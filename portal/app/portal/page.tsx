@@ -1,300 +1,575 @@
 "use client";
-import { useState } from "react";
-import { CheckCircle, XCircle, RotateCcw, Copy, Eye, EyeOff, Search } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import {
+  LayoutDashboard, Upload, FileSearch, Key,
+  CheckCircle, XCircle, RotateCcw, Copy, Eye, EyeOff,
+  Search, TrendingUp, Package, AlertCircle, CloudUpload,
+  ChevronRight, Loader2, BarChart3, Zap, Globe,
+} from "lucide-react";
 
-const MOCK_TENANT = {
-  id: "t-001", name: "Wanderlust Premium", slug: "wanderlust-premium",
-  plan: "professional", api_key: "***REMOVED***",
-  tours_this_month: 142, quota: 500,
-};
+// ── Config ────────────────────────────────────────────────────────────────────
 
-const MOCK_CATALOG = [
-  { id:"c-001", name:"Halong Bay Private Cruise",  country:"Vietnam",   trip_type:"coastal",   quality_score:9.2 },
-  { id:"c-002", name:"Angkor Wat Sunrise Trek",    country:"Cambodia",  trip_type:"cultural",  quality_score:8.7 },
-  { id:"c-003", name:"Bali Wellness Retreat",      country:"Indonesia", trip_type:"wellness",  quality_score:9.5 },
-  { id:"c-004", name:"Kyoto Culinary Journey",     country:"Japan",     trip_type:"culinary",  quality_score:8.9 },
-  { id:"c-005", name:"Sri Lanka Wildlife Safari",  country:"Sri Lanka", trip_type:"wildlife",  quality_score:9.0 },
-  { id:"c-006", name:"Mekong Delta Explorer",      country:"Vietnam",   trip_type:"adventure", quality_score:8.1 },
-];
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://api-cis.lumiguides.it.com";
 
-const TYPE_COLORS: Record<string, { bg: string; color: string }> = {
-  cultural:  { bg:"rgba(139,92,246,0.15)", color:"#a78bfa" },
-  adventure: { bg:"rgba(249,115,22,0.15)", color:"#fb923c" },
-  wellness:  { bg:"rgba(34,197,94,0.15)",  color:"#4ade80" },
-  culinary:  { bg:"rgba(234,179,8,0.15)",  color:"#facc15" },
-  wildlife:  { bg:"rgba(16,185,129,0.15)", color:"#34d399" },
-  coastal:   { bg:"rgba(59,130,246,0.15)", color:"#60a5fa" },
-};
-
-function Badge({ label, bg, color }: { label: string; bg: string; color: string }) {
-  return <span style={{ padding:"3px 10px", borderRadius:20, fontSize:11, fontWeight:600, background:bg, color, border:`1px solid ${color}33` }}>{label}</span>;
+function getCookie(name: string): string {
+  if (typeof document === "undefined") return "";
+  const m = document.cookie.match(new RegExp(`(^| )${name}=([^;]+)`));
+  return m ? decodeURIComponent(m[2]) : "";
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type Tab = "dashboard" | "upload" | "review" | "apikey";
+
+interface Tour {
+  tour_id: string;
+  src_name: string;
+  pipeline_status: string;
+  ingest_at?: string;
+}
+
+// ── Sub-components ────────────────────────────────────────────────────────────
+
+function StatCard({
+  icon, label, value, sub, accent = false,
+}: {
+  icon: React.ReactNode; label: string; value: string | number; sub?: string; accent?: boolean;
+}) {
   return (
-    <div style={{ background:"var(--bg-card)", border:"1px solid var(--border)", borderRadius:12, overflow:"hidden" }}>
-      <div style={{ padding:"14px 20px", borderBottom:"1px solid var(--border)", fontSize:12, fontWeight:700, color:"var(--text-secondary)", textTransform:"uppercase" as const, letterSpacing:1 }}>{title}</div>
-      <div style={{ padding:20 }}>{children}</div>
+    <div style={{
+      background: accent ? "linear-gradient(135deg, rgba(219,150,40,0.12), rgba(219,150,40,0.04))" : "var(--bg-card)",
+      border: `1px solid ${accent ? "rgba(219,150,40,0.3)" : "var(--border)"}`,
+      borderRadius: 12, padding: "20px 24px",
+      display: "flex", alignItems: "flex-start", gap: 16,
+    }}>
+      <div style={{
+        width: 40, height: 40, borderRadius: 10,
+        background: accent ? "rgba(219,150,40,0.2)" : "rgba(255,255,255,0.05)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        color: accent ? "var(--brand-gold)" : "var(--text-muted)", flexShrink: 0,
+      }}>{icon}</div>
+      <div>
+        <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>{label}</div>
+        <div style={{ fontSize: 26, fontWeight: 800, color: accent ? "var(--brand-gold)" : "var(--text-primary)", lineHeight: 1 }}>{value}</div>
+        {sub && <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>{sub}</div>}
+      </div>
     </div>
   );
 }
 
-const MOCK_REWRITE = {
-  original: {
-    name: "Halong Bay Private Cruise",
-    summary: "Discover the timeless grandeur of Halong Bay aboard a refined private vessel, designed for discerning travellers.",
-    highlights: ["Private sundeck with panoramic karst views", "Chef-prepared Vietnamese cuisine", "Guided kayaking through lagoons"],
-    seo_title: "Halong Bay Private Cruise | Adventure Asia",
-  },
-  tenant: {
-    name: "Halong Bay Exclusive Cruise — Wanderlust Collection",
-    summary: "Embark on an extraordinary private voyage through the emerald waters of Halong Bay, curated exclusively for Wanderlust Premium members.",
-    highlights: ["Exclusive member access to private bay anchoring", "Personalised chef menu with dietary preferences", "Private kayaking guide — no group tours"],
-    seo_title: "Halong Bay Exclusive Cruise | Wanderlust Premium",
-  },
-};
+function TabBtn({ id, active, icon, label, onClick }: {
+  id: Tab; active: boolean; icon: React.ReactNode; label: string; onClick: () => void;
+}) {
+  return (
+    <button onClick={onClick} style={{
+      display: "flex", alignItems: "center", gap: 8,
+      padding: "10px 18px", borderRadius: 8, border: "none",
+      background: active ? "var(--brand-gold)" : "var(--bg-card)",
+      color: active ? "white" : "var(--text-secondary)",
+      fontSize: 13, fontWeight: active ? 700 : 500, cursor: "pointer",
+      transition: "all 0.15s",
+      boxShadow: active ? "0 2px 8px rgba(219,150,40,0.3)" : "none",
+    }}>
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
+}
 
-type Tab = "tours" | "config" | "rewrite" | "apikey";
+// ── Dashboard Tab ─────────────────────────────────────────────────────────────
 
-export default function TenantPage() {
-  const [tab, setTab]                 = useState<Tab>("tours");
-  const [search, setSearch]           = useState("");
-  const [selectedTour, setSelected]   = useState<typeof MOCK_CATALOG[0] | null>(null);
-  const [showKey, setShowKey]         = useState(false);
-  const [copied, setCopied]           = useState(false);
-  const [isRewriting, setRewriting]   = useState(false);
-  const [rewriteDone, setRewriteDone] = useState(false);
-  const [reviewDone, setReviewDone]   = useState<"approved"|"rejected"|null>(null);
-  const [brandVoice, setBrandVoice]   = useState("Exclusive, personalised, member-focused");
-  const [forbidden, setForbidden]     = useState("cheap, deal, discount, book now");
-  const [outputFmt, setOutputFmt]     = useState("json");
+function DashboardTab({ tenantName, planTier }: { tenantName: string; planTier: string }) {
+  const quotaMap: Record<string, number> = { starter: 1000, growth: 5000, business: 20000, enterprise: 999999, internal: 999999 };
+  const quota = quotaMap[planTier] ?? 1000;
+  const used = 142; // mock — S8 will wire to real usage API
+  const pct = Math.min(100, Math.round((used / quota) * 100));
 
-  const filtered = MOCK_CATALOG.filter(t =>
-    t.name.toLowerCase().includes(search.toLowerCase()) ||
-    t.country.toLowerCase().includes(search.toLowerCase())
+  const scores = [
+    { range: "9.0–10.0", count: 38, color: "#22c55e" },
+    { range: "8.0–8.9",  count: 61, color: "#86efac" },
+    { range: "7.0–7.9",  count: 31, color: "#fbbf24" },
+    { range: "<7.0",     count: 12, color: "#f87171" },
+  ];
+  const maxCount = Math.max(...scores.map(s => s.count));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      {/* Stats row */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
+        <StatCard icon={<Package size={20}/>}    label="Tours Processed"  value={used}       sub="this month"        accent />
+        <StatCard icon={<TrendingUp size={20}/>}  label="Avg Quality Score" value="8.6"        sub="+0.3 vs last month" />
+        <StatCard icon={<CheckCircle size={20}/>} label="Pass Rate"         value="94%"        sub="auto-approved"     />
+        <StatCard icon={<Zap size={20}/>}         label="Pending Review"    value={3}          sub="requires action"   />
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        {/* Quota */}
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: 24 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 20 }}>Monthly Quota</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+            <span style={{ fontSize: 32, fontWeight: 800, color: "var(--text-primary)" }}>{used.toLocaleString()}</span>
+            <span style={{ fontSize: 14, color: "var(--text-muted)" }}>/ {quota.toLocaleString()} tours</span>
+          </div>
+          <div style={{ height: 8, background: "rgba(255,255,255,0.06)", borderRadius: 4, overflow: "hidden", marginBottom: 8 }}>
+            <div style={{
+              height: "100%", width: `${pct}%`,
+              background: pct > 80 ? "linear-gradient(90deg,#f59e0b,#ef4444)" : "linear-gradient(90deg,var(--brand-gold),#f59e0b)",
+              borderRadius: 4, transition: "width 0.6s ease",
+            }}/>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-muted)" }}>
+            <span>{pct}% used</span>
+            <span style={{ color: "var(--brand-gold)", fontWeight: 600 }}>{(quota - used).toLocaleString()} remaining</span>
+          </div>
+          <div style={{ marginTop: 16, padding: "10px 14px", background: "rgba(219,150,40,0.06)", borderRadius: 8, fontSize: 12, color: "var(--text-muted)" }}>
+            Plan: <span style={{ color: "var(--brand-gold)", fontWeight: 700, textTransform: "capitalize" }}>{planTier}</span>
+            <span style={{ marginLeft: 8, color: "var(--text-muted)" }}>· Resets 1st of month</span>
+          </div>
+        </div>
+
+        {/* Quality distribution */}
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: 24 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 20 }}>Quality Score Distribution</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {scores.map(s => (
+              <div key={s.range} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 70, fontSize: 12, color: "var(--text-muted)", flexShrink: 0 }}>{s.range}</div>
+                <div style={{ flex: 1, height: 20, background: "rgba(255,255,255,0.04)", borderRadius: 4, overflow: "hidden" }}>
+                  <div style={{
+                    height: "100%", width: `${(s.count / maxCount) * 100}%`,
+                    background: s.color, borderRadius: 4, opacity: 0.8,
+                    transition: "width 0.8s ease",
+                  }}/>
+                </div>
+                <div style={{ width: 28, fontSize: 12, fontWeight: 700, color: s.color, textAlign: "right", flexShrink: 0 }}>{s.count}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Quick actions */}
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: 20 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 16 }}>Quick Actions</div>
+        <div style={{ display: "flex", gap: 12 }}>
+          {[
+            { label: "Upload New Batch",    icon: <Upload size={14}/>,      tab: "upload" as Tab },
+            { label: "Review Pending (3)",  icon: <FileSearch size={14}/>,  tab: "review" as Tab },
+            { label: "View API Keys",       icon: <Key size={14}/>,         tab: "apikey" as Tab },
+          ].map(a => (
+            <button key={a.label} style={{
+              display: "flex", alignItems: "center", gap: 8,
+              padding: "10px 20px", background: "rgba(219,150,40,0.08)",
+              border: "1px solid rgba(219,150,40,0.2)", borderRadius: 8,
+              color: "var(--brand-gold)", fontSize: 13, fontWeight: 600, cursor: "pointer",
+            }}>
+              {a.icon}{a.label}<ChevronRight size={12}/>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Batch Upload Tab ──────────────────────────────────────────────────────────
+
+function BatchUploadTab() {
+  const [dragging, setDragging]   = useState(false);
+  const [file, setFile]           = useState<File | null>(null);
+  const [batchName, setBatchName] = useState("");
+  const [market, setMarket]       = useState("vietnam");
+  const [seoMode, setSeoMode]     = useState("dataforseo");
+  const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [batchId, setBatchId]     = useState("");
+
+  const markets = ["vietnam", "cambodia", "thailand", "indonesia", "japan", "sri-lanka"];
+  const seoModes = [
+    { id: "dataforseo", label: "DataForSEO (Default)", desc: "Auto keyword research" },
+    { id: "custom",     label: "Custom Keywords",      desc: "Use your brand keywords" },
+    { id: "disabled",   label: "Disabled",             desc: "Skip SEO enrichment" },
+  ];
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault(); setDragging(false);
+    const f = e.dataTransfer.files[0];
+    if (f && f.name.endsWith(".xlsx")) setFile(f);
+  };
+
+  const handleSubmit = async () => {
+    if (!file || !batchName) return;
+    setSubmitting(true);
+    await new Promise(r => setTimeout(r, 1500)); // S8: replace with real API call
+    setBatchId(`batch-${Date.now().toString(36).toUpperCase()}`);
+    setSubmitted(true);
+    setSubmitting(false);
+  };
+
+  if (submitted) return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 20, padding: "48px 0" }}>
+      <div style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(34,197,94,0.15)", border: "2px solid rgba(34,197,94,0.3)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <CheckCircle size={28} color="#22c55e"/>
+      </div>
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontSize: 18, fontWeight: 700, color: "var(--text-primary)", marginBottom: 8 }}>Batch Submitted</div>
+        <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 4 }}>Batch ID: <code style={{ color: "var(--brand-gold)" }}>{batchId}</code></div>
+        <div style={{ fontSize: 13, color: "var(--text-muted)" }}>You'll be notified when processing completes.</div>
+      </div>
+      <button onClick={() => { setSubmitted(false); setFile(null); setBatchName(""); }}
+        style={{ padding: "10px 24px", background: "var(--brand-gold)", border: "none", borderRadius: 8, color: "white", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+        Upload Another Batch
+      </button>
+    </div>
   );
 
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {/* Drop zone */}
+      <div
+        onDragOver={e => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={handleDrop}
+        onClick={() => document.getElementById("file-input")?.click()}
+        style={{
+          border: `2px dashed ${dragging ? "var(--brand-gold)" : file ? "rgba(34,197,94,0.5)" : "var(--border)"}`,
+          borderRadius: 12, padding: "40px 24px", textAlign: "center", cursor: "pointer",
+          background: dragging ? "rgba(219,150,40,0.04)" : file ? "rgba(34,197,94,0.04)" : "var(--bg-card)",
+          transition: "all 0.2s",
+        }}>
+        <input id="file-input" type="file" accept=".xlsx" style={{ display: "none" }}
+          onChange={e => { if (e.target.files?.[0]) setFile(e.target.files[0]); }} />
+        {file ? (
+          <>
+            <CheckCircle size={32} color="#22c55e" style={{ margin: "0 auto 12px" }}/>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#22c55e" }}>{file.name}</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>{(file.size / 1024).toFixed(1)} KB · Click to replace</div>
+          </>
+        ) : (
+          <>
+            <CloudUpload size={32} color="var(--text-muted)" style={{ margin: "0 auto 12px" }}/>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-secondary)" }}>Drop your Excel file here</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>or click to browse · .xlsx only</div>
+          </>
+        )}
+      </div>
+
+      {/* Config */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase" as const, letterSpacing: 1, display: "block", marginBottom: 8 }}>Batch Name</label>
+          <input value={batchName} onChange={e => setBatchName(e.target.value)} placeholder="e.g. Vietnam Q2 2026"
+            style={{ width: "100%", padding: "10px 12px", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text-primary)", fontSize: 13, outline: "none" }}/>
+        </div>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase" as const, letterSpacing: 1, display: "block", marginBottom: 8 }}>Destination Market</label>
+          <select value={market} onChange={e => setMarket(e.target.value)}
+            style={{ width: "100%", padding: "10px 12px", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text-primary)", fontSize: 13, outline: "none" }}>
+            {markets.map(m => <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* SEO mode */}
+      <div>
+        <label style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase" as const, letterSpacing: 1, display: "block", marginBottom: 10 }}>SEO Mode</label>
+        <div style={{ display: "flex", gap: 10 }}>
+          {seoModes.map(s => (
+            <button key={s.id} onClick={() => setSeoMode(s.id)} style={{
+              flex: 1, padding: "12px 16px", borderRadius: 8, cursor: "pointer", textAlign: "left" as const,
+              background: seoMode === s.id ? "rgba(219,150,40,0.1)" : "var(--bg-primary)",
+              border: `1px solid ${seoMode === s.id ? "rgba(219,150,40,0.4)" : "var(--border)"}`,
+            }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: seoMode === s.id ? "var(--brand-gold)" : "var(--text-primary)", marginBottom: 2 }}>{s.label}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{s.desc}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <button onClick={handleSubmit} disabled={!file || !batchName || submitting}
+        style={{
+          padding: "12px 32px", borderRadius: 8, border: "none", fontSize: 14, fontWeight: 700, cursor: (!file || !batchName) ? "not-allowed" : "pointer",
+          background: (!file || !batchName) ? "var(--border)" : "var(--brand-gold)",
+          color: (!file || !batchName) ? "var(--text-muted)" : "white",
+          display: "flex", alignItems: "center", gap: 8, alignSelf: "flex-start" as const,
+        }}>
+        {submitting ? <><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }}/>Submitting...</> : "Submit Batch →"}
+      </button>
+    </div>
+  );
+}
+
+// ── Content Review Tab ────────────────────────────────────────────────────────
+
+function ContentReviewTab() {
+  const [tours, setTours]         = useState<Tour[]>([]);
+  const [loading, setLoading]     = useState(true);
+  const [search, setSearch]       = useState("");
+  const [selected, setSelected]   = useState<Tour | null>(null);
+  const [rewriting, setRewriting] = useState(false);
+  const [rewritten, setRewritten] = useState(false);
+  const [decision, setDecision]   = useState<"approved"|"rejected"|null>(null);
+
+  const tenantToken = typeof window !== "undefined" ? getCookie("cis_tenant_token") : "";
+
+  useEffect(() => {
+    const fetchTours = async () => {
+      try {
+        const res = await fetch(`${API_URL}/tours?limit=20`, {
+          headers: tenantToken ? { "Authorization": `Bearer ${tenantToken}` } : {},
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setTours(data.data ?? []);
+        }
+      } catch {
+        // fallback to mock
+        setTours([
+          { tour_id: "mock-1", src_name: "Halong Bay Private Cruise",  pipeline_status: "published" },
+          { tour_id: "mock-2", src_name: "Angkor Wat Sunrise Trek",    pipeline_status: "published" },
+          { tour_id: "mock-3", src_name: "Bali Wellness Retreat",      pipeline_status: "published" },
+        ]);
+      } finally { setLoading(false); }
+    };
+    fetchTours();
+  }, [tenantToken]);
+
+  const filtered = tours.filter(t =>
+    t.src_name?.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const runRewrite = async () => {
+    setRewriting(true); setRewritten(false); setDecision(null);
+    await new Promise(r => setTimeout(r, 2000)); // S8: POST /v1/tours/{id}/rewrite
+    setRewriting(false); setRewritten(true);
+  };
+
+  const mockBefore = { name: selected?.src_name ?? "", summary: "A timeless journey through one of Asia's most iconic destinations, crafted by Adventure Asia's editorial team with precision and depth." };
+  const mockAfter  = { name: `${selected?.src_name ?? ""} — Exclusive Experience`, summary: "An extraordinary private journey, curated exclusively for discerning travellers seeking transformative encounters with Asia's most coveted destinations." };
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: selected ? "320px 1fr" : "1fr", gap: 20, alignItems: "start" }}>
+      {/* Tour list */}
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
+          <div style={{ position: "relative" }}>
+            <Search size={12} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }}/>
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search tours..."
+              style={{ width: "100%", padding: "8px 10px 8px 30px", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text-primary)", fontSize: 12, outline: "none" }}/>
+          </div>
+        </div>
+        <div style={{ maxHeight: 480, overflowY: "auto" as const }}>
+          {loading ? (
+            <div style={{ padding: 24, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
+              <Loader2 size={16} style={{ animation: "spin 1s linear infinite", margin: "0 auto 8px", display: "block" }}/>Loading...
+            </div>
+          ) : filtered.length === 0 ? (
+            <div style={{ padding: 24, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>No tours found</div>
+          ) : filtered.map(tour => {
+            const isSelected = selected?.tour_id === tour.tour_id;
+            return (
+              <div key={tour.tour_id} onClick={() => { setSelected(isSelected ? null : tour); setRewritten(false); setDecision(null); }}
+                style={{
+                  padding: "12px 16px", cursor: "pointer", borderBottom: "1px solid var(--border)",
+                  background: isSelected ? "rgba(219,150,40,0.08)" : "transparent",
+                  borderLeft: `3px solid ${isSelected ? "var(--brand-gold)" : "transparent"}`,
+                  transition: "all 0.1s",
+                }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>{tour.src_name}</div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#22c55e", display: "inline-block" }}/>
+                  {tour.pipeline_status}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Review panel */}
+      {selected && (
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
+          <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>{selected.src_name}</div>
+            <button onClick={runRewrite} disabled={rewriting}
+              style={{ padding: "8px 18px", background: rewriting ? "var(--border)" : "var(--brand-gold)", border: "none", borderRadius: 6, color: rewriting ? "var(--text-muted)" : "white", fontSize: 12, fontWeight: 700, cursor: rewriting ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+              {rewriting ? <><Loader2 size={12} style={{ animation: "spin 1s linear infinite" }}/>Rewriting...</> : <><RotateCcw size={12}/>Generate Tenant Version</>}
+            </button>
+          </div>
+
+          {!rewritten ? (
+            <div style={{ padding: 32, textAlign: "center", color: "var(--text-muted)" }}>
+              <BarChart3 size={32} style={{ margin: "0 auto 12px", opacity: 0.3 }}/>
+              <div style={{ fontSize: 13 }}>Click "Generate Tenant Version" to create a branded rewrite</div>
+            </div>
+          ) : (
+            <div style={{ padding: 20 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+                {/* Before */}
+                <div style={{ border: "1px solid rgba(239,68,68,0.2)", borderRadius: 10, overflow: "hidden" }}>
+                  <div style={{ padding: "8px 14px", background: "rgba(239,68,68,0.08)", fontSize: 11, fontWeight: 700, color: "#f87171" }}>AA ORIGINAL</div>
+                  <div style={{ padding: 14 }}>
+                    <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 4 }}>TITLE</div>
+                    <div style={{ fontSize: 13, color: "var(--text-primary)", marginBottom: 12 }}>{mockBefore.name}</div>
+                    <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 4 }}>SUMMARY</div>
+                    <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>{mockBefore.summary}</div>
+                  </div>
+                </div>
+                {/* After */}
+                <div style={{ border: "1px solid rgba(34,197,94,0.2)", borderRadius: 10, overflow: "hidden" }}>
+                  <div style={{ padding: "8px 14px", background: "rgba(34,197,94,0.08)", fontSize: 11, fontWeight: 700, color: "#4ade80" }}>TENANT VERSION</div>
+                  <div style={{ padding: 14 }}>
+                    <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 4 }}>TITLE</div>
+                    <div contentEditable suppressContentEditableWarning style={{ fontSize: 13, color: "var(--text-primary)", marginBottom: 12, outline: "none", padding: "2px 4px", borderRadius: 4, background: "rgba(255,255,255,0.03)" }}>{mockAfter.name}</div>
+                    <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 4 }}>SUMMARY</div>
+                    <div contentEditable suppressContentEditableWarning style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6, outline: "none", padding: "2px 4px", borderRadius: 4, background: "rgba(255,255,255,0.03)" }}>{mockAfter.summary}</div>
+                  </div>
+                </div>
+              </div>
+
+              {!decision ? (
+                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                  <button onClick={() => setDecision("rejected")} style={{ padding: "9px 20px", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 8, color: "#ef4444", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                    <XCircle size={14}/> Reject
+                  </button>
+                  <button onClick={runRewrite} style={{ padding: "9px 20px", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text-secondary)", fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                    <RotateCcw size={14}/> Regenerate
+                  </button>
+                  <button onClick={() => setDecision("approved")} style={{ padding: "9px 24px", background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.3)", borderRadius: 8, color: "#22c55e", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                    <CheckCircle size={14}/> Approve & Export
+                  </button>
+                </div>
+              ) : (
+                <div style={{ padding: 14, borderRadius: 8, background: decision === "approved" ? "rgba(34,197,94,0.08)" : "rgba(239,68,68,0.08)", border: `1px solid ${decision === "approved" ? "rgba(34,197,94,0.2)" : "rgba(239,68,68,0.2)"}`, fontSize: 13, fontWeight: 600, color: decision === "approved" ? "#22c55e" : "#ef4444" }}>
+                  {decision === "approved" ? "✓ Approved — available via API" : "✗ Rejected — not published"}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── API Key Tab ───────────────────────────────────────────────────────────────
+
+function ApiKeyTab({ tenantId }: { tenantId: string }) {
+  const [showKey, setShowKey] = useState(false);
+  const [copied, setCopied]   = useState(false);
+
+  // Real key from cookie — set by tenant-login page
+  const rawKey = getCookie("cis_tenant_key") || "wl_live_sk_test_wanderlux_2026";
+
   const copyKey = () => {
-    navigator.clipboard.writeText(MOCK_TENANT.api_key);
+    navigator.clipboard.writeText(rawKey);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const runRewrite = async () => {
-    setRewriting(true); setRewriteDone(false); setReviewDone(null);
-    await new Promise(r => setTimeout(r, 2500));
-    setRewriting(false); setRewriteDone(true);
-  };
+  const endpoints = [
+    ["GET",  "/v1/tours",              "List your approved tours (Gold layer)"],
+    ["GET",  "/v1/tours/{id}",         "Get single tour with full content"],
+    ["POST", "/v1/tours/{id}/rewrite", "Trigger tenant-branded rewrite"],
+    ["POST", "/v1/exports",            "Create bulk export job (JSON/CSV/XML)"],
+    ["GET",  "/v1/usage",              "Check quota and billing stats"],
+    ["POST", "/v1/webhooks/test",      "Send test webhook payload"],
+  ];
 
-  const quotaPct = Math.round((MOCK_TENANT.tours_this_month / MOCK_TENANT.quota) * 100);
-
-  const tabStyle = (t: Tab): React.CSSProperties => ({
-    padding:"8px 18px", borderRadius:8, fontSize:13, fontWeight:500,
-    cursor:"pointer", border:"none", transition:"all 0.15s",
-    background: tab === t ? "var(--brand-gold)" : "var(--bg-card)",
-    color: tab === t ? "white" : "var(--text-secondary)",
-  });
+  const curlExample = `curl -X GET \\
+  https://api-cis.lumiguides.it.com/v1/tours \\
+  -H "X-API-Key: ${showKey ? rawKey : rawKey.slice(0, 12) + "..."}" \\
+  -H "Accept: application/json"`;
 
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:24 }}>
-      {/* Header */}
-      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between" }}>
-        <div>
-          <h1 style={{ fontSize:24, fontWeight:700, color:"var(--text-primary)", margin:0 }}>Tenant Portal</h1>
-          <p style={{ color:"var(--text-secondary)", fontSize:13, marginTop:6 }}>
-            {MOCK_TENANT.name} · <span style={{ color:"var(--brand-gold)" }}>{MOCK_TENANT.plan}</span>
-          </p>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {/* Key display */}
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: 24 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 16 }}>Your API Key</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+          <div style={{ flex: 1, fontFamily: "monospace", fontSize: 13, padding: "11px 16px", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: 8, color: showKey ? "var(--brand-gold)" : "var(--text-muted)", letterSpacing: showKey ? 0.5 : 2 }}>
+            {showKey ? rawKey : "•".repeat(Math.min(rawKey.length, 32))}
+          </div>
+          <button onClick={() => setShowKey(!showKey)} style={{ padding: "11px 14px", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: 8, cursor: "pointer", color: "var(--text-secondary)", display: "flex", alignItems: "center" }}>
+            {showKey ? <EyeOff size={15}/> : <Eye size={15}/>}
+          </button>
+          <button onClick={copyKey} style={{ padding: "11px 18px", background: copied ? "rgba(34,197,94,0.1)" : "var(--bg-primary)", border: `1px solid ${copied ? "rgba(34,197,94,0.3)" : "var(--border)"}`, borderRadius: 8, cursor: "pointer", color: copied ? "#22c55e" : "var(--text-secondary)", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+            <Copy size={13}/>{copied ? "Copied!" : "Copy"}
+          </button>
         </div>
-        <div style={{ background:"var(--bg-card)", border:"1px solid var(--border)", borderRadius:10, padding:"12px 20px", minWidth:200 }}>
-          <div style={{ display:"flex", justifyContent:"space-between", fontSize:12, color:"var(--text-secondary)", marginBottom:8 }}>
-            <span>Monthly quota</span>
-            <span style={{ color:"var(--brand-gold)", fontWeight:700 }}>{MOCK_TENANT.tours_this_month}/{MOCK_TENANT.quota}</span>
-          </div>
-          <div style={{ height:6, background:"var(--border)", borderRadius:3, overflow:"hidden" }}>
-            <div style={{ height:"100%", width:`${quotaPct}%`, background:"linear-gradient(90deg, var(--brand-gold), #f59e0b)", borderRadius:3 }} />
-          </div>
-          <div style={{ fontSize:11, color:"var(--text-muted)", marginTop:6 }}>{quotaPct}% used this month</div>
+        <div style={{ padding: "10px 14px", background: "rgba(219,150,40,0.06)", border: "1px solid rgba(219,150,40,0.15)", borderRadius: 8, fontSize: 12, color: "var(--text-muted)" }}>
+          <AlertCircle size={12} style={{ display: "inline", marginRight: 6, color: "var(--brand-gold)", verticalAlign: "middle" }}/>
+          Keep your API key secret. Pass it as <code style={{ color: "var(--brand-gold)" }}>X-API-Key</code> header on every request. Do not commit to version control.
+        </div>
+      </div>
+
+      {/* Endpoints */}
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)", fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 1 }}>Available Endpoints</div>
+        <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 6 }}>
+          {endpoints.map(([method, path, desc]) => (
+            <div key={path} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: 8 }}>
+              <span style={{ fontSize: 10, fontWeight: 800, padding: "3px 8px", borderRadius: 4, background: method === "GET" ? "rgba(59,130,246,0.15)" : "rgba(34,197,94,0.15)", color: method === "GET" ? "#60a5fa" : "#4ade80", flexShrink: 0 }}>{method}</span>
+              <code style={{ fontSize: 12, color: "var(--brand-gold)", flex: 1 }}>{path}</code>
+              <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{desc}</span>
+              <Globe size={12} color="var(--text-muted)" style={{ flexShrink: 0, opacity: 0.4 }}/>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* cURL example */}
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)", fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 1 }}>Quick Start</div>
+        <div style={{ padding: 20 }}>
+          <pre style={{ margin: 0, fontFamily: "monospace", fontSize: 12, color: "#a5f3fc", background: "#0d1117", padding: "16px 20px", borderRadius: 8, overflowX: "auto" as const, lineHeight: 1.7 }}>{curlExample}</pre>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main Page ─────────────────────────────────────────────────────────────────
+
+export default function TenantPortalPage() {
+  const [tab, setTab] = useState<Tab>("dashboard");
+  const [tenantName, setTenantName] = useState("Partner");
+  const [planTier, setPlanTier]     = useState("growth");
+  const [tenantId, setTenantId]     = useState("");
+
+  useEffect(() => {
+    setTenantName(getCookie("cis_tenant_name") || "Partner");
+    setPlanTier(getCookie("cis_tenant_plan") || "growth");
+    setTenantId(getCookie("cis_tenant_id") || "");
+  }, []);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      {/* Page header */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: "var(--text-primary)", margin: 0 }}>Tenant Portal</h1>
+          <p style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 4, margin: 0 }}>
+            {tenantName} ·{" "}
+            <span style={{ color: "var(--brand-gold)", textTransform: "capitalize" }}>{planTier}</span>
+          </p>
         </div>
       </div>
 
       {/* Tabs */}
-      <div style={{ display:"flex", gap:6 }}>
-        <button style={tabStyle("tours")}   onClick={() => setTab("tours")}>🗺 Tour Browser</button>
-        <button style={tabStyle("config")}  onClick={() => setTab("config")}>⚙️ Brand Config</button>
-        <button style={tabStyle("rewrite")} onClick={() => setTab("rewrite")}>✨ Rewrite & Review</button>
-        <button style={tabStyle("apikey")}  onClick={() => setTab("apikey")}>🔑 API Access</button>
+      <div style={{ display: "flex", gap: 8 }}>
+        <TabBtn id="dashboard" active={tab === "dashboard"} icon={<LayoutDashboard size={14}/>} label="Dashboard"      onClick={() => setTab("dashboard")}/>
+        <TabBtn id="upload"    active={tab === "upload"}    icon={<Upload size={14}/>}           label="Batch Upload"  onClick={() => setTab("upload")}/>
+        <TabBtn id="review"    active={tab === "review"}    icon={<FileSearch size={14}/>}       label="Content Review" onClick={() => setTab("review")}/>
+        <TabBtn id="apikey"    active={tab === "apikey"}    icon={<Key size={14}/>}              label="API Access"    onClick={() => setTab("apikey")}/>
       </div>
 
-      {/* TAB: Tour Browser */}
-      {tab === "tours" && (
-        <Section title="Published Catalog — Select Tour to Rewrite">
-          <div style={{ position:"relative", marginBottom:16 }}>
-            <Search size={13} style={{ position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:"var(--text-muted)" }} />
-            <input type="text" placeholder="Search tours..." value={search} onChange={e => setSearch(e.target.value)}
-              style={{ width:"100%", padding:"8px 12px 8px 32px", background:"var(--bg-primary)", border:"1px solid var(--border)", borderRadius:8, color:"var(--text-primary)", fontSize:13, outline:"none" }} />
-          </div>
-          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-            {filtered.map(tour => {
-              const tc = TYPE_COLORS[tour.trip_type] || { bg:"var(--border)", color:"var(--text-muted)" };
-              const isSelected = selectedTour?.id === tour.id;
-              return (
-                <div key={tour.id} onClick={() => setSelected(isSelected ? null : tour)}
-                  style={{ display:"flex", alignItems:"center", gap:16, padding:"12px 16px", borderRadius:10, cursor:"pointer", transition:"all 0.15s", background: isSelected ? "rgba(219,150,40,0.08)" : "var(--bg-primary)", border:`1px solid ${isSelected ? "var(--brand-gold)" : "var(--border)"}` }}>
-                  <div style={{ width:20, height:20, borderRadius:"50%", border:`2px solid ${isSelected ? "var(--brand-gold)" : "var(--border)"}`, background: isSelected ? "var(--brand-gold)" : "transparent", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
-                    {isSelected && <CheckCircle size={12} color="white" />}
-                  </div>
-                  <div style={{ flex:1 }}>
-                    <div style={{ fontSize:13, fontWeight:600, color:"var(--text-primary)" }}>{tour.name}</div>
-                    <div style={{ fontSize:11, color:"var(--text-muted)", marginTop:2 }}>{tour.country}</div>
-                  </div>
-                  <Badge label={tour.trip_type} bg={tc.bg} color={tc.color} />
-                  <span style={{ fontWeight:800, fontSize:13, color: tour.quality_score >= 9 ? "#22c55e" : "#DB9628" }}>{tour.quality_score}</span>
-                </div>
-              );
-            })}
-          </div>
-          {selectedTour && (
-            <div style={{ marginTop:16, padding:14, background:"rgba(219,150,40,0.06)", border:"1px solid rgba(219,150,40,0.3)", borderRadius:10 }}>
-              <div style={{ fontSize:13, color:"var(--brand-gold)", fontWeight:600, marginBottom:8 }}>✓ Selected: {selectedTour.name}</div>
-              <button onClick={() => setTab("rewrite")}
-                style={{ padding:"8px 20px", background:"var(--brand-gold)", border:"none", borderRadius:8, color:"white", fontSize:13, fontWeight:700, cursor:"pointer" }}>
-                Rewrite for {MOCK_TENANT.name} →
-              </button>
-            </div>
-          )}
-        </Section>
-      )}
-
-      {/* TAB: Brand Config */}
-      {tab === "config" && (
-        <Section title="Brand & SEO Configuration">
-          <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
-            <div>
-              <label style={{ fontSize:11, fontWeight:600, color:"var(--text-muted)", textTransform:"uppercase" as const, letterSpacing:1, display:"block", marginBottom:8 }}>Brand Voice</label>
-              <textarea value={brandVoice} onChange={e => setBrandVoice(e.target.value)} rows={3}
-                style={{ width:"100%", padding:12, background:"var(--bg-primary)", border:"1px solid var(--border)", borderRadius:8, color:"var(--text-primary)", fontSize:13, resize:"vertical" as const, outline:"none", lineHeight:1.6 }} />
-            </div>
-            <div>
-              <label style={{ fontSize:11, fontWeight:600, color:"var(--text-muted)", textTransform:"uppercase" as const, letterSpacing:1, display:"block", marginBottom:8 }}>Forbidden Words</label>
-              <input type="text" value={forbidden} onChange={e => setForbidden(e.target.value)}
-                style={{ width:"100%", padding:12, background:"var(--bg-primary)", border:"1px solid var(--border)", borderRadius:8, color:"var(--text-primary)", fontSize:13, outline:"none" }} />
-              <div style={{ marginTop:8, display:"flex", flexWrap:"wrap" as const, gap:6 }}>
-                {forbidden.split(",").map(w => w.trim()).filter(Boolean).map(w => (
-                  <span key={w} style={{ padding:"2px 10px", background:"rgba(239,68,68,0.1)", color:"#f87171", border:"1px solid rgba(239,68,68,0.2)", borderRadius:20, fontSize:11 }}>{w}</span>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label style={{ fontSize:11, fontWeight:600, color:"var(--text-muted)", textTransform:"uppercase" as const, letterSpacing:1, display:"block", marginBottom:8 }}>Output Format</label>
-              <div style={{ display:"flex", gap:8 }}>
-                {["json","markdown","html"].map(f => (
-                  <button key={f} onClick={() => setOutputFmt(f)}
-                    style={{ padding:"8px 16px", borderRadius:8, border:`1px solid ${outputFmt===f ? "var(--brand-gold)" : "var(--border)"}`, background: outputFmt===f ? "rgba(219,150,40,0.1)" : "var(--bg-primary)", color: outputFmt===f ? "var(--brand-gold)" : "var(--text-secondary)", fontSize:13, fontWeight: outputFmt===f ? 600 : 400, cursor:"pointer" }}>
-                    {f.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <button style={{ padding:"10px 24px", background:"var(--brand-gold)", border:"none", borderRadius:8, color:"white", fontSize:13, fontWeight:700, cursor:"pointer", alignSelf:"flex-start" as const }}>
-              Save Configuration
-            </button>
-          </div>
-        </Section>
-      )}
-
-      {/* TAB: Rewrite & Review */}
-      {tab === "rewrite" && (
-        <Section title={selectedTour ? `Rewrite: ${selectedTour.name}` : "Rewrite & Review"}>
-          {!selectedTour ? (
-            <div style={{ textAlign:"center", padding:"24px 0", color:"var(--text-muted)" }}>
-              <div style={{ marginBottom:8 }}>No tour selected</div>
-              <button onClick={() => setTab("tours")}
-                style={{ padding:"8px 20px", background:"var(--brand-gold)", border:"none", borderRadius:8, color:"white", fontSize:13, cursor:"pointer" }}>
-                Go to Tour Browser
-              </button>
-            </div>
-          ) : (
-            <div>
-              <div style={{ display:"flex", gap:12, alignItems:"center", marginBottom:16 }}>
-                <div style={{ flex:1, fontSize:13, color:"var(--text-secondary)" }}>
-                  Applying brand config for <strong style={{ color:"var(--brand-gold)" }}>{MOCK_TENANT.name}</strong>
-                </div>
-                <button onClick={runRewrite} disabled={isRewriting}
-                  style={{ padding:"10px 24px", background:isRewriting?"var(--border)":"var(--brand-gold)", border:"none", borderRadius:8, color:isRewriting?"var(--text-muted)":"white", fontSize:13, fontWeight:700, cursor:isRewriting?"not-allowed":"pointer" }}>
-                  {isRewriting ? "Rewriting..." : rewriteDone ? "Regenerate" : "Generate Tenant Rewrite"}
-                </button>
-              </div>
-              {rewriteDone && (
-                <>
-                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:16 }}>
-                    <div style={{ background:"var(--before-bg)", border:"1px solid var(--before-border)", borderRadius:10, overflow:"hidden" }}>
-                      <div style={{ padding:"10px 16px", background:"#F5C6C6", fontSize:11, fontWeight:700, color:"#7F1D1D" }}>AA ORIGINAL</div>
-                      <div style={{ padding:16, display:"flex", flexDirection:"column", gap:10 }}>
-                        <div><div style={{ fontSize:10, color:"#9B1C1C", marginBottom:4 }}>NAME</div><div style={{ fontSize:12, color:"#374151", fontFamily:"monospace" }}>{MOCK_REWRITE.original.name}</div></div>
-                        <div><div style={{ fontSize:10, color:"#9B1C1C", marginBottom:4 }}>SUMMARY</div><div style={{ fontSize:12, color:"#374151", fontFamily:"monospace", lineHeight:1.6 }}>{MOCK_REWRITE.original.summary}</div></div>
-                        <div><div style={{ fontSize:10, color:"#9B1C1C", marginBottom:4 }}>HIGHLIGHTS</div><ul style={{ margin:0, padding:"0 0 0 16px" }}>{MOCK_REWRITE.original.highlights.map((h,i) => <li key={i} style={{ fontSize:12, color:"#374151", fontFamily:"monospace" }}>{h}</li>)}</ul></div>
-                      </div>
-                    </div>
-                    <div style={{ background:"var(--after-bg)", border:"1px solid var(--after-border)", borderRadius:10, overflow:"hidden" }}>
-                      <div style={{ padding:"10px 16px", background:"#B8DFA0", fontSize:11, fontWeight:700, color:"#166534" }}>TENANT VERSION</div>
-                      <div style={{ padding:16, display:"flex", flexDirection:"column", gap:10 }}>
-                        <div><div style={{ fontSize:10, color:"#166534", marginBottom:4 }}>NAME</div><div contentEditable suppressContentEditableWarning style={{ fontSize:12, color:"#14532D", padding:"4px 6px", borderRadius:4, background:"rgba(255,255,255,0.5)", outline:"none" }}>{MOCK_REWRITE.tenant.name}</div></div>
-                        <div><div style={{ fontSize:10, color:"#166534", marginBottom:4 }}>SUMMARY</div><div contentEditable suppressContentEditableWarning style={{ fontSize:12, color:"#14532D", lineHeight:1.6, padding:"4px 6px", borderRadius:4, background:"rgba(255,255,255,0.5)", outline:"none" }}>{MOCK_REWRITE.tenant.summary}</div></div>
-                        <div><div style={{ fontSize:10, color:"#166534", marginBottom:4 }}>HIGHLIGHTS</div><ul style={{ margin:0, padding:"0 0 0 16px" }}>{MOCK_REWRITE.tenant.highlights.map((h,i) => <li key={i} style={{ fontSize:12, color:"#14532D" }}>{h}</li>)}</ul></div>
-                      </div>
-                    </div>
-                  </div>
-                  {!reviewDone ? (
-                    <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
-                      <button onClick={() => setReviewDone("rejected")} style={{ padding:"10px 20px", background:"rgba(239,68,68,0.1)", border:"1px solid rgba(239,68,68,0.3)", borderRadius:8, color:"#ef4444", fontSize:13, fontWeight:600, cursor:"pointer" }}>Reject</button>
-                      <button onClick={runRewrite} style={{ padding:"10px 20px", background:"var(--bg-card)", border:"1px solid var(--border)", borderRadius:8, color:"var(--text-secondary)", fontSize:13, cursor:"pointer" }}>Regenerate</button>
-                      <button onClick={() => setReviewDone("approved")} style={{ padding:"10px 24px", background:"#166534", border:"1px solid #22c55e33", borderRadius:8, color:"#22c55e", fontSize:13, fontWeight:700, cursor:"pointer" }}>Approve and Export</button>
-                    </div>
-                  ) : (
-                    <div style={{ padding:16, borderRadius:10, background:reviewDone==="approved"?"rgba(34,197,94,0.08)":"rgba(239,68,68,0.08)", border:`1px solid ${reviewDone==="approved"?"rgba(34,197,94,0.2)":"rgba(239,68,68,0.2)"}` }}>
-                      <span style={{ color:reviewDone==="approved"?"#22c55e":"#ef4444", fontWeight:600, fontSize:13 }}>
-                        {reviewDone==="approved" ? "Approved - available via API" : "Rejected - not published"}
-                      </span>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-        </Section>
-      )}
-
-      {/* TAB: API Access */}
-      {tab === "apikey" && (
-        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-          <Section title="API Key">
-            <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                <div style={{ flex:1, fontFamily:"monospace", fontSize:13, padding:"10px 16px", background:"var(--bg-primary)", border:"1px solid var(--border)", borderRadius:8, color:showKey?"var(--brand-gold)":"var(--text-muted)" }}>
-                  {showKey ? MOCK_TENANT.api_key : "x".repeat(MOCK_TENANT.api_key.length)}
-                </div>
-                <button onClick={() => setShowKey(!showKey)} style={{ padding:"10px 14px", background:"var(--bg-card)", border:"1px solid var(--border)", borderRadius:8, cursor:"pointer", color:"var(--text-secondary)", display:"flex", alignItems:"center" }}>
-                  {showKey ? <EyeOff size={16}/> : <Eye size={16}/>}
-                </button>
-                <button onClick={copyKey} style={{ padding:"10px 16px", background:copied?"rgba(34,197,94,0.1)":"var(--bg-card)", border:`1px solid ${copied?"rgba(34,197,94,0.3)":"var(--border)"}`, borderRadius:8, cursor:"pointer", color:copied?"#22c55e":"var(--text-secondary)", fontSize:13, fontWeight:600, display:"flex", alignItems:"center", gap:6 }}>
-                  <Copy size={14}/> {copied?"Copied!":"Copy"}
-                </button>
-              </div>
-            </div>
-          </Section>
-          <Section title="API Endpoints">
-            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-              {[["GET","/v1/tours","List approved tours"],["GET","/v1/tours/{id}","Get single tour"],["POST","/v1/tours/{id}/rewrite","Trigger rewrite"],["GET","/v1/catalog","Browse AA catalog"],["GET","/v1/usage","Check quota"]].map(([m,p,d]) => (
-                <div key={p} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 14px", background:"var(--bg-primary)", border:"1px solid var(--border)", borderRadius:8 }}>
-                  <span style={{ fontSize:11, fontWeight:700, padding:"2px 8px", borderRadius:4, background:m==="GET"?"rgba(59,130,246,0.15)":"rgba(34,197,94,0.15)", color:m==="GET"?"#60a5fa":"#4ade80" }}>{m}</span>
-                  <code style={{ fontSize:12, color:"var(--brand-gold)", flex:1 }}>{p}</code>
-                  <span style={{ fontSize:12, color:"var(--text-muted)" }}>{d}</span>
-                </div>
-              ))}
-            </div>
-          </Section>
-        </div>
-      )}
+      {/* Tab content */}
+      {tab === "dashboard" && <DashboardTab tenantName={tenantName} planTier={planTier}/>}
+      {tab === "upload"    && <BatchUploadTab/>}
+      {tab === "review"    && <ContentReviewTab/>}
+      {tab === "apikey"    && <ApiKeyTab tenantId={tenantId}/>}
     </div>
   );
 }
