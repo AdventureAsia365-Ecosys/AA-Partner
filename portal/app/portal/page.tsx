@@ -78,28 +78,63 @@ function TabBtn({ id, active, icon, label, onClick }: {
 
 // ── Dashboard Tab ─────────────────────────────────────────────────────────────
 
-function DashboardTab({ tenantName, planTier }: { tenantName: string; planTier: string }) {
+function DashboardTab({ tenantName, planTier, token }: { tenantName: string; planTier: string; token: string }) {
+  const [dashData, setDashData] = React.useState<{
+    used: number; avgScore: number; passRate: number; pendingReview: number;
+    scores: { range: string; count: number; color: string }[];
+  } | null>(null);
+  const [dashLoading, setDashLoading] = React.useState(true);
+  React.useEffect(() => {
+    const fetchDash = async () => {
+      try {
+        const headers = token ? { "Authorization": `Bearer ${token}` } : {};
+        const [toursRes, queueRes] = await Promise.all([
+          fetch(`${API_URL}/v1/tours?page=1&page_size=100`, { headers }),
+          fetch(`${API_URL}/v1/pipeline/review-queue?page_size=1`, { headers }),
+        ]);
+        const toursData = toursRes.ok ? await toursRes.json() : null;
+        const queueData = queueRes.ok ? await queueRes.json() : null;
+        const tours = toursData?.data ?? [];
+        const total = toursData?.pagination?.total ?? tours.length;
+        const scores = tours.map((t: { quality_score?: number }) => t.quality_score ?? 0).filter((s: number) => s > 0);
+        const avgScore = scores.length ? +(scores.reduce((a: number, b: number) => a + b, 0) / scores.length).toFixed(1) : 0;
+        const passRate = scores.length ? Math.round((scores.filter((s: number) => s >= 7.0).length / scores.length) * 100) : 0;
+        const pendingReview = queueData?.pagination?.total ?? 0;
+        const bands = [
+          { range: "9.0–10.0", min: 9.0, max: 10.1, color: "#22c55e" },
+          { range: "8.0–8.9",  min: 8.0, max: 9.0,  color: "#86efac" },
+          { range: "7.0–7.9",  min: 7.0, max: 8.0,  color: "#fbbf24" },
+          { range: "<7.0",     min: 0,   max: 7.0,  color: "#f87171" },
+        ];
+        const scoreDist = bands.map(b => ({
+          range: b.range,
+          color: b.color,
+          count: scores.filter((s: number) => s >= b.min && s < b.max).length,
+        }));
+        setDashData({ used: total, avgScore, passRate, pendingReview, scores: scoreDist });
+      } catch (e) {
+        console.error("Dashboard fetch error:", e);
+      } finally { setDashLoading(false); }
+    };
+    fetchDash();
+  }, [token]);
   const quotaMap: Record<string, number> = { starter: 1000, growth: 5000, business: 20000, enterprise: 999999, internal: 999999 };
   const quota = quotaMap[planTier] ?? 1000;
-  const used = 142; // mock — S8 will wire to real usage API
+  const used = dashData?.used ?? 0;
   const pct = Math.min(100, Math.round((used / quota) * 100));
 
-  const scores = [
-    { range: "9.0–10.0", count: 38, color: "#22c55e" },
-    { range: "8.0–8.9",  count: 61, color: "#86efac" },
-    { range: "7.0–7.9",  count: 31, color: "#fbbf24" },
-    { range: "<7.0",     count: 12, color: "#f87171" },
-  ];
-  const maxCount = Math.max(...scores.map(s => s.count));
+  const scores = dashData?.scores ?? [];
+  const maxCount = scores.length ? Math.max(...scores.map(s => s.count)) : 1;
 
+  if (dashLoading) return <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading dashboard…</div>;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
       {/* Stats row */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
         <StatCard icon={<Package size={20}/>}    label="Tours Processed"  value={used}       sub="this month"        accent />
-        <StatCard icon={<TrendingUp size={20}/>}  label="Avg Quality Score" value="8.6"        sub="+0.3 vs last month" />
-        <StatCard icon={<CheckCircle size={20}/>} label="Pass Rate"         value="94%"        sub="auto-approved"     />
-        <StatCard icon={<Zap size={20}/>}         label="Pending Review"    value={3}          sub="requires action"   />
+        <StatCard icon={<TrendingUp size={20}/>}  label="Avg Quality Score" value={dashData?.avgScore ?? "—"} sub="across all tours" />
+        <StatCard icon={<CheckCircle size={20}/>} label="Pass Rate"         value={dashData ? `${dashData.passRate}%` : "—"} sub="score ≥ 7.0"     />
+        <StatCard icon={<Zap size={20}/>}         label="Pending Review"    value={dashData?.pendingReview ?? "—"} sub="requires action"   />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
@@ -323,13 +358,9 @@ function ContentReviewTab() {
           const data = await res.json();
           setTours(data.data ?? []);
         }
-      } catch {
-        // fallback to mock
-        setTours([
-          { tour_id: "mock-1", src_name: "Halong Bay Private Cruise",  pipeline_status: "published" },
-          { tour_id: "mock-2", src_name: "Angkor Wat Sunrise Trek",    pipeline_status: "published" },
-          { tour_id: "mock-3", src_name: "Bali Wellness Retreat",      pipeline_status: "published" },
-        ]);
+      } catch (e) {
+        console.error("Tours fetch error:", e);
+        setTours([]);
       } finally { setLoading(false); }
     };
     fetchTours();
@@ -566,7 +597,7 @@ export default function TenantPortalPage() {
       </div>
 
       {/* Tab content */}
-      {tab === "dashboard" && <DashboardTab tenantName={tenantName} planTier={planTier}/>}
+      {tab === "dashboard" && <DashboardTab tenantName={tenantName} planTier={planTier} token={tenantToken}/>}
       {tab === "upload"    && <BatchUploadTab/>}
       {tab === "review"    && <ContentReviewTab/>}
       {tab === "apikey"    && <ApiKeyTab tenantId={tenantId}/>}
