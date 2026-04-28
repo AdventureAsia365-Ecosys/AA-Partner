@@ -79,15 +79,15 @@ function TabBtn({ id, active, icon, label, onClick }: {
 // ── Dashboard Tab ─────────────────────────────────────────────────────────────
 
 function DashboardTab({ tenantName, planTier, token }: { tenantName: string; planTier: string; token: string }) {
-  const [dashData, setDashData] = React.useState<{
+  const [dashData, setDashData] = useState<{
     used: number; avgScore: number; passRate: number; pendingReview: number;
     scores: { range: string; count: number; color: string }[];
   } | null>(null);
-  const [dashLoading, setDashLoading] = React.useState(true);
-  React.useEffect(() => {
+  const [dashLoading, setDashLoading] = useState(true);
+  useEffect(() => {
     const fetchDash = async () => {
       try {
-        const headers = token ? { "Authorization": `Bearer ${token}` } : {};
+        const headers: HeadersInit = token ? { "Authorization": `Bearer ${token}` } : {};
         const [toursRes, queueRes] = await Promise.all([
           fetch(`${API_URL}/v1/tours?page=1&page_size=100`, { headers }),
           fetch(`${API_URL}/v1/pipeline/review-queue?page_size=1`, { headers }),
@@ -568,11 +568,13 @@ export default function TenantPortalPage() {
   const [tenantName, setTenantName] = useState("Partner");
   const [planTier, setPlanTier]     = useState("growth");
   const [tenantId, setTenantId]     = useState("");
+  const [tenantToken, setTenantToken] = useState("");
 
   useEffect(() => {
     setTenantName(getCookie("cis_tenant_name") || "Partner");
     setPlanTier(getCookie("cis_tenant_plan") || "growth");
     setTenantId(getCookie("cis_tenant_id") || "");
+    setTenantToken(getCookie("cis_tenant_token") || "");
   }, []);
 
   return (
