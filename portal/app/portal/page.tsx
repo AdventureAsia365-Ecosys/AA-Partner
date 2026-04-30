@@ -210,14 +210,17 @@ function DashboardTab({ tenantName, planTier, token }: { tenantName: string; pla
 // ── Batch Upload Tab ──────────────────────────────────────────────────────────
 
 function BatchUploadTab() {
-  const [dragging, setDragging]   = useState(false);
-  const [file, setFile]           = useState<File | null>(null);
-  const [batchName, setBatchName] = useState("");
-  const [market, setMarket]       = useState("vietnam");
-  const [seoMode, setSeoMode]     = useState("dataforseo");
-  const [submitted, setSubmitted] = useState(false);
+  const [dragging, setDragging]     = useState(false);
+  const [file, setFile]             = useState<File | null>(null);
+  const [batchName, setBatchName]   = useState("");
+  const [market, setMarket]         = useState("vietnam");
+  const [seoMode, setSeoMode]       = useState("dataforseo");
+  const [submitted, setSubmitted]   = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [batchId, setBatchId]     = useState("");
+  const [batchId, setBatchId]       = useState("");
+  const [error, setError]           = useState("");
+  const [progress, setProgress]     = useState(0);
+  const [step, setStep]             = useState("");
 
   const markets = ["vietnam", "cambodia", "thailand", "indonesia", "japan", "sri-lanka"];
   const seoModes = [
@@ -234,11 +237,52 @@ function BatchUploadTab() {
 
   const handleSubmit = async () => {
     if (!file || !batchName) return;
-    setSubmitting(true);
-    await new Promise(r => setTimeout(r, 1500)); // S8: replace with real API call
-    setBatchId(`batch-${Date.now().toString(36).toUpperCase()}`);
-    setSubmitted(true);
-    setSubmitting(false);
+    setSubmitting(true); setError(""); setProgress(0);
+    try {
+      // Step 1: Get presigned upload URL
+      setStep("Getting upload URL…"); setProgress(10);
+      const urlRes = await fetch("/api/tenant/v1/pipeline/upload-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filename: file.name,
+          content_type: file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }),
+      });
+      if (!urlRes.ok) throw new Error("Failed to get upload URL");
+      const { upload_url, s3_key } = await urlRes.json();
+
+      // Step 2: Upload to S3
+      setStep("Uploading to S3…"); setProgress(40);
+      const uploadRes = await fetch(upload_url, {
+        method: "PUT",
+        headers: { "Content-Type": file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+        body: file,
+      });
+      if (!uploadRes.ok) throw new Error("S3 upload failed");
+
+      // Step 3: Trigger pipeline via run endpoint
+      setStep("Starting pipeline…"); setProgress(70);
+      const runRes = await fetch("/api/tenant/v1/pipeline/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          s3_key,
+          batch_name: batchName,
+          market,
+          seo_mode: seoMode,
+        }),
+      });
+      const runData = runRes.ok ? await runRes.json() : {};
+      setProgress(100);
+      setStep("Submitted!");
+      setBatchId(runData.execution_id ?? s3_key.split("/").pop() ?? "submitted");
+      setSubmitted(true);
+    } catch (e: any) {
+      setError(e.message ?? "Upload failed");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   if (submitted) return (
@@ -322,14 +366,22 @@ function BatchUploadTab() {
         </div>
       </div>
 
+      {error && (
+        <div style={{ padding: "10px 14px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 8, fontSize: 12, color: "#ef4444" }}>{error}</div>
+      )}
+      {submitting && (
+        <div style={{ padding: "10px 14px", background: "rgba(219,150,40,0.06)", border: "1px solid rgba(219,150,40,0.2)", borderRadius: 8, fontSize: 12, color: "var(--brand-gold)" }}>
+          {step} ({progress}%)
+        </div>
+      )}
       <button onClick={handleSubmit} disabled={!file || !batchName || submitting}
         style={{
-          padding: "12px 32px", borderRadius: 8, border: "none", fontSize: 14, fontWeight: 700, cursor: (!file || !batchName) ? "not-allowed" : "pointer",
-          background: (!file || !batchName) ? "var(--border)" : "var(--brand-gold)",
-          color: (!file || !batchName) ? "var(--text-muted)" : "white",
+          padding: "12px 32px", borderRadius: 8, border: "none", fontSize: 14, fontWeight: 700, cursor: (!file || !batchName || submitting) ? "not-allowed" : "pointer",
+          background: (!file || !batchName || submitting) ? "var(--border)" : "var(--brand-gold)",
+          color: (!file || !batchName || submitting) ? "var(--text-muted)" : "white",
           display: "flex", alignItems: "center", gap: 8, alignSelf: "flex-start" as const,
         }}>
-        {submitting ? <><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }}/>Submitting...</> : "Submit Batch →"}
+        {submitting ? <><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }}/>Uploading...</> : "Submit Batch →"}
       </button>
     </div>
   );
@@ -461,13 +513,24 @@ function ContentReviewTab() {
 
               {!decision ? (
                 <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-                  <button onClick={() => setDecision("rejected")} style={{ padding: "9px 20px", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 8, color: "#ef4444", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                  <button onClick={async () => {
+                    setDecision("rejected");
+                    // Wire real reject API via review_queue
+                    try {
+                      await fetch(`/api/tenant/v1/pipeline/review-queue/${selected.tour_id}/reject`, { method: "POST" });
+                    } catch {}
+                  }} style={{ padding: "9px 20px", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 8, color: "#ef4444", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
                     <XCircle size={14}/> Reject
                   </button>
                   <button onClick={runRewrite} style={{ padding: "9px 20px", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text-secondary)", fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
                     <RotateCcw size={14}/> Regenerate
                   </button>
-                  <button onClick={() => setDecision("approved")} style={{ padding: "9px 24px", background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.3)", borderRadius: 8, color: "#22c55e", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                  <button onClick={async () => {
+                    setDecision("approved");
+                    try {
+                      await fetch(`/api/tenant/v1/pipeline/review-queue/${selected.tour_id}/approve`, { method: "POST" });
+                    } catch {}
+                  }} style={{ padding: "9px 24px", background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.3)", borderRadius: 8, color: "#22c55e", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
                     <CheckCircle size={14}/> Approve & Export
                   </button>
                 </div>

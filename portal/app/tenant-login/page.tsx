@@ -108,9 +108,7 @@ export default function TenantLoginPage() {
           ) : "Access Portal"}
         </button>
 
-        <div style={{ marginTop:16, padding:12, background:"rgba(219,150,40,0.06)", border:"1px solid rgba(219,150,40,0.2)", borderRadius:8, fontSize:12, color:"var(--text-muted)" }}>
-          Test key (WanderLux): <code style={{ color:"var(--brand-gold)", fontSize:11 }}>wl_live_sk_test_wanderlux_2026</code>
-        </div>
+
 
         <div style={{ marginTop:16, textAlign:"center" as const }}>
           <a href="/login" style={{ fontSize:12, color:"var(--text-muted)", textDecoration:"none" }}>
