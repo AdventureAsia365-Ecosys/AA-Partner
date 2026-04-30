@@ -403,8 +403,6 @@ function ContentReviewTab() {
   const [rewritten, setRewritten] = useState(false);
   const [decision, setDecision]   = useState<"approved"|"rejected"|null>(null);
 
-  // Token handled server-side by /api/tenant proxy
-
   useEffect(() => {
     const fetchTours = async () => {
       try {
@@ -419,7 +417,7 @@ function ContentReviewTab() {
       } finally { setLoading(false); }
     };
     fetchTours();
-  }, [tenantToken]);
+  }, []);
 
   const filtered = tours.filter(t =>
     t.src_name?.toLowerCase().includes(search.toLowerCase())
