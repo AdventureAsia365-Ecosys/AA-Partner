@@ -19,12 +19,17 @@ function getCookie(name: string): string {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type Tab = "dashboard" | "upload" | "review" | "apikey";
+type Tab = "dashboard" | "upload" | "review" | "brand" | "apikey";
 
 interface Tour {
+  id: string;
   tour_id: string;
-  src_name: string;
-  pipeline_status: string;
+  aa_name?: string;
+  src_name?: string;
+  aa_summary?: string;
+  pipeline_status?: string;
+  quality_score?: number;
+  published_at?: string;
   ingest_at?: string;
 }
 
@@ -89,8 +94,8 @@ function DashboardTab({ tenantName, planTier, token }: { tenantName: string; pla
       try {
         const headers: HeadersInit = token ? { "Authorization": `Bearer ${token}` } : {};
         const [toursRes, queueRes] = await Promise.all([
-          fetch(`${API_URL}/v1/tours?page=1&page_size=100`, { headers }),
-          fetch(`${API_URL}/v1/pipeline/review-queue?page_size=1`, { headers }),
+          fetch(`/api/tenant/v1/tours?page=1&page_size=100`),
+          fetch(`/api/tenant/v1/pipeline/review-queue?page_size=1`),
         ]);
         const toursData = toursRes.ok ? await toursRes.json() : null;
         const queueData = queueRes.ok ? await queueRes.json() : null;
@@ -398,14 +403,12 @@ function ContentReviewTab() {
   const [rewritten, setRewritten] = useState(false);
   const [decision, setDecision]   = useState<"approved"|"rejected"|null>(null);
 
-  const tenantToken = typeof window !== "undefined" ? getCookie("cis_tenant_token") : "";
+  // Token handled server-side by /api/tenant proxy
 
   useEffect(() => {
     const fetchTours = async () => {
       try {
-        const res = await fetch(`${API_URL}/tours?limit=20`, {
-          headers: tenantToken ? { "Authorization": `Bearer ${tenantToken}` } : {},
-        });
+        const res = await fetch(`/api/tenant/v1/tours?page=1&page_size=50`);
         if (res.ok) {
           const data = await res.json();
           setTours(data.data ?? []);
@@ -428,7 +431,7 @@ function ContentReviewTab() {
     setRewriting(false); setRewritten(true);
   };
 
-  const mockBefore = { name: selected?.src_name ?? "", summary: "A timeless journey through one of Asia's most iconic destinations, crafted by Adventure Asia's editorial team with precision and depth." };
+  const mockBefore = { name: selected?.aa_name || selected?.src_name || "", summary: selected?.aa_summary || "No summary available." };
   const mockAfter  = { name: `${selected?.src_name ?? ""} — Exclusive Experience`, summary: "An extraordinary private journey, curated exclusively for discerning travellers seeking transformative encounters with Asia's most coveted destinations." };
 
   return (
@@ -459,10 +462,10 @@ function ContentReviewTab() {
                   borderLeft: `3px solid ${isSelected ? "var(--brand-gold)" : "transparent"}`,
                   transition: "all 0.1s",
                 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>{tour.src_name}</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>{tour.aa_name || tour.src_name}</div>
                 <div style={{ fontSize: 11, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 6 }}>
                   <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#22c55e", display: "inline-block" }}/>
-                  {tour.pipeline_status}
+                  {tour.quality_score ? `Score: ${tour.quality_score}` : tour.pipeline_status || "published"}
                 </div>
               </div>
             );
@@ -517,7 +520,7 @@ function ContentReviewTab() {
                     setDecision("rejected");
                     // Wire real reject API via review_queue
                     try {
-                      await fetch(`/api/tenant/v1/pipeline/review-queue/${selected.tour_id}/reject`, { method: "POST" });
+                      await fetch(`/api/tenant/v1/pipeline/review-queue/${selected.id || selected.tour_id}/reject`, { method: "POST" });
                     } catch {}
                   }} style={{ padding: "9px 20px", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 8, color: "#ef4444", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
                     <XCircle size={14}/> Reject
@@ -528,7 +531,7 @@ function ContentReviewTab() {
                   <button onClick={async () => {
                     setDecision("approved");
                     try {
-                      await fetch(`/api/tenant/v1/pipeline/review-queue/${selected.tour_id}/approve`, { method: "POST" });
+                      await fetch(`/api/tenant/v1/pipeline/review-queue/${selected.id || selected.tour_id}/approve`, { method: "POST" });
                     } catch {}
                   }} style={{ padding: "9px 24px", background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.3)", borderRadius: 8, color: "#22c55e", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
                     <CheckCircle size={14}/> Approve & Export
@@ -543,6 +546,169 @@ function ContentReviewTab() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+
+// ── Brand Identity Tab ────────────────────────────────────────────────────────
+
+function BrandIdentityTab() {
+  const [config, setConfig]       = useState<any>(null);
+  const [loading, setLoading]     = useState(true);
+  const [saving, setSaving]       = useState(false);
+  const [saved, setSaved]         = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadDone, setUploadDone] = useState(false);
+
+  const [systemPrompt, setSystemPrompt]   = useState("");
+  const [styleGuide, setStyleGuide]       = useState("");
+  const [forbiddenWords, setForbiddenWords] = useState("");
+
+  useEffect(() => {
+    fetch("/api/tenant/v1/pipeline/brand-identity")
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.configured) {
+          setSystemPrompt(d.system_prompt || "");
+          setStyleGuide(d.style_guide || "");
+          setForbiddenWords((d.forbidden_words || []).join(", "));
+          setConfig(d);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true); setSaved(false);
+    try {
+      const words = forbiddenWords.split(",").map((w: string) => w.trim()).filter(Boolean);
+      const res = await fetch("/api/tenant/v1/pipeline/brand-identity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ system_prompt: systemPrompt, style_guide: styleGuide, forbidden_words: words }),
+      });
+      if (res.ok) setSaved(true);
+    } catch {}
+    finally { setSaving(false); }
+  };
+
+  const handleFileUpload = async (file: File) => {
+    setUploading(true); setUploadDone(false);
+    try {
+      const urlRes = await fetch("/api/tenant/v1/pipeline/brand-identity/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: file.name, content_type: file.type || "application/pdf" }),
+      });
+      if (!urlRes.ok) return;
+      const { upload_url } = await urlRes.json();
+      const uploadRes = await fetch(upload_url, {
+        method: "PUT",
+        headers: { "Content-Type": file.type || "application/pdf" },
+        body: file,
+      });
+      if (uploadRes.ok) setUploadDone(true);
+    } catch {}
+    finally { setUploading(false); }
+  };
+
+  const inputStyle: React.CSSProperties = {
+    width: "100%", padding: "10px 12px",
+    background: "var(--bg-primary)", border: "1px solid var(--border)",
+    borderRadius: 8, color: "var(--text-primary)", fontSize: 13,
+    outline: "none", boxSizing: "border-box",
+  };
+
+  if (loading) return <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {/* File upload */}
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: 24 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" as const, letterSpacing: 1, marginBottom: 16 }}>
+          Upload Brand Guidelines (PDF / DOCX)
+        </div>
+        <div
+          onClick={() => document.getElementById("brand-file-input")?.click()}
+          style={{
+            border: "2px dashed var(--border)", borderRadius: 10, padding: "28px 24px",
+            textAlign: "center" as const, cursor: "pointer",
+            background: uploadDone ? "rgba(34,197,94,0.04)" : "var(--bg-primary)",
+          }}>
+          <input id="brand-file-input" type="file" accept=".pdf,.docx,.doc" style={{ display: "none" }}
+            onChange={e => { if (e.target.files?.[0]) handleFileUpload(e.target.files[0]); }} />
+          {uploading ? (
+            <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
+              <Loader2 size={20} style={{ animation: "spin 1s linear infinite", margin: "0 auto 8px", display: "block" }}/>
+              Uploading…
+            </div>
+          ) : uploadDone ? (
+            <div style={{ fontSize: 13, color: "#22c55e", fontWeight: 600 }}>
+              <CheckCircle size={20} style={{ margin: "0 auto 8px", display: "block" }}/>
+              Brand file uploaded ✓
+            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-secondary)" }}>Drop brand guidelines here</div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>PDF or DOCX · Click to browse</div>
+            </>
+          )}
+        </div>
+        <div style={{ marginTop: 10, fontSize: 12, color: "var(--text-muted)" }}>
+          Upload your brand style guide — the AI will follow your tone, vocabulary, and content standards when generating tour content.
+        </div>
+      </div>
+
+      {/* Manual config */}
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: 24 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" as const, letterSpacing: 1, marginBottom: 16 }}>
+          Brand Configuration
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase" as const, letterSpacing: 1, display: "block", marginBottom: 6 }}>
+            Brand System Prompt
+          </label>
+          <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)} rows={4}
+            placeholder="e.g. You are a luxury travel writer for WanderLux. Use sophisticated, aspirational language. Focus on exclusivity and transformative experiences..."
+            style={{ ...inputStyle, resize: "vertical" as const }} />
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Overrides the default AA system prompt for your tenant</div>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase" as const, letterSpacing: 1, display: "block", marginBottom: 6 }}>
+            Style Guide Notes
+          </label>
+          <textarea value={styleGuide} onChange={e => setStyleGuide(e.target.value)} rows={3}
+            placeholder="e.g. Always use Oxford comma. Avoid passive voice. Prices in USD. Target audience: HNW individuals 45-65..."
+            style={{ ...inputStyle, resize: "vertical" as const }} />
+        </div>
+
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase" as const, letterSpacing: 1, display: "block", marginBottom: 6 }}>
+            Forbidden Words / Phrases
+          </label>
+          <input value={forbiddenWords} onChange={e => setForbiddenWords(e.target.value)}
+            placeholder="e.g. cheap, budget, deals, discount, backpacker"
+            style={inputStyle} />
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Comma-separated. These words will never appear in generated content.</div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button onClick={handleSave} disabled={saving} style={{
+            padding: "10px 28px", background: saving ? "var(--border)" : "var(--brand-gold)",
+            border: "none", borderRadius: 8, color: "white", fontSize: 13, fontWeight: 700,
+            cursor: saving ? "not-allowed" : "pointer",
+            display: "flex", alignItems: "center", gap: 6,
+          }}>
+            {saving ? <><Loader2 size={13} style={{ animation: "spin 1s linear infinite" }}/>Saving…</> : "Save Brand Config"}
+          </button>
+          {saved && <span style={{ fontSize: 13, color: "#22c55e", fontWeight: 600 }}>✓ Saved successfully</span>}
+          {config?.version && <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Version {config.version}</span>}
+        </div>
+      </div>
     </div>
   );
 }
@@ -658,6 +824,7 @@ export default function TenantPortalPage() {
         <TabBtn id="dashboard" active={tab === "dashboard"} icon={<LayoutDashboard size={14}/>} label="Dashboard"      onClick={() => setTab("dashboard")}/>
         <TabBtn id="upload"    active={tab === "upload"}    icon={<Upload size={14}/>}           label="Batch Upload"  onClick={() => setTab("upload")}/>
         <TabBtn id="review"    active={tab === "review"}    icon={<FileSearch size={14}/>}       label="Content Review" onClick={() => setTab("review")}/>
+        <TabBtn id="brand"     active={tab === "brand"}     icon={<LayoutDashboard size={14}/>}  label="Brand Identity" onClick={() => setTab("brand")}/>
         <TabBtn id="apikey"    active={tab === "apikey"}    icon={<Key size={14}/>}              label="API Access"    onClick={() => setTab("apikey")}/>
       </div>
 
@@ -665,6 +832,7 @@ export default function TenantPortalPage() {
       {tab === "dashboard" && <DashboardTab tenantName={tenantName} planTier={planTier} token={tenantToken}/>}
       {tab === "upload"    && <BatchUploadTab/>}
       {tab === "review"    && <ContentReviewTab/>}
+      {tab === "brand"     && <BrandIdentityTab/>}
       {tab === "apikey"    && <ApiKeyTab tenantId={tenantId}/>}
     </div>
   );
