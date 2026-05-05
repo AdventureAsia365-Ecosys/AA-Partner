@@ -48,86 +48,209 @@ function TabBtn({ id, active, icon, label, onClick }: {
 
 // ── Dashboard Tab ─────────────────────────────────────────────────────────────
 
+function QuotaBar({ label, used, total, pct, color = "var(--brand-gold)" }: {
+  label: string; used: number; total: number; pct: number; color?: string;
+}) {
+  const warn = pct >= 80;
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12,
+        marginBottom: 6 }}>
+        <span style={{ color: "var(--text-secondary)", fontWeight: 600 }}>{label}</span>
+        <span style={{ color: warn ? "#f59e0b" : "var(--text-muted)" }}>
+          {used.toLocaleString()} / {total.toLocaleString()} ({pct}%)
+        </span>
+      </div>
+      <div style={{ height: 8, background: "var(--border)", borderRadius: 4, overflow: "hidden" }}>
+        <div style={{
+          height: "100%", borderRadius: 4, transition: "width 0.5s",
+          width: `${Math.min(100, pct)}%`,
+          background: warn
+            ? "linear-gradient(90deg,#f59e0b,#ef4444)"
+            : `linear-gradient(90deg,${color},#f59e0b)`,
+        }}/>
+      </div>
+      {warn && (
+        <div style={{ fontSize: 11, color: "#f59e0b", marginTop: 4 }}>
+          ⚠ {pct >= 100 ? "Quota exceeded — overage charges apply" : "Approaching quota limit"}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DashboardTab({ planTier }: { planTier: string }) {
-  const [stats, setStats] = useState<any>(null);
+  const [billing, setBilling] = useState<any>(null);
+  const [pool, setPool]       = useState<number>(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/tenant/v1/tours/my-versions?page_size=1"),
+      fetch("/api/tenant/v1/pipeline/billing"),
       fetch("/api/tenant/v1/tours/pool?page_size=1"),
-    ]).then(async ([vRes, pRes]) => {
-      const v = vRes.ok ? await vRes.json() : null;
-      const p = pRes.ok ? await pRes.json() : null;
-      setStats({
-        myVersions: v?.pagination?.total ?? 0,
-        poolSize:   p?.pagination?.total ?? 0,
-        approved:   0,
-      });
+    ]).then(async ([bRes, pRes]) => {
+      if (bRes.ok) setBilling(await bRes.json());
+      if (pRes.ok) { const d = await pRes.json(); setPool(d.pagination?.total ?? 0); }
     }).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
-  const cards = [
-    { label: "Pool Available",   value: stats?.poolSize ?? "—",   icon: <BookOpen size={18}/>, accent: false },
-    { label: "My Rewrites",      value: stats?.myVersions ?? "—", icon: <Package size={18}/>,  accent: true },
-    { label: "Plan",             value: planTier.toUpperCase(),   icon: <Star size={18}/>,     accent: false },
-  ];
+  if (loading) return (
+    <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)" }}>
+      <Loader2 size={20} style={{ margin: "0 auto 8px", display: "block" }}/>Loading...
+    </div>
+  );
+
+  const PLAN_COLOR: Record<string,string> = {
+    starter: "#60a5fa", growth: "#a78bfa",
+    business: "#34d399", enterprise: "#f59e0b", internal: "#f87171",
+  };
+  const planColor = PLAN_COLOR[billing?.plan_tier ?? planTier] ?? "var(--brand-gold)";
 
   return (
-    <div>
-      <h2 style={{ fontSize: 20, fontWeight: 700, color: "var(--text-primary)", marginBottom: 20 }}>
-        Partner Dashboard
-      </h2>
-      {loading ? (
-        <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)" }}>
-          <Loader2 size={20} style={{ margin: "0 auto 8px", display: "block" }}/>Loading...
-        </div>
-      ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16, marginBottom: 24 }}>
-          {cards.map(c => (
-            <div key={c.label} style={{
-              background: c.accent
-                ? "linear-gradient(135deg,rgba(219,150,40,0.12),rgba(219,150,40,0.04))"
-                : "var(--bg-card)",
-              border: `1px solid ${c.accent ? "rgba(219,150,40,0.3)" : "var(--border)"}`,
-              borderRadius: 12, padding: "20px 24px",
-              display: "flex", alignItems: "flex-start", gap: 14,
-            }}>
-              <div style={{
-                width: 40, height: 40, borderRadius: 10, flexShrink: 0,
-                background: c.accent ? "rgba(219,150,40,0.2)" : "rgba(255,255,255,0.05)",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                color: c.accent ? "var(--brand-gold)" : "var(--text-muted)",
-              }}>{c.icon}</div>
-              <div>
-                <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600,
-                  textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>{c.label}</div>
-                <div style={{ fontSize: 26, fontWeight: 800,
-                  color: c.accent ? "var(--brand-gold)" : "var(--text-primary)" }}>{c.value}</div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+
+      {/* Membership + Quota row */}
+      <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 16 }}>
+        {/* Membership card */}
+        <div style={{ background: "var(--bg-card)", border: `1px solid ${planColor}44`,
+          borderRadius: 12, padding: 20 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)",
+            textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>
+            Membership
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+            <div style={{ width: 42, height: 42, borderRadius: 10,
+              background: `${planColor}22`, display: "flex", alignItems: "center",
+              justifyContent: "center" }}>
+              <Star size={20} style={{ color: planColor }}/>
+            </div>
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: planColor,
+                textTransform: "uppercase" }}>
+                {billing?.plan_tier ?? planTier}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                ${billing?.price_usd_monthly ?? 0}/month
               </div>
             </div>
-          ))}
+          </div>
+          <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>
+            Billing month: <span style={{ color: "var(--text-secondary)" }}>
+              {billing?.billing_month ?? "—"}
+            </span>
+          </div>
+          {billing?.overage_usd > 0 && (
+            <div style={{ marginTop: 10, padding: "8px 12px",
+              background: "rgba(239,68,68,0.1)", borderRadius: 8,
+              fontSize: 12, color: "#f87171" }}>
+              Overage: ${billing.overage_usd.toFixed(2)}
+              ({billing.tours_overage} tours × ${billing.overage_rate_usd_per_tour})
+            </div>
+          )}
         </div>
-      )}
+
+        {/* Quota card */}
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)",
+          borderRadius: 12, padding: 20 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)",
+            textTransform: "uppercase", letterSpacing: 1, marginBottom: 16 }}>
+            Quota Usage — {billing?.billing_month ?? "This Month"}
+          </div>
+          <QuotaBar
+            label="Tour Rewrites"
+            used={billing?.tours_rewritten ?? 0}
+            total={billing?.tours_quota_monthly ?? 50}
+            pct={billing?.quota_tours_pct ?? 0}
+          />
+          <QuotaBar
+            label="API Calls"
+            used={billing?.api_calls_used ?? 0}
+            total={billing?.api_calls_quota_monthly ?? 5000}
+            pct={billing?.quota_calls_pct ?? 0}
+            color="#a78bfa"
+          />
+          <div style={{ display: "flex", gap: 20, marginTop: 8 }}>
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              Pool available: <span style={{ color: "var(--brand-gold)",
+                fontWeight: 700 }}>{pool.toLocaleString()} tours</span>
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              LLM cost: <span style={{ color: "var(--text-primary)",
+                fontWeight: 700 }}>${(billing?.llm_cost_usd ?? 0).toFixed(4)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Activity feed */}
       <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)",
         borderRadius: 12, padding: 20 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-secondary)",
-          textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>Quick Start</div>
-        {[
-          { step: "1", text: "Browse the AA shared pool — 200+ quality tours" },
-          { step: "2", text: "Select tours and configure your rewrite settings" },
-          { step: "3", text: "Review the before/after diff and approve" },
-          { step: "4", text: "Access your branded catalog via API" },
-        ].map(s => (
-          <div key={s.step} style={{ display: "flex", gap: 12, alignItems: "flex-start",
-            marginBottom: 12 }}>
-            <div style={{ width: 24, height: 24, borderRadius: "50%", flexShrink: 0,
-              background: "rgba(219,150,40,0.15)", color: "var(--brand-gold)",
-              fontWeight: 700, fontSize: 11,
-              display: "flex", alignItems: "center", justifyContent: "center" }}>{s.step}</div>
-            <div style={{ fontSize: 13, color: "var(--text-secondary)", paddingTop: 3 }}>{s.text}</div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)",
+          textTransform: "uppercase", letterSpacing: 1, marginBottom: 14 }}>
+          Recent Activity
+        </div>
+        {billing?.activity?.length > 0 ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {billing.activity.map((a: any) => {
+              const statusColor = a.status === "approved" ? "#22c55e"
+                : a.status === "rejected" ? "#ef4444" : "#f59e0b";
+              return (
+                <div key={a.id} style={{ display: "flex", alignItems: "center",
+                  gap: 12, fontSize: 13, padding: "8px 12px",
+                  background: "var(--bg-primary)", borderRadius: 8 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+                    background: statusColor }}/>
+                  <div style={{ flex: 1, color: "var(--text-primary)" }}>
+                    {a.tour_name || "Tour"}
+                    {a.country && <span style={{ color: "var(--text-muted)",
+                      fontSize: 11 }}> · {a.country}</span>}
+                  </div>
+                  <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20,
+                    background: `${statusColor}18`, color: statusColor,
+                    fontWeight: 600 }}>{a.status}</span>
+                  <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                    {new Date(a.created_at).toLocaleDateString("en-GB", {
+                      day: "2-digit", month: "short" })}
+                  </span>
+                </div>
+              );
+            })}
           </div>
-        ))}
+        ) : (
+          <div style={{ textAlign: "center", padding: "20px 0",
+            color: "var(--text-muted)", fontSize: 13 }}>
+            No activity yet — browse the pool to start rewriting tours
+          </div>
+        )}
+      </div>
+
+      {/* Quick actions */}
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)",
+        borderRadius: 12, padding: 20 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)",
+          textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>
+          Quick Actions
+        </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" as const }}>
+          {[
+            { label: "Browse Pool", tab: "pool", icon: <BookOpen size={14}/> },
+            { label: "My Catalog",  tab: "catalog", icon: <Package size={14}/> },
+            { label: "Brand Rules", tab: "brand", icon: <Star size={14}/> },
+            { label: "API Access",  tab: "apikey", icon: <Key size={14}/> },
+          ].map(a => (
+            <button key={a.label}
+              onClick={() => document.dispatchEvent(
+                new CustomEvent("portal-tab", { detail: a.tab })
+              )}
+              style={{ display: "flex", alignItems: "center", gap: 8,
+                padding: "9px 16px", borderRadius: 8, border: "1px solid var(--border)",
+                background: "var(--bg-primary)", color: "var(--text-secondary)",
+                fontSize: 13, fontWeight: 500, cursor: "pointer",
+                transition: "all 0.15s" }}>
+              {a.icon}{a.label}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
