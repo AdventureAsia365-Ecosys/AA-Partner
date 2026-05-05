@@ -524,7 +524,39 @@ function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
             overflowY: "auto" as const }}>
 
           {panelTab === "details" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+              {/* Meta info */}
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" as const }}>
+                {selected.country && (
+                  <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20,
+                    background: "var(--bg-primary)", border: "1px solid var(--border)",
+                    color: "var(--text-secondary)" }}>📍 {selected.country}</span>
+                )}
+                {selected.duration && (
+                  <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20,
+                    background: "var(--bg-primary)", border: "1px solid var(--border)",
+                    color: "var(--text-secondary)" }}>⏱ {selected.duration}</span>
+                )}
+                {selected.trip_type && (
+                  <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20,
+                    background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.2)",
+                    color: "#a78bfa" }}>{selected.trip_type}</span>
+                )}
+                {selected.price_raw && (
+                  <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20,
+                    background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.2)",
+                    color: "#22c55e" }}>💰 {selected.price_raw}</span>
+                )}
+                {selected.quality_score && (
+                  <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20,
+                    background: "rgba(219,150,40,0.1)", border: "1px solid rgba(219,150,40,0.2)",
+                    color: "var(--brand-gold)", fontWeight: 700 }}>
+                    ★ {Number(selected.quality_score).toFixed(1)}
+                  </span>
+                )}
+              </div>
+
               {/* Summary */}
               <div>
                 <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)",
@@ -535,25 +567,75 @@ function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
                   {selected.aa_summary || "—"}
                 </div>
               </div>
-              {/* SEO */}
+
+              {/* Highlights */}
               {(() => {
-                const kws = parseSeoKeywords(selected.seo_keywords_used);
-                return (
+                try {
+                  const h = typeof selected.aa_highlights === "string"
+                    ? JSON.parse(selected.aa_highlights) : selected.aa_highlights;
+                  if (!Array.isArray(h) || h.length === 0) return null;
+                  return (
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 700,
+                        color: "var(--text-muted)", textTransform: "uppercase",
+                        letterSpacing: 1, marginBottom: 8 }}>Highlights</div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                        {h.map((item: string, i: number) => (
+                          <div key={i} style={{ display: "flex", gap: 8,
+                            fontSize: 12, color: "var(--text-secondary)" }}>
+                            <span style={{ color: "var(--brand-gold)",
+                              fontWeight: 700, flexShrink: 0 }}>•</span>
+                            <span>{item}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                } catch { return null; }
+              })()}
+
+              {/* Itineraries */}
+              {selected.aa_itineraries && selected.aa_itineraries !== "None" && (
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700,
+                    color: "var(--text-muted)", textTransform: "uppercase",
+                    letterSpacing: 1, marginBottom: 6 }}>Itineraries</div>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)",
+                    lineHeight: 1.7, padding: "10px 12px", maxHeight: 200,
+                    overflowY: "auto" as const,
+                    background: "var(--bg-primary)", borderRadius: 8,
+                    whiteSpace: "pre-wrap" as const }}>
+                    {selected.aa_itineraries}
+                  </div>
+                </div>
+              )}
+
+              {/* SEO */}
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700,
+                  color: "var(--text-muted)", textTransform: "uppercase",
+                  letterSpacing: 1, marginBottom: 8 }}>SEO</div>
+                <div style={{ padding: "12px 14px",
+                  background: "var(--bg-primary)", borderRadius: 8,
+                  display: "flex", flexDirection: "column", gap: 8 }}>
                   <div>
-                    <div style={{ fontSize: 10, fontWeight: 700,
-                      color: "var(--text-muted)", textTransform: "uppercase",
-                      letterSpacing: 1, marginBottom: 8 }}>SEO</div>
-                    <div style={{ padding: "10px 12px",
-                      background: "var(--bg-primary)", borderRadius: 8 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600,
-                        color: "var(--text-primary)", marginBottom: 4 }}>
-                        {selected.seo_title || "—"}
-                      </div>
-                      <div style={{ fontSize: 11, color: "var(--text-secondary)",
-                        lineHeight: 1.5, marginBottom: 8 }}>
-                        {selected.seo_meta || "—"}
-                      </div>
-                      {kws.length > 0 && (
+                    <div style={{ fontSize: 10, color: "var(--text-muted)",
+                      marginBottom: 2 }}>Title</div>
+                    <div style={{ fontSize: 12, fontWeight: 600,
+                      color: "var(--text-primary)" }}>{selected.seo_title || "—"}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: "var(--text-muted)",
+                      marginBottom: 2 }}>Meta Description</div>
+                    <div style={{ fontSize: 12, color: "var(--text-secondary)",
+                      lineHeight: 1.5 }}>{selected.seo_meta || "—"}</div>
+                  </div>
+                  {(() => {
+                    const kws = parseSeoKeywords(selected.seo_keywords_used);
+                    return kws.length > 0 ? (
+                      <div>
+                        <div style={{ fontSize: 10, color: "var(--text-muted)",
+                          marginBottom: 4 }}>Keywords</div>
                         <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 4 }}>
                           {kws.map((k: string) => (
                             <span key={k} style={{ fontSize: 10, padding: "2px 8px",
@@ -561,12 +643,13 @@ function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
                               color: "var(--brand-gold)", borderRadius: 20 }}>{k}</span>
                           ))}
                         </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })()}
-              {/* Published info */}
+                      </div>
+                    ) : null;
+                  })()}
+                </div>
+              </div>
+
+              {/* Footer */}
               <div style={{ fontSize: 11, color: "var(--text-muted)",
                 padding: "8px 0", borderTop: "1px solid var(--border)" }}>
                 Published: {selected.published_at
@@ -574,11 +657,6 @@ function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
                     day: "2-digit", month: "short", year: "numeric",
                     hour: "2-digit", minute: "2-digit"
                   }) : "—"}
-                {selected.aa_quality && (
-                  <span style={{ marginLeft: 12, color: "#22c55e", fontWeight: 600 }}>
-                    ★ AA Quality: {Number(selected.aa_quality_score || selected.quality_score || 0).toFixed(1)}
-                  </span>
-                )}
                 {selected.already_rewritten && (
                   <div style={{ marginTop: 6, fontSize: 11,
                     color: "#22c55e", fontWeight: 600 }}>
