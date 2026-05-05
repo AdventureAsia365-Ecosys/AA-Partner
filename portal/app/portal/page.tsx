@@ -79,7 +79,7 @@ function QuotaBar({ label, used, total, pct, color = "var(--brand-gold)" }: {
   );
 }
 
-function DashboardTab({ planTier }: { planTier: string }) {
+function DashboardTab({ planTier, onTabChange }: { planTier: string; onTabChange: (tab: Tab) => void }) {
   const [billing, setBilling] = useState<any>(null);
   const [pool, setPool]       = useState<number>(0);
   const [loading, setLoading] = useState(true);
@@ -239,9 +239,7 @@ function DashboardTab({ planTier }: { planTier: string }) {
             { label: "API Access",  tab: "apikey", icon: <Key size={14}/> },
           ].map(a => (
             <button key={a.label}
-              onClick={() => document.dispatchEvent(
-                new CustomEvent("portal-tab", { detail: a.tab })
-              )}
+              onClick={() => onTabChange(a.tab as Tab)}
               style={{ display: "flex", alignItems: "center", gap: 8,
                 padding: "9px 16px", borderRadius: 8, border: "1px solid var(--border)",
                 background: "var(--bg-primary)", color: "var(--text-secondary)",
@@ -788,10 +786,11 @@ function BrandTab() {
 // ── API Key Tab ────────────────────────────────────────────────────────────────
 
 function ApiKeyTab() {
-  const [key, setKey]     = useState("");
   const [show, setShow]   = useState(false);
   const [copied, setCopied] = useState(false);
   const tenantId = getCookie("cis_tenant_id");
+  // API key cannot be retrieved after creation — show tenant ID for reference
+  const key = tenantId ? `Tenant ID: ${tenantId}` : "Contact admin to retrieve your API key";
 
   const copy = () => {
     navigator.clipboard.writeText(key);
@@ -933,7 +932,7 @@ export default function PortalPage() {
       </div>
 
       {/* Content */}
-      {tab === "dashboard" && <DashboardTab planTier={planTier}/>}
+      {tab === "dashboard" && <DashboardTab planTier={planTier} onTabChange={setTab}/>}
       {tab === "pool"      && <PoolTab onRewrite={handleRewrite}/>}
       {tab === "catalog"   && <CatalogTab/>}
       {tab === "brand"     && <BrandTab/>}
