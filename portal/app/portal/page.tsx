@@ -257,19 +257,30 @@ function DashboardTab({ planTier, onTabChange }: { planTier: string; onTabChange
 // ── Browse Pool Tab ───────────────────────────────────────────────────────────
 
 function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
-  const [tours, setTours]         = useState<any[]>([]);
-  const [countries, setCountries] = useState<string[]>([]);
-  const [loading, setLoading]     = useState(true);
-  const [search, setSearch]       = useState("");
-  const [country, setCountry]     = useState("");
-  const [page, setPage]           = useState(1);
-  const [total, setTotal]         = useState(0);
-  const [selected, setSelected]   = useState<any | null>(null);
-  const [rewriting, setRewriting] = useState(false);
-  const [language, setLanguage]   = useState("en-US");
-  const [seoMode, setSeoMode]     = useState("standard");
+  const [tours, setTours]           = useState<any[]>([]);
+  const [countries, setCountries]   = useState<string[]>([]);
+  const [loading, setLoading]       = useState(true);
+  const [search, setSearch]         = useState("");
+  const [country, setCountry]       = useState("");
+  const [page, setPage]             = useState(1);
+  const [total, setTotal]           = useState(0);
+  const [selected, setSelected]     = useState<any | null>(null);
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  const [rewriting, setRewriting]   = useState(false);
+  const [language, setLanguage]     = useState("en-US");
+  const [seoMode, setSeoMode]       = useState("standard");
+  const [useBrandRules, setUseBrand] = useState(true);
+  const [brandRules, setBrandRules] = useState<any>(null);
 
   const PAGE_SIZE = 20;
+
+  // Fetch brand rules to show in panel
+  useEffect(() => {
+    fetch("/api/tenant/v1/pipeline/brand-identity")
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setBrandRules(d))
+      .catch(() => {});
+  }, []);
 
   const fetchPool = useCallback(async () => {
     setLoading(true);
@@ -291,175 +302,353 @@ function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
 
   useEffect(() => { fetchPool(); }, [fetchPool]);
 
-  const triggerRewrite = async () => {
-    if (!selected) return;
+  const toggleCheck = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCheckedIds(prev => {
+      const n = new Set(prev);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+  };
+
+  const triggerRewrite = async (tourIds: string[]) => {
     setRewriting(true);
+    let lastResult: any = null;
     try {
-      const res = await fetch(`/api/tenant/v1/tours/pool/${selected.id}/rewrite`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rewrite_language: language, seo_mode: seoMode }),
-      });
-      if (res.ok) {
-        const d = await res.json();
-        onRewrite(d);
-        setSelected(null);
+      for (const tid of tourIds) {
+        const res = await fetch(`/api/tenant/v1/tours/pool/${tid}/rewrite`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rewrite_language: language, seo_mode: seoMode }),
+        });
+        if (res.ok) lastResult = await res.json();
       }
+      if (lastResult) onRewrite({ ...lastResult, count: tourIds.length });
+      setSelected(null);
+      setCheckedIds(new Set());
     } catch {} finally { setRewriting(false); }
   };
 
-  return (
-    <div>
-      <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" as const }}>
-        <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
-          <Search size={13} style={{ position: "absolute", left: 10, top: "50%",
-            transform: "translateY(-50%)", color: "var(--text-muted)" }}/>
-          <input value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}
-            placeholder="Search tours..."
-            style={{ width: "100%", padding: "8px 10px 8px 30px",
-              background: "var(--bg-card)", border: "1px solid var(--border)",
-              borderRadius: 8, color: "var(--text-primary)", fontSize: 13, outline: "none" }}/>
-        </div>
-        <select value={country} onChange={e => { setCountry(e.target.value); setPage(1); }}
-          style={{ padding: "8px 12px", background: "var(--bg-card)",
-            border: "1px solid var(--border)", borderRadius: 8,
-            color: "var(--text-primary)", fontSize: 13 }}>
-          <option value="">All Countries</option>
-          {countries.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
-      </div>
+  const rewriteTargets = checkedIds.size > 0
+    ? Array.from(checkedIds)
+    : selected ? [selected.id] : [];
 
-      <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 360px" : "1fr", gap: 16 }}>
-        {/* Tour grid */}
-        <div>
-          {loading ? (
-            <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)" }}>
-              <Loader2 size={20} style={{ margin: "0 auto 8px", display: "block" }}/>Loading pool...
+  // Parse SEO keywords
+  const parseSeoKeywords = (raw: any): string[] => {
+    if (!raw) return [];
+    try {
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      if (Array.isArray(parsed)) return parsed.slice(0, 6);
+      if (parsed?.top_keywords) return parsed.top_keywords.slice(0, 6);
+    } catch {}
+    return [];
+  };
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 420px" : "1fr",
+      gap: 20, alignItems: "start" }}>
+      {/* LEFT — filters + tour list */}
+      <div>
+        {/* Filters */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" as const }}>
+          <div style={{ position: "relative", flex: 1, minWidth: 180 }}>
+            <Search size={13} style={{ position: "absolute", left: 10, top: "50%",
+              transform: "translateY(-50%)", color: "var(--text-muted)" }}/>
+            <input value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}
+              placeholder="Search tours..."
+              style={{ width: "100%", padding: "8px 10px 8px 30px",
+                background: "var(--bg-card)", border: "1px solid var(--border)",
+                borderRadius: 8, color: "var(--text-primary)", fontSize: 13, outline: "none" }}/>
+          </div>
+          <select value={country} onChange={e => { setCountry(e.target.value); setPage(1); }}
+            style={{ padding: "8px 12px", background: "var(--bg-card)",
+              border: "1px solid var(--border)", borderRadius: 8,
+              color: "var(--text-primary)", fontSize: 13 }}>
+            <option value="">All Countries</option>
+            {countries.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+
+        {/* Batch action bar */}
+        {checkedIds.size > 0 && (
+          <div style={{ marginBottom: 12, padding: "10px 14px",
+            background: "rgba(219,150,40,0.08)", border: "1px solid rgba(219,150,40,0.3)",
+            borderRadius: 8, display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontSize: 13, color: "var(--brand-gold)", fontWeight: 600 }}>
+              {checkedIds.size} tour{checkedIds.size > 1 ? "s" : ""} selected
+            </span>
+            <button onClick={() => triggerRewrite(Array.from(checkedIds))}
+              disabled={rewriting}
+              style={{ padding: "6px 14px", borderRadius: 6, border: "none",
+                background: "var(--brand-gold)", color: "white",
+                fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+              {rewriting ? "Rewriting..." : `Rewrite ${checkedIds.size} tours`}
+            </button>
+            <button onClick={() => setCheckedIds(new Set())}
+              style={{ padding: "6px 10px", borderRadius: 6,
+                border: "1px solid var(--border)", background: "none",
+                color: "var(--text-muted)", fontSize: 12, cursor: "pointer" }}>
+              Clear
+            </button>
+          </div>
+        )}
+
+        {loading ? (
+          <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)" }}>
+            <Loader2 size={20} style={{ margin: "0 auto 8px", display: "block" }}/>Loading pool...
+          </div>
+        ) : (
+          <>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 10 }}>
+              {total} tours available
             </div>
-          ) : (
-            <>
-              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 10 }}>
-                {total} tours in pool
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {tours.map(t => (
-                  <div key={t.id} onClick={() => setSelected(selected?.id === t.id ? null : t)}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {tours.map(t => {
+                const isChecked = checkedIds.has(t.id);
+                const isSelected = selected?.id === t.id;
+                const keywords = parseSeoKeywords(t.seo_keywords_used);
+                return (
+                  <div key={t.id}
                     style={{
-                      background: selected?.id === t.id
-                        ? "rgba(219,150,40,0.08)" : "var(--bg-card)",
-                      border: `1px solid ${selected?.id === t.id
-                        ? "rgba(219,150,40,0.4)" : "var(--border)"}`,
-                      borderRadius: 10, padding: "12px 16px", cursor: "pointer",
-                      display: "flex", alignItems: "center", gap: 12,
+                      background: isSelected ? "rgba(219,150,40,0.06)" : "var(--bg-card)",
+                      border: `1px solid ${isChecked ? "var(--brand-gold)"
+                        : isSelected ? "rgba(219,150,40,0.3)" : "var(--border)"}`,
+                      borderRadius: 10, padding: "12px 14px", cursor: "pointer",
                       transition: "all 0.15s",
                     }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600,
-                        color: "var(--text-primary)", marginBottom: 4 }}>{t.aa_name}</div>
-                      <div style={{ fontSize: 11, color: "var(--text-muted)",
-                        display: "flex", gap: 10 }}>
-                        {t.country && <span><Globe size={10}/> {t.country}</span>}
-                        {t.duration && <span>{t.duration}</span>}
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                      {/* Checkbox */}
+                      <input type="checkbox" checked={isChecked}
+                        onChange={() => {}}
+                        onClick={e => toggleCheck(t.id, e as any)}
+                        style={{ marginTop: 3, flexShrink: 0, cursor: "pointer",
+                          accentColor: "var(--brand-gold)" }}/>
+                      {/* Content */}
+                      <div style={{ flex: 1 }} onClick={() =>
+                        setSelected(isSelected ? null : t)}>
+                        <div style={{ fontSize: 13, fontWeight: 600,
+                          color: "var(--text-primary)", marginBottom: 3 }}>{t.aa_name}</div>
+                        <div style={{ fontSize: 12, color: "var(--text-secondary)",
+                          lineHeight: 1.5, marginBottom: 6 }}>
+                          {t.aa_summary?.slice(0, 120)}{t.aa_summary?.length > 120 ? "..." : ""}
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const,
+                          alignItems: "center" }}>
+                          {t.country && (
+                            <span style={{ fontSize: 11, color: "var(--text-muted)",
+                              display: "flex", alignItems: "center", gap: 3 }}>
+                              <Globe size={10}/>{t.country}
+                            </span>
+                          )}
+                          {t.duration && (
+                            <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                              {t.duration}
+                            </span>
+                          )}
+                          {keywords.slice(0,3).map((k: string) => (
+                            <span key={k} style={{ fontSize: 10, padding: "1px 6px",
+                              background: "rgba(219,150,40,0.08)",
+                              color: "var(--brand-gold)", borderRadius: 20 }}>{k}</span>
+                          ))}
+                          {t.already_rewritten && (
+                            <span style={{ fontSize: 10, padding: "1px 6px",
+                              background: "rgba(34,197,94,0.1)", color: "#22c55e",
+                              borderRadius: 20, fontWeight: 600 }}>✓ Rewritten</span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      {t.already_rewritten && (
-                        <span style={{ fontSize: 10, padding: "2px 6px",
-                          background: "rgba(34,197,94,0.1)", color: "#22c55e",
-                          borderRadius: 4, fontWeight: 600 }}>Done</span>
-                      )}
-                      {t.quality_score && <ScoreBadge score={t.quality_score}/>}
-                      <ChevronRight size={14} style={{ color: "var(--text-muted)" }}/>
+                      <ChevronRight size={14} style={{ color: "var(--text-muted)",
+                        flexShrink: 0, marginTop: 2 }}/>
                     </div>
                   </div>
-                ))}
-              </div>
-              {/* Pagination */}
-              <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "center" }}>
-                <button onClick={() => setPage(p => Math.max(1, p-1))} disabled={page === 1}
-                  style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid var(--border)",
-                    background: "var(--bg-card)", color: "var(--text-secondary)",
-                    cursor: page === 1 ? "not-allowed" : "pointer", fontSize: 12 }}>Prev</button>
-                <span style={{ padding: "6px 12px", fontSize: 12,
-                  color: "var(--text-muted)" }}>Page {page}</span>
-                <button onClick={() => setPage(p => p+1)}
-                  disabled={page * PAGE_SIZE >= total}
-                  style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid var(--border)",
-                    background: "var(--bg-card)", color: "var(--text-secondary)",
-                    cursor: page * PAGE_SIZE >= total ? "not-allowed" : "pointer",
-                    fontSize: 12 }}>Next</button>
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* Rewrite config panel */}
-        {selected && (
-          <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)",
-            borderRadius: 12, padding: 20, alignSelf: "flex-start" as const,
-            position: "sticky" as const, top: 20 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)",
-              marginBottom: 4 }}>{selected.aa_name}</div>
-            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 16 }}>
-              {selected.country} {selected.duration && `· ${selected.duration}`}
+                );
+              })}
             </div>
-            {selected.aa_summary && (
-              <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6,
-                marginBottom: 16, padding: "10px 12px",
+            <div style={{ display: "flex", gap: 8, marginTop: 14,
+              justifyContent: "center" }}>
+              <button onClick={() => setPage(p => Math.max(1, p-1))} disabled={page === 1}
+                style={{ padding: "6px 14px", borderRadius: 6,
+                  border: "1px solid var(--border)", background: "var(--bg-card)",
+                  color: "var(--text-secondary)",
+                  cursor: page === 1 ? "not-allowed" : "pointer", fontSize: 12 }}>Prev</button>
+              <span style={{ padding: "6px 12px", fontSize: 12,
+                color: "var(--text-muted)" }}>Page {page}</span>
+              <button onClick={() => setPage(p => p+1)}
+                disabled={page * PAGE_SIZE >= total}
+                style={{ padding: "6px 14px", borderRadius: 6,
+                  border: "1px solid var(--border)", background: "var(--bg-card)",
+                  color: "var(--text-secondary)",
+                  cursor: page * PAGE_SIZE >= total ? "not-allowed" : "pointer",
+                  fontSize: 12 }}>Next</button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* RIGHT — tour detail + rewrite config */}
+      {selected && (
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)",
+          borderRadius: 12, overflow: "hidden",
+          position: "sticky" as const, top: 20 }}>
+          {/* Tour header */}
+          <div style={{ padding: "16px 20px",
+            borderBottom: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 15, fontWeight: 700,
+              color: "var(--text-primary)", marginBottom: 4 }}>{selected.aa_name}</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              {selected.country}{selected.duration ? ` · ${selected.duration}` : ""}
+            </div>
+          </div>
+
+          <div style={{ padding: 18, maxHeight: 600,
+            overflowY: "auto" as const, display: "flex",
+            flexDirection: "column", gap: 16 }}>
+
+            {/* Summary */}
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 600,
+                color: "var(--text-muted)", textTransform: "uppercase",
+                letterSpacing: 1, marginBottom: 6 }}>Content Preview</div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)",
+                lineHeight: 1.7, padding: "10px 12px",
                 background: "var(--bg-primary)", borderRadius: 8 }}>
                 {selected.aa_summary}
               </div>
-            )}
-            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)",
-              textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Language</div>
-            <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-              {["en-US","en-GB"].map(l => (
-                <button key={l} onClick={() => setLanguage(l)}
-                  style={{ flex: 1, padding: "7px 10px", borderRadius: 6, cursor: "pointer",
-                    border: `1px solid ${language===l ? "var(--brand-gold)" : "var(--border)"}`,
-                    background: language===l ? "rgba(219,150,40,0.08)" : "var(--bg-primary)",
-                    color: language===l ? "var(--brand-gold)" : "var(--text-muted)",
-                    fontSize: 12, fontWeight: language===l ? 700 : 400 }}>{l}</button>
-              ))}
             </div>
-            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)",
-              textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>SEO Mode</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
-              {[
-                {v:"standard",  l:"Standard",   d:"Balanced keywords"},
-                {v:"aggressive",l:"Aggressive",  d:"Max keyword density"},
-                {v:"minimal",   l:"Minimal",     d:"Brand voice first"},
-              ].map(s => (
-                <button key={s.v} onClick={() => setSeoMode(s.v)}
-                  style={{ padding: "7px 10px", borderRadius: 6, cursor: "pointer",
-                    border: `1px solid ${seoMode===s.v ? "var(--brand-gold)" : "var(--border)"}`,
-                    background: seoMode===s.v ? "rgba(219,150,40,0.08)" : "var(--bg-primary)",
-                    color: seoMode===s.v ? "var(--brand-gold)" : "var(--text-muted)",
-                    fontSize: 12, fontWeight: seoMode===s.v ? 700 : 400,
-                    textAlign: "left" as const }}>
-                  <span style={{ fontWeight: 600 }}>{s.l}</span>
-                  <span style={{ opacity: 0.7 }}> — {s.d}</span>
-                </button>
-              ))}
+
+            {/* SEO Keywords */}
+            {(() => {
+              const kws = parseSeoKeywords(selected.seo_keywords_used);
+              return kws.length > 0 ? (
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 600,
+                    color: "var(--text-muted)", textTransform: "uppercase",
+                    letterSpacing: 1, marginBottom: 8 }}>SEO Keywords in Use</div>
+                  <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 6 }}>
+                    {kws.map((k: string) => (
+                      <span key={k} style={{ fontSize: 11, padding: "3px 10px",
+                        background: "rgba(219,150,40,0.1)",
+                        color: "var(--brand-gold)",
+                        border: "1px solid rgba(219,150,40,0.2)",
+                        borderRadius: 20 }}>{k}</span>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+                    SEO title: <em style={{ color: "var(--text-secondary)" }}>{selected.seo_title}</em>
+                  </div>
+                </div>
+              ) : null;
+            })()}
+
+            {/* Brand Identity */}
+            <div style={{ padding: "12px 14px",
+              background: useBrandRules ? "rgba(219,150,40,0.06)" : "var(--bg-primary)",
+              border: `1px solid ${useBrandRules ? "rgba(219,150,40,0.3)" : "var(--border)"}`,
+              borderRadius: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between",
+                alignItems: "center", marginBottom: useBrandRules && brandRules?.configured ? 8 : 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 600,
+                  color: useBrandRules ? "var(--brand-gold)" : "var(--text-muted)" }}>
+                  Apply My Brand Rules
+                </div>
+                <label style={{ display: "flex", alignItems: "center",
+                  gap: 6, cursor: "pointer" }}>
+                  <input type="checkbox" checked={useBrandRules}
+                    onChange={e => setUseBrand(e.target.checked)}
+                    style={{ accentColor: "var(--brand-gold)" }}/>
+                  <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                    {useBrandRules ? "On" : "Off"}
+                  </span>
+                </label>
+              </div>
+              {useBrandRules && brandRules?.configured && (
+                <div style={{ fontSize: 11, color: "var(--text-secondary)",
+                  lineHeight: 1.5 }}>
+                  <div>{brandRules.system_prompt?.slice(0, 80)}
+                    {brandRules.system_prompt?.length > 80 ? "..." : ""}</div>
+                  {brandRules.forbidden_words?.length > 0 && (
+                    <div style={{ marginTop: 4, color: "var(--text-muted)" }}>
+                      Forbidden: {brandRules.forbidden_words.slice(0,5).join(", ")}
+                    </div>
+                  )}
+                </div>
+              )}
+              {useBrandRules && !brandRules?.configured && (
+                <div style={{ fontSize: 11, color: "#f59e0b", marginTop: 4 }}>
+                  No brand rules saved yet —{" "}
+                  <span style={{ textDecoration: "underline", cursor: "pointer" }}>
+                    set up in Brand Identity tab
+                  </span>
+                </div>
+              )}
             </div>
-            <button onClick={triggerRewrite} disabled={rewriting}
-              style={{ width: "100%", padding: "10px 16px", borderRadius: 8, border: "none",
+
+            {/* Language */}
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)",
+                textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Language</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {["en-US","en-GB"].map(l => (
+                  <button key={l} onClick={() => setLanguage(l)}
+                    style={{ flex: 1, padding: "8px 10px", borderRadius: 6,
+                      cursor: "pointer",
+                      border: `1px solid ${language===l ? "var(--brand-gold)" : "var(--border)"}`,
+                      background: language===l ? "rgba(219,150,40,0.08)" : "var(--bg-primary)",
+                      color: language===l ? "var(--brand-gold)" : "var(--text-muted)",
+                      fontSize: 12, fontWeight: language===l ? 700 : 400 }}>{l}</button>
+                ))}
+              </div>
+            </div>
+
+            {/* SEO Mode */}
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)",
+                textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>SEO Mode</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {[
+                  {v:"standard",  l:"Standard",   d:"Balanced keyword density"},
+                  {v:"aggressive",l:"Aggressive",  d:"Maximum keyword integration + PAA"},
+                  {v:"minimal",   l:"Minimal",     d:"Brand voice first, light SEO"},
+                ].map(s => (
+                  <button key={s.v} onClick={() => setSeoMode(s.v)}
+                    style={{ padding: "9px 12px", borderRadius: 8, cursor: "pointer",
+                      border: `1px solid ${seoMode===s.v ? "var(--brand-gold)" : "var(--border)"}`,
+                      background: seoMode===s.v ? "rgba(219,150,40,0.08)" : "var(--bg-primary)",
+                      color: seoMode===s.v ? "var(--brand-gold)" : "var(--text-muted)",
+                      fontSize: 12, textAlign: "left" as const,
+                      fontWeight: seoMode===s.v ? 700 : 400 }}>
+                    <div style={{ fontWeight: 600 }}>{s.l}</div>
+                    <div style={{ fontSize: 11, opacity: 0.75, marginTop: 1 }}>{s.d}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Rewrite button */}
+            <button onClick={() => triggerRewrite(rewriteTargets)}
+              disabled={rewriting || rewriteTargets.length === 0}
+              style={{ width: "100%", padding: "12px 16px", borderRadius: 8,
+                border: "none",
                 background: rewriting ? "var(--border)" : "var(--brand-gold)",
                 color: rewriting ? "var(--text-muted)" : "white",
-                fontSize: 13, fontWeight: 700, cursor: rewriting ? "not-allowed" : "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                fontSize: 14, fontWeight: 700,
+                cursor: rewriting ? "not-allowed" : "pointer",
+                display: "flex", alignItems: "center",
+                justifyContent: "center", gap: 8 }}>
               {rewriting
-                ? <><Loader2 size={14}/>Starting rewrite...</>
-                : <><RotateCcw size={14}/>Start Rewrite</>}
+                ? <><Loader2 size={15}/>Starting rewrite...</>
+                : checkedIds.size > 0
+                ? <><RotateCcw size={15}/>Rewrite {checkedIds.size} selected tours</>
+                : <><RotateCcw size={15}/>Rewrite this tour</>}
             </button>
-            {selected.already_rewritten && (
-              <div style={{ marginTop: 10, fontSize: 11, color: "#f59e0b", textAlign: "center" as const }}>
-                You have already rewritten this tour. Starting a new version.
-              </div>
-            )}
+            <div style={{ fontSize: 11, color: "var(--text-muted)",
+              textAlign: "center" as const }}>
+              Rewrite uses your brand rules + selected SEO mode.
+              Results appear in <strong>My Catalog</strong> (~30 seconds).
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
