@@ -349,7 +349,7 @@ function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
   };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 420px" : "1fr",
+    <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 500px" : "1fr",
       gap: 20, alignItems: "start" }}>
       {/* LEFT — filters + tour list */}
       <div>
@@ -1329,19 +1329,22 @@ function BrandTab() {
   };
 
   const loadHistory = async () => {
-    // Fetch all versions via metrics endpoint — fallback: simulate from version number
-    if (data?.version) {
-      const versions = [];
-      for (let v = data.version; v >= 1; v--) {
-        versions.push({
-          version: v,
-          is_active: v === data.version,
-          updated_at: data.updated_at,
-        });
-      }
-      setHistory(versions);
+    // History already in data.history from API
+    if (data?.history?.length) {
+      setHistory(data.history);
     }
     setShowHistory(true);
+  };
+
+  const restoreVersion = (v: any) => {
+    setSP(v.system_prompt || "");
+    setSG(v.style_guide || "");
+    const fw = Array.isArray(v.forbidden_words)
+      ? v.forbidden_words : [];
+    setForbidden(fw.join(", "));
+    setIsDirty(true);
+    setSaved(false);
+    setViewingVersion(v);
   };
 
   useEffect(() => { loadCurrent(); }, []);
@@ -1537,40 +1540,87 @@ function BrandTab() {
           </div>
           <div style={{ padding: 12 }}>
             {history.map(h => (
-              <div key={h.version} style={{ padding: "10px 12px", borderRadius: 8,
-                marginBottom: 6, cursor: "pointer",
-                background: h.is_active ? "rgba(34,197,94,0.08)" : "var(--bg-primary)",
-                border: `1px solid ${h.is_active ? "rgba(34,197,94,0.2)" : "var(--border)"}`,
-              }}>
-                <div style={{ display: "flex", justifyContent: "space-between",
-                  alignItems: "center" }}>
-                  <span style={{ fontSize: 13, fontWeight: 700,
-                    color: h.is_active ? "#22c55e" : "var(--text-primary)" }}>
-                    Version {h.version}
+              <div key={h.version} style={{ borderRadius: 8, marginBottom: 8,
+                background: h.is_active ? "rgba(34,197,94,0.06)" : "var(--bg-primary)",
+                border: `1px solid ${h.is_active ? "rgba(34,197,94,0.25)" : "var(--border)"}`,
+                overflow: "hidden" }}>
+                {/* Version header */}
+                <div style={{ padding: "10px 12px",
+                  display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <span style={{ fontSize: 13, fontWeight: 700,
+                      color: h.is_active ? "#22c55e" : "var(--text-primary)" }}>
+                      v{h.version}
+                    </span>
                     {h.is_active && (
-                      <span style={{ marginLeft: 6, fontSize: 10,
-                        color: "#22c55e" }}>ACTIVE</span>
+                      <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 700,
+                        color: "#22c55e", background: "rgba(34,197,94,0.1)",
+                        padding: "1px 5px", borderRadius: 10 }}>ACTIVE</span>
                     )}
-                  </span>
+                    {h.updated_at && (
+                      <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>
+                        {new Date(h.updated_at).toLocaleDateString("en-GB",
+                          { day: "2-digit", month: "short", year: "numeric" })}
+                      </div>
+                    )}
+                  </div>
+                  {!h.is_active && (
+                    <button onClick={() => restoreVersion(h)}
+                      style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6,
+                        border: "1px solid var(--brand-gold)",
+                        background: "rgba(219,150,40,0.08)",
+                        color: "var(--brand-gold)", cursor: "pointer", fontWeight: 600 }}>
+                      Restore
+                    </button>
+                  )}
                 </div>
-                {h.updated_at && (
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 3 }}>
-                    {new Date(h.updated_at).toLocaleDateString("en-GB",
-                      { day: "2-digit", month: "short" })}
-                  </div>
-                )}
-                {!h.is_active && (
-                  <div style={{ fontSize: 11, color: "var(--text-muted)",
-                    marginTop: 4 }}>
-                    Previous version — content not retrievable
-                  </div>
-                )}
+                {/* Version content preview */}
+                <div style={{ padding: "0 12px 10px",
+                  borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+                  {h.system_prompt && (
+                    <div style={{ marginBottom: 6 }}>
+                      <div style={{ fontSize: 9, fontWeight: 700,
+                        color: "var(--text-muted)", textTransform: "uppercase",
+                        letterSpacing: 1, marginBottom: 3 }}>Brand Context</div>
+                      <div style={{ fontSize: 11, color: "var(--text-secondary)",
+                        lineHeight: 1.5 }}>
+                        {h.system_prompt.slice(0, 100)}
+                        {h.system_prompt.length > 100 ? "..." : ""}
+                      </div>
+                    </div>
+                  )}
+                  {h.style_guide && (
+                    <div style={{ marginBottom: 6 }}>
+                      <div style={{ fontSize: 9, fontWeight: 700,
+                        color: "var(--text-muted)", textTransform: "uppercase",
+                        letterSpacing: 1, marginBottom: 3 }}>Style</div>
+                      <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+                        {h.style_guide.slice(0, 80)}
+                        {h.style_guide.length > 80 ? "..." : ""}
+                      </div>
+                    </div>
+                  )}
+                  {h.forbidden_words?.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 9, fontWeight: 700,
+                        color: "var(--text-muted)", textTransform: "uppercase",
+                        letterSpacing: 1, marginBottom: 3 }}>Forbidden</div>
+                      <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 3 }}>
+                        {h.forbidden_words.slice(0,5).map((w: string) => (
+                          <span key={w} style={{ fontSize: 10, padding: "1px 6px",
+                            background: "rgba(239,68,68,0.08)", color: "#f87171",
+                            borderRadius: 20 }}>{w}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
             <div style={{ fontSize: 11, color: "var(--text-muted)",
-              marginTop: 10, lineHeight: 1.5, padding: "0 4px" }}>
-              Only the active version is applied to rewrites.
-              Previous version content is not stored.
+              marginTop: 6, lineHeight: 1.5, padding: "0 4px" }}>
+              Click <strong>Restore</strong> to load a previous version into the editor,
+              then save as a new version to apply it.
             </div>
           </div>
         </div>
