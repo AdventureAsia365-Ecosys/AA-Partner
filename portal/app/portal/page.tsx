@@ -337,7 +337,10 @@ function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
   const parseSeoKeywords = (raw: any): string[] => {
     if (!raw) return [];
     try {
-      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      // Handle double-encoded: '"[]"' or '{"top_keywords":[...]}'
+      let parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      // If still a string after first parse (double-encoded), parse again
+      if (typeof parsed === "string") parsed = JSON.parse(parsed);
       if (Array.isArray(parsed)) return parsed.slice(0, 6);
       if (parsed?.top_keywords) return parsed.top_keywords.slice(0, 6);
     } catch {}
@@ -566,9 +569,9 @@ function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
                   lineHeight: 1.5 }}>
                   <div>{brandRules.system_prompt?.slice(0, 80)}
                     {brandRules.system_prompt?.length > 80 ? "..." : ""}</div>
-                  {brandRules.forbidden_words?.length > 0 && (
+                  {(Array.isArray(brandRules.forbidden_words) ? brandRules.forbidden_words : []).length > 0 && (
                     <div style={{ marginTop: 4, color: "var(--text-muted)" }}>
-                      Forbidden: {brandRules.forbidden_words.slice(0,5).join(", ")}
+                      Forbidden: {(Array.isArray(brandRules.forbidden_words) ? brandRules.forbidden_words : []).slice(0,5).join(", ")}
                     </div>
                   )}
                 </div>
@@ -978,8 +981,8 @@ function ApiKeyTab() {
   const [show, setShow]   = useState(false);
   const [copied, setCopied] = useState(false);
   const tenantId = getCookie("cis_tenant_id");
-  // API key cannot be retrieved after creation — show tenant ID for reference
-  const key = tenantId ? `Tenant ID: ${tenantId}` : "Contact admin to retrieve your API key";
+  // API key is a one-time secret — cannot be retrieved after creation
+  const key = "Your API key was shown once at creation. Contact admin@adventureasia.com to regenerate.";
 
   const copy = () => {
     navigator.clipboard.writeText(key);
