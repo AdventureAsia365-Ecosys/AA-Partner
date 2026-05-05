@@ -271,6 +271,7 @@ function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
   const [seoMode, setSeoMode]       = useState("standard");
   const [useBrandRules, setUseBrand] = useState(true);
   const [brandRules, setBrandRules] = useState<any>(null);
+  const [panelTab, setPanelTab]     = useState<"details" | "rewrite">("details");
 
   const PAGE_SIZE = 20;
 
@@ -418,7 +419,8 @@ function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
                         : isSelected ? "rgba(219,150,40,0.3)" : "var(--border)"}`,
                       borderRadius: 10, padding: "12px 14px", cursor: "pointer",
                       transition: "all 0.15s",
-                    }}>
+                    }}
+                    onClick={() => { setSelected(isSelected ? null : t); setPanelTab("details"); }}>
                     <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
                       {/* Checkbox */}
                       <input type="checkbox" checked={isChecked}
@@ -427,8 +429,7 @@ function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
                         style={{ marginTop: 3, flexShrink: 0, cursor: "pointer",
                           accentColor: "var(--brand-gold)" }}/>
                       {/* Content */}
-                      <div style={{ flex: 1 }} onClick={() =>
-                        setSelected(isSelected ? null : t)}>
+                      <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 13, fontWeight: 600,
                           color: "var(--text-primary)", marginBottom: 3 }}>{t.aa_name}</div>
                         <div style={{ fontSize: 12, color: "var(--text-secondary)",
@@ -493,56 +494,103 @@ function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
         <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)",
           borderRadius: 12, overflow: "hidden",
           position: "sticky" as const, top: 20 }}>
-          {/* Tour header */}
-          <div style={{ padding: "16px 20px",
-            borderBottom: "1px solid var(--border)" }}>
-            <div style={{ fontSize: 15, fontWeight: 700,
-              color: "var(--text-primary)", marginBottom: 4 }}>{selected.aa_name}</div>
-            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-              {selected.country}{selected.duration ? ` · ${selected.duration}` : ""}
+          {/* Tour header + tabs */}
+          <div style={{ borderBottom: "1px solid var(--border)" }}>
+            <div style={{ padding: "14px 18px 10px" }}>
+              <div style={{ fontSize: 14, fontWeight: 700,
+                color: "var(--text-primary)", marginBottom: 3 }}>{selected.aa_name}</div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)",
+                display: "flex", gap: 10 }}>
+                {selected.country && <span>📍 {selected.country}</span>}
+                {selected.duration && <span>⏱ {selected.duration}</span>}
+                {selected.price_raw && <span>💰 {selected.price_raw}</span>}
+              </div>
+            </div>
+            <div style={{ display: "flex", padding: "0 18px", gap: 0 }}>
+              {(["details","rewrite"] as const).map(t => (
+                <button key={t} onClick={() => setPanelTab(t)}
+                  style={{ padding: "8px 16px", fontSize: 12, fontWeight: 600,
+                    border: "none", background: "none", cursor: "pointer",
+                    color: panelTab===t ? "var(--brand-gold)" : "var(--text-muted)",
+                    borderBottom: `2px solid ${panelTab===t ? "var(--brand-gold)" : "transparent"}`,
+                    transition: "all 0.15s" }}>
+                  {t === "details" ? "📄 Tour Details" : "✏️ Rewrite Config"}
+                </button>
+              ))}
             </div>
           </div>
 
-          <div style={{ padding: 18, maxHeight: 600,
-            overflowY: "auto" as const, display: "flex",
-            flexDirection: "column", gap: 16 }}>
+          <div style={{ padding: 18, maxHeight: 580,
+            overflowY: "auto" as const }}>
 
-            {/* Summary */}
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 600,
-                color: "var(--text-muted)", textTransform: "uppercase",
-                letterSpacing: 1, marginBottom: 6 }}>Content Preview</div>
-              <div style={{ fontSize: 12, color: "var(--text-secondary)",
-                lineHeight: 1.7, padding: "10px 12px",
-                background: "var(--bg-primary)", borderRadius: 8 }}>
-                {selected.aa_summary}
+          {panelTab === "details" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {/* Summary */}
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)",
+                  textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Summary</div>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)",
+                  lineHeight: 1.7, padding: "10px 12px",
+                  background: "var(--bg-primary)", borderRadius: 8 }}>
+                  {selected.aa_summary || "—"}
+                </div>
+              </div>
+              {/* SEO */}
+              {(() => {
+                const kws = parseSeoKeywords(selected.seo_keywords_used);
+                return (
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 700,
+                      color: "var(--text-muted)", textTransform: "uppercase",
+                      letterSpacing: 1, marginBottom: 8 }}>SEO</div>
+                    <div style={{ padding: "10px 12px",
+                      background: "var(--bg-primary)", borderRadius: 8 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600,
+                        color: "var(--text-primary)", marginBottom: 4 }}>
+                        {selected.seo_title || "—"}
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--text-secondary)",
+                        lineHeight: 1.5, marginBottom: 8 }}>
+                        {selected.seo_meta || "—"}
+                      </div>
+                      {kws.length > 0 && (
+                        <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 4 }}>
+                          {kws.map((k: string) => (
+                            <span key={k} style={{ fontSize: 10, padding: "2px 8px",
+                              background: "rgba(219,150,40,0.1)",
+                              color: "var(--brand-gold)", borderRadius: 20 }}>{k}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+              {/* Published info */}
+              <div style={{ fontSize: 11, color: "var(--text-muted)",
+                padding: "8px 0", borderTop: "1px solid var(--border)" }}>
+                Published: {selected.published_at
+                  ? new Date(selected.published_at).toLocaleString("en-GB", {
+                    day: "2-digit", month: "short", year: "numeric",
+                    hour: "2-digit", minute: "2-digit"
+                  }) : "—"}
+                {selected.aa_quality && (
+                  <span style={{ marginLeft: 12, color: "#22c55e", fontWeight: 600 }}>
+                    ★ AA Quality: {Number(selected.aa_quality_score || selected.quality_score || 0).toFixed(1)}
+                  </span>
+                )}
+                {selected.already_rewritten && (
+                  <div style={{ marginTop: 6, fontSize: 11,
+                    color: "#22c55e", fontWeight: 600 }}>
+                    ✓ Already in your catalog — rewrite will create a new version
+                  </div>
+                )}
               </div>
             </div>
+          )}
 
-            {/* SEO Keywords */}
-            {(() => {
-              const kws = parseSeoKeywords(selected.seo_keywords_used);
-              return kws.length > 0 ? (
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 600,
-                    color: "var(--text-muted)", textTransform: "uppercase",
-                    letterSpacing: 1, marginBottom: 8 }}>SEO Keywords in Use</div>
-                  <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 6 }}>
-                    {kws.map((k: string) => (
-                      <span key={k} style={{ fontSize: 11, padding: "3px 10px",
-                        background: "rgba(219,150,40,0.1)",
-                        color: "var(--brand-gold)",
-                        border: "1px solid rgba(219,150,40,0.2)",
-                        borderRadius: 20 }}>{k}</span>
-                    ))}
-                  </div>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
-                    SEO title: <em style={{ color: "var(--text-secondary)" }}>{selected.seo_title}</em>
-                  </div>
-                </div>
-              ) : null;
-            })()}
-
+          {panelTab === "rewrite" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {/* Brand Identity */}
             <div style={{ padding: "12px 14px",
               background: useBrandRules ? "rgba(219,150,40,0.06)" : "var(--bg-primary)",
@@ -649,6 +697,8 @@ function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
               Rewrite uses your brand rules + selected SEO mode.
               Results appear in <strong>My Catalog</strong> (~30 seconds).
             </div>
+            </div>
+          )}
           </div>
         </div>
       )}
@@ -924,34 +974,155 @@ function CatalogTab() {
           ) : detail ? (
             <div style={{ maxHeight: "75vh", overflowY: "auto" as const }}>
 
-              {/* Before / After Summary comparison */}
-              <div style={{ padding: "16px 20px",
-                borderBottom: "1px solid var(--border)" }}>
-                <div style={{ fontSize: 10, fontWeight: 700,
-                  color: "var(--text-muted)", textTransform: "uppercase",
-                  letterSpacing: 1, marginBottom: 10 }}>Summary — Before / After</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <div style={{ background: "rgba(239,68,68,0.05)",
-                    border: "1px solid rgba(239,68,68,0.15)",
-                    borderRadius: 8, padding: "10px 12px" }}>
-                    <div style={{ fontSize: 9, fontWeight: 700, color: "#f87171",
-                      textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
-                      AA Original
+              {/* Full Before / After comparison */}
+              <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border)" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)",
+                  textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>
+                  Content Comparison — Before / After
+                </div>
+
+                {/* Timestamps */}
+                <div style={{ display: "flex", gap: 16, marginBottom: 12,
+                  fontSize: 11, color: "var(--text-muted)" }}>
+                  <span>Created: <strong style={{ color: "var(--text-secondary)" }}>
+                    {new Date(detail.created_at).toLocaleString("en-GB", {
+                      day: "2-digit", month: "short", year: "numeric",
+                      hour: "2-digit", minute: "2-digit"
+                    })}
+                  </strong></span>
+                  {detail.edited_at && (
+                    <span>Last edited: <strong style={{ color: "var(--text-secondary)" }}>
+                      {new Date(detail.edited_at).toLocaleString("en-GB", {
+                        day: "2-digit", month: "short", year: "numeric",
+                        hour: "2-digit", minute: "2-digit"
+                      })}
+                    </strong></span>
+                  )}
+                  <span>Quality: <strong style={{ color: "#22c55e" }}>
+                    {detail.quality_score ? Number(detail.quality_score).toFixed(1) : "—"}
+                  </strong></span>
+                  <span>Edit: <strong style={{ color: "var(--text-secondary)" }}>
+                    {detail.edit_source === "ai_generated" ? "AI Generated"
+                      : detail.edit_source === "tenant_edit" ? "Your Edit" : detail.edit_source}
+                  </strong></span>
+                </div>
+
+                {[
+                  { label: "Summary",
+                    original: detail.aa_summary,
+                    yours: editSummary },
+                  { label: "SEO Title",
+                    original: detail.aa_seo_title,
+                    yours: editSeoTitle },
+                  { label: "SEO Meta",
+                    original: detail.aa_seo_meta,
+                    yours: editSeoMeta },
+                ].map(row => (
+                  <div key={row.label} style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 10, fontWeight: 600,
+                      color: "var(--text-muted)", textTransform: "uppercase",
+                      letterSpacing: 1, marginBottom: 6 }}>{row.label}</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div style={{ background: "rgba(239,68,68,0.05)",
+                        border: "1px solid rgba(239,68,68,0.12)",
+                        borderRadius: 6, padding: "8px 10px" }}>
+                        <div style={{ fontSize: 9, fontWeight: 700, color: "#f87171",
+                          marginBottom: 4 }}>AA ORIGINAL</div>
+                        <div style={{ fontSize: 11, color: "var(--text-secondary)",
+                          lineHeight: 1.6 }}>{row.original || "—"}</div>
+                      </div>
+                      <div style={{ background: "rgba(34,197,94,0.05)",
+                        border: "1px solid rgba(34,197,94,0.12)",
+                        borderRadius: 6, padding: "8px 10px" }}>
+                        <div style={{ fontSize: 9, fontWeight: 700, color: "#22c55e",
+                          marginBottom: 4 }}>YOUR VERSION</div>
+                        <div style={{ fontSize: 11, color: "var(--text-secondary)",
+                          lineHeight: 1.6 }}>{row.yours || "Generating..."}</div>
+                      </div>
                     </div>
-                    <div style={{ fontSize: 11, color: "var(--text-secondary)",
-                      lineHeight: 1.6 }}>{detail.aa_summary}</div>
                   </div>
-                  <div style={{ background: "rgba(34,197,94,0.05)",
-                    border: "1px solid rgba(34,197,94,0.15)",
-                    borderRadius: 8, padding: "10px 12px" }}>
-                    <div style={{ fontSize: 9, fontWeight: 700, color: "#22c55e",
-                      textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
-                      Your Version
+                ))}
+
+                {/* Highlights comparison */}
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 10, fontWeight: 600,
+                    color: "var(--text-muted)", textTransform: "uppercase",
+                    letterSpacing: 1, marginBottom: 6 }}>Highlights</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <div style={{ background: "rgba(239,68,68,0.05)",
+                      border: "1px solid rgba(239,68,68,0.12)",
+                      borderRadius: 6, padding: "8px 10px" }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: "#f87171",
+                        marginBottom: 4 }}>AA ORIGINAL</div>
+                      {(() => {
+                        try {
+                          const h = typeof detail.aa_highlights === "string"
+                            ? JSON.parse(detail.aa_highlights) : detail.aa_highlights;
+                          return Array.isArray(h) ? h.map((item: string, i: number) => (
+                            <div key={i} style={{ fontSize: 11,
+                              color: "var(--text-secondary)", marginBottom: 3 }}>
+                              • {item}
+                            </div>
+                          )) : <div style={{ fontSize: 11,
+                            color: "var(--text-muted)" }}>{String(h || "—")}</div>;
+                        } catch { return <div style={{ fontSize: 11,
+                          color: "var(--text-muted)" }}>—</div>; }
+                      })()}
                     </div>
-                    <div style={{ fontSize: 11, color: "var(--text-secondary)",
-                      lineHeight: 1.6 }}>{editSummary || "Generating..."}</div>
+                    <div style={{ background: "rgba(34,197,94,0.05)",
+                      border: "1px solid rgba(34,197,94,0.12)",
+                      borderRadius: 6, padding: "8px 10px" }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: "#22c55e",
+                        marginBottom: 4 }}>YOUR VERSION</div>
+                      {editHighlights.length > 0
+                        ? editHighlights.map((h, i) => (
+                          <div key={i} style={{ fontSize: 11,
+                            color: "var(--text-secondary)", marginBottom: 3 }}>• {h}</div>
+                        ))
+                        : <div style={{ fontSize: 11,
+                          color: "var(--text-muted)" }}>Generating...</div>}
+                    </div>
                   </div>
                 </div>
+
+                {/* Itineraries comparison */}
+                {(detail.aa_itineraries || (() => {
+                  const rc = parseContent(detail.rewritten_content);
+                  return rc?.itineraries;
+                })()) && (
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 600,
+                      color: "var(--text-muted)", textTransform: "uppercase",
+                      letterSpacing: 1, marginBottom: 6 }}>Itineraries</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div style={{ background: "rgba(239,68,68,0.05)",
+                        border: "1px solid rgba(239,68,68,0.12)",
+                        borderRadius: 6, padding: "8px 10px", maxHeight: 200,
+                        overflowY: "auto" as const }}>
+                        <div style={{ fontSize: 9, fontWeight: 700, color: "#f87171",
+                          marginBottom: 4 }}>AA ORIGINAL</div>
+                        <div style={{ fontSize: 11, color: "var(--text-secondary)",
+                          lineHeight: 1.6, whiteSpace: "pre-wrap" as const }}>
+                          {detail.aa_itineraries || "—"}
+                        </div>
+                      </div>
+                      <div style={{ background: "rgba(34,197,94,0.05)",
+                        border: "1px solid rgba(34,197,94,0.12)",
+                        borderRadius: 6, padding: "8px 10px", maxHeight: 200,
+                        overflowY: "auto" as const }}>
+                        <div style={{ fontSize: 9, fontWeight: 700, color: "#22c55e",
+                          marginBottom: 4 }}>YOUR VERSION</div>
+                        <div style={{ fontSize: 11, color: "var(--text-secondary)",
+                          lineHeight: 1.6, whiteSpace: "pre-wrap" as const }}>
+                          {(() => {
+                            const rc = parseContent(detail.rewritten_content);
+                            return rc?.itineraries || "Will be generated on next rewrite";
+                          })()}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Editable content */}
