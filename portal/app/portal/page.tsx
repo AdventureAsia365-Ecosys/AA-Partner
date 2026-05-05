@@ -272,6 +272,7 @@ function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
   const [useBrandRules, setUseBrand] = useState(true);
   const [brandRules, setBrandRules] = useState<any>(null);
   const [panelTab, setPanelTab]     = useState<"details" | "rewrite">("details");
+  const [expandItin, setExpandItin] = useState(false);
 
   const PAGE_SIZE = 20;
 
@@ -420,7 +421,7 @@ function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
                       borderRadius: 10, padding: "12px 14px", cursor: "pointer",
                       transition: "all 0.15s",
                     }}
-                    onClick={() => { setSelected(isSelected ? null : t); setPanelTab("details"); }}>
+                    onClick={() => { setSelected(isSelected ? null : t); setPanelTab("details"); setExpandItin(false); }}>
                     <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
                       {/* Checkbox */}
                       <input type="checkbox" checked={isChecked}
@@ -594,18 +595,47 @@ function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
                 } catch { return null; }
               })()}
 
-              {/* Itineraries */}
+              {/* Itineraries — expandable */}
               {selected.aa_itineraries && selected.aa_itineraries !== "None" && (
                 <div>
-                  <div style={{ fontSize: 10, fontWeight: 700,
-                    color: "var(--text-muted)", textTransform: "uppercase",
-                    letterSpacing: 1, marginBottom: 6 }}>Itineraries</div>
-                  <div style={{ fontSize: 12, color: "var(--text-secondary)",
-                    lineHeight: 1.7, padding: "10px 12px",
-                    background: "var(--bg-primary)", borderRadius: 8,
-                    whiteSpace: "pre-wrap" as const }}>
-                    {selected.aa_itineraries}
+                  <div style={{ display: "flex", justifyContent: "space-between",
+                    alignItems: "center", marginBottom: 6 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700,
+                      color: "var(--text-muted)", textTransform: "uppercase",
+                      letterSpacing: 1 }}>Itineraries</div>
+                    <button onClick={() => setExpandItin(e => !e)}
+                      style={{ fontSize: 11, color: "var(--brand-gold)",
+                        background: "none", border: "none", cursor: "pointer",
+                        fontWeight: 600, padding: "2px 8px",
+                        borderRadius: 4, border: "1px solid rgba(219,150,40,0.3)" as any }}>
+                      {expandItin ? "▲ Collapse" : "▼ Expand all"}
+                    </button>
                   </div>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)",
+                    lineHeight: 1.8, padding: "10px 14px",
+                    background: "var(--bg-primary)", borderRadius: 8,
+                    whiteSpace: "pre-wrap" as const,
+                    maxHeight: expandItin ? "none" : "160px",
+                    overflow: expandItin ? "visible" : "hidden",
+                    position: "relative" as const }}>
+                    {selected.aa_itineraries}
+                    {!expandItin && (
+                      <div style={{ position: "absolute" as const, bottom: 0,
+                        left: 0, right: 0, height: 48,
+                        background: "linear-gradient(transparent, var(--bg-primary))",
+                        borderRadius: "0 0 8px 8px" }}/>
+                    )}
+                  </div>
+                  {!expandItin && (
+                    <button onClick={() => setExpandItin(true)}
+                      style={{ marginTop: 6, width: "100%", padding: "6px 0",
+                        fontSize: 12, color: "var(--brand-gold)",
+                        background: "rgba(219,150,40,0.06)",
+                        border: "1px solid rgba(219,150,40,0.2)",
+                        borderRadius: 6, cursor: "pointer", fontWeight: 600 }}>
+                      Show full itinerary ▼
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -794,6 +824,7 @@ function CatalogTab() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [acting, setActing]           = useState(false);
   const [saving, setSaving]           = useState(false);
+  const [expandCatalogItin, setExpandCatalogItin] = useState(false);
   const [saveOk, setSaveOk]           = useState(false);
 
   // Editable fields
@@ -1162,31 +1193,52 @@ function CatalogTab() {
                   </div>
                 </div>
 
-                {/* Itineraries comparison */}
+                {/* Itineraries comparison — expandable */}
                 {(detail.aa_itineraries || (() => {
                   const rc = parseContent(detail.rewritten_content);
                   return rc?.itineraries;
                 })()) && (
                   <div>
-                    <div style={{ fontSize: 10, fontWeight: 600,
-                      color: "var(--text-muted)", textTransform: "uppercase",
-                      letterSpacing: 1, marginBottom: 6 }}>Itineraries</div>
+                    <div style={{ display: "flex", justifyContent: "space-between",
+                      alignItems: "center", marginBottom: 6 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600,
+                        color: "var(--text-muted)", textTransform: "uppercase",
+                        letterSpacing: 1 }}>Itineraries</div>
+                      <button onClick={() => setExpandCatalogItin(e => !e)}
+                        style={{ fontSize: 11, color: "var(--brand-gold)",
+                          background: "rgba(219,150,40,0.06)",
+                          border: "1px solid rgba(219,150,40,0.2)",
+                          borderRadius: 4, padding: "2px 10px",
+                          cursor: "pointer", fontWeight: 600 }}>
+                        {expandCatalogItin ? "▲ Collapse" : "▼ Expand all"}
+                      </button>
+                    </div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                       <div style={{ background: "rgba(239,68,68,0.05)",
                         border: "1px solid rgba(239,68,68,0.12)",
-                        borderRadius: 6, padding: "8px 10px", maxHeight: 200,
-                        overflowY: "auto" as const }}>
+                        borderRadius: 6, padding: "8px 10px",
+                        maxHeight: expandCatalogItin ? "none" : "160px",
+                        overflow: expandCatalogItin ? "visible" : "hidden",
+                        position: "relative" as const }}>
                         <div style={{ fontSize: 9, fontWeight: 700, color: "#f87171",
                           marginBottom: 4 }}>AA ORIGINAL</div>
                         <div style={{ fontSize: 11, color: "var(--text-secondary)",
                           lineHeight: 1.6, whiteSpace: "pre-wrap" as const }}>
                           {detail.aa_itineraries || "—"}
                         </div>
+                        {!expandCatalogItin && (
+                          <div style={{ position: "absolute" as const, bottom: 0,
+                            left: 0, right: 0, height: 40,
+                            background: "linear-gradient(transparent, rgba(239,68,68,0.05))",
+                            borderRadius: "0 0 6px 6px" }}/>
+                        )}
                       </div>
                       <div style={{ background: "rgba(34,197,94,0.05)",
                         border: "1px solid rgba(34,197,94,0.12)",
-                        borderRadius: 6, padding: "8px 10px", maxHeight: 200,
-                        overflowY: "auto" as const }}>
+                        borderRadius: 6, padding: "8px 10px",
+                        maxHeight: expandCatalogItin ? "none" : "160px",
+                        overflow: expandCatalogItin ? "visible" : "hidden",
+                        position: "relative" as const }}>
                         <div style={{ fontSize: 9, fontWeight: 700, color: "#22c55e",
                           marginBottom: 4 }}>YOUR VERSION</div>
                         <div style={{ fontSize: 11, color: "var(--text-secondary)",
@@ -1196,8 +1248,24 @@ function CatalogTab() {
                             return rc?.itineraries || "Will be generated on next rewrite";
                           })()}
                         </div>
+                        {!expandCatalogItin && (
+                          <div style={{ position: "absolute" as const, bottom: 0,
+                            left: 0, right: 0, height: 40,
+                            background: "linear-gradient(transparent, rgba(34,197,94,0.05))",
+                            borderRadius: "0 0 6px 6px" }}/>
+                        )}
                       </div>
                     </div>
+                    {!expandCatalogItin && (
+                      <button onClick={() => setExpandCatalogItin(true)}
+                        style={{ marginTop: 6, width: "100%", padding: "6px 0",
+                          fontSize: 12, color: "var(--brand-gold)",
+                          background: "rgba(219,150,40,0.06)",
+                          border: "1px solid rgba(219,150,40,0.2)",
+                          borderRadius: 6, cursor: "pointer", fontWeight: 600 }}>
+                        Show full itinerary ▼
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
