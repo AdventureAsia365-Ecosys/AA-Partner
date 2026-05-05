@@ -659,13 +659,29 @@ function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
 // ── My Catalog Tab ────────────────────────────────────────────────────────────
 
 function CatalogTab() {
-  const [versions, setVersions] = useState<any[]>([]);
-  const [loading, setLoading]   = useState(true);
-  const [filter, setFilter]     = useState("");
-  const [selected, setSelected] = useState<any | null>(null);
+  const [versions, setVersions]       = useState<any[]>([]);
+  const [loading, setLoading]         = useState(true);
+  const [filter, setFilter]           = useState("");
+  const [selected, setSelected]       = useState<any | null>(null);
+  const [detail, setDetail]           = useState<any | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [detail, setDetail]     = useState<any | null>(null);
-  const [acting, setActing]     = useState(false);
+  const [acting, setActing]           = useState(false);
+  const [saving, setSaving]           = useState(false);
+  const [saveOk, setSaveOk]           = useState(false);
+
+  // Editable fields
+  const [editName, setEditName]       = useState("");
+  const [editSubtitle, setEditSubtitle] = useState("");
+  const [editSummary, setEditSummary] = useState("");
+  const [editHighlights, setEditHighlights] = useState<string[]>([]);
+  const [editSeoTitle, setEditSeoTitle] = useState("");
+  const [editSeoMeta, setEditSeoMeta] = useState("");
+  const [isDirty, setIsDirty]         = useState(false);
+
+  const STATUS_COLOR: Record<string,string> = {
+    approved: "#22c55e", rejected: "#ef4444",
+    pending: "#f59e0b", needs_review: "#a78bfa",
+  };
 
   const fetchVersions = useCallback(async () => {
     setLoading(true);
@@ -673,10 +689,7 @@ function CatalogTab() {
       const params = new URLSearchParams({ page_size: "50",
         ...(filter && { status: filter }) });
       const res = await fetch(`/api/tenant/v1/tours/my-versions?${params}`);
-      if (res.ok) {
-        const d = await res.json();
-        setVersions(d.data ?? []);
-      }
+      if (res.ok) { const d = await res.json(); setVersions(d.data ?? []); }
     } catch {} finally { setLoading(false); }
   }, [filter]);
 
@@ -684,10 +697,27 @@ function CatalogTab() {
 
   const loadDetail = async (v: any) => {
     setSelected(v); setDetailLoading(true); setDetail(null);
+    setIsDirty(false); setSaveOk(false);
     try {
       const res = await fetch(`/api/tenant/v1/tours/versions/${v.id}`);
-      if (res.ok) setDetail(await res.json());
+      if (res.ok) {
+        const d = await res.json();
+        setDetail(d);
+        // Populate edit fields
+        const rc = parseContent(d.rewritten_content);
+        setEditName(rc?.name || d.aa_name || "");
+        setEditSubtitle(rc?.subtitle || "");
+        setEditSummary(rc?.summary || "");
+        setEditHighlights(Array.isArray(rc?.highlights) ? rc.highlights : []);
+        setEditSeoTitle(rc?.seo_title || d.aa_seo_title || "");
+        setEditSeoMeta(rc?.seo_meta || d.aa_seo_meta || "");
+      }
     } catch {} finally { setDetailLoading(false); }
+  };
+
+  const parseContent = (raw: any) => {
+    if (!raw) return null;
+    try { return typeof raw === "string" ? JSON.parse(raw) : raw; } catch { return null; }
   };
 
   const doAction = async (action: string) => {
@@ -699,27 +729,74 @@ function CatalogTab() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
       });
-      if (res.ok) {
-        await fetchVersions();
-        setSelected(null); setDetail(null);
-      }
+      if (res.ok) { await fetchVersions(); await loadDetail(selected); }
     } catch {} finally { setActing(false); }
   };
 
-  const STATUS_COLOR: Record<string,string> = {
-    approved: "#22c55e", rejected: "#ef4444",
-    pending: "#f59e0b", needs_review: "#a78bfa",
+  const saveEdit = async () => {
+    if (!selected || !isDirty) return;
+    setSaving(true); setSaveOk(false);
+    try {
+      const edited = {
+        name: editName, subtitle: editSubtitle, summary: editSummary,
+        highlights: editHighlights, seo_title: editSeoTitle, seo_meta: editSeoMeta,
+      };
+      const res = await fetch(`/api/tenant/v1/tours/versions/${selected.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "edit", edited_content: edited, edited_by: "tenant" }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setSaveOk(true); setIsDirty(false);
+        await fetchVersions();
+        // Load new version
+        if (d.new_version_id) {
+          const nv = versions.find(v => v.id === d.new_version_id) ||
+            { ...selected, id: d.new_version_id, version_number: d.version_number, status: "pending" };
+          await loadDetail(nv);
+        }
+      }
+    } catch {} finally { setSaving(false); }
   };
+
+  // SEO analysis helpers
+  const seoTitleLen = editSeoTitle.length;
+  const seoMetaLen  = editSeoMeta.length;
+  const seoTitleOk  = seoTitleLen > 0 && seoTitleLen <= 60;
+  const seoMetaOk   = seoMetaLen >= 80 && seoMetaLen <= 160;
+
+  const field = (label: string, value: string, onChange: (v:string)=>void,
+    rows: number, hint?: string, okColor?: string) => (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between",
+        alignItems: "center", marginBottom: 5 }}>
+        <label style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)",
+          textTransform: "uppercase", letterSpacing: 1 }}>{label}</label>
+        {hint && <span style={{ fontSize: 10, color: okColor || "var(--text-muted)" }}>{hint}</span>}
+      </div>
+      <textarea value={value}
+        onChange={e => { onChange(e.target.value); setIsDirty(true); }}
+        rows={rows}
+        style={{ width: "100%", padding: "8px 10px",
+          background: "var(--bg-primary)", border: "1px solid var(--border)",
+          borderRadius: 6, color: "var(--text-primary)", fontSize: 12,
+          resize: "vertical" as const, outline: "none", lineHeight: 1.6,
+          fontFamily: "inherit" }}/>
+    </div>
+  );
 
   return (
     <div style={{ display: "grid",
-      gridTemplateColumns: selected ? "1fr 420px" : "1fr", gap: 16 }}>
-      {/* Version list */}
+      gridTemplateColumns: selected ? "320px 1fr" : "1fr",
+      gap: 20, alignItems: "start" }}>
+
+      {/* LEFT — version list */}
       <div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" as const }}>
           {["","pending","approved","rejected"].map(s => (
             <button key={s} onClick={() => setFilter(s)}
-              style={{ padding: "6px 14px", borderRadius: 20, fontSize: 12,
+              style={{ padding: "5px 12px", borderRadius: 20, fontSize: 11,
                 border: `1px solid ${filter===s ? "var(--brand-gold)" : "var(--border)"}`,
                 background: filter===s ? "rgba(219,150,40,0.1)" : "var(--bg-card)",
                 color: filter===s ? "var(--brand-gold)" : "var(--text-muted)",
@@ -730,51 +807,57 @@ function CatalogTab() {
         </div>
         {loading ? (
           <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)" }}>
-            <Loader2 size={20} style={{ margin: "0 auto 8px", display: "block" }}/>Loading...
+            <Loader2 size={18} style={{ margin: "0 auto 8px", display: "block" }}/>
           </div>
         ) : versions.length === 0 ? (
-          <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)",
+          <div style={{ textAlign: "center", padding: 32, color: "var(--text-muted)",
             background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12 }}>
-            <Package size={32} style={{ margin: "0 auto 12px", opacity: 0.3 }}/>
-            <div style={{ fontWeight: 600 }}>No rewrites yet</div>
-            <div style={{ fontSize: 12, marginTop: 6 }}>Browse the pool to start rewriting tours</div>
+            <Package size={28} style={{ margin: "0 auto 10px", opacity: 0.3 }}/>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>No rewrites yet</div>
+            <div style={{ fontSize: 12, marginTop: 4 }}>Browse the pool to get started</div>
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {versions.map(v => {
-              const content = typeof v.rewritten_content === "string"
-                ? JSON.parse(v.rewritten_content) : v.rewritten_content;
+              const rc = parseContent(v.rewritten_content);
+              const isActive = selected?.id === v.id;
               return (
                 <div key={v.id} onClick={() => loadDetail(v)}
                   style={{
-                    background: selected?.id === v.id
-                      ? "rgba(219,150,40,0.06)" : "var(--bg-card)",
-                    border: `1px solid ${selected?.id === v.id
-                      ? "rgba(219,150,40,0.3)" : "var(--border)"}`,
-                    borderRadius: 10, padding: "12px 16px", cursor: "pointer",
-                    display: "flex", alignItems: "center", gap: 12,
+                    background: isActive ? "rgba(219,150,40,0.06)" : "var(--bg-card)",
+                    border: `1px solid ${isActive ? "rgba(219,150,40,0.4)" : "var(--border)"}`,
+                    borderRadius: 10, padding: "11px 14px", cursor: "pointer",
                     transition: "all 0.15s",
                   }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600,
-                      color: "var(--text-primary)", marginBottom: 4 }}>
-                      {v.aa_name || content?.name || "Tour"}
+                  <div style={{ display: "flex", justifyContent: "space-between",
+                    alignItems: "flex-start", gap: 8 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600,
+                        color: "var(--text-primary)", marginBottom: 2,
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {v.aa_name || rc?.name || "Tour"}
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--text-muted)",
+                        display: "flex", gap: 8 }}>
+                        <span>v{v.version_number}</span>
+                        <span>{v.rewrite_language}</span>
+                        {v.country && <span>{v.country}</span>}
+                      </div>
+                      {rc?.summary && (
+                        <div style={{ fontSize: 11, color: "var(--text-muted)",
+                          marginTop: 4, lineHeight: 1.4,
+                          overflow: "hidden", display: "-webkit-box",
+                          WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const }}>
+                          {rc.summary}
+                        </div>
+                      )}
                     </div>
-                    <div style={{ fontSize: 11, color: "var(--text-muted)",
-                      display: "flex", gap: 10 }}>
-                      {v.country && <span>{v.country}</span>}
-                      <span>v{v.version_number}</span>
-                      <span>{v.rewrite_language}</span>
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20,
-                      fontWeight: 700,
+                    <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 20,
+                      fontWeight: 700, flexShrink: 0,
                       background: `${STATUS_COLOR[v.status] ?? "#888"}22`,
                       color: STATUS_COLOR[v.status] ?? "#888" }}>
                       {v.status}
                     </span>
-                    <ChevronRight size={14} style={{ color: "var(--text-muted)" }}/>
                   </div>
                 </div>
               );
@@ -783,97 +866,253 @@ function CatalogTab() {
         )}
       </div>
 
-      {/* Detail panel */}
+      {/* RIGHT — Editorial Workspace */}
       {selected && (
         <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)",
-          borderRadius: 12, overflow: "hidden",
-          position: "sticky" as const, top: 20, alignSelf: "flex-start" as const }}>
-          <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--border)",
-            display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ fontSize: 13, fontWeight: 700,
-              color: "var(--text-primary)" }}>{selected.aa_name || "Tour"}</div>
-            <button onClick={() => { setSelected(null); setDetail(null); }}
-              style={{ background: "none", border: "none", cursor: "pointer",
-                color: "var(--text-muted)", fontSize: 18 }}>×</button>
+          borderRadius: 12, overflow: "hidden" }}>
+          {/* Header */}
+          <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)",
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+            background: "var(--bg-primary)" }}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 700,
+                color: "var(--text-primary)" }}>{selected.aa_name || "Tour"}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2,
+                display: "flex", gap: 10 }}>
+                <span>v{selected.version_number}</span>
+                <span>{selected.rewrite_language}</span>
+                <span>{selected.seo_mode}</span>
+                {selected.quality_score && (
+                  <span style={{ color: "#22c55e", fontWeight: 600 }}>
+                    ★ {Number(selected.quality_score).toFixed(1)}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {isDirty && (
+                <button onClick={saveEdit} disabled={saving}
+                  style={{ padding: "6px 14px", borderRadius: 6, border: "none",
+                    background: "var(--brand-gold)", color: "white",
+                    fontSize: 12, fontWeight: 700,
+                    cursor: saving ? "not-allowed" : "pointer" }}>
+                  {saving ? "Saving..." : "Save Edit"}
+                </button>
+              )}
+              {saveOk && !isDirty && (
+                <span style={{ fontSize: 12, color: "#22c55e", fontWeight: 600 }}>
+                  ✓ Saved as new version
+                </span>
+              )}
+              <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20,
+                fontWeight: 700,
+                background: `${STATUS_COLOR[selected.status] ?? "#888"}22`,
+                color: STATUS_COLOR[selected.status] ?? "#888" }}>
+                {selected.status}
+              </span>
+              <button onClick={() => { setSelected(null); setDetail(null); }}
+                style={{ background: "none", border: "none", cursor: "pointer",
+                  color: "var(--text-muted)", fontSize: 20, lineHeight: 1 }}>×</button>
+            </div>
           </div>
 
           {detailLoading ? (
             <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>
-              <Loader2 size={18} style={{ margin: "0 auto 8px", display: "block" }}/>
+              <Loader2 size={20} style={{ margin: "0 auto 8px", display: "block" }}/>
+              Loading editorial workspace...
             </div>
           ) : detail ? (
-            <div style={{ padding: 16, maxHeight: 560, overflowY: "auto" as const }}>
-              {/* Before / After */}
-              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)",
-                textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>
-                Before / After
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8,
-                marginBottom: 16 }}>
-                <div style={{ background: "rgba(239,68,68,0.06)",
-                  border: "1px solid rgba(239,68,68,0.2)",
-                  borderRadius: 8, padding: 10 }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: "#f87171",
-                    marginBottom: 6 }}>AA ORIGINAL</div>
-                  <div style={{ fontSize: 12, color: "var(--text-secondary)",
-                    lineHeight: 1.5 }}>{detail.aa_summary}</div>
-                </div>
-                <div style={{ background: "rgba(34,197,94,0.06)",
-                  border: "1px solid rgba(34,197,94,0.2)",
-                  borderRadius: 8, padding: 10 }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: "#22c55e",
-                    marginBottom: 6 }}>YOUR VERSION</div>
-                  <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5 }}>
-                    {(() => {
-                      try {
-                        const c = typeof detail.rewritten_content === "string"
-                          ? JSON.parse(detail.rewritten_content) : detail.rewritten_content;
-                        return c?.summary || c?.status || "Generating...";
-                      } catch { return "Generating..."; }
-                    })()}
+            <div style={{ maxHeight: "75vh", overflowY: "auto" as const }}>
+
+              {/* Before / After Summary comparison */}
+              <div style={{ padding: "16px 20px",
+                borderBottom: "1px solid var(--border)" }}>
+                <div style={{ fontSize: 10, fontWeight: 700,
+                  color: "var(--text-muted)", textTransform: "uppercase",
+                  letterSpacing: 1, marginBottom: 10 }}>Summary — Before / After</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div style={{ background: "rgba(239,68,68,0.05)",
+                    border: "1px solid rgba(239,68,68,0.15)",
+                    borderRadius: 8, padding: "10px 12px" }}>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: "#f87171",
+                      textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
+                      AA Original
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--text-secondary)",
+                      lineHeight: 1.6 }}>{detail.aa_summary}</div>
+                  </div>
+                  <div style={{ background: "rgba(34,197,94,0.05)",
+                    border: "1px solid rgba(34,197,94,0.15)",
+                    borderRadius: 8, padding: "10px 12px" }}>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: "#22c55e",
+                      textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
+                      Your Version
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--text-secondary)",
+                      lineHeight: 1.6 }}>{editSummary || "Generating..."}</div>
                   </div>
                 </div>
               </div>
 
-              {/* Version history */}
-              {detail.version_history?.length > 0 && (
-                <div style={{ marginBottom: 16 }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)",
-                    textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
-                    Version History
+              {/* Editable content */}
+              <div style={{ padding: "16px 20px",
+                borderBottom: "1px solid var(--border)" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)",
+                  textTransform: "uppercase", letterSpacing: 1, marginBottom: 14,
+                  display: "flex", justifyContent: "space-between" }}>
+                  <span>Edit Content</span>
+                  {isDirty && <span style={{ color: "var(--brand-gold)" }}>
+                    ● Unsaved changes
+                  </span>}
+                </div>
+
+                {field("Tour Name", editName, setEditName, 1)}
+                {field("Subtitle", editSubtitle, setEditSubtitle, 2)}
+                {field("Summary", editSummary, setEditSummary, 4)}
+
+                {/* Highlights */}
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between",
+                    alignItems: "center", marginBottom: 5 }}>
+                    <label style={{ fontSize: 10, fontWeight: 700,
+                      color: "var(--text-muted)", textTransform: "uppercase",
+                      letterSpacing: 1 }}>Highlights</label>
+                    <button onClick={() => {
+                      setEditHighlights(prev => [...prev, ""]);
+                      setIsDirty(true);
+                    }} style={{ fontSize: 11, color: "var(--brand-gold)",
+                      background: "none", border: "none", cursor: "pointer" }}>
+                      + Add
+                    </button>
                   </div>
+                  {editHighlights.map((h, i) => (
+                    <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                      <span style={{ color: "var(--brand-gold)", fontWeight: 700,
+                        paddingTop: 7, fontSize: 12 }}>•</span>
+                      <input value={h}
+                        onChange={e => {
+                          const n = [...editHighlights];
+                          n[i] = e.target.value;
+                          setEditHighlights(n);
+                          setIsDirty(true);
+                        }}
+                        style={{ flex: 1, padding: "6px 10px",
+                          background: "var(--bg-primary)",
+                          border: "1px solid var(--border)", borderRadius: 6,
+                          color: "var(--text-primary)", fontSize: 12, outline: "none" }}/>
+                      <button onClick={() => {
+                        setEditHighlights(prev => prev.filter((_,j) => j !== i));
+                        setIsDirty(true);
+                      }} style={{ background: "none", border: "none",
+                        cursor: "pointer", color: "var(--text-muted)",
+                        padding: "0 4px" }}>×</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* SEO Panel */}
+              <div style={{ padding: "16px 20px",
+                borderBottom: "1px solid var(--border)" }}>
+                <div style={{ fontSize: 10, fontWeight: 700,
+                  color: "var(--text-muted)", textTransform: "uppercase",
+                  letterSpacing: 1, marginBottom: 14 }}>SEO</div>
+
+                {field("SEO Title",
+                  editSeoTitle, setEditSeoTitle, 1,
+                  `${seoTitleLen}/60 ${seoTitleOk ? "✓" : "⚠"}`,
+                  seoTitleOk ? "#22c55e" : "#f59e0b")}
+
+                {field("SEO Meta Description",
+                  editSeoMeta, setEditSeoMeta, 3,
+                  `${seoMetaLen}/160 ${seoMetaOk ? "✓" : "⚠"}`,
+                  seoMetaOk ? "#22c55e" : "#f59e0b")}
+
+                {/* SEO Health */}
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const }}>
+                  {[
+                    { label: "Title ≤60", ok: seoTitleOk },
+                    { label: "Meta 80-160", ok: seoMetaOk },
+                    { label: "Highlights ≥3", ok: editHighlights.length >= 3 },
+                    { label: "Summary filled", ok: editSummary.length > 50 },
+                  ].map(c => (
+                    <span key={c.label} style={{ fontSize: 10, padding: "2px 8px",
+                      borderRadius: 20,
+                      background: c.ok ? "rgba(34,197,94,0.1)" : "rgba(239,68,68,0.1)",
+                      color: c.ok ? "#22c55e" : "#ef4444",
+                      fontWeight: 600 }}>
+                      {c.ok ? "✓" : "✗"} {c.label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {/* Version History */}
+              {detail.version_history?.length > 0 && (
+                <div style={{ padding: "14px 20px",
+                  borderBottom: "1px solid var(--border)" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700,
+                    color: "var(--text-muted)", textTransform: "uppercase",
+                    letterSpacing: 1, marginBottom: 10 }}>Version History</div>
                   {detail.version_history.map((h: any) => (
-                    <div key={h.id} style={{ display: "flex", gap: 10,
-                      alignItems: "center", marginBottom: 6, fontSize: 12 }}>
-                      <span style={{ color: "var(--text-muted)" }}>v{h.version_number}</span>
-                      <span style={{ color: "var(--text-secondary)" }}>{h.edit_source}</span>
-                      <span style={{ marginLeft: "auto",
-                        color: STATUS_COLOR[h.status] ?? "#888",
-                        fontWeight: 600 }}>{h.status}</span>
+                    <div key={h.id} style={{ display: "flex", alignItems: "center",
+                      gap: 10, padding: "6px 0",
+                      borderBottom: "1px solid var(--border)", fontSize: 12 }}>
+                      <span style={{ color: "var(--brand-gold)", fontWeight: 700,
+                        minWidth: 24 }}>v{h.version_number}</span>
+                      <span style={{ color: "var(--text-muted)", flex: 1 }}>
+                        {h.edit_source === "ai_generated" ? "AI Generated"
+                          : h.edit_source === "tenant_edit" ? "Your Edit"
+                          : h.edit_source}
+                      </span>
+                      <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                        {new Date(h.created_at).toLocaleDateString("en-GB",
+                          { day: "2-digit", month: "short" })}
+                      </span>
+                      <span style={{ fontSize: 10, padding: "2px 7px",
+                        borderRadius: 20, fontWeight: 700,
+                        background: `${STATUS_COLOR[h.status] ?? "#888"}22`,
+                        color: STATUS_COLOR[h.status] ?? "#888" }}>{h.status}</span>
                     </div>
                   ))}
                 </div>
               )}
 
-              {/* Actions */}
-              {selected.status === "pending" && (
-                <div style={{ display: "flex", gap: 8 }}>
+              {/* Action buttons */}
+              <div style={{ padding: "14px 20px",
+                display: "flex", gap: 10 }}>
+                {selected.status !== "approved" && (
                   <button onClick={() => doAction("approve")} disabled={acting}
-                    style={{ flex: 1, padding: "9px 0", borderRadius: 8, border: "none",
-                      background: "rgba(34,197,94,0.15)", color: "#22c55e",
-                      fontSize: 13, fontWeight: 700, cursor: acting ? "not-allowed" : "pointer",
-                      display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    style={{ flex: 1, padding: "10px 0", borderRadius: 8,
+                      border: "none", background: "rgba(34,197,94,0.15)",
+                      color: "#22c55e", fontSize: 13, fontWeight: 700,
+                      cursor: acting ? "not-allowed" : "pointer",
+                      display: "flex", alignItems: "center",
+                      justifyContent: "center", gap: 6 }}>
                     <CheckCircle size={14}/> Approve
                   </button>
+                )}
+                {selected.status !== "rejected" && (
                   <button onClick={() => doAction("reject")} disabled={acting}
-                    style={{ flex: 1, padding: "9px 0", borderRadius: 8, border: "none",
-                      background: "rgba(239,68,68,0.1)", color: "#ef4444",
-                      fontSize: 13, fontWeight: 700, cursor: acting ? "not-allowed" : "pointer",
-                      display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    style={{ flex: 1, padding: "10px 0", borderRadius: 8,
+                      border: "none", background: "rgba(239,68,68,0.08)",
+                      color: "#ef4444", fontSize: 13, fontWeight: 700,
+                      cursor: acting ? "not-allowed" : "pointer",
+                      display: "flex", alignItems: "center",
+                      justifyContent: "center", gap: 6 }}>
                     <XCircle size={14}/> Reject
                   </button>
-                </div>
-              )}
+                )}
+                {isDirty && (
+                  <button onClick={saveEdit} disabled={saving}
+                    style={{ flex: 1, padding: "10px 0", borderRadius: 8,
+                      border: "none", background: "var(--brand-gold)",
+                      color: "white", fontSize: 13, fontWeight: 700,
+                      cursor: saving ? "not-allowed" : "pointer" }}>
+                    {saving ? "Saving..." : "Save as New Version"}
+                  </button>
+                )}
+              </div>
             </div>
           ) : null}
         </div>
@@ -885,28 +1124,56 @@ function CatalogTab() {
 // ── Brand Identity Tab (preserved from existing) ───────────────────────────────
 
 function BrandTab() {
-  const [data, setData]         = useState<any>(null);
-  const [loading, setLoading]   = useState(true);
-  const [saving, setSaving]     = useState(false);
-  const [systemPrompt, setSP]   = useState("");
-  const [styleGuide, setSG]     = useState("");
+  const [data, setData]           = useState<any>(null);
+  const [loading, setLoading]     = useState(true);
+  const [saving, setSaving]       = useState(false);
+  const [saved, setSaved]         = useState(false);
+  const [isDirty, setIsDirty]     = useState(false);
+  const [systemPrompt, setSP]     = useState("");
+  const [styleGuide, setSG]       = useState("");
   const [forbidden, setForbidden] = useState("");
-  const [saved, setSaved]       = useState(false);
+  const [history, setHistory]     = useState<any[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [viewingVersion, setViewingVersion] = useState<any | null>(null);
 
-  useEffect(() => {
+  const loadCurrent = () => {
+    setLoading(true);
     fetch("/api/tenant/v1/pipeline/brand-identity")
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (d?.configured) {
           setSP(d.system_prompt || "");
           setSG(d.style_guide || "");
-          setForbidden((d.forbidden_words || []).join(", "));
+          const fw = Array.isArray(d.forbidden_words)
+            ? d.forbidden_words
+            : (typeof d.forbidden_words === "string"
+              ? JSON.parse(d.forbidden_words || "[]") : []);
+          setForbidden(fw.join(", "));
         }
         setData(d);
+        setIsDirty(false);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  };
+
+  const loadHistory = async () => {
+    // Fetch all versions via metrics endpoint — fallback: simulate from version number
+    if (data?.version) {
+      const versions = [];
+      for (let v = data.version; v >= 1; v--) {
+        versions.push({
+          version: v,
+          is_active: v === data.version,
+          updated_at: data.updated_at,
+        });
+      }
+      setHistory(versions);
+    }
+    setShowHistory(true);
+  };
+
+  useEffect(() => { loadCurrent(); }, []);
 
   const save = async () => {
     setSaving(true); setSaved(false);
@@ -920,20 +1187,25 @@ function BrandTab() {
           forbidden_words: forbidden.split(",").map(w => w.trim()).filter(Boolean),
         }),
       });
-      if (res.ok) setSaved(true);
+      if (res.ok) {
+        setSaved(true);
+        setIsDirty(false);
+        loadCurrent();
+      }
     } catch {} finally { setSaving(false); }
   };
 
-  const field = (label: string, value: string, onChange: (v:string)=>void,
-    rows: number, placeholder: string) => (
+  const fld = (label: string, value: string,
+    onChange: (v:string)=>void, rows: number, placeholder: string) => (
     <div style={{ marginBottom: 18 }}>
       <label style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)",
         textTransform: "uppercase", letterSpacing: 1, display: "block",
         marginBottom: 6 }}>{label}</label>
-      <textarea value={value} onChange={e => onChange(e.target.value)}
+      <textarea value={value}
+        onChange={e => { onChange(e.target.value); setIsDirty(true); setSaved(false); }}
         rows={rows} placeholder={placeholder}
         style={{ width: "100%", padding: "10px 12px",
-          background: "var(--bg-primary)", border: "1px solid var(--border)",
+          background: "var(--bg-primary)", border: `1px solid ${isDirty ? "rgba(219,150,40,0.4)" : "var(--border)"}`,
           borderRadius: 8, color: "var(--text-primary)", fontSize: 13,
           resize: "vertical" as const, outline: "none", lineHeight: 1.6 }}/>
     </div>
@@ -946,30 +1218,191 @@ function BrandTab() {
   );
 
   return (
-    <div style={{ maxWidth: 680 }}>
-      <h2 style={{ fontSize: 18, fontWeight: 700, color: "var(--text-primary)",
-        marginBottom: 6 }}>Brand Identity</h2>
-      <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 24,
-        lineHeight: 1.6 }}>
-        Customize how AA content is rewritten for your brand.
-        These rules are appended to AA core standards — they do not override quality thresholds.
-      </p>
-      {field("Brand Context / System Prompt", systemPrompt, setSP, 5,
-        "e.g. We are a luxury operator focused on US travellers aged 45+. Emphasise exclusivity and cultural depth.")}
-      {field("Style Guide", styleGuide, setSG, 4,
-        "e.g. Use active voice. Avoid adjective stacking. Keep sentences under 25 words.")}
-      {field("Forbidden Words (comma-separated)", forbidden, setForbidden, 2,
-        "e.g. cheap, budget, bargain, deals")}
-      <button onClick={save} disabled={saving}
-        style={{ padding: "10px 28px", background: saving ? "var(--border)" : "var(--brand-gold)",
-          border: "none", borderRadius: 8, color: saving ? "var(--text-muted)" : "white",
-          fontSize: 13, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer" }}>
-        {saving ? "Saving..." : "Save Brand Rules"}
-      </button>
-      {saved && (
-        <span style={{ marginLeft: 12, fontSize: 12, color: "#22c55e", fontWeight: 600 }}>
-          ✓ Saved — active on next pipeline run
-        </span>
+    <div style={{ display: "grid", gridTemplateColumns: showHistory ? "1fr 280px" : "1fr",
+      gap: 24, alignItems: "start" }}>
+
+      {/* Main form */}
+      <div>
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between",
+          alignItems: "flex-start", marginBottom: 20 }}>
+          <div>
+            <h2 style={{ fontSize: 18, fontWeight: 700,
+              color: "var(--text-primary)", marginBottom: 4 }}>Brand Identity</h2>
+            <p style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.6, margin: 0 }}>
+              These rules are appended to AA core standards on every rewrite.
+              They do not override quality thresholds.
+            </p>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+            {data?.version && (
+              <button onClick={loadHistory}
+                style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12,
+                  border: "1px solid var(--border)", background: "var(--bg-card)",
+                  color: "var(--text-secondary)", cursor: "pointer", fontWeight: 500 }}>
+                History (v{data.version})
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Active version badge */}
+        {data?.configured && data?.version && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10,
+            padding: "8px 14px", marginBottom: 20,
+            background: "rgba(34,197,94,0.08)",
+            border: "1px solid rgba(34,197,94,0.2)", borderRadius: 8 }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%",
+              background: "#22c55e", flexShrink: 0 }}/>
+            <span style={{ fontSize: 12, color: "#22c55e", fontWeight: 600 }}>
+              Active — Version {data.version}
+            </span>
+            {data.updated_at && (
+              <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: "auto" }}>
+                Last updated {new Date(data.updated_at).toLocaleDateString("en-GB",
+                  { day: "2-digit", month: "short", year: "numeric" })}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Viewing old version banner */}
+        {viewingVersion && (
+          <div style={{ padding: "10px 14px", marginBottom: 16,
+            background: "rgba(245,158,11,0.08)",
+            border: "1px solid rgba(245,158,11,0.3)", borderRadius: 8,
+            display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 12, color: "#f59e0b" }}>
+              Viewing v{viewingVersion.version} — read only
+            </span>
+            <button onClick={() => { setViewingVersion(null); loadCurrent(); }}
+              style={{ marginLeft: "auto", fontSize: 11, color: "var(--brand-gold)",
+                background: "none", border: "none", cursor: "pointer", fontWeight: 600 }}>
+              ← Back to active
+            </button>
+          </div>
+        )}
+
+        {fld("Brand Context / System Prompt", systemPrompt, setSP, 5,
+          "e.g. We are a luxury private-travel operator for US/UK professionals aged 40-60. Emphasise depth of experience, exclusivity, and cultural immersion.")}
+
+        {fld("Style Guide", styleGuide, setSG, 4,
+          "e.g. Use active voice. Prefer concrete specifics over adjectives. Keep sentences under 25 words. Never open with 'Journey' or 'Discover'.")}
+
+        {fld("Forbidden Words (comma-separated)", forbidden, setForbidden, 2,
+          "e.g. cheap, budget, bargain, amazing, incredible, stunning")}
+
+        {/* Preview */}
+        {(systemPrompt || styleGuide || forbidden) && (
+          <div style={{ marginBottom: 20, padding: "12px 14px",
+            background: "var(--bg-primary)", border: "1px solid var(--border)",
+            borderRadius: 8 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)",
+              textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
+              How it applies to rewrites
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.7 }}>
+              {systemPrompt && (
+                <div style={{ marginBottom: 6 }}>
+                  <strong style={{ color: "var(--text-primary)" }}>Brand context:</strong>{" "}
+                  {systemPrompt.slice(0, 120)}{systemPrompt.length > 120 ? "..." : ""}
+                </div>
+              )}
+              {styleGuide && (
+                <div style={{ marginBottom: 6 }}>
+                  <strong style={{ color: "var(--text-primary)" }}>Style:</strong>{" "}
+                  {styleGuide.slice(0, 80)}{styleGuide.length > 80 ? "..." : ""}
+                </div>
+              )}
+              {forbidden && (
+                <div>
+                  <strong style={{ color: "var(--text-primary)" }}>Will avoid:</strong>{" "}
+                  {forbidden.split(",").filter(Boolean).map(w => w.trim()).slice(0,6).map(w => (
+                    <span key={w} style={{ display: "inline-block", margin: "1px 3px",
+                      padding: "1px 6px", borderRadius: 20, fontSize: 10,
+                      background: "rgba(239,68,68,0.1)", color: "#f87171" }}>{w}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <button onClick={save} disabled={saving || !isDirty || !!viewingVersion}
+            style={{ padding: "10px 28px",
+              background: (!isDirty || viewingVersion) ? "var(--border)" : saving ? "var(--border)" : "var(--brand-gold)",
+              border: "none", borderRadius: 8,
+              color: (!isDirty || viewingVersion) ? "var(--text-muted)" : "white",
+              fontSize: 13, fontWeight: 700,
+              cursor: (!isDirty || saving || !!viewingVersion) ? "not-allowed" : "pointer" }}>
+            {saving ? "Saving..." : "Save as New Version"}
+          </button>
+          {saved && (
+            <span style={{ fontSize: 12, color: "#22c55e", fontWeight: 600 }}>
+              ✓ Saved — active on next pipeline run
+            </span>
+          )}
+          {isDirty && !saved && (
+            <span style={{ fontSize: 12, color: "#f59e0b" }}>
+              ● Unsaved changes
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Version history sidebar */}
+      {showHistory && (
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)",
+          borderRadius: 12, overflow: "hidden",
+          position: "sticky" as const, top: 20 }}>
+          <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)",
+            display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontSize: 12, fontWeight: 600,
+              color: "var(--text-secondary)" }}>Version History</div>
+            <button onClick={() => setShowHistory(false)}
+              style={{ background: "none", border: "none",
+                cursor: "pointer", color: "var(--text-muted)", fontSize: 16 }}>×</button>
+          </div>
+          <div style={{ padding: 12 }}>
+            {history.map(h => (
+              <div key={h.version} style={{ padding: "10px 12px", borderRadius: 8,
+                marginBottom: 6, cursor: "pointer",
+                background: h.is_active ? "rgba(34,197,94,0.08)" : "var(--bg-primary)",
+                border: `1px solid ${h.is_active ? "rgba(34,197,94,0.2)" : "var(--border)"}`,
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between",
+                  alignItems: "center" }}>
+                  <span style={{ fontSize: 13, fontWeight: 700,
+                    color: h.is_active ? "#22c55e" : "var(--text-primary)" }}>
+                    Version {h.version}
+                    {h.is_active && (
+                      <span style={{ marginLeft: 6, fontSize: 10,
+                        color: "#22c55e" }}>ACTIVE</span>
+                    )}
+                  </span>
+                </div>
+                {h.updated_at && (
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 3 }}>
+                    {new Date(h.updated_at).toLocaleDateString("en-GB",
+                      { day: "2-digit", month: "short" })}
+                  </div>
+                )}
+                {!h.is_active && (
+                  <div style={{ fontSize: 11, color: "var(--text-muted)",
+                    marginTop: 4 }}>
+                    Previous version — content not retrievable
+                  </div>
+                )}
+              </div>
+            ))}
+            <div style={{ fontSize: 11, color: "var(--text-muted)",
+              marginTop: 10, lineHeight: 1.5, padding: "0 4px" }}>
+              Only the active version is applied to rewrites.
+              Previous version content is not stored.
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
