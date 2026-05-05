@@ -605,7 +605,7 @@ function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
                       letterSpacing: 1 }}>Itineraries</div>
                     <button onClick={() => setExpandItin(e => !e)}
                       style={{ fontSize: 11, color: "var(--brand-gold)",
-                        background: "none", border: "none", cursor: "pointer",
+                        background: "none", cursor: "pointer",
                         fontWeight: 600, padding: "2px 8px",
                         borderRadius: 4, border: "1px solid rgba(219,150,40,0.3)" as any }}>
                       {expandItin ? "▲ Collapse" : "▼ Expand all"}
