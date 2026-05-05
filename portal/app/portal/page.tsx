@@ -1,64 +1,30 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import {
-  LayoutDashboard, Upload, FileSearch, Key,
-  CheckCircle, XCircle, RotateCcw, Copy, Eye, EyeOff,
-  Search, TrendingUp, Package, AlertCircle, CloudUpload,
-  ChevronRight, Loader2, BarChart3, Zap, Globe,
+  LayoutDashboard, Search, BookOpen, Tag, Key,
+  CheckCircle, XCircle, RotateCcw, Copy,
+  ChevronRight, Loader2, Globe, Star, Filter,
+  Eye, EyeOff, AlertCircle, Package,
 } from "lucide-react";
 
-// ── Config ────────────────────────────────────────────────────────────────────
-
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://api-cis.lumiguides.it.com";
+type Tab = "dashboard" | "pool" | "catalog" | "brand" | "apikey";
 
-function getCookie(name: string): string {
+function getCookie(n: string) {
   if (typeof document === "undefined") return "";
-  const m = document.cookie.match(new RegExp(`(^| )${name}=([^;]+)`));
+  const m = document.cookie.match(new RegExp(`(^| )${n}=([^;]+)`));
   return m ? decodeURIComponent(m[2]) : "";
 }
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// ── Shared helpers ────────────────────────────────────────────────────────────
 
-type Tab = "dashboard" | "upload" | "review" | "brand" | "apikey";
-
-interface Tour {
-  id: string;
-  tour_id: string;
-  aa_name?: string;
-  src_name?: string;
-  aa_summary?: string;
-  pipeline_status?: string;
-  quality_score?: number;
-  published_at?: string;
-  ingest_at?: string;
-}
-
-// ── Sub-components ────────────────────────────────────────────────────────────
-
-function StatCard({
-  icon, label, value, sub, accent = false,
-}: {
-  icon: React.ReactNode; label: string; value: string | number; sub?: string; accent?: boolean;
-}) {
+function ScoreBadge({ score }: { score: number }) {
+  const color = score >= 9 ? "#22c55e" : score >= 7 ? "#f59e0b" : "#ef4444";
   return (
-    <div style={{
-      background: accent ? "linear-gradient(135deg, rgba(219,150,40,0.12), rgba(219,150,40,0.04))" : "var(--bg-card)",
-      border: `1px solid ${accent ? "rgba(219,150,40,0.3)" : "var(--border)"}`,
-      borderRadius: 12, padding: "20px 24px",
-      display: "flex", alignItems: "flex-start", gap: 16,
-    }}>
-      <div style={{
-        width: 40, height: 40, borderRadius: 10,
-        background: accent ? "rgba(219,150,40,0.2)" : "rgba(255,255,255,0.05)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        color: accent ? "var(--brand-gold)" : "var(--text-muted)", flexShrink: 0,
-      }}>{icon}</div>
-      <div>
-        <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>{label}</div>
-        <div style={{ fontSize: 26, fontWeight: 800, color: accent ? "var(--brand-gold)" : "var(--text-primary)", lineHeight: 1 }}>{value}</div>
-        {sub && <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>{sub}</div>}
-      </div>
-    </div>
+    <span style={{
+      padding: "2px 8px", borderRadius: 20, fontSize: 11, fontWeight: 700,
+      background: `${color}22`, color,
+    }}>{score.toFixed(1)}</span>
   );
 }
 
@@ -67,771 +33,788 @@ function TabBtn({ id, active, icon, label, onClick }: {
 }) {
   return (
     <button onClick={onClick} style={{
-      display: "flex", alignItems: "center", gap: 8,
-      padding: "10px 18px", borderRadius: 8, border: "none",
+      display: "flex", alignItems: "center", gap: 7,
+      padding: "9px 16px", borderRadius: 8, border: "none",
       background: active ? "var(--brand-gold)" : "var(--bg-card)",
       color: active ? "white" : "var(--text-secondary)",
       fontSize: 13, fontWeight: active ? 700 : 500, cursor: "pointer",
       transition: "all 0.15s",
       boxShadow: active ? "0 2px 8px rgba(219,150,40,0.3)" : "none",
     }}>
-      {icon}
-      <span>{label}</span>
+      {icon}<span>{label}</span>
     </button>
   );
 }
 
 // ── Dashboard Tab ─────────────────────────────────────────────────────────────
 
-function DashboardTab({ tenantName, planTier, token }: { tenantName: string; planTier: string; token: string }) {
-  const [dashData, setDashData] = useState<{
-    used: number; avgScore: number; passRate: number; pendingReview: number;
-    scores: { range: string; count: number; color: string }[];
-  } | null>(null);
-  const [dashLoading, setDashLoading] = useState(true);
+function DashboardTab({ planTier }: { planTier: string }) {
+  const [stats, setStats] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
-    const fetchDash = async () => {
-      try {
-        const headers: HeadersInit = token ? { "Authorization": `Bearer ${token}` } : {};
-        const [toursRes, queueRes] = await Promise.all([
-          fetch(`/api/tenant/v1/tours?page=1&page_size=100`),
-          fetch(`/api/tenant/v1/pipeline/review-queue?page_size=1`),
-        ]);
-        const toursData = toursRes.ok ? await toursRes.json() : null;
-        const queueData = queueRes.ok ? await queueRes.json() : null;
-        const tours = toursData?.data ?? [];
-        const total = toursData?.pagination?.total ?? tours.length;
-        const scores = tours.map((t: { quality_score?: number }) => t.quality_score ?? 0).filter((s: number) => s > 0);
-        const avgScore = scores.length ? +(scores.reduce((a: number, b: number) => a + b, 0) / scores.length).toFixed(1) : 0;
-        const passRate = scores.length ? Math.round((scores.filter((s: number) => s >= 7.0).length / scores.length) * 100) : 0;
-        const pendingReview = queueData?.pagination?.total ?? 0;
-        const bands = [
-          { range: "9.0–10.0", min: 9.0, max: 10.1, color: "#22c55e" },
-          { range: "8.0–8.9",  min: 8.0, max: 9.0,  color: "#86efac" },
-          { range: "7.0–7.9",  min: 7.0, max: 8.0,  color: "#fbbf24" },
-          { range: "<7.0",     min: 0,   max: 7.0,  color: "#f87171" },
-        ];
-        const scoreDist = bands.map(b => ({
-          range: b.range,
-          color: b.color,
-          count: scores.filter((s: number) => s >= b.min && s < b.max).length,
-        }));
-        setDashData({ used: total, avgScore, passRate, pendingReview, scores: scoreDist });
-      } catch (e) {
-        console.error("Dashboard fetch error:", e);
-      } finally { setDashLoading(false); }
-    };
-    fetchDash();
-  }, [token]);
-  const quotaMap: Record<string, number> = { starter: 1000, growth: 5000, business: 20000, enterprise: 999999, internal: 999999 };
-  const quota = quotaMap[planTier] ?? 1000;
-  const used = dashData?.used ?? 0;
-  const pct = Math.min(100, Math.round((used / quota) * 100));
+    Promise.all([
+      fetch("/api/tenant/v1/tours/my-versions?page_size=1"),
+      fetch("/api/tenant/v1/tours/pool?page_size=1"),
+    ]).then(async ([vRes, pRes]) => {
+      const v = vRes.ok ? await vRes.json() : null;
+      const p = pRes.ok ? await pRes.json() : null;
+      setStats({
+        myVersions: v?.pagination?.total ?? 0,
+        poolSize:   p?.pagination?.total ?? 0,
+        approved:   0,
+      });
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, []);
 
-  const scores = dashData?.scores ?? [];
-  const maxCount = scores.length ? Math.max(...scores.map(s => s.count)) : 1;
+  const cards = [
+    { label: "Pool Available",   value: stats?.poolSize ?? "—",   icon: <BookOpen size={18}/>, accent: false },
+    { label: "My Rewrites",      value: stats?.myVersions ?? "—", icon: <Package size={18}/>,  accent: true },
+    { label: "Plan",             value: planTier.toUpperCase(),   icon: <Star size={18}/>,     accent: false },
+  ];
 
-  if (dashLoading) return <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading dashboard…</div>;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      {/* Stats row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
-        <StatCard icon={<Package size={20}/>}    label="Tours Processed"  value={used}       sub="this month"        accent />
-        <StatCard icon={<TrendingUp size={20}/>}  label="Avg Quality Score" value={dashData?.avgScore ?? "—"} sub="across all tours" />
-        <StatCard icon={<CheckCircle size={20}/>} label="Pass Rate"         value={dashData ? `${dashData.passRate}%` : "—"} sub="score ≥ 7.0"     />
-        <StatCard icon={<Zap size={20}/>}         label="Pending Review"    value={dashData?.pendingReview ?? "—"} sub="requires action"   />
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        {/* Quota */}
-        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: 24 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 20 }}>Monthly Quota</div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
-            <span style={{ fontSize: 32, fontWeight: 800, color: "var(--text-primary)" }}>{used.toLocaleString()}</span>
-            <span style={{ fontSize: 14, color: "var(--text-muted)" }}>/ {quota.toLocaleString()} tours</span>
-          </div>
-          <div style={{ height: 8, background: "rgba(255,255,255,0.06)", borderRadius: 4, overflow: "hidden", marginBottom: 8 }}>
-            <div style={{
-              height: "100%", width: `${pct}%`,
-              background: pct > 80 ? "linear-gradient(90deg,#f59e0b,#ef4444)" : "linear-gradient(90deg,var(--brand-gold),#f59e0b)",
-              borderRadius: 4, transition: "width 0.6s ease",
-            }}/>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-muted)" }}>
-            <span>{pct}% used</span>
-            <span style={{ color: "var(--brand-gold)", fontWeight: 600 }}>{(quota - used).toLocaleString()} remaining</span>
-          </div>
-          <div style={{ marginTop: 16, padding: "10px 14px", background: "rgba(219,150,40,0.06)", borderRadius: 8, fontSize: 12, color: "var(--text-muted)" }}>
-            Plan: <span style={{ color: "var(--brand-gold)", fontWeight: 700, textTransform: "capitalize" }}>{planTier}</span>
-            <span style={{ marginLeft: 8, color: "var(--text-muted)" }}>· Resets 1st of month</span>
-          </div>
+    <div>
+      <h2 style={{ fontSize: 20, fontWeight: 700, color: "var(--text-primary)", marginBottom: 20 }}>
+        Partner Dashboard
+      </h2>
+      {loading ? (
+        <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)" }}>
+          <Loader2 size={20} style={{ margin: "0 auto 8px", display: "block" }}/>Loading...
         </div>
-
-        {/* Quality distribution */}
-        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: 24 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 20 }}>Quality Score Distribution</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {scores.map(s => (
-              <div key={s.range} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{ width: 70, fontSize: 12, color: "var(--text-muted)", flexShrink: 0 }}>{s.range}</div>
-                <div style={{ flex: 1, height: 20, background: "rgba(255,255,255,0.04)", borderRadius: 4, overflow: "hidden" }}>
-                  <div style={{
-                    height: "100%", width: `${(s.count / maxCount) * 100}%`,
-                    background: s.color, borderRadius: 4, opacity: 0.8,
-                    transition: "width 0.8s ease",
-                  }}/>
-                </div>
-                <div style={{ width: 28, fontSize: 12, fontWeight: 700, color: s.color, textAlign: "right", flexShrink: 0 }}>{s.count}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Quick actions */}
-      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: 20 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 16 }}>Quick Actions</div>
-        <div style={{ display: "flex", gap: 12 }}>
-          {[
-            { label: "Upload New Batch",    icon: <Upload size={14}/>,      tab: "upload" as Tab },
-            { label: "Review Pending (3)",  icon: <FileSearch size={14}/>,  tab: "review" as Tab },
-            { label: "View API Keys",       icon: <Key size={14}/>,         tab: "apikey" as Tab },
-          ].map(a => (
-            <button key={a.label} style={{
-              display: "flex", alignItems: "center", gap: 8,
-              padding: "10px 20px", background: "rgba(219,150,40,0.08)",
-              border: "1px solid rgba(219,150,40,0.2)", borderRadius: 8,
-              color: "var(--brand-gold)", fontSize: 13, fontWeight: 600, cursor: "pointer",
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16, marginBottom: 24 }}>
+          {cards.map(c => (
+            <div key={c.label} style={{
+              background: c.accent
+                ? "linear-gradient(135deg,rgba(219,150,40,0.12),rgba(219,150,40,0.04))"
+                : "var(--bg-card)",
+              border: `1px solid ${c.accent ? "rgba(219,150,40,0.3)" : "var(--border)"}`,
+              borderRadius: 12, padding: "20px 24px",
+              display: "flex", alignItems: "flex-start", gap: 14,
             }}>
-              {a.icon}{a.label}<ChevronRight size={12}/>
-            </button>
+              <div style={{
+                width: 40, height: 40, borderRadius: 10, flexShrink: 0,
+                background: c.accent ? "rgba(219,150,40,0.2)" : "rgba(255,255,255,0.05)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                color: c.accent ? "var(--brand-gold)" : "var(--text-muted)",
+              }}>{c.icon}</div>
+              <div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600,
+                  textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>{c.label}</div>
+                <div style={{ fontSize: 26, fontWeight: 800,
+                  color: c.accent ? "var(--brand-gold)" : "var(--text-primary)" }}>{c.value}</div>
+              </div>
+            </div>
           ))}
         </div>
+      )}
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)",
+        borderRadius: 12, padding: 20 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-secondary)",
+          textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>Quick Start</div>
+        {[
+          { step: "1", text: "Browse the AA shared pool — 200+ quality tours" },
+          { step: "2", text: "Select tours and configure your rewrite settings" },
+          { step: "3", text: "Review the before/after diff and approve" },
+          { step: "4", text: "Access your branded catalog via API" },
+        ].map(s => (
+          <div key={s.step} style={{ display: "flex", gap: 12, alignItems: "flex-start",
+            marginBottom: 12 }}>
+            <div style={{ width: 24, height: 24, borderRadius: "50%", flexShrink: 0,
+              background: "rgba(219,150,40,0.15)", color: "var(--brand-gold)",
+              fontWeight: 700, fontSize: 11,
+              display: "flex", alignItems: "center", justifyContent: "center" }}>{s.step}</div>
+            <div style={{ fontSize: 13, color: "var(--text-secondary)", paddingTop: 3 }}>{s.text}</div>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
-// ── Batch Upload Tab ──────────────────────────────────────────────────────────
+// ── Browse Pool Tab ───────────────────────────────────────────────────────────
 
-function BatchUploadTab() {
-  const [dragging, setDragging]     = useState(false);
-  const [file, setFile]             = useState<File | null>(null);
-  const [batchName, setBatchName]   = useState("");
-  const [market, setMarket]         = useState("vietnam");
-  const [seoMode, setSeoMode]       = useState("dataforseo");
-  const [submitted, setSubmitted]   = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [batchId, setBatchId]       = useState("");
-  const [error, setError]           = useState("");
-  const [progress, setProgress]     = useState(0);
-  const [step, setStep]             = useState("");
+function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
+  const [tours, setTours]         = useState<any[]>([]);
+  const [countries, setCountries] = useState<string[]>([]);
+  const [loading, setLoading]     = useState(true);
+  const [search, setSearch]       = useState("");
+  const [country, setCountry]     = useState("");
+  const [page, setPage]           = useState(1);
+  const [total, setTotal]         = useState(0);
+  const [selected, setSelected]   = useState<any | null>(null);
+  const [rewriting, setRewriting] = useState(false);
+  const [language, setLanguage]   = useState("en-US");
+  const [seoMode, setSeoMode]     = useState("standard");
 
-  const markets = ["vietnam", "cambodia", "thailand", "indonesia", "japan", "sri-lanka"];
-  const seoModes = [
-    { id: "dataforseo", label: "DataForSEO (Default)", desc: "Auto keyword research" },
-    { id: "custom",     label: "Custom Keywords",      desc: "Use your brand keywords" },
-    { id: "disabled",   label: "Disabled",             desc: "Skip SEO enrichment" },
-  ];
+  const PAGE_SIZE = 20;
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault(); setDragging(false);
-    const f = e.dataTransfer.files[0];
-    if (f && f.name.endsWith(".xlsx")) setFile(f);
-  };
-
-  const handleSubmit = async () => {
-    if (!file || !batchName) return;
-    setSubmitting(true); setError(""); setProgress(0);
+  const fetchPool = useCallback(async () => {
+    setLoading(true);
     try {
-      // Step 1: Get presigned upload URL
-      setStep("Getting upload URL…"); setProgress(10);
-      const urlRes = await fetch("/api/tenant/v1/pipeline/upload-url", {
+      const params = new URLSearchParams({
+        page: String(page), page_size: String(PAGE_SIZE),
+        ...(country && { country }),
+        ...(search  && { search }),
+      });
+      const res = await fetch(`/api/tenant/v1/tours/pool?${params}`);
+      if (res.ok) {
+        const d = await res.json();
+        setTours(d.data ?? []);
+        setTotal(d.pagination?.total ?? 0);
+        if (d.countries?.length) setCountries(d.countries);
+      }
+    } catch {} finally { setLoading(false); }
+  }, [page, country, search]);
+
+  useEffect(() => { fetchPool(); }, [fetchPool]);
+
+  const triggerRewrite = async () => {
+    if (!selected) return;
+    setRewriting(true);
+    try {
+      const res = await fetch(`/api/tenant/v1/tours/pool/${selected.id}/rewrite`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          filename: file.name,
-          content_type: file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        }),
+        body: JSON.stringify({ rewrite_language: language, seo_mode: seoMode }),
       });
-      if (!urlRes.ok) throw new Error("Failed to get upload URL");
-      const { upload_url, s3_key } = await urlRes.json();
-
-      // Step 2: Upload to S3
-      setStep("Uploading to S3…"); setProgress(40);
-      const uploadRes = await fetch(upload_url, {
-        method: "PUT",
-        headers: { "Content-Type": file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
-        body: file,
-      });
-      if (!uploadRes.ok) throw new Error("S3 upload failed");
-
-      // Step 3: Trigger pipeline via run endpoint
-      setStep("Starting pipeline…"); setProgress(70);
-      const runRes = await fetch("/api/tenant/v1/pipeline/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          s3_key,
-          batch_name: batchName,
-          market,
-          seo_mode: seoMode,
-        }),
-      });
-      const runData = runRes.ok ? await runRes.json() : {};
-      setProgress(100);
-      setStep("Submitted!");
-      setBatchId(runData.execution_id ?? s3_key.split("/").pop() ?? "submitted");
-      setSubmitted(true);
-    } catch (e: any) {
-      setError(e.message ?? "Upload failed");
-    } finally {
-      setSubmitting(false);
-    }
+      if (res.ok) {
+        const d = await res.json();
+        onRewrite(d);
+        setSelected(null);
+      }
+    } catch {} finally { setRewriting(false); }
   };
-
-  if (submitted) return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 20, padding: "48px 0" }}>
-      <div style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(34,197,94,0.15)", border: "2px solid rgba(34,197,94,0.3)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <CheckCircle size={28} color="#22c55e"/>
-      </div>
-      <div style={{ textAlign: "center" }}>
-        <div style={{ fontSize: 18, fontWeight: 700, color: "var(--text-primary)", marginBottom: 8 }}>Batch Submitted</div>
-        <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 4 }}>Batch ID: <code style={{ color: "var(--brand-gold)" }}>{batchId}</code></div>
-        <div style={{ fontSize: 13, color: "var(--text-muted)" }}>You'll be notified when processing completes.</div>
-      </div>
-      <button onClick={() => { setSubmitted(false); setFile(null); setBatchName(""); }}
-        style={{ padding: "10px 24px", background: "var(--brand-gold)", border: "none", borderRadius: 8, color: "white", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-        Upload Another Batch
-      </button>
-    </div>
-  );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      {/* Drop zone */}
-      <div
-        onDragOver={e => { e.preventDefault(); setDragging(true); }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={handleDrop}
-        onClick={() => document.getElementById("file-input")?.click()}
-        style={{
-          border: `2px dashed ${dragging ? "var(--brand-gold)" : file ? "rgba(34,197,94,0.5)" : "var(--border)"}`,
-          borderRadius: 12, padding: "40px 24px", textAlign: "center", cursor: "pointer",
-          background: dragging ? "rgba(219,150,40,0.04)" : file ? "rgba(34,197,94,0.04)" : "var(--bg-card)",
-          transition: "all 0.2s",
-        }}>
-        <input id="file-input" type="file" accept=".xlsx" style={{ display: "none" }}
-          onChange={e => { if (e.target.files?.[0]) setFile(e.target.files[0]); }} />
-        {file ? (
-          <>
-            <CheckCircle size={32} color="#22c55e" style={{ margin: "0 auto 12px" }}/>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "#22c55e" }}>{file.name}</div>
-            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>{(file.size / 1024).toFixed(1)} KB · Click to replace</div>
-          </>
+    <div>
+      <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" as const }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
+          <Search size={13} style={{ position: "absolute", left: 10, top: "50%",
+            transform: "translateY(-50%)", color: "var(--text-muted)" }}/>
+          <input value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}
+            placeholder="Search tours..."
+            style={{ width: "100%", padding: "8px 10px 8px 30px",
+              background: "var(--bg-card)", border: "1px solid var(--border)",
+              borderRadius: 8, color: "var(--text-primary)", fontSize: 13, outline: "none" }}/>
+        </div>
+        <select value={country} onChange={e => { setCountry(e.target.value); setPage(1); }}
+          style={{ padding: "8px 12px", background: "var(--bg-card)",
+            border: "1px solid var(--border)", borderRadius: 8,
+            color: "var(--text-primary)", fontSize: 13 }}>
+          <option value="">All Countries</option>
+          {countries.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 360px" : "1fr", gap: 16 }}>
+        {/* Tour grid */}
+        <div>
+          {loading ? (
+            <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)" }}>
+              <Loader2 size={20} style={{ margin: "0 auto 8px", display: "block" }}/>Loading pool...
+            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 10 }}>
+                {total} tours in pool
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {tours.map(t => (
+                  <div key={t.id} onClick={() => setSelected(selected?.id === t.id ? null : t)}
+                    style={{
+                      background: selected?.id === t.id
+                        ? "rgba(219,150,40,0.08)" : "var(--bg-card)",
+                      border: `1px solid ${selected?.id === t.id
+                        ? "rgba(219,150,40,0.4)" : "var(--border)"}`,
+                      borderRadius: 10, padding: "12px 16px", cursor: "pointer",
+                      display: "flex", alignItems: "center", gap: 12,
+                      transition: "all 0.15s",
+                    }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600,
+                        color: "var(--text-primary)", marginBottom: 4 }}>{t.aa_name}</div>
+                      <div style={{ fontSize: 11, color: "var(--text-muted)",
+                        display: "flex", gap: 10 }}>
+                        {t.country && <span><Globe size={10}/> {t.country}</span>}
+                        {t.duration && <span>{t.duration}</span>}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      {t.already_rewritten && (
+                        <span style={{ fontSize: 10, padding: "2px 6px",
+                          background: "rgba(34,197,94,0.1)", color: "#22c55e",
+                          borderRadius: 4, fontWeight: 600 }}>Done</span>
+                      )}
+                      {t.quality_score && <ScoreBadge score={t.quality_score}/>}
+                      <ChevronRight size={14} style={{ color: "var(--text-muted)" }}/>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {/* Pagination */}
+              <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "center" }}>
+                <button onClick={() => setPage(p => Math.max(1, p-1))} disabled={page === 1}
+                  style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid var(--border)",
+                    background: "var(--bg-card)", color: "var(--text-secondary)",
+                    cursor: page === 1 ? "not-allowed" : "pointer", fontSize: 12 }}>Prev</button>
+                <span style={{ padding: "6px 12px", fontSize: 12,
+                  color: "var(--text-muted)" }}>Page {page}</span>
+                <button onClick={() => setPage(p => p+1)}
+                  disabled={page * PAGE_SIZE >= total}
+                  style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid var(--border)",
+                    background: "var(--bg-card)", color: "var(--text-secondary)",
+                    cursor: page * PAGE_SIZE >= total ? "not-allowed" : "pointer",
+                    fontSize: 12 }}>Next</button>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Rewrite config panel */}
+        {selected && (
+          <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)",
+            borderRadius: 12, padding: 20, alignSelf: "flex-start" as const,
+            position: "sticky" as const, top: 20 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)",
+              marginBottom: 4 }}>{selected.aa_name}</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 16 }}>
+              {selected.country} {selected.duration && `· ${selected.duration}`}
+            </div>
+            {selected.aa_summary && (
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6,
+                marginBottom: 16, padding: "10px 12px",
+                background: "var(--bg-primary)", borderRadius: 8 }}>
+                {selected.aa_summary}
+              </div>
+            )}
+            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)",
+              textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Language</div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+              {["en-US","en-GB"].map(l => (
+                <button key={l} onClick={() => setLanguage(l)}
+                  style={{ flex: 1, padding: "7px 10px", borderRadius: 6, cursor: "pointer",
+                    border: `1px solid ${language===l ? "var(--brand-gold)" : "var(--border)"}`,
+                    background: language===l ? "rgba(219,150,40,0.08)" : "var(--bg-primary)",
+                    color: language===l ? "var(--brand-gold)" : "var(--text-muted)",
+                    fontSize: 12, fontWeight: language===l ? 700 : 400 }}>{l}</button>
+              ))}
+            </div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)",
+              textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>SEO Mode</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
+              {[
+                {v:"standard",  l:"Standard",   d:"Balanced keywords"},
+                {v:"aggressive",l:"Aggressive",  d:"Max keyword density"},
+                {v:"minimal",   l:"Minimal",     d:"Brand voice first"},
+              ].map(s => (
+                <button key={s.v} onClick={() => setSeoMode(s.v)}
+                  style={{ padding: "7px 10px", borderRadius: 6, cursor: "pointer",
+                    border: `1px solid ${seoMode===s.v ? "var(--brand-gold)" : "var(--border)"}`,
+                    background: seoMode===s.v ? "rgba(219,150,40,0.08)" : "var(--bg-primary)",
+                    color: seoMode===s.v ? "var(--brand-gold)" : "var(--text-muted)",
+                    fontSize: 12, fontWeight: seoMode===s.v ? 700 : 400,
+                    textAlign: "left" as const }}>
+                  <span style={{ fontWeight: 600 }}>{s.l}</span>
+                  <span style={{ opacity: 0.7 }}> — {s.d}</span>
+                </button>
+              ))}
+            </div>
+            <button onClick={triggerRewrite} disabled={rewriting}
+              style={{ width: "100%", padding: "10px 16px", borderRadius: 8, border: "none",
+                background: rewriting ? "var(--border)" : "var(--brand-gold)",
+                color: rewriting ? "var(--text-muted)" : "white",
+                fontSize: 13, fontWeight: 700, cursor: rewriting ? "not-allowed" : "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              {rewriting
+                ? <><Loader2 size={14}/>Starting rewrite...</>
+                : <><RotateCcw size={14}/>Start Rewrite</>}
+            </button>
+            {selected.already_rewritten && (
+              <div style={{ marginTop: 10, fontSize: 11, color: "#f59e0b", textAlign: "center" as const }}>
+                You have already rewritten this tour. Starting a new version.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── My Catalog Tab ────────────────────────────────────────────────────────────
+
+function CatalogTab() {
+  const [versions, setVersions] = useState<any[]>([]);
+  const [loading, setLoading]   = useState(true);
+  const [filter, setFilter]     = useState("");
+  const [selected, setSelected] = useState<any | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detail, setDetail]     = useState<any | null>(null);
+  const [acting, setActing]     = useState(false);
+
+  const fetchVersions = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ page_size: "50",
+        ...(filter && { status: filter }) });
+      const res = await fetch(`/api/tenant/v1/tours/my-versions?${params}`);
+      if (res.ok) {
+        const d = await res.json();
+        setVersions(d.data ?? []);
+      }
+    } catch {} finally { setLoading(false); }
+  }, [filter]);
+
+  useEffect(() => { fetchVersions(); }, [fetchVersions]);
+
+  const loadDetail = async (v: any) => {
+    setSelected(v); setDetailLoading(true); setDetail(null);
+    try {
+      const res = await fetch(`/api/tenant/v1/tours/versions/${v.id}`);
+      if (res.ok) setDetail(await res.json());
+    } catch {} finally { setDetailLoading(false); }
+  };
+
+  const doAction = async (action: string) => {
+    if (!selected) return;
+    setActing(true);
+    try {
+      const res = await fetch(`/api/tenant/v1/tours/versions/${selected.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      if (res.ok) {
+        await fetchVersions();
+        setSelected(null); setDetail(null);
+      }
+    } catch {} finally { setActing(false); }
+  };
+
+  const STATUS_COLOR: Record<string,string> = {
+    approved: "#22c55e", rejected: "#ef4444",
+    pending: "#f59e0b", needs_review: "#a78bfa",
+  };
+
+  return (
+    <div style={{ display: "grid",
+      gridTemplateColumns: selected ? "1fr 420px" : "1fr", gap: 16 }}>
+      {/* Version list */}
+      <div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+          {["","pending","approved","rejected"].map(s => (
+            <button key={s} onClick={() => setFilter(s)}
+              style={{ padding: "6px 14px", borderRadius: 20, fontSize: 12,
+                border: `1px solid ${filter===s ? "var(--brand-gold)" : "var(--border)"}`,
+                background: filter===s ? "rgba(219,150,40,0.1)" : "var(--bg-card)",
+                color: filter===s ? "var(--brand-gold)" : "var(--text-muted)",
+                cursor: "pointer", fontWeight: filter===s ? 700 : 400 }}>
+              {s || "All"}
+            </button>
+          ))}
+        </div>
+        {loading ? (
+          <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)" }}>
+            <Loader2 size={20} style={{ margin: "0 auto 8px", display: "block" }}/>Loading...
+          </div>
+        ) : versions.length === 0 ? (
+          <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)",
+            background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12 }}>
+            <Package size={32} style={{ margin: "0 auto 12px", opacity: 0.3 }}/>
+            <div style={{ fontWeight: 600 }}>No rewrites yet</div>
+            <div style={{ fontSize: 12, marginTop: 6 }}>Browse the pool to start rewriting tours</div>
+          </div>
         ) : (
-          <>
-            <CloudUpload size={32} color="var(--text-muted)" style={{ margin: "0 auto 12px" }}/>
-            <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-secondary)" }}>Drop your Excel file here</div>
-            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>or click to browse · .xlsx only</div>
-          </>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {versions.map(v => {
+              const content = typeof v.rewritten_content === "string"
+                ? JSON.parse(v.rewritten_content) : v.rewritten_content;
+              return (
+                <div key={v.id} onClick={() => loadDetail(v)}
+                  style={{
+                    background: selected?.id === v.id
+                      ? "rgba(219,150,40,0.06)" : "var(--bg-card)",
+                    border: `1px solid ${selected?.id === v.id
+                      ? "rgba(219,150,40,0.3)" : "var(--border)"}`,
+                    borderRadius: 10, padding: "12px 16px", cursor: "pointer",
+                    display: "flex", alignItems: "center", gap: 12,
+                    transition: "all 0.15s",
+                  }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600,
+                      color: "var(--text-primary)", marginBottom: 4 }}>
+                      {v.aa_name || content?.name || "Tour"}
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)",
+                      display: "flex", gap: 10 }}>
+                      {v.country && <span>{v.country}</span>}
+                      <span>v{v.version_number}</span>
+                      <span>{v.rewrite_language}</span>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20,
+                      fontWeight: 700,
+                      background: `${STATUS_COLOR[v.status] ?? "#888"}22`,
+                      color: STATUS_COLOR[v.status] ?? "#888" }}>
+                      {v.status}
+                    </span>
+                    <ChevronRight size={14} style={{ color: "var(--text-muted)" }}/>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
 
-      {/* Config */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        <div>
-          <label style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase" as const, letterSpacing: 1, display: "block", marginBottom: 8 }}>Batch Name</label>
-          <input value={batchName} onChange={e => setBatchName(e.target.value)} placeholder="e.g. Vietnam Q2 2026"
-            style={{ width: "100%", padding: "10px 12px", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text-primary)", fontSize: 13, outline: "none" }}/>
-        </div>
-        <div>
-          <label style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase" as const, letterSpacing: 1, display: "block", marginBottom: 8 }}>Destination Market</label>
-          <select value={market} onChange={e => setMarket(e.target.value)}
-            style={{ width: "100%", padding: "10px 12px", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text-primary)", fontSize: 13, outline: "none" }}>
-            {markets.map(m => <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>)}
-          </select>
-        </div>
-      </div>
-
-      {/* SEO mode */}
-      <div>
-        <label style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase" as const, letterSpacing: 1, display: "block", marginBottom: 10 }}>SEO Mode</label>
-        <div style={{ display: "flex", gap: 10 }}>
-          {seoModes.map(s => (
-            <button key={s.id} onClick={() => setSeoMode(s.id)} style={{
-              flex: 1, padding: "12px 16px", borderRadius: 8, cursor: "pointer", textAlign: "left" as const,
-              background: seoMode === s.id ? "rgba(219,150,40,0.1)" : "var(--bg-primary)",
-              border: `1px solid ${seoMode === s.id ? "rgba(219,150,40,0.4)" : "var(--border)"}`,
-            }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: seoMode === s.id ? "var(--brand-gold)" : "var(--text-primary)", marginBottom: 2 }}>{s.label}</div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{s.desc}</div>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {error && (
-        <div style={{ padding: "10px 14px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 8, fontSize: 12, color: "#ef4444" }}>{error}</div>
-      )}
-      {submitting && (
-        <div style={{ padding: "10px 14px", background: "rgba(219,150,40,0.06)", border: "1px solid rgba(219,150,40,0.2)", borderRadius: 8, fontSize: 12, color: "var(--brand-gold)" }}>
-          {step} ({progress}%)
-        </div>
-      )}
-      <button onClick={handleSubmit} disabled={!file || !batchName || submitting}
-        style={{
-          padding: "12px 32px", borderRadius: 8, border: "none", fontSize: 14, fontWeight: 700, cursor: (!file || !batchName || submitting) ? "not-allowed" : "pointer",
-          background: (!file || !batchName || submitting) ? "var(--border)" : "var(--brand-gold)",
-          color: (!file || !batchName || submitting) ? "var(--text-muted)" : "white",
-          display: "flex", alignItems: "center", gap: 8, alignSelf: "flex-start" as const,
-        }}>
-        {submitting ? <><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }}/>Uploading...</> : "Submit Batch →"}
-      </button>
-    </div>
-  );
-}
-
-// ── Content Review Tab ────────────────────────────────────────────────────────
-
-function ContentReviewTab() {
-  const [tours, setTours]         = useState<Tour[]>([]);
-  const [loading, setLoading]     = useState(true);
-  const [search, setSearch]       = useState("");
-  const [selected, setSelected]   = useState<Tour | null>(null);
-  const [rewriting, setRewriting] = useState(false);
-  const [rewritten, setRewritten] = useState(false);
-  const [decision, setDecision]   = useState<"approved"|"rejected"|null>(null);
-
-  useEffect(() => {
-    const fetchTours = async () => {
-      try {
-        const res = await fetch(`/api/tenant/v1/tours?page=1&page_size=50`);
-        if (res.ok) {
-          const data = await res.json();
-          setTours(data.data ?? []);
-        }
-      } catch (e) {
-        console.error("Tours fetch error:", e);
-        setTours([]);
-      } finally { setLoading(false); }
-    };
-    fetchTours();
-  }, []);
-
-  const filtered = tours.filter(t =>
-    t.src_name?.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const runRewrite = async () => {
-    setRewriting(true); setRewritten(false); setDecision(null);
-    await new Promise(r => setTimeout(r, 2000)); // S8: POST /v1/tours/{id}/rewrite
-    setRewriting(false); setRewritten(true);
-  };
-
-  const mockBefore = { name: selected?.aa_name || selected?.src_name || "", summary: selected?.aa_summary || "No summary available." };
-  const mockAfter  = { name: `${selected?.src_name ?? ""} — Exclusive Experience`, summary: "An extraordinary private journey, curated exclusively for discerning travellers seeking transformative encounters with Asia's most coveted destinations." };
-
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: selected ? "320px 1fr" : "1fr", gap: 20, alignItems: "start" }}>
-      {/* Tour list */}
-      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
-        <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
-          <div style={{ position: "relative" }}>
-            <Search size={12} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }}/>
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search tours..."
-              style={{ width: "100%", padding: "8px 10px 8px 30px", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text-primary)", fontSize: 12, outline: "none" }}/>
-          </div>
-        </div>
-        <div style={{ maxHeight: 480, overflowY: "auto" as const }}>
-          {loading ? (
-            <div style={{ padding: 24, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
-              <Loader2 size={16} style={{ animation: "spin 1s linear infinite", margin: "0 auto 8px", display: "block" }}/>Loading...
-            </div>
-          ) : filtered.length === 0 ? (
-            <div style={{ padding: 24, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>No tours found</div>
-          ) : filtered.map(tour => {
-            const isSelected = selected?.tour_id === tour.tour_id;
-            return (
-              <div key={tour.tour_id} onClick={() => { setSelected(isSelected ? null : tour); setRewritten(false); setDecision(null); }}
-                style={{
-                  padding: "12px 16px", cursor: "pointer", borderBottom: "1px solid var(--border)",
-                  background: isSelected ? "rgba(219,150,40,0.08)" : "transparent",
-                  borderLeft: `3px solid ${isSelected ? "var(--brand-gold)" : "transparent"}`,
-                  transition: "all 0.1s",
-                }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>{tour.aa_name || tour.src_name}</div>
-                <div style={{ fontSize: 11, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#22c55e", display: "inline-block" }}/>
-                  {tour.quality_score ? `Score: ${tour.quality_score}` : tour.pipeline_status || "published"}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Review panel */}
+      {/* Detail panel */}
       {selected && (
-        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
-          <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>{selected.src_name}</div>
-            <button onClick={runRewrite} disabled={rewriting}
-              style={{ padding: "8px 18px", background: rewriting ? "var(--border)" : "var(--brand-gold)", border: "none", borderRadius: 6, color: rewriting ? "var(--text-muted)" : "white", fontSize: 12, fontWeight: 700, cursor: rewriting ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-              {rewriting ? <><Loader2 size={12} style={{ animation: "spin 1s linear infinite" }}/>Rewriting...</> : <><RotateCcw size={12}/>Generate Tenant Version</>}
-            </button>
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)",
+          borderRadius: 12, overflow: "hidden",
+          position: "sticky" as const, top: 20, alignSelf: "flex-start" as const }}>
+          <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--border)",
+            display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontSize: 13, fontWeight: 700,
+              color: "var(--text-primary)" }}>{selected.aa_name || "Tour"}</div>
+            <button onClick={() => { setSelected(null); setDetail(null); }}
+              style={{ background: "none", border: "none", cursor: "pointer",
+                color: "var(--text-muted)", fontSize: 18 }}>×</button>
           </div>
 
-          {!rewritten ? (
-            <div style={{ padding: 32, textAlign: "center", color: "var(--text-muted)" }}>
-              <BarChart3 size={32} style={{ margin: "0 auto 12px", opacity: 0.3 }}/>
-              <div style={{ fontSize: 13 }}>Click "Generate Tenant Version" to create a branded rewrite</div>
+          {detailLoading ? (
+            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>
+              <Loader2 size={18} style={{ margin: "0 auto 8px", display: "block" }}/>
             </div>
-          ) : (
-            <div style={{ padding: 20 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-                {/* Before */}
-                <div style={{ border: "1px solid rgba(239,68,68,0.2)", borderRadius: 10, overflow: "hidden" }}>
-                  <div style={{ padding: "8px 14px", background: "rgba(239,68,68,0.08)", fontSize: 11, fontWeight: 700, color: "#f87171" }}>AA ORIGINAL</div>
-                  <div style={{ padding: 14 }}>
-                    <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 4 }}>TITLE</div>
-                    <div style={{ fontSize: 13, color: "var(--text-primary)", marginBottom: 12 }}>{mockBefore.name}</div>
-                    <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 4 }}>SUMMARY</div>
-                    <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>{mockBefore.summary}</div>
-                  </div>
+          ) : detail ? (
+            <div style={{ padding: 16, maxHeight: 560, overflowY: "auto" as const }}>
+              {/* Before / After */}
+              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)",
+                textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>
+                Before / After
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8,
+                marginBottom: 16 }}>
+                <div style={{ background: "rgba(239,68,68,0.06)",
+                  border: "1px solid rgba(239,68,68,0.2)",
+                  borderRadius: 8, padding: 10 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#f87171",
+                    marginBottom: 6 }}>AA ORIGINAL</div>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)",
+                    lineHeight: 1.5 }}>{detail.aa_summary}</div>
                 </div>
-                {/* After */}
-                <div style={{ border: "1px solid rgba(34,197,94,0.2)", borderRadius: 10, overflow: "hidden" }}>
-                  <div style={{ padding: "8px 14px", background: "rgba(34,197,94,0.08)", fontSize: 11, fontWeight: 700, color: "#4ade80" }}>TENANT VERSION</div>
-                  <div style={{ padding: 14 }}>
-                    <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 4 }}>TITLE</div>
-                    <div contentEditable suppressContentEditableWarning style={{ fontSize: 13, color: "var(--text-primary)", marginBottom: 12, outline: "none", padding: "2px 4px", borderRadius: 4, background: "rgba(255,255,255,0.03)" }}>{mockAfter.name}</div>
-                    <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 4 }}>SUMMARY</div>
-                    <div contentEditable suppressContentEditableWarning style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6, outline: "none", padding: "2px 4px", borderRadius: 4, background: "rgba(255,255,255,0.03)" }}>{mockAfter.summary}</div>
+                <div style={{ background: "rgba(34,197,94,0.06)",
+                  border: "1px solid rgba(34,197,94,0.2)",
+                  borderRadius: 8, padding: 10 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#22c55e",
+                    marginBottom: 6 }}>YOUR VERSION</div>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+                    {(() => {
+                      try {
+                        const c = typeof detail.rewritten_content === "string"
+                          ? JSON.parse(detail.rewritten_content) : detail.rewritten_content;
+                        return c?.summary || c?.status || "Generating...";
+                      } catch { return "Generating..."; }
+                    })()}
                   </div>
                 </div>
               </div>
 
-              {!decision ? (
-                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-                  <button onClick={async () => {
-                    setDecision("rejected");
-                    // Wire real reject API via review_queue
-                    try {
-                      await fetch(`/api/tenant/v1/pipeline/review-queue/${selected.id || selected.tour_id}/reject`, { method: "POST" });
-                    } catch {}
-                  }} style={{ padding: "9px 20px", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 8, color: "#ef4444", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+              {/* Version history */}
+              {detail.version_history?.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)",
+                    textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
+                    Version History
+                  </div>
+                  {detail.version_history.map((h: any) => (
+                    <div key={h.id} style={{ display: "flex", gap: 10,
+                      alignItems: "center", marginBottom: 6, fontSize: 12 }}>
+                      <span style={{ color: "var(--text-muted)" }}>v{h.version_number}</span>
+                      <span style={{ color: "var(--text-secondary)" }}>{h.edit_source}</span>
+                      <span style={{ marginLeft: "auto",
+                        color: STATUS_COLOR[h.status] ?? "#888",
+                        fontWeight: 600 }}>{h.status}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Actions */}
+              {selected.status === "pending" && (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => doAction("approve")} disabled={acting}
+                    style={{ flex: 1, padding: "9px 0", borderRadius: 8, border: "none",
+                      background: "rgba(34,197,94,0.15)", color: "#22c55e",
+                      fontSize: 13, fontWeight: 700, cursor: acting ? "not-allowed" : "pointer",
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    <CheckCircle size={14}/> Approve
+                  </button>
+                  <button onClick={() => doAction("reject")} disabled={acting}
+                    style={{ flex: 1, padding: "9px 0", borderRadius: 8, border: "none",
+                      background: "rgba(239,68,68,0.1)", color: "#ef4444",
+                      fontSize: 13, fontWeight: 700, cursor: acting ? "not-allowed" : "pointer",
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                     <XCircle size={14}/> Reject
                   </button>
-                  <button onClick={runRewrite} style={{ padding: "9px 20px", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text-secondary)", fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-                    <RotateCcw size={14}/> Regenerate
-                  </button>
-                  <button onClick={async () => {
-                    setDecision("approved");
-                    try {
-                      await fetch(`/api/tenant/v1/pipeline/review-queue/${selected.id || selected.tour_id}/approve`, { method: "POST" });
-                    } catch {}
-                  }} style={{ padding: "9px 24px", background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.3)", borderRadius: 8, color: "#22c55e", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-                    <CheckCircle size={14}/> Approve & Export
-                  </button>
-                </div>
-              ) : (
-                <div style={{ padding: 14, borderRadius: 8, background: decision === "approved" ? "rgba(34,197,94,0.08)" : "rgba(239,68,68,0.08)", border: `1px solid ${decision === "approved" ? "rgba(34,197,94,0.2)" : "rgba(239,68,68,0.2)"}`, fontSize: 13, fontWeight: 600, color: decision === "approved" ? "#22c55e" : "#ef4444" }}>
-                  {decision === "approved" ? "✓ Approved — available via API" : "✗ Rejected — not published"}
                 </div>
               )}
             </div>
-          )}
+          ) : null}
         </div>
       )}
     </div>
   );
 }
 
+// ── Brand Identity Tab (preserved from existing) ───────────────────────────────
 
-// ── Brand Identity Tab ────────────────────────────────────────────────────────
-
-function BrandIdentityTab() {
-  const [config, setConfig]       = useState<any>(null);
-  const [loading, setLoading]     = useState(true);
-  const [saving, setSaving]       = useState(false);
-  const [saved, setSaved]         = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [uploadDone, setUploadDone] = useState(false);
-
-  const [systemPrompt, setSystemPrompt]   = useState("");
-  const [styleGuide, setStyleGuide]       = useState("");
-  const [forbiddenWords, setForbiddenWords] = useState("");
+function BrandTab() {
+  const [data, setData]         = useState<any>(null);
+  const [loading, setLoading]   = useState(true);
+  const [saving, setSaving]     = useState(false);
+  const [systemPrompt, setSP]   = useState("");
+  const [styleGuide, setSG]     = useState("");
+  const [forbidden, setForbidden] = useState("");
+  const [saved, setSaved]       = useState(false);
 
   useEffect(() => {
     fetch("/api/tenant/v1/pipeline/brand-identity")
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (d?.configured) {
-          setSystemPrompt(d.system_prompt || "");
-          setStyleGuide(d.style_guide || "");
-          setForbiddenWords((d.forbidden_words || []).join(", "));
-          setConfig(d);
+          setSP(d.system_prompt || "");
+          setSG(d.style_guide || "");
+          setForbidden((d.forbidden_words || []).join(", "));
         }
+        setData(d);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
-  const handleSave = async () => {
+  const save = async () => {
     setSaving(true); setSaved(false);
     try {
-      const words = forbiddenWords.split(",").map((w: string) => w.trim()).filter(Boolean);
       const res = await fetch("/api/tenant/v1/pipeline/brand-identity", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ system_prompt: systemPrompt, style_guide: styleGuide, forbidden_words: words }),
+        body: JSON.stringify({
+          system_prompt: systemPrompt,
+          style_guide: styleGuide,
+          forbidden_words: forbidden.split(",").map(w => w.trim()).filter(Boolean),
+        }),
       });
       if (res.ok) setSaved(true);
-    } catch {}
-    finally { setSaving(false); }
+    } catch {} finally { setSaving(false); }
   };
 
-  const handleFileUpload = async (file: File) => {
-    setUploading(true); setUploadDone(false);
-    try {
-      const urlRes = await fetch("/api/tenant/v1/pipeline/brand-identity/upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filename: file.name, content_type: file.type || "application/pdf" }),
-      });
-      if (!urlRes.ok) return;
-      const { upload_url } = await urlRes.json();
-      const uploadRes = await fetch(upload_url, {
-        method: "PUT",
-        headers: { "Content-Type": file.type || "application/pdf" },
-        body: file,
-      });
-      if (uploadRes.ok) setUploadDone(true);
-    } catch {}
-    finally { setUploading(false); }
-  };
+  const field = (label: string, value: string, onChange: (v:string)=>void,
+    rows: number, placeholder: string) => (
+    <div style={{ marginBottom: 18 }}>
+      <label style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)",
+        textTransform: "uppercase", letterSpacing: 1, display: "block",
+        marginBottom: 6 }}>{label}</label>
+      <textarea value={value} onChange={e => onChange(e.target.value)}
+        rows={rows} placeholder={placeholder}
+        style={{ width: "100%", padding: "10px 12px",
+          background: "var(--bg-primary)", border: "1px solid var(--border)",
+          borderRadius: 8, color: "var(--text-primary)", fontSize: 13,
+          resize: "vertical" as const, outline: "none", lineHeight: 1.6 }}/>
+    </div>
+  );
 
-  const inputStyle: React.CSSProperties = {
-    width: "100%", padding: "10px 12px",
-    background: "var(--bg-primary)", border: "1px solid var(--border)",
-    borderRadius: 8, color: "var(--text-primary)", fontSize: 13,
-    outline: "none", boxSizing: "border-box",
-  };
-
-  if (loading) return <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>;
+  if (loading) return (
+    <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)" }}>
+      <Loader2 size={20} style={{ margin: "0 auto 8px", display: "block" }}/>
+    </div>
+  );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      {/* File upload */}
-      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: 24 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" as const, letterSpacing: 1, marginBottom: 16 }}>
-          Upload Brand Guidelines (PDF / DOCX)
-        </div>
-        <div
-          onClick={() => document.getElementById("brand-file-input")?.click()}
-          style={{
-            border: "2px dashed var(--border)", borderRadius: 10, padding: "28px 24px",
-            textAlign: "center" as const, cursor: "pointer",
-            background: uploadDone ? "rgba(34,197,94,0.04)" : "var(--bg-primary)",
-          }}>
-          <input id="brand-file-input" type="file" accept=".pdf,.docx,.doc" style={{ display: "none" }}
-            onChange={e => { if (e.target.files?.[0]) handleFileUpload(e.target.files[0]); }} />
-          {uploading ? (
-            <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
-              <Loader2 size={20} style={{ animation: "spin 1s linear infinite", margin: "0 auto 8px", display: "block" }}/>
-              Uploading…
-            </div>
-          ) : uploadDone ? (
-            <div style={{ fontSize: 13, color: "#22c55e", fontWeight: 600 }}>
-              <CheckCircle size={20} style={{ margin: "0 auto 8px", display: "block" }}/>
-              Brand file uploaded ✓
-            </div>
-          ) : (
-            <>
-              <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-secondary)" }}>Drop brand guidelines here</div>
-              <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>PDF or DOCX · Click to browse</div>
-            </>
-          )}
-        </div>
-        <div style={{ marginTop: 10, fontSize: 12, color: "var(--text-muted)" }}>
-          Upload your brand style guide — the AI will follow your tone, vocabulary, and content standards when generating tour content.
-        </div>
-      </div>
-
-      {/* Manual config */}
-      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: 24 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" as const, letterSpacing: 1, marginBottom: 16 }}>
-          Brand Configuration
-        </div>
-
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase" as const, letterSpacing: 1, display: "block", marginBottom: 6 }}>
-            Brand System Prompt
-          </label>
-          <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)} rows={4}
-            placeholder="e.g. You are a luxury travel writer for WanderLux. Use sophisticated, aspirational language. Focus on exclusivity and transformative experiences..."
-            style={{ ...inputStyle, resize: "vertical" as const }} />
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Overrides the default AA system prompt for your tenant</div>
-        </div>
-
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase" as const, letterSpacing: 1, display: "block", marginBottom: 6 }}>
-            Style Guide Notes
-          </label>
-          <textarea value={styleGuide} onChange={e => setStyleGuide(e.target.value)} rows={3}
-            placeholder="e.g. Always use Oxford comma. Avoid passive voice. Prices in USD. Target audience: HNW individuals 45-65..."
-            style={{ ...inputStyle, resize: "vertical" as const }} />
-        </div>
-
-        <div style={{ marginBottom: 20 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase" as const, letterSpacing: 1, display: "block", marginBottom: 6 }}>
-            Forbidden Words / Phrases
-          </label>
-          <input value={forbiddenWords} onChange={e => setForbiddenWords(e.target.value)}
-            placeholder="e.g. cheap, budget, deals, discount, backpacker"
-            style={inputStyle} />
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Comma-separated. These words will never appear in generated content.</div>
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <button onClick={handleSave} disabled={saving} style={{
-            padding: "10px 28px", background: saving ? "var(--border)" : "var(--brand-gold)",
-            border: "none", borderRadius: 8, color: "white", fontSize: 13, fontWeight: 700,
-            cursor: saving ? "not-allowed" : "pointer",
-            display: "flex", alignItems: "center", gap: 6,
-          }}>
-            {saving ? <><Loader2 size={13} style={{ animation: "spin 1s linear infinite" }}/>Saving…</> : "Save Brand Config"}
-          </button>
-          {saved && <span style={{ fontSize: 13, color: "#22c55e", fontWeight: 600 }}>✓ Saved successfully</span>}
-          {config?.version && <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Version {config.version}</span>}
-        </div>
-      </div>
+    <div style={{ maxWidth: 680 }}>
+      <h2 style={{ fontSize: 18, fontWeight: 700, color: "var(--text-primary)",
+        marginBottom: 6 }}>Brand Identity</h2>
+      <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 24,
+        lineHeight: 1.6 }}>
+        Customize how AA content is rewritten for your brand.
+        These rules are appended to AA core standards — they do not override quality thresholds.
+      </p>
+      {field("Brand Context / System Prompt", systemPrompt, setSP, 5,
+        "e.g. We are a luxury operator focused on US travellers aged 45+. Emphasise exclusivity and cultural depth.")}
+      {field("Style Guide", styleGuide, setSG, 4,
+        "e.g. Use active voice. Avoid adjective stacking. Keep sentences under 25 words.")}
+      {field("Forbidden Words (comma-separated)", forbidden, setForbidden, 2,
+        "e.g. cheap, budget, bargain, deals")}
+      <button onClick={save} disabled={saving}
+        style={{ padding: "10px 28px", background: saving ? "var(--border)" : "var(--brand-gold)",
+          border: "none", borderRadius: 8, color: saving ? "var(--text-muted)" : "white",
+          fontSize: 13, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer" }}>
+        {saving ? "Saving..." : "Save Brand Rules"}
+      </button>
+      {saved && (
+        <span style={{ marginLeft: 12, fontSize: 12, color: "#22c55e", fontWeight: 600 }}>
+          ✓ Saved — active on next pipeline run
+        </span>
+      )}
     </div>
   );
 }
 
-// ── API Key Tab ───────────────────────────────────────────────────────────────
+// ── API Key Tab ────────────────────────────────────────────────────────────────
 
-function ApiKeyTab({ tenantId }: { tenantId: string }) {
-  const [showKey, setShowKey] = useState(false);
-  const [copied, setCopied]   = useState(false);
+function ApiKeyTab() {
+  const [key, setKey]     = useState("");
+  const [show, setShow]   = useState(false);
+  const [copied, setCopied] = useState(false);
+  const tenantId = getCookie("cis_tenant_id");
 
-  // Real key from cookie — set by tenant-login page
-  const rawKey = getCookie("cis_tenant_key") || "wl_live_sk_test_wanderlux_2026";
-
-  const copyKey = () => {
-    navigator.clipboard.writeText(rawKey);
+  const copy = () => {
+    navigator.clipboard.writeText(key);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const endpoints = [
-    ["GET",  "/v1/tours",              "List your approved tours (Gold layer)"],
-    ["GET",  "/v1/tours/{id}",         "Get single tour with full content"],
-    ["POST", "/v1/tours/{id}/rewrite", "Trigger tenant-branded rewrite"],
-    ["POST", "/v1/exports",            "Create bulk export job (JSON/CSV/XML)"],
-    ["GET",  "/v1/usage",              "Check quota and billing stats"],
-    ["POST", "/v1/webhooks/test",      "Send test webhook payload"],
-  ];
-
-  const curlExample = `curl -X GET \\
-  https://api-cis.lumiguides.it.com/v1/tours \\
-  -H "X-API-Key: ${showKey ? rawKey : rawKey.slice(0, 12) + "..."}" \\
-  -H "Accept: application/json"`;
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      {/* Key display */}
-      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: 24 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 16 }}>Your API Key</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-          <div style={{ flex: 1, fontFamily: "monospace", fontSize: 13, padding: "11px 16px", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: 8, color: showKey ? "var(--brand-gold)" : "var(--text-muted)", letterSpacing: showKey ? 0.5 : 2 }}>
-            {showKey ? rawKey : "•".repeat(Math.min(rawKey.length, 32))}
+    <div style={{ maxWidth: 600 }}>
+      <h2 style={{ fontSize: 18, fontWeight: 700, color: "var(--text-primary)", marginBottom: 6 }}>
+        API Access
+      </h2>
+      <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 24, lineHeight: 1.6 }}>
+        Use your API key to access your rewritten tour catalog programmatically.
+      </p>
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)",
+        borderRadius: 12, padding: 20, marginBottom: 20 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)",
+          textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>API Key</div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <code style={{ flex: 1, padding: "10px 14px",
+            background: "var(--bg-primary)", borderRadius: 8,
+            fontSize: 13, color: "var(--text-primary)", letterSpacing: 1,
+            fontFamily: "monospace" }}>
+            {show ? (key || "Contact admin for your API key") : "•".repeat(40)}
+          </code>
+          <button onClick={() => setShow(s => !s)}
+            style={{ padding: "9px 12px", background: "var(--bg-primary)",
+              border: "1px solid var(--border)", borderRadius: 8,
+              cursor: "pointer", color: "var(--text-muted)" }}>
+            {show ? <EyeOff size={14}/> : <Eye size={14}/>}
+          </button>
+          <button onClick={copy}
+            style={{ padding: "9px 12px", background: "var(--bg-primary)",
+              border: "1px solid var(--border)", borderRadius: 8,
+              cursor: "pointer", color: copied ? "#22c55e" : "var(--text-muted)" }}>
+            {copied ? <CheckCircle size={14}/> : <Copy size={14}/>}
+          </button>
+        </div>
+      </div>
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)",
+        borderRadius: 12, padding: 20 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)",
+          textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>
+          Quick Reference
+        </div>
+        {[
+          { label: "List my tours", method: "GET",
+            path: "/v1/tours/my-versions" },
+          { label: "Browse pool",   method: "GET",
+            path: "/v1/tours/pool" },
+          { label: "Trigger rewrite", method: "POST",
+            path: "/v1/tours/pool/{id}/rewrite" },
+          { label: "Approve version", method: "PATCH",
+            path: "/v1/tours/versions/{id}" },
+        ].map(e => (
+          <div key={e.path} style={{ display: "flex", gap: 10, alignItems: "center",
+            marginBottom: 8, fontSize: 12 }}>
+            <span style={{ padding: "2px 8px", borderRadius: 4,
+              background: e.method === "GET" ? "rgba(34,197,94,0.1)"
+                : e.method === "POST" ? "rgba(219,150,40,0.1)"
+                : "rgba(139,92,246,0.1)",
+              color: e.method === "GET" ? "#22c55e"
+                : e.method === "POST" ? "var(--brand-gold)" : "#a78bfa",
+              fontWeight: 700, fontSize: 10 }}>{e.method}</span>
+            <code style={{ color: "var(--text-secondary)", fontFamily: "monospace" }}>
+              {e.path}
+            </code>
+            <span style={{ color: "var(--text-muted)", marginLeft: "auto" }}>{e.label}</span>
           </div>
-          <button onClick={() => setShowKey(!showKey)} style={{ padding: "11px 14px", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: 8, cursor: "pointer", color: "var(--text-secondary)", display: "flex", alignItems: "center" }}>
-            {showKey ? <EyeOff size={15}/> : <Eye size={15}/>}
-          </button>
-          <button onClick={copyKey} style={{ padding: "11px 18px", background: copied ? "rgba(34,197,94,0.1)" : "var(--bg-primary)", border: `1px solid ${copied ? "rgba(34,197,94,0.3)" : "var(--border)"}`, borderRadius: 8, cursor: "pointer", color: copied ? "#22c55e" : "var(--text-secondary)", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
-            <Copy size={13}/>{copied ? "Copied!" : "Copy"}
-          </button>
-        </div>
-        <div style={{ padding: "10px 14px", background: "rgba(219,150,40,0.06)", border: "1px solid rgba(219,150,40,0.15)", borderRadius: 8, fontSize: 12, color: "var(--text-muted)" }}>
-          <AlertCircle size={12} style={{ display: "inline", marginRight: 6, color: "var(--brand-gold)", verticalAlign: "middle" }}/>
-          Keep your API key secret. Pass it as <code style={{ color: "var(--brand-gold)" }}>X-API-Key</code> header on every request. Do not commit to version control.
-        </div>
-      </div>
-
-      {/* Endpoints */}
-      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
-        <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)", fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 1 }}>Available Endpoints</div>
-        <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 6 }}>
-          {endpoints.map(([method, path, desc]) => (
-            <div key={path} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: 8 }}>
-              <span style={{ fontSize: 10, fontWeight: 800, padding: "3px 8px", borderRadius: 4, background: method === "GET" ? "rgba(59,130,246,0.15)" : "rgba(34,197,94,0.15)", color: method === "GET" ? "#60a5fa" : "#4ade80", flexShrink: 0 }}>{method}</span>
-              <code style={{ fontSize: 12, color: "var(--brand-gold)", flex: 1 }}>{path}</code>
-              <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{desc}</span>
-              <Globe size={12} color="var(--text-muted)" style={{ flexShrink: 0, opacity: 0.4 }}/>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* cURL example */}
-      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
-        <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)", fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 1 }}>Quick Start</div>
-        <div style={{ padding: 20 }}>
-          <pre style={{ margin: 0, fontFamily: "monospace", fontSize: 12, color: "#a5f3fc", background: "#0d1117", padding: "16px 20px", borderRadius: 8, overflowX: "auto" as const, lineHeight: 1.7 }}>{curlExample}</pre>
-        </div>
+        ))}
       </div>
     </div>
   );
 }
 
-// ── Main Page ─────────────────────────────────────────────────────────────────
+// ── Main Portal Page ──────────────────────────────────────────────────────────
 
-export default function TenantPortalPage() {
-  const [tab, setTab] = useState<Tab>("dashboard");
-  const [tenantName, setTenantName] = useState("Partner");
-  const [planTier, setPlanTier]     = useState("growth");
-  const [tenantId, setTenantId]     = useState("");
-  const [tenantToken, setTenantToken] = useState("");
+export default function PortalPage() {
+  const [tab, setTab]           = useState<Tab>("dashboard");
+  const [tenantName, setName]   = useState("Partner");
+  const [planTier, setPlan]     = useState("growth");
+  const [notification, setNote] = useState<string | null>(null);
 
   useEffect(() => {
-    setTenantName(getCookie("cis_tenant_name") || "Partner");
-    setPlanTier(getCookie("cis_tenant_plan") || "growth");
-    setTenantId(getCookie("cis_tenant_id") || "");
-    setTenantToken(getCookie("cis_tenant_token") || "");
+    const n = getCookie("cis_tenant_name");
+    const p = getCookie("cis_tenant_plan");
+    if (n) setName(n);
+    if (p) setPlan(p);
   }, []);
 
+  const showNote = (msg: string) => {
+    setNote(msg);
+    setTimeout(() => setNote(null), 4000);
+  };
+
+  const handleRewrite = (d: any) => {
+    showNote(`Rewrite started — version ${d.version_number}. Check My Catalog.`);
+    setTab("catalog");
+  };
+
+  const TABS: { id: Tab; icon: React.ReactNode; label: string }[] = [
+    { id: "dashboard", icon: <LayoutDashboard size={14}/>, label: "Dashboard" },
+    { id: "pool",      icon: <BookOpen size={14}/>,        label: "Browse Pool" },
+    { id: "catalog",   icon: <Package size={14}/>,         label: "My Catalog" },
+    { id: "brand",     icon: <Tag size={14}/>,             label: "Brand Identity" },
+    { id: "apikey",    icon: <Key size={14}/>,             label: "API Access" },
+  ];
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      {/* Page header */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
-        <div>
-          <h1 style={{ fontSize: 22, fontWeight: 800, color: "var(--text-primary)", margin: 0 }}>Tenant Portal</h1>
-          <p style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 4, margin: 0 }}>
-            {tenantName} ·{" "}
-            <span style={{ color: "var(--brand-gold)", textTransform: "capitalize" }}>{planTier}</span>
-          </p>
+    <div>
+      {/* Notification */}
+      {notification && (
+        <div style={{ position: "fixed", top: 70, right: 24, zIndex: 999,
+          padding: "12px 20px", background: "#22c55e", borderRadius: 10,
+          color: "white", fontSize: 13, fontWeight: 600,
+          boxShadow: "0 4px 20px rgba(0,0,0,0.2)" }}>
+          <CheckCircle size={14} style={{ display: "inline", marginRight: 8 }}/>
+          {notification}
         </div>
+      )}
+
+      {/* Header */}
+      <div style={{ marginBottom: 24 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-primary)", margin: 0 }}>
+          Partner Portal
+        </h1>
+        <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 4 }}>
+          Welcome, {tenantName}
+        </p>
       </div>
 
       {/* Tabs */}
-      <div style={{ display: "flex", gap: 8 }}>
-        <TabBtn id="dashboard" active={tab === "dashboard"} icon={<LayoutDashboard size={14}/>} label="Dashboard"      onClick={() => setTab("dashboard")}/>
-        <TabBtn id="upload"    active={tab === "upload"}    icon={<Upload size={14}/>}           label="Batch Upload"  onClick={() => setTab("upload")}/>
-        <TabBtn id="review"    active={tab === "review"}    icon={<FileSearch size={14}/>}       label="Content Review" onClick={() => setTab("review")}/>
-        <TabBtn id="brand"     active={tab === "brand"}     icon={<LayoutDashboard size={14}/>}  label="Brand Identity" onClick={() => setTab("brand")}/>
-        <TabBtn id="apikey"    active={tab === "apikey"}    icon={<Key size={14}/>}              label="API Access"    onClick={() => setTab("apikey")}/>
+      <div style={{ display: "flex", gap: 8, marginBottom: 24, flexWrap: "wrap" as const }}>
+        {TABS.map(t => (
+          <TabBtn key={t.id} id={t.id} active={tab===t.id}
+            icon={t.icon} label={t.label} onClick={() => setTab(t.id)}/>
+        ))}
       </div>
 
-      {/* Tab content */}
-      {tab === "dashboard" && <DashboardTab tenantName={tenantName} planTier={planTier} token={tenantToken}/>}
-      {tab === "upload"    && <BatchUploadTab/>}
-      {tab === "review"    && <ContentReviewTab/>}
-      {tab === "brand"     && <BrandIdentityTab/>}
-      {tab === "apikey"    && <ApiKeyTab tenantId={tenantId}/>}
+      {/* Content */}
+      {tab === "dashboard" && <DashboardTab planTier={planTier}/>}
+      {tab === "pool"      && <PoolTab onRewrite={handleRewrite}/>}
+      {tab === "catalog"   && <CatalogTab/>}
+      {tab === "brand"     && <BrandTab/>}
+      {tab === "apikey"    && <ApiKeyTab/>}
     </div>
   );
 }
