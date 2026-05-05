@@ -349,7 +349,7 @@ function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
   };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 500px" : "1fr",
+    <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 560px" : "1fr",
       gap: 20, alignItems: "start" }}>
       {/* LEFT — filters + tour list */}
       <div>
@@ -520,7 +520,7 @@ function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
             </div>
           </div>
 
-          <div style={{ padding: 18, maxHeight: 580,
+          <div style={{ padding: 18, maxHeight: "75vh",
             overflowY: "auto" as const }}>
 
           {panelTab === "details" && (
@@ -601,8 +601,7 @@ function PoolTab({ onRewrite }: { onRewrite: (tour: any) => void }) {
                     color: "var(--text-muted)", textTransform: "uppercase",
                     letterSpacing: 1, marginBottom: 6 }}>Itineraries</div>
                   <div style={{ fontSize: 12, color: "var(--text-secondary)",
-                    lineHeight: 1.7, padding: "10px 12px", maxHeight: 200,
-                    overflowY: "auto" as const,
+                    lineHeight: 1.7, padding: "10px 12px",
                     background: "var(--bg-primary)", borderRadius: 8,
                     whiteSpace: "pre-wrap" as const }}>
                     {selected.aa_itineraries}
