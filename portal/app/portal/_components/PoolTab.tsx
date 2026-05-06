@@ -82,7 +82,7 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
   const rewriteTargets = checked.size > 0 ? Array.from(checked) : selected ? [selected.id] : [];
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: selected ? "minmax(0,1fr) minmax(440px,38%)" : "1fr", gap: 20, alignItems: "start" }}>
+    <div style={{ display: "grid", gridTemplateColumns: selected ? "minmax(0,36%) minmax(0,64%)" : "1fr", gap: 20, alignItems: "start" }}>
 
       {/* LEFT — list */}
       <div>
