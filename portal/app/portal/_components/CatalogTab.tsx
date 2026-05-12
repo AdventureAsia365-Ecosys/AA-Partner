@@ -20,6 +20,7 @@ interface Version {
   aa_subtitle: string; aa_summary: string; aa_highlights: string;
   aa_itineraries: string | null; aa_seo_title: string; aa_seo_meta: string;
   aa_quality_score: number; country: string | null; duration: string | null;
+  published_tour_id?: string;
   version_history?: { id: string; version_number: number; status: string; edit_source: string; quality_score: number | null; created_at: string }[];
 }
 
@@ -38,6 +39,8 @@ export default function CatalogTab() {
   const [dirty, setDirty]       = useState(false);
   const [expandItin, setExpandItin] = useState(false);
   const [localToast, setLocalToast] = useState<string | null>(null);
+  // Original AA tour data for the "AA Original" diff column
+  const [origTour, setOrigTour]     = useState<any>(null);
 
   // Refs for polling — pollingRef holds the interval ID so we never double-start
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -79,28 +82,34 @@ export default function CatalogTab() {
     const startTime = Date.now();
     pollingRef.current = setInterval(async () => {
       if (Date.now() - startTime > 300_000) {
-        // 5-minute safety stop
         if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
         return;
       }
       try {
-        // Always poll unfiltered so we catch all pending→done transitions
         const r = await fetch('/api/tenant/v1/tours/my-versions?page_size=50');
         if (!r.ok) return;
         const fresh: Version[] = (await r.json()).data ?? [];
 
-        const done = fresh.filter(v =>
-          v.status !== 'pending' &&
-          listRef.current.find(o => o.id === v.id)?.status === 'pending'
-        );
-
-        if (done.length > 0) {
+        // KEY FIX: stop as soon as NO items are pending — catches both
+        // "just completed" and "manually approved/rejected" cases
+        const stillPending = fresh.some(v => v.status === 'pending');
+        if (!stillPending) {
           if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
-          const name = done[0].aa_name || 'Tour';
-          setLocalToast(`✅ "${name}" — rewrite complete. Click to review.`);
-          setTimeout(() => setLocalToast(null), 5000);
-          await fetchList(); // refresh filtered view
+          // Which items just transitioned from pending in our snapshot?
+          const justDone = fresh.filter(v =>
+            listRef.current.find(o => o.id === v.id)?.status === 'pending'
+          );
+          setList(fresh); // update all badges at once with fresh data
+          if (justDone.length > 0) {
+            const name = justDone[0].aa_name || 'Tour';
+            setLocalToast(`✅ "${name}" — rewrite complete. Click to review.`);
+            setTimeout(() => setLocalToast(null), 5000);
+          }
+          return;
         }
+
+        // Still pending — update list so in-progress badges stay current
+        setList(fresh);
       } catch {}
     }, 5000);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -112,13 +121,22 @@ export default function CatalogTab() {
   }, []);
 
   async function loadDetail(v: Version) {
-    setSelected(v); setDlLoad(true); setDetail(null);
+    setSelected(v); setDlLoad(true); setDetail(null); setOrigTour(null);
     setDirty(false); setSaveOk(false); setExpandItin(false);
     try {
-      const r = await fetch(`/api/tenant/v1/tours/versions/${v.id}`);
-      if (r.ok) {
-        const d: Version = await r.json();
+      // Fetch version detail + original pool tour in parallel
+      const [rDetail, rOrig] = await Promise.all([
+        fetch(`/api/tenant/v1/tours/versions/${v.id}`),
+        v.published_tour_id
+          ? fetch(`/api/tenant/v1/tours/pool/${v.published_tour_id}`)
+          : Promise.resolve(null),
+      ]);
+      if (rDetail.ok) {
+        const d: Version = await rDetail.json();
         setDetail(d);
+        // Use pool tour for AA Original if available; fallback to version JOIN data
+        const orig = rOrig?.ok ? await rOrig.json() : d;
+        setOrigTour(orig);
         const rc = parseContent(d.rewritten_content) as Record<string, unknown> | null;
         setEditName((rc?.name ?? d.aa_name ?? "") as string);
         setEditSubtitle((rc?.subtitle ?? d.aa_subtitle ?? "") as string);
@@ -280,20 +298,20 @@ export default function CatalogTab() {
                   {detail.edited_at && <span>· Edited: {fmtDateTime(detail.edited_at)}</span>}
                 </div>
                 {[
-                  { label: "Summary",  orig: detail.aa_summary,   yours: editSummary,  set: (v: string) => { setEditSummary(v); setDirty(true); } },
-                  { label: "SEO Title", orig: detail.aa_seo_title, yours: editSeoTitle, set: (v: string) => { setEditSeoTitle(v); setDirty(true); } },
-                  { label: "SEO Meta",  orig: detail.aa_seo_meta,  yours: editSeoMeta,  set: (v: string) => { setEditSeoMeta(v); setDirty(true); } },
+                  { label: "Summary",   orig: origTour?.aa_summary  ?? detail.aa_summary,   yours: editSummary,  set: (v: string) => { setEditSummary(v); setDirty(true); } },
+                  { label: "SEO Title", orig: origTour?.seo_title   ?? detail.aa_seo_title, yours: editSeoTitle, set: (v: string) => { setEditSeoTitle(v); setDirty(true); } },
+                  { label: "SEO Meta",  orig: origTour?.seo_meta    ?? detail.aa_seo_meta,  yours: editSeoMeta,  set: (v: string) => { setEditSeoMeta(v); setDirty(true); } },
                 ].map(row => (
                   <CompareRow key={row.label} label={row.label} original={row.orig} yours={row.yours} onEdit={row.set} />
                 ))}
                 <HighlightsCompare
-                  origRaw={detail.aa_highlights}
+                  origRaw={origTour?.aa_highlights ?? detail.aa_highlights}
                   yours={editHighlights}
                   onChange={h => { setEditHighlights(h); setDirty(true); }}
                 />
-                {(detail.aa_itineraries || Boolean(parseContent(detail.rewritten_content)?.itineraries)) && (
+                {((origTour?.aa_itineraries ?? detail.aa_itineraries) || Boolean(parseContent(detail.rewritten_content)?.itineraries)) && (
                   <ItineraryCompare
-                    orig={detail.aa_itineraries ?? ""}
+                    orig={origTour?.aa_itineraries ?? detail.aa_itineraries ?? ""}
                     yours={String(parseContent(detail.rewritten_content)?.itineraries ?? "")}
                     expand={expandItin}
                     setExpand={setExpandItin}
@@ -335,21 +353,29 @@ export default function CatalogTab() {
               )}
 
               {/* Actions */}
-              <div style={{ padding: "14px 22px", display: "flex", gap: 10, justifyContent: "flex-end" }}>
-                {selected.status !== "rejected" && (
-                  <Btn variant="danger" disabled={acting} onClick={() => doAction("reject")}>
-                    <XCircle size={14} /> Reject
-                  </Btn>
-                )}
-                {dirty && (
-                  <Btn variant="secondary" disabled={saving} onClick={saveEdit}>
-                    <Save size={14} /> {saving ? "Saving…" : "Save as New Version"}
-                  </Btn>
-                )}
-                {selected.status !== "approved" && (
-                  <Btn variant="primary" disabled={acting} onClick={() => doAction("approve")}>
-                    <CheckCircle size={14} /> Approve
-                  </Btn>
+              <div style={{ padding: "14px 22px", display: "flex", gap: 10, justifyContent: "flex-end", alignItems: "center" }}>
+                {(selected.status === "approved" || selected.status === "rejected") ? (
+                  // Terminal state — no further actions allowed
+                  <span style={{
+                    fontSize: 13, fontWeight: 600,
+                    color: selected.status === "approved" ? T.green : T.red,
+                  }}>
+                    {selected.status === "approved" ? "✅ Approved" : "❌ Rejected — cannot undo"}
+                  </span>
+                ) : (
+                  <>
+                    <Btn variant="danger" disabled={acting} onClick={() => doAction("reject")}>
+                      <XCircle size={14} /> Reject
+                    </Btn>
+                    {dirty && (
+                      <Btn variant="secondary" disabled={saving} onClick={saveEdit}>
+                        <Save size={14} /> {saving ? "Saving…" : "Save as New Version"}
+                      </Btn>
+                    )}
+                    <Btn variant="primary" disabled={acting} onClick={() => doAction("approve")}>
+                      <CheckCircle size={14} /> Approve
+                    </Btn>
+                  </>
                 )}
               </div>
             </div>
