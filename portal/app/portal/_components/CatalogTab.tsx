@@ -4,7 +4,7 @@
 //      GET  /api/tenant/v1/tours/versions/{id}
 //      PATCH /api/tenant/v1/tours/versions/{id}
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Package, ChevronRight, Save, CheckCircle, XCircle, RotateCcw, Clock, X } from "lucide-react";
 import {
   T, serif, mono, sans,
@@ -37,6 +37,11 @@ export default function CatalogTab() {
   const [saveOk, setSaveOk]     = useState(false);
   const [dirty, setDirty]       = useState(false);
   const [expandItin, setExpandItin] = useState(false);
+  const [localToast, setLocalToast] = useState<string | null>(null);
+
+  // Refs for polling — pollingRef holds the interval ID so we never double-start
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const listRef    = useRef<Version[]>([]);
 
   // Edit state
   const [editName, setEditName]       = useState("");
@@ -57,6 +62,54 @@ export default function CatalogTab() {
   }, [filter]);
 
   useEffect(() => { fetchList(); }, [fetchList]);
+
+  // Keep listRef current for polling comparisons (avoids stale closure)
+  useEffect(() => { listRef.current = list; }, [list]);
+
+  // Polling: start when pending items are visible, stop on completion or unmount
+  useEffect(() => {
+    const hasPending = list.some(v => v.status === 'pending');
+
+    if (!hasPending) {
+      if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
+      return;
+    }
+    if (pollingRef.current) return; // already running
+
+    const startTime = Date.now();
+    pollingRef.current = setInterval(async () => {
+      if (Date.now() - startTime > 300_000) {
+        // 5-minute safety stop
+        if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
+        return;
+      }
+      try {
+        // Always poll unfiltered so we catch all pending→done transitions
+        const r = await fetch('/api/tenant/v1/tours/my-versions?page_size=50');
+        if (!r.ok) return;
+        const fresh: Version[] = (await r.json()).data ?? [];
+
+        const done = fresh.filter(v =>
+          v.status !== 'pending' &&
+          listRef.current.find(o => o.id === v.id)?.status === 'pending'
+        );
+
+        if (done.length > 0) {
+          if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
+          const name = done[0].aa_name || 'Tour';
+          setLocalToast(`✅ "${name}" — rewrite complete. Click to review.`);
+          setTimeout(() => setLocalToast(null), 5000);
+          await fetchList(); // refresh filtered view
+        }
+      } catch {}
+    }, 5000);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list]);
+
+  // Cleanup polling on unmount
+  useEffect(() => () => {
+    if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
+  }, []);
 
   async function loadDetail(v: Version) {
     setSelected(v); setDlLoad(true); setDetail(null);
@@ -113,6 +166,21 @@ export default function CatalogTab() {
   const seoMetaOk   = seoMetaLen >= 80 && seoMetaLen <= 160;
 
   return (
+    <>
+    <style>{`@keyframes cis-spin { to { transform: rotate(360deg); } }`}</style>
+
+    {/* Local toast — bottom-right, auto-dismiss after 5s */}
+    {localToast && (
+      <div style={{
+        position: "fixed", bottom: 24, right: 28, zIndex: 9999,
+        padding: "12px 20px", background: "#16A34A", borderRadius: 10,
+        color: "#fff", fontSize: 13, fontWeight: 600,
+        boxShadow: "0 4px 20px rgba(0,0,0,0.2)", maxWidth: 380,
+      }}>
+        {localToast}
+      </div>
+    )}
+
     <div style={{ display: "grid", gridTemplateColumns: selected ? "300px 1fr" : "1fr", gap: 20, alignItems: "start" }}>
 
       {/* LEFT — version list */}
@@ -161,7 +229,7 @@ export default function CatalogTab() {
                         </div>
                       )}
                     </div>
-                    <Badge variant={statusVariant(v.status)}>{v.status}</Badge>
+                    <StatusBadge status={v.status} />
                   </div>
                 </button>
               );
@@ -190,7 +258,7 @@ export default function CatalogTab() {
                 </Btn>
               )}
               {saveOk && !dirty && <span style={{ fontSize: 12, color: T.green, fontWeight: 600 }}>✓ Saved</span>}
-              <Badge variant={statusVariant(selected.status)}>{selected.status}</Badge>
+              <StatusBadge status={selected.status} />
               <button onClick={() => { setSelected(null); setDetail(null); }}
                 style={{ background: "none", border: "none", cursor: "pointer", color: T.muted2 }}>
                 <X size={16} />
@@ -289,6 +357,37 @@ export default function CatalogTab() {
         </div>
       )}
     </div>
+    </>
+  );
+}
+
+// ── Status badge — maps DB status to display text + colour + spinner ──────────
+
+function StatusBadge({ status }: { status: string }) {
+  const map: Record<string, { label: string; bg: string; color: string; spin?: boolean }> = {
+    pending:      { label: "Processing...", bg: "#FEF9C3",  color: "#B45309", spin: true },
+    ai_generated: { label: "Ready to review", bg: "#EFF6FF", color: "#2563EB" },
+    approved:     { label: "Approved",       bg: "#DCFCE7", color: "#16A34A" },
+    rejected:     { label: "Rejected",       bg: "#FEE2E2", color: "#DC2626" },
+    needs_review: { label: "Needs review",   bg: "#FEF3C7", color: "#D97706" },
+  };
+  const m = map[status] ?? { label: status, bg: "#F3F4F6", color: "#6B7280" };
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 5,
+      fontSize: 11, padding: "3px 9px", borderRadius: 20,
+      fontWeight: 600, background: m.bg, color: m.color,
+      whiteSpace: "nowrap",
+    }}>
+      {m.spin && (
+        <span style={{
+          display: "inline-block", width: 9, height: 9, flexShrink: 0,
+          border: `1.5px solid ${m.color}`, borderTopColor: "transparent",
+          borderRadius: "50%", animation: "cis-spin 0.8s linear infinite",
+        }} />
+      )}
+      {m.label}
+    </span>
   );
 }
 
