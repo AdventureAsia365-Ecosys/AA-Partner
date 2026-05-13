@@ -25,6 +25,9 @@ interface Version {
 }
 
 const STATUS_FILTERS = ["", "pending", "approved", "rejected"];
+const FILTER_LABELS: Record<string, string> = {
+  "": "All", pending: "Queued", approved: "In Catalog", rejected: "New Version Requested",
+};
 
 export default function CatalogTab() {
   const [list, setList]         = useState<Version[]>([]);
@@ -238,7 +241,7 @@ export default function CatalogTab() {
               background: filter === s ? T.goldTint : T.card,
               color: filter === s ? T.amber : T.muted,
               cursor: "pointer", fontFamily: sans,
-            }}>{s || "All"}</button>
+            }}>{FILTER_LABELS[s] ?? s}</button>
           ))}
         </div>
 
@@ -292,7 +295,6 @@ export default function CatalogTab() {
               <div style={{ fontSize: 11.5, color: T.muted, marginTop: 3, display: "flex", gap: 10, fontFamily: mono }}>
                 <span>v{selected.version_number}</span>
                 <span>{selected.rewrite_language}</span>
-                {selected.quality_score != null && <ScoreBadge score={selected.quality_score} />}
               </div>
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -370,8 +372,7 @@ export default function CatalogTab() {
                     <div key={h.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: `1px solid ${T.line2}`, fontSize: 12 }}>
                       <span style={{ color: T.gold, fontWeight: 700, fontFamily: mono, minWidth: 24 }}>v{h.version_number}</span>
                       <span style={{ color: T.muted, flex: 1 }}>{h.edit_source === "ai_generated" ? "AI Generated" : "Your Edit"}</span>
-                      {h.quality_score != null && <ScoreBadge score={h.quality_score} />}
-                      <Badge variant={statusVariant(h.status)}>{h.status}</Badge>
+                      <Badge variant={statusVariant(h.status)}>{FILTER_LABELS[h.status] ?? h.status}</Badge>
                       <span style={{ color: T.muted2, fontFamily: mono, fontSize: 11 }}>{fmtDate(h.created_at)}</span>
                     </div>
                   ))}
@@ -393,7 +394,7 @@ export default function CatalogTab() {
                 ) : (
                   <>
                     <Btn variant="danger" disabled={acting} onClick={() => doAction("reject")}>
-                      <XCircle size={14} /> Reject
+                      <XCircle size={14} /> Request New Version
                     </Btn>
                     {dirty && (
                       <Btn variant="secondary" disabled={saving} onClick={saveEdit}>
@@ -401,7 +402,7 @@ export default function CatalogTab() {
                       </Btn>
                     )}
                     <Btn variant="primary" disabled={acting} onClick={() => doAction("approve")}>
-                      <CheckCircle size={14} /> Approve
+                      <CheckCircle size={14} /> Add to Catalog
                     </Btn>
                   </>
                 )}
@@ -419,11 +420,13 @@ export default function CatalogTab() {
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; bg: string; color: string; spin?: boolean }> = {
-    pending:      { label: "Processing...", bg: "#FEF9C3",  color: "#B45309", spin: true },
-    ai_generated: { label: "Ready to review", bg: "#EFF6FF", color: "#2563EB" },
-    approved:     { label: "Approved",       bg: "#DCFCE7", color: "#16A34A" },
-    rejected:     { label: "Rejected",       bg: "#FEE2E2", color: "#DC2626" },
-    needs_review: { label: "Needs review",   bg: "#FEF3C7", color: "#D97706" },
+    pending:       { label: "Queued",                bg: "#F3F4F6",  color: "#6B7280" },
+    processing:    { label: "AI Writing…",           bg: "#EFF6FF",  color: "#2563EB", spin: true },
+    ai_generating: { label: "AI Writing…",           bg: "#EFF6FF",  color: "#2563EB", spin: true },
+    ai_generated:  { label: "Ready to Review",       bg: "#FEF3C7",  color: "#B45309" },
+    approved:      { label: "In Catalog",            bg: "#DCFCE7",  color: "#16A34A" },
+    rejected:      { label: "New Version Requested", bg: "#F3F4F6",  color: "#6B7280" },
+    needs_review:  { label: "Needs Review",          bg: "#FEF3C7",  color: "#D97706" },
   };
   const m = map[status] ?? { label: status, bg: "#F3F4F6", color: "#6B7280" };
   return (
