@@ -39,6 +39,7 @@ export default function CatalogTab() {
   const [dirty, setDirty]       = useState(false);
   const [expandItin, setExpandItin] = useState(false);
   const [localToast, setLocalToast] = useState<string | null>(null);
+  const [actionState, setActionState] = useState<'approved' | 'rejected' | null>(null);
   // Original AA tour data for the "AA Original" diff column
   const [origTour, setOrigTour]     = useState<any>(null);
 
@@ -130,7 +131,7 @@ export default function CatalogTab() {
 
   async function loadDetail(v: Version) {
     setSelected(v); setDlLoad(true); setDetail(null); setOrigTour(null);
-    setDirty(false); setSaveOk(false); setExpandItin(false);
+    setDirty(false); setSaveOk(false); setExpandItin(false); setActionState(null);
     try {
       // Fetch version detail + original pool tour in parallel
       const [rDetail, rOrig] = await Promise.all([
@@ -159,6 +160,8 @@ export default function CatalogTab() {
   async function doAction(action: "approve" | "reject") {
     if (!selected) return;
     setActing(true);
+    const nextState = action === "approve" ? "approved" as const : "rejected" as const;
+    setActionState(nextState); // hide buttons immediately before API responds
     try {
       const r = await fetch(`/api/tenant/v1/tours/versions/${selected.id}`, {
         method: "PATCH",
@@ -166,6 +169,7 @@ export default function CatalogTab() {
         body: JSON.stringify({ action }),
       });
       if (r.ok) { const upd: Version = await r.json(); await fetchList(); setDetail(upd); setSelected(upd); }
+      else { setActionState(null); } // revert optimistic update on failure
     } finally { setActing(false); }
   }
 
@@ -362,13 +366,15 @@ export default function CatalogTab() {
 
               {/* Actions */}
               <div style={{ padding: "14px 22px", display: "flex", gap: 10, justifyContent: "flex-end", alignItems: "center" }}>
-                {(selected.status === "approved" || selected.status === "rejected") ? (
-                  // Terminal state — no further actions allowed
+                {(actionState || selected.status === "approved" || selected.status === "rejected") ? (
+                  // Terminal state — actionState gives immediate feedback, selected.status is source of truth on load
                   <span style={{
                     fontSize: 13, fontWeight: 600,
-                    color: selected.status === "approved" ? T.green : T.red,
+                    color: (actionState ?? selected.status) === "approved" ? T.green : T.amber,
                   }}>
-                    {selected.status === "approved" ? "✅ Approved" : "❌ Rejected — cannot undo"}
+                    {(actionState ?? selected.status) === "approved"
+                      ? "✅ Added to your catalog. Available via API."
+                      : "🔄 New version requested."}
                   </span>
                 ) : (
                   <>
