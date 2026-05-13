@@ -5,6 +5,7 @@
 //      PATCH /api/tenant/v1/tours/versions/{id}
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import * as XLSX from "xlsx";
 import { Package, ChevronRight, Save, CheckCircle, XCircle, RotateCcw, Clock, X } from "lucide-react";
 import {
   T, serif, mono, sans,
@@ -250,10 +251,11 @@ export default function CatalogTab() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = "my-catalog.csv"; a.click(); URL.revokeObjectURL(url);
     } else {
-      const tsv = [headers, ...rows.map(v => cols.map(c => cellVal(v, c)))].map(r => r.join("\t")).join("\n");
-      const blob = new Blob(["﻿" + tsv], { type: "application/vnd.ms-excel" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a"); a.href = url; a.download = "my-catalog.xls"; a.click(); URL.revokeObjectURL(url);
+      const data = rows.map(v => Object.fromEntries(headers.map((h, i) => [h, cellVal(v, cols[i])])));
+      const ws = XLSX.utils.json_to_sheet(data, { header: headers });
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "My Catalog");
+      XLSX.writeFile(wb, "my-catalog.xlsx");
     }
   }
 
@@ -309,7 +311,7 @@ export default function CatalogTab() {
               </button>
               <button onClick={() => exportSelected("xls")}
                 style={{ padding: "5px 12px", borderRadius: 20, fontSize: 11.5, fontWeight: 600, border: "none", background: T.gold, color: "#fff", cursor: "pointer", fontFamily: sans }}>
-                ↓ Excel ({selectedIds.size})
+                ↓ XLSX ({selectedIds.size})
               </button>
             </div>
           )}
