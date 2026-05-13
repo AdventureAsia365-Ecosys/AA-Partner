@@ -244,8 +244,9 @@ export default function CatalogTab() {
     }
 
     if (fmt === "csv") {
-      const csv = [headers, ...rows.map(v => cols.map(c => `"${cellVal(v, c).replace(/"/g,'""')}"`))].map(r => r.join(",")).join("\n");
-      const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+      const san = (s: string) => s.replace(/[\t\n\r]+/g, " ");
+      const tsv = [headers, ...rows.map(v => cols.map(c => san(cellVal(v, c))))].map(r => r.join("\t")).join("\n");
+      const blob = new Blob(["﻿" + tsv], { type: "text/csv;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = "my-catalog.csv"; a.click(); URL.revokeObjectURL(url);
     } else {
