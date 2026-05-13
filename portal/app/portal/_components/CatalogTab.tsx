@@ -225,15 +225,31 @@ export default function CatalogTab() {
 
   function exportSelected(fmt: "csv" | "xls") {
     const rows = list.filter(v => selectedIds.has(v.id));
-    const cols = ["aa_name","version_number","status","rewrite_language","country","duration","aa_seo_title","aa_seo_meta"] as const;
-    const headers = ["Name","Version","Status","Language","Country","Duration","SEO Title","SEO Meta"];
+    type ExportCol = "aa_name" | "aa_subtitle" | "country" | "duration" | "aa_seo_title" | "aa_seo_meta" | "aa_summary" | "aa_highlights" | "quality_score" | "version_number" | "status" | "rewrite_language";
+    const cols: ExportCol[] = ["aa_name","aa_subtitle","country","duration","aa_seo_title","aa_seo_meta","aa_summary","aa_highlights","quality_score","version_number","status","rewrite_language"];
+    const headers = ["Name","Subtitle","Country","Duration","SEO Title","SEO Meta","Summary","Highlights","Quality Score","Version","Status","Language"];
+
+    function cellVal(v: Version, col: ExportCol): string {
+      if (col === "aa_highlights") {
+        const raw = v.aa_highlights;
+        if (!raw) return "";
+        try {
+          const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+          if (Array.isArray(parsed)) return parsed.map((x: any) => (typeof x === "string" ? x : JSON.stringify(x))).join(" | ");
+        } catch {}
+        return String(raw);
+      }
+      if (col === "quality_score") return v.quality_score != null ? String(v.quality_score) : "";
+      return String(v[col] ?? "");
+    }
+
     if (fmt === "csv") {
-      const csv = [headers, ...rows.map(v => cols.map(c => `"${String(v[c as keyof Version] ?? "").replace(/"/g,'""')}"`))].map(r => r.join(",")).join("\n");
-      const blob = new Blob([csv], { type: "text/csv" });
+      const csv = [headers, ...rows.map(v => cols.map(c => `"${cellVal(v, c).replace(/"/g,'""')}"`))].map(r => r.join(",")).join("\n");
+      const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = "my-catalog.csv"; a.click(); URL.revokeObjectURL(url);
     } else {
-      const tsv = [headers, ...rows.map(v => cols.map(c => String(v[c as keyof Version] ?? "")))].map(r => r.join("\t")).join("\n");
+      const tsv = [headers, ...rows.map(v => cols.map(c => cellVal(v, c)))].map(r => r.join("\t")).join("\n");
       const blob = new Blob(["﻿" + tsv], { type: "application/vnd.ms-excel" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = "my-catalog.xls"; a.click(); URL.revokeObjectURL(url);
