@@ -55,6 +55,7 @@ export default function CatalogTab() {
 
   // AA-28 multi-select export
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isExporting, setIsExporting] = useState(false);
 
   // Refs for polling — pollingRef holds the interval ID so we never double-start
   const pollingRef  = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -224,39 +225,81 @@ export default function CatalogTab() {
     } finally { setSaving(false); }
   }
 
-  function exportSelected(fmt: "csv" | "xls") {
-    const rows = list.filter(v => selectedIds.has(v.id));
-    type ExportCol = "aa_name" | "aa_subtitle" | "country" | "duration" | "aa_seo_title" | "aa_seo_meta" | "aa_summary" | "aa_highlights" | "quality_score" | "version_number" | "status" | "rewrite_language";
-    const cols: ExportCol[] = ["aa_name","aa_subtitle","country","duration","aa_seo_title","aa_seo_meta","aa_summary","aa_highlights","quality_score","version_number","status","rewrite_language"];
-    const headers = ["Name","Subtitle","Country","Duration","SEO Title","SEO Meta","Summary","Highlights","Quality Score","Version","Status","Language"];
+  function flattenVal(v: any): string {
+    if (v == null || v === "") return "";
+    if (typeof v === "string") {
+      try { return flattenVal(JSON.parse(v)); } catch {}
+      return v.replace(/[\t\n\r]+/g, " ").trim();
+    }
+    if (Array.isArray(v)) {
+      return v.map((x: any) => {
+        if (x == null) return "";
+        if (typeof x === "string") return x.replace(/[\t\n\r]+/g, " ").trim();
+        if (typeof x === "object") return String(x.keyword ?? x.text ?? x.description ?? x.title ?? x.value ?? JSON.stringify(x));
+        return String(x);
+      }).filter(Boolean).join(" | ");
+    }
+    if (typeof v === "object") {
+      return Object.values(v).filter(x => x != null && x !== "").map(x => String(x)).join(" | ");
+    }
+    return String(v);
+  }
 
-    function cellVal(v: Version, col: ExportCol): string {
-      if (col === "aa_highlights") {
-        const raw = v.aa_highlights;
-        if (!raw) return "";
-        try {
-          const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-          if (Array.isArray(parsed)) return parsed.map((x: any) => (typeof x === "string" ? x : JSON.stringify(x))).join(" | ");
-        } catch {}
-        return String(raw);
+  async function exportSelected(fmt: "csv" | "xls") {
+    const selectedVersions = list.filter(v => selectedIds.has(v.id));
+    if (selectedVersions.length === 0) return;
+    setIsExporting(true);
+    try {
+      const fullData = await Promise.all(
+        selectedVersions.map(async v => {
+          try {
+            const r = await fetch(`/api/tenant/v1/tours/versions/${v.id}`);
+            return r.ok ? await r.json() : null;
+          } catch { return null; }
+        })
+      );
+
+      const headers = [
+        "Name", "Subtitle", "Country", "Duration",
+        "SEO Title", "SEO Meta", "Summary", "Highlights", "Itineraries",
+        "Quality Score", "Created At", "Version", "Status", "Language",
+      ];
+
+      const rows: Record<string, string>[] = fullData.map((d, i) => {
+        const v  = selectedVersions[i];
+        const rc = parseContent(d?.rewritten_content ?? v.rewritten_content) as Record<string, unknown> | null;
+        return {
+          "Name":          String(rc?.name        ?? d?.aa_name      ?? v.aa_name      ?? ""),
+          "Subtitle":      String(rc?.subtitle    ?? d?.aa_subtitle  ?? ""),
+          "Country":       String(d?.country      ?? v.country       ?? ""),
+          "Duration":      String(d?.duration     ?? v.duration      ?? ""),
+          "SEO Title":     String(rc?.seo_title   ?? d?.aa_seo_title ?? ""),
+          "SEO Meta":      String(rc?.seo_meta    ?? d?.aa_seo_meta  ?? ""),
+          "Summary":       String(rc?.summary     ?? d?.aa_summary   ?? ""),
+          "Highlights":    flattenVal(rc?.highlights    ?? d?.aa_highlights    ?? ""),
+          "Itineraries":   flattenVal(rc?.itineraries   ?? d?.aa_itineraries   ?? ""),
+          "Quality Score": v.quality_score != null ? String(v.quality_score) : "",
+          "Created At":    v.created_at ? new Date(v.created_at).toLocaleDateString("en-GB") : "",
+          "Version":       String(v.version_number),
+          "Status":        v.status,
+          "Language":      v.rewrite_language,
+        };
+      });
+
+      if (fmt === "csv") {
+        const san = (s: string) => s.replace(/[\t\n\r]+/g, " ");
+        const tsv = [headers.join("\t"), ...rows.map(r => headers.map(h => san(r[h] ?? "")).join("\t"))].join("\n");
+        const blob = new Blob(["﻿" + tsv], { type: "text/csv;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a"); a.href = url; a.download = "my-catalog.csv"; a.click(); URL.revokeObjectURL(url);
+      } else {
+        const ws = XLSX.utils.json_to_sheet(rows, { header: headers });
+        ws["!cols"] = [30,30,15,12,40,50,60,60,80,12,15,10,15,15].map(w => ({ wch: w }));
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "My Catalog");
+        XLSX.writeFile(wb, "my-catalog.xlsx");
       }
-      if (col === "quality_score") return v.quality_score != null ? String(v.quality_score) : "";
-      return String(v[col] ?? "");
-    }
-
-    if (fmt === "csv") {
-      const san = (s: string) => s.replace(/[\t\n\r]+/g, " ");
-      const tsv = [headers, ...rows.map(v => cols.map(c => san(cellVal(v, c))))].map(r => r.join("\t")).join("\n");
-      const blob = new Blob(["﻿" + tsv], { type: "text/csv;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a"); a.href = url; a.download = "my-catalog.csv"; a.click(); URL.revokeObjectURL(url);
-    } else {
-      const data = rows.map(v => Object.fromEntries(headers.map((h, i) => [h, cellVal(v, cols[i])])));
-      const ws = XLSX.utils.json_to_sheet(data, { header: headers });
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "My Catalog");
-      XLSX.writeFile(wb, "my-catalog.xlsx");
-    }
+    } finally { setIsExporting(false); }
   }
 
   const allSelected = list.length > 0 && list.every(v => selectedIds.has(v.id));
@@ -305,13 +348,13 @@ export default function CatalogTab() {
           )}
           {selectedIds.size > 0 && (
             <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
-              <button onClick={() => exportSelected("csv")}
-                style={{ padding: "5px 12px", borderRadius: 20, fontSize: 11.5, fontWeight: 600, border: "none", background: "#22C55E", color: "#fff", cursor: "pointer", fontFamily: sans }}>
-                ↓ CSV ({selectedIds.size})
+              <button onClick={() => exportSelected("csv")} disabled={isExporting}
+                style={{ padding: "5px 12px", borderRadius: 20, fontSize: 11.5, fontWeight: 600, border: "none", background: isExporting ? "#86EFAC" : "#22C55E", color: "#fff", cursor: isExporting ? "default" : "pointer", fontFamily: sans }}>
+                {isExporting ? "Fetching…" : `↓ CSV (${selectedIds.size})`}
               </button>
-              <button onClick={() => exportSelected("xls")}
-                style={{ padding: "5px 12px", borderRadius: 20, fontSize: 11.5, fontWeight: 600, border: "none", background: T.gold, color: "#fff", cursor: "pointer", fontFamily: sans }}>
-                ↓ XLSX ({selectedIds.size})
+              <button onClick={() => exportSelected("xls")} disabled={isExporting}
+                style={{ padding: "5px 12px", borderRadius: 20, fontSize: 11.5, fontWeight: 600, border: "none", background: T.gold, color: "#fff", cursor: isExporting ? "default" : "pointer", fontFamily: sans, opacity: isExporting ? 0.6 : 1 }}>
+                {isExporting ? "Fetching…" : `↓ XLSX (${selectedIds.size})`}
               </button>
             </div>
           )}
