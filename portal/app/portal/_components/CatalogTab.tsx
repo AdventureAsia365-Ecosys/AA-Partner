@@ -133,27 +133,41 @@ export default function CatalogTab() {
     setSelected(v); setDlLoad(true); setDetail(null); setOrigTour(null);
     setDirty(false); setSaveOk(false); setExpandItin(false); setActionState(null);
     try {
-      // Fetch version detail + original pool tour in parallel
-      const [rDetail, rOrig] = await Promise.all([
+      // allSettled: pool fetch failure (network error or 4xx) must not kill the detail fetch
+      const [detailResult, origResult] = await Promise.allSettled([
         fetch(`/api/tenant/v1/tours/versions/${v.id}`),
         v.published_tour_id
           ? fetch(`/api/tenant/v1/tours/pool/${v.published_tour_id}`)
-          : Promise.resolve(null),
+          : Promise.reject(new Error('no published_tour_id')),
       ]);
-      if (rDetail.ok) {
-        const d: Version = await rDetail.json();
-        setDetail(d);
-        // Use pool tour for AA Original if available; fallback to version JOIN data
-        const orig = rOrig?.ok ? await rOrig.json() : d;
-        setOrigTour(orig);
-        const rc = parseContent(d.rewritten_content) as Record<string, unknown> | null;
-        setEditName((rc?.name ?? d.aa_name ?? "") as string);
-        setEditSubtitle((rc?.subtitle ?? d.aa_subtitle ?? "") as string);
-        setEditSummary((rc?.summary ?? d.aa_summary ?? "") as string);
-        setEditHighlights(Array.isArray(rc?.highlights) ? rc.highlights as string[] : parseHighlights(d.aa_highlights));
-        setEditSeoTitle((rc?.seo_title ?? d.aa_seo_title ?? "") as string);
-        setEditSeoMeta((rc?.seo_meta ?? d.aa_seo_meta ?? "") as string);
+
+      if (detailResult.status === 'rejected' || !detailResult.value.ok) return;
+      const d: Version = await detailResult.value.json();
+      setDetail(d);
+
+      // Pool tour preferred; fallback maps aa_* field names to pool-compatible shape
+      let orig: Record<string, unknown> | null = null;
+      if (origResult.status === 'fulfilled' && origResult.value.ok) {
+        orig = await origResult.value.json();
       }
+      if (!orig) {
+        orig = {
+          aa_summary:     d.aa_summary     ?? null,
+          seo_title:      d.aa_seo_title   ?? null,  // pool uses seo_title, not aa_seo_title
+          seo_meta:       d.aa_seo_meta    ?? null,
+          aa_highlights:  d.aa_highlights  ?? null,
+          aa_itineraries: d.aa_itineraries ?? null,
+        };
+      }
+      setOrigTour(orig);
+
+      const rc = parseContent(d.rewritten_content) as Record<string, unknown> | null;
+      setEditName((rc?.name ?? d.aa_name ?? "") as string);
+      setEditSubtitle((rc?.subtitle ?? d.aa_subtitle ?? "") as string);
+      setEditSummary((rc?.summary ?? d.aa_summary ?? "") as string);
+      setEditHighlights(Array.isArray(rc?.highlights) ? rc.highlights as string[] : parseHighlights(d.aa_highlights));
+      setEditSeoTitle((rc?.seo_title ?? d.aa_seo_title ?? "") as string);
+      setEditSeoMeta((rc?.seo_meta ?? d.aa_seo_meta ?? "") as string);
     } finally { setDlLoad(false); }
   }
 
