@@ -1,9 +1,10 @@
 "use client";
 // app/(tenant)/portal/_components/ApiTab.tsx
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Eye, EyeOff, Copy, CheckCircle } from "lucide-react";
 import { T, serif, mono, sans, Card } from "./ui";
+import { ApiPlayground } from "./ApiPlayground";
 
 const ENDPOINTS = [
   { method: "GET",   path: "/v1/tours/pool",                color: T.green,  label: "Browse published tour pool (paginated)" },
@@ -16,9 +17,26 @@ const ENDPOINTS = [
   { method: "POST",  path: "/v1/pipeline/brand-identity",   color: T.gold,   label: "Save new brand rules version" },
 ];
 
+type Section = "overview" | "endpoints" | "webhooks";
+
+const TABS: { id: Section; label: string }[] = [
+  { id: "overview",   label: "Overview" },
+  { id: "endpoints",  label: "API Playground" },
+  { id: "webhooks",   label: "Webhooks" },
+];
+
 export default function ApiTab() {
+  const [activeSection, setActiveSection] = useState<Section>("overview");
   const [showKey, setShowKey] = useState(false);
   const [copied, setCopied]   = useState(false);
+  const [billing, setBilling] = useState<Record<string, unknown> | null>(null);
+
+  useEffect(() => {
+    fetch("/api/tenant/v1/pipeline/billing")
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setBilling(d); })
+      .catch(() => {});
+  }, []);
 
   // API key is one-time — show contact message
   const keyPlaceholder = "Contact your Adventure Asia account manager to retrieve your API key.";
@@ -31,7 +49,25 @@ export default function ApiTab() {
   }
 
   return (
-    <div style={{ maxWidth: 680, fontFamily: sans }}>
+    <div style={{ fontFamily: sans }}>
+      {/* Tab nav */}
+      <div style={{ display: "flex", gap: 2, marginBottom: 24, borderBottom: `1px solid ${T.line}` }}>
+        {TABS.map(t => (
+          <button key={t.id} onClick={() => setActiveSection(t.id)} style={{
+            padding: "9px 18px", fontSize: 13, fontWeight: 600,
+            border: "none", background: "none", cursor: "pointer", fontFamily: sans,
+            color: activeSection === t.id ? T.gold : T.muted,
+            borderBottom: `2px solid ${activeSection === t.id ? T.gold : "transparent"}`,
+            marginBottom: -1, transition: "all .15s",
+          }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Overview ── */}
+      {activeSection === "overview" && (
+      <div style={{ maxWidth: 680 }}>
       <h2 style={{ fontFamily: serif, fontSize: 22, fontWeight: 500, color: T.ink, margin: "0 0 6px", letterSpacing: "-0.01em" }}>API Access</h2>
       <p style={{ fontSize: 13, color: T.muted, marginBottom: 28, lineHeight: 1.6 }}>
         Use your API key to access your rewritten tour catalog programmatically. All requests require <code style={{ fontFamily: mono, background: T.bg, padding: "1px 6px", borderRadius: 4, fontSize: 12 }}>Authorization: Bearer &lt;jwt&gt;</code> — obtain a JWT via <code style={{ fontFamily: mono, background: T.bg, padding: "1px 6px", borderRadius: 4, fontSize: 12 }}>POST /auth/tenant-login</code>.
@@ -109,6 +145,29 @@ curl -X POST -H "Authorization: Bearer <JWT>" \\
           Base URL: <span style={{ color: T.ink }}>https://api-cis.lumiguides.it.com</span>
         </div>
       </Card>
+      </div>
+      )}
+
+      {/* ── Endpoints / API Playground ── */}
+      {activeSection === "endpoints" && (
+        <ApiPlayground apiKey={null} quota={billing} />
+      )}
+
+      {/* ── Webhooks ── */}
+      {activeSection === "webhooks" && (
+        <div style={{ maxWidth: 560 }}>
+          <h2 style={{ fontFamily: serif, fontSize: 22, fontWeight: 500, color: T.ink, margin: "0 0 6px", letterSpacing: "-0.01em" }}>Webhooks</h2>
+          <p style={{ fontSize: 13, color: T.muted, marginBottom: 24, lineHeight: 1.6 }}>
+            Receive real-time notifications when tour content is updated in your catalog.
+          </p>
+          <div style={{ padding: "20px 24px", background: T.bg, border: `1px solid ${T.line}`, borderRadius: 10 }}>
+            <div style={{ fontSize: 12, color: T.muted, lineHeight: 1.6 }}>
+              🔔 <strong>Coming soon</strong> — webhook delivery is on the roadmap.<br />
+              Contact your Adventure Asia account manager to be notified when webhooks are enabled.
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
