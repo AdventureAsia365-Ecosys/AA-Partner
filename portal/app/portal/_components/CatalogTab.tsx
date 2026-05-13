@@ -12,6 +12,7 @@ import {
   parseHighlights, parseContent, fmtDate, fmtDateTime, statusVariant,
 } from "./ui";
 import { SeoHealthBar } from "./SeoHealthBar";
+import { SeeOriginalToggle } from "./SeeOriginalToggle";
 
 interface Version {
   id: string; version_number: number; status: string;
@@ -312,10 +313,10 @@ export default function CatalogTab() {
            detail ? (
             <div style={{ maxHeight: "78vh", overflowY: "auto" }}>
 
-              {/* Before / After comparison */}
+              {/* Your Version */}
               <div style={{ padding: "18px 22px", borderBottom: `1px solid ${T.line}` }}>
                 <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: T.muted, marginBottom: 14 }}>
-                  Content Comparison — Before / After
+                  Your Version
                 </div>
                 <div style={{ display: "flex", gap: 8, marginBottom: 12, fontSize: 11, color: T.muted2, fontFamily: mono }}>
                   <span>Created: {fmtDateTime(detail.created_at)}</span>
@@ -341,6 +342,13 @@ export default function CatalogTab() {
                     setExpand={setExpandItin}
                   />
                 )}
+                <SeeOriginalToggle
+                  summary={String(origTour?.aa_summary ?? detail.aa_summary ?? "")}
+                  seoTitle={String(origTour?.seo_title ?? detail.aa_seo_title ?? "")}
+                  seoMeta={String(origTour?.seo_meta ?? detail.aa_seo_meta ?? "")}
+                  highlightsRaw={String(origTour?.aa_highlights ?? detail.aa_highlights ?? "")}
+                  itineraries={String(origTour?.aa_itineraries ?? detail.aa_itineraries ?? "") || null}
+                />
               </div>
 
               {/* SEO health */}
@@ -440,29 +448,36 @@ function StatusBadge({ status }: { status: string }) {
 
 // ── Compare row ───────────────────────────────────────────────────────────────
 
-function CompareRow({ label, original, yours, onEdit }: {
+function CompareRow({ label, original: _original, yours, onEdit }: {
   label: string; original: string; yours: string; onEdit: (v: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(yours);
   return (
     <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.muted, marginBottom: 6 }}>{label}</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-        <ColBox color="red" label="AA Original">{original || "—"}</ColBox>
-        <ColBox color="green" label="Your Version" editable onEdit={() => { setEditing(true); setVal(yours); }}>
-          {editing ? (
-            <div>
-              <textarea value={val} onChange={e => setVal(e.target.value)} rows={3}
-                style={{ width: "100%", fontSize: 11, border: `1px solid ${T.gold}`, borderRadius: 4, padding: 6, resize: "vertical", fontFamily: sans, outline: "none", boxSizing: "border-box" }} />
-              <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-                <Btn size="sm" variant="primary" onClick={() => { onEdit(val); setEditing(false); }}>Save</Btn>
-                <Btn size="sm" variant="ghost"   onClick={() => setEditing(false)}>Cancel</Btn>
-              </div>
-            </div>
-          ) : yours || "—"}
-        </ColBox>
+      <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.muted, marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span>{label}</span>
+        {!editing && (
+          <button onClick={() => { setEditing(true); setVal(yours); }}
+            style={{ background: "none", border: "none", cursor: "pointer", color: T.gold, fontSize: 10, fontFamily: sans }}>
+            ✏ Edit
+          </button>
+        )}
       </div>
+      {editing ? (
+        <div>
+          <textarea value={val} onChange={e => setVal(e.target.value)} rows={3}
+            style={{ width: "100%", fontSize: 11.5, border: `1px solid ${T.gold}`, borderRadius: 6, padding: "8px 10px", resize: "vertical", fontFamily: sans, outline: "none", boxSizing: "border-box", color: T.body }} />
+          <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+            <Btn size="sm" variant="primary" onClick={() => { onEdit(val); setEditing(false); }}>Save</Btn>
+            <Btn size="sm" variant="ghost"   onClick={() => setEditing(false)}>Cancel</Btn>
+          </div>
+        </div>
+      ) : (
+        <div style={{ fontSize: 11.5, color: T.body, lineHeight: 1.6, padding: "8px 10px", background: T.bg, border: `1px solid ${T.line}`, borderRadius: 6 }}>
+          {yours || "—"}
+        </div>
+      )}
     </div>
   );
 }
@@ -484,34 +499,30 @@ function ColBox({ color, label, children, editable = false, onEdit }: {
   );
 }
 
-function HighlightsCompare({ origRaw, yours, onChange }: {
+function HighlightsCompare({ origRaw: _origRaw, yours, onChange }: {
   origRaw: string; yours: string[]; onChange: (v: string[]) => void;
 }) {
-  const orig = parseHighlights(origRaw);
   return (
     <div style={{ marginBottom: 14 }}>
       <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.muted, marginBottom: 6 }}>Highlights</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-        <ColBox color="red" label="AA Original">
-          {orig.map((h, i) => <div key={i} style={{ fontSize: 11.5, color: T.body, marginBottom: 3 }}>• {h}</div>)}
-        </ColBox>
-        <ColBox color="green" label="Your Version" editable={false}>
-          {yours.map((h, i) => (
-            <div key={i} style={{ display: "flex", gap: 4, marginBottom: 4, alignItems: "flex-start" }}>
-              <span style={{ color: T.gold, fontWeight: 700, flexShrink: 0 }}>•</span>
-              <input value={h} onChange={e => { const n = [...yours]; n[i] = e.target.value; onChange(n); }}
-                style={{ flex: 1, fontSize: 11, border: `1px solid ${T.line}`, borderRadius: 4, padding: "2px 6px", fontFamily: sans, outline: "none", background: "transparent" }} />
-              <button onClick={() => onChange(yours.filter((_, j) => j !== i))} style={{ background: "none", border: "none", cursor: "pointer", color: T.muted2, padding: 0, flexShrink: 0 }}>×</button>
-            </div>
-          ))}
-          <button onClick={() => onChange([...yours, ""])} style={{ fontSize: 11, color: T.gold, background: "none", border: "none", cursor: "pointer", fontFamily: sans }}>+ Add</button>
-        </ColBox>
+      <div style={{ padding: "8px 10px", background: T.bg, border: `1px solid ${T.line}`, borderRadius: 6 }}>
+        {yours.map((h, i) => (
+          <div key={i} style={{ display: "flex", gap: 4, marginBottom: 4, alignItems: "flex-start" }}>
+            <span style={{ color: T.gold, fontWeight: 700, flexShrink: 0 }}>•</span>
+            <input value={h} onChange={e => { const n = [...yours]; n[i] = e.target.value; onChange(n); }}
+              style={{ flex: 1, fontSize: 11, border: `1px solid ${T.line}`, borderRadius: 4, padding: "2px 6px", fontFamily: sans, outline: "none", background: "transparent" }} />
+            <button onClick={() => onChange(yours.filter((_, j) => j !== i))}
+              style={{ background: "none", border: "none", cursor: "pointer", color: T.muted2, padding: 0, flexShrink: 0 }}>×</button>
+          </div>
+        ))}
+        <button onClick={() => onChange([...yours, ""])}
+          style={{ fontSize: 11, color: T.gold, background: "none", border: "none", cursor: "pointer", fontFamily: sans }}>+ Add</button>
       </div>
     </div>
   );
 }
 
-function ItineraryCompare({ orig, yours, expand, setExpand }: {
+function ItineraryCompare({ orig: _orig, yours, expand, setExpand }: {
   orig: string; yours: string; expand: boolean; setExpand: (v: boolean) => void;
 }) {
   return (
@@ -522,13 +533,8 @@ function ItineraryCompare({ orig, yours, expand, setExpand }: {
           {expand ? "▲ Collapse" : "▼ Expand"}
         </button>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-        <ColBox color="red" label="AA Original">
-          <div style={{ fontSize: 11.5, color: T.body, lineHeight: 1.6, maxHeight: expand ? "none" : 100, overflow: expand ? "visible" : "hidden", whiteSpace: "pre-wrap" }}>{orig || "—"}</div>
-        </ColBox>
-        <ColBox color="green" label="Your Version">
-          <div style={{ fontSize: 11.5, color: T.body, lineHeight: 1.6, maxHeight: expand ? "none" : 100, overflow: expand ? "visible" : "hidden", whiteSpace: "pre-wrap" }}>{yours || "—"}</div>
-        </ColBox>
+      <div style={{ fontSize: 11.5, color: T.body, lineHeight: 1.6, maxHeight: expand ? "none" : 100, overflow: expand ? "visible" : "hidden", whiteSpace: "pre-wrap", padding: "8px 10px", background: T.bg, border: `1px solid ${T.line}`, borderRadius: 6 }}>
+        {yours || "—"}
       </div>
     </div>
   );
