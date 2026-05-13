@@ -11,6 +11,7 @@ import {
   parseHighlights, fmtDate, statusVariant,
 } from "./ui";
 import type { Tab } from "./Sidebar";
+import { PoolFilters, type PoolFiltersState } from "./PoolFilters";
 
 interface PoolTour {
   id: string; tour_id: string; aa_name: string; aa_subtitle: string;
@@ -33,6 +34,8 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
   // Sync external search (from topbar)
   useEffect(() => { if (externalSearch !== undefined) { setSearch(externalSearch); setPage(1); } }, [externalSearch]);
   const [country, setCountry] = useState("");
+  const [poolFilters, setPoolFilters] = useState<PoolFiltersState>({ duration: "all", sort: "newest" });
+  const [inCatalogSet, setInCatalogSet] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<PoolTour | null>(null);
   const [checked, setChecked]   = useState<Set<string>>(new Set());
@@ -51,15 +54,40 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
       const params = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) });
       if (search)  params.set("search", search);
       if (country) params.set("country", country);
-      const r = await fetch(`/api/tenant/v1/tours/pool?${params}`);
-      if (r.ok) {
-        const d = await r.json();
+      params.set("sort", poolFilters.sort);
+      if (poolFilters.duration !== "all") {
+        if (poolFilters.duration === "8+") {
+          params.set("duration_min", "8");
+        } else {
+          const [min, max] = poolFilters.duration.split("-");
+          params.set("duration_min", min);
+          params.set("duration_max", max);
+        }
+      }
+
+      const [poolRes, versionsRes] = await Promise.allSettled([
+        fetch(`/api/tenant/v1/tours/pool?${params}`),
+        fetch("/api/tenant/v1/tours/my-versions?page_size=200"),
+      ]);
+
+      if (poolRes.status === "fulfilled" && poolRes.value.ok) {
+        const d = await poolRes.value.json();
         setTours(d.data ?? []);
         setTotal(d.pagination?.total ?? 0);
         if (d.countries?.length) setCountries(d.countries);
       }
+
+      if (versionsRes.status === "fulfilled" && versionsRes.value.ok) {
+        const vd = await versionsRes.value.json();
+        const versions: { published_tour_id?: string; status: string }[] = vd.data ?? [];
+        setInCatalogSet(new Set(
+          versions
+            .filter(v => v.status === "approved" && v.published_tour_id)
+            .map(v => v.published_tour_id as string)
+        ));
+      }
     } finally { setLoading(false); }
-  }, [page, search, country]);
+  }, [page, search, country, poolFilters]);
 
   useEffect(() => { fetchPool(); }, [fetchPool]);
 
@@ -100,6 +128,10 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
             <option value="">All Countries</option>
             {countries.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
+          <PoolFilters
+            filters={poolFilters}
+            onChange={update => { setPoolFilters(prev => ({ ...prev, ...update })); setPage(1); }}
+          />
         </div>
 
         {/* Batch bar */}
@@ -130,6 +162,7 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
               const isChecked = checked.has(t.id);
               return (
                 <TourRow key={t.id} tour={t} isActive={isActive} isChecked={isChecked}
+                  inCatalogSet={inCatalogSet}
                   onSelect={() => { setSelected(isActive ? null : t); setPanelTab("details"); setExpandItin(false); }}
                   onCheck={() => setChecked(prev => { const s = new Set(prev); s.has(t.id) ? s.delete(t.id) : s.add(t.id); return s; })}
                 />
@@ -172,11 +205,15 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
                   </button>
                 </div>
               </div>
-              {selected.already_rewritten && (
+              {inCatalogSet.has(selected.id) ? (
                 <span style={{ marginTop: 8, display: "inline-block", fontSize: 11, padding: "2px 8px", background: T.greenSoft, color: T.green, borderRadius: 20, fontWeight: 600 }}>
-                  ✓ Already in your catalog
+                  ✓ In My Catalog
                 </span>
-              )}
+              ) : selected.already_rewritten ? (
+                <span style={{ marginTop: 8, display: "inline-block", fontSize: 11, padding: "2px 8px", background: T.goldTint, color: T.amber, borderRadius: 20, fontWeight: 600 }}>
+                  ↻ Version in progress
+                </span>
+              ) : null}
             </div>
             {/* Tabs */}
             <div style={{ display: "flex", padding: "0 20px" }}>
@@ -216,8 +253,9 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
 
 // ── Tour row ──────────────────────────────────────────────────────────────────
 
-function TourRow({ tour, isActive, isChecked, onSelect, onCheck }: {
+function TourRow({ tour, isActive, isChecked, inCatalogSet, onSelect, onCheck }: {
   tour: PoolTour; isActive: boolean; isChecked: boolean;
+  inCatalogSet: Set<string>;
   onSelect: () => void; onCheck: () => void;
 }) {
   const kws = (() => { try { const v = JSON.parse(JSON.parse(tour.seo_keywords_used)); return Array.isArray(v) ? v.slice(0, 3) : []; } catch { return []; } })();
@@ -234,9 +272,11 @@ function TourRow({ tour, isActive, isChecked, onSelect, onCheck }: {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>{tour.aa_name}</span>
-            {tour.already_rewritten && (
-              <span style={{ fontSize: 10, padding: "1px 6px", background: T.greenSoft, color: T.green, borderRadius: 20, fontWeight: 600, flexShrink: 0 }}>✓ Rewritten</span>
-            )}
+            {inCatalogSet.has(tour.id) ? (
+              <span style={{ fontSize: 10, padding: "1px 6px", background: T.greenSoft, color: T.green, borderRadius: 20, fontWeight: 600, flexShrink: 0 }}>✓ In My Catalog</span>
+            ) : tour.already_rewritten ? (
+              <span style={{ fontSize: 10, padding: "1px 6px", background: T.goldTint, color: T.amber, borderRadius: 20, fontWeight: 600, flexShrink: 0 }}>↻ In progress</span>
+            ) : null}
           </div>
           {tour.aa_subtitle && (
             <div style={{ fontSize: 12, color: T.muted, lineHeight: 1.4, marginBottom: 6 }}>
