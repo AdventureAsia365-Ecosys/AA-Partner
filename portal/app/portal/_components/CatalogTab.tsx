@@ -11,6 +11,7 @@ import {
   Card, CardHead, Badge, ScoreBadge, Btn, LoadingScreen, EmptyState,
   parseHighlights, parseContent, fmtDate, fmtDateTime, statusVariant,
 } from "./ui";
+import { SeoHealthBar } from "./SeoHealthBar";
 
 interface Version {
   id: string; version_number: number; status: string;
@@ -207,11 +208,6 @@ export default function CatalogTab() {
     } finally { setSaving(false); }
   }
 
-  const seoTitleLen = editSeoTitle.length;
-  const seoMetaLen  = editSeoMeta.length;
-  const seoTitleOk  = seoTitleLen > 0 && seoTitleLen <= 60;
-  const seoMetaOk   = seoMetaLen >= 80 && seoMetaLen <= 160;
-
   return (
     <>
     <style>{`@keyframes cis-spin { to { transform: rotate(360deg); } }`}</style>
@@ -349,19 +345,13 @@ export default function CatalogTab() {
 
               {/* SEO health */}
               <div style={{ padding: "14px 22px", borderBottom: `1px solid ${T.line}` }}>
-                <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: T.muted, marginBottom: 10 }}>SEO Health</div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {[
-                    { l: `Title ≤60 (${seoTitleLen})`, ok: seoTitleOk },
-                    { l: `Meta 80-160 (${seoMetaLen})`, ok: seoMetaOk },
-                    { l: `Highlights ≥3 (${editHighlights.length})`, ok: editHighlights.length >= 3 },
-                    { l: "Summary filled", ok: editSummary.length > 50 },
-                  ].map(c => (
-                    <span key={c.l} style={{ fontSize: 11, padding: "3px 9px", borderRadius: 20, fontWeight: 600, background: c.ok ? T.greenSoft : T.redSoft, color: c.ok ? T.green : T.red }}>
-                      {c.ok ? "✓" : "✗"} {c.l}
-                    </span>
-                  ))}
-                </div>
+                <SeoHealthBar
+                  seoTitle={editSeoTitle}
+                  seoMeta={editSeoMeta}
+                  highlights={editHighlights}
+                  summary={editSummary}
+                  rulesApplied={(detail as any).rules_applied}
+                />
               </div>
 
               {/* Version history */}
