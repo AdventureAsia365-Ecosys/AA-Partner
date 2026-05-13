@@ -13,6 +13,7 @@ import {
 } from "./ui";
 import { SeoHealthBar } from "./SeoHealthBar";
 import { SeeOriginalToggle } from "./SeeOriginalToggle";
+import { NextStepGuide } from "./NextStepGuide";
 
 interface Version {
   id: string; version_number: number; status: string;
@@ -312,6 +313,11 @@ export default function CatalogTab() {
           {dlLoad ? <LoadingScreen message="Loading editorial workspace…" /> :
            detail ? (
             <div style={{ maxHeight: "78vh", overflowY: "auto" }}>
+
+              {/* Guided next step */}
+              <div style={{ padding: "14px 22px 0" }}>
+                <NextStepGuide status={actionState ?? selected.status} />
+              </div>
 
               {/* Your Version */}
               <div style={{ padding: "18px 22px", borderBottom: `1px solid ${T.line}` }}>
