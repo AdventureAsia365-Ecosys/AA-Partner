@@ -43,8 +43,9 @@ export default function CatalogTab() {
   const [origTour, setOrigTour]     = useState<any>(null);
 
   // Refs for polling — pollingRef holds the interval ID so we never double-start
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const listRef    = useRef<Version[]>([]);
+  const pollingRef  = useRef<ReturnType<typeof setInterval> | null>(null);
+  const listRef     = useRef<Version[]>([]);
+  const selectedRef = useRef<Version | null>(null);
 
   // Edit state
   const [editName, setEditName]       = useState("");
@@ -66,8 +67,9 @@ export default function CatalogTab() {
 
   useEffect(() => { fetchList(); }, [fetchList]);
 
-  // Keep listRef current for polling comparisons (avoids stale closure)
+  // Keep refs current for polling comparisons (avoids stale closure)
   useEffect(() => { listRef.current = list; }, [list]);
+  useEffect(() => { selectedRef.current = selected; }, [selected]);
 
   // Polling: start when pending items are visible, stop on completion or unmount
   useEffect(() => {
@@ -100,6 +102,9 @@ export default function CatalogTab() {
             listRef.current.find(o => o.id === v.id)?.status === 'pending'
           );
           setList(fresh); // update all badges at once with fresh data
+          // Sync selected if its status changed (stops header spinner immediately)
+          const sel0 = selectedRef.current;
+          if (sel0) { const upd0 = fresh.find(v => v.id === sel0.id); if (upd0 && upd0.status !== sel0.status) setSelected(upd0); }
           if (justDone.length > 0) {
             const name = justDone[0].aa_name || 'Tour';
             setLocalToast(`✅ "${name}" — rewrite complete. Click to review.`);
@@ -110,6 +115,9 @@ export default function CatalogTab() {
 
         // Still pending — update list so in-progress badges stay current
         setList(fresh);
+        // Sync selected if its status changed (e.g. pending → ai_generated)
+        const sel = selectedRef.current;
+        if (sel) { const upd = fresh.find(v => v.id === sel.id); if (upd && upd.status !== sel.status) setSelected(upd); }
       } catch {}
     }, 5000);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -157,7 +165,7 @@ export default function CatalogTab() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
       });
-      if (r.ok) { await fetchList(); if (detail) setDetail(await r.json()); }
+      if (r.ok) { const upd: Version = await r.json(); await fetchList(); setDetail(upd); setSelected(upd); }
     } finally { setActing(false); }
   }
 
