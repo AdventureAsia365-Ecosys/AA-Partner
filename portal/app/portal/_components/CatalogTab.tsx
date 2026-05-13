@@ -52,6 +52,9 @@ export default function CatalogTab() {
   // Original AA tour data for the "AA Original" diff column
   const [origTour, setOrigTour]     = useState<any>(null);
 
+  // AA-28 multi-select export
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
   // Refs for polling — pollingRef holds the interval ID so we never double-start
   const pollingRef  = useRef<ReturnType<typeof setInterval> | null>(null);
   const listRef     = useRef<Version[]>([]);
@@ -147,7 +150,7 @@ export default function CatalogTab() {
 
   async function loadDetail(v: Version) {
     setSelected(v); setDlLoad(true); setDetail(null); setOrigTour(null);
-    setDirty(false); setSaveOk(false); setExpandItin(false); setActionState(null);
+    setDirty(false); setSaveOk(false); setExpandItin(true); setActionState(null);
     try {
       // allSettled: pool fetch failure (network error or 4xx) must not kill the detail fetch
       const [detailResult, origResult] = await Promise.allSettled([
@@ -220,6 +223,25 @@ export default function CatalogTab() {
     } finally { setSaving(false); }
   }
 
+  function exportSelected(fmt: "csv" | "xls") {
+    const rows = list.filter(v => selectedIds.has(v.id));
+    const cols = ["aa_name","version_number","status","rewrite_language","country","duration","aa_seo_title","aa_seo_meta"] as const;
+    const headers = ["Name","Version","Status","Language","Country","Duration","SEO Title","SEO Meta"];
+    if (fmt === "csv") {
+      const csv = [headers, ...rows.map(v => cols.map(c => `"${String(v[c as keyof Version] ?? "").replace(/"/g,'""')}"`))].map(r => r.join(",")).join("\n");
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = "my-catalog.csv"; a.click(); URL.revokeObjectURL(url);
+    } else {
+      const tsv = [headers, ...rows.map(v => cols.map(c => String(v[c as keyof Version] ?? "")))].map(r => r.join("\t")).join("\n");
+      const blob = new Blob(["﻿" + tsv], { type: "application/vnd.ms-excel" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = "my-catalog.xls"; a.click(); URL.revokeObjectURL(url);
+    }
+  }
+
+  const allSelected = list.length > 0 && list.every(v => selectedIds.has(v.id));
+
   return (
     <>
     <style>{`@keyframes cis-spin { to { transform: rotate(360deg); } }`}</style>
@@ -240,8 +262,8 @@ export default function CatalogTab() {
 
       {/* LEFT — version list */}
       <div>
-        {/* Filter pills */}
-        <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+        {/* Filter pills + select-all + export */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
           {STATUS_FILTERS.map(s => (
             <button key={s} onClick={() => setFilter(s)} style={{
               padding: "5px 14px", borderRadius: 20, fontSize: 11.5, fontWeight: 600,
@@ -251,6 +273,29 @@ export default function CatalogTab() {
               cursor: "pointer", fontFamily: sans,
             }}>{FILTER_LABELS[s] ?? s}</button>
           ))}
+          {list.length > 0 && (
+            <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, color: T.muted, cursor: "pointer", fontFamily: sans, marginLeft: 4 }}>
+              <input type="checkbox" checked={allSelected}
+                onChange={() => {
+                  if (allSelected) setSelectedIds(new Set());
+                  else setSelectedIds(new Set(list.map(v => v.id)));
+                }}
+                style={{ cursor: "pointer", accentColor: T.gold }} />
+              Select all
+            </label>
+          )}
+          {selectedIds.size > 0 && (
+            <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
+              <button onClick={() => exportSelected("csv")}
+                style={{ padding: "5px 12px", borderRadius: 20, fontSize: 11.5, fontWeight: 600, border: "none", background: "#22C55E", color: "#fff", cursor: "pointer", fontFamily: sans }}>
+                ↓ CSV ({selectedIds.size})
+              </button>
+              <button onClick={() => exportSelected("xls")}
+                style={{ padding: "5px 12px", borderRadius: 20, fontSize: 11.5, fontWeight: 600, border: "none", background: T.gold, color: "#fff", cursor: "pointer", fontFamily: sans }}>
+                ↓ Excel ({selectedIds.size})
+              </button>
+            </div>
+          )}
         </div>
 
         {loading ? <LoadingScreen message="Loading catalog…" /> :
@@ -262,31 +307,40 @@ export default function CatalogTab() {
               const rc = parseContent(v.rewritten_content) as Record<string, unknown> | null;
               const isActive = selected?.id === v.id;
               return (
-                <button key={v.id} onClick={() => loadDetail(v)} style={{
+                <div key={v.id} style={{
                   background: isActive ? "rgba(219,150,40,0.04)" : T.card,
                   border: `1px solid ${isActive ? "rgba(219,150,40,0.35)" : T.line}`,
-                  borderRadius: 10, padding: "11px 14px", cursor: "pointer",
-                  textAlign: "left", fontFamily: sans, transition: "all .15s",
+                  borderRadius: 10, padding: "11px 14px",
+                  fontFamily: sans, transition: "all .15s",
                 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: T.ink, marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {v.aa_name || (rc?.name as string) || "Tour"}
-                      </div>
-                      <div style={{ fontSize: 11, color: T.muted2, display: "flex", gap: 8, fontFamily: mono }}>
-                        <span>v{v.version_number}</span>
-                        <span>{v.rewrite_language}</span>
-                        {v.duration && <span>{v.duration}</span>}
-                      </div>
-                      {rc?.summary != null && (
-                        <div style={{ fontSize: 11.5, color: T.muted, marginTop: 5, lineHeight: 1.45, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
-                          {String(rc.summary)}
+                  <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                    <label onClick={e => e.stopPropagation()} style={{ display: "flex", alignItems: "center", paddingTop: 3, flexShrink: 0, cursor: "pointer" }}>
+                      <input type="checkbox" checked={selectedIds.has(v.id)}
+                        onChange={() => setSelectedIds(prev => { const n = new Set(prev); selectedIds.has(v.id) ? n.delete(v.id) : n.add(v.id); return n; })}
+                        style={{ cursor: "pointer", accentColor: T.gold }} />
+                    </label>
+                    <button onClick={() => loadDetail(v)} style={{ flex: 1, background: "none", border: "none", cursor: "pointer", textAlign: "left", padding: 0, fontFamily: sans }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: T.ink, marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {v.aa_name || (rc?.name as string) || "Tour"}
+                          </div>
+                          <div style={{ fontSize: 11, color: T.muted2, display: "flex", gap: 8, fontFamily: mono }}>
+                            <span>v{v.version_number}</span>
+                            <span>{v.rewrite_language}</span>
+                            {v.duration && <span>{v.duration}</span>}
+                          </div>
+                          {rc?.summary != null && (
+                            <div style={{ fontSize: 11.5, color: T.muted, marginTop: 5, lineHeight: 1.45, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                              {String(rc.summary)}
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                    <StatusBadge status={v.status} />
+                        <StatusBadge status={v.status} />
+                      </div>
+                    </button>
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>
