@@ -193,7 +193,7 @@ export default function DashboardTab({ onTabChange }: { onTabChange: (t: Tab) =>
                 </div>
                 <Badge variant={v}>{a.status}</Badge>
                 <div style={{ fontSize: 11, color: T.muted2, fontFamily: mono, whiteSpace: "nowrap" }}>
-                  {new Date(a.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}
+                  {a.created_at ? new Date(a.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : "—"}
                 </div>
               </div>
             );

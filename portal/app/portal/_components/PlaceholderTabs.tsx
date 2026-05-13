@@ -10,9 +10,12 @@ import { T, serif, sans, Card } from "./ui";
 export function ActivityLogTab({ activity }: {
   activity: { id: string; status: string; edit_source: string; tour_name: string; country: string | null; created_at: string }[]
 }) {
-  const fmtTime = (iso: string) => new Date(iso).toLocaleString("en-GB", {
-    day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
-  });
+  const fmtTime = (iso: string | null | undefined): string => {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "—";
+    return d.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  };
   const sc = (s: string) =>
     s === "approved" ? { bg: "#E4F1E9", color: "#2E7D5B" } :
     s === "rejected" ? { bg: "#FBE7E1", color: "#B14A3B" } :
