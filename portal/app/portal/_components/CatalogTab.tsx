@@ -14,6 +14,7 @@ import {
 import { SeoHealthBar } from "./SeoHealthBar";
 import { SeeOriginalToggle } from "./SeeOriginalToggle";
 import { NextStepGuide } from "./NextStepGuide";
+import { VersionHistory } from "./VersionHistory";
 
 interface Version {
   id: string; version_number: number; status: string;
@@ -46,6 +47,8 @@ export default function CatalogTab() {
   const [expandItin, setExpandItin] = useState(false);
   const [localToast, setLocalToast] = useState<string | null>(null);
   const [actionState, setActionState] = useState<'approved' | 'rejected' | null>(null);
+  const [showQuotaConfirm, setShowQuotaConfirm] = useState(false);
+  const [quota, setQuota] = useState<{ rewrites_remaining: number } | null>(null);
   // Original AA tour data for the "AA Original" diff column
   const [origTour, setOrigTour]     = useState<any>(null);
 
@@ -73,6 +76,13 @@ export default function CatalogTab() {
   }, [filter]);
 
   useEffect(() => { fetchList(); }, [fetchList]);
+
+  useEffect(() => {
+    fetch('/api/tenant/v1/quota')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setQuota(d); })
+      .catch(() => {});
+  }, []);
 
   // Keep refs current for polling comparisons (avoids stale closure)
   useEffect(() => { listRef.current = list; }, [list]);
@@ -369,18 +379,12 @@ export default function CatalogTab() {
               </div>
 
               {/* Version history */}
-              {detail.version_history && detail.version_history.length > 0 && (
-                <div style={{ padding: "14px 22px", borderBottom: `1px solid ${T.line}` }}>
-                  <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: T.muted, marginBottom: 10 }}>Version History</div>
-                  {detail.version_history.map(h => (
-                    <div key={h.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: `1px solid ${T.line2}`, fontSize: 12 }}>
-                      <span style={{ color: T.gold, fontWeight: 700, fontFamily: mono, minWidth: 24 }}>v{h.version_number}</span>
-                      <span style={{ color: T.muted, flex: 1 }}>{h.edit_source === "ai_generated" ? "AI Generated" : "Your Edit"}</span>
-                      <Badge variant={statusVariant(h.status)}>{FILTER_LABELS[h.status] ?? h.status}</Badge>
-                      <span style={{ color: T.muted2, fontFamily: mono, fontSize: 11 }}>{fmtDate(h.created_at)}</span>
-                    </div>
-                  ))}
-                </div>
+              {detail.version_history && (
+                <VersionHistory
+                  versions={detail.version_history}
+                  activeVersionId={selected.id}
+                  onSelect={h => loadDetail({ ...selected, ...h } as Version)}
+                />
               )}
 
               {/* Actions */}
@@ -397,7 +401,7 @@ export default function CatalogTab() {
                   </span>
                 ) : (
                   <>
-                    <Btn variant="danger" disabled={acting} onClick={() => doAction("reject")}>
+                    <Btn variant="danger" disabled={acting} onClick={() => setShowQuotaConfirm(true)}>
                       <XCircle size={14} /> Request New Version
                     </Btn>
                     {dirty && (
@@ -416,6 +420,50 @@ export default function CatalogTab() {
         </div>
       )}
     </div>
+
+    {/* Quota confirm dialog */}
+    {showQuotaConfirm && (
+      <div style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.2)",
+        display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999,
+      }}>
+        <div style={{
+          background: "#fff", borderRadius: 16, padding: "24px 28px",
+          maxWidth: 380, width: "calc(100% - 32px)",
+          boxShadow: "0 8px 32px rgba(0,0,0,0.15)", fontFamily: sans,
+        }}>
+          <h3 style={{ fontWeight: 700, color: T.ink, marginBottom: 8, fontSize: 15, margin: "0 0 8px" }}>
+            Request new version?
+          </h3>
+          <p style={{ fontSize: 13, color: T.muted, margin: "0 0 6px" }}>
+            This will use <strong>1 rewrite credit</strong>.
+          </p>
+          {quota && (
+            <p style={{ fontSize: 13, color: T.muted2, margin: "0 0 20px" }}>
+              You have{" "}
+              <strong style={{ color: quota.rewrites_remaining < 5 ? T.red : T.ink }}>
+                {quota.rewrites_remaining} credit{quota.rewrites_remaining !== 1 ? "s" : ""}
+              </strong>{" "}
+              remaining this month.
+            </p>
+          )}
+          <div style={{ display: "flex", gap: 10, marginTop: quota ? 0 : 20 }}>
+            <button
+              onClick={() => setShowQuotaConfirm(false)}
+              style={{ flex: 1, padding: "10px 0", borderRadius: 8, border: `1px solid ${T.line}`, background: T.card, fontSize: 13, color: T.muted, cursor: "pointer", fontFamily: sans }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={async () => { setShowQuotaConfirm(false); await doAction("reject"); }}
+              style={{ flex: 1, padding: "10px 0", borderRadius: 8, border: "none", background: T.gold, fontSize: 13, fontWeight: 600, color: T.ink, cursor: "pointer", fontFamily: sans }}
+            >
+              Confirm & Request
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     </>
   );
 }
