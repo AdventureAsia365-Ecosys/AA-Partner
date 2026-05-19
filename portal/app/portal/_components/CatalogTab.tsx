@@ -411,9 +411,9 @@ export default function CatalogTab() {
 
       {/* RIGHT — editorial workspace */}
       {selected && (
-        <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, overflow: "hidden" }}>
-          {/* Header */}
-          <div style={{ padding: "14px 22px", borderBottom: `1px solid ${T.line}`, background: T.bg, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, overflow: "hidden", display: "flex", flexDirection: "column", maxHeight: "calc(100vh - 120px)" }}>
+          {/* Header — fixed, does not scroll */}
+          <div style={{ padding: "14px 22px", borderBottom: `1px solid ${T.line}`, background: T.bg, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
             <div>
               <div style={{ fontSize: 15, fontWeight: 700, color: T.ink }}>{selected.aa_name}</div>
               <div style={{ fontSize: 11.5, color: T.muted, marginTop: 3, display: "flex", gap: 10, fontFamily: mono }}>
@@ -438,7 +438,7 @@ export default function CatalogTab() {
 
           {dlLoad ? <LoadingScreen message="Loading editorial workspace…" /> :
            detail ? (
-            <div style={{ maxHeight: "78vh", overflowY: "auto" }}>
+            <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
 
               {/* Guided next step */}
               <div style={{ padding: "14px 22px 0" }}>
