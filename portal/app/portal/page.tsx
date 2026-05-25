@@ -57,7 +57,7 @@ export default function PortalPage() {
     Promise.all([
       fetch("/api/tenant/v1/tours/pool?page_size=1"),
       fetch("/api/tenant/v1/tours/my-versions?page_size=1"),
-      fetch("/api/tenant/v1/pipeline/billing"),
+      fetch("/api/admin/billing"),
     ]).then(async ([pRes, cRes, bRes]) => {
       if (pRes.ok) { const d = await pRes.json(); setPool(d.pagination?.total ?? 0); }
       if (cRes.ok) { const d = await cRes.json(); setCat(d.pagination?.total ?? 0); }

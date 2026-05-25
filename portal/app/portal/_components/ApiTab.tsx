@@ -12,9 +12,9 @@ const ENDPOINTS = [
   { method: "GET",   path: "/v1/tours/versions/{id}",       color: T.green,  label: "Get version detail + history" },
   { method: "POST",  path: "/v1/tours/pool/{id}/rewrite",   color: T.gold,   label: "Trigger a tour rewrite" },
   { method: "PATCH", path: "/v1/tours/versions/{id}",       color: "#7C3AED",label: "Approve / reject / edit inline" },
-  { method: "GET",   path: "/v1/pipeline/billing",          color: T.green,  label: "Quota, spend, activity" },
-  { method: "GET",   path: "/v1/pipeline/brand-identity",   color: T.green,  label: "Get brand rules + version history" },
-  { method: "POST",  path: "/v1/pipeline/brand-identity",   color: T.gold,   label: "Save new brand rules version" },
+  { method: "GET",   path: "/admin/billing",          color: T.green,  label: "Quota, spend, activity" },
+  { method: "GET",   path: "/admin/brand-identity",   color: T.green,  label: "Get brand rules + version history" },
+  { method: "POST",  path: "/admin/brand-identity",   color: T.gold,   label: "Save new brand rules version" },
 ];
 
 type Section = "overview" | "endpoints" | "webhooks";
@@ -32,7 +32,7 @@ export default function ApiTab() {
   const [billing, setBilling] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
-    fetch("/api/tenant/v1/pipeline/billing")
+    fetch("/api/admin/billing")
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d) setBilling(d); })
       .catch(() => {});

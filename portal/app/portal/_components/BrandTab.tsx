@@ -1,8 +1,8 @@
 "use client";
 // app/(tenant)/portal/_components/BrandTab.tsx
-// API: GET  /api/tenant/v1/pipeline/brand-identity
-//      POST /api/tenant/v1/pipeline/brand-identity
-//      POST /api/tenant/v1/pipeline/brand-identity/upload
+// API: GET  /api/admin/brand-identity
+//      POST /api/admin/brand-identity
+//      POST /api/admin/brand-identity/upload
 
 import { useState, useEffect, useRef } from "react";
 import { History, Upload, Check, RotateCcw } from "lucide-react";
@@ -37,7 +37,7 @@ export default function BrandTab() {
   const load = async () => {
     setLoading(true);
     try {
-      const r = await fetch("/api/tenant/v1/pipeline/brand-identity");
+      const r = await fetch("/api/admin/brand-identity");
       if (r.ok) {
         const d: BrandData = await r.json();
         setData(d);
@@ -55,7 +55,7 @@ export default function BrandTab() {
   async function save() {
     setSaving(true); setSaved(false);
     try {
-      const r = await fetch("/api/tenant/v1/pipeline/brand-identity", {
+      const r = await fetch("/api/admin/brand-identity", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -78,7 +78,7 @@ export default function BrandTab() {
     setUploadStatus("uploading");
     try {
       const fd = new FormData(); fd.append("file", file);
-      const r = await fetch("/api/tenant/v1/pipeline/brand-identity/upload", { method: "POST", body: fd });
+      const r = await fetch("/api/admin/brand-identity/upload", { method: "POST", body: fd });
       setUploadStatus(r.ok ? "done" : "error");
       if (r.ok) await load();
     } catch { setUploadStatus("error"); }
