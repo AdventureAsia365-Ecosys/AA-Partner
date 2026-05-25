@@ -1,6 +1,6 @@
 "use client";
 // app/(tenant)/portal/_components/DashboardTab.tsx
-// API: GET /api/tenant/v1/pipeline/billing
+// API: GET /api/admin/billing
 //      GET /api/tenant/v1/tours/pool?page_size=1 (for total count)
 
 import { useState, useEffect } from "react";
@@ -30,7 +30,7 @@ export default function DashboardTab({ onTabChange }: { onTabChange: (t: Tab) =>
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/tenant/v1/pipeline/billing"),
+      fetch("/api/admin/billing"),
       fetch("/api/tenant/v1/tours/pool?page_size=1"),
     ]).then(async ([bRes, pRes]) => {
       if (bRes.ok) setBilling(await bRes.json());
