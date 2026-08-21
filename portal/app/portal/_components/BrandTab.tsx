@@ -1,8 +1,13 @@
 "use client";
 // app/(tenant)/portal/_components/BrandTab.tsx
-// API: GET  /api/admin/brand-identity
-//      POST /api/admin/brand-identity
-//      POST /api/admin/brand-identity/upload
+// API: GET  /api/tenant/admin/brand-identity   (AA-424: was /api/admin/brand-identity, which
+//      POST /api/tenant/admin/brand-identity    requireAdmin()-gated and 401'd every real tenant
+//                                                session — see AA-423/424. Routed through the
+//                                                tenant proxy so cis_tenant_token reaches the now
+//                                                tenant-JWT-aware backend endpoint.)
+//      POST /api/admin/brand-identity/upload    (unchanged — AA-424 scope was GET/POST only;
+//                                                 this one still hardcodes AA-internal tenant_id
+//                                                 server-side, tracked as a follow-up, not fixed here)
 
 import { useState, useEffect, useRef } from "react";
 import { History, Upload, Check, RotateCcw } from "lucide-react";
@@ -37,7 +42,7 @@ export default function BrandTab() {
   const load = async () => {
     setLoading(true);
     try {
-      const r = await fetch("/api/admin/brand-identity");
+      const r = await fetch("/api/tenant/admin/brand-identity");
       if (r.ok) {
         const d: BrandData = await r.json();
         setData(d);
@@ -55,7 +60,7 @@ export default function BrandTab() {
   async function save() {
     setSaving(true); setSaved(false);
     try {
-      const r = await fetch("/api/admin/brand-identity", {
+      const r = await fetch("/api/tenant/admin/brand-identity", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
