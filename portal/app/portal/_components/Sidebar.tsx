@@ -7,7 +7,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Globe2, BookOpen, Sparkles, Code2, LogOut } from "lucide-react";
+import { LayoutDashboard, Globe2, BookOpen, Sparkles, Code2, Puzzle, LogOut } from "lucide-react";
 import { T, serif, sans } from "./ui";
 
 interface Props {
@@ -26,6 +26,7 @@ const NAV1: { href: string; icon: React.ReactNode; label: string }[] = [
   { href: "/portal/t1-rewrite", icon: <Globe2 size={15} />,          label: "Browse Pool" },
   { href: "/portal/t4-pool",    icon: <BookOpen size={15} />,        label: "My Catalog" },
   { href: "/portal/t0-brand",   icon: <Sparkles size={15} />,        label: "Brand Identity" },
+  { href: "/portal/t6-atoms",   icon: <Puzzle size={15} />,          label: "Atom Curation" }, // AA-431
   { href: "/portal/api",        icon: <Code2 size={15} />,           label: "API Access" },
 ];
 
