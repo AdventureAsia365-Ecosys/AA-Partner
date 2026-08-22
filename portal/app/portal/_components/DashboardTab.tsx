@@ -10,7 +10,6 @@ import {
   Card, CardHead, Badge, ProgressBar, Spinner, LoadingScreen,
   fmtDateTime, statusVariant,
 } from "./ui";
-import type { Tab } from "./Sidebar";
 
 interface BillingData {
   tenant_name: string; plan_tier: string; tours_quota_monthly: number;
@@ -22,7 +21,9 @@ interface BillingData {
   activity: { id: string; status: string; edit_source: string; tour_name: string; country: string | null; created_at: string }[];
 }
 
-export default function DashboardTab({ onTabChange }: { onTabChange: (t: Tab) => void }) {
+// AA-430: was onTabChange(t: Tab) — portal is real routes now, so this just takes the
+// destination href directly (router.push in the page.tsx that renders this component).
+export default function DashboardTab({ onNavigate }: { onNavigate: (href: string) => void }) {
   const [billing, setBilling] = useState<BillingData | null>(null);
   const [pool, setPool]       = useState(0);
   const [loading, setLoading] = useState(true);
@@ -74,7 +75,7 @@ export default function DashboardTab({ onTabChange }: { onTabChange: (t: Tab) =>
         {/* Membership — dark */}
         <Card dark>
           <CardHead title="Membership Status" light action={
-            <button onClick={() => onTabChange("billing" as Tab)} style={{ background: T.gold, color: T.ink, border: 0, fontWeight: 700, fontSize: 12, padding: "7px 14px", borderRadius: 6, cursor: "pointer", fontFamily: sans }}>
+            <button onClick={() => onNavigate("/portal/billing")} style={{ background: T.gold, color: T.ink, border: 0, fontWeight: 700, fontSize: 12, padding: "7px 14px", borderRadius: 6, cursor: "pointer", fontFamily: sans }}>
               Upgrade →
             </button>
           } />
@@ -208,11 +209,11 @@ export default function DashboardTab({ onTabChange }: { onTabChange: (t: Tab) =>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14 }}>
           {[
-            { icon: "🌏", title: "Browse Pool",    sub: `${pool.toLocaleString()} published tours available`, tab: "pool" as Tab },
-            { icon: "📋", title: "My Catalog",     sub: `${toursUsed} rewrites · approve, edit, export`,     tab: "catalog" as Tab },
-            { icon: "✨", title: "Brand Identity", sub: "Configure your content voice & style",               tab: "brand" as Tab },
+            { icon: "🌏", title: "Browse Pool",    sub: `${pool.toLocaleString()} published tours available`, href: "/portal/t1-rewrite" },
+            { icon: "📋", title: "My Catalog",     sub: `${toursUsed} rewrites · approve, edit, export`,     href: "/portal/t4-pool" },
+            { icon: "✨", title: "Brand Identity", sub: "Configure your content voice & style",               href: "/portal/t0-brand" },
           ].map(a => (
-            <ActionCard key={a.title} icon={a.icon} title={a.title} sub={a.sub} onClick={() => onTabChange(a.tab)} />
+            <ActionCard key={a.title} icon={a.icon} title={a.title} sub={a.sub} onClick={() => onNavigate(a.href)} />
           ))}
         </div>
       </div>
