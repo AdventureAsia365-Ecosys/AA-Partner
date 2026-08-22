@@ -43,11 +43,14 @@ export default function Sidebar({
   const initials = tenantName.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
 
   async function logout() {
-    // AA-427 (pending, separate PR): tenant cookies will become httpOnly and this will
-    // need to POST /api/auth/tenant-logout instead. Left as-is here — not this task's
-    // scope, see AA-430 implementation notes.
-    ["cis_role", "cis_user", "cis_tenant_token", "cis_tenant_id", "cis_tenant_name", "cis_tenant_plan"]
-      .forEach(k => (document.cookie = `${k}=; path=/; max-age=0`));
+    // AA-427: the tenant cookies are httpOnly now — JS can no longer clear
+    // them by writing "<name>=; max-age=0" itself. Clear server-side instead.
+    try {
+      await fetch("/api/auth/tenant-logout", { method: "POST" });
+    } catch {
+      // ignore — redirect below either way; middleware re-verifies the JWT
+      // on the next request regardless of whether the clear succeeded.
+    }
     window.location.href = "/tenant-login";
   }
 

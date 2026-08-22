@@ -3,8 +3,6 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Key, Loader2 } from "lucide-react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://api-cis.lumiguides.it.com";
-
 export default function TenantLoginPage() {
   const [apiKey, setApiKey]     = useState("");
   const [error, setError]       = useState("");
@@ -20,7 +18,10 @@ export default function TenantLoginPage() {
     setError("");
 
     try {
-      const res = await fetch(`${API_URL}/auth/tenant-login`, {
+      // AA-427: goes through the same-origin BFF route (not the ECS API
+      // directly) so the JWT cookies can be minted httpOnly by the response
+      // Set-Cookie header — nothing left for client JS to store itself.
+      const res = await fetch(`/api/auth/tenant-login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ api_key: apiKey.trim() }),
@@ -31,16 +32,6 @@ export default function TenantLoginPage() {
         setError(data.detail ?? "Invalid API key");
         return;
       }
-
-      const { token, tenant_id, tenant_name, plan_tier } = await res.json();
-
-      // Store JWT + metadata in cookies (24h, matches JWT expiry)
-      const maxAge = 60 * 60 * 24;
-      document.cookie = `cis_role=tenant; path=/; max-age=${maxAge}`;
-      document.cookie = `cis_tenant_token=${token}; path=/; max-age=${maxAge}`;
-      document.cookie = `cis_tenant_id=${tenant_id}; path=/; max-age=${maxAge}`;
-      document.cookie = `cis_tenant_name=${encodeURIComponent(tenant_name)}; path=/; max-age=${maxAge}`;
-      document.cookie = `cis_tenant_plan=${plan_tier}; path=/; max-age=${maxAge}`;
 
       router.push("/portal");
     } catch {
