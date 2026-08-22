@@ -31,6 +31,7 @@ const BREADCRUMBS: Record<string, string> = {
   "/portal/t1-rewrite": "Browse Pool",
   "/portal/t4-pool":    "My Catalog",
   "/portal/t0-brand":   "Brand Identity",
+  "/portal/t6-atoms":   "Atom Curation", // AA-431
   "/portal/api":        "API Access",
   "/portal/activity":   "Activity Log",
   "/portal/billing":    "Billing",
