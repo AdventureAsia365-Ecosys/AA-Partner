@@ -375,9 +375,10 @@ export function SettingsTab() {
           <button
             onClick={() => {
               if (confirm("Sign out of all active sessions?")) {
-                ["cis_role","cis_user","cis_tenant_token","cis_tenant_id","cis_tenant_name","cis_tenant_plan"]
-                  .forEach(k => (document.cookie = `${k}=; path=/; max-age=0`));
-                window.location.href = "/tenant-login";
+                // AA-427: tenant cookies are httpOnly now — clear server-side.
+                fetch("/api/auth/tenant-logout", { method: "POST" }).finally(() => {
+                  window.location.href = "/tenant-login";
+                });
               }
             }}
             style={{ fontSize: 13, color: T.red, background: T.redSoft, border: "1px solid #F5C6C6", borderRadius: 8, padding: "9px 20px", cursor: "pointer", fontFamily: sans, fontWeight: 600 }}>
