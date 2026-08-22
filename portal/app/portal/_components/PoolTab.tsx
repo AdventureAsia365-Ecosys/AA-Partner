@@ -10,7 +10,6 @@ import {
   Card, ScoreBadge, Badge, Btn, LoadingScreen, EmptyState,
   parseHighlights, fmtDate, statusVariant,
 } from "./ui";
-import type { Tab } from "./Sidebar";
 import { PoolFilters, type PoolFiltersState } from "./PoolFilters";
 
 interface PoolTour {

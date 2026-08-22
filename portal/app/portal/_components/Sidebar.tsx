@@ -1,49 +1,59 @@
 "use client";
-// app/(tenant)/portal/_components/Sidebar.tsx — v2
+// app/(tenant)/portal/_components/Sidebar.tsx — v3 (AA-430)
+//
+// Was tab-state (onClick={() => setTab(id)}, active = tab === id). Portal is now real
+// routes per T-stage (see portal/layout.tsx) — nav is <Link> + active state comes from
+// usePathname(), not a prop passed down from a single page.tsx anymore.
 
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { LayoutDashboard, Globe2, BookOpen, Sparkles, Code2, LogOut } from "lucide-react";
 import { T, serif, sans } from "./ui";
 
-export type Tab = "dashboard" | "pool" | "catalog" | "brand" | "api";
-
 interface Props {
-  tab: Tab;
-  setTab: (t: Tab) => void;
   poolCount: number;
   catalogCount: number;
   tenantName: string;
   planTier: string;
-  onActivityLog?: () => void;
-  onBilling?: () => void;
-  onSettings?: () => void;
+  // AA-430: old setTab({...}) => setGlobalSearch("") behavior on any nav click — Sidebar
+  // no longer owns navigation itself (Link does), so the search-clear side effect is
+  // surfaced as a plain onClick alongside the Link instead.
+  onNavClick?: () => void;
 }
 
-const NAV1: { id: Tab; icon: React.ReactNode; label: string }[] = [
-  { id: "dashboard", icon: <LayoutDashboard size={15} />, label: "Dashboard" },
-  { id: "pool",      icon: <Globe2 size={15} />,          label: "Browse Pool" },
-  { id: "catalog",   icon: <BookOpen size={15} />,        label: "My Catalog" },
-  { id: "brand",     icon: <Sparkles size={15} />,        label: "Brand Identity" },
-  { id: "api",       icon: <Code2 size={15} />,           label: "API Access" },
+const NAV1: { href: string; icon: React.ReactNode; label: string }[] = [
+  { href: "/portal/dashboard",  icon: <LayoutDashboard size={15} />, label: "Dashboard" },
+  { href: "/portal/t1-rewrite", icon: <Globe2 size={15} />,          label: "Browse Pool" },
+  { href: "/portal/t4-pool",    icon: <BookOpen size={15} />,        label: "My Catalog" },
+  { href: "/portal/t0-brand",   icon: <Sparkles size={15} />,        label: "Brand Identity" },
+  { href: "/portal/api",        icon: <Code2 size={15} />,           label: "API Access" },
+];
+
+const NAV2: { href: string; label: string }[] = [
+  { href: "/portal/activity", label: "Activity Log" },
+  { href: "/portal/billing",  label: "Billing" },
+  { href: "/portal/settings", label: "Settings" },
 ];
 
 export default function Sidebar({
-  tab, setTab, poolCount, catalogCount, tenantName, planTier,
-  onActivityLog, onBilling, onSettings,
+  poolCount, catalogCount, tenantName, planTier, onNavClick,
 }: Props) {
+  const pathname = usePathname();
   const initials = tenantName.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
 
-  function logout() {
-    ["cis_role","cis_user","cis_tenant_token","cis_tenant_id","cis_tenant_name","cis_tenant_plan"]
+  async function logout() {
+    // AA-427 (pending, separate PR): tenant cookies will become httpOnly and this will
+    // need to POST /api/auth/tenant-logout instead. Left as-is here — not this task's
+    // scope, see AA-430 implementation notes.
+    ["cis_role", "cis_user", "cis_tenant_token", "cis_tenant_id", "cis_tenant_name", "cis_tenant_plan"]
       .forEach(k => (document.cookie = `${k}=; path=/; max-age=0`));
     window.location.href = "/tenant-login";
   }
 
-  const counts: Partial<Record<Tab, number>> = { pool: poolCount, catalog: catalogCount };
-  const nav2 = [
-    { label: "Activity Log", onClick: onActivityLog },
-    { label: "Billing",      onClick: onBilling },
-    { label: "Settings",     onClick: onSettings },
-  ];
+  const counts: Record<string, number> = {
+    "/portal/t1-rewrite": poolCount,
+    "/portal/t4-pool":    catalogCount,
+  };
 
   return (
     <aside style={{
@@ -73,14 +83,14 @@ export default function Sidebar({
       <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 26 }}>
         <NavGroup label="Workspace">
           {NAV1.map(n => (
-            <NavItem key={n.id} active={tab === n.id} icon={n.icon} label={n.label}
-              count={counts[n.id]} onClick={() => setTab(n.id)} />
+            <NavItem key={n.href} href={n.href} active={pathname === n.href} icon={n.icon} label={n.label}
+              count={counts[n.href]} onClick={onNavClick} />
           ))}
         </NavGroup>
         <NavGroup label="Account">
-          {nav2.map(n => (
-            <NavItem key={n.label} active={false} icon={null} label={n.label}
-              onClick={() => n.onClick?.()} />
+          {NAV2.map(n => (
+            <NavItem key={n.href} href={n.href} active={pathname === n.href} icon={null} label={n.label}
+              onClick={onNavClick} />
           ))}
         </NavGroup>
       </div>
@@ -125,12 +135,12 @@ function NavGroup({ label, children }: { label: string; children: React.ReactNod
   );
 }
 
-function NavItem({ active, icon, label, count, onClick }: {
-  active: boolean; icon: React.ReactNode; label: string;
-  count?: number; onClick: () => void;
+function NavItem({ href, active, icon, label, count, onClick }: {
+  href: string; active: boolean; icon: React.ReactNode; label: string;
+  count?: number; onClick?: () => void;
 }) {
   return (
-    <button onClick={onClick} style={{
+    <Link href={href} onClick={onClick} style={{
       display: "flex", alignItems: "center", gap: 10, width: "100%",
       padding: "8px 10px", borderRadius: 7, border: "none",
       background: active ? "rgba(219,150,40,0.12)" : "transparent",
@@ -138,6 +148,7 @@ function NavItem({ active, icon, label, count, onClick }: {
       fontSize: 13, fontWeight: 500, cursor: "pointer",
       textAlign: "left", fontFamily: sans, position: "relative",
       transition: "background .15s, color .15s",
+      textDecoration: "none",
     }}>
       {active && (
         <span style={{ position: "absolute", left: 0, top: 8, bottom: 8, width: 2, background: T.gold, borderRadius: "0 2px 2px 0" }} />
@@ -149,6 +160,6 @@ function NavItem({ active, icon, label, count, onClick }: {
           {count}
         </span>
       )}
-    </button>
+    </Link>
   );
 }
