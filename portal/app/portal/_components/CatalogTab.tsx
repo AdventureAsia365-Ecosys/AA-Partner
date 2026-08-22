@@ -26,6 +26,7 @@ interface Version {
   aa_itineraries: string | null; aa_seo_title: string; aa_seo_meta: string;
   aa_quality_score: number; country: string | null; duration: string | null;
   published_tour_id?: string;
+  qa_auto_passed?: boolean;  // AA-436 — T3 gate didn't clear after max repairs, auto-passed anyway
   version_history?: { id: string; version_number: number; status: string; edit_source: string; quality_score: number | null; created_at: string }[];
 }
 
@@ -398,7 +399,10 @@ export default function CatalogTab() {
                             </div>
                           )}
                         </div>
-                        <StatusBadge status={v.status} />
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end", flexShrink: 0 }}>
+                          <StatusBadge status={v.status} />
+                          {v.qa_auto_passed && <QaAutoPassBadge />}
+                        </div>
                       </div>
                     </button>
                   </div>
@@ -429,6 +433,7 @@ export default function CatalogTab() {
               )}
               {saveOk && !dirty && <span style={{ fontSize: 12, color: T.green, fontWeight: 600 }}>✓ Saved</span>}
               <StatusBadge status={selected.status} />
+              {selected.qa_auto_passed && <QaAutoPassBadge />}
               <button onClick={() => { setSelected(null); setDetail(null); }}
                 style={{ background: "none", border: "none", cursor: "pointer", color: T.muted2 }}>
                 <X size={16} />
@@ -614,6 +619,21 @@ function StatusBadge({ status }: { status: string }) {
       {m.label}
     </span>
   );
+}
+
+// ── QA auto-pass badge — AA-436 ─────────────────────────────────────────────
+// Shown when qa_auto_passed=true: T3's QA gate didn't clear after
+// TENANT_QA_MAX_REPAIRS self-repair rounds, but the tour reached the pool anyway
+// (ADR-2026-038 §0.1, 22/08 — escalate-and-stop was reversed, see AA-436). Reuses
+// the shared `Badge` (./ui.tsx), not the local StatusBadge — this isn't a status,
+// it's an independent flag that can co-occur with any status above. Non-clickable
+// by design (no onClick, no detail/modal) — the full diagnosis stays in
+// review_queue.escalate_detail, which only A4 (admin/AA-437, separate issue)
+// reads; a tenant seeing raw QA failure codes was the exact experience ADR-2026-038
+// §0.1 moved away from. Label text ("Extra QA pass") proposed but not yet
+// confirmed with Nghiep — see docs/implementation-notes/AA-436-t3-autopass.md.
+function QaAutoPassBadge() {
+  return <Badge variant="info">Extra QA pass</Badge>;
 }
 
 // ── Compare row ───────────────────────────────────────────────────────────────
