@@ -20,12 +20,6 @@ import Sidebar from "./_components/Sidebar";
 import { PortalShellContext } from "./_components/PortalShellContext";
 import { T, sans } from "./_components/ui";
 
-function getCookie(n: string) {
-  if (typeof document === "undefined") return "";
-  const m = document.cookie.match(new RegExp(`(^| )${n}=([^;]+)`));
-  return m ? decodeURIComponent(m[2]) : "";
-}
-
 const BREADCRUMBS: Record<string, string> = {
   "/portal/dashboard":  "Dashboard",
   "/portal/t1-rewrite": "Browse Pool",
@@ -52,10 +46,19 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const n = getCookie("cis_tenant_name");
-    const p = getCookie("cis_tenant_plan");
-    if (n) setName(n);
-    if (p) setPlan(p);
+    // AA-443 (gap left by AA-427): cis_tenant_name / cis_tenant_plan became httpOnly in AA-427
+    // (PR #184) — no longer readable from document.cookie. PR #184 moved every other file that
+    // read these two cookies over to fetch("/api/tenant/me") but missed this one (this shell
+    // moved out of portal/page.tsx into its own layout.tsx via AA-430, around the same time AA-427
+    // was in flight), so tenantName/planTier silently stayed at their "Partner"/"growth" defaults
+    // for every real tenant. Same fix, same pattern, applied here.
+    fetch("/api/tenant/me")
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (d?.tenant_name) setName(d.tenant_name);
+        if (d?.plan_tier) setPlan(d.plan_tier);
+      })
+      .catch(() => {});
 
     Promise.all([
       fetch("/api/tenant/v1/tours/pool?page_size=1"),
