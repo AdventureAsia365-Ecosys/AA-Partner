@@ -27,6 +27,7 @@ const BREADCRUMBS: Record<string, string> = {
   "/portal/t0-brand":   "Brand Identity",
   "/portal/t6-atoms":   "Atom Curation", // AA-431
   "/portal/t7-planning": "Content Planning", // AA-448
+  "/portal/t8-angle-gate": "Angle Gate", // AA-449
   "/portal/marketplace": "Marketplace", // AA-444
   "/portal/api":        "API Access",
   "/portal/activity":   "Activity Log",
