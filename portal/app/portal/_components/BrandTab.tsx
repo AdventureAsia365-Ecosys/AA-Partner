@@ -1,13 +1,23 @@
 "use client";
 // app/(tenant)/portal/_components/BrandTab.tsx
-// API: GET  /api/tenant/admin/brand-identity   (AA-424: was /api/admin/brand-identity, which
-//      POST /api/tenant/admin/brand-identity    requireAdmin()-gated and 401'd every real tenant
-//                                                session — see AA-423/424. Routed through the
-//                                                tenant proxy so cis_tenant_token reaches the now
-//                                                tenant-JWT-aware backend endpoint.)
-//      POST /api/admin/brand-identity/upload    (unchanged — AA-424 scope was GET/POST only;
-//                                                 this one still hardcodes AA-internal tenant_id
-//                                                 server-side, tracked as a follow-up, not fixed here)
+// API: GET  /api/tenant/admin/brand-identity          (AA-424: was /api/admin/brand-identity,
+//      POST /api/tenant/admin/brand-identity           which requireAdmin()-gated and 401'd every
+//                                                       real tenant session — see AA-423/424.
+//                                                       Routed through the tenant proxy so
+//                                                       cis_tenant_token reaches the now
+//                                                       tenant-JWT-aware backend endpoint.)
+//      POST /api/tenant/admin/brand-identity/upload    (AA-441: was /api/admin/brand-identity/
+//                                                        upload — same 401 class as above, PLUS
+//                                                        the backend itself hardcoded AA-internal
+//                                                        tenant_id and expected a JSON
+//                                                        {filename,content_type} body → presigned
+//                                                        S3 URL, never actually receiving the
+//                                                        file this component always sent as
+//                                                        multipart. Backend now accepts the
+//                                                        multipart file directly and resolves
+//                                                        tenant_id from the caller; the tenant
+//                                                        proxy now passes multipart through
+//                                                        unmangled instead of forcing JSON.)
 
 import { useState, useEffect, useRef } from "react";
 import { History, Upload, Check, RotateCcw } from "lucide-react";
@@ -83,7 +93,7 @@ export default function BrandTab() {
     setUploadStatus("uploading");
     try {
       const fd = new FormData(); fd.append("file", file);
-      const r = await fetch("/api/admin/brand-identity/upload", { method: "POST", body: fd });
+      const r = await fetch("/api/tenant/admin/brand-identity/upload", { method: "POST", body: fd });
       setUploadStatus(r.ok ? "done" : "error");
       if (r.ok) await load();
     } catch { setUploadStatus("error"); }
