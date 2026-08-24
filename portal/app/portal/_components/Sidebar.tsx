@@ -28,7 +28,7 @@ const NAV1: { href: string; icon: React.ReactNode; label: string }[] = [
   { href: "/portal/t0-brand",   icon: <Sparkles size={15} />,        label: "Brand Identity" },
   { href: "/portal/t6-atoms",   icon: <Puzzle size={15} />,          label: "Atom Curation" }, // AA-431
   { href: "/portal/t7-planning", icon: <CalendarRange size={15} />,  label: "Content Planning" }, // AA-448
-  { href: "/portal/t8-angle-gate", icon: <Compass size={15} />,      label: "Angle Gate" }, // AA-449
+  { href: "/portal/t8-angle-gate", icon: <Compass size={15} />,      label: "Write Content" }, // AA-449/AA-450 — one wizard, goal->angle->write
   { href: "/portal/marketplace", icon: <Store size={15} />,          label: "Marketplace" }, // AA-444
   { href: "/portal/api",        icon: <Code2 size={15} />,           label: "API Access" },
 ];
