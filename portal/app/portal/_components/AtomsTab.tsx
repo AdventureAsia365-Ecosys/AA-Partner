@@ -16,7 +16,9 @@
 // tool for a tenant curating their own handful of tours, not AA staff curating hundreds.
 
 import { useState, useEffect, useCallback } from "react";
-import { Star, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { Star, Trash2, BookOpen, ArrowLeft } from "lucide-react";
 import { T, serif, sans, mono, Card, Badge, Btn, LoadingScreen, EmptyState } from "./ui";
 
 interface Atom {
@@ -44,6 +46,12 @@ const DIST_VARIANT: Record<string, "success" | "warning" | "default"> = {
 const PAGE_SIZE = 50;
 
 export default function AtomsTab() {
+  // AA-454 — arriving from CatalogTab's "View atoms →" link (?tour_id=...). The backend
+  // (api/routers/admin_atoms.py::list_atoms) already accepts tour_id as a real filter param —
+  // no new backend endpoint needed, just wiring this component to use it.
+  const searchParams = useSearchParams();
+  const tourIdFilter = searchParams.get("tour_id");
+
   const [summary, setSummary] = useState<Summary | null>(null);
   const [atoms, setAtoms] = useState<Atom[]>([]);
   const [total, setTotal] = useState(0);
@@ -64,6 +72,7 @@ export default function AtomsTab() {
     const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(offset) });
     if (distinctiveness) params.set("distinctiveness", distinctiveness);
     if (unreviewedOnly) params.set("unreviewed_only", "true");
+    if (tourIdFilter) params.set("tour_id", tourIdFilter);
     fetch(`/api/tenant/admin/atoms?${params}`)
       .then(r => (r.ok ? r.json() : null))
       .then(d => {
@@ -72,7 +81,7 @@ export default function AtomsTab() {
         setTotal(d.total ?? 0);
       })
       .finally(() => { setLoading(false); setLoadingMore(false); });
-  }, [distinctiveness, unreviewedOnly]);
+  }, [distinctiveness, unreviewedOnly, tourIdFilter]);
 
   useEffect(() => { loadSummary(); }, [loadSummary]);
   useEffect(() => { loadAtoms(0, false); }, [loadAtoms]);
@@ -100,8 +109,19 @@ export default function AtomsTab() {
 
   if (loading) return <LoadingScreen message="Loading your atoms…" />;
 
+  const filterTourName = tourIdFilter ? atoms[0]?.tour_name : undefined;
+
   return (
     <div>
+      {/* AA-454 — T4<->T6 nav (was zero navigation either direction). Always visible, not
+          just when filtered — the audit gap was "no nav" full stop, not "no nav while filtered". */}
+      <Link href={tourIdFilter ? `/portal/t4-pool?tour_id=${tourIdFilter}` : "/portal/t4-pool"} style={{
+        display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 600,
+        color: T.muted, textDecoration: "none", marginBottom: 14,
+      }}>
+        <ArrowLeft size={13} /> My Catalog
+      </Link>
+
       <div style={{ marginBottom: 22 }}>
         <h2 style={{ fontFamily: serif, fontSize: 22, fontWeight: 500, color: T.ink, margin: "0 0 6px", letterSpacing: "-0.01em" }}>
           Atom Curation
@@ -111,6 +131,22 @@ export default function AtomsTab() {
           in future scheduling; removed atoms are excluded entirely.
         </p>
       </div>
+
+      {tourIdFilter && (
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+          padding: "9px 14px", marginBottom: 16, borderRadius: 8,
+          background: T.goldTint, border: `1px solid ${T.goldSoft}`, fontFamily: sans,
+        }}>
+          <span style={{ fontSize: 12, color: T.body }}>
+            <BookOpen size={12} style={{ verticalAlign: -2, marginRight: 5 }} />
+            Showing atoms for: <strong>{filterTourName ?? "this tour"}</strong>
+          </span>
+          <Link href="/portal/t6-atoms" style={{ fontSize: 12, fontWeight: 600, color: T.body, textDecoration: "none" }}>
+            Clear filter ×
+          </Link>
+        </div>
+      )}
 
       {summary && (
         <div style={{ display: "flex", gap: 22, marginBottom: 22, flexWrap: "wrap" }}>

@@ -6,7 +6,9 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
-import { Package, ChevronRight, Save, CheckCircle, XCircle, RotateCcw, Clock, X } from "lucide-react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { Package, ChevronRight, Save, CheckCircle, XCircle, RotateCcw, Clock, X, Puzzle } from "lucide-react";
 import {
   T, serif, mono, sans,
   Card, CardHead, Badge, ScoreBadge, Btn, LoadingScreen, EmptyState,
@@ -26,6 +28,8 @@ interface Version {
   aa_itineraries: string | null; aa_seo_title: string; aa_seo_meta: string;
   aa_quality_score: number; country: string | null; duration: string | null;
   published_tour_id?: string;
+  tour_id?: string;  // AA-454 — raw_tours.tour_id, same identity tour_atoms.tour_id uses;
+                      // lets us deep-link to this version's atoms in AtomsTab (T6)
   qa_auto_passed?: boolean;  // AA-436 — T3 gate didn't clear after max repairs, auto-passed anyway
   version_history?: { id: string; version_number: number; status: string; edit_source: string; quality_score: number | null; created_at: string }[];
 }
@@ -36,6 +40,12 @@ const FILTER_LABELS: Record<string, string> = {
 };
 
 export default function CatalogTab() {
+  // AA-454 — arriving from AtomsTab's "View in My Catalog" link (?tour_id=...) filters the
+  // list to just that original tour's versions. Client-side only (list is already fetched
+  // page_size=50, no backend param needed) — mirrors AtomsTab's own tour_id filter direction.
+  const searchParams = useSearchParams();
+  const tourIdFilter = searchParams.get("tour_id");
+
   const [list, setList]         = useState<Version[]>([]);
   const [loading, setLoading]   = useState(true);
   const [filter, setFilter]     = useState("");
@@ -303,7 +313,8 @@ export default function CatalogTab() {
     } finally { setIsExporting(false); }
   }
 
-  const allSelected = list.length > 0 && list.every(v => selectedIds.has(v.id));
+  const visibleList = tourIdFilter ? list.filter(v => v.tour_id === tourIdFilter) : list;
+  const allSelected = visibleList.length > 0 && visibleList.every(v => selectedIds.has(v.id));
 
   return (
     <>
@@ -325,6 +336,22 @@ export default function CatalogTab() {
 
       {/* LEFT — version list */}
       <div>
+        {/* AA-454 — arrived from AtomsTab's "View in My Catalog" link, filtered to 1 tour */}
+        {tourIdFilter && (
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+            padding: "9px 14px", marginBottom: 12, borderRadius: 8,
+            background: T.goldTint, border: `1px solid ${T.goldSoft}`, fontFamily: sans,
+          }}>
+            <span style={{ fontSize: 12, color: T.amber }}>
+              Showing versions for: <strong>{visibleList[0]?.aa_name ?? "this tour"}</strong>
+            </span>
+            <Link href="/portal/t4-pool" style={{ fontSize: 12, color: T.amber, fontWeight: 600, textDecoration: "none" }}>
+              Clear filter ×
+            </Link>
+          </div>
+        )}
+
         {/* Filter pills + select-all + export */}
         <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
           {STATUS_FILTERS.map(s => (
@@ -336,12 +363,12 @@ export default function CatalogTab() {
               cursor: "pointer", fontFamily: sans,
             }}>{FILTER_LABELS[s] ?? s}</button>
           ))}
-          {list.length > 0 && (
+          {visibleList.length > 0 && (
             <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, color: T.muted, cursor: "pointer", fontFamily: sans, marginLeft: 4 }}>
               <input type="checkbox" checked={allSelected}
                 onChange={() => {
                   if (allSelected) setSelectedIds(new Set());
-                  else setSelectedIds(new Set(list.map(v => v.id)));
+                  else setSelectedIds(new Set(visibleList.map(v => v.id)));
                 }}
                 style={{ cursor: "pointer", accentColor: T.gold }} />
               Select all
@@ -362,11 +389,11 @@ export default function CatalogTab() {
         </div>
 
         {loading ? <LoadingScreen message="Loading catalog…" /> :
-         list.length === 0 ? (
+         visibleList.length === 0 ? (
            <EmptyState icon={<Package size={36} />} title="No rewrites yet" sub="Browse the pool and rewrite your first tour" />
          ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {list.map(v => {
+            {visibleList.map(v => {
               const rc = parseContent(v.rewritten_content) as Record<string, unknown> | null;
               const isActive = selected?.id === v.id;
               return (
@@ -434,6 +461,17 @@ export default function CatalogTab() {
               {saveOk && !dirty && <span style={{ fontSize: 12, color: T.green, fontWeight: 600 }}>✓ Saved</span>}
               <StatusBadge status={selected.status} />
               {selected.qa_auto_passed && <QaAutoPassBadge />}
+              {selected.tour_id && (
+                // AA-454 — T4->T6 nav (was zero navigation either direction). tour_id filters
+                // AtomsTab to this exact original tour's atoms, not a name-based guess.
+                <Link href={`/portal/t6-atoms?tour_id=${selected.tour_id}`} style={{
+                  display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 600,
+                  color: T.amber, textDecoration: "none", padding: "4px 10px", borderRadius: 20,
+                  border: `1px solid ${T.goldSoft}`, background: T.goldTint, whiteSpace: "nowrap",
+                }}>
+                  <Puzzle size={12} /> View atoms →
+                </Link>
+              )}
               <button onClick={() => { setSelected(null); setDetail(null); }}
                 style={{ background: "none", border: "none", cursor: "pointer", color: T.muted2 }}>
                 <X size={16} />
