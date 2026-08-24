@@ -1,31 +1,47 @@
 "use client";
-// app/(tenant)/portal/_components/AngleGateTab.tsx — AA-449 (T8 Angle Gate, tenant-facing)
+// app/(tenant)/portal/_components/AngleGateTab.tsx — AA-449 (T8 Angle Gate) + AA-450 (T9 Write +
+// T10-inline quality check), ONE continuous wizard on ONE page — Nghiep's explicit mid-build
+// decision (AA-450 "UI liền mạch" addendum): the tenant never leaves this page or clicks to a
+// separate T9 route between choosing an angle and seeing the written result. Route stays
+// /portal/t8-angle-gate (least-disruptive choice — 0 real tenant traffic yet, no reason to
+// introduce a second URL for one continuous flow); a standalone /portal/t9-write route was NOT
+// built, per that same decision.
+//
+// T8 and T9 remain 2 SEPARATE backend API surfaces (unchanged, already built/deployed/verified,
+// PR #203-205) — this file only chains 2 existing calls together in the UI. Nothing here required
+// any API/schema change: T9's own `attempt_number` design already means one T8 request (one
+// chosen angle) can be written more than once, so T8's request lifecycle and T9's write/attempt
+// lifecycle are genuinely different data models, only merged at the UI layer.
 //
 // Per ADR-2026-038 §0.2/§10.3 (tenant self-service — AA does not gate tenant content; the T8
 // "gate" is the TENANT choosing, never AA) + STEP0 §2 (terminology): this component always says
 // "Goal" for the 8-value list (Bang 1) and "Angle" only for the 3 LLM-generated options per
 // request — never mixes the two.
 //
-// Workflow (docs/claude_tasks/AA-449-01-build-t8-angle-gate.md):
+// Full 9-step workflow, all in this one component now:
 //   1. Pick an atom (from this tenant's own curated T6 atoms) + a channel.
 //   2. Pick a Goal from the 8-value list.
 //   3-6. Backend auto-applies fixed brand audience, formula, generates 3 angles, recommends one.
 //   7. Tenant picks one of the 3 (recommended or not) — the real gate. status -> approved.
+//   8. AUTOMATICALLY, no extra click: fires the T9 write call the instant step 7 resolves.
+//   9. ONE loading state while T9 writes + T10 checks (up to 2 attempts, inline, server-side —
+//      see docs/claude_audit/AA-450-01-t9-t10-retry-loop-investigation.md) -> final result.
 //
-// API (via /api/tenant proxy -> Authorization: Bearer <cis_tenant_token>, api/routers/
-// v1_angle_gate.py — tenant_id always resolved from the JWT):
+// API (via /api/tenant proxy -> Authorization: Bearer <cis_tenant_token>, tenant_id always
+// resolved from the JWT):
 //   GET  /api/tenant/v1/angle-gate/goals
-//   POST /api/tenant/v1/angle-gate/requests                    {atom_id, channel}
-//   POST /api/tenant/v1/angle-gate/requests/{id}/goal           {goal}
+//   POST /api/tenant/v1/angle-gate/requests                       {atom_id, channel}
+//   POST /api/tenant/v1/angle-gate/requests/{id}/goal              {goal}
 //   GET  /api/tenant/v1/angle-gate/requests/{id}
-//   POST /api/tenant/v1/angle-gate/requests/{id}/choose         {idx}
+//   POST /api/tenant/v1/angle-gate/requests/{id}/choose            {idx}
+//   POST /api/tenant/v1/content-writing/requests/{id}/write         {cta?}  — AA-450, step 8-9
 //
 // Atom picker reuses the same tenant-scoped atom list T6 (AtomsTab.tsx) already established
 // (GET /api/tenant/admin/atoms) — no new atom-listing endpoint needed for this.
 
 import { useState, useEffect, useCallback } from "react";
-import { Sparkles, CheckCircle2, RotateCcw } from "lucide-react";
-import { T, serif, sans, mono, Card, CardHead, Badge, Btn, LoadingScreen, EmptyState } from "./ui";
+import { Sparkles, CheckCircle2, RotateCcw, AlertTriangle } from "lucide-react";
+import { T, serif, sans, mono, Card, CardHead, Badge, Btn, LoadingScreen, EmptyState, Spinner } from "./ui";
 
 // Kept in sync with services/acp_planning/models.py's Channel Literal + admin/tenants
 // page.tsx's ALL_CHANNELS (AA-449).
@@ -61,8 +77,26 @@ interface AngleGateRequest {
   atom_id: string;
   channel: string;
   goal: string | null;
+  cta: string | null; // AA-450 migration 114 — usually null today, see that migration's header
   status: "pending_goal" | "pending_choice" | "approved";
   angles: AngleOption[];
+}
+
+// AA-450 — mirrors services/acp_content_writing/service.py::_row_to_dict()'s response shape.
+interface GateLedgerEntry {
+  gate: string;
+  passed: boolean;
+  violations: string[];
+}
+
+interface ContentPiece {
+  piece_id: string;
+  angle_gate_request_id: string;
+  attempt_number: number;
+  content_text: string;
+  status: "approved" | "held";
+  held_reason: string | null;
+  gate_ledger: GateLedgerEntry[];
 }
 
 export default function AngleGateTab() {
@@ -79,6 +113,13 @@ export default function AngleGateTab() {
   const [generating, setGenerating] = useState(false);
   const [choosing, setChoosing] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // AA-450 — step 8-9: write + inline T10 check, chained automatically after choose() resolves.
+  const [piece, setPiece] = useState<ContentPiece | null>(null);
+  const [writing, setWriting] = useState(false);
+  const [writeError, setWriteError] = useState<string | null>(null);
+  const [needsCtaInput, setNeedsCtaInput] = useState(false); // 422 fallback — see writeContent()
+  const [ctaInput, setCtaInput] = useState("");
 
   useEffect(() => {
     fetch("/api/tenant/admin/atoms?limit=100")
@@ -118,6 +159,33 @@ export default function AngleGateTab() {
       .finally(() => setGenerating(false));
   }, [req, selectedGoal]);
 
+  // AA-450 — step 9. `cta` is only ever sent to override a NULL angle_gate_request.cta (the
+  // realistic case today, see migration 114's header comment) — never overrides a real one.
+  const writeContent = useCallback((requestId: string, cta?: string) => {
+    setWriting(true); setWriteError(null); setNeedsCtaInput(false);
+    fetch(`/api/tenant/v1/content-writing/requests/${requestId}/write`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cta ? { cta } : {}),
+    })
+      .then(async r => {
+        if (r.status === 422) {
+          // MissingCTAError (services/acp_content_writing/service.py) — this request's
+          // angle_gate_request.cta is NULL (the realistic case) and no override was sent yet.
+          // Ask the tenant for one instead of silently fabricating a generic CTA (STEP0's
+          // resolved Open Question #2).
+          setNeedsCtaInput(true);
+          throw new Error("cta_needed");
+        }
+        return r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})));
+      })
+      .then(d => setPiece(d))
+      .catch(e => {
+        if (e instanceof Error && e.message === "cta_needed") return; // handled above, not an error banner
+        setWriteError(e.detail ?? "Couldn't write content — try again.");
+      })
+      .finally(() => setWriting(false));
+  }, []);
+
   const choose = useCallback((idx: number) => {
     if (!req) return;
     setChoosing(idx); setError(null);
@@ -126,13 +194,19 @@ export default function AngleGateTab() {
       body: JSON.stringify({ idx }),
     })
       .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
-      .then(d => setReq(d))
+      .then(d => {
+        setReq(d);
+        // AA-450 step 8 — automatic, no extra tenant click: fires the moment status flips to
+        // 'approved', the exact "1 loading, then final result" architecture Nghiep confirmed.
+        if (d.status === "approved") writeContent(d.request_id);
+      })
       .catch(e => setError(e.detail ?? "Couldn't save your choice — try again."))
       .finally(() => setChoosing(null));
-  }, [req]);
+  }, [req, writeContent]);
 
   const reset = useCallback(() => {
     setReq(null); setSelectedAtomId(""); setSelectedGoal(""); setError(null);
+    setPiece(null); setWriteError(null); setNeedsCtaInput(false); setCtaInput("");
   }, []);
 
   if (atomsLoading) return <LoadingScreen message="Loading atoms…" />;
@@ -231,7 +305,7 @@ export default function AngleGateTab() {
           } />
           {req.status === "approved" && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, color: T.green, fontSize: 13 }}>
-              <CheckCircle2 size={16} /> You&rsquo;ve chosen an angle — ready for content writing (T9).
+              <CheckCircle2 size={16} /> Angle chosen — writing the final piece below.
             </div>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -264,6 +338,82 @@ export default function AngleGateTab() {
               </div>
             ))}
           </div>
+        </Card>
+      )}
+
+      {req && req.status === "approved" && (
+        <Card>
+          <CardHead title="4 · Content" />
+
+          {writing && !piece && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 4px", color: T.muted, fontSize: 13 }}>
+              <Spinner size={16} /> Writing and checking your content — one moment…
+            </div>
+          )}
+
+          {needsCtaInput && !writing && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ fontSize: 12.5, color: T.body, lineHeight: 1.5 }}>
+                This piece needs a call to action before it can be written — what should the
+                reader do next?
+              </div>
+              <input value={ctaInput} onChange={e => setCtaInput(e.target.value)}
+                placeholder="e.g. Book a consultation, Read the full guide…"
+                style={{ padding: "9px 12px", background: "#fff", border: `1px solid ${T.line}`, borderRadius: 8, color: T.body, fontSize: 13, fontFamily: sans }} />
+              <div>
+                <Btn variant="primary" disabled={!ctaInput.trim()}
+                  onClick={() => writeContent(req.request_id, ctaInput.trim())}>
+                  <Sparkles size={13} /> Write content
+                </Btn>
+              </div>
+            </div>
+          )}
+
+          {writeError && !writing && (
+            <div style={{ padding: "9px 12px", background: T.redSoft, border: "1px solid #F5C6C6", borderRadius: 8, fontSize: 12, color: T.red, marginBottom: 10 }}>
+              {writeError}
+            </div>
+          )}
+
+          {piece && !writing && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {piece.status === "approved" ? (
+                  <>
+                    <Badge variant="default">Approved</Badge>
+                    <span style={{ fontSize: 11.5, color: T.muted }}>
+                      passed quality review{piece.attempt_number > 1 ? ` (attempt ${piece.attempt_number})` : ""}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 700, color: T.red }}>
+                      <AlertTriangle size={13} /> Needs review
+                    </span>
+                    <span style={{ fontSize: 11.5, color: T.muted }}>
+                      quality review didn&rsquo;t clear after {piece.attempt_number} attempt{piece.attempt_number > 1 ? "s" : ""}
+                    </span>
+                  </>
+                )}
+              </div>
+
+              <div style={{ padding: "14px 16px", borderRadius: 10, border: `1px solid ${piece.status === "approved" ? T.line : "#F5C6C6"}`, background: piece.status === "approved" ? "#fff" : T.redSoft, whiteSpace: "pre-wrap", fontSize: 13.5, lineHeight: 1.6, color: T.body, fontFamily: sans }}>
+                {piece.content_text}
+              </div>
+
+              {piece.status === "held" && piece.held_reason && (
+                <div style={{ fontSize: 11.5, color: T.muted }}>
+                  <strong>Reason:</strong> {piece.held_reason}
+                </div>
+              )}
+
+              <div style={{ fontSize: 11, color: T.muted, display: "flex", flexWrap: "wrap", gap: "4px 14px" }}>
+                <span><strong>Goal:</strong> {req.goal}</span>
+                <span><strong>Channel:</strong> {req.channel}</span>
+                {req.cta && <span><strong>CTA:</strong> {req.cta}</span>}
+              </div>
+            </div>
+          )}
         </Card>
       )}
     </div>
