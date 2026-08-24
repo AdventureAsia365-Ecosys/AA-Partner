@@ -30,7 +30,9 @@
 // API (via /api/tenant proxy -> Authorization: Bearer <cis_tenant_token>, tenant_id always
 // resolved from the JWT):
 //   GET  /api/tenant/v1/angle-gate/goals
-//   POST /api/tenant/v1/angle-gate/requests                       {atom_id, channel}
+//   POST /api/tenant/v1/angle-gate/requests            {atom_id, channel, year, month} — AA-451:
+//                                                        year/month = current calendar month,
+//                                                        inferred (no month-picker UI here)
 //   POST /api/tenant/v1/angle-gate/requests/{id}/goal              {goal}
 //   GET  /api/tenant/v1/angle-gate/requests/{id}
 //   POST /api/tenant/v1/angle-gate/requests/{id}/choose            {idx}
@@ -136,9 +138,18 @@ export default function AngleGateTab() {
   const startRequest = useCallback(() => {
     if (!selectedAtomId) { setError("Pick an atom first."); return; }
     setCreating(true); setError(null);
+    // AA-451: no month-picker exists in this component (the atom picker is generic, sourced
+    // from T6, not tied to any T7 month view) — the current calendar month is the closest real
+    // context to infer (content is written for now, not an arbitrary future month). Lets the
+    // backend compute+persist a T7 slot on the spot so `cta` is usually filled instead of NULL
+    // — see services/acp_angle_gate/service.py::_compute_and_persist_slot_cta().
+    const now = new Date();
     fetch("/api/tenant/v1/angle-gate/requests", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ atom_id: selectedAtomId, channel: selectedChannel }),
+      body: JSON.stringify({
+        atom_id: selectedAtomId, channel: selectedChannel,
+        year: now.getFullYear(), month: now.getMonth() + 1,
+      }),
     })
       .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
       .then(d => setReq({ ...d, goal: null, angles: [] }))
