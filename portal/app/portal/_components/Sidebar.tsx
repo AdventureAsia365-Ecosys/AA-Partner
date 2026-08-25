@@ -7,7 +7,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Globe2, BookOpen, Sparkles, Code2, Puzzle, Store, CalendarRange, Compass, LogOut } from "lucide-react";
+import { LayoutDashboard, Globe2, BookOpen, Sparkles, Code2, Puzzle, Store, CalendarRange, Compass, Send, LogOut } from "lucide-react";
 import { T, serif, sans } from "./ui";
 
 interface Props {
@@ -29,6 +29,7 @@ const NAV1: { href: string; icon: React.ReactNode; label: string }[] = [
   { href: "/portal/t6-atoms",   icon: <Puzzle size={15} />,          label: "Atom Curation" }, // AA-431
   { href: "/portal/t7-planning", icon: <CalendarRange size={15} />,  label: "Content Planning" }, // AA-448
   { href: "/portal/t8-angle-gate", icon: <Compass size={15} />,      label: "Write Content" }, // AA-449/AA-450 — one wizard, goal->angle->write
+  { href: "/portal/t11-publish", icon: <Send size={15} />,           label: "Publish" }, // AA-457/AA-458 — WordPress credentials + real publish
   { href: "/portal/marketplace", icon: <Store size={15} />,          label: "Marketplace" }, // AA-444
   { href: "/portal/api",        icon: <Code2 size={15} />,           label: "API Access" },
 ];
