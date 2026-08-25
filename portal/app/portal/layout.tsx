@@ -28,6 +28,8 @@ const BREADCRUMBS: Record<string, string> = {
   "/portal/t6-atoms":   "Atom Curation", // AA-431
   "/portal/t7-planning": "Content Planning", // AA-448
   "/portal/t8-angle-gate": "Write Content", // AA-449/AA-450 — one wizard, goal->angle->write
+  "/portal/t11-publish": "Publish", // AA-457 — connect-flow only this PR, no Sidebar entry yet
+  "/portal/t11-publish/connection": "Publish", // manage-connection sub-route, same breadcrumb label
   "/portal/marketplace": "Marketplace", // AA-444
   "/portal/api":        "API Access",
   "/portal/activity":   "Activity Log",
