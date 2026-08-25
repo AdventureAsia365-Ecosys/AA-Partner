@@ -1,20 +1,20 @@
 "use client";
-// app/(tenant)/portal/t11-publish/page.tsx — AA-457 [T11 PR1]
+// app/(tenant)/portal/t11-publish/page.tsx — AA-457 [T11 PR1] + AA-458 [T11 PR2]
 //
-// This PR only builds the connect flow (Option 3+2, AA-456 STEP0 §9): if WordPress isn't
-// connected yet, this page IS the connect form — no separate navigation for the common
-// first-time case. Once connected, this page currently shows a placeholder for what AA-458
-// (PR 2) builds next: the list of approved content_piece rows + the real publish action. The
-// route/skeleton exists now so AA-458 extends this file rather than creating it from scratch.
+// AA-457 built the connect flow (Option 3+2, AA-456 STEP0 §9): if WordPress isn't connected
+// yet, this page IS the connect form. AA-458 adds the real list+publish content that was
+// deliberately left as a placeholder — the "Ready to Publish" list (PublishPendingList) now
+// stays visible even when not connected (its own Publish buttons disable with STEP0 §12's exact
+// copy, "Connect WordPress to publish", rather than the whole list disappearing) so a tenant
+// always sees what they have ready.
 //
-// No Sidebar entry yet (deliberate, per this task's own scope) — reachable by direct URL only
-// until AA-458 adds real list/publish content and the nav entry together. Middleware needs no
-// change: `{ prefix: "/portal", roles: ["admin","tenant"] }` in middleware.ts already covers
-// every /portal/* route with one blanket entry (unlike the admin side's per-page allowlist).
+// Sidebar entry added in this same PR (Sidebar.tsx NAV1) — deliberately not added in AA-457
+// per that PR's own scope note, since the route wasn't yet functionally complete.
 import Link from "next/link";
 import { Settings2 } from "lucide-react";
 import { T, serif, sans, LoadingScreen } from "../_components/ui";
 import { useWordPressStatus, WordPressConnectForm, WordPressStatusCard } from "../_components/WordPressConnect";
+import { PublishPendingList } from "../_components/PublishPendingList";
 
 export default function T11PublishPage() {
   const { status, loading, refresh } = useWordPressStatus();
@@ -32,29 +32,24 @@ export default function T11PublishPage() {
         </p>
       </div>
 
-      {!status.connected ? (
-        <WordPressConnectForm onConnected={refresh} />
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          <WordPressStatusCard status={status} onRetest={refresh} />
-
-          <div style={{
-            padding: "18px 20px", borderRadius: 12, border: `1px dashed ${T.line}`,
-            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-          }}>
-            <span style={{ fontSize: 13, color: T.muted, lineHeight: 1.5 }}>
-              Your approved content will appear here to publish — coming soon.
-            </span>
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        {!status.connected ? (
+          <WordPressConnectForm onConnected={refresh} />
+        ) : (
+          <>
+            <WordPressStatusCard status={status} onRetest={refresh} />
             <Link href="/portal/t11-publish/connection" style={{
               display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5,
               fontWeight: 600, color: T.ink3, textDecoration: "none", whiteSpace: "nowrap",
-              fontFamily: sans,
+              fontFamily: sans, alignSelf: "flex-start", marginTop: -10,
             }}>
               <Settings2 size={13} /> Manage connection
             </Link>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+
+        <PublishPendingList wordpressConnected={status.connected} />
+      </div>
     </div>
   );
 }
