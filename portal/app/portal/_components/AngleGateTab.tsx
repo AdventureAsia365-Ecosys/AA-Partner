@@ -37,13 +37,31 @@
 //   GET  /api/tenant/v1/angle-gate/requests/{id}
 //   POST /api/tenant/v1/angle-gate/requests/{id}/choose            {idx}
 //   POST /api/tenant/v1/content-writing/requests/{id}/write         {cta?}  — AA-450, step 8-9
+//                                                                     AA-466: 202 Accepted +
+//                                                                     'processing' placeholder,
+//                                                                     poll GET .../pieces/{id}
+//   GET  /api/tenant/v1/content-writing/pieces/{id}                 — AA-466 poll target
 //
 // Atom picker reuses the same tenant-scoped atom list T6 (AtomsTab.tsx) already established
 // (GET /api/tenant/admin/atoms) — no new atom-listing endpoint needed for this.
+//
+// AA-466 — /write moved from 1 blocking fetch to 202 Accepted + poll (real API Gateway 504s on
+// long LLM+T10 runs, up to ~89s measured). Poll mechanics below (ref-guard against double-start,
+// setInterval + hard ceiling, cleanup-on-unmount) mirror CatalogTab.tsx's list-poll skeleton —
+// deliberately NOT copied wholesale, since that poll diffs a whole list and this one tracks a
+// single piece by id (see docs/implementation-notes/AA-466.md for the full comparison). Ceiling
+// is 180s / interval 3s, independent of the 90s API Gateway timeout — that ceiling only ever
+// applied to the LLM call itself; POST /write now returns in ms, and each poll GET is a
+// single-row read that never approaches it. If the ceiling is hit, the background task keeps
+// running regardless (same "backend keeps working" precedent AA-450/452 already documented for
+// the pre-202 504 case) — the tenant just needs to check back or press "Check status" again.
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Sparkles, CheckCircle2, RotateCcw, AlertTriangle } from "lucide-react";
 import { T, serif, sans, mono, Card, CardHead, Badge, Btn, LoadingScreen, EmptyState, Spinner } from "./ui";
+
+const POLL_INTERVAL_MS = 3000;
+const POLL_CEILING_MS = 180_000;
 
 // Kept in sync with services/acp_planning/models.py's Channel Literal + admin/tenants
 // page.tsx's ALL_CHANNELS (AA-449).
@@ -85,6 +103,9 @@ interface AngleGateRequest {
 }
 
 // AA-450 — mirrors services/acp_content_writing/service.py::_row_to_dict()'s response shape.
+// AA-466: status gains "processing" (the 202 placeholder, before the background task finishes)
+// and "failed" (a real system error in the background task — distinct from "held", which is a
+// complete business outcome with real content_text; see migration 118's header).
 interface GateLedgerEntry {
   gate: string;
   passed: boolean;
@@ -96,7 +117,7 @@ interface ContentPiece {
   angle_gate_request_id: string;
   attempt_number: number;
   content_text: string;
-  status: "approved" | "held";
+  status: "processing" | "approved" | "held" | "failed";
   held_reason: string | null;
   gate_ledger: GateLedgerEntry[];
 }
@@ -117,11 +138,15 @@ export default function AngleGateTab() {
   const [error, setError] = useState<string | null>(null);
 
   // AA-450 — step 8-9: write + inline T10 check, chained automatically after choose() resolves.
+  // AA-466: `writing` now spans the whole 202+poll cycle (POST -> processing -> poll -> final
+  // status), not just the POST round trip.
   const [piece, setPiece] = useState<ContentPiece | null>(null);
   const [writing, setWriting] = useState(false);
   const [writeError, setWriteError] = useState<string | null>(null);
   const [needsCtaInput, setNeedsCtaInput] = useState(false); // 422 fallback — see writeContent()
   const [ctaInput, setCtaInput] = useState("");
+  const [pollTimedOut, setPollTimedOut] = useState(false); // 180s poll ceiling hit, NOT a failure
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     fetch("/api/tenant/admin/atoms?limit=100")
@@ -170,10 +195,44 @@ export default function AngleGateTab() {
       .finally(() => setGenerating(false));
   }, [req, selectedGoal]);
 
+  const stopPolling = useCallback(() => {
+    if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
+  }, []);
+
+  // AA-466 — single-piece poll for the 202 placeholder. Ref-guarded against double-start,
+  // hard ceiling distinct from a real failure (see module header comment). Not the list-diff
+  // shape CatalogTab.tsx uses — this tracks exactly 1 piece_id, no list to diff against.
+  const pollPiece = useCallback((pieceId: string) => {
+    stopPolling();
+    const startTime = Date.now();
+    pollingRef.current = setInterval(async () => {
+      if (Date.now() - startTime > POLL_CEILING_MS) {
+        stopPolling();
+        setWriting(false);
+        setPollTimedOut(true);
+        return;
+      }
+      try {
+        const r = await fetch(`/api/tenant/v1/content-writing/pieces/${pieceId}`);
+        if (!r.ok) return; // transient — next tick may succeed, backend is still working either way
+        const fresh: ContentPiece = await r.json();
+        if (fresh.status !== "processing") {
+          stopPolling();
+          setPiece(fresh);
+          setWriting(false);
+        }
+      } catch { /* transient network error — keep polling, don't surface as a failure */ }
+    }, POLL_INTERVAL_MS);
+  }, [stopPolling]);
+
+  useEffect(() => stopPolling, [stopPolling]); // cleanup on unmount
+
   // AA-450 — step 9. `cta` is only ever sent to override a NULL angle_gate_request.cta (the
   // realistic case today, see migration 114's header comment) — never overrides a real one.
+  // AA-466: POST now returns 202 + a 'processing' placeholder immediately — the real result
+  // comes from polling GET .../pieces/{piece_id}, not from this response.
   const writeContent = useCallback((requestId: string, cta?: string) => {
-    setWriting(true); setWriteError(null); setNeedsCtaInput(false);
+    setWriting(true); setWriteError(null); setNeedsCtaInput(false); setPollTimedOut(false);
     fetch(`/api/tenant/v1/content-writing/requests/${requestId}/write`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(cta ? { cta } : {}),
@@ -184,18 +243,26 @@ export default function AngleGateTab() {
           // angle_gate_request.cta is NULL (the realistic case) and no override was sent yet.
           // Ask the tenant for one instead of silently fabricating a generic CTA (STEP0's
           // resolved Open Question #2).
+          setWriting(false);
           setNeedsCtaInput(true);
-          throw new Error("cta_needed");
+          return null;
         }
-        return r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})));
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.detail ?? "Couldn't write content — try again.");
+        }
+        return r.json();
       })
-      .then(d => setPiece(d))
+      .then((placeholder: ContentPiece | null) => {
+        if (!placeholder) return; // 422 branch above already handled its own state
+        setPiece(placeholder);
+        pollPiece(placeholder.piece_id);
+      })
       .catch(e => {
-        if (e instanceof Error && e.message === "cta_needed") return; // handled above, not an error banner
-        setWriteError(e.detail ?? "Couldn't write content — try again.");
-      })
-      .finally(() => setWriting(false));
-  }, []);
+        setWriting(false);
+        setWriteError(e instanceof Error ? e.message : "Couldn't write content — try again.");
+      });
+  }, [pollPiece]);
 
   const choose = useCallback((idx: number) => {
     if (!req) return;
@@ -216,9 +283,11 @@ export default function AngleGateTab() {
   }, [req, writeContent]);
 
   const reset = useCallback(() => {
+    stopPolling();
     setReq(null); setSelectedAtomId(""); setSelectedGoal(""); setError(null);
     setPiece(null); setWriteError(null); setNeedsCtaInput(false); setCtaInput("");
-  }, []);
+    setPollTimedOut(false);
+  }, [stopPolling]);
 
   if (atomsLoading) return <LoadingScreen message="Loading atoms…" />;
 
@@ -356,9 +425,26 @@ export default function AngleGateTab() {
         <Card>
           <CardHead title="4 · Content" />
 
-          {writing && !piece && (
+          {writing && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 4px", color: T.muted, fontSize: 13 }}>
               <Spinner size={16} /> Writing and checking your content — one moment…
+            </div>
+          )}
+
+          {pollTimedOut && !writing && piece && (
+            // AA-466 — hit the 180s FE poll ceiling. NOT a failure: the background task keeps
+            // running regardless (same "backend keeps working" precedent as the pre-202 504
+            // case) — this only means the FE gave up watching, not that anything broke.
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "9px 12px", background: T.goldTint, border: `1px solid ${T.gold}`, borderRadius: 8, marginBottom: 10 }}>
+              <div style={{ fontSize: 12.5, color: T.body, lineHeight: 1.5 }}>
+                Still working — this is taking longer than usual. Your content is still being
+                written in the background.
+              </div>
+              <div>
+                <Btn size="sm" variant="secondary" onClick={() => { setWriting(true); setPollTimedOut(false); pollPiece(piece.piece_id); }}>
+                  Check status
+                </Btn>
+              </div>
             </div>
           )}
 
@@ -386,7 +472,24 @@ export default function AngleGateTab() {
             </div>
           )}
 
-          {piece && !writing && (
+          {piece && !writing && piece.status === "failed" && (
+            // AA-466 — a real system error in the background task, NOT a quality-gate hold: no
+            // usable content_text was produced, so there's nothing to review — offer Retry
+            // instead. held_reason carries an internal exception message here (unlike a real
+            // 'held' piece, where it's tenant-facing gate feedback) — deliberately not shown.
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 700, color: T.red }}>
+                <AlertTriangle size={13} /> Something went wrong while writing this content
+              </div>
+              <div>
+                <Btn size="sm" variant="primary" onClick={() => writeContent(req.request_id)}>
+                  <Sparkles size={13} /> Retry
+                </Btn>
+              </div>
+            </div>
+          )}
+
+          {piece && !writing && (piece.status === "approved" || piece.status === "held") && (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 {piece.status === "approved" ? (
