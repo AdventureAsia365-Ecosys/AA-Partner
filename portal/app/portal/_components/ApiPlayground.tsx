@@ -5,7 +5,6 @@ import { ENDPOINT_GROUPS } from "./api-playground/endpoints-config";
 import { EndpointPanel } from "./api-playground/EndpointPanel";
 import { ResponseViewer } from "./api-playground/ResponseViewer";
 import { ApiKeyDisplay } from "./api-playground/ApiKeyDisplay";
-import { QuotaBar } from "./api-playground/QuotaBar";
 import type { Language } from "./api-playground/code-generators";
 
 interface PlaygroundResponse {
@@ -17,10 +16,9 @@ interface PlaygroundResponse {
 
 interface ApiPlaygroundProps {
   apiKey?: string | null;
-  quota?: Record<string, unknown> | null;
 }
 
-export function ApiPlayground({ apiKey, quota }: ApiPlaygroundProps) {
+export function ApiPlayground({ apiKey }: ApiPlaygroundProps) {
   const [selectedId, setSelectedId]   = useState("list-tours");
   const [params, setParams]           = useState<Record<string, string>>({});
   const [response, setResponse]       = useState<PlaygroundResponse | null>(null);
@@ -91,10 +89,6 @@ export function ApiPlayground({ apiKey, quota }: ApiPlaygroundProps) {
             ))}
           </div>
         ))}
-
-        <div style={{ borderTop: `1px solid ${T.line}`, paddingTop: 12 }}>
-          <QuotaBar quota={quota} />
-        </div>
       </div>
 
       {/* ── Main ── */}

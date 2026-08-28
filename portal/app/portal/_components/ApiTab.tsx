@@ -1,7 +1,7 @@
 "use client";
 // app/(tenant)/portal/_components/ApiTab.tsx
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Eye, EyeOff, Copy, CheckCircle } from "lucide-react";
 import { T, serif, mono, sans, Card } from "./ui";
 import { ApiPlayground } from "./ApiPlayground";
@@ -29,14 +29,8 @@ export default function ApiTab() {
   const [activeSection, setActiveSection] = useState<Section>("overview");
   const [showKey, setShowKey] = useState(false);
   const [copied, setCopied]   = useState(false);
-  const [billing, setBilling] = useState<Record<string, unknown> | null>(null);
 
-  useEffect(() => {
-    fetch("/api/admin/billing")
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) setBilling(d); })
-      .catch(() => {});
-  }, []);
+  // Rewrite quota UI removed (AA-428) — feature never had backend enforcement, see AA-489 if rebuilding
 
   // API key is one-time — show contact message
   const keyPlaceholder = "Contact your Adventure Asia account manager to retrieve your API key.";
@@ -150,7 +144,7 @@ curl -X POST -H "Authorization: Bearer <JWT>" \\
 
       {/* ── Endpoints / API Playground ── */}
       {activeSection === "endpoints" && (
-        <ApiPlayground apiKey={null} quota={billing} />
+        <ApiPlayground apiKey={null} />
       )}
 
       {/* ── Webhooks ── */}
