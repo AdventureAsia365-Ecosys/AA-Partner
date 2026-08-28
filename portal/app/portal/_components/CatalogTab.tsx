@@ -60,7 +60,6 @@ export default function CatalogTab() {
   const [localToast, setLocalToast] = useState<string | null>(null);
   const [actionState, setActionState] = useState<'approved' | 'rejected' | null>(null);
   const [showQuotaConfirm, setShowQuotaConfirm] = useState(false);
-  const [quota, setQuota] = useState<{ rewrites_remaining: number } | null>(null);
   // Original AA tour data for the "AA Original" diff column
   const [origTour, setOrigTour]     = useState<any>(null);
 
@@ -93,12 +92,7 @@ export default function CatalogTab() {
 
   useEffect(() => { fetchList(); }, [fetchList]);
 
-  useEffect(() => {
-    fetch('/api/tenant/v1/quota')
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) setQuota(d); })
-      .catch(() => {});
-  }, []);
+  // Rewrite quota UI removed (AA-428) — feature never had backend enforcement, see AA-489 if rebuilding
 
   // Keep refs current for polling comparisons (avoids stale closure)
   useEffect(() => { listRef.current = list; }, [list]);
@@ -597,16 +591,7 @@ export default function CatalogTab() {
           <p style={{ fontSize: 13, color: T.muted, margin: "0 0 6px" }}>
             This will use <strong>1 rewrite credit</strong>.
           </p>
-          {quota && (
-            <p style={{ fontSize: 13, color: T.muted2, margin: "0 0 20px" }}>
-              You have{" "}
-              <strong style={{ color: quota.rewrites_remaining < 5 ? T.red : T.ink }}>
-                {quota.rewrites_remaining} credit{quota.rewrites_remaining !== 1 ? "s" : ""}
-              </strong>{" "}
-              remaining this month.
-            </p>
-          )}
-          <div style={{ display: "flex", gap: 10, marginTop: quota ? 0 : 20 }}>
+          <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
             <button
               onClick={() => setShowQuotaConfirm(false)}
               style={{ flex: 1, padding: "10px 0", borderRadius: 8, border: `1px solid ${T.line}`, background: T.card, fontSize: 13, color: T.muted, cursor: "pointer", fontFamily: sans }}
