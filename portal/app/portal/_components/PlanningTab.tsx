@@ -23,6 +23,7 @@
 
 import { useState, useCallback } from "react";
 import { T, serif, sans, mono, Card, CardHead, Badge, Btn, LoadingScreen, EmptyState } from "./ui";
+import SlotPickerPanel from "./SlotPickerPanel";
 
 interface TripScore {
   trip_id: string;
@@ -155,6 +156,8 @@ export default function PlanningTab() {
         <EmptyState icon="🗓️" title="Preview a quarter to get started"
           sub="Pick a year and quarter above, then Preview plan — nothing is saved until you finalize it." />
       )}
+
+      <SlotPickerPanel />
 
       <FeedbackSection />
       <ReallocationSection defaultYear={year} defaultQuarter={quarter} />
