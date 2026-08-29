@@ -99,7 +99,10 @@ interface AngleGateRequest {
   channel: string;
   goal: string | null;
   cta: string | null; // AA-450 migration 114 — usually null today, see that migration's header
-  status: "pending_goal" | "pending_choice" | "approved";
+  // AA-497 — "reusable" is an approved request SlotPickerPanel.tsx's "Change angle" just
+  // reopened (services/acp_angle_gate/service.py::reopen_request()): same "pick 1 of 3 already-
+  // generated angles" UI as "pending_choice" below, choose() is unchanged either way.
+  status: "pending_goal" | "pending_choice" | "approved" | "reusable";
   angles: AngleOption[];
 }
 
@@ -132,6 +135,10 @@ export default function AngleGateTab() {
   // handoff.
   const searchParams = useSearchParams();
   const atomIdParam = searchParams.get("atom_id");
+  // AA-497 — SlotPickerPanel.tsx's "Change angle" action already called .../reopen (approved ->
+  // reusable) before navigating here; this component just needs to load that EXISTING request
+  // (skip straight to step 3, the angle-choice card) rather than starting a new one via ?atom_id.
+  const resumeRequestId = searchParams.get("resume_request_id");
 
   const [atoms, setAtoms] = useState<Atom[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
@@ -169,6 +176,20 @@ export default function AngleGateTab() {
       .then(d => setGoals(d.goals ?? []))
       .catch(() => {});
   }, []);
+
+  // AA-497 — resume an already-reopened request (status should already be 'reusable', set by
+  // SlotPickerPanel.tsx's own POST .../reopen before it navigated here). Loads straight into the
+  // angle-choice card below — no atom/channel/goal picking, those were already done the first
+  // time. If the request somehow isn't reopened (e.g. a stale/reused link), it still just shows
+  // whatever real status the request is at — no separate error state needed, the existing
+  // per-status cards below already cover every value the API can return.
+  useEffect(() => {
+    if (!resumeRequestId) return;
+    fetch(`/api/tenant/v1/angle-gate/requests/${resumeRequestId}`)
+      .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
+      .then(d => setReq(d))
+      .catch(e => setError(e.detail ?? "Couldn't load that request — try again from Weekly Slots."));
+  }, [resumeRequestId]);
 
   const startRequest = useCallback(() => {
     if (!selectedAtomId) { setError("Pick an atom first."); return; }
@@ -388,11 +409,23 @@ export default function AngleGateTab() {
         </Card>
       )}
 
-      {req && (req.status === "pending_choice" || req.status === "approved") && (
+      {req && (req.status === "pending_choice" || req.status === "reusable" || req.status === "approved") && (
         <Card>
-          <CardHead title={req.status === "approved" ? "Approved" : "3 · Choose an Angle"} action={
+          <CardHead title={
+            req.status === "approved" ? "Approved" :
+            req.status === "reusable" ? "Choose a Different Angle" : "3 · Choose an Angle"
+          } action={
             <Btn variant="ghost" size="sm" onClick={reset}><RotateCcw size={12} /> Start over</Btn>
           } />
+          {req.status === "reusable" && (
+            // AA-497 — reopened via SlotPickerPanel.tsx's "Change angle". The currently-chosen
+            // angle still shows "Chosen" below (unchanged until a different one is picked) so the
+            // tenant can see what's being replaced before they commit to a different one.
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, color: T.muted, fontSize: 13 }}>
+              Pick a different one of the 3 angles below — no new content is generated until you
+              choose and it re-writes.
+            </div>
+          )}
           {req.status === "approved" && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, color: T.green, fontSize: 13 }}>
               <CheckCircle2 size={16} /> Angle chosen — writing the final piece below.
@@ -419,7 +452,7 @@ export default function AngleGateTab() {
                 <div style={{ fontSize: 12.5, color: T.body, marginBottom: 10 }}>
                   <strong>Best final style:</strong> {a.best_final_style}
                 </div>
-                {req.status === "pending_choice" && (
+                {(req.status === "pending_choice" || req.status === "reusable") && !a.chosen && (
                   <Btn size="sm" variant={a.recommended ? "primary" : "secondary"}
                     disabled={choosing !== null} onClick={() => choose(a.idx)}>
                     {choosing === a.idx ? "Saving…" : "Choose this angle"}
