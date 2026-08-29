@@ -53,7 +53,9 @@ interface AtomDetail {
   distinctiveness: "HIGH" | "MED" | "LOW";
 }
 
-interface UsedAtom { used_at: string; channel: string; }
+// AA-497 — request_id lets an already-written slot offer "Change angle" (reopen the request
+// behind it), see SlotCard/SlotExpandedPanel below.
+interface UsedAtom { used_at: string; channel: string; request_id: string; }
 
 interface SlotSuggestionsResponse {
   slot_grid: { year: number; month: number; slots: Slot[]; capacity_note: string | null };
@@ -329,6 +331,27 @@ function SlotExpandedPanel({ slot, data }: { slot: Slot; data: SlotSuggestionsRe
   const router = useRouter();
   const [pickedAtomId, setPickedAtomId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  // AA-497 — reopen state for the "already written" branch below.
+  const [reopening, setReopening] = useState(false);
+  const [reopenError, setReopenError] = useState<string | null>(null);
+
+  const writtenAtomId = slot.atom_ids.find(id => data.used_atoms[id]);
+  const written = writtenAtomId ? data.used_atoms[writtenAtomId] : null;
+  const writtenAtom = writtenAtomId ? data.atoms_by_id[writtenAtomId] : null;
+
+  // AA-497 (AA-494 Decision 3) — reopens the angle_gate_request behind this already-written
+  // slot (approved -> reusable), then hands off to AngleGateTab.tsx's resume mode to pick a
+  // different one of the 3 already-generated angles. Deliberately does NOT let a tenant pick a
+  // different ATOM here — that's a separate, bigger product question (a new request entirely)
+  // not part of this build; "Change angle" is exactly what it says.
+  const changeAngle = useCallback(() => {
+    if (!written) return;
+    setReopening(true); setReopenError(null);
+    fetch(`/api/tenant/v1/angle-gate/requests/${written.request_id}/reopen`, { method: "POST" })
+      .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
+      .then(() => router.push(`/portal/t8-angle-gate?resume_request_id=${encodeURIComponent(written.request_id)}`))
+      .catch(e => { setReopenError(e.detail ?? "Couldn't reopen — try again."); setReopening(false); });
+  }, [written, router]);
 
   const freeAtoms = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -344,6 +367,37 @@ function SlotExpandedPanel({ slot, data }: { slot: Slot; data: SlotSuggestionsRe
     if (!pickedAtomId) return;
     router.push(`/portal/t8-angle-gate?atom_id=${encodeURIComponent(pickedAtomId)}`);
   }, [pickedAtomId, router]);
+
+  // AA-497 — an already-written slot shows what was used + a "Change angle" action instead of
+  // the atom-picker below (picking a different ATOM for an already-decided slot is a separate,
+  // bigger question than this build covers — see changeAngle()'s own comment above).
+  if (written && writtenAtom) {
+    return (
+      <div style={{ borderTop: `1px solid ${T.line2}`, paddingTop: 16 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.muted, marginBottom: 10 }}>
+          Already written
+        </div>
+        <div style={{ padding: "14px 16px", borderRadius: 10, border: `1px solid ${T.green}`, background: T.greenSoft, marginBottom: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: T.ink }}>{writtenAtom.trip_name ?? "—"}</div>
+          <div style={{ fontSize: 11.5, color: T.muted, marginTop: 4 }}>
+            {written.channel} · written {fmtDate(written.used_at)}
+          </div>
+        </div>
+        {reopenError && (
+          <div style={{ padding: "8px 10px", background: T.redSoft, border: "1px solid #F5C6C6", borderRadius: 8, fontSize: 11.5, color: T.red, marginBottom: 10 }}>
+            {reopenError}
+          </div>
+        )}
+        <Btn variant="secondary" disabled={reopening} onClick={changeAngle}>
+          {reopening ? "Reopening…" : "Change angle"}
+        </Btn>
+        <div style={{ fontSize: 11, color: T.muted2, marginTop: 8, lineHeight: 1.5, maxWidth: 420 }}>
+          Picks from the same 3 angles already generated for this atom — no new content is
+          written until you choose one and it re-writes.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ borderTop: `1px solid ${T.line2}`, paddingTop: 16, paddingBottom: 56, position: "relative" }}>
