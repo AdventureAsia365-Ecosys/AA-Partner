@@ -12,6 +12,8 @@
 //   POST /api/tenant/v1/planning/quarter-plan/preview  {year, quarter, specials, excluded_trip_ids}
 //   POST /api/tenant/v1/planning/quarter-plan           (finalize — same body, auto-approved)
 //   GET  /api/tenant/v1/planning/quarter-plan?year=&quarter=
+//   GET  /api/tenant/v1/planning/quarter-plan/history?year=&quarter=      (AA-469 Việc 2)
+//   GET  /api/tenant/v1/planning/quarter-plan/versions/{version_id}      (AA-469 Việc 2)
 //   GET  /api/tenant/v1/planning/slot-grid?year=&month=
 //   POST /api/tenant/v1/planning/metrics                {piece_id, reach, engagement, clicks}
 //   POST /api/tenant/v1/planning/metrics/rollup
@@ -20,6 +22,24 @@
 //
 // Feedback loop (round 6) is explicitly a NEW extension beyond aa-marketing-v2's own Module H —
 // see services/acp_shared/content_metrics.py's module docstring for the full boundary.
+//
+// "Edit after finalize" (AA-469 Việc 2(a)) — decision, flagged explicitly rather than silently
+// picked: at the QUARTER-PLAN level (which trips get planned), "edit" means adjusting
+// specials/excluded_trip_ids and re-finalizing — this generalizes the pre-existing
+// specials/excluded_trip_ids override-replay mechanism (QuarterPlanRequest already accepted
+// both; only this component's own hardcoded `[]` was wiring them away) rather than inventing a
+// new primitive. Re-finalizing always creates a NEW quarter_plan_version (never overwrites —
+// migration 092's own design), so nothing is destructively "edited" — the History section below
+// is what makes the resulting trail visible/browsable.
+// At the SLOT/ATOM level (which atom fills a given week's post), STEP0-refresh (this session)
+// confirmed re-picking an atom for an ALREADY-WRITTEN slot is still explicitly out of scope —
+// AA-494's own Step 5 notes call this out as a deliberate deferral ("a written slot-card is
+// display-only... not re-expandable"), blocked on AA-494 Decision 3's still-unbuilt status-
+// transition wiring (`reusable` status has zero code path yet — content_piece's own
+// UNIQUE(angle_gate_request_id, attempt_number) constraint would collide the moment a second
+// write session is attempted on the same request, a genuine open schema question AA-494's own
+// migration 124 header flags, not resolved here). Not built in this pass — see
+// docs/implementation-notes/AA-469.md for the full writeup.
 
 import { useState, useCallback } from "react";
 import { T, serif, sans, mono, Card, CardHead, Badge, Btn, LoadingScreen, EmptyState } from "./ui";
@@ -85,34 +105,49 @@ export default function PlanningTab() {
   const [error, setError] = useState<string | null>(null);
   const [finalizedVersionId, setFinalizedVersionId] = useState<string | null>(null);
 
+  // AA-469 Việc 2(a) — the edit mechanism: specials/excluded_trip_ids, previously hardcoded to
+  // [] below, now real tenant-editable overrides that replay into every preview/finalize call.
+  const [specialsInput, setSpecialsInput] = useState("");
+  const [excludedTripIds, setExcludedTripIds] = useState<Set<string>>(new Set());
+
+  const toggleExcluded = useCallback((tripId: string) => {
+    setExcludedTripIds(prev => {
+      const next = new Set(prev);
+      if (next.has(tripId)) next.delete(tripId); else next.add(tripId);
+      return next;
+    });
+  }, []);
+
   const runPreview = useCallback(() => {
     setLoading(true);
     setError(null);
     setFinalizedVersionId(null);
+    const specials = specialsInput.split(",").map(s => s.trim()).filter(Boolean);
     fetch("/api/tenant/v1/planning/quarter-plan/preview", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ year, quarter, specials: [], excluded_trip_ids: [] }),
+      body: JSON.stringify({ year, quarter, specials, excluded_trip_ids: Array.from(excludedTripIds) }),
     })
       .then(r => (r.ok ? r.json() : Promise.reject(r)))
       .then(d => setPreview(d))
       .catch(() => setError("Couldn't compute a preview — try again."))
       .finally(() => setLoading(false));
-  }, [year, quarter]);
+  }, [year, quarter, specialsInput, excludedTripIds]);
 
   const finalize = useCallback(() => {
     setFinalizing(true);
     setError(null);
+    const specials = specialsInput.split(",").map(s => s.trim()).filter(Boolean);
     fetch("/api/tenant/v1/planning/quarter-plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ year, quarter, specials: [], excluded_trip_ids: [] }),
+      body: JSON.stringify({ year, quarter, specials, excluded_trip_ids: Array.from(excludedTripIds) }),
     })
       .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
       .then(d => setFinalizedVersionId(d.version_id))
       .catch((e) => setError(e?.detail || "Couldn't finalize this quarter's plan."))
       .finally(() => setFinalizing(false));
-  }, [year, quarter]);
+  }, [year, quarter, specialsInput, excludedTripIds]);
 
   return (
     <div>
@@ -130,6 +165,17 @@ export default function PlanningTab() {
       <Card style={{ padding: "16px 18px", marginBottom: 18 }}>
         <div style={{ display: "flex", gap: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
           <YearQuarterPicker year={year} quarter={quarter} onYear={setYear} onQuarter={setQuarter} />
+          <div style={{ flex: "1 1 220px", minWidth: 220 }}>
+            <div style={{ fontSize: 10, color: T.muted2, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
+              Force-include (comma-separated trip name/destination)
+            </div>
+            <input value={specialsInput} onChange={e => setSpecialsInput(e.target.value)}
+              placeholder="e.g. Sapa, Ha Giang Loop" style={{
+                width: "100%", boxSizing: "border-box", padding: "8px 10px", background: T.bg,
+                border: `1px solid ${T.line}`, borderRadius: 8, color: T.body, fontSize: 13,
+                fontFamily: sans, outline: "none",
+              }} />
+          </div>
           <Btn variant="primary" onClick={runPreview} disabled={loading}>
             {loading ? "Computing…" : "Preview plan"}
           </Btn>
@@ -140,6 +186,12 @@ export default function PlanningTab() {
             </Btn>
           )}
         </div>
+        {excludedTripIds.size > 0 && (
+          <div style={{ marginTop: 10, fontSize: 12, color: T.muted }}>
+            {excludedTripIds.size} trip{excludedTripIds.size === 1 ? "" : "s"} excluded — re-run
+            Preview to see the effect, then Finalize to save it as a new version.
+          </div>
+        )}
         {error && <div style={{ marginTop: 10, fontSize: 12.5, color: T.red }}>{error}</div>}
         {finalizedVersionId && (
           <div style={{ marginTop: 10, fontSize: 12.5, color: T.green }}>
@@ -150,12 +202,16 @@ export default function PlanningTab() {
 
       {loading && <LoadingScreen message="Computing your quarter plan…" />}
 
-      {!loading && preview && <PreviewPanel preview={preview} />}
+      {!loading && preview && (
+        <PreviewPanel preview={preview} excludedTripIds={excludedTripIds} onToggleExcluded={toggleExcluded} />
+      )}
 
       {!loading && !preview && (
         <EmptyState icon="🗓️" title="Preview a quarter to get started"
           sub="Pick a year and quarter above, then Preview plan — nothing is saved until you finalize it." />
       )}
+
+      <HistorySection year={year} quarter={quarter} />
 
       <SlotPickerPanel />
 
@@ -190,7 +246,9 @@ function YearQuarterPicker({ year, quarter, onYear, onQuarter }: {
   );
 }
 
-function PreviewPanel({ preview }: { preview: PreviewResponse }) {
+function PreviewPanel({ preview, excludedTripIds, onToggleExcluded }: {
+  preview: PreviewResponse; excludedTripIds: Set<string>; onToggleExcluded: (tripId: string) => void;
+}) {
   const lockedWeeks = preview.lock_status.filter(w => w.locked).length;
   return (
     <>
@@ -220,6 +278,7 @@ function PreviewPanel({ preview }: { preview: PreviewResponse }) {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
             <thead>
               <tr style={{ textAlign: "left", color: T.muted2, fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                <th style={{ padding: "6px 8px" }}>Exclude</th>
                 <th style={{ padding: "6px 8px" }}>Trip</th>
                 <th style={{ padding: "6px 8px" }}>Selected</th>
                 <th style={{ padding: "6px 8px" }}>Score</th>
@@ -233,7 +292,12 @@ function PreviewPanel({ preview }: { preview: PreviewResponse }) {
             </thead>
             <tbody>
               {preview.plan.trip_scores.map(ts => (
-                <tr key={ts.trip_id} style={{ borderTop: `1px solid ${T.line2}` }}>
+                <tr key={ts.trip_id} style={{ borderTop: `1px solid ${T.line2}`, opacity: excludedTripIds.has(ts.trip_id) ? 0.5 : 1 }}>
+                  <td style={{ padding: "8px" }}>
+                    <input type="checkbox" checked={excludedTripIds.has(ts.trip_id)}
+                      onChange={() => onToggleExcluded(ts.trip_id)}
+                      title="Exclude this trip, then Preview again to see the effect" />
+                  </td>
                   <td style={{ padding: "8px" }}>
                     <div style={{ fontWeight: 600, color: T.ink }}>{ts.name}</div>
                     <div style={{ fontSize: 10.5, color: T.muted2 }}>{ts.destination}</div>
@@ -269,6 +333,127 @@ function StatBlock({ label, value }: { label: string; value: number | string }) 
       <div style={{ fontSize: 10, color: T.muted2, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 3 }}>{label}</div>
       <div style={{ fontFamily: serif, fontSize: 20, fontWeight: 500, color: T.ink }}>{value}</div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------- history (AA-469 Việc 2)
+
+interface HistoryVersion {
+  version_id: string;
+  version_no: number;
+  approval_status: string;
+  approved_by: string | null;
+  approved_at: string | null;
+  created_at: string | null;
+  source: string;
+}
+
+interface HistoryVersionDetail {
+  version_no: number;
+  approval_status: string;
+  plan: QuarterPlanPayload;
+}
+
+function HistorySection({ year, quarter }: { year: number; quarter: number }) {
+  const [open, setOpen] = useState(false);
+  const [versions, setVersions] = useState<HistoryVersion[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<HistoryVersionDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setSelectedId(null);
+    setDetail(null);
+    fetch(`/api/tenant/v1/planning/quarter-plan/history?year=${year}&quarter=${quarter}`)
+      .then(r => (r.ok ? r.json() : Promise.reject()))
+      .then(d => setVersions(d.versions))
+      .catch(() => setVersions([]))
+      .finally(() => setLoading(false));
+  }, [year, quarter]);
+
+  const toggleOpen = useCallback(() => {
+    const next = !open;
+    setOpen(next);
+    if (next && versions === null) load();
+  }, [open, versions, load]);
+
+  const selectVersion = useCallback((versionId: string) => {
+    setSelectedId(versionId);
+    setDetailLoading(true);
+    setDetail(null);
+    fetch(`/api/tenant/v1/planning/quarter-plan/versions/${versionId}`)
+      .then(r => (r.ok ? r.json() : Promise.reject()))
+      .then(d => setDetail(d))
+      .catch(() => setDetail(null))
+      .finally(() => setDetailLoading(false));
+  }, []);
+
+  return (
+    <Card style={{ padding: "16px 18px", marginBottom: 18 }}>
+      <CardHead title={`History — Q${quarter} ${year}`}
+        action={<Btn variant="secondary" size="sm" onClick={toggleOpen}>
+          {open ? "Hide" : (loading ? "Loading…" : "View history")}
+        </Btn>} />
+      {open && (
+        <>
+          <p style={{ fontSize: 12, color: T.muted, lineHeight: 1.6, margin: "0 0 12px" }}>
+            Every version of this quarter&rsquo;s plan you&rsquo;ve ever finalized — re-finalizing
+            never overwrites, it always saves a new one. Older versions stay here for reference.
+          </p>
+          {loading && <div style={{ fontSize: 12.5, color: T.muted }}>Loading…</div>}
+          {!loading && versions && versions.length === 0 && (
+            <div style={{ fontSize: 12.5, color: T.muted }}>No saved versions for this quarter yet.</div>
+          )}
+          {!loading && versions && versions.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {versions.map(v => (
+                <div key={v.version_id} onClick={() => selectVersion(v.version_id)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 10, padding: "8px 10px",
+                    borderRadius: 8, cursor: "pointer", fontSize: 12.5,
+                    background: selectedId === v.version_id ? T.bg : "transparent",
+                    border: `1px solid ${selectedId === v.version_id ? T.line : "transparent"}`,
+                  }}>
+                  <span style={{ fontFamily: mono, color: T.ink3 }}>v{v.version_no}</span>
+                  <Badge variant={v.approval_status === "approved" ? "success" : undefined}>
+                    {v.approval_status}
+                  </Badge>
+                  <span style={{ color: T.muted2 }}>{v.approved_by || "—"}</span>
+                  <span style={{ color: T.muted2, marginLeft: "auto" }}>
+                    {v.created_at ? new Date(v.created_at).toLocaleString() : "—"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {selectedId && (
+            <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${T.line2}` }}>
+              {detailLoading && <div style={{ fontSize: 12.5, color: T.muted }}>Loading version…</div>}
+              {!detailLoading && detail && (
+                <div style={{ display: "flex", gap: 22, flexWrap: "wrap" }}>
+                  <StatBlock label="Trips" value={detail.plan.trip_ids.length} />
+                  <StatBlock label="Special" value={detail.plan.forced_specials.length} />
+                  <StatBlock label="Status" value={detail.approval_status} />
+                  <div style={{ minWidth: 200, fontSize: 12, color: T.muted }}>
+                    <div style={{ fontSize: 10, color: T.muted2, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 3 }}>
+                      Destination shares
+                    </div>
+                    {Object.entries(detail.plan.destination_shares).map(([dest, share]) => (
+                      <div key={dest}>{dest}: {(share * 100).toFixed(0)}%</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {!detailLoading && !detail && (
+                <div style={{ fontSize: 12.5, color: T.red }}>Couldn&rsquo;t load this version.</div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </Card>
   );
 }
 
