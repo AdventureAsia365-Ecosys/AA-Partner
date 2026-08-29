@@ -57,6 +57,7 @@
 // the pre-202 504 case) — the tenant just needs to check back or press "Check status" again.
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import { Sparkles, CheckCircle2, RotateCcw, AlertTriangle } from "lucide-react";
 import { T, serif, sans, mono, Card, CardHead, Badge, Btn, LoadingScreen, EmptyState, Spinner } from "./ui";
 
@@ -123,11 +124,20 @@ interface ContentPiece {
 }
 
 export default function AngleGateTab() {
+  // AA-494 Step 5 — SlotPickerPanel.tsx (T7 slot-view) hands off here via
+  // /portal/t8-angle-gate?atom_id=..., same useSearchParams() pattern AtomsTab.tsx already uses
+  // for ?tour_id= (AA-345 round 5/6 lesson: useSearchParams(), never window.location.search).
+  // Pre-selects the atom only — channel/goal/angle are still chosen here as before; the
+  // write-time-channel move (design doc Decision 1) is explicitly deferred, not built by this
+  // handoff.
+  const searchParams = useSearchParams();
+  const atomIdParam = searchParams.get("atom_id");
+
   const [atoms, setAtoms] = useState<Atom[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [atomsLoading, setAtomsLoading] = useState(true);
 
-  const [selectedAtomId, setSelectedAtomId] = useState("");
+  const [selectedAtomId, setSelectedAtomId] = useState(atomIdParam ?? "");
   const [selectedChannel, setSelectedChannel] = useState("facebook");
   const [selectedGoal, setSelectedGoal] = useState("");
 
