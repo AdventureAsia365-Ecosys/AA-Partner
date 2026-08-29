@@ -220,11 +220,24 @@ function MonthLevel({ quarter, onPick }: { quarter: number; onPick: (m: number) 
 }
 
 function WeekLevel({ data, onPick }: { data: SlotSuggestionsResponse; onPick: (w: number) => void }) {
+  // AA-494 close-out (Item 1) — `slot_grid.capacity_note` used to be rendered verbatim here.
+  // Investigated: it's `allocator.py::compute_slot_grid()`'s own internal reasoning trail
+  // (`_add_note()`, pipe-joined multi-trip log lines — "Trip 'X' atom floor: N live atoms <
+  // 2xM planned slots for CHANNEL — capacity implicitly reduced, no silent atom repeat.", etc.),
+  // never designed as display copy — confirmed by grep: nothing anywhere in this codebase
+  // (admin or tenant) had ever rendered `SlotGrid.capacity_note` before this session's own
+  // PlanningTab.tsx addition, unlike the separate `QuarterPlan.capacity_note` (quarter.py,
+  // already shown above in the Trips section) which IS a genuine one-line tenant-appropriate
+  // sentence ("N eligible trips at M posts/wk — focusing on K trips (applied)."). The two
+  // fields share a name but not a design intent — this component mistakenly treated them the
+  // same. Removed rather than reformatted: turning allocator.py's per-trip, whole-month-string
+  // notes into real tenant copy (e.g. a per-slot/per-trip tooltip explaining a dropped slot)
+  // needs its own structured backend field and design pass, not a same-PR string rewrite — see
+  // docs/implementation-notes/AA-494.md's post-merge record for this flagged as a follow-up.
   return (
     <div>
       <div style={{ fontSize: 11.5, color: T.muted, marginBottom: 10 }}>
         Capacity: {data.capacity_posts_per_week} post{data.capacity_posts_per_week === 1 ? "" : "s"}/week
-        {data.slot_grid.capacity_note && <span> · {data.slot_grid.capacity_note}</span>}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
         {[1, 2, 3, 4].map(w => {
