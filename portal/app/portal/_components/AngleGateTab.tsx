@@ -18,6 +18,22 @@
 // "Goal" for the 8-value list (Bang 1) and "Angle" only for the 3 LLM-generated options per
 // request — never mixes the two.
 //
+// AA-469 Việc 4 (redesign, this session) — restyled to match T7's SlotPickerPanel.tsx drill-down
+// language: a top Stepper (1 Atom+Channel · 2 Goal · 3 Angle · 4 Write) replaces the old per-card
+// "Start over" buttons (now one consolidated action next to the Stepper), and angle selection is
+// now pick-then-confirm (click a card to highlight it, a separate "Confirm this angle" button
+// submits) instead of a single click submitting immediately — same two-beat pattern as
+// SlotPickerPanel.tsx's atom-pick + "Start writing".
+//
+// Real back-navigation exists for exactly ONE step, because it's the only one the backend
+// supports (AA-497's reopen_request(), approved -> reusable): from step 4 (Write), "Change angle"
+// (in the Stepper's "3 Angle" crumb AND inline on the Write card's meta row) reopens the SAME
+// request and rewinds to the angle-choice card, no new LLM call. Steps 1 and 2 have no reopen-
+// style backend endpoint (creating a request / submitting a goal are still one-way), so their
+// Stepper crumbs are informational only, not clickable — "Start over" (full reset) remains the
+// only way back past step 3. Flagged explicitly per AA-469 Việc 4's brief: this is a deliberate
+// scope boundary (no backend work beyond the existing reopen endpoint), not an oversight.
+//
 // Full 9-step workflow, all in this one component now:
 //   1. Pick an atom (from this tenant's own curated T6 atoms) + a channel.
 //   2. Pick a Goal from the 8-value list.
@@ -36,6 +52,8 @@
 //   POST /api/tenant/v1/angle-gate/requests/{id}/goal              {goal}
 //   GET  /api/tenant/v1/angle-gate/requests/{id}
 //   POST /api/tenant/v1/angle-gate/requests/{id}/choose            {idx}
+//   POST /api/tenant/v1/angle-gate/requests/{id}/reopen             {}     — AA-497, step 4 "Change
+//                                                                     angle" (approved -> reusable)
 //   POST /api/tenant/v1/content-writing/requests/{id}/write         {cta?}  — AA-450, step 8-9
 //                                                                     AA-466: 202 Accepted +
 //                                                                     'processing' placeholder,
@@ -58,7 +76,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
-import { Sparkles, CheckCircle2, RotateCcw, AlertTriangle } from "lucide-react";
+import { Sparkles, CheckCircle2, ChevronRight, RotateCcw, AlertTriangle } from "lucide-react";
 import { T, serif, sans, mono, Card, CardHead, Badge, Btn, LoadingScreen, EmptyState, Spinner } from "./ui";
 
 const POLL_INTERVAL_MS = 3000;
@@ -126,6 +144,52 @@ interface ContentPiece {
   gate_ledger: GateLedgerEntry[];
 }
 
+// AA-469 Việc 4 — step derivation reads `req` directly (not local selection state) so the
+// Stepper renders correctly both for a fresh start AND for a resumed (`resume_request_id`)
+// request, which never populates selectedAtomId/selectedGoal locally.
+type Step = 1 | 2 | 3 | 4;
+const STEP_LABELS: [Step, string][] = [[1, "Atom + Channel"], [2, "Goal"], [3, "Angle"], [4, "Write"]];
+
+function currentStep(req: AngleGateRequest | null): Step {
+  if (!req) return 1;
+  if (req.status === "pending_goal") return 2;
+  if (req.status === "pending_choice" || req.status === "reusable") return 3;
+  return 4; // approved
+}
+
+// Mirrors SlotPickerPanel.tsx's Breadcrumb — same visual language (chevron-separated, active
+// crumb bold, past crumbs dim + checked), but only the "3 Angle" crumb is ever clickable, and
+// only from step 4, because `reopen_request()` is the only backend endpoint that actually
+// supports jumping back a step (see module header). The other 3 crumbs are progress display
+// only — clicking them would imply a "back" the backend can't do without discarding history.
+function Stepper({ step, canChangeAngle, onChangeAngle }: {
+  step: Step; canChangeAngle: boolean; onChangeAngle: () => void;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", padding: "8px 0" }}>
+      {STEP_LABELS.map(([n, label], i) => {
+        const done = n < step;
+        const active = n === step;
+        const clickable = n === 3 && step === 4 && canChangeAngle;
+        const crumbStyle: React.CSSProperties = {
+          display: "inline-flex", alignItems: "center", gap: 4, fontFamily: sans, fontSize: 12.5,
+          fontWeight: active ? 700 : 500, color: active ? T.ink : done ? T.muted : T.muted2,
+          background: "none", border: "none", padding: 0, cursor: clickable ? "pointer" : "default",
+        };
+        const content = <>{done && <CheckCircle2 size={12} color={T.green} />} {n} · {label}</>;
+        return (
+          <span key={n} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {i > 0 && <ChevronRight size={13} color={T.muted2} />}
+            {clickable
+              ? <button onClick={onChangeAngle} style={crumbStyle} title="Change angle — picks from the same 3 already-generated options, no new content generated">{content}</button>
+              : <span style={crumbStyle}>{content}</span>}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function AngleGateTab() {
   // AA-494 Step 5 — SlotPickerPanel.tsx (T7 slot-view) hands off here via
   // /portal/t8-angle-gate?atom_id=..., same useSearchParams() pattern AtomsTab.tsx already uses
@@ -153,6 +217,18 @@ export default function AngleGateTab() {
   const [generating, setGenerating] = useState(false);
   const [choosing, setChoosing] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // AA-469 Việc 4 — pick-then-confirm for step 3 (matches SlotPickerPanel.tsx's atom-pick +
+  // separate "Start writing" button): clicking an angle card only highlights it via this local
+  // state; `choose()` itself isn't called until "Confirm this angle" is pressed. Reset at every
+  // call site that starts a new angle-choice round (submitGoal, changeAngle, the resume load) —
+  // NOT via a useEffect keyed on req, which would call setState synchronously inside an effect
+  // (react-hooks/set-state-in-effect) for a value these same setReq() calls can just also clear.
+  const [pendingAngleIdx, setPendingAngleIdx] = useState<number | null>(null);
+
+  // AA-497 — "Change angle" (step 4 -> back to step 3), see reopen() below.
+  const [reopening, setReopening] = useState(false);
+  const [reopenError, setReopenError] = useState<string | null>(null);
 
   // AA-450 — step 8-9: write + inline T10 check, chained automatically after choose() resolves.
   // AA-466: `writing` now spans the whole 202+poll cycle (POST -> processing -> poll -> final
@@ -187,7 +263,7 @@ export default function AngleGateTab() {
     if (!resumeRequestId) return;
     fetch(`/api/tenant/v1/angle-gate/requests/${resumeRequestId}`)
       .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
-      .then(d => setReq(d))
+      .then(d => { setReq(d); setPendingAngleIdx(null); })
       .catch(e => setError(e.detail ?? "Couldn't load that request — try again from Weekly Slots."));
   }, [resumeRequestId]);
 
@@ -221,7 +297,7 @@ export default function AngleGateTab() {
       body: JSON.stringify({ goal: selectedGoal }),
     })
       .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
-      .then(d => setReq(d))
+      .then(d => { setReq(d); setPendingAngleIdx(null); })
       .catch(e => setError(e.detail ?? "Couldn't generate angles — try again."))
       .finally(() => setGenerating(false));
   }, [req, selectedGoal]);
@@ -313,14 +389,46 @@ export default function AngleGateTab() {
       .finally(() => setChoosing(null));
   }, [req, writeContent]);
 
+  // AA-497 / AA-469 Việc 4 — step 4's "Change angle": reopens THIS SAME request (approved ->
+  // reusable, no new LLM call) and rewinds the UI to the angle-choice card. Only valid from
+  // 'approved' (backend enforces via 409 WrongStatusError; the UI only ever surfaces this action
+  // while req.status === 'approved', see Stepper's canChangeAngle + the Write card's meta row
+  // below, so a stale double-click is the only way to hit that 409). Clearing the piece/write
+  // states on success is what makes the Write card unmount and the (now 'reusable') angle card
+  // reappear — no separate "step" state to manage, the existing per-status render already covers it.
+  const changeAngle = useCallback(() => {
+    if (!req) return;
+    setReopening(true); setReopenError(null);
+    fetch(`/api/tenant/v1/angle-gate/requests/${req.request_id}/reopen`, { method: "POST" })
+      .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
+      .then(d => {
+        setReq(d);
+        stopPolling();
+        setPiece(null); setWriteError(null); setNeedsCtaInput(false); setPollTimedOut(false);
+        setPendingAngleIdx(null);
+      })
+      .catch(e => setReopenError(e.detail ?? "Couldn't reopen — try again."))
+      .finally(() => setReopening(false));
+  }, [req, stopPolling]);
+
+  // AA-469 Việc 4 — "Start over" now lives once, next to the Stepper, instead of repeated on
+  // every card's CardHead. It's a full reset (unlike "Change angle" above, it discards atom/
+  // channel/goal too, not just the angle) — still the only escape hatch for steps 1-2, which have
+  // no reopen-style backend endpoint. Confirms before wiping real progress (a goal already
+  // submitted means at least one real LLM call happened) rather than silently discarding it;
+  // skipped when there's nothing to lose yet (no req).
   const reset = useCallback(() => {
+    if (req && !window.confirm("Start over? This clears your current atom, goal, and angle choices.")) return;
     stopPolling();
     setReq(null); setSelectedAtomId(""); setSelectedGoal(""); setError(null);
     setPiece(null); setWriteError(null); setNeedsCtaInput(false); setCtaInput("");
-    setPollTimedOut(false);
-  }, [stopPolling]);
+    setPollTimedOut(false); setReopenError(null); setPendingAngleIdx(null);
+  }, [req, stopPolling]);
 
   if (atomsLoading) return <LoadingScreen message="Loading atoms…" />;
+
+  const step = currentStep(req);
+  const chosenAngle = req?.angles.find(a => a.chosen) ?? null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 720 }}>
@@ -329,6 +437,13 @@ export default function AngleGateTab() {
         system generates. You always choose — Adventure Asia never approves or blocks this
         for you.
       </p>
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", borderBottom: `1px solid ${T.line2}` }}>
+        <Stepper step={step} canChangeAngle={req?.status === "approved"} onChangeAngle={changeAngle} />
+        {req && (
+          <Btn variant="ghost" size="sm" onClick={reset}><RotateCcw size={12} /> Start over</Btn>
+        )}
+      </div>
 
       {error && (
         <div style={{ padding: "9px 12px", background: T.redSoft, border: "1px solid #F5C6C6", borderRadius: 8, fontSize: 12, color: T.red }}>
@@ -386,9 +501,7 @@ export default function AngleGateTab() {
 
       {req && req.status === "pending_goal" && (
         <Card>
-          <CardHead title="2 · Choose a Goal" action={
-            <Btn variant="ghost" size="sm" onClick={reset}><RotateCcw size={12} /> Start over</Btn>
-          } />
+          <CardHead title="2 · Choose a Goal" />
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {goals.map(g => (
               <button key={g.key} onClick={() => setSelectedGoal(g.key)} style={{
@@ -409,64 +522,95 @@ export default function AngleGateTab() {
         </Card>
       )}
 
-      {req && (req.status === "pending_choice" || req.status === "reusable" || req.status === "approved") && (
+      {req && (req.status === "pending_choice" || req.status === "reusable") && (
+        // AA-469 Việc 4 — this card now ONLY shows while actively choosing (not once approved —
+        // see the Write card's meta row below for the post-choice summary instead, mirroring
+        // T7's breadcrumb pattern of collapsing a completed level rather than re-showing it in
+        // full). Pick-then-confirm: clicking a card only sets pendingAngleIdx (highlight); a
+        // separate "Confirm this angle" button below calls choose() — same 2-beat pattern as
+        // SlotPickerPanel.tsx's atom-pick + "Start writing".
         <Card>
-          <CardHead title={
-            req.status === "approved" ? "Approved" :
-            req.status === "reusable" ? "Choose a Different Angle" : "3 · Choose an Angle"
-          } action={
-            <Btn variant="ghost" size="sm" onClick={reset}><RotateCcw size={12} /> Start over</Btn>
-          } />
-          {req.status === "reusable" && (
-            // AA-497 — reopened via SlotPickerPanel.tsx's "Change angle". The currently-chosen
-            // angle still shows "Chosen" below (unchanged until a different one is picked) so the
-            // tenant can see what's being replaced before they commit to a different one.
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, color: T.muted, fontSize: 13 }}>
-              Pick a different one of the 3 angles below — no new content is generated until you
-              choose and it re-writes.
-            </div>
-          )}
-          {req.status === "approved" && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, color: T.green, fontSize: 13 }}>
-              <CheckCircle2 size={16} /> Angle chosen — writing the final piece below.
-            </div>
-          )}
+          <CardHead title={req.status === "reusable" ? "3 · Choose a Different Angle" : "3 · Choose an Angle"} />
+          <p style={{ fontSize: 12.5, color: T.muted, margin: "0 0 14px", lineHeight: 1.5 }}>
+            {req.status === "reusable"
+              ? "Pick a different one of the 3 angles below, then confirm — no new content is generated until you do."
+              : "Pick one of the 3 angles below, then confirm."}
+          </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {req.angles.map(a => (
-              <div key={a.idx} style={{
-                padding: "14px 16px", borderRadius: 10,
-                border: `1px solid ${a.chosen ? T.green : a.recommended ? T.gold : T.line}`,
-                background: a.chosen ? T.greenSoft : a.recommended ? T.goldTint : "#fff",
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                  <span style={{ fontFamily: serif, fontSize: 15, fontWeight: 600, color: T.ink }}>{a.name}</span>
-                  {a.recommended && <Badge variant="default">Recommended</Badge>}
-                  {a.chosen && <Badge variant="default">Chosen</Badge>}
-                </div>
-                <div style={{ fontSize: 12.5, color: T.body, marginBottom: 4 }}>
-                  <strong>Why it works:</strong> {a.why_it_works}
-                </div>
-                <div style={{ fontSize: 12.5, color: T.body, marginBottom: 4 }}>
-                  <strong>Formula fit:</strong> <span style={{ fontFamily: mono }}>{a.formula_fit}</span>
-                </div>
-                <div style={{ fontSize: 12.5, color: T.body, marginBottom: 10 }}>
-                  <strong>Best final style:</strong> {a.best_final_style}
-                </div>
-                {(req.status === "pending_choice" || req.status === "reusable") && !a.chosen && (
-                  <Btn size="sm" variant={a.recommended ? "primary" : "secondary"}
-                    disabled={choosing !== null} onClick={() => choose(a.idx)}>
-                    {choosing === a.idx ? "Saving…" : "Choose this angle"}
-                  </Btn>
-                )}
-              </div>
-            ))}
+            {req.angles.map(a => {
+              const picked = pendingAngleIdx === a.idx;
+              const clickable = !a.chosen;
+              return (
+                <button key={a.idx} disabled={!clickable}
+                  onClick={() => clickable && setPendingAngleIdx(a.idx)}
+                  style={{
+                    textAlign: "left", width: "100%", cursor: clickable ? "pointer" : "default",
+                    padding: "14px 16px", borderRadius: 10, position: "relative", fontFamily: sans,
+                    border: `1px solid ${a.chosen ? T.green : picked ? T.gold : a.recommended ? T.goldSoft : T.line}`,
+                    borderWidth: picked ? 2 : 1,
+                    background: a.chosen ? T.greenSoft : picked ? T.goldTint : a.recommended ? T.goldTint : "#fff",
+                  }}>
+                  {picked && !a.chosen && <CheckCircle2 size={16} color={T.gold} style={{ position: "absolute", top: 12, right: 12 }} />}
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <span style={{ fontFamily: serif, fontSize: 15, fontWeight: 600, color: T.ink }}>{a.name}</span>
+                    {a.recommended && <Badge variant="default">Recommended</Badge>}
+                    {a.chosen && <Badge variant="default">Currently chosen</Badge>}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: T.body, marginBottom: 4 }}>
+                    <strong>Why it works:</strong> {a.why_it_works}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: T.body, marginBottom: 4 }}>
+                    <strong>Formula fit:</strong> <span style={{ fontFamily: mono }}>{a.formula_fit}</span>
+                  </div>
+                  <div style={{ fontSize: 12.5, color: T.body }}>
+                    <strong>Best final style:</strong> {a.best_final_style}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ marginTop: 14 }}>
+            <Btn variant="primary" disabled={pendingAngleIdx === null || choosing !== null}
+              onClick={() => pendingAngleIdx !== null && choose(pendingAngleIdx)}>
+              {choosing !== null ? "Saving…" : "Confirm this angle"}
+            </Btn>
           </div>
         </Card>
       )}
 
       {req && req.status === "approved" && (
         <Card>
-          <CardHead title="4 · Content" />
+          <CardHead title="4 · Write" />
+
+          {chosenAngle && (
+            // AA-469 Việc 4 — compact summary of what step 3 decided, replacing the old
+            // full re-render of the angle card here. "Change angle" (AA-497) lives here as a
+            // first-class action, not a bolted-on extra — same reopen() call the Stepper's "3
+            // Angle" crumb triggers, just a second, more visible entry point right next to the
+            // result it affects. Hidden while `writing` to avoid racing a background write with
+            // a reopen (reopen requires 'approved', so a mid-write click would only ever hit a
+            // harmless 409 — hiding it is just cleaner than surfacing that edge case).
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 14, padding: "10px 12px", background: T.bg, border: `1px solid ${T.line2}`, borderRadius: 8 }}>
+              <div style={{ fontSize: 12.5, color: T.body }}>
+                <strong>Angle:</strong> {chosenAngle.name}
+                <span style={{ color: T.muted2 }}> · </span>
+                <strong>Goal:</strong> {req.goal}
+                <span style={{ color: T.muted2 }}> · </span>
+                <strong>Channel:</strong> {req.channel}
+              </div>
+              {!writing && (
+                <Btn size="sm" variant="secondary" disabled={reopening} onClick={changeAngle}>
+                  {reopening ? "Reopening…" : "Change angle"}
+                </Btn>
+              )}
+            </div>
+          )}
+
+          {reopenError && (
+            <div style={{ padding: "9px 12px", background: T.redSoft, border: "1px solid #F5C6C6", borderRadius: 8, fontSize: 12, color: T.red, marginBottom: 10 }}>
+              {reopenError}
+            </div>
+          )}
 
           {writing && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 4px", color: T.muted, fontSize: 13 }}>
@@ -564,11 +708,9 @@ export default function AngleGateTab() {
                 </div>
               )}
 
-              <div style={{ fontSize: 11, color: T.muted, display: "flex", flexWrap: "wrap", gap: "4px 14px" }}>
-                <span><strong>Goal:</strong> {req.goal}</span>
-                <span><strong>Channel:</strong> {req.channel}</span>
-                {req.cta && <span><strong>CTA:</strong> {req.cta}</span>}
-              </div>
+              {req.cta && (
+                <div style={{ fontSize: 11, color: T.muted }}><strong>CTA:</strong> {req.cta}</div>
+              )}
             </div>
           )}
         </Card>
