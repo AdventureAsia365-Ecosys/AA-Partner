@@ -18,43 +18,68 @@
 // "Goal" for the 8-value list (Bang 1) and "Angle" only for the 3 LLM-generated options per
 // request — never mixes the two.
 //
-// AA-469 Việc 4 (redesign, this session) — restyled to match T7's SlotPickerPanel.tsx drill-down
-// language: a top Stepper (1 Atom+Channel · 2 Goal · 3 Angle · 4 Write) replaces the old per-card
-// "Start over" buttons (now one consolidated action next to the Stepper), and angle selection is
-// now pick-then-confirm (click a card to highlight it, a separate "Confirm this angle" button
-// submits) instead of a single click submitting immediately — same two-beat pattern as
-// SlotPickerPanel.tsx's atom-pick + "Start writing".
+// AA-469 Việc 4 (redesign, this session — 2 passes) — restyled to match T7's
+// SlotPickerPanel.tsx drill-down language: a top Stepper replaces the old per-card "Start over"
+// buttons (now one consolidated action next to the Stepper), and angle selection is pick-then-
+// confirm (click a card to highlight it, a separate "Confirm this angle" button submits) instead
+// of a single click submitting immediately — same two-beat pattern as SlotPickerPanel.tsx's
+// atom-pick + "Start writing".
+//
+// PASS 2, same session — FLOW-ORDER FIX, confirmed with Nghiệp (supersedes pass 1's assumption
+// that the existing [atom+channel] -> goal -> angle -> write order was already correct — it was
+// NOT). The real order is: atom(+DFS/PAA+brand, server-side) -> Goal -> generate 3 angles ->
+// pick 1 -> Channel (NEW step, AFTER the angle, not before angle generation) -> T9 write. Channel
+// used to be chosen alongside the atom in step 1 AND fed into angle generation itself
+// (services/acp_angle_gate/generate.py used to take a `channel` param) — neither is true anymore.
+// See that module's own header comment for why dropping channel from angle generation doesn't
+// lose any real channel-fit (T9's write prompt re-applies the full channel style block at write
+// time regardless, unchanged by this fix).
+//
+// Stepper: 1 Atom · 2 Goal · 3 Angle · 4 Channel · 5 Write.
 //
 // Real back-navigation exists for exactly ONE step, because it's the only one the backend
-// supports (AA-497's reopen_request(), approved -> reusable): from step 4 (Write), "Change angle"
-// (in the Stepper's "3 Angle" crumb AND inline on the Write card's meta row) reopens the SAME
-// request and rewinds to the angle-choice card, no new LLM call. Steps 1 and 2 have no reopen-
-// style backend endpoint (creating a request / submitting a goal are still one-way), so their
-// Stepper crumbs are informational only, not clickable — "Start over" (full reset) remains the
-// only way back past step 3. Flagged explicitly per AA-469 Việc 4's brief: this is a deliberate
-// scope boundary (no backend work beyond the existing reopen endpoint), not an oversight.
+// supports (AA-497's reopen_request(), approved -> reusable): from step 4 or 5, "Change angle"
+// (the Stepper's "3 Angle" crumb AND inline on the Write card's meta row) reopens the SAME
+// request and rewinds to the angle-choice card, no new LLM call. Reconciled with the channel
+// reorder as follows (flagged explicitly, not guessed): reopening does NOT reset or re-ask
+// channel — channel has no dependency on which specific angle was picked (T9's write prompt
+// applies channel style independently of the angle's own best_final_style), so a previously-set
+// channel simply carries over unchanged across a reopen+re-choice cycle, and write auto-fires
+// again immediately once the new angle is confirmed (channel is already known). There is
+// currently no symmetric "Change channel" action (set_channel() supports being called again
+// freely while still 'approved', so one could be added later with no backend work) — not built
+// this session, flagged as a natural follow-up rather than guessed into scope.
 //
-// Full 9-step workflow, all in this one component now:
-//   1. Pick an atom (from this tenant's own curated T6 atoms) + a channel.
+// Steps 1 and 2 have no reopen-style backend endpoint (creating a request / submitting a goal
+// are still one-way), so their Stepper crumbs are informational only, not clickable — "Start
+// over" (full reset) remains the only way back past step 3.
+//
+// Full workflow, all in this one component now:
+//   1. Pick an atom (from this tenant's own curated T6 atoms). No channel here anymore.
 //   2. Pick a Goal from the 8-value list.
-//   3-6. Backend auto-applies fixed brand audience, formula, generates 3 angles, recommends one.
+//   3-6. Backend auto-applies fixed brand audience, formula, generates 3 angles, recommends one
+//      (no channel input to this call anymore either).
 //   7. Tenant picks one of the 3 (recommended or not) — the real gate. status -> approved.
-//   8. AUTOMATICALLY, no extra click: fires the T9 write call the instant step 7 resolves.
-//   9. ONE loading state while T9 writes + T10 checks (up to 2 attempts, inline, server-side —
+//   8. NEW — tenant picks a Channel (1 of 8), a separate confirm step.
+//   9. AUTOMATICALLY, no extra click: fires the T9 write call the instant BOTH 7 and 8 resolve.
+//   10. ONE loading state while T9 writes + T10 checks (up to 2 attempts, inline, server-side —
 //      see docs/claude_audit/AA-450-01-t9-t10-retry-loop-investigation.md) -> final result.
 //
 // API (via /api/tenant proxy -> Authorization: Bearer <cis_tenant_token>, tenant_id always
 // resolved from the JWT):
 //   GET  /api/tenant/v1/angle-gate/goals
-//   POST /api/tenant/v1/angle-gate/requests            {atom_id, channel, year, month} — AA-451:
-//                                                        year/month = current calendar month,
-//                                                        inferred (no month-picker UI here)
+//   POST /api/tenant/v1/angle-gate/requests            {atom_id}                — step 1, NO
+//                                                                     channel/year/month anymore
 //   POST /api/tenant/v1/angle-gate/requests/{id}/goal              {goal}
 //   GET  /api/tenant/v1/angle-gate/requests/{id}
 //   POST /api/tenant/v1/angle-gate/requests/{id}/choose            {idx}
-//   POST /api/tenant/v1/angle-gate/requests/{id}/reopen             {}     — AA-497, step 4 "Change
+//   POST /api/tenant/v1/angle-gate/requests/{id}/reopen             {}     — AA-497, step "Change
 //                                                                     angle" (approved -> reusable)
-//   POST /api/tenant/v1/content-writing/requests/{id}/write         {cta?}  — AA-450, step 8-9
+//   POST /api/tenant/v1/angle-gate/requests/{id}/channel  {channel, year, month} — NEW, step 8.
+//                                                                     year/month moved here from
+//                                                                     the old create-request body
+//                                                                     (AA-451's slot-CTA prefill).
+//   POST /api/tenant/v1/content-writing/requests/{id}/write         {cta?}  — AA-450, step 9-10
 //                                                                     AA-466: 202 Accepted +
 //                                                                     'processing' placeholder,
 //                                                                     poll GET .../pieces/{id}
@@ -114,7 +139,7 @@ interface AngleOption {
 interface AngleGateRequest {
   request_id: string;
   atom_id: string;
-  channel: string;
+  channel: string | null; // AA-469 Việc 4 (flow-order fix) — NULL until step 8, set_channel()
   goal: string | null;
   cta: string | null; // AA-450 migration 114 — usually null today, see that migration's header
   // AA-497 — "reusable" is an approved request SlotPickerPanel.tsx's "Change angle" just
@@ -147,21 +172,26 @@ interface ContentPiece {
 // AA-469 Việc 4 — step derivation reads `req` directly (not local selection state) so the
 // Stepper renders correctly both for a fresh start AND for a resumed (`resume_request_id`)
 // request, which never populates selectedAtomId/selectedGoal locally.
-type Step = 1 | 2 | 3 | 4;
-const STEP_LABELS: [Step, string][] = [[1, "Atom + Channel"], [2, "Goal"], [3, "Angle"], [4, "Write"]];
+type Step = 1 | 2 | 3 | 4 | 5;
+const STEP_LABELS: [Step, string][] = [
+  [1, "Atom"], [2, "Goal"], [3, "Angle"], [4, "Channel"], [5, "Write"],
+];
 
 function currentStep(req: AngleGateRequest | null): Step {
   if (!req) return 1;
   if (req.status === "pending_goal") return 2;
   if (req.status === "pending_choice" || req.status === "reusable") return 3;
-  return 4; // approved
+  if (req.status === "approved" && !req.channel) return 4; // angle chosen, channel not yet
+  return 5; // approved, channel set — ready for/at Write
 }
 
 // Mirrors SlotPickerPanel.tsx's Breadcrumb — same visual language (chevron-separated, active
 // crumb bold, past crumbs dim + checked), but only the "3 Angle" crumb is ever clickable, and
-// only from step 4, because `reopen_request()` is the only backend endpoint that actually
-// supports jumping back a step (see module header). The other 3 crumbs are progress display
+// only from step 4+, because `reopen_request()` is the only backend endpoint that actually
+// supports jumping back a step (see module header). The other crumbs are progress display
 // only — clicking them would imply a "back" the backend can't do without discarding history.
+// (No "4 Channel" crumb click either — set_channel() CAN be called again freely, but that
+// symmetric "Change channel" action isn't built this session, see module header.)
 function Stepper({ step, canChangeAngle, onChangeAngle }: {
   step: Step; canChangeAngle: boolean; onChangeAngle: () => void;
 }) {
@@ -170,7 +200,7 @@ function Stepper({ step, canChangeAngle, onChangeAngle }: {
       {STEP_LABELS.map(([n, label], i) => {
         const done = n < step;
         const active = n === step;
-        const clickable = n === 3 && step === 4 && canChangeAngle;
+        const clickable = n === 3 && step >= 4 && canChangeAngle;
         const crumbStyle: React.CSSProperties = {
           display: "inline-flex", alignItems: "center", gap: 4, fontFamily: sans, fontSize: 12.5,
           fontWeight: active ? 700 : 500, color: active ? T.ink : done ? T.muted : T.muted2,
@@ -209,7 +239,6 @@ export default function AngleGateTab() {
   const [atomsLoading, setAtomsLoading] = useState(true);
 
   const [selectedAtomId, setSelectedAtomId] = useState(atomIdParam ?? "");
-  const [selectedChannel, setSelectedChannel] = useState("facebook");
   const [selectedGoal, setSelectedGoal] = useState("");
 
   const [req, setReq] = useState<AngleGateRequest | null>(null);
@@ -226,11 +255,17 @@ export default function AngleGateTab() {
   // (react-hooks/set-state-in-effect) for a value these same setReq() calls can just also clear.
   const [pendingAngleIdx, setPendingAngleIdx] = useState<number | null>(null);
 
-  // AA-497 — "Change angle" (step 4 -> back to step 3), see reopen() below.
+  // AA-497 — "Change angle" (step 5/4 -> back to step 3), see changeAngle() below.
   const [reopening, setReopening] = useState(false);
   const [reopenError, setReopenError] = useState<string | null>(null);
 
-  // AA-450 — step 8-9: write + inline T10 check, chained automatically after choose() resolves.
+  // AA-469 Việc 4 (flow-order fix) — step 4, NEW: channel picker.
+  const [selectedChannel, setSelectedChannel] = useState("facebook");
+  const [settingChannel, setSettingChannel] = useState(false);
+  const [channelError, setChannelError] = useState<string | null>(null);
+
+  // AA-450 — step 9-10: write + inline T10 check, chained automatically after choose()/
+  // submitChannel() resolves (AA-469 Việc 4 moved the trigger point — see both callbacks below).
   // AA-466: `writing` now spans the whole 202+poll cycle (POST -> processing -> poll -> final
   // status), not just the POST round trip.
   const [piece, setPiece] = useState<ContentPiece | null>(null);
@@ -270,24 +305,18 @@ export default function AngleGateTab() {
   const startRequest = useCallback(() => {
     if (!selectedAtomId) { setError("Pick an atom first."); return; }
     setCreating(true); setError(null);
-    // AA-451: no month-picker exists in this component (the atom picker is generic, sourced
-    // from T6, not tied to any T7 month view) — the current calendar month is the closest real
-    // context to infer (content is written for now, not an arbitrary future month). Lets the
-    // backend compute+persist a T7 slot on the spot so `cta` is usually filled instead of NULL
-    // — see services/acp_angle_gate/service.py::_compute_and_persist_slot_cta().
-    const now = new Date();
+    // AA-469 Việc 4 (flow-order fix) — no channel/year/month here anymore; channel is picked at
+    // the new step 4 (submitChannel() below), which is also where the AA-451 slot-CTA prefill
+    // (year/month) moved to, since it's genuinely keyed by channel.
     fetch("/api/tenant/v1/angle-gate/requests", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        atom_id: selectedAtomId, channel: selectedChannel,
-        year: now.getFullYear(), month: now.getMonth() + 1,
-      }),
+      body: JSON.stringify({ atom_id: selectedAtomId }),
     })
       .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
       .then(d => setReq({ ...d, goal: null, angles: [] }))
       .catch(e => setError(e.detail ?? "Couldn't start a request — try again."))
       .finally(() => setCreating(false));
-  }, [selectedAtomId, selectedChannel]);
+  }, [selectedAtomId]);
 
   const submitGoal = useCallback(() => {
     if (!req || !selectedGoal) return;
@@ -334,7 +363,7 @@ export default function AngleGateTab() {
 
   useEffect(() => stopPolling, [stopPolling]); // cleanup on unmount
 
-  // AA-450 — step 9. `cta` is only ever sent to override a NULL angle_gate_request.cta (the
+  // AA-450 — step 10. `cta` is only ever sent to override a NULL angle_gate_request.cta (the
   // realistic case today, see migration 114's header comment) — never overrides a real one.
   // AA-466: POST now returns 202 + a 'processing' placeholder immediately — the real result
   // comes from polling GET .../pieces/{piece_id}, not from this response.
@@ -381,15 +410,42 @@ export default function AngleGateTab() {
       .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
       .then(d => {
         setReq(d);
-        // AA-450 step 8 — automatic, no extra tenant click: fires the moment status flips to
-        // 'approved', the exact "1 loading, then final result" architecture Nghiep confirmed.
-        if (d.status === "approved") writeContent(d.request_id);
+        // AA-450's original "no extra click" auto-fire, adapted for AA-469 Việc 4's flow-order
+        // fix: write can't start until channel is ALSO known (T9 requires both), so this only
+        // auto-fires when d.channel is already set — true on a reopen+re-choice cycle (channel
+        // carries over unchanged, see module header), false on a first-time choice, where the
+        // UI advances to the new step 4 (Channel) card instead and submitChannel() below is
+        // what eventually fires the write.
+        if (d.status === "approved" && d.channel) writeContent(d.request_id);
       })
       .catch(e => setError(e.detail ?? "Couldn't save your choice — try again."))
       .finally(() => setChoosing(null));
   }, [req, writeContent]);
 
-  // AA-497 / AA-469 Việc 4 — step 4's "Change angle": reopens THIS SAME request (approved ->
+  // AA-469 Việc 4 (flow-order fix) — step 8, NEW: tenant picks a channel, after the angle. Fires
+  // the T9 write call automatically on success (same "no extra click" pattern choose() above
+  // uses) — by this point both angle AND channel are known, so write can actually proceed.
+  const submitChannel = useCallback(() => {
+    if (!req) return;
+    setSettingChannel(true); setChannelError(null);
+    const now = new Date();
+    fetch(`/api/tenant/v1/angle-gate/requests/${req.request_id}/channel`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        channel: selectedChannel, year: now.getFullYear(), month: now.getMonth() + 1,
+      }),
+    })
+      .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
+      .then(d => {
+        setReq(d);
+        if (d.status === "approved" && d.channel) writeContent(d.request_id);
+      })
+      .catch(e => setChannelError(e.detail ?? "Couldn't save channel — try again."))
+      .finally(() => setSettingChannel(false));
+  }, [req, selectedChannel, writeContent]);
+
+  // AA-497 / AA-469 Việc 4 — "Change angle" (available from step 4 OR 5, both are 'approved'):
+  // reopens THIS SAME request (approved ->
   // reusable, no new LLM call) and rewinds the UI to the angle-choice card. Only valid from
   // 'approved' (backend enforces via 409 WrongStatusError; the UI only ever surfaces this action
   // while req.status === 'approved', see Stepper's canChangeAngle + the Write card's meta row
@@ -418,11 +474,12 @@ export default function AngleGateTab() {
   // submitted means at least one real LLM call happened) rather than silently discarding it;
   // skipped when there's nothing to lose yet (no req).
   const reset = useCallback(() => {
-    if (req && !window.confirm("Start over? This clears your current atom, goal, and angle choices.")) return;
+    if (req && !window.confirm("Start over? This clears your current atom, goal, angle, and channel choices.")) return;
     stopPolling();
     setReq(null); setSelectedAtomId(""); setSelectedGoal(""); setError(null);
     setPiece(null); setWriteError(null); setNeedsCtaInput(false); setCtaInput("");
     setPollTimedOut(false); setReopenError(null); setPendingAngleIdx(null);
+    setChannelError(null); setSettingChannel(false);
   }, [req, stopPolling]);
 
   if (atomsLoading) return <LoadingScreen message="Loading atoms…" />;
@@ -453,7 +510,7 @@ export default function AngleGateTab() {
 
       {!req && (
         <Card>
-          <CardHead title="1 · Atom + Channel" />
+          <CardHead title="1 · Atom" />
           {atoms.length === 0 ? (
             <EmptyState icon="🧩" title="No curated atoms yet"
               sub="Curate atoms in Atom Curation (T6) first, then come back here." />
@@ -472,22 +529,6 @@ export default function AngleGateTab() {
                     </option>
                   ))}
                 </select>
-              </div>
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 600, color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", display: "block", marginBottom: 6 }}>
-                  Channel
-                </label>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {CHANNELS.map(ch => (
-                    <button key={ch} onClick={() => setSelectedChannel(ch)} style={{
-                      padding: "7px 12px", borderRadius: 8, cursor: "pointer", fontFamily: sans,
-                      border: `1px solid ${selectedChannel === ch ? T.gold : T.line}`,
-                      background: selectedChannel === ch ? T.goldTint : "#fff",
-                      color: selectedChannel === ch ? "#8A5A16" : T.muted,
-                      fontSize: 12.5, fontWeight: selectedChannel === ch ? 700 : 400,
-                    }}>{ch}</button>
-                  ))}
-                </div>
               </div>
               <div>
                 <Btn variant="primary" disabled={!selectedAtomId || creating} onClick={startRequest}>
@@ -578,9 +619,44 @@ export default function AngleGateTab() {
         </Card>
       )}
 
-      {req && req.status === "approved" && (
+      {req && req.status === "approved" && !req.channel && (
+        // AA-469 Việc 4 (flow-order fix) — NEW step 4: channel, AFTER the angle. Pick-then-confirm,
+        // same pattern as step 3's angle cards — click a channel to highlight it, "Confirm channel"
+        // submits. Only shows once an angle is chosen but no channel is set yet; on a reopen +
+        // re-choice cycle this card is skipped entirely (channel carries over, see module header).
         <Card>
-          <CardHead title="4 · Write" />
+          <CardHead title="4 · Channel" />
+          {chosenAngle && (
+            <div style={{ fontSize: 12.5, color: T.muted, marginBottom: 14 }}>
+              <strong>Angle:</strong> {chosenAngle.name} <span style={{ color: T.muted2 }}>·</span>{" "}
+              <strong>Goal:</strong> {req.goal}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+            {CHANNELS.map(ch => (
+              <button key={ch} onClick={() => setSelectedChannel(ch)} style={{
+                padding: "7px 12px", borderRadius: 8, cursor: "pointer", fontFamily: sans,
+                border: `1px solid ${selectedChannel === ch ? T.gold : T.line}`,
+                background: selectedChannel === ch ? T.goldTint : "#fff",
+                color: selectedChannel === ch ? "#8A5A16" : T.muted,
+                fontSize: 12.5, fontWeight: selectedChannel === ch ? 700 : 400,
+              }}>{ch}</button>
+            ))}
+          </div>
+          {channelError && (
+            <div style={{ padding: "9px 12px", background: T.redSoft, border: "1px solid #F5C6C6", borderRadius: 8, fontSize: 12, color: T.red, marginBottom: 10 }}>
+              {channelError}
+            </div>
+          )}
+          <Btn variant="primary" disabled={!selectedChannel || settingChannel} onClick={submitChannel}>
+            {settingChannel ? "Saving…" : "Confirm channel"}
+          </Btn>
+        </Card>
+      )}
+
+      {req && req.status === "approved" && req.channel && (
+        <Card>
+          <CardHead title="5 · Write" />
 
           {chosenAngle && (
             // AA-469 Việc 4 — compact summary of what step 3 decided, replacing the old
