@@ -43,7 +43,10 @@
 
 import { useState, useCallback } from "react";
 import { T, serif, sans, mono, Card, CardHead, Badge, Btn, LoadingScreen, EmptyState } from "./ui";
-import SlotPickerPanel from "./SlotPickerPanel";
+// AA-511 — the Slate replaces SlotPickerPanel.tsx (Weekly Slots) on this render path. The old
+// component/file is deliberately left in place, unused, per the epic's own "giữ code cũ, chỉ
+// ngưng dùng, không xoá" rule — see docs/claude_audit/AA-511-step0-slate-investigation.md.
+import SlateTab from "./SlateTab";
 
 interface TripScore {
   trip_id: string;
@@ -213,7 +216,7 @@ export default function PlanningTab() {
 
       <HistorySection year={year} quarter={quarter} />
 
-      <SlotPickerPanel />
+      <SlateTab />
 
       <FeedbackSection />
       <ReallocationSection defaultYear={year} defaultQuarter={quarter} />
