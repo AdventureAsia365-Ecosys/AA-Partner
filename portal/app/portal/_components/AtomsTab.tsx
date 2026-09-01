@@ -14,11 +14,18 @@
 // platform delete-forever messaging. Reuses this portal's own ui.tsx tokens
 // (Card/Badge/Btn/LoadingScreen/EmptyState), not adminUi.tsx — a deliberately smaller
 // tool for a tenant curating their own handful of tours, not AA staff curating hundreds.
+//
+// AA-509 — Segment: `segment_id`/`segment_canonical_*` come from admin_atoms.py's LEFT JOIN onto
+// acp_contract.atom_segment(_member) — NULL for an atom not yet grouped (pre-migration-129, or
+// segment_matching.py hasn't run since). Grouping below is a pure render-layer transform over
+// whatever page of atoms is already loaded (filter/select/star/delete stay entirely per-atom,
+// unchanged) — a Segment whose members straddle two paginated pages won't group into one header,
+// a known limitation at this tool's current per-tenant volumes (see implementation notes).
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Star, Trash2, BookOpen, ArrowLeft } from "lucide-react";
+import { Star, Trash2, BookOpen, ArrowLeft, ChevronDown, ChevronRight, Layers } from "lucide-react";
 import { T, serif, sans, mono, Card, Badge, Btn, LoadingScreen, EmptyState } from "./ui";
 
 interface Atom {
@@ -31,6 +38,9 @@ interface Atom {
   starred: boolean;
   deleted: boolean;
   unreviewed: boolean;
+  segment_id: string | null;
+  canonical_place: string | null;
+  canonical_action: string | null;
 }
 
 interface Summary {
@@ -59,6 +69,9 @@ export default function AtomsTab() {
   const [unreviewedOnly, setUnreviewedOnly] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  // AA-509 — Segment header collapse state, keyed by segment_id. Empty set = everything expanded
+  // (default), same "nothing hidden by default" behavior this page had before grouping existed.
+  const [collapsedSegments, setCollapsedSegments] = useState<Set<string>>(new Set());
 
   const loadSummary = useCallback(() => {
     fetch("/api/tenant/admin/atoms/summary")
@@ -177,31 +190,27 @@ export default function AtomsTab() {
           sub="Atoms are generated automatically once one of your rewritten tours passes QA. Rewrite a tour from Browse Pool to get started." />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {atoms.map(atom => (
-            <Card key={atom.atom_id} style={{ padding: "14px 18px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 11, color: T.muted2, marginBottom: 4, fontFamily: mono }}>{atom.tour_name}</div>
-                  <div style={{ fontSize: 13.5, color: T.body, lineHeight: 1.5 }}>{atom.text}</div>
-                  <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                    <Badge variant={DIST_VARIANT[atom.distinctiveness] ?? "default"}>{atom.distinctiveness}</Badge>
-                    {atom.activity_type && <Badge>{atom.activity_type}</Badge>}
-                    {atom.unreviewed && <Badge variant="warning">New</Badge>}
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                  <button onClick={() => toggleStar(atom)} title={atom.starred ? "Unstar" : "Star"}
-                    style={{ background: atom.starred ? T.goldTint : "none", border: `1px solid ${atom.starred ? T.goldSoft : T.line}`, borderRadius: 6, padding: 6, cursor: "pointer", color: atom.starred ? T.gold : T.muted2, display: "flex" }}>
-                    <Star size={14} fill={atom.starred ? T.gold : "none"} />
-                  </button>
-                  <button onClick={() => deleteAtom(atom)} title="Remove"
-                    style={{ background: "none", border: `1px solid ${T.line}`, borderRadius: 6, padding: 6, cursor: "pointer", color: T.red, display: "flex" }}>
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              </div>
-            </Card>
-          ))}
+          {groupBySegment(atoms).map(row =>
+            row.kind === "atom" ? (
+              <AtomCard key={row.atom.atom_id} atom={row.atom} onStar={toggleStar} onDelete={deleteAtom} />
+            ) : (
+              <SegmentGroup
+                key={row.segmentId}
+                segmentId={row.segmentId}
+                place={row.place}
+                action={row.action}
+                atoms={row.atoms}
+                collapsed={collapsedSegments.has(row.segmentId)}
+                onToggle={() => setCollapsedSegments(prev => {
+                  const next = new Set(prev);
+                  next.has(row.segmentId) ? next.delete(row.segmentId) : next.add(row.segmentId);
+                  return next;
+                })}
+                onStar={toggleStar}
+                onDelete={deleteAtom}
+              />
+            )
+          )}
         </div>
       )}
 
@@ -221,6 +230,105 @@ function StatBlock({ label, value, accent }: { label: string; value: number; acc
     <div style={{ minWidth: 100 }}>
       <div style={{ fontSize: 10, color: T.muted2, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 3 }}>{label}</div>
       <div style={{ fontFamily: serif, fontSize: 22, fontWeight: 500, color: accent ?? T.ink }}>{value}</div>
+    </div>
+  );
+}
+
+// AA-509 — one row of the rendered list: either a lone atom (no Segment, or a Segment with only
+// one member in the currently-loaded page) or a Segment header wrapping >=2 atoms. Grouping is
+// evaluated over the atoms already loaded, in their existing order — a Segment split across two
+// paginated pages just renders as separate singleton rows on each page (known limitation, see
+// implementation notes).
+type AtomRow =
+  | { kind: "atom"; atom: Atom }
+  | { kind: "segment"; segmentId: string; place: string; action: string; atoms: Atom[] };
+
+function groupBySegment(atoms: Atom[]): AtomRow[] {
+  const bySegment = new Map<string, Atom[]>();
+  for (const atom of atoms) {
+    if (!atom.segment_id) continue;
+    const list = bySegment.get(atom.segment_id) ?? [];
+    list.push(atom);
+    bySegment.set(atom.segment_id, list);
+  }
+
+  const rows: AtomRow[] = [];
+  const emitted = new Set<string>();
+  for (const atom of atoms) {
+    const members = atom.segment_id ? bySegment.get(atom.segment_id) : undefined;
+    if (members && members.length > 1) {
+      if (emitted.has(atom.segment_id!)) continue;
+      emitted.add(atom.segment_id!);
+      rows.push({
+        kind: "segment",
+        segmentId: atom.segment_id!,
+        place: members[0].canonical_place ?? "",
+        action: members[0].canonical_action ?? "",
+        atoms: members,
+      });
+    } else {
+      rows.push({ kind: "atom", atom });
+    }
+  }
+  return rows;
+}
+
+function AtomCard({ atom, onStar, onDelete }: {
+  atom: Atom; onStar: (a: Atom) => void; onDelete: (a: Atom) => void;
+}) {
+  return (
+    <Card style={{ padding: "14px 18px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 11, color: T.muted2, marginBottom: 4, fontFamily: mono }}>{atom.tour_name}</div>
+          <div style={{ fontSize: 13.5, color: T.body, lineHeight: 1.5 }}>{atom.text}</div>
+          <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+            <Badge variant={DIST_VARIANT[atom.distinctiveness] ?? "default"}>{atom.distinctiveness}</Badge>
+            {atom.activity_type && <Badge>{atom.activity_type}</Badge>}
+            {atom.unreviewed && <Badge variant="warning">New</Badge>}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+          <button onClick={() => onStar(atom)} title={atom.starred ? "Unstar" : "Star"}
+            style={{ background: atom.starred ? T.goldTint : "none", border: `1px solid ${atom.starred ? T.goldSoft : T.line}`, borderRadius: 6, padding: 6, cursor: "pointer", color: atom.starred ? T.gold : T.muted2, display: "flex" }}>
+            <Star size={14} fill={atom.starred ? T.gold : "none"} />
+          </button>
+          <button onClick={() => onDelete(atom)} title="Remove"
+            style={{ background: "none", border: `1px solid ${T.line}`, borderRadius: 6, padding: 6, cursor: "pointer", color: T.red, display: "flex" }}>
+            <Trash2 size={14} />
+          </button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function SegmentGroup({ place, action, atoms, collapsed, onToggle, onStar, onDelete }: {
+  segmentId: string; place: string; action: string; atoms: Atom[]; collapsed: boolean;
+  onToggle: () => void; onStar: (a: Atom) => void; onDelete: (a: Atom) => void;
+}) {
+  return (
+    <div style={{ border: `1px solid ${T.line}`, borderRadius: 10, overflow: "hidden" }}>
+      <button onClick={onToggle} style={{
+        width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "10px 14px",
+        background: T.goldTint, border: "none", cursor: "pointer", textAlign: "left",
+      }}>
+        {collapsed ? <ChevronRight size={14} color={T.muted} /> : <ChevronDown size={14} color={T.muted} />}
+        <Layers size={13} color={T.gold} />
+        <span style={{ fontSize: 13, fontWeight: 600, color: T.body, fontFamily: sans }}>
+          {place}{action ? ` — ${action}` : ""}
+        </span>
+        <span style={{ fontSize: 11.5, color: T.muted2, marginLeft: "auto" }}>
+          {atoms.length} atoms, same moment
+        </span>
+      </button>
+      {!collapsed && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 8, background: T.card }}>
+          {atoms.map(atom => (
+            <AtomCard key={atom.atom_id} atom={atom} onStar={onStar} onDelete={onDelete} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
