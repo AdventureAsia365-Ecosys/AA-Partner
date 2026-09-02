@@ -134,6 +134,11 @@ interface AngleOption {
   best_final_style: string;
   recommended: boolean;
   chosen: boolean;
+  // AA-512 — measurable-ranking evidence (services/acp_angle_gate/ranking.py). Both null
+  // together = never ranked (legacy atom-picker path, channel unknown at generation time) — the
+  // badge row is simply omitted then, not rendered as "0 answers, 0 violations".
+  answers: string[] | null;
+  violations: string[] | null;
 }
 
 interface AngleGateRequest {
@@ -147,6 +152,17 @@ interface AngleGateRequest {
   // generated angles" UI as "pending_choice" below, choose() is unchanged either way.
   status: "pending_goal" | "pending_choice" | "approved" | "reusable";
   angles: AngleOption[];
+  // AA-512 — the real PAA pool this request's angles were ranked against (AA-501 migration 127,
+  // snapshotted at set_goal_and_generate() time) — only used here for the badge's denominator
+  // ("answers X/Y"), Y = people_also_ask.length.
+  dfs_paa_snapshot: { people_also_ask: string[] } | null;
+  // AA-512 — fixed header (Subject + Channel, "không sửa được ở đây, không có bước chọn
+  // Channel"). subject_id null = legacy atom-picker path (no header, unchanged old flow).
+  subject_id: string | null;
+  subject_score: number | null;
+  subject_place: string | null;
+  subject_action: string | null;
+  subject_hub_name: string | null;
 }
 
 // AA-450 — mirrors services/acp_content_writing/service.py::_row_to_dict()'s response shape.
@@ -172,17 +188,76 @@ interface ContentPiece {
 // AA-469 Việc 4 — step derivation reads `req` directly (not local selection state) so the
 // Stepper renders correctly both for a fresh start AND for a resumed (`resume_request_id`)
 // request, which never populates selectedAtomId/selectedGoal locally.
+//
+// AA-512 — a Subject-driven request (req.subject_id set) skips 2 whole steps: no Atom pick (the
+// Slate already picked one) and no Channel pick (already fixed from the Subject) — 3 steps
+// instead of 5. The legacy atom-picker path (subject_id null) is UNCHANGED, still 5 steps —
+// see docs/claude_audit/AA-512-fe-wireframe.md.
 type Step = 1 | 2 | 3 | 4 | 5;
 const STEP_LABELS: [Step, string][] = [
   [1, "Atom"], [2, "Goal"], [3, "Angle"], [4, "Channel"], [5, "Write"],
 ];
+const SUBJECT_STEP_LABELS: [Step, string][] = [
+  [1, "Goal"], [2, "Angle"], [3, "Write"],
+];
 
 function currentStep(req: AngleGateRequest | null): Step {
   if (!req) return 1;
+  if (req.subject_id) {
+    // Subject-driven: channel is already known from creation, so 'approved' always means
+    // ready-for-Write — there is no "approved but channel still missing" state on this path.
+    if (req.status === "pending_goal") return 1;
+    if (req.status === "pending_choice" || req.status === "reusable") return 2;
+    return 3;
+  }
   if (req.status === "pending_goal") return 2;
   if (req.status === "pending_choice" || req.status === "reusable") return 3;
   if (req.status === "approved" && !req.channel) return 4; // angle chosen, channel not yet
   return 5; // approved, channel set — ready for/at Write
+}
+
+// AA-512 — fixed, non-editable header shown above the Stepper for a Subject-driven request
+// (Linear: "Header cố định hiện Subject + Channel đã chọn, không sửa được ở đây"). Renders
+// nothing for the legacy atom-picker path (subject_id null).
+function SubjectHeader({ req }: { req: AngleGateRequest }) {
+  const place = req.subject_place ?? req.subject_hub_name;
+  const detail = req.subject_place && req.subject_action ? `${req.subject_place} — ${req.subject_action}` : place;
+  return (
+    <div style={{ padding: "10px 14px", background: T.bg, border: `1px solid ${T.line2}`, borderRadius: 8, fontFamily: sans }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: T.ink, textTransform: "capitalize" }}>
+          Writing for: {req.channel}
+        </span>
+        {req.subject_score !== null && <Badge variant="default">Score {req.subject_score}</Badge>}
+      </div>
+      {detail && <div style={{ fontSize: 12, color: T.muted, marginTop: 4 }}>{detail}</div>}
+    </div>
+  );
+}
+
+// AA-512 — the 2 measurable badges on an angle card (STEP0 §2: Segment/Route Score is shown
+// once in SubjectHeader above instead, constant across all 3 angles — see ranking.py's module
+// docstring for why it isn't a per-angle differentiator). Omitted entirely when this angle was
+// never ranked (answers/violations both null — the legacy atom-picker path).
+function AngleRankingBadges({ angle, paaTotal }: { angle: AngleOption; paaTotal: number }) {
+  if (angle.answers === null || angle.violations === null) return null;
+  const n = angle.violations.length;
+  return (
+    <div style={{ display: "flex", gap: 8, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${T.line2}` }}>
+      <span
+        title={angle.answers.length ? angle.answers.join("; ") : "No PAA data for this request"}
+        style={{ fontSize: 11.5, color: T.muted, fontFamily: sans }}
+      >
+        {paaTotal > 0 ? `✓ answers ${angle.answers.length}/${paaTotal} PAA questions` : "no PAA data"}
+      </span>
+      <span
+        title={angle.violations.join("; ") || "No avoid-list phrases matched"}
+        style={{ fontSize: 11.5, fontFamily: sans, color: n > 0 ? "#8A5A16" : T.muted }}
+      >
+        {n > 0 ? `⚠ ${n} avoid-list hit${n === 1 ? "" : "s"}` : "0 avoid-list violations"}
+      </span>
+    </div>
+  );
 }
 
 // Mirrors SlotPickerPanel.tsx's Breadcrumb — same visual language (chevron-separated, active
@@ -192,15 +267,19 @@ function currentStep(req: AngleGateRequest | null): Step {
 // only — clicking them would imply a "back" the backend can't do without discarding history.
 // (No "4 Channel" crumb click either — set_channel() CAN be called again freely, but that
 // symmetric "Change channel" action isn't built this session, see module header.)
-function Stepper({ step, canChangeAngle, onChangeAngle }: {
-  step: Step; canChangeAngle: boolean; onChangeAngle: () => void;
+function Stepper({ step, labels, angleStepN, canChangeAngle, onChangeAngle }: {
+  step: Step; labels: [Step, string][]; angleStepN: Step;
+  canChangeAngle: boolean; onChangeAngle: () => void;
 }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", padding: "8px 0" }}>
-      {STEP_LABELS.map(([n, label], i) => {
+      {labels.map(([n, label], i) => {
         const done = n < step;
         const active = n === step;
-        const clickable = n === 3 && step >= 4 && canChangeAngle;
+        // AA-512 — angleStepN is the "3 Angle" crumb's own number, which differs between the
+        // 5-step legacy Stepper (3) and the 3-step Subject-driven one (2) — parameterized rather
+        // than hardcoded so "Change angle" stays clickable on both.
+        const clickable = n === angleStepN && step > angleStepN && canChangeAngle;
         const crumbStyle: React.CSSProperties = {
           display: "inline-flex", alignItems: "center", gap: 4, fontFamily: sans, fontSize: 12.5,
           fontWeight: active ? 700 : 500, color: active ? T.ink : done ? T.muted : T.muted2,
@@ -490,13 +569,21 @@ export default function AngleGateTab() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 720 }}>
       <p style={{ fontSize: 12, color: T.muted, margin: 0, lineHeight: 1.5 }}>
-        Pick an atom and a channel, choose a content goal, then pick 1 of the 3 angles the
-        system generates. You always choose — Adventure Asia never approves or blocks this
-        for you.
+        {req?.subject_id
+          // AA-512 — Subject + Channel already fixed (the Slate picked them); nothing to choose
+          // here but Goal, then Angle.
+          ? "Choose a content goal, then pick 1 of the 3 angles the system generates. You always choose — Adventure Asia never approves or blocks this for you."
+          : "Pick an atom and a channel, choose a content goal, then pick 1 of the 3 angles the system generates. You always choose — Adventure Asia never approves or blocks this for you."}
       </p>
 
+      {req?.subject_id && <SubjectHeader req={req} />}
+
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", borderBottom: `1px solid ${T.line2}` }}>
-        <Stepper step={step} canChangeAngle={req?.status === "approved"} onChangeAngle={changeAngle} />
+        <Stepper
+          step={step} labels={req?.subject_id ? SUBJECT_STEP_LABELS : STEP_LABELS}
+          angleStepN={req?.subject_id ? 2 : 3}
+          canChangeAngle={req?.status === "approved"} onChangeAngle={changeAngle}
+        />
         {req && (
           <Btn variant="ghost" size="sm" onClick={reset}><RotateCcw size={12} /> Start over</Btn>
         )}
@@ -542,7 +629,7 @@ export default function AngleGateTab() {
 
       {req && req.status === "pending_goal" && (
         <Card>
-          <CardHead title="2 · Choose a Goal" />
+          <CardHead title={`${req.subject_id ? 1 : 2} · Choose a Goal`} />
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {goals.map(g => (
               <button key={g.key} onClick={() => setSelectedGoal(g.key)} style={{
@@ -571,7 +658,7 @@ export default function AngleGateTab() {
         // separate "Confirm this angle" button below calls choose() — same 2-beat pattern as
         // SlotPickerPanel.tsx's atom-pick + "Start writing".
         <Card>
-          <CardHead title={req.status === "reusable" ? "3 · Choose a Different Angle" : "3 · Choose an Angle"} />
+          <CardHead title={`${req.subject_id ? 2 : 3} · ${req.status === "reusable" ? "Choose a Different Angle" : "Choose an Angle"}`} />
           <p style={{ fontSize: 12.5, color: T.muted, margin: "0 0 14px", lineHeight: 1.5 }}>
             {req.status === "reusable"
               ? "Pick a different one of the 3 angles below, then confirm — no new content is generated until you do."
@@ -606,6 +693,7 @@ export default function AngleGateTab() {
                   <div style={{ fontSize: 12.5, color: T.body }}>
                     <strong>Best final style:</strong> {a.best_final_style}
                   </div>
+                  <AngleRankingBadges angle={a} paaTotal={req.dfs_paa_snapshot?.people_also_ask.length ?? 0} />
                 </button>
               );
             })}
@@ -656,7 +744,7 @@ export default function AngleGateTab() {
 
       {req && req.status === "approved" && req.channel && (
         <Card>
-          <CardHead title="5 · Write" />
+          <CardHead title={`${req.subject_id ? 3 : 5} · Write`} />
 
           {chosenAngle && (
             // AA-469 Việc 4 — compact summary of what step 3 decided, replacing the old
