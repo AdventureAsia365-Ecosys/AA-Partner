@@ -25,7 +25,7 @@
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Star, Trash2, BookOpen, ArrowLeft, ChevronDown, ChevronRight, Layers } from "lucide-react";
+import { Star, Trash2, BookOpen, ArrowLeft, ChevronDown, ChevronRight, Layers, Milestone } from "lucide-react";
 import { T, serif, sans, mono, Card, Badge, Btn, LoadingScreen, EmptyState } from "./ui";
 
 interface Atom {
@@ -41,6 +41,11 @@ interface Atom {
   segment_id: string | null;
   canonical_place: string | null;
   canonical_action: string | null;
+  // AA-519 Việc 2 — Segment-grain (AA-515 atom_ranking / AA-510 route), NULL for an ungrouped
+  // atom or a Segment not (yet) ranked/part of a Route.
+  segment_score: number | null;
+  route_id: string | null;
+  route_hub_name: string | null;
 }
 
 interface Summary {
@@ -187,7 +192,9 @@ export default function AtomsTab() {
 
       {atoms.length === 0 ? (
         <EmptyState icon="🧩" title="No atoms yet"
-          sub="Atoms are generated automatically once one of your rewritten tours passes QA. Rewrite a tour from Browse Pool to get started." />
+          // AA-519 Việc 1 — was "generated automatically", which hasn't been true since AA-469
+          // Việc 1 made T5 a standalone manual trigger (the "Atomize" button on My Catalog).
+          sub="Atoms aren't generated automatically — open a rewritten tour in My Catalog and use Atomize to extract its atoms." />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {groupBySegment(atoms).map(row =>
@@ -200,6 +207,8 @@ export default function AtomsTab() {
                 place={row.place}
                 action={row.action}
                 atoms={row.atoms}
+                score={row.score}
+                routeHubName={row.routeHubName}
                 collapsed={collapsedSegments.has(row.segmentId)}
                 onToggle={() => setCollapsedSegments(prev => {
                   const next = new Set(prev);
@@ -241,7 +250,10 @@ function StatBlock({ label, value, accent }: { label: string; value: number; acc
 // implementation notes).
 type AtomRow =
   | { kind: "atom"; atom: Atom }
-  | { kind: "segment"; segmentId: string; place: string; action: string; atoms: Atom[] };
+  | {
+      kind: "segment"; segmentId: string; place: string; action: string; atoms: Atom[];
+      score: number | null; routeHubName: string | null;
+    };
 
 function groupBySegment(atoms: Atom[]): AtomRow[] {
   const bySegment = new Map<string, Atom[]>();
@@ -265,6 +277,10 @@ function groupBySegment(atoms: Atom[]): AtomRow[] {
         place: members[0].canonical_place ?? "",
         action: members[0].canonical_action ?? "",
         atoms: members,
+        // AA-519 Việc 2 — same field on every member (Segment-grain, not per-atom), take the
+        // first non-null the way place/action already do.
+        score: members.find(m => m.segment_score != null)?.segment_score ?? null,
+        routeHubName: members.find(m => m.route_hub_name != null)?.route_hub_name ?? null,
       });
     } else {
       rows.push({ kind: "atom", atom });
@@ -303,21 +319,39 @@ function AtomCard({ atom, onStar, onDelete }: {
   );
 }
 
-function SegmentGroup({ place, action, atoms, collapsed, onToggle, onStar, onDelete }: {
-  segmentId: string; place: string; action: string; atoms: Atom[]; collapsed: boolean;
+function SegmentGroup({ place, action, atoms, score, routeHubName, collapsed, onToggle, onStar, onDelete }: {
+  segmentId: string; place: string; action: string; atoms: Atom[];
+  score: number | null; routeHubName: string | null; collapsed: boolean;
   onToggle: () => void; onStar: (a: Atom) => void; onDelete: (a: Atom) => void;
 }) {
   return (
     <div style={{ border: `1px solid ${T.line}`, borderRadius: 10, overflow: "hidden" }}>
       <button onClick={onToggle} style={{
         width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "10px 14px",
-        background: T.goldTint, border: "none", cursor: "pointer", textAlign: "left",
+        background: T.goldTint, border: "none", cursor: "pointer", textAlign: "left", flexWrap: "wrap",
       }}>
         {collapsed ? <ChevronRight size={14} color={T.muted} /> : <ChevronDown size={14} color={T.muted} />}
         <Layers size={13} color={T.gold} />
         <span style={{ fontSize: 13, fontWeight: 600, color: T.body, fontFamily: sans }}>
           {place}{action ? ` — ${action}` : ""}
         </span>
+        {/* AA-519 Việc 2 — Atom Score (AA-515 atom_ranking.total_rank), Segment-grain only. */}
+        {score != null && (
+          <span style={{
+            fontFamily: mono, fontSize: 11, color: T.ink3, background: T.card,
+            border: `1px solid ${T.line}`, borderRadius: 6, padding: "2px 7px",
+          }} title="Rank-sum — lower is better">
+            Score {score}
+          </span>
+        )}
+        {/* Route/Hub link — informational only, no tenant-facing Route detail page exists yet
+            (Route is only visible through T7's Slate). */}
+        {routeHubName && (
+          <Badge variant="gold">
+            <Milestone size={11} style={{ verticalAlign: -2, marginRight: 3 }} />
+            Part of Route: {routeHubName}
+          </Badge>
+        )}
         <span style={{ fontSize: 11.5, color: T.muted2, marginLeft: "auto" }}>
           {atoms.length} atoms, same moment
         </span>
