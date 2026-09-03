@@ -12,7 +12,7 @@
 // every other real tenant-portal fetch uses (see PublishPendingList.tsx).
 
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, FileText, HelpCircle, Loader2, Search, Sparkles } from "lucide-react";
+import { ChevronDown, ChevronUp, FileText, Flag, HelpCircle, Loader2, Milestone, Search, Sparkles } from "lucide-react";
 import { T, sans, mono, Card, CardHead, Badge, EmptyState, fmtDateTime } from "./ui";
 import type { BadgeVariant } from "./ui";
 
@@ -21,6 +21,9 @@ interface ReviewAngle { name: string; why_it_works: string; formula_fit: string;
 interface ReviewAtom { text: string; activity_type: string | null; emotional_hook: string | null; season_note: string | null }
 interface ReviewTour { name: string; destination: string }
 interface DfsPaaSnapshot { relevance: string; people_also_ask: string[]; related_keywords: string[] }
+// AA-519 Việc 5 — a non-blocking gate's own result shape (services/acp_content_writing/
+// quality_gates.py::GateResultLite), narrowed to what's tenant-safe (never the full ledger).
+interface ReviewFlag { gate: string; violations: string[] }
 
 type ReadyState = "ready" | "in_progress" | "not_ready";
 
@@ -37,6 +40,11 @@ interface ReviewItem {
   dfs_paa_snapshot: DfsPaaSnapshot | null;
   cta: string | null;
   created_at: string | null;
+  // AA-519 Việc 4 — null for a Segment pick or pre-Slate request (not a Route-aware piece).
+  route_hub_name: string | null;
+  route_segment_count: number | null;
+  // AA-519 Việc 5 — [] when nothing was flagged (ADR 0023 flag-not-block).
+  flags: ReviewFlag[];
 }
 
 const READY_STATE_META: Record<ReadyState, { label: string; variant: BadgeVariant }> = {
@@ -154,6 +162,21 @@ function ReviewCard({ item, expanded, onToggle }: {
             <span style={{ fontSize: 14, fontWeight: 600, color: T.ink }}>{title}</span>
             <Badge variant="default">{channelLabel(item.channel)}</Badge>
             <Badge variant={stateMeta.variant}>{stateMeta.label}</Badge>
+            {/* AA-519 Việc 5 — flag is a SEPARATE badge alongside Ready, never a replacement for
+                it (ADR 0023: a flag never blocks). */}
+            {item.flags.length > 0 && (
+              <Badge variant="warning">
+                <Flag size={11} style={{ verticalAlign: -2, marginRight: 3 }} />
+                Flagged
+              </Badge>
+            )}
+            {/* AA-519 Việc 4 — Route-aware piece, distinct from a plain single-atom one. */}
+            {item.route_segment_count != null && (
+              <Badge variant="gold">
+                <Milestone size={11} style={{ verticalAlign: -2, marginRight: 3 }} />
+                Route: {item.route_hub_name ?? "—"} · {item.route_segment_count} Segments
+              </Badge>
+            )}
           </div>
           <div style={{ fontSize: 11.5, color: T.muted2, fontFamily: sans }}>
             {item.tour ? `${item.tour.name} · ${item.tour.destination} · ` : ""}
@@ -166,6 +189,7 @@ function ReviewCard({ item, expanded, onToggle }: {
       {expanded && (
         <div style={{ padding: "0 16px 16px", display: "flex", flexDirection: "column", gap: 14 }}>
           <ContentBlock item={item} />
+          <FlagBanner flags={item.flags} />
           <ContextSection item={item} />
         </div>
       )}
@@ -206,6 +230,26 @@ function ContentBlock({ item }: { item: ReviewItem }) {
           Draft above isn&rsquo;t ready to publish yet — our team is reviewing it.
         </div>
       )}
+    </div>
+  );
+}
+
+// AA-519 Việc 5 — the "note" ADR 0023 requires every flag to carry, shown to the tenant
+// directly (unlike gate_ledger's other 8 gates, which stay admin-only). Doesn't block anything —
+// this piece can still be Ready/published, see the Badge next to it in ReviewCard's header.
+function FlagBanner({ flags }: { flags: ReviewFlag[] }) {
+  if (flags.length === 0) return null;
+  return (
+    <div style={{
+      padding: "10px 12px", borderRadius: 8, border: `1px solid ${T.amber}`,
+      background: "#FBEFD6", fontSize: 12, lineHeight: 1.6, color: T.body,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 5, fontWeight: 600, color: T.ink, marginBottom: 4 }}>
+        <Flag size={12} color={T.amber} /> Flagged for your review — doesn&rsquo;t block publishing
+      </div>
+      {flags.flatMap(f => f.violations).map((v, i) => (
+        <div key={i} style={{ color: T.muted }}>{v}</div>
+      ))}
     </div>
   );
 }

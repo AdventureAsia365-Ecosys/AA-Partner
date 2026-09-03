@@ -11,8 +11,8 @@
 // — same /api/tenant/[...path] proxy convention every other real tenant-portal fetch uses.
 
 import { useState, useEffect, useCallback } from "react";
-import { CheckCircle2, XCircle, ExternalLink, Loader2, FileText } from "lucide-react";
-import { T, sans, Card, CardHead, Btn, EmptyState } from "./ui";
+import { CheckCircle2, XCircle, ExternalLink, Loader2, FileText, Milestone } from "lucide-react";
+import { T, sans, Card, CardHead, Btn, Badge, EmptyState } from "./ui";
 
 interface PendingPiece {
   piece_id: string;
@@ -20,6 +20,9 @@ interface PendingPiece {
   content_preview: string;
   channel: string;
   created_at: string | null;
+  // AA-519 Việc 4 — null for a Segment pick or pre-Slate request (not a Route-aware piece).
+  route_hub_name: string | null;
+  route_segment_count: number | null;
 }
 
 interface PublishResult {
@@ -94,6 +97,15 @@ export function PublishPendingList({ wordpressConnected }: { wordpressConnected:
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ fontSize: 14, fontWeight: 600, color: T.ink, marginBottom: 3 }}>{p.title}</div>
+                    {/* AA-519 Việc 4 — Route-aware piece, distinct from a plain single-atom one. */}
+                    {p.route_segment_count != null && (
+                      <div style={{ marginBottom: 5 }}>
+                        <Badge variant="gold">
+                          <Milestone size={11} style={{ verticalAlign: -2, marginRight: 3 }} />
+                          Route: {p.route_hub_name ?? "—"} · {p.route_segment_count} Segments
+                        </Badge>
+                      </div>
+                    )}
                     <div style={{ fontSize: 12, color: T.muted, lineHeight: 1.5, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
                       {p.content_preview}
                     </div>
