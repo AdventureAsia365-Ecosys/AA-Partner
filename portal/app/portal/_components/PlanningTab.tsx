@@ -6,23 +6,33 @@
 // body) is that this was fully superseded by the Slate (AA-511) and should come out, not stay as
 // dead/hidden code — removed here. See git history on this file (pre-AA-519) for that design's
 // full record (API routes it called, the "edit after finalize" decision, etc.) if ever needed
-// again. FeedbackSection/ReallocationSection below predate AA-511 too but were kept (scope
-// decision posted to the AA-519 Linear comment before building) — neither is "Quarter Plan UI" in
-// the narrow sense that changed here.
+// again. ReallocationSection below predates AA-511 too but was kept (scope decision posted to
+// the AA-519 Linear comment before building) — not "Quarter Plan UI" in the narrow sense that
+// changed here; confirmed still live (suggest_trip_reallocation() computes fresh each call, not
+// dependent on the removed Preview/Finalize UI ever having run).
+//
+// AA-519 follow-up (same day, real-data audit posted to the Linear comment) — FeedbackSection
+// (the "round 6" manual metric-entry + atom-weight rollup UI that used to render here) was
+// REMOVED, not kept: confirmed genuinely dead via a real HTTP 404
+// (`POST /v1/planning/metrics` against a real T9 `content_piece.piece_id` — the only kind of
+// piece_id a real tenant ever has). Root cause has nothing to do with Slate/quarter — `services/
+// acp_shared/content_metrics.py::record_metric_snapshot()`/`rollup_atom_weights()` query
+// `acp_deliver.pieces` (N7/N8's OLD table, migration 094/096), never `acp_shared.content_piece`
+// (T9's real table, migration 115) — a gap that predates AA-511 by weeks, from when AA-448's
+// round-6 feedback loop was built against the wrong/older piece table and never reconciled when
+// T9 shipped its own. Nghiệp's explicit call: remove the dead UI now rather than leave a feature
+// tenants can see but can never successfully use; `content_metrics.py` itself is untouched — a
+// real feedback loop, if built again, gets designed fresh against T9's actual schema, not patched
+// onto the old one.
 //
 // API this file still calls (via /api/tenant proxy -> Authorization: Bearer <cis_tenant_token>,
 // api/routers/v1_planning.py — tenant_id always resolved from the JWT):
-//   POST /api/tenant/v1/planning/metrics                {piece_id, reach, engagement, clicks}
-//   POST /api/tenant/v1/planning/metrics/rollup
 //   GET  /api/tenant/v1/planning/trip-reallocation/suggest?year=&quarter=
 //   POST /api/tenant/v1/planning/trip-reallocation/confirm {year, quarter, accept}
 // (<SlateTab/> itself calls GET /v1/slate + POST /v1/subjects/{id}/pick — see that file.)
-//
-// Feedback loop (round 6) is explicitly a NEW extension beyond aa-marketing-v2's own Module H —
-// see services/acp_shared/content_metrics.py's module docstring for the full boundary.
 
 import { useState, useCallback } from "react";
-import { T, serif, sans, mono, Card, CardHead, Badge, Btn } from "./ui";
+import { T, serif, mono, Card, CardHead, Badge, Btn } from "./ui";
 // AA-511 — the Slate replaces SlotPickerPanel.tsx (Weekly Slots) on this render path. The old
 // component/file is deliberately left in place, unused, per the epic's own "giữ code cũ, chỉ
 // ngưng dùng, không xoá" rule — see docs/claude_audit/AA-511-step0-slate-investigation.md.
@@ -33,10 +43,13 @@ import SlateTab from "./SlateTab";
 // thế hoàn toàn bởi Slate", AA-519 issue body). That UI's own types/components
 // (YearQuarterPicker/PreviewPanel/HistorySection/ScoreCell/StatBlock/TripScore/QuarterPlanPayload/
 // WeekLock/PreviewResponse/HistoryVersion*) are deleted along with it, not left as dead code — see
-// git history (this file, pre-AA-519) to recover if ever needed. FeedbackSection and
-// ReallocationSection below are KEPT (scope decision, posted to the AA-519 Linear comment before
-// building this): neither is "Quarter Plan UI" in the narrow sense (no trip-selection table/
-// preview/finalize), each has its own card heading and stands independently.
+// git history (this file, pre-AA-519) to recover if ever needed. ReallocationSection below is
+// KEPT (scope decision, posted to the AA-519 Linear comment before building this): not "Quarter
+// Plan UI" in the narrow sense (no trip-selection table/preview/finalize), has its own card
+// heading and stands independently — and confirmed still live via a real HTTP call (see this
+// file's own top-of-file comment). FeedbackSection (was here too at first) was REMOVED in the
+// AA-519 follow-up round — confirmed genuinely dead (real 404 against a real tenant piece_id),
+// see top-of-file comment for the full root cause.
 
 interface TripScore {
   trip_id: string;
@@ -88,81 +101,7 @@ export default function PlanningTab() {
 
       <SlateTab />
 
-      <FeedbackSection />
       <ReallocationSection defaultYear={DEFAULT_YEAR} defaultQuarter={DEFAULT_QUARTER} />
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------- feedback loop (round 6)
-
-function FeedbackSection() {
-  const [pieceId, setPieceId] = useState("");
-  const [reach, setReach] = useState("");
-  const [engagement, setEngagement] = useState("");
-  const [clicks, setClicks] = useState("");
-  const [status, setStatus] = useState<string | null>(null);
-  const [rollupStatus, setRollupStatus] = useState<string | null>(null);
-
-  const submitMetric = useCallback(() => {
-    setStatus(null);
-    fetch("/api/tenant/v1/planning/metrics", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        piece_id: pieceId,
-        reach: reach ? Number(reach) : null,
-        engagement: engagement ? Number(engagement) : null,
-        clicks: clicks ? Number(clicks) : null,
-      }),
-    })
-      .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
-      .then(() => { setStatus("Saved."); setPieceId(""); setReach(""); setEngagement(""); setClicks(""); })
-      .catch((e) => setStatus(e?.detail || "Couldn't save — check the piece ID."));
-  }, [pieceId, reach, engagement, clicks]);
-
-  const runRollup = useCallback(() => {
-    setRollupStatus("Recomputing…");
-    fetch("/api/tenant/v1/planning/metrics/rollup", { method: "POST" })
-      .then(r => (r.ok ? r.json() : Promise.reject()))
-      .then(d => setRollupStatus(`${d.atoms_adjusted} atom${d.atoms_adjusted === 1 ? "" : "s"} adjusted.`))
-      .catch(() => setRollupStatus("Couldn't recompute — try again."));
-  }, []);
-
-  return (
-    <Card style={{ padding: "16px 18px", marginBottom: 18 }}>
-      <CardHead title="Feedback" />
-      <p style={{ fontSize: 12.5, color: T.muted, lineHeight: 1.6, margin: "0 0 14px" }}>
-        Report what you observed after posting a piece somewhere (no auto-publish yet) — after at
-        least 3 posts using the same content atom carry a metric, its weight adjusts and future
-        planning reflects it.
-      </p>
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 10 }}>
-        <LabeledInput label="Piece ID" value={pieceId} onChange={setPieceId} width={200} />
-        <LabeledInput label="Reach" value={reach} onChange={setReach} />
-        <LabeledInput label="Engagement" value={engagement} onChange={setEngagement} />
-        <LabeledInput label="Clicks" value={clicks} onChange={setClicks} />
-        <Btn variant="primary" onClick={submitMetric} disabled={!pieceId}>Report metric</Btn>
-      </div>
-      {status && <div style={{ fontSize: 12, color: status === "Saved." ? T.green : T.red, marginBottom: 10 }}>{status}</div>}
-      <div style={{ borderTop: `1px solid ${T.line2}`, paddingTop: 12, display: "flex", alignItems: "center", gap: 10 }}>
-        <Btn variant="secondary" onClick={runRollup}>Recompute atom weights</Btn>
-        {rollupStatus && <span style={{ fontSize: 12, color: T.muted }}>{rollupStatus}</span>}
-      </div>
-    </Card>
-  );
-}
-
-function LabeledInput({ label, value, onChange, width = 100 }: {
-  label: string; value: string; onChange: (v: string) => void; width?: number;
-}) {
-  return (
-    <div>
-      <div style={{ fontSize: 10, color: T.muted2, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{label}</div>
-      <input value={value} onChange={e => onChange(e.target.value)} style={{
-        padding: "8px 10px", background: T.bg, border: `1px solid ${T.line}`, borderRadius: 8,
-        color: T.body, fontSize: 13, fontFamily: sans, outline: "none", width, boxSizing: "border-box",
-      }} />
     </div>
   );
 }
