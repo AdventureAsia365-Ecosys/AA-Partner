@@ -1,6 +1,8 @@
 "use client";
 // app/(tenant)/portal/_components/DashboardTab.tsx
-// API: GET /api/admin/billing
+// API: GET /api/tenant/v1/billing (AA-496 — was /api/admin/billing, guaranteed 401 for every
+//      real tenant since that proxy requires an admin JWT; see api/routers/v1_tours.py's
+//      GET /v1/billing for the real tenant-scoped sibling)
 //      GET /api/tenant/v1/tours/pool?page_size=1 (for total count)
 
 import { useState, useEffect } from "react";
@@ -31,7 +33,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/admin/billing"),
+      fetch("/api/tenant/v1/billing"),
       fetch("/api/tenant/v1/tours/pool?page_size=1"),
     ]).then(async ([bRes, pRes]) => {
       if (bRes.ok) setBilling(await bRes.json());
