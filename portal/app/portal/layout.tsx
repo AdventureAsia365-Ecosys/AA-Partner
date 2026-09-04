@@ -68,7 +68,10 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
     Promise.all([
       fetch("/api/tenant/v1/tours/pool?page_size=1"),
       fetch("/api/tenant/v1/tours/my-versions?page_size=1"),
-      fetch("/api/admin/billing"),
+      // AA-496: was /api/admin/billing — that proxy requires an admin JWT (requireAdmin()),
+      // so this 401'd on every tenant, every page load, always. /v1/billing is the real
+      // tenant-scoped sibling (JWT-derived tenant_id, api/routers/v1_tours.py).
+      fetch("/api/tenant/v1/billing"),
     ]).then(async ([pRes, cRes, bRes]) => {
       if (pRes.ok) { const d = await pRes.json(); setPool(d.pagination?.total ?? 0); }
       if (cRes.ok) { const d = await cRes.json(); setCat(d.pagination?.total ?? 0); }
