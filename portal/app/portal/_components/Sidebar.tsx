@@ -7,7 +7,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Globe2, BookOpen, Sparkles, Code2, Puzzle, Store, CalendarRange, Compass, Eye, Send, LogOut } from "lucide-react";
+import { LayoutDashboard, Globe2, BookOpen, Sparkles, Code2, Store, CalendarRange, Compass, Eye, Send, LogOut } from "lucide-react";
 import { T, serif, sans } from "./ui";
 
 interface Props {
@@ -26,7 +26,8 @@ const NAV1: { href: string; icon: React.ReactNode; label: string }[] = [
   { href: "/portal/t1-rewrite", icon: <Globe2 size={15} />,          label: "Browse Pool" },
   { href: "/portal/t4-pool",    icon: <BookOpen size={15} />,        label: "My Catalog" },
   { href: "/portal/t0-brand",   icon: <Sparkles size={15} />,        label: "Brand Identity" },
-  { href: "/portal/t6-atoms",   icon: <Puzzle size={15} />,          label: "Atom Curation" }, // AA-431
+  // AA-526 — Atom Curation (T6) removed from the tenant portal entirely: atoms are backend-only
+  // now (owner_scope='platform', curated by AA-admin — see AA-527), tenants never see them.
   { href: "/portal/t7-planning", icon: <CalendarRange size={15} />,  label: "Slate" }, // AA-448, relabeled AA-519 Việc 3 (Slate, AA-511, replaced the old Quarter Plan UI on this page)
   { href: "/portal/t8-angle-gate", icon: <Compass size={15} />,      label: "Write Content" }, // AA-449/AA-450 — one wizard, goal->angle->write
   { href: "/portal/t10-review", icon: <Eye size={15} />,             label: "Review" }, // AA-501 — pre-T11 review, no gate/error detail

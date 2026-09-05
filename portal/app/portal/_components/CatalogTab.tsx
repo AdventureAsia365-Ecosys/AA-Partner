@@ -8,7 +8,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Package, ChevronRight, Save, CheckCircle, XCircle, RotateCcw, Clock, X, Puzzle } from "lucide-react";
+import { Package, ChevronRight, Save, CheckCircle, XCircle, RotateCcw, Clock, X } from "lucide-react";
 import {
   T, serif, mono, sans,
   Card, CardHead, Badge, ScoreBadge, Btn, LoadingScreen, EmptyState,
@@ -28,18 +28,12 @@ interface Version {
   aa_itineraries: string | null; aa_seo_title: string; aa_seo_meta: string;
   aa_quality_score: number; country: string | null; duration: string | null;
   published_tour_id?: string;
-  tour_id?: string;  // AA-454 — raw_tours.tour_id, same identity tour_atoms.tour_id uses;
-                      // lets us deep-link to this version's atoms in AtomsTab (T6)
+  tour_id?: string;  // AA-454 — raw_tours.tour_id, used for the ?tour_id= "showing versions for
+                      // this tour" filter below (AA-526 — no longer also a deep-link target into
+                      // AtomsTab/T6, removed along with tenant atom visibility)
   qa_auto_passed?: boolean;  // AA-436 — T3 gate didn't clear after max repairs, auto-passed anyway
-  atomized_at?: string | null;  // AA-469 Việc 1 — derived (acp_contract.tour_atoms), not a real column
-  atom_count?: number;          // — see api/routers/v1_tours.py::_ATOMIZED_SUBQUERY
   version_history?: { id: string; version_number: number; status: string; edit_source: string; quality_score: number | null; created_at: string }[];
 }
-
-// AA-469 Việc 1 — statuses a version's rewrite has actually finished for (mirrors the
-// backend's POST /versions/{id}/atomize allowlist, api/routers/v1_tours.py). 'pending'
-// (still generating) and 'rejected' (tenant asked to replace it) can't be atomized.
-const ATOMIZABLE_STATUSES = new Set(["ai_generated", "needs_review", "approved"]);
 
 const STATUS_FILTERS = ["", "pending", "approved", "rejected"];
 const FILTER_LABELS: Record<string, string> = {
@@ -47,9 +41,10 @@ const FILTER_LABELS: Record<string, string> = {
 };
 
 export default function CatalogTab() {
-  // AA-454 — arriving from AtomsTab's "View in My Catalog" link (?tour_id=...) filters the
-  // list to just that original tour's versions. Client-side only (list is already fetched
-  // page_size=50, no backend param needed) — mirrors AtomsTab's own tour_id filter direction.
+  // AA-454 — a ?tour_id= filters the list to just that original tour's versions. Client-side
+  // only (list is already fetched page_size=50, no backend param needed). AA-526 — the one
+  // real source of this link (AtomsTab's "View in My Catalog") is gone along with tenant atom
+  // visibility; kept as a general-purpose filter, still reachable by URL.
   const searchParams = useSearchParams();
   const tourIdFilter = searchParams.get("tour_id");
 
@@ -67,9 +62,6 @@ export default function CatalogTab() {
   const [localToast, setLocalToast] = useState<string | null>(null);
   const [actionState, setActionState] = useState<'approved' | 'rejected' | null>(null);
   const [showQuotaConfirm, setShowQuotaConfirm] = useState(false);
-  // AA-469 Việc 1 — standalone Atomize trigger state (was fully automatic pre-fix)
-  const [atomizing, setAtomizing] = useState(false);
-  const [atomizeError, setAtomizeError] = useState<string | null>(null);
   // Original AA tour data for the "AA Original" diff column
   const [origTour, setOrigTour]     = useState<any>(null);
 
@@ -167,7 +159,7 @@ export default function CatalogTab() {
 
   async function loadDetail(v: Version) {
     setSelected(v); setDlLoad(true); setDetail(null); setOrigTour(null);
-    setDirty(false); setSaveOk(false); setExpandItin(true); setActionState(null); setAtomizeError(null);
+    setDirty(false); setSaveOk(false); setExpandItin(true); setActionState(null);
     try {
       // allSettled: pool fetch failure (network error or 4xx) must not kill the detail fetch
       const [detailResult, origResult] = await Promise.allSettled([
@@ -221,24 +213,6 @@ export default function CatalogTab() {
       if (r.ok) { const upd: Version = await r.json(); await fetchList(); setDetail(upd); setSelected(upd); }
       else { setActionState(null); } // revert optimistic update on failure
     } finally { setActing(false); }
-  }
-
-  // AA-469 Việc 1 — standalone T5 trigger. run_t5_atomize()'s own source-hash check
-  // makes a repeat call on unchanged content a no-op server-side, so no client-side
-  // guard beyond the button disappearing once atomized_at is set (via fetchList()).
-  async function doAtomize() {
-    if (!selected) return;
-    setAtomizing(true); setAtomizeError(null);
-    try {
-      const r = await fetch(`/api/tenant/v1/tours/versions/${selected.id}/atomize`, { method: "POST" });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) { setAtomizeError(d.detail || "Atomize failed"); return; }
-      await fetchList();
-      const upd = { ...selected, atomized_at: d.atomized_at ?? new Date().toISOString(), atom_count: d.atom_count ?? selected.atom_count };
-      setSelected(upd);
-    } catch {
-      setAtomizeError("Atomize failed — network error");
-    } finally { setAtomizing(false); }
   }
 
   async function saveEdit() {
@@ -483,42 +457,12 @@ export default function CatalogTab() {
               {saveOk && !dirty && <span style={{ fontSize: 12, color: T.green, fontWeight: 600 }}>✓ Saved</span>}
               <StatusBadge status={selected.status} />
               {selected.qa_auto_passed && <QaAutoPassBadge />}
-              {/* AA-469 Việc 1 — T5 is no longer automatic after T4, so "View atoms →"
-                  can no longer just assume atoms exist. atomized_at (derived, see
-                  atomize_version()'s _ATOMIZED_SUBQUERY) decides which of the two
-                  shows: an Atomize action, or the pre-existing atoms link. */}
-              {selected.tour_id && (selected.atomized_at ? (
-                // AA-454 — T4->T6 nav (was zero navigation either direction). tour_id filters
-                // AtomsTab to this exact original tour's atoms, not a name-based guess.
-                <Link href={`/portal/t6-atoms?tour_id=${selected.tour_id}`} style={{
-                  display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 600,
-                  color: T.amber, textDecoration: "none", padding: "4px 10px", borderRadius: 20,
-                  border: `1px solid ${T.goldSoft}`, background: T.goldTint, whiteSpace: "nowrap",
-                }}>
-                  <Puzzle size={12} /> View atoms ({selected.atom_count ?? 0}) →
-                </Link>
-              ) : ATOMIZABLE_STATUSES.has(selected.status) && (
-                <button onClick={doAtomize} disabled={atomizing} style={{
-                  display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 600,
-                  color: "#fff", border: "none", padding: "4px 10px", borderRadius: 20,
-                  background: atomizing ? "#D1B26B" : T.gold, whiteSpace: "nowrap",
-                  cursor: atomizing ? "default" : "pointer", fontFamily: sans,
-                }}>
-                  <Puzzle size={12} /> {atomizing ? "Atomizing…" : "Atomize"}
-                </button>
-              ))}
               <button onClick={() => { setSelected(null); setDetail(null); }}
                 style={{ background: "none", border: "none", cursor: "pointer", color: T.muted2 }}>
                 <X size={16} />
               </button>
             </div>
           </div>
-
-          {atomizeError && (
-            <div style={{ padding: "8px 22px", background: "rgba(239,68,68,0.06)", borderBottom: `1px solid ${T.line}`, fontSize: 12, color: "#DC2626", fontFamily: sans, flexShrink: 0 }}>
-              {atomizeError}
-            </div>
-          )}
 
           {dlLoad ? <LoadingScreen message="Loading editorial workspace…" /> :
            detail ? (
