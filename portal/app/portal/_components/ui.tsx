@@ -39,6 +39,16 @@ export function parseContent(raw: unknown): Record<string, unknown> | null {
   return null;
 }
 
+// AA-566 Phần A — GET /v1/tours/my-versions returns one row per VERSION
+// (gold_aa_internal.tenant_tour_versions), not one per tour. AA-565 made CatalogTab.tsx's own
+// heading count unique tours (1 row per tour, latest version only) but layout.tsx's Sidebar
+// badge still read the flat `pagination.total` from the same endpoint — the exact bug this
+// fixes: both must count the same thing (unique tours), from the same client-side dedup logic,
+// not two different numbers from two different readings of one endpoint.
+export function countUniqueTours(list: { published_tour_id?: string | null }[]): number {
+  return new Set(list.filter(v => v.published_tour_id).map(v => v.published_tour_id)).size;
+}
+
 export function fmtDate(iso: string | null | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);
