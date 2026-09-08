@@ -28,7 +28,7 @@ const NAV1: { href: string; icon: React.ReactNode; label: string }[] = [
   { href: "/portal/t0-brand",   icon: <Sparkles size={15} />,        label: "Brand Identity" },
   // AA-526 — Atom Curation (T6) removed from the tenant portal entirely: atoms are backend-only
   // now (owner_scope='platform', curated by AA-admin — see AA-527), tenants never see them.
-  { href: "/portal/t7-planning", icon: <CalendarRange size={15} />,  label: "Slate" }, // AA-448, relabeled AA-519 Việc 3 (Slate, AA-511, replaced the old Quarter Plan UI on this page)
+  { href: "/portal/t7-planning", icon: <CalendarRange size={15} />,  label: "Social Content" }, // AA-448, relabeled AA-519 Việc 3 (Slate replaced the old Quarter Plan UI), renamed again AA-564 4.1 (Tenant Portal only — Admin still calls this "Slate", AA-563/564 Group 2)
   { href: "/portal/t8-angle-gate", icon: <Compass size={15} />,      label: "Write Content" }, // AA-449/AA-450 — one wizard, goal->angle->write
   { href: "/portal/t10-review", icon: <Eye size={15} />,             label: "Review" }, // AA-501 — pre-T11 review, no gate/error detail
   { href: "/portal/t11-publish", icon: <Send size={15} />,           label: "Publish" }, // AA-457/AA-458 — WordPress credentials + real publish

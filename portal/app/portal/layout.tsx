@@ -26,7 +26,7 @@ const BREADCRUMBS: Record<string, string> = {
   "/portal/t4-pool":    "My Catalog",
   "/portal/t0-brand":   "Brand Identity",
   // AA-526 — /portal/t6-atoms removed along with tenant atom visibility.
-  "/portal/t7-planning": "Slate", // AA-448, relabeled AA-519 Việc 3
+  "/portal/t7-planning": "Social Content", // AA-448, relabeled AA-519 Việc 3, renamed again AA-564 4.1
   "/portal/t8-angle-gate": "Write Content", // AA-449/AA-450 — one wizard, goal->angle->write
   "/portal/t11-publish": "Publish", // AA-457 — connect-flow only this PR, no Sidebar entry yet
   "/portal/t11-publish/connection": "Publish", // manage-connection sub-route, same breadcrumb label

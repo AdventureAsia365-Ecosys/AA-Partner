@@ -90,8 +90,10 @@ export default function PlanningTab() {
   return (
     <div>
       <div style={{ marginBottom: 22 }}>
+        {/* AA-564 4.1 — renamed "Slate" -> "Social Content" here (Tenant Portal only; Admin's
+            /admin/atom-curation page still calls this section "05 · Slate", AA-563/564 Group 2). */}
         <h2 style={{ fontFamily: serif, fontSize: 22, fontWeight: 500, color: T.ink, margin: "0 0 6px", letterSpacing: "-0.01em" }}>
-          Slate
+          Social Content
         </h2>
         <p style={{ fontSize: 13, color: T.muted, lineHeight: 1.6, margin: 0 }}>
           Channel-scoped content picks, ranked by score and cleared against each channel&rsquo;s

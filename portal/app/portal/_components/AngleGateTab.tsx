@@ -292,7 +292,7 @@ export default function AngleGateTab() {
     fetch(`/api/tenant/v1/angle-gate/requests/${resumeRequestId}`)
       .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
       .then(d => { setReq(d); setPendingAngleIdx(null); })
-      .catch(e => setError(e.detail ?? "Couldn't load that request — try again from the Slate."))
+      .catch(e => setError(e.detail ?? "Couldn't load that request — try again from Social Content."))
       .finally(() => setInitialLoading(false));
   }, [resumeRequestId]);
 
@@ -484,8 +484,8 @@ export default function AngleGateTab() {
         <Card>
           <CardHead title="Pick a Subject to start" />
           <EmptyState icon="🧭" title="Nothing to write yet"
-            sub="Go to the Slate and pick a Subject — Write Content always starts from there now."
-            action={<Btn variant="primary" onClick={() => router.push("/portal/t7-planning")}>Go to the Slate</Btn>} />
+            sub="Go to Social Content and pick a Subject — Write Content always starts from there now."
+            action={<Btn variant="primary" onClick={() => router.push("/portal/t7-planning")}>Go to Social Content</Btn>} />
         </Card>
       )}
 
