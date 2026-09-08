@@ -78,10 +78,15 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
 
       if (versionsRes.status === "fulfilled" && versionsRes.value.ok) {
         const vd = await versionsRes.value.json();
-        const versions: { published_tour_id?: string; status: string }[] = vd.data ?? [];
+        const versions: { published_tour_id?: string; status: string; edit_source: string }[] = vd.data ?? [];
+        // AA-565 — My Catalog no longer has a manual "Add to Catalog" approval step, so
+        // status never reaches 'approved' anymore. "In My Catalog" now means "has a finished
+        // rewrite" — any version that isn't still being AI-written. (Kept edit_source==
+        // 'tenant_edit' rows in this set too: those never leave 'pending' by design, see
+        // CatalogTab.tsx's isAiWriting() comment, but they ARE finished content.)
         setInCatalogSet(new Set(
           versions
-            .filter(v => v.status === "approved" && v.published_tour_id)
+            .filter(v => v.published_tour_id && !(v.status === "pending" && v.edit_source === "ai_generated"))
             .map(v => v.published_tour_id as string)
         ));
       }
