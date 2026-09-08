@@ -121,7 +121,10 @@ export default function SlateTab() {
         .aa511-slate-tabstrip::-webkit-scrollbar { display: none; }
       `}</style>
 
-      <CardHead title="Slate" />
+      {/* AA-564 4.1 — Tenant-facing label renamed "Slate" -> "Social Content"; the component/file
+          name (SlateTab.tsx, internal-only) is unchanged, matching CONTEXT.md's own Subject/Slate
+          terminology used everywhere else in the codebase. */}
+      <CardHead title="Social Content" />
       <p style={{ fontSize: 12.5, color: T.muted, lineHeight: 1.6, margin: "0 0 14px" }}>
         Every moment that has cleared its Channel&rsquo;s bar — search-led Channels need
         measured demand and questions to answer; attention-led Channels need enough of the
@@ -165,7 +168,7 @@ export default function SlateTab() {
       {loading && <SkeletonPanel />}
 
       {error && !loading && (
-        <EmptyState icon="⚠️" title="Couldn't load the Slate" sub={error}
+        <EmptyState icon="⚠️" title="Couldn't load Social Content" sub={error}
           action={<Btn variant="secondary" onClick={load}>Try again</Btn>} />
       )}
 
