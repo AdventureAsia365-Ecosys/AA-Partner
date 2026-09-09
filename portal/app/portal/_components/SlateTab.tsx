@@ -10,13 +10,18 @@
 // never produces a Subject list for these at all; this build runs the same Bar against them at
 // their default-zero threshold, so an on-demand tab just lists "everything eligible", no
 // nhịp/tuần line). Each row shows why it cleared the Bar (`cleared_bar_reason`, verbatim from
-// `services/acp_shared/slate.py::_clears_bar()`) and a "Chọn viết" button that posts the pick and
-// hands off to the SAME T8 entry point SlotPickerPanel.tsx's atom-picker already used
-// (`/portal/t8-angle-gate`) — via `?resume_request_id=`, not `?atom_id=`, because
-// `pick_subject()` already creates the `angle_gate_request` (with `channel` pre-set) before this
-// component ever navigates; AngleGateTab.tsx's own `resumeRequestId` load path (built for AA-497's
-// "Change angle" reopen) already handles loading an existing request at whatever step it's
-// actually at (`pending_goal` here — step 2, Goal) with zero changes needed there.
+// `services/acp_shared/slate.py::_clears_bar()`) and a "Chọn viết" button that posts the pick.
+//
+// AA-564 Nhóm 4.2 (2026-09-08) — pick() used to navigate to the standalone T8 route
+// (`/portal/t8-angle-gate?resume_request_id=`). It now expands `AngleGateWizard` INLINE under
+// the same Subject row instead (accordion — `expanded` state below holds at most one
+// {subjectId, requestId} at a time, shared by both `proposed.map()` and `DecidedList` via the
+// same `SubjectRow` so the wizard stays open across the row moving from one list to the other
+// when `onPicked()`'s refetch flips `state` proposed -> picked). The standalone route/page still
+// exists unchanged (a valid bookmark/deep-link), just no longer the only way in — its own
+// `AngleGateWizard`'s `requestId` load path (built for AA-497's "Change angle" reopen) already
+// handled loading an existing request at whatever step it's actually at, with zero changes
+// needed there for this embedded use.
 //
 // API: GET /api/tenant/v1/slate, POST /api/tenant/v1/subjects/{id}/pick
 // (api/routers/v1_planning.py's `slate_router`, AA-511).
@@ -39,9 +44,9 @@
 //     on a narrow screen.
 
 import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { Calendar, ChevronRight, Sparkles, Zap } from "lucide-react";
 import { T, serif, sans, mono, Card, CardHead, Badge, Btn, EmptyState } from "./ui";
+import AngleGateWizard from "./AngleGateWizard";
 
 interface ClearedBarReason {
   channel: string;
@@ -91,11 +96,18 @@ const CHANNEL_TABS: { key: string; label: string; group: "weekly" | "on_demand" 
   { key: "ads", label: "Ads", group: "on_demand" },
 ];
 
+// AA-564 4.2 — at most one Subject row's wizard open at a time, across the whole Slate (all 8
+// Channel tabs), not just within one Channel — picking a new Subject always closes whatever was
+// open before. Keyed by subject_id (not list position) so the SAME expanded state survives the
+// row moving from `proposed` to `decided` when onPicked()'s refetch flips `state`.
+interface ExpandedWizard { subjectId: string; requestId: string }
+
 export default function SlateTab() {
   const [data, setData] = useState<SlateResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeChannel, setActiveChannel] = useState("blog");
+  const [expanded, setExpanded] = useState<ExpandedWizard | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -173,7 +185,10 @@ export default function SlateTab() {
       )}
 
       {!loading && !error && active && (
-        <ChannelPanel channel={active} postsPerWeek={data!.posts_per_week} onPicked={load} />
+        <ChannelPanel
+          channel={active} postsPerWeek={data!.posts_per_week} onPicked={load}
+          expanded={expanded} onExpand={setExpanded}
+        />
       )}
     </Card>
   );
@@ -221,8 +236,9 @@ function SkeletonPanel() {
   );
 }
 
-function ChannelPanel({ channel, postsPerWeek, onPicked }: {
+function ChannelPanel({ channel, postsPerWeek, onPicked, expanded, onExpand }: {
   channel: ChannelSlate; postsPerWeek: number; onPicked: () => void;
+  expanded: ExpandedWizard | null; onExpand: (w: ExpandedWizard | null) => void;
 }) {
   const proposed = channel.subjects.filter(s => s.state === "proposed");
   const decided = channel.subjects.filter(s => s.state !== "proposed");
@@ -248,28 +264,31 @@ function ChannelPanel({ channel, postsPerWeek, onPicked }: {
         <>
           <EmptyState icon="✅" title="Không còn Subject mới đủ điều kiện lúc này"
             sub="Xem lại các Subject đã quyết định bên dưới, hoặc rewrite/atomize thêm tour để có đề xuất mới." />
-          <DecidedList subjects={decided} onPicked={onPicked} />
+          <DecidedList subjects={decided} onPicked={onPicked} expanded={expanded} onExpand={onExpand} />
         </>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {proposed.map(s => (
-            <SubjectRow key={s.subject_id} subject={s} onPicked={onPicked} />
+            <SubjectRow key={s.subject_id} subject={s} onPicked={onPicked} expanded={expanded} onExpand={onExpand} />
           ))}
-          {decided.length > 0 && <DecidedList subjects={decided} onPicked={onPicked} />}
+          {decided.length > 0 && <DecidedList subjects={decided} onPicked={onPicked} expanded={expanded} onExpand={onExpand} />}
         </div>
       )}
     </div>
   );
 }
 
-function DecidedList({ subjects, onPicked }: { subjects: SlateSubject[]; onPicked: () => void }) {
+function DecidedList({ subjects, onPicked, expanded, onExpand }: {
+  subjects: SlateSubject[]; onPicked: () => void;
+  expanded: ExpandedWizard | null; onExpand: (w: ExpandedWizard | null) => void;
+}) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
       <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: T.muted2, margin: "10px 0 2px" }}>
         Already decided
       </div>
       {subjects.map(s => (
-        <SubjectRow key={s.subject_id} subject={s} onPicked={onPicked} />
+        <SubjectRow key={s.subject_id} subject={s} onPicked={onPicked} expanded={expanded} onExpand={onExpand} />
       ))}
     </div>
   );
@@ -290,8 +309,10 @@ function barReasonText(reason: ClearedBarReason): string {
   return parts.length > 0 ? parts.join(" · ") : "Không có ngưỡng nào áp dụng";
 }
 
-function SubjectRow({ subject, onPicked }: { subject: SlateSubject; onPicked: () => void }) {
-  const router = useRouter();
+function SubjectRow({ subject, onPicked, expanded, onExpand }: {
+  subject: SlateSubject; onPicked: () => void;
+  expanded: ExpandedWizard | null; onExpand: (w: ExpandedWizard | null) => void;
+}) {
   const [picking, setPicking] = useState(false);
   const [pickError, setPickError] = useState<string | null>(null);
 
@@ -300,6 +321,7 @@ function SubjectRow({ subject, onPicked }: { subject: SlateSubject; onPicked: ()
     : [subject.place, subject.action].filter(Boolean).join(" — ") || "Untitled moment";
 
   const kindLabel = subject.route_id ? "Route" : "Segment";
+  const isExpanded = expanded?.subjectId === subject.subject_id;
 
   const pick = useCallback(() => {
     setPicking(true);
@@ -313,9 +335,12 @@ function SubjectRow({ subject, onPicked }: { subject: SlateSubject; onPicked: ()
       .then(d => {
         // FE audit #2 — only a CONFIRMED 200 clears the error and refreshes the Slate. Reaching
         // here means the backend really did flip this Subject to 'picked', so both are safe.
+        // AA-564 4.2 — used to navigate to the standalone T8 route here; now expands
+        // AngleGateWizard inline under this same row instead (onExpand overwrites whatever was
+        // expanded before — accordion, one row at a time across the whole Slate).
         setPickError(null);
         onPicked();
-        router.push(`/portal/t8-angle-gate?resume_request_id=${encodeURIComponent(d.request_id)}`);
+        onExpand({ subjectId: subject.subject_id, requestId: d.request_id });
       })
       .catch(e => {
         // FE audit #2 (the important fix) — a failed request (4xx/5xx, or the browser giving up
@@ -327,7 +352,7 @@ function SubjectRow({ subject, onPicked }: { subject: SlateSubject; onPicked: ()
         setPickError(e?.detail ?? "Couldn't pick this Subject — try again.");
         setPicking(false);
       });
-  }, [subject.subject_id, router, onPicked]);
+  }, [subject.subject_id, onPicked, onExpand]);
 
   const stateVariant = subject.state === "proposed" ? "gold"
     : subject.state === "picked" ? "info"
@@ -335,46 +360,61 @@ function SubjectRow({ subject, onPicked }: { subject: SlateSubject; onPicked: ()
 
   return (
     <div style={{
-      display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12,
-      padding: "12px 14px", borderRadius: 10, border: `1px solid ${T.line}`, background: "#fff",
+      borderRadius: 10, border: `1px solid ${isExpanded ? T.gold : T.line}`, background: "#fff",
+      overflow: "hidden",
     }}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
-          <span style={{ fontFamily: serif, fontSize: 14.5, fontWeight: 500, color: T.ink }}>{title}</span>
-          <Badge variant="default">{kindLabel}</Badge>
-          {subject.state !== "proposed" && <Badge variant={stateVariant}>{subject.state}</Badge>}
-          {subject.score != null && (
-            <span style={{ fontFamily: mono, fontSize: 10.5, color: T.muted2 }} title="Rank-sum — lower is better">
-              rank {subject.score}
-            </span>
+      <div style={{
+        display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12,
+        padding: "12px 14px",
+      }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+            <span style={{ fontFamily: serif, fontSize: 14.5, fontWeight: 500, color: T.ink }}>{title}</span>
+            <Badge variant="default">{kindLabel}</Badge>
+            {subject.state !== "proposed" && <Badge variant={stateVariant}>{subject.state}</Badge>}
+            {subject.score != null && (
+              <span style={{ fontFamily: mono, fontSize: 10.5, color: T.muted2 }} title="Rank-sum — lower is better">
+                rank {subject.score}
+              </span>
+            )}
+          </div>
+          <div style={{ fontSize: 11.5, color: T.muted, lineHeight: 1.5 }}>
+            {barReasonText(subject.cleared_bar_reason)}
+          </div>
+          {pickError && (
+            <div style={{
+              marginTop: 6, padding: "6px 8px", background: T.redSoft, border: "1px solid #F5C6C6",
+              borderRadius: 6, fontSize: 11, color: T.red, display: "flex", alignItems: "center", gap: 8,
+            }}>
+              <span>{pickError}</span>
+              {/* Manual, explicit refresh — never automatic (FE audit #2) — so the tenant can
+                  check the real state on their own terms instead of an auto-refresh that could
+                  have shown this same error next to a row that actually succeeded. */}
+              <button onClick={onPicked} style={{
+                background: "none", border: "none", padding: 0, cursor: "pointer",
+                color: T.red, fontFamily: sans, fontSize: 11, fontWeight: 700, textDecoration: "underline",
+                flexShrink: 0,
+              }}>
+                Refresh
+              </button>
+            </div>
           )}
         </div>
-        <div style={{ fontSize: 11.5, color: T.muted, lineHeight: 1.5 }}>
-          {barReasonText(subject.cleared_bar_reason)}
-        </div>
-        {pickError && (
-          <div style={{
-            marginTop: 6, padding: "6px 8px", background: T.redSoft, border: "1px solid #F5C6C6",
-            borderRadius: 6, fontSize: 11, color: T.red, display: "flex", alignItems: "center", gap: 8,
-          }}>
-            <span>{pickError}</span>
-            {/* Manual, explicit refresh — never automatic (FE audit #2) — so the tenant can
-                check the real state on their own terms instead of an auto-refresh that could
-                have shown this same error next to a row that actually succeeded. */}
-            <button onClick={onPicked} style={{
-              background: "none", border: "none", padding: 0, cursor: "pointer",
-              color: T.red, fontFamily: sans, fontSize: 11, fontWeight: 700, textDecoration: "underline",
-              flexShrink: 0,
-            }}>
-              Refresh
-            </button>
-          </div>
+        {subject.state === "proposed" && (
+          <Btn variant="primary" size="sm" disabled={picking} onClick={pick}>
+            {picking ? "Đang chọn…" : <><Sparkles size={12} /> Chọn viết <ChevronRight size={12} /></>}
+          </Btn>
         )}
       </div>
-      {subject.state === "proposed" && (
-        <Btn variant="primary" size="sm" disabled={picking} onClick={pick}>
-          {picking ? "Đang chọn…" : <><Sparkles size={12} /> Chọn viết <ChevronRight size={12} /></>}
-        </Btn>
+      {/* AA-564 4.2 — AngleGateWizard embedded inline, accordion (only when this row's
+          subject_id matches the single shared `expanded` state). `onReset` collapses this row
+          instead of the wizard's standalone-mode navigation to /portal/t8-angle-gate. */}
+      {isExpanded && expanded && (
+        <div style={{ padding: "0 14px 16px", borderTop: `1px solid ${T.line2}`, marginTop: 2 }}>
+          <div style={{ paddingTop: 14 }}>
+            <AngleGateWizard requestId={expanded.requestId} embedded onReset={() => onExpand(null)} />
+          </div>
+        </div>
       )}
     </div>
   );
