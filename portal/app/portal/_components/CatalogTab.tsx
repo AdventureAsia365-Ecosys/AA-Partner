@@ -17,13 +17,12 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import * as XLSX from "xlsx";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Save, X } from "lucide-react";
+import { Save, X, Download } from "lucide-react";
 import {
   T, mono, sans,
   Btn, LoadingScreen, EmptyState,
   parseHighlights, parseContent, fmtDateTime,
 } from "./ui";
-import { SeoHealthBar } from "./SeoHealthBar";
 import { SeeOriginalToggle } from "./SeeOriginalToggle";
 
 interface Version {
@@ -34,11 +33,16 @@ interface Version {
   aa_subtitle: string; aa_summary: string; aa_highlights: string;
   aa_itineraries: string | null; aa_seo_title: string; aa_seo_meta: string;
   aa_quality_score: number; country: string | null; duration: string | null;
+  inclusions?: string | null; exclusions?: string | null; // AA-566 Phần B.4
   published_tour_id?: string;
   tour_id?: string;  // AA-454 — raw_tours.tour_id, used for the ?tour_id= "showing versions for
                       // this tour" filter below (AA-526 — no longer also a deep-link target into
                       // AtomsTab/T6, removed along with tenant atom visibility)
 }
+
+// AA-566 Phần B.3 — sortable columns, same toggleSort/arrow convention as
+// admin/_components/auditPanels.tsx (AA-557's own precedent).
+type SortKey = "aa_name" | "country";
 
 // AA-565 — a version is "still being written by AI" only while status='pending' AND
 // edit_source='ai_generated'. A tenant's own manual Save also inserts a status='pending' row
@@ -60,6 +64,10 @@ export default function CatalogTab() {
   const [list, setList]         = useState<Version[]>([]);
   const [loading, setLoading]   = useState(true);
   const [search, setSearch]     = useState("");
+  const [countryFilter, setCountryFilter] = useState("");
+  const [sortKey, setSortKey]   = useState<SortKey | null>(null);
+  const [sortDir, setSortDir]   = useState<"asc" | "desc">("asc");
+  const [exportingDocxId, setExportingDocxId] = useState<string | null>(null);
 
   // AA-565 — the open drawer is identified by published_tour_id, not a specific version id.
   // Every action here (Save, Request Rewrite) creates a NEW version row under the hood; keying
@@ -348,16 +356,59 @@ export default function CatalogTab() {
     } finally { setIsExporting(false); }
   }
 
+  // AA-566 Phần B.3 — Country dropdown filter (Score/Version filters were already dropped in
+  // AA-565 — the tenant view no longer surfaces those fields at all).
+  const countries = useMemo(
+    () => [...new Set(grouped.map(g => g.country).filter(Boolean))].sort() as string[],
+    [grouped]
+  );
+
+  function toggleSort(key: SortKey) {
+    if (sortKey !== key) { setSortKey(key); setSortDir("asc"); }
+    else if (sortDir === "asc") setSortDir("desc");
+    else { setSortKey(null); setSortDir("asc"); }
+  }
+  const sortArrow = (key: SortKey) => (sortKey === key ? (sortDir === "asc" ? "▲" : "▼") : "▲▼");
+
   const visibleList = useMemo(() => {
     let v = tourIdFilter ? grouped.filter(g => g.tour_id === tourIdFilter) : grouped;
+    if (countryFilter) v = v.filter(g => g.country === countryFilter);
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       v = v.filter(g => (g.aa_name || "").toLowerCase().includes(q) || (g.country || "").toLowerCase().includes(q));
     }
+    if (sortKey) {
+      v = [...v].sort((a, b) => {
+        const av = (a[sortKey] || "").toString().toLowerCase();
+        const bv = (b[sortKey] || "").toString().toLowerCase();
+        const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+        return sortDir === "asc" ? cmp : -cmp;
+      });
+    }
     return v;
-  }, [grouped, tourIdFilter, search]);
+  }, [grouped, tourIdFilter, search, countryFilter, sortKey, sortDir]);
 
   const allSelected = visibleList.length > 0 && visibleList.every(v => selectedIds.has(v.id));
+
+  // AA-566 Phần B.2 — real DOCX export, mirrors Admin Master Content's own
+  // exportVersionDocx()/downloadBlob() trigger pattern (frontend/app/admin/master-content/
+  // page.tsx), pointed at the new tenant-scoped endpoint (GET /v1/tours/versions/{id}/
+  // export-docx) instead of Admin's silver_aa_internal.generated_content-reading one.
+  async function exportDocx(versionId: string) {
+    setExportingDocxId(versionId);
+    try {
+      const r = await fetch(`/api/tenant/v1/tours/versions/${versionId}/export-docx`);
+      if (!r.ok) return;
+      const blob = await r.blob();
+      const cd = r.headers.get("content-disposition") || "";
+      const match = /filename=([^;]+)/.exec(cd);
+      const filename = match ? match[1].trim() : "tour.docx";
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    } finally { setExportingDocxId(null); }
+  }
 
   return (
     <>
@@ -410,6 +461,16 @@ export default function CatalogTab() {
           placeholder="Search name or country…"
           style={{ padding: "5px 10px", border: `1px solid ${T.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, width: 200, background: T.card, color: T.ink, outline: "none" }}
         />
+        {countries.length > 0 && (
+          <select
+            value={countryFilter}
+            onChange={e => setCountryFilter(e.target.value)}
+            style={{ padding: "5px 10px", border: `1px solid ${T.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: T.card, color: T.ink, outline: "none", cursor: "pointer" }}
+          >
+            <option value="">All countries</option>
+            {countries.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        )}
         {visibleList.length > 0 && (
           <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, color: T.muted, cursor: "pointer", fontFamily: sans }}>
             <input type="checkbox" checked={allSelected}
@@ -452,8 +513,17 @@ export default function CatalogTab() {
                   }}
                   style={{ accentColor: T.gold, cursor: "pointer" }} />
               </th>
-              <th style={THStyle}>Tour Name</th>
-              <th style={THStyle}>Country</th>
+              <th style={{ ...THStyle, width: 36 }}>#</th>
+              <th style={THStyle}>
+                <button onClick={() => toggleSort("aa_name")} style={{ ...sortBtnStyle, color: sortKey === "aa_name" ? T.gold : T.muted }}>
+                  Tour Name <span style={{ fontSize: 9, opacity: sortKey === "aa_name" ? 1 : 0.35 }}>{sortArrow("aa_name")}</span>
+                </button>
+              </th>
+              <th style={THStyle}>
+                <button onClick={() => toggleSort("country")} style={{ ...sortBtnStyle, color: sortKey === "country" ? T.gold : T.muted }}>
+                  Country <span style={{ fontSize: 9, opacity: sortKey === "country" ? 1 : 0.35 }}>{sortArrow("country")}</span>
+                </button>
+              </th>
               <th style={{ ...THStyle, textAlign: "right" as const }}>Actions</th>
             </tr>
           </thead>
@@ -461,16 +531,25 @@ export default function CatalogTab() {
             {visibleList.map((v, i) => {
               const writing = isAiWriting(v);
               return (
-                <tr key={v.id} style={{
-                  background: i % 2 === 0 ? T.card : T.bg,
-                  borderBottom: `1px solid ${T.line}`,
-                }}>
+                <tr key={v.id}
+                  onClick={() => setOpenTourId(v.published_tour_id ?? null)}
+                  style={{
+                    background: i % 2 === 0 ? T.card : T.bg,
+                    borderBottom: `1px solid ${T.line}`,
+                    cursor: "pointer",
+                  }}>
                   <td style={TDStyle} onClick={e => e.stopPropagation()}>
                     <input type="checkbox" checked={selectedIds.has(v.id)}
                       onChange={() => setSelectedIds(prev => { const n = new Set(prev); selectedIds.has(v.id) ? n.delete(v.id) : n.add(v.id); return n; })}
                       style={{ accentColor: T.gold, cursor: "pointer" }} />
                   </td>
-                  <td style={{ ...TDStyle, fontWeight: 600, color: T.ink }}>{v.aa_name || "Tour"}</td>
+                  <td style={{ ...TDStyle, color: T.muted2 }}>{i + 1}</td>
+                  <td style={{ ...TDStyle, fontWeight: 600, color: T.ink }}>
+                    {v.aa_name || "Tour"}
+                    {v.aa_subtitle && (
+                      <div style={{ fontWeight: 400, fontSize: 11.5, color: T.muted, marginTop: 2 }}>{v.aa_subtitle}</div>
+                    )}
+                  </td>
                   <td style={TDStyle}>{v.country || "—"}</td>
                   <td style={{ ...TDStyle, textAlign: "right" as const }}>
                     {writing ? (
@@ -478,7 +557,7 @@ export default function CatalogTab() {
                         <span style={{ animation: "cis-pulse 1.4s ease-in-out infinite" }}>✍️</span> Writing…
                       </span>
                     ) : (
-                      <button onClick={() => setOpenTourId(v.published_tour_id ?? null)}
+                      <button onClick={e => { e.stopPropagation(); setOpenTourId(v.published_tour_id ?? null); }}
                         style={{ padding: "5px 12px", fontSize: 12, fontWeight: 600, border: `1px solid ${T.gold}`, borderRadius: 6, background: T.goldTint, color: T.gold, cursor: "pointer", fontFamily: sans }}>
                         Open →
                       </button>
@@ -549,9 +628,7 @@ export default function CatalogTab() {
                   {detail.edited_at && <span>· Edited: {fmtDateTime(detail.edited_at)}</span>}
                 </div>
                 {[
-                  { label: "Summary",   orig: origTour?.aa_summary  ?? detail.aa_summary,   yours: editSummary,  set: (v: string) => { setEditSummary(v); setDirty(true); } },
-                  { label: "SEO Title", orig: origTour?.seo_title   ?? detail.aa_seo_title, yours: editSeoTitle, set: (v: string) => { setEditSeoTitle(v); setDirty(true); } },
-                  { label: "SEO Meta",  orig: origTour?.seo_meta    ?? detail.aa_seo_meta,  yours: editSeoMeta,  set: (v: string) => { setEditSeoMeta(v); setDirty(true); } },
+                  { label: "Summary", orig: origTour?.aa_summary ?? detail.aa_summary, yours: editSummary, set: (v: string) => { setEditSummary(v); setDirty(true); } },
                 ].map(row => (
                   <CompareRow key={row.label} label={row.label} original={row.orig} yours={row.yours} onEdit={row.set} />
                 ))}
@@ -570,24 +647,32 @@ export default function CatalogTab() {
                 )}
                 <SeeOriginalToggle
                   summary={String(origTour?.aa_summary ?? detail.aa_summary ?? "")}
-                  seoTitle={String(origTour?.seo_title ?? detail.aa_seo_title ?? "")}
-                  seoMeta={String(origTour?.seo_meta ?? detail.aa_seo_meta ?? "")}
+                  seoTitle={null}
+                  seoMeta={null}
                   highlightsRaw={String(origTour?.aa_highlights ?? detail.aa_highlights ?? "")}
                   itineraries={String(origTour?.aa_itineraries ?? detail.aa_itineraries ?? "") || null}
                 />
               </div>
 
-              <div style={{ padding: "14px 22px", borderBottom: `1px solid ${T.line}` }}>
-                <SeoHealthBar
-                  seoTitle={editSeoTitle}
-                  seoMeta={editSeoMeta}
-                  highlights={editHighlights}
-                  summary={editSummary}
-                  rulesApplied={(detail as any).rules_applied}
-                />
-              </div>
+              {/* AA-566 Phần B.4 — trip facts already in the data model but not previously
+                  surfaced to the tenant. SEO Health Bar / SEO Title / SEO Meta deliberately
+                  removed from this drawer per Phần B.5 (Nghiệp: not meaningful to tenants) —
+                  the underlying columns/fields are untouched, still readable by Admin. */}
+              {(detail.duration || detail.inclusions || detail.exclusions) && (
+                <div style={{ padding: "14px 22px", borderBottom: `1px solid ${T.line}` }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: T.muted, marginBottom: 10 }}>
+                    Trip Details
+                  </div>
+                  {detail.duration && <TripFact label="Duration" value={detail.duration} />}
+                  {detail.inclusions && <TripFact label="Inclusions" value={detail.inclusions} />}
+                  {detail.exclusions && <TripFact label="Exclusions" value={detail.exclusions} />}
+                </div>
+              )}
 
-              <div style={{ padding: "14px 22px", display: "flex", justifyContent: "flex-end" }}>
+              <div style={{ padding: "14px 22px", display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <Btn variant="ghost" disabled={exportingDocxId === detail.id} onClick={() => exportDocx(detail.id)}>
+                  <Download size={12} /> {exportingDocxId === detail.id ? "Exporting…" : "Export DOCX"}
+                </Btn>
                 <Btn variant="secondary" disabled={rewriting} onClick={() => setShowRewriteConfirm(true)}>
                   {rewriting ? "Starting…" : "Request Rewrite"}
                 </Btn>
@@ -643,6 +728,19 @@ const THStyle: React.CSSProperties = {
 const TDStyle: React.CSSProperties = {
   padding: "10px 12px", fontSize: 13, color: T.body, fontFamily: sans,
 };
+const sortBtnStyle: React.CSSProperties = {
+  background: "none", border: "none", cursor: "pointer", padding: 0,
+  display: "flex", alignItems: "center", gap: 4, font: "inherit", textTransform: "inherit", letterSpacing: "inherit",
+};
+
+function TripFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.muted, marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 11.5, color: T.body, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{value}</div>
+    </div>
+  );
+}
 
 // ── Compare row ───────────────────────────────────────────────────────────────
 

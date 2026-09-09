@@ -7,10 +7,20 @@ import { useState, useEffect, useCallback } from "react";
 import { Search, ChevronRight, X, RotateCcw, Globe2 } from "lucide-react";
 import {
   T, serif, mono, sans,
-  Card, ScoreBadge, Badge, Btn, LoadingScreen, EmptyState,
+  Card, Badge, Btn, LoadingScreen, EmptyState,
   parseHighlights, fmtDate, statusVariant,
 } from "./ui";
 import { PoolFilters, type PoolFiltersState } from "./PoolFilters";
+
+// AA-566 Phần D — the Rewrite Config tab (language/SEO mode/brand rules) is removed per
+// Nghiệp's decision (b): the external bulk "Rewrite N" bar already covers triggering a rewrite,
+// duplicating that inside a per-tour tab added nothing. These 3 knobs had no other UI anywhere
+// in the tenant portal to move into, so they're hardcoded here at RewritePanel's own prior
+// defaults (unchanged behavior for the common case) — WHERE a tenant should be able to change
+// them again, if ever, is an open product question (a Settings/Brand page?), not decided here.
+const REWRITE_LANGUAGE = "en-US";
+const REWRITE_SEO_MODE = "standard";
+const REWRITE_USE_BRAND_RULES = true;
 
 interface PoolTour {
   id: string; tour_id: string; aa_name: string; aa_subtitle: string;
@@ -38,13 +48,7 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<PoolTour | null>(null);
   const [checked, setChecked]   = useState<Set<string>>(new Set());
-  const [panelTab, setPanelTab] = useState<"details" | "rewrite">("details");
   const [expandItin, setExpandItin] = useState(false);
-
-  // Rewrite config
-  const [rwLang, setRwLang]   = useState("en-US");
-  const [rwSeo, setRwSeo]     = useState("standard");
-  const [rwBrand, setRwBrand] = useState(true);
   const [rewrit, setRewrit]   = useState(false);
 
   const fetchPool = useCallback(async () => {
@@ -102,7 +106,7 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
         await fetch(`/api/tenant/v1/tours/pool/${id}/rewrite`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ rewrite_language: rwLang, seo_mode: rwSeo, use_brand_rules: rwBrand }),
+          body: JSON.stringify({ rewrite_language: REWRITE_LANGUAGE, seo_mode: REWRITE_SEO_MODE, use_brand_rules: REWRITE_USE_BRAND_RULES }),
         });
       }
       setSelected(null);
@@ -138,14 +142,19 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
           />
         </div>
 
-        {/* Batch bar */}
-        {checked.size > 0 && (
+        {/* Batch bar — AA-566 Phần D: this is now the ONLY way to trigger a rewrite (the
+            per-tour "Rewrite Config" tab was removed), so it must also cover the single-tour
+            case (a row clicked open in the detail panel, not necessarily checkbox-checked) —
+            not just the multi-checkbox case it originally handled. */}
+        {rewriteTargets.length > 0 && (
           <div style={{ marginBottom: 12, padding: "10px 16px", background: T.goldTint, border: `1px solid ${T.goldSoft}`, borderRadius: 8, display: "flex", alignItems: "center", gap: 12 }}>
-            <span style={{ fontSize: 13, color: T.amber, fontWeight: 600 }}>{checked.size} tour{checked.size > 1 ? "s" : ""} selected</span>
-            <Btn variant="primary" size="sm" disabled={rewrit} onClick={() => doRewrite(Array.from(checked))}>
-              {rewrit ? "Rewriting…" : `Rewrite ${checked.size}`}
+            <span style={{ fontSize: 13, color: T.amber, fontWeight: 600 }}>
+              {rewriteTargets.length} tour{rewriteTargets.length > 1 ? "s" : ""} selected
+            </span>
+            <Btn variant="primary" size="sm" disabled={rewrit} onClick={() => doRewrite(rewriteTargets)}>
+              {rewrit ? "Starting rewrite…" : rewriteTargets.length > 1 ? `Rewrite ${rewriteTargets.length} tours` : "Rewrite this tour"}
             </Btn>
-            <Btn variant="ghost" size="sm" onClick={() => setChecked(new Set())}>Clear</Btn>
+            <Btn variant="ghost" size="sm" onClick={() => { setChecked(new Set()); setSelected(null); }}>Clear</Btn>
           </div>
         )}
 
@@ -161,13 +170,13 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
           <EmptyState icon="🌏" title="No tours found" sub="Try adjusting your search or filters" />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {tours.map(t => {
+            {tours.map((t, i) => {
               const isActive  = selected?.id === t.id;
               const isChecked = checked.has(t.id);
               return (
-                <TourRow key={t.id} tour={t} isActive={isActive} isChecked={isChecked}
+                <TourRow key={t.id} tour={t} index={(page - 1) * PAGE_SIZE + i + 1} isActive={isActive} isChecked={isChecked}
                   inCatalogSet={inCatalogSet}
-                  onSelect={() => { setSelected(isActive ? null : t); setPanelTab("details"); setExpandItin(false); }}
+                  onSelect={() => { setSelected(isActive ? null : t); setExpandItin(false); }}
                   onCheck={() => setChecked(prev => { const s = new Set(prev); s.has(t.id) ? s.delete(t.id) : s.add(t.id); return s; })}
                 />
               );
@@ -203,7 +212,6 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
                   </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <ScoreBadge score={selected.quality_score} />
                   <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", cursor: "pointer", color: T.muted2, padding: 2 }}>
                     <X size={16} />
                   </button>
@@ -215,39 +223,17 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
                 </span>
               ) : selected.already_rewritten ? (
                 <span style={{ marginTop: 8, display: "inline-block", fontSize: 11, padding: "2px 8px", background: T.goldTint, color: T.amber, borderRadius: 20, fontWeight: 600 }}>
-                  ↻ Version in progress
+                  ✍️ Writing…
                 </span>
               ) : null}
             </div>
-            {/* Tabs */}
-            <div style={{ display: "flex", padding: "0 20px" }}>
-              {(["details", "rewrite"] as const).map(t => (
-                <button key={t} onClick={() => setPanelTab(t)} style={{
-                  padding: "8px 16px", fontSize: 13, fontWeight: 600, border: "none",
-                  background: "none", cursor: "pointer", fontFamily: sans,
-                  color: panelTab === t ? T.gold : T.muted,
-                  borderBottom: `2px solid ${panelTab === t ? T.gold : "transparent"}`,
-                  transition: "all .15s",
-                }}>
-                  {t === "details" ? "📄 Tour Details" : "✏️ Rewrite Config"}
-                </button>
-              ))}
-            </div>
           </div>
 
-          {/* Body */}
+          {/* Body — AA-566 Phần D: single panel now, no more Tour Details/Rewrite Config tabs
+              (Rewrite Config removed entirely; triggering a rewrite happens via the batch bar
+              above the list, which now also covers the single-tour case — see its own comment). */}
           <div style={{ padding: 20, maxHeight: "70vh", overflowY: "auto" }}>
-            {panelTab === "details" ? (
-              <DetailPanel tour={selected} expandItin={expandItin} setExpandItin={setExpandItin} />
-            ) : (
-              <RewritePanel
-                rwLang={rwLang} setRwLang={setRwLang}
-                rwSeo={rwSeo} setRwSeo={setRwSeo}
-                rwBrand={rwBrand} setRwBrand={setRwBrand}
-                rewrit={rewrit} targets={rewriteTargets}
-                onRewrite={() => doRewrite(rewriteTargets)}
-              />
-            )}
+            <DetailPanel tour={selected} expandItin={expandItin} setExpandItin={setExpandItin} />
           </div>
         </div>
       )}
@@ -257,20 +243,21 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
 
 // ── Tour row ──────────────────────────────────────────────────────────────────
 
-function TourRow({ tour, isActive, isChecked, inCatalogSet, onSelect, onCheck }: {
-  tour: PoolTour; isActive: boolean; isChecked: boolean;
+function TourRow({ tour, index, isActive, isChecked, inCatalogSet, onSelect, onCheck }: {
+  tour: PoolTour; index: number; isActive: boolean; isChecked: boolean;
   inCatalogSet: Set<string>;
   onSelect: () => void; onCheck: () => void;
 }) {
   const kws = (() => { try { const v = JSON.parse(JSON.parse(tour.seo_keywords_used)); return Array.isArray(v) ? v.slice(0, 3) : []; } catch { return []; } })();
   return (
-    <div style={{
+    <div data-testid="pool-tour-row" style={{
       background: isActive ? "rgba(219,150,40,0.04)" : T.card,
       border: `1px solid ${isChecked ? T.gold : isActive ? "rgba(219,150,40,0.3)" : T.line}`,
       borderRadius: 10, padding: "12px 14px", cursor: "pointer",
       transition: "all .15s",
     }} onClick={onSelect}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+        <span style={{ fontSize: 11.5, color: T.muted2, marginTop: 4, flexShrink: 0, minWidth: 18, fontFamily: mono }}>{index}</span>
         <input type="checkbox" checked={isChecked} onChange={() => {}} onClick={e => { e.stopPropagation(); onCheck(); }}
           style={{ marginTop: 3, flexShrink: 0, accentColor: T.gold, cursor: "pointer" }} />
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -279,7 +266,7 @@ function TourRow({ tour, isActive, isChecked, inCatalogSet, onSelect, onCheck }:
             {inCatalogSet.has(tour.id) ? (
               <span style={{ fontSize: 10, padding: "1px 6px", background: T.greenSoft, color: T.green, borderRadius: 20, fontWeight: 600, flexShrink: 0 }}>✓ In My Catalog</span>
             ) : tour.already_rewritten ? (
-              <span style={{ fontSize: 10, padding: "1px 6px", background: T.goldTint, color: T.amber, borderRadius: 20, fontWeight: 600, flexShrink: 0 }}>↻ In progress</span>
+              <span style={{ fontSize: 10, padding: "1px 6px", background: T.goldTint, color: T.amber, borderRadius: 20, fontWeight: 600, flexShrink: 0 }}>✍️ Writing…</span>
             ) : null}
           </div>
           {tour.aa_subtitle && (
@@ -293,10 +280,7 @@ function TourRow({ tour, isActive, isChecked, inCatalogSet, onSelect, onCheck }:
             {kws.map((k: string) => <Tag key={k} gold>{k}</Tag>)}
           </div>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, flexShrink: 0 }}>
-          <ScoreBadge score={tour.quality_score} />
-          <ChevronRight size={14} color={T.muted2} />
-        </div>
+        <ChevronRight size={14} color={T.muted2} style={{ flexShrink: 0, marginTop: 3 }} />
       </div>
     </div>
   );
@@ -386,88 +370,3 @@ function SeoLine({ label, value }: { label: string; value: string }) {
   );
 }
 
-// ── Rewrite panel ─────────────────────────────────────────────────────────────
-
-function RewritePanel({ rwLang, setRwLang, rwSeo, setRwSeo, rwBrand, setRwBrand, rewrit, targets, onRewrite }: {
-  rwLang: string; setRwLang: (v: string) => void;
-  rwSeo: string; setRwSeo: (v: string) => void;
-  rwBrand: boolean; setRwBrand: (v: boolean) => void;
-  rewrit: boolean; targets: string[]; onRewrite: () => void;
-}) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      {/* Brand rules */}
-      <ConfigBlock title="Brand Rules" active={rwBrand} onToggle={() => setRwBrand(!rwBrand)}>
-        <div style={{ fontSize: 12, color: T.muted, lineHeight: 1.5 }}>
-          {rwBrand ? "Your brand voice and forbidden words will be injected into the LLM prompt." : "Using Adventure Asia default rules (29 validated brand rules)."}
-        </div>
-      </ConfigBlock>
-
-      {/* Language */}
-      <div>
-        <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: T.muted, marginBottom: 8 }}>Language</div>
-        <div style={{ display: "flex", gap: 8 }}>
-          {["en-US", "en-GB"].map(l => (
-            <button key={l} onClick={() => setRwLang(l)} style={{
-              flex: 1, padding: "8px 10px", borderRadius: 7, cursor: "pointer", fontFamily: sans,
-              border: `1px solid ${rwLang === l ? T.gold : T.line}`,
-              background: rwLang === l ? T.goldTint : T.bg,
-              color: rwLang === l ? T.amber : T.muted,
-              fontSize: 12.5, fontWeight: rwLang === l ? 700 : 400,
-            }}>{l}</button>
-          ))}
-        </div>
-      </div>
-
-      {/* SEO Mode */}
-      <div>
-        <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: T.muted, marginBottom: 8 }}>SEO Mode</div>
-        {[
-          { v: "standard",  l: "Standard",  d: "Balanced keyword density" },
-          { v: "aggressive",l: "Aggressive", d: "Maximum keywords + PAA questions" },
-          { v: "minimal",   l: "Minimal",    d: "Brand voice first, light SEO" },
-        ].map(s => (
-          <button key={s.v} onClick={() => setRwSeo(s.v)} style={{
-            width: "100%", padding: "9px 12px", marginBottom: 6,
-            borderRadius: 7, cursor: "pointer", textAlign: "left", fontFamily: sans,
-            border: `1px solid ${rwSeo === s.v ? T.gold : T.line}`,
-            background: rwSeo === s.v ? T.goldTint : T.bg,
-            color: rwSeo === s.v ? T.amber : T.muted,
-          }}>
-            <div style={{ fontSize: 12.5, fontWeight: 600 }}>{s.l}</div>
-            <div style={{ fontSize: 11, opacity: 0.75, marginTop: 1 }}>{s.d}</div>
-          </button>
-        ))}
-      </div>
-
-      {/* Cost estimate */}
-      <div style={{ background: T.bg, border: `1px solid ${T.line}`, borderRadius: 8, padding: "10px 14px", fontSize: 12, color: T.muted, fontFamily: mono }}>
-        Est. ~$0.018/tour · Bedrock claude-sonnet-4-5 · ~4,200 tokens
-      </div>
-
-      <Btn variant="primary" size="lg" disabled={rewrit || targets.length === 0} onClick={onRewrite} style={{ width: "100%" }}>
-        {rewrit ? "Starting rewrite…" : targets.length > 1 ? `Rewrite ${targets.length} tours` : "Rewrite this tour"}
-      </Btn>
-      <div style={{ fontSize: 11, color: T.muted2, textAlign: "center" }}>
-        Results appear in <strong>My Catalog</strong> within ~30 seconds.
-      </div>
-    </div>
-  );
-}
-
-function ConfigBlock({ title, active, onToggle, children }: {
-  title: string; active: boolean; onToggle: () => void; children: React.ReactNode;
-}) {
-  return (
-    <div style={{ padding: "12px 14px", background: active ? T.goldTint : T.bg, border: `1px solid ${active ? T.goldSoft : T.line}`, borderRadius: 8 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: active ? 8 : 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: active ? T.amber : T.muted }}>{title}</div>
-        <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-          <input type="checkbox" checked={active} onChange={onToggle} style={{ accentColor: T.gold }} />
-          <span style={{ fontSize: 12, color: T.muted }}>{active ? "On" : "Off"}</span>
-        </label>
-      </div>
-      {active && children}
-    </div>
-  );
-}
