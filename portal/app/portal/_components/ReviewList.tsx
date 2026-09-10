@@ -100,7 +100,7 @@ export function ReviewList() {
         <EmptyState
           icon={<FileText size={28} color={T.muted2} />}
           title="Nothing written yet"
-          sub="Once you've written content in Write Content, it'll show up here for you to review before publishing."
+          sub="Once you've written content from Social Content, it'll show up here for you to review before publishing." // AA-576 (was "in Write Content" — stale after that nav item was removed)
         />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
