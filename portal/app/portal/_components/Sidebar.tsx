@@ -7,7 +7,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Globe2, BookOpen, Sparkles, Code2, Store, CalendarRange, Compass, Eye, Send, LogOut } from "lucide-react";
+import { LayoutDashboard, Globe2, BookOpen, Sparkles, Code2, Store, CalendarRange, Eye, Send, LogOut } from "lucide-react";
 import { T, serif, sans } from "./ui";
 
 interface Props {
@@ -23,14 +23,17 @@ interface Props {
 
 const NAV1: { href: string; icon: React.ReactNode; label: string }[] = [
   { href: "/portal/dashboard",  icon: <LayoutDashboard size={15} />, label: "Dashboard" },
-  { href: "/portal/t1-rewrite", icon: <Globe2 size={15} />,          label: "Browse Pool" },
-  { href: "/portal/t4-pool",    icon: <BookOpen size={15} />,        label: "My Catalog" },
+  { href: "/portal/t1-rewrite", icon: <Globe2 size={15} />,          label: "Browse Tours" }, // AA-576 Phần 3 (was "Browse Pool" — "Pool" read as internal jargon)
+  { href: "/portal/t4-pool",    icon: <BookOpen size={15} />,        label: "My Catalog Tours" }, // AA-576 Phần 3 (was "My Catalog" — disambiguate from "My Content" below)
   { href: "/portal/t0-brand",   icon: <Sparkles size={15} />,        label: "Brand Identity" },
   // AA-526 — Atom Curation (T6) removed from the tenant portal entirely: atoms are backend-only
   // now (owner_scope='platform', curated by AA-admin — see AA-527), tenants never see them.
-  { href: "/portal/t7-planning", icon: <CalendarRange size={15} />,  label: "Social Content" }, // AA-448, relabeled AA-519 Việc 3 (Slate replaced the old Quarter Plan UI), renamed again AA-564 4.1 (Tenant Portal only — Admin still calls this "Slate", AA-563/564 Group 2)
-  { href: "/portal/t8-angle-gate", icon: <Compass size={15} />,      label: "Write Content" }, // AA-449/AA-450 — one wizard, goal->angle->write
-  { href: "/portal/t10-review", icon: <Eye size={15} />,             label: "Review" }, // AA-501 — pre-T11 review, no gate/error detail
+  { href: "/portal/t7-planning", icon: <CalendarRange size={15} />,  label: "Social Content" }, // AA-448, relabeled AA-519 Việc 3 (Slate replaced the old Quarter Plan UI), renamed again AA-564 4.1 (Tenant Portal only — Admin still calls this "Slate", AA-563/564 Group 2); kept as-is AA-576 Phần 3 (Nghiệp's call)
+  // AA-576 Phần 3 — "Write Content" nav item removed (Nghiệp's call): AngleGateWizard is reached
+  // inline from a Social Content Subject row since AA-564 4.2, so this standalone menu entry was
+  // redundant. Route/page/AngleGateTab.tsx deliberately left untouched — still a real, valid
+  // deep-link (e.g. a bookmarked resume link), not deleted, just no longer in the menu.
+  { href: "/portal/t10-review", icon: <Eye size={15} />,             label: "My Content" }, // AA-576 Phần 3 (was "Review" — ambiguous next to "My Catalog Tours")
   { href: "/portal/t11-publish", icon: <Send size={15} />,           label: "Publish" }, // AA-457/AA-458 — WordPress credentials + real publish
   { href: "/portal/marketplace", icon: <Store size={15} />,          label: "Marketplace" }, // AA-444
   { href: "/portal/api",        icon: <Code2 size={15} />,           label: "API Access" },
