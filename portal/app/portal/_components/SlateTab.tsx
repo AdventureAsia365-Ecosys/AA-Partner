@@ -23,8 +23,19 @@
 // handled loading an existing request at whatever step it's actually at, with zero changes
 // needed there for this embedded use.
 //
-// API: GET /api/tenant/v1/slate, POST /api/tenant/v1/subjects/{id}/pick
-// (api/routers/v1_planning.py's `slate_router`, AA-511).
+// AA-556 (2026-09-10) — "Cut" button added next to "Chọn viết" in SubjectRow's `state ===
+// "proposed"` block. `cut_subject()` (services/acp_shared/slate.py) already existed backend-only
+// since AA-554 H.2, always re-SELECTs the real DB state before allowing proposed->cut (never
+// trusts a client-supplied value) — confirmed via direct read + posted on AA-556 before building
+// this, since AA-564 Nhóm 5 flagged a possible race between this same row's `pick()` succeeding
+// (isExpanded flips true synchronously) and the Slate's own refetch landing (which is what
+// actually updates `subject.state` away from "proposed"). Backend is safe either way (a
+// same-row Cut mid-race just 409s, same as an already-picked row would), so disabling Cut during
+// `picking || isExpanded` here is purely UX polish (avoid a pointless 409/flicker), not a data
+// safety fix.
+//
+// API: GET /api/tenant/v1/slate, POST /api/tenant/v1/subjects/{id}/pick,
+// POST /api/tenant/v1/subjects/{id}/cut (api/routers/v1_planning.py's `slate_router`, AA-511/556).
 //
 // AA-511 FE audit fix (2026-09-02, before Done) — 5 of the 6 reported gaps closed here (#4 was
 // explicitly "no fix needed, skip"), each cited to the finding it closes:
@@ -44,7 +55,7 @@
 //     on a narrow screen.
 
 import { useCallback, useEffect, useState } from "react";
-import { Calendar, ChevronRight, Sparkles, Zap } from "lucide-react";
+import { Calendar, ChevronRight, Sparkles, X, Zap } from "lucide-react";
 import { T, serif, sans, mono, Card, CardHead, Badge, Btn, EmptyState } from "./ui";
 import AngleGateWizard from "./AngleGateWizard";
 
@@ -315,6 +326,8 @@ function SubjectRow({ subject, onPicked, expanded, onExpand }: {
 }) {
   const [picking, setPicking] = useState(false);
   const [pickError, setPickError] = useState<string | null>(null);
+  const [cutting, setCutting] = useState(false);
+  const [cutError, setCutError] = useState<string | null>(null);
 
   const title = subject.route_id
     ? (subject.hub_name ?? "Untitled journey")
@@ -353,6 +366,29 @@ function SubjectRow({ subject, onPicked, expanded, onExpand }: {
         setPicking(false);
       });
   }, [subject.subject_id, onPicked, onExpand]);
+
+  // AA-556 — one-way action (no "un-cut"), so a confirm dialog gates every call. Disabled while
+  // `picking` or `isExpanded` (see file header) — purely to avoid a same-row race that would just
+  // 409 harmlessly, not a data-safety guard (the backend already re-checks live DB state).
+  const cut = useCallback(() => {
+    if (!window.confirm("Bỏ qua đề xuất này? Không thể hoàn tác.")) return;
+    setCutting(true);
+    setCutError(null);
+    fetch(`/api/tenant/v1/subjects/${subject.subject_id}/cut`, { method: "POST" })
+      .then(async r => {
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) throw body;
+        return body;
+      })
+      .then(() => {
+        setCutError(null);
+        onPicked();
+      })
+      .catch(e => {
+        setCutError(e?.detail ?? "Couldn't cut this Subject — try again.");
+        setCutting(false);
+      });
+  }, [subject.subject_id, onPicked]);
 
   const stateVariant = subject.state === "proposed" ? "gold"
     : subject.state === "picked" ? "info"
@@ -399,11 +435,35 @@ function SubjectRow({ subject, onPicked, expanded, onExpand }: {
               </button>
             </div>
           )}
+          {/* AA-556 — same shape as pickError above, own Refresh (cut() failing never calls
+              onPicked() itself, same FE-audit-#2 "only a confirmed success refetches" rule). */}
+          {cutError && (
+            <div style={{
+              marginTop: 6, padding: "6px 8px", background: T.redSoft, border: "1px solid #F5C6C6",
+              borderRadius: 6, fontSize: 11, color: T.red, display: "flex", alignItems: "center", gap: 8,
+            }}>
+              <span>{cutError}</span>
+              <button onClick={onPicked} style={{
+                background: "none", border: "none", padding: 0, cursor: "pointer",
+                color: T.red, fontFamily: sans, fontSize: 11, fontWeight: 700, textDecoration: "underline",
+                flexShrink: 0,
+              }}>
+                Refresh
+              </button>
+            </div>
+          )}
         </div>
         {subject.state === "proposed" && (
-          <Btn variant="primary" size="sm" disabled={picking} onClick={pick}>
-            {picking ? "Đang chọn…" : <><Sparkles size={12} /> Chọn viết <ChevronRight size={12} /></>}
-          </Btn>
+          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+            <Btn variant="primary" size="sm" disabled={picking} onClick={pick}>
+              {picking ? "Đang chọn…" : <><Sparkles size={12} /> Chọn viết <ChevronRight size={12} /></>}
+            </Btn>
+            {/* AA-556 — disabled while picking/isExpanded/cutting: UX polish only (see file
+                header) — the backend already 409s a stale/racing cut safely on its own. */}
+            <Btn variant="danger" size="sm" disabled={picking || isExpanded || cutting} onClick={cut}>
+              {cutting ? "Đang bỏ…" : <><X size={12} /> Cut</>}
+            </Btn>
+          </div>
         )}
       </div>
       {/* AA-564 4.2 — AngleGateWizard embedded inline, accordion (only when this row's
