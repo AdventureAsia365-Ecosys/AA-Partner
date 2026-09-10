@@ -170,7 +170,7 @@ export default function SlateTab() {
               )}
               <button
                 onClick={() => setActiveChannel(key)}
-                title={group === "weekly" ? "Nhịp tuần" : "Theo yêu cầu (on-demand)"}
+                title={group === "weekly" ? "Weekly rhythm" : "On-demand"}
                 style={{
                   display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap", flexShrink: 0,
                   padding: "7px 12px", borderRadius: "8px 8px 0 0", cursor: "pointer",
@@ -257,11 +257,11 @@ function ChannelPanel({ channel, postsPerWeek, onPicked, expanded, onExpand }: {
   return (
     <div>
       <div style={{ fontSize: 12, color: T.muted, marginBottom: 14 }}>
-        <strong style={{ color: T.ink, fontFamily: mono }}>{channel.eligible_count}</strong> subject{channel.eligible_count === 1 ? "" : "s"} đủ điều kiện
+        <strong style={{ color: T.ink, fontFamily: mono }}>{channel.eligible_count}</strong> eligible subject{channel.eligible_count === 1 ? "" : "s"}
         {!channel.on_demand && (
-          <> · nhịp đề xuất <strong style={{ color: T.ink, fontFamily: mono }}>{postsPerWeek}</strong> bài/tuần</>
+          <> · target rhythm <strong style={{ color: T.ink, fontFamily: mono }}>{postsPerWeek}</strong> posts/week</>
         )}
-        {channel.on_demand && <> · viết theo yêu cầu</>}
+        {channel.on_demand && <> · written on demand</>}
       </div>
 
       {channel.subjects.length === 0 ? (
@@ -273,8 +273,8 @@ function ChannelPanel({ channel, postsPerWeek, onPicked, expanded, onExpand }: {
         // to pick right now. Conflating this with the "never had any Subject" case above was the
         // reported gap — a tenant seeing a bare gap above "Already decided" with no explanation.
         <>
-          <EmptyState icon="✅" title="Không còn Subject mới đủ điều kiện lúc này"
-            sub="Xem lại các Subject đã quyết định bên dưới, hoặc rewrite/atomize thêm tour để có đề xuất mới." />
+          <EmptyState icon="✅" title="No new eligible Subjects right now"
+            sub="Review the Subjects already decided below, or rewrite/atomize more tours for new proposals." />
           <DecidedList subjects={decided} onPicked={onPicked} expanded={expanded} onExpand={onExpand} />
         </>
       ) : (
@@ -306,7 +306,7 @@ function DecidedList({ subjects, onPicked, expanded, onExpand }: {
 }
 
 function barReasonText(reason: ClearedBarReason): string {
-  if (reason.on_demand) return "Theo yêu cầu — không giới hạn ngưỡng";
+  if (reason.on_demand) return "On demand — no threshold applies";
   const parts: string[] = [];
   if (reason.needs_demand > 0) {
     parts.push(`Demand ${reason.demand?.toLocaleString() ?? 0} ≥ ${reason.needs_demand.toLocaleString()}`);
@@ -315,9 +315,9 @@ function barReasonText(reason: ClearedBarReason): string {
     parts.push(`Questions ${reason.questions} ≥ ${reason.needs_questions}`);
   }
   if (reason.needs_said > 0) {
-    parts.push(`Said ${reason.said} ký tự ≥ ${reason.needs_said}`);
+    parts.push(`Said ${reason.said} chars ≥ ${reason.needs_said}`);
   }
-  return parts.length > 0 ? parts.join(" · ") : "Không có ngưỡng nào áp dụng";
+  return parts.length > 0 ? parts.join(" · ") : "No threshold applies";
 }
 
 function SubjectRow({ subject, onPicked, expanded, onExpand }: {
@@ -360,7 +360,7 @@ function SubjectRow({ subject, onPicked, expanded, onExpand }: {
         // on a real network timeout) must NOT call onPicked(). The old code refreshed here
         // unconditionally, which could show this exact error message sitting right next to a
         // "picked" badge if the backend had actually succeeded before the client gave up waiting
-        // on the response. Leaving the Slate untouched means the row keeps showing "Chọn viết"
+        // on the response. Leaving the Slate untouched means the row keeps showing "Pick to write"
         // (its last KNOWN state) alongside the error — never a state the tenant never asked for.
         setPickError(e?.detail ?? "Couldn't pick this Subject — try again.");
         setPicking(false);
@@ -371,7 +371,7 @@ function SubjectRow({ subject, onPicked, expanded, onExpand }: {
   // `picking` or `isExpanded` (see file header) — purely to avoid a same-row race that would just
   // 409 harmlessly, not a data-safety guard (the backend already re-checks live DB state).
   const cut = useCallback(() => {
-    if (!window.confirm("Bỏ qua đề xuất này? Không thể hoàn tác.")) return;
+    if (!window.confirm("Cut this proposal? This cannot be undone.")) return;
     setCutting(true);
     setCutError(null);
     fetch(`/api/tenant/v1/subjects/${subject.subject_id}/cut`, { method: "POST" })
@@ -456,12 +456,12 @@ function SubjectRow({ subject, onPicked, expanded, onExpand }: {
         {subject.state === "proposed" && (
           <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
             <Btn variant="primary" size="sm" disabled={picking} onClick={pick}>
-              {picking ? "Đang chọn…" : <><Sparkles size={12} /> Chọn viết <ChevronRight size={12} /></>}
+              {picking ? "Picking…" : <><Sparkles size={12} /> Pick to write <ChevronRight size={12} /></>}
             </Btn>
             {/* AA-556 — disabled while picking/isExpanded/cutting: UX polish only (see file
                 header) — the backend already 409s a stale/racing cut safely on its own. */}
             <Btn variant="danger" size="sm" disabled={picking || isExpanded || cutting} onClick={cut}>
-              {cutting ? "Đang bỏ…" : <><X size={12} /> Cut</>}
+              {cutting ? "Cutting…" : <><X size={12} /> Cut</>}
             </Btn>
           </div>
         )}
