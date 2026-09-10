@@ -211,8 +211,8 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14 }}>
           {[
-            { icon: "🌏", title: "Browse Pool",    sub: `${pool.toLocaleString()} published tours available`, href: "/portal/t1-rewrite" },
-            { icon: "📋", title: "My Catalog",     sub: `${toursUsed} rewrites · approve, edit, export`,     href: "/portal/t4-pool" },
+            { icon: "🌏", title: "Browse Tours",      sub: `${pool.toLocaleString()} published tours available`, href: "/portal/t1-rewrite" }, // AA-576 Phần 3 (was "Browse Pool")
+            { icon: "📋", title: "My Catalog Tours",  sub: `${toursUsed} rewrites · approve, edit, export`,     href: "/portal/t4-pool" }, // AA-576 Phần 3 (was "My Catalog")
             { icon: "✨", title: "Brand Identity", sub: "Configure your content voice & style",               href: "/portal/t0-brand" },
           ].map(a => (
             <ActionCard key={a.title} icon={a.icon} title={a.title} sub={a.sub} onClick={() => onNavigate(a.href)} />
