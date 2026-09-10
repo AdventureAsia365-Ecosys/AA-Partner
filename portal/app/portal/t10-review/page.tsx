@@ -14,7 +14,7 @@ export default function T10ReviewPage() {
     <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 720 }}>
       <div>
         <h1 style={{ fontFamily: serif, fontSize: 24, fontWeight: 500, color: T.ink, margin: "0 0 6px" }}>
-          Review
+          My Content
         </h1>
         <p style={{ fontSize: 13, color: T.muted, margin: 0, lineHeight: 1.5 }}>
           See everything you&rsquo;ve written — where it came from and whether it&rsquo;s ready —

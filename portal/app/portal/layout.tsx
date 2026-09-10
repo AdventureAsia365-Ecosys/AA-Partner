@@ -22,12 +22,16 @@ import { T, sans, countUniqueTours } from "./_components/ui";
 
 const BREADCRUMBS: Record<string, string> = {
   "/portal/dashboard":  "Dashboard",
-  "/portal/t1-rewrite": "Browse Pool",
-  "/portal/t4-pool":    "My Catalog",
+  "/portal/t1-rewrite": "Browse Tours", // AA-576 Phần 3 (was "Browse Pool")
+  "/portal/t4-pool":    "My Catalog Tours", // AA-576 Phần 3 (was "My Catalog")
   "/portal/t0-brand":   "Brand Identity",
   // AA-526 — /portal/t6-atoms removed along with tenant atom visibility.
   "/portal/t7-planning": "Social Content", // AA-448, relabeled AA-519 Việc 3, renamed again AA-564 4.1
-  "/portal/t8-angle-gate": "Write Content", // AA-449/AA-450 — one wizard, goal->angle->write
+  "/portal/t8-angle-gate": "Write Content", // AA-449/AA-450 — one wizard, goal->angle->write; no
+  // longer a Sidebar entry as of AA-576 Phần 3, but the route/breadcrumb still exist for the
+  // deep-link case.
+  "/portal/t10-review": "My Content", // AA-576 Phần 3 (was unset — page had no breadcrumb entry
+  // before; now matches the page's own <h1> and the Sidebar label)
   "/portal/t11-publish": "Publish", // AA-457 — connect-flow only this PR, no Sidebar entry yet
   "/portal/t11-publish/connection": "Publish", // manage-connection sub-route, same breadcrumb label
   "/portal/marketplace": "Marketplace", // AA-444

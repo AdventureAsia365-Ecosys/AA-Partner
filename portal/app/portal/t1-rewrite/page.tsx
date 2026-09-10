@@ -11,7 +11,7 @@ export default function T1RewritePage() {
   const { globalSearch, showToast, refreshCatalogCount } = usePortalShell();
 
   function handleRewriteDone() {
-    showToast("Rewrite started — check My Catalog in ~30 seconds.");
+    showToast("Rewrite started — check My Catalog Tours in ~30 seconds.");
     refreshCatalogCount();
     router.push("/portal/t4-pool");
   }

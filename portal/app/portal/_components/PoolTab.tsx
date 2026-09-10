@@ -219,7 +219,7 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
               </div>
               {inCatalogSet.has(selected.id) ? (
                 <span style={{ marginTop: 8, display: "inline-block", fontSize: 11, padding: "2px 8px", background: T.greenSoft, color: T.green, borderRadius: 20, fontWeight: 600 }}>
-                  ✓ In My Catalog
+                  ✓ In My Catalog Tours
                 </span>
               ) : selected.already_rewritten ? (
                 <span style={{ marginTop: 8, display: "inline-block", fontSize: 11, padding: "2px 8px", background: T.goldTint, color: T.amber, borderRadius: 20, fontWeight: 600 }}>
@@ -264,7 +264,7 @@ function TourRow({ tour, index, isActive, isChecked, inCatalogSet, onSelect, onC
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>{tour.aa_name}</span>
             {inCatalogSet.has(tour.id) ? (
-              <span style={{ fontSize: 10, padding: "1px 6px", background: T.greenSoft, color: T.green, borderRadius: 20, fontWeight: 600, flexShrink: 0 }}>✓ In My Catalog</span>
+              <span style={{ fontSize: 10, padding: "1px 6px", background: T.greenSoft, color: T.green, borderRadius: 20, fontWeight: 600, flexShrink: 0 }}>✓ In My Catalog Tours</span>
             ) : tour.already_rewritten ? (
               <span style={{ fontSize: 10, padding: "1px 6px", background: T.goldTint, color: T.amber, borderRadius: 20, fontWeight: 600, flexShrink: 0 }}>✍️ Writing…</span>
             ) : null}

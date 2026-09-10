@@ -80,8 +80,8 @@ export default function MarketplaceTab() {
         </h2>
         <p style={{ fontSize: 13, color: T.muted, lineHeight: 1.6, margin: 0 }}>
           Every tour you've written and the content atoms curated from it, in one place — a
-          rollup of My Catalog and Atom Curation, read-only. To select a new tour or curate
-          atoms, use Browse Pool or Atom Curation.
+          rollup of My Catalog Tours and Atom Curation, read-only. To select a new tour or curate
+          atoms, use Browse Tours or Atom Curation.
         </p>
       </div>
 
@@ -93,7 +93,7 @@ export default function MarketplaceTab() {
 
       {data.tours.length === 0 ? (
         <EmptyState icon="🗂️" title="Nothing here yet"
-          sub="Once you write your first tour from Browse Pool, it'll show up here alongside its curated atoms." />
+          sub="Once you write your first tour from Browse Tours, it'll show up here alongside its curated atoms." />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {data.tours.map(t => (

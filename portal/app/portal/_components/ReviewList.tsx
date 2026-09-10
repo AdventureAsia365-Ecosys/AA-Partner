@@ -91,7 +91,7 @@ export function ReviewList() {
 
   return (
     <Card>
-      <CardHead title="Review" />
+      <CardHead title="My Content" />
       {items === null ? (
         <div style={{ padding: 24, textAlign: "center", color: T.muted, fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
           <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Loading…

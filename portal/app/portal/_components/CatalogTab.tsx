@@ -350,7 +350,7 @@ export default function CatalogTab() {
         const ws = XLSX.utils.json_to_sheet(rows, { header: headers });
         ws["!cols"] = [30,30,15,12,40,50,60,60,80,15,15].map(w => ({ wch: w }));
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "My Catalog");
+        XLSX.utils.book_append_sheet(wb, ws, "My Catalog Tours");
         XLSX.writeFile(wb, "my-catalog.xlsx");
       }
     } finally { setIsExporting(false); }
@@ -449,7 +449,7 @@ export default function CatalogTab() {
       flexWrap: "wrap", padding: "10px 0", marginBottom: 4, borderBottom: `1px solid ${T.line}`,
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: T.ink, fontFamily: sans }}>My Catalog</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: T.ink, fontFamily: sans }}>My Catalog Tours</span>
         <span style={{ fontSize: 12, color: T.muted2 }}>
           {visibleList.length < grouped.length ? `${visibleList.length} of ${grouped.length}` : `${grouped.length}`} tours
         </span>
@@ -612,7 +612,7 @@ export default function CatalogTab() {
                 Writing your tour content…
               </div>
               <div style={{ fontSize: 12, color: T.muted, textAlign: "center" as const }}>
-                Usually 1–2 minutes. You can close this and keep browsing — it will be ready in My Catalog.
+                Usually 1–2 minutes. You can close this and keep browsing — it will be ready in My Catalog Tours.
               </div>
             </div>
           ) : dlLoad ? (
