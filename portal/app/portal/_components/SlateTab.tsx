@@ -56,7 +56,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Calendar, ChevronRight, Sparkles, X, Zap } from "lucide-react";
-import { T, serif, sans, mono, Card, CardHead, Badge, Btn, EmptyState } from "./ui";
+import { T, serif, sans, mono, Card, CardHead, Badge, Btn, EmptyState, StickyBar } from "./ui";
 import AngleGateWizard from "./AngleGateWizard";
 
 interface ClearedBarReason {
@@ -144,50 +144,63 @@ export default function SlateTab() {
         .aa511-slate-tabstrip::-webkit-scrollbar { display: none; }
       `}</style>
 
-      {/* AA-564 4.1 — Tenant-facing label renamed "Slate" -> "Social Content"; the component/file
-          name (SlateTab.tsx, internal-only) is unchanged, matching CONTEXT.md's own Subject/Slate
-          terminology used everywhere else in the codebase. */}
-      <CardHead title="Social Content" />
-      <p style={{ fontSize: 12.5, color: T.muted, lineHeight: 1.6, margin: "0 0 14px" }}>
-        Every moment that has cleared its Channel&rsquo;s bar — search-led Channels need
-        measured demand and questions to answer; attention-led Channels need enough of the
-        journey actually described. Sorted strongest first. Pick one to start writing.
-      </p>
+      {/* AA-524 — sticky, bleeding out to this Card's own custom padding (16px/18px) so it reads
+          as one continuous bar rather than floating detached from the card's border once a
+          Channel's Subject list scrolls underneath it. */}
+      <StickyBar
+        background={T.card}
+        style={{
+          marginTop: -16, marginLeft: -18, marginRight: -18,
+          paddingTop: 16, paddingLeft: 18, paddingRight: 18,
+          borderRadius: "12px 12px 0 0",
+        }}
+      >
+        {/* AA-564 4.1 — Tenant-facing label renamed "Slate" -> "Social Content"; the component/file
+            name (SlateTab.tsx, internal-only) is unchanged, matching CONTEXT.md's own Subject/Slate
+            terminology used everywhere else in the codebase. */}
+        <CardHead title="Social Content" />
+        <p style={{ fontSize: 12.5, color: T.muted, lineHeight: 1.6, margin: "0 0 14px" }}>
+          Every moment that has cleared its Channel&rsquo;s bar — search-led Channels need
+          measured demand and questions to answer; attention-led Channels need enough of the
+          journey actually described. Sorted strongest first. Pick one to start writing.
+        </p>
 
-      <div className="aa511-slate-tabstrip" style={{
-        display: "flex", gap: 4, alignItems: "center", overflowX: "auto", flexWrap: "nowrap",
-        borderBottom: `1px solid ${T.line2}`, marginBottom: 16, paddingBottom: 2,
-      }}>
-        {CHANNEL_TABS.map(({ key, label, group }, i) => {
-          const showDivider = i > 0 && CHANNEL_TABS[i - 1].group !== group;
-          const count = data?.channels[key]?.eligible_count ?? null;
-          const isActive = activeChannel === key;
-          const Icon = group === "weekly" ? Calendar : Zap;
-          return (
-            <div key={key} style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
-              {showDivider && (
-                <div aria-hidden style={{ width: 1, height: 20, background: T.line2, margin: "0 6px", flexShrink: 0 }} />
-              )}
-              <button
-                onClick={() => setActiveChannel(key)}
-                title={group === "weekly" ? "Weekly rhythm" : "On-demand"}
-                style={{
-                  display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap", flexShrink: 0,
-                  padding: "7px 12px", borderRadius: "8px 8px 0 0", cursor: "pointer",
-                  fontFamily: sans, fontSize: 12.5, fontWeight: isActive ? 700 : 500,
-                  color: isActive ? T.ink : T.muted,
-                  background: isActive ? T.bg : "transparent",
-                  border: "none", borderBottom: isActive ? `2px solid ${T.gold}` : "2px solid transparent",
-                }}
-              >
-                <Icon size={11} style={{ opacity: 0.55, flexShrink: 0 }} />
-                {label}{count != null && <span style={{ marginLeft: 2, fontFamily: mono, fontSize: 10.5, color: T.muted2 }}>{count}</span>}
-              </button>
-            </div>
-          );
-        })}
-      </div>
+        <div className="aa511-slate-tabstrip" style={{
+          display: "flex", gap: 4, alignItems: "center", overflowX: "auto", flexWrap: "nowrap",
+          borderBottom: `1px solid ${T.line2}`, paddingBottom: 2,
+        }}>
+          {CHANNEL_TABS.map(({ key, label, group }, i) => {
+            const showDivider = i > 0 && CHANNEL_TABS[i - 1].group !== group;
+            const count = data?.channels[key]?.eligible_count ?? null;
+            const isActive = activeChannel === key;
+            const Icon = group === "weekly" ? Calendar : Zap;
+            return (
+              <div key={key} style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
+                {showDivider && (
+                  <div aria-hidden style={{ width: 1, height: 20, background: T.line2, margin: "0 6px", flexShrink: 0 }} />
+                )}
+                <button
+                  onClick={() => setActiveChannel(key)}
+                  title={group === "weekly" ? "Weekly rhythm" : "On-demand"}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap", flexShrink: 0,
+                    padding: "7px 12px", borderRadius: "8px 8px 0 0", cursor: "pointer",
+                    fontFamily: sans, fontSize: 12.5, fontWeight: isActive ? 700 : 500,
+                    color: isActive ? T.ink : T.muted,
+                    background: isActive ? T.bg : "transparent",
+                    border: "none", borderBottom: isActive ? `2px solid ${T.gold}` : "2px solid transparent",
+                  }}
+                >
+                  <Icon size={11} style={{ opacity: 0.55, flexShrink: 0 }} />
+                  {label}{count != null && <span style={{ marginLeft: 2, fontFamily: mono, fontSize: 10.5, color: T.muted2 }}>{count}</span>}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </StickyBar>
 
+      <div style={{ marginTop: 16 }}>
       {loading && <SkeletonPanel />}
 
       {error && !loading && (
@@ -201,6 +214,7 @@ export default function SlateTab() {
           expanded={expanded} onExpand={setExpanded}
         />
       )}
+      </div>
     </Card>
   );
 }

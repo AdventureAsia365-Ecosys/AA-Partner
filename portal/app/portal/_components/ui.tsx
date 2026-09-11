@@ -97,6 +97,34 @@ export function Card({ children, style = {}, dark = false }: {
   );
 }
 
+// AA-524 — shared sticky-header wrapper. `<main>` in layout.tsx is the scroll container (the
+// outer breadcrumb bar above it is already its own sticky element, zIndex 10); this sticks AT
+// the top of that same scrollport, one zIndex band below so the two never compete.
+//
+// `top: 0` on ANY descendant of `<main>` resolves to `<main>`'s own padding edge — 28px down
+// (layout.tsx's `<main>` has `padding: "28px 36px 56px"`), REGARDLESS of how deep the sticky
+// element is nested. That 28px band (viewport y 56-84) is inside `<main>`'s padding box, so
+// `overflow-y: auto` does NOT clip it — anything that scrolls up INTO that band while this bar
+// is already stuck renders ABOVE the bar, uncovered (confirmed live: a form input scrolled
+// there, in front of a page title). `bleedTop` (default 28, matching that padding) extends this
+// bar's own opaque background up to cover it — every usage needs this, not just page-level ones,
+// since the 28px offset is constant no matter the nesting depth. Only skip it (bleedTop=0) for a
+// bar that is deliberately NOT the first sticky point `<main>` will hit while scrolling.
+export function StickyBar({ children, background = T.bg, style = {}, bleedTop = 28 }: {
+  children: React.ReactNode; background?: string; style?: React.CSSProperties; bleedTop?: number;
+}) {
+  const { marginTop, paddingTop, ...rest } = style;
+  const mt = (typeof marginTop === "number" ? marginTop : 0) - bleedTop;
+  const pt = (typeof paddingTop === "number" ? paddingTop : 0) + bleedTop;
+  return (
+    <div style={{
+      position: "sticky", top: 0, zIndex: 5, background,
+      marginTop: mt, paddingTop: pt,
+      ...rest,
+    }}>{children}</div>
+  );
+}
+
 export function CardHead({ title, action, light = false }: {
   title: string; action?: React.ReactNode; light?: boolean;
 }) {

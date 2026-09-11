@@ -22,7 +22,15 @@ export default function T11PublishPage() {
   if (loading || !status) return <LoadingScreen message="Loading connection status…" />;
 
   return (
-    <div style={{ maxWidth: 640 }}>
+    // AA-524 — was maxWidth:640 on this whole page (the "hẹp/nhỏ" complaint) — the connect-form
+    // section genuinely needs a form-comfortable width (inputs are width:100%, see
+    // WordPressConnect.tsx), but PublishPendingList's content cards do not, and were being
+    // squeezed into the same 640px for no reason (compare ReviewList.tsx's identical card
+    // pattern, already full-width). Split: only the form/status section keeps a cap now.
+    //
+    // This H1 is deliberately NOT sticky (see t10-review/page.tsx's own comment on the same
+    // decision) — PublishPendingList's own StickyBar is the one sticky point on this page.
+    <div>
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ fontFamily: serif, fontSize: 24, fontWeight: 500, color: T.ink, margin: "0 0 6px" }}>
           Publish
@@ -33,20 +41,22 @@ export default function T11PublishPage() {
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-        {!status.connected ? (
-          <WordPressConnectForm onConnected={refresh} />
-        ) : (
-          <>
-            <WordPressStatusCard status={status} onRetest={refresh} />
-            <Link href="/portal/t11-publish/connection" style={{
-              display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5,
-              fontWeight: 600, color: T.ink3, textDecoration: "none", whiteSpace: "nowrap",
-              fontFamily: sans, alignSelf: "flex-start", marginTop: -10,
-            }}>
-              <Settings2 size={13} /> Manage connection
-            </Link>
-          </>
-        )}
+        <div style={{ maxWidth: 560, display: "flex", flexDirection: "column", gap: 12 }}>
+          {!status.connected ? (
+            <WordPressConnectForm onConnected={refresh} />
+          ) : (
+            <>
+              <WordPressStatusCard status={status} onRetest={refresh} />
+              <Link href="/portal/t11-publish/connection" style={{
+                display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5,
+                fontWeight: 600, color: T.ink3, textDecoration: "none", whiteSpace: "nowrap",
+                fontFamily: sans, alignSelf: "flex-start", marginTop: -10,
+              }}>
+                <Settings2 size={13} /> Manage connection
+              </Link>
+            </>
+          )}
+        </div>
 
         <PublishPendingList wordpressConnected={status.connected} />
       </div>
