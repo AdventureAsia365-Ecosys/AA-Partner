@@ -114,8 +114,9 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
       .catch(() => {});
   }
 
-  // Search box: focusing or hitting Enter with text jumps to Browse Pool (T1) — same
-  // behavior as the old onFocus/onKeyDown handlers on the tab-state version.
+  // Search box: hitting Enter with text jumps to Browse Pool (T1) to show filtered results.
+  // AA-586: navigating on bare focus (not just Enter) was removed — it silently discarded
+  // whatever page the user was on elsewhere in the portal just from clicking into the field.
   function goToPool() {
     if (pathname !== "/portal/t1-rewrite") router.push("/portal/t1-rewrite");
   }
@@ -173,7 +174,6 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
                 value={globalSearch}
                 onChange={e => setGlobalSearch(e.target.value)}
                 onKeyDown={handleSearchKey}
-                onFocus={goToPool}
                 placeholder="Search tours, jobs…"
                 style={{
                   background: T.bg, border: `1px solid ${T.line}`, padding: "7px 40px 7px 32px",
