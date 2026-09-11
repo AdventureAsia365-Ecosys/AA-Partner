@@ -579,7 +579,12 @@ export default function CatalogTab() {
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 199 }}
         />
         <div style={{
-          position: "fixed", top: 0, right: 0, bottom: 0, width: 700, maxWidth: "92vw",
+          // AA-584: was a fixed 700px — t1-rewrite's equivalent panel is a 64%-of-container
+          // grid column, so it scales with the screen and reads far wider on anything past a
+          // laptop viewport. clamp() keeps the 700px floor (unchanged on narrow/mobile, where
+          // maxWidth:92vw already governs) but lets it grow toward t1-rewrite's proportions on
+          // wide screens, capped at 1100px so it doesn't become an unreadably long line length.
+          position: "fixed", top: 0, right: 0, bottom: 0, width: "clamp(700px, 62vw, 1100px)", maxWidth: "92vw",
           background: T.card, boxShadow: "-4px 0 32px rgba(0,0,0,0.14)", zIndex: 200,
           display: "flex", flexDirection: "column", fontFamily: sans,
         }}>
