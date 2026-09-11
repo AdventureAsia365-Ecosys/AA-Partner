@@ -3,12 +3,15 @@ import { cookies } from "next/headers";
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
 
-// Only these prefixes/patterns are reachable through the playground.
-// Prevents the proxy from being used as an open relay.
+// Only these exact paths are reachable through the playground — must match
+// endpoints-config.ts's own displayed endpoint list 1:1 (AA-582: the previous
+// "/v1/tours" prefix + /^\/v1\/tours\/[\w-]+$/ regex were broader than the UI,
+// letting a logged-in tenant reach /v1/tours/:id and .../full — neither ever
+// shown in the Playground UI — directly via devtools/curl).
 const ALLOWED_PATHS: Array<string | RegExp> = [
-  "/v1/tours",                         // list catalog + get single tour
-  /^\/v1\/tours\/[\w-]+$/,             // /v1/tours/:id
-  "/v1/webhooks",                      // webhook setup
+  "/v1/tours/my-versions",                    // list catalog
+  /^\/v1\/tours\/versions\/[\w-]+$/,          // get tour detail (version)
+  "/v1/webhooks",                             // webhook setup
 ];
 
 function isAllowed(endpoint: string): boolean {
