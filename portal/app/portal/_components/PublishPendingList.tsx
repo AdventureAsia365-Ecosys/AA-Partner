@@ -12,7 +12,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { CheckCircle2, XCircle, ExternalLink, Loader2, FileText, Milestone } from "lucide-react";
-import { T, sans, Card, CardHead, Btn, Badge, EmptyState } from "./ui";
+import { T, sans, Card, CardHead, Btn, Badge, EmptyState, StickyBar } from "./ui";
 
 interface PendingPiece {
   piece_id: string;
@@ -75,7 +75,18 @@ export function PublishPendingList({ wordpressConnected }: { wordpressConnected:
 
   return (
     <Card>
-      <CardHead title="Ready to Publish" />
+      {/* AA-524 — sticky, bleeding out to Card's own default padding (22px), same pattern as
+          ReviewList.tsx's identical card-list layout. */}
+      <StickyBar
+        background={T.card}
+        style={{
+          marginTop: -22, marginLeft: -22, marginRight: -22,
+          paddingTop: 22, paddingLeft: 22, paddingRight: 22, paddingBottom: 14,
+          borderRadius: "12px 12px 0 0",
+        }}
+      >
+        <CardHead title="Ready to Publish" />
+      </StickyBar>
       {pieces === null ? (
         <div style={{ padding: 24, textAlign: "center", color: T.muted, fontSize: 13 }}>Loading…</div>
       ) : pieces.length === 0 ? (

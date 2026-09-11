@@ -15,6 +15,13 @@ export default function T10ReviewPage() {
     // AA-569 — was maxWidth:720 (the "hẹp/nhỏ" complaint); no cap now, matches PlanningTab.tsx/
     // t7-planning's own full-width convention (the portal layout's <main> has no width cap of
     // its own, so a page either sets one or fills the available flex space).
+    //
+    // AA-524 — this H1 is deliberately NOT sticky (tried it, reverted): `<main>`'s scroll
+    // container gives every sticky descendant the SAME top:0 offset regardless of nesting depth,
+    // so a sticky page header here + ReviewList's own sticky CardHead/filter bar would both stick
+    // at the identical position and visually collide. ReviewList's own StickyBar (the one that
+    // actually matters for "which channel am I filtered to" while scrolling a long list) covers
+    // the real complaint; the breadcrumb above already shows the page name while scrolled.
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <div>
         <h1 style={{ fontFamily: serif, fontSize: 24, fontWeight: 500, color: T.ink, margin: "0 0 6px" }}>

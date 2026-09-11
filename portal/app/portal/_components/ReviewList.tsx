@@ -17,7 +17,7 @@ import {
   ChevronDown, ChevronUp, Download, FileText, Flag, HelpCircle, Loader2, Milestone, Pencil,
   Save, Search, Sparkles, X,
 } from "lucide-react";
-import { T, sans, mono, Card, CardHead, Badge, Btn, EmptyState, fmtDateTime } from "./ui";
+import { T, sans, mono, Card, CardHead, Badge, Btn, EmptyState, fmtDateTime, StickyBar } from "./ui";
 import type { BadgeVariant } from "./ui";
 import { usePortalShell } from "./PortalShellContext";
 
@@ -165,9 +165,31 @@ export function ReviewList() {
 
   return (
     <Card>
-      <CardHead title="My Content" />
+      {/* AA-524 — sticky, bleeding out to Card's own edges (negative margin = Card's default
+          padding) so it reads as one continuous bar rather than floating detached from the
+          card's border once the list scrolls underneath it. bleedTop (StickyBar's default 28)
+          additionally covers <main>'s own top padding — see StickyBar's own comment. */}
+      <StickyBar
+        background={T.card}
+        style={{
+          marginTop: -22, marginLeft: -22, marginRight: -22,
+          paddingTop: 22, paddingLeft: 22, paddingRight: 22, paddingBottom: 14,
+          borderRadius: "12px 12px 0 0",
+          borderBottom: channels.length > 1 ? `1px solid ${T.line2}` : undefined,
+        }}
+      >
+        <CardHead title="My Content" />
+        {channels.length > 1 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: -4 }}>
+            <FilterPill label="All" count={items?.length ?? 0} active={channelFilter === "all"} onClick={() => setChannelFilter("all")} />
+            {channels.map(([ch, count]) => (
+              <FilterPill key={ch} label={channelLabel(ch)} count={count} active={channelFilter === ch} onClick={() => setChannelFilter(ch)} />
+            ))}
+          </div>
+        )}
+      </StickyBar>
       {items === null ? (
-        <div style={{ padding: 24, textAlign: "center", color: T.muted, fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+        <div style={{ padding: 24, textAlign: "center", color: T.muted, fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 14 }}>
           <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Loading…
         </div>
       ) : items.length === 0 ? (
@@ -177,16 +199,7 @@ export function ReviewList() {
           sub="Once you've written content from Social Content, it'll show up here for you to review before publishing." // AA-576 (was "in Write Content" — stale after that nav item was removed)
         />
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {channels.length > 1 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              <FilterPill label="All" count={items.length} active={channelFilter === "all"} onClick={() => setChannelFilter("all")} />
-              {channels.map(([ch, count]) => (
-                <FilterPill key={ch} label={channelLabel(ch)} count={count} active={channelFilter === ch} onClick={() => setChannelFilter(ch)} />
-              ))}
-            </div>
-          )}
-
+        <div style={{ marginTop: 14 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {visible.map(item => (
               <ReviewCard

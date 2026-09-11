@@ -484,7 +484,13 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
   const chosenAngle = req?.angles.find(a => a.chosen) ?? null;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 720 }}>
+    // AA-524 — was maxWidth:720, a real outlier vs t7/t10's full-width convention (measured live:
+    // 720 of ~1148px available on the standalone page, ~63% used). Bumped to 880, not removed
+    // entirely — Goal/Angle cards here are prose (why_it_works/formula_fit/best_final_style), a
+    // single-column reading layout, not a grid; going edge-to-edge would stretch those lines
+    // well past a comfortable reading width. 880 meaningfully closes the gap (~77% used) while
+    // keeping line length reasonable.
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 880 }}>
       <p style={{ fontSize: 12, color: T.muted, margin: 0, lineHeight: 1.5 }}>
         Choose a content goal, then pick 1 of the 3 angles the system generates. You always
         choose — Adventure Asia never approves or blocks this for you.
