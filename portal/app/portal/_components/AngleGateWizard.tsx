@@ -54,7 +54,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Sparkles, CheckCircle2, ChevronRight, RotateCcw, AlertTriangle } from "lucide-react";
+import { Sparkles, CheckCircle2, ChevronRight, RotateCcw, AlertTriangle, ExternalLink } from "lucide-react";
 import { T, serif, sans, mono, Card, CardHead, Badge, Btn, LoadingScreen, EmptyState, Spinner } from "./ui";
 
 const POLL_INTERVAL_MS = 3000;
@@ -214,6 +214,41 @@ function Stepper({ step, canChangeAngle, onChangeAngle }: {
   );
 }
 
+// AA-569 — replaces the old inline result card (which showed full content_text +
+// attempt_number + raw held_reason, right here in the wizard). This popup confirms the write
+// finished and links to My Content (ReviewList.tsx) — deliberately no content preview, no
+// status-specific gate/technical wording, same regardless of approved/held, per Nghiệp's
+// explicit build decision (AA-569).
+function WriteDonePopup({ onClose, onOpenInMyContent }: {
+  onClose: () => void; onOpenInMyContent: () => void;
+}) {
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, background: "rgba(31,41,51,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}
+      onClick={onClose}
+    >
+      <div
+        style={{ background: "#fff", borderRadius: 12, padding: "28px 26px", maxWidth: 360, width: "90%", boxShadow: "0 12px 40px rgba(0,0,0,0.25)", textAlign: "center", fontFamily: sans }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
+          <CheckCircle2 size={36} color={T.green} />
+        </div>
+        <div style={{ fontFamily: serif, fontSize: 17, fontWeight: 600, color: T.ink, marginBottom: 6 }}>
+          Your content is ready
+        </div>
+        <p style={{ fontSize: 12.5, color: T.muted, lineHeight: 1.5, margin: "0 0 20px" }}>
+          Review, edit, or export it any time from My Content.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <Btn variant="primary" onClick={onOpenInMyContent}><ExternalLink size={13} /> Open in My Content</Btn>
+          <Btn variant="ghost" onClick={onClose}>Stay here</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AngleGateWizard({ requestId, embedded = false, onReset }: {
   requestId: string | null;
   embedded?: boolean;
@@ -249,6 +284,12 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
   const [ctaInput, setCtaInput] = useState("");
   const [pollTimedOut, setPollTimedOut] = useState(false); // 180s poll ceiling hit, NOT a failure
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // AA-569 — only true right after a write this session just finished (set inside pollPiece's
+  // success branch below), never when resuming an already-finished piece via the latest-piece
+  // effect further down — a tenant revisiting a done request shouldn't get a popup for nothing
+  // that just happened.
+  const [showDonePopup, setShowDonePopup] = useState(false);
 
   // AA-522 — tracks which request_id the write-step effect below has already resolved (fetched
   // latest-piece for, and either restored it or decided to auto-write/ask-for-CTA), so it runs
@@ -311,6 +352,10 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
           stopPolling();
           setPiece(fresh);
           setWriting(false);
+          // AA-569 — the ONLY place this fires: a write that started THIS session just reached
+          // a terminal outcome. "failed" (a system error, not a business outcome) keeps its own
+          // inline retry state below instead — nothing to "review in My Content" for that case.
+          if (fresh.status === "approved" || fresh.status === "held") setShowDonePopup(true);
         }
       } catch { /* transient network error — keep polling, don't surface as a failure */ }
     }, POLL_INTERVAL_MS);
@@ -411,7 +456,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
         setReq(d);
         stopPolling();
         setPiece(null); setWriteError(null); setNeedsCtaInput(false); setPollTimedOut(false);
-        setPendingAngleIdx(null);
+        setPendingAngleIdx(null); setShowDonePopup(false);
         resolvedWriteStepFor.current = null; // AA-522 — force a fresh latest-piece check on re-choice
       })
       .catch(e => setReopenError(e.detail ?? "Couldn't reopen — try again."))
@@ -427,7 +472,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
     stopPolling();
     setReq(null); setSelectedGoal(""); setError(null);
     setPiece(null); setWriteError(null); setNeedsCtaInput(false); setCtaInput("");
-    setPollTimedOut(false); setReopenError(null); setPendingAngleIdx(null);
+    setPollTimedOut(false); setReopenError(null); setPendingAngleIdx(null); setShowDonePopup(false);
     resolvedWriteStepFor.current = null;
     if (embedded) onReset?.();
     else router.push("/portal/t8-angle-gate");
@@ -631,44 +676,32 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
             </div>
           )}
 
+          {/* AA-569 — no more inline result card here (used to show full content_text +
+              attempt_number + raw held_reason). Just a minimal, non-technical confirmation +
+              link — same wording regardless of approved/held, real content lives in My Content
+              now. WriteDonePopup (rendered at the bottom of this component) covers the "just
+              finished this session" moment; this line stays visible afterward (popup dismissed,
+              or a resumed already-finished request) so the card never looks empty/broken. */}
           {piece && !writing && (piece.status === "approved" || piece.status === "held") && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                {piece.status === "approved" ? (
-                  <>
-                    <Badge variant="default">Approved</Badge>
-                    <span style={{ fontSize: 11.5, color: T.muted }}>
-                      passed quality review{piece.attempt_number > 1 ? ` (attempt ${piece.attempt_number})` : ""}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 700, color: T.red }}>
-                      <AlertTriangle size={13} /> Needs review
-                    </span>
-                    <span style={{ fontSize: 11.5, color: T.muted }}>
-                      quality review didn&rsquo;t clear after {piece.attempt_number} attempt{piece.attempt_number > 1 ? "s" : ""}
-                    </span>
-                  </>
-                )}
-              </div>
-
-              <div style={{ padding: "14px 16px", borderRadius: 10, border: `1px solid ${piece.status === "approved" ? T.line : "#F5C6C6"}`, background: piece.status === "approved" ? "#fff" : T.redSoft, whiteSpace: "pre-wrap", fontSize: 13.5, lineHeight: 1.6, color: T.body, fontFamily: sans }}>
-                {piece.content_text}
-              </div>
-
-              {piece.status === "held" && piece.held_reason && (
-                <div style={{ fontSize: 11.5, color: T.muted }}>
-                  <strong>Reason:</strong> {piece.held_reason}
-                </div>
-              )}
-
-              {req.cta && (
-                <div style={{ fontSize: 11, color: T.muted }}><strong>CTA:</strong> {req.cta}</div>
-              )}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", background: T.greenSoft, border: `1px solid ${T.green}`, borderRadius: 8, fontSize: 12.5, color: T.body }}>
+              <CheckCircle2 size={14} color={T.green} />
+              Content ready.{" "}
+              <a
+                onClick={() => router.push(`/portal/t10-review?piece=${piece.piece_id}`)}
+                style={{ color: T.gold, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}
+              >
+                View, edit, or export it in My Content
+              </a>
             </div>
           )}
         </Card>
+      )}
+
+      {showDonePopup && piece && (
+        <WriteDonePopup
+          onClose={() => setShowDonePopup(false)}
+          onOpenInMyContent={() => router.push(`/portal/t10-review?piece=${piece.piece_id}`)}
+        />
       )}
     </div>
   );

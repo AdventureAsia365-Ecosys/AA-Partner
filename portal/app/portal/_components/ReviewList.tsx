@@ -11,10 +11,15 @@
 // API: GET /api/tenant/v1/content-writing/reviews — same /api/tenant/[...path] proxy convention
 // every other real tenant-portal fetch uses (see PublishPendingList.tsx).
 
-import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, FileText, Flag, HelpCircle, Loader2, Milestone, Search, Sparkles } from "lucide-react";
-import { T, sans, mono, Card, CardHead, Badge, EmptyState, fmtDateTime } from "./ui";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import {
+  ChevronDown, ChevronUp, Download, FileText, Flag, HelpCircle, Loader2, Milestone, Pencil,
+  Save, Search, Sparkles, X,
+} from "lucide-react";
+import { T, sans, mono, Card, CardHead, Badge, Btn, EmptyState, fmtDateTime } from "./ui";
 import type { BadgeVariant } from "./ui";
+import { usePortalShell } from "./PortalShellContext";
 
 interface ReviewGoal { key: string; label: string }
 interface ReviewAngle { name: string; why_it_works: string; formula_fit: string; best_final_style: string }
@@ -61,6 +66,20 @@ export function ReviewList() {
   const [items, setItems] = useState<ReviewItem[] | null>(null);
   const [channelFilter, setChannelFilter] = useState<string>("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const { showToast } = usePortalShell();
+
+  // AA-569 — the "Open in My Content" link from AngleGateWizard.tsx's confirmation popup lands
+  // here as ?piece=<piece_id>. Auto-expand + scroll to that exact card once items have loaded,
+  // so "bấm link → mở đúng bài" is a real, verified behavior, not just a list landing page.
+  const searchParams = useSearchParams();
+  const focusPieceId = searchParams.get("piece");
+  const scrolledToFocusRef = useRef(false);
+
+  // AA-569 — hand-edit state, lifted here (not per-card local state) since saving must update
+  // the shared `items` array the whole list renders from.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draftText, setDraftText] = useState("");
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     fetch("/api/tenant/v1/content-writing/reviews")
@@ -68,6 +87,61 @@ export function ReviewList() {
       .then(d => setItems(d.data || []))
       .catch(() => setItems([]));
   }, []);
+
+  useEffect(() => {
+    if (!items || !focusPieceId || scrolledToFocusRef.current) return;
+    if (!items.some(it => it.piece_id === focusPieceId)) return;
+    setExpanded(prev => new Set(prev).add(focusPieceId));
+    scrolledToFocusRef.current = true;
+    requestAnimationFrame(() => {
+      document.getElementById(`review-card-${focusPieceId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }, [items, focusPieceId]);
+
+  function startEdit(item: ReviewItem) {
+    setEditingId(item.piece_id);
+    setDraftText(item.content_text ?? "");
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setDraftText("");
+  }
+
+  function saveEdit(pieceId: string) {
+    setSaving(true);
+    fetch(`/api/tenant/v1/content-writing/pieces/${pieceId}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content_text: draftText }),
+    })
+      .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
+      .then((updated: { content_text: string }) => {
+        setItems(prev => prev ? prev.map(it => it.piece_id === pieceId ? { ...it, content_text: updated.content_text } : it) : prev);
+        setEditingId(null);
+        showToast("Saved");
+      })
+      .catch(() => showToast("Couldn't save — try again."))
+      .finally(() => setSaving(false));
+  }
+
+  // AA-569 — real browser download: fetch the export endpoint (proxy already forwards the
+  // correct upstream Content-Type; it does NOT forward Content-Disposition, so a plain <a href>
+  // to the API would just open inline — building the Blob/download client-side sidesteps that
+  // entirely and works regardless of what headers the proxy does or doesn't pass through).
+  async function exportPiece(item: ReviewItem, format: "text" | "html") {
+    const r = await fetch(`/api/tenant/v1/content-writing/pieces/${item.piece_id}/export?format=${format}`);
+    if (!r.ok) { showToast("Export failed — try again."); return; }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const safeTitle = (item.angle?.name || item.channel || "content").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "content";
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${safeTitle}.${format === "html" ? "html" : "txt"}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
 
   const channels = useMemo(() => {
     if (!items) return [];
@@ -120,6 +194,15 @@ export function ReviewList() {
                 item={item}
                 expanded={expanded.has(item.piece_id)}
                 onToggle={() => toggle(item.piece_id)}
+                highlighted={item.piece_id === focusPieceId}
+                editing={editingId === item.piece_id}
+                draftText={draftText}
+                onDraftChange={setDraftText}
+                saving={saving && editingId === item.piece_id}
+                onStartEdit={() => startEdit(item)}
+                onCancelEdit={cancelEdit}
+                onSaveEdit={() => saveEdit(item.piece_id)}
+                onExport={(format) => exportPiece(item, format)}
               />
             ))}
           </div>
@@ -144,14 +227,21 @@ function FilterPill({ label, count, active, onClick }: {
   );
 }
 
-function ReviewCard({ item, expanded, onToggle }: {
-  item: ReviewItem; expanded: boolean; onToggle: () => void;
+function ReviewCard({
+  item, expanded, onToggle, highlighted, editing, draftText, onDraftChange, saving,
+  onStartEdit, onCancelEdit, onSaveEdit, onExport,
+}: {
+  item: ReviewItem; expanded: boolean; onToggle: () => void; highlighted: boolean;
+  editing: boolean; draftText: string; onDraftChange: (v: string) => void; saving: boolean;
+  onStartEdit: () => void; onCancelEdit: () => void; onSaveEdit: () => void;
+  onExport: (format: "text" | "html") => void;
 }) {
   const stateMeta = READY_STATE_META[item.ready_state];
   const title = item.angle?.name || "Untitled";
+  const editable = item.content_text !== null; // AA-569 — mirrors the backend's own approved/held gate
 
   return (
-    <div style={{ border: `1px solid ${T.line}`, borderRadius: 10, overflow: "hidden" }}>
+    <div id={`review-card-${item.piece_id}`} style={{ border: `1px solid ${highlighted ? T.gold : T.line}`, borderRadius: 10, overflow: "hidden" }}>
       <button onClick={onToggle} style={{
         width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
         gap: 12, padding: "12px 16px", background: "none", border: "none", cursor: "pointer",
@@ -188,7 +278,13 @@ function ReviewCard({ item, expanded, onToggle }: {
 
       {expanded && (
         <div style={{ padding: "0 16px 16px", display: "flex", flexDirection: "column", gap: 14 }}>
-          <ContentBlock item={item} />
+          <ContentBlock item={item} editing={editing} draftText={draftText} onDraftChange={onDraftChange} />
+          {editable && (
+            <ActionRow
+              channel={item.channel} editing={editing} saving={saving}
+              onEdit={onStartEdit} onCancel={onCancelEdit} onSave={onSaveEdit} onExport={onExport}
+            />
+          )}
           <FlagBanner flags={item.flags} />
           <ContextSection item={item} />
         </div>
@@ -197,7 +293,57 @@ function ReviewCard({ item, expanded, onToggle }: {
   );
 }
 
-function ContentBlock({ item }: { item: ReviewItem }) {
+// AA-569 — Edit/Save/Export controls. Only ever rendered when `editable` (item.content_text !==
+// null, i.e. status approved/held) — same boundary the PATCH/export backend endpoints enforce.
+function ActionRow({ channel, editing, saving, onEdit, onCancel, onSave, onExport }: {
+  channel: string; editing: boolean; saving: boolean;
+  onEdit: () => void; onCancel: () => void; onSave: () => void;
+  onExport: (format: "text" | "html") => void;
+}) {
+  if (editing) {
+    return (
+      <div style={{ display: "flex", gap: 8 }}>
+        <Btn variant="primary" size="sm" disabled={saving} onClick={onSave}>
+          <Save size={12} /> {saving ? "Saving…" : "Save"}
+        </Btn>
+        <Btn variant="ghost" size="sm" disabled={saving} onClick={onCancel}>
+          <X size={12} /> Cancel
+        </Btn>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <Btn variant="secondary" size="sm" onClick={onEdit}><Pencil size={12} /> Edit</Btn>
+      {channel === "blog" ? (
+        <>
+          <Btn variant="secondary" size="sm" onClick={() => onExport("text")}><Download size={12} /> Export text</Btn>
+          <Btn variant="secondary" size="sm" onClick={() => onExport("html")}><Download size={12} /> Export HTML</Btn>
+        </>
+      ) : (
+        <Btn variant="secondary" size="sm" onClick={() => onExport("text")}><Download size={12} /> Export</Btn>
+      )}
+    </div>
+  );
+}
+
+function ContentBlock({ item, editing, draftText, onDraftChange }: {
+  item: ReviewItem; editing: boolean; draftText: string; onDraftChange: (v: string) => void;
+}) {
+  if (editing) {
+    return (
+      <textarea
+        value={draftText}
+        onChange={e => onDraftChange(e.target.value)}
+        rows={12}
+        style={{
+          width: "100%", padding: "14px 16px", borderRadius: 10, border: `1px solid ${T.gold}`,
+          background: "#fff", fontSize: 13.5, lineHeight: 1.6, color: T.body, fontFamily: sans,
+          resize: "vertical", outline: "none", boxSizing: "border-box",
+        }}
+      />
+    );
+  }
   if (item.ready_state === "in_progress") {
     return (
       <div style={{
