@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/_components/WordPressConnect.tsx — AA-457 [T11 PR1]
+// portal/app/portal/_components/WordPressConnect.tsx — AA-457 [T11 PR1]
 //
 // Shared between /portal/t11-publish (inline first-run form when not connected) and
 // /portal/t11-publish/connection (manage/change credentials + re-test) — Option 3+2 from

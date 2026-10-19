@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/_components/BrandTab.tsx
+// portal/app/portal/_components/BrandTab.tsx
 // API: GET  /api/tenant/admin/brand-identity          (AA-424: was /api/admin/brand-identity,
 //      POST /api/tenant/admin/brand-identity           which requireAdmin()-gated and 401'd every
 //                                                       real tenant session — see AA-423/424.

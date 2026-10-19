@@ -1,11 +1,11 @@
-// app/(tenant)/portal/_components/ui.tsx
+// portal/app/portal/_components/ui.tsx
 // Design system — Adventure Asia brand tokens shared with the admin UI (app/_brand/tokens.ts,
 // AA-605): Fahkwang display + Poppins UI + JetBrains Mono, gold accent, pill buttons.
 
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { BRAND, BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_MONO, FONT_SANS } from "../../../_brand/tokens";
+import { BRAND, BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_MONO, FONT_SANS } from "@/app/_brand/tokens";
 
 // ─── Tokens ───────────────────────────────────────────────────────────────────
 // Key names unchanged (hundreds of call sites); values come from BRAND. red = danger only

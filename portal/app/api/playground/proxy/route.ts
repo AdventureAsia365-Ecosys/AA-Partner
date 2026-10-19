@@ -1,8 +1,6 @@
+// portal/app/api/playground/proxy/route.ts (AA-885: moved from the admin app)
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { requireTenant } from "@/lib/auth-server";
-
-const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
+import { API_URL, requireTenant } from "@/lib/auth-server";
 
 // Only these exact paths are reachable through the playground — must match
 // endpoints-config.ts's own displayed endpoint list 1:1 (AA-582: the previous
@@ -26,8 +24,7 @@ export async function POST(req: NextRequest) {
   // AA-656: verify the tenant JWT here too (was: token presence only), like every other BFF proxy.
   const auth = await requireTenant(req);
   if (!auth.ok) return auth.response;
-  const cookieStore = await cookies();
-  const token = cookieStore.get("cis_tenant_token")?.value;
+  const token = auth.token; // the token that was just verified
 
   let body: { endpoint: string; params?: Record<string, string>; method?: string };
   try {

@@ -1,9 +1,9 @@
 "use client";
-// app/(tenant)/portal/_components/ApiTab.tsx
+// portal/app/portal/_components/ApiTab.tsx
 
 import { useState } from "react";
 import { Eye, EyeOff, Copy, CheckCircle, Bell } from "lucide-react";
-import { SUPPORT_EMAIL } from "../../../_brand/tokens";
+import { SUPPORT_EMAIL } from "@/app/_brand/tokens";
 import { T, serif, mono, sans, Card } from "./ui";
 import { ApiPlayground } from "./ApiPlayground";
 

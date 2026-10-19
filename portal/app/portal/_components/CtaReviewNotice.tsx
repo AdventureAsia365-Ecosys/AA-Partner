@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/_components/CtaReviewNotice.tsx
+// portal/app/portal/_components/CtaReviewNotice.tsx
 // AA-819 follow-up (S237) — the tenant's call to action is published exactly as they type it. When
 // it mentions reviews or ratings ("Read our five-star reviews", "Rated 4.9 on TripAdvisor") the
 // portal shows one plain, non-blocking line; the save still happens. The rule is the backend's
@@ -9,7 +9,7 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { TriangleAlert } from "lucide-react";
-import { K, sans, apiSend } from "../../../_kit";
+import { K, sans, apiSend } from "@/app/_kit";
 
 export const CTA_REVIEW_NOTICE =
   "Only mention reviews or ratings if they are real and you can show them publicly. AI-written copy never adds reviews for you.";

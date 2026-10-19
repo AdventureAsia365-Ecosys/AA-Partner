@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/_components/CatalogDrawer.tsx
+// portal/app/portal/_components/CatalogDrawer.tsx
 // AA-662 PR 3 — the My Content detail/edit drawer, split out of CatalogTab. Uses the kit Drawer +
 // react-query (version detail, which also carries the Master text) + mutations (save edit, request rewrite). The
 // compare editors (summary / highlights / itinerary) and SeeOriginalToggle are unchanged.

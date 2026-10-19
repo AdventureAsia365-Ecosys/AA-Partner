@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/t11-publish/page.tsx — AA-457 [T11 PR1] + AA-458 [T11 PR2] + AA-815
+// portal/app/portal/t11-publish/page.tsx — AA-457 [T11 PR1] + AA-458 [T11 PR2] + AA-815
 //
 // AA-457 built the connect flow (Option 3+2, AA-456 STEP0 §9): a channel that isn't connected yet
 // shows its connect form inline here. AA-458 added the "Ready to Publish" list (PublishPendingList),

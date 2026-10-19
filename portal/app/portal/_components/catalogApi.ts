@@ -1,9 +1,9 @@
-// app/(tenant)/portal/_components/catalogApi.ts
+// portal/app/portal/_components/catalogApi.ts
 // AA-662 PR 3 — My Content (CatalogTab) data layer, used with react-query. Tenant calls go through
 // the BFF proxy /api/tenant/* (no reviewer-id header; tenant identity is the session cookie the
 // proxy forwards). Plain functions; CatalogTab wires them into useQuery/useMutation.
 
-import { apiGet } from "../../../_kit";
+import { apiGet } from "@/app/_kit";
 
 export interface Version {
   id: string;

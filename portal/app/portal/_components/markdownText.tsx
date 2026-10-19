@@ -1,4 +1,4 @@
-// app/(tenant)/portal/_components/markdownText.tsx
+// portal/app/portal/_components/markdownText.tsx
 // AA-836 (D6) — writer output (blog pieces especially) is markdown; a tenant must never see raw
 // `##` / `**` in the portal. Two helpers, no dependency, no dangerouslySetInnerHTML (piece text is
 // turned into React elements, so it can never inject HTML):

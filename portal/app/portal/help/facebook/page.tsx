@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/help/facebook/page.tsx — AA-831
+// portal/app/portal/help/facebook/page.tsx — AA-831
 //
 // Tenant guide "Connect your Facebook Page", linked from the Connect Facebook Page card
 // (FacebookConnect.tsx, FACEBOOK_GUIDE_HREF). Static content, no API calls. Covered by the

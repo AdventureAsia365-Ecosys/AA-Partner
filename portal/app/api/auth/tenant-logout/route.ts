@@ -1,4 +1,4 @@
-// frontend/app/api/auth/tenant-logout/route.ts
+// portal/app/api/auth/tenant-logout/route.ts (AA-885: moved from the admin app)
 // AA-427 — clears the 5 httpOnly tenant cookies server-side.
 //
 // Sidebar.tsx / PlaceholderTabs.tsx used to clear the session by looping
@@ -7,17 +7,13 @@
 // longer see or overwrite them at all (expiry included), so the browser
 // would keep sending a "logged out" user's real tenant JWT on every request
 // after clicking Logout. This route does the clearing server-side instead.
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { TENANT_COOKIES, TENANT_TOKEN_COOKIE, tenantVerifyCache } from "@/lib/auth-server";
 
-const TENANT_COOKIES = [
-  "cis_role",
-  "cis_tenant_token",
-  "cis_tenant_id",
-  "cis_tenant_name",
-  "cis_tenant_plan",
-];
-
-export async function POST() {
+export async function POST(req: NextRequest) {
+  // AA-885: drop the token's verify-cache entry on this instance too (same idea as the staff logout).
+  const token = req.cookies.get(TENANT_TOKEN_COOKIE)?.value;
+  if (token) tenantVerifyCache.delete(token);
   const response = NextResponse.json({ ok: true });
   for (const name of TENANT_COOKIES) {
     response.cookies.set(name, "", { path: "/", maxAge: 0 });

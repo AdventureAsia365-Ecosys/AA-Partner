@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/t1-rewrite/page.tsx — AA-430 route migration.
+// portal/app/portal/t1-rewrite/page.tsx — AA-430 route migration.
 // Was the "pool" tab in the old portal/page.tsx (T1 — Tour Selection, triggers the
 // rewrite job that runs T2-T5). Route slug confirmed against the ADR-2026-038 mapping.
 import { useRouter } from "next/navigation";

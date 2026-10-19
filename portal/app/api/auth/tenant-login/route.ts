@@ -1,5 +1,6 @@
-// frontend/app/api/auth/tenant-login/route.ts
-// AA-427 — tenant login BFF route.
+// portal/app/api/auth/tenant-login/route.ts
+// AA-427 — tenant login BFF route (AA-885: moved from the admin app into the portal app; the cookies
+// are now host-only on portal.lumiguides.it.com — no Domain attribute, on purpose).
 //
 // Before this route existed, tenant-login/page.tsx called the FastAPI backend
 // (api-cis.lumiguides.it.com) directly from the browser, then set 5 cookies
@@ -14,15 +15,14 @@
 // docs/implementation-notes/AA-427-tenant-jwt-httponly-cookie.md for why the
 // cookie has to be minted here: api-cis.lumiguides.it.com and
 // aa-cis.lumiguides.it.com are different origins, so a cookie set by FastAPI
-// would live on the wrong domain for middleware.ts to ever see it.
+// would live on the wrong domain for the page gate (now portal/proxy.ts) to ever see it.
 //
 // The JSON response deliberately does NOT include the raw JWT — only the
 // httpOnly Set-Cookie header carries it. Returning it in the body would
 // defeat httpOnly entirely (page JS / XSS can read a fetch response body
 // just as easily as a plain cookie).
 import { NextRequest, NextResponse } from "next/server";
-
-const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
+import { API_URL } from "@/lib/auth-server";
 
 const COOKIE_MAX_AGE = 60 * 60 * 24; // 24h — matches backend JWT_EXPIRY_H (api/routers/auth.py)
 

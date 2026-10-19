@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/_components/MarketplaceTab.tsx — AA-444 (Marketplace, tenant-facing)
+// portal/app/portal/_components/MarketplaceTab.tsx — AA-444 (Marketplace, tenant-facing)
 //
 // Per ADR-2026-038 §0.3 (22/08/2026): Marketplace is NOT its own pipeline stage — it is a
 // read-only rollup of what T1-T4 (tenant_tour_versions) and T5-T6 (tour_atoms, owner_scope)

@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/t10-review/page.tsx — AA-501
+// portal/app/portal/t10-review/page.tsx — AA-501
 //
 // The screen that sits between T10's automatic quality gate and T11 publish. Route slug
 // confirmed with Nghiệp (AA-501 STEP0 §6): "t10" is the one number in the existing

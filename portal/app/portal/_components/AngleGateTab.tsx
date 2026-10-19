@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/_components/AngleGateTab.tsx — thin wrapper around AngleGateWizard.tsx for
+// portal/app/portal/_components/AngleGateTab.tsx — thin wrapper around AngleGateWizard.tsx for
 // the standalone /portal/t8-angle-gate route.
 //
 // AA-564 Nhóm 4.2 (2026-09-08) — the actual wizard (state machine, every card, every fetch call)

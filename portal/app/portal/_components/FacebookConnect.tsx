@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/_components/FacebookConnect.tsx — AA-815
+// portal/app/portal/_components/FacebookConnect.tsx — AA-815
 //
 // Facebook Page connection for T11 (the backend side is AA-462: /v1/integrations/facebook).
 // Same shape as WordPressConnect.tsx — a status hook, a connect form that saves then tests, and a

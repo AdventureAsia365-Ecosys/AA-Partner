@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/_components/PlaceholderTabs.tsx
+// portal/app/portal/_components/PlaceholderTabs.tsx
 // Activity Log, Billing and Settings.
 //
 // AA-636: these three pages were largely mock UI — every tenant saw "WanderLux Travel" /
@@ -13,7 +13,7 @@ import { useState } from "react";
 import { Check, X, RefreshCw, Mail, ExternalLink, KeyRound, LogOut } from "lucide-react";
 import { T, sans, Card, PageHeader, Btn, fmtDateTime, statusLabel } from "./ui";
 import { usePortalShell } from "./PortalShellContext";
-import { SUPPORT_EMAIL, SITE_URL } from "../../../_brand/tokens";
+import { SUPPORT_EMAIL, SITE_URL } from "@/app/_brand/tokens";
 
 type Activity = { id: string; status: string; edit_source: string; tour_name: string; country: string | null; created_at: string };
 

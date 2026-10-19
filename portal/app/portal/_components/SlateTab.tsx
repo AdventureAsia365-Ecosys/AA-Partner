@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/_components/SlateTab.tsx — AA-511, the Slate (Weekly Slots' replacement).
+// portal/app/portal/_components/SlateTab.tsx — AA-511, the Slate (Weekly Slots' replacement).
 //
 // Replaces SlotPickerPanel.tsx on PlanningTab.tsx's own render path (not deleted — the epic's
 // own "giữ code cũ, chỉ ngưng dùng ở đường Slate chính, không xoá" rule; see docs/claude_audit/
@@ -64,7 +64,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Calendar, ChevronRight, Sparkles, X, Zap, AlertTriangle, ClipboardList, CheckCircle2 } from "lucide-react";
 import { T, serif, sans, mono, Card, CardHead, Badge, Btn, EmptyState, StickyBar } from "./ui";
-import { ToastProvider } from "../../../_kit";
+import { ToastProvider } from "@/app/_kit";
 import type { ContentPiece } from "./AngleGateWizard";
 import { WriterPanel, useWriteWatcher, watchPiece, type WriterTarget } from "./WriterPanel";
 

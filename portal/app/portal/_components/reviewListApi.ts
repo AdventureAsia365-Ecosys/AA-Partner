@@ -1,9 +1,9 @@
-// app/(tenant)/portal/_components/reviewListApi.ts
+// portal/app/portal/_components/reviewListApi.ts
 // AA-669 — My Content (t10-review) data layer, used with react-query. Tenant BFF proxy, no extra
 // headers (session cookie forwarded by the proxy). Keeps the exact ReviewItem shape AA-501/AA-519
 // established and the tenant-safe projection (never gate_ledger/held_reason/repair_log).
 
-import { apiGet } from "../../../_kit";
+import { apiGet } from "@/app/_kit";
 
 export interface ReviewGoal { key: string; label: string }
 export interface ReviewAngle {

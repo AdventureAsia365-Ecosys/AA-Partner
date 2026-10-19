@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/_components/WriterPanel.tsx — AA-668, the Writer panel (Social Content).
+// portal/app/portal/_components/WriterPanel.tsx — AA-668, the Writer panel (Social Content).
 //
 // Picking a Subject on the Slate opens this right-side kit Drawer (full width on a phone) instead
 // of expanding AngleGateWizard inline under the row (AA-564 4.2), so the tenant never scrolls the
@@ -27,7 +27,7 @@ import { CheckCircle2, Download, ExternalLink, Send } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, ConfirmModal, Drawer, K, useToast } from "../../../_kit";
+import { Button, ConfirmModal, Drawer, K, useToast } from "@/app/_kit";
 import { T, sans } from "./ui";
 import AngleGateWizard, { type ContentPiece } from "./AngleGateWizard";
 import { AiContentNotice } from "./AiContentNotice";
