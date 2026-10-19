@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/t11-publish/connection/page.tsx — AA-457 [T11 PR1] + AA-815
+// portal/app/portal/t11-publish/connection/page.tsx — AA-457 [T11 PR1] + AA-815
 //
 // The standalone "manage connections" half of Option 3+2 (AA-456 STEP0 §9): re-test, change
 // credentials or disconnect each publish channel after the first inline connect on

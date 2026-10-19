@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/_components/AngleGateWizard.tsx — AA-449 (T8 Angle Gate) + AA-450 (T9 Write
+// portal/app/portal/_components/AngleGateWizard.tsx — AA-449 (T8 Angle Gate) + AA-450 (T9 Write
 // + T10-inline quality check), ONE continuous wizard, Goal -> Angle -> Write.
 //
 // AA-564 Nhóm 4.2 (2026-09-08) — extracted out of AngleGateTab.tsx (which is now a thin wrapper,

@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/_components/TourRewritePanel.tsx — AA-668 part 2 (S239): the tour rewrite in
+// portal/app/portal/_components/TourRewritePanel.tsx — AA-668 part 2 (S239): the tour rewrite in
 // the Writer panel.
 //
 // "Request Rewrite" in the My Catalog Tours drawer (CatalogDrawer.tsx) used to swap the drawer's
@@ -16,7 +16,7 @@
 // already refetches every 5 s while any version is being written, and hands the row in (`version`).
 
 import { CheckCircle2, Download, ExternalLink, RotateCcw } from "lucide-react";
-import { Button, K } from "../../../_kit";
+import { Button, K } from "@/app/_kit";
 import { AiContentNotice } from "./AiContentNotice";
 import LiveWriter from "./LiveWriter";
 import { WriterDrawer, type WatchItem, type WatchOutcome } from "./WriterPanel";

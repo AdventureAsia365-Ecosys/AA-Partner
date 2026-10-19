@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/_components/PlanningTab.tsx — T7 (tenant-facing), page title "Slate".
+// portal/app/portal/_components/PlanningTab.tsx — T7 (tenant-facing), page title "Slate".
 //
 // AA-519 Việc 3 — this page used to open with a Quarter Plan preview/trip-table/finalize/history
 // UI (AA-448, extended AA-469 Việc 2) ABOVE <SlateTab/>; Nghiệp's explicit call (AA-519 issue

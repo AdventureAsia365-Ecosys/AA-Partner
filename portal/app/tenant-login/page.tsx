@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { BRAND, BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_SANS, LOGO_SRC } from "../_brand/tokens";
+import { PRIVACY_PATH, STAFF_LOGIN_URL, TERMS_PATH } from "@/lib/hosts";
 import { useRouter } from "next/navigation";
 import { Key, Loader2 } from "lucide-react";
 
@@ -43,8 +44,9 @@ export default function TenantLoginPage() {
   };
 
   return (
-    <div data-theme="light" style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"var(--bg-primary)", fontFamily: FONT_SANS }}>
-      <div style={{ background:"var(--bg-card)", border:"1px solid var(--border)", borderRadius:16, padding:40, width:380 }}>
+    <div data-theme="light" style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"var(--bg-primary)", fontFamily: FONT_SANS, padding:16, boxSizing:"border-box" }}>
+      {/* AA-885: fluid up to 380px content width so the card fits a 390px phone (was a fixed 380 + 80 padding). */}
+      <div style={{ background:"var(--bg-card)", border:"1px solid var(--border)", borderRadius:16, padding:40, width:"100%", maxWidth:460, boxSizing:"border-box" }}>
         <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:8 }}>
           {/* AA-605 — real Adventure Asia logo (was a gold "AA" tile). */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -104,10 +106,15 @@ export default function TenantLoginPage() {
 
 
 
+        {/* AA-885: staff sign in on the admin console (another host); the portal has no staff login. */}
         <div style={{ marginTop:16, textAlign:"center" as const }}>
-          <a href="/login" style={{ fontSize:12, color:"var(--text-muted)", textDecoration:"none" }}>
+          <a href={STAFF_LOGIN_URL} style={{ fontSize:12, color:"var(--text-muted)", textDecoration:"none" }}>
             ← Staff login
           </a>
+        </div>
+        <div data-testid="portal-legal-links" style={{ marginTop:12, display:"flex", justifyContent:"center", gap:16, fontSize:11 }}>
+          <a href={PRIVACY_PATH} target="_blank" rel="noopener noreferrer" style={{ color:"var(--text-muted)", textDecoration:"none" }}>Privacy</a>
+          <a href={TERMS_PATH} target="_blank" rel="noopener noreferrer" style={{ color:"var(--text-muted)", textDecoration:"none" }}>Terms</a>
         </div>
       </div>
     </div>

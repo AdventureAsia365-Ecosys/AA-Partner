@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/_components/PortalShellContext.tsx
+// portal/app/portal/_components/PortalShellContext.tsx
 // AA-430 — route migration (tab-state -> real routes per T-stage).
 //
 // portal/page.tsx used to be a single client component owning tenantName/planTier/
@@ -27,7 +27,7 @@ export const PortalShellContext = createContext<PortalShellValue | null>(null);
 export function usePortalShell(): PortalShellValue {
   const ctx = useContext(PortalShellContext);
   if (!ctx) {
-    throw new Error("usePortalShell() must be called from a page under app/(tenant)/portal/ (layout.tsx provides it)");
+    throw new Error("usePortalShell() must be called from a page under app/portal/ (layout.tsx provides it)");
   }
   return ctx;
 }

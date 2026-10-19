@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/_components/ReviewList.tsx — My Content (t10-review).
+// portal/app/portal/_components/ReviewList.tsx — My Content (t10-review).
 // AA-669: migrated from an expand-card list to the shared UI-kit DataTable + react-query.
 //   - columns: title, channel, goal, status, created, actions
 //   - filters: channel, status, goal, search; sort any column; saved views; CSV export
@@ -21,7 +21,7 @@ import {
   StatusBadge,
   ToastProvider,
   useToast,
-} from "../../../_kit";
+} from "@/app/_kit";
 import { ReviewDrawer } from "./ReviewDrawer";
 import {
   channelLabel,

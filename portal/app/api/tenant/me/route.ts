@@ -1,4 +1,4 @@
-// frontend/app/api/tenant/me/route.ts
+// portal/app/api/tenant/me/route.ts (AA-885: moved from the admin app)
 // AA-427 — "/me" for the tenant portal.
 //
 // portal/page.tsx used to read cis_tenant_name / cis_tenant_plan straight out

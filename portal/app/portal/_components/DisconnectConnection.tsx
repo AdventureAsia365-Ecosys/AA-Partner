@@ -1,12 +1,12 @@
 "use client";
-// app/(tenant)/portal/_components/DisconnectConnection.tsx — AA-815
+// portal/app/portal/_components/DisconnectConnection.tsx — AA-815
 //
 // "Disconnect" for a publish channel connection (WordPress / Facebook): a confirm step (kit
 // ConfirmModal), then DELETE /api/tenant/v1/integrations/{wordpress|facebook}. The backend removes
 // the connection row and wipes the saved credentials. Published posts stay on the channel.
 
 import { useState } from "react";
-import { ConfirmModal } from "../../../_kit";
+import { ConfirmModal } from "@/app/_kit";
 import { T, sans } from "./ui";
 
 export function DisconnectConnection({ integration, label, onDisconnected }: {

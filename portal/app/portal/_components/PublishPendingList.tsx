@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/_components/PublishPendingList.tsx — AA-458 [T11 PR2]
+// portal/app/portal/_components/PublishPendingList.tsx — AA-458 [T11 PR2]
 //
 // The list AA-456's own STEP0 §5 flagged as missing: a tenant's approved content_piece rows for
 // the blog channel that haven't been successfully published yet. Publish buttons stay visible

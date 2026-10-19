@@ -1,5 +1,6 @@
 "use client";
-// app/(tenant)/portal/layout.tsx — AA-430 route migration.
+// portal/app/portal/layout.tsx — AA-430 route migration (AA-885: moved from the admin app's
+// app/(tenant)/portal/layout.tsx; the staff SessionKeepAlive is gone, the portal has no staff session).
 //
 // Was app/(tenant)/portal/page.tsx: a single client component that owned all shell
 // state (tenantName/planTier/poolTotal/catTotal/billing/toast/globalSearch) AND
@@ -21,10 +22,7 @@ import NotificationsBell from "./_components/NotificationsBell";
 import CommandPalette from "./_components/CommandPalette";
 import { PortalShellContext } from "./_components/PortalShellContext";
 import { T, sans, countUniqueTours } from "./_components/ui";
-import { Breadcrumb } from "../../_kit";
-// AA-816 (C4): admins also work here (PAGE_RULES /portal: admin + tenant); keep their Cognito session
-// alive like the admin shell does. For a tenant the route answers "none" once and the timer stops.
-import { SessionKeepAlive } from "../../_kit/SessionKeepAlive";
+import { Breadcrumb } from "@/app/_kit";
 
 const BREADCRUMBS: Record<string, string> = {
   "/portal/dashboard":  "Dashboard",
@@ -152,8 +150,6 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
           data-theme="light" here re-declares the light values for the whole portal subtree, so
           portal + kit components render light regardless of the admin/OS theme. */}
       <div data-theme="light" style={{ display: "flex", minHeight: "100vh", fontFamily: sans, background: T.bg }}>
-
-        <SessionKeepAlive />
 
         {/* Toast */}
         {toast && (

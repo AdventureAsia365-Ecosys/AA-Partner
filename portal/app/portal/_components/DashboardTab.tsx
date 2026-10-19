@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/_components/DashboardTab.tsx
+// portal/app/portal/_components/DashboardTab.tsx
 // API: GET /api/tenant/v1/billing (AA-496 — was /api/admin/billing, guaranteed 401 for every
 //      real tenant since that proxy requires an admin JWT; see api/routers/v1_tours.py's
 //      GET /v1/billing for the real tenant-scoped sibling)
@@ -13,7 +13,7 @@ import {
   fmtDateTime, statusVariant, statusLabel,
 } from "./ui";
 import { usePortalShell } from "./PortalShellContext";
-import { useIsPhone } from "../../../_kit";
+import { useIsPhone } from "@/app/_kit";
 import GettingStarted from "./GettingStarted";
 import UsageSparkline, { type DailyPoint } from "./UsageSparkline";
 import { DashboardSkeleton } from "./Skeleton";

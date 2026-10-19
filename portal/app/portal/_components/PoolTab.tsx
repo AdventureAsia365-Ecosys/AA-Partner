@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/_components/PoolTab.tsx
+// portal/app/portal/_components/PoolTab.tsx
 // API: GET /api/tenant/v1/tours/pool?page=N&page_size=20&search=X&country=Y
 //      POST /api/tenant/v1/tours/pool/{id}/rewrite
 

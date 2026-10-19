@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/activity/page.tsx — AA-430 route migration.
+// portal/app/portal/activity/page.tsx — AA-430 route migration.
 // Was the "activity" tab in the old portal/page.tsx. Not a T-stage (utility page), so
 // no T-prefix — see AA-430 implementation notes.
 import { ActivityLogTab } from "../_components/PlaceholderTabs";

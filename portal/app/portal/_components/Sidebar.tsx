@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/_components/Sidebar.tsx — v3 (AA-430)
+// portal/app/portal/_components/Sidebar.tsx — v3 (AA-430; moved into the portal app, AA-885)
 //
 // Was tab-state (onClick={() => setTab(id)}, active = tab === id). Portal is now real
 // routes per T-stage (see portal/layout.tsx) — nav is <Link> + active state comes from
@@ -9,7 +9,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LayoutDashboard, Globe2, BookOpen, Sparkles, Code2, Store, CalendarRange, Eye, Send, LogOut } from "lucide-react";
 import { T, serif, sans } from "./ui";
-import { LOGO_SRC } from "../../../_brand/tokens";
+import { LOGO_SRC } from "@/app/_brand/tokens";
+import { PRIVACY_PATH, TERMS_PATH } from "@/lib/hosts";
 
 interface Props {
   poolCount: number;
@@ -143,6 +144,11 @@ export default function Sidebar({
             style={{ background: "none", border: "none", cursor: "pointer", color: "#8A929D", padding: 2, display: "flex" }}>
             <LogOut size={12} />
           </button>
+        </div>
+        {/* AA-885 — legal links (privacy → adventure.asia/privacy-policy; terms → the portal's /terms page). */}
+        <div data-testid="portal-legal-links" style={{ display: "flex", gap: 12, padding: "10px 8px 0", fontSize: 10.5 }}>
+          <a href={PRIVACY_PATH} target="_blank" rel="noopener noreferrer" style={{ color: "#8A929D", textDecoration: "none" }}>Privacy</a>
+          <a href={TERMS_PATH} target="_blank" rel="noopener noreferrer" style={{ color: "#8A929D", textDecoration: "none" }}>Terms</a>
         </div>
       </div>
     </aside>

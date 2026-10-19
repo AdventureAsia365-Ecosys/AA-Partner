@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/_components/ReviewDrawer.tsx
+// portal/app/portal/_components/ReviewDrawer.tsx
 // AA-669 — the My Content detail view, shown in the kit Drawer when a row is opened. Carries over
 // the copy-lock, tenant-safe context, flag banner, inline edit and export actions from the old
 // ReviewList card (AA-501/AA-519/AA-614) unchanged in behaviour.

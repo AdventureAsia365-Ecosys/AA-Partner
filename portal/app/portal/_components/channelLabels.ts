@@ -1,4 +1,4 @@
-// app/(tenant)/portal/_components/channelLabels.ts — the tenant-facing names of the 8 content
+// portal/app/portal/_components/channelLabels.ts — the tenant-facing names of the 8 content
 // Channels (the Slate tabs). Shared by the Writer panel header and the wizard's Write card, so the
 // tenant never sees a raw key such as "linkedin" (AA-668). Kept out of WriterPanel.tsx because
 // AngleGateWizard (which WriterPanel imports) needs it too.

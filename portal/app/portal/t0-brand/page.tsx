@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/t0-brand/page.tsx — AA-430 route migration.
+// portal/app/portal/t0-brand/page.tsx — AA-430 route migration.
 // Was the "brand" tab in the old portal/page.tsx (T0 — Brand Identity Setup).
 //
 // AA-754: the "Competitors" sub-tab (AA-445-02, backed by acp_silver_s2.competitor_inputs and

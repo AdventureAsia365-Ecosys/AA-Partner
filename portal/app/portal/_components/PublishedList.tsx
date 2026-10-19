@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/_components/PublishedList.tsx — AA-815
+// portal/app/portal/_components/PublishedList.tsx — AA-815
 //
 // The tenant's published posts (and ones they removed), with an Unpublish action. Unpublish is a
 // confirm step, then DELETE /api/tenant/v1/publish-log/{publish_id}. The backend removes the post
@@ -23,7 +23,7 @@ import {
   apiGet,
   apiSend,
   useToast,
-} from "../../../_kit";
+} from "@/app/_kit";
 import { T, sans, Card, CardHead } from "./ui";
 
 export interface PublishedRow {

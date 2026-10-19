@@ -1,5 +1,5 @@
 "use client";
-// app/(tenant)/portal/_components/CatalogTab.tsx — My Content.
+// portal/app/portal/_components/CatalogTab.tsx — My Content.
 // AA-662 PR 3: migrated to the UI kit (DataTable, Drawer, Toast) + react-query. The hand-rolled
 // list fetch + the two setInterval polling effects are replaced by one useQuery with a
 // refetchInterval that runs only while a tour is still being AI-written (isAiWriting) and stops on
@@ -27,7 +27,7 @@ import {
   StatusBadge,
   ToastProvider,
   useToast,
-} from "../../../_kit";
+} from "@/app/_kit";
 import { CatalogDrawer } from "./CatalogDrawer";
 import { TourRewritePanel, watchTourRewrite, type TourRewriteTarget } from "./TourRewritePanel";
 import { useWriteWatcher } from "./WriterPanel";
