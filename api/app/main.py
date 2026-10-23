@@ -38,6 +38,7 @@ from app.observability.request_id import RequestIdMiddleware, unhandled_error_ha
 from app.ratelimit import FixedWindowLimiter
 from app.routers import agency, ci, health, ops, staff
 from app.settings import Settings, load_settings
+from app.vault import KeyProvider, build_key_provider
 
 # On shutdown a job in flight gets this long to finish; then the worker task is cancelled and releases the job back to
 # the queue at once (app.jobs.queue.release). ECS gives the container 30 s after SIGTERM (stopTimeout).
@@ -51,6 +52,7 @@ def create_app(
     db: Database | None = None,
     verifier: MultiIssuerVerifier | None | object = _UNSET,
     deploy_verifier: GithubDeployVerifier | None = None,
+    keys: KeyProvider | None | object = _UNSET,
 ) -> FastAPI:
     settings = settings or load_settings()
     db = db or Database(settings)
@@ -58,6 +60,8 @@ def create_app(
     if verifier is _UNSET:
         verifier = identity_config.build_verifier(identity)
     deploy_verifier = deploy_verifier or GithubDeployVerifier.default()
+    if keys is _UNSET:
+        keys = build_key_provider(settings)  # no KMS call here: the client is created on first use
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -100,6 +104,7 @@ def create_app(
     app.state.identity = identity
     app.state.verifier = verifier
     app.state.deploy_verifier = deploy_verifier
+    app.state.keys = keys  # app.vault.KeyProvider, or None when KMS_DATA_KEY_ID is missing (vault calls answer 503)
     app.state.public_limiter = FixedWindowLimiter(settings.rate_limit_public_per_minute)
     app.add_exception_handler(ServiceError, service_error_handler)
     app.add_exception_handler(Exception, unhandled_error_handler)

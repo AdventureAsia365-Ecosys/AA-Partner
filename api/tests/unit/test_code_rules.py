@@ -42,10 +42,23 @@ DB_MODULES = frozenset(
         "app/jobs/queue.py",  # crm.job state machine (platform table, no tenant rows)
         "app/jobs/metrics.py",  # crm.job backlog sampler
         "app/jobs/handlers.py",  # crm.job retention (platform table)
+        "app/vault/store.py",  # DEK store: crm.tenant_key, only on the connection of a TenantContext (AA-934)
     }
 )
 THIRD_PARTY = frozenset(
-    {"asyncpg", "boto3", "botocore", "fastapi", "jwt", "pydantic", "sentry_sdk", "starlette", "structlog"}
+    {
+        "asyncpg",
+        "boto3",
+        "botocore",
+        "cryptography",
+        "fastapi",
+        "jwt",
+        "phonenumbers",
+        "pydantic",
+        "sentry_sdk",
+        "starlette",
+        "structlog",
+    }
 )
 FORBIDDEN_TOP_LEVEL = frozenset({"api", "shared", "backend", "core", "cis", "tripplanner", "lambdas"})
 
@@ -191,6 +204,6 @@ def test_imports_stay_inside_the_boundary() -> None:
 
 def test_every_third_party_import_is_pinned() -> None:
     requirements = (APP.parent / "requirements.txt").read_text(encoding="utf-8").lower()
-    pins = {"jwt": "pyjwt==", "sentry_sdk": "sentry-sdk"}
+    pins = {"jwt": "pyjwt==", "sentry_sdk": "sentry-sdk", "phonenumbers": "phonenumberslite=="}
     for package in THIRD_PARTY:
         assert pins.get(package, f"{package}==") in requirements, package

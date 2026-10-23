@@ -12,9 +12,18 @@ One transaction on one pooled connection:
 5. optionally ``SET LOCAL ROLE`` to one of the four NOLOGIN readers (``crm_app`` is NOINHERIT and reaches them only
    this way, Infra rl-004). The name comes from :data:`READER_ROLES`, never from input.
 
-The transaction commits when the block exits normally and rolls back on any exception, which also ends every
-``SET LOCAL``. The DB access lint in ``tests/unit/test_code_rules.py`` fails when request code reaches the database
-any other way than ``ctx.conn`` inside ``async with tenant_tx(...) as ctx``.
+The route's work then runs in a savepoint. Audit events it queues with :meth:`TenantContext.audit` are written when
+the block ends (AA-934, ``crm.audit_event``):
+
+- normal exit: every queued event is inserted and the transaction commits;
+- an exception: the work is rolled back to the savepoint; if ``denied`` events were queued (a refused decrypt, a
+  refused access), only those are inserted and the transaction **commits**, then the exception goes on — a denial is
+  on record even when it ends the request; with no denial the whole transaction rolls back as before.
+
+Events are inserted as ``crm_app`` (``SET LOCAL ROLE NONE`` first when a reader role was set: the readers have no
+privilege on the audit table). Rolling back or committing ends every ``SET LOCAL``. The DB access lint in
+``tests/unit/test_code_rules.py`` fails when request code reaches the database any other way than ``ctx.conn`` inside
+``async with tenant_tx(...) as ctx``.
 """
 
 from __future__ import annotations
@@ -22,10 +31,11 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import asyncpg
 
+from app.audit import INSERT_SQL, AuditEvent, current_request_id
 from app.auth.route_guard import Caller
 from app.errors import Forbidden
 
@@ -47,6 +57,36 @@ class TenantContext:
     tenant_id: uuid.UUID
     member_id: uuid.UUID
     member_role: str
+    reader_role: str | None = None
+    audit_events: list[AuditEvent] = field(default_factory=list, repr=False)
+    # Field encryption (app.vault): DEKs generated in this transaction, never in the process cache until committed.
+    dek_memo: dict[tuple[str, int], bytes] = field(default_factory=dict, repr=False)
+    dek_current: dict[str, int] = field(default_factory=dict, repr=False)
+
+    def audit(
+        self,
+        action: str,
+        outcome: str,
+        object_kind: str,
+        object_id: str | None = None,
+        *,
+        fields: tuple[str, ...] = (),
+        reason: str | None = None,
+    ) -> AuditEvent:
+        """Queue an ``audit_event`` for this member (written when the ``tenant_tx()`` block ends)."""
+        event = AuditEvent(
+            actor_kind="user",
+            actor_ref=f"member:{self.member_id}",
+            action=action,
+            outcome=outcome,
+            object_kind=object_kind,
+            object_id=object_id,
+            fields=tuple(fields),
+            reason=reason,
+            request_id=current_request_id(),
+        )
+        self.audit_events.append(event)
+        return event
 
 
 @asynccontextmanager
@@ -57,6 +97,7 @@ async def tenant_tx(
         raise TypeError("tenant_id must be a UUID")
     if reader_role is not None and reader_role not in READER_ROLES:
         raise ValueError(f"not a CRM reader role: {reader_role!r}")
+    pending: Exception | None = None
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
         status = await conn.fetchval(TENANT_SQL, tenant_id)
@@ -76,4 +117,27 @@ async def tenant_tx(
         if reader_role is not None:
             # A role name cannot be a bind parameter; READER_ROLES is a fixed allow-list checked above.
             await conn.execute(f"SET LOCAL ROLE {reader_role}")
-        yield TenantContext(conn=conn, tenant_id=tenant_id, member_id=member["member_id"], member_role=role)
+        ctx = TenantContext(
+            conn=conn, tenant_id=tenant_id, member_id=member["member_id"], member_role=role, reader_role=reader_role
+        )
+        try:
+            async with conn.transaction():  # savepoint: the route's work
+                yield ctx
+        except Exception as exc:
+            denied = [e for e in ctx.audit_events if e.outcome == "denied"]
+            if not denied:
+                raise
+            await _write_audit(ctx, denied)
+            pending = exc  # commit the denials, then let the exception go on
+        else:
+            await _write_audit(ctx, ctx.audit_events)
+    if pending is not None:
+        raise pending
+
+
+async def _write_audit(ctx: TenantContext, events: list[AuditEvent]) -> None:
+    if not events:
+        return
+    if ctx.reader_role is not None:
+        await ctx.conn.execute("SET LOCAL ROLE NONE")
+    await ctx.conn.executemany(INSERT_SQL, [e.row() for e in events])

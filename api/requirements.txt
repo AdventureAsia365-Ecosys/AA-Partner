@@ -7,6 +7,9 @@ pydantic==2.13.5
 # Access-token verification (RS256, the vendored multi-issuer verifier) — same library as AA-CIS-App (PyJWT[crypto]).
 PyJWT==2.15.1
 cryptography==50.0.2
+# E.164 normalisation of phone numbers for blind indexes (app/vault/blind_index.py, AA-934); the "lite" build is
+# libphonenumber without the geocoder / carrier data.
+phonenumberslite==9.0.40
 # CloudWatch PutMetricData of the crm.job backlog sampler (app/jobs/metrics.py).
 boto3==1.43.49
 botocore==1.43.49
