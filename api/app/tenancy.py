@@ -13,7 +13,8 @@ One transaction on one pooled connection:
    this way, Infra rl-004). The name comes from :data:`READER_ROLES`, never from input.
 
 The transaction commits when the block exits normally and rolls back on any exception, which also ends every
-``SET LOCAL``. ``tests/unit/test_db_access_lint.py`` fails when request code calls the pool another way.
+``SET LOCAL``. The DB access lint in ``tests/unit/test_code_rules.py`` fails when request code reaches the database
+any other way than ``ctx.conn`` inside ``async with tenant_tx(...) as ctx``.
 """
 
 from __future__ import annotations
