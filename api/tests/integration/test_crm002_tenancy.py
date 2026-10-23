@@ -31,6 +31,16 @@ PLATFORM_TABLES = {
     "job": "ADR 0003a job table template (crm-001); ids-only payloads, no tenant rows",
     "status_transition": "reference data for the status trigger (crm-002), no tenant column",
 }
+# Append-only tenant tables (crm-003): tenant column, RLS and policy as the template, but no updated_at, no trash
+# columns; instead the append-only trigger, and crm_app may only INSERT and SELECT.
+APPEND_ONLY_TABLES = {
+    "audit_event": "F5 agency audit (crm-003, AA-934; CRM-12 extends it)",
+}
+APPEND_ONLY_COLUMNS = {
+    "tenant_id": ("uuid", True),
+    "created_at": ("timestamp with time zone", True),
+    "created_by": ("text", True),
+}
 BASE_COLUMNS = {
     "tenant_id": ("uuid", True),
     "created_at": ("timestamp with time zone", True),
@@ -88,7 +98,8 @@ async def test_every_crm_table_follows_the_base_template(admin: asyncpg.Connecti
                 t["oid"],
             )
         }
-        for col, want in BASE_COLUMNS.items():
+        append_only = name in APPEND_ONLY_TABLES
+        for col, want in (APPEND_ONLY_COLUMNS if append_only else BASE_COLUMNS).items():
             if cols.get(col) != want:
                 problems.append(f"{name}.{col}: {cols.get(col)} != {want}")
         if not (t["relrowsecurity"] and t["relforcerowsecurity"]):
@@ -112,6 +123,13 @@ async def test_every_crm_table_follows_the_base_template(admin: asyncpg.Connecti
             "WHERE g.tgrelid = $1 AND NOT g.tgisinternal",
             t["oid"],
         )
+        if append_only:
+            if "reject_append_only_change" not in {r["proname"] for r in triggers}:
+                problems.append(f"{name}: append-only trigger")
+            for privilege in ("UPDATE", "DELETE", "TRUNCATE"):
+                if await admin.fetchval("SELECT has_table_privilege($1, $2::oid, $3)", APP_ROLE, t["oid"], privilege):
+                    problems.append(f"{name}: crm_app may {privilege} an append-only table")
+            continue
         if "set_updated_at" not in {r["proname"] for r in triggers}:
             problems.append(f"{name}: updated_at trigger")
         if "status" in cols and "enforce_status_transition" not in {r["proname"] for r in triggers}:

@@ -73,6 +73,13 @@ def test_identity_values_are_read() -> None:
         ({"JOB_RETENTION_UTC_HOUR": "-1"}, "between 0 and 23"),
         ({"SENTRY_DSN": "http://x"}, "SENTRY_DSN"),
         ({"SENTRY_REQUIRED": "true"}, "SENTRY_REQUIRED"),
+        ({"KEY_PROVIDER": "vault9"}, "KEY_PROVIDER must be"),
+        ({"KEY_PROVIDER": "local"}, "KEY_PROVIDER=local"),
+        ({"ENVIRONMENT": "prod", "KEY_PROVIDER": "local"}, "KEY_PROVIDER=local"),
+        ({"LOCAL_KEK_B64": "abc"}, "LOCAL_KEK_B64"),
+        ({"KMS_DATA_KEY_ID": "crm-dev/data"}, "KMS_DATA_KEY_ID"),
+        ({"DEK_CACHE_TTL_SECONDS": "901"}, "DEK_CACHE_TTL_SECONDS"),
+        ({"DEK_CACHE_TTL_SECONDS": "-1"}, "DEK_CACHE_TTL_SECONDS"),
     ],
 )
 def test_unsafe_values_are_refused(env: dict[str, str], message: str) -> None:
@@ -82,3 +89,22 @@ def test_unsafe_values_are_refused(env: dict[str, str], message: str) -> None:
 
 def test_insecure_db_only_in_test_or_local() -> None:
     assert Settings(environment="local", db_ssl="disable").db_ssl == "disable"
+
+
+def test_key_provider_defaults_per_environment() -> None:
+    dev = load_settings({})
+    assert (dev.key_provider, dev.kms_data_key_id, dev.keys_state, dev.dek_cache_ttl_seconds) == (
+        "kms",
+        "",
+        "not_configured",
+        300,
+    )
+    assert load_settings({"KMS_DATA_KEY_ID": "alias/crm-dev/data"}).keys_state == "kms"
+    for key_id in (
+        "arn:aws:kms:us-west-1:123456789012:key/0f0e0d0c-0b0a-4908-8706-050403020100",
+        "0f0e0d0c-0b0a-4908-8706-050403020100",
+    ):
+        assert load_settings({"KMS_DATA_KEY_ID": key_id}).kms_data_key_id == key_id
+    test = load_settings({"ENVIRONMENT": "test", "LOCAL_KEK_B64": "A" * 44, "DEK_CACHE_TTL_SECONDS": "0"})
+    assert (test.key_provider, test.keys_state, test.dek_cache_ttl_seconds) == ("local", "local", 0)
+    assert "AAAA" not in repr(test)

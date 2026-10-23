@@ -116,3 +116,70 @@ def test_me_for_a_non_member_is_403() -> None:
             "/crm/v1/me", headers={"Authorization": f"Bearer {pools.partner_web()}", "X-AA-Tenant-Id": str(TENANT)}
         )
     assert (r.status_code, r.json()["detail"]) == (403, "not_a_member")
+
+
+# ── Audit queue (AA-934): written at the end, denials survive the rollback ──────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_queued_events_are_written_when_the_block_succeeds() -> None:
+    conn = _conn()
+    async with tenant_tx(conn, CALLER, TENANT) as ctx:
+        ctx.audit("reveal", "allowed", "traveler", "t-1", fields=("email_enc",), reason="client_call")
+    rows = conn.sql("INSERT INTO crm.audit_event")
+    assert rows == [
+        ("user", f"member:{MEMBER}", "reveal", "allowed", "traveler", "t-1", ["email_enc"], "client_call", None)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_on_error_only_denials_are_written_and_the_error_goes_on() -> None:
+    conn = _conn()
+    with pytest.raises(Forbidden, match="decrypt_denied"):
+        async with tenant_tx(conn, CALLER, TENANT) as ctx:
+            ctx.audit("reveal", "allowed", "traveler", "t-1", fields=("email_enc",))
+            ctx.audit("decrypt", "denied", "traveler", "t-2", fields=("email_enc",), reason="integrity_check_failed")
+            raise Forbidden("decrypt_denied")
+    rows = conn.sql("INSERT INTO crm.audit_event")
+    assert [r[2:4] for r in rows] == [("decrypt", "denied")]
+
+
+@pytest.mark.asyncio
+async def test_on_error_without_denials_nothing_is_written() -> None:
+    conn = _conn()
+    with pytest.raises(RuntimeError):
+        async with tenant_tx(conn, CALLER, TENANT) as ctx:
+            ctx.audit("reveal", "allowed", "traveler", "t-1")
+            raise RuntimeError("boom")
+    assert conn.sql("INSERT INTO crm.audit_event") == []
+
+
+@pytest.mark.asyncio
+async def test_reader_role_is_dropped_before_writing_events() -> None:
+    conn = _conn()
+    async with tenant_tx(conn, CALLER, TENANT, reader_role="crm_support_reader") as ctx:
+        assert ctx.reader_role == "crm_support_reader"
+        ctx.audit("decrypt", "denied", "traveler", "t-1", reason="tenant_mismatch")
+    sqls = [flat for flat, _ in conn.calls]
+    assert sqls.index("SET LOCAL ROLE NONE") < next(i for i, s in enumerate(sqls) if "crm.audit_event" in s)
+
+
+def test_audit_events_carry_codes_only() -> None:
+    from app.audit import AuditEvent
+
+    ok = AuditEvent("user", "member:1", "decrypt", "denied", "traveler", "t-1", ("email_enc",), "tenant_mismatch", "r1")
+    assert ok.row()[6] == ["email_enc"]
+    assert AuditEvent("system", "system:x", "a", "allowed", "b", request_id="bad id with spaces").request_id is None
+    bad = [
+        {"actor_kind": "hacker"},
+        {"outcome": "maybe"},
+        {"actor_ref": "an@example.test"},
+        {"action": "Reveal Email"},
+        {"object_id": "Nguyễn"},
+        {"fields": ("Email",)},
+        {"reason": "the client asked me on the phone"},
+    ]
+    base = {"actor_kind": "user", "actor_ref": "member:1", "action": "decrypt", "outcome": "denied", "object_kind": "t"}
+    for change in bad:
+        with pytest.raises(ValueError):
+            AuditEvent(**{**base, **change})

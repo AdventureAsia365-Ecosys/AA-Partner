@@ -18,6 +18,9 @@
 --     blind indexes *_bidx (CRM-06);
 --   * money rows: amount numeric(14,2), currency char(3) and the frozen FX block (design v3 §3.2), corrections as new
 --     rows with supersedes_id.
+-- Append-only variant (crm-003, crm.audit_event): base columns tenant_id, created_at, created_by only (no updated_at,
+-- no trash columns), the same RLS policy, the trigger crm.reject_append_only_change() BEFORE UPDATE OR DELETE (and
+-- BEFORE TRUNCATE), and REVOKE UPDATE, DELETE, TRUNCATE FROM crm_app; listed in APPEND_ONLY_TABLES of the test.
 -- Grants: none to write. crm-001's default privileges give crm_app DML on every new table; the NOLOGIN readers get
 -- nothing by default (grant them table by table, never on the F1 vault tables).
 

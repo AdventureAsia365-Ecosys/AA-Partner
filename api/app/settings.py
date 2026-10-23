@@ -32,6 +32,19 @@ class whose values are empty accepts no token at all (fail closed).
   accepted on ``/crm/v1`` on Dev only, until AA-939 (ADR 0006b decision 6). Refused when ``ENVIRONMENT`` is not
   ``dev``/``test``/``local``.
 
+Field encryption (AA-934, design v3 §4.1; ``app.vault``):
+
+- ``KEY_PROVIDER``: ``kms`` or ``local``. Default ``kms`` when ``ENVIRONMENT`` is ``dev``/``stg``/``prod``, ``local``
+  when it is ``test``/``local``. ``local`` (an in-process AES keyring instead of KMS) is refused outside
+  ``test``/``local``.
+- ``KMS_DATA_KEY_ID``: the KMS key that wraps the per-tenant DEKs, as an alias (``alias/crm-<env>/data``, set by
+  Terraform), a key ARN or a key id. Optional: without it (and with ``KEY_PROVIDER=kms``) the service starts, the
+  readiness body says ``keys: not_configured`` and every encrypt / decrypt answers 503 ``key_provider_not_configured``.
+- ``LOCAL_KEK_B64``: ``local`` only; base64 of a 32-byte KEK. Empty = a random KEK per process (data written by an
+  earlier process is then unreadable, which is fine for tests).
+- ``DEK_CACHE_TTL_SECONDS``: how long an unwrapped DEK stays in the process cache (default 300, the design's "about
+  5 minutes"; 0 turns the cache off; at most 900).
+
 Rate limits (ADR 0010 decision 2: CloudFront → VPC origin bypasses API Gateway throttling):
 
 - ``RATE_LIMIT_PUBLIC_PER_MINUTE``: requests per client address per minute on the unauthenticated routes (default
@@ -59,6 +72,10 @@ FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 DEFAULT_RATE_LIMIT_PER_MINUTE = 120
 DEFAULT_XFF_HOPS = 2
 DEFAULT_RETENTION_UTC_HOUR = 19
+KEY_PROVIDERS = frozenset({"kms", "local"})
+DEFAULT_DEK_CACHE_TTL_S = 300
+MAX_DEK_CACHE_TTL_S = 900
+_KMS_KEY_PREFIXES = ("alias/", "arn:aws:kms:")
 
 
 class SettingsError(ValueError):
@@ -87,6 +104,10 @@ class Settings:
     sentry_required: bool = False
     job_retention_dry_run: bool = True
     job_retention_utc_hour: int = DEFAULT_RETENTION_UTC_HOUR
+    key_provider: str = "kms"
+    kms_data_key_id: str = ""
+    local_kek_b64: str = field(default="", repr=False)
+    dek_cache_ttl_seconds: int = DEFAULT_DEK_CACHE_TTL_S
 
     def __post_init__(self) -> None:
         if self.environment not in {"dev", "stg", "prod"} | INSECURE_ENVIRONMENTS:
@@ -130,6 +151,32 @@ class Settings:
             raise SettingsError("SENTRY_DSN must be an https:// URL")  # the value is never echoed
         if self.sentry_required and not self.sentry_dsn:
             raise SettingsError("SENTRY_REQUIRED is on but SENTRY_DSN is empty")
+        if self.key_provider not in KEY_PROVIDERS:
+            raise SettingsError(f"KEY_PROVIDER must be one of {sorted(KEY_PROVIDERS)}, got {self.key_provider!r}")
+        if self.key_provider == "local" and self.environment not in INSECURE_ENVIRONMENTS:
+            raise SettingsError(
+                f"KEY_PROVIDER=local is only allowed when ENVIRONMENT is one of {sorted(INSECURE_ENVIRONMENTS)}"
+            )
+        if self.local_kek_b64 and self.key_provider != "local":
+            raise SettingsError("LOCAL_KEK_B64 is only read with KEY_PROVIDER=local")
+        if self.kms_data_key_id and not (
+            self.kms_data_key_id.startswith(_KMS_KEY_PREFIXES) or _looks_like_key_id(self.kms_data_key_id)
+        ):
+            raise SettingsError("KMS_DATA_KEY_ID must be an alias/..., a KMS key ARN or a key id")
+        if not 0 <= self.dek_cache_ttl_seconds <= MAX_DEK_CACHE_TTL_S:
+            raise SettingsError(f"DEK_CACHE_TTL_SECONDS must be between 0 and {MAX_DEK_CACHE_TTL_S}")
+
+    @property
+    def keys_state(self) -> str:
+        """``kms`` / ``local`` when field encryption can run, else ``not_configured`` (readiness body)."""
+        if self.key_provider == "kms" and not self.kms_data_key_id:
+            return "not_configured"
+        return self.key_provider
+
+
+def _looks_like_key_id(value: str) -> bool:
+    parts = value.split("-")
+    return [len(p) for p in parts] == [8, 4, 4, 4, 12] and all(c in "0123456789abcdef-" for c in value)
 
 
 _WORKFORCE_CLIENTS = frozenset(
@@ -165,6 +212,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     env = os.environ if env is None else env
     database_url = env.get("DATABASE_URL") or None
     environment = (env.get("ENVIRONMENT") or "dev").strip().lower()
+    default_provider = "local" if environment in INSECURE_ENVIRONMENTS else "kms"
     return Settings(
         database_url=database_url,
         db_ssl=(env.get("DB_SSL") or "require").strip().lower(),
@@ -192,4 +240,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         job_retention_utc_hour=_int(
             env.get("JOB_RETENTION_UTC_HOUR"), DEFAULT_RETENTION_UTC_HOUR, "JOB_RETENTION_UTC_HOUR"
         ),
+        key_provider=(_text(env, "KEY_PROVIDER") or default_provider).lower(),
+        kms_data_key_id=_text(env, "KMS_DATA_KEY_ID"),
+        local_kek_b64=_text(env, "LOCAL_KEK_B64"),
+        dek_cache_ttl_seconds=_int(env.get("DEK_CACHE_TTL_SECONDS"), DEFAULT_DEK_CACHE_TTL_S, "DEK_CACHE_TTL_SECONDS"),
     )
