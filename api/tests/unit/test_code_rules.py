@@ -6,7 +6,10 @@
   provisioning modules :data:`PROVISIONING_MODULES` only (AA-935: creating an agency, before any member exists). Any
   other receiver (a pool, ``request_pool()``, a connection from ``acquire()``, an alias of ``ctx.conn``, ``ctx.conn``
   after the block) fails, and so does rebinding ``<ctx>`` inside the block. Routers reach platform tables through
-  the job queue only.
+  the job queue only. AA-936: the platform contexts ``system_tx()`` (job handlers, :data:`SYSTEM_MODULES`) and
+  ``intake_tx()`` (the public intake form, :data:`INTAKE_MODULES`) count as context factories too, each allowed only
+  in its modules; and a function whose parameter is annotated with a context type (:data:`CONTEXT_TYPES`) may call
+  ``<param>.conn`` (it can only have been handed a context that one of the factories opened).
 - **Import boundary** (ADR 0010 decision 1): app/ imports only the standard library, the pinned third-party packages
   and ``app`` itself — never a CIS or TripPlanner backend module.
 """
@@ -45,11 +48,16 @@ DB_MODULES = frozenset(
         "app/jobs/metrics.py",  # crm.job backlog sampler
         "app/jobs/handlers.py",  # crm.job retention (platform table)
         "app/vault/store.py",  # DEK store: crm.tenant_key, only on the connection of a TenantContext (AA-934)
+        "app/llm/usage.py",  # crm.llm_usage_daily: platform rollup, no tenant rows (AA-936)
     }
 )
 # The only modules that may open the platform context provisioning_tx() (no membership check): agency creation and the
 # Dev seeder. Never a router: /crm/v1 request code reaches tenant data through tenant_tx() only.
 PROVISIONING_MODULES = frozenset({"app/agencies.py", "app/seed/__init__.py"})
+# AA-936: the job context in one agency (no member) and the public intake form's context.
+SYSTEM_MODULES = frozenset({"app/intake/process.py", "app/seed/__init__.py"})
+INTAKE_MODULES = frozenset({"app/intake/public.py"})
+CONTEXT_TYPES = frozenset({"TenantContext", "SystemContext", "ProvisioningContext", "AnyContext"})
 THIRD_PARTY = frozenset(
     {
         "asyncpg",
@@ -77,7 +85,24 @@ def _modules() -> list[tuple[str, ast.Module]]:
     return out
 
 
-CONTEXT_FACTORIES = frozenset({"tenant_tx", "provisioning_tx"})
+CONTEXT_FACTORIES = frozenset({"tenant_tx", "provisioning_tx", "system_tx", "intake_tx"})
+
+
+def _context_names(target: ast.expr | None) -> list[str]:
+    """``as ctx`` or ``as (ctx, form)``: the first name is the context."""
+    if isinstance(target, ast.Name):
+        return [target.id]
+    if isinstance(target, ast.Tuple) and target.elts and isinstance(target.elts[0], ast.Name):
+        return [target.elts[0].id]
+    return []
+
+
+def _annotation_names(node: ast.expr | None) -> set[str]:
+    if node is None:
+        return set()
+    return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)} | {
+        n.value for n in ast.walk(node) if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    }
 
 
 def _is_tenant_tx(call: ast.expr) -> bool:
@@ -98,9 +123,10 @@ class _DbAccess(ast.NodeVisitor):
 
     def visit_AsyncWith(self, node: ast.AsyncWith) -> None:
         bound = [
-            item.optional_vars.id
+            name
             for item in node.items
-            if _is_tenant_tx(item.context_expr) and isinstance(item.optional_vars, ast.Name)
+            if _is_tenant_tx(item.context_expr)
+            for name in _context_names(item.optional_vars)
         ]
         for item in node.items:
             self.visit(item)
@@ -108,6 +134,16 @@ class _DbAccess(ast.NodeVisitor):
         for stmt in node.body:
             self.visit(stmt)
         del self.ctx_names[len(self.ctx_names) - len(bound) :]
+
+    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        args = node.args.posonlyargs + node.args.args + node.args.kwonlyargs
+        bound = [a.arg for a in args if _annotation_names(a.annotation) & CONTEXT_TYPES]
+        self.ctx_names.extend(bound)
+        self.generic_visit(node)
+        del self.ctx_names[len(self.ctx_names) - len(bound) :]
+
+    visit_FunctionDef = _visit_function
+    visit_AsyncFunctionDef = _visit_function
 
     def visit_Name(self, node: ast.Name) -> None:
         if isinstance(node.ctx, ast.Store | ast.Del) and node.id in self.ctx_names:
@@ -196,6 +232,60 @@ def test_provisioning_tx_is_used_only_by_the_provisioning_modules() -> None:
             if isinstance(node, ast.ImportFrom) and any(a.name == "provisioning_tx" for a in node.names):
                 users.append(f"{rel}:{node.lineno} imports provisioning_tx")
     assert users == [], "provisioning_tx outside agency provisioning: " + ", ".join(users)
+
+
+def _users_of(name: str, allowed: frozenset[str]) -> list[str]:
+    users = []
+    for rel, tree in _modules():
+        if rel in DB_MODULES or rel in allowed:
+            continue
+        for node in ast.walk(tree):
+            found = node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
+            if found == name:
+                users.append(f"{rel}:{node.lineno}")
+            if isinstance(node, ast.ImportFrom) and any(a.name == name for a in node.names):
+                users.append(f"{rel}:{node.lineno} imports {name}")
+    return users
+
+
+def test_system_tx_is_used_only_by_the_job_modules() -> None:
+    assert _users_of("system_tx", SYSTEM_MODULES) == []
+
+
+def test_intake_tx_is_used_only_by_the_public_intake_module() -> None:
+    assert _users_of("intake_tx", INTAKE_MODULES) == []
+
+
+CONTEXT_PARAM_ALLOWED = """
+async def helper(ctx: TenantContext | SystemContext, x):
+    return await ctx.conn.fetchrow("SELECT 1")
+
+async def job(pool, t):
+    async with system_tx(pool, t, actor="job:x") as ctx:
+        await ctx.conn.execute("SELECT 1")
+    async with intake_tx(pool, "k" * 22) as (ictx, form):
+        await ictx.conn.execute("SELECT 1")
+"""
+
+CONTEXT_PARAM_FORBIDDEN = {
+    "untyped parameter": "async def helper(ctx):\n    await ctx.conn.fetch('x')\n",
+    "other type": "async def helper(ctx: Pool):\n    await ctx.conn.fetch('x')\n",
+    "after the function": (
+        "async def helper(ctx: TenantContext):\n    pass\n\nasync def g(ctx):\n    await ctx.conn.fetch('x')\n"
+    ),
+    "the form, not the context": (
+        "async def f(pool):\n    async with intake_tx(pool, 'k') as (ctx, form):\n        await form.conn.fetch('x')\n"
+    ),
+}
+
+
+def test_the_lint_allows_context_typed_parameters() -> None:
+    assert db_access_offenders(ast.parse(CONTEXT_PARAM_ALLOWED)) == []
+
+
+def test_the_lint_refuses_untyped_context_parameters() -> None:
+    for name, source in CONTEXT_PARAM_FORBIDDEN.items():
+        assert db_access_offenders(ast.parse(source)), name
 
 
 def test_the_lint_allows_ctx_conn_inside_tenant_tx() -> None:

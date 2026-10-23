@@ -5,6 +5,7 @@ Every path is under ``/crm`` (CloudFront -> VPC origin -> ALB host + path rule -
 
 - ``/crm/health``, ``/crm/health/ready``: public, rate limited (``app.routers.health``);
 - ``/crm/ci/deploy-gate``: the Deploy Dev workflow's GitHub OIDC token only (``app.routers.ci``);
+- ``/crm/public/v1``: the public inquiry form, no token, rate limited (``app.routers.public``, AA-936);
 - ``/crm/v1``, ``/crm/ops/v1``, ``/crm/staff/v1``: the three route classes, each behind its token-audience guard
   (``app.auth.route_guard``, root ADR 0006b decision 6).
 
@@ -36,7 +37,7 @@ from app.jobs.worker import Worker
 from app.observability import setup as setup_observability
 from app.observability.request_id import RequestIdMiddleware, unhandled_error_handler
 from app.ratelimit import FixedWindowLimiter
-from app.routers import agency, ci, health, ops, staff
+from app.routers import agency, ci, health, ops, pipeline, public, staff
 from app.settings import Settings, load_settings
 from app.vault import KeyProvider, build_key_provider
 
@@ -72,7 +73,7 @@ def create_app(
         if settings.worker_enabled and db.configured:
             worker = Worker(
                 db.pool,
-                job_handlers.build_handlers(retention_dry_run=settings.job_retention_dry_run),
+                job_handlers.build_handlers(retention_dry_run=settings.job_retention_dry_run, keys=app.state.keys),
                 recurring=job_handlers.RECURRING,
                 hooks=job_handlers.build_hooks(retention_utc_hour=settings.job_retention_utc_hour),
             )
@@ -106,12 +107,17 @@ def create_app(
     app.state.deploy_verifier = deploy_verifier
     app.state.keys = keys  # app.vault.KeyProvider, or None when KMS_DATA_KEY_ID is missing (vault calls answer 503)
     app.state.public_limiter = FixedWindowLimiter(settings.rate_limit_public_per_minute)
+    # AA-936: inquiry-form submissions, per client address per minute and per form per hour.
+    app.state.intake_limiter = FixedWindowLimiter(settings.rate_limit_intake_per_minute)
+    app.state.intake_form_limiter = FixedWindowLimiter(settings.rate_limit_intake_form_per_hour, window_s=3600.0)
     app.add_exception_handler(ServiceError, service_error_handler)
     app.add_exception_handler(Exception, unhandled_error_handler)
     app.add_middleware(RequestIdMiddleware)
     app.include_router(health.router)
     app.include_router(ci.router)
+    app.include_router(public.router)
     app.include_router(agency.router)
+    app.include_router(pipeline.router)
     app.include_router(ops.router)
     app.include_router(staff.router)
     return app

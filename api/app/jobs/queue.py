@@ -279,3 +279,24 @@ async def prune(pool: asyncpg.Pool, kind: str, keep_days: int) -> int:
         keep_days,
     )
     return int(deleted or 0)
+
+
+async def kind_summary(pool: asyncpg.Pool) -> list[dict[str, Any]]:
+    """Per kind: queued, running, failed in the last 24 h, age of the oldest due queued row (crm.ops.v1
+    ``JobKindRow``; CIS sees CRM jobs, card CRM-08). Counts only."""
+    rows = await pool.fetch(
+        """
+        SELECT kind,
+               count(*) FILTER (WHERE status = 'queued')::int AS queued,
+               count(*) FILTER (WHERE status = 'running')::int AS running,
+               count(*) FILTER (WHERE status = 'failed' AND finished_at > now() - interval '24 hours')::int
+                   AS failed_24h,
+               extract(epoch FROM now() - min(run_after) FILTER (WHERE status = 'queued' AND run_after <= now()))::int
+                   AS oldest_queued_age_s
+          FROM crm.job
+         WHERE status IN ('queued', 'running') OR (status = 'failed' AND finished_at > now() - interval '24 hours')
+         GROUP BY kind
+         ORDER BY kind
+        """
+    )
+    return [dict(r) for r in rows]

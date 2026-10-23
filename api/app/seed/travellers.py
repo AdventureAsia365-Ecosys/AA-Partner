@@ -9,15 +9,16 @@ given names (its plain ``first_name`` returns English placeholders). E-mail addr
 top-level domain (RFC 2606), so no message to a synthetic traveller can ever be delivered; phones are fake numbers in
 E.164 form.
 
-The vault table ``crm.traveler`` exists (crm-003, AA-934); rows are written by the intake card (AA-936) through
-:mod:`app.vault` field encryption: this module is the generator those cards import; :mod:`app.seed` reports the
-planned travellers and does not write them before that path exists (no personal data outside the vault rules).
+AA-936: :func:`inquiry_for` turns a traveller into a Stage 1 inquiry; ``python -m app.seed --apply --travellers``
+stores those through the same path as the public form (encrypted submission + ``crm_intake_process`` job), so the
+synthetic travellers reach ``crm.traveler`` only through :mod:`app.vault` field encryption.
 """
 
 from __future__ import annotations
 
 import hashlib
 import unicodedata
+import uuid
 from dataclasses import asdict, dataclass
 from datetime import date
 
@@ -100,3 +101,32 @@ def travellers_for(agency_key: str, locales: tuple[str, ...], count: int) -> lis
     if count < 0 or not locales:
         raise ValueError("count must be >= 0 and locales non-empty")
     return [make_traveller(agency_key, i, locales[i % len(locales)]) for i in range(count)]
+
+
+def inquiry_for(person: SyntheticTraveller) -> dict[str, object]:
+    """A Stage 1 inquiry (``app.intake.stage1`` shape) this synthetic traveller submits (AA-936): deterministic per
+    agency and index, varied enough to fill the board (destinations, months, party, budget band, style)."""
+    from app.intake import stage1
+
+    i = person.index
+    places = [c for c in stage1.DESTINATIONS if c != "not_sure"]
+    answers: dict[str, object] = {
+        "destinations": [places[i % len(places)]] + ([places[(i + 3) % len(places)]] if i % 3 == 0 else []),
+        "month": f"{2027 + (i // 12) % 2}-{(i % 12) + 1:02d}",
+        "nights": 5 + (i * 3) % 12,
+        "adults": 1 + i % 4,
+        "child_ages": [6 + i % 9] if i % 4 == 0 else [],
+        "party_type": stage1.PARTY_TYPES[i % len(stage1.PARTY_TYPES)],
+        "budget_band": stage1.BUDGET_BANDS[i % len(stage1.BUDGET_BANDS)],
+        "trip_style": stage1.TRIP_STYLES[i % len(stage1.TRIP_STYLES)],
+        "name": person.full_name,
+        "email": person.email,
+        "phone": person.phone_e164,
+        "preferred_channel": "email",
+        "heard_from": stage1.HEARD_FROM[i % len(stage1.HEARD_FROM)],
+        "consent_contact": True,
+        "consent_marketing": i % 2 == 0,
+        "locale": person.preferred_language,
+        "client_submission_id": str(uuid.UUID(hashlib.sha256(f"{person.agency_key}:{i}".encode()).hexdigest()[:32])),
+    }
+    return answers

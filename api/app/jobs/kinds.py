@@ -16,6 +16,8 @@ from __future__ import annotations
 
 HEARTBEAT = "crm_heartbeat"
 JOB_RETENTION = "crm_job_retention"
+# AA-936: one stored inquiry -> traveller, profile, trip at Inquiry, reply task (app.intake.process).
+INTAKE_PROCESS = "crm_intake_process"
 
 DEFAULT_EXPECTED_SECONDS = 300
 OVERDUE_FACTOR = 2
@@ -25,6 +27,7 @@ DEPLOY_GATE_EXEMPT: frozenset[str] = frozenset({HEARTBEAT})
 EXPECTED_SECONDS: dict[str, int] = {
     HEARTBEAT: 30,
     JOB_RETENTION: 900,
+    INTAKE_PROCESS: 30,
 }
 
 

@@ -2,6 +2,8 @@
 
 - ``crm_heartbeat`` (every 60 s, one row per minute slot): proves the worker claims and finishes jobs. A due heartbeat
   that stays queued is the "worker stopped" signal (``OldestQueuedAgeSeconds``). Idle-exempt in DB Migrate.
+- ``crm_intake_process`` (AA-936, queued by the public intake route with each stored submission): see
+  :mod:`app.intake.process`.
 - ``crm_job_retention`` (daily, :class:`DailyRetentionSchedule`): data standards §7 row ``crm.job`` — succeeded rows
   30 days, cancelled 90 days after ``finished_at``; queued / running never. **Failed rows are kept**: §7 says "archive
   before delete: failed rows only", and the CRM has no archive bucket yet (CRM-04 rest), so nothing that must be
@@ -22,14 +24,17 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import asyncpg
 
 from app.jobs import queue
-from app.jobs.kinds import HEARTBEAT, JOB_RETENTION
+from app.jobs.kinds import HEARTBEAT, INTAKE_PROCESS, JOB_RETENTION
 from app.jobs.queue import Job
 from app.jobs.worker import Handler, MaintenanceHook, Recurring
+
+if TYPE_CHECKING:  # pragma: no cover
+    from app.vault import KeyProvider
 
 log = logging.getLogger(__name__)
 
@@ -92,8 +97,16 @@ def build_job_retention(dry_run: bool) -> Handler:
     return job_retention
 
 
-def build_handlers(*, retention_dry_run: bool) -> dict[str, Handler]:
-    return {HEARTBEAT: heartbeat, JOB_RETENTION: build_job_retention(retention_dry_run)}
+def build_handlers(*, retention_dry_run: bool, keys: KeyProvider | None = None) -> dict[str, Handler]:
+    """Every kind the worker runs. ``keys``: the field-encryption provider the intake kind needs (AA-936); without
+    it ``crm_intake_process`` jobs are retried until the provider is configured."""
+    from app.intake.process import build_handler as build_intake_handler
+
+    return {
+        HEARTBEAT: heartbeat,
+        JOB_RETENTION: build_job_retention(retention_dry_run),
+        INTAKE_PROCESS: build_intake_handler(keys),
+    }
 
 
 def schedule_key(day: date) -> str:
@@ -141,3 +154,5 @@ def build_hooks(*, retention_utc_hour: int) -> tuple[MaintenanceHook, ...]:
 # goes through a due-now maintenance hook instead (DailyRetentionSchedule): never add one here.
 RECURRING: tuple[Recurring, ...] = (Recurring(HEARTBEAT, every_seconds=60, keep_days=2),)
 SCHEDULED_KINDS: frozenset[str] = frozenset({JOB_RETENTION})
+# Kinds queued by request code, one row per event (AA-936: each stored inquiry), never scheduled.
+EVENT_KINDS: frozenset[str] = frozenset({INTAKE_PROCESS})

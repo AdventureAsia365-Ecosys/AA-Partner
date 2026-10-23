@@ -36,6 +36,16 @@ Two more entry points, each one transaction with its own narrow context (AA-935)
   test checks the importers).
 
 Both commit when the block exits normally and roll back on any exception (no audit queue).
+
+Two platform contexts without a member, each with the same audit queue as ``tenant_tx()`` (AA-936):
+
+- :func:`intake_tx` is the public intake form (``/crm/public/v1``, no token): it sets ``app.intake_key`` from the URL
+  key, which the crm-005 SELECT-only policy ``intake_form_public_lookup`` reads; the form found decides the agency,
+  then ``app.tenant_id`` is set and the agency must be ``active``. Only ``app/intake/public.py`` may open it.
+- :func:`system_tx` is a job's context in one agency (``crm_intake_process``): ``app.tenant_id`` from the job payload,
+  ``app.actor`` = ``job:<kind>``. Only the job handler modules may open it.
+
+A unit test checks the importers of both (``tests/unit/test_code_rules.py``).
 """
 
 from __future__ import annotations
@@ -49,7 +59,7 @@ import asyncpg
 
 from app.audit import INSERT_SQL, AuditEvent, current_request_id
 from app.auth.route_guard import Caller
-from app.errors import Forbidden
+from app.errors import Forbidden, NotFound
 
 READER_ROLES = frozenset({"crm_ai_reader", "crm_insights", "crm_support_reader", "crm_eraser"})
 MEMBER_ROLES = frozenset({"owner", "agent", "assistant"})
@@ -73,6 +83,13 @@ SELECT t.tenant_id, t.display_name, t.default_locale, t.status AS tenant_status,
 # A person belongs to a handful of agencies; the cap keeps one response bounded whatever the data says.
 MAX_MEMBERSHIPS = 50
 PROVISION_ACTOR_PREFIXES = ("platform:", "seed:")
+SYSTEM_ACTOR_PREFIXES = ("job:", "seed:")
+INTAKE_FORM_SQL = """
+SELECT f.intake_form_id, f.tenant_id, f.label, f.form_definition_id, f.allowed_origins, f.honeypot_field,
+       f.default_owner_member_id, f.lead_source, f.privacy_notice_url
+  FROM crm.intake_form f
+ WHERE f.public_key = $1 AND f.status = 'active' AND f.deleted_at IS NULL
+"""
 
 
 @dataclass(frozen=True)
@@ -136,6 +153,62 @@ class TenantContext:
         return event
 
 
+@dataclass(frozen=True)
+class SystemContext:
+    """A platform context in one agency without a member (:func:`system_tx`, :func:`intake_tx`). Same shape as
+    :class:`TenantContext` for :class:`app.vault.Vault` and the key provider (``conn``, ``tenant_id``, the DEK memos,
+    ``audit``); ``member_id`` / ``member_role`` are None."""
+
+    conn: asyncpg.Connection
+    tenant_id: uuid.UUID
+    actor: str
+    member_id: None = None
+    member_role: None = None
+    reader_role: None = None
+    audit_events: list[AuditEvent] = field(default_factory=list, repr=False)
+    dek_memo: dict[tuple[str, int], bytes] = field(default_factory=dict, repr=False)
+    dek_current: dict[str, int] = field(default_factory=dict, repr=False)
+
+    def audit(
+        self,
+        action: str,
+        outcome: str,
+        object_kind: str,
+        object_id: str | None = None,
+        *,
+        fields: tuple[str, ...] = (),
+        reason: str | None = None,
+    ) -> AuditEvent:
+        event = AuditEvent(
+            actor_kind="system",
+            actor_ref=self.actor,
+            action=action,
+            outcome=outcome,
+            object_kind=object_kind,
+            object_id=object_id,
+            fields=tuple(fields),
+            reason=reason,
+            request_id=current_request_id(),
+        )
+        self.audit_events.append(event)
+        return event
+
+
+@dataclass(frozen=True)
+class IntakeForm:
+    """The public form :func:`intake_tx` found (ids, codes and the agency's own settings; no personal data)."""
+
+    intake_form_id: uuid.UUID
+    tenant_id: uuid.UUID
+    label: str
+    form_definition_id: uuid.UUID
+    allowed_origins: tuple[str, ...]
+    honeypot_field: str
+    default_owner_member_id: uuid.UUID | None
+    lead_source: str
+    privacy_notice_url: str | None
+
+
 @asynccontextmanager
 async def tenant_tx(
     pool: asyncpg.Pool, caller: Caller, tenant_id: uuid.UUID, *, reader_role: str | None = None
@@ -182,7 +255,87 @@ async def tenant_tx(
         raise pending
 
 
-async def _write_audit(ctx: TenantContext, events: list[AuditEvent]) -> None:
+@asynccontextmanager
+async def system_tx(pool: asyncpg.Pool, tenant_id: uuid.UUID, *, actor: str) -> AsyncIterator[SystemContext]:
+    """A job's context in one agency (no member). The agency must exist and be active (else 403 ``tenant_locked`` /
+    ``not_a_member``, which a job handler turns into a permanent failure). Audit semantics as :func:`tenant_tx`."""
+    if not isinstance(tenant_id, uuid.UUID):
+        raise TypeError("tenant_id must be a UUID")
+    if not actor.startswith(SYSTEM_ACTOR_PREFIXES) or len(actor) > 80:
+        raise ValueError(f"system actor must start with one of {SYSTEM_ACTOR_PREFIXES}")
+    pending: Exception | None = None
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        status = await conn.fetchval(TENANT_SQL, tenant_id)
+        if status is None:
+            raise Forbidden("not_a_member")
+        if status != "active":
+            raise Forbidden("tenant_locked")
+        await conn.execute("SELECT set_config('app.actor', $1, true)", actor)
+        ctx = SystemContext(conn=conn, tenant_id=tenant_id, actor=actor)
+        try:
+            async with conn.transaction():  # savepoint: the job's work
+                yield ctx
+        except Exception as exc:
+            denied = [e for e in ctx.audit_events if e.outcome == "denied"]
+            if not denied:
+                raise
+            await _write_audit(ctx, denied)
+            pending = exc
+        else:
+            await _write_audit(ctx, ctx.audit_events)
+    if pending is not None:
+        raise pending
+
+
+@asynccontextmanager
+async def intake_tx(pool: asyncpg.Pool, public_key: str) -> AsyncIterator[tuple[SystemContext, IntakeForm]]:
+    """The public intake form's context: the form found by its URL key decides the agency (no token, no member).
+    An unknown, disabled or trashed key, and a form of a locked or trashed agency, all raise 404 ``form_not_found``
+    (the same answer, so keys cannot be probed). ``app.actor`` = ``intake_form:<id>``."""
+    if not isinstance(public_key, str) or not 20 <= len(public_key) <= 64:
+        raise NotFound("form_not_found")
+    pending: Exception | None = None
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.intake_key', $1, true)", public_key)
+        row = await conn.fetchrow(INTAKE_FORM_SQL, public_key)
+        await conn.execute("SELECT set_config('app.intake_key', '', true)")
+        if row is None:
+            raise NotFound("form_not_found")
+        tenant_id = row["tenant_id"]
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        if await conn.fetchval(TENANT_SQL, tenant_id) != "active":
+            raise NotFound("form_not_found")
+        actor = f"intake_form:{row['intake_form_id']}"
+        await conn.execute("SELECT set_config('app.actor', $1, true)", actor)
+        form = IntakeForm(
+            intake_form_id=row["intake_form_id"],
+            tenant_id=tenant_id,
+            label=row["label"],
+            form_definition_id=row["form_definition_id"],
+            allowed_origins=tuple(row["allowed_origins"] or ()),
+            honeypot_field=row["honeypot_field"],
+            default_owner_member_id=row["default_owner_member_id"],
+            lead_source=row["lead_source"],
+            privacy_notice_url=row["privacy_notice_url"],
+        )
+        ctx = SystemContext(conn=conn, tenant_id=tenant_id, actor=actor)
+        try:
+            async with conn.transaction():  # savepoint: the route's work
+                yield ctx, form
+        except Exception as exc:
+            denied = [e for e in ctx.audit_events if e.outcome == "denied"]
+            if not denied:
+                raise
+            await _write_audit(ctx, denied)
+            pending = exc
+        else:
+            await _write_audit(ctx, ctx.audit_events)
+    if pending is not None:
+        raise pending
+
+
+async def _write_audit(ctx: TenantContext | SystemContext, events: list[AuditEvent]) -> None:
     if not events:
         return
     if ctx.reader_role is not None:
@@ -225,3 +378,7 @@ async def provisioning_tx(
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
         await conn.execute("SELECT set_config('app.actor', $1, true)", actor)
         yield ProvisioningContext(conn=conn, tenant_id=tenant_id, actor=actor)
+
+
+# What helpers that work inside any of the contexts accept (the DB lint allows ``<param>.conn`` on this annotation).
+AnyContext = TenantContext | SystemContext
