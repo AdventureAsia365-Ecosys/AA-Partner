@@ -23,6 +23,14 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 # The roles of the one tenant policy: never PUBLIC (ecosystem catalogue rule b, AA-CIS-Infra db/rls_catalogue_rules.py).
 POLICY_ROLES = {OWNER, APP_ROLE, *READERS}
 
+# Every policy on a crm table other than tenant_isolation, by (table, name): its command and roles. Anything else is
+# refused, so an extra permissive policy (which would widen tenant_isolation, policies are OR-ed) needs a line here.
+#   crm-004: the SELECT-only membership lookups of app.tenancy.caller_memberships() (keyed on app.caller_iss/_sub).
+EXTRA_POLICIES = {
+    ("member", "member_self_lookup"): ("r", {APP_ROLE}),
+    ("tenant", "tenant_member_lookup"): ("r", {APP_ROLE}),
+}
+
 ISS = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_TESTPARTN"
 
 # Tables in schema crm that are not tenant tables, with the reason. Everything else must follow
@@ -105,7 +113,8 @@ async def test_every_crm_table_follows_the_base_template(admin: asyncpg.Connecti
         if not (t["relrowsecurity"] and t["relforcerowsecurity"]):
             problems.append(f"{name}: ENABLE + FORCE row level security")
         policies = await admin.fetch(
-            "SELECT polname, pg_get_expr(polqual, polrelid) AS q, pg_get_expr(polwithcheck, polrelid) AS c, "
+            "SELECT polname, polcmd::text AS cmd, polpermissive, "
+            "pg_get_expr(polqual, polrelid) AS q, pg_get_expr(polwithcheck, polrelid) AS c, "
             "ARRAY(SELECT CASE r WHEN 0 THEN 'public' ELSE r::regrole::text END FROM unnest(polroles) r) AS roles "
             "FROM pg_policy WHERE polrelid = $1",
             t["oid"],
@@ -118,6 +127,14 @@ async def test_every_crm_table_follows_the_base_template(admin: asyncpg.Connecti
         if not tenant_policy or set(tenant_policy[0]["roles"]) != POLICY_ROLES:
             problems.append(f"{name}: one tenant_isolation policy TO the CRM roles (USING + WITH CHECK)")
         problems += [f"{name}.{p['polname']}: TO PUBLIC (catalogue rule b)" for p in policies if "public" in p["roles"]]
+        for p in policies:
+            if p["polname"] == "tenant_isolation":
+                continue
+            want = EXTRA_POLICIES.get((name, p["polname"]))
+            if want is None:
+                problems.append(f"{name}.{p['polname']}: policy not listed in EXTRA_POLICIES")
+            elif (p["cmd"], set(p["roles"])) != want:
+                problems.append(f"{name}.{p['polname']}: {p['cmd']} TO {sorted(p['roles'])} != {want}")
         triggers = await admin.fetch(
             "SELECT p.proname FROM pg_trigger g JOIN pg_proc p ON p.oid = g.tgfoid "
             "WHERE g.tgrelid = $1 AND NOT g.tgisinternal",
