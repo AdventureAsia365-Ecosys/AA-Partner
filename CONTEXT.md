@@ -149,7 +149,10 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 - Secret scan (`.github/workflows/secret-scan.yml`, AA-981 follow-up): **gitleaks** on every PR (lines the PR adds, rules
   and baseline read from the base branch) and **gitleaks full history** nightly, on push to `main` and on demand (every
   branch, tag and pull request head). Rules in `.gitleaks.toml` (same as the root repo), reviewed findings pinned in
-  `.gitleaksignore`; a PR that changes either file needs the label `secret-scan-baseline-reviewed`.
+  `.gitleaksignore`; a PR that changes either file, or adds an inline `gitleaks:allow`, needs the label
+  `secret-scan-baseline-reviewed` (a later push that touches them again removes it). False positives: prefer a
+  narrow allowlist in `.gitleaks.toml`; a commit fingerprint does not survive the squash merge (header of
+  `.gitleaksignore`).
 - Deploy Dev (`.github/workflows/deploy-dev.yml`): OIDC role `aa-crm-dev-app-deploy` (GitHub environment `dev`,
   variable `AWS_ROLE_ARN`), job guard via `/crm/ci/deploy-gate`, immutable SHA tag, latest task definition revision with
   only the image swapped, smoke on `/crm/health` + `/crm/health/ready`.
