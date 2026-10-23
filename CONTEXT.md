@@ -23,7 +23,10 @@ guards, `tenant_tx()` on FORCE row level security, the base table template `crm-
 encryption, blind indexes and the append-only audit of denials, `crm-003`); and the web (AA-935, card CRM-07: the
 Next.js agency shell on the partner host with Cognito sign-in, a server session, the BFF allow-list, host routing,
 EN/VI with locale dates, a health page), the agency directory `crm-004` and the Dev seeder of the synthetic agencies,
-CI and the two Dev deploy workflows.
+CI and the two Dev deploy workflows; and **Slice 1** (AA-936, CRM-08, `crm-005`): the public inquiry form on the
+client host, `crm_intake_process` (blind-index dedupe, a repeat inquiry attaches to the open trip), the pipeline
+board and trip workspace, intake-form settings, the two `crm.ops.v1` reads CIS uses, the LLM gateway stub with its
+call log, and the Dev E2E.
 
 > Read this file before designing or changing anything here (AA-Ecosys steering, "CONTEXT.md first"). Change it in the
 > same PR when a boundary, owner, route class or the stack changes.
@@ -80,6 +83,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | Prefix | Accepts | Then |
 |---|---|---|
 | `/crm/health`, `/crm/health/ready` | no token (rate limited per `CloudFront-Viewer-Address`, IPv6 per /64) | liveness / readiness |
+| `/crm/public/v1` | no token: the inquiry form only (AA-936), served on the **client host** too (ALB rule `/crm/public/*`) | `GET forms/{key}`, `POST forms/{key}/submissions`; the form key decides the agency inside `intake_tx()`; Origin check, honeypot, consent, per-address and per-form limits |
 | `/crm/ci/deploy-gate` | the Deploy Dev workflow's GitHub OIDC token only (`app/auth/ci.py`) | job counts for the deploy guard |
 | `/crm/v1` | PARTNER x {AA-Partner web}; on Dev before AA-939 also EXTERNAL x {`cis-portal`} | `X-AA-Tenant-Id` + `tenant_tx()` (membership in `crm.member`); `GET /crm/v1/memberships` alone needs no header (`caller_memberships()`) |
 | `/crm/ops/v1` | WORKFORCE x {`cis-admin`} | group `cis-admin` reads, `crm-platform-admin` writes |
@@ -113,6 +117,16 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
   members (no membership exists yet): `app.tenant_id` = the new agency, `app.actor` = `seed:*` / `platform:*`. Only
   `app/agencies.py` and the seeder may use it (`test_provisioning_tx_is_used_only_by_the_provisioning_modules`);
   `/crm/v1` request code never does.
+- **`intake_tx(pool, public_key)`** (AA-936) is the public form's context: it sets `app.intake_key` from the URL key,
+  read by the crm-005 SELECT-only policy `intake_form_public_lookup` (TO `crm_app`), then `app.tenant_id` = the
+  form's agency (which must be active) and `app.actor` = `intake_form:<id>`. Unknown, disabled or locked = 404
+  `form_not_found` (keys cannot be probed). Only `app/intake/public.py` may open it.
+- **`system_tx(pool, tenant_id, actor="job:<kind>")`** (AA-936) is a job's context in one agency (no member):
+  `app.tenant_id` from the job payload, the agency must be active, the same audit queue as `tenant_tx()` with
+  `actor_kind = system`. Only the job handler modules (`app/intake/process.py`) and the seeder may open it.
+- The DB lint also accepts `<param>.conn` in a function whose parameter is annotated with a context type
+  (`TenantContext`, `SystemContext`, `ProvisioningContext`, `AnyContext`): helpers such as `app/pipeline.py` take the
+  open context, they never open one.
 - **Agency provisioning** (`app/agencies.py`): on `dev` / `test` / `local` an agency with `is_synthetic = false` is
   refused with **422** `synthetic_required` (card CRM-07 R test); on `prod` a synthetic one with 422
   `synthetic_not_allowed`. Names are NFC-normalised (a Vietnamese name round-trips byte for byte). Creating the same
@@ -153,6 +167,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-002` | `api/migrations/002_crm_tenancy_base.sql` | `crm.tenant`, `crm.member`, `crm.status_transition`, trigger functions, `crm.v_schema_versions` (AA-933) |
 | `crm-003` | `api/migrations/003_crm_vault_keys.sql` | `crm.tenant_key` (DEK store + guard trigger), `crm.integration_credential` (BYO vendor credentials, wizard health, states), `crm.traveler` (F1 vault columns + blind indexes), `crm.audit_event` (append-only) (AA-934) |
 | `crm-004` | `api/migrations/004_crm_tenant_directory.sql` | `crm.tenant.display_name` + `default_locale`; SELECT-only lookup policies `member_self_lookup`, `tenant_member_lookup` TO `crm_app` (AA-935) |
+| `crm-005` | `api/migrations/005_crm_intake_pipeline.sql` | Slice 1 (AA-936): `tenant_settings` (AI switches), `form_definition`, `intake_form` (+ `intake_form_public_lookup`), `form_submission` (encrypted payload), `consent` (append-only), `traveler_profile` (F2), `trip` (every stage in the CHECK, Slice 1 moves only, `crm.enforce_stage_transition`), `trip_stage_history` (append-only), `trip_traveler` / `trip_party`, `task`, `note` (encrypted), `llm_call` (append-only, no text), platform rollup `llm_usage_daily` |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -173,6 +188,7 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 | Kind | Every | What |
 |---|---|---|
 | `crm_heartbeat` | 60 s | Liveness. Always queued; exempt from the deploy gate and from the DB Migrate idle check (Infra `owners.yaml`) |
+| `crm_intake_process` | per stored inquiry (queued in the submission's transaction) | `app/intake/process.py`: e-mail then phone blind-index dedupe; **attach** to the lead's open trip (`inquiry` / `qualifying`, C47 in R6) or create traveller (F1) + profile (F2) + companions + trip at Inquiry + party twins + "Reply within 2 h" task + consent rows; a payload that does not open marks the submission `failed` (permanent). Not deploy-gate exempt |
 | `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
 
 ## CI and release
@@ -237,6 +253,32 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 - **Deploy**: `.github/workflows/deploy-web-dev.yml` (same model as the API deploy, no job guard: the web runs no
   worker), gated by the `dev` environment variable `CRM_WEB_ENABLED`.
 
+## Slice 1: intake, pipeline, LLM gateway (AA-936)
+
+- **Inquiry form (C-01)**: `web/app/c/f/[publicKey]` on the client host renders the Stage 1 form from
+  `GET /crm/public/v1/forms/{key}` (field codes from `app/intake/stage1.py`, the server's validator; the web words
+  them EN/VI). The browser posts to `/crm/public/v1/forms/{key}/submissions` on its own origin, so the API's limits
+  key on the real viewer address. The proxy's CSP `frame-ancestors` for that page = `'self'` + the form's
+  `allowed_origins` (60 s memo). Honeypot filled -> 202, nothing stored; no contact consent -> 422
+  `consent_required`, nothing stored; each drop is one count-only log line (`intake_dropped reason=...`).
+- **Board and trip** (`web/app/(crm)/pipeline`, API `app/pipeline.py`, router `app/routers/pipeline.py`): one
+  `list_view` audit per board load (display name only, no contact data in lists, design §4.4), one `view` event per
+  trip page, one `reveal` event per contact field click. Moves: `inquiry <-> qualifying`, either -> `lost` with a
+  fixed reason (R23), `lost -> inquiry`; the DB enforces the edges (409 `transition_not_allowed`). Assign: the owner
+  assigns anyone; others may take an unassigned trip. Settings > Forms (`web/app/(crm)/settings/forms`): hosted
+  link, embed code, owner-only create / on-off / allowed origins.
+- **CIS sees the CRM** (`crm.ops.v1`): `GET /crm/ops/v1/jobs/summary` (crm.job per kind) and
+  `GET /crm/ops/v1/llm/usage?from&to` (the `llm_usage_daily` rollup), WORKFORCE `cis-admin` token relayed by the CIS
+  API (AA-CIS-App `AppInfo("crm")`).
+- **LLM gateway** (`app/llm/gateway.py`, D12): scrub receipt -> month budget (`tenant_settings.ai_budget_usd`) ->
+  `ai_enabled` (default off) -> call -> one `crm.llm_call` row (no text) + the rollup; every refusal is logged too.
+  Slice 1 ships the stub scrubber / provider pair (a stub scrubber is refused with any real provider); CRM-10 adds the
+  scrubber, CRM-33a Bedrock.
+- **Not in Slice 1** (later cards): the prospect's confirmation mail and the agent alert (traveller mail leaves the
+  agency's own mailbox, CRM-17), system tags from the catalog (R29), conditional forms and the Stage 2 gate (CRM-15),
+  F2 views and reader grants (CRM-09), the `form_submission` 90-day redaction job (CRM-14).
+- **E2E** (`e2e/`, workflow `E2E Dev`, dispatch on main): form -> card on the board within about a minute -> trip.
+
 ## Dev seeder (`api/app/seed/`, AA-935)
 
 `python -m app.seed` inside the API container (ECS Exec on `aa-crm-dev-api`; it has the `crm_app` DSN): DRY RUN by
@@ -244,7 +286,10 @@ default (reads state, writes nothing), `--apply` creates or converges the three 
 `app/seed/catalogue.py` (fixed UUIDv5 ids, one with a Vietnamese name, default locales vi-VN / en-AU / en-US) and the
 members given as `--member KEY:ROLE:SUB` (the subjects the AA-CIS-Infra e2e user script prints; issuer = partner pool
 when set, else EXTERNAL). Faker EN/VI travellers (`app/seed/travellers.py`, deterministic, NFC, `.invalid` e-mail) are
-generated and counted; they are written by the intake card (AA-936) into `crm.traveler` through `app.vault`. Refuses to run
+generated and counted. AA-936: `--apply` makes sure each agency has the inquiry form `Website (synthetic)` (its
+public key is printed); `--apply --travellers` stores the travellers as Stage 1 inquiries through
+`app.intake.public.store_submission` (encrypted submission + `crm_intake_process` job, idempotent per traveller),
+so they reach `crm.traveler` only through `app.vault` (needs the key provider). Refuses to run
 outside `dev` / `test` / `local`. Output: one JSON line per agency, ids, labels and counts only.
 
 ## Configuration (environment of the ECS task, AA-CIS-Infra `crm_app.tf`)
@@ -255,7 +300,9 @@ outside `dev` / `test` / `local`. Output: one JSON line per agency, ids, labels 
 `COGNITO_WORKFORCE_ISSUER`, `COGNITO_CIS_ADMIN_CLIENT_ID`, `COGNITO_BREAKGLASS_CLIENT_ID`, `COGNITO_CRM_STAFF_CLIENT_ID`,
 `COGNITO_PARTNER_ISSUER`, `COGNITO_PARTNER_WEB_CLIENT_ID`, `COGNITO_EXTERNAL_ISSUER`, `COGNITO_CIS_PORTAL_CLIENT_ID`,
 and the key provider `KEY_PROVIDER` (`kms`; `local` only in test / local), `KMS_DATA_KEY_ID` (`alias/crm-<env>/data`),
-`DEK_CACHE_TTL_SECONDS`. Meanings and defaults: `api/app/settings.py`. Live check of the key provider inside the
+`DEK_CACHE_TTL_SECONDS`, and the public intake (AA-936) `INTAKE_PAGE_ORIGINS` (the client host origin; empty on Dev =
+every submission 503 `intake_not_configured`), `RATE_LIMIT_INTAKE_PER_MINUTE` (default 5 per address),
+`RATE_LIMIT_INTAKE_FORM_PER_HOUR` (default 200 per form). Meanings and defaults: `api/app/settings.py`. Live check of the key provider inside the
 container: `python -m app.vault.selftest` (KMS round trip under the nil tenant context, nothing stored).
 
 ## Domain terms
@@ -270,5 +317,9 @@ container: `python -m app.vault.selftest` (KMS round trip under the nil tenant c
   exact match without decrypting.
 - **Synthetic agency**: a Dev agency with `is_synthetic = true` and invented data (`app/seed/`); the only kind Dev
   accepts (ADR 0010 decision 3).
+- **Inquiry**: a trip at stage `inquiry`, created by `crm_intake_process` from a form submission; a repeat
+  submission of the same e-mail (or phone) while the lead's trip is still `inquiry` / `qualifying` attaches to it.
+- **Intake form**: one public form of an agency (`crm.intake_form`, random `public_key` in its URL); its answers are a
+  **submission** (`crm.form_submission`, payload encrypted, redacted after 90 days).
 - **Partner host / client host**: the agency app's host (Dev `partner-dev.`) and the travellers' host (later
   `go-dev.`); never one session across both.
