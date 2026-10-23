@@ -27,7 +27,7 @@ def test_ready_without_database_is_503() -> None:
     with _client() as c:
         r = c.get("/crm/health/ready")
     assert r.status_code == 503
-    assert r.json() == {"status": "not_ready", "db": "not_configured", "schema_version": None, "keys": "not_configured"}
+    assert r.json() == {"status": "not_ready", "db": "not_configured", "schema_version": None}
 
 
 def test_no_docs_or_schema_on_the_public_host() -> None:
