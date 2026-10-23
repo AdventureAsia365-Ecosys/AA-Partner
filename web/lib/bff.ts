@@ -19,9 +19,22 @@ export interface BffRoute {
   card: string;
 }
 
+const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+
 export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "GET", pattern: /^me$/, tenant: true, card: "AA-933/AA-935" },
   { method: "GET", pattern: /^memberships$/, tenant: false, card: "AA-935" },
+  // AA-936 (CRM-08 Slice 1): board, trip workspace, moves, assignment, notes, tasks, contact reveal, forms.
+  { method: "GET", pattern: /^pipeline$/, tenant: true, card: "AA-936" },
+  { method: "GET", pattern: new RegExp(`^trips/${UUID}$`), tenant: true, card: "AA-936" },
+  { method: "PATCH", pattern: new RegExp(`^trips/${UUID}$`), tenant: true, card: "AA-936" },
+  { method: "POST", pattern: new RegExp(`^trips/${UUID}/(stage|owner|notes)$`), tenant: true, card: "AA-936" },
+  { method: "POST", pattern: new RegExp(`^tasks/${UUID}/status$`), tenant: true, card: "AA-936" },
+  { method: "POST", pattern: new RegExp(`^travelers/${UUID}/reveal$`), tenant: true, card: "AA-936" },
+  { method: "GET", pattern: /^members$/, tenant: true, card: "AA-936" },
+  { method: "GET", pattern: /^intake-forms$/, tenant: true, card: "AA-936" },
+  { method: "POST", pattern: /^intake-forms$/, tenant: true, card: "AA-936" },
+  { method: "PATCH", pattern: new RegExp(`^intake-forms/${UUID}$`), tenant: true, card: "AA-936" },
 ];
 
 export function matchBff(method: string, subPath: string, routes: readonly BffRoute[] = BFF_ROUTES): BffRoute | null {

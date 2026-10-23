@@ -36,7 +36,7 @@ export async function crmCall<T>(
   session: Session,
   method: Method,
   subPath: string,
-  opts: { body?: unknown; fetchImpl?: typeof fetch; requestId?: string } = {},
+  opts: { body?: unknown; fetchImpl?: typeof fetch; requestId?: string; query?: URLSearchParams } = {},
 ): Promise<ApiResult<T>> {
   const route = matchBff(method, subPath);
   if (!route) throw new Error(`not on the BFF allow-list: ${method} ${subPath}`);
@@ -49,7 +49,8 @@ export async function crmCall<T>(
   );
   let res: Response;
   try {
-    res = await (opts.fetchImpl ?? fetch)(`${cfg.crmApiOrigin}/crm/v1/${subPath}`, {
+    const qs = opts.query && opts.query.toString() ? `?${opts.query.toString()}` : "";
+    res = await (opts.fetchImpl ?? fetch)(`${cfg.crmApiOrigin}/crm/v1/${subPath}${qs}`, {
       method,
       headers,
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
