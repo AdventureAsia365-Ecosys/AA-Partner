@@ -1,12 +1,14 @@
-# gitleaks config for AA-Partner (AA-933). Used by the "Security Audit" job of .github/workflows/ci.yml, which scans
-# the FULL git history on every PR and every push to main (fetch-depth 0, failing).
+# gitleaks config for AA-Partner (AA-981 follow-up). Used by .github/workflows/secret-scan.yml and by the local
+# commands in the header of that workflow.
 #
-# The rules are a byte-for-byte copy of the AA-Ecosys root / AA-CIS-Infra rules (AA-981): the default gitleaks rules
-# plus a DSN with an embedded password, a plaintext password/key in Terraform code or variables (tf/tfvars/hcl), and a
-# credential-named key with a literal value in a config data file (tfvars, .env, json, yaml). The last one exists
-# because credentials in an old Infra variables file sat in history unseen until an external scanner flagged them after
-# that repo went public (AA-981). This repo is public from its first commit (ADR 0010 decision 1). Keep the rules in
-# step with the root repo: a rule change lands in every repo that carries this file.
+# The rules are a copy of the AA-Ecosys root / AA-CIS-Infra .gitleaks.toml (keep them in step; a rule change lands in
+# every repo that carries this file): the default gitleaks rules plus a DSN with an embedded password, a plaintext
+# password/key in Terraform code or variables (tf/tfvars/hcl), and a credential-named key with a literal value in a
+# config data file (tfvars, .env, json, yaml). The last one exists because credentials in an old Infra variables file
+# sat in history unseen until an external scanner flagged them after that repo went public (AA-981).
+#
+# The same rule set is used by the PR scan (lines a PR adds) and by the full-history scan (every commit of every
+# branch, tag and pull request head, nightly + on push to main); see .github/workflows/secret-scan.yml.
 #
 # Known false positives: prefer a narrow allowlist entry here (path or exact placeholder regex) for a class of values;
 # use .gitleaksignore (one fingerprint per line) for a single finding.
