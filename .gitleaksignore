@@ -1,0 +1,30 @@
+# gitleaks ignore list for AA-Partner (AA-981 follow-up): one finding fingerprint per line, for a single known false
+# positive that a narrow allowlist entry in .gitleaks.toml cannot express. Read by .github/workflows/secret-scan.yml
+# and secret-scan-history.yml.
+#
+# Fingerprint formats (printed by gitleaks with --redact, never the value itself):
+#   <commit sha>:<file>:<rule id>:<line>   pinned: that finding in that one commit only. Use this format.
+#   <file>:<rule id>:<line>                global: that file, rule and line in EVERY commit. gitleaks 8.30 honours it
+#                                          in git mode too, so it suppresses the PR job and the full-history job
+#                                          for any later commit, a real secret at the same place included. Avoid
+#                                          it; if one is unavoidable, put it in its own block with a comment why.
+#   <blob id>/<file>:<rule id>:<line>      a UTF-16 file (the transcoded pass): that finding in that one file
+#                                          content only (blob id = git hash-object of the UTF-16 file).
+# Squash merges: a pinned fingerprint names one commit, and the squash merge writes the same line in a new commit on
+# main. The PR check also scans a squash preview (the PR merged into the base), which a pin of a PR commit does
+# not cover, so it stays red, as the full-history job would after the merge. For a false positive that a PR adds, use
+# a narrow allowlist entry (regex or path) in .gitleaks.toml: it matches every commit. Pins are for findings already
+# in history (old commits, squash commits on the default branch, closed PR heads).
+# An inline gitleaks:allow comment on the line also survives the squash, but it hides that line from both jobs, so
+# the PR job treats it like a change to this file (label needed).
+# Add a short comment above each entry: what the value is and why it is not a secret. Never write the value here.
+# A real secret is never ignored here: remove it, rotate it, then pin the old commit.
+# A change to this file needs the PR label `secret-scan-baseline-reviewed` (see the workflow header).
+
+# --- Full-history baseline (AA-981 follow-up, S248): the first full-history scan with .gitleaks.toml (branches,
+# tags and pull request heads) found nothing, so there is no entry yet.
+
+# AA-981 canary (test/aa981-canary, closed unmerged): a FAKE random value committed on purpose to prove the
+# scan goes red. Its PR head stays fetchable, so it is pinned by commit.
+eebb0f3d4465fa3f971c8b4cb07d86e2833baf23:canary/aa981-canary.tfvars:credential-key-literal:2
+eebb0f3d4465fa3f971c8b4cb07d86e2833baf23:canary/aa981-canary.tfvars:terraform-plaintext-secret:2

@@ -143,10 +143,24 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 
 ## CI and release
 
-- Required checks: **Lint**, **Security Audit** (DM-6.10 resource-ID scan, pip-audit, gitleaks over the full history
-  with `.gitleaks.toml`), **Unit Tests** (coverage >= 90 %), **Integration Tests** (PostgreSQL 15, no skips),
-  **Docker Build Check** (native arm64 build, container smoke, Trivy, SBOM); plus **Docs lint**, **PR title**.
-  Non-required: **Vendored CIS copies**.
+- Required checks: **Lint**, **Security Audit** (DM-6.10 resource-ID scan, pip-audit), **Unit Tests** (coverage >= 90 %),
+  **Integration Tests** (PostgreSQL 15, no skips), **Docker Build Check** (native arm64 build, container smoke, Trivy,
+  SBOM); plus **Docs lint**, **PR title**, **gitleaks**. Non-required: **Vendored CIS copies**.
+- Secret scan (`.github/workflows/secret-scan.yml`, AA-981 follow-up): **gitleaks** on every PR (lines the PR adds, rules
+  and baseline read from the base branch) and **gitleaks full history** (`secret-scan-history.yml`) nightly, on push to `main` and on demand (every
+  branch, tag and pull request head). Rules in `.gitleaks.toml` (same as the root repo), reviewed findings pinned in
+  `.gitleaksignore`; a PR that changes either file, either secret scan workflow, `.github/CODEOWNERS` or any `.gitattributes`, or
+  adds an inline `gitleaks:allow`, needs
+  the label `secret-scan-baseline-reviewed` after the last push (any later push, reopen or label change removes
+  it). Merge commits (remerge diff), renames and type changes are scanned too, every file as text. A red result
+  means the value is public: rotate it, even if it was force-pushed away. False positives: prefer a
+  narrow allowlist in `.gitleaks.toml`; a commit fingerprint does not survive the squash merge (header of
+  `.gitleaksignore`).
+  The PR check runs on `pull_request_target`: GitHub always runs the base branch's copy of the workflow and the PR
+  head is only read as data, so a PR cannot change the check that judges it. It also scans a squash preview of the PR
+  (what the squash merge writes), and it fails when another workflow has a job named `gitleaks`. `.gitleaks.toml`
+  carries a copy of the gitleaks v8.30.1 default rules and no path allowlist, so every file is scanned (`.svg`,
+  `go.sum`, `node_modules/`, images, lock files); UTF-16 files are transcoded to UTF-8 and scanned too.
 - Deploy Dev (`.github/workflows/deploy-dev.yml`): OIDC role `aa-crm-dev-app-deploy` (GitHub environment `dev`,
   variable `AWS_ROLE_ARN`), job guard via `/crm/ci/deploy-gate`, immutable SHA tag, latest task definition revision with
   only the image swapped, smoke on `/crm/health` + `/crm/health/ready`.

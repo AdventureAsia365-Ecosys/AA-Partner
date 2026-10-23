@@ -8,7 +8,8 @@ name: Docs lint
 # Weekly (and on demand): freshness report of pages past their review date, as a run artifact.
 #
 # Not repeated here: literal resource IDs are already blocked in every tracked file by the required "Security Audit"
-# job (.github/scripts/check_resource_ids.py, AA-902), and gitleaks runs there on the full history.
+# job (.github/scripts/check_resource_ids.py, AA-902), and gitleaks runs in secret-scan.yml (every PR) and
+# secret-scan-history.yml (full history).
 #
 # No path filter, so the "Docs lint" check reports on every PR and can be added to the required checks. It takes
 # under a minute; Actions minutes are free on a public repo. No AWS, no secrets beyond the read-only token.
@@ -93,7 +94,7 @@ jobs:
           python tools/docs/check_frontmatter.py --freshness-report freshness/freshness.md
           cat freshness/freshness.md >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: docs-freshness
