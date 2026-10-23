@@ -1,4 +1,4 @@
-"""crm-001 and crm-002 on PostgreSQL 15 with the RDS role shape: keys, idempotency, ownership, privileges, readiness."""
+"""Every crm-NNN file on PostgreSQL 15 with the RDS role shape: keys, idempotency, ownership, privileges, readiness."""
 
 from __future__ import annotations
 
@@ -41,6 +41,21 @@ async def test_crm_owner_owns_everything(admin: asyncpg.Connection) -> None:
 async def test_crm002_refuses_the_wrong_role(admin: asyncpg.Connection) -> None:
     with pytest.raises(asyncpg.RaiseError, match="must run as crm_owner"):
         await admin.execute(MIGRATIONS[1].read_text(encoding="utf-8"))
+
+
+async def test_crm004_refuses_to_run_before_the_crm003_vault(admin: asyncpg.Connection) -> None:
+    # crm-004 (AA-935 directory) was drafted as crm-003 and renumbered behind the AA-934 vault: Guard 0 needs crm-003.
+    crm004 = next(p for p in MIGRATIONS if p.name.startswith("004_"))
+    tx = admin.transaction()
+    await tx.start()
+    try:
+        await admin.execute("DELETE FROM shared.schema_versions WHERE version = 'crm-003'")
+        await admin.execute(f"SET LOCAL ROLE {OWNER}")
+        with pytest.raises(asyncpg.RaiseError, match="crm-003 is not registered"):
+            await admin.execute(crm004.read_text(encoding="utf-8"))
+    finally:
+        await tx.rollback()
+    assert await admin.fetchval("SELECT 1 FROM shared.schema_versions WHERE version = 'crm-003'") == 1
 
 
 async def test_runtime_privileges(admin: asyncpg.Connection) -> None:
