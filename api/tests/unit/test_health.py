@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import ipaddress
+
 from fastapi.testclient import TestClient
 
 from app.main import create_app
-from app.ratelimit import FixedWindowLimiter
+from app.ratelimit import FixedWindowLimiter, address_key, client_address
 from app.settings import Settings
 
 
@@ -63,3 +65,57 @@ def test_limit_zero_turns_it_off_and_the_window_resets() -> None:
     assert limiter.allow("a") and not limiter.allow("a")
     now[0] = 61.0
     assert limiter.allow("a")
+
+
+def test_cloudfront_viewer_address_wins_over_x_forwarded_for() -> None:
+    """CloudFront sets CloudFront-Viewer-Address and a viewer cannot: it is the key when present, port stripped, and a
+    different X-Forwarded-For per request does not dodge the limit (review round, AA-933)."""
+    with _client(rate_limit_public_per_minute=2) as c:
+        codes = [
+            c.get(
+                "/crm/health",
+                headers={"CloudFront-Viewer-Address": f"198.51.100.7:{40000 + i}", "X-Forwarded-For": f"203.0.113.{i}"},
+            ).status_code
+            for i in range(3)
+        ]
+        other = c.get("/crm/health", headers={"CloudFront-Viewer-Address": "198.51.100.8:40000"}).status_code
+    assert codes == [200, 200, 429] and other == 200
+
+
+def test_ipv6_viewers_are_keyed_by_their_64() -> None:
+    with _client(rate_limit_public_per_minute=2) as c:
+        codes = [
+            c.get("/crm/health", headers={"CloudFront-Viewer-Address": f"2001:db8:aa:1::{i:x}:443"}).status_code
+            for i in range(1, 4)
+        ]
+        other_64 = c.get("/crm/health", headers={"CloudFront-Viewer-Address": "2001:db8:aa:2::1:443"}).status_code
+    assert codes == [200, 200, 429] and other_64 == 200
+
+
+class _Req:
+    def __init__(self, headers: dict[str, str], peer: str | None = "127.0.0.1") -> None:
+        self.headers = {k.lower(): v for k, v in headers.items()}
+        self.client = type("Peer", (), {"host": peer})() if peer is not None else None
+
+
+def test_client_address_sources_and_fallbacks() -> None:
+    assert client_address(_Req({"CloudFront-Viewer-Address": "203.0.113.9:1234"}), 2) == "203.0.113.9"
+    assert client_address(_Req({"CloudFront-Viewer-Address": "2001:db8::5:80"}), 2) == "2001:db8::/64"
+    # Not an address (or no port): fall back to the X-Forwarded-For hop, then the socket peer.
+    for bad in ("garbage", "203.0.113.9", "not-an-ip:80", ""):
+        req = _Req({"CloudFront-Viewer-Address": bad, "X-Forwarded-For": "1.1.1.1, 198.51.100.7, 10.0.1.5"})
+        assert client_address(req, 2) == "198.51.100.7", bad
+    assert client_address(_Req({"X-Forwarded-For": "2001:db8:1:2:3::9, 10.0.1.5"}), 2) == "2001:db8:1:2::/64"
+    assert client_address(_Req({}), 2) == "127.0.0.1"
+    assert client_address(_Req({}, peer=None), 2) == "unknown"
+    assert address_key(ipaddress.ip_address("::ffff:198.51.100.7")) == "198.51.100.7"
+
+
+def test_a_full_table_evicts_only_the_least_recently_seen_key() -> None:
+    """A flood of new keys must not reset the count of a busy address (the old limiter cleared the whole table)."""
+    limiter = FixedWindowLimiter(2, clock=lambda: 0.0, max_keys=3)
+    assert limiter.allow("busy") and limiter.allow("busy")
+    for i in range(10):
+        limiter.allow(f"new-{i}")
+        assert not limiter.allow("busy")  # still counted: busy is re-seen each round, so never the eviction victim
+    assert limiter.tracked() == 3

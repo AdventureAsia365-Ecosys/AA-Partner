@@ -36,8 +36,9 @@ Rate limits (ADR 0010 decision 2: CloudFront → VPC origin bypasses API Gateway
 
 - ``RATE_LIMIT_PUBLIC_PER_MINUTE``: requests per client address per minute on the unauthenticated routes (default
   120; 0 turns the limit off).
-- ``RATE_LIMIT_XFF_HOPS``: which ``X-Forwarded-For`` entry is the client, counted from the right (default 2: the
-  viewer address CloudFront appended, then the address the ALB appended). Verified live after the first deploy.
+- ``RATE_LIMIT_XFF_HOPS``: **fallback only**. The limiter keys on ``CloudFront-Viewer-Address`` (set by CloudFront,
+  not by the viewer); only when that header is missing does it use the ``X-Forwarded-For`` entry this many from the
+  right (default 2: the viewer address CloudFront appended, then the address the ALB appended). See ``app.ratelimit``.
 """
 
 from __future__ import annotations
