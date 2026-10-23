@@ -1,0 +1,16 @@
+# Runtime dependencies (pinned; same stack and pins as AA-Booking: FastAPI + asyncpg, Python 3.12).
+fastapi==0.142.2
+starlette==1.7.0
+uvicorn==0.53.0
+asyncpg==0.31.0
+pydantic==2.13.5
+# Access-token verification (RS256, the vendored multi-issuer verifier) — same library as AA-CIS-App (PyJWT[crypto]).
+PyJWT==2.15.1
+cryptography==50.0.2
+# CloudWatch PutMetricData of the crm.job backlog sampler (app/jobs/metrics.py).
+boto3==1.43.49
+botocore==1.43.49
+# JSON logs + request ids (app/observability): structlog renders stdlib and structlog calls as one JSON line.
+structlog==25.5.0
+# Error tracking, same SDK as AA-CIS-App and AA-Booking; off unless SENTRY_DSN is set.
+sentry-sdk[fastapi]==2.70.0

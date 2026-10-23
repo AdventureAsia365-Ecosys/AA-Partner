@@ -1,0 +1,32 @@
+# Same model as AA-Booking, AA-CIS-App and AA-CIS-Infra (AA-895, S243).
+# - pip (/api): security updates only, grouped into one PR per week (npm joins when web/ exists, AA-935).
+#   Version updates are off (open-pull-requests-limit: 0); the weekly schedule only paces the group.
+# - github-actions: weekly version updates, grouped into one PR (pinned action versions are a supply-chain
+#   control; Infra does the same).
+# Alerts and security updates are switched on in the repo settings. Triage and SLA: AA-Ecosys
+# docs/security/vulnerability-management.md.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/api"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 0
+    groups:
+      python-security:
+        applies-to: security-updates
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 1
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore

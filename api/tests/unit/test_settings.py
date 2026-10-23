@@ -1,0 +1,79 @@
+"""Settings from the environment: defaults, fail-closed identity, unsafe values refused."""
+
+from __future__ import annotations
+
+import pytest
+
+from app.settings import Settings, SettingsError, load_settings
+
+POOL = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_TESTWORKF"
+
+
+def test_defaults_without_environment() -> None:
+    s = load_settings({})
+    assert s.environment == "dev"
+    assert s.db_ssl == "require"
+    assert s.database_url is None
+    assert s.worker_enabled is False  # no DSN
+    assert s.job_retention_dry_run is True
+    # Identity has no default at all (public repo, DM-6.10): every class accepts nothing until Terraform sets it.
+    assert (s.cognito_workforce_issuer, s.cognito_partner_issuer, s.cognito_external_issuer) == ("", "", "")
+    assert s.rate_limit_public_per_minute == 120
+    assert s.rate_limit_xff_hops == 2
+
+
+def test_worker_defaults_on_in_dev_with_a_dsn() -> None:
+    assert load_settings({"DATABASE_URL": "postgresql://crm_app@h/db"}).worker_enabled is True
+    assert load_settings({"DATABASE_URL": "postgresql://crm_app@h/db", "ENVIRONMENT": "test"}).worker_enabled is False
+    assert load_settings({"DATABASE_URL": "x", "WORKER_ENABLED": "false"}).worker_enabled is False
+
+
+def test_dsn_is_not_in_repr() -> None:
+    assert "secret" not in repr(load_settings({"DATABASE_URL": "postgresql://crm_app:secret@h/db"}))
+
+
+def test_identity_values_are_read() -> None:
+    s = load_settings(
+        {
+            "COGNITO_WORKFORCE_ISSUER": POOL,
+            "COGNITO_CIS_ADMIN_CLIENT_ID": "abc123",
+            "COGNITO_BREAKGLASS_CLIENT_ID": "def456",
+            "JOB_RETENTION_DRY_RUN": "off",
+            "RATE_LIMIT_PUBLIC_PER_MINUTE": "0",
+        }
+    )
+    assert (s.cognito_workforce_issuer, s.cognito_cis_admin_client_id, s.cognito_breakglass_client_id) == (
+        POOL,
+        "abc123",
+        "def456",
+    )
+    assert s.job_retention_dry_run is False
+    assert s.rate_limit_public_per_minute == 0
+
+
+@pytest.mark.parametrize(
+    ("env", "message"),
+    [
+        ({"ENVIRONMENT": "staging"}, "ENVIRONMENT"),
+        ({"DB_SSL": "disable"}, "DB_SSL=disable"),
+        ({"DB_SSL": "prefer"}, "DB_SSL"),
+        ({"COGNITO_WORKFORCE_ISSUER": "http://cognito.test/pool"}, "https"),
+        ({"COGNITO_PARTNER_ISSUER": POOL + "/"}, "trailing slash"),
+        ({"COGNITO_CIS_ADMIN_CLIENT_ID": "not a client"}, "client id"),
+        ({"COGNITO_CIS_ADMIN_CLIENT_ID": "same1", "COGNITO_BREAKGLASS_CLIENT_ID": "same1"}, "must differ"),
+        ({"ENVIRONMENT": "prod", "COGNITO_CIS_PORTAL_CLIENT_ID": "abc"}, "Dev-only"),
+        ({"WORKER_ENABLED": "maybe"}, "WORKER_ENABLED"),
+        ({"RATE_LIMIT_PUBLIC_PER_MINUTE": "many"}, "integer"),
+        ({"RATE_LIMIT_PUBLIC_PER_MINUTE": "-1"}, ">= 0"),
+        ({"RATE_LIMIT_XFF_HOPS": "0"}, "between 1 and 5"),
+        ({"SENTRY_DSN": "http://x"}, "SENTRY_DSN"),
+        ({"SENTRY_REQUIRED": "true"}, "SENTRY_REQUIRED"),
+    ],
+)
+def test_unsafe_values_are_refused(env: dict[str, str], message: str) -> None:
+    with pytest.raises(SettingsError, match=message):
+        load_settings(env)
+
+
+def test_insecure_db_only_in_test_or_local() -> None:
+    assert Settings(environment="local", db_ssl="disable").db_ssl == "disable"

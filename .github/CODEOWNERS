@@ -1,0 +1,25 @@
+# CODEOWNERS - AA-Partner.
+#
+# Owners of the risky paths only: CI and workflows, database migrations, sign-in, route-class and tenancy code, the
+# secret-scan rules and the agent rules. There is deliberately no catch-all `*` rule.
+# Dev phase: not enforced. Branch protection does not require code-owner review, so this file only adds a review
+# request; the agent still merges after green CI (risky classes after an agent review). From the first prod or the
+# first paying tenant, "Require review from Code Owners" is turned on and these paths need the owner's approval.
+
+# CI, workflows, Dependabot, CI scripts and this file
+/.github/                                     @pqnghiep1354
+
+# Secret-scan rules (a rule change can hide a leak)
+/.gitleaks.toml                               @pqnghiep1354
+
+# Database migrations (copied to the infra repo and applied by its DB Migrate workflow) and the base table template
+/api/migrations/                              @pqnghiep1354
+/api/db/                                      @pqnghiep1354
+
+# Token verification, route classes and the tenant transaction
+/api/app/auth/                                @pqnghiep1354
+/api/app/tenancy.py                           @pqnghiep1354
+/api/app/jobs/payload_guard.py                @pqnghiep1354
+
+# Agent rules
+/.claude/                                     @pqnghiep1354

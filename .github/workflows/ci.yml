@@ -1,0 +1,236 @@
+name: CI
+
+# Required checks (branch protection on main; names like AA-Booking's and AA-CIS-App's so the rules read the same):
+#   Lint, Security Audit, Unit Tests, Integration Tests, Docker Build Check.
+# Non-required: "Vendored CIS copies" (byte copies of AA-CIS-App files: the job table template + comparator, ADR 0003a,
+# and the multi-issuer verifier, ADR 0006 §8 rule 9).
+#
+# ARM: the API runs on Fargate ARM64 (ADR 0010 decision 2), so the image is built and smoke-tested on a native arm64
+# runner (ubuntu-24.04-arm, free for public repositories); the Python jobs run on x64 (pure-Python code, the pinned
+# wheels exist for both).
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: api
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: api/requirements-dev.txt
+
+      - name: Install ruff
+        run: pip install "$(grep '^ruff==' requirements-dev.txt)"
+
+      - name: ruff check
+        run: ruff check .
+
+      - name: ruff format --check
+        run: ruff format --check .
+
+  # pip-audit FAILS here (as in AA-Booking). The same job runs the DM-6.10 resource-ID check (this repo is public) and
+  # gitleaks over the FULL git history with the shared rules in .gitleaks.toml (AA-981: credential-named keys in
+  # tfvars / .env / JSON / YAML, plaintext Terraform secrets, DSNs with a password), so a committed secret fails CI.
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: "8.30.1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # DM-6.10 (D-25): no AWS account ID, ARN with an account, VPC/SG/subnet ID, Cognito pool ID or API Gateway host
+      # in any tracked file. Stdlib only; byte copy of AA-Booking's script (AA-902).
+      - name: No literal AWS resource IDs (failing)
+        working-directory: .
+        run: python3 .github/scripts/check_resource_ids.py
+
+      - name: pip-audit (runtime + dev requirements, failing)
+        run: |
+          pip install pip-audit==2.10.1 --quiet
+          pip-audit -r requirements.txt
+          pip-audit -r requirements-dev.txt
+
+      - name: gitleaks (full history, shared rules, failing)
+        working-directory: .
+        run: |
+          set -euo pipefail
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "/tmp/${tarball}" "${base}/${tarball}"
+          curl -sSfL -o /tmp/gitleaks_checksums.txt "${base}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          (cd /tmp && grep " ${tarball}\$" gitleaks_checksums.txt | sha256sum -c -)
+          tar -xzf "/tmp/${tarball}" -C /tmp gitleaks
+          /tmp/gitleaks git --config .gitleaks.toml --redact --verbose --exit-code 1 .
+
+  test-unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: api/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      # Includes the route-class guard over every served path, the job payload guard (ids only), the DB access lint,
+      # the import boundary, the deploy preflight script (stub aws/curl) and the vendored-copy checker.
+      - name: Run unit tests
+        env:
+          ENVIRONMENT: test
+        run: pytest tests/unit -v --tb=short --cov=app --cov-report=term-missing --cov-fail-under=90
+
+  # Applies api/migrations/*.sql in order to a real PostgreSQL 15 (the RDS major) as AA-CIS-Infra DB Migrate does:
+  # logged in as aa_cis_admin (NOT superuser, the RDS master shape), each file as crm_owner (SET ROLE), after a role
+  # bootstrap that mirrors Infra rl-003 / rl-004 (tests/integration/bootstrap_roles.py). Then: re-apply (idempotency),
+  # the base-table catalogue guard, cross-tenant RLS, tenant_tx() as crm_app, crm.job against the ADR 0003a template,
+  # lease re-claim of a stopped worker, /crm/health/ready as crm_app.
+  test-integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-only # gitleaks:allow (throwaway CI service container)
+          POSTGRES_DB: crm_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d crm_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: api/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      # -rs lists skips; a skipped integration test would make this check green without testing anything.
+      - name: Run integration tests (no skips allowed)
+        env:
+          ENVIRONMENT: test
+          CRM_TEST_ADMIN_DSN: postgresql://aa_cis_admin:ci-only@localhost:5432/crm_ci # gitleaks:allow (CI-only)
+        run: |
+          set -o pipefail
+          python -m tests.integration.bootstrap_roles "postgresql://postgres:ci-only@localhost:5432/crm_ci" # gitleaks:allow (CI-only)
+          pytest tests/integration -v --tb=short -rs -p no:cacheprovider | tee /tmp/integration.txt
+          if grep -qE "^SKIPPED|[0-9]+ skipped" /tmp/integration.txt; then
+            echo "::error::integration tests were skipped"; exit 1
+          fi
+
+  docker-build:
+    name: Docker Build Check
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      # The release version comes from the manifest at the repo root, like the Deploy Dev build.
+      - name: Build image (linux/arm64, native)
+        run: |
+          docker build \
+            --build-arg GIT_SHA=${{ github.sha }} \
+            --build-arg APP_VERSION="$(jq -r '."."' ../.release-please-manifest.json)" \
+            --tag aa-crm-api:ci-${{ github.sha }} \
+            .
+          docker image inspect aa-crm-api:ci-${{ github.sha }} --format '{{.Architecture}}' | grep -qx arm64
+
+      # The image must start and answer liveness without a database (ALB health check contract).
+      - name: Container answers /crm/health without a database
+        run: |
+          set -euo pipefail
+          docker run -d --name crm-ci -p 8000:8000 aa-crm-api:ci-${{ github.sha }}
+          for i in $(seq 1 20); do
+            if curl -sf http://localhost:8000/crm/health -o /tmp/health.json; then break; fi
+            sleep 1
+          done
+          cat /tmp/health.json
+          jq -e --arg sha "${{ github.sha }}" --arg ver "$(jq -r '."."' ../.release-please-manifest.json)" \
+            '.status == "ok" and .service == "aa-crm-api" and .git_sha == $sha and .version == $ver' /tmp/health.json
+          code=$(curl -s -o /tmp/ready.json -w "%{http_code}" http://localhost:8000/crm/health/ready)
+          cat /tmp/ready.json
+          [ "$code" = "503" ] && jq -e '.db == "not_configured"' /tmp/ready.json
+          code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/crm/v1/me)
+          [ "$code" = "401" ]
+          docker rm -f crm-ci
+
+      # Blocking, like CIS and Booking: fails on any CRITICAL/HIGH finding that HAS a fix (`ignore-unfixed`). An
+      # accepted fixable finding goes into .trivyignore with a `# reason` line and `exp:YYYY-MM-DD` at most 90 days
+      # ahead (.github/scripts/check_trivyignore.py, byte copy of the AA-CIS-App script).
+      - name: Trivy ignore entries carry a reason and an expiry
+        working-directory: .
+        run: python3 .github/scripts/check_trivyignore.py .trivyignore
+
+      - name: Scan image for vulnerabilities (Trivy, failing on fixable CRITICAL/HIGH)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: "aa-crm-api:ci-${{ github.sha }}"
+          format: "table"
+          severity: "CRITICAL,HIGH"
+          ignore-unfixed: true
+          trivyignores: ".trivyignore"
+          exit-code: "1"
+
+      - name: Generate SBOM (syft, CycloneDX)
+        uses: anchore/sbom-action@v0.24.3
+        with:
+          image: "aa-crm-api:ci-${{ github.sha }}"
+          format: cyclonedx-json
+          output-file: sbom-${{ github.sha }}.cdx.json
+          artifact-name: sbom-${{ github.sha }}.cdx.json
+
+  # Non-required: byte copies of AA-CIS-App files (api/tests/job_template/, api/app/auth/identity_verifier.py). Fails
+  # when a copy drifts from CIS main. Stdlib only; the repos are public, github.token only lifts the API rate limit.
+  vendored-copies:
+    name: Vendored CIS copies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compare the vendored CIS files with AA-CIS-App main
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/check_vendored_copies.py
