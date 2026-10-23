@@ -2,29 +2,46 @@
 
 - ``crm_heartbeat`` (every 60 s, one row per minute slot): proves the worker claims and finishes jobs. A due heartbeat
   that stays queued is the "worker stopped" signal (``OldestQueuedAgeSeconds``). Idle-exempt in DB Migrate.
-- ``crm_job_retention`` (daily): data standards §7 row ``crm.job`` — succeeded rows 30 days, cancelled 90 days after
-  ``finished_at``; queued / running never. **Failed rows are kept**: §7 says "archive before delete: failed rows
-  only", and the CRM has no archive bucket yet (CRM-04 rest), so nothing that must be archived is deleted. A row that
-  another job points at (``parent_job_id``) is kept. DM-7.2: the first runs are DRY RUN (counts only) while
-  ``JOB_RETENTION_DRY_RUN`` is on, the default; turning it off is an ops decision recorded in the runbook.
-  Deletes go in batches of :data:`BATCH_SIZE` (at most :data:`MAX_BATCHES` per run).
+- ``crm_job_retention`` (daily, :class:`DailyRetentionSchedule`): data standards §7 row ``crm.job`` — succeeded rows
+  30 days, cancelled 90 days after ``finished_at``; queued / running never. **Failed rows are kept**: §7 says "archive
+  before delete: failed rows only", and the CRM has no archive bucket yet (CRM-04 rest), so nothing that must be
+  archived is deleted. A row that another job points at (``parent_job_id``) is kept. DM-7.2: the first runs are DRY RUN
+  (counts only) while ``JOB_RETENTION_DRY_RUN`` is on, the default; turning it off is an ops decision recorded in the
+  runbook. Deletes go in batches of :data:`BATCH_SIZE` (at most :data:`MAX_BATCHES` per run).
+
+Why the retention kind is not a :class:`~app.jobs.worker.Recurring` kind: a Recurring kind always holds its NEXT
+slot's row, queued with a future ``run_after``. The deploy gate (``queue.active_count``) and AA-CIS-Infra DB Migrate
+(``db/run_migration.py`` ``JOB_BUSY_SQL``: "any queued (any run_after)") count such a row as busy, and only the
+heartbeat is exempt there, so a queued-ahead daily row would block every deploy and every DB Migrate apply of every
+owner. The daily run is instead queued by a maintenance hook (AA-Booking ``retention/jobs.py`` ``DailySchedule``,
+AA-825) only once it is due, so the row exists only between "due" and "finished".
 """
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
+from datetime import UTC, date, datetime
 from typing import Any
 
 import asyncpg
 
+from app.jobs import queue
 from app.jobs.kinds import HEARTBEAT, JOB_RETENTION
 from app.jobs.queue import Job
-from app.jobs.worker import Handler, Recurring
+from app.jobs.worker import Handler, MaintenanceHook, Recurring
+
+log = logging.getLogger(__name__)
 
 SUCCEEDED_DAYS = 30
 CANCELLED_DAYS = 90
 FAILED_DAYS = 90
 BATCH_SIZE = 1000
 MAX_BATCHES = 50
+# The daily run's history (its own rows) is pruned after this many days, as the Recurring kind's keep_days was.
+RETENTION_HISTORY_DAYS = 30
+RETENTION_MAX_ATTEMPTS = 3
+SCHEDULER = "scheduler:crm-retention"
 
 ELIGIBLE_SQL = """
 SELECT j.id FROM crm.job j
@@ -79,7 +96,48 @@ def build_handlers(*, retention_dry_run: bool) -> dict[str, Handler]:
     return {HEARTBEAT: heartbeat, JOB_RETENTION: build_job_retention(retention_dry_run)}
 
 
-RECURRING: tuple[Recurring, ...] = (
-    Recurring(HEARTBEAT, every_seconds=60, keep_days=2),
-    Recurring(JOB_RETENTION, every_seconds=86_400, keep_days=30),
-)
+def schedule_key(day: date) -> str:
+    return f"{JOB_RETENTION}:schedule:{day.isoformat()}"
+
+
+class DailyRetentionSchedule:
+    """Worker maintenance hook: queues one ``crm_job_retention`` run per UTC day, **due now**, on the first maintenance
+    pass at or after ``utc_hour`` (``JOB_RETENTION_UTC_HOUR``). Never queues ahead: no future-dated row ever sits in
+    crm.job (see the module docstring). Idempotent across workers and restarts (idempotency key per day); the
+    in-memory day only saves the INSERT on later passes. Port of AA-Booking ``DailySchedule`` (AA-825)."""
+
+    def __init__(self, utc_hour: int, now: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
+        if not 0 <= utc_hour <= 23:
+            raise ValueError(f"utc_hour must be 0..23, got {utc_hour}")
+        self._utc_hour = utc_hour
+        self._now = now
+        self._done_day: date | None = None
+
+    async def __call__(self, pool: asyncpg.Pool) -> str | None:
+        now = self._now()
+        today = now.date()
+        if now.hour < self._utc_hour or self._done_day == today:
+            return None
+        job_id = await queue.enqueue(
+            pool,
+            JOB_RETENTION,
+            {"purpose": "daily_schedule"},
+            idempotency_key=schedule_key(today),
+            max_attempts=RETENTION_MAX_ATTEMPTS,
+            created_by=SCHEDULER,
+        )
+        await queue.prune(pool, JOB_RETENTION, RETENTION_HISTORY_DAYS)
+        self._done_day = today
+        if job_id:
+            log.info("job retention: queued the scheduled run for %s", today)
+        return job_id
+
+
+def build_hooks(*, retention_utc_hour: int) -> tuple[MaintenanceHook, ...]:
+    return (DailyRetentionSchedule(retention_utc_hour),)
+
+
+# Only the heartbeat queues its next slot ahead (it is deploy-gate and DB Migrate idle exempt). A daily or slower kind
+# goes through a due-now maintenance hook instead (DailyRetentionSchedule): never add one here.
+RECURRING: tuple[Recurring, ...] = (Recurring(HEARTBEAT, every_seconds=60, keep_days=2),)
+SCHEDULED_KINDS: frozenset[str] = frozenset({JOB_RETENTION})

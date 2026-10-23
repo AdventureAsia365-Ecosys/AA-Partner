@@ -7,7 +7,9 @@ compares this map with the handlers the lifespan registers).
 ``DEPLOY_GATE_EXEMPT``: kinds the deploy gate (``GET /crm/ci/deploy-gate``) does not count. ``crm_heartbeat`` is the
 always-queued liveness kind (one row per minute slot): counting it would block every deploy, and interrupting it is
 harmless. It is also idle-exempt in AA-CIS-Infra DB Migrate (``db/owners.yaml`` ``idle_exempt_kinds``), so a CIS,
-Booking or TripPlanner migration is never blocked by the CRM (card CRM-04 E check).
+Booking or TripPlanner migration is never blocked by the CRM (card CRM-04 E check). ``crm_job_retention`` is
+deliberately NOT exempt: it is queued only when due (``handlers.DailyRetentionSchedule``), so it blocks only while it
+really runs.
 """
 
 from __future__ import annotations

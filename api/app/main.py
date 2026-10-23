@@ -70,6 +70,7 @@ def create_app(
                 db.pool,
                 job_handlers.build_handlers(retention_dry_run=settings.job_retention_dry_run),
                 recurring=job_handlers.RECURRING,
+                hooks=job_handlers.build_hooks(retention_utc_hour=settings.job_retention_utc_hour),
             )
             task = asyncio.create_task(worker.run_forever(stop), name="crm-job-worker")
             # Independent of the worker task: a stuck worker loop must still show in the metrics.

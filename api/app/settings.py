@@ -14,6 +14,8 @@ Names (set by the ECS task definition in AA-CIS-Infra ``accounts/aa365/crm_app.t
 - ``SENTRY_DSN`` / ``SENTRY_REQUIRED``: error tracking (``app.observability.sentry``), as in AA-Booking.
 - ``JOB_RETENTION_DRY_RUN``: ``true`` (default) makes ``crm_job_retention`` count only (DM-7.2: the first runs of a
   TTL kind are DRY RUN on synthetic agencies). Turn it off once a dry-run result has been checked.
+- ``JOB_RETENTION_UTC_HOUR``: the UTC hour (0-23) from which the day's ``crm_job_retention`` run is queued (default 19,
+  02:00 in Vietnam, the hour AA-Booking's retention uses). The run is queued due-now at that hour, never ahead.
 
 Identity (root ADR 0006b decision 6, ``app.auth.identity_config``). Every value is optional and has **no default**:
 this repo is public, so pool ids never live in code (DM-6.10); Terraform passes them from the pool resources. A route
@@ -55,6 +57,7 @@ FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 
 DEFAULT_RATE_LIMIT_PER_MINUTE = 120
 DEFAULT_XFF_HOPS = 2
+DEFAULT_RETENTION_UTC_HOUR = 19
 
 
 class SettingsError(ValueError):
@@ -82,6 +85,7 @@ class Settings:
     sentry_dsn: str = field(default="", repr=False)
     sentry_required: bool = False
     job_retention_dry_run: bool = True
+    job_retention_utc_hour: int = DEFAULT_RETENTION_UTC_HOUR
 
     def __post_init__(self) -> None:
         if self.environment not in {"dev", "stg", "prod"} | INSECURE_ENVIRONMENTS:
@@ -119,6 +123,8 @@ class Settings:
             raise SettingsError("RATE_LIMIT_PUBLIC_PER_MINUTE must be >= 0")
         if not 1 <= self.rate_limit_xff_hops <= 5:
             raise SettingsError("RATE_LIMIT_XFF_HOPS must be between 1 and 5")
+        if not 0 <= self.job_retention_utc_hour <= 23:
+            raise SettingsError("JOB_RETENTION_UTC_HOUR must be between 0 and 23")
         if self.sentry_dsn and not self.sentry_dsn.startswith("https://"):
             raise SettingsError("SENTRY_DSN must be an https:// URL")  # the value is never echoed
         if self.sentry_required and not self.sentry_dsn:
@@ -182,4 +188,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         sentry_dsn=_text(env, "SENTRY_DSN"),
         sentry_required=_flag(env.get("SENTRY_REQUIRED"), False, "SENTRY_REQUIRED"),
         job_retention_dry_run=_flag(env.get("JOB_RETENTION_DRY_RUN"), True, "JOB_RETENTION_DRY_RUN"),
+        job_retention_utc_hour=_int(
+            env.get("JOB_RETENTION_UTC_HOUR"), DEFAULT_RETENTION_UTC_HOUR, "JOB_RETENTION_UTC_HOUR"
+        ),
     )

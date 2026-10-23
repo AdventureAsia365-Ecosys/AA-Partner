@@ -129,12 +129,15 @@ Ported from AA-Booking (AA-751 rules): `FOR UPDATE SKIP LOCKED` claims, guarded 
 reaper (a stopped worker's job is re-claimed), release on graceful shutdown, `cancel_requested`, backoff, the backlog
 sampler to CloudWatch `AA/Jobs/Crm`. CRM differences: the job row keeps the **error class only** (crm-001 column
 comment); recurring kinds are scheduled with an idempotency key per time slot (`<kind>:<slot>`) because crm-001 has no
-singleton index.
+singleton index. **Only a deploy-gate / DB Migrate exempt kind may be Recurring**: a Recurring kind always holds its
+next slot's row queued ahead, and both the deploy gate and the Infra DB Migrate idle check count any queued row of a
+non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worker maintenance hook (Booking's
+`DailySchedule` pattern, AA-825), one idempotency key per UTC day.
 
 | Kind | Every | What |
 |---|---|---|
 | `crm_heartbeat` | 60 s | Liveness. Always queued; exempt from the deploy gate and from the DB Migrate idle check (Infra `owners.yaml`) |
-| `crm_job_retention` | daily | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
+| `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
 
 ## CI and release
 
@@ -151,6 +154,7 @@ singleton index.
 ## Configuration (environment of the ECS task, AA-CIS-Infra `crm_app.tf`)
 
 `DATABASE_URL` (secret `crm/dev/database-url`), `DB_SSL`, `ENVIRONMENT`, `WORKER_ENABLED`, `JOB_RETENTION_DRY_RUN`,
+`JOB_RETENTION_UTC_HOUR`,
 `RATE_LIMIT_PUBLIC_PER_MINUTE`, `RATE_LIMIT_XFF_HOPS`, `SENTRY_DSN` / `SENTRY_REQUIRED`, and the identity values
 `COGNITO_WORKFORCE_ISSUER`, `COGNITO_CIS_ADMIN_CLIENT_ID`, `COGNITO_BREAKGLASS_CLIENT_ID`, `COGNITO_CRM_STAFF_CLIENT_ID`,
 `COGNITO_PARTNER_ISSUER`, `COGNITO_PARTNER_WEB_CLIENT_ID`, `COGNITO_EXTERNAL_ISSUER`, `COGNITO_CIS_PORTAL_CLIENT_ID`.

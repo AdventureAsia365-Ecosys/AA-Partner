@@ -40,6 +40,7 @@ def test_identity_values_are_read() -> None:
             "COGNITO_BREAKGLASS_CLIENT_ID": "def456",
             "JOB_RETENTION_DRY_RUN": "off",
             "RATE_LIMIT_PUBLIC_PER_MINUTE": "0",
+            "JOB_RETENTION_UTC_HOUR": "3",
         }
     )
     assert (s.cognito_workforce_issuer, s.cognito_cis_admin_client_id, s.cognito_breakglass_client_id) == (
@@ -48,6 +49,8 @@ def test_identity_values_are_read() -> None:
         "def456",
     )
     assert s.job_retention_dry_run is False
+    assert s.job_retention_utc_hour == 3
+    assert load_settings({}).job_retention_utc_hour == 19
     assert s.rate_limit_public_per_minute == 0
 
 
@@ -66,6 +69,8 @@ def test_identity_values_are_read() -> None:
         ({"RATE_LIMIT_PUBLIC_PER_MINUTE": "many"}, "integer"),
         ({"RATE_LIMIT_PUBLIC_PER_MINUTE": "-1"}, ">= 0"),
         ({"RATE_LIMIT_XFF_HOPS": "0"}, "between 1 and 5"),
+        ({"JOB_RETENTION_UTC_HOUR": "24"}, "between 0 and 23"),
+        ({"JOB_RETENTION_UTC_HOUR": "-1"}, "between 0 and 23"),
         ({"SENTRY_DSN": "http://x"}, "SENTRY_DSN"),
         ({"SENTRY_REQUIRED": "true"}, "SENTRY_REQUIRED"),
     ],

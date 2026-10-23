@@ -18,6 +18,15 @@ from app.jobs.payload_guard import PersonalDataInPayload
 from app.jobs.queue import Job
 from app.jobs.worker import Recurring, Worker
 
+# AA-CIS-Infra db/run_migration.py JOB_BUSY_SQL (DB Migrate idle check, DM-11.4) and its IDLE_EXEMPT_KINDS["crm"],
+# copied verbatim: "busy" = any queued (any run_after) or running row of a kind that is not exempt.
+INFRA_JOB_BUSY_SQL = """
+SELECT kind, status, count(*)::int AS n,
+       count(*) FILTER (WHERE status = 'queued' AND run_after <= now())::int AS due
+  FROM {table} WHERE status IN ('queued', 'running') AND NOT (kind = ANY($1::text[]))
+ GROUP BY kind, status ORDER BY kind, status"""
+INFRA_IDLE_EXEMPT_CRM = frozenset({"crm_heartbeat"})
+
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 TENANT = "00000000-0000-4000-8000-0000000000a1"
@@ -130,3 +139,41 @@ async def test_retention_dry_run_then_real_run(app_pool: asyncpg.Pool, admin: as
         ("succeeded", False),
         ("succeeded", False),
     ]
+
+
+async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migrate(app_pool: asyncpg.Pool) -> None:
+    """Review round (AA-933): with the production RECURRING and maintenance hooks, after the worker has run what is due
+    the only queued rows are exempt ones. A queued-ahead daily retention row would keep the deploy gate false and make
+    every DB Migrate apply refuse (exit 7) for every owner."""
+    assert DEPLOY_GATE_EXEMPT == INFRA_IDLE_EXEMPT_CRM
+    # Hour 0: the day's retention run is always due, so the hook queues it now (the worst case for the gate).
+    worker = Worker(
+        lambda: _pool(app_pool),
+        handlers.build_handlers(retention_dry_run=True),
+        recurring=handlers.RECURRING,
+        hooks=handlers.build_hooks(retention_utc_hour=0),
+        worker_id="worker-a",
+    )
+    await worker.maintenance(app_pool)
+    rows = await app_pool.fetch("SELECT kind, run_after <= now() AS due FROM crm.job WHERE status = 'queued'")
+    assert sorted((r["kind"], r["due"]) for r in rows) == [(HEARTBEAT, False), (JOB_RETENTION, True)]
+    # The due run counts while it waits (it would be interrupted by a deploy) ...
+    assert (await queue.active_count(app_pool, DEPLOY_GATE_EXEMPT))["by_kind"] == {JOB_RETENTION: 1}
+    while await worker.run_once():
+        pass
+    # ... and once it has run, nothing but the exempt heartbeat slot is left, for the gate and for DB Migrate.
+    assert (await queue.active_count(app_pool, DEPLOY_GATE_EXEMPT))["active"] == 0
+    busy = await app_pool.fetch(INFRA_JOB_BUSY_SQL.format(table="crm.job"), sorted(INFRA_IDLE_EXEMPT_CRM))
+    assert busy == []
+    # Another worker (or a restart) the same day queues nothing new: one run per day, never a future-dated row.
+    other = Worker(
+        lambda: _pool(app_pool),
+        handlers.build_handlers(retention_dry_run=True),
+        recurring=handlers.RECURRING,
+        hooks=handlers.build_hooks(retention_utc_hour=0),
+        worker_id="worker-b",
+    )
+    await other.maintenance(app_pool)
+    assert await app_pool.fetch(INFRA_JOB_BUSY_SQL.format(table="crm.job"), sorted(INFRA_IDLE_EXEMPT_CRM)) == []
+    done = await app_pool.fetch("SELECT status, result FROM crm.job WHERE kind = $1", JOB_RETENTION)
+    assert [r["status"] for r in done] == ["succeeded"] and json.loads(done[0]["result"])["dry_run"] is True
