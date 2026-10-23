@@ -10,7 +10,8 @@
 --     (default = app.actor, set by tenant_tx() to "member:<id>", else the database role), updated_at;
 --   * trash columns from the first migration (R21, Fix B6): deleted_at, deleted_by, purge_after, set together or not
 --     at all ({{table}}_trash_chk). CRM-14 adds only the behaviour (trash view, restore, purge job);
---   * ENABLE + FORCE row level security and the one tenant policy for every role: no tenant set = no row;
+--   * ENABLE + FORCE row level security and the one tenant policy TO the six CRM roles (crm_owner, crm_app, the four
+--     readers; never TO PUBLIC, catalogue rule b): no tenant set = no row;
 --   * the updated_at trigger;
 --   * a status column, when the table has one: TEXT + CHECK, plus rows in crm.status_transition and the trigger;
 --   * personal data: every PII column gets COMMENT 'pii:<class>' (design v3 §3.2); encrypted columns are *_enc,
@@ -42,6 +43,7 @@ ALTER TABLE crm.{{table}} ENABLE ROW LEVEL SECURITY;
 ALTER TABLE crm.{{table}} FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS tenant_isolation ON crm.{{table}};
 CREATE POLICY tenant_isolation ON crm.{{table}}
+    TO crm_owner, crm_app, crm_ai_reader, crm_insights, crm_support_reader, crm_eraser
     USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 

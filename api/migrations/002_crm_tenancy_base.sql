@@ -18,8 +18,9 @@
 --      or, on Dev before AA-939, EXTERNAL cis-portal token; role owner / agent / assistant). Both follow the base
 --      template api/db/templates/tenant_table.sql: base columns tenant_id, created_at, created_by, updated_at; trash
 --      columns deleted_at, deleted_by, purge_after (set together or not at all); ENABLE + FORCE RLS with one policy
---      for every role: tenant_id = the transaction's app.tenant_id (set by tenant_tx() before anything is read). No
---      tenant set = no row. FORCE makes crm_owner subject to it too.
+--      for the CRM roles (crm_owner, crm_app and the four NOLOGIN readers; never TO PUBLIC, ecosystem catalogue rule
+--      b): tenant_id = the transaction's app.tenant_id (set by tenant_tx() before anything is read). No tenant set =
+--      no row. Any other role matches no policy and sees no row. FORCE makes crm_owner subject to it too.
 --   4. crm.v_schema_versions: security_barrier view (owner crm_owner, CIS 269 grants it SELECT on
 --      shared.schema_versions) over the crm- keys, read by /crm/health/ready. crm_app gets SELECT only: a simple view
 --      is auto-updatable through its owner's rights, so the DML the default privileges give is revoked.
@@ -124,6 +125,7 @@ ALTER TABLE crm.tenant ENABLE ROW LEVEL SECURITY;
 ALTER TABLE crm.tenant FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS tenant_isolation ON crm.tenant;
 CREATE POLICY tenant_isolation ON crm.tenant
+    TO crm_owner, crm_app, crm_ai_reader, crm_insights, crm_support_reader, crm_eraser
     USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 
@@ -169,6 +171,7 @@ ALTER TABLE crm.member ENABLE ROW LEVEL SECURITY;
 ALTER TABLE crm.member FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS tenant_isolation ON crm.member;
 CREATE POLICY tenant_isolation ON crm.member
+    TO crm_owner, crm_app, crm_ai_reader, crm_insights, crm_support_reader, crm_eraser
     USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 
@@ -214,6 +217,10 @@ BEGIN
     END LOOP;
     IF NOT pg_catalog.has_table_privilege('crm_app', 'crm.v_schema_versions', 'SELECT') THEN
         RAISE EXCEPTION 'crm-002: crm_app cannot read crm.v_schema_versions';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_catalog.pg_policy pol JOIN pg_catalog.pg_class c ON c.oid = pol.polrelid
+               WHERE c.relnamespace = 'crm'::regnamespace AND 0 = ANY (pol.polroles)) THEN
+        RAISE EXCEPTION 'crm-002: a crm policy applies TO PUBLIC (catalogue rule b); name the CRM roles';
     END IF;
     IF pg_catalog.has_function_privilege('public', 'crm.set_updated_at()', 'EXECUTE')
        OR pg_catalog.has_function_privilege('public', 'crm.enforce_status_transition()', 'EXECUTE') THEN

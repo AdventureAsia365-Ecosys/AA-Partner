@@ -16,8 +16,12 @@ import pytest_asyncio
 from app.auth.route_guard import Caller
 from app.errors import Forbidden
 from app.tenancy import tenant_tx
+from tests.integration.conftest import APP_ROLE, OWNER, READERS
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+
+# The roles of the one tenant policy: never PUBLIC (ecosystem catalogue rule b, AA-CIS-Infra db/rls_catalogue_rules.py).
+POLICY_ROLES = {OWNER, APP_ROLE, *READERS}
 
 ISS = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_TESTPARTN"
 
@@ -91,7 +95,8 @@ async def test_every_crm_table_follows_the_base_template(admin: asyncpg.Connecti
             problems.append(f"{name}: ENABLE + FORCE row level security")
         policies = await admin.fetch(
             "SELECT polname, pg_get_expr(polqual, polrelid) AS q, pg_get_expr(polwithcheck, polrelid) AS c, "
-            "polroles FROM pg_policy WHERE polrelid = $1",
+            "ARRAY(SELECT CASE r WHEN 0 THEN 'public' ELSE r::regrole::text END FROM unnest(polroles) r) AS roles "
+            "FROM pg_policy WHERE polrelid = $1",
             t["oid"],
         )
         tenant_policy = [
@@ -99,8 +104,9 @@ async def test_every_crm_table_follows_the_base_template(admin: asyncpg.Connecti
             for p in policies
             if "current_setting('app.tenant_id'" in (p["q"] or "") and "app.tenant_id" in (p["c"] or "")
         ]
-        if not tenant_policy or tenant_policy[0]["polroles"] != [0]:
-            problems.append(f"{name}: one tenant_isolation policy for every role (USING + WITH CHECK)")
+        if not tenant_policy or set(tenant_policy[0]["roles"]) != POLICY_ROLES:
+            problems.append(f"{name}: one tenant_isolation policy TO the CRM roles (USING + WITH CHECK)")
+        problems += [f"{name}.{p['polname']}: TO PUBLIC (catalogue rule b)" for p in policies if "public" in p["roles"]]
         triggers = await admin.fetch(
             "SELECT p.proname FROM pg_trigger g JOIN pg_proc p ON p.oid = g.tgfoid "
             "WHERE g.tgrelid = $1 AND NOT g.tgisinternal",

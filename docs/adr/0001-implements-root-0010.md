@@ -22,7 +22,7 @@ choices made **inside** AA-Partner while building the skeleton.
 3. **`tenant_tx()` is the only data path for requests**, with a static lint (no asyncpg query calls outside the DB,
    tenancy and job modules). Membership is checked by the token's `(iss, sub)` inside the RLS context.
 4. **Base table template from `crm-002`** with an integration catalogue guard: base and trash columns, ENABLE + FORCE
-   RLS with one policy for every role, `updated_at` trigger, status transitions table + trigger.
+   RLS with one policy TO the six CRM roles (never PUBLIC), `updated_at` trigger, status transitions table + trigger.
 5. **`crm.job` runner ported from AA-Booking** with two CRM rules: the row keeps the error class only, and recurring
    kinds use one idempotency key per time slot (no singleton index in crm-001).
 6. **ARM64 everywhere**: the image is built natively on GitHub's arm64 runner (CI and deploy).

@@ -100,8 +100,9 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
   `app/jobs/` calls asyncpg query methods.
 - **Base table template** (`api/db/templates/tenant_table.sql`, design v3 §3.2): `tenant_id`, `created_at`,
   `created_by`, `updated_at`; trash columns `deleted_at`, `deleted_by`, `purge_after` from the first migration (set
-  together); ENABLE + FORCE RLS with one `tenant_isolation` policy for every role; the `updated_at` trigger; a status
-  column as `TEXT + CHECK` plus rows in `crm.status_transition` and its trigger. The integration test
+  together); ENABLE + FORCE RLS with one `tenant_isolation` policy `TO` the six CRM roles (`crm_owner`, `crm_app`,
+  the four readers; never PUBLIC, ecosystem catalogue rule b); the `updated_at` trigger; a status column as
+  `TEXT + CHECK` plus rows in `crm.status_transition` and its trigger. The integration test
   `test_every_crm_table_follows_the_base_template` checks every table in schema `crm` except the listed platform
   tables (`job`, `status_transition`).
 - **Dev holds synthetic agencies only** (`crm.tenant.is_synthetic`, ADR 0010 decision 3); real agencies only after the
