@@ -147,11 +147,13 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   **Integration Tests** (PostgreSQL 15, no skips), **Docker Build Check** (native arm64 build, container smoke, Trivy,
   SBOM); plus **Docs lint**, **PR title**, **gitleaks**. Non-required: **Vendored CIS copies**.
 - Secret scan (`.github/workflows/secret-scan.yml`, AA-981 follow-up): **gitleaks** on every PR (lines the PR adds, rules
-  and baseline read from the base branch) and **gitleaks full history** nightly, on push to `main` and on demand (every
+  and baseline read from the base branch) and **gitleaks full history** (`secret-scan-history.yml`) nightly, on push to `main` and on demand (every
   branch, tag and pull request head). Rules in `.gitleaks.toml` (same as the root repo), reviewed findings pinned in
-  `.gitleaksignore`; a PR that changes either file or `secret-scan.yml`, or adds an inline `gitleaks:allow`, needs
+  `.gitleaksignore`; a PR that changes either file, either secret scan workflow, `.github/CODEOWNERS` or any `.gitattributes`, or
+  adds an inline `gitleaks:allow`, needs
   the label `secret-scan-baseline-reviewed` after the last push (any later push, reopen or label change removes
-  it). Merge commits are scanned too (remerge diff). False positives: prefer a
+  it). Merge commits (remerge diff), renames and type changes are scanned too, every file as text. A red result
+  means the value is public: rotate it, even if it was force-pushed away. False positives: prefer a
   narrow allowlist in `.gitleaks.toml`; a commit fingerprint does not survive the squash merge (header of
   `.gitleaksignore`).
 - Deploy Dev (`.github/workflows/deploy-dev.yml`): OIDC role `aa-crm-dev-app-deploy` (GitHub environment `dev`,

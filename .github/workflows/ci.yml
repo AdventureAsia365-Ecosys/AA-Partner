@@ -51,8 +51,8 @@ jobs:
 
   # pip-audit FAILS here (as in AA-Booking). The same job runs the DM-6.10 resource-ID check (this repo is public). The
   # gitleaks scan that ran here moved to .github/workflows/secret-scan.yml (AA-981 follow-up): check "gitleaks" on every
-  # PR with the base branch's rules (.gitleaks.toml, .gitleaksignore), "gitleaks full history" nightly and on push to
-  # main.
+  # PR with the base branch's rules (.gitleaks.toml, .gitleaksignore), "gitleaks full history"
+  # (secret-scan-history.yml) nightly and on push to main.
   security-audit:
     name: Security Audit
     runs-on: ubuntu-latest
