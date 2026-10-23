@@ -29,6 +29,8 @@ POLICY_ROLES = {OWNER, APP_ROLE, *READERS}
 EXTRA_POLICIES = {
     ("member", "member_self_lookup"): ("r", {APP_ROLE}),
     ("tenant", "tenant_member_lookup"): ("r", {APP_ROLE}),
+    #   crm-005: the public intake form lookup of app.tenancy.intake_tx() (keyed on app.intake_key).
+    ("intake_form", "intake_form_public_lookup"): ("r", {APP_ROLE}),
 }
 
 ISS = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_TESTPARTN"
@@ -38,11 +40,15 @@ ISS = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_TESTPARTN"
 PLATFORM_TABLES = {
     "job": "ADR 0003a job table template (crm-001); ids-only payloads, no tenant rows",
     "status_transition": "reference data for the status trigger (crm-002), no tenant column",
+    "llm_usage_daily": "LLM usage rollup over every agency (crm-005), no tenant column, no PII",
 }
 # Append-only tenant tables (crm-003): tenant column, RLS and policy as the template, but no updated_at, no trash
 # columns; instead the append-only trigger, and crm_app may only INSERT and SELECT.
 APPEND_ONLY_TABLES = {
     "audit_event": "F5 agency audit (crm-003, AA-934; CRM-12 extends it)",
+    "consent": "consent evidence, DM-6.5 (crm-005, AA-936)",
+    "trip_stage_history": "every stage move of a trip (crm-005, AA-936)",
+    "llm_call": "LLM gateway call log, no text (crm-005, AA-936)",
 }
 APPEND_ONLY_COLUMNS = {
     "tenant_id": ("uuid", True),
@@ -151,6 +157,8 @@ async def test_every_crm_table_follows_the_base_template(admin: asyncpg.Connecti
             problems.append(f"{name}: updated_at trigger")
         if "status" in cols and "enforce_status_transition" not in {r["proname"] for r in triggers}:
             problems.append(f"{name}: status column without the transition trigger")
+        if "stage" in cols and name == "trip" and "enforce_stage_transition" not in {r["proname"] for r in triggers}:
+            problems.append(f"{name}: stage column without the stage transition trigger")
         trash = await admin.fetchval(
             "SELECT count(*) FROM pg_constraint WHERE conrelid = $1 AND contype = 'c' AND conname = $2",
             t["oid"],
