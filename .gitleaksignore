@@ -23,3 +23,8 @@
 
 # --- Full-history baseline (AA-981 follow-up, S248): the first full-history scan with .gitleaks.toml (branches,
 # tags and pull request heads) found nothing, so there is no entry yet.
+
+# AA-981 canary (test/aa981-canary, closed unmerged): a FAKE random value committed on purpose to prove the
+# scan goes red. Its PR head stays fetchable, so it is pinned by commit.
+eebb0f3d4465fa3f971c8b4cb07d86e2833baf23:canary/aa981-canary.tfvars:credential-key-literal:2
+eebb0f3d4465fa3f971c8b4cb07d86e2833baf23:canary/aa981-canary.tfvars:terraform-plaintext-secret:2
