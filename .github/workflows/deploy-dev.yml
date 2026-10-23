@@ -1,0 +1,217 @@
+name: Deploy Dev
+
+# Build (linux/arm64, native arm runner) -> push to ECR (immutable git-SHA tag) -> new task definition revision (only
+# the image swapped) -> update the ECS service -> wait stable -> verify the running image -> live smoke. Ported from
+# AA-Booking (root ADR 0004 decision 4). Runtime resources come from AA-CIS-Infra accounts/aa365/crm_app.tf.
+#
+# Configuration lives in the GitHub environment `dev` as VARIABLES (none of them is a secret):
+#   AWS_ROLE_ARN          OIDC deploy role aa-crm-dev-app-deploy (output crm_app_deploy_role_arn of crm_app.tf). While
+#                         it is unset the deploy job is skipped.
+#   AWS_REGION            default us-west-1
+#   ECR_REPOSITORY        default aa-crm-dev-api
+#   ECS_CLUSTER           default aa-cis-dev-cluster
+#   ECS_SERVICE           default aa-crm-dev-api
+#   ECS_TASK_FAMILY       default aa-crm-dev-api (the Terraform task definition family)
+#   CRM_API_BASE_URL      default https://partner-dev.lumiguides.it.com (CloudFront -> VPC origin -> ALB /crm/* rule);
+#                         used by the deploy gate and the smoke test
+# Give the `dev` environment a deployment-branch policy of `main` only (the OIDC role trusts environment:dev).
+#
+# Job guard (the `preflight` job, same logic as AA-Booking AA-751 B3/B4): a deploy stops the running task, so a
+# crm.job row that is queued or running would be interrupted. Preflight reads the service's task counts with the
+# deploy role (all 0 -> pass; a task starting -> blocked), otherwise mints this run's GitHub OIDC token (audience
+# aa-crm-deploy-gate) and calls GET <BASE_URL>/crm/ci/deploy-gate, which accepts only a token from this workflow file
+# on main, environment dev, event push or workflow_dispatch (api/app/auth/ci.py). crm_heartbeat (always queued) never
+# counts. Not safe, or the gate unreachable -> blocked, unless a workflow_dispatch gives `override_running_jobs`
+# (Nghiệp only, with the reason). Logic: .github/scripts/partner-deploy-preflight.sh, tested with stub aws/curl by
+# api/tests/unit/test_deploy_preflight_script.py.
+# Pushes that only change api/tests/** or api/pyproject.toml do not deploy (the image copies only requirements.txt and
+# app/), so a merged release PR never deploys by itself.
+#
+# The base task definition is the family's latest ACTIVE revision, so a redeploy of an older commit keeps the latest
+# Terraform env/secrets: revert config in Terraform. This workflow never changes the service's desired count; scaling
+# 0 -> 1 is a separate step.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+      - "!api/tests/**"
+      - "!api/pyproject.toml"
+      - ".github/workflows/deploy-dev.yml"
+      - ".github/scripts/partner-deploy-preflight.sh"
+  workflow_dispatch:
+    inputs:
+      override_running_jobs:
+        description: "Nghiệp only — reason to deploy anyway while crm.job has queued/running jobs. Leave empty to respect the guard."
+        required: false
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+jobs:
+  config:
+    name: Deploy configuration
+    runs-on: ubuntu-latest
+    environment: dev
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - name: Check AWS_ROLE_ARN
+        id: check
+        env:
+          ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+        run: |
+          if [ -z "${ROLE_ARN}" ]; then
+            echo "::warning::Variable AWS_ROLE_ARN is not set on environment 'dev' — deploy skipped (AA-CIS-Infra crm_app.tf not applied yet?)."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  preflight:
+    name: Pre-deploy job guard
+    needs: config
+    if: needs.config.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-west-1' }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER || 'aa-cis-dev-cluster' }}
+      ECS_SERVICE: ${{ vars.ECS_SERVICE || 'aa-crm-dev-api' }}
+      BASE_URL: ${{ vars.CRM_API_BASE_URL || 'https://partner-dev.lumiguides.it.com' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/scripts
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check for queued/running crm.job rows
+        env:
+          OVERRIDE: ${{ inputs.override_running_jobs }}
+          GATE_AUDIENCE: aa-crm-deploy-gate
+        run: bash .github/scripts/partner-deploy-preflight.sh
+
+  deploy:
+    name: Deploy to ECS Dev
+    needs: [config, preflight]
+    if: needs.config.outputs.enabled == 'true'
+    # Native arm64 build for the Fargate ARM64 task (free arm runner on a public repo).
+    runs-on: ubuntu-24.04-arm
+    environment: dev
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-west-1' }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'aa-crm-dev-api' }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER || 'aa-cis-dev-cluster' }}
+      ECS_SERVICE: ${{ vars.ECS_SERVICE || 'aa-crm-dev-api' }}
+      ECS_TASK_FAMILY: ${{ vars.ECS_TASK_FAMILY || 'aa-crm-dev-api' }}
+      BASE_URL: ${{ vars.CRM_API_BASE_URL || 'https://partner-dev.lumiguides.it.com' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image (git-SHA tag only)
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          IMAGE="${REGISTRY}/${ECR_REPOSITORY}:${GITHUB_SHA}"
+          APP_VERSION=$(jq -r '."."' .release-please-manifest.json)
+          [[ "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad version in the manifest: $APP_VERSION"; exit 1; }
+          # The repository is IMMUTABLE (AA-869): a re-deploy of the same commit (a manual dispatch after a
+          # Terraform change to env/secrets) reuses the image already pushed for this SHA instead of failing
+          # on the push. `docker manifest inspect` needs only the pull rights the ECR login already gives.
+          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "image for ${GITHUB_SHA} already in ECR: reusing it (no build, no push)"
+          else
+            docker build --build-arg GIT_SHA="${GITHUB_SHA}" --build-arg APP_VERSION="${APP_VERSION}" -t "$IMAGE" api
+            docker image inspect "$IMAGE" --format '{{.Architecture}}' | grep -qx arm64
+            docker push "$IMAGE"
+          fi
+          echo "DEPLOY_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
+
+      - name: Register task definition and update service
+        run: |
+          set -euo pipefail
+          # Base = the LATEST ACTIVE revision of the family, not the revision the service runs: a Terraform change
+          # to the task definition (crm_app.tf: environment, secrets, roles, size) registers a new revision that
+          # the service ignores (ignore_changes), and only this copy carries it to the running task (same rule as the
+          # CIS and Booking deploys).
+          aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].serviceName' --output text | grep -qx "$ECS_SERVICE" \
+            || { echo "::error::service $ECS_SERVICE not found"; exit 1; }
+          aws ecs describe-task-definition --task-definition "$ECS_TASK_FAMILY" --query 'taskDefinition' --output json > /tmp/td.json
+          echo "base task definition: $(jq -r '.taskDefinitionArn' /tmp/td.json)"
+          [ "$(jq '.containerDefinitions | length' /tmp/td.json)" = "1" ] || { echo "::error::expected exactly one container"; exit 1; }
+          # Only the image changes; every other field stays as Terraform set it.
+          jq --arg img "$DEPLOY_IMAGE" \
+            'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy,.deregisteredAt) | .containerDefinitions[0].image = $img' \
+            /tmp/td.json > /tmp/td_new.json
+          NEW_TD=$(aws ecs register-task-definition --cli-input-json file:///tmp/td_new.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "registered: $NEW_TD"
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" \
+            --task-definition "$NEW_TD" >/dev/null
+
+      - name: Wait for the service to be stable
+        run: aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
+
+      - name: Verify the running image
+        run: |
+          set -euo pipefail
+          TD=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].taskDefinition' --output text)
+          RUNNING=$(aws ecs describe-task-definition --task-definition "$TD" \
+            --query 'taskDefinition.containerDefinitions[0].image' --output text)
+          echo "service image: $RUNNING"
+          [ "$RUNNING" = "$DEPLOY_IMAGE" ] || { echo "::error::service runs $RUNNING, expected $DEPLOY_IMAGE"; exit 1; }
+          DESIRED=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].desiredCount' --output text)
+          echo "DESIRED_COUNT=$DESIRED" >> "$GITHUB_ENV"
+
+      - name: Smoke test (/crm/health, /crm/health/ready)
+        run: |
+          set -uo pipefail
+          if [ "${DESIRED_COUNT}" = "0" ]; then
+            echo "::warning::desired count is 0 — no task is running, smoke skipped (scale to 1 is a separate approved step)."
+            exit 0
+          fi
+          if [ -z "${BASE_URL}" ]; then
+            echo "::warning::No base URL — smoke skipped."
+            exit 0
+          fi
+          BASE="${BASE_URL%/}"
+          fail=0
+          code=$(curl -s --max-time 20 -o /tmp/health.json -w "%{http_code}" "$BASE/crm/health")
+          cat /tmp/health.json; echo
+          if [ "$code" != "200" ] || ! jq -e --arg sha "$GITHUB_SHA" --arg ver "$APP_VERSION" \
+            '.status == "ok" and .git_sha == $sha and .version == $ver' /tmp/health.json >/dev/null; then
+            echo "::error::/crm/health -> $code (expected 200, git_sha $GITHUB_SHA, version $APP_VERSION)"; fail=1
+          fi
+          code=$(curl -s --max-time 20 -o /tmp/ready.json -w "%{http_code}" "$BASE/crm/health/ready")
+          cat /tmp/ready.json; echo
+          if [ "$code" != "200" ] || ! jq -e '.db == "ok" and (.schema_version | startswith("crm-"))' /tmp/ready.json >/dev/null; then
+            echo "::error::/crm/health/ready -> $code (expected 200, db ok, schema_version crm-NNN)"; fail=1
+          fi
+          [ "$fail" = "0" ] && echo "Smoke passed" || exit 1

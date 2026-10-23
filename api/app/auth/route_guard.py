@@ -1,0 +1,126 @@
+"""Token-audience guards of the three route classes (root ADR 0006b decision 6; card CRM-05).
+
+Every router of a class is built with :func:`class_router`, which puts the class guard on the router itself, so a
+route added to it cannot skip the guard (``tests/unit/test_route_guard.py`` walks every app route and checks it).
+
+The guard, in order:
+
+1. no ``Authorization: Bearer`` -> **401** ``missing_bearer_token``;
+2. the token does not verify against any configured ``(issuer, client)`` pair -> **401** ``invalid_token``; no key set
+   ever loaded for its issuer -> **503** ``auth_unavailable``;
+3. it verifies, but its ``(issuer kind, client kind)`` is not one the class accepts -> **403** ``wrong_audience``
+   (a ``cis-admin`` or ``breakglass`` token on ``/crm/v1``, a partner token on ``/crm/ops/v1``, ...);
+4. the class needs a group and the token holds none of them -> **403** ``missing_group``.
+
+Then the route gets a :class:`Caller` (no e-mail or name: ids only). Tenant membership is not checked here: the agency
+routes open :func:`app.tenancy.tenant_tx`, which checks it.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from app.auth.identity_config import Identity, RouteClass
+from app.auth.identity_verifier import AuthUnavailable, InvalidToken, MultiIssuerVerifier
+
+log = logging.getLogger(__name__)
+
+bearer = HTTPBearer(auto_error=False, scheme_name="CognitoAccessToken", description="Cognito access token")
+
+
+@dataclass(frozen=True)
+class Caller:
+    """A verified caller allowed into one route class. ``iss`` + ``sub`` are the identity (never the e-mail)."""
+
+    route_class: str
+    issuer_kind: str
+    client_kind: str
+    iss: str
+    sub: str
+    groups: tuple[str, ...]
+
+    def in_group(self, group: str) -> bool:
+        return group in self.groups
+
+    def actor(self) -> str:
+        """Audit actor for rows written on this caller's behalf before a membership is known."""
+        return f"{self.issuer_kind}:{self.sub}"
+
+
+def _unauthorized(detail: str) -> HTTPException:
+    return HTTPException(status_code=401, detail=detail, headers={"WWW-Authenticate": "Bearer"})
+
+
+def guard_for(route_class: RouteClass) -> Callable[..., Awaitable[Caller]]:
+    """The FastAPI dependency of one route class. Stores the caller on ``request.state.caller`` too."""
+
+    async def guard(
+        request: Request, credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]
+    ) -> Caller:
+        if credentials is None or credentials.scheme.lower() != "bearer" or not credentials.credentials:
+            raise _unauthorized("missing_bearer_token")
+        verifier: MultiIssuerVerifier | None = request.app.state.verifier
+        identity: Identity = request.app.state.identity
+        if verifier is None:
+            raise _unauthorized("invalid_token")
+        try:
+            principal = await verifier.verify(credentials.credentials)
+        except InvalidToken as exc:
+            log.info("route_guard_rejected class=%s reason=%s", route_class.name, exc)
+            raise _unauthorized("invalid_token") from exc
+        except AuthUnavailable as exc:
+            log.warning("route_guard_auth_unavailable class=%s", route_class.name)
+            raise HTTPException(status_code=503, detail="auth_unavailable") from exc
+        issuer_kind = identity.issuer_kind(principal.iss)
+        client_kind = identity.client_kind(issuer_kind or "", principal.client_id)
+        if issuer_kind is None or client_kind is None or (issuer_kind, client_kind) not in route_class.accepts:
+            log.warning(
+                "route_guard_wrong_audience class=%s issuer=%s client=%s", route_class.name, issuer_kind, client_kind
+            )
+            raise HTTPException(status_code=403, detail="wrong_audience")
+        if route_class.groups_any and not route_class.groups_any.intersection(principal.groups):
+            log.warning("route_guard_missing_group class=%s client=%s", route_class.name, client_kind)
+            raise HTTPException(status_code=403, detail="missing_group")
+        caller = Caller(
+            route_class=route_class.name,
+            issuer_kind=issuer_kind,
+            client_kind=client_kind,
+            iss=principal.iss,
+            sub=principal.sub,
+            groups=principal.groups,
+        )
+        request.state.caller = caller
+        return caller
+
+    guard.route_class = route_class  # type: ignore[attr-defined] — read by the route-coverage test
+    return guard
+
+
+def class_router(route_class: RouteClass, **kwargs: Any) -> APIRouter:
+    """An APIRouter under the class prefix whose every route runs the class guard first."""
+    return APIRouter(prefix=route_class.prefix, dependencies=[Depends(guard_for(route_class))], **kwargs)
+
+
+def current_caller(request: Request) -> Caller:
+    """The caller the router guard stored (FastAPI runs router dependencies before the route's own)."""
+    caller = getattr(request.state, "caller", None)
+    if not isinstance(caller, Caller):  # a route mounted outside class_router: refuse rather than guess
+        raise HTTPException(status_code=401, detail="missing_bearer_token")
+    return caller
+
+
+def require_group(group: str) -> Callable[[Caller], Caller]:
+    """A route-level dependency for a write that needs one specific group (e.g. ``crm-platform-admin`` on ops)."""
+
+    def dependency(caller: Annotated[Caller, Depends(current_caller)]) -> Caller:
+        if not caller.in_group(group):
+            raise HTTPException(status_code=403, detail="missing_group")
+        return caller
+
+    return dependency
