@@ -15,6 +15,16 @@
 A DEK created inside a transaction (first use, rotation) stays in that transaction's memo and never enters the process
 cache: if the transaction rolls back, no other request can encrypt under a key that was never stored.
 
+:class:`~app.vault.errors.UnwrapDenied` leaves this class only through :meth:`KeyProvider.get_dek`, the read path
+whose caller (``Vault._open``) turns it into an audited :class:`~app.vault.errors.DecryptionDenied`. On every other
+path (encrypt via :meth:`current_dek`, blind indexes via :meth:`index_root`, :meth:`rotate`, :meth:`rewrap`) a refused
+unwrap of the tenant's own current key row is not about a value the caller holds, so it becomes
+:class:`~app.vault.errors.KeyUnavailable` (``key_unwrap_refused``, 503) instead of an unhandled 500.
+
+Crypto-shred is immediate in the process that runs :meth:`destroy` only: other API / worker tasks may still hold an
+unwrapped DEK in their cache for up to ``DEK_CACHE_TTL_SECONDS``. Offboarding (CRM-35) waits out that TTL before it
+reports the tenant shredded.
+
 Keys never reach a log line, an exception message, a job payload or ``repr``.
 """
 
@@ -24,7 +34,7 @@ import base64
 import binascii
 import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -99,6 +109,9 @@ class KeyProvider:
 
     async def current_dek(self, ctx: TenantContext, purpose: str) -> Dek:
         """The DEK new values are encrypted under; generated (version 1) on the first use of a purpose."""
+        return await _unwrap_refusal_is_unavailable(self._current_dek(ctx, purpose))
+
+    async def _current_dek(self, ctx: TenantContext, purpose: str) -> Dek:
         _check_purpose(purpose)
         memo_version = ctx.dek_current.get(purpose)
         if memo_version is not None:
@@ -116,6 +129,9 @@ class KeyProvider:
     async def index_root(self, ctx: TenantContext) -> Dek:
         """The vault DEK blind-index keys derive from: the tenant's oldest live vault key, so a rotation does not
         change any index (no re-index job). Generated on first use like :meth:`current_dek`."""
+        return await _unwrap_refusal_is_unavailable(self._index_root(ctx))
+
+    async def _index_root(self, ctx: TenantContext) -> Dek:
         memo_version = ctx.dek_current.get(ROOT_MEMO)
         if memo_version is not None:
             return await self.get_dek(ctx, "vault", memo_version)
@@ -124,7 +140,7 @@ class KeyProvider:
             return await self.get_dek(ctx, "vault", cached[0])
         row = await self._store.oldest_live(ctx, "vault")
         if row is None:
-            dek = await self.current_dek(ctx, "vault")  # provisioned in this transaction: memo only
+            dek = await self._current_dek(ctx, "vault")  # provisioned in this transaction: memo only
             ctx.dek_current[ROOT_MEMO] = dek.version
             return dek
         self._root[ctx.tenant_id] = (row.key_version, self._clock() + self._ttl)
@@ -133,6 +149,9 @@ class KeyProvider:
     # ── Changes ────────────────────────────────────────────────────────────────────────────────────
     async def rotate(self, ctx: TenantContext, purpose: str) -> Dek:
         """Retire the current DEK of ``purpose`` and create the next version (in the caller's transaction)."""
+        return await _unwrap_refusal_is_unavailable(self._rotate(ctx, purpose))
+
+    async def _rotate(self, ctx: TenantContext, purpose: str) -> Dek:
         _check_purpose(purpose)
         retired = await self._store.retire_current(ctx, purpose)
         next_version = 1 if retired is None else retired.key_version + 1
@@ -146,6 +165,9 @@ class KeyProvider:
         DEK stays the same, so every value and blind index stays valid. Returns the number of keys re-wrapped."""
         if target.provider not in self._wrappers:
             raise ValueError("register the target wrapper's provider before rewrapping to it")
+        return await _unwrap_refusal_is_unavailable(self._rewrap(ctx, target))
+
+    async def _rewrap(self, ctx: TenantContext, target: KeyWrapper) -> int:
         count = 0
         for row in await self._store.live(ctx):
             key = await self._unwrap_row(ctx, row, cache=False)
@@ -187,6 +209,9 @@ class KeyProvider:
         # Another request created the first key at the same time: use the stored one.
         row = await self._store.current(ctx, purpose)
         if row is None:
+            existing = await self._store.version(ctx, purpose, version)
+            if existing is not None and existing.destroyed:  # the tenant was crypto-shredded, not a race
+                raise KeyDestroyed()
             raise KeyUnavailable("key_race")
         key = await self._unwrap_row(ctx, row, cache=True)
         return Dek(ctx.tenant_id, purpose, row.key_version, key)
@@ -201,6 +226,13 @@ class KeyProvider:
         if cache and self._ttl > 0:
             self._cache[(ctx.tenant_id, row.purpose, row.key_version)] = (key, self._clock() + self._ttl)
         return key
+
+
+async def _unwrap_refusal_is_unavailable[T](work: Awaitable[T]) -> T:
+    try:
+        return await work
+    except UnwrapDenied:
+        raise KeyUnavailable("key_unwrap_refused") from None
 
 
 def _check_purpose(purpose: str) -> None:

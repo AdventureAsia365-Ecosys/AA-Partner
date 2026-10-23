@@ -223,10 +223,20 @@ async def test_tenant_key_guard_and_constraints(app_pool: asyncpg.Pool) -> None:
         asyncpg.UniqueViolationError,
     )
     await refused("UPDATE crm.tenant_key SET destroyed_at = now()", asyncpg.CheckViolationError)
+    # The wrapping triple moves only together with rewrapped_at.
+    await refused("UPDATE crm.tenant_key SET kek_id = 'another-kek'", asyncpg.CheckViolationError)
+    await refused("UPDATE crm.tenant_key SET kek_provider = 'kms'", asyncpg.CheckViolationError)
     # Destroy (crypto-shred), then the rows may go; a retire cannot be undone.
     async with tenant_tx(app_pool, who, tenant) as ctx:
         assert await keys.destroy(ctx) == 1
     await refused("UPDATE crm.tenant_key SET retired_at = NULL", asyncpg.CheckViolationError)
+    await refused(  # a destroyed key never gets a wrapped DEK back
+        "UPDATE crm.tenant_key SET wrapped_dek = decode(repeat('ab', 40), 'hex'), rewrapped_at = clock_timestamp()",
+        asyncpg.CheckViolationError,
+    )
+    with pytest.raises(KeyDestroyed):  # a new value after the shred: KeyDestroyed, not a key race
+        async with tenant_tx(app_pool, who, tenant) as ctx:
+            await Vault(_keys(), ctx).encrypt("traveler", "email_enc", uuid.uuid4(), "z@example.test")
     with pytest.raises(KeyDestroyed):
         async with tenant_tx(app_pool, who, tenant) as ctx:
             row = await ctx.conn.fetchrow("SELECT traveler_id, email_enc FROM crm.traveler")

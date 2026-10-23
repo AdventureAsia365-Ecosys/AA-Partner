@@ -11,9 +11,17 @@ purpose cannot be unwrapped under another.
 - :class:`LocalKeyWrapper`: AES-256-GCM under a keyring of local KEKs, context as AAD. Tests and local runs only;
   settings refuse it elsewhere.
 
-Errors: a refusal about *this* blob or context (``InvalidCiphertextException``, ``IncorrectKeyException``,
-``AccessDeniedException``, a bad local tag) raises :class:`~app.vault.errors.UnwrapDenied` (audited ``denied`` by the
-caller); anything else (throttling, network, a disabled key) raises :class:`~app.vault.errors.KeyUnavailable` (503).
+Errors: a refusal about *this* blob or context (``InvalidCiphertextException`` — which is also what a wrong
+``tenant_id`` context gives —, ``IncorrectKeyException``, a bad local tag) raises
+:class:`~app.vault.errors.UnwrapDenied` (audited ``denied`` by the caller). Anything else raises
+:class:`~app.vault.errors.KeyUnavailable` (503): throttling, network, a disabled key, and also
+``AccessDeniedException`` / ``InvalidKeyUsageException``. Those two mean an IAM or key-policy misconfiguration (the
+purpose is checked in the app before KMS is called), so treating them as a per-value denial would answer every decrypt
+with 403 and write a false ``denied`` audit row.
+
+The boto3 client is built once per wrapper under a lock, from a dedicated ``boto3.session.Session``: the default
+session is not thread-safe, and the first KMS calls after a deploy can run concurrently in ``asyncio.to_thread``
+workers.
 """
 
 from __future__ import annotations
@@ -21,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 from collections.abc import Callable, Mapping
 from typing import Any, Protocol
 
@@ -32,10 +41,9 @@ from app.vault.errors import KeyUnavailable, UnwrapDenied
 
 Context = Mapping[str, str]
 
-# KMS error codes that mean "this blob / context / key is not yours": audited as a denial.
-KMS_DENIED_CODES = frozenset(
-    {"InvalidCiphertextException", "IncorrectKeyException", "AccessDeniedException", "InvalidKeyUsageException"}
-)
+# KMS error codes that mean "this blob / context / key is not yours": audited as a denial. AccessDeniedException and
+# InvalidKeyUsageException are deliberately absent: they are configuration faults (KeyUnavailable, 503).
+KMS_DENIED_CODES = frozenset({"InvalidCiphertextException", "IncorrectKeyException"})
 KMS_REGION_ENV = "AWS_REGION"
 
 
@@ -118,7 +126,8 @@ def default_kms_client() -> Any:
     from botocore.config import Config
 
     config = Config(connect_timeout=3, read_timeout=5, retries={"max_attempts": 3, "mode": "standard"})
-    return boto3.client("kms", region_name=os.environ.get(KMS_REGION_ENV) or None, config=config)
+    session = boto3.session.Session()  # a dedicated session: the default one is not thread-safe
+    return session.client("kms", region_name=os.environ.get(KMS_REGION_ENV) or None, config=config)
 
 
 class KmsKeyWrapper:
@@ -130,10 +139,14 @@ class KmsKeyWrapper:
         self.key_id = key_id
         self._client_factory = client_factory
         self._client: Any = None
+        self._client_lock = threading.Lock()
 
     def _kms(self) -> Any:
+        # Runs inside to_thread workers: build the client once, under a lock (double-checked).
         if self._client is None:
-            self._client = self._client_factory()
+            with self._client_lock:
+                if self._client is None:
+                    self._client = self._client_factory()
         return self._client
 
     async def _call(self, method: str, **kwargs: Any) -> dict[str, Any]:

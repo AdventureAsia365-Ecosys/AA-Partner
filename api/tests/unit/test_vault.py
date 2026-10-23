@@ -10,8 +10,8 @@ import pytest
 
 from app.vault import KeyProvider, Vault
 from app.vault.errors import DecryptionDenied
-from app.vault.wrapping import LocalKeyWrapper
-from tests.unit.vault_fakes import TENANT_A, TENANT_B, MemoryDekStore, make_ctx
+from app.vault.wrapping import KmsKeyWrapper, LocalKeyWrapper
+from tests.unit.vault_fakes import TENANT_A, TENANT_B, FakeKms, MemoryDekStore, make_ctx
 
 ROW = uuid.UUID("00000000-0000-4000-8000-0000000000e1")
 
@@ -78,6 +78,32 @@ async def test_a_copied_key_row_does_not_unwrap_in_another_tenant() -> None:
     with pytest.raises(DecryptionDenied):
         await Vault(keys, ctx_a).decrypt("traveler", "email_enc", ROW, blob_b)
     assert _only_denial(ctx_a)["reason"] == "key_unwrap_refused"
+
+
+@pytest.mark.asyncio
+async def test_under_kms_another_tenants_value_and_a_copied_key_row_are_denied_and_audited() -> None:
+    """Card R under the KMS wrapper (FakeKms keeps KMS's exact encryption-context rule)."""
+    store = MemoryDekStore()
+    kms = FakeKms("data")
+    keys = KeyProvider({"kms": KmsKeyWrapper("alias/crm-dev/data", client_factory=lambda: kms)}, "kms", store=store)
+    blob_b = await Vault(keys, make_ctx(TENANT_B)).encrypt("traveler", "email_enc", ROW, "b@example.test")
+    # A has its own KMS-wrapped DEK: B's value fails the AES-GCM tag (AAD and DEK are A's).
+    await Vault(keys, make_ctx(TENANT_A)).encrypt("traveler", "email_enc", ROW, "a@example.test")
+    ctx_a = make_ctx(TENANT_A)
+    with pytest.raises(DecryptionDenied):
+        await Vault(keys, ctx_a).decrypt("traveler", "email_enc", ROW, blob_b)
+    assert _only_denial(ctx_a)["reason"] == "integrity_check_failed"
+    # B's KMS-wrapped key row copied into A: KMS refuses the context {tenant_id: A} (InvalidCiphertextException).
+    other = uuid.UUID("00000000-0000-4000-8000-0000000000c3")
+    await Vault(keys, make_ctx(TENANT_B)).encrypt("traveler", "email_enc", ROW, "b2@example.test", purpose="docs")
+    store.copy_row(TENANT_B, other, "docs", 1)
+    blob_docs_b = await Vault(keys, make_ctx(TENANT_B)).encrypt("traveler", "email_enc", ROW, "x", purpose="docs")
+    keys.clear_cache()
+    ctx_other = make_ctx(other)
+    with pytest.raises(DecryptionDenied):
+        await Vault(keys, ctx_other).decrypt("traveler", "email_enc", ROW, blob_docs_b, purpose="docs")
+    assert _only_denial(ctx_other)["reason"] == "key_unwrap_refused"
+    assert kms.calls.count("decrypt") >= 1
 
 
 @pytest.mark.asyncio

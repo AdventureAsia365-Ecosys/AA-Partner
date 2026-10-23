@@ -26,6 +26,9 @@ DEK_BYTES = 32
 MIN_BLOB = HEADER.size + NONCE_BYTES + TAG_BYTES  # 30: an empty plaintext
 MAX_VERSION = 65535
 
+# A table name is also the audit ``object_kind`` of a denied decrypt (``app.audit._CODE``, CHECK
+# ``audit_event_object_kind_chk``): keep both at 40 characters so a denial can always be recorded.
+_TABLE = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 _NAME = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 _ROW_ID = re.compile(r"^[A-Za-z0-9:_-]{1,80}$")
 _SEP = "\x1f"
@@ -39,8 +42,8 @@ def field_aad(tenant_id: uuid.UUID, table: str, column: str, row_id: uuid.UUID |
     """The AAD of one field value, without the version header (:func:`seal` / :func:`open_sealed` append it)."""
     if not isinstance(tenant_id, uuid.UUID):
         raise TypeError("tenant_id must be a UUID")
-    if not _NAME.match(table) or not _NAME.match(column):
-        raise ValueError("table and column must be lower-case SQL names")
+    if not _TABLE.match(table) or not _NAME.match(column):
+        raise ValueError("table (<= 40 chars) and column must be lower-case SQL names")
     row = str(row_id)
     if not _ROW_ID.match(row):
         raise ValueError("row_id must be an id (letters, digits, ':', '_', '-')")

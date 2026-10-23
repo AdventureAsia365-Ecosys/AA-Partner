@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import threading
+import time
 
 import pytest
 
@@ -68,8 +70,11 @@ async def test_kms_round_trip_with_the_encryption_context() -> None:
 @pytest.mark.parametrize(
     ("code", "error"),
     [
-        ("AccessDeniedException", UnwrapDenied),
+        ("InvalidCiphertextException", UnwrapDenied),
         ("IncorrectKeyException", UnwrapDenied),
+        # IAM / key-policy faults: not about the value, so 503 and no false "denied" audit row.
+        ("AccessDeniedException", KeyUnavailable),
+        ("InvalidKeyUsageException", KeyUnavailable),
         ("ThrottlingException", KeyUnavailable),
         ("KMSInvalidStateException", KeyUnavailable),
         ("DisabledException", KeyUnavailable),
@@ -110,3 +115,41 @@ def test_default_kms_client_is_lazy_and_regional(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("AWS_REGION", "us-west-1")
     client = wrapping.default_kms_client()
     assert client.meta.region_name == "us-west-1"
+
+
+def test_the_kms_client_is_built_once_under_concurrent_first_calls() -> None:
+    """The first KMS calls after a deploy run in parallel to_thread workers: one client, built once."""
+    built: list[object] = []
+
+    def slow_factory() -> object:
+        time.sleep(0.05)  # widen the race window
+        built.append(object())
+        return built[-1]
+
+    wrapper = KmsKeyWrapper("alias/crm-dev/data", client_factory=slow_factory)
+    barrier = threading.Barrier(8)
+    seen: list[object] = []
+
+    def first_call() -> None:
+        barrier.wait()
+        seen.append(wrapper._kms())
+
+    threads = [threading.Thread(target=first_call) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(built) == 1 and all(c is built[0] for c in seen)
+
+
+def test_default_kms_client_uses_its_own_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    import boto3
+
+    from app.vault import wrapping
+
+    def no_default_session(*_: object, **__: object) -> None:
+        raise AssertionError("the default boto3 session is not thread-safe")
+
+    monkeypatch.setattr(boto3, "client", no_default_session)
+    monkeypatch.setenv("AWS_REGION", "us-west-1")
+    assert wrapping.default_kms_client().meta.region_name == "us-west-1"

@@ -228,3 +228,43 @@ def test_build_from_settings() -> None:
     assert build_key_provider(Settings(environment="test", key_provider="local")).active_provider == "local"
     with pytest.raises(ValueError, match="base64"):
         build_key_provider(Settings(environment="test", key_provider="local", local_kek_b64="***"))
+
+
+@pytest.mark.asyncio
+async def test_a_refused_unwrap_outside_decrypt_is_unavailable_not_a_500() -> None:
+    """UnwrapDenied leaves the provider only through get_dek (audited by Vault._open). On the encrypt, blind-index and
+    rewrap paths a tampered current key row (or a KMS refusal) is a 503 KeyUnavailable, never an unhandled error."""
+    from dataclasses import replace
+
+    from app.vault.errors import UnwrapDenied
+
+    store = MemoryDekStore()
+    keys = _local(store)
+    await Vault(keys, make_ctx()).encrypt("traveler", "email_enc", "t1", "a@example.test")
+    stored = store.rows[(TENANT_A, "vault", 1)]
+    stored.row = replace(stored.row, wrapped_dek=os.urandom(60))  # tampered with master-level DB access
+    keys.clear_cache()
+    for attempt in (
+        lambda v: v.encrypt("traveler", "email_enc", "t2", "b@example.test"),
+        lambda v: v.email_index("traveler", "email", "b@example.test"),
+    ):
+        with pytest.raises(KeyUnavailable) as info:
+            await attempt(Vault(keys, make_ctx()))
+        assert info.value.reason == "key_unwrap_refused" and info.value.status_code == 503
+    with pytest.raises(KeyUnavailable, match="key_unavailable"):
+        await keys.rewrap(make_ctx(), keys.wrapper("local"))
+    # The read path still sees the refusal, so the vault can audit it.
+    with pytest.raises(UnwrapDenied):
+        await keys.get_dek(make_ctx(), "vault", 1)
+
+
+@pytest.mark.asyncio
+async def test_after_destroy_new_values_report_key_destroyed_not_a_race() -> None:
+    store = MemoryDekStore()
+    keys = _local(store)
+    await Vault(keys, make_ctx()).encrypt("traveler", "email_enc", "t1", "a@example.test")
+    await keys.destroy(make_ctx())
+    with pytest.raises(KeyDestroyed):
+        await Vault(keys, make_ctx()).encrypt("traveler", "email_enc", "t2", "b@example.test")
+    with pytest.raises(KeyDestroyed):
+        await keys.current_dek(make_ctx(), "vault")

@@ -80,3 +80,11 @@ def test_short_values_and_bad_names_are_refused() -> None:
     for version in (0, 65536):
         with pytest.raises(ValueError):
             header_of(version)
+
+
+def test_table_names_fit_the_audit_object_kind() -> None:
+    """A denied decrypt records the table as audit object_kind (40 chars): longer table names are refused up front."""
+    tenant = uuid.UUID("00000000-0000-4000-8000-0000000000a1")
+    assert field_aad(tenant, "t" * 40, "c" * 63, "r1")
+    with pytest.raises(ValueError):
+        field_aad(tenant, "t" * 41, "email_enc", "r1")
