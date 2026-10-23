@@ -93,4 +93,8 @@ async def test_readiness_as_crm_app(migrated_app_dsn: str) -> None:
     finally:
         await db.close()
     assert result.ok, result.body
-    assert result.body == {"status": "ok", "db": "ok", "schema_version": max(REQUIRED_SCHEMA_VERSIONS)}
+    # Readiness reports the newest registered key: the newest migration file, which may be ahead of the code's
+    # requirement while a migration lands before the code that reads it (D8 / MIG-4).
+    newest = f"crm-{MIGRATIONS[-1].name[:3]}"
+    assert newest >= max(REQUIRED_SCHEMA_VERSIONS)
+    assert result.body == {"status": "ok", "db": "ok", "schema_version": newest}
