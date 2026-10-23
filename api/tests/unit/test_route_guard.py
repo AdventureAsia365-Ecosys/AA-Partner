@@ -223,3 +223,16 @@ def test_require_group_outside_a_class_router_is_401(pools: LocalPools) -> None:
     app.include_router(stray)
     with TestClient(app) as c:
         assert c.get("/crm/stray").status_code == 401
+
+
+def test_unrouted_paths_under_a_class_prefix_are_404_without_a_token(pools: LocalPools) -> None:
+    """FastAPI runs a router's dependencies only for a matched route, so a path no route serves answers 404 before any
+    guard runs (review round, AA-933). The live checks therefore expect 404 on the still-empty ``/crm/ops/v1`` and
+    ``/crm/staff/v1`` (their first routes arrive with CRM-13a / CRM-26) and 401 / 403 only on ``/crm/v1/me``."""
+    settings = pools.settings()
+    with TestClient(create_app(settings, verifier=pools.verifier(settings))) as c:
+        for path in ("/crm/ops/v1/x", "/crm/staff/v1/x", "/crm/v1/x"):
+            assert c.get(path).status_code == 404, path
+        assert c.get("/crm/v1/me").status_code == 401
+        r = c.get("/crm/v1/me", headers=_bearer(pools.cis_admin()))
+        assert (r.status_code, r.json()["detail"]) == (403, "wrong_audience")
