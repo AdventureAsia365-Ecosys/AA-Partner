@@ -357,3 +357,247 @@ async def test_readers_reach_none_of_the_new_tables(app_pool: asyncpg.Pool) -> N
                 async with ctx(app_pool, tenant) as conn:
                     await conn.execute(f"SET LOCAL ROLE {reader}")
                     await conn.fetch(f"SELECT 1 FROM crm.{table}")  # noqa: S608
+
+
+# ── Review round (S249): the three bypasses of the first crm-008 draft, now refused ──────────────────────────────────
+async def _owners(pool: asyncpg.Pool, tenant: uuid.UUID) -> int:
+    async with ctx(pool, tenant, "seed:test") as conn:
+        return await conn.fetchval(
+            "SELECT count(*) FROM crm.member WHERE role = 'owner' AND status = 'active' AND deleted_at IS NULL"
+        )
+
+
+async def test_no_crm_app_session_deletes_a_member(app_pool: asyncpg.Pool) -> None:
+    """An agent deleting the only owner, the last owner deleting themself, even a platform actor: all CRM02."""
+    tenant, (owner, agent) = await _agency(app_pool, "owner", "agent")
+    for actor, role, target in (
+        (f"member:{agent}", "agent", owner),
+        (f"member:{owner}", "owner", owner),
+        (f"member:{owner}", "owner", agent),
+        ("platform:l1:staff-1", "", owner),
+    ):
+        with pytest.raises(asyncpg.PostgresError) as exc:
+            async with ctx(app_pool, tenant, actor, role) as conn:
+                await conn.execute("DELETE FROM crm.member WHERE member_id = $1", target)
+        assert _code(exc) == "CRM02", actor
+    assert await _owners(app_pool, tenant) == 1
+
+
+async def test_a_members_identity_is_fixed_outside_platform_contexts(app_pool: asyncpg.Pool) -> None:
+    """The agent cannot park its own subject and move it onto the owner's row (agent -> owner escalation)."""
+    tenant, (owner, agent) = await _agency(app_pool, "owner", "agent")
+    other, _ = await _agency(app_pool, "owner")
+    async with ctx(app_pool, tenant, "seed:test") as conn:
+        agent_sub = await conn.fetchval("SELECT cognito_sub FROM crm.member WHERE member_id = $1", agent)
+    with pytest.raises(asyncpg.PostgresError) as exc:
+        async with ctx(app_pool, tenant, f"member:{agent}", "agent") as conn:
+            await conn.execute("UPDATE crm.member SET cognito_sub = 'parked' WHERE member_id = $1", agent)
+            await conn.execute("UPDATE crm.member SET cognito_sub = $2 WHERE member_id = $1", owner, agent_sub)
+    assert _code(exc) == "CRM02"
+    # Not even the owner rebinds a row to another subject, issuer or agency.
+    for change, value in (
+        ("cognito_sub = $2", "someone-else"),
+        ("cognito_iss = $2", ISS + "-other"),
+        ("tenant_id = $2::uuid", str(other)),
+        ("created_by = $2", "member:forged"),
+    ):
+        with pytest.raises(asyncpg.PostgresError) as exc:
+            async with ctx(app_pool, tenant, f"member:{owner}", "owner") as conn:
+                await conn.execute(f"UPDATE crm.member SET {change} WHERE member_id = $1", agent, value)  # noqa: S608
+        assert _code(exc) == "CRM02", change
+    async with ctx(app_pool, tenant, "seed:test") as conn:
+        assert await conn.fetchval("SELECT cognito_sub FROM crm.member WHERE member_id = $1", agent) == agent_sub
+    # A platform context (L1 console) may correct a subject.
+    async with ctx(app_pool, tenant, "platform:l1:staff-1") as conn:
+        await conn.execute("UPDATE crm.member SET cognito_sub = $2 WHERE member_id = $1", agent, f"{agent_sub}-fixed")
+
+
+async def test_an_actorless_crm_app_session_writes_no_membership_and_no_platform_row(app_pool: asyncpg.Pool) -> None:
+    tenant, (owner, agent) = await _agency(app_pool, "owner", "agent")
+    for sql, args, code in (
+        (
+            "INSERT INTO crm.member (cognito_iss, cognito_sub, role, status) VALUES ($1, 'x', 'owner', 'active')",
+            (ISS,),
+            "CRM02",
+        ),
+        ("UPDATE crm.member SET role = 'owner' WHERE member_id = $1", (agent,), "CRM02"),
+        ("UPDATE crm.member SET status = 'disabled' WHERE member_id = $1", (owner,), "CRM02"),
+        ("INSERT INTO crm.tenant_entitlement (plan) VALUES ('pro')", (), "CRM04"),
+        (
+            "INSERT INTO crm.owner_recovery_request (candidate_member_id, reason, eligible_at) "
+            "VALUES ($1, 'owner_left', now() + interval '14 days')",
+            (agent,),
+            "CRM04",
+        ),
+        (
+            "INSERT INTO crm.member_invitation (role, email_enc, email_bidx, token_hash, expires_at) "
+            "VALUES ('owner', $1, $2, $3, now() + interval '7 days')",
+            (BLOB, BIDX, b"\x09" * 32),
+            "CRM02",
+        ),
+    ):
+        with pytest.raises(asyncpg.PostgresError) as exc:
+            async with ctx(app_pool, tenant) as conn:
+                await conn.execute(sql, *args)
+        assert _code(exc) == code, sql
+
+
+async def _claim(pool: asyncpg.Pool, tenant: uuid.UUID, invitation: uuid.UUID, sub: str) -> None:
+    async with ctx(pool, tenant, f"invitation:{invitation}") as conn:
+        await conn.execute(
+            "UPDATE crm.member_invitation SET status = 'claimed', cognito_iss = $1, cognito_sub = $2, "
+            "claimed_at = now() WHERE invitation_id = $3",
+            ISS,
+            sub,
+            invitation,
+        )
+
+
+async def test_an_agent_cannot_rewrite_an_invitation(app_pool: asyncpg.Pool) -> None:
+    """The draft let an agent swap the token hash of a pending OWNER invitation, then claim and accept it."""
+    tenant, (owner, agent, assistant) = await _agency(app_pool, "owner", "agent", "assistant")
+    invitation, _ = await _invite(app_pool, tenant, f"member:{owner}", "owner", "owner")
+    attacker = hashlib.sha256(b"attacker token").digest()
+    for actor, role in ((f"member:{agent}", "agent"), (f"member:{assistant}", "assistant"), ("job:x", "")):
+        for change, args in (
+            ("token_hash = $2", (attacker,)),
+            ("status = 'revoked'", ()),
+            ("expires_at = now() + interval '20 days'", ()),
+            ("deleted_at = now(), deleted_by = 'x', purge_after = now()", ()),
+            ("status = 'claimed', cognito_iss = $2, cognito_sub = 'x', claimed_at = now()", (ISS,)),
+        ):
+            with pytest.raises(asyncpg.PostgresError) as exc:
+                async with ctx(app_pool, tenant, actor, role) as conn:
+                    await conn.execute(
+                        f"UPDATE crm.member_invitation SET {change} WHERE invitation_id = $1",  # noqa: S608
+                        invitation,
+                        *args,
+                    )
+            assert _code(exc) == "CRM02", (actor, change)
+    async with ctx(app_pool, tenant, "seed:test") as conn:
+        row = await conn.fetchrow(
+            "SELECT status, token_hash FROM crm.member_invitation WHERE invitation_id = $1", invitation
+        )
+    assert row["status"] == "pending" and bytes(row["token_hash"]) != attacker
+
+
+async def test_the_owner_only_invites_and_withdraws(app_pool: asyncpg.Pool) -> None:
+    tenant, (owner,) = await _agency(app_pool, "owner")
+    invitation, _ = await _invite(app_pool, tenant, f"member:{owner}", "owner", "agent")
+    for change, args in (
+        ("token_hash = $2", (_token_hash(),)),
+        ("email_bidx = $2", (os.urandom(16),)),
+        ("expires_at = now() + interval '20 days'", ()),
+        ("status = 'claimed', cognito_iss = $2, cognito_sub = 'x', claimed_at = now()", (ISS,)),
+    ):
+        with pytest.raises(asyncpg.PostgresError) as exc:
+            async with ctx(app_pool, tenant, f"member:{owner}", "owner") as conn:
+                await conn.execute(
+                    f"UPDATE crm.member_invitation SET {change} WHERE invitation_id = $1",  # noqa: S608
+                    invitation,
+                    *args,
+                )
+        assert _code(exc) == "CRM02", change
+    # A new invitation starts pending and unbound.
+    with pytest.raises(asyncpg.PostgresError) as exc:
+        async with ctx(app_pool, tenant, f"member:{owner}", "owner") as conn:
+            await conn.execute(
+                "INSERT INTO crm.member_invitation (role, email_enc, email_bidx, token_hash, expires_at, status, "
+                "cognito_iss, cognito_sub, claimed_at) VALUES ('owner', $1, $2, $3, now() + interval '7 days', "
+                "'claimed', $4, 'x', now())",
+                BLOB,
+                os.urandom(16),
+                _token_hash(),
+                ISS,
+            )
+    assert _code(exc) == "CRM02"
+    async with ctx(app_pool, tenant, f"member:{owner}", "owner") as conn:
+        assert (
+            await conn.execute(
+                "UPDATE crm.member_invitation SET status = 'revoked' WHERE invitation_id = $1", invitation
+            )
+            == "UPDATE 1"
+        )
+
+
+async def test_an_invitation_moves_only_itself_and_only_forward(app_pool: asyncpg.Pool) -> None:
+    tenant, (owner, agent) = await _agency(app_pool, "owner", "agent")
+    invitation, _ = await _invite(app_pool, tenant, f"member:{owner}", "owner", "owner")
+    sibling, _ = await _invite(app_pool, tenant, f"member:{owner}", "owner", "agent")
+    async with ctx(app_pool, tenant, "seed:test") as conn:
+        agent_sub = await conn.fetchval("SELECT cognito_sub FROM crm.member WHERE member_id = $1", agent)
+    # Another invitation's actor, a token swap during the claim, an early expiry: refused.
+    with pytest.raises(asyncpg.PostgresError) as exc:
+        async with ctx(app_pool, tenant, f"invitation:{sibling}") as conn:
+            await conn.execute(
+                "UPDATE crm.member_invitation SET status = 'claimed', cognito_iss = $1, cognito_sub = 'x', "
+                "claimed_at = now() WHERE invitation_id = $2",
+                ISS,
+                invitation,
+            )
+    assert _code(exc) == "CRM02"
+    for change, args in (
+        (
+            "status = 'claimed', cognito_iss = $2, cognito_sub = 'x', claimed_at = now(), token_hash = $3",
+            (ISS, _token_hash()),
+        ),
+        ("status = 'expired'", ()),
+        ("status = 'revoked'", ()),
+        ("expires_at = now() + interval '20 days'", ()),
+    ):
+        with pytest.raises(asyncpg.PostgresError) as exc:
+            async with ctx(app_pool, tenant, f"invitation:{invitation}") as conn:
+                await conn.execute(
+                    f"UPDATE crm.member_invitation SET {change} WHERE invitation_id = $1",  # noqa: S608
+                    invitation,
+                    *args,
+                )
+        assert _code(exc) == "CRM02", change
+    with pytest.raises(asyncpg.PostgresError) as exc:
+        async with ctx(app_pool, tenant, f"invitation:{invitation}") as conn:
+            await conn.execute(
+                "INSERT INTO crm.member_invitation (role, email_enc, email_bidx, token_hash, expires_at) "
+                "VALUES ('owner', $1, $2, $3, now() + interval '7 days')",
+                BLOB,
+                os.urandom(16),
+                _token_hash(),
+            )
+    assert _code(exc) == "CRM02"
+    # Claimed by a fresh subject; accept may not name an existing member of another subject (the agent).
+    sub = f"sub-{uuid.uuid4()}"
+    await _claim(app_pool, tenant, invitation, sub)
+    with pytest.raises(asyncpg.PostgresError) as exc:
+        async with ctx(app_pool, tenant, f"invitation:{invitation}") as conn:
+            await conn.execute(
+                "UPDATE crm.member_invitation SET status = 'accepted', accepted_at = now(), member_id = $1 "
+                "WHERE invitation_id = $2",
+                agent,
+                invitation,
+            )
+    assert _code(exc) == "CRM02"
+    # Nor re-point the claim at the agent's own subject after the fact.
+    with pytest.raises(asyncpg.PostgresError) as exc:
+        async with ctx(app_pool, tenant, f"invitation:{invitation}") as conn:
+            await conn.execute(
+                "UPDATE crm.member_invitation SET cognito_sub = $1 WHERE invitation_id = $2", agent_sub, invitation
+            )
+    assert _code(exc) == "CRM02"
+
+
+async def test_an_expired_invitation_may_be_marked_expired_by_its_own_step(app_pool: asyncpg.Pool) -> None:
+    tenant, _ = await _agency(app_pool, "owner")
+    async with ctx(app_pool, tenant, "platform:l1:staff-1") as conn:
+        invitation = await conn.fetchval(
+            "INSERT INTO crm.member_invitation (role, email_enc, email_bidx, token_hash, created_at, expires_at) "
+            "VALUES ('agent', $1, $2, $3, now() - interval '8 days', now() - interval '1 day') RETURNING invitation_id",
+            BLOB,
+            os.urandom(16),
+            _token_hash(),
+        )
+    async with ctx(app_pool, tenant, f"invitation:{invitation}") as conn:
+        assert (
+            await conn.execute(
+                "UPDATE crm.member_invitation SET status = 'expired' WHERE invitation_id = $1", invitation
+            )
+            == "UPDATE 1"
+        )

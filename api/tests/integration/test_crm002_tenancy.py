@@ -79,6 +79,7 @@ async def _seed(pool: asyncpg.Pool, *, role: str = "owner", member_status: str =
     tenant_id, sub = uuid.uuid4(), f"sub-{uuid.uuid4()}"
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        await conn.execute("SELECT set_config('app.actor', 'seed:test', true)")  # crm-008: crm_app names its actor
         await conn.execute("INSERT INTO crm.tenant (tenant_id) VALUES ($1)", tenant_id)
         await conn.execute(
             "INSERT INTO crm.member (cognito_iss, cognito_sub, role, status) VALUES ($1, $2, $3, 'invited')",
