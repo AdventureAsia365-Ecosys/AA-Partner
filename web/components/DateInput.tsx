@@ -3,8 +3,13 @@
 // AA-935 — a date field that reads what the person types in their locale's order and shows, next to the field, the
 // date it understood with the month spelled out (R32): "03/04" reads "3 Apr 2026" for en-AU and "Mar 4, 2026" for
 // en-US. The form value is the ISO date (hidden input `name`), never the typed text.
+//
+// Typed before hydration (S249 sign-in check): the page is server-rendered, so a person (or a test) can type while the
+// scripts still load. React then keeps that text in the DOM but fires no onChange for it, which left the state empty:
+// no reading, no ISO value, until the next keystroke. On mount the field therefore adopts whatever the DOM already
+// holds, and marks itself `data-hydrated="true"` so browser checks can wait for it.
 
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { K } from "@/app/_kit";
 import { formatDate, inputPattern, parseDateInput, type DateLocale } from "@/lib/dates";
 
@@ -27,6 +32,14 @@ export function DateInput({
 }) {
   const id = useId();
   const [text, setText] = useState(defaultValue);
+  const [hydrated, setHydrated] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const typed = inputRef.current?.value ?? "";
+    if (typed !== defaultValue) setText(typed);
+    setHydrated(true);
+    // Mount only: later changes arrive through onChange.
+  }, []);
   const iso = parseDateInput(text, locale);
   const status = !text.trim() ? "" : iso ? `${readAs}: ${formatDate(iso, locale)}` : invalid;
   return (
@@ -36,6 +49,7 @@ export function DateInput({
       </label>
       {help && <span style={{ fontSize: 12, color: K.muted }}>{help}</span>}
       <input
+        ref={inputRef}
         id={id}
         inputMode="numeric"
         autoComplete="off"
@@ -45,6 +59,7 @@ export function DateInput({
         aria-describedby={`${id}-read`}
         aria-invalid={Boolean(text.trim()) && !iso}
         data-testid="date-input"
+        data-hydrated={hydrated ? "true" : undefined}
         style={{
           padding: "8px 10px",
           borderRadius: 8,

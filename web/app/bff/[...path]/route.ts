@@ -10,10 +10,10 @@ import type { NextRequest } from "next/server";
 import { matchBff, upstreamHeaders } from "@/lib/bff";
 import { proxyPath } from "@/lib/bffPath";
 import { config } from "@/lib/config";
-import { refuseCrossSiteWrite } from "@/lib/crossSiteGuard";
 import { streamUpstream } from "@/lib/proxyResponse";
 import { json } from "@/lib/respond";
 import { accessValid, readSession } from "@/lib/session";
+import { refuseForeignWrite } from "@/lib/writeGuard";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +21,7 @@ const UPSTREAM_TIMEOUT_MS = 15_000;
 const MAX_BODY_BYTES = 256 * 1024;
 
 async function handle(request: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
-  const refused = refuseCrossSiteWrite(request);
+  const refused = refuseForeignWrite(config(), request);
   if (refused) return refused;
   const { path } = await ctx.params;
   const sub = proxyPath(path ?? []);
