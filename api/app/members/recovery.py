@@ -21,6 +21,11 @@ audit):
   inside the agency nobody can grant the owner role (matrix ``team_manage`` is owner-only, and the database refuses a
   membership write by anyone but an owner).
 
+AA-978: when CIS removes an agency's last active owner, the membership feed locks the agency with
+``lock_source = cis_membership`` (card E: "recovery only"). :func:`open_request` and :func:`complete_request` accept
+such a locked agency (any other lock is 409 ``tenant_locked``), and completing the recovery unlocks it (the crm-013
+trigger clears the source).
+
 AA-941: the L1 console's ticket reference goes on each platform write as the audit object id ``ticket:<REF>``
 (:func:`ticket_ids`); :func:`mail_owners` is the best-effort AA system mail to the agency's owners that the console's
 data requests use too. :func:`members` reads an agency in any status; the writes need an active one (409
@@ -83,6 +88,11 @@ MEMBERS_SQL = """
 SELECT member_id, role, status, created_at FROM crm.member WHERE deleted_at IS NULL ORDER BY created_at, member_id
 """
 TENANT_LABEL_SQL = "SELECT display_name FROM crm.tenant WHERE tenant_id = $1"
+# AA-978: the agency statuses an owner recovery meets: active, or locked by the CIS feed after the last owner left.
+RECOVERY_STATUSES = frozenset({"active", "locked"})
+LOCK_SOURCE_SQL = "SELECT lock_source FROM crm.tenant WHERE tenant_id = $1 FOR UPDATE"
+UNLOCK_SQL = "UPDATE crm.tenant SET status = 'active' WHERE tenant_id = $1"
+RECOVERY_LOCK = "cis_membership"
 
 
 def _iso(value: Any) -> str | None:
@@ -91,6 +101,16 @@ def _iso(value: Any) -> str | None:
 
 def platform_actor(staff_sub: str) -> str:
     return f"platform:{staff_sub}"[:80]
+
+
+async def _recovery_lock(ctx: SystemContext) -> bool:
+    """True when the agency is locked by the CIS feed for want of an owner (the recovery reopens it); 409
+    ``tenant_locked`` for any other lock, as before AA-978."""
+    if ctx.status != "locked":
+        return False
+    if await ctx.conn.fetchval(LOCK_SOURCE_SQL, ctx.tenant_id) != RECOVERY_LOCK:
+        raise Conflict("tenant_locked", "the agency is locked; unlock it first")
+    return True
 
 
 def _not_due(exc: asyncpg.PostgresError) -> Exception:
@@ -204,7 +224,8 @@ async def open_request(
 ) -> dict[str, Any]:
     if reason not in REASONS:
         raise Invalid("invalid_reason", "owner_left, owner_unreachable or no_owner")
-    async with platform_tx(pool, tenant_id, actor=platform_actor(staff_sub)) as ctx:
+    async with platform_tx(pool, tenant_id, actor=platform_actor(staff_sub), statuses=RECOVERY_STATUSES) as ctx:
+        await _recovery_lock(ctx)
         candidate = await _active_member(ctx, candidate_member_id)
         if candidate["role"] == "owner":
             raise Conflict("candidate_is_owner", "the candidate is already an owner")
@@ -242,7 +263,8 @@ async def complete_request(
     pool: asyncpg.Pool, tenant_id: uuid.UUID, request_id: uuid.UUID, *, staff_sub: str, ticket_ref: str | None = None
 ) -> dict[str, Any]:
     actor = platform_actor(staff_sub)
-    async with platform_tx(pool, tenant_id, actor=actor) as ctx:
+    async with platform_tx(pool, tenant_id, actor=actor, statuses=RECOVERY_STATUSES) as ctx:
+        locked = await _recovery_lock(ctx)
         row = await ctx.conn.fetchrow(LOCK_SQL, request_id)
         if row is None:
             raise NotFound("recovery_not_found")
@@ -269,6 +291,12 @@ async def complete_request(
             fields=("role",),
             reason="recovery_to_owner",
         )
+        if locked:
+            await ctx.conn.execute(UNLOCK_SQL, tenant_id)  # crm-013 clears lock_source with the status
+            ctx.audit(
+                "tenant_unlock", "allowed", "tenant", str(tenant_id), fields=("status",), reason="owner_recovered",
+                object_ids=ticket_ids(ticket_ref),
+            )  # fmt: skip
         return {
             "request_id": str(request_id),
             "status": "completed",

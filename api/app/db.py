@@ -22,6 +22,7 @@ from typing import Any
 import asyncpg
 from fastapi import HTTPException, Request
 
+from app.cis import feed_state
 from app.settings import Settings
 
 log = logging.getLogger(__name__)
@@ -138,7 +139,11 @@ class Database:
                     "missing_schema_versions": missing,
                 },
             )
-        return Readiness(True, {"status": "ok", "db": "ok", "schema_version": version})
+        # AA-978: the CIS membership feed in one word (ok / pending / stale / failing / not_configured / unknown). It
+        # never fails readiness (a CIS outage must not roll a deploy back); the alarm keys on crm_membership_feed_stuck.
+        feed_configured = bool(self._settings.cis_api_url and self._settings.m2m_client)
+        feed = await feed_state.health(pool, configured=feed_configured)
+        return Readiness(True, {"status": "ok", "db": "ok", "schema_version": version, "membership_feed": feed})
 
 
 async def request_pool(request: Request) -> asyncpg.Pool:

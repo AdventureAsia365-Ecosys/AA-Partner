@@ -59,7 +59,10 @@ SELECT t.tenant_id, t.display_name, t.status, t.is_synthetic, t.created_at,
   FROM crm.tenant t
  WHERE t.tenant_id = $1
 """
-TENANT_LOCK_SQL = "SELECT status FROM crm.tenant WHERE tenant_id = $1 FOR UPDATE"
+TENANT_LOCK_SQL = "SELECT status, lock_source FROM crm.tenant WHERE tenant_id = $1 FOR UPDATE"
+# AA-978: an L1 lock on an agency the CIS feed locked takes the lock over (the feed lifts only its own sources).
+TAKE_OVER_LOCK_SQL = "UPDATE crm.tenant SET lock_source = 'aa_ops' WHERE tenant_id = $1"
+CIS_LOCK_SOURCES = frozenset({"cis_tenant", "cis_membership"})
 SET_STATUS_SQL = "UPDATE crm.tenant SET status = $2 WHERE tenant_id = $1"
 # First-owner rule (design S-01: "invite the first owner only while the agency has no owner and no travellers").
 OWNER_EXISTS_SQL = """
@@ -264,10 +267,19 @@ async def _set_status(
     ticket_ref: str,
 ) -> dict[str, Any]:  # fmt: skip
     async with platform_tx(pool, tenant_id, actor=platform_actor(staff_sub), statuses=LOCKABLE) as ctx:
-        current = await ctx.conn.fetchval(TENANT_LOCK_SQL, tenant_id)
+        row = await ctx.conn.fetchrow(TENANT_LOCK_SQL, tenant_id)
+        current = row["status"]
         if current not in LOCKABLE:  # moved on between the context check and the row lock
             raise Conflict("tenant_status", f"the agency is {current}", state=current)
-        if current != target:
+        if target == "locked" and current == "locked" and row["lock_source"] in CIS_LOCK_SOURCES:
+            # AA-978: locked by the CIS feed. AA's lock must outlive a CIS tenant.unlocked, so AA takes it over
+            # (crm-013 lets a platform actor name aa_ops); audited, unlike a lock that is AA's already.
+            await ctx.conn.execute(TAKE_OVER_LOCK_SQL, tenant_id)
+            ctx.audit(
+                action, "allowed", "tenant", str(tenant_id), fields=("lock_source",), reason=reason,
+                object_ids=ticket_ids(ticket_ref),
+            )  # fmt: skip
+        elif current != target:
             await ctx.conn.execute(SET_STATUS_SQL, tenant_id, target)
             ctx.audit(
                 action, "allowed", "tenant", str(tenant_id), fields=("status",), reason=reason,
@@ -280,8 +292,9 @@ async def lock_agency(
     pool: asyncpg.Pool, tenant_id: uuid.UUID, *, staff_sub: str, reason_code: str, ticket_ref: str
 ) -> dict[str, Any]:
     """active -> locked: no member, intake form, job or invitation context opens any more (403 ``tenant_locked`` /
-    404 ``form_not_found``); queued jobs of the agency fail and can be retried after the unlock. Already locked: a
-    no-op without an audit event."""
+    404 ``form_not_found``); queued jobs of the agency fail and can be retried after the unlock. Already locked by AA:
+    a no-op without an audit event. Locked by the CIS membership feed (AA-978, ``lock_source`` cis_tenant /
+    cis_membership): AA takes the lock over (``aa_ops``, audited), so a later CIS ``tenant.unlocked`` cannot lift it."""
     if reason_code not in LOCK_REASONS:
         raise Invalid("invalid_reason", ", ".join(LOCK_REASONS))
     return await _set_status(

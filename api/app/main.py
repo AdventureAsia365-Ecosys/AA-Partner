@@ -30,6 +30,8 @@ from app.audit_export.archive import AuditArchive, build_audit_archive
 from app.auth import identity_config
 from app.auth.ci import GithubDeployVerifier
 from app.auth.identity_verifier import MultiIssuerVerifier
+from app.cis.m2m import TokenProvider
+from app.cis.membership_feed import FeedConfig
 from app.db import Database
 from app.documents.store import DocumentStore, MemoryDocumentStore, S3DocumentStore
 from app.errors import ServiceError, service_error_handler
@@ -113,6 +115,8 @@ def create_app(
                     dek_cache_ttl_s=settings.dek_cache_ttl_seconds,
                     sender=app.state.dispatch_sender,
                     fx_provider=settings.fx_provider,
+                    membership_feed=build_membership_feed(settings),
+                    directory=app.state.directory,
                 ),
                 recurring=job_handlers.RECURRING,
                 hooks=job_handlers.build_hooks(retention_utc_hour=settings.job_retention_utc_hour),
@@ -187,6 +191,15 @@ def build_document_store(settings: Settings) -> DocumentStore | None:
     if settings.environment in INSECURE_ENVIRONMENTS:
         return MemoryDocumentStore()
     return None
+
+
+def build_membership_feed(settings: Settings) -> FeedConfig | None:
+    """The CIS membership feed's endpoint and M2M token (AA-978); None when CIS_API_URL or M2M_CLIENT is empty (the
+    pull then logs not_configured). No network call here: the first token is asked for on the first pull."""
+    credentials = settings.m2m_credentials
+    if not settings.cis_api_url or credentials is None:
+        return None
+    return FeedConfig(base_url=settings.cis_api_url, tokens=TokenProvider(credentials))
 
 
 def build_directory(settings: Settings) -> PartnerDirectory | None:
