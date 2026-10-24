@@ -6,8 +6,12 @@ on action ``NONE`` (detect only: the guardrail never blocks or rewrites, our cod
 the task role ``bedrock:ApplyGuardrail`` on that guardrail only. Its id and version reach the task as
 ``SCRUB_GUARDRAIL_ID`` / ``SCRUB_GUARDRAIL_VERSION``.
 
-- ``outputScope=FULL`` so detect-mode findings are returned; only ``type`` and ``match`` are read, and ``match`` (the
-  raw value) is never logged or raised (lane §5.4, S6 / K12).
+- ``outputScope=FULL`` so detect-mode findings are returned; only ``type``, ``detected`` and ``match`` are read, and
+  ``match`` (the raw value) is never logged or raised (lane §5.4, S6 / K12). With ``FULL`` the live API lists **every
+  configured entity type** on each call: a type that was not found comes back as ``{"type": ..., "match": "",
+  "action": "NONE", "detected": false}`` (probed live, AA-938). Those rows are not findings and are skipped; a row
+  that is ``detected`` (or carries no ``detected`` flag) but has no ``match`` is still returned with an empty value
+  so the scrubber refuses it (fail closed).
 - botocore retries are off (one attempt) and the read timeout follows the scrubber's timeout; the scrubber's own
   ``asyncio.wait_for`` bounds the whole call. An error is raised by class only.
 - Without a configured guardrail, :class:`UnavailableDetector` refuses every scrub: no silent "two passes only" mode.
@@ -89,11 +93,23 @@ def parse_assessments(response: dict[str, Any]) -> list[Detection]:
         if not isinstance(assessment, dict):
             raise ScrubError("malformed guardrail response")
         policy = assessment.get("sensitiveInformationPolicy") or {}
-        for entity in policy.get("piiEntities", []) or []:
+        entities = policy.get("piiEntities", []) or []
+        if not isinstance(entities, list):
+            raise ScrubError("malformed guardrail response")
+        for entity in entities:
             if not isinstance(entity, dict) or not entity.get("type"):
                 raise ScrubError("malformed guardrail response")
-            # A finding without its match is kept with an empty value: the scrubber refuses it (fail closed).
-            found.append(Detection(str(entity["type"]), str(entity.get("match") or "")))
+            detected = entity.get("detected")
+            if detected is not None and not isinstance(detected, bool):
+                raise ScrubError("malformed guardrail response")
+            match = entity.get("match")
+            if match is not None and not isinstance(match, str):
+                raise ScrubError("malformed guardrail response")
+            if detected is False and not match:
+                continue  # outputScope=FULL lists every configured type; this one was not found in the text
+            # A finding without its match is kept with an empty value: the scrubber refuses it (fail closed). A row
+            # flagged not detected but carrying a value is kept too: removing a value costs less than leaking it.
+            found.append(Detection(str(entity["type"]), match or ""))
     return found
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import time
 from typing import Any
 
@@ -28,6 +29,43 @@ RESPONSE = {
         },
         {"contentPolicy": {}},
     ],
+}
+
+
+# The live shape (probed on the dev guardrail, AA-938; synthetic values): with outputScope=FULL every configured entity
+# type comes back on every call, the ones not found with ``match: ""`` and ``detected: false``. Treating those rows as
+# findings made the first live corpus run refuse every scrub ("detector finding without a value").
+_NOT_FOUND_TYPES = (
+    "USERNAME PASSWORD PIN DRIVER_ID LICENSE_PLATE VEHICLE_IDENTIFICATION_NUMBER CREDIT_DEBIT_CARD_NUMBER "
+    "CREDIT_DEBIT_CARD_CVV CREDIT_DEBIT_CARD_EXPIRY INTERNATIONAL_BANK_ACCOUNT_NUMBER SWIFT_CODE "
+    "US_BANK_ACCOUNT_NUMBER "
+    "US_BANK_ROUTING_NUMBER IP_ADDRESS MAC_ADDRESS US_PASSPORT_NUMBER US_SOCIAL_SECURITY_NUMBER "
+    "US_INDIVIDUAL_TAX_IDENTIFICATION_NUMBER UK_NATIONAL_INSURANCE_NUMBER UK_UNIQUE_TAXPAYER_REFERENCE_NUMBER "
+    "UK_NATIONAL_HEALTH_SERVICE_NUMBER CA_SOCIAL_INSURANCE_NUMBER CA_HEALTH_NUMBER AWS_ACCESS_KEY AWS_SECRET_KEY"
+).split()
+LIVE_TEXT = "Contact John Doe at john.doe@example.invalid or +1 555 010 0199, 12 Fake Street, Springfield."
+LIVE_FULL_RESPONSE = {
+    "usage": {"sensitiveInformationPolicyUnits": 1, "sensitiveInformationPolicyFreeUnits": 0},
+    "action": "NONE",
+    "actionReason": "No action.",
+    "outputs": [],
+    "assessments": [
+        {
+            "sensitiveInformationPolicy": {
+                "piiEntities": [
+                    {"match": "John Doe", "type": "NAME", "action": "NONE", "detected": True},
+                    {"match": "john.doe@example.invalid", "type": "EMAIL", "action": "NONE", "detected": True},
+                    {"match": "+1 555 010 0199", "type": "PHONE", "action": "NONE", "detected": True},
+                    {"match": "12 Fake Street, Springfield", "type": "ADDRESS", "action": "NONE", "detected": True},
+                ]
+                + [{"match": "", "type": t, "action": "NONE", "detected": False} for t in _NOT_FOUND_TYPES],
+                "regexes": [],
+            },
+            "invocationMetrics": {"guardrailProcessingLatency": 120, "usage": {}, "guardrailCoverage": {}},
+            "appliedGuardrailDetails": {"guardrailVersion": "1", "guardrailOrigin": ["REQUEST"]},
+        }
+    ],
+    "guardrailCoverage": {"textCharacters": {"guarded": 93, "total": 93}},
 }
 
 
@@ -109,3 +147,55 @@ async def test_configured_guardrail_builds_a_boto3_client() -> None:
     assert isinstance(scrubber.detector, BedrockGuardrailsDetector)
     assert scrubber.detector.guardrail_version == "2" and scrubber.timeout_s == 1.5
     assert scrubber.detector._client.meta.region_name == "us-west-1"
+
+
+async def test_live_full_scope_rows_not_detected_are_not_findings() -> None:
+    found = parse_assessments(LIVE_FULL_RESPONSE)
+    assert found == [
+        Detection("NAME", "John Doe"),
+        Detection("EMAIL", "john.doe@example.invalid"),
+        Detection("PHONE", "+1 555 010 0199"),
+        Detection("ADDRESS", "12 Fake Street, Springfield"),
+    ]
+
+
+async def test_live_full_scope_response_scrubs_instead_of_refusing() -> None:
+    # The case that failed live, through the whole scrubber. Pass 3 sees the text after passes 1-2 (the email and the
+    # phone are placeholders by then), so the guardrail reports only the name and the address, plus a not-found row
+    # for every other configured type.
+    client = Client(copy.deepcopy(LIVE_FULL_RESPONSE))
+    entities = client.response["assessments"][0]["sensitiveInformationPolicy"]["piiEntities"]
+    for e in entities:
+        if e["type"] in ("EMAIL", "PHONE"):
+            e.update(match="", detected=False)
+    result = await PiiScrubber(detector(client), timeout_s=1).scrub(LIVE_TEXT)
+    [call] = client.calls
+    assert "john.doe" not in call["content"][0]["text"]  # pass 3 got the locally scrubbed text
+    for value in ("John Doe", "john.doe@example.invalid", "555 010 0199", "Fake Street", "Springfield"):
+        assert value not in result.text
+    assert result.text == "Contact <PERSON_1> at <EMAIL_1> or <PHONE_1>, <ADDRESS_1>."
+
+
+def _one(entity: dict) -> dict:
+    return {"assessments": [{"sensitiveInformationPolicy": {"piiEntities": [entity]}}]}
+
+
+async def test_fail_closed_is_kept_for_findings_without_a_value() -> None:
+    # Detected but no match: kept with an empty value, and the scrubber refuses the text.
+    for entity in (
+        {"type": "NAME", "match": "", "action": "NONE", "detected": True},
+        {"type": "NAME", "action": "NONE", "detected": True},
+        {"type": "NAME", "match": "", "action": "NONE"},  # no detected flag: treated as a finding
+    ):
+        assert parse_assessments(_one(entity)) == [Detection("NAME", "")]
+        with pytest.raises(ScrubError, match="without a value"):
+            await PiiScrubber(detector(Client(_one(entity))), timeout_s=1).scrub("Peter Lawson called")
+    # Flagged not detected but carrying a value: still removed (a lost value costs less than a leak).
+    entity = {"type": "NAME", "match": "Peter Lawson", "action": "NONE", "detected": False}
+    assert parse_assessments(_one(entity)) == [Detection("NAME", "Peter Lawson")]
+    # A detected flag or a match of the wrong type is a malformed response.
+    for bad in ({"type": "NAME", "match": "", "detected": "false"}, {"type": "NAME", "match": 5, "detected": True}):
+        with pytest.raises(ScrubError, match="malformed"):
+            parse_assessments(_one(bad))
+    with pytest.raises(ScrubError, match="malformed"):
+        parse_assessments({"assessments": [{"sensitiveInformationPolicy": {"piiEntities": {"type": "NAME"}}}]})
