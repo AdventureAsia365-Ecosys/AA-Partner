@@ -27,8 +27,10 @@ _REQUEST_ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 INSERT_SQL = (
     "INSERT INTO crm.audit_event (actor_kind, actor_ref, action, outcome, object_kind, object_id, fields, reason, "
-    "request_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+    "request_id, object_ids) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
 )
+# AA-937 (crm-006): a list view names the ids it showed (design §4.4), at most this many per event.
+MAX_OBJECT_IDS = 200
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,7 @@ class AuditEvent:
     fields: tuple[str, ...] = field(default_factory=tuple)
     reason: str | None = None
     request_id: str | None = None
+    object_ids: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if self.actor_kind not in ACTOR_KINDS:
@@ -58,6 +61,8 @@ class AuditEvent:
             raise ValueError("fields are column names")
         if self.reason is not None and not _REASON.match(self.reason):
             raise ValueError("reason is a code, never free text")
+        if len(self.object_ids) > MAX_OBJECT_IDS or not all(_ID.match(i) for i in self.object_ids):
+            raise ValueError("object_ids are ids")
         if self.request_id is not None and not _REQUEST_ID.match(self.request_id):
             object.__setattr__(self, "request_id", None)
 
@@ -72,6 +77,7 @@ class AuditEvent:
             list(self.fields),
             self.reason,
             self.request_id,
+            list(self.object_ids),
         )
 
 

@@ -136,6 +136,7 @@ class TenantContext:
         *,
         fields: tuple[str, ...] = (),
         reason: str | None = None,
+        object_ids: tuple[str, ...] = (),
     ) -> AuditEvent:
         """Queue an ``audit_event`` for this member (written when the ``tenant_tx()`` block ends)."""
         event = AuditEvent(
@@ -148,6 +149,7 @@ class TenantContext:
             fields=tuple(fields),
             reason=reason,
             request_id=current_request_id(),
+            object_ids=tuple(object_ids),
         )
         self.audit_events.append(event)
         return event
@@ -178,6 +180,7 @@ class SystemContext:
         *,
         fields: tuple[str, ...] = (),
         reason: str | None = None,
+        object_ids: tuple[str, ...] = (),
     ) -> AuditEvent:
         event = AuditEvent(
             actor_kind="system",
@@ -189,6 +192,7 @@ class SystemContext:
             fields=tuple(fields),
             reason=reason,
             request_id=current_request_id(),
+            object_ids=tuple(object_ids),
         )
         self.audit_events.append(event)
         return event

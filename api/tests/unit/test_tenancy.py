@@ -135,7 +135,7 @@ async def test_queued_events_are_written_when_the_block_succeeds() -> None:
         ctx.audit("reveal", "allowed", "traveler", "t-1", fields=("email_enc",), reason="client_call")
     rows = conn.sql("INSERT INTO crm.audit_event")
     assert rows == [
-        ("user", f"member:{MEMBER}", "reveal", "allowed", "traveler", "t-1", ["email_enc"], "client_call", None)
+        ("user", f"member:{MEMBER}", "reveal", "allowed", "traveler", "t-1", ["email_enc"], "client_call", None, [])
     ]
 
 

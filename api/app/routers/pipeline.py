@@ -9,23 +9,24 @@ Route                                      What                                 
 =========================================  ==================================================  ==================
 ``GET  /pipeline``                         board: open stages, cards, counts (one list_view)   every role
 ``GET  /trips/{trip_id}``                  trip workspace (one view event)                     every role
-``PATCH /trips/{trip_id}``                 waiting on, title                                   every role
+``PATCH /trips/{trip_id}``                 waiting on, title, start / end date (AA-937)        every role
 ``POST /trips/{trip_id}/stage``            move (inquiry <-> qualifying, -> lost, reopen)      every role
 ``POST /trips/{trip_id}/owner``            assign                                              owner; others take
 ``POST /trips/{trip_id}/notes``            internal note (encrypted)                           every role
 ``POST /tasks/{task_id}/status``           open / done / skipped                               every role
-``POST /travelers/{traveler_id}/reveal``   e-mail or phone, one field (one reveal event)       every role
 ``GET  /members``                          ids and roles (for the assign menu)                 every role
 ``GET  /intake-forms``                     the agency's forms + public keys                    every role
 ``POST /intake-forms``                     create a form                                       owner
 ``PATCH /intake-forms/{form_id}``          label, status, origins, default owner, privacy url  owner
 =========================================  ==================================================  ==================
 
-No margin, price or commission field exists yet (CRM-11 adds the per-role serializer allow-list, design §4.6).
+The traveller routes (directory, profile, reveal with a reason, party, documents) are in :mod:`app.routers.travellers`
+(AA-937). No margin, price or commission field exists yet (CRM-11 adds the per-role serializer allow-list, design §4.6).
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 from typing import Annotated, Any, Literal
 
@@ -44,7 +45,6 @@ from app.pipeline import (
     board,
     members,
     move_stage,
-    reveal_contact,
     set_task_status,
     trip_detail,
     update_trip,
@@ -79,6 +79,8 @@ class OwnerChange(_Body):
 class TripChange(_Body):
     waiting_on: str | None = Field(default=None, max_length=20)
     title: str | None = Field(default=None, max_length=200)
+    start_date: dt.date | None = None
+    end_date: dt.date | None = None
 
 
 class NoteIn(_Body):
@@ -87,10 +89,6 @@ class NoteIn(_Body):
 
 class TaskStatus(_Body):
     status: Literal["open", "done", "skipped"]
-
-
-class Reveal(_Body):
-    field: Literal["email", "phone"]
 
 
 class FormIn(_Body):
@@ -140,8 +138,10 @@ async def patch_trip(
     request: Request, caller: CallerDep, tenant_id: TenantDep, trip_id: uuid.UUID, body: TripChange
 ) -> dict[str, Any]:
     pool = await request_pool(request)
+    changes = body.model_dump(exclude_unset=True)
+    keys = require_keys(request.app.state.keys) if "start_date" in changes else None
     async with tenant_tx(pool, caller, tenant_id) as ctx:
-        return await update_trip(ctx, trip_id, body.model_dump(exclude_unset=True))
+        return await update_trip(ctx, trip_id, changes, Vault(keys, ctx) if keys is not None else None)
 
 
 @router.post("/trips/{trip_id}/stage")
@@ -179,16 +179,6 @@ async def post_task_status(
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id) as ctx:
         return await set_task_status(ctx, task_id, body.status)
-
-
-@router.post("/travelers/{traveler_id}/reveal")
-async def post_reveal(
-    request: Request, caller: CallerDep, tenant_id: TenantDep, traveler_id: uuid.UUID, body: Reveal
-) -> dict[str, Any]:
-    pool = await request_pool(request)
-    keys = require_keys(request.app.state.keys)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
-        return await reveal_contact(ctx, Vault(keys, ctx), traveler_id, body.field)
 
 
 @router.get("/members")

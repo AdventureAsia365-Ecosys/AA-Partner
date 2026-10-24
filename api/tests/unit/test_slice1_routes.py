@@ -184,7 +184,6 @@ def test_pipeline_routes_reach_their_helpers(agency: Any, monkeypatch: pytest.Mo
         "assign",
         "add_note",
         "set_task_status",
-        "reveal_contact",
     ):
         monkeypatch.setattr(pipeline_router, name, stub(name))
 
@@ -207,11 +206,6 @@ def test_pipeline_routes_reach_their_helpers(agency: Any, monkeypatch: pytest.Mo
     assert client.post(f"/crm/v1/trips/{TRIP}/owner", json={"member_id": None}, headers=headers).status_code == 200
     assert client.post(f"/crm/v1/trips/{TRIP}/notes", json={"body": "Called"}, headers=headers).status_code == 201
     assert client.post(f"/crm/v1/tasks/{TRIP}/status", json={"status": "done"}, headers=headers).status_code == 200
-    assert client.post(f"/crm/v1/travelers/{TRIP}/reveal", json={"field": "email"}, headers=headers).status_code == 200
-    assert (
-        client.post(f"/crm/v1/travelers/{TRIP}/reveal", json={"field": "passport_no"}, headers=headers).status_code
-        == 422
-    )
     assert client.get("/crm/v1/members", headers=headers).json() == {"members": [{"member_id": str(MEMBER)}]}
     assert [c[0] for c in calls] == [
         "board",
@@ -221,7 +215,6 @@ def test_pipeline_routes_reach_their_helpers(agency: Any, monkeypatch: pytest.Mo
         "assign",
         "add_note",
         "set_task_status",
-        "reveal_contact",
     ]
 
 

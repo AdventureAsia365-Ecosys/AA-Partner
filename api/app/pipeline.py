@@ -6,10 +6,12 @@ parameter) and a :class:`~app.vault.Vault` when it shows personal data.
 Personal data on these screens (design v3 §4.4, Fix B15, Decision D7):
 
 - the **board** decrypts the lead traveller's ``display_name`` only, and one page load writes **one**
-  ``audit_event`` (``list_view``, field ``display_name``); no e-mail, no phone, no partial digits;
+  ``audit_event`` (``list_view``, field ``display_name``, the travellers shown in ``object_ids``, AA-937); no
+  e-mail, no phone, no partial digits;
 - the **trip** decrypts the party's display names, the notes and the non-identity answers of its submissions, and
   writes one ``view`` event naming those fields;
-- the e-mail and phone open only on a click (:func:`reveal_contact`), one ``reveal`` event per field.
+- the e-mail and phone open only on a click (:func:`app.travellers.reveal.reveal`, AA-937: with a reason code), one
+  ``reveal`` event per field.
 
 Stage moves (Slice 1): ``inquiry <-> qualifying``, either -> ``lost`` with a reason (R23), ``lost -> inquiry``. The DB
 enforces the edges (``crm.enforce_stage_transition``, crm-005); a refused edge is 409 ``transition_not_allowed``.
@@ -21,6 +23,7 @@ an agent or assistant may only take an unassigned trip for themselves.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import uuid
 from dataclasses import dataclass
@@ -31,6 +34,7 @@ import asyncpg
 from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.intake import stage1
 from app.tenancy import TenantContext
+from app.travellers import age_bands
 from app.vault import Vault
 
 BOARD_STAGES = ("inquiry", "qualifying", "proposal", "booked", "pre_departure", "travelling")
@@ -137,10 +141,6 @@ UPDATE crm.task SET assignee_member_id = $2
  WHERE trip_id = $1 AND status = 'open' AND deleted_at IS NULL
    AND (assignee_member_id IS NULL OR assignee_member_id = $3)
 """
-TRAVELER_CONTACT_SQL = """
-SELECT tr.email_enc, tr.phone_enc FROM crm.traveler tr
- WHERE tr.traveler_id = $1 AND tr.deleted_at IS NULL
-"""
 TASK_LOCK_SQL = "SELECT status FROM crm.task WHERE task_id = $1 AND deleted_at IS NULL FOR UPDATE"
 TASK_STATUS_SQL = """
 UPDATE crm.task SET status = $2,
@@ -153,6 +153,8 @@ NOTE_INSERT_SQL = """
 INSERT INTO crm.note (note_id, trip_id, kind, body_enc) VALUES ($1, $2, 'internal', $3) RETURNING created_at, created_by
 """
 TRIP_EXISTS_SQL = "SELECT 1 FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL"
+TRIP_DATES_SQL = "SELECT start_date, end_date FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL FOR UPDATE"
+TRIP_EDITABLE = ("waiting_on", "title", "start_date", "end_date")
 
 # The answers of a submission the trip page shows: everything except identity (name, e-mail, phone, companions are
 # the party list, the message is a note).
@@ -230,7 +232,9 @@ async def board(ctx: TenantContext, vault: Vault, flt: BoardFilter) -> dict[str,
             }
         )
     if rows:
-        ctx.audit("list_view", "allowed", "pipeline", None, fields=("display_name",), reason="board")
+        # AA-937 (crm-006): the event names the travellers whose names the page showed (design §4.4).
+        shown = tuple(dict.fromkeys(str(r["lead_traveler_id"]) for r in rows if r["lead_name_enc"] is not None))
+        ctx.audit("list_view", "allowed", "pipeline", None, fields=("display_name",), reason="board", object_ids=shown)
     return {
         "stages": [
             {
@@ -407,9 +411,29 @@ async def assign(ctx: TenantContext, trip_id: uuid.UUID, member_id: uuid.UUID | 
     return {"trip_id": str(trip_id), "owner_member_id": _id(member_id), "is_mine": member_id == ctx.member_id}
 
 
-async def update_trip(ctx: TenantContext, trip_id: uuid.UUID, changes: dict[str, Any]) -> dict[str, Any]:
+async def update_trip(
+    ctx: TenantContext, trip_id: uuid.UUID, changes: dict[str, Any], vault: Vault | None = None
+) -> dict[str, Any]:
+    """Waiting on, title, and (AA-937) the start / end dates. A changed start date recomputes the party's age bands
+    (R32, :mod:`app.travellers.age_bands`; needs ``vault``); any other change leaves them alone."""
     sets: list[str] = []
     args: list[Any] = [trip_id]
+    before = None
+    if "start_date" in changes or "end_date" in changes:
+        before = await ctx.conn.fetchrow(TRIP_DATES_SQL, trip_id)
+        if before is None:
+            raise NotFound("trip_not_found")
+        for name in ("start_date", "end_date"):
+            if name in changes:
+                value = changes[name]
+                if value is not None and not isinstance(value, dt.date):
+                    raise Invalid(f"invalid_{name}", "an ISO date")
+                args.append(value)
+                sets.append(f"{name} = ${len(args)}")
+        start = changes.get("start_date", before["start_date"])
+        end = changes.get("end_date", before["end_date"])
+        if start is not None and end is not None and end < start:
+            raise Invalid("invalid_dates", "the end date is before the start date")
     if "waiting_on" in changes:
         if changes["waiting_on"] not in WAITING_ON:
             raise Invalid("invalid_waiting_on", "agency, client, aa, supplier or none")
@@ -434,8 +458,12 @@ async def update_trip(ctx: TenantContext, trip_id: uuid.UUID, changes: dict[str,
         "allowed",
         "trip",
         str(trip_id),
-        fields=tuple(sorted(k for k in changes if k in ("waiting_on", "title"))),
+        fields=tuple(sorted(k for k in changes if k in TRIP_EDITABLE)),
     )
+    if before is not None and "start_date" in changes and changes["start_date"] != before["start_date"]:
+        if vault is None:
+            raise RuntimeError("a start date change needs the vault (age bands)")
+        await age_bands.recompute_for_trip(ctx, vault, trip_id, changes["start_date"])
     return _trip(row, ctx)
 
 
@@ -486,16 +514,3 @@ async def members(ctx: TenantContext) -> list[dict[str, Any]]:
         }
         for r in await ctx.conn.fetch(MEMBERS_SQL)
     ]
-
-
-async def reveal_contact(ctx: TenantContext, vault: Vault, traveler_id: uuid.UUID, field: str) -> dict[str, Any]:
-    """One contact field of one traveller, on a click (design §4.4: one ``reveal`` event per field)."""
-    if field not in ("email", "phone"):
-        raise Invalid("invalid_field", "email or phone")
-    row = await ctx.conn.fetchrow(TRAVELER_CONTACT_SQL, traveler_id)
-    if row is None:
-        raise NotFound("traveler_not_found")
-    blob = row[f"{field}_enc"]
-    value = await vault.decrypt("traveler", f"{field}_enc", traveler_id, blob) if blob is not None else None
-    ctx.audit("reveal", "allowed", "traveler", str(traveler_id), fields=(field,))
-    return {"traveler_id": str(traveler_id), "field": field, "value": value}

@@ -282,7 +282,8 @@ async def test_add_note_and_task_status() -> None:
         await pipeline.set_task_status(tenant_ctx(tconn), task, "skipped")
 
 
-async def test_members_and_reveal() -> None:
+async def test_members() -> None:
+    # The contact reveal moved to app.travellers.reveal (AA-937, tests/unit/test_travellers.py).
     conn = ScriptedConn().on(
         "FROM crm.member",
         [
@@ -291,15 +292,4 @@ async def test_members_and_reveal() -> None:
         ],
     )
     assert [m["is_me"] for m in await pipeline.members(tenant_ctx(conn))] == [True, False]
-    rconn = ScriptedConn().on(
-        "SELECT tr.email_enc", {"email_enc": enc("traveler", "email_enc", "a@b.test"), "phone_enc": None}
-    )
-    ctx = tenant_ctx(rconn)
-    assert (await pipeline.reveal_contact(ctx, FakeVault(), LEAD, "email"))["value"] == "a@b.test"
-    assert (await pipeline.reveal_contact(ctx, FakeVault(), LEAD, "phone"))["value"] is None
-    assert [e.fields for e in ctx.audit_events] == [("email",), ("phone",)]
-    with pytest.raises(Invalid):
-        await pipeline.reveal_contact(ctx, FakeVault(), LEAD, "passport")
-    with pytest.raises(NotFound):
-        await pipeline.reveal_contact(tenant_ctx(), FakeVault(), LEAD, "email")
     assert TENANT
