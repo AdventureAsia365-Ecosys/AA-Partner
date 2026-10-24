@@ -44,6 +44,7 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   // AA-937 (CRM-09): clients (A-06 / A-07), the party of a trip, documents.
   { method: "GET", pattern: /^travelers$/, tenant: true, card: "AA-937" },
   { method: "POST", pattern: /^travelers$/, tenant: true, card: "AA-937" },
+  { method: "POST", pattern: /^travelers\/search$/, tenant: true, card: "AA-937" },
   { method: "GET", pattern: new RegExp(`^travelers/${UUID}$`), tenant: true, card: "AA-937" },
   { method: "PATCH", pattern: new RegExp(`^travelers/${UUID}(/profile)?$`), tenant: true, card: "AA-937" },
   { method: "PUT", pattern: new RegExp(`^travelers/${UUID}/health$`), tenant: true, card: "AA-937" },

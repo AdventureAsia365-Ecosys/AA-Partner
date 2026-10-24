@@ -1,11 +1,15 @@
 // web/app/(crm)/clients/page.tsx — A-06 Clients (AA-937, card CRM-09; design v3 §2.2, §4.4). The directory shows
 // display names only (no e-mail, no phone, no partial digits) and the API writes one list_view audit event per load
-// with the ids shown. Search is exact (blind indexes, R35). Filters and pages are links, so the list is a server
-// render; adding a client is the one client-side form.
+// with the ids shown. Search is exact (blind indexes, R35) and never in a URL: the form POSTs the term to
+// /clients/search (sealed short-lived cookie, lib/clientSearch.ts) and the page searches with POST
+// /crm/v1/travelers/search. Filters and pages are links, so the list is a server render; adding a client is the one
+// client-side form.
+import { cookies } from "next/headers";
 import { EmptyState, ErrorState, K } from "@/app/_kit";
 import { NewClientForm } from "@/components/clients/NewClientForm";
 import { PageTitle } from "@/components/PageTitle";
-import { directoryHref, label, parseDirectory, tripsCount, type Directory } from "@/lib/clients";
+import { directoryHref, label, parseDirectory, SEARCH_MAX, tripsCount, type Directory } from "@/lib/clients";
+import { openSearch, searchCookieName } from "@/lib/clientSearch";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { formatDate } from "@/lib/dates";
@@ -29,24 +33,29 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
   if (ctx.apiDown) return null;
   const { session } = await serverContext();
   const f = parseDirectory(await searchParams);
+  const q = f.search ? openSearch(ctx.cfg, session, (await cookies()).get(searchCookieName(ctx.cfg))?.value) : "";
+  const search = Boolean(q);
   const query = new URLSearchParams();
-  if (f.q) query.set("q", f.q);
   if (f.archived) query.set("archived", "true");
   if (f.owner === "me") query.set("owner", "me");
   if (f.page > 1) query.set("page", String(f.page));
-  const res = session ? await crmCall<Directory>(ctx.cfg, session, "GET", "travelers", { query }) : null;
+  const res = !session
+    ? null
+    : search
+      ? await crmCall<Directory>(ctx.cfg, session, "POST", "travelers/search", { body: { q, archived: f.archived, owner: f.owner, page: f.page } })
+      : await crmCall<Directory>(ctx.cfg, session, "GET", "travelers", { query });
   const { lang, locale } = ctx;
   const KIND = { email: "clients.byEmail", phone: "clients.byPhone", name: "clients.byName" } as const;
-  const search = res?.ok ? res.data.filter.search : "none";
-  const kindLabel = search !== "none" ? t(lang, KIND[search]) : null;
+  const matched = res?.ok ? res.data.filter.search : "none";
+  const kindLabel = matched !== "none" ? t(lang, KIND[matched]) : null;
   return (
     <div data-testid="crm-clients" data-card="AA-937" style={{ display: "grid", gap: 14, minWidth: 0, maxWidth: 1080 }}>
       <PageTitle title={t(lang, "clients.title")} subtitle={t(lang, "clients.subtitle")} />
-      <form method="get" action="/clients" style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+      <form method="post" action="/clients/search" style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
         <input
           name="q"
-          defaultValue={f.q}
-          maxLength={120}
+          defaultValue={q}
+          maxLength={SEARCH_MAX}
           aria-label={t(lang, "clients.search")}
           placeholder={t(lang, "clients.search")}
           style={{ font: "inherit", fontSize: 13.5, padding: "7px 10px", borderRadius: 8, border: `1px solid ${K.line2}`, background: K.card, color: K.ink, flex: "1 1 260px", minWidth: 0 }}
@@ -56,23 +65,23 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
         <button type="submit" style={{ ...chip(true), cursor: "pointer", font: "inherit", fontSize: 13 }}>
           {t(lang, "clients.searchButton")}
         </button>
-        {f.q && (
+        {search && (
           <a href={directoryHref({ archived: f.archived, owner: f.owner })} style={chip(false)}>
             {t(lang, "clients.clear")}
           </a>
         )}
       </form>
       <nav style={{ display: "flex", flexWrap: "wrap", gap: 8 }} aria-label={t(lang, "clients.title")}>
-        <a href={directoryHref({ q: f.q, owner: f.owner })} style={chip(!f.archived)}>
+        <a href={directoryHref({ search, owner: f.owner })} style={chip(!f.archived)}>
           {t(lang, "clients.active")}
         </a>
-        <a href={directoryHref({ q: f.q, owner: f.owner, archived: true })} style={chip(f.archived)}>
+        <a href={directoryHref({ search, owner: f.owner, archived: true })} style={chip(f.archived)}>
           {t(lang, "clients.archived")}
         </a>
-        <a href={directoryHref({ q: f.q, archived: f.archived })} style={chip(f.owner === "anyone")}>
+        <a href={directoryHref({ search, archived: f.archived })} style={chip(f.owner === "anyone")}>
           {t(lang, "clients.everyone")}
         </a>
-        <a href={directoryHref({ q: f.q, archived: f.archived, owner: "me" })} style={chip(f.owner === "me")}>
+        <a href={directoryHref({ search, archived: f.archived, owner: "me" })} style={chip(f.owner === "me")}>
           {t(lang, "clients.mine")}
         </a>
       </nav>
@@ -80,7 +89,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
       {!res || !res.ok ? (
         <ErrorState message={t(lang, res?.status === 422 ? "clients.noResults" : "clients.error")} />
       ) : res.data.items.length === 0 ? (
-        f.q ? (
+        search ? (
           <EmptyState title={t(lang, "clients.noResults")} />
         ) : (
           <EmptyState title={t(lang, "section.clients.title")} description={t(lang, "section.clients.body")} />
@@ -108,12 +117,12 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
           </ul>
           <nav style={{ display: "flex", gap: 10 }}>
             {f.page > 1 && (
-              <a href={directoryHref({ ...f, page: f.page - 1 })} style={chip(false)}>
+              <a href={directoryHref({ ...f, search, page: f.page - 1 })} style={chip(false)}>
                 {t(lang, "clients.prev")}
               </a>
             )}
             {res.data.has_more && (
-              <a href={directoryHref({ ...f, page: f.page + 1 })} style={chip(false)}>
+              <a href={directoryHref({ ...f, search, page: f.page + 1 })} style={chip(false)}>
                 {t(lang, "clients.next")}
               </a>
             )}

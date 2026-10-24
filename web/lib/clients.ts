@@ -152,10 +152,12 @@ export function label(lang: Lang, prefix: string, code: string | null | undefine
   return text ?? code;
 }
 
-/** Directory URL for a filter (search, archived, mine, page): links, so the list stays a server render. */
-export function directoryHref(f: { q?: string | null; archived?: boolean; owner?: "anyone" | "me"; page?: number }): string {
+/** Directory URL for a filter (archived, mine, page) and whether the saved search applies: links, so the list stays a
+ * server render. The search term itself never goes into a URL (Vercel / CDN request logs, browser history): the form
+ * POSTs it to /clients/search, which keeps it in a short-lived sealed cookie and links here with `s=1`. */
+export function directoryHref(f: { search?: boolean; archived?: boolean; owner?: "anyone" | "me"; page?: number }): string {
   const q = new URLSearchParams();
-  if (f.q) q.set("q", f.q);
+  if (f.search) q.set("s", "1");
   if (f.archived) q.set("archived", "true");
   if (f.owner === "me") q.set("owner", "me");
   if (f.page && f.page > 1) q.set("page", String(f.page));
@@ -163,16 +165,18 @@ export function directoryHref(f: { q?: string | null; archived?: boolean; owner?
   return s ? `/clients?${s}` : "/clients";
 }
 
-export function parseDirectory(params: Record<string, string | string[] | undefined>): { q: string; archived: boolean; owner: "anyone" | "me"; page: number } {
-  const q = typeof params.q === "string" ? params.q.trim().slice(0, 120) : "";
+export function parseDirectory(params: Record<string, string | string[] | undefined>): { search: boolean; archived: boolean; owner: "anyone" | "me"; page: number } {
   const page = Number(typeof params.page === "string" ? params.page : "1");
   return {
-    q,
+    search: params.s === "1",
     archived: params.archived === "true",
     owner: params.owner === "me" ? "me" : "anyone",
     page: Number.isInteger(page) && page >= 1 && page <= 200 ? page : 1,
   };
 }
+
+/** The longest search term the API accepts (POST /crm/v1/travelers/search). */
+export const SEARCH_MAX = 120;
 
 /** What a search box value will be matched as (mirrors the API: exact only, R35). */
 export function searchKind(q: string): "none" | "email" | "phone" | "name" {

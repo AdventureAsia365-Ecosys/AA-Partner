@@ -1,6 +1,9 @@
 // AA-937 (CRM-09): client helpers (masking, search kind, links, base64, file checks), the BFF allow-list lines and
 // the document body limit, and the EN/VI strings of every code the client pages label.
 import { describe, expect, it } from "vitest";
+import { openSearch, SEARCH_TTL_S, searchCookie, searchCookieName } from "@/lib/clientSearch";
+import type { Session } from "@/lib/session";
+import { testConfig } from "./helpers";
 import { BFF_ROUTES, DOCUMENT_BODY_BYTES, matchBff } from "@/lib/bff";
 import {
   AGE_BANDS,
@@ -60,9 +63,10 @@ describe("directory helpers", () => {
 
   it("builds filter links and parses them back", () => {
     expect(directoryHref({})).toBe("/clients");
-    expect(directoryHref({ q: "anna", archived: true, owner: "me", page: 3 })).toBe("/clients?q=anna&archived=true&owner=me&page=3");
-    expect(parseDirectory({ q: " anna ", archived: "true", owner: "me", page: "2" })).toEqual({ q: "anna", archived: true, owner: "me", page: 2 });
-    expect(parseDirectory({ page: "0", owner: "x" })).toEqual({ q: "", archived: false, owner: "anyone", page: 1 });
+    // The search term is never in a link: only the "search applies" flag.
+    expect(directoryHref({ search: true, archived: true, owner: "me", page: 3 })).toBe("/clients?s=1&archived=true&owner=me&page=3");
+    expect(parseDirectory({ s: "1", q: "anna@example.test", archived: "true", owner: "me", page: "2" })).toEqual({ search: true, archived: true, owner: "me", page: 2 });
+    expect(parseDirectory({ page: "0", owner: "x" })).toEqual({ search: false, archived: false, owner: "anyone", page: 1 });
     expect(parseDirectory({ page: "abc" }).page).toBe(1);
   });
 
@@ -108,6 +112,7 @@ describe("BFF allow-list (AA-937 lines)", () => {
     for (const [method, path] of [
       ["GET", "travelers"],
       ["POST", "travelers"],
+      ["POST", "travelers/search"],
       ["GET", `travelers/${ID}`],
       ["PATCH", `travelers/${ID}`],
       ["PATCH", `travelers/${ID}/profile`],
@@ -178,5 +183,30 @@ describe("strings", () => {
 
   it("names the card that builds the Clients page", () => {
     expect(SECTIONS.find((s) => s.key === "clients")?.card).toBe("AA-937");
+  });
+});
+
+describe("search term out of URLs (lib/clientSearch.ts)", () => {
+  const cfg = testConfig();
+  const session = { v: 1, at: "a", sub: "user-1", tid: ID, exp: 9_999_999_999 } as unknown as Session;
+
+  it("seals the term for this person and agency only, for 15 minutes", () => {
+    const c = searchCookie(cfg, session, "anna@example.test", 1000);
+    expect(c.path).toBe("/clients");
+    expect(c.httpOnly).toBe(true);
+    expect(c.maxAge).toBe(SEARCH_TTL_S);
+    expect(c.value).not.toContain("anna");
+    expect(openSearch(cfg, session, c.value, 1001)).toBe("anna@example.test");
+    expect(openSearch(cfg, { ...session, sub: "user-2" }, c.value, 1001)).toBe("");
+    expect(openSearch(cfg, { ...session, tid: ID2 }, c.value, 1001)).toBe("");
+    expect(openSearch(cfg, session, c.value, 1000 + SEARCH_TTL_S)).toBe("");
+    expect(openSearch(cfg, null, c.value, 1001)).toBe("");
+    expect(openSearch(cfg, session, "garbage", 1001)).toBe("");
+  });
+
+  it("an empty term or no session clears the cookie", () => {
+    expect(searchCookie(cfg, session, "", 1000)).toMatchObject({ value: "", maxAge: 0 });
+    expect(searchCookie(cfg, null, "anna", 1000)).toMatchObject({ value: "", maxAge: 0 });
+    expect(searchCookieName({ secureCookies: true })).toBe("__Secure-aa_crm_q");
   });
 });

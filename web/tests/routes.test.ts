@@ -9,7 +9,9 @@ import { GET as refresh } from "@/app/auth/refresh/route";
 import { GET as signIn } from "@/app/auth/sign-in/route";
 import { POST as signOut } from "@/app/auth/sign-out/route";
 import { GET as healthz } from "@/app/healthz/route";
+import { GET as searchGet, POST as searchPost } from "@/app/(crm)/clients/search/route";
 import { POST as setLocale } from "@/app/prefs/locale/route";
+import { openSearch, searchCookieName } from "@/lib/clientSearch";
 import { cookieNames, readSession, refreshCookie, sessionCookie } from "@/lib/session";
 import { cookieHeader, ENV, fakeAccessToken, testConfig } from "./helpers";
 
@@ -193,6 +195,32 @@ describe("sign-out, locale, healthz", () => {
     const bad = new FormData();
     bad.set("locale", "xx");
     expect((await setLocale(request("/prefs/locale", { method: "POST", headers: { origin: ORIGIN }, body: bad }))).status).toBe(422);
+  });
+
+  it("client search keeps the term out of the URL (AA-937)", async () => {
+    const f = new FormData();
+    f.set("q", "  anna@example.test ");
+    f.set("owner", "me");
+    const ok = await searchPost(request("/clients/search", { method: "POST", cookie: signedIn(), headers: { origin: ORIGIN }, body: f }));
+    expect(ok.status).toBe(303);
+    const location = ok.headers.get("location")!;
+    expect(location).toBe(`${ORIGIN}/clients?s=1&owner=me`);
+    expect(location).not.toContain("anna");
+    const set = ok.headers.getSetCookie().find((c) => c.startsWith(`${searchCookieName(cfg)}=`))!;
+    expect(set).toMatch(/Path=\/clients/);
+    expect(set).toMatch(/HttpOnly/i);
+    expect(set).not.toContain("anna");
+    const sealed = set.slice(set.indexOf("=") + 1, set.indexOf(";"));
+    const session = readSession(cfg, jarOf(signedIn()));
+    expect(openSearch(cfg, session, sealed)).toBe("anna@example.test");
+    const empty = new FormData();
+    empty.set("q", " ");
+    const cleared = await searchPost(request("/clients/search", { method: "POST", cookie: signedIn(), headers: { origin: ORIGIN }, body: empty }));
+    expect(cleared.headers.get("location")).toBe(`${ORIGIN}/clients`);
+    expect(cleared.headers.getSetCookie().some((c) => /Max-Age=0/i.test(c))).toBe(true);
+    const cross = await searchPost(request("/clients/search", { method: "POST", cookie: signedIn(), headers: { origin: "https://evil.example.test" }, body: f }));
+    expect(cross.status).toBe(403);
+    expect((await searchGet(request("/clients/search"))).headers.get("location")).toBe(`${ORIGIN}/clients`);
   });
 
   it("healthz answers without any dependency", async () => {
