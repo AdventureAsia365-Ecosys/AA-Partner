@@ -15,7 +15,7 @@ import pytest_asyncio
 
 from app.auth.route_guard import Caller
 from app.errors import Forbidden
-from app.tenancy import tenant_tx
+from app.tenancy import provisioning_tx, tenant_tx
 from tests.integration.conftest import APP_ROLE, OWNER, READERS
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -31,6 +31,8 @@ EXTRA_POLICIES = {
     ("tenant", "tenant_member_lookup"): ("r", {APP_ROLE}),
     #   crm-005: the public intake form lookup of app.tenancy.intake_tx() (keyed on app.intake_key).
     ("intake_form", "intake_form_public_lookup"): ("r", {APP_ROLE}),
+    #   crm-008: the invitation claim / accept lookup of app.tenancy.invitation_tx() (keyed on app.invite_token_hash).
+    ("member_invitation", "invitation_token_lookup"): ("r", {APP_ROLE}),
 }
 
 ISS = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_TESTPARTN"
@@ -77,6 +79,7 @@ async def _seed(pool: asyncpg.Pool, *, role: str = "owner", member_status: str =
     tenant_id, sub = uuid.uuid4(), f"sub-{uuid.uuid4()}"
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        await conn.execute("SELECT set_config('app.actor', 'seed:test', true)")  # crm-008: crm_app names its actor
         await conn.execute("INSERT INTO crm.tenant (tenant_id) VALUES ($1)", tenant_id)
         await conn.execute(
             "INSERT INTO crm.member (cognito_iss, cognito_sub, role, status) VALUES ($1, $2, $3, 'invited')",
@@ -292,19 +295,20 @@ async def test_created_by_and_updated_at_defaults(app_pool: asyncpg.Pool, two_ag
 
 async def test_status_moves_only_along_the_transition_table(app_pool: asyncpg.Pool, two_agencies) -> None:  # noqa: ANN001
     (a, a_sub), _ = two_agencies
+    # A platform context (crm-008: inside a member request the last owner cannot change their own status at all).
     with pytest.raises(asyncpg.CheckViolationError, match="not an allowed transition"):
-        async with tenant_tx(app_pool, caller(a_sub), a) as ctx:
-            await ctx.conn.execute("UPDATE crm.member SET status = 'invited' WHERE member_id = $1", ctx.member_id)
+        async with provisioning_tx(app_pool, a, actor="seed:test") as ctx:
+            await ctx.conn.execute("UPDATE crm.member SET status = 'invited' WHERE cognito_sub = $1", a_sub)
     with pytest.raises(asyncpg.CheckViolationError):
-        async with tenant_tx(app_pool, caller(a_sub), a) as ctx:
-            await ctx.conn.execute("UPDATE crm.member SET status = 'gone' WHERE member_id = $1", ctx.member_id)
+        async with provisioning_tx(app_pool, a, actor="seed:test") as ctx:
+            await ctx.conn.execute("UPDATE crm.member SET status = 'gone' WHERE cognito_sub = $1", a_sub)
 
 
 async def test_trash_columns_move_together(app_pool: asyncpg.Pool, two_agencies) -> None:  # noqa: ANN001
     (a, a_sub), _ = two_agencies
     with pytest.raises(asyncpg.CheckViolationError, match="member_trash_chk"):
-        async with tenant_tx(app_pool, caller(a_sub), a) as ctx:
-            await ctx.conn.execute("UPDATE crm.member SET deleted_at = now() WHERE member_id = $1", ctx.member_id)
+        async with provisioning_tx(app_pool, a, actor="seed:test") as ctx:
+            await ctx.conn.execute("UPDATE crm.member SET deleted_at = now() WHERE cognito_sub = $1", a_sub)
     async with tenant_tx(app_pool, caller(a_sub), a) as ctx:
         await ctx.conn.execute(
             "UPDATE crm.member SET deleted_at = now(), deleted_by = 'x', purge_after = now() + interval '7 days' "

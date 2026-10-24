@@ -84,7 +84,8 @@ async def test_caller_sees_only_their_own_active_memberships(app_pool: asyncpg.P
     b = await _agency(app_pool, SEN_VANG, (me, "assistant"), locale="vi-VN")
     c = await _agency(app_pool, "Agency C", (other, "owner"))
     d = await _agency(app_pool, "Agency D", (me, "agent"))
-    async with tenant_tx(app_pool, caller(me), d) as ctx:
+    # crm-008: an agent cannot change memberships, not even their own; the platform context disables it.
+    async with provisioning_tx(app_pool, d, actor="seed:test") as ctx:
         await ctx.conn.execute("UPDATE crm.member SET status = 'disabled' WHERE cognito_sub = $1", me)
     found = await caller_memberships(app_pool, caller(me))
     assert {(m.tenant_id, m.member_role) for m in found} == {(a, "owner"), (b, "assistant")}
@@ -117,7 +118,8 @@ async def test_the_lookup_context_grants_no_write_and_no_foreign_rows(app_pool: 
         assert await conn.execute("UPDATE crm.member SET role = 'assistant' WHERE tenant_id = $1", a) == "UPDATE 0"
         assert await conn.execute("UPDATE crm.tenant SET display_name = 'x' WHERE tenant_id = $1", a) == "UPDATE 0"
         assert await conn.execute("DELETE FROM crm.member WHERE tenant_id = $1", a) == "DELETE 0"
-    with pytest.raises(asyncpg.InsufficientPrivilegeError, match="row-level security"):
+    # crm-008: the member guard refuses a crm_app write without app.actor before RLS's WITH CHECK is reached.
+    with pytest.raises(asyncpg.PostgresError) as refused:
         async with app_pool.acquire() as conn, conn.transaction():
             await conn.execute("SELECT set_config('app.caller_iss', $1, true)", ISS)
             await conn.execute("SELECT set_config('app.caller_sub', $1, true)", me)
@@ -126,6 +128,7 @@ async def test_the_lookup_context_grants_no_write_and_no_foreign_rows(app_pool: 
                 a,
                 ISS,
             )
+    assert refused.value.sqlstate == "CRM02"
 
 
 async def test_inside_tenant_tx_the_lookup_policies_stay_off(app_pool: asyncpg.Pool) -> None:
