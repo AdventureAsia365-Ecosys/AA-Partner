@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.3.0...v0.4.0) (2026-10-24)
+
+
+### Features
+
+* crm_membership_pull consumes the CIS tenant.membership.v1 feed over M2M ([#41](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/41)) ([dca754e](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/dca754e43e3d59aa3b92dcefcd3b2499c342c5f4))
+* crm-012 schema for CRM-15 modules 1 + 2 (stage edges, gates, undo, client links, call slots) ([#37](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/37)) ([8169d26](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/8169d2607fe3ebe81a5248afa59a1c18e6b441bf))
+* crm-013 schema for the CIS membership feed consumer (feed state, inbox, lock source) ([#39](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/39)) ([02fd757](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/02fd757956e4ce668cd4485f5a6a507b087fb63d))
+* crm-014 schema for CRM-16 agency-line ledger and suppliers (lines, frozen FX money, rates) ([#42](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/42)) ([fbf9011](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/fbf9011555dab9268dbac0f7b6e27221a24fa4c4))
+* CRM-15 stage engine, planning form, call slots and their web UI ([#40](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/40)) ([e6bcaf4](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/e6bcaf414c3b3be3b8d780bd80fa9059b22fd611))
+* CRM-16 agency-line ledger, suppliers, payment settings and daily FX fetch ([#43](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/43)) ([cb9c759](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/cb9c759aaff8a5eb2a78cfcfadc2043b60705543))
+* keep the trip's own non-name-like destinations in clear (scrubber f3-3) ([#36](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/36)) ([3f4e391](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/3f4e3914db967e3ca8c56b027cf8589a31c05bdf))
+
 ## [0.3.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.2.0...v0.3.0) (2026-10-24)
 
 
