@@ -55,7 +55,12 @@ APPEND_ONLY_TABLES = {
     "trip_stage_history": "every stage move of a trip (crm-005, AA-936)",
     "llm_call": "LLM gateway call log, no text (crm-005, AA-936)",
     "audit_export_manifest": "the hourly audit export hash chain (crm-007, AA-940)",
+    "lifecycle_run": "counts of each lifecycle job run per agency (crm-010, AA-942)",
 }
+# AA-942 (crm-010): append-only tables that erasure must reach. Their trigger is crm.erasable_append_only(): UPDATE and
+# TRUNCATE always refused, DELETE only as crm_owner inside crm.erase_subject / crm.lifecycle_purge_expired. Every other
+# append-only table (the audit above all) keeps crm.reject_append_only_change().
+ERASABLE_APPEND_ONLY = {"consent", "trip_stage_history", "llm_call"}
 APPEND_ONLY_COLUMNS = {
     "tenant_id": ("uuid", True),
     "created_at": ("timestamp with time zone", True),
@@ -155,8 +160,9 @@ async def test_every_crm_table_follows_the_base_template(admin: asyncpg.Connecti
             t["oid"],
         )
         if append_only:
-            if "reject_append_only_change" not in {r["proname"] for r in triggers}:
-                problems.append(f"{name}: append-only trigger")
+            want_fn = "erasable_append_only" if name in ERASABLE_APPEND_ONLY else "reject_append_only_change"
+            if want_fn not in {r["proname"] for r in triggers}:
+                problems.append(f"{name}: append-only trigger ({want_fn})")
             for privilege in ("UPDATE", "DELETE", "TRUNCATE"):
                 if await admin.fetchval("SELECT has_table_privilege($1, $2::oid, $3)", APP_ROLE, t["oid"], privilege):
                     problems.append(f"{name}: crm_app may {privilege} an append-only table")
