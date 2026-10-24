@@ -60,6 +60,7 @@ async def _agency(pool: asyncpg.Pool, *roles: str) -> tuple[uuid.UUID, list[tupl
     people: list[tuple[Caller, uuid.UUID]] = []
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        await conn.execute("SELECT set_config('app.actor', 'seed:test', true)")  # crm-008: crm_app names its actor
         await conn.execute("INSERT INTO crm.tenant (tenant_id, display_name) VALUES ($1, 'Sen Vàng Travel')", tenant_id)
         for role in roles or ("owner",):
             sub = f"sub-{uuid.uuid4()}"
