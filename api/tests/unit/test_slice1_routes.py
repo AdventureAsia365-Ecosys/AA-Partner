@@ -243,7 +243,7 @@ def test_forms_routes_owner_only_for_writes(agency: Any, monkeypatch: pytest.Mon
     assert client.patch(f"/crm/v1/intake-forms/{TRIP}", json={"status": "disabled"}, headers=headers).status_code == 200
     monkeypatch.setattr(pipeline_router, "tenant_tx", fake_tx(tenant_ctx(ScriptedConn(), role="agent")))
     refused = client.post("/crm/v1/intake-forms", json={"label": "Website"}, headers=headers)
-    assert refused.status_code == 403 and refused.json()["detail"] == "owner_only"
+    assert refused.status_code == 403 and refused.json()["detail"] == "role_forbidden"
     assert client.patch(f"/crm/v1/intake-forms/{TRIP}", json={"label": "x"}, headers=headers).status_code == 403
 
 

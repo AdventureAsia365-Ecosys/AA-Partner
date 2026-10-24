@@ -7,8 +7,18 @@ name: E2E Dev
 # tools/identity/crm_dev_identity.py e2e-users); GitHub environment `e2e` with secret E2E_MAIL_ROLE_ARN (the
 # read-only e2e mailbox role, whose trust must list this repo's `e2e` environment on refs/heads/main) and variables
 # E2ECRMCLIENT, E2ECRMPARTNER, E2ECRMFORMKEY, E2ECRMEMAIL.
+# AA-939: once the CRM web signs in with the partner pool (required MFA), the owner signs in with password +
+# authenticator: environment secrets E2ECRMPASSWORD and E2ECRMTOTP (from the e2e user's Secrets Manager entry written by
+# AA-CIS-Infra tools/identity/crm_dev_identity.py e2e-users --pool partner). Empty = e-mail code sign-in (EXTERNAL).
+# The one-off "invite -> active < 5 min" run (e2e/tests/invite.spec.ts) is the `invite` input, with variable
+# E2ECRMINVITEE (the invitee address; reset its account first: crm_dev_identity.py invitee-reset --apply).
 on:
   workflow_dispatch:
+    inputs:
+      invite:
+        description: "AA-939: also run the timed invite -> active test (one-off; reset the invitee account first)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -34,6 +44,8 @@ jobs:
       E2ECRMPARTNER: ${{ vars.E2ECRMPARTNER }}
       E2ECRMFORMKEY: ${{ vars.E2ECRMFORMKEY }}
       E2ECRMEMAIL: ${{ vars.E2ECRMEMAIL }}
+      E2ECRMINVITE: ${{ inputs.invite && '1' || '0' }}
+      E2ECRMINVITEE: ${{ vars.E2ECRMINVITEE }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -57,6 +69,10 @@ jobs:
           aws-region: us-west-1
           role-session-name: crm-e2e-dev-${{ github.run_id }}
       - name: Run
+        # The owner's partner-pool credentials reach this step only (never the install steps above).
+        env:
+          E2ECRMPASSWORD: ${{ secrets.E2ECRMPASSWORD }}
+          E2ECRMTOTP: ${{ secrets.E2ECRMTOTP }}
         run: npx playwright test
       # Screenshots only, never the reports (a fill step would name the sign-in code).
       - name: Upload screenshots

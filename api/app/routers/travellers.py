@@ -46,6 +46,7 @@ from app.db import request_pool
 from app.documents import service as documents
 from app.documents.store import require_store
 from app.errors import Invalid
+from app.permissions import Action
 from app.routers.agency import tenant_header
 from app.tenancy import tenant_tx
 from app.travellers import service
@@ -55,6 +56,14 @@ from app.vault import Vault
 from app.vault.provider import require_keys
 
 router = class_router(AGENCY, tags=["travellers"])
+
+CONTACT_FIELDS = frozenset({"given_name", "family_name", "email", "phone"})
+
+
+def reveal_action(field: str) -> Action:
+    """Contact fields vs passport / DOB / health / emergency contact (two rows of design §4.6; both every role)."""
+    return Action.REVEAL_CONTACT if field in CONTACT_FIELDS else Action.REVEAL_SENSITIVE
+
 
 CallerDep = Annotated[Caller, Depends(current_caller)]
 TenantDep = Annotated[uuid.UUID, Depends(tenant_header)]
@@ -178,7 +187,7 @@ async def get_travelers(
         raise Invalid("search_by_post", "search with POST /crm/v1/travelers/search (the term stays out of URLs)")
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.CLIENT_VIEW) as ctx:
         return await service.directory(ctx, Vault(keys, ctx), archived=archived, owner=owner, page=page)
 
 
@@ -188,7 +197,7 @@ async def post_travelers_search(
 ) -> dict[str, Any]:
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.CLIENT_VIEW) as ctx:
         return await service.directory(
             ctx, Vault(keys, ctx), q=body.q, archived=body.archived, owner=body.owner, page=body.page
         )
@@ -198,7 +207,7 @@ async def post_travelers_search(
 async def post_traveler(request: Request, caller: CallerDep, tenant_id: TenantDep, body: TravelerIn) -> dict[str, Any]:
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.CLIENT_EDIT) as ctx:
         return await service.create_traveler(ctx, Vault(keys, ctx), body.model_dump())
 
 
@@ -208,7 +217,7 @@ async def get_traveler(
 ) -> dict[str, Any]:
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.CLIENT_VIEW) as ctx:
         return await service.profile(ctx, Vault(keys, ctx), traveler_id)
 
 
@@ -218,7 +227,7 @@ async def patch_traveler(
 ) -> dict[str, Any]:
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.CLIENT_EDIT) as ctx:
         return await service.update_traveler(ctx, Vault(keys, ctx), traveler_id, body.model_dump(exclude_unset=True))
 
 
@@ -228,7 +237,7 @@ async def patch_profile(
 ) -> dict[str, Any]:
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.CLIENT_EDIT) as ctx:
         return await service.update_profile(ctx, Vault(keys, ctx), traveler_id, body.model_dump(exclude_unset=True))
 
 
@@ -238,7 +247,7 @@ async def put_health(
 ) -> dict[str, Any]:
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.CLIENT_EDIT) as ctx:
         return await service.set_health(
             ctx,
             Vault(keys, ctx),
@@ -256,7 +265,7 @@ async def post_reveal(
 ) -> dict[str, Any]:
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=reveal_action(body.field)) as ctx:
         return await reveal(ctx, Vault(keys, ctx), traveler_id, body.field, body.reason)
 
 
@@ -265,7 +274,7 @@ async def post_relation(
     request: Request, caller: CallerDep, tenant_id: TenantDep, traveler_id: uuid.UUID, body: RelationIn
 ) -> dict[str, Any]:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.CLIENT_EDIT) as ctx:
         return await service.add_relation(ctx, traveler_id, body.to_traveler_id, body.kind)
 
 
@@ -274,7 +283,7 @@ async def delete_relation(
     request: Request, caller: CallerDep, tenant_id: TenantDep, traveler_id: uuid.UUID, relation_id: uuid.UUID
 ) -> dict[str, Any]:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.CLIENT_EDIT) as ctx:
         return await service.remove_relation(ctx, traveler_id, relation_id)
 
 
@@ -285,7 +294,7 @@ async def post_party(
 ) -> dict[str, Any]:
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_EDIT) as ctx:
         return await service.add_to_trip(
             ctx,
             Vault(keys, ctx),
@@ -301,7 +310,7 @@ async def delete_party(
 ) -> dict[str, Any]:
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_EDIT) as ctx:
         return await service.remove_from_trip(ctx, Vault(keys, ctx), trip_id, traveler_id)
 
 
@@ -312,7 +321,7 @@ async def get_trip_documents(
 ) -> dict[str, Any]:
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_VIEW) as ctx:
         return await documents.trip_documents(ctx, Vault(keys, ctx), trip_id)
 
 
@@ -322,7 +331,7 @@ async def post_document(request: Request, caller: CallerDep, tenant_id: TenantDe
     keys = require_keys(request.app.state.keys)
     store = require_store(request.app.state.documents)
     content = documents.decode(body.content_b64)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.DOCUMENT_UPLOAD) as ctx:
         return await documents.upload(
             ctx,
             Vault(keys, ctx),
@@ -344,7 +353,7 @@ async def post_download(
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     store = require_store(request.app.state.documents)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.DOCUMENT_DOWNLOAD) as ctx:
         return await documents.download(ctx, Vault(keys, ctx), store, document_id, body.reason)
 
 
@@ -353,7 +362,7 @@ async def patch_document(
     request: Request, caller: CallerDep, tenant_id: TenantDep, document_id: uuid.UUID, body: DocumentChange
 ) -> dict[str, Any]:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.DOCUMENT_UPLOAD) as ctx:
         return await documents.set_visibility(ctx, document_id, body.visible_to_travelers)
 
 
@@ -362,5 +371,5 @@ async def delete_document(
     request: Request, caller: CallerDep, tenant_id: TenantDep, document_id: uuid.UUID
 ) -> dict[str, Any]:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.DOCUMENT_DELETE) as ctx:
         return await documents.trash(ctx, document_id)

@@ -30,7 +30,9 @@ call log, and the Dev E2E; and **F1 / F2 complete** (AA-937, CRM-09, `crm-006`):
 directory and profile, relationships with their inverse, health codes, documents under the tenant `docs` DEK, the
 age band at departure, and the F2 views with the first NOLOGIN reader grants; and **F5 audit complete** (AA-940,
 CRM-12, `crm-007`): monthly audit partitions with a verified 12-month drop, the hourly export to both Object Lock
-buckets with a SHA-256 manifest chain, its verify script, and the owner's access log page with download.
+buckets with a SHA-256 manifest chain, its verify script, and the owner's access log page with download; and **F4 roles**
+(AA-939, CRM-11, `crm-008`): the permission matrix, the margin serializer on every `/crm/v1` response, the partner pool
+sign-in with required MFA, invitations, team management, the reassign queue, owner recovery and the plan columns.
 
 > Read this file before designing or changing anything here (AA-Ecosys steering, "CONTEXT.md first"). Change it in the
 > same PR when a boundary, owner, route class or the stack changes.
@@ -89,8 +91,9 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `/crm/health`, `/crm/health/ready` | no token (rate limited per `CloudFront-Viewer-Address`, IPv6 per /64) | liveness / readiness |
 | `/crm/public/v1` | no token: the inquiry form only (AA-936), served on the **client host** too (ALB rule `/crm/public/*`) | `GET forms/{key}`, `POST forms/{key}/submissions`; the form key decides the agency inside `intake_tx()`; Origin check, honeypot, consent, per-address limit (before any read) and per-form quota (charged only after every check), body streamed and capped at 32 KiB (413) |
 | `/crm/ci/deploy-gate` | the Deploy Dev workflow's GitHub OIDC token only (`app/auth/ci.py`) | job counts for the deploy guard |
-| `/crm/v1` | PARTNER x {AA-Partner web}; on Dev before AA-939 also EXTERNAL x {`cis-portal`} | `X-AA-Tenant-Id` + `tenant_tx()` (membership in `crm.member`); `GET /crm/v1/memberships` alone needs no header (`caller_memberships()`) |
-| `/crm/ops/v1` | WORKFORCE x {`cis-admin`} | group `cis-admin` reads, `crm-platform-admin` writes |
+| `/crm/public/v1/invitations/claim` | no token (AA-939): the invitation token in the body only; rate limited per address (`RATE_LIMIT_CLAIM_PER_MINUTE`) | `invitation_tx()`; creates or finds the partner-pool account |
+| `/crm/v1` | PARTNER x {AA-Partner web}; on Dev also EXTERNAL x {`cis-portal`} until the CRM web switches pools (AA-CIS-Infra `crm_partner_signin_enabled`; removed at P2b, AA-979) | `X-AA-Tenant-Id` + `tenant_tx(action=...)` (membership in `crm.member`, then the permission matrix); `GET /crm/v1/memberships` and `POST /crm/v1/invitations/accept` need no header |
+| `/crm/ops/v1` | WORKFORCE x {`cis-admin`} | group `cis-admin` reads, `crm-platform-admin` writes (AA-939: member deactivation, owner recovery open / complete) |
 | `/crm/staff/v1` | WORKFORCE x {`crm-staff`} | group `crm-ops` or `crm-support` (+ an owner grant for support, CRM-13b) |
 
 - One verifier (`app/auth/identity_verifier.py`, **byte copy** of AA-CIS-App `api/core/identity_verifier.py`, checked
@@ -113,6 +116,10 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
   `app/db.py`, `app/tenancy.py` and the `app/jobs/` queue modules, only asyncpg calls on `ctx.conn` written inside
   `async with tenant_tx(...) as ctx`; a pool, `request_pool()`, `acquire()`, an alias of `ctx.conn` or a call after
   the block fails.
+- **`tenant_tx(..., action=Action.X)`** (AA-939): right after the membership check the permission matrix
+  (`app/permissions.py`) refuses a role whose rule is DENY: 403 `role_forbidden` and a committed `denied` event. Every
+  `tenant_tx(` call in `app/routers/` must pass `action=` (`test_code_rules.py`). It also records the member role for
+  the margin serializer (`app/margin.py`).
 - **`caller_memberships(pool, caller)`** (`app/tenancy.py`, AA-935) lists the caller's agencies before any tenant is
   chosen: one transaction that sets `app.caller_iss` / `app.caller_sub` from the verified token (never
   `app.tenant_id`), read by the crm-004 SELECT-only policies `member_self_lookup` and `tenant_member_lookup` (TO
@@ -125,9 +132,24 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
   read by the crm-005 SELECT-only policy `intake_form_public_lookup` (TO `crm_app`), then `app.tenant_id` = the
   form's agency (which must be active) and `app.actor` = `intake_form:<id>`. Unknown, disabled or locked = 404
   `form_not_found` (keys cannot be probed). Only `app/intake/public.py` may open it.
+- **`invitation_tx(pool, token_hash_hex)`** (AA-939) is the invitation claim / accept context: it sets
+  `app.invite_token_hash`, read by the crm-008 SELECT-only policy `invitation_token_lookup` (TO `crm_app`); the
+  invitation found decides the agency (must be active), `app.actor` = `invitation:<id>` (audit actor kind `user`).
+  Unknown token or locked agency = 404 `invitation_not_found`. The row is then re-read `FOR UPDATE`, so two claims
+  or two accepts of one invitation run one after the other. Only `app/members/invitations.py` may open it.
 - **`system_tx(pool, tenant_id, actor="job:<kind>")`** (AA-936) is a job's context in one agency (no member):
   `app.tenant_id` from the job payload, the agency must be active, the same audit queue as `tenant_tx()` with
-  `actor_kind = system`. Only the job handler modules (`app/intake/process.py`) and the seeder may open it.
+  `actor_kind = system`. Actors `job:` / `seed:` only. Only the job handler modules (`app/intake/process.py`) and the
+  seeder may open it.
+- **`platform_tx(pool, tenant_id, actor="platform:<staff sub>")`** (AA-939) is AA staff in one agency (L1 console,
+  `/crm/ops/v1`, audit kind `aa_ops`): the crm-008 guards let this actor remove the last owner, open / complete an
+  owner recovery and write entitlements. Only `app/members/recovery.py` may open it, and only `app/routers/ops.py`
+  (writes need the WORKFORCE group `crm-platform-admin`) calls its platform functions (code-rules tests).
+- **crm-008 membership rules** (DB, whatever the API code does): inside a member request only an owner writes
+  `crm.member` / `crm.member_invitation` (CRM02); a member's identity (`tenant_id`, `cognito_iss`, `cognito_sub`) is
+  fixed outside platform contexts; no crm_app session deletes a member; an invitation moves only itself, pending ->
+  claimed -> accepted (or expires); the last active owner stays unless a platform context acts (CRM01); a crm_app
+  session without `app.actor` writes none of these tables.
 - The DB lint also accepts `<param>.conn` in a function whose parameter is annotated with a context type
   (`TenantContext`, `SystemContext`, `ProvisioningContext`, `AnyContext`): helpers such as `app/pipeline.py` take the
   open context, they never open one.
@@ -179,6 +201,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-005` | `api/migrations/005_crm_intake_pipeline.sql` | Slice 1 (AA-936): `tenant_settings` (AI switches), `form_definition`, `intake_form` (+ `intake_form_public_lookup`), `form_submission` (encrypted payload), `consent` (append-only), `traveler_profile` (F2), `trip` (every stage in the CHECK, Slice 1 moves only, `crm.enforce_stage_transition`), `trip_stage_history` (append-only), `trip_traveler` / `trip_party`, `task`, `note` (encrypted), `llm_call` (append-only, no text), platform rollup `llm_usage_daily` |
 | `crm-006` | `api/migrations/006_crm_f1_f2_complete.sql` | F1 / F2 complete (AA-937): `traveler_relation` (+ trigger-written inverse), `traveler_health` (needs a `health_data` consent), `document` (docs-DEK objects, write-only passports), the full F2 `traveler_profile`, `profile_history`, the age band list on `trip_party`, `audit_event.object_ids` (list views), the views `v_ai_traveler_profile` / `v_ai_trip_party` / `v_ai_trip_context` (`crm_ai_reader`) and `v_insight_fact` (`crm_insights`) |
 | `crm-007` | `api/migrations/007_crm_audit_partitions_export.sql` | F5 audit (AA-940): `audit_event` PARTITION BY RANGE (`at`), the crm-003 table attached as `audit_event_legacy` (MINVALUE to the next month), `at` = insert time (explicit values only from `crm_owner`), `audit_partition_bounds()`, `audit_ensure_partitions()` (three months ahead), `audit_drop_expired_partitions(dry_run)` (12 months + every agency verified), `audit_export_tenant` (registry, RLS enabled not forced, `audit_export_agencies()`), `audit_export_manifest` (hash chain, trigger-enforced, no FK to `tenant`) |
+| `crm-008` | `api/migrations/008_crm_roles_members.sql` | F4 roles (AA-939): `crm.guard_member_write` (only an owner writes memberships inside a member request, CRM02; the last active owner stays unless a platform context acts, CRM01), `member_invitation` (token hash, encrypted e-mail + blind index, claimed `(iss, sub)`; `invitation_token_lookup`), `owner_recovery_request` (14 days, platform-only open / complete, CRM03 / CRM04), `tenant_entitlement` (plan, member limit, features; platform-only), `tenant_settings.refund_owner_threshold_base`, `UNIQUE (tenant_id, member_id)` on `member` |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -237,8 +260,9 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 - **Hosts** (`web/lib/hosts.ts`, `web/proxy.ts`): the partner host serves the agency app; the client host
   (`WEB_CLIENT_HOSTS`, later `go-dev.`) serves `/c/*` only; any other Host is 404; `/healthz` answers any Host (the ALB
   health check sends the task IP). Cookies are host-only, so the two hosts never share a session.
-- **Sign-in**: Cognito managed login, authorization code + PKCE, confidential client (on Dev the EXTERNAL `cis-portal`
-  client until AA-939, design v3 Fix C10). The portal itself still signs in with its tenant API key, so there is no
+- **Sign-in**: Cognito managed login, authorization code + PKCE, confidential client: the partner pool's `partner-web`
+  client (MFA required) once AA-CIS-Infra `crm_partner_signin_enabled` is on, the EXTERNAL `cis-portal` client before
+  (design v3 Fix C10). The web reads the domain and client from its environment only. The portal itself still signs in with its tenant API key, so there is no
   shared session until AA-979 P2b (design-final §4.4).
 - **Server session** (`web/lib/session.ts`, `web/lib/seal.ts`): sealed (AES-256-GCM, HKDF key per purpose) httpOnly
   cookies `__Host-aa_crm_s` (access token, identity, agency picked) and `__Secure-aa_crm_r` (refresh token, Path
@@ -359,7 +383,7 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   always; not on the browser BFF list), role changes (`provision_agency`: `agency_create`, `member_add`,
   `member_role_change`, actor `aa_ops` for `platform:` / `system` for `seed:`), one `audit_retention` event per run per
   active agency (the daily job; the hourly export's per-run record is its manifest row), every F1 reveal (same transaction), list views, views, creates / changes / deletes, refused owner-only
-  actions (`denied`, reason `owner_only` / `not_allowed_for_role`), decrypt denials, key operations (`key_create`,
+  actions (`denied`; since AA-939 the permission matrix's action and reason, e.g. `reassign` / `role_forbidden`), decrypt denials, key operations (`key_create`,
   `key_rotate`, `key_rewrap`, `key_destroy`, `app/vault/provider.py`), AI context builds (`ai_context_build`, actor
   `ai_agent` / `ai:<stage>`, one per LLM gateway call), intake job events, the access log's own views and downloads.
   Later cards add their actors (L1 writes, support reads, break-glass Decrypts) with the same table.
@@ -386,7 +410,7 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   its rows leave with the partition drops, then nothing references the tenant row and CRM-35 may delete it (the
   registry cascades, the manifests stay with the seven-year archive).
 - **Access log** (`app/audit_log.py`, `app/routers/audit.py`, web `/settings/access-log`): owner only (others: 403
-  `owner_only` + a committed `denied` event; the web shows why without calling the API); filters = actor group
+  `role_forbidden` from the matrix, action `access_log_view`, + a committed `denied` event; the web shows why without calling the API); filters = actor group
   (`user`, `ai`, `aa_ops`, `aa_support`, `aa_emergency`, `system`), action, result, member, object, dates inside the
   last 365 days; newest first with a keyset cursor; download as CSV (formula-guarded) or JSON lines, at most 50,000
   rows (422 `export_too_large`). Lines show the member's role and a short id, never a traveller's name; a client or
@@ -394,6 +418,37 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 - **Metrics** (`AA/Jobs/Crm`, the job sampler): `AuditExportLagMinutes` (Infra alarm at 180),
   `AuditPartitionMonthsAhead` (alarm below 1) and `AuditVerifyLagHours` (largest exported-minus-verified gap over
   agencies; alarm at 50: one agency failing verification stops drops for all).
+
+## F4 roles and team (AA-939, CRM-11)
+
+- **Permission matrix** (`app/permissions.py`, design v3 §4.6): every agency action x owner / agent / assistant with
+  rules ALLOW, DENY, OWN, ASSIGNED, THRESHOLD (refund threshold from `tenant_settings`); one table, pinned cell by cell
+  in `tests/unit/test_permissions.py`. Doors: `tenant_tx(action=)` (role level) and `permissions.require()` (object
+  facts). Membership writes are also refused by the database for anyone but an owner (crm-008).
+- **Margin serializer** (`app/margin.py`): `class_router(AGENCY)` builds every agency router with
+  `MarginFilteredRoute`; JSON responses lose every key named like net / b2b / cost / margin / commission unless the
+  role holds `view_margin` (owner, agent). Unknown role = filtered. Contract test over every `/crm/v1` route:
+  `tests/unit/test_margin_filter.py`.
+- **Partner pool** (root ADR 0006b, AA-CIS-Infra `identity_partner.tf`): admin-create only, MFA required (password +
+  authenticator; passkeys later), the `partner-web` client. The web's pool is chosen by Infra
+  (`crm_partner_signin_enabled`); the API accepts both pairs on Dev meanwhile.
+- **Invitations** (`app/members/invitations.py`, `app/members/team.py`): the owner invites an address with a role ->
+  AA system mail (`app/members/mail.py`, SES) with `/join?t=<token>` (only the SHA-256 is stored, expires after
+  `INVITATION_TTL_HOURS`) -> claim (public; `AdminCreateUser` SUPPRESS with a temporary password shown once by the web,
+  or the existing account) -> managed login (own password, authenticator) -> accept (the caller's token must carry the
+  claimed `(iss, sub)`). The API's partner-pool calls (`app/members/directory.py`) are AdminCreateUser, ListUsers and
+  AdminUserGlobalSignOut (IAM allows AdminDisableUser too; unused).
+- **Team** (`/crm/v1/team*`, owner): members (invited address or short id), pending invitations (masked), role change
+  (409 `last_owner`), removal (membership disabled + global sign-out), the **reassign queue** (open trips / clients of
+  members who are no longer active) and reassign, the plan (`/crm/v1/plan`; no `tenant_entitlement` row = free, 10
+  seats).
+- **Owner recovery** (Q1 6.3, `app/members/recovery.py`): opened by AA (`/crm/ops/v1/.../owner-recovery`,
+  `crm-platform-admin`) for an existing member, completes only after 14 days; every member sees the banner and may
+  cancel (`/crm/v1/recovery`). AA's member deactivation can leave an agency without an owner: then only a recovery
+  makes one.
+- **Web**: `web/app/(crm)/settings/team` (owner page, `components/team/TeamAdmin.tsx`), the recovery banner in the
+  `(crm)` layout, the join pages `web/app/join/*` (`lib/invite.ts`: token and claim answer in sealed cookies on
+  `/join`, never in a URL). Runbooks (lost second factor, rollout order): `docs/implementation-notes/AA-939.md`.
 
 ## Dev seeder (`api/app/seed/`, AA-935)
 
@@ -418,13 +473,19 @@ outside `dev` / `test` / `local`. Output: one JSON line per agency, ids, labels 
 and the key provider `KEY_PROVIDER` (`kms`; `local` only in test / local), `KMS_DATA_KEY_ID` (`alias/crm-<env>/data`),
 `DEK_CACHE_TTL_SECONDS`, and the public intake (AA-936) `INTAKE_PAGE_ORIGINS` (the client host origin; empty on Dev =
 every submission 503 `intake_not_configured`), `RATE_LIMIT_INTAKE_PER_MINUTE` (default 5 per address),
-`RATE_LIMIT_INTAKE_FORM_PER_HOUR` (default 200 per form), and the documents bucket (AA-937) `DOCUMENTS_BUCKET`, and the
+`RATE_LIMIT_INTAKE_FORM_PER_HOUR` (default 200 per form), and the documents bucket (AA-937) `DOCUMENTS_BUCKET`, the
 audit export (AA-940) `AUDIT_BUCKET_COMPLIANCE` / `AUDIT_BUCKET_GOVERNANCE` (both or neither) and
-`AUDIT_RETENTION_DRY_RUN` (default true). Meanings and defaults: `api/app/settings.py`. Live check of the key provider inside the
+`AUDIT_RETENTION_DRY_RUN` (default true), and (AA-939) `COGNITO_PARTNER_POOL_ID`, `PARTNER_WEB_ORIGIN`,
+`SES_FROM_ADDRESS`, `SES_CONFIGURATION_SET`, `INVITATION_TTL_HOURS` (default 168), `RATE_LIMIT_CLAIM_PER_MINUTE`
+(default 10). Meanings and defaults: `api/app/settings.py`. Live check of the key provider inside the
 container: `python -m app.vault.selftest` (KMS round trip under the nil tenant context, nothing stored).
 
 ## Domain terms
 
+- **Permission matrix**: the table of what each CRM role may do (`app/permissions.py`); **margin keys**: response keys
+  only owner and agent see. **Invitation**: a single-use, expiring token mailed by AA; claimed (account created or
+  found) then accepted by that account. **Owner recovery**: AA promoting an existing member to owner after 14 days.
+  **Reassign queue**: open trips and clients whose owner left.
 - **Agency** (tenant): a partner travel agency, one row in `crm.tenant`. **Member**: an agency user with a CRM role
   (`owner`, `agent`, `assistant`), one row in `crm.member`, identified by the token's `(iss, sub)`.
 - **Route class**: the set of `(issuer, client)` pairs one API prefix accepts.

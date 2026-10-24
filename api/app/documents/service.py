@@ -19,8 +19,9 @@ import uuid
 from typing import Any
 
 from app.documents.store import DocumentStore
-from app.errors import Conflict, Forbidden, Invalid, NotFound, Unavailable
+from app.errors import Conflict, Invalid, NotFound, Unavailable
 from app.intake import stage1
+from app.permissions import Action, require
 from app.tenancy import TenantContext
 from app.travellers.fields import REVEAL_REASONS
 from app.vault import Vault
@@ -230,9 +231,7 @@ async def set_visibility(ctx: TenantContext, document_id: uuid.UUID, visible: bo
 
 
 async def trash(ctx: TenantContext, document_id: uuid.UUID) -> dict[str, Any]:
-    if ctx.member_role == "assistant":
-        ctx.audit("delete", "denied", "document", str(document_id), reason="not_allowed_for_role")
-        raise Forbidden("not_allowed_for_role", "owners and agents delete documents")
+    require(ctx, Action.DOCUMENT_DELETE, object_kind="document", object_id=str(document_id))  # owner, agent (§4.6)
     row = await ctx.conn.fetchrow(ROW_SQL, document_id)
     if row is None:
         raise NotFound("document_not_found")

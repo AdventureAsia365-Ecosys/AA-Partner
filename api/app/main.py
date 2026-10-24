@@ -36,10 +36,12 @@ from app.errors import ServiceError, service_error_handler
 from app.jobs import handlers as job_handlers
 from app.jobs.metrics import JobMetricsSampler
 from app.jobs.worker import Worker
+from app.members.directory import CognitoDirectory, MemoryDirectory, PartnerDirectory
+from app.members.mail import Mailer, MemoryMailer, SesMailer
 from app.observability import setup as setup_observability
 from app.observability.request_id import RequestIdMiddleware, unhandled_error_handler
 from app.ratelimit import FixedWindowLimiter
-from app.routers import agency, audit, ci, health, ops, pipeline, public, staff, travellers
+from app.routers import agency, audit, ci, health, invitations, ops, pipeline, public, staff, team, travellers
 from app.settings import INSECURE_ENVIRONMENTS, Settings, load_settings
 from app.vault import KeyProvider, build_key_provider
 
@@ -58,6 +60,8 @@ def create_app(
     keys: KeyProvider | None | object = _UNSET,
     documents: DocumentStore | None | object = _UNSET,
     audit_archive: AuditArchive | None | object = _UNSET,
+    directory: PartnerDirectory | None | object = _UNSET,
+    mailer: Mailer | None | object = _UNSET,
 ) -> FastAPI:
     settings = settings or load_settings()
     db = db or Database(settings)
@@ -71,6 +75,10 @@ def create_app(
         documents = build_document_store(settings)
     if audit_archive is _UNSET:
         audit_archive = build_audit_archive(settings)  # no AWS call here: the client is created on first use
+    if directory is _UNSET:
+        directory = build_directory(settings)
+    if mailer is _UNSET:
+        mailer = build_mailer(settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -121,6 +129,10 @@ def create_app(
     app.state.keys = keys  # app.vault.KeyProvider, or None when KMS_DATA_KEY_ID is missing (vault calls answer 503)
     app.state.documents = documents  # app.documents.store, or None without DOCUMENTS_BUCKET (document routes: 503)
     app.state.audit_archive = audit_archive  # app.audit_export.archive, or None without the two audit buckets (AA-940)
+    # AA-939: the partner pool admin calls and AA system mail (app.members); None = the routes answer 503.
+    app.state.directory = directory
+    app.state.mailer = mailer
+    app.state.claim_limiter = FixedWindowLimiter(settings.rate_limit_claim_per_minute)
     app.state.public_limiter = FixedWindowLimiter(settings.rate_limit_public_per_minute)
     # AA-936: inquiry-form submissions, per client address per minute and per form per hour.
     app.state.intake_limiter = FixedWindowLimiter(settings.rate_limit_intake_per_minute)
@@ -135,6 +147,9 @@ def create_app(
     app.include_router(pipeline.router)
     app.include_router(travellers.router)
     app.include_router(audit.router)
+    app.include_router(team.router)
+    app.include_router(invitations.public_router)
+    app.include_router(invitations.agency_router)
     app.include_router(ops.router)
     app.include_router(staff.router)
     return app
@@ -146,6 +161,24 @@ def build_document_store(settings: Settings) -> DocumentStore | None:
         return S3DocumentStore(settings.documents_bucket)  # no AWS call here: the client is created on first use
     if settings.environment in INSECURE_ENVIRONMENTS:
         return MemoryDocumentStore()
+    return None
+
+
+def build_directory(settings: Settings) -> PartnerDirectory | None:
+    """The partner pool when configured; an in-memory directory on test / local; else None (AA-939)."""
+    if settings.cognito_partner_pool_id and settings.cognito_partner_issuer:
+        return CognitoDirectory(settings.cognito_partner_pool_id, settings.cognito_partner_issuer)
+    if settings.environment in INSECURE_ENVIRONMENTS:
+        return MemoryDirectory(settings.cognito_partner_issuer or "https://cognito-idp.local.test/local_partner")
+    return None
+
+
+def build_mailer(settings: Settings) -> Mailer | None:
+    """AA system mail through SES when configured; in-memory on test / local; else None (AA-939)."""
+    if settings.ses_from_address and settings.ses_configuration_set:
+        return SesMailer(settings.ses_from_address, settings.ses_configuration_set)
+    if settings.environment in INSECURE_ENVIRONMENTS:
+        return MemoryMailer()
     return None
 
 

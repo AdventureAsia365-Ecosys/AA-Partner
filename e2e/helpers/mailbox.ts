@@ -73,3 +73,24 @@ export async function waitForCode(recipient: string, before: Set<string>, timeou
   }
   throw new Error("no sign-in code mail arrived in time");
 }
+
+
+/** AA-939: the join link (/join?t=<token>) of the newest invitation mail to `recipient` not in `before`. */
+export async function waitForInviteLink(recipient: string, before: Set<string>, timeoutMs = 90_000): Promise<string> {
+  const b = await bucket();
+  const deadline = Date.now() + timeoutMs;
+  const needle = recipient.toLowerCase();
+  while (Date.now() < deadline) {
+    const fresh = (await keys(b)).filter((k) => !before.has(k.key)).sort((x, y) => y.at - x.at);
+    for (const { key } of fresh) {
+      const raw = await read(b, key);
+      const head = raw.split(/\r?\n\r?\n/)[0].replace(/\r?\n[ \t]+/g, " ").toLowerCase();
+      if (!head.split(/\r?\n/).some((l) => /^(to|delivered-to|x-original-to):/.test(l) && l.includes(needle))) continue;
+      const body = raw.replace(/=\r?\n/g, "").replace(/=3D/g, "=");
+      const link = /(https:\/\/[^\s"<>]+\/join\?t=[A-Za-z0-9_-]{43})/.exec(body)?.[1];
+      if (link) return link;
+    }
+    await new Promise((r) => setTimeout(r, POLL_MS));
+  }
+  throw new Error("no invitation mail arrived in time");
+}

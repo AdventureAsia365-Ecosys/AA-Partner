@@ -10,7 +10,8 @@
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
 
 // "client-search": the clients directory search term (AA-937, lib/clientSearch.ts), kept out of URLs.
-export type Purpose = "session" | "refresh" | "oauth-tx" | "client-search";
+// "invite" / "invite-claim": the invitation token and the claim result of the join pages (AA-939, lib/invite.ts).
+export type Purpose = "session" | "refresh" | "oauth-tx" | "client-search" | "invite" | "invite-claim";
 
 const VERSION = 1;
 const IV_BYTES = 12;

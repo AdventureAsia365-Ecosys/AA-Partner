@@ -76,6 +76,18 @@ Audit export (AA-940, card CRM-12; ``app.audit_export``):
   export lag metric grows and its alarm says so); on ``test`` / ``local`` empty = an in-memory archive.
 - ``AUDIT_RETENTION_DRY_RUN``: ``true`` (default) makes ``crm_audit_retention`` report which audit partitions it would
   drop without dropping them (DM-7.2). Partitions are still created and verification still runs.
+Team and roles (AA-939, card CRM-11; ``app.members``):
+
+- ``COGNITO_PARTNER_POOL_ID``: the partner pool (``<region>_<id>``) the invitation claim step creates accounts in
+  (``AdminCreateUser`` / ``ListUsers``) and member removal signs out of (``AdminUserGlobalSignOut``). Must be the pool
+  of ``COGNITO_PARTNER_ISSUER``. Empty on ``dev`` / ``stg`` / ``prod`` = the invitation routes answer 503
+  ``directory_not_configured``; on ``test`` / ``local`` an in-memory directory.
+- ``PARTNER_WEB_ORIGIN``: the https origin of the partner host (the join link in the invitation mail). Required for
+  invitations outside test / local (503 ``invitations_not_configured``).
+- ``SES_FROM_ADDRESS`` / ``SES_CONFIGURATION_SET``: AA system mail (invitations, owner recovery notices) through
+  AA's SES as that sender and configuration set. Empty outside test / local = 503 ``mail_not_configured``.
+- ``INVITATION_TTL_HOURS``: how long an invitation link works (default 168 = 7 days, 1 to 720).
+- ``RATE_LIMIT_CLAIM_PER_MINUTE``: invitation claims per client address per minute (default 10; 0 = off).
 """
 
 from __future__ import annotations
@@ -99,6 +111,11 @@ DEFAULT_XFF_HOPS = 2
 DEFAULT_RETENTION_UTC_HOUR = 19
 DEFAULT_INTAKE_PER_MINUTE = 5
 DEFAULT_INTAKE_FORM_PER_HOUR = 200
+DEFAULT_INVITATION_TTL_HOURS = 168
+MAX_INVITATION_TTL_HOURS = 720
+DEFAULT_CLAIM_PER_MINUTE = 10
+_POOL_ID = re.compile(r"^[a-z]{2}(-[a-z]+)+-[0-9]_[A-Za-z0-9]{1,55}$")
+_EMAIL = re.compile(r"^[^@\s]{1,64}@[a-z0-9.-]{1,189}\.[a-z]{2,}$")
 KEY_PROVIDERS = frozenset({"kms", "local"})
 _BUCKET = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
 DEFAULT_DEK_CACHE_TTL_S = 300
@@ -143,6 +160,12 @@ class Settings:
     audit_bucket_compliance: str = ""
     audit_bucket_governance: str = ""
     audit_retention_dry_run: bool = True
+    cognito_partner_pool_id: str = ""
+    partner_web_origin: str = ""
+    ses_from_address: str = ""
+    ses_configuration_set: str = ""
+    invitation_ttl_hours: int = DEFAULT_INVITATION_TTL_HOURS
+    rate_limit_claim_per_minute: int = DEFAULT_CLAIM_PER_MINUTE
 
     def __post_init__(self) -> None:
         if self.environment not in {"dev", "stg", "prod"} | INSECURE_ENVIRONMENTS:
@@ -214,6 +237,21 @@ class Settings:
             raise SettingsError(f"DEK_CACHE_TTL_SECONDS must be between 0 and {MAX_DEK_CACHE_TTL_S}")
         if self.rate_limit_intake_per_minute < 0 or self.rate_limit_intake_form_per_hour < 0:
             raise SettingsError("RATE_LIMIT_INTAKE_PER_MINUTE / RATE_LIMIT_INTAKE_FORM_PER_HOUR must be >= 0")
+        if self.cognito_partner_pool_id:
+            if not _POOL_ID.match(self.cognito_partner_pool_id):
+                raise SettingsError("COGNITO_PARTNER_POOL_ID must be a Cognito user pool id (<region>_<id>)")
+            if not self.cognito_partner_issuer.endswith(f"/{self.cognito_partner_pool_id}"):
+                raise SettingsError("COGNITO_PARTNER_POOL_ID must be the pool of COGNITO_PARTNER_ISSUER")
+        if self.partner_web_origin and not _ORIGIN.match(self.partner_web_origin):
+            raise SettingsError(f"PARTNER_WEB_ORIGIN must be an https origin, got {self.partner_web_origin!r}")
+        if self.ses_from_address and not _EMAIL.match(self.ses_from_address):
+            raise SettingsError("SES_FROM_ADDRESS must be an e-mail address")
+        if bool(self.ses_from_address) != bool(self.ses_configuration_set):
+            raise SettingsError("SES_FROM_ADDRESS and SES_CONFIGURATION_SET are set together")
+        if not 1 <= self.invitation_ttl_hours <= MAX_INVITATION_TTL_HOURS:
+            raise SettingsError(f"INVITATION_TTL_HOURS must be between 1 and {MAX_INVITATION_TTL_HOURS}")
+        if self.rate_limit_claim_per_minute < 0:
+            raise SettingsError("RATE_LIMIT_CLAIM_PER_MINUTE must be >= 0")
         for origin in self.intake_page_origins:
             if not _ORIGIN.match(origin):
                 raise SettingsError(f"INTAKE_PAGE_ORIGINS entries must be https origins, got {origin!r}")
@@ -222,6 +260,13 @@ class Settings:
     def intake_origin_check(self) -> bool:
         """Whether submissions must carry an allowed Origin (always outside test / local)."""
         return bool(self.intake_page_origins) or self.environment not in INSECURE_ENVIRONMENTS
+
+    @property
+    def invitation_origin(self) -> str:
+        """The join link's origin: PARTNER_WEB_ORIGIN, or a local placeholder on test / local."""
+        if self.partner_web_origin:
+            return self.partner_web_origin
+        return "https://partner.local.test" if self.environment in INSECURE_ENVIRONMENTS else ""
 
     @property
     def keys_state(self) -> str:
@@ -319,4 +364,14 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         audit_bucket_compliance=_text(env, "AUDIT_BUCKET_COMPLIANCE"),
         audit_bucket_governance=_text(env, "AUDIT_BUCKET_GOVERNANCE"),
         audit_retention_dry_run=_flag(env.get("AUDIT_RETENTION_DRY_RUN"), True, "AUDIT_RETENTION_DRY_RUN"),
+        cognito_partner_pool_id=_text(env, "COGNITO_PARTNER_POOL_ID"),
+        partner_web_origin=_text(env, "PARTNER_WEB_ORIGIN").lower().rstrip("/"),
+        ses_from_address=_text(env, "SES_FROM_ADDRESS").lower(),
+        ses_configuration_set=_text(env, "SES_CONFIGURATION_SET"),
+        invitation_ttl_hours=_int(
+            env.get("INVITATION_TTL_HOURS"), DEFAULT_INVITATION_TTL_HOURS, "INVITATION_TTL_HOURS"
+        ),
+        rate_limit_claim_per_minute=_int(
+            env.get("RATE_LIMIT_CLAIM_PER_MINUTE"), DEFAULT_CLAIM_PER_MINUTE, "RATE_LIMIT_CLAIM_PER_MINUTE"
+        ),
     )

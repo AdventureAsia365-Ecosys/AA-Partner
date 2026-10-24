@@ -32,8 +32,9 @@ from typing import Any
 import asyncpg
 
 from app.audit import MAX_OBJECT_IDS
-from app.errors import Conflict, Forbidden, Invalid, NotFound
+from app.errors import Conflict, Invalid, NotFound
 from app.intake import stage1
+from app.permissions import Action, require
 from app.tenancy import TenantContext
 from app.travellers import age_bands
 from app.vault import Vault
@@ -408,11 +409,10 @@ async def assign(ctx: TenantContext, trip_id: uuid.UUID, member_id: uuid.UUID | 
     current = await ctx.conn.fetchrow(LOCK_TRIP_SQL, trip_id)
     if current is None:
         raise NotFound("trip_not_found")
-    if ctx.member_role != "owner":
-        taking = member_id == ctx.member_id and current["owner_member_id"] is None
-        if not taking:
-            ctx.audit("assign", "denied", "trip", str(trip_id), fields=("owner_member_id",), reason="owner_only")
-            raise Forbidden("owner_only", "only the owner reassigns; you may take an unassigned trip")
+    taking = member_id == ctx.member_id and current["owner_member_id"] is None
+    if not taking:
+        # Design §4.6 / R8: reassigning is the owner's; anyone may take an unassigned trip.
+        require(ctx, Action.REASSIGN, object_kind="trip", object_id=str(trip_id))
     if member_id is not None and not await ctx.conn.fetchval(ACTIVE_MEMBER_SQL, member_id):
         raise Invalid("invalid_member", "an active member of this agency")
     await ctx.conn.execute(OWNER_SQL, trip_id, member_id)

@@ -15,16 +15,21 @@
 //   E2ECRMPARTNER       https origin of the partner host (partner-dev.)
 //   E2ECRMFORMKEY       public key of the seeded agency's form (python -m app.seed --apply prints it)
 //   E2ECRMEMAIL         the agency e2e user's address (owner of that agency)
+//   E2ECRMPASSWORD      (AA-939, secret) that user's partner-pool password; with E2ECRMTOTP, password + authenticator
+//   E2ECRMTOTP          (AA-939, secret) that user's authenticator secret (base32)
 // AWS credentials of the read-only mailbox role come from the job.
 import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs";
-import { baseline, waitForCode } from "../helpers/mailbox";
+import { landOnPartner, signIn } from "../helpers/signin";
 
 const env = (name: string) => (process.env[name] ?? "").trim().replace(/\/+$/, "");
 const CLIENT = env("E2ECRMCLIENT");
 const PARTNER = env("E2ECRMPARTNER");
 const FORM_KEY = env("E2ECRMFORMKEY");
 const EMAIL = env("E2ECRMEMAIL");
+// AA-939: the owner's partner-pool password and authenticator secret (empty = e-mail code sign-in, EXTERNAL pool).
+const PASSWORD = (process.env.E2ECRMPASSWORD ?? "").trim();
+const TOTP_SECRET = (process.env.E2ECRMTOTP ?? "").trim();
 const SHOTS = "results";
 const RUN = Date.now().toString(36);
 // A synthetic prospect per run: .invalid never delivers (RFC 2606); the run id makes the e-mail new each time. The run
@@ -65,21 +70,11 @@ test.describe("CRM-08 slice 1 on Dev", () => {
     await expect(page.getByTestId("intake-thanks")).toBeVisible({ timeout: 15_000 });
     await shot(page, "02-thanks");
 
-    // Agency side: sign in with the e2e owner's e-mail code (managed login), pick the agency if asked.
+    // Agency side: sign in as the e2e owner (partner pool: password + authenticator; before AA-939's switch: the
+    // e-mail code), pick the agency if asked.
     await page.goto(`${PARTNER}/pipeline`);
-    const before = await baseline();
-    const emailField = page.getByLabel(/email/i).first();
-    await expect(emailField).toBeVisible({ timeout: 30_000 });
-    await emailField.fill(EMAIL);
-    await page.getByRole("button", { name: /^(next|sign in)$/i }).first().click();
-    const codeField = page.getByLabel(/code/i).first();
-    await expect(codeField).toBeVisible({ timeout: 30_000 });
-    await codeField.fill(await waitForCode(EMAIL, before));
-    await page.getByRole("button", { name: /^(continue|sign in|next)$/i }).first().click();
-    await page.waitForURL((u) => u.origin === PARTNER, { timeout: 30_000 });
-    if (new URL(page.url()).pathname === "/select-agency") {
-      await page.getByTestId("agency-option").first().getByRole("button").click(); // plain form POST, no JS needed
-    }
+    await signIn(page, { email: EMAIL, password: PASSWORD || undefined, totpSecret: TOTP_SECRET || undefined });
+    await landOnPartner(page, PARTNER);
     // The agency is vi-VN; with no saved choice the shell is English.
     await expect(page.locator("html")).toHaveAttribute("lang", "en");
 

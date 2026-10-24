@@ -10,8 +10,10 @@ Route                                      What                                 
 ``GET  /pipeline``                         board: open stages, cards, counts (one list_view)   every role
 ``GET  /trips/{trip_id}``                  trip workspace (one view event)                     every role
 ``PATCH /trips/{trip_id}``                 waiting on, title, start / end date (AA-937)        every role
-``POST /trips/{trip_id}/stage``            move (inquiry <-> qualifying, -> lost, reopen)      every role
-``POST /trips/{trip_id}/owner``            assign                                              owner; others take
+``POST /trips/{trip_id}/stage``            move (inquiry <-> qualifying, -> lost, reopen)      every role; cancel:
+                                                                                               owner, agent
+``POST /trips/{trip_id}/owner``            assign                                              owner (reassign);
+                                                                                               others take
 ``POST /trips/{trip_id}/notes``            internal note (encrypted)                           every role
 ``POST /tasks/{task_id}/status``           open / done / skipped                               every role
 ``GET  /members``                          ids and roles (for the assign menu)                 every role
@@ -21,7 +23,8 @@ Route                                      What                                 
 =========================================  ==================================================  ==================
 
 The traveller routes (directory, profile, reveal with a reason, party, documents) are in :mod:`app.routers.travellers`
-(AA-937). No margin, price or commission field exists yet (CRM-11 adds the per-role serializer allow-list, design §4.6).
+(AA-937). AA-939: each route names its permission-matrix action (``app.permissions``) to ``tenant_tx()``, and every
+response passes the margin serializer (``app.margin``).
 """
 
 from __future__ import annotations
@@ -36,8 +39,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
 from app.db import request_pool
-from app.errors import Forbidden
 from app.intake import forms as intake_forms
+from app.permissions import Action, require
 from app.pipeline import (
     BoardFilter,
     add_note,
@@ -106,11 +109,14 @@ class FormChange(_Body):
     privacy_notice_url: str | None = Field(default=None, max_length=500)
 
 
-def _owner(ctx: TenantContext, action: str, form_id: str | None = None) -> None:
-    if ctx.member_role != "owner":
-        # AA-940: a refused change is on record too (committed by tenant_tx before the 403).
-        ctx.audit(action, "denied", "intake_form", form_id, reason="owner_only")
-        raise Forbidden("owner_only", "only the agency owner changes forms")
+def _owner(ctx: TenantContext) -> None:
+    # The matrix again (tenant_tx refused already): Settings > Forms is owner-only (design §4.6 "team, settings").
+    require(ctx, Action.SETTINGS_FORMS_MANAGE, object_kind="intake_form")
+
+
+def _stage_action(to: str) -> Action:
+    """Cancelling a trip is owner / agent (design §4.6); every other move is a trip edit."""
+    return Action.TRIP_CANCEL if to == "cancelled" else Action.TRIP_EDIT
 
 
 @router.get("/pipeline")
@@ -123,7 +129,7 @@ async def get_pipeline(
 ) -> dict[str, Any]:
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PIPELINE_VIEW) as ctx:
         return await board(ctx, Vault(keys, ctx), BoardFilter(waiting_on=waiting_on, owner=owner))
 
 
@@ -131,7 +137,7 @@ async def get_pipeline(
 async def get_trip(request: Request, caller: CallerDep, tenant_id: TenantDep, trip_id: uuid.UUID) -> dict[str, Any]:
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_VIEW) as ctx:
         return await trip_detail(ctx, Vault(keys, ctx), trip_id)
 
 
@@ -142,7 +148,7 @@ async def patch_trip(
     pool = await request_pool(request)
     changes = body.model_dump(exclude_unset=True)
     keys = require_keys(request.app.state.keys) if "start_date" in changes else None
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_EDIT) as ctx:
         return await update_trip(ctx, trip_id, changes, Vault(keys, ctx) if keys is not None else None)
 
 
@@ -151,7 +157,7 @@ async def post_stage(
     request: Request, caller: CallerDep, tenant_id: TenantDep, trip_id: uuid.UUID, body: StageMove
 ) -> dict[str, Any]:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=_stage_action(body.to)) as ctx:
         return await move_stage(ctx, trip_id, body.to, lost_reason=body.lost_reason, undo=body.undo)
 
 
@@ -160,7 +166,7 @@ async def post_owner(
     request: Request, caller: CallerDep, tenant_id: TenantDep, trip_id: uuid.UUID, body: OwnerChange
 ) -> dict[str, Any]:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_TAKE) as ctx:
         return await assign(ctx, trip_id, body.member_id)
 
 
@@ -170,7 +176,7 @@ async def post_note(
 ) -> dict[str, Any]:
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.NOTE_ADD) as ctx:
         return await add_note(ctx, Vault(keys, ctx), trip_id, body.body)
 
 
@@ -179,29 +185,29 @@ async def post_task_status(
     request: Request, caller: CallerDep, tenant_id: TenantDep, task_id: uuid.UUID, body: TaskStatus
 ) -> dict[str, Any]:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.TASK_UPDATE) as ctx:
         return await set_task_status(ctx, task_id, body.status)
 
 
 @router.get("/members")
 async def get_members(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.MEMBERS_LIST) as ctx:
         return {"members": await members(ctx)}
 
 
 @router.get("/intake-forms")
 async def get_forms(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PIPELINE_VIEW) as ctx:
         return {"forms": [f.__dict__ for f in await intake_forms.list_forms(ctx)]}
 
 
 @router.post("/intake-forms", status_code=201)
 async def post_form(request: Request, caller: CallerDep, tenant_id: TenantDep, body: FormIn) -> dict[str, Any]:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
-        _owner(ctx, "create")
+    async with tenant_tx(pool, caller, tenant_id, action=Action.SETTINGS_FORMS_MANAGE) as ctx:
+        _owner(ctx)
         form = await intake_forms.create_form(
             ctx,
             label=body.label,
@@ -218,8 +224,8 @@ async def patch_form(
     request: Request, caller: CallerDep, tenant_id: TenantDep, form_id: uuid.UUID, body: FormChange
 ) -> dict[str, Any]:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
-        _owner(ctx, "update", str(form_id))
+    async with tenant_tx(pool, caller, tenant_id, action=Action.SETTINGS_FORMS_MANAGE) as ctx:
+        _owner(ctx)
         changes = body.model_dump(exclude_unset=True)
         form = await intake_forms.update_form(ctx, form_id, changes)
         ctx.audit("update", "allowed", "intake_form", form.intake_form_id, fields=tuple(sorted(changes)))

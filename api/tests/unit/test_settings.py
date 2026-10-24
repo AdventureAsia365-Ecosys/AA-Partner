@@ -108,3 +108,50 @@ def test_key_provider_defaults_per_environment() -> None:
     test = load_settings({"ENVIRONMENT": "test", "LOCAL_KEK_B64": "A" * 44, "DEK_CACHE_TTL_SECONDS": "0"})
     assert (test.key_provider, test.keys_state, test.dek_cache_ttl_seconds) == ("local", "local", 0)
     assert "AAAA" not in repr(test)
+
+
+PARTNER = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_TESTPARTN"
+
+
+def test_team_values_are_read_and_checked() -> None:
+    s = load_settings(
+        {
+            "COGNITO_PARTNER_ISSUER": PARTNER,
+            "COGNITO_PARTNER_POOL_ID": "us-west-1_TESTPARTN",
+            "PARTNER_WEB_ORIGIN": "https://Partner.Example.TEST/",
+            "SES_FROM_ADDRESS": "No-Reply@Example.test",
+            "SES_CONFIGURATION_SET": "aa-email-dev-transactional",
+            "INVITATION_TTL_HOURS": "72",
+            "RATE_LIMIT_CLAIM_PER_MINUTE": "4",
+        }
+    )
+    assert (s.cognito_partner_pool_id, s.partner_web_origin, s.ses_from_address) == (
+        "us-west-1_TESTPARTN",
+        "https://partner.example.test",
+        "no-reply@example.test",
+    )
+    assert (s.invitation_ttl_hours, s.rate_limit_claim_per_minute, s.invitation_origin) == (
+        72,
+        4,
+        "https://partner.example.test",
+    )
+    assert load_settings({}).invitation_origin == ""
+    assert load_settings({"ENVIRONMENT": "test"}).invitation_origin == "https://partner.local.test"
+
+
+@pytest.mark.parametrize(
+    ("env", "message"),
+    [
+        ({"COGNITO_PARTNER_ISSUER": PARTNER, "COGNITO_PARTNER_POOL_ID": "not a pool"}, "COGNITO_PARTNER_POOL_ID"),
+        ({"COGNITO_PARTNER_ISSUER": PARTNER, "COGNITO_PARTNER_POOL_ID": "us-west-1_OTHER"}, "pool of"),
+        ({"PARTNER_WEB_ORIGIN": "http://partner.example.test"}, "PARTNER_WEB_ORIGIN"),
+        ({"SES_FROM_ADDRESS": "nobody", "SES_CONFIGURATION_SET": "x"}, "SES_FROM_ADDRESS"),
+        ({"SES_FROM_ADDRESS": "a@example.test"}, "set together"),
+        ({"INVITATION_TTL_HOURS": "0"}, "INVITATION_TTL_HOURS"),
+        ({"INVITATION_TTL_HOURS": "721"}, "INVITATION_TTL_HOURS"),
+        ({"RATE_LIMIT_CLAIM_PER_MINUTE": "-1"}, "RATE_LIMIT_CLAIM_PER_MINUTE"),
+    ],
+)
+def test_unsafe_team_values_are_refused(env: dict[str, str], message: str) -> None:
+    with pytest.raises(SettingsError, match=message):
+        load_settings(env)
