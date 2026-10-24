@@ -5,8 +5,13 @@
 //   POST (form tenant_id, next)  same-origin only; switch to that agency
 //   GET  ?next=…                 pick automatically when the person has exactly one active agency, else the chooser
 //
-// AA-940: each pick sends POST /crm/v1/audit/sign-in for the picked agency (the agency audit's "sign-ins", design
-// §4.9), best effort.
+// AA-940: the agency audit's "sign-ins" (design §4.9), sent server side as POST /crm/v1/audit/sign-in for the picked
+// agency, best effort:
+//   - GET records only when the session carries the one-shot `si` flag that /auth/callback sets after a real Cognito
+//     sign-in. A GET has a side effect only then: it.com is a public suffix (AA-911), so a sibling host can make a
+//     signed-in browser load /auth/agency with the Lax cookie, and must not be able to add sign-in events.
+//   - POST (a person picking or switching agency in the chooser, behind refuseCrossSiteWrite) always records.
+// Either way the new session cookie drops the flag. The browser has no BFF route to the sign-in endpoint.
 import type { NextRequest } from "next/server";
 import { config } from "@/lib/config";
 import { fetchMemberships, recordSignIn, selectable } from "@/lib/crmApi";
@@ -18,7 +23,7 @@ import { refuseForeignWrite } from "@/lib/writeGuard";
 export const dynamic = "force-dynamic";
 
 function keep(session: Session, tid: string) {
-  const { v: _v, exp: _exp, ...rest } = session;
+  const { v: _v, exp: _exp, si: _si, ...rest } = session;
   return { ...rest, tid };
 }
 
@@ -33,7 +38,7 @@ export async function GET(request: NextRequest) {
   const active = found.ok ? found.data.filter((m) => m.tenant_status === "active") : [];
   if (active.length === 1) {
     const picked = keep(session, active[0].tenant_id);
-    await recordSignIn(cfg, { ...session, tid: picked.tid });
+    if (session.si === 1) await recordSignIn(cfg, { ...session, tid: picked.tid });
     return withCookies(redirectTo(cfg, next), [sessionCookie(cfg, picked)]);
   }
   return redirectTo(cfg, `/select-agency?next=${encodeURIComponent(next)}&manual=1`);

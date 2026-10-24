@@ -37,9 +37,9 @@ function jarOf(cookie: string) {
   return { get: (n: string) => map.get(n) };
 }
 
-function signedIn(tid: string | null = "tenant-a"): string {
+function signedIn(tid: string | null = "tenant-a", si?: 1): string {
   const now = Math.floor(Date.now() / 1000);
-  const s = sessionCookie(cfg, { at: fakeAccessToken(), atExp: now + 1200, iss: "i", sub: "sub-1", cid: "c", tid });
+  const s = sessionCookie(cfg, { at: fakeAccessToken(), atExp: now + 1200, iss: "i", sub: "sub-1", cid: "c", tid, si });
   const r = refreshCookie(cfg, "rt-1", "sub-1");
   return `${s.name}=${s.value}; ${r.name}=${r.value}`;
 }
@@ -68,7 +68,7 @@ describe("sign-in and callback", () => {
     expect(done.status).toBe(307);
     expect(done.headers.get("location")).toBe(`${ORIGIN}/clients`);
     const session = readSession(cfg, jarOf(cookieHeader(done)));
-    expect(session).toMatchObject({ at, sub: "sub-1", tid: null });
+    expect(session).toMatchObject({ at, sub: "sub-1", tid: null, si: 1 }); // AA-940: a sign-in to record on the pick
     expect(done.headers.getSetCookie().some((c) => c.startsWith(`${cookieNames(cfg).tx}=;`))).toBe(true);
   });
 
@@ -118,13 +118,20 @@ describe("agency pick", () => {
   it("auto-picks the only active agency and refuses one the person is not in", async () => {
     const api = vi.fn(async (_url: string, _init?: RequestInit) => Response.json(MEMBERSHIPS));
     vi.stubGlobal("fetch", api);
-    const auto = await agencyGet(request("/auth/agency?next=/clients", { cookie: signedIn(null) }));
+    const signIns = () => api.mock.calls.filter(([url]) => String(url).endsWith("/crm/v1/audit/sign-in"));
+    const auto = await agencyGet(request("/auth/agency?next=/clients", { cookie: signedIn(null, 1) }));
     expect(auto.headers.get("location")).toBe(`${ORIGIN}/clients`);
-    expect(readSession(cfg, jarOf(cookieHeader(auto)))?.tid).toBe("tenant-a");
-    // AA-940: the pick records a sign-in in the picked agency's audit (POST /crm/v1/audit/sign-in, its tenant header).
-    const signIn = api.mock.calls.find(([url]) => String(url).endsWith("/crm/v1/audit/sign-in"));
-    expect(signIn?.[1]?.method).toBe("POST");
-    expect(new Headers(signIn?.[1]?.headers).get("X-AA-Tenant-Id")).toBe("tenant-a");
+    const picked = readSession(cfg, jarOf(cookieHeader(auto)));
+    expect(picked?.tid).toBe("tenant-a");
+    expect(picked?.si).toBeUndefined(); // the one-shot flag is used up
+    // AA-940: the pick right after a sign-in records it in the picked agency's audit (POST, its tenant header).
+    expect(signIns().length).toBe(1);
+    expect(signIns()[0][1]?.method).toBe("POST");
+    expect(new Headers(signIns()[0][1]?.headers).get("X-AA-Tenant-Id")).toBe("tenant-a");
+    // A later GET (a sibling *.lumiguides.it.com page can make the browser send one) has no flag: no event.
+    const again = await agencyGet(request("/auth/agency?next=/clients", { cookie: signedIn("tenant-a") }));
+    expect(again.headers.get("location")).toBe(`${ORIGIN}/clients`);
+    expect(signIns().length).toBe(1);
 
     const form = (tenant: string) => {
       const f = new FormData();
@@ -135,6 +142,7 @@ describe("agency pick", () => {
     const ok = await agencyPost(request("/auth/agency", { method: "POST", cookie: signedIn(null), headers: { origin: ORIGIN }, body: form("tenant-a") }));
     expect(ok.status).toBe(303);
     expect(readSession(cfg, jarOf(cookieHeader(ok)))?.tid).toBe("tenant-a");
+    expect(signIns().length).toBe(2); // a chooser pick (same-site POST) always records
     for (const tenant of ["tenant-l", "tenant-x"]) {
       const no = await agencyPost(request("/auth/agency", { method: "POST", cookie: signedIn(null), headers: { origin: ORIGIN }, body: form(tenant) }));
       expect(no.headers.get("location")).toContain("/select-agency");

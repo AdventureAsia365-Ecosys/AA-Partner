@@ -60,7 +60,7 @@ describe("access log filters", () => {
     expect(exportPath({ outcome: "denied" }, "csv")).toBe("audit/events/export?outcome=denied&format=csv");
     expect(matchBff("GET", list.split("?")[0])?.card).toBe("AA-940");
     expect(matchBff("GET", "audit/events/export")?.tenant).toBe(true);
-    expect(matchBff("POST", "audit/sign-in")?.card).toBe("AA-940");
+    expect(matchBff("POST", "audit/sign-in")).toBeNull(); // server side only (/auth/agency), no browser route
     expect(matchBff("DELETE", "audit/events")).toBeNull();
     expect(matchBff("POST", "audit/events")).toBeNull();
     expect(exportFilename("jsonl", new Date("2026-10-24T10:00:00Z"))).toBe("access-log-20261024.jsonl");

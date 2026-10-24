@@ -28,6 +28,8 @@ export async function GET(request: NextRequest) {
         sub: claims.sub,
         cid: claims.clientId,
         tid: null,
+        // AA-940: a sign-in to record once an agency is picked (/auth/agency).
+        si: 1,
       }),
       // The attempt is used up: expire it.
       { ...clearedCookies(cfg).find((c) => c.name === cookieNames(cfg).tx)! },
