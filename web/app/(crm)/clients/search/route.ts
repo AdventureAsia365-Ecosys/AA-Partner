@@ -5,16 +5,16 @@ import type { NextRequest } from "next/server";
 import { directoryHref, SEARCH_MAX } from "@/lib/clients";
 import { searchCookie } from "@/lib/clientSearch";
 import { config } from "@/lib/config";
-import { refuseCrossSiteWrite } from "@/lib/crossSiteGuard";
 import { redirectTo } from "@/lib/respond";
 import { readSession } from "@/lib/session";
+import { refuseForeignWrite } from "@/lib/writeGuard";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
-  const refused = refuseCrossSiteWrite(request);
-  if (refused) return refused;
   const cfg = config();
+  const refused = refuseForeignWrite(cfg, request);
+  if (refused) return refused;
   const form = await request.formData();
   const q = String(form.get("q") ?? "").trim().slice(0, SEARCH_MAX);
   const archived = form.get("archived") === "true";
