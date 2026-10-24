@@ -116,10 +116,15 @@ describe("refresh", () => {
 
 describe("agency pick", () => {
   it("auto-picks the only active agency and refuses one the person is not in", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json(MEMBERSHIPS)));
+    const api = vi.fn(async (_url: string, _init?: RequestInit) => Response.json(MEMBERSHIPS));
+    vi.stubGlobal("fetch", api);
     const auto = await agencyGet(request("/auth/agency?next=/clients", { cookie: signedIn(null) }));
     expect(auto.headers.get("location")).toBe(`${ORIGIN}/clients`);
     expect(readSession(cfg, jarOf(cookieHeader(auto)))?.tid).toBe("tenant-a");
+    // AA-940: the pick records a sign-in in the picked agency's audit (POST /crm/v1/audit/sign-in, its tenant header).
+    const signIn = api.mock.calls.find(([url]) => String(url).endsWith("/crm/v1/audit/sign-in"));
+    expect(signIn?.[1]?.method).toBe("POST");
+    expect(new Headers(signIn?.[1]?.headers).get("X-AA-Tenant-Id")).toBe("tenant-a");
 
     const form = (tenant: string) => {
       const f = new FormData();

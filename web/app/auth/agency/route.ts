@@ -4,9 +4,12 @@
 //
 //   POST (form tenant_id, next)  same-origin only; switch to that agency
 //   GET  ?next=…                 pick automatically when the person has exactly one active agency, else the chooser
+//
+// AA-940: each pick sends POST /crm/v1/audit/sign-in for the picked agency (the agency audit's "sign-ins", design
+// §4.9), best effort.
 import type { NextRequest } from "next/server";
 import { config } from "@/lib/config";
-import { fetchMemberships, selectable } from "@/lib/crmApi";
+import { fetchMemberships, recordSignIn, selectable } from "@/lib/crmApi";
 import { safeNext } from "@/lib/hosts";
 import { redirectTo, withCookies } from "@/lib/respond";
 import { accessValid, readSession, sessionCookie, type Session } from "@/lib/session";
@@ -28,7 +31,11 @@ export async function GET(request: NextRequest) {
   }
   const found = await fetchMemberships(cfg, session);
   const active = found.ok ? found.data.filter((m) => m.tenant_status === "active") : [];
-  if (active.length === 1) return withCookies(redirectTo(cfg, next), [sessionCookie(cfg, keep(session, active[0].tenant_id))]);
+  if (active.length === 1) {
+    const picked = keep(session, active[0].tenant_id);
+    await recordSignIn(cfg, { ...session, tid: picked.tid });
+    return withCookies(redirectTo(cfg, next), [sessionCookie(cfg, picked)]);
+  }
   return redirectTo(cfg, `/select-agency?next=${encodeURIComponent(next)}&manual=1`);
 }
 
@@ -44,5 +51,6 @@ export async function POST(request: NextRequest) {
   const found = await fetchMemberships(cfg, session);
   const pick = found.ok ? selectable(found.data, tenantId) : null;
   if (!pick) return redirectTo(cfg, `/select-agency?next=${encodeURIComponent(next)}&manual=1`, 303);
+  await recordSignIn(cfg, { ...session, tid: pick.tenant_id });
   return withCookies(redirectTo(cfg, next, 303), [sessionCookie(cfg, keep(session, pick.tenant_id))]);
 }

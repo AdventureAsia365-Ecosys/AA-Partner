@@ -86,3 +86,11 @@ export function fetchMe(cfg: WebConfig, session: Session, fetchImpl?: typeof fet
 export function selectable(memberships: Membership[], tenantId: string): Membership | null {
   return memberships.find((m) => m.tenant_id === tenantId && m.tenant_status === "active") ?? null;
 }
+
+/** AA-940 (design §4.9 "sign-ins"): record that this session opened ``session.tid`` (best effort: a failed call never
+ * blocks the sign-in; the API logs its own failures). Called by /auth/agency after the agency is picked. */
+export async function recordSignIn(cfg: WebConfig, session: Session, fetchImpl?: typeof fetch): Promise<boolean> {
+  if (!session.tid) return false;
+  const r = await crmCall<{ recorded: boolean }>(cfg, session, "POST", "audit/sign-in", { fetchImpl });
+  return r.ok;
+}

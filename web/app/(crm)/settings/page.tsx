@@ -30,6 +30,16 @@ export default async function SettingsPage() {
           {t(lang, "settings.forms")}
         </a>
       </Panel>
+      <Panel title={t(lang, "settings.privacy")} testId="settings-privacy">
+        <p style={{ margin: "0 0 8px", fontSize: 13, color: K.muted }}>{t(lang, "settings.accessLogHelp")}</p>
+        {ctx.role === "owner" ? (
+          <a href="/settings/access-log" style={{ fontSize: 13.5 }} data-testid="settings-access-log-link">
+            {t(lang, "settings.accessLog")}
+          </a>
+        ) : (
+          <p style={{ margin: 0, fontSize: 13 }}>{t(lang, "settings.accessLogOwnerOnly")}</p>
+        )}
+      </Panel>
       <Panel title={t(lang, "settings.language")} testId="settings-language">
         <p style={{ margin: "0 0 12px", fontSize: 13, color: K.muted }}>{t(lang, "settings.languageHelp")}</p>
         <LocaleSwitch locale={locale} label={t(lang, "settings.language")} next="/settings" saveLabel={t(lang, "settings.save")} />
