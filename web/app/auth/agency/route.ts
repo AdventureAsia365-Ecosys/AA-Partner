@@ -7,10 +7,10 @@
 import type { NextRequest } from "next/server";
 import { config } from "@/lib/config";
 import { fetchMemberships, selectable } from "@/lib/crmApi";
-import { refuseCrossSiteWrite } from "@/lib/crossSiteGuard";
 import { safeNext } from "@/lib/hosts";
 import { redirectTo, withCookies } from "@/lib/respond";
 import { accessValid, readSession, sessionCookie, type Session } from "@/lib/session";
+import { refuseForeignWrite } from "@/lib/writeGuard";
 
 export const dynamic = "force-dynamic";
 
@@ -33,9 +33,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const refused = refuseCrossSiteWrite(request);
-  if (refused) return refused;
   const cfg = config();
+  const refused = refuseForeignWrite(cfg, request);
+  if (refused) return refused;
   const form = await request.formData();
   const next = safeNext(String(form.get("next") ?? "/"));
   const tenantId = String(form.get("tenant_id") ?? "");
