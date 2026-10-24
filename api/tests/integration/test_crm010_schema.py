@@ -636,12 +636,319 @@ async def test_the_deletion_functions_pin_their_search_path(admin: asyncpg.Conne
             "erase_rows",
             "erase_subject",
             "lifecycle_purge_expired",
+            "hold_trip",
+            "hold_traveler",
+            "hold_row",
+            "erase_held",
         ],
     )
-    assert len(rows) == 7
+    assert len(rows) == 11
     assert {r["fn"]: list(r["proconfig"] or []) for r in rows} == {
         r["fn"]: ["search_path=pg_catalog, pg_temp"] for r in rows
     }
+
+
+# ── The hold rule (crm-010 header item 4), re-review S249 round 3 ─────────────────────────────────────────────────
+# Every case: the erase refuses with CRM10 (dry run and real run), crm.legal_hold_blocks agrees (so the trash
+# pre-check does too), nothing changed; after the release the same erase goes through.
+
+
+async def _release(pool: asyncpg.Pool, tenant_id: uuid.UUID, hold: uuid.UUID) -> None:
+    async with pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, tenant_id, "member:releaser")
+        await conn.execute(
+            "UPDATE crm.legal_hold SET status = 'released', released_at = now(), released_by = 'member:releaser' "
+            "WHERE hold_id = $1",
+            hold,
+        )
+
+
+async def _snapshot(pool: asyncpg.Pool, tenant_id: uuid.UUID, queries: dict[str, str]) -> dict[str, Any]:
+    async with pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, tenant_id)
+        return {k: await conn.fetchval(q) for k, q in queries.items()}
+
+
+async def _refused_until_released(
+    pool: asyncpg.Pool,
+    tenant_id: uuid.UUID,
+    scope: str,
+    subject: uuid.UUID,
+    token: uuid.UUID | None,
+    hold: uuid.UUID,
+    queries: dict[str, str],
+    *,
+    dry_run: bool,
+) -> dict[str, Any]:
+    """CRM10 with nothing changed and legal_hold_blocks true; released: the erase goes through. Returns its counts."""
+    assert await _held(pool, tenant_id, scope, subject), "the trash pre-check must agree with the erase"
+    before = await _snapshot(pool, tenant_id, queries)
+    with pytest.raises(asyncpg.PostgresError, match="legal_hold") as err:
+        await _erase(pool, tenant_id, scope, subject, token, dry_run=dry_run)
+    assert err.value.sqlstate == "CRM10"
+    assert await _snapshot(pool, tenant_id, queries) == before
+    await _release(pool, tenant_id, hold)
+    assert not await _held(pool, tenant_id, scope, subject)
+    done = await _erase(pool, tenant_id, scope, subject, token, dry_run=dry_run)
+    after = await _snapshot(pool, tenant_id, queries)
+    assert (after == before) is dry_run
+    return done["counts"]
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+async def test_r4_a_co_travellers_client_hold_reaches_the_traveller_erase(
+    app_pool: asyncpg.Pool, dry_run: bool
+) -> None:
+    """Repro r4: trip T (in the trash) has lead H with a client hold and companion X, who has a note on T. T is held
+    (4a), so X's party row and note on T are held rows (4d): erasing X refuses until H's hold is released."""
+    ids = await _agency(app_pool)
+    t = ids["tenant"]
+    x, x_token = await _client(app_pool, t)
+    h, _ = await _client(app_pool, t)
+    trip = uuid.uuid4()
+    async with app_pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, t, "seed:test")
+        await conn.execute(
+            "INSERT INTO crm.trip (trip_id, title, deleted_at, deleted_by, purge_after) "
+            "VALUES ($1, 'Trip T', now(), 'member:x', now() + interval '7 days')",
+            trip,
+        )
+        for who, role in ((h, "lead"), (x, "companion")):
+            await conn.execute(
+                "INSERT INTO crm.trip_traveler (trip_id, traveler_id, role) VALUES ($1, $2, $3)", trip, who, role
+            )
+        await conn.execute(
+            "INSERT INTO crm.note (trip_id, traveler_id, kind, body_enc) VALUES ($1, $2, 'internal', $3)",
+            trip,
+            x,
+            _blob(),
+        )
+    hold = await _hold(app_pool, t, "traveler", h, "member:m")
+    assert await _held(app_pool, t, "trip", trip)
+    for scope, subject in (("trip", trip),):
+        with pytest.raises(asyncpg.PostgresError, match="legal_hold"):
+            await _erase(app_pool, t, scope, subject, dry_run=dry_run)
+    queries = {
+        "party": f"SELECT count(*) FROM crm.trip_traveler WHERE trip_id = '{trip}'",
+        "notes": f"SELECT count(*) FROM crm.note WHERE trip_id = '{trip}'",
+        "x": f"SELECT count(*) FROM crm.traveler WHERE traveler_id = '{x}'",
+    }
+    counts = await _refused_until_released(app_pool, t, "traveler", x, x_token, hold, queries, dry_run=dry_run)
+    assert counts["trip_traveler"] == 1 and counts["note"] == 1
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+async def test_r1a_a_relation_to_a_client_held_through_a_trip_hold(app_pool: asyncpg.Pool, dry_run: bool) -> None:
+    """Repro r1 section A: Y is on trip T2, which has a trip hold, so Y is held (4b). Erasing X would delete both rows
+    of the relation X -> Y (4d: either end): refused, like erasing the relation itself."""
+    ids = await _agency(app_pool)
+    t = ids["tenant"]
+    x, x_token = await _client(app_pool, t)
+    y, _ = await _client(app_pool, t)
+    t2 = uuid.uuid4()
+    async with app_pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, t, "seed:test")
+        await conn.execute("INSERT INTO crm.trip (trip_id, title) VALUES ($1, 'Held trip T2')", t2)
+        await conn.execute("INSERT INTO crm.trip_traveler (trip_id, traveler_id, role) VALUES ($1, $2, 'lead')", t2, y)
+        rel = await conn.fetchval(
+            "INSERT INTO crm.traveler_relation (from_traveler_id, to_traveler_id, kind) VALUES ($1, $2, 'friend') "
+            "RETURNING relation_id",
+            x,
+            y,
+        )
+    hold = await _hold(app_pool, t, "trip", t2, "member:m")
+    assert await _held(app_pool, t, "traveler", y) and await _held(app_pool, t, "relation", rel)
+    with pytest.raises(asyncpg.PostgresError, match="legal_hold"):
+        await _erase(app_pool, t, "relation", rel, dry_run=dry_run)
+    queries = {
+        "relations": f"SELECT count(*) FROM crm.traveler_relation WHERE '{y}' IN (from_traveler_id, to_traveler_id)"
+    }
+    counts = await _refused_until_released(app_pool, t, "traveler", x, x_token, hold, queries, dry_run=dry_run)
+    assert counts["traveler_relation"] == 2
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+async def test_r1b_a_trip_naming_a_client_held_through_another_trip(app_pool: asyncpg.Pool, dry_run: bool) -> None:
+    """Repro r1 section B: H is on held trip T2 and on unheld trip T, with a note on T. H is held (4b), so H's party
+    row and note on T are held rows: erasing T refuses, like erasing the note itself."""
+    ids = await _agency(app_pool)
+    t = ids["tenant"]
+    h, _ = await _client(app_pool, t)
+    trip, t2 = uuid.uuid4(), uuid.uuid4()
+    async with app_pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, t, "seed:test")
+        await conn.execute(
+            "INSERT INTO crm.trip (trip_id, title) VALUES ($1, 'Trip T'), ($2, 'Held trip T2')", trip, t2
+        )
+        await conn.execute(
+            "INSERT INTO crm.trip_traveler (trip_id, traveler_id, role) VALUES ($1, $3, 'lead'), ($2, $3, 'companion')",
+            trip,
+            t2,
+            h,
+        )
+        note = await conn.fetchval(
+            "INSERT INTO crm.note (trip_id, traveler_id, kind, body_enc) VALUES ($1, $2, 'internal', $3) "
+            "RETURNING note_id",
+            trip,
+            h,
+            _blob(),
+        )
+    hold = await _hold(app_pool, t, "trip", t2, "member:m")
+    assert not await _erase_would_pass(app_pool, t, "note", note)
+    queries = {
+        "h_notes": f"SELECT count(*) FROM crm.note WHERE traveler_id = '{h}'",
+        "h_party": f"SELECT count(*) FROM crm.trip_traveler WHERE traveler_id = '{h}'",
+        "trip": f"SELECT count(*) FROM crm.trip WHERE trip_id = '{trip}'",
+    }
+    counts = await _refused_until_released(app_pool, t, "trip", trip, None, hold, queries, dry_run=dry_run)
+    assert counts["note"] == 1 and counts["trip_traveler"] == 1 and counts["trip"] == 1
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+async def test_a_trip_erase_does_not_unlink_a_held_clients_submission(app_pool: asyncpg.Pool, dry_run: bool) -> None:
+    """Re-review finding 4: H (client hold) has a submission on trip T but is not on T's party. The trip erase would
+    set its trip_id to NULL (an UPDATE of a held row): refused."""
+    ids = await _agency(app_pool)
+    t = ids["tenant"]
+    h, _ = await _client(app_pool, t)
+    trip = uuid.uuid4()
+    async with app_pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, t, "seed:test")
+        await conn.execute("INSERT INTO crm.trip (trip_id, title) VALUES ($1, 'Trip T')", trip)
+    await _name_on_trip(app_pool, t, trip, h, "submission")
+    hold = await _hold(app_pool, t, "traveler", h, "member:m")
+    queries = {"linked": f"SELECT count(*) FROM crm.form_submission WHERE trip_id = '{trip}' AND traveler_id = '{h}'"}
+    counts = await _refused_until_released(app_pool, t, "trip", trip, None, hold, queries, dry_run=dry_run)
+    assert counts["form_submission_unlinked"] == 1
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("held_by", ["client_hold", "trip_hold"])
+async def test_a_traveller_erase_does_not_rewrite_a_held_referred_client(
+    app_pool: asyncpg.Pool, held_by: str, dry_run: bool
+) -> None:
+    """Re-review finding 5: Y was referred by X and Y is held (own hold, or a hold on a trip Y is on). Erasing X would
+    set Y.referrer_traveler_id to NULL (an UPDATE of a held row): refused."""
+    ids = await _agency(app_pool)
+    t = ids["tenant"]
+    x, x_token = await _client(app_pool, t)
+    y = uuid.uuid4()
+    async with app_pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, t, "seed:test")
+        await conn.execute(
+            "INSERT INTO crm.traveler (traveler_id, display_name_enc, referrer_traveler_id) VALUES ($1, $2, $3)",
+            y,
+            _blob(),
+            x,
+        )
+        if held_by == "trip_hold":
+            await conn.execute(
+                "INSERT INTO crm.trip_traveler (trip_id, traveler_id, role) VALUES ($1, $2, 'companion')",
+                ids["trip"],
+                y,
+            )
+    hold = await _hold(
+        app_pool, t, *(("traveler", y) if held_by == "client_hold" else ("trip", ids["trip"])), "member:m"
+    )
+    queries = {"referred": f"SELECT count(*) FROM crm.traveler WHERE referrer_traveler_id = '{x}'"}
+    counts = await _refused_until_released(app_pool, t, "traveler", x, x_token, hold, queries, dry_run=dry_run)
+    assert counts["traveler_referrer_unlinked"] == 1
+
+
+async def _erase_would_pass(pool: asyncpg.Pool, tenant_id: uuid.UUID, scope: str, subject: uuid.UUID) -> bool:
+    try:
+        await _erase(pool, tenant_id, scope, subject, dry_run=True)
+    except asyncpg.PostgresError as err:
+        assert err.sqlstate == "CRM10", err
+        return False
+    return True
+
+
+async def test_the_hold_rule_is_one_level_and_legal_hold_blocks_matches_the_erase(app_pool: asyncpg.Pool) -> None:
+    """Rule 4a/4b are one level: a trip hold holds its party, not the other trips of those travellers. And for every
+    subject of the agency, legal_hold_blocks(scope, id) is true exactly when the erase (dry run) refuses with CRM10."""
+    ids = await _agency(app_pool)
+    t = ids["tenant"]
+    other = uuid.uuid4()
+    async with app_pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, t, "seed:test")
+        await conn.execute("INSERT INTO crm.trip (trip_id, title) VALUES ($1, 'Other trip')", other)
+        await conn.execute(
+            "INSERT INTO crm.trip_traveler (trip_id, traveler_id, role) VALUES ($1, $2, 'lead')", other, ids["lead"]
+        )
+        rows = {
+            "task": await conn.fetchval("SELECT task_id FROM crm.task LIMIT 1"),
+            "note": await conn.fetchval("SELECT note_id FROM crm.note LIMIT 1"),
+        }
+    await _hold(app_pool, t, "trip", ids["trip"], "member:m")
+    async with app_pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, t)
+        assert await conn.fetchval("SELECT crm.hold_traveler($1)", ids["lead"])  # on the held trip
+        assert await conn.fetchval("SELECT crm.hold_trip($1)", ids["trip"])
+        assert not await conn.fetchval("SELECT crm.hold_trip($1)", other)  # one level: the lead's other trip
+        assert not await conn.fetchval("SELECT crm.hold_row($1, NULL)", other)
+    subjects = [("trip", ids["trip"]), ("trip", other), ("traveler", ids["lead"]), ("traveler", ids["companion"])]
+    subjects += [(k, v) for k, v in rows.items()]
+    for scope, subject in subjects:
+        assert await _held(app_pool, t, scope, subject) is not await _erase_would_pass(app_pool, t, scope, subject), (
+            scope,
+            subject,
+        )
+    # The other trip names the held lead on its party: its erase would delete the lead's party row (4d), so it is
+    # refused even though the trip itself is not held.
+    assert not await _erase_would_pass(app_pool, t, "trip", other)
+
+
+async def test_the_erase_takes_a_share_lock_so_a_hold_placement_waits(app_pool: asyncpg.Pool) -> None:
+    """Rule 4g: erase_subject holds LOCK TABLE crm.legal_hold IN SHARE MODE until its transaction ends; a hold insert
+    (ROW EXCLUSIVE) waits for it, then goes in."""
+    ids = await _agency(app_pool)
+    t = ids["tenant"]
+    async with app_pool.acquire() as a, app_pool.acquire() as b:
+        tx = a.transaction()
+        await tx.start()
+        await _ctx(a, t)
+        await a.execute("SET LOCAL ROLE crm_eraser")
+        await a.fetchval("SELECT crm.erase_subject('trip', $1, NULL, true)", ids["trip"])
+        modes = await b.fetch(
+            "SELECT mode, granted FROM pg_locks WHERE relation = 'crm.legal_hold'::regclass AND pid = $1",
+            a.get_server_pid(),
+        )
+        assert ("ShareLock", True) in {(m["mode"], m["granted"]) for m in modes}
+        with pytest.raises(asyncpg.LockNotAvailableError):
+            async with b.transaction():
+                await _ctx(b, t, "member:m")
+                await b.execute("SET LOCAL lock_timeout = '300ms'")
+                await b.execute(
+                    "INSERT INTO crm.legal_hold (scope, subject_id, reason_code) VALUES ('trip', $1, 'dispute')",
+                    ids["trip"],
+                )
+        await tx.rollback()
+    await _hold(app_pool, t, "trip", ids["trip"], "member:m")  # the erase ended: the hold goes in
+
+
+async def test_an_erase_waits_for_a_hold_being_placed_and_then_refuses(app_pool: asyncpg.Pool) -> None:
+    """Rule 4g, the other order: a hold inserted but not committed makes the erase wait at its lock; once the hold
+    commits, the erase sees it and refuses with CRM10 (the race of the re-review: the trip is not deleted)."""
+    import asyncio
+
+    ids = await _agency(app_pool)
+    t = ids["tenant"]
+    async with app_pool.acquire() as b:
+        hold_tx = b.transaction()
+        await hold_tx.start()
+        await _ctx(b, t, "member:m")
+        await b.execute(
+            "INSERT INTO crm.legal_hold (scope, subject_id, reason_code) VALUES ('trip', $1, 'dispute')", ids["trip"]
+        )
+        erase = asyncio.create_task(_erase(app_pool, t, "trip", ids["trip"], dry_run=False))
+        await asyncio.sleep(0.5)
+        assert not erase.done(), "the erase must wait for the hold being placed"
+        await hold_tx.commit()
+        with pytest.raises(asyncpg.PostgresError, match="legal_hold") as err:
+            await erase
+        assert err.value.sqlstate == "CRM10"
+    assert await _count(app_pool, t, "trip") == 1
 
 
 async def test_the_llm_call_purge_keeps_180_days(app_pool: asyncpg.Pool) -> None:
