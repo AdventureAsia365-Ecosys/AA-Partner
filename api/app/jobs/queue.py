@@ -300,3 +300,62 @@ async def kind_summary(pool: asyncpg.Pool) -> list[dict[str, Any]]:
         """
     )
     return [dict(r) for r in rows]
+
+
+# ── AA-941: per-agency failed jobs for the L1 console (crm.job has no tenant column: payload->>'tenant_id') ────────
+# Only per-agency kinds whose payload names the agency; never payload or result in the answer (they hold trip /
+# submission ids). Called with the connection of an open platform context, so the read / retry and its audit event
+# commit together.
+RETRYABLE_KINDS: tuple[str, ...] = ("crm_intake_process", "crm_dispatch", "crm_offboard")
+FAILED_JOBS_DAYS = 7
+FAILED_JOBS_LIMIT = 50
+
+
+async def failed_jobs(conn: asyncpg.Connection, tenant_id: str) -> list[dict[str, Any]]:
+    """The agency's failed jobs of the retryable kinds, finished in the last 7 days, newest first (at most 50)."""
+    rows = await conn.fetch(
+        """
+        SELECT id::text AS job_id, kind, attempt, max_attempts, error, finished_at
+          FROM crm.job
+         WHERE status = 'failed' AND kind = ANY($2::text[]) AND payload->>'tenant_id' = $1
+           AND finished_at > now() - make_interval(days => $3)
+         ORDER BY finished_at DESC, id
+         LIMIT $4
+        """,
+        tenant_id,
+        list(RETRYABLE_KINDS),
+        FAILED_JOBS_DAYS,
+        FAILED_JOBS_LIMIT,
+    )
+    return [dict(r) for r in rows]
+
+
+async def failed_count_24h(conn: asyncpg.Connection, tenant_id: str) -> int:
+    """Failed jobs of the agency (any kind whose payload names it) in the last 24 h: the usage meter."""
+    return int(
+        await conn.fetchval(
+            """
+            SELECT count(*) FROM crm.job
+             WHERE status = 'failed' AND payload->>'tenant_id' = $1 AND finished_at > now() - interval '24 hours'
+            """,
+            tenant_id,
+        )
+        or 0
+    )
+
+
+async def retry_failed(conn: asyncpg.Connection, job_id: str, tenant_id: str) -> str | None:
+    """Put one failed job of the agency back in the queue, due now, attempts reset. None when no such job (another
+    agency's id, another status or kind: the same answer, so ids cannot be probed)."""
+    return await conn.fetchval(
+        """
+        UPDATE crm.job SET status = 'queued', attempt = 0, run_after = now(), error = NULL, result = NULL,
+               started_at = NULL, finished_at = NULL, locked_by = NULL, locked_until = NULL, cancel_requested = false,
+               progress = progress - 'releases' - 'released'
+         WHERE id = $1::uuid AND status = 'failed' AND kind = ANY($3::text[]) AND payload->>'tenant_id' = $2
+        RETURNING id::text
+        """,
+        job_id,
+        tenant_id,
+        list(RETRYABLE_KINDS),
+    )

@@ -41,6 +41,11 @@ export interface LifecycleRun {
 export interface Offboarding {
   request_id: string;
   status: "requested" | "export_ready" | "erasing" | "erased" | "cancelled" | "failed";
+  // AA-941 (crm-011): an agency deletion ("offboard") or an export only, raised by the owner or by AA; an AA-raised
+  // request waits for the owner's Confirm / Decline. Optional: an API without crm-011 code omits them.
+  purpose?: "offboard" | "export_only";
+  raised_by?: "aa" | "owner";
+  awaiting_owner?: boolean;
   dry_run_counts: Record<string, number>;
   export_waived: boolean;
   export_ready: boolean;
@@ -109,13 +114,25 @@ export function confirmsErase(typed: string, tenantId: string): boolean {
  */
 export function offboardingStep(
   o: Offboarding | null | undefined,
-): "request" | "wait_export" | "confirm" | "running" | "failed" | "done" {
+): "request" | "aa_request" | "wait_export" | "confirm" | "export_ready" | "running" | "failed" | "done" {
   if (!o || o.status === "cancelled") return "request";
+  if (o.awaiting_owner) return "aa_request";
+  if (o.purpose === "export_only") {
+    // An export AA raised and the owner confirmed: download it; it never erases (close it with Cancel).
+    if (o.status === "requested") return "wait_export";
+    if (o.status === "failed") return "failed";
+    return "export_ready";
+  }
   if (o.status === "erased") return "done";
   if (o.status === "erasing") return "running";
   if (o.status === "failed") return "failed";
   if (o.status === "requested" && !o.export_waived) return "wait_export";
   return "confirm";
+}
+
+/** AA-941: the heading of an AA-raised request the owner must answer. */
+export function aaRequestKey(o: Offboarding): MessageKey {
+  return o.purpose === "export_only" ? "data.aa.export" : "data.aa.deletion";
 }
 
 /** The 409 detail of a refused trip delete -> the message key the trip page shows (a blocker: "Cancel trip" instead;

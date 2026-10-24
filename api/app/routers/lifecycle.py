@@ -21,6 +21,7 @@ Route                                           What                            
 ``POST /lifecycle/offboarding/{id}/cancel``     cancel before the erase                                    owner
 ``GET  /lifecycle/offboarding/{id}/export``     download the export (JSON lines)                           owner
 ``POST /lifecycle/offboarding/{id}/erase``      confirm the erase (typed agency id)                        owner
+``POST /lifecycle/offboarding/{id}/accept``     confirm a request AA raised (AA-941; decline = cancel)     owner
 ==============================================  =========================================================  ============
 
 ``DELETE /documents/{id}`` stays in :mod:`app.routers.travellers` and uses the same trash. Every refusal of a role is
@@ -115,6 +116,10 @@ class OffboardingIn(_Body):
 
 class EraseConfirm(_Body):
     confirm_tenant_id: uuid.UUID
+
+
+class AcceptIn(_Body):
+    export_waived: bool = False
 
 
 def _dry_run(request: Request) -> bool:
@@ -358,3 +363,13 @@ async def post_offboarding_erase(
         return await offboarding.confirm_erase(
             ctx, request_id, confirm_tenant_id=body.confirm_tenant_id, dry_run=_dry_run(request)
         )
+
+
+@router.post("/lifecycle/offboarding/{request_id}/accept")
+async def post_offboarding_accept(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, request_id: uuid.UUID, body: AcceptIn
+) -> dict[str, Any]:
+    """AA-941: the owner confirms an agency export or deletion request AA raised (decline = ``/cancel``)."""
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.AGENCY_EXPORT) as ctx:
+        return await offboarding.accept(ctx, request_id, export_waived=body.export_waived)

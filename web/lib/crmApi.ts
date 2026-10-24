@@ -21,7 +21,7 @@ export interface Membership {
   member_role: Role;
   display_name: string;
   default_locale: DateLocale;
-  tenant_status: "active" | "locked";
+  tenant_status: "active" | "locked" | "offboarding" | "offboarded";
 }
 
 export interface Me {
@@ -86,6 +86,13 @@ export function fetchMe(cfg: WebConfig, session: Session, fetchImpl?: typeof fet
 /** The membership a session may switch to: one of the caller's own, in an active agency. */
 export function selectable(memberships: Membership[], tenantId: string): Membership | null {
   return memberships.find((m) => m.tenant_id === tenantId && m.tenant_status === "active") ?? null;
+}
+
+/** AA-941: show "This agency is locked by AA" on the chooser — the agency the session had open answered 403
+ * tenant_locked (``?locked=1``), or the session's agency is listed as locked. */
+export function lockedNotice(memberships: Membership[], tenantId: string | null | undefined, lockedParam?: string): boolean {
+  if (lockedParam === "1") return true;
+  return !!tenantId && memberships.some((m) => m.tenant_id === tenantId && m.tenant_status === "locked");
 }
 
 /** AA-940 (design §4.9 "sign-ins"): record that this session opened ``session.tid`` (best effort: a failed call never

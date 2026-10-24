@@ -443,6 +443,39 @@ async def test_accept_never_changes_an_active_member_s_role(monkeypatch: pytest.
     assert conn.sql("SET role = $2") == [] and conn.sql("SET status = 'accepted'") == []
 
 
+@pytest.mark.asyncio
+async def test_accept_rechecks_the_first_owner_rule_for_an_aa_owner_invitation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AA-941 review: an owner invitation sent by AA's L1 console (invited_by platform:*) is re-checked at accept:
+    an agency that now has an active owner or holds a traveller answers 409 and no membership is written."""
+    recheck = "i.invited_by LIKE 'platform:%' AS by_platform"
+    for row, code in (
+        ({"by_platform": True, "has_owner": True, "holds_travellers": False}, "owner_exists"),
+        ({"by_platform": True, "has_owner": False, "holds_travellers": True}, "has_travellers"),
+    ):
+        conn = ScriptedConn().on(recheck, row).on("INSERT INTO crm.member", OTHER_MEMBER)
+        ctx = _system(conn)
+        monkeypatch.setattr(invitations, "invitation_tx", fake_tx(ctx, _invitation("claimed", sub=SUB, role="owner")))
+        with raises(Conflict, code):
+            await invitations.accept(conn, CALLER, TOKEN)  # type: ignore[arg-type]
+        assert conn.sql("INSERT INTO crm.member") == [] and conn.sql("SET status = 'accepted'") == []
+        assert (ctx.audit_events[-1].outcome, ctx.audit_events[-1].reason) == ("denied", code)
+    # Still a first owner (no owner, no traveller), or an owner invitation the agency's own owner sent: accepted.
+    for row in (
+        {"by_platform": True, "has_owner": False, "holds_travellers": False},
+        {"by_platform": False, "has_owner": True, "holds_travellers": True},
+    ):
+        conn = ScriptedConn().on(recheck, row).on("INSERT INTO crm.member", OTHER_MEMBER)
+        monkeypatch.setattr(
+            invitations, "invitation_tx", fake_tx(_system(conn), _invitation("claimed", sub=SUB, role="owner"))
+        )
+        assert (await invitations.accept(conn, CALLER, TOKEN))["member_role"] == "owner"  # type: ignore[arg-type]
+    # Other roles never run the check.
+    conn = ScriptedConn().on("INSERT INTO crm.member", OTHER_MEMBER)
+    monkeypatch.setattr(invitations, "invitation_tx", fake_tx(_system(conn), _invitation("claimed", sub=SUB)))
+    await invitations.accept(conn, CALLER, TOKEN)  # type: ignore[arg-type]
+    assert conn.sql(recheck) == []
+
+
 @pytest.mark.parametrize(
     ("error", "code"),
     [
@@ -899,6 +932,59 @@ async def test_system_and_platform_contexts_take_their_own_actors_only() -> None
     assert conn.sql("'app.actor'") == [("platform:staff",)]
     [event] = conn.sql("INSERT INTO crm.audit_event")
     assert event[0] == "aa_ops"
+
+
+@pytest.mark.asyncio
+async def test_platform_tx_takes_the_statuses_the_call_may_meet() -> None:
+    """AA-941: default active only; a missing agency is 404 tenant_not_found, a refused status 409."""
+    for status, cls, code in ((None, NotFound, "tenant_not_found"), ("locked", Conflict, "tenant_locked"),
+                              ("offboarding", Conflict, "tenant_status")):  # fmt: skip
+        conn = ScriptedConn().on("FROM crm.tenant", status)
+        with raises(cls, code):
+            async with tenancy.platform_tx(conn, TENANT, actor="platform:staff"):  # type: ignore[arg-type]
+                pass
+        assert not conn.sql("'app.actor'")
+    conn = ScriptedConn().on("FROM crm.tenant", "offboarded")
+    async with tenancy.platform_tx(conn, TENANT, actor="platform:s", statuses=tenancy.TENANT_STATUSES) as ctx:  # type: ignore[arg-type]
+        assert ctx.status == "offboarded"
+    for bad in (frozenset(), frozenset({"trashed"})):
+        with pytest.raises(ValueError, match="statuses"):
+            async with tenancy.platform_tx(conn, TENANT, actor="platform:s", statuses=bad):  # type: ignore[arg-type]
+                pass
+    # A job's context keeps its 403 answers.
+    with raises(Forbidden, "tenant_locked"):
+        async with tenancy.system_tx(ScriptedConn().on("FROM crm.tenant", "locked"), TENANT, actor="job:x"):  # type: ignore[arg-type]
+            pass
+    with raises(Forbidden, "not_a_member"):
+        async with tenancy.system_tx(ScriptedConn(), TENANT, actor="job:x"):  # type: ignore[arg-type]
+            pass
+
+
+@pytest.mark.asyncio
+async def test_recovery_writes_carry_the_l1_ticket(monkeypatch: pytest.MonkeyPatch) -> None:
+    conn = ScriptedConn()
+    conn.on("FROM crm.member WHERE member_id = $1", {**_member(), "member_id": OTHER_MEMBER})
+    conn.on("INSERT INTO crm.owner_recovery_request", {"request_id": REQ, "eligible_at": NOW + dt.timedelta(days=14)})
+    ctx = _platform(conn)
+    monkeypatch.setattr(recovery, "platform_tx", fake_tx(ctx))
+    await recovery.open_request(
+        conn,  # type: ignore[arg-type]
+        TENANT,
+        candidate_member_id=OTHER_MEMBER,
+        reason="no_owner",
+        staff_sub="staff-1",
+        directory=None,
+        mailer=None,
+        web_origin="https://x.test",
+        ticket_ref="SUP-3",
+    )
+    assert ctx.audit_events[-1].object_ids == ("ticket:SUP-3",)
+    disable = ScriptedConn().on("FROM crm.member WHERE member_id = $1", _member())
+    dctx = _platform(disable)
+    monkeypatch.setattr(recovery, "platform_tx", fake_tx(dctx))
+    await recovery.deactivate_member(disable, TENANT, OTHER_MEMBER, staff_sub="s", directory=None, ticket_ref="SUP-4")  # type: ignore[arg-type]
+    assert dctx.audit_events[-1].object_ids == ("ticket:SUP-4",)
+    assert recovery.ticket_ids(None) == ()
 
 
 @pytest.mark.asyncio

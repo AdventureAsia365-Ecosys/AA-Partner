@@ -67,7 +67,7 @@ def test_every_route_reaches_its_helper(owner: Any, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(policy, "holds", _stub(calls, "holds", []))
     for name in ("list_trash", "restore", "move_to_trash"):
         monkeypatch.setattr(trash, name, _stub(calls, name))
-    for name in ("request", "cancel", "confirm_erase"):
+    for name in ("request", "cancel", "confirm_erase", "accept"):
         monkeypatch.setattr(offboarding, name, _stub(calls, name))
     monkeypatch.setattr(offboarding, "latest", _stub(calls, "latest", {"status": "requested"}))
     monkeypatch.setattr(offboarding, "download", _stub(calls, "download", b'{"format": 1}\n'))
@@ -109,6 +109,10 @@ def test_every_route_reaches_its_helper(owner: Any, monkeypatch: pytest.MonkeyPa
     erase_body = {"confirm_tenant_id": str(TENANT)}
     assert client.post(f"/crm/v1/lifecycle/offboarding/{ID}/erase", json=erase_body, headers=headers).status_code == 200
     assert [c for c in calls if c[0] == "confirm_erase"][0][1]["dry_run"] is True
+    # AA-941: the owner confirms a request AA raised.
+    accept = client.post(f"/crm/v1/lifecycle/offboarding/{ID}/accept", json={"export_waived": True}, headers=headers)
+    assert accept.status_code == 200 and [c for c in calls if c[0] == "accept"][0][1] == {"export_waived": True}
+    assert client.post(f"/crm/v1/lifecycle/offboarding/{ID}/accept", json={"x": 1}, headers=headers).status_code == 422
 
 
 def test_non_owners_see_rules_only_and_cannot_erase(pools: LocalPools, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -120,6 +124,7 @@ def test_non_owners_see_rules_only_and_cannot_erase(pools: LocalPools, monkeypat
         for res in (
             client.post(f"/crm/v1/travelers/{ID}/erasure", json={}, headers=headers),
             client.get("/crm/v1/lifecycle/offboarding", headers=headers),
+            client.post(f"/crm/v1/lifecycle/offboarding/{ID}/accept", json={}, headers=headers),
             client.patch("/crm/v1/lifecycle/settings", json={"trash_days": 3}, headers=headers),
             client.post("/crm/v1/lifecycle/holds", json={"scope": "tenant", "reason_code": "other"}, headers=headers),
         ):

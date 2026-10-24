@@ -6,7 +6,9 @@ Two messages, each in English then Vietnamese in one mail (the person's language
 - the **invitation**: the agency's name, the role, the join link ``<PARTNER_WEB_ORIGIN>/join?t=<token>`` and the
   expiry. The token is the only secret in it; it is single-use, and its SHA-256 is all the database keeps;
 - the **owner recovery notice** (Q1 6.3): AA opened an owner recovery, the date it can complete, and how to cancel
-  (any member, from the banner in the CRM).
+  (any member, from the banner in the CRM);
+- the **data request notice** (AA-941, S-01): AA raised an agency export or deletion request that only the owner can
+  confirm or decline, in Settings > Data and privacy.
 
 Mail bodies hold no client data. Nothing here is logged except ids and the SES message id.
 
@@ -40,7 +42,7 @@ class Message:
     to: str
     subject: str
     text: str
-    kind: str  # invitation | recovery_notice
+    kind: str  # invitation | recovery_notice | data_request_notice
 
 
 class Mailer(Protocol):
@@ -102,6 +104,36 @@ def recovery_message(to: str, *, agency: str, eligible_at: dt.datetime, link: st
     )
     subject = f"Owner recovery opened for {agency} / Yêu cầu khôi phục chủ đại lý"
     return Message(to=to, subject=subject[:200], text=text, kind="recovery_notice")
+
+
+def data_request_message(to: str, *, agency: str, kind: str, link: str) -> Message:
+    """AA-941: AA raised an agency export (``agency_export``) or deletion (``agency_deletion``) request."""
+    en, vi = {
+        "agency_export": ("an export of all the agency's data", "xuất toàn bộ dữ liệu của đại lý"),
+        "agency_deletion": (
+            "the deletion of the agency and all its data (after an export)",
+            "xoá đại lý cùng toàn bộ dữ liệu (sau khi xuất dữ liệu)",
+        ),
+    }[kind]
+    text = "\n".join(
+        [
+            f"Adventure Asia raised a request for {en} for {agency} on AA Partner.",
+            "Nothing happens until the agency owner confirms it. The owner can confirm or decline it in",
+            f"Settings > Data and privacy: {link}/settings/data",
+            "If you did not ask Adventure Asia for this, decline it and contact us.",
+            "",
+            "---",
+            "",
+            f"Adventure Asia đã tạo yêu cầu {vi} cho {agency} trên AA Partner.",
+            "Không có gì xảy ra cho tới khi chủ đại lý xác nhận. Chủ đại lý xác nhận hoặc từ chối trong",
+            f"Cài đặt > Dữ liệu và quyền riêng tư: {link}/settings/data",
+            "Nếu bạn không yêu cầu Adventure Asia việc này, hãy từ chối và liên hệ với chúng tôi.",
+            "",
+            "Adventure Asia — AA Partner",
+        ]
+    )
+    subject = f"Data request for {agency} / Yêu cầu về dữ liệu của {agency}"
+    return Message(to=to, subject=subject[:200], text=text, kind="data_request_notice")
 
 
 class SesMailer:

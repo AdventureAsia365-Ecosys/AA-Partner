@@ -1,7 +1,8 @@
 "use client";
 // web/components/settings/DataLifecycleView.tsx — Settings > Data and privacy (AA-942, card CRM-14). The rules table for
 // everyone; for the owner: trash window and archive setting, legal holds, the trash with Restore, clients archived
-// after inactivity (Delete), the last lifecycle runs and leaving AA Partner (export, download, typed erase). Writes go
+// after inactivity (Delete), the last lifecycle runs and leaving AA Partner (export, download, typed erase); an export
+// or deletion request AA raised shows with Confirm / Decline (AA-941, crm-011). Writes go
 // through the BFF allow-list (lib/bff.ts), which refuses cross-site writes first.
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -11,6 +12,7 @@ import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import {
+  aaRequestKey,
   confirmsErase,
   offboardingStep,
   ruleWindow,
@@ -275,8 +277,42 @@ export function DataLifecycleView({
       {owner && (
         <Panel title={t(lang, "data.off")} testId="data-offboarding">
           <p style={{ margin: "0 0 10px", fontSize: 13, color: K.muted }}>{fmt(t(lang, "data.off.help"), { n: view.backup_purge_days })}</p>
-          {off && step !== "request" && step !== "done" && (
+          {off && !["request", "done", "aa_request", "export_ready"].includes(step) && off.purpose !== "export_only" && (
             <p style={{ margin: "0 0 10px", fontSize: 13 }}>{fmt(t(lang, "data.off.counts"), { n: totalCount(off.dry_run_counts) })}</p>
+          )}
+          {step === "aa_request" && off && (
+            <div data-testid="data-aa-request" style={{ display: "grid", gap: 8 }}>
+              <strong style={{ fontSize: 14, color: K.ink }}>{t(lang, aaRequestKey(off))}</strong>
+              <span style={{ fontSize: 13, color: K.muted }}>{t(lang, "data.aa.help")}</span>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <Button
+                  variant={off.purpose === "export_only" ? "primary" : "danger"}
+                  disabled={busy}
+                  onClick={() => send("POST", `lifecycle/offboarding/${off.request_id}/accept`, { export_waived: false })}
+                >
+                  {t(lang, "data.aa.confirm")}
+                </Button>
+                <Button variant="ghost" disabled={busy} onClick={() => send("POST", `lifecycle/offboarding/${off.request_id}/cancel`)}>
+                  {t(lang, "data.aa.decline")}
+                </Button>
+              </div>
+            </div>
+          )}
+          {step === "export_ready" && off && (
+            <div style={{ display: "grid", gap: 8 }}>
+              <span style={{ fontSize: 13 }}>{t(lang, "data.aa.exportReady")}</span>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                {off.export_ready && <Button onClick={() => download(off.request_id)}>{t(lang, "data.off.download")}</Button>}
+                {off.export_expires_at && (
+                  <span style={{ fontSize: 13, color: K.muted }}>
+                    {fmt(t(lang, "data.off.expires"), { date: formatDate(off.export_expires_at, locale, { year: true }) })}
+                  </span>
+                )}
+                <Button size="sm" variant="ghost" disabled={busy} onClick={() => send("POST", `lifecycle/offboarding/${off.request_id}/cancel`)}>
+                  {t(lang, "data.aa.close")}
+                </Button>
+              </div>
+            </div>
           )}
           {step === "request" && (
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

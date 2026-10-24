@@ -106,11 +106,16 @@ def class_router(route_class: RouteClass, **kwargs: Any) -> APIRouter:
     """An APIRouter under the class prefix whose every route runs the class guard first.
 
     AGENCY routers also use :class:`app.margin.MarginFilteredRoute` (AA-939, design §4.6): their JSON responses lose
-    every margin-bearing key unless the member's role may see margins."""
+    every margin-bearing key unless the member's role may see margins. OPS routers use
+    :class:`app.ops.serializer.OpsAllowListRoute` (AA-941, card CRM-13a R): every key must be on the L1 allow-list."""
     if route_class.name == "agency":
         from app.margin import MarginFilteredRoute  # noqa: PLC0415 — keeps the auth module free of app imports
 
         kwargs.setdefault("route_class", MarginFilteredRoute)
+    elif route_class.name == "ops":
+        from app.ops.serializer import OpsAllowListRoute  # noqa: PLC0415 — same reason
+
+        kwargs.setdefault("route_class", OpsAllowListRoute)
     return APIRouter(prefix=route_class.prefix, dependencies=[Depends(guard_for(route_class))], **kwargs)
 
 

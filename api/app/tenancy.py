@@ -45,7 +45,8 @@ Two platform contexts without a member, each with the same audit queue as ``tena
 - :func:`system_tx` is a job's context in one agency (``crm_intake_process``): ``app.tenant_id`` from the job payload,
   ``app.actor`` = ``job:<kind>``. Only the job handler modules may open it.
 - :func:`platform_tx` (AA-939) is AA staff in one agency (L1 console, ``/crm/ops/v1``): ``app.actor`` =
-  ``platform:<staff sub>``. Only ``app/members/recovery.py`` may open it.
+  ``platform:<staff sub>``. Only ``app/members/recovery.py`` and ``app/ops/console.py`` (AA-941) may open it; it
+  takes the agency statuses the call may meet (default active only).
 
 A unit test checks the importers of both (``tests/unit/test_code_rules.py``).
 
@@ -135,7 +136,13 @@ class ProvisioningContext:
     audit_events: list[AuditEvent] = field(default_factory=list, repr=False)
 
     def audit(
-        self, action: str, object_kind: str, object_id: str | None = None, *, fields: tuple[str, ...] = ()
+        self,
+        action: str,
+        object_kind: str,
+        object_id: str | None = None,
+        *,
+        fields: tuple[str, ...] = (),
+        object_ids: tuple[str, ...] = (),
     ) -> AuditEvent:
         event = AuditEvent(
             actor_kind="aa_ops" if self.actor.startswith("platform:") else "system",
@@ -146,6 +153,7 @@ class ProvisioningContext:
             object_id=object_id,
             fields=tuple(fields),
             request_id=current_request_id(),
+            object_ids=tuple(object_ids),
         )
         self.audit_events.append(event)
         return event
@@ -208,6 +216,8 @@ class SystemContext:
     audit_events: list[AuditEvent] = field(default_factory=list, repr=False)
     dek_memo: dict[tuple[str, int], bytes] = field(default_factory=dict, repr=False)
     dek_current: dict[str, int] = field(default_factory=dict, repr=False)
+    # AA-941: the agency's status when the block opened (system / platform contexts; None for intake / invitations).
+    status: str | None = None
 
     def audit(
         self,
@@ -389,33 +399,63 @@ async def system_tx(pool: asyncpg.Pool, tenant_id: uuid.UUID, *, actor: str) -> 
         yield ctx
 
 
+# AA-941: the agency statuses an L1 console call may meet. Default active only (every write that a member must be able
+# to answer: owner recovery, invitations, data requests); reads name every status; lock / unlock active + locked.
+PLATFORM_DEFAULT_STATUSES = frozenset({"active"})
+TENANT_STATUSES = frozenset({"active", "locked", "offboarding", "offboarded"})
+
+
 @asynccontextmanager
-async def platform_tx(pool: asyncpg.Pool, tenant_id: uuid.UUID, *, actor: str) -> AsyncIterator[SystemContext]:
-    """AA staff acting in one agency from the L1 console (``/crm/ops/v1``, AA-939): ``app.actor`` =
+async def platform_tx(
+    pool: asyncpg.Pool,
+    tenant_id: uuid.UUID,
+    *,
+    actor: str,
+    statuses: frozenset[str] = PLATFORM_DEFAULT_STATUSES,
+) -> AsyncIterator[SystemContext]:
+    """AA staff acting in one agency from the L1 console (``/crm/ops/v1``, AA-939 / AA-941): ``app.actor`` =
     ``platform:<staff sub>`` (audit actor kind ``aa_ops``). The crm-008 guards let this actor do what no member may
     (remove the last owner, open and complete an owner recovery, write entitlements), so only
-    ``app/members/recovery.py`` opens it, and only the ops router calls those functions (``test_code_rules``).
-    Same agency checks and audit semantics as :func:`system_tx`."""
+    ``app/members/recovery.py`` and ``app/ops/console.py`` open it, and only the ops router calls their platform
+    functions (``test_code_rules``). Audit semantics as :func:`system_tx`.
+
+    The agency must exist (else **404** ``tenant_not_found``: the L1 console knows the agency list, so there is nothing
+    to hide) and be in ``statuses`` (default active only; else **409** ``tenant_locked`` for a locked agency,
+    ``tenant_status`` otherwise). ``ctx.status`` is the status the block opened with."""
     if not actor.startswith(PLATFORM_ACTOR_PREFIX) or len(actor) > 80:
         raise ValueError(f"platform actor must start with {PLATFORM_ACTOR_PREFIX!r}")
-    async with _agency_tx(pool, tenant_id, actor) as ctx:
+    if not statuses or not statuses <= TENANT_STATUSES:
+        raise ValueError(f"statuses must be a non-empty subset of {sorted(TENANT_STATUSES)}")
+    async with _agency_tx(pool, tenant_id, actor, statuses=statuses) as ctx:
         yield ctx
 
 
 @asynccontextmanager
-async def _agency_tx(pool: asyncpg.Pool, tenant_id: uuid.UUID, actor: str) -> AsyncIterator[SystemContext]:
+async def _agency_tx(
+    pool: asyncpg.Pool, tenant_id: uuid.UUID, actor: str, *, statuses: frozenset[str] | None = None
+) -> AsyncIterator[SystemContext]:
+    """``statuses`` None = a job's context (403 ``not_a_member`` / ``tenant_locked``, unchanged since AA-936); a set =
+    the platform context (404 ``tenant_not_found``, 409 ``tenant_locked`` / ``tenant_status``)."""
     if not isinstance(tenant_id, uuid.UUID):
         raise TypeError("tenant_id must be a UUID")
     pending: Exception | None = None
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
         status = await conn.fetchval(TENANT_SQL, tenant_id)
-        if status is None:
-            raise Forbidden("not_a_member")
-        if status != "active":
-            raise Forbidden("tenant_locked")
+        if statuses is None:
+            if status is None:
+                raise Forbidden("not_a_member")
+            if status != "active":
+                raise Forbidden("tenant_locked")
+        else:
+            if status is None:
+                raise NotFound("tenant_not_found", "no agency with this id")
+            if status not in statuses:
+                if status == "locked":
+                    raise Conflict("tenant_locked", "the agency is locked; unlock it first")
+                raise Conflict("tenant_status", f"the agency is {status}", state=status)
         await conn.execute("SELECT set_config('app.actor', $1, true)", actor)
-        ctx = SystemContext(conn=conn, tenant_id=tenant_id, actor=actor)
+        ctx = SystemContext(conn=conn, tenant_id=tenant_id, actor=actor, status=status)
         try:
             async with conn.transaction():  # savepoint: the job's work
                 yield ctx

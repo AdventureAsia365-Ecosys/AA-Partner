@@ -28,6 +28,14 @@ nothing was deleted (one transaction): the request becomes ``failed`` with the c
 reason (retries exhausted) leaves the agency ``offboarding``; the platform recovery is in
 ``docs/implementation-notes/AA-942.md``.
 
+**AA-raised requests** (AA-941, crm-011): the L1 console raises an agency export (``purpose = export_only``) or deletion
+(``offboard``) request with :func:`raise_request` (no counts, no job). It waits for the owner: the owner confirms it
+with :func:`accept` (counts for a deletion, then the export job, unless a deletion's export is waived) or declines it
+with :func:`cancel`. Meanwhile the owner's own :func:`request` answers 409 ``data_request_awaiting`` and
+:func:`confirm_erase` 409 ``data_request_awaiting``; an export-only request never erases (409 ``export_only_request``).
+The crm-011 trigger (CRM18) holds the same rules in the database: AA can never accept, confirm or run a request.
+:func:`data_request` is the L1 console's view of a request (ids, kind, a coarse status; no counts, no receipt).
+
 The audit is not erased: it has no personal data, the hourly export keeps running for an offboarded agency until its
 partitions drop (crm-007 offboarding path), and the Object Lock archive keeps it 7 years.
 """
@@ -53,7 +61,7 @@ from app.jobs.queue import Job
 from app.jobs.worker import Handler, PermanentError
 from app.lifecycle import erase
 from app.lifecycle.rules import BACKUP_PURGE_DAYS, EXPORT_FILE_DAYS
-from app.tenancy import LifecycleContext, TenantContext, lifecycle_tx
+from app.tenancy import AnyContext, LifecycleContext, TenantContext, lifecycle_tx
 from app.vault import Vault
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -96,7 +104,7 @@ EXPORT_TABLES: dict[str, str] = {
 NEVER_EXPORT_COLUMNS = frozenset({"profile_token_enc"})
 
 OPEN_SQL = """
-SELECT request_id, status FROM crm.erasure_request
+SELECT request_id, status, requested_by, owner_accepted_at FROM crm.erasure_request
  WHERE scope = 'tenant' AND status IN ('requested', 'export_ready', 'erasing', 'failed')
 """
 INSERT_SQL = """
@@ -143,6 +151,23 @@ def _owner(ctx: TenantContext, action: str) -> None:
         raise Forbidden("owner_only", "only the agency owner offboards the agency")
 
 
+def raised_by_aa(row: Any) -> bool:
+    """AA-941: a request the L1 console raised (crm-011: requested_by platform:*)."""
+    return str(_get(row, "requested_by", "") or "").startswith("platform:")
+
+
+def awaiting_owner(row: Any) -> bool:
+    """AA-941: an AA-raised request the owner has not confirmed yet (still requested)."""
+    return raised_by_aa(row) and _get(row, "owner_accepted_at") is None and row["status"] == "requested"
+
+
+def _get(row: Any, key: str, default: Any = None) -> Any:
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return default
+
+
 def view(row: Any) -> dict[str, Any] | None:
     if row is None:
         return None
@@ -155,6 +180,10 @@ def view(row: Any) -> dict[str, Any] | None:
     return {
         "request_id": str(row["request_id"]),
         "status": row["status"],
+        # AA-941 (crm-011): what the request is for, who raised it, and whether it waits for the owner's confirmation.
+        "purpose": _get(row, "purpose", "offboard"),
+        "raised_by": "aa" if raised_by_aa(row) else "owner",
+        "awaiting_owner": awaiting_owner(row),
         "dry_run_counts": json.loads(counts) if isinstance(counts, str) else dict(counts),
         "export_waived": row["export_waived"],
         "export_ready": row["export_object_key"] is not None,
@@ -175,7 +204,10 @@ async def latest(ctx: TenantContext) -> dict[str, Any] | None:
 
 async def request(ctx: TenantContext, *, export_waived: bool) -> dict[str, Any]:
     _owner(ctx, "offboarding_request")
-    if await ctx.conn.fetchrow(OPEN_SQL) is not None:
+    open_row = await ctx.conn.fetchrow(OPEN_SQL)
+    if open_row is not None:
+        if awaiting_owner(open_row):
+            raise Conflict("data_request_awaiting", "a request AA raised waits for your answer: confirm or decline")
         raise Conflict("offboarding_open", "an offboarding request is already open")
     if await ctx.conn.fetchval(HOLD_SQL):
         ctx.audit("offboarding_request", "denied", "tenant", str(ctx.tenant_id), reason="legal_hold")
@@ -214,10 +246,13 @@ async def cancel(ctx: TenantContext, request_id: uuid.UUID, store: DocumentStore
     # A failed request is cancellable once the agency is active again (the refused erase deleted nothing).
     if row["status"] not in ("requested", "export_ready", "failed"):
         raise Conflict("not_cancellable", "the erase has started")
+    declined = awaiting_owner(row)  # AA-941: the owner declines a request AA raised
     await ctx.conn.execute(CANCEL_SQL, request_id)
     if row["export_object_key"] and store is not None:
         await store.delete(row["export_object_key"])
-    ctx.audit("offboarding_cancel", "allowed", "erasure_request", str(request_id))
+    ctx.audit(
+        "offboarding_cancel", "allowed", "erasure_request", str(request_id), reason="declined" if declined else None
+    )
     return view(await ctx.conn.fetchrow(REQUEST_SQL, request_id)) or {}
 
 
@@ -246,6 +281,10 @@ async def confirm_erase(
     if confirm_tenant_id != ctx.tenant_id:
         raise Invalid("confirmation_mismatch", "type the agency id to confirm")
     row = await _open_request(ctx, request_id)
+    if _get(row, "purpose", "offboard") == "export_only":
+        raise Conflict("export_only_request", "this request is an agency export; it never erases the agency")
+    if awaiting_owner(row):
+        raise Conflict("data_request_awaiting", "confirm the request AA raised first")
     if row["status"] not in ("requested", "export_ready"):
         raise Conflict("not_confirmable", f"the request is {row['status']}")
     if row["status"] == "requested" and not row["export_waived"]:
@@ -269,6 +308,117 @@ async def confirm_erase(
         created_by="offboarding",
     )
     ctx.audit("offboarding_erase", "allowed", "erasure_request", str(request_id), reason="confirmed")
+    return view(await ctx.conn.fetchrow(REQUEST_SQL, request_id)) or {}
+
+
+# ── AA-raised requests (AA-941, crm-011) ─────────────────────────────────────────────────────────
+PURPOSES = ("offboard", "export_only")
+RAISE_SQL = """
+INSERT INTO crm.erasure_request (scope, subject_id, purpose) VALUES ('tenant', $1, $2)
+RETURNING request_id
+"""
+ACCEPT_SQL = """
+UPDATE crm.erasure_request SET owner_accepted_at = now(), export_waived = $2, dry_run_counts = $3::jsonb
+ WHERE request_id = $1 AND owner_accepted_at IS NULL
+"""
+AGENCY_REQUESTS_SQL = """
+SELECT request_id, tenant_id, purpose, status, requested_by, owner_accepted_at, export_downloaded_at, created_at
+  FROM crm.erasure_request WHERE scope = 'tenant' ORDER BY created_at DESC, request_id LIMIT $1
+"""
+AGENCY_REQUEST_SQL = """
+SELECT request_id, tenant_id, purpose, status, requested_by, owner_accepted_at, export_downloaded_at, created_at
+  FROM crm.erasure_request WHERE request_id = $1
+"""
+DATA_REQUEST_KINDS = {"offboard": "agency_deletion", "export_only": "agency_export"}
+
+
+def data_request(row: Any) -> dict[str, Any]:
+    """An agency-scope request as the L1 console sees it: ids, kind, a coarse status, when it was raised. No counts,
+    no receipt, no export details."""
+    purpose = row["purpose"]
+    status = row["status"]
+    aa = raised_by_aa(row)
+    accepted = row["owner_accepted_at"] is not None
+    downloaded = purpose == "export_only" and row["export_downloaded_at"] is not None
+    if status == "erased" or (downloaded and status == "cancelled"):
+        state = "done"  # erased, or an export downloaded and then closed by the owner
+    elif downloaded:
+        # Downloaded but still open (crm-010: only the owner's "Close request" ends an export_only row): it still
+        # holds the agency's one open-request slot, so a new AA request is 409 offboarding_open until it is closed.
+        state = "export_downloaded"
+    elif status == "failed":
+        state = "failed"
+    elif status == "cancelled":
+        state = "rejected" if aa and not accepted else "cancelled"
+    elif aa and not accepted:
+        state = "awaiting_owner_confirmation"
+    else:
+        state = "confirmed"
+    return {
+        "request_id": str(row["request_id"]),
+        "tenant_id": str(row["tenant_id"]),
+        "kind": DATA_REQUEST_KINDS.get(purpose, "agency_deletion"),
+        "status": state,
+        "raised_at": row["created_at"].isoformat(),
+    }
+
+
+async def agency_requests(ctx: AnyContext, limit: int = 10) -> list[dict[str, Any]]:
+    """The latest agency-scope requests (owner-made and AA-raised), newest first."""
+    return [data_request(r) for r in await ctx.conn.fetch(AGENCY_REQUESTS_SQL, limit)]
+
+
+async def raise_request(ctx: AnyContext, purpose: str) -> dict[str, Any]:
+    """AA raises an agency export (``export_only``) or deletion (``offboard``) request that the owner must confirm
+    (L1 console, AA-941). No job is queued and no counts are taken: the owner's confirmation does both. 409
+    ``offboarding_open`` while any agency request is open; 409 ``legal_hold`` for a deletion under an active hold.
+    The crm-011 trigger refuses anything else a platform actor might write (CRM18)."""
+    if purpose not in PURPOSES:
+        raise Invalid("invalid_purpose", "offboard or export_only")
+    if await ctx.conn.fetchrow(OPEN_SQL) is not None:
+        raise Conflict("offboarding_open", "the agency already has an open export or deletion request")
+    if purpose == "offboard" and await ctx.conn.fetchval(HOLD_SQL):
+        raise Conflict("legal_hold", "an active legal hold in the agency suspends its deletion")
+    try:
+        request_id = await ctx.conn.fetchval(RAISE_SQL, ctx.tenant_id, purpose)
+    except asyncpg.UniqueViolationError:
+        raise Conflict("offboarding_open", "the agency already has an open export or deletion request") from None
+    return data_request(await ctx.conn.fetchrow(AGENCY_REQUEST_SQL, request_id))
+
+
+async def accept(ctx: TenantContext, request_id: uuid.UUID, *, export_waived: bool) -> dict[str, Any]:
+    """The owner confirms a request AA raised (AA-941): for a deletion the dry-run counts are taken now (refused under a
+    legal hold); then, unless waived (never for an export-only request), the ``crm_offboard`` export job is queued.
+    From here on the AA-942 owner flow applies (download, typed erase for a deletion, cancel)."""
+    _owner(ctx, "offboarding_accept")
+    row = await _open_request(ctx, request_id)
+    if not awaiting_owner(row):
+        raise Conflict("not_awaiting", "this request is not waiting for your confirmation")
+    purpose = _get(row, "purpose", "offboard")
+    waived = bool(export_waived) and purpose == "offboard"
+    counts: dict[str, Any] = {}
+    if purpose == "offboard":
+        if await ctx.conn.fetchval(HOLD_SQL):
+            ctx.audit("offboarding_accept", "denied", "tenant", str(ctx.tenant_id), reason="legal_hold")
+            raise Conflict("legal_hold", "an active legal hold in the agency suspends offboarding")
+        counts = await erase.erase(ctx, "tenant", ctx.tenant_id, dry_run=True)
+    await ctx.conn.execute(ACCEPT_SQL, request_id, waived, json.dumps(counts))
+    if not waived:
+        await jobs.enqueue(
+            ctx.conn,
+            OFFBOARD,
+            {"tenant_id": str(ctx.tenant_id), "request_id": str(request_id), "mode": "export"},
+            idempotency_key=f"{OFFBOARD}:export:{request_id}",
+            max_attempts=MAX_ATTEMPTS,
+            created_by="offboarding",
+        )
+    ctx.audit(
+        "offboarding_accept",
+        "allowed",
+        "erasure_request",
+        str(request_id),
+        reason=f"{purpose}_export_waived" if waived else f"{purpose}_export_queued",
+    )
     return view(await ctx.conn.fetchrow(REQUEST_SQL, request_id)) or {}
 
 

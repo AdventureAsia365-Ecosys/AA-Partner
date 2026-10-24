@@ -187,6 +187,24 @@ async def test_unchanged_agency_writes_nothing_and_the_flag_never_flips() -> Non
 
 
 @pytest.mark.asyncio
+async def test_create_only_refuses_an_existing_agency_and_writes_nothing() -> None:
+    """AA-941 review: the L1 console's create (create_only) never converges: no rename, no member, no audit."""
+    other = {"display_name": "Old", "default_locale": "en-AU", "is_synthetic": True}
+    conn = ScriptedConn().on("SELECT display_name, default_locale, is_synthetic", other)
+    with pytest.raises(Conflict) as info:
+        await provision_agency(
+            conn, spec(), (MemberSpec(EXTERNAL_ISSUER, "sub-a", "owner"),), environment="dev", actor="platform:l1",
+            create_only=True,
+        )  # fmt: skip
+    assert info.value.code == "tenant_exists"
+    assert conn.sql("UPDATE crm.tenant") == [] and conn.sql("INSERT INTO crm.member") == []
+    assert conn.sql("INSERT INTO crm.audit_event") == []
+    created = ScriptedConn().on("INSERT INTO crm.tenant", TENANT)
+    result = await provision_agency(created, spec(), environment="dev", actor="platform:l1", create_only=True)
+    assert result.created and [e[2] for e in created.sql("INSERT INTO crm.audit_event")] == ["agency_create"]
+
+
+@pytest.mark.asyncio
 async def test_validation_happens_before_any_sql() -> None:
     conn = ScriptedConn()
     with pytest.raises(Invalid):

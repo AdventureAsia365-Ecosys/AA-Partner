@@ -36,7 +36,10 @@ sign-in with required MFA, invitations, team management, the reassign queue, own
 **F3 PII scrubber** (AA-938, CRM-10, `crm-009`): known values -> regex -> Bedrock Guardrails before any LLM call, fail
 closed, the encrypted placeholder map and the EN/VI corpus gate; and **data lifecycle** (AA-942, CRM-14, `crm-010`): one trash with the agency's window, the delete block, archive enforced at the
 dispatcher, legal holds, client erasure and agency offboarding through one deletion function (`crm.erase_subject`),
-the daily `crm_lifecycle` run in DRY RUN by default, and Settings > Data and privacy.
+the daily `crm_lifecycle` run in DRY RUN by default, and Settings > Data and privacy; and the **L1 console**
+(AA-941, CRM-13a, `crm-011`): `/crm/ops/v1` for the CIS admin "Agencies (CRM)" page (agency list, usage meters,
+create agency, lock / unlock, first-owner invite, allowed features, insights opt-out, AA-raised export / deletion
+requests the owner confirms, failed-job retry, owner recovery) behind a response key allow-list.
 
 > Read this file before designing or changing anything here (AA-Ecosys steering, "CONTEXT.md first"). Change it in the
 > same PR when a boundary, owner, route class or the stack changes.
@@ -97,7 +100,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `/crm/ci/deploy-gate` | the Deploy Dev workflow's GitHub OIDC token only (`app/auth/ci.py`) | job counts for the deploy guard |
 | `/crm/public/v1/invitations/claim` | no token (AA-939): the invitation token in the body only; rate limited per address (`RATE_LIMIT_CLAIM_PER_MINUTE`) | `invitation_tx()`; creates or finds the partner-pool account |
 | `/crm/v1` | PARTNER x {AA-Partner web}; on Dev also EXTERNAL x {`cis-portal`} until the CRM web switches pools (AA-CIS-Infra `crm_partner_signin_enabled`; removed at P2b, AA-979) | `X-AA-Tenant-Id` + `tenant_tx(action=...)` (membership in `crm.member`, then the permission matrix); `GET /crm/v1/memberships` and `POST /crm/v1/invitations/accept` need no header |
-| `/crm/ops/v1` | WORKFORCE x {`cis-admin`} | group `cis-admin` reads, `crm-platform-admin` writes (AA-939: member deactivation, owner recovery open / complete) |
+| `/crm/ops/v1` | WORKFORCE x {`cis-admin`} | group `cis-admin` or `crm-platform-admin` reads, `crm-platform-admin` writes (AA-939: member deactivation, owner recovery; AA-941: the L1 console, section "L1 console" below). Every response passes the L1 key allow-list (`app/ops/serializer.py`) |
 | `/crm/staff/v1` | WORKFORCE x {`crm-staff`} | group `crm-ops` or `crm-support` (+ an owner grant for support, CRM-13b) |
 
 - One verifier (`app/auth/identity_verifier.py`, **byte copy** of AA-CIS-App `api/core/identity_verifier.py`, checked
@@ -145,10 +148,15 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
   `app.tenant_id` from the job payload, the agency must be active, the same audit queue as `tenant_tx()` with
   `actor_kind = system`. Actors `job:` / `seed:` only. Only the job handler modules (`app/intake/process.py`) and the
   seeder may open it.
-- **`platform_tx(pool, tenant_id, actor="platform:<staff sub>")`** (AA-939) is AA staff in one agency (L1 console,
-  `/crm/ops/v1`, audit kind `aa_ops`): the crm-008 guards let this actor remove the last owner, open / complete an
-  owner recovery and write entitlements. Only `app/members/recovery.py` may open it, and only `app/routers/ops.py`
-  (writes need the WORKFORCE group `crm-platform-admin`) calls its platform functions (code-rules tests).
+- **`platform_tx(pool, tenant_id, actor="platform:<staff sub>", statuses={"active"})`** (AA-939, AA-941) is AA staff
+  in one agency (L1 console, `/crm/ops/v1`, audit kind `aa_ops`): the crm-008 guards let this actor remove the last
+  owner, open / complete an owner recovery and write entitlements. `statuses` = the agency statuses the call may meet
+  (default active only; reads all four; lock / unlock and entitlements active + locked; a job retry active +
+  offboarding); a missing agency is 404 `tenant_not_found`, a refused status 409 `tenant_locked` / `tenant_status`.
+  Only `app/members/recovery.py` and `app/ops/console.py` may open it, and only `app/routers/ops.py` (writes need the
+  WORKFORCE group `crm-platform-admin`) calls their platform functions; the helpers a platform context is handed
+  (`offboarding.raise_request`, `team.create_invitation`, `queue.retry_failed`) are called only from their module
+  and the console (code-rules tests).
 - **crm-008 membership rules** (DB, whatever the API code does): inside a member request only an owner writes
   `crm.member` / `crm.member_invitation` (CRM02); a member's identity (`tenant_id`, `cognito_iss`, `cognito_sub`) is
   fixed outside platform contexts; no crm_app session deletes a member; an invitation moves only itself, pending ->
@@ -469,6 +477,37 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 - **Web**: `web/app/(crm)/settings/team` (owner page, `components/team/TeamAdmin.tsx`), the recovery banner in the
   `(crm)` layout, the join pages `web/app/join/*` (`lib/invite.ts`: token and claim answer in sealed cookies on
   `/join`, never in a URL). Runbooks (lost second factor, rollout order): `docs/implementation-notes/AA-939.md`.
+## L1 console (AA-941, CRM-13a)
+
+Design v3 S-01 (CIS admin "Agencies (CRM)": usage meters only, never trips or revenue, no PII), Q1 6.3, Q2 3.12, §4.9
+"AA ops reads". The CIS page and its relay are AA-CIS-App's; this repo serves `/crm/ops/v1` (`app/routers/ops.py`,
+operations in `app/ops/console.py`):
+
+- **Reads** (`cis-admin` or `crm-platform-admin`): `GET /console` (`{can_write}`), `GET /tenants` (keyset page of
+  TenantSummary: id, agency name, state, synthetic, has owner, holds travellers, created; the ids come from the crm-007
+  registry function, then one `platform_tx` per agency), `GET /tenants/{id}`, `/usage` (seats, active members 30 d,
+  storage, AI spend of the month vs budget as strings, failed jobs 24 h, last activity; `inbound_mail_30d` is 0 until
+  CRM-17), `/entitlements`, `/data-requests`, `/jobs` (failed per-agency jobs of 7 days, no payload), `/members`.
+  Each agency read writes one `ops_read` event (reason list / summary / usage / ...) in that agency's audit.
+- **Writes** (`crm-platform-admin`, ticket reference `^[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,10}$` as the audit object id
+  `ticket:<REF>`): create agency (`app.agencies.provision_agency` create-only, no member; 201, an existing id 409 `tenant_exists` with nothing written), lock / unlock
+  (active <-> locked; a no-op writes nothing), first-owner invite (409 `owner_exists` / `owner_invite_pending` /
+  `has_travellers` (any traveller row incl. trashed, or any stored inquiry) / `member_limit_reached`; the shared
+  `team.create_invitation`; the address never stored in clear, logged or returned), allowed features (the six crm-008
+  codes; never `tenant_settings`: the owner switches on), insights opt-out (`tenant_entitlement.insights_opt_out`,
+  crm-011), AA data requests (`agency_export` / `agency_deletion` -> a `crm.erasure_request` the owner must confirm in
+  Settings > Data and privacy; no job until then; crm-011 trigger CRM18), job retry (failed `crm_intake_process` /
+  `crm_dispatch` / `crm_offboard` of this agency only, 404 `job_not_found` otherwise; locked agency 409), owner
+  recovery open (ticket required) / complete, member deactivation.
+- **Response allow-list** (`app/ops/serializer.py`, `OpsAllowListRoute` set by `class_router()` for OPS): every key at
+  any depth must be listed and match no forbidden pattern (trip, pipeline, revenue, margin, commission, GMV, booking,
+  invoice, payment, price, amount, net, proposal, personal-data names); 500 on test / local, dropped + logged
+  elsewhere; validation errors answer `{detail: invalid_request, message, fields}` (names only, never the input).
+  `tests/unit/test_ops_contract.py` calls every ops route (success and 4xx) and walks the OpenAPI response schemas.
+- **Agency side**: an AA-raised request shows on Settings > Data and privacy with Confirm
+  (`POST /crm/v1/lifecycle/offboarding/{id}/accept`, owner) / Decline (cancel); a locked agency shows "This agency is
+  locked by AA" on the chooser. The opt-out is stored, not yet honoured: the insights card (AA-966) must exclude it.
+
 ## Data lifecycle (AA-942, CRM-14)
 
 Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retention, §4.10 erasure (Fix B16), V1.

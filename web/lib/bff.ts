@@ -85,6 +85,8 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "GET", pattern: /^lifecycle\/offboarding$/, tenant: true, card: "AA-942" },
   { method: "POST", pattern: /^lifecycle\/offboarding$/, tenant: true, card: "AA-942" },
   { method: "POST", pattern: new RegExp(`^lifecycle/offboarding/${UUID}/(cancel|erase)$`), tenant: true, card: "AA-942" },
+  // AA-941 (CRM-13a): the owner confirms an export / deletion request AA raised (decline = cancel).
+  { method: "POST", pattern: new RegExp(`^lifecycle/offboarding/${UUID}/accept$`), tenant: true, card: "AA-941" },
   { method: "GET", pattern: new RegExp(`^lifecycle/offboarding/${UUID}/export$`), tenant: true, card: "AA-942" },
 ];
 

@@ -747,6 +747,112 @@ async def test_offboarding_cancel_download_confirm(monkeypatch: pytest.MonkeyPat
     assert conn.sql("SET status = 'offboarding'") and conn.sql("INSERT INTO crm.job")
 
 
+# ── AA-raised requests (AA-941, crm-011) ─────────────────────────────────────────────────────────
+def _aa_request(**over: Any) -> dict[str, Any]:
+    return _request(**({"purpose": "offboard", "requested_by": "platform:staff-1", "owner_accepted_at": None} | over))
+
+
+@pytest.mark.asyncio
+async def test_view_tells_who_raised_a_request_and_whether_it_waits() -> None:
+    got = offboarding.view(_aa_request())
+    assert (got["purpose"], got["raised_by"], got["awaiting_owner"]) == ("offboard", "aa", True)  # type: ignore[index]
+    accepted = offboarding.view(_aa_request(owner_accepted_at=NOW))
+    assert accepted["awaiting_owner"] is False and accepted["raised_by"] == "aa"  # type: ignore[index]
+    own = offboarding.view(_request())  # an AA-942 row read by a fake without the crm-011 columns
+    assert (own["purpose"], own["raised_by"], own["awaiting_owner"]) == ("offboard", "owner", False)  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_owner_request_and_erase_respect_aa_raised_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    waiting = {"request_id": REQ, "status": "requested", "requested_by": "platform:s", "owner_accepted_at": None}
+    with codes(Conflict, "data_request_awaiting"):
+        await offboarding.request(tenant_ctx(ScriptedConn().on("status IN ('requested'", waiting)), export_waived=False)
+    with codes(Conflict, "export_only_request"):
+        conn = ScriptedConn().on("FOR UPDATE", _aa_request(purpose="export_only", owner_accepted_at=NOW))
+        await offboarding.confirm_erase(tenant_ctx(conn), REQ, confirm_tenant_id=TENANT, dry_run=False)
+    with codes(Conflict, "data_request_awaiting"):
+        conn = ScriptedConn().on("FOR UPDATE", _aa_request(export_waived=False))
+        await offboarding.confirm_erase(tenant_ctx(conn), REQ, confirm_tenant_id=TENANT, dry_run=False)
+    # Decline = cancel, recorded as declined.
+    conn = ScriptedConn().on("FOR UPDATE", _aa_request())
+    ctx = tenant_ctx(conn)
+    await offboarding.cancel(ctx, REQ, None)
+    assert ctx.audit_events[-1].reason == "declined"
+
+
+@pytest.mark.asyncio
+async def test_owner_accepts_an_aa_raised_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def counts(*_: Any, **__: Any) -> dict[str, int]:
+        return {"trip": 3}
+
+    monkeypatch.setattr(offboarding.erase, "erase", counts)
+    with codes(Forbidden, "owner_only"):
+        await offboarding.accept(tenant_ctx(role="agent"), REQ, export_waived=False)
+    with codes(NotFound, "request_not_found"):
+        await offboarding.accept(tenant_ctx(), REQ, export_waived=False)
+    for row in (_request(), _aa_request(owner_accepted_at=NOW), _aa_request(status="cancelled")):
+        with codes(Conflict, "not_awaiting"):
+            await offboarding.accept(tenant_ctx(ScriptedConn().on("FOR UPDATE", row)), REQ, export_waived=False)
+    held = ScriptedConn().on("FOR UPDATE", _aa_request()).on("legal_hold_blocks", True)
+    held_ctx = tenant_ctx(held)
+    with codes(Conflict, "legal_hold"):
+        await offboarding.accept(held_ctx, REQ, export_waived=False)
+    assert held_ctx.audit_events[-1].outcome == "denied"
+    # A deletion: counts now, export job queued (or waived).
+    for waived in (False, True):
+        conn = ScriptedConn().on("FOR UPDATE", _aa_request())
+        ctx = tenant_ctx(conn)
+        await offboarding.accept(ctx, REQ, export_waived=waived)
+        (args,) = conn.sql("SET owner_accepted_at = now()")
+        assert args[1] is waived and json.loads(args[2]) == {"trip": 3}
+        assert bool(conn.sql("INSERT INTO crm.job")) is not waived
+        assert ctx.audit_events[-1].reason == ("offboard_export_waived" if waived else "offboard_export_queued")
+    # An export: never waived, no counts, the export job queued.
+    conn = ScriptedConn().on("FOR UPDATE", _aa_request(purpose="export_only"))
+    await offboarding.accept(tenant_ctx(conn), REQ, export_waived=True)
+    (args,) = conn.sql("SET owner_accepted_at = now()")
+    assert args[1] is False and json.loads(args[2]) == {} and conn.sql("INSERT INTO crm.job")
+    # An export under a legal hold is still confirmable (nothing is deleted).
+    conn = ScriptedConn().on("FOR UPDATE", _aa_request(purpose="export_only")).on("legal_hold_blocks", True)
+    await offboarding.accept(tenant_ctx(conn), REQ, export_waived=False)
+
+
+def test_data_request_states() -> None:
+    def row(**over: Any) -> dict[str, Any]:
+        base = {
+            "request_id": REQ, "tenant_id": TENANT, "purpose": "offboard", "status": "requested",
+            "requested_by": "platform:s", "owner_accepted_at": None, "export_downloaded_at": None, "created_at": NOW,
+        }  # fmt: skip
+        return base | over
+
+    cases = [
+        (row(), "agency_deletion", "awaiting_owner_confirmation"),
+        (row(owner_accepted_at=NOW, status="export_ready"), "agency_deletion", "confirmed"),
+        (row(status="cancelled"), "agency_deletion", "rejected"),
+        (row(status="cancelled", owner_accepted_at=NOW), "agency_deletion", "cancelled"),
+        (row(requested_by="member:m", status="cancelled"), "agency_deletion", "cancelled"),
+        (row(requested_by="member:m", status="erasing"), "agency_deletion", "confirmed"),
+        (row(status="failed", owner_accepted_at=NOW), "agency_deletion", "failed"),
+        (row(status="erased", owner_accepted_at=NOW), "agency_deletion", "done"),
+        (row(purpose="export_only", owner_accepted_at=NOW, status="export_ready"), "agency_export", "confirmed"),
+        # Downloaded but not closed: still the open request (OPEN_SQL), so not "done" (AA-941 review).
+        (row(purpose="export_only", owner_accepted_at=NOW, status="export_ready", export_downloaded_at=NOW),
+         "agency_export", "export_downloaded"),
+        (row(purpose="export_only", owner_accepted_at=NOW, status="cancelled", export_downloaded_at=NOW),
+         "agency_export", "done"),
+    ]  # fmt: skip
+    for r, kind, state in cases:
+        got = offboarding.data_request(r)
+        assert (got["kind"], got["status"]) == (kind, state), r
+        assert set(got) == {"request_id", "tenant_id", "kind", "status", "raised_at"}
+
+
+@pytest.mark.asyncio
+async def test_raise_request_refuses_an_unknown_purpose() -> None:
+    with codes(Invalid, "invalid_purpose"):
+        await offboarding.raise_request(tenant_ctx(), "purge")
+
+
 @pytest.mark.asyncio
 async def test_build_export_decrypts_and_drops_indexes() -> None:
     rows = [
