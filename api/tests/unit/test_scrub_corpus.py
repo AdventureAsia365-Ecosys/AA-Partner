@@ -1,0 +1,52 @@
+"""The F3 corpus gate, offline half (card CRM-10 checklist: ">= 200 samples, nightly + on scrubber change").
+
+Every PR runs passes 1 and 2 over the corpus: 0 leaks, over-scrub within the limit. The Guardrails half (all three
+passes) is the "Scrub corpus" workflow (nightly and on every push to main that changes app/privacy or the corpus).
+"""
+
+from __future__ import annotations
+
+import asyncio
+
+from app.privacy.scrubber import ScrubResult
+from tests.scrub_corpus import generate, run
+
+
+def test_corpus_size_languages_and_e_cases() -> None:
+    samples = run.load()
+    assert len(samples) >= run.MIN_SAMPLES
+    langs = {s["lang"] for s in samples}
+    assert langs == {"vi", "en"}
+    assert sum(s["lang"] == "vi" for s in samples) >= 100 and sum(s["lang"] == "en" for s in samples) >= 100
+    assert len({s["id"] for s in samples}) == len(samples)
+    assert any(s["needs_detector"] for s in samples)  # names nobody stored: only Guardrails can find them
+    assert all("example.invalid" in e for s in samples for p in s["known"] for e in p.get("emails", []))
+
+
+def test_corpus_is_the_generator_output() -> None:
+    assert generate.main(["--check"]) == 0
+
+
+def test_offline_corpus_has_no_leaks() -> None:
+    report = asyncio.run(run.evaluate(run.PiiScrubber(run.NoDetector(), today=run.TODAY), run.load(), offline=True))
+    assert report.samples >= run.MIN_SAMPLES and report.leaks == [], report.summary()
+    assert report.overscrub_rate <= run.MAX_OVERSCRUB_RATE, report.summary()
+    assert report.ok()
+
+
+def test_a_scrubber_that_does_nothing_leaks_everything() -> None:
+    """The leak check itself works: the identity scrubber leaks every sample."""
+
+    class Identity:
+        version = "none"
+
+        async def scrub(self, text, known=None):  # noqa: ANN001, ANN202
+            return ScrubResult(text, {})
+
+    report = asyncio.run(run.evaluate(Identity(), run.load(), offline=True))  # type: ignore[arg-type]
+    assert len(report.leaks) >= report.samples and not report.ok()
+
+
+def test_cli_offline_mode(capsys) -> None:  # noqa: ANN001
+    assert run.main([]) == 0
+    assert '"leaks": 0' in capsys.readouterr().out

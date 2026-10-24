@@ -33,6 +33,10 @@ class Conflict(ServiceError):
     status_code = 409
 
 
+class Gone(ServiceError):
+    status_code = 410
+
+
 class Invalid(ServiceError):
     status_code = 422
 

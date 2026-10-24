@@ -14,7 +14,14 @@ import pytest
 import pytest_asyncio
 
 from app.jobs import handlers, queue
-from app.jobs.kinds import AUDIT_EXPORT, AUDIT_RETENTION, DEPLOY_GATE_EXEMPT, HEARTBEAT, JOB_RETENTION
+from app.jobs.kinds import (
+    AUDIT_EXPORT,
+    AUDIT_RETENTION,
+    DEPLOY_GATE_EXEMPT,
+    HEARTBEAT,
+    JOB_RETENTION,
+    PLACEHOLDER_PURGE,
+)
 from app.jobs.payload_guard import PersonalDataInPayload
 from app.jobs.queue import Job
 from app.jobs.worker import Recurring, Worker
@@ -167,12 +174,14 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         (AUDIT_RETENTION, True),
         (HEARTBEAT, False),
         (JOB_RETENTION, True),
+        (PLACEHOLDER_PURGE, True),  # AA-938: the hourly purge, queued due now like the daily retention
     ]
     # The due runs count while they wait (they would be interrupted by a deploy) ...
     assert (await queue.active_count(app_pool, DEPLOY_GATE_EXEMPT))["by_kind"] == {
         JOB_RETENTION: 1,
         AUDIT_EXPORT: 1,
         AUDIT_RETENTION: 1,
+        PLACEHOLDER_PURGE: 1,
     }
     while await worker.run_once():
         pass

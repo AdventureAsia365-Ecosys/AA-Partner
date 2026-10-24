@@ -50,6 +50,7 @@ DB_MODULES = frozenset(
         "app/vault/store.py",  # DEK store: crm.tenant_key, only on the connection of a TenantContext (AA-934)
         "app/llm/usage.py",  # crm.llm_usage_daily: platform rollup, no tenant rows (AA-936)
         "app/audit_export/registry.py",  # crm-007 platform functions: agency list, partition maker, drop (AA-940)
+        "app/privacy/purge.py",  # expired placeholder maps, crm-009 DELETE-only purge policy, no reads (AA-938)
     }
 )
 # The only modules that may open the platform context provisioning_tx() (no membership check): agency creation and the

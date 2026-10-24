@@ -3,17 +3,26 @@
 Every model call of the CRM goes through :meth:`LlmGateway.call`, inside the agency's context (``tenant_tx()`` or a
 job's ``system_tx()``), in this order — and any step that fails stops the call (fail closed):
 
-1. **scrub receipt**: the scrubber (F3, CRM-10) replaces personal data by placeholders and returns counts only. A
-   scrub error refuses with ``scrub_failed``; the **stub** scrubber (no real scrubbing) is accepted only with the
-   **stub** provider, so no real model ever receives unscrubbed text (``scrubber_unavailable``);
+1. **scrub receipt**: the F3 scrubber (:class:`app.privacy.scrubber.PiiScrubber`, AA-938) replaces personal data
+   by numbered placeholders (known values of the trip, regex, Bedrock Guardrails) and returns counts only. Any scrub
+   error refuses with ``scrub_failed``, a detector timeout with ``scrub_timeout`` (card CRM-10 R test: no call,
+   ``manual_reply_needed``); the **stub** scrubber (no real scrubbing) is accepted only with the **stub** provider,
+   so no real model ever receives unscrubbed text (``scrubber_unavailable``);
 2. **budget**: this month's ``crm.llm_call`` cost of the agency against ``crm.tenant_settings.ai_budget_usd``
    (default 2 USD); at 100 % the call is refused with ``budget_exhausted`` (R5; the 75 / 90 % alerts are CRM-33a).
    The check runs under a transaction-scoped advisory lock per agency, held until the call is logged, so two calls
    at 99 % cannot both pass (calls of one agency are serialised; acceptable for the volumes of CRM-33a);
-3. **ai_enabled** (default false): refused with ``ai_disabled``;
+3. **ai_enabled** (default false): refused with ``ai_disabled``; then, when the scrub replaced anything, the
+   placeholder map is sealed under the tenant ``scrub`` DEK **before** the call (a key failure refuses with
+   ``scrub_failed``; without a key provider the call is refused the same way: an unrestorable output is useless);
 4. **the call**: an error is recorded with its class (never its message);
 5. **the log**: one ``crm.llm_call`` row (no prompt, no output, no traveller token) and the platform rollup
-   ``crm.llm_usage_daily`` the CIS cost page reads over ``/crm/ops/v1/llm/usage``. Refusals are logged too (cost 0).
+   ``crm.llm_usage_daily`` the CIS cost page reads over ``/crm/ops/v1/llm/usage``. Refusals are logged too (cost 0);
+6. **the map**: on success, the sealed map is stored against the call (``crm.placeholder_map``, 24 h). The output
+   keeps its placeholders (``GatewayResult.text``); only :func:`app.privacy.placeholder_store.restore_placeholders`
+   in an agency member's session puts the values back.
+
+Every non-``ok`` result carries ``fallback = "manual_reply_needed"``: the draft UI (CRM-33a) shows "reply by hand".
 
 Slice 1 ships the stub pair (:class:`StubScrubber`, :class:`StubProvider`: deterministic, no network, cost 0) so the
 order, the refusals and the log are tested end to end before CRM-10 (scrubber) and CRM-33a (Bedrock) plug in.
@@ -28,12 +37,16 @@ from decimal import Decimal
 from typing import Any, Protocol
 
 from app.audit import AuditEvent, current_request_id
+from app.privacy.placeholder_store import SealedMap, seal_map, store_map
+from app.privacy.scrubber import KnownValues, ScrubError
 from app.tenancy import AnyContext
+from app.vault import Vault
 
 STAGE_PREFIX = "crm_"
 ROLES = frozenset({"writer", "judge", "validate"})
 DEFAULT_BUDGET_USD = Decimal("2")
 STUB_PREFIX = "stub"
+MANUAL_REPLY = "manual_reply_needed"
 
 BUDGET_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtextextended('crm_llm_budget:' || $1::text, 0))"
 MONTH_SPEND_SQL = """
@@ -61,6 +74,7 @@ ON CONFLICT (day, stage, model) DO UPDATE
 class Scrubbed:
     text: str
     receipt: dict[str, Any]  # counts and versions only
+    placeholders: dict[str, str] = field(default_factory=dict, repr=False)  # placeholder -> value: sealed, never logged
 
 
 @dataclass(frozen=True)
@@ -74,7 +88,7 @@ class Completion:
 class Scrubber(Protocol):
     version: str
 
-    async def scrub(self, text: str) -> Scrubbed: ...
+    async def scrub(self, text: str, known: KnownValues | None = None) -> Any: ...  # Scrubbed / ScrubResult
 
 
 class Provider(Protocol):
@@ -89,7 +103,7 @@ class StubScrubber:
 
     version = "stub-0"
 
-    async def scrub(self, text: str) -> Scrubbed:
+    async def scrub(self, text: str, known: KnownValues | None = None) -> Scrubbed:
         return Scrubbed(text=text, receipt={"scrubber": self.version, "entities": 0})
 
 
@@ -115,22 +129,37 @@ class GatewayResult:
     llm_call_id: str | None = None
     budget_used_pct: float | None = None
     receipt: dict[str, Any] = field(default_factory=dict)
+    placeholder_map_id: str | None = None
+
+    @property
+    def fallback(self) -> str | None:
+        """``manual_reply_needed`` for every result without a model output (refused or error)."""
+        return None if self.outcome == "ok" else MANUAL_REPLY
 
 
 class LlmGateway:
-    def __init__(self, scrubber: Scrubber, provider: Provider) -> None:
+    def __init__(self, scrubber: Scrubber, provider: Provider, keys: Any | None = None) -> None:
+        """``keys``: the :class:`app.vault.KeyProvider` that seals placeholder maps (required once the scrub replaces
+        anything; without it such a call is refused)."""
         self.scrubber = scrubber
         self.provider = provider
+        self.keys = keys
 
-    async def call(self, ctx: AnyContext, *, stage: str, role: str, prompt: str) -> GatewayResult:
+    async def call(
+        self, ctx: AnyContext, *, stage: str, role: str, prompt: str, known: KnownValues | None = None
+    ) -> GatewayResult:
+        """``known``: the identity values tied to the call (``app.privacy.known.known_values_for_trip``)."""
         if not stage.startswith(STAGE_PREFIX) or role not in ROLES:
             raise ValueError("stage must be crm_* and role writer / judge / validate")
         # 1. scrub receipt
         try:
-            scrubbed = await self.scrubber.scrub(prompt)
+            scrubbed = await self.scrubber.scrub(prompt, known)
+        except ScrubError as exc:
+            return await self._log(ctx, stage, role, "refused", refusal=exc.code)
         except Exception:  # noqa: BLE001 — any scrubber failure stops the call
             return await self._log(ctx, stage, role, "refused", refusal="scrub_failed")
         receipt = scrubbed.receipt
+        placeholders: dict[str, str] = dict(getattr(scrubbed, "placeholders", {}) or {})
         if self.scrubber.version.startswith(STUB_PREFIX) and self.provider.name != STUB_PREFIX:
             return await self._log(ctx, stage, role, "refused", refusal="scrubber_unavailable", receipt=receipt)
         # 2. budget, 3. ai_enabled (the per-agency lock holds until this transaction ends, after the log row)
@@ -144,6 +173,15 @@ class LlmGateway:
             return await self._log(ctx, stage, role, "refused", refusal="budget_exhausted", receipt=receipt, pct=pct)
         if not enabled:
             return await self._log(ctx, stage, role, "refused", refusal="ai_disabled", receipt=receipt, pct=pct)
+        # 3b. seal the placeholder map before paying for the call
+        sealed: SealedMap | None = None
+        if placeholders:
+            try:
+                if self.keys is None:
+                    raise ScrubError("no key provider for the placeholder map")
+                sealed = await seal_map(Vault(self.keys, ctx), placeholders)  # type: ignore[arg-type]
+            except Exception:  # noqa: BLE001 — a map that cannot be sealed stops the call
+                return await self._log(ctx, stage, role, "refused", refusal="scrub_failed", receipt=receipt, pct=pct)
         # 4. the call
         started = time.monotonic()
         try:
@@ -155,7 +193,12 @@ class LlmGateway:
             )
         latency = int((time.monotonic() - started) * 1000)
         result = await self._log(ctx, stage, role, "ok", receipt=receipt, pct=pct, latency=latency, completion=done)
-        return GatewayResult(**{**result.__dict__, "text": done.text})
+        map_id = None
+        if sealed is not None:
+            # 6. the map, against the logged call (same transaction)
+            await store_map(ctx, sealed, result.llm_call_id or "", str(receipt.get("scrubber", "")))
+            map_id = str(sealed.placeholder_map_id)
+        return GatewayResult(**{**result.__dict__, "text": done.text, "placeholder_map_id": map_id})
 
     async def _log(
         self,

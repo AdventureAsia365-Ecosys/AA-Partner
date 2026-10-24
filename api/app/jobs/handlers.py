@@ -4,6 +4,8 @@
   that stays queued is the "worker stopped" signal (``OldestQueuedAgeSeconds``). Idle-exempt in DB Migrate.
 - ``crm_intake_process`` (AA-936, queued by the public intake route with each stored submission): see
   :mod:`app.intake.process`.
+- ``crm_placeholder_purge`` (AA-938, hourly, :class:`app.privacy.purge.HourlyPlaceholderPurge`): expired F3
+  placeholder maps (24 h), every agency in one DELETE through the crm-009 purge policy.
 - ``crm_job_retention`` (daily, :class:`DailyRetentionSchedule`): data standards §7 row ``crm.job`` — succeeded rows
   30 days, cancelled 90 days after ``finished_at``; queued / running never. **Failed rows are kept**: §7 says "archive
   before delete: failed rows only", and the CRM has no archive bucket yet (CRM-04 rest), so nothing that must be
@@ -29,7 +31,14 @@ from typing import TYPE_CHECKING, Any
 import asyncpg
 
 from app.jobs import queue
-from app.jobs.kinds import AUDIT_EXPORT, AUDIT_RETENTION, HEARTBEAT, INTAKE_PROCESS, JOB_RETENTION
+from app.jobs.kinds import (
+    AUDIT_EXPORT,
+    AUDIT_RETENTION,
+    HEARTBEAT,
+    INTAKE_PROCESS,
+    JOB_RETENTION,
+    PLACEHOLDER_PURGE,
+)
 from app.jobs.queue import Job
 from app.jobs.worker import Handler, MaintenanceHook, Recurring
 
@@ -111,6 +120,7 @@ def build_handlers(
     from app.audit_export import export as audit_export
     from app.audit_export import retention as audit_retention
     from app.intake.process import build_handler as build_intake_handler
+    from app.privacy.purge import purge_expired_maps
 
     return {
         HEARTBEAT: heartbeat,
@@ -118,6 +128,7 @@ def build_handlers(
         INTAKE_PROCESS: build_intake_handler(keys),
         AUDIT_EXPORT: audit_export.build_handler(audit_archive),
         AUDIT_RETENTION: audit_retention.build_handler(audit_archive, dry_run=audit_retention_dry_run),
+        PLACEHOLDER_PURGE: purge_expired_maps,
     }
 
 
@@ -162,18 +173,20 @@ def build_hooks(*, retention_utc_hour: int, now: Callable[[], datetime] | None =
     """The due-now schedules. ``now``: a fixed clock for tests (default: the real UTC clock)."""
     from app.audit_export.export import HourlyAuditExportSchedule
     from app.audit_export.retention import DailyAuditRetentionSchedule
+    from app.privacy.purge import HourlyPlaceholderPurge
 
     clock = now or (lambda: datetime.now(UTC))
     return (
         DailyRetentionSchedule(retention_utc_hour, clock),
         HourlyAuditExportSchedule(clock),
         DailyAuditRetentionSchedule(retention_utc_hour, clock),
+        HourlyPlaceholderPurge(clock),
     )
 
 
 # Only the heartbeat queues its next slot ahead (it is deploy-gate and DB Migrate idle exempt). A daily or slower kind
 # goes through a due-now maintenance hook instead (DailyRetentionSchedule): never add one here.
 RECURRING: tuple[Recurring, ...] = (Recurring(HEARTBEAT, every_seconds=60, keep_days=2),)
-SCHEDULED_KINDS: frozenset[str] = frozenset({JOB_RETENTION, AUDIT_EXPORT, AUDIT_RETENTION})
+SCHEDULED_KINDS: frozenset[str] = frozenset({JOB_RETENTION, AUDIT_EXPORT, AUDIT_RETENTION, PLACEHOLDER_PURGE})
 # Kinds queued by request code, one row per event (AA-936: each stored inquiry), never scheduled.
 EVENT_KINDS: frozenset[str] = frozenset({INTAKE_PROCESS})

@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import uuid
 from decimal import Decimal
 
 import pytest
 
-from app.llm.gateway import Completion, LlmGateway, Scrubbed, StubProvider, StubScrubber, stub_gateway
+from app.llm import gateway as gateway_module
+from app.llm.gateway import MANUAL_REPLY, Completion, LlmGateway, Scrubbed, StubProvider, StubScrubber, stub_gateway
+from app.privacy.placeholder_store import SealedMap
+from app.privacy.scrubber import Detection, KnownPerson, KnownValues, PiiScrubber
 from tests.unit.fakes import ScriptedConn
 from tests.unit.slice_fakes import system_ctx
 
@@ -25,15 +30,17 @@ def conn(enabled: bool = True, budget: str = "2", spent: str = "0") -> ScriptedC
 class BrokenScrubber:
     version = "f3-1"
 
-    async def scrub(self, text: str) -> Scrubbed:
+    async def scrub(self, text: str, known: KnownValues | None = None) -> Scrubbed:
         raise RuntimeError("boom")
 
 
 class RealScrubber:
+    """Counts only in the receipt, no map (nothing to restore)."""
+
     version = "f3-1"
 
-    async def scrub(self, text: str) -> Scrubbed:
-        return Scrubbed(text=text.replace("Hoa", "<PERSON_1>"), receipt={"scrubber": "f3-1", "PERSON": 1})
+    async def scrub(self, text: str, known: KnownValues | None = None) -> Scrubbed:
+        return Scrubbed(text=text.replace("Hoa", "[name]"), receipt={"scrubber": "f3-1", "counts": {"PERSON": 1}})
 
 
 class Bedrock:
@@ -84,10 +91,11 @@ async def test_ok_call_scrubs_logs_tokens_and_cost_never_text() -> None:
         system_ctx(c), stage="crm_reply", role="writer", prompt="Hi Hoa"
     )
     assert result.outcome == "ok" and result.text == "ok" and result.budget_used_pct == 50.0
-    assert provider.prompts == ["Hi <PERSON_1>"]
+    assert provider.prompts == ["Hi [name]"]
     [args] = c.sql("INSERT INTO crm.llm_call")
     assert args[:9] == ("crm_reply", "writer", "bedrock", "us.model-v1", 10, 5, Decimal("0.0012"), args[7], "ok")
     assert "Hoa" not in repr(args) and '"PERSON": 1' in args[-1]
+    assert result.placeholder_map_id is None and result.fallback is None
     [rollup] = c.sql("INSERT INTO crm.llm_usage_daily")
     assert rollup == ("crm_reply", "us.model-v1", 0, 10, 5, Decimal("0.0012"))
 
@@ -113,3 +121,103 @@ async def test_stub_pair_is_deterministic() -> None:
     assert scrubbed.receipt == {"scrubber": "stub-0", "entities": 0}
     done = await StubProvider().complete("a b c")
     assert (done.text, done.input_tokens, done.cost_usd) == ("[stub reply to 3 words]", 3, Decimal(0))
+
+
+class SlowGuardrails:
+    name = "bedrock_guardrails"
+
+    async def detect(self, text: str) -> list[Detection]:
+        await asyncio.sleep(1)
+        return []
+
+
+class NoFindings:
+    name = "bedrock_guardrails"
+
+    async def detect(self, text: str) -> list[Detection]:
+        return []
+
+
+async def test_r_guardrails_timeout_no_call_manual_reply_needed() -> None:
+    """Card CRM-10 R test: a Guardrails timeout -> no call, manual_reply_needed (and the refusal is logged)."""
+    c = conn()
+    provider = Bedrock()
+    gateway = LlmGateway(PiiScrubber(SlowGuardrails(), timeout_s=0.05), provider, keys=object())
+    result = await gateway.call(system_ctx(c), stage="crm_reply", role="writer", prompt="Reply to Peter Lawson")
+    assert (result.outcome, result.refusal_code, result.fallback) == ("refused", "scrub_timeout", MANUAL_REPLY)
+    assert provider.prompts == []
+    [args] = c.sql("INSERT INTO crm.llm_call")
+    assert args[8:10] == ("refused", "scrub_timeout") and "Peter" not in repr(args)
+    assert c.sql("pg_advisory_xact_lock") == []  # refused before the budget step
+
+
+async def test_e_scrubber_failure_means_no_call() -> None:
+    provider = Bedrock()
+    result = await LlmGateway(BrokenScrubber(), provider).call(
+        system_ctx(conn()), stage="crm_x", role="writer", prompt="x"
+    )
+    assert result.refusal_code == "scrub_failed" and result.fallback == MANUAL_REPLY and provider.prompts == []
+
+
+async def test_map_is_sealed_before_the_call_and_stored_after_the_log(monkeypatch: pytest.MonkeyPatch) -> None:
+    order: list[str] = []
+    map_id = "00000000-0000-4000-8000-0000000000aa"
+
+    async def fake_seal(vault, placeholders):  # noqa: ANN001, ANN202
+        order.append("seal")
+        assert placeholders == {"<PERSON_1>": "Nguyễn Thị Hoa"}
+        return SealedMap(uuid.UUID(map_id), b"sealed", 1)
+
+    monkeypatch.setattr(gateway_module, "seal_map", fake_seal)
+    c = conn()
+    provider = Bedrock()
+    original_complete = provider.complete
+
+    async def complete(prompt: str) -> Completion:
+        order.append("call")
+        return await original_complete(prompt)
+
+    provider.complete = complete  # type: ignore[method-assign]
+    hoa = KnownValues((KnownPerson("traveller", display_name="Nguyễn Thị Hoa"),))
+    gateway = LlmGateway(PiiScrubber(NoFindings()), provider, keys=object())
+    result = await gateway.call(system_ctx(c), stage="crm_reply", role="writer", prompt="Hi Nguyen Thi Hoa", known=hoa)
+    assert order == ["seal", "call"] and provider.prompts == ["Hi <PERSON_1>"]
+    assert result.outcome == "ok" and result.placeholder_map_id == map_id
+    [stored] = c.sql("INSERT INTO crm.placeholder_map")
+    assert stored[1:] == (uuid.UUID("00000000-0000-4000-8000-000000000001"), b"sealed", 1, "f3-1")
+    flat = [sql for sql, _ in c.calls]
+    assert next(i for i, q in enumerate(flat) if "INSERT INTO crm.llm_call" in q) < next(
+        i for i, q in enumerate(flat) if "INSERT INTO crm.placeholder_map" in q
+    )
+
+
+async def test_a_map_that_cannot_be_sealed_stops_the_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    hoa = KnownValues((KnownPerson("traveller", display_name="Nguyễn Thị Hoa"),))
+    provider = Bedrock()
+    no_keys = await LlmGateway(PiiScrubber(NoFindings()), provider).call(
+        system_ctx(conn()), stage="crm_reply", role="writer", prompt="Hi Nguyen Thi Hoa", known=hoa
+    )
+    assert no_keys.refusal_code == "scrub_failed" and provider.prompts == []
+
+    async def broken_seal(vault, placeholders):  # noqa: ANN001, ANN202
+        raise RuntimeError("kms down")
+
+    monkeypatch.setattr(gateway_module, "seal_map", broken_seal)
+    c = conn()
+    kms_down = await LlmGateway(PiiScrubber(NoFindings()), provider, keys=object()).call(
+        system_ctx(c), stage="crm_reply", role="writer", prompt="Hi Nguyen Thi Hoa", known=hoa
+    )
+    assert kms_down.refusal_code == "scrub_failed" and provider.prompts == []
+    assert c.sql("INSERT INTO crm.placeholder_map") == []
+
+
+async def test_disabled_ai_never_seals_a_map(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def must_not_seal(vault, placeholders):  # noqa: ANN001, ANN202
+        raise AssertionError("sealed while AI is off")
+
+    monkeypatch.setattr(gateway_module, "seal_map", must_not_seal)
+    hoa = KnownValues((KnownPerson("traveller", display_name="Nguyễn Thị Hoa"),))
+    off = await LlmGateway(PiiScrubber(NoFindings()), Bedrock(), keys=object()).call(
+        system_ctx(conn(enabled=False)), stage="crm_reply", role="writer", prompt="Hi Nguyen Thi Hoa", known=hoa
+    )
+    assert off.refusal_code == "ai_disabled" and off.fallback == MANUAL_REPLY

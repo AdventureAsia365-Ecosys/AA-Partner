@@ -80,6 +80,13 @@ def test_identity_values_are_read() -> None:
         ({"KMS_DATA_KEY_ID": "crm-dev/data"}, "KMS_DATA_KEY_ID"),
         ({"DEK_CACHE_TTL_SECONDS": "901"}, "DEK_CACHE_TTL_SECONDS"),
         ({"DEK_CACHE_TTL_SECONDS": "-1"}, "DEK_CACHE_TTL_SECONDS"),
+        ({"SCRUB_GUARDRAIL_ID": "abc123"}, "set together"),
+        ({"SCRUB_GUARDRAIL_VERSION": "1"}, "set together"),
+        ({"SCRUB_GUARDRAIL_ID": "ABC-1", "SCRUB_GUARDRAIL_VERSION": "1"}, "guardrail id"),
+        ({"SCRUB_GUARDRAIL_ID": "abc123", "SCRUB_GUARDRAIL_VERSION": "v1"}, "published version"),
+        ({"SCRUB_GUARDRAIL_REGION": "mars"}, "AWS region"),
+        ({"SCRUB_DETECTOR_TIMEOUT_MS": "100"}, "SCRUB_DETECTOR_TIMEOUT_MS"),
+        ({"SCRUB_DETECTOR_TIMEOUT_MS": "60000"}, "SCRUB_DETECTOR_TIMEOUT_MS"),
     ],
 )
 def test_unsafe_values_are_refused(env: dict[str, str], message: str) -> None:
@@ -155,3 +162,21 @@ def test_team_values_are_read_and_checked() -> None:
 def test_unsafe_team_values_are_refused(env: dict[str, str], message: str) -> None:
     with pytest.raises(SettingsError, match=message):
         load_settings(env)
+
+
+def test_scrub_guardrail_values_are_read() -> None:
+    """AA-938: the F3 guardrail of pass 3 (AA-CIS-Infra crm_scrub.tf); without it every scrub fails closed."""
+    default = load_settings({})
+    assert (default.scrub_guardrail_id, default.scrub_guardrail_region, default.scrub_detector_timeout_ms) == (
+        "",
+        "us-west-1",
+        3000,
+    )
+    got = load_settings(
+        {"SCRUB_GUARDRAIL_ID": "abc123", "SCRUB_GUARDRAIL_VERSION": "DRAFT", "SCRUB_DETECTOR_TIMEOUT_MS": "1500"}
+    )
+    assert (got.scrub_guardrail_id, got.scrub_guardrail_version, got.scrub_detector_timeout_ms) == (
+        "abc123",
+        "DRAFT",
+        1500,
+    )

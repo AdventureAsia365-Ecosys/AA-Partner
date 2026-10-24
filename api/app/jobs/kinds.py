@@ -21,6 +21,8 @@ INTAKE_PROCESS = "crm_intake_process"
 # AA-940: the hourly audit export (both Object Lock buckets, hash chain) and the daily audit retention (verify, drop).
 AUDIT_EXPORT = "crm_audit_export"
 AUDIT_RETENTION = "crm_audit_retention"
+# AA-938: hourly delete of expired F3 placeholder maps (app.privacy.purge), queued due-now, never ahead.
+PLACEHOLDER_PURGE = "crm_placeholder_purge"
 
 DEFAULT_EXPECTED_SECONDS = 300
 OVERDUE_FACTOR = 2
@@ -33,6 +35,7 @@ EXPECTED_SECONDS: dict[str, int] = {
     INTAKE_PROCESS: 30,
     AUDIT_EXPORT: 300,
     AUDIT_RETENTION: 900,
+    PLACEHOLDER_PURGE: 60,
 }
 
 
