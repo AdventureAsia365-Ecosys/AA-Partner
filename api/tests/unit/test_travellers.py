@@ -220,6 +220,8 @@ async def test_recompute_for_trip_matches_each_twin() -> None:
     assert await age_bands.recompute_for_trip(ctx, FakeVault(), TRIP, dt.date(2027, 3, 12)) == 1
     assert conn.sql("UPDATE crm.trip_party SET age_band_at_departure") == [(PARTY, "2_11")]
     assert [e.reason for e in ctx.audit_events] == ["start_date_changed"]
+    # The event names the travellers whose DOB was decrypted (T2 has no profile token: not read).
+    assert ctx.audit_events[0].object_ids == (str(T1),)
     empty = tenant_ctx(ScriptedConn())
     assert await age_bands.recompute_for_trip(empty, FakeVault(), TRIP, None) == 0 and empty.audit_events == []
 
@@ -264,10 +266,29 @@ async def test_reveal_health_codes() -> None:
         ScriptedConn()
         .on("emergency_contact_enc FROM crm.traveler", traveler_row())
         .on("FROM crm.traveler_health", {"health_id": hid, "health_flags_enc": enc("x", "y", json.dumps(codes))})
+        .on("purpose = 'health_data' ORDER BY", True)
     )
     assert (await reveal(tenant_ctx(conn), FakeVault(), T1, "health", "fill_forms"))["value"] == codes
     none = ScriptedConn().on("emergency_contact_enc FROM crm.traveler", traveler_row())
     assert (await reveal(tenant_ctx(none), FakeVault(), T1, "health", "other"))["value"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("latest", [False, None])
+async def test_reveal_health_needs_the_latest_consent(latest: bool | None) -> None:
+    """Design §4.3: health codes are read with consent. A withdrawn (or missing) consent keeps them sealed: 409 and a
+    denied event, which tenant_tx() commits even though the request fails."""
+    conn = (
+        ScriptedConn()
+        .on("emergency_contact_enc FROM crm.traveler", traveler_row())
+        .on("FROM crm.traveler_health", {"health_id": uuid.uuid4(), "health_flags_enc": enc("x", "y", "{}")})
+        .on("purpose = 'health_data' ORDER BY", latest)
+    )
+    ctx = tenant_ctx(conn)
+    with pytest.raises(Conflict) as err:
+        await reveal(ctx, FakeVault(), T1, "health", "fill_forms")
+    assert err.value.code == "health_consent_withdrawn"
+    assert [(e.action, e.outcome, e.reason) for e in ctx.audit_events] == [("reveal", "denied", "consent_withdrawn")]
 
 
 # ── traveller_self_reveal(session) ─────────────────────────────────────────────────────────────────
@@ -426,6 +447,8 @@ async def test_profile_masks_f1_and_audits_one_view() -> None:
     assert got["documents"][0]["filename"] == "anna-passport.jpg" and got["consent"]["marketing"]["value"] is True
     [event] = ctx.audit_events
     assert (event.action, event.fields) == ("view", ("display_name", "relation_display_name", "document_filename"))
+    # Design §4.4: the other identities shown (a related traveller's name, a file name) are named by id.
+    assert event.object_ids == (str(T2), str(doc))
     with pytest.raises(NotFound):
         await service.profile(tenant_ctx(), FakeVault(), T1)
     bare = ScriptedConn().on("emergency_contact_enc, profile_token_enc", traveler_row(profile_token_enc=None))

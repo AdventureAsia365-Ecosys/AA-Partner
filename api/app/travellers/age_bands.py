@@ -18,6 +18,7 @@ import datetime as dt
 import uuid
 from typing import Any
 
+from app.audit import MAX_OBJECT_IDS
 from app.tenancy import TenantContext
 from app.vault import Vault
 
@@ -92,6 +93,7 @@ async def recompute_for_trip(ctx: TenantContext, vault: Vault, trip_id: uuid.UUI
     """After the trip's start date changed (``start`` = the new value): every party member of the trip, one event."""
     party = {r["traveler_token"]: r for r in await ctx.conn.fetch(TRIP_PARTY_SQL, trip_id)}
     pairs: list[tuple[Any, str | None]] = []
+    decrypted: list[str] = []  # the travellers whose DOB was read (audit object_ids, design §4.4)
     for r in await ctx.conn.fetch(TRIP_TRAVELERS_SQL, trip_id):
         if r["profile_token_enc"] is None:
             continue
@@ -101,6 +103,7 @@ async def recompute_for_trip(ctx: TenantContext, vault: Vault, trip_id: uuid.UUI
         twin = party.get(token)  # the F2 twin of this F1 party row
         if twin is not None:
             pairs.append((twin, age_band(await _dob(vault, r["traveler_id"], r["dob_enc"]), start)))
+            decrypted.append(str(r["traveler_id"]))
     changed = await _apply(ctx, pairs)
     if party:
         ctx.audit(
@@ -110,6 +113,7 @@ async def recompute_for_trip(ctx: TenantContext, vault: Vault, trip_id: uuid.UUI
             str(trip_id),
             fields=("dob",),
             reason="start_date_changed",
+            object_ids=tuple(sorted(decrypted))[:MAX_OBJECT_IDS],
         )
     return changed
 

@@ -31,6 +31,7 @@ from typing import Any
 
 import asyncpg
 
+from app.audit import MAX_OBJECT_IDS
 from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.intake import stage1
 from app.tenancy import TenantContext
@@ -308,7 +309,15 @@ async def trip_detail(ctx: TenantContext, vault: Vault, trip_id: uuid.UUID) -> d
         }
         for r in await ctx.conn.fetch(HISTORY_SQL, trip_id)
     ]
-    ctx.audit("view", "allowed", "trip", str(trip_id), fields=("display_name", "note_body", "submission_answers"))
+    # Design §4.4: the party's names are shown, so the event names those travellers.
+    ctx.audit(
+        "view",
+        "allowed",
+        "trip",
+        str(trip_id),
+        fields=("display_name", "note_body", "submission_answers"),
+        object_ids=tuple(dict.fromkeys(p["traveler_id"] for p in party))[:MAX_OBJECT_IDS],
+    )
     return {
         "trip": _trip(trip, ctx),
         "party": party,

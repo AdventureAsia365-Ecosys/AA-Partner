@@ -50,7 +50,7 @@ async def _events(admin: asyncpg.Connection, tenant_id: uuid.UUID, action: str) 
     return await _owner_fetch(
         admin,
         tenant_id,
-        "SELECT action, object_kind, object_id, fields, reason, object_ids FROM crm.audit_event "
+        "SELECT action, outcome, object_kind, object_id, fields, reason, object_ids FROM crm.audit_event "
         "WHERE action = $1 ORDER BY at, event_id",
         action,
     )
@@ -220,6 +220,50 @@ async def test_create_dedupes_relations_health_and_f2_without_decrypt(
         admin, tenant_id, "SELECT referrer_traveler_id FROM crm.traveler WHERE traveler_id = $1", lead
     )
     assert referrer[0]["referrer_traveler_id"] is None
+
+
+async def test_health_reveal_follows_the_latest_consent_and_profile_names_what_it_shows(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection
+) -> None:
+    """Design §4.3 (health with consent) and §4.4 (the ids of every identity shown), plus the reveal meter."""
+    from app.observability import reveal_meter
+
+    keys = _keys()
+    tenant_id, owner, trip_id, lead = await _inquiry(app_pool, keys)
+    async with tenant_tx(app_pool, owner, tenant_id) as ctx:
+        tom = uuid.UUID(
+            (await service.create_traveler(ctx, Vault(keys, ctx), {"display_name": "Tom Martin"}))["traveler_id"]
+        )
+        await service.add_relation(ctx, lead, tom, "spouse")
+        await service.set_health(
+            ctx, Vault(keys, ctx), lead, dietary=["vegan"], mobility=[], medical=[], consent_recorded=True
+        )
+        member_id = ctx.member_id
+    reveal_meter.METER.reset()
+    async with tenant_tx(app_pool, owner, tenant_id) as ctx:
+        assert (await reveal(ctx, Vault(keys, ctx), lead, "health", "fill_forms"))["value"]["dietary"] == ["vegan"]
+        await service.profile(ctx, Vault(keys, ctx), lead)
+    assert reveal_meter.METER.count(tenant_id, member_id) == 1
+    [view] = await _events(admin, tenant_id, "view")
+    assert view["object_id"] == str(lead) and view["object_ids"] == [str(tom)]
+    # The traveller withdraws the consent (append-only: a later row with value false). The codes stay sealed.
+    async with tenant_tx(app_pool, owner, tenant_id) as ctx:
+        await ctx.conn.execute(
+            "INSERT INTO crm.consent (traveler_id, purpose, value, source) VALUES ($1, 'health_data', false, "
+            "'agent_recorded')",
+            lead,
+        )
+    with pytest.raises(Conflict) as err:
+        async with tenant_tx(app_pool, owner, tenant_id) as ctx:
+            await reveal(ctx, Vault(keys, ctx), lead, "health", "fill_forms")
+    assert err.value.code == "health_consent_withdrawn"
+    reveals = await _events(admin, tenant_id, "reveal")
+    assert [(r["outcome"], r["reason"]) for r in reveals] == [
+        ("allowed", "fill_forms"),
+        ("denied", "consent_withdrawn"),
+    ]
+    assert reveal_meter.METER.count(tenant_id, member_id) == 1  # a refused reveal released nothing
+    reveal_meter.METER.reset()
 
 
 async def test_documents_are_sealed_with_the_docs_dek(app_pool: asyncpg.Pool, admin: asyncpg.Connection) -> None:

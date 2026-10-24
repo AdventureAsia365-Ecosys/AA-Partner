@@ -13,10 +13,26 @@ in-memory store.
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 from typing import Any, Protocol
 
 from app.errors import Unavailable
+
+log = logging.getLogger(__name__)
+
+# S3 answers 403 AccessDenied instead of 404 for a missing key when the caller has no s3:ListBucket (the task role
+# has none, by design), so both mean "the object is not there" to the app.
+MISSING_CODES = frozenset({"NoSuchKey", "NotFound", "404", "AccessDenied", "403"})
+
+
+def _error_code(exc: Exception) -> str | None:
+    """The S3 error code of a botocore ``ClientError`` (duck-typed: botocore is imported lazily), else None."""
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return None
+    code = (response.get("Error") or {}).get("Code")
+    return str(code) if code is not None else None
 
 
 class DocumentStore(Protocol):
@@ -72,7 +88,15 @@ class S3DocumentStore:
         def read() -> bytes:
             return self._s3().get_object(Bucket=self.bucket, Key=key)["Body"].read()
 
-        return await asyncio.to_thread(read)
+        try:
+            return await asyncio.to_thread(read)
+        except Exception as exc:
+            code = _error_code(exc)
+            if code not in MISSING_CODES:
+                raise
+            # The code tells a missing object (NoSuchKey) from a grant problem (AccessDenied) in the logs.
+            log.warning("documents_object_missing code=%s", code)
+            raise Unavailable("document_missing", "the stored document is not available") from None
 
     async def delete(self, key: str) -> None:
         await asyncio.to_thread(self._s3().delete_object, Bucket=self.bucket, Key=key)

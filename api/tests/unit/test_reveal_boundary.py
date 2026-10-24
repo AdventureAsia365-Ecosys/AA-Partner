@@ -5,14 +5,23 @@ The public / client routes may show a traveller only their own record, through
 reachable from them: no module a public router imports (directly or through other ``app`` modules) may be
 ``app.travellers.reveal`` or import a name ``reveal`` from anywhere.
 
-Public router modules are found, not listed: every module under ``app/routers`` that builds an ``APIRouter`` whose
-prefix starts with ``/crm/public`` (or, later, ``/crm/client``), so a new public router is covered the day it lands.
+Public router modules are found, not listed, three ways, so a new public router is covered the day it lands however
+it is built: (1) a module under ``app/routers`` that builds ``APIRouter(prefix=...)`` with a prefix starting with
+``/crm/public`` or ``/crm/client``; (2) one that builds ``class_router(<RouteClass>)`` (ADR 0006b) whose route class
+prefix starts with them; (3) any imported ``app.routers`` module whose ``APIRouter`` objects carry a route under them.
 """
 
 from __future__ import annotations
 
 import ast
+import importlib
+import pkgutil
 from pathlib import Path
+
+from fastapi import APIRouter
+
+import app.routers
+from app.auth import identity_config
 
 APP = Path(__file__).resolve().parents[2] / "app"
 FORBIDDEN_MODULE = "app.travellers.reveal"
@@ -31,15 +40,44 @@ def _sources() -> dict[str, str]:
     return out
 
 
-def public_router_modules(sources: dict[str, str]) -> list[str]:
+def public_route_classes() -> set[str]:
+    """Names of the ``identity_config`` route classes whose prefix is public or client-facing."""
+    return {
+        name
+        for name, value in vars(identity_config).items()
+        if isinstance(value, identity_config.RouteClass) and value.prefix.startswith(PUBLIC_PREFIXES)
+    }
+
+
+def live_public_router_modules() -> set[str]:
+    """(3) Every ``app.routers`` module that, once imported, holds an ``APIRouter`` with a public or client route."""
+    found = set()
+    for info in pkgutil.iter_modules(app.routers.__path__, "app.routers."):
+        module = importlib.import_module(info.name)
+        for value in vars(module).values():
+            if isinstance(value, APIRouter) and any(
+                str(getattr(r, "path", "")).startswith(PUBLIC_PREFIXES) for r in value.routes
+            ):
+                found.add(info.name)
+    return found
+
+
+def public_router_modules(sources: dict[str, str], *, live: bool = True) -> list[str]:
     found = []
+    classes = public_route_classes()
     for name, source in sources.items():
         if not name.startswith("app.routers."):
             continue
         for node in ast.walk(ast.parse(source)):
-            if not (
-                isinstance(node, ast.Call) and getattr(node.func, "id", getattr(node.func, "attr", "")) == "APIRouter"
-            ):
+            if not isinstance(node, ast.Call):
+                continue
+            func = getattr(node.func, "id", getattr(node.func, "attr", ""))
+            if func == "class_router" and node.args:
+                arg = node.args[0]
+                if getattr(arg, "id", getattr(arg, "attr", None)) in classes:
+                    found.append(name)
+                continue
+            if func != "APIRouter":
                 continue
             for kw in node.keywords:
                 if (
@@ -48,6 +86,8 @@ def public_router_modules(sources: dict[str, str]) -> list[str]:
                     and str(kw.value.value).startswith(PUBLIC_PREFIXES)
                 ):
                     found.append(name)
+    if live:
+        found += [m for m in live_public_router_modules() if m in sources]
     return sorted(set(found))
 
 
@@ -93,6 +133,22 @@ def boundary_offenders(sources: dict[str, str]) -> list[str]:
 
 def test_the_public_router_is_found() -> None:
     assert public_router_modules(_sources()) == ["app.routers.public"]
+    assert live_public_router_modules() == {"app.routers.public"}
+
+
+def test_a_class_router_with_a_client_route_class_is_a_root(monkeypatch) -> None:  # noqa: ANN001
+    """CRM-24a will build its client router the ADR 0006b way; that router must count as a root too."""
+    client = identity_config.RouteClass(name="client", prefix="/crm/client/v1", accepts=frozenset())
+    monkeypatch.setattr(identity_config, "CLIENT", client, raising=False)
+    sources = _sources()
+    sources["app.routers.client_portal"] = (
+        "from app.auth.identity_config import CLIENT\n"
+        "from app.auth.route_guard import class_router\n"
+        "from app.travellers.reveal import reveal\n"
+        "router = class_router(CLIENT, tags=['client'])\n"
+    )
+    assert "app.routers.client_portal" in public_router_modules(sources, live=False)
+    assert "app.routers.client_portal: reaches app.travellers.reveal" in boundary_offenders(sources)
 
 
 def test_no_public_route_reaches_the_generic_reveal() -> None:

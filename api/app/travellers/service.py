@@ -27,6 +27,7 @@ from typing import Any
 
 import asyncpg
 
+from app.audit import MAX_OBJECT_IDS
 from app.errors import Conflict, Invalid, NotFound
 from app.tenancy import TenantContext
 from app.travellers import age_bands
@@ -137,8 +138,11 @@ TRASH_RELATION_SQL = """
 UPDATE crm.traveler_relation SET deleted_at = now(), deleted_by = $2, purge_after = now() + make_interval(days => $3)
  WHERE relation_id = $1
 """
+# The explicit relation wins over a referrer the intake recorded earlier (the column then names the same person as
+# the one live referrer relation, which traveler_relation_one_referrer_uq keeps unique).
 SET_REFERRER_SQL = """
-UPDATE crm.traveler SET referrer_traveler_id = $2 WHERE traveler_id = $1 AND referrer_traveler_id IS NULL
+UPDATE crm.traveler SET referrer_traveler_id = $2
+ WHERE traveler_id = $1 AND referrer_traveler_id IS DISTINCT FROM $2
 """
 CLEAR_REFERRER_SQL = """
 UPDATE crm.traveler SET referrer_traveler_id = NULL WHERE traveler_id = $1 AND referrer_traveler_id = $2
@@ -305,7 +309,10 @@ async def profile(ctx: TenantContext, vault: Vault, traveler_id: uuid.UUID) -> d
         fields.append("relation_display_name")
     if documents:
         fields.append("document_filename")
-    ctx.audit("view", "allowed", "traveler", str(traveler_id), fields=tuple(fields))
+    # Design §4.4: when several identities are shown, the event names them (related travellers' names, document
+    # file names) besides the profile's own id.
+    shown = tuple(dict.fromkeys([r["traveler_id"] for r in relations] + [d["document_id"] for d in documents]))
+    ctx.audit("view", "allowed", "traveler", str(traveler_id), fields=tuple(fields), object_ids=shown[:MAX_OBJECT_IDS])
     return {
         "traveler": {
             "traveler_id": str(traveler_id),

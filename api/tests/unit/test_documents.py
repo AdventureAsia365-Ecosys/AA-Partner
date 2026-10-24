@@ -230,6 +230,45 @@ async def test_stores() -> None:
     assert require_store(memory) is memory
 
 
+class _ClientError(Exception):
+    """The shape of botocore's ClientError (``response["Error"]["Code"]``)."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.response = {"Error": {"Code": code}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["NoSuchKey", "AccessDenied", "404"])
+async def test_s3_missing_object_is_a_clean_503(code: str) -> None:
+    """Without s3:ListBucket a missing key answers 403, so NoSuchKey and AccessDenied both mean document_missing."""
+
+    class Missing(FakeS3):
+        def get_object(self, **kw: Any) -> dict[str, Any]:
+            raise _ClientError(code)
+
+    with pytest.raises(Unavailable) as err:
+        await S3DocumentStore("b", client=Missing()).get("tenants/x/documents/y")
+    assert err.value.code == "document_missing"
+
+
+@pytest.mark.asyncio
+async def test_s3_other_errors_still_raise() -> None:
+    class Throttled(FakeS3):
+        def get_object(self, **kw: Any) -> dict[str, Any]:
+            raise _ClientError("SlowDown")
+
+    with pytest.raises(_ClientError):
+        await S3DocumentStore("b", client=Throttled()).get("k")
+    with pytest.raises(RuntimeError):
+
+        class Broken(FakeS3):
+            def get_object(self, **kw: Any) -> dict[str, Any]:
+                raise RuntimeError("network")
+
+        await S3DocumentStore("b", client=Broken()).get("k")
+
+
 def test_document_store_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
     assert isinstance(build_document_store(Settings(environment="test", db_ssl="disable")), MemoryDocumentStore)
     s3 = build_document_store(Settings(environment="dev", documents_bucket="aa-crm-dev-documents-x"))

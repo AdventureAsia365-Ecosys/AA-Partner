@@ -7,7 +7,8 @@ decrypted only through :class:`app.vault.Vault`; the audit events are queued on 
 ==============================================  =================================================  ================
 Route                                           What                                               Who
 ==============================================  =================================================  ================
-``GET    /travelers``                           directory + exact search (one list_view)           every role
+``GET    /travelers``                           directory, no search (one list_view)               every role
+``POST   /travelers/search``                    exact search, the term in the body (one list_view) every role
 ``POST   /travelers``                           new client (409 duplicate_traveler, R6)            every role
 ``GET    /travelers/{id}``                      profile: masked F1, F2 bands, relations, trips     every role
 ``PATCH  /travelers/{id}``                      F1 fields (encrypted; DOB -> age bands)            every role
@@ -25,6 +26,9 @@ Route                                           What                            
 ``DELETE /documents/{id}``                      to the trash                                       owner, agent
 ==============================================  =================================================  ================
 
+Search is a POST so an e-mail, phone or name never sits in a URL (request logs of the CDN / load balancer, browser
+history); ``GET /travelers?q=`` answers 422 ``search_by_post``.
+
 Design §4.6: every role may reveal (each logged); export and delete of a client stay with CRM-14 / CRM-35.
 """
 
@@ -41,6 +45,7 @@ from app.auth.route_guard import Caller, class_router, current_caller
 from app.db import request_pool
 from app.documents import service as documents
 from app.documents.store import require_store
+from app.errors import Invalid
 from app.routers.agency import tenant_header
 from app.tenancy import tenant_tx
 from app.travellers import service
@@ -58,6 +63,13 @@ Code = Annotated[str, Field(max_length=40)]
 
 class _Body(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class SearchIn(_Body):
+    q: str = Field(min_length=1, max_length=120)
+    archived: bool = False
+    owner: Literal["anyone", "me"] = "anyone"
+    page: int = Field(default=1, ge=1, le=service.MAX_PAGE)
 
 
 class TravelerIn(_Body):
@@ -162,10 +174,24 @@ async def get_travelers(
     owner: Annotated[Literal["anyone", "me"], Query()] = "anyone",
     page: Annotated[int, Query(ge=1, le=service.MAX_PAGE)] = 1,
 ) -> dict[str, Any]:
+    if q is not None:
+        raise Invalid("search_by_post", "search with POST /crm/v1/travelers/search (the term stays out of URLs)")
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     async with tenant_tx(pool, caller, tenant_id) as ctx:
-        return await service.directory(ctx, Vault(keys, ctx), q=q, archived=archived, owner=owner, page=page)
+        return await service.directory(ctx, Vault(keys, ctx), archived=archived, owner=owner, page=page)
+
+
+@router.post("/travelers/search")
+async def post_travelers_search(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, body: SearchIn
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    async with tenant_tx(pool, caller, tenant_id) as ctx:
+        return await service.directory(
+            ctx, Vault(keys, ctx), q=body.q, archived=body.archived, owner=body.owner, page=body.page
+        )
 
 
 @router.post("/travelers", status_code=201)

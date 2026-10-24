@@ -81,7 +81,8 @@ def test_routes_reach_their_helpers(client: TestClient, pools: LocalPools, monke
     h = _headers(pools.partner_web())
     pdf = base64.b64encode(b"%PDF-1.7 synthetic").decode()
     ok = [
-        client.get("/crm/v1/travelers?q=anna&owner=me&page=2", headers=h),
+        client.get("/crm/v1/travelers?owner=me&page=2", headers=h),
+        client.post("/crm/v1/travelers/search", json={"q": "anna", "owner": "me", "page": 2}, headers=h),
         client.post("/crm/v1/travelers", json={"display_name": "Lily Martin"}, headers=h),
         client.get(f"/crm/v1/travelers/{T1}", headers=h),
         client.patch(f"/crm/v1/travelers/{T1}", json={"dob": "1990-04-03"}, headers=h),
@@ -113,6 +114,7 @@ def test_routes_reach_their_helpers(client: TestClient, pools: LocalPools, monke
     ]
     assert [r.status_code for r in ok] == [
         200,
+        200,
         201,
         200,
         200,
@@ -132,6 +134,7 @@ def test_routes_reach_their_helpers(client: TestClient, pools: LocalPools, monke
     ]
     assert [c[0] for c in calls] == [
         "directory",
+        "directory",
         "create_traveler",
         "profile",
         "update_traveler",
@@ -149,9 +152,10 @@ def test_routes_reach_their_helpers(client: TestClient, pools: LocalPools, monke
         "trash",
         "update_trip",
     ]
-    assert calls[0][1] == {"q": "anna", "archived": False, "owner": "me", "page": 2}
-    assert calls[3][1] == {"dob": "1990-04-03"}  # only the fields sent (exclude_unset)
-    assert calls[12][1]["content"] == b"%PDF-1.7 synthetic"
+    assert calls[0][1] == {"archived": False, "owner": "me", "page": 2}
+    assert calls[1][1] == {"q": "anna", "archived": False, "owner": "me", "page": 2}
+    assert calls[4][1] == {"dob": "1990-04-03"}  # only the fields sent (exclude_unset)
+    assert calls[13][1]["content"] == b"%PDF-1.7 synthetic"
 
 
 def test_routes_validate_bodies(client: TestClient, pools: LocalPools) -> None:
@@ -172,6 +176,11 @@ def test_routes_validate_bodies(client: TestClient, pools: LocalPools) -> None:
     ):
         assert getattr(client, method)(path, json=body, headers=h).status_code == 422, (path, body)
     assert client.get("/crm/v1/travelers?page=0", headers=h).status_code == 422
+    # The search term never travels in a URL: GET ?q= is refused, the POST body carries it.
+    refused = client.get("/crm/v1/travelers?q=anna%40example.test", headers=h)
+    assert refused.status_code == 422 and refused.json()["detail"] == "search_by_post"
+    for body in ({}, {"q": ""}, {"q": "a", "page": 0}, {"q": "a", "extra": 1}):
+        assert client.post("/crm/v1/travelers/search", json=body, headers=h).status_code == 422, body
 
 
 def test_foreign_tokens_are_refused(client: TestClient, pools: LocalPools) -> None:
