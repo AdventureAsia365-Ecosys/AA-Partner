@@ -21,8 +21,8 @@ from typing import Any
 from app.documents.store import DocumentStore
 from app.errors import Conflict, Invalid, NotFound, Unavailable
 from app.intake import stage1
-from app.permissions import Action, require
 from app.lifecycle.window import trash_days
+from app.permissions import Action, require
 from app.tenancy import TenantContext
 from app.travellers.fields import REVEAL_REASONS
 from app.vault import Vault

@@ -116,9 +116,14 @@ def test_non_owners_see_rules_only_and_cannot_erase(pools: LocalPools, monkeypat
     with TestClient(app) as client:
         got = client.get("/crm/v1/lifecycle", headers=headers).json()
         assert "holds" not in got and got["role"] == "agent"
-        assert client.post(f"/crm/v1/travelers/{ID}/erasure", json={}, headers=headers).status_code == 403
-        assert client.get("/crm/v1/lifecycle/offboarding", headers=headers).status_code == 403
-    assert [e.reason for e in ctx.audit_events] == ["owner_only", "owner_only"]
+        # AA-939 matrix: client_delete and agency_export are owner-only, refused by tenant_tx(action=) (role_forbidden).
+        for res in (
+            client.post(f"/crm/v1/travelers/{ID}/erasure", json={}, headers=headers),
+            client.get("/crm/v1/lifecycle/offboarding", headers=headers),
+            client.patch("/crm/v1/lifecycle/settings", json={"trash_days": 3}, headers=headers),
+            client.post("/crm/v1/lifecycle/holds", json={"scope": "tenant", "reason_code": "other"}, headers=headers),
+        ):
+            assert (res.status_code, res.json()["detail"]) == (403, "role_forbidden")
 
 
 def test_erasure_dry_run_then_real(pools: LocalPools, monkeypatch: pytest.MonkeyPatch) -> None:

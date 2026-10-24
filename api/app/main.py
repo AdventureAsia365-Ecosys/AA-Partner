@@ -41,8 +41,20 @@ from app.members.mail import Mailer, MemoryMailer, SesMailer
 from app.observability import setup as setup_observability
 from app.observability.request_id import RequestIdMiddleware, unhandled_error_handler
 from app.ratelimit import FixedWindowLimiter
-from app.routers import agency, audit, ci, health, invitations, ops, pipeline, public, staff, team, travellers
-from app.routers import agency, audit, ci, health, lifecycle, ops, pipeline, public, staff, travellers
+from app.routers import (
+    agency,
+    audit,
+    ci,
+    health,
+    invitations,
+    lifecycle,
+    ops,
+    pipeline,
+    public,
+    staff,
+    team,
+    travellers,
+)
 from app.settings import INSECURE_ENVIRONMENTS, Settings, load_settings
 from app.vault import KeyProvider, build_key_provider
 

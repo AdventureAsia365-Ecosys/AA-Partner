@@ -66,6 +66,7 @@ DESIGN: dict[str, tuple[str, str, str]] = {
     "plan_view": (Y, N, N),
     "settings_forms_manage": (Y, N, N),
     "access_log_view": (Y, N, N),
+    "data_settings": (Y, N, N),  # AA-942 (design §3.5 / §3.6): trash window, auto-archive, legal holds — owner
 }
 WORD = {Rule.ALLOW: Y, Rule.DENY: N, Rule.OWN: OWN, Rule.ASSIGNED: ASG, Rule.THRESHOLD: THR}
 

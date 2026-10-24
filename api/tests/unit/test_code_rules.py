@@ -321,6 +321,8 @@ def test_every_router_tenant_tx_names_its_permission_action() -> None:
                 if not any(k.arg == "action" for k in node.keywords):
                     missing.append(f"{rel}:{node.lineno}")
     assert missing == [], "tenant_tx() without action=: " + ", ".join(missing)
+
+
 def test_lifecycle_tx_is_used_only_by_the_lifecycle_jobs() -> None:
     assert _users_of("lifecycle_tx", LIFECYCLE_MODULES) == []
 

@@ -24,7 +24,11 @@ Route                                           What                            
 ==============================================  =========================================================  ============
 
 ``DELETE /documents/{id}`` stays in :mod:`app.routers.travellers` and uses the same trash. Every refusal of a role is
-a committed ``denied`` audit event.
+a committed ``denied`` audit event. Each route names its permission-matrix action (AA-939, ``app.permissions``):
+``session_view`` (rules), ``data_settings`` (settings, holds; owner), ``trip_view`` (the trash list), the kind's delete
+action for delete / restore (``trip_delete``, ``client_delete``, ``task_update``, ``note_add``, ``document_delete``),
+``client_edit`` (archive), ``client_delete`` (erasure), ``agency_export`` (offboarding); the services keep their
+object checks (own trip, own note, owner-only paths).
 """
 
 from __future__ import annotations
@@ -44,6 +48,7 @@ from app.db import request_pool
 from app.errors import Conflict, Forbidden
 from app.lifecycle import erase, offboarding, policy, rules, trash
 from app.lifecycle.rules import BACKUP_PURGE_DAYS
+from app.permissions import Action
 from app.pipeline import LOST_REASONS
 from app.routers.agency import tenant_header
 from app.tenancy import TenantContext, tenant_tx
@@ -54,6 +59,15 @@ router = class_router(AGENCY, tags=["lifecycle"])
 
 CallerDep = Annotated[Caller, Depends(current_caller)]
 TenantDep = Annotated[uuid.UUID, Depends(tenant_header)]
+
+# The permission-matrix action of each trash kind (route level; the trash module still checks own trip / own note).
+TRASH_ACTIONS: dict[str, Action] = {
+    "trip": Action.TRIP_DELETE,
+    "traveler": Action.CLIENT_DELETE,
+    "task": Action.TASK_UPDATE,
+    "note": Action.NOTE_ADD,
+    "document": Action.DOCUMENT_DELETE,
+}
 
 RUNS_SQL = """
 SELECT kind, dry_run, counts, created_at FROM crm.lifecycle_run ORDER BY created_at DESC, run_id LIMIT 10
@@ -151,7 +165,7 @@ async def _owner_extras(ctx: TenantContext, vault: Vault | None) -> dict[str, An
 async def get_lifecycle(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
     pool = await request_pool(request)
     keys = request.app.state.keys
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.SESSION_VIEW) as ctx:
         out: dict[str, Any] = {
             "rules": rules.rules_view(),
             "settings": await policy.settings(ctx),
@@ -170,7 +184,7 @@ async def get_lifecycle(request: Request, caller: CallerDep, tenant_id: TenantDe
 @router.patch("/lifecycle/settings")
 async def patch_settings(request: Request, caller: CallerDep, tenant_id: TenantDep, body: SettingsChange) -> dict:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.DATA_SETTINGS) as ctx:
         return await policy.update_settings(
             ctx, trash_days=body.trash_days, auto_archive_months=body.auto_archive_months
         )
@@ -179,14 +193,14 @@ async def patch_settings(request: Request, caller: CallerDep, tenant_id: TenantD
 @router.post("/lifecycle/holds", status_code=201)
 async def post_hold(request: Request, caller: CallerDep, tenant_id: TenantDep, body: HoldIn) -> dict[str, Any]:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.DATA_SETTINGS) as ctx:
         return await policy.place_hold(ctx, body.scope, body.subject_id, body.reason_code)
 
 
 @router.post("/lifecycle/holds/{hold_id}/release")
 async def post_release(request: Request, caller: CallerDep, tenant_id: TenantDep, hold_id: uuid.UUID) -> dict:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.DATA_SETTINGS) as ctx:
         return await policy.release_hold(ctx, hold_id)
 
 
@@ -194,7 +208,7 @@ async def post_release(request: Request, caller: CallerDep, tenant_id: TenantDep
 async def get_trash(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_VIEW) as ctx:
         return await trash.list_trash(ctx, Vault(keys, ctx))
 
 
@@ -208,13 +222,13 @@ async def post_restore(
 ) -> dict[str, Any]:
     pool = await request_pool(request)
     checker = getattr(request.app.state, "booking_checker", None)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=TRASH_ACTIONS[kind]) as ctx:
         return await trash.restore(ctx, kind, object_id, checker)
 
 
 async def _delete(request: Request, caller: Caller, tenant_id: uuid.UUID, kind: str, object_id: uuid.UUID) -> dict:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=TRASH_ACTIONS[kind]) as ctx:
         return await trash.move_to_trash(ctx, kind, object_id)
 
 
@@ -243,14 +257,14 @@ async def post_archive(
     request: Request, caller: CallerDep, tenant_id: TenantDep, traveler_id: uuid.UUID, body: ArchiveIn
 ) -> dict[str, Any]:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.CLIENT_EDIT) as ctx:
         return await policy.archive(ctx, traveler_id, body.reason)
 
 
 @router.post("/travelers/{traveler_id}/unarchive")
 async def post_unarchive(request: Request, caller: CallerDep, tenant_id: TenantDep, traveler_id: uuid.UUID) -> dict:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.CLIENT_EDIT) as ctx:
         return await policy.unarchive(ctx, traveler_id)
 
 
@@ -263,7 +277,7 @@ async def post_erasure(
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     store = request.app.state.documents
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.CLIENT_DELETE) as ctx:
         if ctx.member_role != "owner":
             ctx.audit("erasure", "denied", "traveler", str(traveler_id), reason="owner_only")
             raise Forbidden("owner_only", "only the agency owner erases a client")
@@ -293,7 +307,7 @@ async def post_erasure(
 @router.get("/lifecycle/offboarding")
 async def get_offboarding(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.AGENCY_EXPORT) as ctx:
         if ctx.member_role != "owner":
             ctx.audit("view", "denied", "erasure_request", reason="owner_only")
             raise Forbidden("owner_only", "only the agency owner sees the offboarding")
@@ -303,7 +317,7 @@ async def get_offboarding(request: Request, caller: CallerDep, tenant_id: Tenant
 @router.post("/lifecycle/offboarding", status_code=201)
 async def post_offboarding(request: Request, caller: CallerDep, tenant_id: TenantDep, body: OffboardingIn) -> dict:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.AGENCY_EXPORT) as ctx:
         return await offboarding.request(ctx, export_waived=body.export_waived)
 
 
@@ -312,7 +326,7 @@ async def post_offboarding_cancel(
     request: Request, caller: CallerDep, tenant_id: TenantDep, request_id: uuid.UUID
 ) -> dict[str, Any]:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.AGENCY_EXPORT) as ctx:
         return await offboarding.cancel(ctx, request_id, request.app.state.documents)
 
 
@@ -322,7 +336,7 @@ async def get_offboarding_export(
 ) -> Response:
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.AGENCY_EXPORT) as ctx:
         content = await offboarding.download(ctx, Vault(keys, ctx), request.app.state.documents, request_id)
     return Response(
         content=content,
@@ -340,7 +354,7 @@ async def post_offboarding_erase(
 ) -> dict[str, Any]:
     pool = await request_pool(request)
     require_keys(request.app.state.keys)  # the erase ends with the crypto-shred: no provider, no start
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.AGENCY_EXPORT) as ctx:
         return await offboarding.confirm_erase(
             ctx, request_id, confirm_tenant_id=body.confirm_tenant_id, dry_run=_dry_run(request)
         )
