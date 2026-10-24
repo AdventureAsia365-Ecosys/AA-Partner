@@ -176,8 +176,8 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         (AUDIT_RETENTION, True),
         (HEARTBEAT, False),
         (JOB_RETENTION, True),
-        (PLACEHOLDER_PURGE, True),  # AA-938: the hourly purge, queued due now like the daily retention
         (LIFECYCLE, True),
+        (PLACEHOLDER_PURGE, True),  # AA-938: the hourly purge, queued due now like the daily retention
     ]
     # The due runs count while they wait (they would be interrupted by a deploy) ...
     assert (await queue.active_count(app_pool, DEPLOY_GATE_EXEMPT))["by_kind"] == {

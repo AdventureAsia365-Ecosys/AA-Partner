@@ -133,9 +133,9 @@ def build_handlers(
     from app.audit_export import retention as audit_retention
     from app.dispatch import worker as dispatch_worker
     from app.intake.process import build_handler as build_intake_handler
-    from app.privacy.purge import purge_expired_maps
     from app.lifecycle import job as lifecycle_job
     from app.lifecycle import offboarding
+    from app.privacy.purge import purge_expired_maps
 
     return {
         HEARTBEAT: heartbeat,
@@ -193,8 +193,8 @@ def build_hooks(*, retention_utc_hour: int, now: Callable[[], datetime] | None =
     """The due-now schedules. ``now``: a fixed clock for tests (default: the real UTC clock)."""
     from app.audit_export.export import HourlyAuditExportSchedule
     from app.audit_export.retention import DailyAuditRetentionSchedule
-    from app.privacy.purge import HourlyPlaceholderPurge
     from app.lifecycle.job import DailyLifecycleSchedule
+    from app.privacy.purge import HourlyPlaceholderPurge
 
     clock = now or (lambda: datetime.now(UTC))
     return (
@@ -209,7 +209,8 @@ def build_hooks(*, retention_utc_hour: int, now: Callable[[], datetime] | None =
 # Only the heartbeat queues its next slot ahead (it is deploy-gate and DB Migrate idle exempt). A daily or slower kind
 # goes through a due-now maintenance hook instead (DailyRetentionSchedule): never add one here.
 RECURRING: tuple[Recurring, ...] = (Recurring(HEARTBEAT, every_seconds=60, keep_days=2),)
-SCHEDULED_KINDS: frozenset[str] = frozenset({JOB_RETENTION, AUDIT_EXPORT, AUDIT_RETENTION, PLACEHOLDER_PURGE})
-SCHEDULED_KINDS: frozenset[str] = frozenset({JOB_RETENTION, AUDIT_EXPORT, AUDIT_RETENTION, LIFECYCLE})
+SCHEDULED_KINDS: frozenset[str] = frozenset(
+    {JOB_RETENTION, AUDIT_EXPORT, AUDIT_RETENTION, PLACEHOLDER_PURGE, LIFECYCLE}
+)
 # Kinds queued by request code, one row per event (AA-936: each stored inquiry), never scheduled.
 EVENT_KINDS: frozenset[str] = frozenset({INTAKE_PROCESS, OFFBOARD, DISPATCH})
