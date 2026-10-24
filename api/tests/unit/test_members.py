@@ -443,6 +443,39 @@ async def test_accept_never_changes_an_active_member_s_role(monkeypatch: pytest.
     assert conn.sql("SET role = $2") == [] and conn.sql("SET status = 'accepted'") == []
 
 
+@pytest.mark.asyncio
+async def test_accept_rechecks_the_first_owner_rule_for_an_aa_owner_invitation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AA-941 review: an owner invitation sent by AA's L1 console (invited_by platform:*) is re-checked at accept:
+    an agency that now has an active owner or holds a traveller answers 409 and no membership is written."""
+    recheck = "i.invited_by LIKE 'platform:%' AS by_platform"
+    for row, code in (
+        ({"by_platform": True, "has_owner": True, "holds_travellers": False}, "owner_exists"),
+        ({"by_platform": True, "has_owner": False, "holds_travellers": True}, "has_travellers"),
+    ):
+        conn = ScriptedConn().on(recheck, row).on("INSERT INTO crm.member", OTHER_MEMBER)
+        ctx = _system(conn)
+        monkeypatch.setattr(invitations, "invitation_tx", fake_tx(ctx, _invitation("claimed", sub=SUB, role="owner")))
+        with raises(Conflict, code):
+            await invitations.accept(conn, CALLER, TOKEN)  # type: ignore[arg-type]
+        assert conn.sql("INSERT INTO crm.member") == [] and conn.sql("SET status = 'accepted'") == []
+        assert (ctx.audit_events[-1].outcome, ctx.audit_events[-1].reason) == ("denied", code)
+    # Still a first owner (no owner, no traveller), or an owner invitation the agency's own owner sent: accepted.
+    for row in (
+        {"by_platform": True, "has_owner": False, "holds_travellers": False},
+        {"by_platform": False, "has_owner": True, "holds_travellers": True},
+    ):
+        conn = ScriptedConn().on(recheck, row).on("INSERT INTO crm.member", OTHER_MEMBER)
+        monkeypatch.setattr(
+            invitations, "invitation_tx", fake_tx(_system(conn), _invitation("claimed", sub=SUB, role="owner"))
+        )
+        assert (await invitations.accept(conn, CALLER, TOKEN))["member_role"] == "owner"  # type: ignore[arg-type]
+    # Other roles never run the check.
+    conn = ScriptedConn().on("INSERT INTO crm.member", OTHER_MEMBER)
+    monkeypatch.setattr(invitations, "invitation_tx", fake_tx(_system(conn), _invitation("claimed", sub=SUB)))
+    await invitations.accept(conn, CALLER, TOKEN)  # type: ignore[arg-type]
+    assert conn.sql(recheck) == []
+
+
 @pytest.mark.parametrize(
     ("error", "code"),
     [

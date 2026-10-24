@@ -339,8 +339,13 @@ def data_request(row: Any) -> dict[str, Any]:
     status = row["status"]
     aa = raised_by_aa(row)
     accepted = row["owner_accepted_at"] is not None
-    if status == "erased" or (purpose == "export_only" and row["export_downloaded_at"] is not None):
-        state = "done"
+    downloaded = purpose == "export_only" and row["export_downloaded_at"] is not None
+    if status == "erased" or (downloaded and status == "cancelled"):
+        state = "done"  # erased, or an export downloaded and then closed by the owner
+    elif downloaded:
+        # Downloaded but still open (crm-010: only the owner's "Close request" ends an export_only row): it still
+        # holds the agency's one open-request slot, so a new AA request is 409 offboarding_open until it is closed.
+        state = "export_downloaded"
     elif status == "failed":
         state = "failed"
     elif status == "cancelled":

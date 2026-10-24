@@ -21,7 +21,7 @@ import pytest
 from app.errors import Conflict, Forbidden, NotFound
 from app.intake import public as intake
 from app.lifecycle import offboarding
-from app.members import recovery
+from app.members import invitations, recovery
 from app.members.directory import MemoryDirectory
 from app.members.mail import MemoryMailer
 from app.ops import console
@@ -36,6 +36,7 @@ from tests.integration.test_crm005_intake import (
     _owner_fetch,
     answers,
 )
+from tests.integration.test_crm008_members import _caller
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -148,16 +149,11 @@ async def test_first_owner_invite_on_an_empty_agency_then_owner_exists(
 ) -> None:
     keys, mailer = _keys(), MemoryMailer()
     tenant_id = uuid.uuid4()
-    created, summary = await console.create_agency(
+    summary = await console.create_agency(
         app_pool, tenant_id=tenant_id, agency_name="Lữ hành Sen Vàng", is_synthetic=True, default_locale="vi-VN",
-        environment="test", staff_sub=STAFF,
+        environment="test", staff_sub=STAFF, ticket_ref="SUP-3",
     )  # fmt: skip
-    assert created and summary["agency_name"] == "Lữ hành Sen Vàng" and summary["state"] == "active"
-    again, _ = await console.create_agency(
-        app_pool, tenant_id=tenant_id, agency_name="Lữ hành Sen Vàng", is_synthetic=True, default_locale="vi-VN",
-        environment="test", staff_sub=STAFF,
-    )  # fmt: skip
-    assert again is False
+    assert summary["agency_name"] == "Lữ hành Sen Vàng" and summary["state"] == "active"
     out = await console.invite_first_owner(
         app_pool, tenant_id, staff_sub=STAFF, owner_email="Owner@SenVang.example", ticket_ref="SUP-4", keys=keys,
         mailer=mailer, web_origin=ORIGIN, ttl_hours=168,
@@ -183,6 +179,71 @@ async def test_first_owner_invite_on_an_empty_agency_then_owner_exists(
             mailer=mailer, web_origin=ORIGIN, ttl_hours=168,
         )  # fmt: skip
     assert exc.value.code == "owner_exists"
+
+
+async def test_create_on_an_existing_id_is_409_and_never_renames(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection
+) -> None:
+    """AA-941 review probe: create, lock, then create again with the same id and another name / locale -> 409
+    ``tenant_exists``; the agency keeps its name, locale and status, and its audit gains nothing."""
+    tenant_id = uuid.uuid4()
+    await console.create_agency(
+        app_pool, tenant_id=tenant_id, agency_name="Alpha Travel", is_synthetic=True, default_locale="en-AU",
+        environment="test", staff_sub=STAFF, ticket_ref="SUP-1",
+    )  # fmt: skip
+    await console.lock_agency(app_pool, tenant_id, staff_sub=STAFF, reason_code="test", ticket_ref="SUP-2")
+    for name, locale in (("Totally Different Name", "vi-VN"), ("Alpha Travel", "en-AU")):
+        with pytest.raises(Conflict) as exc:
+            await console.create_agency(
+                app_pool, tenant_id=tenant_id, agency_name=name, is_synthetic=True, default_locale=locale,
+                environment="test", staff_sub=STAFF, ticket_ref="SUP-3",
+            )  # fmt: skip
+        assert exc.value.code == "tenant_exists"
+    [row] = await _owner_fetch(admin, tenant_id, "SELECT display_name, default_locale, status FROM crm.tenant")
+    assert tuple(row) == ("Alpha Travel", "en-AU", "locked")
+    events = [(e["action"], e["object_ids"]) for e in await _audit(admin, tenant_id) if e["action"] != "ops_read"]
+    assert events == [("agency_create", ["ticket:SUP-1"]), ("tenant_lock", ["ticket:SUP-2"])]
+
+
+async def _aa_owner_invite(app_pool: asyncpg.Pool, tenant_id: uuid.UUID, email: str, ticket: str) -> tuple:  # noqa: ANN001
+    """AA's first-owner invitation, claimed: (token, the invited person's caller)."""
+    keys, mailer, directory = _keys(), MemoryMailer(), MemoryDirectory(ISS)
+    await console.invite_first_owner(
+        app_pool, tenant_id, staff_sub=STAFF, owner_email=email, ticket_ref=ticket, keys=keys, mailer=mailer,
+        web_origin=ORIGIN, ttl_hours=168,
+    )  # fmt: skip
+    token = mailer.sent[0].text.split("/join?t=")[1].split()[0]
+    await invitations.claim(app_pool, keys, directory, token)
+    return token, _caller(directory.accounts[email]["sub"])
+
+
+async def test_the_first_owner_rule_is_checked_again_at_accept(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection
+) -> None:
+    """AA-941 review probe: owner + agent; AA disables the owner and invites a first owner (no travellers yet); the
+    agent then adds a traveller -> accepting the owner invitation answers 409 has_travellers, no membership is
+    written and the refusal is on record. On an agency still without owner and travellers the accept works."""
+    tenant_id, [(_, owner_id), _agent] = await _agency(app_pool, "owner", "agent")
+    await recovery.deactivate_member(app_pool, tenant_id, owner_id, staff_sub=STAFF, directory=None)
+    token, person = await _aa_owner_invite(app_pool, tenant_id, "new.owner@agency.example", "SUP-21")
+    async with app_pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        await conn.execute("SELECT set_config('app.actor', 'seed:test', true)")
+        await conn.execute("INSERT INTO crm.traveler (display_name_enc) VALUES ($1)", b"\x00\x01" + b"\x07" * 40)
+    before = await _members(admin, tenant_id)
+    with pytest.raises(Conflict) as exc:
+        await invitations.accept(app_pool, person, token)
+    assert exc.value.code == "has_travellers"
+    assert await _members(admin, tenant_id) == before
+    [denied] = [e for e in await _audit(admin, tenant_id) if e["action"] == "invitation_accept"]
+    assert denied["reason"] == "has_travellers"
+    [inv] = await _owner_fetch(admin, tenant_id, "SELECT status FROM crm.member_invitation")
+    assert inv["status"] == "claimed"
+    # Still a first owner: accepted.
+    empty, [(_, first_owner)] = await _agency(app_pool, "owner")
+    await recovery.deactivate_member(app_pool, empty, first_owner, staff_sub=STAFF, directory=None)
+    token, person = await _aa_owner_invite(app_pool, empty, "first.owner@agency.example", "SUP-22")
+    assert (await invitations.accept(app_pool, person, token))["member_role"] == "owner"
 
 
 async def test_lock_refuses_member_requests_until_the_unlock(app_pool: asyncpg.Pool, admin: asyncpg.Connection) -> None:

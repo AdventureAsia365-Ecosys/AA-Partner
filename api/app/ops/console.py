@@ -238,12 +238,13 @@ async def create_agency(
     default_locale: str,
     environment: str,
     staff_sub: str,
-    ticket_ref: str | None = None,
-) -> tuple[bool, dict[str, Any]]:
-    """Create (or converge) an agency without any member (S-01 "create agency"); the first owner is invited after.
-    The rules are :func:`app.agencies.provision_agency`'s (Dev: synthetic only; prod: real only). Returns
-    ``(created, summary)``."""
-    result = await agencies.provision_agency(
+    ticket_ref: str,
+) -> dict[str, Any]:
+    """Create an agency without any member (S-01 "create agency"); the first owner is invited after. The rules are
+    :func:`app.agencies.provision_agency`'s (Dev: synthetic only; prod: real only), create-only: an id that already
+    exists is 409 ``tenant_exists`` and nothing is written (never a silent rename, whatever the agency's status). The
+    ``agency_create`` event carries ``ticket:<REF>``. Returns the new agency's summary."""
+    await agencies.provision_agency(
         pool,
         agencies.AgencySpec(
             tenant_id=tenant_id, display_name=agency_name, default_locale=default_locale, is_synthetic=is_synthetic
@@ -252,9 +253,10 @@ async def create_agency(
         environment=environment,
         actor=platform_actor(staff_sub),
         audit_object_ids=ticket_ids(ticket_ref),
+        create_only=True,
     )
     async with platform_tx(pool, tenant_id, actor=platform_actor(staff_sub), statuses=TENANT_STATUSES) as ctx:
-        return result.created, await _read_summary(ctx)
+        return await _read_summary(ctx)
 
 
 async def _set_status(

@@ -56,6 +56,18 @@ MEMBER_INSERT_SQL = """
 INSERT INTO crm.member (cognito_iss, cognito_sub, role, status) VALUES ($1, $2, $3, 'active') RETURNING member_id
 """
 MEMBER_REACTIVATE_SQL = "UPDATE crm.member SET role = $2, status = 'active' WHERE member_id = $1"
+# AA-941 (design S-01 first-owner rule, re-checked at accept): an owner invitation AA's L1 console sent (invited_by
+# platform:*) only becomes a membership while the agency still has no active owner and holds no traveller (any
+# traveller row, trashed included, or any stored inquiry; the same rule as app.ops.console's invite check). Otherwise a
+# new person could become owner of client data without the Q1 6.3 owner recovery.
+PLATFORM_OWNER_RECHECK_SQL = """
+SELECT i.invited_by LIKE 'platform:%' AS by_platform,
+       EXISTS (SELECT 1 FROM crm.member m
+                WHERE m.role = 'owner' AND m.status = 'active' AND m.deleted_at IS NULL) AS has_owner,
+       (EXISTS (SELECT 1 FROM crm.traveler) OR EXISTS (SELECT 1 FROM crm.form_submission)) AS holds_travellers
+  FROM crm.member_invitation i
+ WHERE i.invitation_id = $1
+"""
 ACCEPT_SQL = """
 UPDATE crm.member_invitation SET status = 'accepted', accepted_at = now(), member_id = $2
  WHERE invitation_id = $1 AND status = 'claimed'
@@ -153,6 +165,21 @@ async def claim(pool: asyncpg.Pool, keys: KeyProvider, directory: PartnerDirecto
     return result
 
 
+async def _recheck_first_owner(ctx: SystemContext, invitation: Any) -> None:
+    """409 ``owner_exists`` / ``has_travellers`` when an AA-sent owner invitation no longer meets the first-owner rule
+    (a ``denied`` event goes on the agency audit; the invitation stays claimed and nothing else is written)."""
+    row = await ctx.conn.fetchrow(PLATFORM_OWNER_RECHECK_SQL, invitation.invitation_id)
+    if row is None or not row["by_platform"]:
+        return
+    code = "owner_exists" if row["has_owner"] else "has_travellers" if row["holds_travellers"] else None
+    if code is None:
+        return
+    ctx.audit("invitation_accept", "denied", "member_invitation", str(invitation.invitation_id), reason=code)
+    if code == "owner_exists":
+        raise Conflict(code, "the agency has an owner now; ask the owner for an invitation")
+    raise Conflict(code, "the agency holds client data now; a new owner comes only through an owner recovery")
+
+
 async def accept(pool: asyncpg.Pool, caller: Caller, token: str) -> dict[str, Any]:
     digest = token_hash_hex(token)
     result: dict[str, Any] | None = None
@@ -177,6 +204,8 @@ async def accept(pool: asyncpg.Pool, caller: Caller, token: str) -> dict[str, An
             existing = await ctx.conn.fetchrow(MEMBER_BY_IDENTITY_SQL, caller.iss, caller.sub)
             if existing is not None and existing["status"] == "active":
                 raise Conflict("already_member", "you already belong to this agency; the owner changes roles")
+            if invitation.role == "owner":
+                await _recheck_first_owner(ctx, invitation)
             try:
                 if existing is None:
                     member_id = await ctx.conn.fetchval(MEMBER_INSERT_SQL, caller.iss, caller.sub, invitation.role)

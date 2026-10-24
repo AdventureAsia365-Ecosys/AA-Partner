@@ -218,20 +218,23 @@ SCENARIOS: list[tuple[str, str, str, Any, Any, str, int, str | None]] = [
     ("GET", "/tenants", f"{PREFIX}/tenants?limit=10", None, None, "reader", 200, None),
     ("GET", "/tenants", f"{PREFIX}/tenants?limit=0", None, None, "reader", 422, "invalid_request"),
     ("POST", "/tenants", f"{PREFIX}/tenants",
-     {"tenant_id": str(TENANT), "agency_name": "Sen Vàng", "is_synthetic": True, "default_locale": "vi-VN"},
-     None, "admin", 201, None),
+     {"tenant_id": str(TENANT), "agency_name": "Sen Vàng", "is_synthetic": True, "default_locale": "vi-VN",
+      "ticket_ref": TICKET}, None, "admin", 201, None),
     ("POST", "/tenants", f"{PREFIX}/tenants",
-     {"tenant_id": str(TENANT), "agency_name": "Sen Vàng", "is_synthetic": False}, None, "admin", 422,
-     "synthetic_required"),
+     {"tenant_id": str(TENANT), "agency_name": "Sen Vàng", "is_synthetic": True}, None, "admin", 422,
+     "invalid_request"),
+    ("POST", "/tenants", f"{PREFIX}/tenants",
+     {"tenant_id": str(TENANT), "agency_name": "Sen Vàng", "is_synthetic": False, "ticket_ref": TICKET}, None,
+     "admin", 422, "synthetic_required"),
     ("POST", "/tenants", f"{PREFIX}/tenants",
      {"tenant_id": str(TENANT), "agency_name": "Sen Vàng", "is_synthetic": True}, None, "reader", 403,
      "missing_group"),
     ("POST", "/tenants", f"{PREFIX}/tenants",
-     {"tenant_id": str(TENANT), "agency_name": "Sen Vàng", "is_synthetic": True},
+     {"tenant_id": str(TENANT), "agency_name": "Other Name", "is_synthetic": True, "ticket_ref": TICKET},
      lambda c: (c.on("INSERT INTO crm.tenant (tenant_id", None),
                 c.on("SELECT display_name, default_locale, is_synthetic FROM crm.tenant",
                      {"display_name": "Sen Vàng", "default_locale": "en-AU", "is_synthetic": True})),
-     "admin", 200, None),
+     "admin", 409, "tenant_exists"),
     ("GET", "/tenants/{tenant_id}", T, None, None, "reader", 200, None),
     ("GET", "/tenants/{tenant_id}", T, None, lambda c: c.on(
         "SELECT status FROM crm.tenant WHERE tenant_id = $1 AND deleted_at IS NULL", None), "reader", 404,
@@ -319,8 +322,9 @@ def test_every_ops_route_answers_inside_the_allow_list(ops_app: Any, pools: Loca
             assert data["detail"] == detail and set(data) <= {"detail", "message", "fields", "state", "member_limit"}
         if status < 300 and method != "GET":
             events = [args for args in conn.sql("INSERT INTO crm.audit_event")]
-            if (route, status) != ("/tenants", 200):  # a converge that changes nothing writes nothing
-                assert events and all(e[0] == "aa_ops" for e in events), label  # every write is on record
+            assert events and all(e[0] == "aa_ops" for e in events), label  # every write is on record
+        if status >= 400 and method != "GET":
+            assert not conn.sql("UPDATE crm.tenant SET display_name"), label  # a refused write renames nothing
         if status == 200 and method == "GET" and "/tenants/" in path:
             actions = [args[2] for args in conn.sql("INSERT INTO crm.audit_event")]
             assert actions and set(actions) <= {"ops_read", "list_view"}, label  # every agency read is on record

@@ -835,7 +835,10 @@ def test_data_request_states() -> None:
         (row(status="failed", owner_accepted_at=NOW), "agency_deletion", "failed"),
         (row(status="erased", owner_accepted_at=NOW), "agency_deletion", "done"),
         (row(purpose="export_only", owner_accepted_at=NOW, status="export_ready"), "agency_export", "confirmed"),
+        # Downloaded but not closed: still the open request (OPEN_SQL), so not "done" (AA-941 review).
         (row(purpose="export_only", owner_accepted_at=NOW, status="export_ready", export_downloaded_at=NOW),
+         "agency_export", "export_downloaded"),
+        (row(purpose="export_only", owner_accepted_at=NOW, status="cancelled", export_downloaded_at=NOW),
          "agency_export", "done"),
     ]  # fmt: skip
     for r, kind, state in cases:

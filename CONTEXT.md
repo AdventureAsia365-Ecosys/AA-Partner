@@ -490,7 +490,7 @@ operations in `app/ops/console.py`):
   CRM-17), `/entitlements`, `/data-requests`, `/jobs` (failed per-agency jobs of 7 days, no payload), `/members`.
   Each agency read writes one `ops_read` event (reason list / summary / usage / ...) in that agency's audit.
 - **Writes** (`crm-platform-admin`, ticket reference `^[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,10}$` as the audit object id
-  `ticket:<REF>`): create agency (`app.agencies.provision_agency`, no member; 201 / 200 converged), lock / unlock
+  `ticket:<REF>`): create agency (`app.agencies.provision_agency` create-only, no member; 201, an existing id 409 `tenant_exists` with nothing written), lock / unlock
   (active <-> locked; a no-op writes nothing), first-owner invite (409 `owner_exists` / `owner_invite_pending` /
   `has_travellers` (any traveller row incl. trashed, or any stored inquiry) / `member_limit_reached`; the shared
   `team.create_invitation`; the address never stored in clear, logged or returned), allowed features (the six crm-008

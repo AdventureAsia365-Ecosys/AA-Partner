@@ -212,7 +212,7 @@ async def test_summary_usage_entitlements_requests_and_jobs_are_audited_reads(mo
 
 # ── Create agency ────────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
-async def test_create_agency_created_converged_and_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_create_agency_created_and_refused(monkeypatch: pytest.MonkeyPatch) -> None:
     conn = agency_conn()
     conn.on("INSERT INTO crm.tenant (tenant_id", TENANT)
     ctx = ProvisioningContext(conn=conn, tenant_id=TENANT, actor="platform:staff-1")  # type: ignore[arg-type]
@@ -223,27 +223,45 @@ async def test_create_agency_created_converged_and_refused(monkeypatch: pytest.M
 
     monkeypatch.setattr(agencies, "provisioning_tx", fake_provisioning)
     kwargs: dict[str, Any] = dict(
-        tenant_id=TENANT, agency_name=" Sen  Vàng ", is_synthetic=True, default_locale="vi-VN", environment="dev"
-    )
-    created, summary = await console.create_agency(conn, staff_sub=STAFF, ticket_ref="AA-941", **kwargs)  # type: ignore[arg-type]
-    assert created is True and summary["tenant_id"] == str(TENANT)
+        tenant_id=TENANT, agency_name=" Sen  Vàng ", is_synthetic=True, default_locale="vi-VN", environment="dev",
+        ticket_ref="AA-941",
+    )  # fmt: skip
+    summary = await console.create_agency(conn, staff_sub=STAFF, **kwargs)  # type: ignore[arg-type]
+    assert summary["tenant_id"] == str(TENANT)
     assert conn.sql("INSERT INTO crm.tenant (tenant_id")[0][1:] == ("Sen Vàng", "vi-VN", True)
     event = ctx.audit_events[0]
     assert (event.action, event.actor_kind, event.object_ids) == ("agency_create", "aa_ops", ("ticket:AA-941",))
     assert not conn.sql("INSERT INTO crm.member")  # no member is created here
-    conn.on("INSERT INTO crm.tenant (tenant_id", None)
-    conn.on("SELECT display_name, default_locale, is_synthetic FROM crm.tenant", {
-        "display_name": "Sen Vàng", "default_locale": "vi-VN", "is_synthetic": True})  # fmt: skip
-    created, _ = await console.create_agency(conn, staff_sub=STAFF, **kwargs)  # type: ignore[arg-type]
-    assert created is False
     with raises(Invalid, "synthetic_required"):
         await console.create_agency(conn, staff_sub=STAFF, **{**kwargs, "is_synthetic": False})  # type: ignore[arg-type]
     with raises(Invalid, "invalid_locale"):
         await console.create_agency(conn, staff_sub=STAFF, **{**kwargs, "default_locale": "fr-FR"})  # type: ignore[arg-type]
-    conn.on("SELECT display_name, default_locale, is_synthetic FROM crm.tenant", {
-        "display_name": "Sen Vàng", "default_locale": "vi-VN", "is_synthetic": False})  # fmt: skip
-    with raises(Conflict, "synthetic_flag_mismatch"):
-        await console.create_agency(conn, staff_sub=STAFF, **kwargs)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_create_agency_refuses_an_existing_id_and_writes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AA-941 review: the L1 create on an existing id (any status) is 409 tenant_exists; it never renames the agency
+    (no TENANT_UPDATE, no member write, no audit event), unlike the seeder's converge."""
+    for status in ("active", "locked", "offboarding", "offboarded"):
+        conn = agency_conn(status)
+        conn.on("INSERT INTO crm.tenant (tenant_id", None)  # ON CONFLICT DO NOTHING: the id exists
+        conn.on("SELECT display_name, default_locale, is_synthetic FROM crm.tenant", {
+            "display_name": "Alpha Travel", "default_locale": "en-AU", "is_synthetic": True})  # fmt: skip
+        ctx = ProvisioningContext(conn=conn, tenant_id=TENANT, actor="platform:staff-1")  # type: ignore[arg-type]
+
+        @asynccontextmanager
+        async def fake_provisioning(*_: Any, _ctx: ProvisioningContext = ctx, **__: Any):  # noqa: ANN202
+            yield _ctx
+
+        monkeypatch.setattr(agencies, "provisioning_tx", fake_provisioning)
+        with raises(Conflict, "tenant_exists"):
+            await console.create_agency(
+                conn, staff_sub=STAFF, tenant_id=TENANT, agency_name="Totally Different Name", is_synthetic=True,
+                default_locale="vi-VN", environment="dev", ticket_ref="SUP-9",
+            )  # type: ignore[arg-type]  # fmt: skip
+        assert not conn.sql("UPDATE crm.tenant SET display_name"), status
+        assert not conn.sql("SELECT display_name, default_locale, is_synthetic FROM crm.tenant"), status
+        assert ctx.audit_events == [] and not audits(conn), status
 
 
 # ── Lock / unlock ────────────────────────────────────────────────────────────────────────────────

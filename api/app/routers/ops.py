@@ -14,7 +14,7 @@ AA-941 (card CRM-13a, design S-01), :mod:`app.ops.console`:
 =====  ==========================================  =============================================================
 GET    ``/console``                                ``{can_write}``: the caller is in ``crm-platform-admin``
 GET    ``/tenants?cursor=&limit=``                 agency list (TenantSummary page)
-POST   ``/tenants``                                create agency (201 created, 200 converged); no member
+POST   ``/tenants``                                create agency (201; an existing id is 409 tenant_exists); no member
 GET    ``/tenants/{id}``                           one TenantSummary
 GET    ``/tenants/{id}/usage``                     usage meters
 POST   ``/tenants/{id}/lock`` / ``unlock``         lock / unlock (ticket, lock reason)
@@ -35,7 +35,7 @@ import uuid
 from datetime import UTC, date, datetime
 from typing import Annotated, Literal
 
-from fastapi import Depends, HTTPException, Query, Request, Response
+from fastapi import Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth.identity_config import GROUP_CRM_PLATFORM_ADMIN, OPS
@@ -128,7 +128,9 @@ class DataRequest(_Out):
     request_id: str
     tenant_id: str
     kind: Literal["agency_export", "agency_deletion"]
-    status: Literal["awaiting_owner_confirmation", "confirmed", "rejected", "cancelled", "failed", "done"]
+    status: Literal[
+        "awaiting_owner_confirmation", "confirmed", "export_downloaded", "rejected", "cancelled", "failed", "done"
+    ]
     raised_at: str
 
 
@@ -233,7 +235,7 @@ class TenantCreate(_In):
     agency_name: str = Field(min_length=1, max_length=200)
     is_synthetic: bool
     default_locale: Literal["en-AU", "en-GB", "en-US", "vi-VN"] = "en-AU"
-    ticket_ref: TicketRef | None = None
+    ticket_ref: TicketRef
 
 
 class LockIn(_In):
@@ -314,9 +316,9 @@ async def list_tenants(
 
 
 @router.post("/tenants", response_model=TenantSummary, status_code=201)
-async def create_tenant(request: Request, response: Response, body: TenantCreate, caller: PlatformAdmin) -> dict:
+async def create_tenant(request: Request, body: TenantCreate, caller: PlatformAdmin) -> dict:
     pool = await request_pool(request)
-    created, summary = await console.create_agency(
+    return await console.create_agency(
         pool,
         tenant_id=body.tenant_id,
         agency_name=body.agency_name,
@@ -326,9 +328,6 @@ async def create_tenant(request: Request, response: Response, body: TenantCreate
         staff_sub=caller.sub,
         ticket_ref=body.ticket_ref,
     )
-    if not created:
-        response.status_code = 200  # converged: the agency already existed (label / locale brought to the request)
-    return summary
 
 
 @router.get("/tenants/{tenant_id}", response_model=TenantSummary)
