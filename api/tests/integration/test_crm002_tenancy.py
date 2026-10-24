@@ -41,6 +41,7 @@ PLATFORM_TABLES = {
     "job": "ADR 0003a job table template (crm-001); ids-only payloads, no tenant rows",
     "status_transition": "reference data for the status trigger (crm-002), no tenant column",
     "llm_usage_daily": "LLM usage rollup over every agency (crm-005), no tenant column, no PII",
+    "audit_export_tenant": "audit export registry, one row per agency, ids and times only (crm-007, AA-940)",
 }
 # Append-only tenant tables (crm-003): tenant column, RLS and policy as the template, but no updated_at, no trash
 # columns; instead the append-only trigger, and crm_app may only INSERT and SELECT.
@@ -49,6 +50,7 @@ APPEND_ONLY_TABLES = {
     "consent": "consent evidence, DM-6.5 (crm-005, AA-936)",
     "trip_stage_history": "every stage move of a trip (crm-005, AA-936)",
     "llm_call": "LLM gateway call log, no text (crm-005, AA-936)",
+    "audit_export_manifest": "the hourly audit export hash chain (crm-007, AA-940)",
 }
 APPEND_ONLY_COLUMNS = {
     "tenant_id": ("uuid", True),
@@ -95,7 +97,8 @@ async def two_agencies(app_pool: asyncpg.Pool) -> AsyncIterator[tuple[tuple[uuid
 async def test_every_crm_table_follows_the_base_template(admin: asyncpg.Connection) -> None:
     tables = await admin.fetch(
         "SELECT c.oid, c.relname, c.relrowsecurity, c.relforcerowsecurity FROM pg_class c "
-        "WHERE c.relnamespace = 'crm'::regnamespace AND c.relkind IN ('r', 'p') ORDER BY c.relname"
+        "WHERE c.relnamespace = 'crm'::regnamespace AND c.relkind IN ('r', 'p') AND NOT c.relispartition "
+        "ORDER BY c.relname"
     )
     names = {t["relname"] for t in tables}
     assert {"tenant", "member"} <= names and set(PLATFORM_TABLES) <= names
@@ -166,6 +169,42 @@ async def test_every_crm_table_follows_the_base_template(admin: asyncpg.Connecti
         )
         if trash != 1:
             problems.append(f"{name}: {name}_trash_chk")
+    assert problems == []
+
+
+async def test_every_partition_is_reached_through_its_parent(admin: asyncpg.Connection) -> None:
+    """AA-940 (crm-007): a partition (crm.audit_event's months) is skipped above and checked here instead: ENABLE +
+    FORCE RLS with the tenant policy to the CRM roles, no crm_app privilege (the parent's grants and policy are what a
+    query through the parent uses), both append-only triggers."""
+    parts = await admin.fetch(
+        "SELECT c.oid, c.relname, c.relrowsecurity, c.relforcerowsecurity, i.inhparent::regclass::text AS parent "
+        "FROM pg_class c JOIN pg_inherits i ON i.inhrelid = c.oid "
+        "WHERE c.relnamespace = 'crm'::regnamespace AND c.relispartition AND c.relkind = 'r' ORDER BY c.relname"
+    )
+    assert {p["parent"] for p in parts} == {"crm.audit_event"}
+    assert len(parts) >= 3
+    problems = []
+    for p in parts:
+        name = p["relname"]
+        if not (p["relrowsecurity"] and p["relforcerowsecurity"]):
+            problems.append(f"{name}: ENABLE + FORCE row level security")
+        roles = await admin.fetchval(
+            "SELECT ARRAY(SELECT r::regrole::text FROM unnest(polroles) r) FROM pg_policy "
+            "WHERE polrelid = $1 AND polname = 'tenant_isolation'",
+            p["oid"],
+        )
+        if roles is None or set(roles) != POLICY_ROLES:
+            problems.append(f"{name}: tenant_isolation TO the CRM roles")
+        for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE"):
+            if await admin.fetchval("SELECT has_table_privilege($1, $2::oid, $3)", APP_ROLE, p["oid"], privilege):
+                problems.append(f"{name}: crm_app may {privilege} a partition")
+        triggers = await admin.fetchval(
+            "SELECT count(*) FROM pg_trigger g JOIN pg_proc f ON f.oid = g.tgfoid "
+            "WHERE g.tgrelid = $1 AND NOT g.tgisinternal AND f.proname = 'reject_append_only_change'",
+            p["oid"],
+        )
+        if triggers != 2:
+            problems.append(f"{name}: append-only row + TRUNCATE triggers")
     assert problems == []
 
 
