@@ -219,23 +219,30 @@ def test_ops_recovery_routes_need_the_platform_admin_group_for_writes(
 ) -> None:
     client, _ = app_client
     seen: list[tuple[str, dict[str, Any]]] = []
+    answers: dict[str, dict[str, Any]] = {
+        "members": {"members": [], "active_owners": 0, "recovery": None},
+        "deactivate_member": {"member_id": ID, "status": "disabled", "signed_out": False, "active_owners": 0},
+        "open_request": {"request_id": ID, "status": "pending", "eligible_at": None, "owners_notified": 0},
+        "complete_request": {"request_id": ID, "status": "completed", "owner_member_id": ID},
+    }
 
     def stub(name: str) -> Any:
         async def call(*args: Any, **kwargs: Any) -> dict[str, Any]:
             seen.append((name, kwargs))
-            return {"ok": name}
+            return answers[name]
 
         return call
 
-    for name in ("members", "deactivate_member", "open_request", "complete_request"):
+    for name in answers:
         monkeypatch.setattr(recovery_service, name, stub(name))
     reader = {"Authorization": f"Bearer {pools.cis_admin()}"}
     admin = {"Authorization": f"Bearer {pools.cis_admin(['cis-admin', 'crm-platform-admin'])}"}
     base = f"/crm/ops/v1/tenants/{TENANT}"
-    assert client.get(f"{base}/members", headers=reader).json() == {"ok": "members"}
+    assert client.get(f"{base}/members", headers=reader).json() == answers["members"]
+    open_body = {"candidate_member_id": ID, "reason": "owner_left", "ticket_ref": "SUP-12"}
     writes = (
         (f"{base}/members/{ID}/deactivate", None),
-        (f"{base}/owner-recovery", {"candidate_member_id": ID, "reason": "owner_left"}),
+        (f"{base}/owner-recovery", open_body),
         (f"{base}/owner-recovery/{ID}/complete", None),
     )
     for path, body in writes:
@@ -243,12 +250,11 @@ def test_ops_recovery_routes_need_the_platform_admin_group_for_writes(
         assert client.post(path, headers=admin, json=body).status_code in (200, 201)
     assert [n for n, _ in seen] == ["members", "deactivate_member", "open_request", "complete_request"]
     assert seen[2][1]["reason"] == "owner_left" and seen[2][1]["web_origin"] == "https://partner.local.test"
-    assert (
-        client.post(
-            f"{base}/owner-recovery", headers=admin, json={"candidate_member_id": ID, "reason": "x"}
-        ).status_code
-        == 422
-    )
+    assert seen[2][1]["ticket_ref"] == "SUP-12" and seen[1][1]["ticket_ref"] is None
+    # AA-941: the ticket is required on the recovery open, and a bad body answers with field names only.
+    for bad in ({**open_body, "reason": "x"}, {k: v for k, v in open_body.items() if k != "ticket_ref"}):
+        r = client.post(f"{base}/owner-recovery", headers=admin, json=bad)
+        assert r.status_code == 422 and r.json()["detail"] == "invalid_request"
     # A partner token never reaches the ops class.
     assert client.get(f"{base}/members", headers={"Authorization": f"Bearer {pools.partner_web()}"}).status_code == 403
 

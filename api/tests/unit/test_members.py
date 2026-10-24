@@ -902,6 +902,59 @@ async def test_system_and_platform_contexts_take_their_own_actors_only() -> None
 
 
 @pytest.mark.asyncio
+async def test_platform_tx_takes_the_statuses_the_call_may_meet() -> None:
+    """AA-941: default active only; a missing agency is 404 tenant_not_found, a refused status 409."""
+    for status, cls, code in ((None, NotFound, "tenant_not_found"), ("locked", Conflict, "tenant_locked"),
+                              ("offboarding", Conflict, "tenant_status")):  # fmt: skip
+        conn = ScriptedConn().on("FROM crm.tenant", status)
+        with raises(cls, code):
+            async with tenancy.platform_tx(conn, TENANT, actor="platform:staff"):  # type: ignore[arg-type]
+                pass
+        assert not conn.sql("'app.actor'")
+    conn = ScriptedConn().on("FROM crm.tenant", "offboarded")
+    async with tenancy.platform_tx(conn, TENANT, actor="platform:s", statuses=tenancy.TENANT_STATUSES) as ctx:  # type: ignore[arg-type]
+        assert ctx.status == "offboarded"
+    for bad in (frozenset(), frozenset({"trashed"})):
+        with pytest.raises(ValueError, match="statuses"):
+            async with tenancy.platform_tx(conn, TENANT, actor="platform:s", statuses=bad):  # type: ignore[arg-type]
+                pass
+    # A job's context keeps its 403 answers.
+    with raises(Forbidden, "tenant_locked"):
+        async with tenancy.system_tx(ScriptedConn().on("FROM crm.tenant", "locked"), TENANT, actor="job:x"):  # type: ignore[arg-type]
+            pass
+    with raises(Forbidden, "not_a_member"):
+        async with tenancy.system_tx(ScriptedConn(), TENANT, actor="job:x"):  # type: ignore[arg-type]
+            pass
+
+
+@pytest.mark.asyncio
+async def test_recovery_writes_carry_the_l1_ticket(monkeypatch: pytest.MonkeyPatch) -> None:
+    conn = ScriptedConn()
+    conn.on("FROM crm.member WHERE member_id = $1", {**_member(), "member_id": OTHER_MEMBER})
+    conn.on("INSERT INTO crm.owner_recovery_request", {"request_id": REQ, "eligible_at": NOW + dt.timedelta(days=14)})
+    ctx = _platform(conn)
+    monkeypatch.setattr(recovery, "platform_tx", fake_tx(ctx))
+    await recovery.open_request(
+        conn,  # type: ignore[arg-type]
+        TENANT,
+        candidate_member_id=OTHER_MEMBER,
+        reason="no_owner",
+        staff_sub="staff-1",
+        directory=None,
+        mailer=None,
+        web_origin="https://x.test",
+        ticket_ref="SUP-3",
+    )
+    assert ctx.audit_events[-1].object_ids == ("ticket:SUP-3",)
+    disable = ScriptedConn().on("FROM crm.member WHERE member_id = $1", _member())
+    dctx = _platform(disable)
+    monkeypatch.setattr(recovery, "platform_tx", fake_tx(dctx))
+    await recovery.deactivate_member(disable, TENANT, OTHER_MEMBER, staff_sub="s", directory=None, ticket_ref="SUP-4")  # type: ignore[arg-type]
+    assert dctx.audit_events[-1].object_ids == ("ticket:SUP-4",)
+    assert recovery.ticket_ids(None) == ()
+
+
+@pytest.mark.asyncio
 async def test_invitation_tx_commits_denials_and_reraises() -> None:
     digest = hashlib.sha256(TOKEN.encode()).hexdigest()
     conn = ScriptedConn()

@@ -7,5 +7,5 @@
 - :mod:`app.members.recovery`: owner recovery (Q1 6.3) for members (banner, cancel) and for the platform (open,
   complete, deactivate a member), the platform side inside ``platform_tx()`` (actor ``platform:<staff sub>``).
 - :mod:`app.members.directory`: the partner pool admin calls the API may make (root ADR 0006b decision 5 allow-list).
-- :mod:`app.members.mail`: AA system mail for invitations and recovery notices (SES).
+- :mod:`app.members.mail`: AA system mail for invitations, recovery notices and AA data request notices (SES).
 """

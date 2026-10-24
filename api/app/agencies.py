@@ -1,7 +1,7 @@
 """Agency provisioning: the rules for creating a CRM agency (``crm.tenant``) and its first members (AA-935, CRM-07).
 
-Used by the Dev seeder (``app.seed``) now and by the L1 console's "create agency" (``/crm/ops/v1``, CRM-13a / AA-944)
-later, so both refuse the same things the same way:
+Used by the Dev seeder (``app.seed``) and by the L1 console's "create agency" (``POST /crm/ops/v1/tenants``, CRM-13a /
+AA-941, through ``app.ops.console``), so both refuse the same things the same way:
 
 - **Dev holds synthetic agencies only** (ADR 0010 decision 3; card CRM-07 R test): on ``dev`` / ``test`` / ``local`` an
   agency with ``is_synthetic = false`` is refused with **422** ``synthetic_required``. On ``prod`` a synthetic agency is
@@ -135,8 +135,10 @@ async def provision_agency(
     *,
     environment: str,
     actor: str,
+    audit_object_ids: tuple[str, ...] = (),
 ) -> ProvisionResult:
-    """Create (or converge) one agency and its members in one transaction. Validation happens before any SQL."""
+    """Create (or converge) one agency and its members in one transaction. Validation happens before any SQL.
+    ``audit_object_ids`` go on the ``agency_create`` event (AA-941: the L1 console's ``ticket:<REF>``)."""
     agency = validate_agency(spec, environment)
     people = tuple(validate_member(m) for m in members)
     created = updated = False
@@ -147,7 +149,7 @@ async def provision_agency(
         )
         if inserted is not None:
             created = True
-            ctx.audit("agency_create", "agency", str(agency.tenant_id))
+            ctx.audit("agency_create", "agency", str(agency.tenant_id), object_ids=audit_object_ids)
         else:
             current = await ctx.conn.fetchrow(TENANT_CURRENT_SQL, agency.tenant_id)
             if current is None:  # trashed by someone else between the two statements, or invisible: never guess

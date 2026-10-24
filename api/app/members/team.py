@@ -34,7 +34,7 @@ from app.errors import Conflict, Invalid, NotFound
 from app.members.directory import PartnerDirectory
 from app.members.mail import Mailer, invitation_message
 from app.permissions import Action, require
-from app.tenancy import TenantContext
+from app.tenancy import AnyContext, TenantContext
 from app.vault import Vault
 
 log = logging.getLogger(__name__)
@@ -157,6 +157,11 @@ def new_token() -> tuple[str, bytes]:
 
 async def plan(ctx: TenantContext) -> dict[str, Any]:
     require(ctx, Action.PLAN_VIEW)
+    return await plan_of(ctx)
+
+
+async def plan_of(ctx: AnyContext) -> dict[str, Any]:
+    """The agency's plan and seats used, in any context (the owner's plan page, the L1 first-owner invite)."""
     row = await ctx.conn.fetchrow(PLAN_SQL)
     current = (
         dict(DEFAULT_PLAN)
@@ -232,9 +237,36 @@ async def invite(
     if role not in MEMBER_ROLES:
         raise Invalid("invalid_role", "owner, agent or assistant")
     address = normalise_email(email)
-    # Serialise invites per agency (until this transaction ends), so two at once cannot both take the last seat.
+    await lock_seats(ctx)
+    return await create_invitation(
+        ctx, vault, mailer, address=address, role=role, web_origin=web_origin, ttl_hours=ttl_hours
+    )
+
+
+async def lock_seats(ctx: AnyContext) -> None:
+    """Serialise invites per agency (until this transaction ends), so two at once cannot both take the last seat."""
     await ctx.conn.execute(SEATS_LOCK_SQL, str(ctx.tenant_id))
-    current = await plan(ctx)
+
+
+async def create_invitation(
+    ctx: AnyContext,
+    vault: Vault,
+    mailer: Mailer,
+    *,
+    address: str,
+    role: str,
+    web_origin: str,
+    ttl_hours: int,
+    object_ids: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """One invitation in the open context (the owner's Team page, or the L1 console's first-owner invite, AA-941): the
+    plan's seat limit, one live invitation per address, the address encrypted with its blind index, the token's hash,
+    one ``invite`` audit event (``object_ids`` e.g. the L1 ticket), then the AA system mail inside the transaction (a
+    mail failure rolls the invitation back). The caller has checked the permission, normalised ``address`` and taken
+    :func:`lock_seats`. The address is never logged, never stored in clear."""
+    if role not in MEMBER_ROLES:
+        raise Invalid("invalid_role", "owner, agent or assistant")
+    current = await plan_of(ctx)
     if current["seats_used"] >= current["member_limit"]:
         raise Conflict(
             "member_limit_reached", "the plan's member limit is reached", member_limit=current["member_limit"]
@@ -251,7 +283,15 @@ async def invite(
         )
     except asyncpg.UniqueViolationError:
         raise Conflict("invitation_exists", "this address already has a pending invitation") from None
-    ctx.audit("invite", "allowed", "member_invitation", str(invitation_id), fields=("role",), reason=f"role_{role}")
+    ctx.audit(
+        "invite",
+        "allowed",
+        "member_invitation",
+        str(invitation_id),
+        fields=("role",),
+        reason=f"role_{role}",
+        object_ids=object_ids,
+    )
     agency = await ctx.conn.fetchval(TENANT_LABEL_SQL, ctx.tenant_id) or "AA Partner"
     # Sent inside the transaction: a mail failure rolls the invitation back (no row without a mail).
     await mailer.send(

@@ -57,11 +57,37 @@ DB_MODULES = frozenset(
 # Dev seeder. Never a router: /crm/v1 request code reaches tenant data through tenant_tx() only.
 PROVISIONING_MODULES = frozenset({"app/agencies.py", "app/seed/__init__.py"})
 # AA-939: AA staff in one agency (actor platform:<staff sub>; may remove the last owner, complete a recovery).
-PLATFORM_MODULES = frozenset({"app/members/recovery.py"})
-# ... and the only module that calls the platform side of app.members.recovery: the /crm/ops/v1 router, whose write
-# routes require the WORKFORCE group crm-platform-admin.
+# AA-941: the L1 console's agency operations (app/ops/console.py) open it too.
+PLATFORM_MODULES = frozenset({"app/members/recovery.py", "app/ops/console.py"})
+# ... and the only module that calls the platform side of app.members.recovery and app.ops.console: the /crm/ops/v1
+# router, whose write routes require the WORKFORCE group crm-platform-admin.
 PLATFORM_CALLERS = frozenset({"app/routers/ops.py"})
-PLATFORM_FUNCTIONS = ("open_request", "complete_request", "deactivate_member")
+PLATFORM_FUNCTIONS = (
+    "open_request",
+    "complete_request",
+    "deactivate_member",
+    # AA-941 (app.ops.console)
+    "list_agencies",
+    "agency_summary",
+    "agency_usage",
+    "agency_entitlements",
+    "agency_data_requests",
+    "agency_failed_jobs",
+    "create_agency",
+    "lock_agency",
+    "unlock_agency",
+    "invite_first_owner",
+    "allow_features",
+    "set_insights_opt_out",
+    "raise_data_request",
+    "retry_agency_job",
+)
+# AA-941: helpers a platform context hands its context to, each called only from its own module and the console.
+PLATFORM_HELPERS = {
+    "raise_request": frozenset({"app/lifecycle/offboarding.py", "app/ops/console.py"}),
+    "create_invitation": frozenset({"app/members/team.py", "app/ops/console.py"}),
+    "retry_failed": frozenset({"app/jobs/queue.py", "app/ops/console.py"}),
+}
 # AA-936: the job context in one agency (no member) and the public intake form's context (AA-942: the dispatcher).
 SYSTEM_MODULES = frozenset({"app/intake/process.py", "app/seed/__init__.py", "app/dispatch/worker.py"})
 INTAKE_MODULES = frozenset({"app/intake/public.py"})
@@ -281,12 +307,20 @@ def test_system_tx_is_used_only_by_the_job_modules() -> None:
     assert _users_of("system_tx", SYSTEM_MODULES) == []
 
 
-def test_platform_tx_is_used_only_by_the_recovery_module() -> None:
+def test_platform_tx_is_used_only_by_the_recovery_and_console_modules() -> None:
     assert _users_of("platform_tx", PLATFORM_MODULES) == []
 
 
+def test_the_platform_helpers_are_called_only_by_their_module_and_the_console() -> None:
+    """AA-941: raising an AA data request, the shared invitation writer and the job retry run with whatever context
+    they are handed; only the console hands them a platform one."""
+    for name, allowed in PLATFORM_HELPERS.items():
+        assert _users_of(name, allowed) == [], name
+
+
 def test_the_platform_side_of_recovery_is_called_only_by_the_ops_router() -> None:
-    """AA-939 review: a platform: actor bypasses CRM01 / CRM04, so no job, seeder or /crm/v1 module reaches it."""
+    """AA-939 review: a platform: actor bypasses CRM01 / CRM04, so no job, seeder or /crm/v1 module reaches it
+    (AA-941: the console's operations too)."""
     users = []
     for name in PLATFORM_FUNCTIONS:
         for found in _users_of(name, PLATFORM_CALLERS | PLATFORM_MODULES):

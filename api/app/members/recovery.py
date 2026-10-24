@@ -21,6 +21,11 @@ audit):
   inside the agency nobody can grant the owner role (matrix ``team_manage`` is owner-only, and the database refuses a
   membership write by anyone but an owner).
 
+AA-941: the L1 console's ticket reference goes on each platform write as the audit object id ``ticket:<REF>``
+(:func:`ticket_ids`); :func:`mail_owners` is the best-effort AA system mail to the agency's owners that the console's
+data requests use too. :func:`members` reads an agency in any status; the writes need an active one (409
+``tenant_locked`` / ``tenant_status`` from :func:`app.tenancy.platform_tx`).
+
 Ids and codes only; no name or e-mail is stored or returned.
 """
 
@@ -28,15 +33,16 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import asyncpg
 
 from app.errors import Conflict, Invalid, NotFound
 from app.members.directory import PartnerDirectory
-from app.members.mail import Mailer, recovery_message
+from app.members.mail import Mailer, Message, recovery_message
 from app.permissions import Action, require
-from app.tenancy import SystemContext, TenantContext, platform_tx
+from app.tenancy import TENANT_STATUSES, SystemContext, TenantContext, platform_tx
 
 log = logging.getLogger(__name__)
 
@@ -129,9 +135,41 @@ async def _active_member(ctx: SystemContext, member_id: uuid.UUID) -> asyncpg.Re
     return row
 
 
+async def mail_owners(
+    owners: Sequence[asyncpg.Record | dict[str, Any]],
+    directory: PartnerDirectory | None,
+    mailer: Mailer | None,
+    build: Callable[[str], Message],
+    *,
+    tenant_id: uuid.UUID,
+    tag: str,
+) -> int:
+    """AA system mail to the agency's active owners of the partner pool, best effort (after the commit): a failure is
+    logged by class only and never undoes the platform action. Returns how many mails went out."""
+    notified = 0
+    if directory is None or mailer is None:
+        return notified
+    for owner in owners:
+        if owner["cognito_iss"] != directory.issuer:
+            continue
+        try:
+            email = await directory.email_for(owner["cognito_sub"])
+            if email:
+                await mailer.send(build(email))
+                notified += 1
+        except Exception as exc:  # noqa: BLE001 — the action stands; the agency sees it in the CRM anyway
+            log.warning("crm_%s_failed tenant=%s error=%s", tag, tenant_id, type(exc).__name__)
+    return notified
+
+
+def ticket_ids(ticket_ref: str | None) -> tuple[str, ...]:
+    """AA-941: the L1 ticket reference as an audit object id (``ticket:<REF>``; the route validated the pattern)."""
+    return (f"ticket:{ticket_ref}",) if ticket_ref else ()
+
+
 async def members(pool: asyncpg.Pool, tenant_id: uuid.UUID, *, staff_sub: str) -> dict[str, Any]:
-    """Ids, roles and statuses (the L1 console picks a recovery candidate; no identity data)."""
-    async with platform_tx(pool, tenant_id, actor=platform_actor(staff_sub)) as ctx:
+    """Ids, roles and statuses (the L1 console picks a recovery candidate; no identity data). Any agency status."""
+    async with platform_tx(pool, tenant_id, actor=platform_actor(staff_sub), statuses=TENANT_STATUSES) as ctx:
         rows = await ctx.conn.fetch(MEMBERS_SQL)
         pending = await ctx.conn.fetchrow(PENDING_SQL)
         ctx.audit("list_view", "allowed", "member", object_ids=tuple(str(r["member_id"]) for r in rows)[:200])
@@ -162,6 +200,7 @@ async def open_request(
     directory: PartnerDirectory | None,
     mailer: Mailer | None,
     web_origin: str,
+    ticket_ref: str | None = None,
 ) -> dict[str, Any]:
     if reason not in REASONS:
         raise Invalid("invalid_reason", "owner_left, owner_unreachable or no_owner")
@@ -173,23 +212,24 @@ async def open_request(
             row = await ctx.conn.fetchrow(OPEN_SQL, candidate_member_id, reason, RECOVERY_DAYS)
         except asyncpg.UniqueViolationError:
             raise Conflict("recovery_pending", "this agency already has a pending owner recovery") from None
-        ctx.audit("recovery_open", "allowed", "owner_recovery_request", str(row["request_id"]), reason=reason)
+        ctx.audit(
+            "recovery_open",
+            "allowed",
+            "owner_recovery_request",
+            str(row["request_id"]),
+            reason=reason,
+            object_ids=ticket_ids(ticket_ref),
+        )
         owners = await ctx.conn.fetch(OWNERS_SQL)
         agency = await ctx.conn.fetchval(TENANT_LABEL_SQL, tenant_id) or "AA Partner"
-    notified = 0
-    if directory is not None and mailer is not None:
-        for owner in owners:
-            if owner["cognito_iss"] != directory.issuer:
-                continue
-            try:
-                email = await directory.email_for(owner["cognito_sub"])
-                if email:
-                    await mailer.send(
-                        recovery_message(email, agency=agency, eligible_at=row["eligible_at"], link=web_origin)
-                    )
-                    notified += 1
-            except Exception as exc:  # noqa: BLE001 — the request stands; the banner reaches every member anyway
-                log.warning("crm_recovery_notice_failed tenant=%s error=%s", tenant_id, type(exc).__name__)
+    notified = await mail_owners(
+        owners,
+        directory,
+        mailer,
+        lambda email: recovery_message(email, agency=agency, eligible_at=row["eligible_at"], link=web_origin),
+        tenant_id=tenant_id,
+        tag="recovery_notice",
+    )
     return {
         "request_id": str(row["request_id"]),
         "status": "pending",
@@ -199,7 +239,7 @@ async def open_request(
 
 
 async def complete_request(
-    pool: asyncpg.Pool, tenant_id: uuid.UUID, request_id: uuid.UUID, *, staff_sub: str
+    pool: asyncpg.Pool, tenant_id: uuid.UUID, request_id: uuid.UUID, *, staff_sub: str, ticket_ref: str | None = None
 ) -> dict[str, Any]:
     actor = platform_actor(staff_sub)
     async with platform_tx(pool, tenant_id, actor=actor) as ctx:
@@ -214,7 +254,13 @@ async def complete_request(
         except asyncpg.PostgresError as exc:
             raise _not_due(exc) from None
         await ctx.conn.execute(PROMOTE_SQL, row["candidate_member_id"])
-        ctx.audit("recovery_complete", "allowed", "owner_recovery_request", str(request_id))
+        ctx.audit(
+            "recovery_complete",
+            "allowed",
+            "owner_recovery_request",
+            str(request_id),
+            object_ids=ticket_ids(ticket_ref),
+        )
         ctx.audit(
             "role_change",
             "allowed",
@@ -237,6 +283,7 @@ async def deactivate_member(
     *,
     staff_sub: str,
     directory: PartnerDirectory | None,
+    ticket_ref: str | None = None,
 ) -> dict[str, Any]:
     async with platform_tx(pool, tenant_id, actor=platform_actor(staff_sub)) as ctx:
         row = await ctx.conn.fetchrow(MEMBER_SQL, member_id)
@@ -244,7 +291,14 @@ async def deactivate_member(
             raise NotFound("member_not_found")
         if row["status"] != "disabled":
             await ctx.conn.execute(DISABLE_SQL, member_id)
-            ctx.audit("member_deactivate", "allowed", "member", str(member_id), fields=("status",))
+            ctx.audit(
+                "member_deactivate",
+                "allowed",
+                "member",
+                str(member_id),
+                fields=("status",),
+                object_ids=ticket_ids(ticket_ref),
+            )
         owners_left = len(await ctx.conn.fetch(OWNERS_SQL))
     signed_out = False
     if directory is not None and row["cognito_iss"] == directory.issuer:
