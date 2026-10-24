@@ -11,9 +11,10 @@ from __future__ import annotations
 import asyncio
 import re
 
-from app.privacy.places import TYPED_PLACE_RE
+from app.privacy.names import name_like
+from app.privacy.places import TYPED_PLACE_RE, is_place
 from app.privacy.scrubber import Detection, ScrubResult
-from app.privacy.text import fold_with_map, original_span
+from app.privacy.text import fold, fold_with_map, original_span
 from tests.scrub_corpus import generate, run
 
 
@@ -73,8 +74,10 @@ class PlaceTagger:
 
 
 def test_option_c_destinations_tagged_as_address_are_typed_places_not_overscrub() -> None:
+    # Option C alone: without the trip's destinations (option B) nothing is kept, every bare destination is typed.
     scrubber = run.PiiScrubber(PlaceTagger(), today=run.TODAY)
-    report = asyncio.run(run.evaluate(scrubber, run.load(), offline=True))
+    samples = [{**s, "destinations": []} for s in run.load()]
+    report = asyncio.run(run.evaluate(scrubber, samples, offline=True))
     summary = report.summary()
     assert report.leaks == [], summary
     # Before option C every one of these was an over-scrub (<ADDRESS_n>), as in the live run (28.5 %).
@@ -98,3 +101,119 @@ def test_typed_place_is_counted_apart_from_overscrub() -> None:
     report = asyncio.run(run.evaluate(fixed, [sample], offline=True))  # type: ignore[arg-type]
     assert report.typed_place == ["t-1:0"] and report.overscrubbed == ["t-1:1"] and report.keep_total == 3
     assert report.summary()["typed_place"] == 1 and report.summary()["typed_place_rate"] == round(1 / 3, 4)
+
+
+# ── Option B (AA-938, S250, scrubber f3-3): the trip's own non-name-like destinations stay in clear ───────────────
+
+# The 33 over-scrubs of the live run 40081230173 (S250 start, scrubber f3-2; ids only): 25 destinations the guardrail
+# tagged NAME, 6 "2030" passport-expiry years and 2 "Northern Loop" tour names.
+LIVE_OVERSCRUB_IDS = (
+    "vi-002:1 vi-035:1 vi-054:0 vi-057:1 vi-087:0 en-112:1 en-116:0 en-122:0 en-138:0 en-144:0 en-145:0 en-147:1 "
+    "en-149:0 en-152:0 en-155:0 en-156:1 en-158:1 en-167:1 en-178:0 en-180:1 en-182:0 en-185:0 en-189:1 en-191:1 "
+    "en-202:1 en-204:0 en-210:0 en-211:1 en-213:1 en-215:0 en-224:0 en-225:0 en-226:0"
+).split()
+
+
+class NameTagger(PlaceTagger):
+    """Every destination comes back as a NAME finding: the worst case for option B. Offline and free."""
+
+    name = "name-tagger"
+
+    async def detect(self, text: str) -> list[Detection]:
+        return [Detection("NAME", d.match) for d in await super().detect(text)]
+
+
+class LiveReplay(PlaceTagger):
+    """One sample as the live run saw it: the keep strings it over-scrubbed come back as the finding that masked
+    them (a destination as NAME, "2030" as a card expiry, a tour name as an address), every other destination as
+    ADDRESS (typed places in the live run)."""
+
+    name = "live-replay"
+
+    def __init__(self, sample: dict) -> None:
+        ids = set(LIVE_OVERSCRUB_IDS)
+        self.hits = [k for i, k in enumerate(sample["keep"]) if f"{sample['id']}:{i}" in ids]
+
+    async def detect(self, text: str) -> list[Detection]:
+        out = []
+        for d in await super().detect(text):
+            out.append(Detection("NAME" if d.match in self.hits else "ADDRESS", d.match))
+        for k in self.hits:
+            if k == "2030":
+                out.append(Detection("CREDIT_DEBIT_CARD_EXPIRY", k))
+            elif not TYPED_PLACE_RE.fullmatch(fold(k)):
+                out.append(Detection("ADDRESS", k))
+        return out
+
+
+def _replay(tagger: PlaceTagger, samples: list[dict] | None = None) -> run.Report:
+    """Offline half: samples that need the real detector (names that are not places) are skipped, as in run.py."""
+    return asyncio.run(run.evaluate(run.PiiScrubber(tagger, today=run.TODAY), samples or run.load(), offline=True))
+
+
+def _live_replay(samples: list[dict]) -> run.Report:
+    total = run.Report()
+    for s in samples:
+        one = asyncio.run(run.evaluate(run.PiiScrubber(LiveReplay(s), today=run.TODAY), [s], offline=True))
+        total.samples += one.samples
+        total.skipped += one.skipped
+        total.leaks += one.leaks
+        total.overscrubbed += one.overscrubbed
+        total.typed_place += one.typed_place
+        total.keep_total += one.keep_total
+        total.kept_place += one.kept_place
+    return total
+
+
+def _keep(samples: list[dict], ref: str) -> str:
+    sample_id, i = ref.rsplit(":", 1)
+    return next(s for s in samples if s["id"] == sample_id)["keep"][int(i)]
+
+
+def test_option_b_every_destination_tagged_name_leaks_nothing_and_keeps_only_non_name_like_places() -> None:
+    samples = run.load()
+    report = _replay(NameTagger(), samples)
+    summary = report.summary()
+    assert report.leaks == [] and report.kept_place >= 60, summary
+    for ref in report.overscrubbed:  # what is still masked is a name-like place (Ninh Bình, Huế, Mai Châu ...)
+        assert name_like(_keep(samples, ref)), ref
+
+
+def test_option_b_the_live_run_replayed_without_destinations_is_the_live_result() -> None:
+    """The replay is faithful: without the trip's destinations (f3-2's behaviour) it gives the live run's 33."""
+    samples = [{**s, "destinations": []} for s in run.load()]
+    report = _live_replay(samples)
+    assert report.leaks == [] and report.kept_place == 0, report.summary()
+    assert sorted(report.overscrubbed) == sorted(LIVE_OVERSCRUB_IDS)
+
+
+def test_option_b_the_live_run_replayed_fits_the_overscrub_budget() -> None:
+    samples = run.load()
+    report = _live_replay(samples)
+    summary = report.summary()
+    assert report.leaks == [] and report.kept_place >= 20, summary
+    # Left: the name-like destinations (Ninh Binh x3, Mai Châu, Ha Long Bay), the "2030" years, the tour names.
+    left = sorted({_keep(samples, ref) for ref in report.overscrubbed})
+    assert left == ["2030", "Ha Long Bay", "Mai Châu", "Ninh Binh", "Northern Loop"], left
+    assert len(report.overscrubbed) == 13 and report.overscrub_rate <= run.MAX_OVERSCRUB_RATE and report.ok(), summary
+
+
+def test_option_b_name_like_strangers_and_places_outside_the_trip_stay_masked() -> None:
+    samples = run.load()
+    strangers = [s for s in samples if s["needs_detector"] and not s["known"]]
+    outside = [s for s in samples if s.get("outside")]
+    assert len(strangers) >= 9 and len(outside) >= 3
+    assert all(name_like(p) for s in strangers for p in s["pii"] if " " in p)
+
+    async def scrubbed(s: dict) -> str:
+        return (await run.PiiScrubber(NameTagger(), today=run.TODAY).scrub(s["text"], run.known_of(s))).text
+
+    for s in outside:
+        text = asyncio.run(scrubbed(s))
+        assert all(k in text for k in s["keep"]), s["id"]  # the trip's own destination: clear
+        assert not any(p in text for p in s["outside"]), s["id"]  # another country's: masked as in f3-2
+    for s in strangers:  # every person named like a place, tagged NAME (or ADDRESS) on a Vietnam trip: masked
+        for tagger in (NameTagger(), PlaceTagger()):
+            text = asyncio.run(run.PiiScrubber(tagger, today=run.TODAY).scrub(s["text"], run.known_of(s))).text
+            assert s["destinations"] == ["vietnam"]
+            assert not any(run._readable(p, text) for p in s["pii"] if is_place(p)), s["id"]

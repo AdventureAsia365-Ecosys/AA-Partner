@@ -595,9 +595,19 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   An", "Huế") is still replaced, as `<PLACE_n>`, so the model knows a place stood there; it is sealed in the same map
   and restored with the rest. A place plus anything else stays `<ADDRESS_n>`; a `NAME` finding stays `<PERSON_n>`
   even when it equals a place; a person named like a destination whom the guardrail labels `ADDRESS` is typed
-  `<PLACE_n>` (still masked; the place hint is the accepted cost of option C). Nothing is left unmasked: no "keep known
-  places" rule, because many destinations are also Vietnamese personal names. The scrubber `VERSION` is bumped
-  whenever the same input can scrub differently.
+  `<PLACE_n>` (still masked; the place hint is the accepted cost of option C). **Trip destinations in clear**
+  (option B, S250, scrubber `f3-3`): a `NAME` or `ADDRESS` finding that is exactly one of the trip's own destinations
+  stays in clear. Scope: the trip's countries (`crm.trip.destinations`, read by `known_values_for_trip` into
+  `KnownValues.destinations`) and within them only the explicit list `app.privacy.places.KEEPABLE_PLACES`, matched
+  with diacritics ("Hạ Long" yes, "Hà Long" / "Ha Long" no). Never kept: a place that reads as a person's name
+  (`app.privacy.names.name_like`: first word a family name or an honorific, or every word a common given name, so
+  "Hà Giang", "Mai Châu", "Ninh Bình", "Long An", "Thanh Hóa", "Huế" stay masked; a test holds the list to the rule and
+  `is_keepable_place` checks it again), a place right after an honorific or a person word ("chị Sa Pa", "guest Hội
+  An"), a place plus anything else, and any merged span with a piece that is not keepable. No destinations = `f3-2`
+  output byte for byte. The receipt counts kept findings as `PLACE_KEPT` (not in `entities`). Accepted residual risk:
+  a person nobody stored whose whole name is exactly a listed non-name-like destination of the trip's countries is
+  left visible when the guardrail tags them. The scrubber `VERSION` is bumped whenever the same input can scrub
+  differently.
 - **Fail closed**: any error -> `scrub_failed`, a scrub over its deadline (`SCRUB_DETECTOR_TIMEOUT_MS`, default 3 s,
   passes 1-3 together) -> `scrub_timeout`; no call, `manual_reply_needed`. No guardrail configured = every scrub refused. Text that already
   holds a placeholder-shaped token is neutralised to `[KIND_n]` first.
@@ -611,10 +621,12 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   kept with placeholders.
 - **Logs**: the JSON log renderer and Sentry scrubber (`app/observability/scrub.py`) also run the pass-2 detectors
   (cards, CCCD, phones without `+`, passports, OTPs, signed links; not dates).
-- **Corpus gate** (`api/tests/scrub_corpus/`): 242 synthetic EN/VI samples (generator + `--check`), 0 leaks,
-  over-scrub of `keep` strings <= 5 %; a `keep` string back once only the `<PLACE_n>` placeholders are restored is a
-  **typed place**, reported apart (`typed_place`, `typed_place_rate`), not an over-scrub. Offline half (passes 1-2, and
-  a detector that tags every destination `ADDRESS` like the live guardrail) in every PR's Unit Tests; all three passes in the workflow **Scrub corpus** (nightly 20:30 UTC and
+- **Corpus gate** (`api/tests/scrub_corpus/`): 254 synthetic EN/VI samples (generator + `--check`; each carries the
+  trip's `destinations`), 0 leaks, over-scrub of `keep` strings <= 5 %; a `keep` string back once only the
+  `<PLACE_n>` placeholders are restored is a **typed place**, reported apart (`typed_place`, `typed_place_rate`), not an
+  over-scrub; findings left in clear as trip destinations are counted as `kept_place`. Offline half (passes 1-2; a
+  detector that tags every destination `ADDRESS`, one that tags every destination `NAME`, and a replay of the live
+  run's labels) in every PR's Unit Tests; all three passes in the workflow **Scrub corpus** (nightly 20:30 UTC and
   on every push to main that changes `api/app/privacy/**` or the corpus; GitHub environment `scrub-corpus`, OIDC role
   with `bedrock:ApplyGuardrail` only; about $0.72 a month). A red run opens or comments on the issue "Scrub corpus is
   red on main".

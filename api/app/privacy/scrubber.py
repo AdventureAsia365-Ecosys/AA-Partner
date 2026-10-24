@@ -18,7 +18,12 @@
    place stood there, the value goes into the map like any other and is restored after the reply. A ``NAME`` finding
    stays ``<PERSON_n>`` even when it equals a place. A person named like a destination whom the guardrail labels
    ``ADDRESS`` is typed ``<PLACE_n>``: still masked, but the model is told a place stood there (accepted cost of
-   option C, docs/implementation-notes/AA-938.md).
+   option C, docs/implementation-notes/AA-938.md). **Option B** (S250, ``f3-3``): a ``NAME`` or ``ADDRESS`` finding
+   that is exactly one of the trip's own destinations (:attr:`KnownValues.destinations`, the trip's countries, and
+   within them only the explicit list :data:`app.privacy.places.KEEPABLE_PLACES`) is left in clear, unless the place
+   could be read as a person's name ("Mai Châu", "Hà Giang", "Long An": :func:`app.privacy.names.name_like`) or it
+   follows an honorific or a word for a person ("chị Sa Pa", "guest Hội An"). Accepted residual risk: a person nobody
+   stored whose whole name is exactly such a place is left visible when the guardrail tags them.
 
 Rules:
 
@@ -43,50 +48,23 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from app.privacy import patterns
-from app.privacy.places import is_place, place_spans
+from app.privacy import names, patterns
+from app.privacy.places import is_keepable_place, is_place, place_spans
 from app.privacy.text import digits, extend_over_marks, fold, fold_with_map, original_span
 
 # Bumped whenever the same input can scrub to a different output (a new kind, a new rule): the receipt and the stored
 # map say which rules produced them. f3-2: detector ADDRESS findings that are exactly one destination -> <PLACE_n>.
-VERSION = "f3-2"
+# f3-3: detector NAME / ADDRESS findings that are exactly one of the trip's own non-name-like destinations: clear.
+VERSION = "f3-3"
 MAX_TEXT_CHARS = 24_000
 DEFAULT_TIMEOUT_S = 3.0
 PASSES = ("known", "regex", "detector")
 
-# Vietnamese family names: when a display name starts with one, the name reads family-first.
-VN_FAMILY_NAMES = frozenset(
-    fold(n)
-    for n in (
-        "Nguyễn Trần Lê Phạm Hoàng Huỳnh Phan Vũ Võ Đặng Bùi Đỗ Hồ Ngô Dương Lý Đào Đoàn Vương Trịnh Trương Lâm Phùng "
-        "Mai Tô Hà Tạ Lương Đinh Cao Châu Quách Thái Văn Kiều Lại Lục Mạc Triệu Từ Chu Hứa La Tăng Thân Kim"
-    ).split()
-)
-# Honorifics after which a family name alone is a person ("anh Nguyễn", "Mrs Smith").
-HONORIFICS = (
-    "anh",
-    "chi",
-    "em",
-    "ong",
-    "ba",
-    "co",
-    "chu",
-    "bac",
-    "di",
-    "thay",
-    "ban",
-    "mr",
-    "mrs",
-    "ms",
-    "miss",
-    "mx",
-    "dr",
-    "sir",
-    "madam",
-    "mme",
-    "herr",
-    "frau",
-)
+# Vietnamese family names (folded): when a display name starts with one, the name reads family-first. Honorifics after
+# which a family name alone is a person ("anh Nguyễn", "Mrs Smith"). Both live in app.privacy.names (option B reads
+# them too).
+VN_FAMILY_NAMES = names.VN_FAMILY_NAMES
+HONORIFICS = names.HONORIFIC_WORDS
 _HONORIFIC_BEFORE = re.compile(r"\b(?:" + "|".join(HONORIFICS) + r")\.?\s+$")
 _PLACEHOLDER_SHAPE = re.compile(r"<([A-Za-z][A-Za-z_]{0,20}_\d{1,4})>")
 _WORD = re.compile(r"[^\W\d_]+(?:['’-][^\W\d_]+)*")
@@ -167,7 +145,11 @@ class KnownPerson:
 
 @dataclass(frozen=True)
 class KnownValues:
+    """``persons``: pass 1 input. ``destinations``: the trip's destination codes (``crm.trip.destinations``, countries
+    such as ``vietnam``; not PII), the scope of option B in pass 3."""
+
     persons: tuple[KnownPerson, ...] = ()
+    destinations: tuple[str, ...] = ()
 
     @property
     def count(self) -> int:
@@ -189,6 +171,7 @@ class _Registry:
         self.values: dict[str, str] = {}
         self.counts: dict[str, int] = {}
         self.per_pass: dict[str, int] = dict.fromkeys(PASSES, 0)
+        self.kept_places = 0  # option B: detector findings left in clear (no placeholder, not an entity)
 
     def placeholder(self, kind: str, key: str, original: str, pass_name: str) -> str:
         k = (kind, key)
@@ -419,12 +402,15 @@ class PiiScrubber:
             raise
         except Exception as exc:  # noqa: BLE001 — a bug in a pass must not let text through
             raise ScrubError(type(exc).__name__) from None
-        text = await self._detector_pass(text, reg, deadline - loop.time())
+        text = await self._detector_pass(text, reg, deadline - loop.time(), known.destinations)
+        counts = dict(reg.counts)
+        if reg.kept_places:
+            counts[PLACE_KEPT] = reg.kept_places  # a count of what was not replaced: not in "entities"
         receipt = {
             "scrubber": self.version,
             "detector": self.detector.name,
             "entities": sum(reg.counts.values()),
-            "counts": dict(sorted(reg.counts.items())),
+            "counts": dict(sorted(counts.items())),
             "passes": reg.per_pass,
             "known_persons": known.count,
         }
@@ -441,7 +427,9 @@ class PiiScrubber:
             spans.append((s.start, s.end, reg.placeholder(s.kind, key or original, original, "regex")))
         return _apply(text, spans)
 
-    async def _detector_pass(self, text: str, reg: _Registry, timeout_s: float) -> str:
+    async def _detector_pass(
+        self, text: str, reg: _Registry, timeout_s: float, destinations: tuple[str, ...] = ()
+    ) -> str:
         if timeout_s <= 0:
             raise ScrubTimeout("scrub timeout")
         try:
@@ -453,7 +441,7 @@ class PiiScrubber:
         except Exception as exc:  # noqa: BLE001 — recorded by class only, never the message (it may echo text)
             raise ScrubError(type(exc).__name__) from None
         try:
-            return _apply_detections(text, detections, reg)
+            return _apply_detections(text, detections, reg, destinations)
         except ScrubError:
             raise
         except Exception as exc:  # noqa: BLE001 — a bug here must not let text through
@@ -464,9 +452,30 @@ class PiiScrubber:
 
 _PIECE_TRIM = " \t\r\n,;:"
 PLACE = "PLACE"  # option C: a detector ADDRESS finding that is exactly one known destination
+PLACE_KEPT = "PLACE_KEPT"  # option B: receipt count of findings left in clear as the trip's own destinations
+KEEPABLE_TYPES = frozenset({"NAME", "ADDRESS"})  # option B: only these detector types may be a destination
+# Option B: a destination right after an honorific or a word for a person ("chị Sa Pa", "Mrs Hoi An", "guest Hội An",
+# "Travellers: Đà Lạt") is a person named like it: masked as before. Matched on the text before the finding with its
+# marks (names.mark), so "đi Sa Pa" (go to) is not "dì Sa Pa" (aunt); the unmarked honorifics match unmarked writing.
+PERSON_CUES = (
+    *names.HONORIFIC_WORDS_MARKED,
+    "khach",
+    "guest",
+    "guests",
+    "traveller",
+    "travellers",
+    "traveler",
+    "travelers",
+    "passenger",
+    "passengers",
+)
+_PERSON_BEFORE = re.compile(r"\b(?:" + "|".join(HONORIFICS + PERSON_CUES) + r")\.?[:,]?\s+$")
+_PERSON_BEFORE_WINDOW = 16
 
 
-def _apply_detections(text: str, detections: Sequence[Detection], reg: _Registry) -> str:
+def _apply_detections(
+    text: str, detections: Sequence[Detection], reg: _Registry, destinations: Sequence[str] = ()
+) -> str:
     """Replace every finding of a mapped kind; **fail closed** when one cannot be placed.
 
     - A finding is located with any whitespace between its words (a name broken over two lines is found), then
@@ -486,9 +495,16 @@ def _apply_detections(text: str, detections: Sequence[Detection], reg: _Registry
       (``PLACE`` pieces count as ``ADDRESS``), so a ``NAME`` and an ``ADDRESS`` finding on the same words give
       ``<ADDRESS_n>``, as before option C (never a place hint). The
       typing changes a label only: what is replaced is exactly what was replaced before.
+    - **Kept** (option B, f3-3): a ``NAME`` or ``ADDRESS`` finding whose whole value, and the text it was located on,
+      is exactly one of the trip's own destinations that cannot be read as a person's name
+      (:func:`app.privacy.places.is_keepable_place`, scoped by ``destinations``), standing as whole words and not right
+      after an honorific or a word for a person, is a keepable piece. A merged span is left in clear only when every
+      piece in it is keepable and the merged text is itself exactly one keepable destination; any other span is
+      replaced exactly as in f3-2. With no ``destinations`` nothing is keepable and the output is f3-2's, byte for
+      byte. A kept span takes no placeholder; the receipt counts it as ``PLACE_KEPT``.
     """
     protected = patterns.Ranges(patterns.protected_spans(text))
-    pieces: list[tuple[int, int, str]] = []
+    pieces: list[tuple[int, int, str, bool]] = []
     for d in detections:
         kind = DETECTOR_KINDS.get(d.type)
         if not kind:
@@ -503,6 +519,7 @@ def _apply_detections(text: str, detections: Sequence[Detection], reg: _Registry
             raise ScrubError("detector finding not located")
         if kind == "ADDRESS" and is_place(value):
             kind = PLACE
+        keep_value = bool(destinations) and d.type in KEEPABLE_TYPES and is_keepable_place(value, destinations)
         for start, end in spans:
             for ps, pe in _outside(protected, start, end):
                 while ps < pe and text[ps] in _PIECE_TRIM:
@@ -510,10 +527,10 @@ def _apply_detections(text: str, detections: Sequence[Detection], reg: _Registry
                 while pe > ps and text[pe - 1] in _PIECE_TRIM:
                     pe -= 1
                 if any(c.isalnum() for c in text[ps:pe]):
-                    pieces.append((ps, pe, kind))
-    merged: list[list[Any]] = []  # [start, end, kind, longest piece length, every piece a place]
+                    pieces.append((ps, pe, kind, keep_value and _keepable_at(text, ps, pe, destinations)))
+    merged: list[list[Any]] = []  # [start, end, kind, longest piece length, every piece a place, every piece kept]
     # Sorted and merged on the kind the piece had before option C, so ties between kinds resolve as they always did.
-    for ps, pe, kind in sorted(pieces, key=lambda p: (p[0], p[1], "ADDRESS" if p[2] == PLACE else p[2])):
+    for ps, pe, kind, keep in sorted(pieces, key=lambda p: (p[0], p[1], "ADDRESS" if p[2] == PLACE else p[2])):
         base = "ADDRESS" if kind == PLACE else kind
         if merged and ps < merged[-1][1]:
             last = merged[-1]
@@ -521,14 +538,29 @@ def _apply_detections(text: str, detections: Sequence[Detection], reg: _Registry
             if pe - ps > last[3]:
                 last[2], last[3] = base, pe - ps
             last[4] = last[4] and kind == PLACE
+            last[5] = last[5] and keep
         else:
-            merged.append([ps, pe, base, pe - ps, kind == PLACE])
+            merged.append([ps, pe, base, pe - ps, kind == PLACE, keep])
     spans_out = []
-    for s, e, k, _, all_place in merged:
+    for s, e, k, _, all_place, all_keep in merged:
+        if all_keep and _keepable_at(text, s, e, destinations):
+            reg.kept_places += 1  # option B: the trip's own destination stays in clear
+            continue
         if all_place and is_place(text[s:e]):
             k = PLACE
         spans_out.append((s, e, reg.placeholder(k, fold(text[s:e]), text[s:e], "detector")))
     return _apply(text, spans_out)
+
+
+def _keepable_at(text: str, start: int, end: int, destinations: Sequence[str]) -> bool:
+    """Option B: ``text[start:end]`` is exactly one keepable destination of the trip, stands as whole words, and does
+    not follow an honorific or a word for a person ("chị Sa Pa", "guest Hội An" stay masked)."""
+    if not destinations or not is_keepable_place(text[start:end], destinations):
+        return False
+    if (start > 0 and text[start - 1].isalnum()) or (end < len(text) and text[end].isalnum()):
+        return False
+    before = names.mark(text[max(0, start - _PERSON_BEFORE_WINDOW) : start])
+    return _PERSON_BEFORE.search(before) is None
 
 
 def _locate(text: str, value: str) -> list[tuple[int, int]]:
