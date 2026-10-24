@@ -5,8 +5,8 @@
   allows duplicates unless the supplier is ``confirmation_unique``.
 - **E** (card): a confirmed line's money is frozen at the rate of its confirmation day; a later override or platform
   row for that day changes no stored base amount, and the FX block cannot be updated.
-- Margins: the assistant reads no money row (also through the security_invoker view) and writes none; owner and agent
-  read them; the NOLOGIN readers have nothing on the new tables (42501).
+- Margins: the assistant and a platform: actor (AA staff) read no money row (also through the security_invoker view)
+  and write none; owner and agent read them; the NOLOGIN readers have nothing on the new tables (42501).
 - The Adventure Asia supplier row: one per agency, created by ``crm.ensure_aa_supplier()`` only, never changed by
   crm_app (CRM22); AA lines are read-only for members (CRM24).
 - The confirm path: the level's missing codes (CRM23), the assistant's missing commission does not block, an agency
@@ -207,6 +207,84 @@ async def test_r_a_line_confirmed_before_strict_still_counts(app_pool: asyncpg.P
     await _confirm(app_pool, ids, await _ready_line(app_pool, ids, conf="NEW-1"))
 
 
+async def test_r_lines_confirmed_with_one_number_before_strict_stay_editable(app_pool: asyncpg.Pool) -> None:
+    """Two duplicates allowed under Basic: after Strict a title edit still works; a new confirm is refused."""
+    ids = await _ledger(app_pool, level="basic")
+    first = await _ready_line(app_pool, ids, conf="DUP-5")
+    second = await _ready_line(app_pool, ids, conf="dup 5")
+    await _confirm(app_pool, ids, first)
+    await _confirm(app_pool, ids, second)
+    await _set_level(app_pool, ids, "strict")
+    async with _as(app_pool, ids["tenant"], "agent", ids["members"]["agent"]) as conn:
+        for line in (first, second):
+            await conn.execute(
+                "UPDATE crm.booking_line SET title = 'Hanoi 3 nights', visible_to_travelers = true "
+                "WHERE booking_line_id = $1",
+                line,
+            )
+    with pytest.raises(asyncpg.UniqueViolationError) as err:
+        await _confirm(app_pool, ids, await _ready_line(app_pool, ids, conf="DUP-5"))
+    assert err.value.constraint_name == "booking_line_conf_uq"
+    # Changing the number of one of them is a new claim on that number: checked again.
+    async with app_pool.acquire() as conn:
+        with pytest.raises(asyncpg.UniqueViolationError):
+            async with conn.transaction():
+                await _ctx(conn, ids["tenant"], f"member:{ids['members']['agent']}")
+                await conn.execute(
+                    "UPDATE crm.booking_line SET confirmation_no = 'DUP5' WHERE booking_line_id = $1", second
+                )
+
+
+async def test_a_confirmed_line_keeps_its_number_unless_the_level_is_off(app_pool: asyncpg.Pool) -> None:
+    ids = await _ledger(app_pool, level="basic")
+    line = await _ready_line(app_pool, ids, conf="KEEP-1")
+    await _confirm(app_pool, ids, line)
+    clear = "UPDATE crm.booking_line SET confirmation_no = NULL WHERE booking_line_id = $1"
+    for level in ("basic", "strict"):
+        await _set_level(app_pool, ids, level)
+        async with app_pool.acquire() as conn:
+            with pytest.raises(asyncpg.PostgresError, match="line_incomplete:confirmation_no") as err:
+                async with conn.transaction():
+                    await _ctx(conn, ids["tenant"], f"member:{ids['members']['agent']}")
+                    await conn.execute(clear, line)
+            assert err.value.sqlstate == "CRM23"
+    async with _as(app_pool, ids["tenant"], "agent", ids["members"]["agent"]) as conn:
+        await conn.execute("UPDATE crm.booking_line SET confirmation_no = 'KEEP-2' WHERE booking_line_id = $1", line)
+    await _set_level(app_pool, ids, "off")
+    async with _as(app_pool, ids["tenant"], "agent", ids["members"]["agent"]) as conn:
+        await conn.execute(clear, line)
+        assert await conn.fetchval(
+            "SELECT conf_unique_key IS NULL FROM crm.booking_line WHERE booking_line_id = $1", line
+        )
+
+
+async def test_confirmed_at_is_null_until_the_confirm_sets_it(app_pool: asyncpg.Pool) -> None:
+    ids = await _ledger(app_pool)
+    async with _as(app_pool, ids["tenant"], "agent", ids["members"]["agent"]) as conn:
+        line = await conn.fetchval(
+            "INSERT INTO crm.booking_line (trip_id, agency_supplier_id, title, confirmation_no, confirmed_at) "
+            "VALUES ($1, $2, 'Hanoi', 'AT-1', now() - interval '40 days') RETURNING booking_line_id",
+            ids["trip"],
+            ids["supplier"],
+        )
+        await conn.execute(
+            "UPDATE crm.booking_line SET confirmed_at = now() - interval '9 days' WHERE booking_line_id = $1", line
+        )
+        assert await conn.fetchval("SELECT confirmed_at FROM crm.booking_line WHERE booking_line_id = $1", line) is None
+    await _money(app_pool, ids, line, "cost", "100", "USD")
+    await _money(app_pool, ids, line, "sell", "130", "USD")
+    await _confirm(app_pool, ids, line)
+    async with _as(app_pool, ids["tenant"], "owner", ids["members"]["owner"]) as conn:
+        row = await conn.fetchrow(
+            "SELECT (l.confirmed_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = m.fx_rate_date AS same_day, "
+            "l.confirmed_at > now() - interval '1 minute' AS fresh "
+            "FROM crm.booking_line l JOIN crm.v_booking_line_money_current m USING (booking_line_id) "
+            "WHERE l.booking_line_id = $1 AND m.kind = 'cost'",
+            line,
+        )
+    assert row["fresh"] is True and row["same_day"] is True
+
+
 async def test_basic_allows_duplicates_unless_the_supplier_is_confirmation_unique(app_pool: asyncpg.Pool) -> None:
     ids = await _ledger(app_pool, level="basic")
     for _ in range(2):
@@ -269,6 +347,15 @@ async def test_the_assistant_reads_and_writes_no_money(app_pool: asyncpg.Pool) -
             assert await conn.fetchval("SELECT count(*) FROM crm.booking_line") == 1  # the line itself is not margin
     async with _as(app_pool, ids["tenant"], actor="job:crm_b2b_events_pull") as conn:
         assert await conn.fetchval("SELECT count(*) FROM crm.booking_line_money") == 3
+    # AA staff (a platform: actor, the L1 console) neither read nor write agency margins.
+    async with _as(app_pool, ids["tenant"], actor="platform:staff-sub") as conn:
+        assert await conn.fetchval("SELECT count(*) FROM crm.booking_line_money") == 0
+        assert await conn.fetchval("SELECT count(*) FROM crm.v_booking_line_money_current") == 0
+    async with app_pool.acquire() as conn:
+        with pytest.raises(asyncpg.InsufficientPrivilegeError, match="margin_forbidden"):
+            async with conn.transaction():
+                await _ctx(conn, ids["tenant"], "platform:staff-sub")
+                await conn.fetchval("SELECT crm.booking_line_money_put($1, 'cost', 1, 'USD')", line)
     assert await _sqlstate(_money(app_pool, ids, line, "cost", "1", "USD", role="assistant")) == "42501"
     async with app_pool.acquire() as conn:
         with pytest.raises(asyncpg.InsufficientPrivilegeError):
