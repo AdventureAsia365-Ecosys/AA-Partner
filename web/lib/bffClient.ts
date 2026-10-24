@@ -2,9 +2,9 @@
 // AA-936 — browser calls to the BFF (/bff/<path> on the page's own origin, lib/bff.ts allow-list). A 401 means the
 // access token expired: the page reloads through /auth/refresh (which renews it or signs in again).
 
-export type BffResult<T> = { ok: true; data: T } | { ok: false; status: number; detail: string };
+export type BffResult<T> = { ok: true; data: T } | { ok: false; status: number; detail: string; body?: unknown };
 
-export async function bffSend<T>(method: "GET" | "POST" | "PATCH", path: string, body?: unknown): Promise<BffResult<T>> {
+export async function bffSend<T>(method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE", path: string, body?: unknown): Promise<BffResult<T>> {
   let res: Response;
   try {
     res = await fetch(`/bff/${path}`, {
@@ -23,7 +23,7 @@ export async function bffSend<T>(method: "GET" | "POST" | "PATCH", path: string,
   const json = (await res.json().catch(() => null)) as unknown;
   if (!res.ok) {
     const detail = typeof (json as { detail?: unknown })?.detail === "string" ? (json as { detail: string }).detail : "error";
-    return { ok: false, status: res.status, detail };
+    return { ok: false, status: res.status, detail, body: json };
   }
   return { ok: true, data: json as T };
 }

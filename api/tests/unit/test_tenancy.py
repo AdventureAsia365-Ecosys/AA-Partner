@@ -11,6 +11,7 @@ from app.auth.route_guard import Caller
 from app.db import Database
 from app.errors import Forbidden
 from app.main import create_app
+from app.observability import reveal_meter
 from app.tenancy import MAX_MEMBERSHIPS, READER_ROLES, caller_memberships, tenant_tx
 from tests.tokens import PARTNER_ISSUER, SUB, LocalPools
 from tests.unit.fakes import ScriptedConn
@@ -135,7 +136,7 @@ async def test_queued_events_are_written_when_the_block_succeeds() -> None:
         ctx.audit("reveal", "allowed", "traveler", "t-1", fields=("email_enc",), reason="client_call")
     rows = conn.sql("INSERT INTO crm.audit_event")
     assert rows == [
-        ("user", f"member:{MEMBER}", "reveal", "allowed", "traveler", "t-1", ["email_enc"], "client_call", None)
+        ("user", f"member:{MEMBER}", "reveal", "allowed", "traveler", "t-1", ["email_enc"], "client_call", None, [])
     ]
 
 
@@ -159,6 +160,26 @@ async def test_on_error_without_denials_nothing_is_written() -> None:
             ctx.audit("reveal", "allowed", "traveler", "t-1")
             raise RuntimeError("boom")
     assert conn.sql("INSERT INTO crm.audit_event") == []
+
+
+@pytest.mark.asyncio
+async def test_only_committed_allowed_reveals_reach_the_reveal_meter() -> None:
+    """AA-937 (design §4.4): the per-member hourly count sees what was released, never a rolled-back reveal."""
+    reveal_meter.METER.reset()
+    try:
+        async with tenant_tx(_conn(), CALLER, TENANT) as ctx:
+            ctx.audit("reveal", "allowed", "traveler", "t-1", fields=("email",), reason="contact_client")
+            ctx.audit("reveal", "allowed", "document", "d-1", fields=("document",), reason="fill_forms")
+            ctx.audit("reveal", "denied", "traveler", "t-2", fields=("health",), reason="consent_withdrawn")
+            ctx.audit("view", "allowed", "traveler", "t-1")
+        assert reveal_meter.METER.count(TENANT, MEMBER) == 2
+        with pytest.raises(RuntimeError):
+            async with tenant_tx(_conn(), CALLER, TENANT) as ctx:
+                ctx.audit("reveal", "allowed", "traveler", "t-1", fields=("email",), reason="contact_client")
+                raise RuntimeError("boom")
+        assert reveal_meter.METER.count(TENANT, MEMBER) == 2
+    finally:
+        reveal_meter.METER.reset()
 
 
 @pytest.mark.asyncio

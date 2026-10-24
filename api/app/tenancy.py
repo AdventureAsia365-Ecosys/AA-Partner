@@ -60,6 +60,7 @@ import asyncpg
 from app.audit import INSERT_SQL, AuditEvent, current_request_id
 from app.auth.route_guard import Caller
 from app.errors import Forbidden, NotFound
+from app.observability import reveal_meter
 
 READER_ROLES = frozenset({"crm_ai_reader", "crm_insights", "crm_support_reader", "crm_eraser"})
 MEMBER_ROLES = frozenset({"owner", "agent", "assistant"})
@@ -136,6 +137,7 @@ class TenantContext:
         *,
         fields: tuple[str, ...] = (),
         reason: str | None = None,
+        object_ids: tuple[str, ...] = (),
     ) -> AuditEvent:
         """Queue an ``audit_event`` for this member (written when the ``tenant_tx()`` block ends)."""
         event = AuditEvent(
@@ -148,6 +150,7 @@ class TenantContext:
             fields=tuple(fields),
             reason=reason,
             request_id=current_request_id(),
+            object_ids=tuple(object_ids),
         )
         self.audit_events.append(event)
         return event
@@ -178,6 +181,7 @@ class SystemContext:
         *,
         fields: tuple[str, ...] = (),
         reason: str | None = None,
+        object_ids: tuple[str, ...] = (),
     ) -> AuditEvent:
         event = AuditEvent(
             actor_kind="system",
@@ -189,6 +193,7 @@ class SystemContext:
             fields=tuple(fields),
             reason=reason,
             request_id=current_request_id(),
+            object_ids=tuple(object_ids),
         )
         self.audit_events.append(event)
         return event
@@ -253,6 +258,10 @@ async def tenant_tx(
             await _write_audit(ctx, ctx.audit_events)
     if pending is not None:
         raise pending
+    # Committed: count what was really released (design §4.4 reveals per member per hour, app.observability).
+    released = sum(1 for e in ctx.audit_events if e.action == "reveal" and e.outcome == "allowed")
+    if released:
+        reveal_meter.METER.record(ctx.tenant_id, ctx.member_id, released)
 
 
 @asynccontextmanager

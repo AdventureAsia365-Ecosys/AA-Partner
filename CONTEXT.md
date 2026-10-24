@@ -26,7 +26,9 @@ EN/VI with locale dates, a health page), the agency directory `crm-004` and the 
 CI and the two Dev deploy workflows; and **Slice 1** (AA-936, CRM-08, `crm-005`): the public inquiry form on the
 client host, `crm_intake_process` (blind-index dedupe, a repeat inquiry attaches to the open trip), the pipeline
 board and trip workspace, intake-form settings, the two `crm.ops.v1` reads CIS uses, the LLM gateway stub with its
-call log, and the Dev E2E.
+call log, and the Dev E2E; and **F1 / F2 complete** (AA-937, CRM-09, `crm-006`): `reveal(field, reason)`, the client
+directory and profile, relationships with their inverse, health codes, documents under the tenant `docs` DEK, the
+age band at departure, and the F2 views with the first NOLOGIN reader grants.
 
 > Read this file before designing or changing anything here (AA-Ecosys steering, "CONTEXT.md first"). Change it in the
 > same PR when a boundary, owner, route class or the stack changes.
@@ -168,6 +170,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-003` | `api/migrations/003_crm_vault_keys.sql` | `crm.tenant_key` (DEK store + guard trigger), `crm.integration_credential` (BYO vendor credentials, wizard health, states), `crm.traveler` (F1 vault columns + blind indexes), `crm.audit_event` (append-only) (AA-934) |
 | `crm-004` | `api/migrations/004_crm_tenant_directory.sql` | `crm.tenant.display_name` + `default_locale`; SELECT-only lookup policies `member_self_lookup`, `tenant_member_lookup` TO `crm_app` (AA-935) |
 | `crm-005` | `api/migrations/005_crm_intake_pipeline.sql` | Slice 1 (AA-936): `tenant_settings` (AI switches), `form_definition`, `intake_form` (+ `intake_form_public_lookup`), `form_submission` (encrypted payload), `consent` (append-only), `traveler_profile` (F2), `trip` (every stage in the CHECK, Slice 1 moves only, `crm.enforce_stage_transition`), `trip_stage_history` (append-only), `trip_traveler` / `trip_party`, `task`, `note` (encrypted), `llm_call` (append-only, no text), platform rollup `llm_usage_daily` |
+| `crm-006` | `api/migrations/006_crm_f1_f2_complete.sql` | F1 / F2 complete (AA-937): `traveler_relation` (+ trigger-written inverse), `traveler_health` (needs a `health_data` consent), `document` (docs-DEK objects, write-only passports), the full F2 `traveler_profile`, `profile_history`, the age band list on `trip_party`, `audit_event.object_ids` (list views), the views `v_ai_traveler_profile` / `v_ai_trip_party` / `v_ai_trip_context` (`crm_ai_reader`) and `v_insight_fact` (`crm_insights`) |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -288,6 +291,57 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   F2 views and reader grants (CRM-09), the `form_submission` 90-day redaction job (CRM-14).
 - **E2E** (`e2e/`, workflow `E2E Dev`, dispatch on main): form -> card on the board within about a minute -> trip.
 
+## F1 / F2 complete (AA-937, CRM-09)
+
+- **Reveal** (`app/travellers/reveal.py`): `reveal(ctx, vault, traveler_id, field, reason)` is the only agency path to
+  an F1 field beyond the display name (names, e-mail, phone, DOB, nationality, passport, emergency contact, health
+  codes). A reason code is required (`contact_client`, `prepare_booking`, `verify_identity`, `client_request`,
+  `fill_forms`, `ops_handoff`, `other`); one `reveal` event per field in the same transaction. Every role may reveal
+  (design §4.6). Health codes come back only while the traveller's latest `health_data` consent is true (else 409
+  `health_consent_withdrawn` and a denied event). **No public route may reach it**: `tests/unit/test_reveal_boundary.py`
+  walks the import graph of every router under `/crm/public` or `/crm/client` (found by `APIRouter(prefix=)`, by
+  `class_router(<RouteClass>)` and by the live routes). **Reveals per member per hour** (design §4.4):
+  `app/observability/reveal_meter.py` counts committed allowed reveals (fields and document downloads) per agency and
+  member over a sliding hour; the job metrics sampler publishes the peak as `AA/Jobs/Crm` `RevealsPerMemberPeakHour`
+  (Infra alarm `aa-crm-<env>-bulk-reveal`), and 60 in an hour logs `crm_bulk_reveal`. A traveller sees their own record only through
+  `app/travellers/self_reveal.py` `traveller_self_reveal(session)` (masked passport, own trip only; the OTP session
+  is CRM-24a).
+- **List views** (design §4.4): the board, the client directory (`GET /crm/v1/travelers`; exact search by e-mail /
+  phone blind index or name tokens confirmed after decrypting is `POST /crm/v1/travelers/search`, the term in the body,
+  and `GET ?q=` answers 422 `search_by_post`; the web keeps the term in a sealed 15-minute cookie on `/clients`, never
+  in a URL) and a trip's document list decrypt display names (file
+  names) only and write one `list_view` event per load with the ids shown (`audit_event.object_ids`). No contact data
+  and no partial digits in any list; the profile shows which fields are filled, not their value.
+- **Client profile** (`GET /crm/v1/travelers/{id}`, one `view` event naming the related travellers and documents
+  shown in `object_ids`; the trip page's `view` names its party the same way): masked F1, consent (latest per purpose), the F2
+  profile (bands and codes, reached through `traveler.profile_token_enc`), relationships, trips with the age band at
+  departure, documents. Edits: F1 fields (encrypted, blind indexes in step, 409 `duplicate_traveler` on a known e-mail
+  or phone), the F2 profile, health codes (`PUT .../health`, consent required, dietary / mobility mirrored to F2),
+  relationships (the DB writes the inverse; an explicit referrer relation overwrites the intake's
+  `referrer_traveler_id`), the party of a trip (`trip_traveler` + `trip_party` together; a
+  companion needs a name only).
+- **Age band at departure** (R32): recomputed only when a DOB or a trip's start date really changes, or for the one
+  new row when someone joins a trip; one `age_band_recompute` event per run (`app/travellers/age_bands.py`).
+- **Documents** (`app/documents/`): the API seals each file with the tenant `docs` DEK (AAD = tenant, `document`,
+  `content`, document id) before it reaches the documents bucket (`DOCUMENTS_BUCKET`, SSE-KMS as the second layer);
+  key `tenants/<tenant>/documents/<document>`, SHA-256 of the stored object checked before decrypting, the file name
+  encrypted, at most 7 MiB (base64 JSON through the BFF), passport scans write-only. Download is a reveal (reason
+  required). Without `DOCUMENTS_BUCKET` on dev the document routes answer 503 `documents_not_configured`; a missing
+  object (S3 `NoSuchKey`, or `AccessDenied` since the role has no `ListBucket`) answers 503 `document_missing`.
+- **Same-agency keys** (crm-006): every new reference to a traveller, trip or profile is a `(tenant_id, id)` foreign
+  key (referential checks bypass FORCE RLS), and `document.s3_key` must equal `tenants/<its tenant>/documents/<its id>`.
+  The crm-003 / crm-005 single-column references (`trip_traveler`, `trip_party`, ...) get the same in a later file.
+- **Readers** (design §4.3, Fix A1): `crm_ai_reader` reads `v_ai_traveler_profile`, `v_ai_trip_party`,
+  `v_ai_trip_context`; `crm_insights` reads `v_insight_fact` (no token, no trip id). The views run with `crm_owner`'s
+  rights under FORCE RLS (one agency, the one of `app.tenant_id`); neither role has any base table. No reader reaches
+  an F1 table (`traveler`, `traveler_health`, `traveler_relation`, `document`, `trip_traveler`, `note`, `consent`,
+  `form_submission`, `tenant_key`, `integration_credential`, `member`): 42501, checked by the crm-006 guard and the
+  integration tests. `crm_support_reader` stays without grants until CRM-13b (AA-971). `v_insight_fact` shows one
+  agency at a time (FORCE RLS on `app.tenant_id`), so CRM-34's cross-agency aggregate (n >= 10, >= 3 agencies) needs
+  its own path (for example a `SECURITY DEFINER` aggregate owned by `crm_owner`), not this view. **Threat model**: the split
+  protects against the readers, not against `crm_app` or the RDS master (the lead of a trip joins F2 to identity
+  through `trip_id`); the DPA draft says so.
+
 ## Dev seeder (`api/app/seed/`, AA-935)
 
 `python -m app.seed` inside the API container (ECS Exec on `aa-crm-dev-api`; it has the `crm_app` DSN): DRY RUN by
@@ -311,7 +365,7 @@ outside `dev` / `test` / `local`. Output: one JSON line per agency, ids, labels 
 and the key provider `KEY_PROVIDER` (`kms`; `local` only in test / local), `KMS_DATA_KEY_ID` (`alias/crm-<env>/data`),
 `DEK_CACHE_TTL_SECONDS`, and the public intake (AA-936) `INTAKE_PAGE_ORIGINS` (the client host origin; empty on Dev =
 every submission 503 `intake_not_configured`), `RATE_LIMIT_INTAKE_PER_MINUTE` (default 5 per address),
-`RATE_LIMIT_INTAKE_FORM_PER_HOUR` (default 200 per form). Meanings and defaults: `api/app/settings.py`. Live check of the key provider inside the
+`RATE_LIMIT_INTAKE_FORM_PER_HOUR` (default 200 per form), and the documents bucket (AA-937) `DOCUMENTS_BUCKET`. Meanings and defaults: `api/app/settings.py`. Live check of the key provider inside the
 container: `python -m app.vault.selftest` (KMS round trip under the nil tenant context, nothing stored).
 
 ## Domain terms
@@ -320,7 +374,9 @@ container: `python -m app.vault.selftest` (KMS round trip under the nil tenant c
   (`owner`, `agent`, `assistant`), one row in `crm.member`, identified by the token's `(iss, sub)`.
 - **Route class**: the set of `(issuer, client)` pairs one API prefix accepts.
 - **Traveller / client**: the agency's own customer, one row in `crm.traveler` (F1 vault, every identity field
-  encrypted); never an AA Cognito user.
+  encrypted); never an AA Cognito user. Its **F2 profile** (`crm.traveler_profile`, random `traveler_token`, bands
+  and codes only) is reached only through the encrypted pointer `traveler.profile_token_enc`.
+- **Reveal**: opening one F1 field of one traveller on a member's click, with a reason code; always audited.
 - **DEK / KEK**: a tenant data key (one per agency per purpose and version) and the key that wraps it (the KMS data
   key, or an agency's own key under BYOK later). **Blind index**: a keyed, truncated hash of a normalised value for
   exact match without decrypting.

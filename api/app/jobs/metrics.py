@@ -13,6 +13,9 @@ two numbers and sends them in **one** ``PutMetricData`` call to namespace ``AA/J
   (``coalesce(progress->>'attempt_started_at', started_at)``, written by every claim since AA-751 B2) has run longer
   than :func:`app.jobs.kinds.overdue_after_seconds` (2 x ``EXPECTED_SECONDS[kind]``, default 300 s).
 
+- ``RevealsPerMemberPeakHour`` (Count, AA-937): the highest number of field reveals / document downloads one member
+  made in the last hour in this process (:mod:`app.observability.reveal_meter`, design §4.4 bulk reveal).
+
 Infra alarms on them (``aa-crm-<env>-jobs-queue-age`` > 900 s, ``-jobs-overdue-running`` > 0, the same pair as
 Booking) and the task role may put metrics into ``AA/Jobs/Crm`` only (IAM condition ``cloudwatch:namespace``;
 AA-CIS-Infra ``accounts/aa365/crm_app.tf``). The kind ``crm_heartbeat`` is due every minute, so a stopped worker
@@ -37,6 +40,7 @@ from typing import Any, Protocol
 import asyncpg
 
 from app.jobs.kinds import overdue_after_seconds
+from app.observability import reveal_meter
 
 log = logging.getLogger(__name__)
 
@@ -103,11 +107,14 @@ def backlog_sample(oldest_due_age_s: float | None, running: Iterable[tuple[str, 
     )
 
 
-def metric_data(sample: Sample) -> list[dict[str, Any]]:
-    return [
+def metric_data(sample: Sample, reveal_peak: int | None = None) -> list[dict[str, Any]]:
+    data = [
         {"MetricName": "OldestQueuedAgeSeconds", "Value": sample.oldest_queued_age_s, "Unit": "Seconds"},
         {"MetricName": "OverdueRunningJobs", "Value": float(sample.overdue_running), "Unit": "Count"},
     ]
+    if reveal_peak is not None:
+        data.append({"MetricName": "RevealsPerMemberPeakHour", "Value": float(reveal_peak), "Unit": "Count"})
+    return data
 
 
 async def read_sample(pool: asyncpg.Pool) -> Sample:
@@ -145,7 +152,7 @@ class JobMetricsSampler:
             log.warning("ops_metrics_sample_failed namespace=%s stage=read error=%s", NAMESPACE, type(exc).__name__)
             return None
         try:
-            await asyncio.to_thread(self._put, metric_data(sample))
+            await asyncio.to_thread(self._put, metric_data(sample, reveal_meter.METER.peak()))
         except Exception as exc:  # noqa: BLE001 — AccessDenied before the Infra apply, throttling, network
             log.warning(
                 "ops_metrics_sample_failed namespace=%s stage=put error=%s: %s",

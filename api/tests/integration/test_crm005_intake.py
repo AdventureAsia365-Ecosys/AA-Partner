@@ -32,9 +32,10 @@ from app.jobs.queue import Job
 from app.jobs.worker import PermanentError
 from app.llm.gateway import LlmGateway, StubProvider, StubScrubber, stub_gateway
 from app.llm.usage import llm_usage
-from app.pipeline import BoardFilter, assign, board, move_stage, reveal_contact, set_task_status, trip_detail
+from app.pipeline import BoardFilter, assign, board, move_stage, set_task_status, trip_detail
 from app.settings import Settings
 from app.tenancy import intake_tx, system_tx, tenant_tx
+from app.travellers.reveal import reveal
 from app.vault import KeyProvider, Vault
 from app.vault.wrapping import LocalKeyWrapper
 
@@ -290,7 +291,7 @@ async def test_submit_process_board_and_ciphertext_only(app_pool: asyncpg.Pool, 
         assert "email" not in detail["submissions"][0]["answers"]
         lead = detail["party"][0]["traveler_id"]
     async with tenant_tx(app_pool, owner, tenant_id) as ctx:
-        revealed = await reveal_contact(ctx, Vault(keys, ctx), uuid.UUID(lead), "email")
+        revealed = await reveal(ctx, Vault(keys, ctx), uuid.UUID(lead), "email", "contact_client")
         assert revealed["value"] == "hoa.nguyen@example.test"
     events = await _owner_fetch(
         admin, tenant_id, "SELECT action, object_kind, fields, actor_kind FROM crm.audit_event ORDER BY at"

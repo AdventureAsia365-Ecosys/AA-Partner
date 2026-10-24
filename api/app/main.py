@@ -30,6 +30,7 @@ from app.auth import identity_config
 from app.auth.ci import GithubDeployVerifier
 from app.auth.identity_verifier import MultiIssuerVerifier
 from app.db import Database
+from app.documents.store import DocumentStore, MemoryDocumentStore, S3DocumentStore
 from app.errors import ServiceError, service_error_handler
 from app.jobs import handlers as job_handlers
 from app.jobs.metrics import JobMetricsSampler
@@ -37,8 +38,8 @@ from app.jobs.worker import Worker
 from app.observability import setup as setup_observability
 from app.observability.request_id import RequestIdMiddleware, unhandled_error_handler
 from app.ratelimit import FixedWindowLimiter
-from app.routers import agency, ci, health, ops, pipeline, public, staff
-from app.settings import Settings, load_settings
+from app.routers import agency, ci, health, ops, pipeline, public, staff, travellers
+from app.settings import INSECURE_ENVIRONMENTS, Settings, load_settings
 from app.vault import KeyProvider, build_key_provider
 
 # On shutdown a job in flight gets this long to finish; then the worker task is cancelled and releases the job back to
@@ -54,6 +55,7 @@ def create_app(
     verifier: MultiIssuerVerifier | None | object = _UNSET,
     deploy_verifier: GithubDeployVerifier | None = None,
     keys: KeyProvider | None | object = _UNSET,
+    documents: DocumentStore | None | object = _UNSET,
 ) -> FastAPI:
     settings = settings or load_settings()
     db = db or Database(settings)
@@ -63,6 +65,8 @@ def create_app(
     deploy_verifier = deploy_verifier or GithubDeployVerifier.default()
     if keys is _UNSET:
         keys = build_key_provider(settings)  # no KMS call here: the client is created on first use
+    if documents is _UNSET:
+        documents = build_document_store(settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -106,6 +110,7 @@ def create_app(
     app.state.verifier = verifier
     app.state.deploy_verifier = deploy_verifier
     app.state.keys = keys  # app.vault.KeyProvider, or None when KMS_DATA_KEY_ID is missing (vault calls answer 503)
+    app.state.documents = documents  # app.documents.store, or None without DOCUMENTS_BUCKET (document routes: 503)
     app.state.public_limiter = FixedWindowLimiter(settings.rate_limit_public_per_minute)
     # AA-936: inquiry-form submissions, per client address per minute and per form per hour.
     app.state.intake_limiter = FixedWindowLimiter(settings.rate_limit_intake_per_minute)
@@ -118,9 +123,19 @@ def create_app(
     app.include_router(public.router)
     app.include_router(agency.router)
     app.include_router(pipeline.router)
+    app.include_router(travellers.router)
     app.include_router(ops.router)
     app.include_router(staff.router)
     return app
+
+
+def build_document_store(settings: Settings) -> DocumentStore | None:
+    """The documents bucket when configured; an in-memory store on test / local; else None (AA-937)."""
+    if settings.documents_bucket:
+        return S3DocumentStore(settings.documents_bucket)  # no AWS call here: the client is created on first use
+    if settings.environment in INSECURE_ENVIRONMENTS:
+        return MemoryDocumentStore()
+    return None
 
 
 def build_app() -> FastAPI:

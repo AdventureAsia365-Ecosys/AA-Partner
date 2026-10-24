@@ -17,7 +17,12 @@ export interface BffRoute {
   tenant: boolean;
   /** Card that added it (review trail). */
   card: string;
+  /** Largest request body the BFF forwards for this route (default 256 KiB, app/bff/[...path]/route.ts). */
+  maxBody?: number;
 }
+
+/** AA-937: a document upload is base64 JSON of at most 7 MiB (~9.4 MiB), under the proxy's 10 MiB body clone limit. */
+export const DOCUMENT_BODY_BYTES = 10 * 1024 * 1024;
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 
@@ -30,11 +35,28 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "PATCH", pattern: new RegExp(`^trips/${UUID}$`), tenant: true, card: "AA-936" },
   { method: "POST", pattern: new RegExp(`^trips/${UUID}/(stage|owner|notes)$`), tenant: true, card: "AA-936" },
   { method: "POST", pattern: new RegExp(`^tasks/${UUID}/status$`), tenant: true, card: "AA-936" },
-  { method: "POST", pattern: new RegExp(`^travelers/${UUID}/reveal$`), tenant: true, card: "AA-936" },
+  // AA-937 (CRM-09): the reveal now carries a reason code (same path as AA-936).
+  { method: "POST", pattern: new RegExp(`^travelers/${UUID}/reveal$`), tenant: true, card: "AA-936/AA-937" },
   { method: "GET", pattern: /^members$/, tenant: true, card: "AA-936" },
   { method: "GET", pattern: /^intake-forms$/, tenant: true, card: "AA-936" },
   { method: "POST", pattern: /^intake-forms$/, tenant: true, card: "AA-936" },
   { method: "PATCH", pattern: new RegExp(`^intake-forms/${UUID}$`), tenant: true, card: "AA-936" },
+  // AA-937 (CRM-09): clients (A-06 / A-07), the party of a trip, documents.
+  { method: "GET", pattern: /^travelers$/, tenant: true, card: "AA-937" },
+  { method: "POST", pattern: /^travelers$/, tenant: true, card: "AA-937" },
+  { method: "POST", pattern: /^travelers\/search$/, tenant: true, card: "AA-937" },
+  { method: "GET", pattern: new RegExp(`^travelers/${UUID}$`), tenant: true, card: "AA-937" },
+  { method: "PATCH", pattern: new RegExp(`^travelers/${UUID}(/profile)?$`), tenant: true, card: "AA-937" },
+  { method: "PUT", pattern: new RegExp(`^travelers/${UUID}/health$`), tenant: true, card: "AA-937" },
+  { method: "POST", pattern: new RegExp(`^travelers/${UUID}/relations$`), tenant: true, card: "AA-937" },
+  { method: "DELETE", pattern: new RegExp(`^travelers/${UUID}/relations/${UUID}$`), tenant: true, card: "AA-937" },
+  { method: "POST", pattern: new RegExp(`^trips/${UUID}/travelers$`), tenant: true, card: "AA-937" },
+  { method: "DELETE", pattern: new RegExp(`^trips/${UUID}/travelers/${UUID}$`), tenant: true, card: "AA-937" },
+  { method: "GET", pattern: new RegExp(`^trips/${UUID}/documents$`), tenant: true, card: "AA-937" },
+  { method: "POST", pattern: /^documents$/, tenant: true, card: "AA-937", maxBody: DOCUMENT_BODY_BYTES },
+  { method: "POST", pattern: new RegExp(`^documents/${UUID}/download$`), tenant: true, card: "AA-937" },
+  { method: "PATCH", pattern: new RegExp(`^documents/${UUID}$`), tenant: true, card: "AA-937" },
+  { method: "DELETE", pattern: new RegExp(`^documents/${UUID}$`), tenant: true, card: "AA-937" },
 ];
 
 export function matchBff(method: string, subPath: string, routes: readonly BffRoute[] = BFF_ROUTES): BffRoute | null {

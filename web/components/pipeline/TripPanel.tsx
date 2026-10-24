@@ -5,10 +5,16 @@
 // The page is a full server render (the board card is a plain link): until React hydrates, a click on a button does
 // nothing. So the action buttons stay disabled until then and the root carries `data-hydrated="true"` once handlers
 // are attached (AA-936 E2E run 40060691620 clicked "Show email" before hydration and no reveal reached the API).
+// AA-937 (CRM-09): a reveal asks why (RevealField, one event with the reason); names link to the client profile;
+// companions are added by name only (Fix E5) or taken off the trip; start / end dates (a changed start date moves the
+// party's age bands, R32); the trip's documents.
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
+import { DocumentsPanel } from "@/components/clients/DocumentsPanel";
+import { RevealField } from "@/components/clients/RevealField";
 import { Panel } from "@/components/PageTitle";
+import type { DocumentRow } from "@/lib/clients";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, type Lang, type MessageKey, t } from "@/lib/i18n";
@@ -38,7 +44,21 @@ const field: React.CSSProperties = {
   maxWidth: "100%",
 };
 
-export function TripPanel({ view, members, role, lang, locale }: { view: TripView; members: Member[]; role: Role; lang: Lang; locale: DateLocale }) {
+export function TripPanel({
+  view,
+  members,
+  role,
+  lang,
+  locale,
+  documents = [],
+}: {
+  view: TripView;
+  members: Member[];
+  role: Role;
+  lang: Lang;
+  locale: DateLocale;
+  documents?: DocumentRow[];
+}) {
   const router = useRouter();
   const { trip } = view;
   const [busy, setBusy] = useState(false);
@@ -46,11 +66,12 @@ export function TripPanel({ view, members, role, lang, locale }: { view: TripVie
   const [lostOpen, setLostOpen] = useState(false);
   const [lostReason, setLostReason] = useState<string>("");
   const [note, setNote] = useState("");
-  const [revealed, setRevealed] = useState<Record<string, string>>({});
   const hydrated = useHydrated();
+  const [companion, setCompanion] = useState("");
+  const [dates, setDates] = useState({ start: trip.start_date ?? "", end: trip.end_date ?? "" });
   const me = members.find((m) => m.is_me);
 
-  async function run(path: string, method: "POST" | "PATCH", body: unknown) {
+  async function run(path: string, method: "POST" | "PATCH" | "DELETE", body?: unknown) {
     setBusy(true);
     setError(null);
     const res = await bffSend(method, path, body);
@@ -63,16 +84,10 @@ export function TripPanel({ view, members, role, lang, locale }: { view: TripVie
     return true;
   }
 
-  async function reveal(travelerId: string, which: "email" | "phone") {
-    const res = await bffSend<{ value: string | null }>("POST", `travelers/${travelerId}/reveal`, { field: which });
-    if (res.ok) setRevealed((r) => ({ ...r, [`${travelerId}:${which}`]: res.data.value ?? "—" }));
-    else setError(t(lang, "trip.error"));
-  }
-
   const owner = members.find((m) => m.member_id === trip.owner_member_id);
   const canTake = !trip.owner_member_id && role !== "owner" && me;
   return (
-    <div data-testid="crm-trip" data-card="AA-936" data-hydrated={hydrated ? "true" : undefined} style={{ display: "grid", gap: 14, maxWidth: 1080, minWidth: 0 }}>
+    <div data-testid="crm-trip" data-card="AA-936 AA-937" data-hydrated={hydrated ? "true" : undefined} style={{ display: "grid", gap: 14, maxWidth: 1080, minWidth: 0 }}>
       <a href="/pipeline" style={{ fontSize: 13, color: K.accentDeep }}>
         ← {t(lang, "trip.back")}
       </a>
@@ -202,6 +217,26 @@ export function TripPanel({ view, members, role, lang, locale }: { view: TripVie
             <dt style={{ color: K.muted }}>{t(lang, "trip.source")}</dt>
             <dd style={{ margin: 0 }}>{trip.lead_source ?? "—"}</dd>
           </dl>
+          <form
+            data-testid="trip-dates"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void run(`trips/${trip.trip_id}`, "PATCH", { start_date: dates.start || null, end_date: dates.end || null });
+            }}
+            style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12, alignItems: "end" }}
+          >
+            <label style={{ display: "grid", gap: 3, fontSize: 12, color: K.muted }}>
+              {t(lang, "trip.startDate")}
+              <input type="date" value={dates.start} onChange={(e) => setDates((d) => ({ ...d, start: e.target.value }))} style={field} />
+            </label>
+            <label style={{ display: "grid", gap: 3, fontSize: 12, color: K.muted }}>
+              {t(lang, "trip.endDate")}
+              <input type="date" value={dates.end} onChange={(e) => setDates((d) => ({ ...d, end: e.target.value }))} style={field} />
+            </label>
+            <Button size="sm" type="submit" variant="secondary" disabled={busy || !hydrated || (dates.start === (trip.start_date ?? "") && dates.end === (trip.end_date ?? ""))}>
+              {t(lang, "trip.saveDates")}
+            </Button>
+          </form>
         </Panel>
 
         <Panel title={t(lang, "trip.travellers")} testId="trip-party">
@@ -209,34 +244,40 @@ export function TripPanel({ view, members, role, lang, locale }: { view: TripVie
             {view.party.map((p) => (
               <li key={p.traveler_id} style={{ display: "grid", gap: 4 }}>
                 <span style={{ fontSize: 13.5, color: K.ink, overflowWrap: "anywhere" }}>
-                  {p.display_name} <span style={{ color: K.muted, fontSize: 12 }}>· {t(lang, p.role === "lead" ? "trip.lead" : "trip.companion")}</span>
+                  <a href={`/clients/${p.traveler_id}`} title={t(lang, "trip.openClient")} style={{ color: K.ink }}>
+                    {p.display_name}
+                  </a>{" "}
+                  <span style={{ color: K.muted, fontSize: 12 }}>· {t(lang, p.role === "lead" ? "trip.lead" : "trip.companion")}</span>
                 </span>
                 {p.preferred_channel && <span style={{ fontSize: 12, color: K.muted }}>{fmt(t(lang, "trip.prefers"), { channel: codeLabel(lang, "channel", p.preferred_channel) })}</span>}
-                <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {p.has_email &&
-                    (revealed[`${p.traveler_id}:email`] ? (
-                      <code data-testid="revealed-email" style={{ fontSize: 12.5, overflowWrap: "anywhere" }}>{revealed[`${p.traveler_id}:email`]}</code>
-                    ) : (
-                      <span data-testid="show-email" style={{ display: "contents" }}>
-                        <Button size="sm" variant="ghost" disabled={!hydrated} onClick={() => void reveal(p.traveler_id, "email")}>
-                          {t(lang, "trip.showEmail")}
-                        </Button>
-                      </span>
-                    ))}
-                  {p.has_phone &&
-                    (revealed[`${p.traveler_id}:phone`] ? (
-                      <code style={{ fontSize: 12.5 }}>{revealed[`${p.traveler_id}:phone`]}</code>
-                    ) : (
-                      <span data-testid="show-phone" style={{ display: "contents" }}>
-                        <Button size="sm" variant="ghost" disabled={!hydrated} onClick={() => void reveal(p.traveler_id, "phone")}>
-                          {t(lang, "trip.showPhone")}
-                        </Button>
-                      </span>
-                    ))}
+                <span style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                  {p.has_email && <RevealField travelerId={p.traveler_id} field="email" filled lang={lang} label={t(lang, "field.email")} />}
+                  {p.has_phone && <RevealField travelerId={p.traveler_id} field="phone" filled lang={lang} label={t(lang, "field.phone")} />}
                 </span>
+                {p.role === "companion" && (
+                  <span>
+                    <Button size="sm" variant="ghost" disabled={busy || !hydrated} onClick={() => void run(`trips/${trip.trip_id}/travelers/${p.traveler_id}`, "DELETE")}>
+                      {t(lang, "trip.removeTraveller")}
+                    </Button>
+                  </span>
+                )}
               </li>
             ))}
           </ul>
+          <form
+            data-testid="trip-add-companion"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (companion.trim() && (await run(`trips/${trip.trip_id}/travelers`, "POST", { new: { display_name: companion } }))) setCompanion("");
+            }}
+            style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10, alignItems: "center" }}
+          >
+            <input aria-label={t(lang, "trip.companionName")} placeholder={t(lang, "trip.companionName")} value={companion} onChange={(e) => setCompanion(e.target.value)} maxLength={120} style={{ ...field, flex: "1 1 160px" }} />
+            <Button size="sm" type="submit" variant="secondary" disabled={busy || !hydrated || !companion.trim()}>
+              {t(lang, "trip.add")}
+            </Button>
+            <span style={{ width: "100%", fontSize: 11.5, color: K.muted }}>{t(lang, "trip.companionHelp")}</span>
+          </form>
           <p style={{ margin: "10px 0 0", fontSize: 11.5, color: K.muted }}>{t(lang, "trip.revealNote")}</p>
         </Panel>
 
@@ -316,6 +357,8 @@ export function TripPanel({ view, members, role, lang, locale }: { view: TripVie
             ))}
           </ul>
         </Panel>
+
+        <DocumentsPanel documents={documents} tripId={trip.trip_id} role={role} lang={lang} locale={locale} />
 
         <Panel title={t(lang, "trip.history")} testId="trip-history">
           <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 6 }}>

@@ -12,6 +12,7 @@ import pytest
 from app.jobs import metrics
 from app.jobs.kinds import DEFAULT_EXPECTED_SECONDS, EXPECTED_SECONDS, expected_seconds, overdue_after_seconds
 from app.jobs.metrics import JobMetricsSampler, Sample, backlog_sample, metric_data
+from app.observability import reveal_meter
 from tests.unit.fakes import ScriptedConn
 
 
@@ -120,12 +121,14 @@ async def test_sample_once_puts_one_call_in_the_crm_namespace(caplog: pytest.Log
 
     sampler = JobMetricsSampler(_pool(_conn(1000.0, [("crm_heartbeat", 700.0)])), client_factory=factory)
     caplog.set_level(logging.INFO, logger="app.jobs.metrics")
+    reveal_meter.METER.reset()
     sample = await sampler.sample_once()
     assert sample == Sample(1000.0, 1, 1, 1000.0)
     await sampler.sample_once()
     assert len(made) == 1  # the client is created once and reused
     assert len(cw.calls) == 2
-    assert cw.calls[0] == {"Namespace": "AA/Jobs/Crm", "MetricData": metric_data(sample)}
+    assert cw.calls[0] == {"Namespace": "AA/Jobs/Crm", "MetricData": metric_data(sample, 0)}
+    assert cw.calls[0]["MetricData"][-1] == {"MetricName": "RevealsPerMemberPeakHour", "Value": 0.0, "Unit": "Count"}
     assert "ops_metrics_sampled namespace=AA/Jobs/Crm oldest_queued_age_s=1000" in caplog.text
     assert "overdue_running_jobs=1 running=1" in caplog.text
 
@@ -186,3 +189,21 @@ async def test_run_forever_keeps_going_after_failures_and_stops_on_cancel() -> N
     with pytest.raises(asyncio.CancelledError):
         await task
     assert len(reads) >= 3
+
+
+@pytest.mark.asyncio
+async def test_sample_once_publishes_the_reveal_peak() -> None:
+    """AA-937 (design §4.4): the busiest member's reveals in the last hour go out with the backlog metrics."""
+    import uuid
+
+    cw = FakeCloudWatch()
+    sampler = JobMetricsSampler(_pool(_conn(None, [])), client_factory=lambda: cw)
+    reveal_meter.METER.reset()
+    tenant = uuid.uuid4()
+    reveal_meter.METER.record(tenant, uuid.uuid4(), 3)
+    reveal_meter.METER.record(tenant, uuid.uuid4(), 7)
+    try:
+        await sampler.sample_once()
+    finally:
+        reveal_meter.METER.reset()
+    assert cw.calls[0]["MetricData"][-1] == {"MetricName": "RevealsPerMemberPeakHour", "Value": 7.0, "Unit": "Count"}

@@ -61,6 +61,12 @@ Public intake (AA-936, card CRM-08; ``app.intake.public``):
   ``https://go-dev.…``, set by Terraform). A form's own ``allowed_origins`` are accepted too. Empty on ``dev`` /
   ``stg`` / ``prod`` = every submission answers 503 ``intake_not_configured`` (fail closed); on ``test`` / ``local``
   empty means "no Origin check".
+
+Documents (AA-937, card CRM-09; ``app.documents``):
+
+- ``DOCUMENTS_BUCKET``: the ``aa-crm-<env>-documents-*`` bucket (set by Terraform). Objects are encrypted by the app
+  with the tenant ``docs`` DEK before the PUT; the bucket adds SSE-KMS. Empty on ``dev`` / ``stg`` / ``prod`` = the
+  document routes answer 503 ``documents_not_configured``; on ``test`` / ``local`` empty = an in-memory store.
 """
 
 from __future__ import annotations
@@ -85,6 +91,7 @@ DEFAULT_RETENTION_UTC_HOUR = 19
 DEFAULT_INTAKE_PER_MINUTE = 5
 DEFAULT_INTAKE_FORM_PER_HOUR = 200
 KEY_PROVIDERS = frozenset({"kms", "local"})
+_BUCKET = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
 DEFAULT_DEK_CACHE_TTL_S = 300
 MAX_DEK_CACHE_TTL_S = 900
 _KMS_KEY_PREFIXES = ("alias/", "arn:aws:kms:")
@@ -123,6 +130,7 @@ class Settings:
     rate_limit_intake_per_minute: int = DEFAULT_INTAKE_PER_MINUTE
     rate_limit_intake_form_per_hour: int = DEFAULT_INTAKE_FORM_PER_HOUR
     intake_page_origins: tuple[str, ...] = ()
+    documents_bucket: str = ""
 
     def __post_init__(self) -> None:
         if self.environment not in {"dev", "stg", "prod"} | INSECURE_ENVIRONMENTS:
@@ -166,6 +174,8 @@ class Settings:
             raise SettingsError("SENTRY_DSN must be an https:// URL")  # the value is never echoed
         if self.sentry_required and not self.sentry_dsn:
             raise SettingsError("SENTRY_REQUIRED is on but SENTRY_DSN is empty")
+        if self.documents_bucket and not _BUCKET.match(self.documents_bucket):
+            raise SettingsError(f"DOCUMENTS_BUCKET must be an S3 bucket name, got {self.documents_bucket!r}")
         if self.key_provider not in KEY_PROVIDERS:
             raise SettingsError(f"KEY_PROVIDER must be one of {sorted(KEY_PROVIDERS)}, got {self.key_provider!r}")
         if self.key_provider == "local" and self.environment not in INSECURE_ENVIRONMENTS:
@@ -283,4 +293,5 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             env.get("RATE_LIMIT_INTAKE_FORM_PER_HOUR"), DEFAULT_INTAKE_FORM_PER_HOUR, "RATE_LIMIT_INTAKE_FORM_PER_HOUR"
         ),
         intake_page_origins=_origins(env.get("INTAKE_PAGE_ORIGINS")),
+        documents_bucket=_text(env, "DOCUMENTS_BUCKET"),
     )

@@ -3,6 +3,7 @@
 // clicked "Show email" on the server HTML before React hydrated it; the click did nothing and no reveal request reached
 // the API (CRM API log: GET /crm/v1/trips/<id> then nothing). The action buttons now stay disabled until hydration and
 // the root says data-hydrated="true" once handlers are attached; after hydration a click reveals the e-mail.
+// AA-937 (CRM-09): Reveal first asks why; Show posts one reveal with the reason.
 import { act, createElement } from "react";
 import { hydrateRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
@@ -70,7 +71,7 @@ describe("trip workspace before and after hydration", () => {
     expect(container.querySelector('[data-testid=trip-task][data-kind=reply_inquiry][data-status=open]')!.textContent).toContain("Reply within 2 h");
   });
 
-  it("hydrated: marker set, a click on Show email posts one reveal and shows the address", async () => {
+  it("hydrated: marker set, Reveal -> reason -> Show posts one reveal with the reason and shows the address", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ value: "e2e.prospect@example.invalid" }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const container = document.createElement("div");
@@ -85,8 +86,22 @@ describe("trip workspace before and after hydration", () => {
     await act(async () => {
       button.click();
     });
+    expect(fetchMock).not.toHaveBeenCalled(); // Reveal only asks why
+    const select = container.querySelector<HTMLSelectElement>("[data-testid=reveal-reason-email]")!;
+    const show = container.querySelector<HTMLButtonElement>("[data-testid=reveal-show-email] button")!;
+    expect(show.disabled).toBe(true); // no reason yet
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(select, "contact_client");
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(show.disabled).toBe(false);
+    await act(async () => {
+      show.click();
+    });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toBe(`/bff/travelers/${TRAVELER}/reveal`);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(String(url)).toBe(`/bff/travelers/${TRAVELER}/reveal`);
+    expect(JSON.parse(String(init.body))).toEqual({ field: "email", reason: "contact_client" });
     expect(container.querySelector("[data-testid=revealed-email]")!.textContent).toBe("e2e.prospect@example.invalid");
   });
 });
