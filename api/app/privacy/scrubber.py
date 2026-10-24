@@ -43,6 +43,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import re
+import unicodedata
 from bisect import bisect_right
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
@@ -454,11 +455,14 @@ _PIECE_TRIM = " \t\r\n,;:"
 PLACE = "PLACE"  # option C: a detector ADDRESS finding that is exactly one known destination
 PLACE_KEPT = "PLACE_KEPT"  # option B: receipt count of findings left in clear as the trip's own destinations
 KEEPABLE_TYPES = frozenset({"NAME", "ADDRESS"})  # option B: only these detector types may be a destination
-# Option B: a destination right after an honorific or a word for a person ("chị Sa Pa", "Mrs Hoi An", "guest Hội An",
-# "Travellers: Đà Lạt") is a person named like it: masked as before. Matched on the text before the finding with its
-# marks (names.mark), so "đi Sa Pa" (go to) is not "dì Sa Pa" (aunt); the unmarked honorifics match unmarked writing.
+# Option B: a destination right after an honorific or a word for a person ("chị Sa Pa", "Mrs Hoi An", "Mr.Hội An",
+# "(Mrs) Hội An", "guest Hội An", "My wife Hội An", "Vợ tôi tên Hội An", "Name: Nha Trang", "Dear Đà Lạt,") is a person
+# named like it: masked as before. The cue may be followed by any punctuation and spacing, none at all included
+# ("Mr.Hội An", "Ms:Đà Lạt"). Matched on the text before the finding with its marks (names.mark), so "đi Sa Pa" (go
+# to) is not "dì Sa Pa" (aunt); the unmarked honorifics (and a few unmarked kin words) match unmarked writing.
 PERSON_CUES = (
     *names.HONORIFIC_WORDS_MARKED,
+    # people on the booking
     "khach",
     "guest",
     "guests",
@@ -468,9 +472,67 @@ PERSON_CUES = (
     "travelers",
     "passenger",
     "passengers",
+    "contact",
+    "driver",
+    "guide",
+    # naming and greeting
+    "name",
+    "named",
+    "called",
+    "dear",
+    "hi",
+    "hello",
+    "tên",
+    "ten",
+    "gửi",
+    "chào",
+    "liên hệ",
+    # family and friends
+    "wife",
+    "husband",
+    "son",
+    "daughter",
+    "child",
+    "kid",
+    "baby",
+    "friend",
+    "partner",
+    "mother",
+    "father",
+    "mom",
+    "mum",
+    "dad",
+    "sister",
+    "brother",
+    "vợ",
+    "vo",
+    "chồng",
+    "chong",
+    "con",
+    "cháu",
+    "mẹ",
+    "bố",
+    "má",
+    "bé",
+    "cậu",
+    "mợ",
+    "thím",
+    "dượng",
+    "trai",
+    "gái",
 )
-_PERSON_BEFORE = re.compile(r"\b(?:" + "|".join(HONORIFICS + PERSON_CUES) + r")\.?[:,]?\s+$")
+_PERSON_BEFORE = re.compile(
+    r"(?<!\w)(?:" + "|".join(re.escape(c).replace(r"\ ", r"\s+") for c in HONORIFICS + PERSON_CUES) + r")(?!\w)\W*$"
+)
 _PERSON_BEFORE_WINDOW = 16
+# Option B: the word right before or after a destination, whitespace only between ("Lê Hội An", "<PERSON_1> Hội An",
+# "Hội An Nguyễn"). A family name, a middle name before it, or a placeholder there makes the destination part of a name.
+_WORD_BEFORE = re.compile(r"(<[A-Z][A-Z_]{1,20}_\d{1,4}>|[^\W\d_]+)\s+$")
+_WORD_AFTER = re.compile(r"\s+(<[A-Z][A-Z_]{1,20}_\d{1,4}>|[^\W\d_]+)")
+_NEIGHBOUR_WINDOW = 40
+# Unmarked family names that are everyday English words at the start of a sentence ("To Sa Pa by night bus", "Do Hoi
+# An first"): not read as a family name next to a destination. Marked spellings ("Tô", "Đỗ") still are.
+_ENGLISH_NOT_A_NAME = frozenset({"to", "do"})
 
 
 def _apply_detections(
@@ -499,9 +561,11 @@ def _apply_detections(
       is exactly one of the trip's own destinations that cannot be read as a person's name
       (:func:`app.privacy.places.is_keepable_place`, scoped by ``destinations``), standing as whole words and not right
       after an honorific or a word for a person, is a keepable piece. A merged span is left in clear only when every
-      piece in it is keepable and the merged text is itself exactly one keepable destination; any other span is
-      replaced exactly as in f3-2. With no ``destinations`` nothing is keepable and the output is f3-2's, byte for
-      byte. A kept span takes no placeholder; the receipt counts it as ``PLACE_KEPT``.
+      piece in it is keepable and the merged text is itself exactly one keepable destination, and when no family name,
+      middle name or placeholder stands right next to it and no masked span touches it (whitespace only between: "Lê
+      Hội An", "<PERSON_1> Hội An", "Hội An Nguyễn"); any other span is replaced exactly as in f3-2. With no
+      ``destinations`` nothing is keepable and the output is f3-2's, byte for byte. A kept span takes no placeholder;
+      the receipt counts it as ``PLACE_KEPT``.
     """
     protected = patterns.Ranges(patterns.protected_spans(text))
     pieces: list[tuple[int, int, str, bool]] = []
@@ -541,9 +605,21 @@ def _apply_detections(
             last[5] = last[5] and keep
         else:
             merged.append([ps, pe, base, pe - ps, kind == PLACE, keep])
+    kept = [bool(m[5]) and _keepable_at(text, m[0], m[1], destinations) for m in merged]
+    # Option B: a kept span next to a masked one, whitespace only between ("Lê" and "Hội An" found apart in "Lê Hội
+    # An"), is part of that name: masked too. Repeated until stable, since each newly masked span can touch another.
+    changed = any(kept)
+    while changed:
+        changed = False
+        for i in range(len(merged)):
+            if kept[i] and any(
+                0 <= j < len(merged) and not kept[j] and not text[merged[min(i, j)][1] : merged[max(i, j)][0]].strip()
+                for j in (i - 1, i + 1)
+            ):
+                kept[i], changed = False, True
     spans_out = []
-    for s, e, k, _, all_place, all_keep in merged:
-        if all_keep and _keepable_at(text, s, e, destinations):
+    for (s, e, k, _, all_place, _all_keep), keep in zip(merged, kept, strict=True):
+        if keep:
             reg.kept_places += 1  # option B: the trip's own destination stays in clear
             continue
         if all_place and is_place(text[s:e]):
@@ -560,7 +636,29 @@ def _keepable_at(text: str, start: int, end: int, destinations: Sequence[str]) -
     if (start > 0 and text[start - 1].isalnum()) or (end < len(text) and text[end].isalnum()):
         return False
     before = names.mark(text[max(0, start - _PERSON_BEFORE_WINDOW) : start])
-    return _PERSON_BEFORE.search(before) is None
+    if _PERSON_BEFORE.search(before):
+        return False
+    return not _next_to_a_name_part(text, start, end)
+
+
+def _next_to_a_name_part(text: str, start: int, end: int) -> bool:
+    """Option B: the word before ``text[start:end]`` (whitespace only between) is a placeholder, a family name or a
+    middle name ("<PERSON_1> Hội An", "Lê Hội An", "Nguyễn Thị Nha Trang"), or the word after it is a placeholder or a
+    family name ("Hội An Nguyễn"). A name word counts when capitalised, or in any case when the destination itself is
+    written in lower case ("lê hội an"), so "từ Hội An" (from) is not the family name "Từ"."""
+    loose = not text[start].isupper()
+    before = _WORD_BEFORE.search(unicodedata.normalize("NFC", text[max(0, start - _NEIGHBOUR_WINDOW) : start]))
+    after = _WORD_AFTER.match(unicodedata.normalize("NFC", text[end : end + _NEIGHBOUR_WINDOW]))
+    for found, middle in ((before, True), (after, False)):
+        if not found:
+            continue
+        word = found.group(1)
+        if word.startswith("<"):
+            return True
+        english = word.isascii() and word.casefold() in _ENGLISH_NOT_A_NAME
+        if (loose or word[0].isupper()) and not english and names.name_part(word, middle=middle):
+            return True
+    return False
 
 
 def _locate(text: str, value: str) -> list[tuple[int, int]]:

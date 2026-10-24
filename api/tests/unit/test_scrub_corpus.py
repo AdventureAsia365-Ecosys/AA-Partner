@@ -200,7 +200,8 @@ def test_option_b_the_live_run_replayed_fits_the_overscrub_budget() -> None:
 
 def test_option_b_name_like_strangers_and_places_outside_the_trip_stay_masked() -> None:
     samples = run.load()
-    strangers = [s for s in samples if s["needs_detector"] and not s["known"]]
+    cue_texts = {text for _, text, _, _ in generate.PERSON_CUE_STRANGERS}
+    strangers = [s for s in samples if s["needs_detector"] and not s["known"] and s["text"] not in cue_texts]
     outside = [s for s in samples if s.get("outside")]
     assert len(strangers) >= 9 and len(outside) >= 3
     assert all(name_like(p) for s in strangers for p in s["pii"] if " " in p)
@@ -217,3 +218,25 @@ def test_option_b_name_like_strangers_and_places_outside_the_trip_stay_masked() 
             text = asyncio.run(run.PiiScrubber(tagger, today=run.TODAY).scrub(s["text"], run.known_of(s))).text
             assert s["destinations"] == ["vietnam"]
             assert not any(run._readable(p, text) for p in s["pii"] if is_place(p)), s["id"]
+
+
+def test_option_b_people_named_like_a_keepable_destination_stay_masked() -> None:
+    """S250 review (live on acc2): a person named exactly like a keepable destination, after a person cue ("Mr.Hội An",
+    "My wife Hội An", "Name: Nha Trang") or next to a family name ("Khách Lê Hội An"), tagged NAME on a Vietnam trip."""
+    samples = [s for s in run.load() if s["text"] in {text for _, text, _, _ in generate.PERSON_CUE_STRANGERS}]
+    assert len(samples) == len(generate.PERSON_CUE_STRANGERS)
+
+    class PiiTagger:
+        name = "pii-tagger"
+
+        def __init__(self, sample: dict) -> None:
+            self.pii = sample["pii"]
+
+        async def detect(self, text: str) -> list[Detection]:
+            return [Detection("NAME", p) for p in self.pii]
+
+    for s in samples:
+        assert s["destinations"] == ["vietnam"] and not any(name_like(p) for p in s["pii"]), s["id"]  # keepable shapes
+        r = asyncio.run(run.PiiScrubber(PiiTagger(s), today=run.TODAY).scrub(s["text"], run.known_of(s)))
+        assert not any(run._readable(p, r.text) for p in s["pii"]), (s["id"], r.text)
+        assert all(k in r.text for k in s["keep"]) and "PLACE_KEPT" not in r.receipt["counts"], s["id"]

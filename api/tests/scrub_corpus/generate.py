@@ -92,6 +92,17 @@ NAME_LIKE_STRANGERS = [
     ("vi", "Khách Mai Châu và chồng là Thái Bình đi tour Sa Pa.", ["Mai Châu", "Thái Bình"], ["Sa Pa"]),
     ("en", "Traveller Hà Giang wants to visit Hạ Long.", ["Hà Giang"], ["Hạ Long"]),
 ]
+# Option B review (S250, live on acc2 ApplyGuardrail): people named exactly like a keepable destination, after a person
+# cue or next to a family name. The guardrail tagged each one, and before the review fix each was left in clear. They
+# must stay masked: a cue dropped from scrubber.PERSON_CUES turns the corpus red with a leak. (text, pii, keep)
+PERSON_CUE_STRANGERS = [
+    ("en", "Mr.Hội An confirmed the booking.", ["Hội An"], ["confirmed the booking"]),
+    ("en", "(Mrs) Hội An will join the trip.", ["Hội An"], ["will join the trip"]),
+    ("en", "My wife Hội An and I arrive Monday.", ["Hội An"], ["arrive Monday"]),
+    ("vi", "Vợ tôi tên Hội An, đi cùng tôi.", ["Hội An"], ["đi cùng tôi"]),
+    ("en", "Name: Nha Trang, phone later.", ["Nha Trang"], ["phone later"]),
+    ("vi", "Khách Lê Hội An đã cọc 30%.", ["Hội An"], ["30%"]),
+]
 # Option B: a destination outside the trip's countries is masked or typed as in f3-2. (lang, countries, text, keep,
 # outside)
 OUTSIDE_TRIP = [
@@ -394,6 +405,8 @@ def build() -> list[dict]:
         add(lang, text, [], pii, keep, needs=True)
     for lang, countries, text, keep, outside in OUTSIDE_TRIP:
         add(lang, text, [], [], keep, destinations=countries, outside=outside)
+    for lang, text, pii, keep in PERSON_CUE_STRANGERS:
+        add(lang, text, [], pii, keep, needs=True)
     return samples
 
 

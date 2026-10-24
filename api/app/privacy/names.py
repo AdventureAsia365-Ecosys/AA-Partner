@@ -36,6 +36,13 @@ _VN_GIVEN = (
     "Quỳnh Sang Sơn Tài Tâm Tân Thái Thắng Thanh Thành Thảo Thịnh Thọ Thơ Thu Thuận Thủy Thuỷ Tiến Tín Tĩnh Toàn "
     "Trang Trinh Trung Tú Tuấn Tùng Tuyên Tuyết Vân Việt Vinh Vĩnh Vy Xuân Yên Yến"
 ).split()
+# Common middle names: a capitalised one right before a destination ("Nguyễn Thị Nha Trang", "Lê Văn Hội An") makes
+# the destination the end of a full name (option B, :mod:`app.privacy.scrubber`). "Mỹ" is left out: unmarked it reads
+# "My", the English word that starts many sentences ("My Hoi An trip").
+_VN_MIDDLE = (
+    "Thị Văn Đức Hữu Ngọc Minh Công Quang Xuân Thanh Kim Hoàng Gia Bảo Đình Quốc Mạnh Trọng Như Diệu Phương Hồng "
+    "Thu Anh"
+).split()
 HONORIFIC_WORDS = (
     "anh",
     "chi",
@@ -76,6 +83,8 @@ FAMILY_FOLDED = VN_FAMILY_NAMES | {fold(n) for n in _VN_FAMILY_EXTRA}
 FAMILY_MARKED = frozenset(mark(n) for n in (*_VN_FAMILY, *_VN_FAMILY_EXTRA))
 GIVEN_FOLDED = frozenset(fold(n) for n in _VN_GIVEN)
 GIVEN_MARKED = frozenset(mark(n) for n in _VN_GIVEN)
+MIDDLE_FOLDED = frozenset(fold(n) for n in _VN_MIDDLE)
+MIDDLE_MARKED = frozenset(mark(n) for n in _VN_MIDDLE)
 _WORD = re.compile(r"[^\W\d_]+")
 
 
@@ -87,11 +96,17 @@ def _is(word: str, folded: frozenset[str], marked: frozenset[str]) -> bool:
 def name_like(phrase: str) -> bool:
     """``phrase`` could be read as a person's name: its first word is a family name or an honorific ("Hà Giang", "Mai
     Châu", "Ninh Bình", "Ba Bể"), or every word is a common given name ("Long An", "Thanh Hóa", "Huế"). A phrase with no
-    word at all is name-like too (fail closed)."""
-    words = _WORD.findall(phrase)
+    word at all is name-like too (fail closed). Read in NFC, so a decomposed spelling gives the same answer."""
+    words = _WORD.findall(unicodedata.normalize("NFC", phrase))
     if not words:
         return True
     first = words[0]
     if _is(first, FAMILY_FOLDED, FAMILY_MARKED) or fold(first) in HONORIFIC_WORDS:
         return True
     return all(_is(w, GIVEN_FOLDED, GIVEN_MARKED) for w in words)
+
+
+def name_part(word: str, *, middle: bool) -> bool:
+    """``word`` can stand inside a Vietnamese full name next to a given name: a family name ("Lê" in "Lê Hội An",
+    "Nguyễn" in "Hội An Nguyễn") or, with ``middle``, a common middle name ("Thị" in "Nguyễn Thị Nha Trang")."""
+    return _is(word, FAMILY_FOLDED, FAMILY_MARKED) or (middle and _is(word, MIDDLE_FOLDED, MIDDLE_MARKED))

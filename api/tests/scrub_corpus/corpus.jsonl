@@ -252,3 +252,9 @@
 {"destinations": ["laos"], "id": "en-252", "keep": ["Luang Prabang"], "known": [], "lang": "en", "needs_detector": false, "outside": ["Hoi An"], "pii": [], "text": "Luang Prabang for 3 nights, then Hoi An by air."}
 {"destinations": ["cambodia"], "id": "vi-253", "keep": ["Siem Reap"], "known": [], "lang": "vi", "needs_detector": false, "outside": ["Hạ Long"], "pii": [], "text": "Đi Siem Reap 3 đêm rồi bay ra Hạ Long."}
 {"destinations": ["thailand"], "id": "en-254", "keep": ["Chiang Mai"], "known": [], "lang": "en", "needs_detector": false, "outside": ["Sapa"], "pii": [], "text": "Chiang Mai first, then Sapa in the north of Vietnam."}
+{"destinations": ["vietnam"], "id": "en-255", "keep": ["confirmed the booking"], "known": [], "lang": "en", "needs_detector": true, "pii": ["Hội An"], "text": "Mr.Hội An confirmed the booking."}
+{"destinations": ["vietnam"], "id": "en-256", "keep": ["will join the trip"], "known": [], "lang": "en", "needs_detector": true, "pii": ["Hội An"], "text": "(Mrs) Hội An will join the trip."}
+{"destinations": ["vietnam"], "id": "en-257", "keep": ["arrive Monday"], "known": [], "lang": "en", "needs_detector": true, "pii": ["Hội An"], "text": "My wife Hội An and I arrive Monday."}
+{"destinations": ["vietnam"], "id": "vi-258", "keep": ["đi cùng tôi"], "known": [], "lang": "vi", "needs_detector": true, "pii": ["Hội An"], "text": "Vợ tôi tên Hội An, đi cùng tôi."}
+{"destinations": ["vietnam"], "id": "en-259", "keep": ["phone later"], "known": [], "lang": "en", "needs_detector": true, "pii": ["Nha Trang"], "text": "Name: Nha Trang, phone later."}
+{"destinations": ["vietnam"], "id": "vi-260", "keep": ["30%"], "known": [], "lang": "vi", "needs_detector": true, "pii": ["Hội An"], "text": "Khách Lê Hội An đã cọc 30%."}

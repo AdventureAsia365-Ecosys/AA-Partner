@@ -489,12 +489,87 @@ async def test_option_b_marks_decide_the_reading() -> None:
         ("Travellers: Đà Lạt and Hannah.", ("ADDRESS", "Đà Lạt")),
         ("Khách Hạ Long muốn đổi phòng.", ("NAME", "Hạ Long")),
         ("anh Sapa gọi lại.", ("NAME", "Sapa")),
+        # S250 review, live on acc2 ApplyGuardrail: a cue with no space after it, or in brackets, still counts.
+        ("Mr.Hội An confirmed the booking.", ("NAME", "Hội An")),
+        ("Mrs.Sa Pa will pay the deposit.", ("NAME", "Sa Pa")),
+        ("(Mrs) Hội An will join.", ("NAME", "Hội An")),
+        ("Ms:Đà Lạt, room 2.", ("NAME", "Đà Lạt")),
+        ("Mrs (Hội An) will join.", ("NAME", "Hội An")),
+        # S250 review, live: kin and naming words left a person in clear.
+        ("My wife Hội An and I arrive Monday.", ("NAME", "Hội An")),
+        ("Vợ tôi tên Hội An, đi cùng tôi.", ("NAME", "Hội An")),
+        ("Name: Nha Trang, phone later.", ("NAME", "Nha Trang")),
+        ("Dear Đà Lạt, thanks for the deposit.", ("NAME", "Đà Lạt")),
+        ("Our guide Sa Pa meets you at 8.", ("NAME", "Sa Pa")),
+        ("Con gái Hội An đi cùng.", ("NAME", "Hội An")),
+        ("vo toi ten Hoi An", ("NAME", "Hoi An")),
     ],
 )
 async def test_option_b_after_an_honorific_or_a_person_word_stays_masked(text: str, hit: tuple[str, str]) -> None:
     r = await scrub_for(text, VN, hit)
     assert hit[1] not in r.text and "PLACE_KEPT" not in r.receipt["counts"]
     assert restore(r.text, r.placeholders) == text
+
+
+@pytest.mark.parametrize(
+    ("text", "hits", "gone"),
+    [
+        # S250 review: a name found in pieces. The family name and the destination come back apart.
+        ("Khách Lê Hội An đã cọc", [("NAME", "Lê"), ("NAME", "Hội An")], ["Lê", "Hội An"]),
+        # Only the destination is found: the family name, middle name or placeholder next to it still marks a name.
+        ("Khách Lê Hội An đã cọc", [("NAME", "Hội An")], ["Hội An"]),
+        ("Nguyễn Thị Nha Trang sẽ đến muộn.", [("NAME", "Nha Trang")], ["Nha Trang"]),
+        ("Booked for Hội An Nguyễn and family.", [("NAME", "Hội An")], ["Hội An"]),
+        ("Booked for Hoi An Nguyen and family.", [("NAME", "Hoi An")], ["Hoi An"]),
+        ("lê hội an đã cọc", [("NAME", "hội an")], ["hội an"]),
+        # Pieces touching a masked one are masked in turn (whitespace only between).
+        ("Khách Lê Hội An Sa Pa đã cọc", [("NAME", "Lê"), ("NAME", "Hội An"), ("NAME", "Sa Pa")], ["Hội An", "Sa Pa"]),
+        ("Room for Peter Sa Pa", [("NAME", "Peter"), ("NAME", "Sa Pa")], ["Peter", "Sa Pa"]),
+    ],
+)
+async def test_option_b_a_destination_inside_a_full_name_stays_masked(text: str, hits: list, gone: list) -> None:
+    r = await scrub_for(text, VN, *hits)
+    assert not any(g in r.text for g in gone), r.text
+    assert "PLACE_KEPT" not in r.receipt["counts"]
+    assert restore(r.text, r.placeholders) == text
+
+
+async def test_option_b_a_destination_next_to_a_placeholder_stays_masked() -> None:
+    # A stored person masked by pass 1 right before the destination: "Contact <PERSON_1> Hội An tomorrow".
+    lan = KnownPerson("primary", display_name="Thanh Lan")
+    finds = Finds(("NAME", "Hội An"))
+    r = await PiiScrubber(finds, today=TODAY).scrub(
+        "Contact Thanh Lan Hội An tomorrow.", KnownValues((lan,), destinations=VN)
+    )
+    assert finds.seen == ["Contact <PERSON_1> Hội An tomorrow."]
+    assert "Hội An" not in r.text and "PLACE_KEPT" not in r.receipt["counts"]
+
+
+async def test_option_b_everyday_words_next_to_a_destination_keep_it() -> None:
+    # "từ" (from) is the family name "Từ" only when capitalised; English "To" / "Do" are never family names here;
+    # a place after a comma or a dash is not touching a name.
+    for text, hit in (
+        ("Đi từ Hội An ra Đà Nẵng.", ("NAME", "Hội An")),
+        ("To Sa Pa by night bus.", ("NAME", "Sa Pa")),
+        ("Do Hoi An first, then Hue.", ("NAME", "Hoi An")),
+        ("Khách Lê, Hội An là điểm đầu.", ("NAME", "Hội An")),
+        ("Tour Hạ Long 2 ngày.", ("NAME", "Hạ Long")),
+        ("Hà Nội - Sa Pa 3 đêm.", ("NAME", "Sa Pa")),
+    ):
+        r = await scrub_for(text, VN, hit)
+        assert r.text == text and r.receipt["counts"] == {"PLACE_KEPT": 1}, text
+
+
+async def test_option_b_decomposed_text_is_read_as_composed() -> None:
+    import unicodedata
+
+    nfd = unicodedata.normalize("NFD", "Đi Hội An rồi Thanh Hóa.")
+    r = await scrub_for(
+        nfd, VN, ("NAME", unicodedata.normalize("NFD", "Hội An")), ("NAME", unicodedata.normalize("NFD", "Thanh Hóa"))
+    )
+    assert unicodedata.normalize("NFD", "Hội An") in r.text  # kept, as the composed spelling would be
+    assert unicodedata.normalize("NFD", "Thanh Hóa") not in r.text  # name-like whatever the normal form
+    assert r.receipt["counts"]["PLACE_KEPT"] == 1
 
 
 async def test_option_b_place_plus_more_and_merges_stay_masked() -> None:
@@ -547,6 +622,13 @@ async def test_keepable_places_guard() -> None:
     for place in NAME_LIKE_PLACES:
         assert name_like(place) and not any(is_keepable_place(place, (c,)) for c in KEEPABLE_PLACES), place
     assert name_like("") and name_like("12 / 3")  # no word at all: fail closed
+    import unicodedata
+
+    for place in ("Thanh Hóa", "Ninh Bình", "Hà Giang", "Mai Châu"):  # decomposed text reads the same
+        assert name_like(unicodedata.normalize("NFD", place)), place
+    assert not name_like(unicodedata.normalize("NFD", "Hội An"))
+    for dropped in ("Mandalay", "Paro", "Bali"):  # S250 review: given names too, never kept
+        assert not any(is_keepable_place(dropped, (c,)) for c in KEEPABLE_PLACES), dropped
     for yes in ("hạ long", "SA PA", "Sa-Pa", " (Hội An), ", "Hội An"):
         assert is_keepable_place(yes, VN), yes
     for no in ("Hà Long", "Ha Long", "Sa Pa 2", "đi Sa Pa", "", "Bangkok"):

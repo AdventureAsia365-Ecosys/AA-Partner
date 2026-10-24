@@ -602,11 +602,13 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   with diacritics ("Hạ Long" yes, "Hà Long" / "Ha Long" no). Never kept: a place that reads as a person's name
   (`app.privacy.names.name_like`: first word a family name or an honorific, or every word a common given name, so
   "Hà Giang", "Mai Châu", "Ninh Bình", "Long An", "Thanh Hóa", "Huế" stay masked; a test holds the list to the rule and
-  `is_keepable_place` checks it again), a place right after an honorific or a person word ("chị Sa Pa", "guest Hội
-  An"), a place plus anything else, and any merged span with a piece that is not keepable. No destinations = `f3-2`
+  `is_keepable_place` checks it again), a place right after an honorific or a person word, with any punctuation or
+  none between ("chị Sa Pa", "guest Hội An", "Mr.Hội An", "(Mrs) Hội An", "My wife Hội An", "Name: Nha Trang"), a
+  place right next to a family name, a middle name, a placeholder or a masked span ("Lê Hội An", "Nguyễn Thị Nha
+  Trang", "<PERSON_1> Hội An"), a place plus anything else, and any merged span with a piece that is not keepable. No destinations = `f3-2`
   output byte for byte. The receipt counts kept findings as `PLACE_KEPT` (not in `entities`). Accepted residual risk:
   a person nobody stored whose whole name is exactly a listed non-name-like destination of the trip's countries is
-  left visible when the guardrail tags them. The scrubber `VERSION` is bumped whenever the same input can scrub
+  left visible when the guardrail tags them and no person cue or name part stands next to them. The scrubber `VERSION` is bumped whenever the same input can scrub
   differently.
 - **Fail closed**: any error -> `scrub_failed`, a scrub over its deadline (`SCRUB_DETECTOR_TIMEOUT_MS`, default 3 s,
   passes 1-3 together) -> `scrub_timeout`; no call, `manual_reply_needed`. No guardrail configured = every scrub refused. Text that already

@@ -77,6 +77,9 @@ def is_place(value: str) -> bool:
 # "Phú Quốc", "Huế", "Long An", "Thanh Hóa", "Hải Dương", "Kim Liên" are never kept. Spellings are listed as written:
 # a phrase is matched case-insensitively with its diacritics ("Hạ Long" is kept, "Hà Long" is not), and an unmarked
 # spelling ("Ha Long") is listed only when it passes the rule read folded (it does not: "Ha" may be "Hà").
+# The name lists are Vietnamese, so the other countries' entries were screened by hand for use as personal names
+# (S250 review): "Mandalay", "Paro" and "Bali" are given names too and are left out; a destination nobody listed is
+# masked as in f3-2, which costs only an over-scrub.
 KEEPABLE_PLACES: dict[str, tuple[str, ...]] = {
     "vietnam": (
         "Hạ Long",
@@ -119,10 +122,10 @@ KEEPABLE_PLACES: dict[str, tuple[str, ...]] = {
     "cambodia": ("Siem Reap", "Phnom Penh", "Angkor", "Angkor Wat", "Battambang", "Kampot", "Tonle Sap"),
     "laos": ("Luang Prabang", "Vientiane", "Vang Vieng", "Pakse"),
     "thailand": ("Bangkok", "Chiang Mai", "Chiang Rai", "Phuket", "Krabi", "Ayutthaya", "Sukhothai"),
-    "myanmar": ("Yangon", "Bagan", "Mandalay", "Inle Lake"),
-    "bhutan": ("Paro", "Thimphu", "Punakha"),
+    "myanmar": ("Yangon", "Bagan", "Inle Lake"),
+    "bhutan": ("Thimphu", "Punakha"),
     "nepal": ("Kathmandu", "Pokhara", "Chitwan"),
-    "indonesia": ("Bali", "Ubud", "Yogyakarta", "Borobudur", "Komodo"),
+    "indonesia": ("Ubud", "Yogyakarta", "Borobudur", "Komodo"),
 }
 _SEPARATORS = re.compile(r"[\s.\-]+")
 
