@@ -112,11 +112,30 @@ class Membership:
 
 @dataclass(frozen=True)
 class ProvisioningContext:
-    """What platform provisioning may use inside :func:`provisioning_tx`."""
+    """What platform provisioning may use inside :func:`provisioning_tx`. ``audit`` queues an agency audit event
+    (AA-940, design §4.9 "role changes"), written when the block succeeds: actor kind ``aa_ops`` for a ``platform:``
+    actor (the L1 console), ``system`` for a ``seed:`` actor."""
 
     conn: asyncpg.Connection
     tenant_id: uuid.UUID
     actor: str
+    audit_events: list[AuditEvent] = field(default_factory=list, repr=False)
+
+    def audit(
+        self, action: str, object_kind: str, object_id: str | None = None, *, fields: tuple[str, ...] = ()
+    ) -> AuditEvent:
+        event = AuditEvent(
+            actor_kind="aa_ops" if self.actor.startswith("platform:") else "system",
+            actor_ref=self.actor,
+            action=action,
+            outcome="allowed",
+            object_kind=object_kind,
+            object_id=object_id,
+            fields=tuple(fields),
+            request_id=current_request_id(),
+        )
+        self.audit_events.append(event)
+        return event
 
 
 @dataclass(frozen=True)
@@ -210,6 +229,7 @@ class ExportContext:
 
     conn: asyncpg.Connection
     tenant_id: uuid.UUID
+    actor: str = "job:crm_audit_export"
 
 
 @dataclass(frozen=True)
@@ -358,21 +378,28 @@ async def intake_tx(pool: asyncpg.Pool, public_key: str) -> AsyncIterator[tuple[
 
 
 EXPORT_ACTOR = "job:crm_audit_export"
+RETENTION_ACTOR = "job:crm_audit_retention"
+EXPORT_ACTORS = frozenset({EXPORT_ACTOR, RETENTION_ACTOR})
 TENANT_EXISTS_SQL = "SELECT 1 FROM crm.tenant WHERE tenant_id = $1"
 
 
 @asynccontextmanager
-async def audit_export_tx(pool: asyncpg.Pool, tenant_id: uuid.UUID) -> AsyncIterator[ExportContext]:
+async def audit_export_tx(
+    pool: asyncpg.Pool, tenant_id: uuid.UUID, *, actor: str = EXPORT_ACTOR
+) -> AsyncIterator[ExportContext]:
     """One transaction in one agency for the audit export and its verification (AA-940). The agency must exist; a
-    locked or trashed one is accepted (its audit is exported until its partitions go). Commits on a normal exit."""
+    locked or trashed one is accepted (its audit is exported until its partitions go). Commits on a normal exit.
+    ``actor``: ``job:crm_audit_export`` or ``job:crm_audit_retention`` (the daily run's per-agency event)."""
     if not isinstance(tenant_id, uuid.UUID):
         raise TypeError("tenant_id must be a UUID")
+    if actor not in EXPORT_ACTORS:
+        raise ValueError(f"audit export actor must be one of {sorted(EXPORT_ACTORS)}")
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
         if await conn.fetchval(TENANT_EXISTS_SQL, tenant_id) is None:
             raise NotFound("tenant_not_found")
-        await conn.execute("SELECT set_config('app.actor', $1, true)", EXPORT_ACTOR)
-        yield ExportContext(conn=conn, tenant_id=tenant_id)
+        await conn.execute("SELECT set_config('app.actor', $1, true)", actor)
+        yield ExportContext(conn=conn, tenant_id=tenant_id, actor=actor)
 
 
 async def _write_audit(ctx: TenantContext | SystemContext, events: list[AuditEvent]) -> None:
@@ -417,7 +444,11 @@ async def provisioning_tx(
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
         await conn.execute("SELECT set_config('app.actor', $1, true)", actor)
-        yield ProvisioningContext(conn=conn, tenant_id=tenant_id, actor=actor)
+        ctx = ProvisioningContext(conn=conn, tenant_id=tenant_id, actor=actor)
+        yield ctx
+        # The block succeeded: its audit events go in the same transaction (a failed write fails the provisioning).
+        if ctx.audit_events:
+            await conn.executemany(INSERT_SQL, [e.row() for e in ctx.audit_events])
 
 
 # What helpers that work inside any of the contexts accept (the DB lint allows ``<param>.conn`` on this annotation).

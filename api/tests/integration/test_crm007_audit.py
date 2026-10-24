@@ -123,8 +123,21 @@ async def test_e_the_verify_script_detects_a_deleted_row(app_pool: asyncpg.Pool,
     assert {"content_mismatch", "object_mismatch:governance"} <= codes
 
 
+async def _run_events(admin: asyncpg.Connection, tenant_id: uuid.UUID) -> list[asyncpg.Record]:
+    return await _owner_fetch(
+        admin,
+        tenant_id,
+        "SELECT actor_kind, actor_ref, reason, object_ids FROM crm.audit_event WHERE action = 'audit_retention' "
+        "ORDER BY at, event_id",
+    )
+
+
 async def test_the_export_job_and_the_retention_job(app_pool: asyncpg.Pool, admin: asyncpg.Connection) -> None:
     tenant_id, _ = await _agency(app_pool)
+    locked, _ = await _agency(app_pool)
+    async with app_pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(locked))
+        await conn.execute("UPDATE crm.tenant SET status = 'locked' WHERE tenant_id = $1", locked)
     start = _start()
     await _backdate(admin, tenant_id, start, [start + timedelta(minutes=1)])
     archive = MemoryAuditArchive()
@@ -151,6 +164,38 @@ async def test_the_export_job_and_the_retention_job(app_pool: asyncpg.Pool, admi
         await admin.execute("SET LOCAL ROLE crm_owner")
         after = await admin.fetchval("SELECT count(*) FROM crm.audit_export_tenant WHERE verified_until IS NOT NULL")
     assert after == before
+    # One event per run per active agency (design §4.9 bulk jobs); none in a locked agency (offboarding path).
+    events = await _run_events(admin, tenant_id)
+    assert [(e["actor_kind"], e["actor_ref"], e["reason"]) for e in events] == [
+        ("system", "job:crm_audit_retention", "verified"),
+        ("system", "job:crm_audit_retention", "database_only"),
+    ]
+    assert events[0]["object_ids"] == []
+    assert await _run_events(admin, locked) == []
+
+
+async def test_provisioning_records_role_changes(app_pool: asyncpg.Pool, admin: asyncpg.Connection) -> None:
+    """Design §4.9 "Logged: role changes" (AA-940 review): the provisioning path writes the agency audit."""
+    from app.agencies import AgencySpec, MemberSpec, provision_agency
+    from tests.integration.test_crm005_intake import ISS
+
+    tenant_id = uuid.uuid4()
+    spec = AgencySpec(tenant_id=tenant_id, display_name="Sen Vàng Travel", default_locale="vi-VN", is_synthetic=True)
+    sub = f"sub-{uuid.uuid4()}"
+    await provision_agency(app_pool, spec, (MemberSpec(ISS, sub, "owner"),), environment="test", actor="seed:it")
+    await provision_agency(app_pool, spec, (MemberSpec(ISS, sub, "agent"),), environment="test", actor="platform:l1")
+    await provision_agency(app_pool, spec, (MemberSpec(ISS, sub, "agent"),), environment="test", actor="platform:l1")
+    rows = await _owner_fetch(
+        admin,
+        tenant_id,
+        "SELECT actor_kind, actor_ref, action, object_kind, fields FROM crm.audit_event ORDER BY at, event_id",
+    )
+    assert [(r["actor_kind"], r["actor_ref"], r["action"], r["object_kind"]) for r in rows] == [
+        ("system", "seed:it", "agency_create", "agency"),
+        ("system", "seed:it", "member_add", "member"),
+        ("aa_ops", "platform:l1", "member_role_change", "member"),
+    ]
+    assert rows[2]["fields"] == ["role"]
 
 
 async def test_the_access_log_is_for_the_owner(app_pool: asyncpg.Pool, admin: asyncpg.Connection) -> None:

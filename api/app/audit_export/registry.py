@@ -11,7 +11,9 @@ from datetime import datetime
 
 import asyncpg
 
-AGENCIES_SQL = "SELECT tenant_id, exported_until, verified_until, last_seq FROM crm.audit_export_agencies()"
+AGENCIES_SQL = (
+    "SELECT tenant_id, exported_until, verified_until, last_seq, registered_at FROM crm.audit_export_agencies()"
+)
 ENSURE_SQL = "SELECT crm.audit_ensure_partitions()"
 DROP_SQL = "SELECT partition_name, range_end, action FROM crm.audit_drop_expired_partitions($1)"
 
@@ -22,6 +24,7 @@ class Agency:
     exported_until: datetime
     verified_until: datetime | None
     last_seq: int
+    registered_at: datetime | None = None
 
 
 @dataclass(frozen=True)

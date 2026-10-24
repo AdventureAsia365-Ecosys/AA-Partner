@@ -17,6 +17,7 @@ from app.audit_export.archive import (
     S3AuditArchive,
     build_audit_archive,
 )
+from app.errors import NotFound
 from app.jobs.queue import Job
 from app.settings import Settings, SettingsError
 from app.tenancy import ExportContext
@@ -200,7 +201,7 @@ async def test_export_next_hour_waits_for_the_lag_and_refuses_a_disagreement() -
 
 def _fake_export_tx(conns: list[ScriptedConn]) -> Any:
     @asynccontextmanager
-    async def tx(_pool: Any, tenant_id: uuid.UUID):  # noqa: ANN202
+    async def tx(_pool: Any, tenant_id: uuid.UUID, **_: Any):  # noqa: ANN202
         yield ExportContext(conns.pop(0) if len(conns) > 1 else conns[0], tenant_id)
 
     return tx
@@ -429,7 +430,8 @@ async def test_retention_verifies_marks_and_reports(monkeypatch: pytest.MonkeyPa
     async def drop(_pool: Any, *, dry_run: bool) -> list[registry.PartitionAction]:
         return [registry.PartitionAction("audit_event_p202401", START, "would_drop" if dry_run else "dropped")]
 
-    conn = ScriptedConn()
+    # TENANT is active, `other` is locked or trashed (no run event: offboarding path).
+    conn = ScriptedConn().on("status = 'active'", lambda tid: 1 if tid == TENANT else None)
     monkeypatch.setattr(registry, "ensure_partitions", ensure)
     monkeypatch.setattr(registry, "agencies", listed)
     monkeypatch.setattr(registry, "drop_expired_partitions", drop)
@@ -438,9 +440,29 @@ async def test_retention_verifies_marks_and_reports(monkeypatch: pytest.MonkeyPa
     job = Job("r", retention.KIND, {}, 1, 3)
     result = await retention.build_handler(MemoryAuditArchive(), dry_run=True)(object(), job)
     assert result["verified_count"] == 1 and result["problem_count"] == 1 and result["would_drop_count"] == 1
-    assert result["status"] == "problems" and conn.sql("SET verified_until") == [(TENANT, START)]
+    assert result["status"] == "problems" and conn.sql("crm.audit_mark_verified") == [(START,)]
+    assert conn.sql("UPDATE crm.audit_export_tenant") == []  # verified_until never moves by a plain UPDATE
+    events = conn.sql("INSERT INTO crm.audit_event")
+    assert result["event_count"] == 1 and len(events) == 1
+    assert events[0][:5] == ("system", "job:crm_audit_retention", "audit_retention", "allowed", "audit_export")
+    assert events[0][7] == "verified" and events[0][9] == []  # dry run: nothing dropped
     result = await retention.build_handler(None, dry_run=False)(object(), job)
     assert result["verified_count"] == 0 and result["dropped_count"] == 1
+    events = conn.sql("INSERT INTO crm.audit_event")
+    assert events[-1][7] == "database_only" and events[-1][9] == ["audit_event_p202401"]
+
+
+@pytest.mark.asyncio
+async def test_the_run_event_skips_a_deleted_agency(monkeypatch: pytest.MonkeyPatch) -> None:
+    @asynccontextmanager
+    async def gone(_pool: Any, _tenant_id: uuid.UUID, **_: Any):  # noqa: ANN202
+        raise NotFound("tenant_not_found")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(retention, "audit_export_tx", gone)
+    assert await retention.record_run(object(), TENANT, "verified", ()) is False
+    with pytest.raises(ValueError):
+        retention.run_event("verified", ("not a partition name",))
 
 
 @pytest.mark.asyncio
@@ -488,3 +510,16 @@ async def test_registry_calls_the_crm007_functions() -> None:
         registry.PartitionAction("p", START, "would_drop")
     ]
     assert pool.sql("crm.audit_drop_expired_partitions") == [(True,)]
+
+
+@pytest.mark.asyncio
+async def test_audit_export_tx_takes_the_two_job_actors_only() -> None:
+    from app.tenancy import audit_export_tx
+
+    with pytest.raises(ValueError):
+        async with audit_export_tx(ScriptedConn(), TENANT, actor="job:other"):
+            pass  # pragma: no cover
+    conn = ScriptedConn().on("FROM crm.tenant WHERE tenant_id", 1)
+    async with audit_export_tx(conn, TENANT, actor="job:crm_audit_retention") as ctx:  # type: ignore[arg-type]
+        assert ctx.actor == "job:crm_audit_retention"
+    assert conn.sql("'app.actor'") == [("job:crm_audit_retention",)]

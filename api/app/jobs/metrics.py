@@ -21,8 +21,13 @@ two numbers and sends them in **one** ``PutMetricData`` call to namespace ``AA/J
 - ``AuditPartitionMonthsAhead`` (Count, AA-940): whole months after the current UTC month that already have an audit
   partition (``crm.audit_partition_bounds()``; 3 after the hourly job). Infra alarms below 1: without a partition the
   next month's audit writes, and so the requests that write them, fail.
+- ``AuditVerifyLagHours`` (Count, AA-940 review): the largest gap, over agencies, between what is exported
+  (``exported_until``) and what the daily verification confirmed (``verified_until``, or the hour the agency was
+  registered while it was never verified); 0 when the verification is level with the export. Healthy is under about
+  26 (one daily run); Infra alarms at 50. One agency that keeps failing its verification stops partition drops for
+  every agency (the drop needs all of them verified), so this is the alarm for that, not the job log line.
 
-The two audit values are read in their own statement; before crm-007 (or on any error there) they are left out and the
+The three audit values are read in their own statement; before crm-007 (or on any error there) they are left out and the
 job values still go.
 
 Infra alarms on them (``aa-crm-<env>-jobs-queue-age`` > 900 s, ``-jobs-overdue-running`` > 0, the same pair as
@@ -119,6 +124,9 @@ def backlog_sample(oldest_due_age_s: float | None, running: Iterable[tuple[str, 
 AUDIT_SQL = """
 SELECT coalesce(extract(epoch FROM now() - (SELECT min(exported_until) FROM crm.audit_export_agencies())) / 60,
                 0)::float8 AS export_lag_min,
+       coalesce((SELECT max(extract(epoch FROM a.exported_until
+                                    - coalesce(a.verified_until, date_trunc('hour', a.registered_at))))
+                   FROM crm.audit_export_agencies() a) / 3600, 0)::float8 AS verify_lag_h,
        (SELECT count(*) FROM crm.audit_partition_bounds()
          WHERE range_start >= (date_trunc('month', now() AT TIME ZONE 'UTC') + interval '1 month') AT TIME ZONE 'UTC'
        )::int AS months_ahead
@@ -129,6 +137,7 @@ SELECT coalesce(extract(epoch FROM now() - (SELECT min(exported_until) FROM crm.
 class AuditSample:
     export_lag_minutes: float
     partition_months_ahead: int
+    verify_lag_hours: float = 0.0
 
 
 def metric_data(
@@ -147,6 +156,7 @@ def metric_data(
         data.append(
             {"MetricName": "AuditPartitionMonthsAhead", "Value": float(audit.partition_months_ahead), "Unit": "Count"}
         )
+        data.append({"MetricName": "AuditVerifyLagHours", "Value": max(audit.verify_lag_hours, 0.0), "Unit": "Count"})
     return data
 
 
@@ -156,7 +166,9 @@ async def read_audit_sample(pool: asyncpg.Pool) -> AuditSample | None:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(AUDIT_SQL)
         return AuditSample(
-            export_lag_minutes=float(row["export_lag_min"]), partition_months_ahead=int(row["months_ahead"])
+            export_lag_minutes=float(row["export_lag_min"]),
+            partition_months_ahead=int(row["months_ahead"]),
+            verify_lag_hours=float(row["verify_lag_h"]),
         )
     except Exception as exc:  # noqa: BLE001 — never block the job metrics
         log.warning("ops_metrics_audit_read_failed error=%s", type(exc).__name__)

@@ -228,17 +228,20 @@ async def test_an_ai_call_is_an_audit_event_of_the_ai_actor() -> None:
 
 def test_audit_metrics_join_the_job_metrics() -> None:
     sample = metrics.Sample(0.0, 0, 0, 0.0)
-    data = metrics.metric_data(sample, 0, metrics.AuditSample(export_lag_minutes=-3.0, partition_months_ahead=3))
-    assert data[-2:] == [
+    audit = metrics.AuditSample(export_lag_minutes=-3.0, partition_months_ahead=3, verify_lag_hours=30.0)
+    data = metrics.metric_data(sample, 0, audit)
+    assert data[-3:] == [
         {"MetricName": "AuditExportLagMinutes", "Value": 0.0, "Unit": "Count"},
         {"MetricName": "AuditPartitionMonthsAhead", "Value": 3.0, "Unit": "Count"},
+        {"MetricName": "AuditVerifyLagHours", "Value": 30.0, "Unit": "Count"},
     ]
 
 
 @pytest.mark.asyncio
 async def test_read_audit_sample() -> None:
-    ok = ScriptedConn([("crm.audit_export_agencies()", {"export_lag_min": 42.0, "months_ahead": 3})])
-    assert await metrics.read_audit_sample(ok) == metrics.AuditSample(42.0, 3)
+    row = {"export_lag_min": 42.0, "months_ahead": 3, "verify_lag_h": 5.0}
+    ok = ScriptedConn([("crm.audit_export_agencies()", row)])
+    assert await metrics.read_audit_sample(ok) == metrics.AuditSample(42.0, 3, 5.0)
     assert await metrics.read_audit_sample(ScriptedConn([("crm.audit_export_agencies()", RuntimeError("x"))])) is None
 
 
