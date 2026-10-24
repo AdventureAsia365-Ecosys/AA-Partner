@@ -35,6 +35,8 @@ EXTRA_POLICIES = {
     ("member_invitation", "invitation_token_lookup"): ("r", {APP_ROLE}),
     #   crm-009: the hourly purge of expired F3 placeholder maps (DELETE only, keyed on app.purge_scope + expires_at).
     ("placeholder_map", "placeholder_map_expired_purge"): ("d", {APP_ROLE}),
+    #   crm-012: the signed client link lookup of app.tenancy.client_link_tx() (keyed on app.client_link_hash).
+    ("client_link", "client_link_token_lookup"): ("r", {APP_ROLE}),
 }
 
 ISS = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_TESTPARTN"

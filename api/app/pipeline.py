@@ -394,6 +394,10 @@ async def move_stage(
             raise Invalid("lost_reason_required", "pick one of the fixed reasons", reasons=list(LOST_REASONS))
     elif lost_reason is not None:
         raise Invalid("lost_reason_not_allowed", "a reason goes with lost only")
+    if to not in ALLOWED_MOVES.get(current["stage"], ()):
+        # crm-012 (AA-943) opens the later edges in the DB behind gates this module does not handle yet: refuse them
+        # here, so the Slice 1 behaviour stays the same until the CRM-15 stage engine replaces this function.
+        raise Conflict("transition_not_allowed", allowed=allowed_moves(current["stage"]))
     try:
         async with ctx.conn.transaction():
             await ctx.conn.execute(MOVE_SQL, trip_id, to, lost_reason if to == "lost" else None)
