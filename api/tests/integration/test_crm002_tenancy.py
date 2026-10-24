@@ -48,6 +48,7 @@ PLATFORM_TABLES = {
     "status_transition": "reference data for the status trigger (crm-002), no tenant column",
     "llm_usage_daily": "LLM usage rollup over every agency (crm-005), no tenant column, no PII",
     "audit_export_tenant": "audit export registry, one row per agency, ids and times only (crm-007, AA-940)",
+    "membership_feed_state": "the CIS membership feed cursor, one platform row, no tenant column (crm-013, AA-978)",
 }
 # Append-only tenant tables (crm-003): tenant column, RLS and policy as the template, but no updated_at, no trash
 # columns; instead the append-only trigger, and crm_app may only INSERT and SELECT.
@@ -58,11 +59,15 @@ APPEND_ONLY_TABLES = {
     "llm_call": "LLM gateway call log, no text (crm-005, AA-936)",
     "audit_export_manifest": "the hourly audit export hash chain (crm-007, AA-940)",
     "lifecycle_run": "counts of each lifecycle job run per agency (crm-010, AA-942)",
+    "membership_inbox": "one row per CIS membership feed event, ids and codes only (crm-013, AA-978)",
 }
 # AA-942 (crm-010): append-only tables that erasure must reach. Their trigger is crm.erasable_append_only(): UPDATE and
 # TRUNCATE always refused, DELETE only as crm_owner inside crm.erase_subject / crm.lifecycle_purge_expired. Every other
 # append-only table (the audit above all) keeps crm.reject_append_only_change().
 ERASABLE_APPEND_ONLY = {"consent", "trip_stage_history", "llm_call"}
+# AA-978 (crm-013): membership_inbox is erased with its agency (tenant scope) through its own copy of that rule
+# (crm-010's Guard 1 pins crm.erasable_append_only() to the three tables above).
+OWN_APPEND_ONLY_TRIGGER = {"membership_inbox": "membership_inbox_append_only"}
 APPEND_ONLY_COLUMNS = {
     "tenant_id": ("uuid", True),
     "created_at": ("timestamp with time zone", True),
@@ -162,7 +167,9 @@ async def test_every_crm_table_follows_the_base_template(admin: asyncpg.Connecti
             t["oid"],
         )
         if append_only:
-            want_fn = "erasable_append_only" if name in ERASABLE_APPEND_ONLY else "reject_append_only_change"
+            want_fn = OWN_APPEND_ONLY_TRIGGER.get(
+                name, "erasable_append_only" if name in ERASABLE_APPEND_ONLY else "reject_append_only_change"
+            )
             if want_fn not in {r["proname"] for r in triggers}:
                 problems.append(f"{name}: append-only trigger ({want_fn})")
             for privilege in ("UPDATE", "DELETE", "TRUNCATE"):
