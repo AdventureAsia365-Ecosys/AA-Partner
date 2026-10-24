@@ -76,6 +76,7 @@ Audit export (AA-940, card CRM-12; ``app.audit_export``):
   export lag metric grows and its alarm says so); on ``test`` / ``local`` empty = an in-memory archive.
 - ``AUDIT_RETENTION_DRY_RUN``: ``true`` (default) makes ``crm_audit_retention`` report which audit partitions it would
   drop without dropping them (DM-7.2). Partitions are still created and verification still runs.
+
 Team and roles (AA-939, card CRM-11; ``app.members``):
 
 - ``COGNITO_PARTNER_POOL_ID``: the partner pool (``<region>_<id>``) the invitation claim step creates accounts in
@@ -88,6 +89,14 @@ Team and roles (AA-939, card CRM-11; ``app.members``):
   AA's SES as that sender and configuration set. Empty outside test / local = 503 ``mail_not_configured``.
 - ``INVITATION_TTL_HOURS``: how long an invitation link works (default 168 = 7 days, 1 to 720).
 - ``RATE_LIMIT_CLAIM_PER_MINUTE``: invitation claims per client address per minute (default 10; 0 = off).
+
+F3 PII scrubber (AA-938, card CRM-10; ``app.privacy``):
+
+- ``SCRUB_GUARDRAIL_ID`` / ``SCRUB_GUARDRAIL_VERSION``: the Bedrock guardrail of pass 3 (AA-CIS-Infra
+  ``crm_scrub.tf``, acc2). Both or neither; empty = every scrub fails closed (no LLM call can be made).
+- ``SCRUB_GUARDRAIL_REGION``: its region (default ``us-west-1``).
+- ``SCRUB_DETECTOR_TIMEOUT_MS``: how long pass 3 may take (default 3000, 200..10000); a timeout refuses the call
+  (``scrub_timeout``, the draft says "reply by hand").
 """
 
 from __future__ import annotations
@@ -121,6 +130,10 @@ _BUCKET = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
 DEFAULT_DEK_CACHE_TTL_S = 300
 MAX_DEK_CACHE_TTL_S = 900
 _KMS_KEY_PREFIXES = ("alias/", "arn:aws:kms:")
+DEFAULT_SCRUB_TIMEOUT_MS = 3000
+_GUARDRAIL_ID = re.compile(r"^[a-z0-9]{1,64}$")
+_GUARDRAIL_VERSION = re.compile(r"^(DRAFT|[1-9][0-9]{0,7})$")
+_REGION = re.compile(r"^[a-z]{2}(-[a-z]+)+-[0-9]$")
 
 
 class SettingsError(ValueError):
@@ -166,6 +179,10 @@ class Settings:
     ses_configuration_set: str = ""
     invitation_ttl_hours: int = DEFAULT_INVITATION_TTL_HOURS
     rate_limit_claim_per_minute: int = DEFAULT_CLAIM_PER_MINUTE
+    scrub_guardrail_id: str = ""
+    scrub_guardrail_version: str = ""
+    scrub_guardrail_region: str = "us-west-1"
+    scrub_detector_timeout_ms: int = DEFAULT_SCRUB_TIMEOUT_MS
 
     def __post_init__(self) -> None:
         if self.environment not in {"dev", "stg", "prod"} | INSECURE_ENVIRONMENTS:
@@ -221,6 +238,16 @@ class Settings:
             raise SettingsError("AUDIT_BUCKET_COMPLIANCE and AUDIT_BUCKET_GOVERNANCE are set together (both tiers)")
         if self.audit_bucket_compliance and self.audit_bucket_compliance == self.audit_bucket_governance:
             raise SettingsError("the two audit buckets must differ")
+        if bool(self.scrub_guardrail_id) != bool(self.scrub_guardrail_version):
+            raise SettingsError("SCRUB_GUARDRAIL_ID and SCRUB_GUARDRAIL_VERSION are set together or not at all")
+        if self.scrub_guardrail_id and not _GUARDRAIL_ID.match(self.scrub_guardrail_id):
+            raise SettingsError("SCRUB_GUARDRAIL_ID must be a guardrail id (lower-case letters and digits)")
+        if self.scrub_guardrail_version and not _GUARDRAIL_VERSION.match(self.scrub_guardrail_version):
+            raise SettingsError("SCRUB_GUARDRAIL_VERSION must be a published version number or DRAFT")
+        if not _REGION.match(self.scrub_guardrail_region):
+            raise SettingsError(f"SCRUB_GUARDRAIL_REGION must be an AWS region, got {self.scrub_guardrail_region!r}")
+        if not 200 <= self.scrub_detector_timeout_ms <= 10_000:
+            raise SettingsError("SCRUB_DETECTOR_TIMEOUT_MS must be between 200 and 10000")
         if self.key_provider not in KEY_PROVIDERS:
             raise SettingsError(f"KEY_PROVIDER must be one of {sorted(KEY_PROVIDERS)}, got {self.key_provider!r}")
         if self.key_provider == "local" and self.environment not in INSECURE_ENVIRONMENTS:
@@ -373,5 +400,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ),
         rate_limit_claim_per_minute=_int(
             env.get("RATE_LIMIT_CLAIM_PER_MINUTE"), DEFAULT_CLAIM_PER_MINUTE, "RATE_LIMIT_CLAIM_PER_MINUTE"
+        ),
+        scrub_guardrail_id=_text(env, "SCRUB_GUARDRAIL_ID"),
+        scrub_guardrail_version=_text(env, "SCRUB_GUARDRAIL_VERSION"),
+        scrub_guardrail_region=_text(env, "SCRUB_GUARDRAIL_REGION") or "us-west-1",
+        scrub_detector_timeout_ms=_int(
+            env.get("SCRUB_DETECTOR_TIMEOUT_MS"), DEFAULT_SCRUB_TIMEOUT_MS, "SCRUB_DETECTOR_TIMEOUT_MS"
         ),
     )

@@ -8,8 +8,13 @@ Two layers:
   query parameters (``?api_key=…``, ``token=…``) and Postgres error details such as ``Key (email)=(a@b.c)`` are
   redacted.
 
+- **by the F3 detectors** (AA-938, :mod:`app.privacy.patterns`): card numbers (Luhn), Vietnamese CCCD numbers,
+  phone numbers without a ``+`` (Vietnamese mobiles and landlines, ``(415) 555-0132``, digits after a phone cue),
+  passport numbers, OTPs after a code cue and signed links, the same detectors the LLM scrubber's pass 2 uses.
+
 Free-text names cannot be found by a pattern; the rule stays "ids only in log lines". This module is the safety net.
-Bare digit runs are not treated as phone numbers on purpose (ids, counts and timestamps would be lost).
+Bare digit runs are not treated as phone numbers on purpose (ids, counts and timestamps would be lost): a run is
+redacted only when its length and prefix (or a cue) make it one of the kinds above; UUIDs are never touched.
 """
 
 from __future__ import annotations
@@ -17,6 +22,8 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from typing import Any
+
+from app.privacy import patterns
 
 FILTERED = "[Filtered]"
 
@@ -64,7 +71,8 @@ _SENSITIVE_EXACT = frozenset(
 # Substring matches: any key containing one of these is a credential.
 _SENSITIVE_PARTS = ("password", "passwd", "secret", "token", "api_key", "apikey", "private_key", "credential")
 
-_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
+# Starts only where a local part can start: a long run without "@" is scanned once, not once per character.
+_EMAIL = re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
 _PHONE = re.compile(r"(?<![\w+])\+\d[\d\s().-]{6,18}\d")
 _BEARER = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}")
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*")
@@ -90,7 +98,36 @@ def scrub_text(text: str) -> str:
     text = _SECRET_PARAM.sub(lambda m: f"{m.group(1)}***", text)
     text = _PG_DETAIL.sub(lambda m: f"({m.group(1)})=({FILTERED})", text)
     text = _EMAIL.sub("[email]", text)
-    return _PHONE.sub("[phone]", text)
+    text = _PHONE.sub("[phone]", text)
+    return _scrub_f3(text)
+
+
+# Kinds of app.privacy.patterns the log scrubber redacts (dates are left alone: log lines are full of timestamps).
+_F3_LOG_KINDS = {
+    "LINK": "[link]",
+    "SECRET": "[jwt]",
+    "CARD": "[card]",
+    "NATIONAL_ID": "[national_id]",
+    "PASSPORT": "[passport]",
+    "PHONE": "[phone]",
+    "OTP": "[otp]",
+}
+_HAS_DIGIT_OR_LINK = re.compile(r"\d|https?://", re.IGNORECASE)
+
+
+def _scrub_f3(text: str) -> str:
+    if not _HAS_DIGIT_OR_LINK.search(text):
+        return text
+    out, pos = [], 0
+    for span in patterns.find(text):
+        label = _F3_LOG_KINDS.get(span.kind)
+        if label is None:
+            continue
+        out.append(text[pos : span.start])
+        out.append(label)
+        pos = span.end
+    out.append(text[pos:])
+    return "".join(out)
 
 
 def scrub(value: Any, *, keep: frozenset[str] = frozenset(), _depth: int = 0) -> Any:
