@@ -1,0 +1,101 @@
+name: Scrub corpus
+
+# AA-938 (card CRM-10, design v3 §4.5 "CI corpus: >= 200 EN/VI samples, 0 leaks, run nightly and on scrubber changes
+# only"). Runs the F3 corpus (api/tests/scrub_corpus/corpus.jsonl) through all three passes of the scrubber against
+# the real Bedrock guardrail (acc2, us-west-1): a leak or an over-scrub rate above 5 % fails the run. The offline half
+# (passes 1 and 2, no AWS) runs in every PR inside "Unit Tests" (tests/unit/test_scrub_corpus.py).
+#
+# When: nightly at 20:30 UTC, on a push to main that changes the scrubber or the corpus, and on demand. Not on pull
+# requests: the job assumes an AWS role, and a PR (a fork of this public repo included) must never get one.
+# Cost: about 240 text units a run (one per sample, PII filter $0.10 per 1,000) = about $0.024; nightly about $0.72 a
+# month (design v3 §7 "Guardrails CI corpus ≈ $0.70").
+#
+# Configuration: GitHub environment `scrub-corpus` (deployment-branch policy `main` only; the OIDC role trusts only
+# environment:scrub-corpus), VARIABLES, none of them a secret:
+#   SCRUB_CORPUS_ROLE_ARN    OIDC role aa-crm-dev-scrub-corpus (AA-CIS-Infra crm_scrub.tf output), ApplyGuardrail on
+#                            the scrub guardrail only. While it is unset the job is skipped.
+#   SCRUB_GUARDRAIL_ID       the guardrail id (crm_scrub.tf output)
+#   SCRUB_GUARDRAIL_VERSION  its published version (crm_scrub.tf output)
+#   AWS_REGION               default us-west-1
+# The report prints ids and counts only.
+
+on:
+  schedule:
+    - cron: "30 20 * * *"
+  push:
+    branches: [main]
+    paths:
+      - "api/app/privacy/**"
+      - "api/tests/scrub_corpus/**"
+      - ".github/workflows/scrub-corpus.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: scrub-corpus
+  cancel-in-progress: false
+
+jobs:
+  corpus:
+    name: Scrub corpus (Guardrails)
+    runs-on: ubuntu-latest
+    environment: scrub-corpus
+    if: github.ref == 'refs/heads/main'
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: api
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-west-1' }}
+    steps:
+      - name: Skip when not configured
+        id: cfg
+        working-directory: .
+        env:
+          ROLE: ${{ vars.SCRUB_CORPUS_ROLE_ARN }}
+        run: |
+          if [ -z "$ROLE" ]; then
+            echo "SCRUB_CORPUS_ROLE_ARN is not set in environment scrub-corpus: skipping (AA-CIS-Infra crm_scrub.tf)"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.cfg.outputs.enabled == 'true'
+
+      - name: Set up Python 3.12
+        if: steps.cfg.outputs.enabled == 'true'
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: api/requirements-dev.txt
+
+      - name: Install dependencies
+        if: steps.cfg.outputs.enabled == 'true'
+        run: pip install -r requirements-dev.txt
+
+      - name: Corpus is the generator's output
+        if: steps.cfg.outputs.enabled == 'true'
+        run: python -m tests.scrub_corpus.generate --check
+
+      - name: Configure AWS credentials (OIDC)
+        if: steps.cfg.outputs.enabled == 'true'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.SCRUB_CORPUS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Run the corpus through all three passes
+        if: steps.cfg.outputs.enabled == 'true'
+        env:
+          ENVIRONMENT: test
+          SCRUB_GUARDRAIL_ID: ${{ vars.SCRUB_GUARDRAIL_ID }}
+          SCRUB_GUARDRAIL_VERSION: ${{ vars.SCRUB_GUARDRAIL_VERSION }}
+          SCRUB_GUARDRAIL_REGION: ${{ env.AWS_REGION }}
+          SCRUB_DETECTOR_TIMEOUT_MS: "8000"
+        run: python -m tests.scrub_corpus.run --guardrails
