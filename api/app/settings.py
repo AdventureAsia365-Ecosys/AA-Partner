@@ -16,6 +16,10 @@ Names (set by the ECS task definition in AA-CIS-Infra ``accounts/aa365/crm_app.t
   TTL kind are DRY RUN on synthetic agencies). Turn it off once a dry-run result has been checked.
 - ``JOB_RETENTION_UTC_HOUR``: the UTC hour (0-23) from which the day's ``crm_job_retention`` run is queued (default 19,
   02:00 in Vietnam, the hour AA-Booking's retention uses). The run is queued due-now at that hour, never ahead.
+- ``LIFECYCLE_DRY_RUN``: ``true`` (default, AA-942) makes every hard delete of agency data count only: the daily
+  ``crm_lifecycle`` run (submission redaction, LLM-call purge, trash purge, auto-archive) reports what it would do, and
+  an owner's erasure or offboarding erase answers 409 ``deletion_dry_run`` with the counts. Same hour as the job
+  retention. Turning it off is an ops decision recorded in the runbook.
 
 Identity (root ADR 0006b decision 6, ``app.auth.identity_config``). Every value is optional and has **no default**:
 this repo is public, so pool ids never live in code (DM-6.10); Terraform passes them from the pool resources. A route
@@ -183,6 +187,7 @@ class Settings:
     scrub_guardrail_version: str = ""
     scrub_guardrail_region: str = "us-west-1"
     scrub_detector_timeout_ms: int = DEFAULT_SCRUB_TIMEOUT_MS
+    lifecycle_dry_run: bool = True
 
     def __post_init__(self) -> None:
         if self.environment not in {"dev", "stg", "prod"} | INSECURE_ENVIRONMENTS:
@@ -407,4 +412,5 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         scrub_detector_timeout_ms=_int(
             env.get("SCRUB_DETECTOR_TIMEOUT_MS"), DEFAULT_SCRUB_TIMEOUT_MS, "SCRUB_DETECTOR_TIMEOUT_MS"
         ),
+        lifecycle_dry_run=_flag(env.get("LIFECYCLE_DRY_RUN"), True, "LIFECYCLE_DRY_RUN"),
     )

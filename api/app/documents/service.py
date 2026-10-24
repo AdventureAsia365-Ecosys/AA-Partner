@@ -22,6 +22,7 @@ from app.documents.store import DocumentStore
 from app.errors import Conflict, Invalid, NotFound, Unavailable
 from app.intake import stage1
 from app.permissions import Action, require
+from app.lifecycle.window import trash_days
 from app.tenancy import TenantContext
 from app.travellers.fields import REVEAL_REASONS
 from app.vault import Vault
@@ -40,7 +41,6 @@ KINDS = (
     "other",
 )
 CONTENT_TYPES = ("application/pdf", "image/jpeg", "image/png", "image/webp", "image/heic")
-TRASH_DAYS = 7
 MAX_FILENAME = 200
 
 INSERT_SQL = """
@@ -235,6 +235,6 @@ async def trash(ctx: TenantContext, document_id: uuid.UUID) -> dict[str, Any]:
     row = await ctx.conn.fetchrow(ROW_SQL, document_id)
     if row is None:
         raise NotFound("document_not_found")
-    await ctx.conn.execute(TRASH_SQL, document_id, f"member:{ctx.member_id}", TRASH_DAYS)
+    await ctx.conn.execute(TRASH_SQL, document_id, f"member:{ctx.member_id}", await trash_days(ctx))
     ctx.audit("delete", "allowed", "document", str(document_id))
     return {"document_id": str(document_id), "trashed": True}

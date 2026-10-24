@@ -42,6 +42,7 @@ from app.observability import setup as setup_observability
 from app.observability.request_id import RequestIdMiddleware, unhandled_error_handler
 from app.ratelimit import FixedWindowLimiter
 from app.routers import agency, audit, ci, health, invitations, ops, pipeline, public, staff, team, travellers
+from app.routers import agency, audit, ci, health, lifecycle, ops, pipeline, public, staff, travellers
 from app.settings import INSECURE_ENVIRONMENTS, Settings, load_settings
 from app.vault import KeyProvider, build_key_provider
 
@@ -94,6 +95,10 @@ def create_app(
                     keys=app.state.keys,
                     audit_archive=app.state.audit_archive,
                     audit_retention_dry_run=settings.audit_retention_dry_run,
+                    documents=app.state.documents,
+                    lifecycle_dry_run=settings.lifecycle_dry_run,
+                    dek_cache_ttl_s=settings.dek_cache_ttl_seconds,
+                    sender=app.state.dispatch_sender,
                 ),
                 recurring=job_handlers.RECURRING,
                 hooks=job_handlers.build_hooks(retention_utc_hour=settings.job_retention_utc_hour),
@@ -133,6 +138,10 @@ def create_app(
     app.state.directory = directory
     app.state.mailer = mailer
     app.state.claim_limiter = FixedWindowLimiter(settings.rate_limit_claim_per_minute)
+    # AA-942: the Booking line re-check a trip restore needs (CRM-19 plugs the B2B client in) and the outbound sender
+    # behind the dispatcher gate (CRM-17); both None until those cards.
+    app.state.booking_checker = None
+    app.state.dispatch_sender = None
     app.state.public_limiter = FixedWindowLimiter(settings.rate_limit_public_per_minute)
     # AA-936: inquiry-form submissions, per client address per minute and per form per hour.
     app.state.intake_limiter = FixedWindowLimiter(settings.rate_limit_intake_per_minute)
@@ -150,6 +159,7 @@ def create_app(
     app.include_router(team.router)
     app.include_router(invitations.public_router)
     app.include_router(invitations.agency_router)
+    app.include_router(lifecycle.router)
     app.include_router(ops.router)
     app.include_router(staff.router)
     return app

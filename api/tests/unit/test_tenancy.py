@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.auth.route_guard import Caller
 from app.db import Database
-from app.errors import Forbidden
+from app.errors import Forbidden, NotFound
 from app.main import create_app
 from app.observability import reveal_meter
 from app.tenancy import MAX_MEMBERSHIPS, READER_ROLES, caller_memberships, tenant_tx
@@ -262,3 +262,56 @@ def test_memberships_route_needs_no_tenant_header() -> None:
         ]
     }
     assert (foreign.status_code, anonymous.status_code) == (403, 401)
+
+
+# ── AA-942: the lifecycle jobs' context and the eraser switch ────────────────────────────────────
+@pytest.mark.asyncio
+async def test_lifecycle_tx_checks_actor_status_and_writes_its_events() -> None:
+    from app.errors import Conflict
+    from app.tenancy import as_eraser, lifecycle_tx
+
+    with pytest.raises(TypeError):
+        async with lifecycle_tx(ScriptedConn(), "not-a-uuid", actor="job:crm_lifecycle"):  # type: ignore[arg-type]
+            pass
+    with pytest.raises(ValueError):
+        async with lifecycle_tx(ScriptedConn(), TENANT, actor="job:other"):
+            pass
+    with pytest.raises(NotFound):
+        async with lifecycle_tx(ScriptedConn(), TENANT, actor="job:crm_lifecycle"):
+            pass
+    pool = ScriptedConn().on("SELECT status FROM crm.tenant", "offboarded")
+    with pytest.raises(Forbidden, match="offboarded"):
+        async with lifecycle_tx(pool, TENANT, actor="job:crm_lifecycle"):
+            pass
+    pool = ScriptedConn().on("SELECT status FROM crm.tenant", "locked")
+    async with lifecycle_tx(pool, TENANT, actor="job:crm_lifecycle") as ctx:
+        assert ctx.status == "locked"
+        ctx.audit("lifecycle_run", "allowed", "tenant", str(TENANT))
+        async with as_eraser(ctx):
+            pass
+    assert pool.sql("INSERT INTO crm.audit_event")[0][0] == "system"
+    assert pool.sql("SET LOCAL ROLE crm_eraser") and pool.sql("SET LOCAL ROLE NONE")
+    pool = ScriptedConn().on("SELECT status FROM crm.tenant", "offboarding")
+    with pytest.raises(Conflict):
+        async with lifecycle_tx(pool, TENANT, actor="job:crm_offboard", statuses=frozenset({"offboarding"})) as ctx:
+            ctx.audit("offboarding_erase", "allowed", "tenant")
+            ctx.audit("decrypt", "denied", "traveler", reason="integrity_check_failed")
+            raise Conflict("legal_hold")
+    assert [args[3] for args in pool.sql("INSERT INTO crm.audit_event")] == ["denied"]
+    pool = ScriptedConn().on("SELECT status FROM crm.tenant", "active")
+    with pytest.raises(Conflict):
+        async with lifecycle_tx(pool, TENANT, actor="job:crm_lifecycle"):
+            raise Conflict("x")
+    assert pool.sql("INSERT INTO crm.audit_event") == []
+
+
+@pytest.mark.asyncio
+async def test_as_eraser_refuses_a_reader_context() -> None:
+    from app.tenancy import TenantContext, as_eraser
+
+    ctx = TenantContext(
+        conn=ScriptedConn(), tenant_id=TENANT, member_id=TENANT, member_role="owner", reader_role="crm_ai_reader"
+    )
+    with pytest.raises(ValueError):
+        async with as_eraser(ctx):
+            pass

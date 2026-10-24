@@ -56,22 +56,26 @@ DB_MODULES = frozenset(
 # The only modules that may open the platform context provisioning_tx() (no membership check): agency creation and the
 # Dev seeder. Never a router: /crm/v1 request code reaches tenant data through tenant_tx() only.
 PROVISIONING_MODULES = frozenset({"app/agencies.py", "app/seed/__init__.py"})
-# AA-936: the job context in one agency (no member) and the public intake form's context.
-SYSTEM_MODULES = frozenset({"app/intake/process.py", "app/seed/__init__.py"})
 # AA-939: AA staff in one agency (actor platform:<staff sub>; may remove the last owner, complete a recovery).
 PLATFORM_MODULES = frozenset({"app/members/recovery.py"})
 # ... and the only module that calls the platform side of app.members.recovery: the /crm/ops/v1 router, whose write
 # routes require the WORKFORCE group crm-platform-admin.
 PLATFORM_CALLERS = frozenset({"app/routers/ops.py"})
 PLATFORM_FUNCTIONS = ("open_request", "complete_request", "deactivate_member")
+# AA-936: the job context in one agency (no member) and the public intake form's context (AA-942: the dispatcher).
+SYSTEM_MODULES = frozenset({"app/intake/process.py", "app/seed/__init__.py", "app/dispatch/worker.py"})
 INTAKE_MODULES = frozenset({"app/intake/public.py"})
 # AA-940: the audit export's read context (a locked or trashed agency too): the export, verify and retention jobs only.
 AUDIT_EXPORT_MODULES = frozenset(
     {"app/audit_export/export.py", "app/audit_export/verify.py", "app/audit_export/retention.py"}
 )
-CONTEXT_TYPES = frozenset({"TenantContext", "SystemContext", "ProvisioningContext", "AnyContext", "ExportContext"})
 # AA-939: the invitation claim / accept context (token hash lookup, actor invitation:<id>).
 INVITATION_MODULES = frozenset({"app/members/invitations.py"})
+# AA-942: the lifecycle jobs' context (the daily run, the offboarding steps).
+LIFECYCLE_MODULES = frozenset({"app/lifecycle/job.py", "app/lifecycle/offboarding.py"})
+CONTEXT_TYPES = frozenset(
+    {"TenantContext", "SystemContext", "ProvisioningContext", "AnyContext", "ExportContext", "LifecycleContext"}
+)
 THIRD_PARTY = frozenset(
     {
         "asyncpg",
@@ -100,7 +104,16 @@ def _modules() -> list[tuple[str, ast.Module]]:
 
 
 CONTEXT_FACTORIES = frozenset(
-    {"tenant_tx", "provisioning_tx", "system_tx", "platform_tx", "intake_tx", "audit_export_tx", "invitation_tx"}
+    {
+        "tenant_tx",
+        "provisioning_tx",
+        "system_tx",
+        "platform_tx",
+        "intake_tx",
+        "audit_export_tx",
+        "invitation_tx",
+        "lifecycle_tx",
+    }
 )
 
 
@@ -308,6 +321,20 @@ def test_every_router_tenant_tx_names_its_permission_action() -> None:
                 if not any(k.arg == "action" for k in node.keywords):
                     missing.append(f"{rel}:{node.lineno}")
     assert missing == [], "tenant_tx() without action=: " + ", ".join(missing)
+def test_lifecycle_tx_is_used_only_by_the_lifecycle_jobs() -> None:
+    assert _users_of("lifecycle_tx", LIFECYCLE_MODULES) == []
+
+
+def test_only_the_erase_module_calls_the_deletion_functions() -> None:
+    """AA-942: every hard delete of agency data goes through app/lifecycle/erase.py (crm.erase_subject /
+    crm.lifecycle_purge_expired, as crm_eraser)."""
+    calls = ("crm.erase_subject($", "crm.lifecycle_purge_expired($")
+    users = [
+        str(path.relative_to(APP.parent))
+        for path in sorted(APP.rglob("*.py"))
+        if any(c in path.read_text(encoding="utf-8") for c in calls)
+    ]
+    assert users == ["app/lifecycle/erase.py"]
 
 
 CONTEXT_PARAM_ALLOWED = """

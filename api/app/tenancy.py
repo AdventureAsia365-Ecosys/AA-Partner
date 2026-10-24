@@ -53,6 +53,12 @@ One more platform context (AA-940): :func:`audit_export_tx` is the audit export'
 (``app.tenant_id`` only, ``app.actor`` = ``job:crm_audit_export``, no audit queue). Unlike :func:`system_tx` it accepts
 a locked or trashed agency: an offboarded agency's audit is still exported and verified until its partitions are
 dropped (crm-007 offboarding path). Only the ``app/audit_export/`` job modules may open it.
+
+One more (AA-942): :func:`lifecycle_tx` is a lifecycle job's context in one agency (the daily ``crm_lifecycle`` run, the
+``crm_offboard`` steps): ``app.tenant_id``, ``app.actor`` = ``job:<kind>``, the audit queue of :func:`system_tx`, and
+the agency statuses the caller names (a locked agency still has retention; an offboarding one is being erased). Only
+the ``app/lifecycle/`` job modules may open it. :func:`as_eraser` switches an open context to ``crm_eraser`` for one
+call of the crm-010 deletion functions and back (``SET LOCAL ROLE``; the eraser has no table privilege of its own).
 """
 
 from __future__ import annotations
@@ -246,6 +252,49 @@ class ExportContext:
     conn: asyncpg.Connection
     tenant_id: uuid.UUID
     actor: str = "job:crm_audit_export"
+
+
+@dataclass(frozen=True)
+class LifecycleContext:
+    """A lifecycle job's context in one agency (:func:`lifecycle_tx`). Same shape as :class:`SystemContext` for
+    :class:`app.vault.Vault` and the key provider; ``status`` is the agency's status when the block opened."""
+
+    conn: asyncpg.Connection
+    tenant_id: uuid.UUID
+    actor: str
+    status: str
+    member_id: None = None
+    member_role: None = None
+    reader_role: None = None
+    audit_events: list[AuditEvent] = field(default_factory=list, repr=False)
+    dek_memo: dict[tuple[str, int], bytes] = field(default_factory=dict, repr=False)
+    dek_current: dict[str, int] = field(default_factory=dict, repr=False)
+
+    def audit(
+        self,
+        action: str,
+        outcome: str,
+        object_kind: str,
+        object_id: str | None = None,
+        *,
+        fields: tuple[str, ...] = (),
+        reason: str | None = None,
+        object_ids: tuple[str, ...] = (),
+    ) -> AuditEvent:
+        event = AuditEvent(
+            actor_kind="system",
+            actor_ref=self.actor,
+            action=action,
+            outcome=outcome,
+            object_kind=object_kind,
+            object_id=object_id,
+            fields=tuple(fields),
+            reason=reason,
+            request_id=current_request_id(),
+            object_ids=tuple(object_ids),
+        )
+        self.audit_events.append(event)
+        return event
 
 
 @dataclass(frozen=True)
@@ -535,7 +584,61 @@ async def invitation_tx(pool: asyncpg.Pool, token_hash_hex: str) -> AsyncIterato
         raise pending
 
 
-async def _write_audit(ctx: TenantContext | SystemContext, events: list[AuditEvent]) -> None:
+LIFECYCLE_ACTORS = frozenset({"job:crm_lifecycle", "job:crm_offboard"})
+TENANT_STATUS_SQL = "SELECT status FROM crm.tenant WHERE tenant_id = $1"
+ERASER_ROLE = "crm_eraser"
+
+
+@asynccontextmanager
+async def lifecycle_tx(
+    pool: asyncpg.Pool, tenant_id: uuid.UUID, *, actor: str, statuses: frozenset[str] = frozenset({"active", "locked"})
+) -> AsyncIterator[LifecycleContext]:
+    """One transaction in one agency for a lifecycle job (AA-942). The agency must exist and be in ``statuses``
+    (else 403 ``tenant_status``). Audit semantics as :func:`system_tx`."""
+    if not isinstance(tenant_id, uuid.UUID):
+        raise TypeError("tenant_id must be a UUID")
+    if actor not in LIFECYCLE_ACTORS:
+        raise ValueError(f"lifecycle actor must be one of {sorted(LIFECYCLE_ACTORS)}")
+    pending: Exception | None = None
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        status = await conn.fetchval(TENANT_STATUS_SQL, tenant_id)
+        if status is None:
+            raise NotFound("tenant_not_found")
+        if status not in statuses:
+            raise Forbidden("tenant_status", f"the agency is {status}")
+        await conn.execute("SELECT set_config('app.actor', $1, true)", actor)
+        ctx = LifecycleContext(conn=conn, tenant_id=tenant_id, actor=actor, status=status)
+        try:
+            async with conn.transaction():  # savepoint: the job's work
+                yield ctx
+        except Exception as exc:
+            denied = [e for e in ctx.audit_events if e.outcome == "denied"]
+            if not denied:
+                raise
+            await _write_audit(ctx, denied)
+            pending = exc
+        else:
+            await _write_audit(ctx, ctx.audit_events)
+    if pending is not None:
+        raise pending
+
+
+@asynccontextmanager
+async def as_eraser(ctx: TenantContext | LifecycleContext) -> AsyncIterator[asyncpg.Connection]:
+    """Run the block as ``crm_eraser`` (crm-010: the only role that executes ``crm.erase_subject`` and
+    ``crm.lifecycle_purge_expired``), then back to the login role. Only for a context opened without a reader role."""
+    if ctx.reader_role is not None:
+        raise ValueError("as_eraser needs a context without a reader role")
+    # A savepoint: when the call fails, rolling it back also undoes the SET LOCAL ROLE (and the function's own
+    # app.erasing flag), so the context goes on as the login role.
+    async with ctx.conn.transaction():
+        await ctx.conn.execute(f"SET LOCAL ROLE {ERASER_ROLE}")
+        yield ctx.conn
+        await ctx.conn.execute("SET LOCAL ROLE NONE")
+
+
+async def _write_audit(ctx: TenantContext | SystemContext | LifecycleContext, events: list[AuditEvent]) -> None:
     if not events:
         return
     if ctx.reader_role is not None:
@@ -585,4 +688,4 @@ async def provisioning_tx(
 
 
 # What helpers that work inside any of the contexts accept (the DB lint allows ``<param>.conn`` on this annotation).
-AnyContext = TenantContext | SystemContext
+AnyContext = TenantContext | SystemContext | LifecycleContext
