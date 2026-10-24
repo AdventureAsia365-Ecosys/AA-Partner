@@ -34,7 +34,9 @@ buckets with a SHA-256 manifest chain, its verify script, and the owner's access
 (AA-939, CRM-11, `crm-008`): the permission matrix, the margin serializer on every `/crm/v1` response, the partner pool
 sign-in with required MFA, invitations, team management, the reassign queue, owner recovery and the plan columns; and the
 **F3 PII scrubber** (AA-938, CRM-10, `crm-009`): known values -> regex -> Bedrock Guardrails before any LLM call, fail
-closed, the encrypted placeholder map and the EN/VI corpus gate.
+closed, the encrypted placeholder map and the EN/VI corpus gate; and **data lifecycle** (AA-942, CRM-14, `crm-010`): one trash with the agency's window, the delete block, archive enforced at the
+dispatcher, legal holds, client erasure and agency offboarding through one deletion function (`crm.erase_subject`),
+the daily `crm_lifecycle` run in DRY RUN by default, and Settings > Data and privacy.
 
 > Read this file before designing or changing anything here (AA-Ecosys steering, "CONTEXT.md first"). Change it in the
 > same PR when a boundary, owner, route class or the stack changes.
@@ -152,8 +154,15 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
   fixed outside platform contexts; no crm_app session deletes a member; an invitation moves only itself, pending ->
   claimed -> accepted (or expires); the last active owner stays unless a platform context acts (CRM01); a crm_app
   session without `app.actor` writes none of these tables.
+- **`lifecycle_tx(pool, tenant_id, actor=..., statuses=...)`** (AA-942) is a lifecycle job's context in one agency
+  (`job:crm_lifecycle`, `job:crm_offboard`): the audit queue of `system_tx()`, and the agency statuses the caller names
+  (default active / locked: a locked agency still has retention; the erase step opens an `offboarding` one). Only
+  `app/lifecycle/{job,offboarding}.py` may open it (`test_lifecycle_tx_is_used_only_by_the_lifecycle_jobs`).
+  **`as_eraser(ctx)`** switches an open context to `crm_eraser` for one call of the crm-010 deletion functions inside a
+  savepoint (a failed call rolls the role back too); only `app/lifecycle/erase.py` calls those functions
+  (`test_only_the_erase_module_calls_the_deletion_functions`).
 - The DB lint also accepts `<param>.conn` in a function whose parameter is annotated with a context type
-  (`TenantContext`, `SystemContext`, `ProvisioningContext`, `AnyContext`): helpers such as `app/pipeline.py` take the
+  (`TenantContext`, `SystemContext`, `ProvisioningContext`, `AnyContext`, `LifecycleContext`): helpers such as `app/pipeline.py` take the
   open context, they never open one.
 - **Agency provisioning** (`app/agencies.py`): on `dev` / `test` / `local` an agency with `is_synthetic = false` is
   refused with **422** `synthetic_required` (card CRM-07 R test); on `prod` a synthetic one with 422
@@ -206,6 +215,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-007` | `api/migrations/007_crm_audit_partitions_export.sql` | F5 audit (AA-940): `audit_event` PARTITION BY RANGE (`at`), the crm-003 table attached as `audit_event_legacy` (MINVALUE to the next month), `at` = insert time (explicit values only from `crm_owner`), `audit_partition_bounds()`, `audit_ensure_partitions()` (three months ahead), `audit_drop_expired_partitions(dry_run)` (12 months + every agency verified), `audit_export_tenant` (registry, RLS enabled not forced, `audit_export_agencies()`), `audit_export_manifest` (hash chain, trigger-enforced, no FK to `tenant`) |
 | `crm-008` | `api/migrations/008_crm_roles_members.sql` | F4 roles (AA-939): `crm.guard_member_write` (only an owner writes memberships inside a member request, CRM02; the last active owner stays unless a platform context acts, CRM01), `member_invitation` (token hash, encrypted e-mail + blind index, claimed `(iss, sub)`; `invitation_token_lookup`), `owner_recovery_request` (14 days, platform-only open / complete, CRM03 / CRM04), `tenant_entitlement` (plan, member limit, features; platform-only), `tenant_settings.refund_owner_threshold_base`, `UNIQUE (tenant_id, member_id)` on `member` |
 | `crm-009` | `api/migrations/009_crm_scrub_placeholder_map.sql` | F3 scrubber (AA-938): `placeholder_map` (scrub DEK, written once, 24 h CHECK, same-agency key to its `llm_call`, no reader grant; DELETE-only purge policy `placeholder_map_expired_purge` keyed on `app.purge_scope`), `llm_call.scrub_receipt` closed at every level (receipt keys, version codes, numbers, `counts` / `passes` keys), `UNIQUE (tenant_id, llm_call_id)`. Needs crm-006 only; independent of crm-007 / crm-008 |
+| `crm-010` | `api/migrations/010_crm_data_lifecycle.sql` | Data lifecycle (AA-942; needs crm-007 only, independent of crm-008 / crm-009): agency statuses `offboarding` / `offboarded`, `tenant_settings.trash_days` (1-30, default 7) and `auto_archive_months` (12-120, default 36), `traveler.archived_by` + archive reason codes, `legal_hold` (platform holds released by platform only), `trip_commitment` + `trip_delete_blockers()` (the delete-block ledger), `dispatch_queue`, `erasure_request`, `lifecycle_run` (append-only), `erasable_append_only()` on consent / trip_stage_history / llm_call, `legal_hold_blocks()`, `erase_subject()` and `lifecycle_purge_expired()` (SECURITY DEFINER, EXECUTE for `crm_eraser` only) |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -230,6 +240,9 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 | `crm_audit_export` | hourly, queued due now from minute 16 (`HourlyAuditExportSchedule`) | AA-940: keeps the audit partitions three months ahead, then exports every agency's closed hours (15-minute lag, at most 48 per agency per run) to both Object Lock buckets and the manifest chain; `not_configured` without the buckets. Not deploy-gate exempt |
 | `crm_audit_retention` | daily, from `JOB_RETENTION_UTC_HOUR`, due-now hook | AA-940: verifies every agency from `verified_until` (rows, chain, both copies), moves `verified_until`, then drops expired partitions (dry run while `AUDIT_RETENTION_DRY_RUN` is on, the default) |
 | `crm_placeholder_purge` | hourly, due-now hook (`app.privacy.purge.HourlyPlaceholderPurge`, key per UTC hour) | AA-938: deletes expired F3 placeholder maps of every agency in one DELETE through the crm-009 purge policy (no read); count only. Not deploy-gate exempt (exists only while due / running) |
+| `crm_lifecycle` | daily, from `JOB_RETENTION_UTC_HOUR`, due-now hook (`DailyLifecycleSchedule`) | AA-942: per agency (active / locked): form-submission payloads redacted after 90 days, LLM calls older than 180 days purged, trash past its window purged through `crm.erase_subject`, inactive clients auto-archived; one `lifecycle_run` row + one audit event per agency; skips anything under a legal hold or the delete block; DRY RUN (counts only) while `LIFECYCLE_DRY_RUN` is on (default). Not deploy-gate exempt |
+| `crm_offboard` | per owner step (queued in the request's transaction) | AA-942: `mode=export` builds and seals the agency export; `mode=erase` erases the agency, deletes its objects, destroys its keys, writes the receipt. Not deploy-gate exempt |
+| `crm_dispatch` | per queued message (after the 10 s undo delay for a user action) | AA-942: the dispatcher gate at send time (trashed, archived, no marketing consent -> dropped; no sender -> held). Not deploy-gate exempt |
 | `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
 
 ## CI and release
@@ -328,7 +341,7 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   the F3 scrubber (below), CRM-33a Bedrock.
 - **Not in Slice 1** (later cards): the prospect's confirmation mail and the agent alert (traveller mail leaves the
   agency's own mailbox, CRM-17), system tags from the catalog (R29), conditional forms and the Stage 2 gate (CRM-15),
-  F2 views and reader grants (CRM-09), the `form_submission` 90-day redaction job (CRM-14).
+  F2 views and reader grants (CRM-09), the `form_submission` 90-day redaction job (CRM-14, done in AA-942).
 - **E2E** (`e2e/`, workflow `E2E Dev`, dispatch on main): form -> card on the board within about a minute -> trip.
 
 ## F1 / F2 complete (AA-937, CRM-09)
@@ -455,6 +468,51 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 - **Web**: `web/app/(crm)/settings/team` (owner page, `components/team/TeamAdmin.tsx`), the recovery banner in the
   `(crm)` layout, the join pages `web/app/join/*` (`lib/invite.ts`: token and claim answer in sealed cookies on
   `/join`, never in a URL). Runbooks (lost second factor, rollout order): `docs/implementation-notes/AA-939.md`.
+## Data lifecycle (AA-942, CRM-14)
+
+Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retention, §4.10 erasure (Fix B16), V1.
+
+- **Rules** (`app/lifecycle/rules.py`): one row per data class (window, mechanism, enforcing job or card), returned by
+  `GET /crm/v1/lifecycle` and worded on Settings > Data and privacy (`web/app/(crm)/settings/data`, EN default, VI).
+  Codes only from the API; a unit test checks the web has words for every rule and mechanism.
+- **One deletion path**: `crm.erase_subject(scope, subject, profile_token, dry_run)` (crm-010) is the only hard delete
+  of agency data (scopes trip, traveler, task, note, document, relation, tenant), reached as `crm_eraser` through
+  `app/lifecycle/erase.py`. It refuses under a legal hold (CRM10 -> 409 `legal_hold`), a blocked trip (CRM11 ->
+  `delete_blocked`), a client on a live trip (CRM12), a tenant not `offboarding` (CRM14), a profile token that is not
+  the traveller's (CRM15), and after a tenant erase any row left in a tenant table outside the keep list (CRM16): a new
+  tenant table must be named in the function in the migration that creates it (integration test). The append-only
+  consent, stage history and LLM-call tables open to DELETE only inside it (crm_owner + `app.erasing`); the audit never.
+  Document objects are deleted from the bucket after the rows, before the commit.
+- **Trash** (`app/lifecycle/trash.py`, `DELETE /crm/v1/{trips,travelers,tasks,notes,documents}/{id}`, `GET /trash`,
+  `POST /trash/{kind}/{id}/restore`): window = `tenant_settings.trash_days` (default 7); restore inside the window by
+  the owner or whoever deleted it. Who deletes: trip owner / agent (own or unassigned trip); client owner only (R8);
+  task, document owner / agent; note owner or author.
+- **Delete block**: `crm.trip_commitment` is the ledger the money, signature, commission and AA-line cards write
+  (CRM-16/19/23/25/27): `has_money` (paid / claimed invoice, succeeded or refunded payment), `has_signature`,
+  `has_commission` (claimed / received), `has_aa_line` (held / confirmed) -> 409 with the first code, every blocker and
+  `alternative = cancel_trip`. Released, expired, cancelled and declined AA lines do not block.
+- **Restore re-checks Booking**: an AA line the ledger still shows open goes through `app.state.booking_checker`
+  (`app/lifecycle/booking.py`, the seam CRM-19 fills); none configured = 503 `booking_not_configured`, the trip stays in
+  the trash.
+- **Archive** (R23, `POST /travelers/{id}/archive|unarchive`): hidden from lists and search; queueing a message to an
+  archived client is refused; a message queued before is **dropped at the dispatcher** (`crm.dispatch_queue`,
+  `crm_dispatch`, `app/dispatch/`). A repeat inquiry unarchives the client. Auto-archive after `auto_archive_months`
+  without trip activity; the owner then decides on the Settings page.
+- **Legal holds** (`crm.legal_hold`, `POST /lifecycle/holds`, `.../release`): agency, trip or client; a trip hold also
+  holds its travellers; a hold placed by `platform:*` is released only by `platform:*`.
+- **Erasure** (`POST /travelers/{id}/erasure`, owner): dry run by default; a real run bypasses the trash and leaves an
+  `erasure_request` receipt (backup_purge_by = +30 days). CRM-35 (AA-967) adds partial erasure with the signed-agreement
+  and accounting exceptions and the data-request log.
+- **Offboarding** (`/lifecycle/offboarding`, owner; `app/lifecycle/offboarding.py`): request (dry-run counts) -> export
+  job (JSON lines, personal fields decrypted, indexes / F2 pointer / secrets left out, sealed with the agency `export`
+  DEK, documents bucket `exports/tenants/<tenant>/<request>.jsonl.enc`, 7-day bucket rule) -> download (audited) ->
+  typed confirmation (the agency id) -> agency `offboarding` -> erase job: `erase_subject('tenant')`, objects deleted,
+  `KeyProvider.destroy` (crypto-shred; other tasks' DEK caches expire within `DEK_CACHE_TTL_SECONDS`, stated on the
+  receipt), agency `offboarded`. The audit and its export registry / chain stay (AA-940 offboarding path).
+- **DRY RUN**: `LIFECYCLE_DRY_RUN` (default true) makes the daily run count only and every owner erasure / offboarding
+  erase answer 409 `deletion_dry_run` with the counts.
+- **Backups (V1)**: AA-CIS-Infra's snapshot expiry function publishes the oldest backup copy per instance; an alarm
+  fires above 30 days (`rds_snapshot_expiry.tf`, AA-942).
 
 ## F3 PII scrubber (AA-938, CRM-10)
 
@@ -522,7 +580,8 @@ audit export (AA-940) `AUDIT_BUCKET_COMPLIANCE` / `AUDIT_BUCKET_GOVERNANCE` (bot
 `AUDIT_RETENTION_DRY_RUN` (default true), and (AA-939) `COGNITO_PARTNER_POOL_ID`, `PARTNER_WEB_ORIGIN`,
 `SES_FROM_ADDRESS`, `SES_CONFIGURATION_SET`, `INVITATION_TTL_HOURS` (default 168), `RATE_LIMIT_CLAIM_PER_MINUTE`
 (default 10), and the F3 guardrail (AA-938) `SCRUB_GUARDRAIL_ID`, `SCRUB_GUARDRAIL_VERSION`,
-`SCRUB_GUARDRAIL_REGION`, `SCRUB_DETECTOR_TIMEOUT_MS`. Meanings and defaults: `api/app/settings.py`. Live check of the key provider inside the
+`SCRUB_GUARDRAIL_REGION`, `SCRUB_DETECTOR_TIMEOUT_MS`, and the data lifecycle (AA-942) `LIFECYCLE_DRY_RUN` (default
+true). Meanings and defaults: `api/app/settings.py`. Live check of the key provider inside the
 container: `python -m app.vault.selftest` (KMS round trip under the nil tenant context, nothing stored).
 
 ## Domain terms
@@ -549,5 +608,10 @@ container: `python -m app.vault.selftest` (KMS round trip under the nil tenant c
   **submission** (`crm.form_submission`, payload encrypted, redacted after 90 days).
 - **Access log**: the owner's view of the agency audit (`crm.audit_event`), 12 months in the app plus download.
   **Export manifest**: one row of `crm.audit_export_manifest`, the hash-chained record of one exported hour.
+- **Trash**: a deleted object, restorable for the agency's `trash_days`, then purged. **Delete block**: a trip with
+  money, a signature, a commission or a held / confirmed AA line cannot be deleted, only cancelled. **Archive**: a
+  client hidden from lists and never messaged, history kept. **Legal hold**: a hold that suspends every deletion of
+  its subject. **Erasure**: an immediate hard delete of one client (bypasses the trash). **Offboarding**: an agency
+  leaves: export, then erase and crypto-shred.
 - **Partner host / client host**: the agency app's host (Dev `partner-dev.`) and the travellers' host (later
   `go-dev.`); never one session across both.
