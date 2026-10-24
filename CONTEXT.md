@@ -554,7 +554,8 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   `ADDRESS` finding that is exactly one known destination (`app.privacy.places.is_place`, folded: "Hà Giang", "Hoi
   An", "Huế") is still replaced, as `<PLACE_n>`, so the model knows a place stood there; it is sealed in the same map
   and restored with the rest. A place plus anything else stays `<ADDRESS_n>`; a `NAME` finding stays `<PERSON_n>`
-  even when it equals a place (never hint that a person is a place). Nothing is left unmasked: no "keep known
+  even when it equals a place; a person named like a destination whom the guardrail labels `ADDRESS` is typed
+  `<PLACE_n>` (still masked; the place hint is the accepted cost of option C). Nothing is left unmasked: no "keep known
   places" rule, because many destinations are also Vietnamese personal names. The scrubber `VERSION` is bumped
   whenever the same input can scrub differently.
 - **Fail closed**: any error -> `scrub_failed`, a scrub over its deadline (`SCRUB_DETECTOR_TIMEOUT_MS`, default 3 s,

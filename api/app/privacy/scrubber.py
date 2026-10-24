@@ -16,7 +16,9 @@
    and never logged. An ``ADDRESS`` finding that is exactly one known destination ("Hà Giang", "Hội An",
    :func:`app.privacy.places.is_place`) is replaced too, but typed ``<PLACE_n>`` (option C, S249): the model knows a
    place stood there, the value goes into the map like any other and is restored after the reply. A ``NAME`` finding
-   stays ``<PERSON_n>`` even when it equals a place: the scrubber never tells the model that a person is a place.
+   stays ``<PERSON_n>`` even when it equals a place. A person named like a destination whom the guardrail labels
+   ``ADDRESS`` is typed ``<PLACE_n>``: still masked, but the model is told a place stood there (accepted cost of
+   option C, docs/implementation-notes/AA-938.md).
 
 Rules:
 
@@ -481,7 +483,8 @@ def _apply_detections(text: str, detections: Sequence[Detection], reg: _Registry
     - **PLACE** (option C): an ``ADDRESS`` finding whose whole value is exactly one known destination is still
       replaced, typed ``<PLACE_n>``. A merged span is ``PLACE`` only when every piece in it came from such a finding
       and the merged text is itself exactly one destination; otherwise it keeps the kind it has always had
-      (``PLACE`` pieces count as ``ADDRESS``), so a ``NAME`` finding on the same words keeps ``<PERSON_n>``. The
+      (``PLACE`` pieces count as ``ADDRESS``), so a ``NAME`` and an ``ADDRESS`` finding on the same words give
+      ``<ADDRESS_n>``, as before option C (never a place hint). The
       typing changes a label only: what is replaced is exactly what was replaced before.
     """
     protected = patterns.Ranges(patterns.protected_spans(text))
