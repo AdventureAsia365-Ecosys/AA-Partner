@@ -13,7 +13,12 @@
    OTPs).
 3. **Detector** — Bedrock Guardrails ``ApplyGuardrail`` in detect mode on what is left
    (:mod:`app.privacy.guardrails`): names and addresses nobody stored. Its ``match`` values are replaced in the text
-   and never logged.
+   and never logged. An ``ADDRESS`` finding that is exactly one known destination ("Hà Giang", "Hội An",
+   :func:`app.privacy.places.is_place`) is replaced too, but typed ``<PLACE_n>`` (option C, S249): the model knows a
+   place stood there, the value goes into the map like any other and is restored after the reply. A ``NAME`` finding
+   stays ``<PERSON_n>`` even when it equals a place. A person named like a destination whom the guardrail labels
+   ``ADDRESS`` is typed ``<PLACE_n>``: still masked, but the model is told a place stood there (accepted cost of
+   option C, docs/implementation-notes/AA-938.md).
 
 Rules:
 
@@ -39,10 +44,12 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from app.privacy import patterns
-from app.privacy.places import place_spans
+from app.privacy.places import is_place, place_spans
 from app.privacy.text import digits, extend_over_marks, fold, fold_with_map, original_span
 
-VERSION = "f3-1"
+# Bumped whenever the same input can scrub to a different output (a new kind, a new rule): the receipt and the stored
+# map say which rules produced them. f3-2: detector ADDRESS findings that are exactly one destination -> <PLACE_n>.
+VERSION = "f3-2"
 MAX_TEXT_CHARS = 24_000
 DEFAULT_TIMEOUT_S = 3.0
 PASSES = ("known", "regex", "detector")
@@ -456,6 +463,7 @@ class PiiScrubber:
 # ── Pass 3: placing the detector's findings ──────────────────────────────────────────────────────────
 
 _PIECE_TRIM = " \t\r\n,;:"
+PLACE = "PLACE"  # option C: a detector ADDRESS finding that is exactly one known destination
 
 
 def _apply_detections(text: str, detections: Sequence[Detection], reg: _Registry) -> str:
@@ -472,6 +480,12 @@ def _apply_detections(text: str, detections: Sequence[Detection], reg: _Registry
       placeholder instead of dropping one of them, so no part of either reaches the model.
     - Kinds the scrubber does not map (``URL``, ``AGE``) are left as they are; a finding with no letter or digit
       outside its placeholders has nothing left to remove.
+    - **PLACE** (option C): an ``ADDRESS`` finding whose whole value is exactly one known destination is still
+      replaced, typed ``<PLACE_n>``. A merged span is ``PLACE`` only when every piece in it came from such a finding
+      and the merged text is itself exactly one destination; otherwise it keeps the kind it has always had
+      (``PLACE`` pieces count as ``ADDRESS``), so a ``NAME`` and an ``ADDRESS`` finding on the same words give
+      ``<ADDRESS_n>``, as before option C (never a place hint). The
+      typing changes a label only: what is replaced is exactly what was replaced before.
     """
     protected = patterns.Ranges(patterns.protected_spans(text))
     pieces: list[tuple[int, int, str]] = []
@@ -487,6 +501,8 @@ def _apply_detections(text: str, detections: Sequence[Detection], reg: _Registry
         spans = _locate(text, value)
         if not spans:
             raise ScrubError("detector finding not located")
+        if kind == "ADDRESS" and is_place(value):
+            kind = PLACE
         for start, end in spans:
             for ps, pe in _outside(protected, start, end):
                 while ps < pe and text[ps] in _PIECE_TRIM:
@@ -495,16 +511,23 @@ def _apply_detections(text: str, detections: Sequence[Detection], reg: _Registry
                     pe -= 1
                 if any(c.isalnum() for c in text[ps:pe]):
                     pieces.append((ps, pe, kind))
-    merged: list[list[Any]] = []  # [start, end, kind, longest piece length]
-    for ps, pe, kind in sorted(pieces):
+    merged: list[list[Any]] = []  # [start, end, kind, longest piece length, every piece a place]
+    # Sorted and merged on the kind the piece had before option C, so ties between kinds resolve as they always did.
+    for ps, pe, kind in sorted(pieces, key=lambda p: (p[0], p[1], "ADDRESS" if p[2] == PLACE else p[2])):
+        base = "ADDRESS" if kind == PLACE else kind
         if merged and ps < merged[-1][1]:
             last = merged[-1]
             last[1] = max(last[1], pe)
             if pe - ps > last[3]:
-                last[2], last[3] = kind, pe - ps
+                last[2], last[3] = base, pe - ps
+            last[4] = last[4] and kind == PLACE
         else:
-            merged.append([ps, pe, kind, pe - ps])
-    spans_out = [(s, e, reg.placeholder(k, fold(text[s:e]), text[s:e], "detector")) for s, e, k, _ in merged]
+            merged.append([ps, pe, base, pe - ps, kind == PLACE])
+    spans_out = []
+    for s, e, k, _, all_place in merged:
+        if all_place and is_place(text[s:e]):
+            k = PLACE
+        spans_out.append((s, e, reg.placeholder(k, fold(text[s:e]), text[s:e], "detector")))
     return _apply(text, spans_out)
 
 

@@ -11,6 +11,7 @@ import pytest
 from app.llm import gateway as gateway_module
 from app.llm.gateway import MANUAL_REPLY, Completion, LlmGateway, Scrubbed, StubProvider, StubScrubber, stub_gateway
 from app.privacy.placeholder_store import SealedMap
+from app.privacy.scrubber import VERSION as SCRUBBER_VERSION
 from app.privacy.scrubber import Detection, KnownPerson, KnownValues, PiiScrubber
 from tests.unit.fakes import ScriptedConn
 from tests.unit.slice_fakes import system_ctx
@@ -184,7 +185,7 @@ async def test_map_is_sealed_before_the_call_and_stored_after_the_log(monkeypatc
     assert order == ["seal", "call"] and provider.prompts == ["Hi <PERSON_1>"]
     assert result.outcome == "ok" and result.placeholder_map_id == map_id
     [stored] = c.sql("INSERT INTO crm.placeholder_map")
-    assert stored[1:] == (uuid.UUID("00000000-0000-4000-8000-000000000001"), b"sealed", 1, "f3-1")
+    assert stored[1:] == (uuid.UUID("00000000-0000-4000-8000-000000000001"), b"sealed", 1, SCRUBBER_VERSION)
     flat = [sql for sql, _ in c.calls]
     assert next(i for i, q in enumerate(flat) if "INSERT INTO crm.llm_call" in q) < next(
         i for i, q in enumerate(flat) if "INSERT INTO crm.placeholder_map" in q

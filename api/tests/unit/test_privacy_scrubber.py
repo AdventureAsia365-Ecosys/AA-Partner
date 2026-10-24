@@ -148,7 +148,11 @@ async def test_detector_pass_replaces_matches_and_ignores_urls_ages_and_placehol
 async def test_receipt_has_counts_and_versions_only() -> None:
     r = await run("Nguyen Van An, an.nguyen@example.invalid, 0912 345 678", an())
     assert set(r.receipt) == RECEIPT_KEYS
-    assert r.receipt["scrubber"] == "f3-1" and r.receipt["detector"] == "fake" and r.receipt["entities"] == 3
+    assert (
+        r.receipt["scrubber"] == scrubber_module.VERSION == "f3-2"
+        and r.receipt["detector"] == "fake"
+        and r.receipt["entities"] == 3
+    )
     flat = repr(r.receipt)
     assert "An" not in flat.replace("ANY", "") and "example" not in flat and "345" not in flat
     assert "Nguyễn" not in repr(r) and "example" not in repr(r)  # the map never reaches a repr / log line
@@ -273,3 +277,113 @@ async def test_local_passes_share_the_deadline(monkeypatch: pytest.MonkeyPatch) 
     with pytest.raises(ScrubTimeout):
         await PiiScrubber(finds, timeout_s=0.05, today=TODAY).scrub("Peter Lawson")
     assert finds.seen == []  # the detector is never reached
+
+
+# ── Option C (AA-938, S249): bare destinations typed <PLACE_n>, still masked ─────────────────────────
+
+
+async def test_detector_address_that_is_one_destination_becomes_a_typed_place() -> None:
+    # The live corpus run: Guardrails labels bare destinations ADDRESS (over-scrub 28.5 %). They stay masked, typed.
+    finds = Finds(("ADDRESS", "Hà Giang"), ("ADDRESS", "Hoi An"), ("ADDRESS", "Hạ Long"), ("ADDRESS", "Huế"))
+    r = await run("Tour Hà Giang 4 ngày, rồi Hoi An, Hạ Long và Huế; lại Hà Giang.", detector=finds)
+    assert r.text == "Tour <PLACE_1> 4 ngày, rồi <PLACE_2>, <PLACE_3> và <PLACE_4>; lại <PLACE_1>."
+    assert r.placeholders == {
+        "<PLACE_1>": "Hà Giang",
+        "<PLACE_2>": "Hoi An",
+        "<PLACE_3>": "Hạ Long",
+        "<PLACE_4>": "Huế",
+    }
+    assert r.receipt["counts"] == {"PLACE": 5} and r.receipt["passes"]["detector"] == 5
+    reply = "Lịch <PLACE_1> -> <PLACE_2> -> <PLACE_3> ổn ạ."
+    assert restore(reply, r.placeholders) == "Lịch Hà Giang -> Hoi An -> Hạ Long ổn ạ."
+
+
+async def test_a_place_plus_more_keeps_its_address_kind() -> None:
+    finds = Finds(
+        ("ADDRESS", "45 Hải Phòng, Đà Nẵng"), ("ADDRESS", "Ninh Bình + Hải Dương"), ("ADDRESS", "Ha Long Bay 3")
+    )
+    r = await run("Nhà 45 Hải Phòng, Đà Nẵng; phòng Ninh Bình + Hải Dương; Ha Long Bay 3.", detector=finds)
+    assert r.text == "Nhà <ADDRESS_1>; phòng <ADDRESS_2>; <ADDRESS_3>."
+
+
+async def test_a_name_finding_equal_to_a_place_stays_a_person() -> None:
+    # A person named like a place is never hinted as a place; a tie on the same words keeps today's kind (ADDRESS).
+    r = await run("Contact person: Hà Nam.", detector=Finds(("NAME", "Hà Nam")))
+    assert r.text == "Contact person: <PERSON_1>."
+    r = await run("Guest Mai Châu.", detector=Finds(("NAME", "Mai Châu"), ("ADDRESS", "Mai Châu")))
+    assert r.text == "Guest <ADDRESS_1>."
+    # An address that swallows a place-typed finding is one ADDRESS, never a PLACE.
+    r = await run("Ship to 12 Hội An road.", detector=Finds(("ADDRESS", "Hội An"), ("ADDRESS", "12 Hội An road")))
+    assert r.text == "Ship to <ADDRESS_1>."
+    # A known companion called like a place is pass 1's: PERSON, and pass 3 only ever sees the placeholder.
+    hg = KnownPerson("companion", display_name="Hà Giang")
+    finds = Finds()
+    r = await run("Đi cùng Hà Giang tới Hà Giang", hg, detector=finds)
+    assert r.text == "Đi cùng <PERSON_1> tới <PERSON_1>" and finds.seen == [r.text]
+
+
+# Reviewer's live probe (ApplyGuardrail, acc2, S249): people named like places. Every name must stay masked; NAME
+# findings stay PERSON; only ADDRESS findings that are exactly one place become PLACE.
+LIVE_PROBE = [
+    (
+        "Khách Kim Liên (vợ anh Tuấn) muốn đổi phòng.",
+        [("NAME", "Kim Liên"), ("NAME", "Tuấn")],
+        "Khách <PERSON_1> (vợ anh <PERSON_2>) muốn đổi phòng.",
+    ),
+    ("Liên hệ chị Hải Dương để nhận vé.", [("NAME", "Hải Dương")], "Liên hệ chị <PERSON_1> để nhận vé."),
+    ("Our driver Long An will meet you.", [("NAME", "Long An")], "Our driver <PERSON_1> will meet you."),
+    (
+        "Travellers: Mai Châu and Thái Bình.",
+        [("ADDRESS", "Mai Châu"), ("ADDRESS", "Thái Bình")],
+        "Travellers: <PLACE_1> and <PLACE_2>.",
+    ),
+    (
+        "Giao vé tới số 12 phố Kim Liên, Đống Đa.",
+        [("ADDRESS", "số 12 phố Kim Liên, Đống Đa")],
+        "Giao vé tới <ADDRESS_1>.",
+    ),
+    (
+        "Danh sách khách: Hà Giang, Kim Liên, Hòa Bình.",
+        [("ADDRESS", "Hà Giang"), ("NAME", "Kim Liên"), ("ADDRESS", "Hòa Bình")],
+        "Danh sách khách: <PLACE_1>, <PERSON_1>, <PLACE_2>.",
+    ),
+    (
+        "Passengers: Mrs Hà Giang, Mr Long An.",
+        [("NAME", "Hà Giang"), ("NAME", "Long An")],
+        "Passengers: Mrs <PERSON_1>, Mr <PERSON_2>.",
+    ),
+    (
+        "Room 1: Ninh Bình + Hải Dương. Room 2: Thanh Hóa.",
+        [("ADDRESS", "Ninh Bình + Hải Dương"), ("ADDRESS", "Thanh Hóa")],
+        "Room 1: <ADDRESS_1>. Room 2: <PLACE_1>.",
+    ),
+    (
+        "Khách Mai Châu và chồng là Thái Bình đi tour Sa Pa.",
+        [("ADDRESS", "Mai Châu"), ("NAME", "Thái Bình"), ("ADDRESS", "Sa Pa")],
+        "Khách <PLACE_1> và chồng là <PERSON_1> đi tour <PLACE_2>.",
+    ),
+    (
+        "Traveller Hà Giang wants to visit Hạ Long.",
+        [("NAME", "Hà Giang"), ("NAME", "Hạ Long")],
+        "Traveller <PERSON_1> wants to visit <PERSON_2>.",
+    ),
+]
+
+
+@pytest.mark.parametrize(("text", "hits", "expected"), LIVE_PROBE)
+async def test_people_named_like_places_stay_masked(text: str, hits: list, expected: str) -> None:
+    r = await run(text, detector=Finds(*hits))
+    assert r.text == expected
+    for _, value in hits:
+        assert value not in r.text  # nothing that was masked before option C is readable now
+    assert restore(r.text, r.placeholders) == text  # every placeholder, PLACE included, restores
+
+
+async def test_is_place_matches_exactly_one_destination_folded() -> None:
+    from app.privacy.places import PLACE_PHRASES, is_place
+
+    for yes in ("Hà Giang", "ha giang", "HOI AN", "Hội An,", " (Huế) ", "Ha Long Bay", "Mekong Delta", "Sa-Pa"):
+        assert is_place(yes), yes
+    for no in ("45 Hải Phòng, Đà Nẵng", "Ninh Bình + Hải Dương", "Hà", "Giang", "Northern Loop", "Hà Giang 4", ""):
+        assert not is_place(no), no
+    assert "hue" not in PLACE_PHRASES and "sapa" not in PLACE_PHRASES  # typing-only: pass 1 still sees "chị Huế"

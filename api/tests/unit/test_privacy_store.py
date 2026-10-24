@@ -40,9 +40,9 @@ async def test_seal_uses_the_scrub_dek_and_store_writes_the_row() -> None:
     assert vault.sealed == [("placeholder_map", "map_enc", sealed.placeholder_map_id, "scrub")]
     assert sealed.count == 1 and "Hoa" not in repr(sealed)
     c = ScriptedConn()
-    await store_map(system_ctx(c), sealed, "00000000-0000-4000-8000-000000000001", "f3-1")
+    await store_map(system_ctx(c), sealed, "00000000-0000-4000-8000-000000000001", "f3-2")
     [args] = c.sql("INSERT INTO crm.placeholder_map")
-    assert args[0] == sealed.placeholder_map_id and args[3:] == (1, "f3-1")
+    assert args[0] == sealed.placeholder_map_id and args[3:] == (1, "f3-2")
     with pytest.raises(ValueError):
         await seal_map(vault, {})
 
@@ -185,3 +185,23 @@ async def test_hourly_hook_queues_one_due_now_run_per_utc_hour() -> None:
     clock["now"] = datetime(2026, 10, 24, 5, 0, tzinfo=UTC)
     await hook(pool)
     assert len(pool.inserts) == 2
+
+
+async def test_place_placeholders_round_trip_through_the_sealed_map() -> None:
+    # Option C (AA-938, S249): <PLACE_n> lives in the same sealed map and is restored like any placeholder.
+    from app.privacy.scrubber import Detection, PiiScrubber
+
+    class Finds:
+        name = "fake"
+
+        async def detect(self, text):  # noqa: ANN001, ANN202
+            return [Detection("ADDRESS", "Hà Giang"), Detection("NAME", "Kim Liên")]
+
+    scrubbed = await PiiScrubber(Finds()).scrub("Khách Kim Liên muốn đi Hà Giang.")
+    assert scrubbed.text == "Khách <PERSON_1> muốn đi <PLACE_1>."
+    vault = RecordingVault()
+    sealed = await seal_map(vault, scrubbed.placeholders)
+    blob = enc("placeholder_map", "map_enc", json.dumps(scrubbed.placeholders, ensure_ascii=False))
+    ctx = tenant_ctx(ScriptedConn().on("FROM crm.placeholder_map", blob))
+    out = await restore_placeholders(ctx, FakeVault(), sealed.placeholder_map_id, "Chào <PERSON_1>, tour <PLACE_1> ạ.")
+    assert out == "Chào Kim Liên, tour Hà Giang ạ."
