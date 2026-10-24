@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from decimal import Decimal
 from typing import Any
 
 import asyncpg
@@ -198,3 +199,38 @@ async def test_the_synthetic_fx_job_fills_platform_rates_once(app_pool: asyncpg.
             )
             == fetch.SYNTHETIC_USD["VND"]
         )
+
+
+async def test_ledger_totals_never_add_two_base_currencies(app_pool: asyncpg.Pool) -> None:
+    """Confirm in USD, switch the base to VND, confirm again: totals sum the VND-based lines and count the other."""
+    s = await _setup(app_pool)
+    owner = s["who"]["owner"]
+    await _fx_today(app_pool)
+    async with tenant_tx(app_pool, owner, s["tenant"]) as ctx:
+        supplier = uuid.UUID(
+            (await suppliers.create_supplier(ctx, Vault(s["keys"], ctx), {"name": "Pearl"}))["agency_supplier_id"]
+        )
+
+    async def confirmed_line(conf: str, cost: str, sell: str) -> None:
+        async with tenant_tx(app_pool, owner, s["tenant"]) as ctx:
+            made = await lines.create_line(
+                ctx, s["trip"], {"agency_supplier_id": supplier, "title": conf, "confirmation_no": conf}
+            )
+            line_id = uuid.UUID(made["booking_line_id"])
+            await lines.put_money(
+                ctx,
+                line_id,
+                {"cost": {"amount": cost, "currency": "USD"}, "sell": {"amount": sell, "currency": "USD"}},
+            )
+            await lines.confirm(ctx, line_id)
+
+    await confirmed_line("USD-1", "100", "130")
+    async with tenant_tx(app_pool, owner, s["tenant"]) as ctx:
+        await fx.update_payment_settings(ctx, {"base_currency": "VND"})
+    await confirmed_line("VND-1", "10", "20")
+    async with tenant_tx(app_pool, owner, s["tenant"]) as ctx:
+        totals = (await lines.ledger(ctx, status=None, date_from=None, date_to=None))["totals"]
+    rate = fetch.SYNTHETIC_USD["VND"]
+    assert totals["confirmed_sell_base"] == str((20 * rate).quantize(Decimal("0.01")))
+    assert totals["confirmed_cost_base"] == str((10 * rate).quantize(Decimal("0.01")))
+    assert totals["confirmed_other_base"] == 1  # the USD-based line, never added to VND

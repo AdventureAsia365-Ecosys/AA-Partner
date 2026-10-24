@@ -108,10 +108,12 @@ SELECT {_LINE_COLUMNS}, t.title AS trip_title, t.stage AS trip_stage
  LIMIT $4
 """  # noqa: S608 — fixed text
 # Totals in the base currency: confirmed lines from their frozen base amounts; planning sell as pipeline value at
-# today's rate (an estimate; a line whose currency has no rate is counted apart).
+# today's rate (an estimate; a line whose currency has no rate is counted apart). A confirmed amount frozen in an
+# earlier base currency (the owner changed it in Settings > Payments; stored rows are never re-converted) is left out
+# of the sums and its lines counted apart (confirmed_other_base), so the totals never add two currencies.
 TOTALS_SQL = """
 WITH heads AS (
-    SELECT m.kind, m.amount, m.currency, m.amount_base, l.status
+    SELECT m.booking_line_id, m.kind, m.amount, m.currency, m.amount_base, m.base_currency, l.status
       FROM crm.v_booking_line_money_current m
       JOIN crm.booking_line l ON l.booking_line_id = m.booking_line_id AND l.deleted_at IS NULL
       JOIN crm.trip t ON t.trip_id = l.trip_id AND t.deleted_at IS NULL
@@ -119,10 +121,14 @@ WITH heads AS (
        AND ($1::date IS NULL OR l.service_from >= $1) AND ($2::date IS NULL OR l.service_from <= $2)
 )
 SELECT
-    COALESCE(sum(amount_base) FILTER (WHERE status = 'confirmed' AND kind = 'sell'), 0) AS confirmed_sell_base,
-    COALESCE(sum(amount_base) FILTER (WHERE status = 'confirmed' AND kind = 'cost'), 0) AS confirmed_cost_base,
-    COALESCE(sum(amount_base) FILTER (WHERE status = 'confirmed' AND kind = 'commission_expected'), 0)
-        AS confirmed_commission_expected_base,
+    COALESCE(sum(amount_base) FILTER (WHERE status = 'confirmed' AND kind = 'sell' AND base_currency = $3), 0)
+        AS confirmed_sell_base,
+    COALESCE(sum(amount_base) FILTER (WHERE status = 'confirmed' AND kind = 'cost' AND base_currency = $3), 0)
+        AS confirmed_cost_base,
+    COALESCE(sum(amount_base) FILTER (WHERE status = 'confirmed' AND kind = 'commission_expected'
+                                        AND base_currency = $3), 0) AS confirmed_commission_expected_base,
+    count(DISTINCT h.booking_line_id) FILTER (WHERE status = 'confirmed' AND base_currency <> $3)
+        AS confirmed_other_base,
     COALESCE(sum(round(h.amount * r.rate, 2)) FILTER (WHERE status = 'planning' AND kind = 'sell'), 0)
         AS pipeline_sell_base,
     count(*) FILTER (WHERE status = 'planning' AND kind = 'sell' AND r.rate IS NULL) AS pipeline_unconverted
@@ -325,6 +331,7 @@ async def ledger(
             "confirmed_commission_expected_base": str(Decimal(t["confirmed_commission_expected_base"])),
             "pipeline_sell_base": str(Decimal(t["pipeline_sell_base"])),
             "pipeline_unconverted": int(t["pipeline_unconverted"]),
+            "confirmed_other_base": int(t["confirmed_other_base"]),
         }
     ids = tuple(str(r["booking_line_id"]) for r in rows)
     ctx.audit("list_view", "allowed", "booking_line", None, reason="ledger", object_ids=ids)
@@ -389,6 +396,12 @@ async def update_line(ctx: TenantContext, line_id: uuid.UUID, changes: dict[str,
             value = _title(value)
         elif field == "confirmation_no":
             value = _confirmation(value)
+            if value is None and current["status"] == "confirmed" and current["supplier_kind"] == "agency":
+                # R18: the number the level asked for at confirm stays (crm-014 refuses it too, CRM23).
+                if (await fx.settings(ctx))["booking_validation_level"] != "off":
+                    raise Conflict(
+                        "line_incomplete", "a confirmed line keeps its confirmation number", missing=["confirmation_no"]
+                    )
         elif field in ("service_from", "service_to"):
             value = _date(value, field)
         elif field == "collect":

@@ -171,11 +171,15 @@ async def test_the_ledger_has_totals_for_owner_and_agent_only() -> None:
         "confirmed_commission_expected_base": Decimal("5.00"),
         "pipeline_sell_base": Decimal("40.00"),
         "pipeline_unconverted": 1,
+        "confirmed_other_base": 2,
     }
     conn = _conn(**{"WITH heads AS": totals, "now() AT TIME ZONE": dt.date(2026, 10, 24)})
     ctx = tenant_ctx(conn, role="agent")
     out = await lines.ledger(ctx, status="confirmed", date_from=None, date_to=None)
     assert out["totals"]["confirmed_margin_base"] == "20.00" and out["totals"]["pipeline_unconverted"] == 1
+    assert out["totals"]["confirmed_other_base"] == 2  # lines frozen in an earlier base: counted apart
+    (totals_call,) = [c for c in conn.calls if "WITH heads AS" in c[0]]
+    assert "base_currency = $3" in totals_call[0] and totals_call[1][2] == "USD"
     assert out["lines"][0]["trip_title"] == "Vietnam 9 nights"
     assert ctx.audit_events[-1].action == "list_view"
     assistant = await lines.ledger(tenant_ctx(_conn(), role="assistant"), status=None, date_from=None, date_to=None)
@@ -248,6 +252,33 @@ async def test_update_line_validates_each_field() -> None:
     aa = _conn(**{"UPDATE crm.booking_line SET": _db_error("CRM24", "crm: aa_line_read_only")})
     with _raises(Forbidden, "aa_line_read_only"):
         await lines.update_line(tenant_ctx(aa), LINE, {"title": "x"})
+
+
+@pytest.mark.asyncio
+async def test_a_confirmed_line_keeps_its_number_unless_the_level_is_off() -> None:
+    confirmed = {"trip_id": TRIP, "status": "confirmed", "supplier_kind": "agency"}
+    conn = _conn(**{"SELECT trip_id, status, supplier_kind FROM crm.booking_line": confirmed})
+    with pytest.raises(Conflict) as err:
+        await lines.update_line(tenant_ctx(conn), LINE, {"confirmation_no": ""})
+    assert err.value.code == "line_incomplete" and err.value.extra["missing"] == ["confirmation_no"]
+    assert not [c for c in conn.calls if c[0].startswith("UPDATE crm.booking_line SET")]
+    await lines.update_line(tenant_ctx(conn), LINE, {"confirmation_no": "HP-2"})  # a new number is fine
+    off = _conn(
+        **{
+            "SELECT trip_id, status, supplier_kind FROM crm.booking_line": confirmed,
+            "SELECT base_currency, booking_validation_level, fx_mode": {
+                "base_currency": "USD",
+                "booking_validation_level": "off",
+                "fx_mode": "automatic",
+            },
+        }
+    )
+    await lines.update_line(tenant_ctx(off), LINE, {"confirmation_no": ""})
+    # The database refuses it too (CRM23): worded the same way.
+    db = _conn(**{"UPDATE crm.booking_line SET": _db_error("CRM23", "crm: line_incomplete:confirmation_no (kept)")})
+    with pytest.raises(Conflict) as err:
+        await lines.update_line(tenant_ctx(db), LINE, {"confirmation_no": "", "title": "x"})
+    assert err.value.extra["missing"] == ["confirmation_no"]
 
 
 def _check(name: str) -> asyncpg.CheckViolationError:

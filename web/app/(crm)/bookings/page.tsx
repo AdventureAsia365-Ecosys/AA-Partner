@@ -60,6 +60,11 @@ export default async function BookingsPage({ searchParams }: { searchParams: Pro
               )}
             </dd>
           </dl>
+          {(totals.confirmed_other_base ?? 0) > 0 && (
+            <p style={{ margin: "8px 0 0", fontSize: 12.5, color: K.muted }} data-testid="bookings-other-base">
+              {fmt(tr("ledger.totals.otherBase"), { n: totals.confirmed_other_base ?? 0 })}
+            </p>
+          )}
         </Panel>
       )}
       <nav style={{ display: "flex", gap: 10, fontSize: 13 }} aria-label={tr("ledger.col.status")}>

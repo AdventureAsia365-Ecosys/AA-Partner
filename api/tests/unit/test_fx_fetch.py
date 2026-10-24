@@ -106,6 +106,26 @@ def test_live_rows_count_failed_sources_and_fail_only_when_all_fail() -> None:
         fetch.live_rows(down)
 
 
+def test_live_rows_fail_when_only_the_cross_check_source_answers() -> None:
+    """fawazahmed0 alone gives crm.fx_resolve nothing to use: the run fails (and alerts) instead of passing."""
+
+    def only_fawaz(url: str) -> bytes:
+        if url != fetch.FAWAZ_URL:
+            raise fetch.FxFetchError("fx_unreachable")
+        return FAWAZ
+
+    with pytest.raises(fetch.FxFetchError, match="fx_no_usable_source"):
+        fetch.live_rows(only_fawaz)
+
+    def ecb_only(url: str) -> bytes:
+        if url != fetch.ECB_URL:
+            raise fetch.FxFetchError("fx_unreachable")
+        return ECB
+
+    rows, counts = fetch.live_rows(ecb_only)
+    assert counts["failed_count"] == 2 and {r.source for r in rows} == {"ecb"}
+
+
 def test_synthetic_rows_are_deterministic_and_include_vnd() -> None:
     rows = fetch.synthetic_rows(DAY)
     assert rows == fetch.synthetic_rows(DAY)

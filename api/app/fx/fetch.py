@@ -55,6 +55,8 @@ ER_API_URL = "https://open.er-api.com/v6/latest/USD"
 ECB_URL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml"
 FAWAZ_URL = "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json"
 ECB_NS = "{http://www.ecb.int/vocabulary/2002-08-01/eurofxref}"
+# The sources crm.fx_resolve reads; fawazahmed0 is a cross-check only.
+USABLE_SOURCES = frozenset({"exchangerate_api", "ecb"})
 
 # The currencies the CRM's agencies trade in (Asia and the usual client currencies). Others are skipped.
 CURRENCIES = frozenset(
@@ -209,7 +211,9 @@ def cross_check(primary: list[RateRow], check: list[RateRow]) -> list[str]:
 
 
 def live_rows(get: Fetcher = _http_get) -> tuple[list[RateRow], dict[str, int]]:
-    """Every live source; a failing one is counted (``failed_count``), the run fails only when all three fail."""
+    """Every live source; a failing one is counted (``failed_count``). The run fails when ExchangeRate-API and the ECB
+    both fail, whatever fawazahmed0 returns: ``crm.fx_resolve`` never uses fawazahmed0, so that day would have no
+    usable rate while the job looked healthy (confirms would drift onto stale rates and then CRM25, unalerted)."""
     rows: list[RateRow] = []
     counts = {"failed_count": 0, "flagged_count": 0}
     er: list[RateRow] = []
@@ -229,6 +233,8 @@ def live_rows(get: Fetcher = _http_get) -> tuple[list[RateRow], dict[str, int]]:
             fawaz = got
     if counts["failed_count"] == 3:
         raise FxFetchError("fx_all_sources_failed")
+    if not any(r.source in USABLE_SOURCES for r in rows):
+        raise FxFetchError("fx_no_usable_source")
     flagged = cross_check(er, fawaz)
     if flagged:
         log.warning("crm_fx_cross_check_gap quotes=%s", ",".join(flagged))

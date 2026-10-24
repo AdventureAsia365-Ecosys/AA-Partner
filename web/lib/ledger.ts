@@ -66,6 +66,8 @@ export interface LedgerTotals {
   confirmed_commission_expected_base?: string;
   pipeline_sell_base: string;
   pipeline_unconverted: number;
+  /** Confirmed lines frozen in an earlier base currency: not in the sums above (never re-converted). */
+  confirmed_other_base?: number;
 }
 
 export interface LedgerView {
