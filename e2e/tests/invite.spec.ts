@@ -9,14 +9,14 @@
 //   E2ECRMPARTNER, E2ECRMEMAIL, E2ECRMPASSWORD, E2ECRMTOTP   the owner (as slice1.spec.ts)
 //   E2ECRMINVITEE   the invitee address (a recipient of the e2e mailbox rule, crm_e2e_users.json "invitee": true)
 //
-// UNVERIFIED until the first Dev run: the managed login v2 labels of the new-password and authenticator-setup pages
-// (the selectors below try the usual texts; the secret is read from the page as a base32 string).
+// The managed login v2 new-password and authenticator-setup pages were checked on a throwaway Dev user (S249): see the
+// comment at the authenticator step.
 import { expect, test, type Page } from "@playwright/test";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import { baseline, waitForInviteLink } from "../helpers/mailbox";
 import { landOnPartner, signIn } from "../helpers/signin";
-import { freshTotp } from "../helpers/totp";
+import { freshTotp, parseSetupSecret } from "../helpers/totp";
 
 const env = (name: string) => (process.env[name] ?? "").trim().replace(/\/+$/, "");
 const PARTNER = env("E2ECRMPARTNER");
@@ -57,6 +57,14 @@ test.describe("CRM-11 invite -> active on Dev", () => {
     await owner.goto(`${PARTNER}/settings/team`);
     await expect(owner.getByTestId("team-admin")).toHaveAttribute("data-hydrated", "true", { timeout: 15_000 });
 
+    // A run that failed after sending leaves its invitation pending ("already has a pending invitation"), and the
+    // list masks addresses: the synthetic agency only ever has this test's invitations, so revoke every pending one.
+    const pending = owner.getByTestId("team-invitations").getByRole("button", { name: /withdraw|thu hồi/i });
+    for (let left = await pending.count(); left > 0; left -= 1) {
+      await pending.first().click();
+      await expect(pending).toHaveCount(left - 1, { timeout: 15_000 });
+    }
+
     const before = await baseline();
     const started = Date.now();
     await owner.getByTestId("team-invite-email").fill(INVITEE);
@@ -94,12 +102,18 @@ test.describe("CRM-11 invite -> active on Dev", () => {
     const confirm = person.getByLabel(/confirm|re-?enter/i).first();
     if (await confirm.isVisible().catch(() => false)) await confirm.fill(mine);
     await click(person, /^(next|change password|continue|submit|save)$/i);
-    const showKey = person.getByRole("button", { name: /secret|key|can.?t scan/i }).first();
-    if (await showKey.isVisible({ timeout: 15_000 }).catch(() => false)) await showKey.click();
-    const secret = /\b([A-Z2-7]{32,64})\b/.exec((await person.locator("body").innerText()).replace(/\s(?=[A-Z2-7]{4}\b)/g, ""))?.[1];
+    // Authenticator setup (managed login v2, checked on a throwaway Dev user, S249): heading "Set up authenticator app
+    // MFA", a QR code, a "Show secret key" inline-link button that reveals <p class="qr-secret-key">Secret key: ...</p>,
+    // the "3. Enter code" field and a "Sign in" submit. The page replaces "Change password" client-side, so wait for
+    // it (isVisible() does not wait) before reading anything.
+    await expect(person.getByRole("heading", { name: /authenticator/i })).toBeVisible({ timeout: 30_000 });
+    await person.getByRole("button", { name: /show secret key|can.?t scan/i }).click();
+    const keyLine = person.locator("p.qr-secret-key").or(person.getByText(/secret key:/i)).first();
+    await expect(keyLine).toBeVisible({ timeout: 10_000 });
+    const secret = parseSetupSecret(await keyLine.innerText());
     if (!secret) throw new Error("authenticator secret not found on the setup page");
     await person.getByLabel(/code/i).first().fill(await freshTotp(secret));
-    await click(person, /^(next|verify|continue|submit|confirm)$/i);
+    await click(person, /^(sign in|next|verify|continue|submit|confirm)$/i);
     const skip = person.getByRole("button", { name: /skip|not now|later/i }).first(); // passkey offer, if any
     if (await skip.isVisible({ timeout: 5_000 }).catch(() => false)) await skip.click();
 
