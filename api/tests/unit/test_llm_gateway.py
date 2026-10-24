@@ -60,6 +60,12 @@ async def test_refusals_in_order_and_every_one_is_logged() -> None:
     assert unscrubbed.refusal_code == "scrubber_unavailable"
     budget = await stub_gateway().call(system_ctx(conn(spent="2")), stage="crm_x", role="writer", prompt="hi")
     assert budget.refusal_code == "budget_exhausted" and budget.budget_used_pct == 100.0
+    locked = conn(spent="1.99")
+    await stub_gateway().call(system_ctx(locked), stage="crm_x", role="writer", prompt="hi")
+    flat = [sql for sql, _ in locked.calls]
+    lock_at = next(i for i, sql in enumerate(flat) if "pg_advisory_xact_lock" in sql)
+    assert lock_at < next(i for i, sql in enumerate(flat) if "sum(cost_usd_est)" in sql)  # serialised per agency
+    assert locked.sql("pg_advisory_xact_lock") == [(str(system_ctx().tenant_id),)]
     zero = await stub_gateway().call(system_ctx(conn(budget="0")), stage="crm_x", role="writer", prompt="hi")
     assert zero.refusal_code == "budget_exhausted"
     off = await stub_gateway().call(system_ctx(conn(enabled=False)), stage="crm_x", role="judge", prompt="hi")

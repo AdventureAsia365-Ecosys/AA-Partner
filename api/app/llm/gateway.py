@@ -7,7 +7,9 @@ job's ``system_tx()``), in this order — and any step that fails stops the call
    scrub error refuses with ``scrub_failed``; the **stub** scrubber (no real scrubbing) is accepted only with the
    **stub** provider, so no real model ever receives unscrubbed text (``scrubber_unavailable``);
 2. **budget**: this month's ``crm.llm_call`` cost of the agency against ``crm.tenant_settings.ai_budget_usd``
-   (default 2 USD); at 100 % the call is refused with ``budget_exhausted`` (R5; the 75 / 90 % alerts are CRM-33a);
+   (default 2 USD); at 100 % the call is refused with ``budget_exhausted`` (R5; the 75 / 90 % alerts are CRM-33a).
+   The check runs under a transaction-scoped advisory lock per agency, held until the call is logged, so two calls
+   at 99 % cannot both pass (calls of one agency are serialised; acceptable for the volumes of CRM-33a);
 3. **ai_enabled** (default false): refused with ``ai_disabled``;
 4. **the call**: an error is recorded with its class (never its message);
 5. **the log**: one ``crm.llm_call`` row (no prompt, no output, no traveller token) and the platform rollup
@@ -32,6 +34,7 @@ ROLES = frozenset({"writer", "judge", "validate"})
 DEFAULT_BUDGET_USD = Decimal("2")
 STUB_PREFIX = "stub"
 
+BUDGET_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtextextended('crm_llm_budget:' || $1::text, 0))"
 MONTH_SPEND_SQL = """
 SELECT coalesce(sum(cost_usd_est), 0) FROM crm.llm_call
  WHERE at >= date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
@@ -129,7 +132,8 @@ class LlmGateway:
         receipt = scrubbed.receipt
         if self.scrubber.version.startswith(STUB_PREFIX) and self.provider.name != STUB_PREFIX:
             return await self._log(ctx, stage, role, "refused", refusal="scrubber_unavailable", receipt=receipt)
-        # 2. budget, 3. ai_enabled
+        # 2. budget, 3. ai_enabled (the per-agency lock holds until this transaction ends, after the log row)
+        await ctx.conn.execute(BUDGET_LOCK_SQL, str(ctx.tenant_id))
         settings = await ctx.conn.fetchrow(SETTINGS_SQL)
         enabled = bool(settings["ai_enabled"]) if settings else False
         budget = Decimal(settings["ai_budget_usd"]) if settings else DEFAULT_BUDGET_USD
