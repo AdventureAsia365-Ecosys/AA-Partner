@@ -10,7 +10,7 @@
 //   - GET records only when the session carries the one-shot `si` flag that /auth/callback sets after a real Cognito
 //     sign-in. A GET has a side effect only then: it.com is a public suffix (AA-911), so a sibling host can make a
 //     signed-in browser load /auth/agency with the Lax cookie, and must not be able to add sign-in events.
-//   - POST (a person picking or switching agency in the chooser, behind refuseCrossSiteWrite) always records.
+//   - POST (a person picking or switching agency in the chooser, behind refuseForeignWrite) always records.
 // Either way the new session cookie drops the flag. The browser has no BFF route to the sign-in endpoint.
 import type { NextRequest } from "next/server";
 import { config } from "@/lib/config";
