@@ -3,14 +3,17 @@
 // (no identity values) and the activity. One "view" audit event per load (API). AA-937: the trip's documents
 // (one list_view of the file names), companions and dates. AA-943 (CRM-15): the Traveller info panel reads
 // GET /trips/{id}/stage2 (completeness with the missing codes, the planning form's pages, the F2 answers); the
-// planning form's link opens on the first client host.
+// planning form's link opens on the first client host. AA-944 (CRM-16): the Bookings tab under the workspace
+// (GET /trips/{id}/lines, money for owner / agent only; the supplier list for the add form).
 import { notFound } from "next/navigation";
 import { ErrorState } from "@/app/_kit";
+import { LinesPanel } from "@/components/ledger/LinesPanel";
 import { TripPanel } from "@/components/pipeline/TripPanel";
 import type { DocumentRow } from "@/lib/clients";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { t } from "@/lib/i18n";
+import type { SuppliersView, TripLines } from "@/lib/ledger";
 import type { Member, Stage2View, TripView } from "@/lib/pipeline";
 import { serverContext } from "@/lib/serverContext";
 
@@ -25,11 +28,13 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
   if (ctx.apiDown) return null;
   const { session } = await serverContext();
   if (!session) return null;
-  const [trip, members, docs, stage2] = await Promise.all([
+  const [trip, members, docs, stage2, lines, suppliers] = await Promise.all([
     crmCall<TripView>(ctx.cfg, session, "GET", `trips/${tripId}`),
     crmCall<{ members: Member[] }>(ctx.cfg, session, "GET", "members"),
     crmCall<{ documents: DocumentRow[] }>(ctx.cfg, session, "GET", `trips/${tripId}/documents`),
     crmCall<Stage2View>(ctx.cfg, session, "GET", `trips/${tripId}/stage2`),
+    crmCall<TripLines>(ctx.cfg, session, "GET", `trips/${tripId}/lines`),
+    crmCall<SuppliersView>(ctx.cfg, session, "GET", "suppliers"),
   ]);
   const clientHost = ctx.cfg.clientHosts[0];
   if (!trip.ok) {
@@ -39,6 +44,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
     return <ErrorState message={t(ctx.lang, "error.api")} />;
   }
   return (
+    <div style={{ display: "grid", gap: 16 }}>
     <TripPanel
       view={trip.data}
       members={members.ok ? members.data.members : []}
@@ -49,5 +55,16 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
       stage2={stage2.ok ? stage2.data : null}
       clientOrigin={clientHost ? `https://${clientHost}` : null}
     />
+    {lines.ok && (
+      <LinesPanel
+        tripId={tripId}
+        view={lines.data}
+        suppliers={suppliers.ok ? suppliers.data.suppliers : []}
+        role={ctx.role}
+        lang={ctx.lang}
+        locale={ctx.locale}
+      />
+    )}
+    </div>
   );
 }

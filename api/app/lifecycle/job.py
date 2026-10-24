@@ -55,7 +55,8 @@ MAX_ATTEMPTS = 3
 HISTORY_DAYS = 30
 BATCH = 500
 OPEN_STAGES = ("inquiry", "qualifying", "proposal", "booked", "pre_departure", "travelling")
-TRASH_ORDER = ("relation", "task", "note", "document", "trip", "traveler")
+# AA-944: planning lines before their trips; suppliers last (a purge refuses one that any line still names).
+TRASH_ORDER = ("relation", "task", "note", "document", "booking_line", "trip", "traveler", "agency_supplier")
 TRASH_TABLE = {
     "relation": ("traveler_relation", "relation_id"),
     "task": ("task", "task_id"),
@@ -63,6 +64,8 @@ TRASH_TABLE = {
     "document": ("document", "document_id"),
     "trip": ("trip", "trip_id"),
     "traveler": ("traveler", "traveler_id"),
+    "booking_line": ("booking_line", "booking_line_id"),
+    "agency_supplier": ("agency_supplier", "agency_supplier_id"),
 }
 
 REDACT_DUE_SQL = """

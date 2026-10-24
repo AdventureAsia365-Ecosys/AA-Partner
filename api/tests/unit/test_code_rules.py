@@ -51,6 +51,7 @@ DB_MODULES = frozenset(
         "app/llm/usage.py",  # crm.llm_usage_daily: platform rollup, no tenant rows (AA-936)
         "app/audit_export/registry.py",  # crm-007 platform functions: agency list, partition maker, drop (AA-940)
         "app/privacy/purge.py",  # expired placeholder maps, crm-009 DELETE-only purge policy, no reads (AA-938)
+        "app/fx/fetch.py",  # crm.fx_rate_platform: platform reference rates, no tenant rows, insert only (AA-944)
     }
 )
 # The only modules that may open the platform context provisioning_tx() (no membership check): agency creation and the
@@ -446,3 +447,18 @@ def test_every_third_party_import_is_pinned() -> None:
     pins = {"jwt": "pyjwt==", "sentry_sdk": "sentry-sdk", "phonenumbers": "phonenumberslite==", "faker": "faker=="}
     for package in THIRD_PARTY:
         assert pins.get(package, f"{package}==") in requirements, package
+
+
+def test_only_the_fx_fetch_job_writes_platform_rates() -> None:
+    """AA-944: ``crm.fx_rate_platform`` is reference data the daily ``crm_fx_fetch`` job fills (app/fx/fetch.py); no
+    request path writes a platform rate (the owner's own rates go to ``crm.fx_rate_override``)."""
+    writers = [
+        rel
+        for rel, tree in _modules()
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and "fx_rate_platform" in node.value
+        and any(word in node.value.upper() for word in ("INSERT", "UPDATE", "DELETE"))
+    ]
+    assert sorted(set(writers)) == ["app/fx/fetch.py"]

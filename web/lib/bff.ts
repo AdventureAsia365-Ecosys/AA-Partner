@@ -79,7 +79,7 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "POST", pattern: /^lifecycle\/holds$/, tenant: true, card: "AA-942" },
   { method: "POST", pattern: new RegExp(`^lifecycle/holds/${UUID}/release$`), tenant: true, card: "AA-942" },
   { method: "GET", pattern: /^trash$/, tenant: true, card: "AA-942" },
-  { method: "POST", pattern: new RegExp(`^trash/(trip|traveler|task|note|document)/${UUID}/restore$`), tenant: true, card: "AA-942" },
+  { method: "POST", pattern: new RegExp(`^trash/(trip|traveler|task|note|document|booking_line|agency_supplier)/${UUID}/restore$`), tenant: true, card: "AA-942/AA-944" },
   { method: "DELETE", pattern: new RegExp(`^(trips|travelers|tasks|notes)/${UUID}$`), tenant: true, card: "AA-942" },
   { method: "POST", pattern: new RegExp(`^travelers/${UUID}/(archive|unarchive|erasure)$`), tenant: true, card: "AA-942" },
   { method: "GET", pattern: /^lifecycle\/offboarding$/, tenant: true, card: "AA-942" },
@@ -100,6 +100,25 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "POST", pattern: new RegExp(`^trips/${UUID}/stage2/send$`), tenant: true, card: "AA-943" },
   { method: "GET", pattern: /^settings\/pipeline$/, tenant: true, card: "AA-943" },
   { method: "PUT", pattern: /^settings\/pipeline$/, tenant: true, card: "AA-943" },
+  // AA-944 (CRM-16): suppliers (A-13, contact reveal with a reason), a trip's booking lines (add, edit, confirm,
+  // cancel, delete a planning one, money), the A-11 ledger, Settings > Payments and FX overrides (owner; the API
+  // checks the roles and strips margins for the assistant).
+  { method: "GET", pattern: /^suppliers$/, tenant: true, card: "AA-944" },
+  { method: "POST", pattern: /^suppliers$/, tenant: true, card: "AA-944" },
+  { method: "PATCH", pattern: new RegExp(`^suppliers/${UUID}$`), tenant: true, card: "AA-944" },
+  { method: "DELETE", pattern: new RegExp(`^suppliers/${UUID}$`), tenant: true, card: "AA-944" },
+  { method: "POST", pattern: new RegExp(`^suppliers/${UUID}/reveal$`), tenant: true, card: "AA-944" },
+  { method: "GET", pattern: new RegExp(`^trips/${UUID}/lines$`), tenant: true, card: "AA-944" },
+  { method: "POST", pattern: new RegExp(`^trips/${UUID}/lines$`), tenant: true, card: "AA-944" },
+  { method: "PATCH", pattern: new RegExp(`^lines/${UUID}$`), tenant: true, card: "AA-944" },
+  { method: "DELETE", pattern: new RegExp(`^lines/${UUID}$`), tenant: true, card: "AA-944" },
+  { method: "POST", pattern: new RegExp(`^lines/${UUID}/(confirm|cancel)$`), tenant: true, card: "AA-944" },
+  { method: "PUT", pattern: new RegExp(`^lines/${UUID}/money$`), tenant: true, card: "AA-944" },
+  { method: "GET", pattern: /^bookings$/, tenant: true, card: "AA-944" },
+  { method: "GET", pattern: /^settings\/payments$/, tenant: true, card: "AA-944" },
+  { method: "PUT", pattern: /^settings\/payments$/, tenant: true, card: "AA-944" },
+  { method: "GET", pattern: /^fx\/overrides$/, tenant: true, card: "AA-944" },
+  { method: "POST", pattern: /^fx\/overrides$/, tenant: true, card: "AA-944" },
 ];
 
 /** Calls only the web server makes (lib/crmApi.ts crmCall), never reachable through /bff from the browser. */
