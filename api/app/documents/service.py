@@ -1,6 +1,6 @@
 """Agency documents of a traveller or a trip (AA-937; design v3 §3.3 group B, §4.1 Fix A7; crm-006 ``crm.document``).
 
-Upload: the bytes are checked (type by magic number, at most 10 MiB), encrypted with the tenant's ``docs`` DEK
+Upload: the bytes are checked (type by magic number, at most 7 MiB), encrypted with the tenant's ``docs`` DEK
 (AES-256-GCM, AAD = tenant, ``document``, ``content``, document id) and written to the store under
 ``tenants/<tenant>/documents/<document>`` (no name, no traveller in the key); the row keeps the SHA-256 of that stored
 object, the encrypted file name (vault DEK) and the flags. A passport scan is always write-only and never visible to
@@ -25,7 +25,9 @@ from app.tenancy import TenantContext
 from app.travellers.fields import REVEAL_REASONS
 from app.vault import Vault
 
-MAX_BYTES = 10 * 1024 * 1024
+# 7 MiB: base64 of it (~9.4 MiB) stays under the web proxy's 10 MiB request body limit (Next.js proxy clone limit);
+# the table allows 10 MiB for a later streaming upload.
+MAX_BYTES = 7 * 1024 * 1024
 KINDS = (
     "passport_scan",
     "waiver_pdf",

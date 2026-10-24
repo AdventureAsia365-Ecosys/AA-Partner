@@ -103,7 +103,11 @@ test.describe("CRM-08 slice 1 on Dev", () => {
     await expect(trip).toHaveAttribute("data-hydrated", "true", { timeout: 15_000 });
     await expect(page.getByTestId("trip-party")).toContainText(PROSPECT.name);
     await expect(page.getByTestId("revealed-email")).toHaveCount(0);
-    await page.getByTestId("show-email").first().getByRole("button").click();
+    // AA-937: Reveal asks why first, then Show posts one reveal with the reason (one audit event).
+    const email = page.getByTestId("reveal-email").first();
+    await email.getByTestId("show-email").getByRole("button").click();
+    await email.getByTestId("reveal-reason-email").selectOption("contact_client");
+    await email.getByTestId("reveal-show-email").getByRole("button").click();
     await expect(page.getByTestId("revealed-email")).toHaveText(PROSPECT.email, { timeout: 10_000 });
     await expect(page.locator('[data-testid="trip-task"][data-kind="reply_inquiry"][data-status="open"]')).toHaveCount(1);
     await expect(page.getByTestId("trip-tasks")).toContainText(/reply within 2 h/i); // English labels
@@ -115,5 +119,12 @@ test.describe("CRM-08 slice 1 on Dev", () => {
     await page.getByTestId("trip-move-inquiry").getByRole("button").click();
     await expect(page.getByTestId("trip-stage")).toHaveAttribute("data-stage", "inquiry", { timeout: 10_000 });
     await shot(page, "05-moved-back");
+
+    // AA-937 (CRM-09): the lead's client profile shows the name, masked identity fields and the trip.
+    await page.getByTestId("trip-party").getByRole("link", { name: PROSPECT.name }).click();
+    await expect(page.getByTestId("client-name")).toHaveText(PROSPECT.name);
+    await expect(page.getByTestId("client-identity")).not.toContainText(PROSPECT.email);
+    await expect(page.getByTestId("client-trips").getByRole("link")).toHaveCount(1);
+    await shot(page, "06-client-profile");
   });
 });
