@@ -6,6 +6,9 @@ name: CI
 # the multi-issuer verifier, ADR 0006 §8 rule 9, and the CRM web's UI kit + BFF helpers, AA-935).
 # CRM web (web/, AA-935): "Web Build" (unit tests, next build with the type check, standalone smoke) and "Web Docker
 # Build Check" (native arm64 image, container smoke, Trivy). Both are meant to join the required checks.
+# Tenant portal (portal/, AA-979 CRM-P2a, moved from AA-CIS-App with its history): "Portal Build" (npm ci, tsc, next
+# build; meant to join the required checks) and "Portal Lint" (ESLint, non-required, like in AA-CIS-App). The portal
+# deploys to Vercel from vercel-deploy-portal.yml, never from here.
 #
 # ARM: the API runs on Fargate ARM64 (ADR 0010 decision 2), so the image is built and smoke-tested on a native arm64
 # runner (ubuntu-24.04-arm, free for public repositories); the Python jobs run on x64 (pure-Python code, the pinned
@@ -81,6 +84,11 @@ jobs:
       # AA-935: the CRM web's npm dependencies (runtime and dev), from the lockfile, failing on high or critical.
       - name: npm audit (web, failing on high)
         working-directory: web
+        run: npm audit --audit-level=high
+
+      # AA-979: the tenant portal's npm dependencies, from its lockfile, same rule as the web.
+      - name: npm audit (portal, failing on high)
+        working-directory: portal
         run: npm audit --audit-level=high
 
   test-unit:
@@ -326,3 +334,71 @@ jobs:
           ignore-unfixed: true
           trivyignores: ".trivyignore"
           exit-code: "1"
+
+  # AA-979 (CRM-P2a) — the tenant portal (portal/, Next.js, Vercel project aa-cis-portal): type check and production
+  # build. It builds without any secret or env var (the app reads its API URL at runtime). No local `next build` on the
+  # agents' 7 GB machine: this job is the build check. NODE_OPTIONS caps the heap like the web build.
+  portal-build:
+    name: Portal Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+
+      - name: Install (lockfile only)
+        run: npm ci --no-audit --no-fund
+
+      - name: Type-check (tsc --noEmit)
+        run: npx tsc --noEmit -p .
+
+      - name: Build (next build)
+        env:
+          NODE_OPTIONS: --max-old-space-size=1536
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm run build
+
+  # AA-979 — ESLint for the portal. NON-required, as in AA-CIS-App (AA-885): the pre-existing errors came over with the
+  # portal files. The summary line goes to the job summary.
+  portal-lint:
+    name: Portal Lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+
+      - name: Install (lockfile only)
+        run: npm ci --no-audit --no-fund
+
+      - name: Run ESLint (write summary to the job summary)
+        continue-on-error: true
+        run: |
+          set +e
+          npm run lint 2>&1 | tee "$RUNNER_TEMP/lint-output.txt"
+          STATUS=${PIPESTATUS[0]}
+          SUMMARY_LINE=$(grep -E "problems \(" "$RUNNER_TEMP/lint-output.txt" | tail -n1)
+          {
+            echo "### Portal ESLint"
+            echo ""
+            echo "${SUMMARY_LINE:-No summary line (lint produced no problems)}"
+            echo ""
+            echo "_Non-required job; the pre-existing errors came with the portal files (AA-885, AA-979)._"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $STATUS

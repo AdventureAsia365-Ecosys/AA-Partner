@@ -7,7 +7,7 @@ status: active
 owner: nghiep
 audience: [engineer, agent]
 applies_to: [aa-crm-api, aa-crm-web]
-last_reviewed: 2026-10-24
+last_reviewed: 2026-10-25
 review_every_days: 90
 related: [ARCH-01, ARCH-06-booking, docs/adr/README.md]
 ---
@@ -88,7 +88,8 @@ Design sources, in order:
 | Runtime | ECS Fargate **ARM64** service `aa-crm-dev-api` on `aa-cis-dev-cluster` (acc2, us-west-1), desired 0 until the first image |
 | Edge | CloudFront `partner-dev.` -> VPC origin -> internal NLB -> ALB host + `X-AA-Origin` + `/crm/*` rule -> the service (AA-931 spike, ADR 0010 decision 2) |
 | Image | ECR `aa-crm-dev-api`, IMMUTABLE, tag = git SHA, built natively on an arm64 runner |
-| Web | `web/`: Next.js 16 standalone (React 19, TypeScript, vitest), the AA UI kit vendored from AA-CIS-App (inline styles from the kit tokens); ECS Fargate **ARM64** service `aa-crm-dev-web` (port 3000, `/healthz`), ECR `aa-crm-dev-web`, desired 0 until the first image (AA-CIS-Infra `crm_web.tf`). `portal/` arrives with CRM-P2a (AA-979) |
+| Web | `web/`: Next.js 16 standalone (React 19, TypeScript, vitest), the AA UI kit vendored from AA-CIS-App (inline styles from the kit tokens); ECS Fargate **ARM64** service `aa-crm-dev-web` (port 3000, `/healthz`), ECR `aa-crm-dev-web`, desired 0 until the first image (AA-CIS-Infra `crm_web.tf`) |
+| Portal | `portal/`: the tenant Content studio (Next.js 16, React 19, TypeScript), moved from AA-CIS-App with its history by CRM-P2a (AA-979). Still on Vercel (project `aa-cis-portal`, host `portal.lumiguides.it.com`) and still the CIS tenant API-key sign-in until P2b; section "Tenant portal" below |
 | Edge for the web | the same CloudFront distribution: the ALB rule `crm_api` (`/crm`, `/crm/*`) stays above `crm_partner_default`, which forwards every other path of the partner host to the web target group |
 
 AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everything `aa-crm-<env>-*`, tag `App = crm`
@@ -279,7 +280,9 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 ## CI and release
 
 - Web checks (AA-935): **Web Build** (vitest, `next build` with the type check, standalone smoke) and **Web Docker Build
-  Check** (native arm64 image, container smoke, Trivy); Security Audit also runs `npm audit` for `web/`.
+  Check** (native arm64 image, container smoke, Trivy); Security Audit also runs `npm audit` for `web/` and `portal/`.
+- Portal checks (AA-979): **Portal Build** (`npm ci`, `tsc --noEmit`, `next build`) and **Portal Lint** (ESLint,
+  non-required). The portal deploys from `vercel-deploy-portal.yml`, never from `ci.yml`.
 - Required checks: **Lint**, **Security Audit** (DM-6.10 resource-ID scan, pip-audit), **Unit Tests** (coverage >= 90 %),
   **Integration Tests** (PostgreSQL 15, no skips), **Docker Build Check** (native arm64 build, container smoke, Trivy,
   SBOM); plus **Docs lint**, **PR title**, **gitleaks**. Non-required: **Vendored CIS copies**.
@@ -331,8 +334,8 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   `trip_title`). Dates are always shown with the month spelled ("3 Apr 2026" en-AU, "Apr 3, 2026" en-US,
   "3 thg 4, 2026" vi-VN); typed dates follow the locale's order and the field shows the reading.
 - **Shell**: the whole agency IA of design v3 §2.2 in the sidebar (each section an empty state that names its card in
-  `data-card`), the Content studio cross-link (`CONTENT_STUDIO_URL`), Settings with language and dates. The AA-CIS-App
-  portal sidebar links back ("Open CRM").
+  `data-card`), the Content studio cross-link (`CONTENT_STUDIO_URL`), Settings with language and dates. The portal
+  sidebar (`portal/`, AA-979) links back ("Open CRM").
 - **UI kit**: `web/app/_kit/*`, `web/app/_brand/tokens.ts` and `web/lib/{sameOrigin,crossSiteGuard,bffPath,proxyResponse}.ts`
   are byte copies of AA-CIS-App `frontend/` (CI "Vendored CIS copies"); `web/app/_kit/index.ts` is the CRM's barrel.
 - **Configuration** (task environment, AA-CIS-Infra `crm_web.tf`; meanings in `web/lib/config.ts`): `ENVIRONMENT`,
@@ -341,6 +344,42 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   turn sign-in off (the pages say so) while `/healthz` stays up.
 - **Deploy**: `.github/workflows/deploy-web-dev.yml` (same model as the API deploy, no job guard: the web runs no
   worker), gated by the `dev` environment variable `CRM_WEB_ENABLED`.
+
+## Tenant portal (`portal/`, AA-979 CRM-P2a)
+
+The Content studio of the tenant agencies, moved here from AA-CIS-App (`portal/`, AA-885) with its history (root ADR
+0010 §6, stage P2a: `git log --follow` reaches the pre-split CIS commits; the trailer `Imported-from:` names each
+original CIS commit). P2a moves the code only:
+
+- **Same Vercel project and host**: `aa-cis-portal` (Root Directory `portal`, Git integration off by
+  `portal/vercel.json`), `portal.lumiguides.it.com`, same env vars (`API_URL`, `NEXT_PUBLIC_CRM_URL`). Deployments come
+  only from `.github/workflows/vercel-deploy-portal.yml` (preview on a PR touching `portal/**`, production on main,
+  then the UI smoke `ui-smoke-portal.yml` on the preview). Repo values: variable `VERCEL_PORTAL_PROJECT_ID`, secrets
+  `VERCEL_TOKEN`, `VERCEL_PORTAL_BYPASS_SECRET`, `E2E_TENANT_API_KEY`.
+- **Same sign-in**: the tenant API key through the portal BFF (`portal/app/api/auth/tenant-login`), which calls CIS
+  `POST /auth/tenant-login` with `client: "portal"` (portal page loads are not metered as API calls, AA-760) and keeps
+  the CIS tenant token in the host-only cookie `cis_tenant_token`. The gate is `portal/proxy.ts` (tenant only).
+- **Business logic stays in the CIS API** (ADR 0010 §7): the portal is a client of CIS `/v1/*` and `/auth/*` through
+  its BFF (`portal/app/api/tenant/[...path]`, cross-site writes refused first, AA-911). It never reads the `crm`
+  schema or calls `/crm/*`; the sidebar only links the CRM (`NEXT_PUBLIC_CRM_URL`).
+- **UI kit** (byte copies of AA-CIS-App `frontend/`, CI "Vendored CIS copies", `PORTAL_COPIES`):
+  `portal/app/_kit/tokens.ts`, `portal/app/_kit/primitives.tsx`, `portal/app/_kit/Modal.tsx`,
+  `portal/app/_kit/Drawer.tsx`, `portal/app/_kit/Toast.tsx`, `portal/app/_kit/api.ts`,
+  `portal/app/_kit/useMediaQuery.ts`, `portal/app/_kit/Providers.tsx`, `portal/app/_kit/DataTable.tsx`,
+  `portal/app/_kit/csv.ts`, `portal/app/_kit/savedViews.ts`, `portal/app/_kit/theme.ts`, `portal/app/_kit/useTheme.ts`,
+  `portal/app/_kit/sidebarStore.ts`, `portal/app/_kit/useSidebar.ts`, `portal/app/_kit/useHydrated.ts`,
+  `portal/app/_brand/tokens.ts`, `portal/lib/sameOrigin.ts`, `portal/lib/crossSiteGuard.ts`, `portal/lib/bffPath.ts`,
+  `portal/lib/proxyResponse.ts`. `portal/app/_kit/index.ts` is the portal's own barrel. Edit the CIS file first, then
+  copy it here byte for byte.
+- **Guards**: `api/tests/unit/test_portal_guards.py` (no admin secret or staff session in `portal/`, tenant-only gate,
+  security headers, the 308 map of the old slugs, draft legal pages outside the gate, muted-text contrast, the
+  unmetered portal session, cross-site write refusal, lockfile tracked, deploy on `portal/**` only).
+- **Smoke**: `e2e/smoke-portal/` with `e2e/playwright.portal.config.ts` (host checks always; logged-in pages with
+  `E2E_TENANT_API_KEY`).
+- **The AA-CIS-App copy** of `portal/` is frozen (a CIS CI guard fails on any change) and no longer deployed; it is
+  deleted 7 or more days after P2b. Portal changes are made here only.
+- **P2b (later)**: CloudFront to Fargate on the partner host, the partner pool sign-in, re-enrolment by invitation and
+  a 301 for `/trip/*`.
 
 ## Slice 1: intake, pipeline, LLM gateway (AA-936)
 

@@ -1,5 +1,5 @@
 # Same model as AA-Booking, AA-CIS-App and AA-CIS-Infra (AA-895, S243).
-# - pip (/api) and npm (/web, AA-935): security updates only, one grouped PR per week per ecosystem.
+# - pip (/api) and npm (/web, AA-935; /portal, AA-979): security updates only, one grouped PR per week per ecosystem.
 #   Version updates are off (open-pull-requests-limit: 0); the weekly schedule only paces the group.
 # - github-actions: weekly version updates, grouped into one PR (pinned action versions are a supply-chain
 #   control; Infra does the same).
@@ -27,6 +27,18 @@ updates:
     open-pull-requests-limit: 0
     groups:
       npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+  - package-ecosystem: npm
+    directory: "/portal"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 0
+    groups:
+      npm-portal-security:
         applies-to: security-updates
         patterns: ["*"]
     commit-message:

@@ -2,9 +2,10 @@
   "name": "aa-crm-e2e",
   "version": "0.1.0",
   "private": true,
-  "description": "AA-Partner Dev E2E (Playwright): card CRM-08 slice 1 — inquiry form on the client host -> card on the board",
+  "description": "AA-Partner Dev E2E (Playwright): card CRM-08 slice 1 (inquiry form on the client host -> card on the board), and the tenant portal UI smoke (AA-979, playwright.portal.config.ts)",
   "scripts": {
-    "test": "playwright test"
+    "test": "playwright test",
+    "test:portal": "playwright test -c playwright.portal.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "1.59.1",

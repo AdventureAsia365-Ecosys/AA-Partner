@@ -18,6 +18,11 @@
           "type": "json",
           "path": "web/package.json",
           "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "portal/package.json",
+          "jsonpath": "$.version"
         }
       ]
     }

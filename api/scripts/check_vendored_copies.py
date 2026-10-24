@@ -7,7 +7,10 @@
 - the CRM web's UI kit and BFF helpers (``web/``, AA-935): ``web/app/_kit/*`` and ``web/app/_brand/tokens.ts`` =
   AA-CIS-App ``frontend/app/_kit/*`` / ``frontend/app/_brand/tokens.ts`` (one kit for portal and CRM until the shared
   package AA-655, design-final §4.2), ``web/lib/{sameOrigin,crossSiteGuard,bffPath,proxyResponse}.ts`` = AA-CIS-App
-  ``frontend/lib/*`` (the AA-911 cross-site rule and the AA-577 path rule of every BFF).
+  ``frontend/lib/*`` (the AA-911 cross-site rule and the AA-577 path rule of every BFF);
+- the tenant portal's (``portal/``, AA-979 CRM-P2a, moved from AA-CIS-App with AA-885's vendored list):
+  ``portal/app/_kit/*`` except its own barrel ``index.ts``, ``portal/app/_brand/tokens.ts`` and
+  ``portal/lib/{sameOrigin,crossSiteGuard,bffPath,proxyResponse}.ts`` = the same AA-CIS-App ``frontend/`` files.
 
 This check fails when a copy differs from the file on AA-CIS-App ``main`` by even one byte, or is not on main yet.
 Modelled on AA-CIS-Infra ``db/check_migration_copies.py``. CI job "Vendored CIS copies" (non-required).
@@ -38,6 +41,7 @@ REPO = "AA-CIS-App"
 BRANCH = "main"
 API_DIR = Path(__file__).resolve().parent.parent
 WEB_DIR = API_DIR.parent / "web"
+PORTAL_DIR = API_DIR.parent / "portal"
 # path under api/ -> path in AA-CIS-App
 COPIES: dict[str, str] = {
     "tests/job_template/job_table_template.sql": "shared/jobs/job_table_template.sql",
@@ -49,6 +53,30 @@ _WEB_LIB = ("sameOrigin.ts", "crossSiteGuard.ts", "bffPath.ts", "proxyResponse.t
 # path under web/ -> path in AA-CIS-App (AA-935). web/app/_kit/index.ts is the CRM's own barrel, not a copy.
 WEB_COPIES: dict[str, str] = {
     **{f"app/_kit/{name}": f"frontend/app/_kit/{name}" for name in _WEB_KIT},
+    "app/_brand/tokens.ts": "frontend/app/_brand/tokens.ts",
+    **{f"lib/{name}": f"frontend/lib/{name}" for name in _WEB_LIB},
+}
+_PORTAL_KIT = (
+    "tokens.ts",
+    "primitives.tsx",
+    "Modal.tsx",
+    "Drawer.tsx",
+    "Toast.tsx",
+    "api.ts",
+    "useMediaQuery.ts",
+    "Providers.tsx",
+    "DataTable.tsx",
+    "csv.ts",
+    "savedViews.ts",
+    "theme.ts",
+    "useTheme.ts",
+    "sidebarStore.ts",
+    "useSidebar.ts",
+    "useHydrated.ts",
+)
+# path under portal/ -> path in AA-CIS-App (AA-979). portal/app/_kit/index.ts is the portal's own barrel, not a copy.
+PORTAL_COPIES: dict[str, str] = {
+    **{f"app/_kit/{name}": f"frontend/app/_kit/{name}" for name in _PORTAL_KIT},
     "app/_brand/tokens.ts": "frontend/app/_brand/tokens.ts",
     **{f"lib/{name}": f"frontend/lib/{name}" for name in _WEB_LIB},
 }
@@ -156,10 +184,11 @@ def run(
 
 
 def main(fetch: Fetcher = github_fetch, out: TextIO = sys.stdout) -> int:
-    """Both sets: the API's copies (under api/) and the web's (under web/)."""
+    """All three sets: the API's copies (under api/), the web's (under web/) and the portal's (under portal/)."""
     api = run(API_DIR, fetch, out)
     web = run(WEB_DIR, fetch, out, WEB_COPIES, "web")
-    return 1 if (api or web) else 0
+    portal = run(PORTAL_DIR, fetch, out, PORTAL_COPIES, "portal")
+    return 1 if (api or web or portal) else 0
 
 
 if __name__ == "__main__":
