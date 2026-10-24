@@ -10,7 +10,9 @@ import {
   frameAncestors,
   hostedUrl,
   loadForm,
+  MISS_LIMIT_PER_MINUTE,
   parseAges,
+  viewerKey,
   type PublicForm,
 } from "@/lib/intakeForms";
 import {
@@ -160,6 +162,48 @@ describe("inquiry form helpers", () => {
     expect(await loadForm("https://api.test", "Y".repeat(22), { fetchImpl: down, now: 0 })).toEqual({ ok: false, status: 0 });
     await loadForm("https://api.test", "Y".repeat(22), { fetchImpl: down, now: 1 });
     expect(down).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the last good form when a refresh fails or is rate limited", async () => {
+    clearFormMemo();
+    const ok = vi.fn(async () => new Response(JSON.stringify(FORM), { status: 200 }));
+    await loadForm("https://api.test", KEY, { fetchImpl: ok, now: 0 });
+    const limited = vi.fn(async () => new Response("{}", { status: 429 }));
+    const stale = await loadForm("https://api.test", KEY, { fetchImpl: limited, now: 61_000 });
+    expect(stale.ok).toBe(true);
+    const down = vi.fn(async () => {
+      throw new Error("offline");
+    });
+    expect((await loadForm("https://api.test", KEY, { fetchImpl: down, now: 62_000 })).ok).toBe(true);
+    const gone = vi.fn(async () => new Response("{}", { status: 404 }));
+    expect(await loadForm("https://api.test", KEY, { fetchImpl: gone, now: 63_000 })).toEqual({ ok: false, status: 404 });
+  });
+
+  it("caps memo misses per viewer and keeps random keys from evicting real forms", async () => {
+    clearFormMemo();
+    const ok = vi.fn(async () => new Response(JSON.stringify(FORM), { status: 200 }));
+    await loadForm("https://api.test", KEY, { fetchImpl: ok, now: 0, viewer: "198.51.100.7" });
+    const gone = vi.fn(async () => new Response("{}", { status: 404 }));
+    const results = [];
+    for (let i = 0; i < MISS_LIMIT_PER_MINUTE + 5; i++) {
+      results.push(await loadForm("https://api.test", `r${String(i).padStart(21, "x")}`, { fetchImpl: gone, now: 1, viewer: "203.0.113.9" }));
+    }
+    expect(gone).toHaveBeenCalledTimes(MISS_LIMIT_PER_MINUTE); // the rest never reach the API
+    expect(results.at(-1)).toEqual({ ok: false, status: 429 });
+    // Another viewer is not affected, and the real form is still memoised.
+    expect((await loadForm("https://api.test", KEY, { fetchImpl: gone, now: 2, viewer: "198.51.100.8" })).ok).toBe(true);
+    expect(ok).toHaveBeenCalledTimes(1);
+    // A new minute: the viewer may miss again.
+    await loadForm("https://api.test", "n".repeat(22), { fetchImpl: gone, now: 61_000, viewer: "203.0.113.9" });
+    expect(gone).toHaveBeenCalledTimes(MISS_LIMIT_PER_MINUTE + 1);
+  });
+
+  it("derives the viewer key from CloudFront-Viewer-Address", () => {
+    expect(viewerKey("203.0.113.7:46532")).toBe("203.0.113.7");
+    expect(viewerKey("2001:db8:1:2:3:4:5:6:443")).toBe("2001:db8:1:2::/64");
+    expect(viewerKey("2001:db8::1:443")).toBe("2001:db8:0:0::/64");
+    expect(viewerKey(null)).toBe("local");
+    expect(viewerKey("")).toBe("local");
   });
 });
 

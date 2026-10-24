@@ -17,7 +17,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { config as webConfig } from "./lib/config";
 import { classifyHost, clientPathAllowed, isPublicPartnerPath, type HostKind } from "./lib/hosts";
-import { formKey, frameAncestors, loadForm } from "./lib/intakeForms";
+import { formKey, frameAncestors, loadForm, viewerKey } from "./lib/intakeForms";
 import { accessValid, readSession } from "./lib/session";
 
 const INTERNAL_HEADERS = ["x-aa-path", "x-aa-host-kind"];
@@ -86,7 +86,8 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   const key = formKey(request.nextUrl.pathname);
   if (!key || res.headers.get("x-middleware-next") !== "1") return res;
   const cfg = webConfig();
-  const found = cfg.crmApiOrigin ? await loadForm(cfg.crmApiOrigin, key) : null;
+  const viewer = viewerKey(request.headers.get("cloudfront-viewer-address"));
+  const found = cfg.crmApiOrigin ? await loadForm(cfg.crmApiOrigin, key, { viewer }) : null;
   res.headers.set("Content-Security-Policy", contentSecurityPolicy(cfg.cognitoDomain, frameAncestors(found && found.ok ? found.form : null)));
   return res;
 }

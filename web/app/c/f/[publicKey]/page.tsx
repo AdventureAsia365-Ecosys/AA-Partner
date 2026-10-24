@@ -2,11 +2,12 @@
 // Public: no session, no agency data beyond the form itself. The definition comes from the API's public route
 // (lib/intakeForms.ts, 60 s memo shared with the proxy's CSP); the page words every field in EN/VI (the visitor's
 // cookie / Accept-Language, else the agency's default locale) and the browser posts to /crm/public/v1 on this origin.
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { CenteredCard } from "@/components/CenteredCard";
 import { InquiryForm } from "@/components/intake/InquiryForm";
 import { K } from "@/app/_kit";
-import { loadForm } from "@/lib/intakeForms";
+import { loadForm, viewerKey } from "@/lib/intakeForms";
 import { dictionary, fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import { serverContext } from "@/lib/serverContext";
 
@@ -26,7 +27,10 @@ export default async function InquiryPage({ params }: { params: Promise<{ public
   const { publicKey } = await params;
   if (!/^[A-Za-z0-9_-]{20,64}$/.test(publicKey)) notFound();
   const base = await serverContext();
-  const found = base.cfg.crmApiOrigin ? await loadForm(base.cfg.crmApiOrigin, publicKey) : { ok: false as const, status: 0 };
+  const viewer = viewerKey((await headers()).get("cloudfront-viewer-address"));
+  const found = base.cfg.crmApiOrigin
+    ? await loadForm(base.cfg.crmApiOrigin, publicKey, { viewer })
+    : { ok: false as const, status: 0 };
   if (!found.ok) {
     return (
       <CenteredCard testId="intake-unavailable">
