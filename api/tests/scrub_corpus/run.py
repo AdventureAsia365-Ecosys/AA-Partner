@@ -17,6 +17,8 @@ A **typed place** = a ``keep`` string that is back once only the ``<PLACE_n>`` p
 S249: the detector's ADDRESS finding on a bare destination is still masked, but typed, so the model knows a place
 stood there). It is neither an over-scrub nor a pass; it is reported on its own (``typed_place``, rate over the keep
 strings). Leaks are counted exactly as before: a ``<PLACE_n>`` hides its value like every placeholder.
+A **kept place** (option B, S250, scrubber f3-3) = a detector finding left in clear because it is one of the sample
+trip's own non-name-like destinations (``destinations``; receipt count ``PLACE_KEPT``); reported as ``kept_place``.
 The report has ids and counts only, never a sample's values (the corpus is synthetic, but the habit stays).
 """
 
@@ -34,7 +36,7 @@ from pathlib import Path
 
 from app.privacy import patterns
 from app.privacy.places import place_spans
-from app.privacy.scrubber import PLACE, Detection, KnownPerson, KnownValues, PiiScrubber, restore
+from app.privacy.scrubber import PLACE, PLACE_KEPT, Detection, KnownPerson, KnownValues, PiiScrubber, restore
 from app.privacy.text import digits, fold
 
 CORPUS = Path(__file__).with_name("corpus.jsonl")
@@ -60,6 +62,7 @@ class Report:
     overscrubbed: list[str] = field(default_factory=list)
     typed_place: list[str] = field(default_factory=list)  # keep strings masked as <PLACE_n> (option C)
     keep_total: int = 0
+    kept_place: int = 0  # detector findings left in clear as the trip's own destinations (option B)
 
     @property
     def overscrub_rate(self) -> float:
@@ -85,6 +88,7 @@ class Report:
             "typed_place": len(self.typed_place),
             "typed_place_rate": round(self.typed_place_rate, 4),
             "typed_place_ids": self.typed_place[:50],
+            "kept_place": self.kept_place,
         }
 
 
@@ -105,7 +109,7 @@ def known_of(sample: dict) -> KnownValues:
                 phones=tuple(p.get("phones", ())),
             )
         )
-    return KnownValues(tuple(persons))
+    return KnownValues(tuple(persons), destinations=tuple(sample.get("destinations", ())))
 
 
 def _readable(value: str, scrubbed: str) -> bool:
@@ -136,6 +140,7 @@ async def evaluate(scrubber: PiiScrubber, samples: list[dict], *, offline: bool)
             continue
         report.samples += 1
         result = await scrubber.scrub(s["text"], known_of(s))
+        report.kept_place += (result.receipt.get("counts") or {}).get(PLACE_KEPT, 0)
         report.leaks += [f"{s['id']}:{i}" for i, v in enumerate(s["pii"]) if _readable(v, result.text)]
         places_back = restore(result.text, places_only(result.placeholders))
         for i, keep in enumerate(s.get("keep", [])):

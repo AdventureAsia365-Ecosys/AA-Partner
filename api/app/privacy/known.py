@@ -8,6 +8,10 @@ emergency contacts (the stored text, split into a name and a phone). It runs ins
 naming the travellers whose fields were opened (ids only). The values exist only in memory until the scrubber has
 replaced them.
 
+It also reads the trip's destination codes (``crm.trip.destinations``: countries such as ``vietnam``, not identity
+data, nothing opened through the vault): pass 3 leaves the trip's own non-name-like destinations in clear (option B,
+AA-938 S250, :func:`app.privacy.places.is_keepable_place`). A deleted or unknown trip has none, so nothing is kept.
+
 Agency members have no names in the CRM yet (``crm.member`` holds ids and roles) and supplier contacts arrive with
 the supplier cards; callers that hold such names pass them as extra :class:`KnownPerson` rows.
 """
@@ -46,6 +50,7 @@ SELECT t.traveler_id, pe.role, t.display_name_enc, t.given_name_enc, t.family_na
  WHERE t.deleted_at IS NULL
  ORDER BY pe.rank, pe.role = 'lead' DESC, pe.created_at, t.traveler_id
 """
+DESTINATIONS_SQL = "SELECT destinations FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL"
 _ROLES = {"lead": "traveller", "related": "related"}
 FIELDS = ("display_name", "given_name", "family_name", "email", "phone", "passport_no", "dob", "emergency_contact")
 _PHONE_IN_TEXT = re.compile(r"\+?\d[\d\s().-]{6,}\d")
@@ -102,4 +107,5 @@ async def known_values_for_trip(ctx: AnyContext, vault, trip_id: uuid.UUID) -> K
             fields=FIELDS,
             object_ids=tuple(str(r["traveler_id"]) for r in rows),
         )
-    return KnownValues(tuple(persons))
+    destinations = await ctx.conn.fetchval(DESTINATIONS_SQL, trip_id)
+    return KnownValues(tuple(persons), destinations=tuple(str(d) for d in destinations or ()))

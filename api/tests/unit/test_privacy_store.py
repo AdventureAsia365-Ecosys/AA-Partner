@@ -107,8 +107,13 @@ async def test_known_values_of_a_trip_and_one_audit_event() -> None:
             "emergency_contact_enc": None,
         }
     )
-    ctx = tenant_ctx(ScriptedConn().on("FROM crm.trip_traveler", rows))
+    conn = ScriptedConn().on("FROM crm.trip_traveler", rows).on("FROM crm.trip WHERE", ["vietnam", "laos"])
+    ctx = tenant_ctx(conn)
     known = await known_values_for_trip(ctx, FakeVault(), TRIP)
+    # Option B (S250): the trip's destination codes, read in the same context, nothing opened through the vault.
+    assert known.destinations == ("vietnam", "laos") and known.count == 4
+    [destinations_args] = conn.sql("SELECT destinations FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL")
+    assert destinations_args == (TRIP,)
     lead, ec, mate, spouse = known.persons
     assert (spouse.role, spouse.display_name) == ("related", "Phạm Quang Khải")
     [(sql, _)] = ctx.conn.calls[:1]
@@ -127,7 +132,8 @@ async def test_known_values_of_a_trip_and_one_audit_event() -> None:
     assert (event.action, event.object_kind, event.object_id) == ("scrub_known_values", "trip", str(TRIP))
     assert event.object_ids == (str(LEAD), str(MATE), str(SPOUSE)) and "dob" in event.fields
     empty = tenant_ctx(ScriptedConn())
-    assert (await known_values_for_trip(empty, FakeVault(), TRIP)).persons == () and empty.audit_events == []
+    nothing = await known_values_for_trip(empty, FakeVault(), TRIP)
+    assert nothing.persons == () and nothing.destinations == () and empty.audit_events == []
 
 
 async def test_split_contact() -> None:
