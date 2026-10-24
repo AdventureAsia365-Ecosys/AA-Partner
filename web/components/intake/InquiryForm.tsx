@@ -7,11 +7,15 @@
 // Server-rendered: until React hydrates, a click on a destination chip is lost and the submit button would post the
 // form natively (the answers in the URL). So the submit stays disabled until hydration and the form carries
 // `data-hydrated="true"` once its handlers are attached (AA-936; E2E specs wait for it).
-import { useMemo, useState } from "react";
+// AA-943 (CRM-15): the fields follow the API's page grouping (trip, who is travelling, about you) as three numbered
+// sections on one page: the form is embedded in the agency's website as one iframe, so it stays one scroll rather than
+// a wizard; a refused answer scrolls to and focuses the first refused field in page order. The optional call-slot
+// picker (R15) lists the agency's free call starts in the visitor's own timezone; the value sent is the API's UTC time.
+import { useMemo, useRef, useState } from "react";
 import { Button, K, useHydrated } from "@/app/_kit";
 import type { Lang, MessageKey } from "@/lib/i18n";
 import { fmt } from "@/lib/i18n";
-import { parseAges, type PublicForm } from "@/lib/intakeForms";
+import { firstBadField, parseAges, slotOptions, type PublicForm } from "@/lib/intakeForms";
 
 type Dict = Record<MessageKey, string>;
 type Status = "idle" | "sending" | "sent";
@@ -30,6 +34,7 @@ const input: React.CSSProperties = {
   boxSizing: "border-box",
 };
 const hidden: React.CSSProperties = { position: "absolute", left: "-10000px", width: 1, height: 1, overflow: "hidden" };
+const legend: React.CSSProperties = { fontSize: 12, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: K.muted, marginBottom: 8 };
 
 function options(form: PublicForm, name: string): string[] {
   return form.fields.find((f) => f.name === name)?.options ?? [];
@@ -46,6 +51,8 @@ export function InquiryForm({ publicKey, form, lang, dict }: { publicKey: string
   const [companions, setCompanions] = useState<string[]>([""]);
   const [childAges, setChildAges] = useState("");
   const hydrated = useHydrated();
+  const formRef = useRef<HTMLFormElement>(null);
+  const slots = form.call_slots ?? [];
 
   if (status === "sent") {
     return (
@@ -60,14 +67,25 @@ export function InquiryForm({ publicKey, form, lang, dict }: { publicKey: string
     return bad.includes(name) ? { borderColor: K.danger } : {};
   }
 
+  /** Mark the refused fields and bring the first one (in page order) into view, focused. */
+  function refuse(fields: string[], message: string) {
+    setBad(fields);
+    setError(message);
+    const first = firstBadField(form, fields);
+    const box = first ? formRef.current?.querySelector<HTMLElement>(`[data-field="${first}"]`) : null;
+    if (box) {
+      box.scrollIntoView?.({ block: "center", behavior: "smooth" });
+      (box.matches("input, select, textarea, button") ? box : box.querySelector<HTMLElement>("input, select, textarea, button"))?.focus({ preventScroll: true });
+    }
+  }
+
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const text = (n: string) => String(data.get(n) ?? "").trim();
     const ages = childAges.trim() ? parseAges(childAges) : [];
     if (ages === null) {
-      setBad(["child_ages"]);
-      setError(t("intake.invalid"));
+      refuse(["child_ages"], t("intake.invalid"));
       return;
     }
     const body: Record<string, unknown> = {
@@ -87,6 +105,7 @@ export function InquiryForm({ publicKey, form, lang, dict }: { publicKey: string
       heard_from: text("heard_from") || null,
       message: text("message") || null,
       companions: companions.map((c) => c.trim()).filter(Boolean),
+      call_slot: text("call_slot") || null,
       consent_contact: data.get("consent_contact") === "on",
       consent_marketing: data.get("consent_marketing") === "on",
       locale: lang,
@@ -109,11 +128,9 @@ export function InquiryForm({ publicKey, form, lang, dict }: { publicKey: string
       const payload = (await res.json().catch(() => ({}))) as { detail?: string; fields?: string[] };
       setStatus("idle");
       if (payload.detail === "consent_required") {
-        setBad(["consent_contact"]);
-        setError(t("intake.consentRequired"));
+        refuse(["consent_contact"], t("intake.consentRequired"));
       } else if (payload.detail === "invalid_submission") {
-        setBad(payload.fields ?? []);
-        setError(t("intake.invalid"));
+        refuse(payload.fields ?? [], t("intake.invalid"));
       } else if (res.status === 429) {
         setError(t("intake.rateLimited"));
       } else {
@@ -126,13 +143,12 @@ export function InquiryForm({ publicKey, form, lang, dict }: { publicKey: string
   }
 
   const sending = status === "sending";
+  const viewerZone = hydrated ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC";
   return (
-    <form onSubmit={submit} noValidate data-testid="intake-form" data-hydrated={hydrated ? "true" : undefined} style={{ display: "grid", gap: 14, position: "relative" }}>
-      <fieldset style={{ border: 0, padding: 0, margin: 0, display: "grid", gap: 12 }}>
-        <legend style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: K.muted, marginBottom: 8 }}>
-          {t("intake.trip")}
-        </legend>
-        <div role="group" aria-label={t("intake.destinations")} style={{ display: "grid", gap: 6 }}>
+    <form ref={formRef} onSubmit={submit} noValidate data-testid="intake-form" data-hydrated={hydrated ? "true" : undefined} style={{ display: "grid", gap: 14, position: "relative" }}>
+      <fieldset style={{ border: 0, padding: 0, margin: 0, display: "grid", gap: 12 }} data-page="trip">
+        <legend style={legend}>1 · {t("intake.trip")}</legend>
+        <div role="group" aria-label={t("intake.destinations")} style={{ display: "grid", gap: 6 }} data-field="destinations">
           <span style={{ fontSize: 13, color: K.ink2 }}>
             {t("intake.destinations")} <span style={{ color: K.danger }}>*</span>
           </span>
@@ -164,24 +180,37 @@ export function InquiryForm({ publicKey, form, lang, dict }: { publicKey: string
           </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
-          <label style={label}>
+          <label style={label} data-field="month">
             {t("intake.month")}
             <input type="month" name="month" style={{ ...input, ...invalid("month") }} />
           </label>
-          <label style={label}>
+          <label style={label} data-field="nights">
             {t("intake.nights")}
             <input type="number" name="nights" min={1} max={90} inputMode="numeric" style={{ ...input, ...invalid("nights") }} />
           </label>
-          <label style={label}>
+          <label style={label} data-field="date_flex_days">
             {t("intake.flex")}
-            <input type="number" name="date_flex_days" min={0} max={60} inputMode="numeric" style={input} />
-          </label>
-          <label style={label}>
-            {t("intake.adults")} <span style={{ color: K.danger }}>*</span>
-            <input type="number" name="adults" min={1} max={50} defaultValue={2} required inputMode="numeric" style={{ ...input, ...invalid("adults") }} />
+            <input type="number" name="date_flex_days" min={0} max={60} inputMode="numeric" style={{ ...input, ...invalid("date_flex_days") }} />
           </label>
         </div>
-        <label style={label}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+          <Select name="budget_band" text={t("intake.budget")} items={options(form, "budget_band")} prefix="budget" code={code} choose={t("intake.choose")} required invalid={bad.includes("budget_band")} />
+          <Select name="trip_style" text={t("intake.style")} items={options(form, "trip_style")} prefix="style" code={code} choose={t("intake.choose")} invalid={bad.includes("trip_style")} />
+        </div>
+      </fieldset>
+
+      <fieldset style={{ border: 0, padding: 0, margin: 0, display: "grid", gap: 12 }} data-page="party">
+        <legend style={legend}>2 · {t("intake.party")}</legend>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
+          <label style={label} data-field="adults">
+            <span>
+              {t("intake.adults")} <span style={{ color: K.danger }}>*</span>
+            </span>
+            <input type="number" name="adults" min={1} max={50} defaultValue={2} required inputMode="numeric" style={{ ...input, ...invalid("adults") }} />
+          </label>
+          <Select name="party_type" text={t("intake.partyType")} items={options(form, "party_type")} prefix="party" code={code} choose={t("intake.choose")} invalid={bad.includes("party_type")} />
+        </div>
+        <label style={label} data-field="child_ages">
           {t("intake.children")}
           <input
             name="child_ages_text"
@@ -192,40 +221,7 @@ export function InquiryForm({ publicKey, form, lang, dict }: { publicKey: string
           />
           <span style={{ fontSize: 12, color: K.muted }}>{t("intake.childrenHelp")}</span>
         </label>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
-          <Select name="party_type" text={t("intake.partyType")} items={options(form, "party_type")} prefix="party" code={code} choose={t("intake.choose")} />
-          <Select name="budget_band" text={t("intake.budget")} items={options(form, "budget_band")} prefix="budget" code={code} choose={t("intake.choose")} required invalid={bad.includes("budget_band")} />
-          <Select name="trip_style" text={t("intake.style")} items={options(form, "trip_style")} prefix="style" code={code} choose={t("intake.choose")} />
-        </div>
-      </fieldset>
-
-      <fieldset style={{ border: 0, padding: 0, margin: 0, display: "grid", gap: 12 }}>
-        <legend style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: K.muted, marginBottom: 8 }}>
-          {t("intake.you")}
-        </legend>
-        <label style={label}>
-          {t("intake.name")} <span style={{ color: K.danger }}>*</span>
-          <input name="name" autoComplete="name" required maxLength={120} style={{ ...input, ...invalid("name") }} />
-        </label>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
-          <label style={label}>
-            {t("intake.email")} <span style={{ color: K.danger }}>*</span>
-            <input name="email" type="email" autoComplete="email" required style={{ ...input, ...invalid("email") }} />
-          </label>
-          <label style={label}>
-            {t("intake.phone")}
-            <input name="phone" type="tel" autoComplete="tel" placeholder={t("intake.phoneHelp")} style={{ ...input, ...invalid("phone") }} />
-          </label>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
-          <Select name="preferred_channel" text={t("intake.channel")} items={options(form, "preferred_channel")} prefix="channel" code={code} choose={t("intake.choose")} />
-          <Select name="heard_from" text={t("intake.heard")} items={options(form, "heard_from")} prefix="heard" code={code} choose={t("intake.choose")} />
-        </div>
-        <label style={label}>
-          {t("intake.message")}
-          <textarea name="message" rows={4} maxLength={2000} style={{ ...input, resize: "vertical" }} />
-        </label>
-        <details data-testid="intake-companions">
+        <details data-testid="intake-companions" data-field="companions" open={bad.includes("companions") || undefined}>
           <summary style={{ cursor: "pointer", fontSize: 13, color: K.accentDeep }}>{t("intake.companions")}</summary>
           <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
             {companions.map((value, i) => (
@@ -236,7 +232,7 @@ export function InquiryForm({ publicKey, form, lang, dict }: { publicKey: string
                 value={value}
                 maxLength={120}
                 onChange={(e) => setCompanions(companions.map((c, j) => (j === i ? e.target.value : c)))}
-                style={input}
+                style={{ ...input, ...invalid("companions") }}
               />
             ))}
             {companions.length < 8 && (
@@ -248,6 +244,58 @@ export function InquiryForm({ publicKey, form, lang, dict }: { publicKey: string
         </details>
       </fieldset>
 
+      <fieldset style={{ border: 0, padding: 0, margin: 0, display: "grid", gap: 12 }} data-page="contact">
+        <legend style={legend}>3 · {t("intake.you")}</legend>
+        <label style={label} data-field="name">
+          <span>
+            {t("intake.name")} <span style={{ color: K.danger }}>*</span>
+          </span>
+          <input name="name" autoComplete="name" required maxLength={120} style={{ ...input, ...invalid("name") }} />
+        </label>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
+          <label style={label} data-field="email">
+            <span>
+              {t("intake.email")} <span style={{ color: K.danger }}>*</span>
+            </span>
+            <input name="email" type="email" autoComplete="email" required style={{ ...input, ...invalid("email") }} />
+          </label>
+          <label style={label} data-field="phone">
+            {t("intake.phone")}
+            <input name="phone" type="tel" autoComplete="tel" placeholder={t("intake.phoneHelp")} style={{ ...input, ...invalid("phone") }} />
+          </label>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
+          <Select name="preferred_channel" text={t("intake.channel")} items={options(form, "preferred_channel")} prefix="channel" code={code} choose={t("intake.choose")} invalid={bad.includes("preferred_channel")} />
+          <Select name="heard_from" text={t("intake.heard")} items={options(form, "heard_from")} prefix="heard" code={code} choose={t("intake.choose")} invalid={bad.includes("heard_from")} />
+        </div>
+        <label style={label} data-field="message">
+          {t("intake.message")}
+          <textarea name="message" rows={4} maxLength={2000} style={{ ...input, resize: "vertical", ...invalid("message") }} />
+        </label>
+        {slots.length > 0 && (
+          <label style={label} data-field="call_slot">
+            {t("intake.call")}
+            {/* Times in the visitor's own zone: rendered after hydration (the server does not know it). */}
+            <select name="call_slot" defaultValue="" disabled={!hydrated} data-testid="intake-call-slot" style={{ ...input, ...invalid("call_slot") }}>
+              <option value="">{t("intake.callNone")}</option>
+              {hydrated &&
+                slotOptions(slots, lang === "vi" ? "vi-VN" : "en-AU", viewerZone).map((g) => (
+                  <optgroup key={g.day} label={g.day}>
+                    {g.options.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+            </select>
+            {form.call_minutes ? (
+              <span style={{ fontSize: 12, color: K.muted }}>{fmt(t("intake.callHelp"), { tz: viewerZone, n: form.call_minutes })}</span>
+            ) : null}
+          </label>
+        )}
+      </fieldset>
+
       <div style={hidden} aria-hidden="true">
         <label>
           {t("intake.honeypot")}
@@ -255,7 +303,7 @@ export function InquiryForm({ publicKey, form, lang, dict }: { publicKey: string
         </label>
       </div>
 
-      <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13.5, color: K.ink2, ...(bad.includes("consent_contact") ? { color: K.danger } : {}) }}>
+      <label data-field="consent_contact" style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13.5, color: K.ink2, ...(bad.includes("consent_contact") ? { color: K.danger } : {}) }}>
         <input type="checkbox" name="consent_contact" data-testid="intake-consent" style={{ marginTop: 3 }} />
         <span>{fmt(t("intake.consent"), { agency: form.agency_name })}</span>
       </label>
@@ -302,7 +350,7 @@ function Select({
   invalid?: boolean;
 }) {
   return (
-    <label style={label}>
+    <label style={label} data-field={name}>
       <span>
         {text} {required && <span style={{ color: K.danger }}>*</span>}
       </span>

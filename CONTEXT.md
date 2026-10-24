@@ -360,6 +360,8 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   agency's own mailbox, CRM-17), system tags from the catalog (R29), conditional forms and the Stage 2 gate (CRM-15),
   F2 views and reader grants (CRM-09), the `form_submission` 90-day redaction job (CRM-14, done in AA-942).
 - **E2E** (`e2e/`, workflow `E2E Dev`, dispatch on main): form -> card on the board within about a minute -> trip.
+  AA-943 adds `e2e/tests/slice2-m1m2.spec.ts` (call slot, auto-send + Undo, the client planning page, the gates, fill
+  in from call, bulk preview, cancel dry run and run).
 
 ## CRM-15 Modules 1 + 2 (AA-943)
 
@@ -397,6 +399,19 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   `GET/PUT /crm/v1/settings/pipeline`); the public form lists free starts (ISO UTC); `crm_intake_process` books one
   (`meeting_slot` requested + a `call_scheduled` task) or, when another inquiry won the race, opens an urgent
   `call_slot_taken` task and keeps the inquiry.
+- **Web** (S4): the board has every crm-012 edge between its six open columns (a gated drop opens the gate dialog
+  with the override reasons), each column's menu moves its trips at once (dry run -> preview counts -> run; with a
+  board filter on, only the cards on screen), cards show `waiting_on`, the quiet flag and the Stage 2 percentage, and
+  the Closed group sits under the board. Every move, bulk move and auto-sent form shows the Undo toast for 10 s
+  (`components/pipeline/UndoToast.tsx`, the API's Undo routes). The trip page: the stage menu, the gate dialog,
+  Cancel trip (owner / agent; reason -> dry-run effects -> type CANCEL; no Undo), the Traveller info panel (s1 / s2 /
+  s3, missing answers, [Send planning form] with the link shown once to copy, [Fill in from call]), the timeline with
+  override, date-rule and undo reasons. C-01 shows the API's page grouping as three sections on one page (it lives in
+  one iframe on agency websites) and focuses the first refused field; the call-slot picker lists the free starts in
+  the visitor's own timezone. C-02 (`web/app/c/s/[token]`, client host, Referrer-Policy no-referrer): the browser
+  reads `/crm/public/v1/s/{token}` on its own origin (the API's limit keys on the visitor, the web server never calls
+  the API with the token) and renders the paged planning form (`components/intake/PlanningForm.tsx`, shared with
+  Fill in from call; branches in `web/lib/planningForm.ts`). Settings > Forms: timezone, auto-send, call windows.
 
 ## F1 / F2 complete (AA-937, CRM-09)
 

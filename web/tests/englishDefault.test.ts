@@ -17,6 +17,7 @@ vi.mock("next/headers", () => ({
 
 const { serverContext } = await import("@/lib/serverContext");
 const { default: InquiryPage } = await import("@/app/c/f/[publicKey]/page");
+const { default: PlanningFormPage } = await import("@/app/c/s/[token]/page");
 
 const KEY = "AbCdEfGhIjKlMnOpQrStUv";
 const FORM: PublicForm = {
@@ -77,5 +78,24 @@ describe("inquiry form page (client host)", () => {
     const html = await render(FORM);
     expect(html).toMatch(/data-testid="intake-submit"><button[^>]*disabled/);
     expect(html).not.toContain('data-hydrated="true"');
+  });
+});
+
+describe("planning form page (AA-943, client host)", () => {
+  const TOKEN = "Ab".repeat(21) + "c";
+
+  it("is English unless the visitor picked a language, and never fetches on the server", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const html = renderToString(await PlanningFormPage({ params: Promise.resolve({ token: TOKEN }) }));
+    expect(html).toContain('lang="en"');
+    expect(html).toContain("Loading…");
+    expect(fetchMock).not.toHaveBeenCalled(); // the browser reads the form (the API limits per visitor)
+    req.cookie = "vi-VN";
+    expect(renderToString(await PlanningFormPage({ params: Promise.resolve({ token: TOKEN }) }))).toContain('lang="vi"');
+  });
+
+  it("refuses a path that is not a link token", async () => {
+    await expect(PlanningFormPage({ params: Promise.resolve({ token: "short" }) })).rejects.toThrow();
   });
 });
