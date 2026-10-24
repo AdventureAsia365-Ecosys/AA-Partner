@@ -1,8 +1,8 @@
 """The F3 placeholder map (crm-009 ``crm.placeholder_map``; design v3 §4.5, lane §2.9 / §5.4).
 
 - :func:`seal_map` encrypts ``placeholder -> original`` as JSON under the tenant **scrub** DEK (AAD = tenant,
-  ``placeholder_map``, ``map_enc``, the row id) **before** the model is called, so a key failure refuses the call
-  instead of losing the map after paying for it;
+  ``placeholder_map``, ``map_enc``, the row id) **before** the model is called, and checks the sealed size against the
+  crm-009 bounds, so a key failure or an oversized map refuses the call instead of losing the map after paying for it;
 - :func:`store_map` writes the row after the call is logged (same transaction, ``llm_call_id`` = that call), expiring
   24 h later (CHECK in crm-009);
 - :func:`restore_placeholders` puts the values back into a model output **only in an agency member's session**
@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from dataclasses import dataclass, field
 
@@ -24,6 +25,9 @@ TABLE = "placeholder_map"
 COLUMN = "map_enc"
 PURPOSE = "scrub"
 MAX_PLACEHOLDERS = 500
+# The crm-009 CHECKs, enforced again before the model is paid for (a map the table would refuse stops the call).
+MIN_MAP_BYTES, MAX_MAP_BYTES = 30, 65536
+VERSION_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,19}$")
 
 INSERT_SQL = """
 INSERT INTO crm.placeholder_map (placeholder_map_id, llm_call_id, map_enc, placeholder_count, scrubber_version)
@@ -47,7 +51,16 @@ async def seal_map(vault, placeholders: dict[str, str]) -> SealedMap:  # noqa: A
         raise ValueError("a placeholder map holds 1..500 entries")
     map_id = uuid.uuid4()
     blob = await vault.encrypt(TABLE, COLUMN, map_id, json.dumps(placeholders, ensure_ascii=False), purpose=PURPOSE)
+    if not MIN_MAP_BYTES <= len(blob) <= MAX_MAP_BYTES:
+        raise ValueError("the sealed placeholder map is outside the crm-009 size bounds")
     return SealedMap(map_id, blob, len(placeholders))
+
+
+def check_scrubber_version(version: str) -> str:
+    """The scrubber version as crm-009 keeps it (``placeholder_map_version_chk``), checked before the call."""
+    if not VERSION_RE.match(version or ""):
+        raise ValueError("scrubber version not storable")
+    return version
 
 
 async def store_map(ctx: AnyContext, sealed: SealedMap, llm_call_id: str, scrubber_version: str) -> None:

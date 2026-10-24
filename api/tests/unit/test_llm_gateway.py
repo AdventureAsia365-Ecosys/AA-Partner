@@ -221,3 +221,57 @@ async def test_disabled_ai_never_seals_a_map(monkeypatch: pytest.MonkeyPatch) ->
         system_ctx(conn(enabled=False)), stage="crm_reply", role="writer", prompt="Hi Nguyen Thi Hoa", known=hoa
     )
     assert off.refusal_code == "ai_disabled" and off.fallback == MANUAL_REPLY
+
+
+async def test_a_map_that_cannot_be_stored_keeps_the_paid_call_logged(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Review AA-938: store_map failing after the paid call used to roll back the llm_call row (cost lost).
+    async def fake_seal(vault, placeholders):  # noqa: ANN001, ANN202
+        return SealedMap(uuid.UUID("00000000-0000-4000-8000-0000000000aa"), b"sealed", 1)
+
+    async def broken_store(*_a, **_k):  # noqa: ANN002, ANN003, ANN202
+        raise RuntimeError("check violation with Nguyễn Thị Hoa")
+
+    monkeypatch.setattr(gateway_module, "seal_map", fake_seal)
+    monkeypatch.setattr(gateway_module, "store_map", broken_store)
+    c = conn()
+    provider = Bedrock()
+    hoa = KnownValues((KnownPerson("traveller", display_name="Nguyễn Thị Hoa"),))
+    result = await LlmGateway(PiiScrubber(NoFindings()), provider, keys=object()).call(
+        system_ctx(c), stage="crm_reply", role="writer", prompt="Hi Nguyen Thi Hoa", known=hoa
+    )
+    assert provider.prompts == ["Hi <PERSON_1>"]
+    assert (result.outcome, result.error_class, result.text, result.fallback) == (
+        "error",
+        "PlaceholderMapStoreError",
+        None,
+        MANUAL_REPLY,
+    )
+    [logged] = c.sql("INSERT INTO crm.llm_call")
+    assert logged[6] == Decimal("0.0012") and logged[8] == "ok"  # the cost stays in the budget and the rollup
+    assert len(c.sql("INSERT INTO crm.llm_usage_daily")) == 1
+
+
+async def test_an_unstorable_map_or_version_is_refused_before_the_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    class HugeVault:
+        def __init__(self, *_a: object) -> None:
+            pass
+
+        async def encrypt(self, *_a, **_k):  # noqa: ANN002, ANN003, ANN202
+            return b"x" * 70_000
+
+    monkeypatch.setattr(gateway_module, "Vault", HugeVault)
+    hoa = KnownValues((KnownPerson("traveller", display_name="Nguyễn Thị Hoa"),))
+    provider = Bedrock()
+    c = conn()
+    huge = await LlmGateway(PiiScrubber(NoFindings()), provider, keys=object()).call(
+        system_ctx(c), stage="crm_reply", role="writer", prompt="Hi Nguyen Thi Hoa", known=hoa
+    )
+    assert huge.refusal_code == "scrub_failed" and provider.prompts == []
+
+    class OddVersion(PiiScrubber):
+        version = "F3 Upper"
+
+    odd = await LlmGateway(OddVersion(NoFindings()), provider, keys=object()).call(
+        system_ctx(conn()), stage="crm_reply", role="writer", prompt="Hi Nguyen Thi Hoa", known=hoa
+    )
+    assert odd.refusal_code == "scrub_failed" and provider.prompts == []

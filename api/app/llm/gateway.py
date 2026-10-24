@@ -18,9 +18,10 @@ job's ``system_tx()``), in this order — and any step that fails stops the call
 4. **the call**: an error is recorded with its class (never its message);
 5. **the log**: one ``crm.llm_call`` row (no prompt, no output, no traveller token) and the platform rollup
    ``crm.llm_usage_daily`` the CIS cost page reads over ``/crm/ops/v1/llm/usage``. Refusals are logged too (cost 0);
-6. **the map**: on success, the sealed map is stored against the call (``crm.placeholder_map``, 24 h). The output
-   keeps its placeholders (``GatewayResult.text``); only :func:`app.privacy.placeholder_store.restore_placeholders`
-   in an agency member's session puts the values back.
+6. **the map**: on success, the sealed map is stored against the call (``crm.placeholder_map``, 24 h) in a savepoint;
+   if that fails the paid call stays logged and the result is an ``error`` (``PlaceholderMapStoreError``, no text,
+   ``manual_reply_needed``). The output keeps its placeholders (``GatewayResult.text``); only
+   :func:`app.privacy.placeholder_store.restore_placeholders` in an agency member's session puts the values back.
 
 Every non-``ok`` result carries ``fallback = "manual_reply_needed"``: the draft UI (CRM-33a) shows "reply by hand".
 
@@ -31,13 +32,14 @@ order, the refusals and the log are tested end to end before CRM-10 (scrubber) a
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Protocol
 
 from app.audit import AuditEvent, current_request_id
-from app.privacy.placeholder_store import SealedMap, seal_map, store_map
+from app.privacy.placeholder_store import SealedMap, check_scrubber_version, seal_map, store_map
 from app.privacy.scrubber import KnownValues, ScrubError
 from app.tenancy import AnyContext
 from app.vault import Vault
@@ -47,6 +49,9 @@ ROLES = frozenset({"writer", "judge", "validate"})
 DEFAULT_BUDGET_USD = Decimal("2")
 STUB_PREFIX = "stub"
 MANUAL_REPLY = "manual_reply_needed"
+MAP_STORE_FAILED = "PlaceholderMapStoreError"
+
+log = logging.getLogger(__name__)
 
 BUDGET_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtextextended('crm_llm_budget:' || $1::text, 0))"
 MONTH_SPEND_SQL = """
@@ -179,6 +184,7 @@ class LlmGateway:
             try:
                 if self.keys is None:
                     raise ScrubError("no key provider for the placeholder map")
+                check_scrubber_version(str(receipt.get("scrubber", "")))
                 sealed = await seal_map(Vault(self.keys, ctx), placeholders)  # type: ignore[arg-type]
             except Exception:  # noqa: BLE001 — a map that cannot be sealed stops the call
                 return await self._log(ctx, stage, role, "refused", refusal="scrub_failed", receipt=receipt, pct=pct)
@@ -195,8 +201,15 @@ class LlmGateway:
         result = await self._log(ctx, stage, role, "ok", receipt=receipt, pct=pct, latency=latency, completion=done)
         map_id = None
         if sealed is not None:
-            # 6. the map, against the logged call (same transaction)
-            await store_map(ctx, sealed, result.llm_call_id or "", str(receipt.get("scrubber", "")))
+            # 6. the map, against the logged call, in a savepoint: if it cannot be stored the paid call stays logged
+            # (budget and rollup keep its cost) and the draft falls back to "reply by hand" (the output could never
+            # be restored).
+            try:
+                async with ctx.conn.transaction():
+                    await store_map(ctx, sealed, result.llm_call_id or "", str(receipt.get("scrubber", "")))
+            except Exception as exc:  # noqa: BLE001 — class only
+                log.warning("llm gateway: placeholder map not stored (%s), output dropped", type(exc).__name__)
+                return GatewayResult(**{**result.__dict__, "outcome": "error", "error_class": MAP_STORE_FAILED})
             map_id = str(sealed.placeholder_map_id)
         return GatewayResult(**{**result.__dict__, "text": done.text, "placeholder_map_id": map_id})
 
