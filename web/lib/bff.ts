@@ -72,6 +72,20 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "GET", pattern: /^recovery$/, tenant: true, card: "AA-939" },
   { method: "POST", pattern: new RegExp(`^recovery/${UUID}/cancel$`), tenant: true, card: "AA-939" },
   { method: "POST", pattern: /^invitations\/accept$/, tenant: false, card: "AA-939" },
+  // AA-942 (CRM-14): data lifecycle — rules and settings, legal holds, the trash, delete / restore, archive, client
+  // erasure, agency offboarding (export download, erase). Owner-only checks are the API's.
+  { method: "GET", pattern: /^lifecycle$/, tenant: true, card: "AA-942" },
+  { method: "PATCH", pattern: /^lifecycle\/settings$/, tenant: true, card: "AA-942" },
+  { method: "POST", pattern: /^lifecycle\/holds$/, tenant: true, card: "AA-942" },
+  { method: "POST", pattern: new RegExp(`^lifecycle/holds/${UUID}/release$`), tenant: true, card: "AA-942" },
+  { method: "GET", pattern: /^trash$/, tenant: true, card: "AA-942" },
+  { method: "POST", pattern: new RegExp(`^trash/(trip|traveler|task|note|document)/${UUID}/restore$`), tenant: true, card: "AA-942" },
+  { method: "DELETE", pattern: new RegExp(`^(trips|travelers|tasks|notes)/${UUID}$`), tenant: true, card: "AA-942" },
+  { method: "POST", pattern: new RegExp(`^travelers/${UUID}/(archive|unarchive|erasure)$`), tenant: true, card: "AA-942" },
+  { method: "GET", pattern: /^lifecycle\/offboarding$/, tenant: true, card: "AA-942" },
+  { method: "POST", pattern: /^lifecycle\/offboarding$/, tenant: true, card: "AA-942" },
+  { method: "POST", pattern: new RegExp(`^lifecycle/offboarding/${UUID}/(cancel|erase)$`), tenant: true, card: "AA-942" },
+  { method: "GET", pattern: new RegExp(`^lifecycle/offboarding/${UUID}/export$`), tenant: true, card: "AA-942" },
 ];
 
 /** Calls only the web server makes (lib/crmApi.ts crmCall), never reachable through /bff from the browser. */

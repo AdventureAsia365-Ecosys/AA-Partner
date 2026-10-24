@@ -816,3 +816,11 @@ async def test_offboard_handler(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(PermanentError, match="legal_hold"):
         await handler(object(), job("erase"))  # type: ignore[arg-type]
     assert conn.sql("SET status = 'failed'")[0][1] == "legal_hold"
+
+
+def test_the_web_words_every_rule_and_mechanism() -> None:
+    """Settings > Data and privacy words each rule the API returns (web/lib/i18n.ts, EN and VI blocks)."""
+    text = (WEB / "lib" / "i18n.ts").read_text(encoding="utf-8")
+    for r in rules.RULES:
+        for key in (f"data.rule.{r.code}", f"data.how.{r.mechanism}"):
+            assert text.count(f'"{key}"') == 2, key  # once in EN, once in VI
