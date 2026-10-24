@@ -247,7 +247,8 @@ async def test_read_audit_sample() -> None:
 
 @pytest.mark.asyncio
 async def test_refused_owner_actions_leave_a_denied_event() -> None:
-    """AA-940: the F1 / F2 / Slice 1 owner-only refusals are on record (tenant_tx commits denied events)."""
+    """AA-940: the F1 / F2 / Slice 1 owner-only refusals are on record (tenant_tx commits denied events); since AA-939
+    they go through the permission matrix (permissions.require): the action is the matrix's, the reason its code."""
     from app import pipeline
     from app.documents import service as documents
     from app.routers import pipeline as pipeline_router
@@ -262,9 +263,9 @@ async def test_refused_owner_actions_leave_a_denied_event() -> None:
     with pytest.raises(Forbidden):
         await documents.trash(assistant, doc)
     with pytest.raises(Forbidden):
-        pipeline_router._owner(assistant, "update", str(trip))
+        pipeline_router._owner(assistant)
     assert [(e.action, e.outcome, e.object_kind, e.reason) for e in agent.audit_events + assistant.audit_events] == [
-        ("assign", "denied", "trip", "owner_only"),
-        ("delete", "denied", "document", "not_allowed_for_role"),
-        ("update", "denied", "intake_form", "owner_only"),
+        ("reassign", "denied", "trip", "role_forbidden"),
+        ("document_delete", "denied", "document", "role_forbidden"),
+        ("settings_forms_manage", "denied", "intake_form", "role_forbidden"),
     ]

@@ -132,8 +132,9 @@ def boundary_offenders(sources: dict[str, str]) -> list[str]:
 
 
 def test_the_public_router_is_found() -> None:
-    assert public_router_modules(_sources()) == ["app.routers.public"]
-    assert live_public_router_modules() == {"app.routers.public"}
+    # AA-939: the invitation claim route is public too (no token: the person has no account yet).
+    assert public_router_modules(_sources()) == ["app.routers.invitations", "app.routers.public"]
+    assert live_public_router_modules() == {"app.routers.invitations", "app.routers.public"}
 
 
 def test_a_class_router_with_a_client_route_class_is_a_root(monkeypatch) -> None:  # noqa: ANN001

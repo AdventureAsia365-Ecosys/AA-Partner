@@ -25,6 +25,10 @@ export const PUBLIC_PARTNER_PATHS = [
   // redirect chain just to load the favicon, and crawlers would never read the "Disallow: /" file.
   "/icon.svg",
   "/robots.txt",
+  // AA-939: the invitation landing (the person has no account yet). /join/accept and /join/confirm need a session.
+  "/join",
+  "/join/invite",
+  "/join/claim",
 ] as const;
 
 export function hostOnly(hostHeader: string | null): string {

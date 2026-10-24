@@ -44,6 +44,8 @@ Two platform contexts without a member, each with the same audit queue as ``tena
   then ``app.tenant_id`` is set and the agency must be ``active``. Only ``app/intake/public.py`` may open it.
 - :func:`system_tx` is a job's context in one agency (``crm_intake_process``): ``app.tenant_id`` from the job payload,
   ``app.actor`` = ``job:<kind>``. Only the job handler modules may open it.
+- :func:`platform_tx` (AA-939) is AA staff in one agency (L1 console, ``/crm/ops/v1``): ``app.actor`` =
+  ``platform:<staff sub>``. Only ``app/members/recovery.py`` may open it.
 
 A unit test checks the importers of both (``tests/unit/test_code_rules.py``).
 
@@ -65,7 +67,9 @@ import asyncpg
 from app.audit import INSERT_SQL, AuditEvent, current_request_id
 from app.auth.route_guard import Caller
 from app.errors import Forbidden, NotFound
+from app.margin import current_member_role
 from app.observability import reveal_meter
+from app.permissions import Action, may
 
 READER_ROLES = frozenset({"crm_ai_reader", "crm_insights", "crm_support_reader", "crm_eraser"})
 MEMBER_ROLES = frozenset({"owner", "agent", "assistant"})
@@ -90,6 +94,9 @@ SELECT t.tenant_id, t.display_name, t.default_locale, t.status AS tenant_status,
 MAX_MEMBERSHIPS = 50
 PROVISION_ACTOR_PREFIXES = ("platform:", "seed:")
 SYSTEM_ACTOR_PREFIXES = ("job:", "seed:")
+# AA-939: AA staff in one agency (L1 console). The crm-008 guards let this actor remove the last owner and complete an
+# owner recovery, so it has its own context, platform_tx(), which only app/members/recovery.py may open.
+PLATFORM_ACTOR_PREFIX = "platform:"
 INTAKE_FORM_SQL = """
 SELECT f.intake_form_id, f.tenant_id, f.label, f.form_definition_id, f.allowed_origins, f.honeypot_field,
        f.default_owner_member_id, f.lead_source, f.privacy_notice_url
@@ -208,7 +215,8 @@ class SystemContext:
         object_ids: tuple[str, ...] = (),
     ) -> AuditEvent:
         event = AuditEvent(
-            actor_kind="system",
+            # AA-939: an AA platform action (L1 console: owner recovery, member deactivation) is aa_ops.
+            actor_kind=_system_actor_kind(self.actor),
             actor_ref=self.actor,
             action=action,
             outcome=outcome,
@@ -221,6 +229,14 @@ class SystemContext:
         )
         self.audit_events.append(event)
         return event
+
+
+def _system_actor_kind(actor: str) -> str:
+    if actor.startswith("platform:"):
+        return "aa_ops"
+    if actor.startswith("invitation:"):
+        return "user"  # the invited person accepting (AA-939)
+    return "system"
 
 
 @dataclass(frozen=True)
@@ -249,7 +265,12 @@ class IntakeForm:
 
 @asynccontextmanager
 async def tenant_tx(
-    pool: asyncpg.Pool, caller: Caller, tenant_id: uuid.UUID, *, reader_role: str | None = None
+    pool: asyncpg.Pool,
+    caller: Caller,
+    tenant_id: uuid.UUID,
+    *,
+    reader_role: str | None = None,
+    action: Action | None = None,
 ) -> AsyncIterator[TenantContext]:
     if not isinstance(tenant_id, uuid.UUID):
         raise TypeError("tenant_id must be a UUID")
@@ -278,7 +299,13 @@ async def tenant_tx(
         ctx = TenantContext(
             conn=conn, tenant_id=tenant_id, member_id=member["member_id"], member_role=role, reader_role=reader_role
         )
+        # AA-939: the role the response serializer filters for (app.margin), in this request's context.
+        current_member_role.set(role)
         try:
+            if action is not None and not may(role, action):
+                # The permission matrix (app.permissions): refused before any work, the denial is on record.
+                ctx.audit(action.value, "denied", "permission", reason="role_forbidden")
+                raise Forbidden("role_forbidden", f"the {role} role may not do {action.value}")
             async with conn.transaction():  # savepoint: the route's work
                 yield ctx
         except Exception as exc:
@@ -300,11 +327,31 @@ async def tenant_tx(
 @asynccontextmanager
 async def system_tx(pool: asyncpg.Pool, tenant_id: uuid.UUID, *, actor: str) -> AsyncIterator[SystemContext]:
     """A job's context in one agency (no member). The agency must exist and be active (else 403 ``tenant_locked`` /
-    ``not_a_member``, which a job handler turns into a permanent failure). Audit semantics as :func:`tenant_tx`."""
-    if not isinstance(tenant_id, uuid.UUID):
-        raise TypeError("tenant_id must be a UUID")
+    ``not_a_member``, which a job handler turns into a permanent failure). Audit semantics as :func:`tenant_tx`.
+    Actors ``job:`` / ``seed:`` only: an AA staff action uses :func:`platform_tx`."""
     if not actor.startswith(SYSTEM_ACTOR_PREFIXES) or len(actor) > 80:
         raise ValueError(f"system actor must start with one of {SYSTEM_ACTOR_PREFIXES}")
+    async with _agency_tx(pool, tenant_id, actor) as ctx:
+        yield ctx
+
+
+@asynccontextmanager
+async def platform_tx(pool: asyncpg.Pool, tenant_id: uuid.UUID, *, actor: str) -> AsyncIterator[SystemContext]:
+    """AA staff acting in one agency from the L1 console (``/crm/ops/v1``, AA-939): ``app.actor`` =
+    ``platform:<staff sub>`` (audit actor kind ``aa_ops``). The crm-008 guards let this actor do what no member may
+    (remove the last owner, open and complete an owner recovery, write entitlements), so only
+    ``app/members/recovery.py`` opens it, and only the ops router calls those functions (``test_code_rules``).
+    Same agency checks and audit semantics as :func:`system_tx`."""
+    if not actor.startswith(PLATFORM_ACTOR_PREFIX) or len(actor) > 80:
+        raise ValueError(f"platform actor must start with {PLATFORM_ACTOR_PREFIX!r}")
+    async with _agency_tx(pool, tenant_id, actor) as ctx:
+        yield ctx
+
+
+@asynccontextmanager
+async def _agency_tx(pool: asyncpg.Pool, tenant_id: uuid.UUID, actor: str) -> AsyncIterator[SystemContext]:
+    if not isinstance(tenant_id, uuid.UUID):
+        raise TypeError("tenant_id must be a UUID")
     pending: Exception | None = None
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
@@ -400,6 +447,92 @@ async def audit_export_tx(
             raise NotFound("tenant_not_found")
         await conn.execute("SELECT set_config('app.actor', $1, true)", actor)
         yield ExportContext(conn=conn, tenant_id=tenant_id, actor=actor)
+
+
+INVITATION_SQL = """
+SELECT invitation_id, tenant_id, role, status, expires_at, cognito_iss, cognito_sub, member_id, email_enc,
+       expires_at <= now() AS expired
+  FROM crm.member_invitation
+ WHERE token_hash = decode($1, 'hex') AND deleted_at IS NULL
+"""
+# Once the agency is set, the same row again, locked: two claims (or two accepts) of one invitation run one after the
+# other, and the second sees what the first committed (READ COMMITTED re-reads a row after waiting for its lock).
+# The lookup policy is SELECT-only, so the lock goes through tenant_isolation (the UPDATE policy) here.
+INVITATION_LOCK_SQL = """
+SELECT invitation_id, tenant_id, role, status, expires_at, cognito_iss, cognito_sub, member_id, email_enc,
+       expires_at <= now() AS expired
+  FROM crm.member_invitation
+ WHERE invitation_id = $1 AND deleted_at IS NULL
+   FOR UPDATE
+"""
+
+
+@dataclass(frozen=True)
+class Invitation:
+    """The invitation :func:`invitation_tx` found by its token (ids, codes, the sealed e-mail; nothing decrypted)."""
+
+    invitation_id: uuid.UUID
+    tenant_id: uuid.UUID
+    role: str
+    status: str
+    expired: bool
+    cognito_iss: str | None
+    cognito_sub: str | None
+    member_id: uuid.UUID | None
+    email_enc: bytes
+
+
+@asynccontextmanager
+async def invitation_tx(pool: asyncpg.Pool, token_hash_hex: str) -> AsyncIterator[tuple[SystemContext, Invitation]]:
+    """The invitation claim / accept context (AA-939, root ADR 0006b decision 5): the token's SHA-256 (hex) finds one
+    ``crm.member_invitation`` row through the crm-008 SELECT-only policy ``invitation_token_lookup`` before any agency
+    is known; then ``app.tenant_id`` = its agency (which must be active) and ``app.actor`` = ``invitation:<id>`` (the
+    crm-008 member guard lets that actor write exactly the member the invitation names). Unknown or trashed token, or
+    a locked agency: 404 ``invitation_not_found`` (tokens cannot be probed). Audit semantics as :func:`tenant_tx`.
+    Only ``app/members/invitations.py`` may open it."""
+    if not isinstance(token_hash_hex, str) or len(token_hash_hex) != 64:
+        raise NotFound("invitation_not_found")
+    pending: Exception | None = None
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.invite_token_hash', $1, true)", token_hash_hex)
+        row = await conn.fetchrow(INVITATION_SQL, token_hash_hex)
+        await conn.execute("SELECT set_config('app.invite_token_hash', '', true)")
+        if row is None:
+            raise NotFound("invitation_not_found")
+        tenant_id = row["tenant_id"]
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        if await conn.fetchval(TENANT_SQL, tenant_id) != "active":
+            raise NotFound("invitation_not_found")
+        row = await conn.fetchrow(INVITATION_LOCK_SQL, row["invitation_id"])
+        if row is None:
+            raise NotFound("invitation_not_found")
+        actor = f"invitation:{row['invitation_id']}"
+        await conn.execute("SELECT set_config('app.actor', $1, true)", actor)
+        invitation = Invitation(
+            invitation_id=row["invitation_id"],
+            tenant_id=tenant_id,
+            role=row["role"],
+            status=row["status"],
+            expired=bool(row["expired"]),
+            cognito_iss=row["cognito_iss"],
+            cognito_sub=row["cognito_sub"],
+            member_id=row["member_id"],
+            email_enc=bytes(row["email_enc"]),
+        )
+        ctx = SystemContext(conn=conn, tenant_id=tenant_id, actor=actor)
+        try:
+            async with conn.transaction():  # savepoint: the step's work
+                yield ctx, invitation
+        except Exception as exc:
+            denied = [e for e in ctx.audit_events if e.outcome == "denied"]
+            if not denied:
+                raise
+            await _write_audit(ctx, denied)
+            pending = exc
+        else:
+            await _write_audit(ctx, ctx.audit_events)
+    if pending is not None:
+        raise pending
 
 
 async def _write_audit(ctx: TenantContext | SystemContext, events: list[AuditEvent]) -> None:

@@ -8,8 +8,9 @@ Route                                           What                            
 ``POST /audit/sign-in``                         records that the caller opened this agency         every role
 ==============================================  =================================================  ================
 
-A non-owner reading the log gets 403 ``owner_only`` and leaves a ``denied`` event. The web calls ``sign-in`` from its
-``/auth/agency`` route each time a session picks an agency (design §4.9 "sign-ins").
+A non-owner reading the log gets 403 ``role_forbidden`` from the permission matrix (``tenant_tx(action=)``, AA-939;
+``audit_log.require_owner`` checks again with ``owner_only``) and leaves a ``denied`` event. The web calls
+``sign-in`` from its ``/auth/agency`` route each time a session picks an agency (design §4.9 "sign-ins").
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from app import audit_log
 from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
 from app.db import request_pool
+from app.permissions import Action
 from app.routers.agency import tenant_header
 from app.tenancy import tenant_tx
 
@@ -68,7 +70,7 @@ async def list_audit_events(
     limit: Annotated[int, Query(ge=1, le=audit_log.PAGE_MAX)] = 50,
 ) -> dict[str, Any]:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.ACCESS_LOG_VIEW) as ctx:
         return await audit_log.list_events(ctx, filters, cursor=cursor, limit=limit)
 
 
@@ -81,7 +83,7 @@ async def export_audit_events(
     fmt: Annotated[Literal["csv", "jsonl"], Query(alias="format")] = "csv",
 ) -> Response:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.ACCESS_LOG_VIEW) as ctx:
         body, count = await audit_log.export_events(ctx, filters, fmt)
     stamp = datetime.now(UTC).strftime("%Y%m%d")
     media = "text/csv; charset=utf-8" if fmt == "csv" else "application/x-ndjson"
@@ -99,5 +101,5 @@ async def export_audit_events(
 @router.post("/audit/sign-in")
 async def record_sign_in(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.SESSION_VIEW) as ctx:
         return audit_log.record_sign_in(ctx)

@@ -60,6 +60,18 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   // AA-940 (CRM-12): the access log (owner only, the API checks) and its download.
   { method: "GET", pattern: /^audit\/events$/, tenant: true, card: "AA-940" },
   { method: "GET", pattern: /^audit\/events\/export$/, tenant: true, card: "AA-940" },
+  // AA-939 (CRM-11): Team & roles, plan, owner recovery banner; the invitation accept (no agency yet: the token decides).
+  { method: "GET", pattern: /^team$/, tenant: true, card: "AA-939" },
+  { method: "POST", pattern: /^team\/invitations$/, tenant: true, card: "AA-939" },
+  { method: "DELETE", pattern: new RegExp(`^team/invitations/${UUID}$`), tenant: true, card: "AA-939" },
+  { method: "PATCH", pattern: new RegExp(`^team/members/${UUID}$`), tenant: true, card: "AA-939" },
+  { method: "POST", pattern: new RegExp(`^team/members/${UUID}/remove$`), tenant: true, card: "AA-939" },
+  { method: "GET", pattern: /^team\/reassign-queue$/, tenant: true, card: "AA-939" },
+  { method: "POST", pattern: /^team\/reassign$/, tenant: true, card: "AA-939" },
+  { method: "GET", pattern: /^plan$/, tenant: true, card: "AA-939" },
+  { method: "GET", pattern: /^recovery$/, tenant: true, card: "AA-939" },
+  { method: "POST", pattern: new RegExp(`^recovery/${UUID}/cancel$`), tenant: true, card: "AA-939" },
+  { method: "POST", pattern: /^invitations\/accept$/, tenant: false, card: "AA-939" },
 ];
 
 /** Calls only the web server makes (lib/crmApi.ts crmCall), never reachable through /bff from the browser. */

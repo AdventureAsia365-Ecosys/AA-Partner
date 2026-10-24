@@ -103,7 +103,14 @@ def guard_for(route_class: RouteClass) -> Callable[..., Awaitable[Caller]]:
 
 
 def class_router(route_class: RouteClass, **kwargs: Any) -> APIRouter:
-    """An APIRouter under the class prefix whose every route runs the class guard first."""
+    """An APIRouter under the class prefix whose every route runs the class guard first.
+
+    AGENCY routers also use :class:`app.margin.MarginFilteredRoute` (AA-939, design §4.6): their JSON responses lose
+    every margin-bearing key unless the member's role may see margins."""
+    if route_class.name == "agency":
+        from app.margin import MarginFilteredRoute  # noqa: PLC0415 — keeps the auth module free of app imports
+
+        kwargs.setdefault("route_class", MarginFilteredRoute)
     return APIRouter(prefix=route_class.prefix, dependencies=[Depends(guard_for(route_class))], **kwargs)
 
 

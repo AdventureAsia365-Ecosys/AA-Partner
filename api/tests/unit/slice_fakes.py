@@ -10,6 +10,8 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
+from app.errors import Forbidden
+from app.permissions import may
 from app.tenancy import IntakeForm, SystemContext, TenantContext
 from app.vault import DecryptionDenied
 from tests.unit.fakes import ScriptedConn
@@ -80,10 +82,14 @@ def intake_form(**over: Any) -> IntakeForm:
 
 
 def fake_tx(ctx: Any, extra: Any = None):  # noqa: ANN201
-    """A replacement for tenant_tx / system_tx / intake_tx that yields ``ctx`` (or ``(ctx, extra)``)."""
+    """A replacement for tenant_tx / system_tx / intake_tx that yields ``ctx`` (or ``(ctx, extra)``). Like the real
+    tenant_tx() it refuses a role the permission matrix denies ``action=`` (AA-939), so route tests see the 403."""
 
     @asynccontextmanager
-    async def tx(*_: Any, **__: Any):  # noqa: ANN202
+    async def tx(*_: Any, action: Any = None, **__: Any):  # noqa: ANN202
+        role = getattr(ctx, "member_role", None)
+        if action is not None and role is not None and not may(role, action):
+            raise Forbidden("role_forbidden", f"the {role} role may not do {action.value}")
         yield ctx if extra is None else (ctx, extra)
 
     return tx

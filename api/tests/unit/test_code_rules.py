@@ -57,12 +57,20 @@ DB_MODULES = frozenset(
 PROVISIONING_MODULES = frozenset({"app/agencies.py", "app/seed/__init__.py"})
 # AA-936: the job context in one agency (no member) and the public intake form's context.
 SYSTEM_MODULES = frozenset({"app/intake/process.py", "app/seed/__init__.py"})
+# AA-939: AA staff in one agency (actor platform:<staff sub>; may remove the last owner, complete a recovery).
+PLATFORM_MODULES = frozenset({"app/members/recovery.py"})
+# ... and the only module that calls the platform side of app.members.recovery: the /crm/ops/v1 router, whose write
+# routes require the WORKFORCE group crm-platform-admin.
+PLATFORM_CALLERS = frozenset({"app/routers/ops.py"})
+PLATFORM_FUNCTIONS = ("open_request", "complete_request", "deactivate_member")
 INTAKE_MODULES = frozenset({"app/intake/public.py"})
 # AA-940: the audit export's read context (a locked or trashed agency too): the export, verify and retention jobs only.
 AUDIT_EXPORT_MODULES = frozenset(
     {"app/audit_export/export.py", "app/audit_export/verify.py", "app/audit_export/retention.py"}
 )
 CONTEXT_TYPES = frozenset({"TenantContext", "SystemContext", "ProvisioningContext", "AnyContext", "ExportContext"})
+# AA-939: the invitation claim / accept context (token hash lookup, actor invitation:<id>).
+INVITATION_MODULES = frozenset({"app/members/invitations.py"})
 THIRD_PARTY = frozenset(
     {
         "asyncpg",
@@ -90,7 +98,9 @@ def _modules() -> list[tuple[str, ast.Module]]:
     return out
 
 
-CONTEXT_FACTORIES = frozenset({"tenant_tx", "provisioning_tx", "system_tx", "intake_tx", "audit_export_tx"})
+CONTEXT_FACTORIES = frozenset(
+    {"tenant_tx", "provisioning_tx", "system_tx", "platform_tx", "intake_tx", "audit_export_tx", "invitation_tx"}
+)
 
 
 def _context_names(target: ast.expr | None) -> list[str]:
@@ -257,12 +267,46 @@ def test_system_tx_is_used_only_by_the_job_modules() -> None:
     assert _users_of("system_tx", SYSTEM_MODULES) == []
 
 
+def test_platform_tx_is_used_only_by_the_recovery_module() -> None:
+    assert _users_of("platform_tx", PLATFORM_MODULES) == []
+
+
+def test_the_platform_side_of_recovery_is_called_only_by_the_ops_router() -> None:
+    """AA-939 review: a platform: actor bypasses CRM01 / CRM04, so no job, seeder or /crm/v1 module reaches it."""
+    users = []
+    for name in PLATFORM_FUNCTIONS:
+        for found in _users_of(name, PLATFORM_CALLERS | PLATFORM_MODULES):
+            users.append(found)
+    assert users == [], "platform recovery functions outside the ops router: " + ", ".join(users)
+    ops = dict(_modules())["app/routers/ops.py"]
+    called = {n.attr for n in ast.walk(ops) if isinstance(n, ast.Attribute)}
+    assert set(PLATFORM_FUNCTIONS) <= called  # the walk really sees the router (an empty walk proves nothing)
+
+
 def test_intake_tx_is_used_only_by_the_public_intake_module() -> None:
     assert _users_of("intake_tx", INTAKE_MODULES) == []
 
 
 def test_audit_export_tx_is_used_only_by_the_audit_export_jobs() -> None:
     assert _users_of("audit_export_tx", AUDIT_EXPORT_MODULES) == []
+
+
+def test_invitation_tx_is_used_only_by_the_invitations_module() -> None:
+    assert _users_of("invitation_tx", INVITATION_MODULES) == []
+
+
+def test_every_router_tenant_tx_names_its_permission_action() -> None:
+    """AA-939 (design §4.6): each /crm/v1 route passes ``action=`` to tenant_tx(), so the permission matrix refuses a
+    role before any work. A route without one would only be checked by whatever its helper remembers to do."""
+    missing = []
+    for rel, tree in _modules():
+        if not rel.startswith("app/routers/"):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and _is_tenant_tx(node) and getattr(node.func, "id", None) == "tenant_tx":
+                if not any(k.arg == "action" for k in node.keywords):
+                    missing.append(f"{rel}:{node.lineno}")
+    assert missing == [], "tenant_tx() without action=: " + ", ".join(missing)
 
 
 CONTEXT_PARAM_ALLOWED = """
