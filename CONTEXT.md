@@ -205,7 +205,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-006` | `api/migrations/006_crm_f1_f2_complete.sql` | F1 / F2 complete (AA-937): `traveler_relation` (+ trigger-written inverse), `traveler_health` (needs a `health_data` consent), `document` (docs-DEK objects, write-only passports), the full F2 `traveler_profile`, `profile_history`, the age band list on `trip_party`, `audit_event.object_ids` (list views), the views `v_ai_traveler_profile` / `v_ai_trip_party` / `v_ai_trip_context` (`crm_ai_reader`) and `v_insight_fact` (`crm_insights`) |
 | `crm-007` | `api/migrations/007_crm_audit_partitions_export.sql` | F5 audit (AA-940): `audit_event` PARTITION BY RANGE (`at`), the crm-003 table attached as `audit_event_legacy` (MINVALUE to the next month), `at` = insert time (explicit values only from `crm_owner`), `audit_partition_bounds()`, `audit_ensure_partitions()` (three months ahead), `audit_drop_expired_partitions(dry_run)` (12 months + every agency verified), `audit_export_tenant` (registry, RLS enabled not forced, `audit_export_agencies()`), `audit_export_manifest` (hash chain, trigger-enforced, no FK to `tenant`) |
 | `crm-008` | `api/migrations/008_crm_roles_members.sql` | F4 roles (AA-939): `crm.guard_member_write` (only an owner writes memberships inside a member request, CRM02; the last active owner stays unless a platform context acts, CRM01), `member_invitation` (token hash, encrypted e-mail + blind index, claimed `(iss, sub)`; `invitation_token_lookup`), `owner_recovery_request` (14 days, platform-only open / complete, CRM03 / CRM04), `tenant_entitlement` (plan, member limit, features; platform-only), `tenant_settings.refund_owner_threshold_base`, `UNIQUE (tenant_id, member_id)` on `member` |
-| `crm-009` | `api/migrations/009_crm_scrub_placeholder_map.sql` | F3 scrubber (AA-938): `placeholder_map` (scrub DEK, written once, 24 h CHECK, same-agency key to its `llm_call`, no reader grant; DELETE-only purge policy `placeholder_map_expired_purge` keyed on `app.purge_scope`), `llm_call.scrub_receipt` limited to the receipt keys, `UNIQUE (tenant_id, llm_call_id)`. Needs crm-006 only; independent of crm-007 / crm-008 |
+| `crm-009` | `api/migrations/009_crm_scrub_placeholder_map.sql` | F3 scrubber (AA-938): `placeholder_map` (scrub DEK, written once, 24 h CHECK, same-agency key to its `llm_call`, no reader grant; DELETE-only purge policy `placeholder_map_expired_purge` keyed on `app.purge_scope`), `llm_call.scrub_receipt` closed at every level (receipt keys, version codes, numbers, `counts` / `passes` keys), `UNIQUE (tenant_id, llm_call_id)`. Needs crm-006 only; independent of crm-007 / crm-008 |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -459,24 +459,31 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 ## F3 PII scrubber (AA-938, CRM-10)
 
 - **Three passes** (`app/privacy/scrubber.py`, design §4.5), every LLM prompt through `LlmGateway.call(...,
-  known=...)`: (1) **known values** of the trip (`app/privacy/known.py`: travellers, companions, emergency contacts,
-  opened through the vault, one `scrub_known_values` audit event with the traveller ids) -> numbered placeholders
+  known=...)`: (1) **known values** of the trip (`app/privacy/known.py`: travellers, companions, the travellers they
+  are related to (crm-006 relations, one hop, not on the trip), emergency contacts, opened through the vault, one
+  `scrub_known_values` audit event with the traveller ids) -> numbered placeholders
   `<PERSON_1>`, `<EMAIL_1>`, ...; names are matched folded (no diacritics, any case: "Nguyen Van An" = "Nguyễn Văn
-  An"), a full name and any run of 2+ of its words always, a given name alone only with a capital, a family name alone
-  only after an honorific (anh, chị, ông, bà, Mr, Mrs, ...), never one word inside a known place name ("Bình" in
+  An"), a full name and any run of 2+ of its words always, a given name alone with a capital or after an honorific
+  ("chị hoa"), a family name alone only after an honorific (anh, chị, ông, bà, Mr, Mrs, ...), never one word inside a
+  known place name ("Bình" in
   "Ninh Bình", `app/privacy/places.py`); a place-like person ("Florence Lyon", "Hà Giang") is still caught because the
   pass matches what the agency stored; (2) **regex** (`app/privacy/patterns.py`): signed links, JWTs, e-mail, dates of
   birth (cue or 2+ years back), Luhn cards, CCCD, passports, phones incl. Vietnamese formats, OTPs; UUIDs never
-  touched; (3) **Bedrock Guardrails** `ApplyGuardrail` in detect mode (`app/privacy/guardrails.py`, acc2 us-west-1,
-  AA-930 §2), `match` never logged.
-- **Fail closed**: any error -> `scrub_failed`, a detector timeout (`SCRUB_DETECTOR_TIMEOUT_MS`, default 3 s) ->
-  `scrub_timeout`; no call, `manual_reply_needed`. No guardrail configured = every scrub refused. Text that already
+  touched; digit runs are tried in windows of at most 19 digits, so the cost is linear (passes 1-2 also run in a
+  worker thread under the scrub deadline, and the log path uses the same detectors); (3) **Bedrock Guardrails**
+  `ApplyGuardrail` in detect mode (`app/privacy/guardrails.py`, acc2 us-west-1, AA-930 §2), `match` never logged.
+  Every finding of a mapped kind is replaced: located across whitespace, case, word boundaries and diacritics, the
+  placeholders inside a finding kept and every other fragment replaced, overlapping findings merged; a finding that
+  cannot be located (or has no value) refuses the scrub.
+- **Fail closed**: any error -> `scrub_failed`, a scrub over its deadline (`SCRUB_DETECTOR_TIMEOUT_MS`, default 3 s,
+  passes 1-3 together) -> `scrub_timeout`; no call, `manual_reply_needed`. No guardrail configured = every scrub refused. Text that already
   holds a placeholder-shaped token is neutralised to `[KIND_n]` first.
 - **Receipt** (`crm.llm_call.scrub_receipt`): scrubber version, detector, counts per kind and per pass, nothing else
-  (crm-009 CHECK on the keys).
+  (crm-009 CHECK closed at every level: keys, version codes, numbers, the keys of `counts` and `passes`).
 - **Placeholder map** (`app/privacy/placeholder_store.py`, `crm.placeholder_map`): sealed under the tenant `scrub` DEK
-  before the call, stored against the call after the log, expires after 24 h (reads refuse it at once, the hourly
-  `crm_placeholder_purge` deletes it). `restore_placeholders` only in a member's `TenantContext` (a job context is
+  before the call and checked against the crm-009 size / version bounds, stored against the call after the log in a
+  savepoint (a failed store keeps the paid call logged and returns an `error`, `manual_reply_needed`), expires after
+  24 h (reads refuse it at once, the hourly `crm_placeholder_purge` deletes it). `restore_placeholders` only in a member's `TenantContext` (a job context is
   403), 410 `placeholder_map_expired` after 24 h, one `placeholder_restore` audit event per restore. Model output is
   kept with placeholders.
 - **Logs**: the JSON log renderer and Sentry scrubber (`app/observability/scrub.py`) also run the pass-2 detectors
@@ -484,7 +491,8 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 - **Corpus gate** (`api/tests/scrub_corpus/`): 242 synthetic EN/VI samples (generator + `--check`), 0 leaks. Offline
   half (passes 1-2) in every PR's Unit Tests; all three passes in the workflow **Scrub corpus** (nightly 20:30 UTC and
   on every push to main that changes `api/app/privacy/**` or the corpus; GitHub environment `scrub-corpus`, OIDC role
-  with `bedrock:ApplyGuardrail` only; about $0.72 a month).
+  with `bedrock:ApplyGuardrail` only; about $0.72 a month). A red run opens or comments on the issue "Scrub corpus is
+  red on main".
 
 ## Dev seeder (`api/app/seed/`, AA-935)
 

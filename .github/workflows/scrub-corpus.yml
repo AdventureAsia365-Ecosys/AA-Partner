@@ -18,6 +18,9 @@ name: Scrub corpus
 #   SCRUB_GUARDRAIL_VERSION  its published version (crm_scrub.tf output)
 #   AWS_REGION               default us-west-1
 # The report prints ids and counts only.
+#
+# A red run opens (or comments on) the issue "Scrub corpus is red on main", so a regression of pass 3 that reached main
+# is seen by a person before the next scrubber deploy, not only in the Actions tab (review AA-938).
 
 on:
   schedule:
@@ -33,6 +36,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  issues: write # the red-run alert below (this workflow never runs on pull requests)
 
 concurrency:
   group: scrub-corpus
@@ -99,3 +103,19 @@ jobs:
           SCRUB_GUARDRAIL_REGION: ${{ env.AWS_REGION }}
           SCRUB_DETECTOR_TIMEOUT_MS: "8000"
         run: python -m tests.scrub_corpus.run --guardrails
+
+      - name: Alert on a red run
+        if: failure()
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Scrub corpus is red on main"
+          body="The F3 scrub corpus failed (event ${GITHUB_EVENT_NAME}, commit ${GITHUB_SHA}): ${RUN_URL}. The report lists sample ids and counts only. Do not deploy a scrubber change until a run is green again (AA-938)."
+          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"${title}\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          fi
