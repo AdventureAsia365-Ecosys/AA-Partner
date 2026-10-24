@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import time
 from collections.abc import Sequence
 
 import pytest
@@ -30,6 +31,8 @@ from app.privacy.scrubber import (
 
 pytestmark = pytest.mark.asyncio
 TODAY = dt.date(2026, 10, 24)
+# 20,000 characters take about 0.2 s (0.5 s under coverage); the cubic version took hours. Generous for slow CI.
+PERF_BUDGET_S = 3.0
 RECEIPT_KEYS = {"scrubber", "detector", "entities", "counts", "passes", "known_persons"}  # crm-009 CHECK
 
 
@@ -129,7 +132,7 @@ async def test_detector_pass_replaces_matches_and_ignores_urls_ages_and_placehol
         ("AGE", "34"),
         ("NAME", "<PERSON_1>"),
         ("ADDRESS", "12 Lý Thái Tổ, Hoàn Kiếm"),
-        ("NAME", "x"),
+        ("NAME", "--"),
     )
     r = await run(
         "An's friend Peter Lawson (34) lives at 12 Lý Thái Tổ, Hoàn Kiếm; https://agency.example", an(), detector=finds
@@ -195,9 +198,78 @@ async def test_a_bug_in_a_pass_fails_closed(monkeypatch: pytest.MonkeyPatch) -> 
     assert str(info.value) == "KeyError"
 
 
+async def test_detector_finding_with_placeholders_replaces_every_other_fragment() -> None:
+    # Review AA-938: the address around a known name used to be dropped (it contains "<PERSON_1>") and reach the model.
+    finds = Finds(("ADDRESS", "12 <PERSON_1> street, Ward 5, Da Nang"))
+    r = await run("Deliver to 12 Nguyen Van An street, Ward 5, Da Nang tomorrow.", an(), detector=finds)
+    assert r.text == "Deliver to <ADDRESS_1> <PERSON_1> <ADDRESS_2> tomorrow."
+    assert r.placeholders == {
+        "<PERSON_1>": "Nguyễn Văn An",
+        "<ADDRESS_1>": "12",
+        "<ADDRESS_2>": "street, Ward 5, Da Nang",
+    }
+    assert "Ward" not in r.text and "street" not in r.text
+    assert restore(r.text, r.placeholders) == "Deliver to 12 Nguyễn Văn An street, Ward 5, Da Nang tomorrow."
+
+
+async def test_detector_finding_across_lines_or_case_is_still_replaced() -> None:
+    # Review AA-938: "John Smith" on "John\nSmith" was not found verbatim and the name reached the model.
+    r = await run("Guest: John\nSmith, room 4", detector=Finds(("NAME", "John Smith")))
+    assert r.text == "Guest: <PERSON_1>, room 4"
+    assert r.placeholders == {"<PERSON_1>": "John\nSmith"}
+    r = await run("guest JOHN SMITH and Lê Văn Tám", detector=Finds(("NAME", "John Smith"), ("NAME", "Le Van Tam")))
+    assert r.text == "guest <PERSON_1> and <PERSON_2>"
+    r = await run("A called; a note", detector=Finds(("NAME", "A")))  # one letter: replaced, never skipped
+    assert r.text == "<PERSON_1> called; a note"
+
+
+async def test_detector_finding_that_cannot_be_placed_fails_closed() -> None:
+    for hits in ((("NAME", "Peter Lawson"),), (("NAME", ""),), (("ADDRESS", "   "),)):
+        with pytest.raises(ScrubError) as info:
+            await run("Text without that name.", detector=Finds(*hits))
+        assert info.value.code == "scrub_failed" and "Peter" not in str(info.value)
+    # Unmapped kinds and findings made only of placeholders have nothing left to remove: no error.
+    r = await run("An, 34, https://agency.example", an(), detector=Finds(("AGE", "99"), ("NAME", "<PERSON_1>")))
+    assert r.text == "<PERSON_1>, 34, https://agency.example"
+
+
+async def test_overlapping_detector_findings_merge_instead_of_dropping_one() -> None:
+    finds = Finds(("NAME", "Mary Smith"), ("ADDRESS", "Smith Street 5"))
+    r = await run("Ask Mary Smith Street 5 tonight", detector=finds)
+    assert r.text == "Ask <ADDRESS_1> tonight"
+    assert r.placeholders == {"<ADDRESS_1>": "Mary Smith Street 5"}
+
+
+async def test_lower_case_given_name_after_an_honorific_is_the_person() -> None:
+    hoa = KnownPerson("traveller", display_name="Nguyễn Thị Hoa")
+    r = await run("chị hoa hỏi giá; anh an gọi lại; hoa sen nở; an toàn", hoa, an())
+    assert r.text == "chị <PERSON_1> hỏi giá; anh <PERSON_2> gọi lại; hoa sen nở; an toàn"
+
+
 async def test_western_and_family_first_name_rules() -> None:
     john = KnownPerson("traveller", display_name="John Paul Smith", given_name="John Paul", family_name="Smith")
     r = await run("John asked; Smith Street is near; Mr Smith paid; Paul Smith too.", john)
     assert r.text == "<PERSON_1> asked; Smith Street is near; Mr <PERSON_1> paid; <PERSON_1> too."
     no_parts = KnownPerson("traveller", display_name="Madonna")
     assert (await run("Madonna called; madonna lily", no_parts)).text == "<PERSON_1> called; madonna lily"
+
+
+@pytest.mark.parametrize("shape", ["1 ", "0912 345 678 ", "Prices: 10 11 12 13 ", "Nguyen Van An chị an Ninh Bình "])
+async def test_scrub_of_a_large_prompt_is_fast_and_off_the_event_loop(shape: str) -> None:
+    # Review AA-938: a 2,400-char digit list took 1.6 s and 24,000 chars would have taken hours, on the event loop.
+    text = (shape * (20_000 // len(shape) + 1))[:20_000]
+    started = time.perf_counter()
+    await PiiScrubber(Finds(), timeout_s=5, today=TODAY).scrub(text, KnownValues((an(),)))
+    assert time.perf_counter() - started < PERF_BUDGET_S, shape
+
+
+async def test_local_passes_share_the_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    def slow(text, known, reg):  # noqa: ANN001, ANN202
+        time.sleep(0.3)
+        return text
+
+    monkeypatch.setattr(scrubber_module, "_known_pass", slow)
+    finds = Finds()
+    with pytest.raises(ScrubTimeout):
+        await PiiScrubber(finds, timeout_s=0.05, today=TODAY).scrub("Peter Lawson")
+    assert finds.seen == []  # the detector is never reached

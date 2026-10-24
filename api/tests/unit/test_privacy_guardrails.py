@@ -54,7 +54,8 @@ def detector(client: Client) -> BedrockGuardrailsDetector:
 async def test_detect_mode_call_shape_and_findings() -> None:
     client = Client()
     found = await detector(client).detect("Peter Lawson lives at 12 Lý Thái Tổ")
-    assert found == [Detection("NAME", "Peter Lawson"), Detection("ADDRESS", "12 Lý Thái Tổ")]
+    # A finding without its match is kept with an empty value, so the scrubber refuses it (fail closed).
+    assert found == [Detection("NAME", "Peter Lawson"), Detection("ADDRESS", "12 Lý Thái Tổ"), Detection("NAME", "")]
     [call] = client.calls
     assert call == {
         "guardrailIdentifier": "abc123guard",
@@ -74,7 +75,8 @@ async def test_errors_are_raised_by_class_only() -> None:
     with pytest.raises(ScrubError) as info:
         await detector(Client(fail=AccessDeniedException("text was Peter Lawson"))).detect("Peter Lawson")
     assert str(info.value) == "AccessDeniedException"
-    for bad in ({"assessments": "x"}, {"assessments": ["x"]}, "nope"):
+    malformed_entity = {"assessments": [{"sensitiveInformationPolicy": {"piiEntities": [{"match": "Peter"}]}}]}
+    for bad in ({"assessments": "x"}, {"assessments": ["x"]}, "nope", malformed_entity):
         with pytest.raises(ScrubError):
             parse_assessments(bad)  # type: ignore[arg-type]
 

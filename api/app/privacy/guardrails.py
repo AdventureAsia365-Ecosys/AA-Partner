@@ -90,8 +90,10 @@ def parse_assessments(response: dict[str, Any]) -> list[Detection]:
             raise ScrubError("malformed guardrail response")
         policy = assessment.get("sensitiveInformationPolicy") or {}
         for entity in policy.get("piiEntities", []) or []:
-            if entity.get("match") and entity.get("type"):
-                found.append(Detection(str(entity["type"]), str(entity["match"])))
+            if not isinstance(entity, dict) or not entity.get("type"):
+                raise ScrubError("malformed guardrail response")
+            # A finding without its match is kept with an empty value: the scrubber refuses it (fail closed).
+            found.append(Detection(str(entity["type"]), str(entity.get("match") or "")))
     return found
 
 

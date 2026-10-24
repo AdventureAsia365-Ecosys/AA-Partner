@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import re
+from bisect import bisect_right
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -144,7 +145,8 @@ class Detector(Protocol):
 
 @dataclass(frozen=True)
 class KnownPerson:
-    """One person tied to the trip. ``role``: traveller | companion | emergency_contact | member | supplier_contact."""
+    """One person tied to the trip. ``role``: traveller | companion | related | emergency_contact | member |
+    supplier_contact."""
 
     role: str
     display_name: str | None = field(default=None, repr=False)
@@ -278,8 +280,9 @@ def _dob_spellings(d: dt.date) -> list[str]:
 
 def _known_pass(text: str, known: KnownValues, reg: _Registry) -> str:
     folded, index = fold_with_map(text)
-    protected = patterns.protected_spans(text)
+    protected = patterns.Ranges(patterns.protected_spans(text))
     places = place_spans(folded)
+    place_starts = [ps for ps, _ in places]
     found: list[tuple[int, int, str, str]] = []  # (start, end, kind, key) in original positions
     for i, person in enumerate(known.persons):
         key = f"person:{i}"
@@ -288,11 +291,12 @@ def _known_pass(text: str, known: KnownValues, reg: _Registry) -> str:
             for m in rx.finditer(folded):
                 start, end = original_span(index, m.start(), m.end())
                 end = extend_over_marks(text, end)
-                if len(v.tokens) == 1 and any(ps <= m.start() and m.end() <= pe for ps, pe in places):
+                if len(v.tokens) == 1 and _inside_place(places, place_starts, m.start(), m.end()):
                     continue  # "Bình" inside "Ninh Bình": the place, not the person
-                if v.rule == "capital" and not text[start].isupper():
-                    continue
-                if v.rule == "honorific" and not _HONORIFIC_BEFORE.search(folded[max(0, m.start() - 12) : m.start()]):
+                after_honorific = _HONORIFIC_BEFORE.search(folded[max(0, m.start() - 12) : m.start()]) is not None
+                if v.rule == "capital" and not (text[start].isupper() or after_honorific):
+                    continue  # "chị an" / "anh hoa": lower case after an honorific is still the person
+                if v.rule == "honorific" and not after_honorific:
                     continue
                 found.append((start, end, "PERSON", key))
         for email in person.emails:
@@ -312,17 +316,24 @@ def _known_pass(text: str, known: KnownValues, reg: _Registry) -> str:
         found += _known_phones(text, person.phones)
     # Longest first, then earliest; protected ranges (ids, placeholders) are never touched.
     found.sort(key=lambda f: (-(f[1] - f[0]), f[0]))
+    taken = patterns.Ranges()
     chosen: list[tuple[int, int, str, str]] = []
     for f in found:
-        if any(f[0] < pe and ps < f[1] for ps, pe in protected):
+        if protected.overlaps(f[0], f[1]) or taken.overlaps(f[0], f[1]):
             continue
-        if not any(f[0] < c[1] and c[0] < f[1] for c in chosen):
-            chosen.append(f)
+        taken.add(f[0], f[1])
+        chosen.append(f)
     spans = []
     for start, end, kind, key in sorted(chosen):
         original = _canonical(known, key) if kind == "PERSON" else text[start:end]
         spans.append((start, end, reg.placeholder(kind, key, original, "known")))
     return _apply(text, spans)
+
+
+def _inside_place(places: list[tuple[int, int]], starts: list[int], start: int, end: int) -> bool:
+    """``[start, end)`` lies inside one place phrase (``places`` sorted by start, non-overlapping: finditer order)."""
+    i = bisect_right(starts, start) - 1
+    return i >= 0 and places[i][0] <= start and end <= places[i][1]
 
 
 def _canonical(known: KnownValues, key: str) -> str:
@@ -347,15 +358,21 @@ def _known_phones(text: str, phones: tuple[str, ...]) -> list[tuple[int, int, st
             forms[f] = "phone:" + max(_phone_forms(phone), key=len)
     if not forms:
         return []
+    longest = max(len(f) for f in forms)  # a longer window can never equal a stored form: never built (linear cost)
+    shortest = min(len(f) for f in forms)
     out = []
-    for run in patterns.DIGIT_RUN.finditer(text):
-        groups = [(g.start() + run.start(), g.end() + run.start()) for g in patterns.DIGIT_GROUP.finditer(run.group(0))]
+    for groups in patterns.digit_groups(text):
+        run_digits = digits(text[groups[0][0] : groups[-1][1]])
+        offsets = [0]
+        for g in groups:
+            offsets.append(offsets[-1] + g[2])
         for i in range(len(groups)):
-            for j in range(len(groups), i, -1):
-                start, end = groups[i][0], groups[j - 1][1]
-                key = forms.get(digits(text[start:end]))
+            for j in range(patterns.window_limits(groups, i, longest), i, -1):
+                if offsets[j] - offsets[i] < shortest:
+                    break
+                key = forms.get(run_digits[offsets[i] : offsets[j]])
                 if key:
-                    out.append((start, end, "PHONE", key))
+                    out.append((groups[i][0], groups[j - 1][1], "PHONE", key))
                     break
     return out
 
@@ -381,15 +398,21 @@ class PiiScrubber:
             raise ScrubError("text too long")
         known = known or KnownValues()
         reg = _Registry()
-        text = neutralise(text)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.timeout_s
+        # Passes 1 and 2 are CPU work: a worker thread, under the same deadline as pass 3, so a large prompt never
+        # blocks the event loop and a slow scrub fails closed like a slow detector.
         try:
-            text = _known_pass(text, known, reg)
-            text = self._regex_pass(text, reg)
+            text = await asyncio.wait_for(
+                asyncio.to_thread(self._local_passes, neutralise(text), known, reg), timeout=self.timeout_s
+            )
+        except TimeoutError:
+            raise ScrubTimeout("scrub timeout") from None
         except ScrubError:
             raise
         except Exception as exc:  # noqa: BLE001 — a bug in a pass must not let text through
             raise ScrubError(type(exc).__name__) from None
-        text = await self._detector_pass(text, reg)
+        text = await self._detector_pass(text, reg, deadline - loop.time())
         receipt = {
             "scrubber": self.version,
             "detector": self.detector.name,
@@ -400,6 +423,9 @@ class PiiScrubber:
         }
         return ScrubResult(text=text, receipt=receipt, placeholders=dict(reg.values))
 
+    def _local_passes(self, text: str, known: KnownValues, reg: _Registry) -> str:
+        return self._regex_pass(_known_pass(text, known, reg), reg)
+
     def _regex_pass(self, text: str, reg: _Registry) -> str:
         spans = []
         for s in patterns.find(text, self._today):
@@ -408,30 +434,112 @@ class PiiScrubber:
             spans.append((s.start, s.end, reg.placeholder(s.kind, key or original, original, "regex")))
         return _apply(text, spans)
 
-    async def _detector_pass(self, text: str, reg: _Registry) -> str:
+    async def _detector_pass(self, text: str, reg: _Registry, timeout_s: float) -> str:
+        if timeout_s <= 0:
+            raise ScrubTimeout("scrub timeout")
         try:
-            detections = await asyncio.wait_for(self.detector.detect(text), timeout=self.timeout_s)
+            detections = await asyncio.wait_for(self.detector.detect(text), timeout=timeout_s)
         except TimeoutError:
             raise ScrubTimeout("detector timeout") from None
         except ScrubError:
             raise
         except Exception as exc:  # noqa: BLE001 — recorded by class only, never the message (it may echo text)
             raise ScrubError(type(exc).__name__) from None
-        protected = patterns.protected_spans(text)
-        found: list[tuple[int, int, str, str]] = []
-        for d in detections:
-            kind = DETECTOR_KINDS.get(d.type)
-            value = (d.match or "").strip()
-            if not kind or len(value) < 2 or "<" in value or ">" in value:
-                continue
-            for m in re.finditer(r"(?<!\w)" + re.escape(value) + r"(?!\w)", text):
-                found.append((m.start(), m.end(), kind, fold(value)))
-        found.sort(key=lambda f: (-(f[1] - f[0]), f[0]))
-        chosen: list[tuple[int, int, str, str]] = []
-        for f in found:
-            if any(f[0] < pe and ps < f[1] for ps, pe in protected):
-                continue
-            if not any(f[0] < c[1] and c[0] < f[1] for c in chosen):
-                chosen.append(f)
-        spans = [(s, e, reg.placeholder(k, key, text[s:e], "detector")) for s, e, k, key in sorted(chosen)]
-        return _apply(text, spans)
+        try:
+            return _apply_detections(text, detections, reg)
+        except ScrubError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — a bug here must not let text through
+            raise ScrubError(type(exc).__name__) from None
+
+
+# ── Pass 3: placing the detector's findings ──────────────────────────────────────────────────────────
+
+_PIECE_TRIM = " \t\r\n,;:"
+
+
+def _apply_detections(text: str, detections: Sequence[Detection], reg: _Registry) -> str:
+    """Replace every finding of a mapped kind; **fail closed** when one cannot be placed.
+
+    - A finding is located with any whitespace between its words (a name broken over two lines is found), then
+      case-insensitively, then without word boundaries, then folded (no diacritics). One that is still not found
+      raises :class:`ScrubError`: the detector saw something the scrubber cannot remove, so the text must not reach
+      the model. Nothing is skipped silently.
+    - A finding may contain placeholders of the earlier passes ("12 <PERSON_1> street, Ward 5"): the placeholders
+      stay, every other fragment of it ("12", "street, Ward 5") is replaced. Protected ranges (placeholders, UUIDs)
+      are never touched.
+    - Overlapping findings ("John Smith" as a name and "Smith Street 5" as an address) are merged into one
+      placeholder instead of dropping one of them, so no part of either reaches the model.
+    - Kinds the scrubber does not map (``URL``, ``AGE``) are left as they are; a finding with no letter or digit
+      outside its placeholders has nothing left to remove.
+    """
+    protected = patterns.Ranges(patterns.protected_spans(text))
+    pieces: list[tuple[int, int, str]] = []
+    for d in detections:
+        kind = DETECTOR_KINDS.get(d.type)
+        if not kind:
+            continue
+        value = d.match or ""
+        if not value.strip():
+            raise ScrubError("detector finding without a value")  # nothing to locate: the text cannot be cleared
+        if not any(c.isalnum() for c in patterns.PLACEHOLDER.sub("", value)):
+            continue  # only placeholders (already scrubbed) or punctuation: nothing left to remove
+        spans = _locate(text, value)
+        if not spans:
+            raise ScrubError("detector finding not located")
+        for start, end in spans:
+            for ps, pe in _outside(protected, start, end):
+                while ps < pe and text[ps] in _PIECE_TRIM:
+                    ps += 1
+                while pe > ps and text[pe - 1] in _PIECE_TRIM:
+                    pe -= 1
+                if any(c.isalnum() for c in text[ps:pe]):
+                    pieces.append((ps, pe, kind))
+    merged: list[list[Any]] = []  # [start, end, kind, longest piece length]
+    for ps, pe, kind in sorted(pieces):
+        if merged and ps < merged[-1][1]:
+            last = merged[-1]
+            last[1] = max(last[1], pe)
+            if pe - ps > last[3]:
+                last[2], last[3] = kind, pe - ps
+        else:
+            merged.append([ps, pe, kind, pe - ps])
+    spans_out = [(s, e, reg.placeholder(k, fold(text[s:e]), text[s:e], "detector")) for s, e, k, _ in merged]
+    return _apply(text, spans_out)
+
+
+def _locate(text: str, value: str) -> list[tuple[int, int]]:
+    tokens = value.split()
+    if not tokens:
+        return []
+    body = r"\s+".join(re.escape(t) for t in tokens)
+    lead = r"(?<!\w)" if re.match(r"\w", tokens[0]) else ""
+    trail = r"(?!\w)" if re.search(r"\w$", tokens[-1]) else ""
+    for rx, flags in ((lead + body + trail, 0), (lead + body + trail, re.IGNORECASE), (body, re.IGNORECASE)):
+        found = [(m.start(), m.end()) for m in re.finditer(rx, text, flags)]
+        if found:
+            return found
+    folded, index = fold_with_map(text)
+    folded_tokens = fold(" ".join(tokens)).split()
+    if not folded_tokens:
+        return []
+    rx = r"\s+".join(re.escape(t) for t in folded_tokens)
+    out = []
+    for m in re.finditer(rx, folded):
+        start, end = original_span(index, m.start(), m.end())
+        out.append((start, extend_over_marks(text, end)))
+    return out
+
+
+def _outside(protected: patterns.Ranges, start: int, end: int) -> list[tuple[int, int]]:
+    """``[start, end)`` minus the protected ranges."""
+    out, pos = [], start
+    i = bisect_right(protected.ends, start)
+    while i < len(protected.starts) and protected.starts[i] < end:
+        if protected.starts[i] > pos:
+            out.append((pos, protected.starts[i]))
+        pos = max(pos, protected.ends[i])
+        i += 1
+    if pos < end:
+        out.append((pos, end))
+    return out

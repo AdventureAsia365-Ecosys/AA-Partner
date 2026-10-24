@@ -18,7 +18,9 @@ What is found (kind -> placeholder ``<KIND_n>``):
 - ``OTP``: 4–8 digits after a code cue (``OTP``, ``verification code``, ``mã xác nhận`` ...).
 
 Digit groups separated by one space, dot or dash are read together ("0912 345 678"), and a run that does not classify
-as a whole is tried window by window ("room 12 0912 345 678" finds the phone). UUIDs and placeholders are never
+as a whole is tried window by window ("room 12 0912 345 678" finds the phone). A window holds at most
+:data:`MAX_WINDOW_DIGITS` digits (the longest kind, a card, has 19), so the cost is linear in the text: a long list of
+numbers ("Prices: 10 11 12 ...") cannot stall the event loop or the log path. UUIDs and placeholders are never
 touched, so ids in a prompt survive. Cues are matched in folded text (no diacritics, lower case).
 
 :func:`find` returns non-overlapping spans; it never returns or logs the values themselves beyond the spans.
@@ -27,7 +29,10 @@ touched, so ids in a prompt survive. Cues are matched in folded text (no diacrit
 from __future__ import annotations
 
 import datetime as dt
+import functools
 import re
+from bisect import bisect_left, bisect_right
+from collections.abc import Iterator
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, urlsplit
 
@@ -77,7 +82,8 @@ SIGNED_PARAMS = frozenset(
 )
 _TOKENISH = re.compile(r"^[A-Za-z0-9_\-.~%=+]{24,}$")
 JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*")
-EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
+# Starts only where a local part can start, so a long run without "@" is scanned once (no quadratic backtracking).
+EMAIL = re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
 
 _MONTHS = {
     "jan": 1,
@@ -128,16 +134,17 @@ DIGIT_RUN = re.compile(r"(?<![\w+])\+?(?:\(\d{1,4}\)[ .\-]?)?\d(?:[ .\-]?(?:\(\d
 DIGIT_GROUP = re.compile(r"\+?(?:\(\d+\)|\d+)")
 NANP = re.compile(r"^\(?\d{3}\)?[ .\-]?\d{3}[ .\-]\d{4}$")
 CUE_WINDOW = 28
+# No kind has more digits than a card (19): a longer window can never classify, so it is never built.
+MAX_WINDOW_DIGITS = 19
+
+
+_LUHN_DOUBLE = {str(d): (d * 2 - 9 if d > 4 else d * 2) for d in range(10)}
 
 
 def luhn_ok(number: str) -> bool:
-    total = 0
-    for i, ch in enumerate(reversed(number)):
-        d = int(ch)
-        if i % 2:
-            d = d * 2 - 9 if d > 4 else d * 2
-        total += d
-    return total % 10 == 0
+    odd = sum(int(c) for c in number[-1::-2])
+    even = sum(_LUHN_DOUBLE[c] for c in number[-2::-2])
+    return (odd + even) % 10 == 0
 
 
 def protected_spans(text: str) -> list[tuple[int, int]]:
@@ -164,13 +171,41 @@ def find(text: str, today: dt.date | None = None) -> list[Span]:
 
 def resolve(spans: list[Span], protected: list[tuple[int, int]]) -> list[Span]:
     """Drop spans touching a protected range, then keep the highest-priority (then longest) of overlapping spans."""
-    live = [s for s in spans if s.end > s.start and not any(s.start < pe and ps < s.end for ps, pe in protected)]
+    blocked = Ranges(protected)
+    live = [s for s in spans if s.end > s.start and not blocked.overlaps(s.start, s.end)]
     live.sort(key=lambda s: (_PRIORITY.get(s.kind, len(KINDS)), -(s.end - s.start), s.start))
-    chosen: list[Span] = []
+    chosen = Ranges()
+    out: list[Span] = []
     for s in live:
-        if not any(s.start < c.end and c.start < s.end for c in chosen):
-            chosen.append(s)
-    return sorted(chosen, key=lambda s: s.start)
+        if not chosen.overlaps(s.start, s.end):
+            chosen.add(s.start, s.end)
+            out.append(s)
+    return sorted(out, key=lambda s: s.start)
+
+
+class Ranges:
+    """Non-overlapping ``[start, end)`` ranges, sorted, with O(log n) overlap checks (the selections of every pass
+    stay near-linear however many matches a text has). Ranges given at construction may overlap; they are merged."""
+
+    def __init__(self, ranges: list[tuple[int, int]] | None = None) -> None:
+        self.starts: list[int] = []
+        self.ends: list[int] = []
+        for start, end in sorted(r for r in (ranges or []) if r[1] > r[0]):
+            if self.ends and start < self.ends[-1]:
+                self.ends[-1] = max(self.ends[-1], end)
+            else:
+                self.starts.append(start)
+                self.ends.append(end)
+
+    def overlaps(self, start: int, end: int) -> bool:
+        i = bisect_right(self.ends, start)
+        return i < len(self.starts) and self.starts[i] < end
+
+    def add(self, start: int, end: int) -> None:
+        """Add a range that overlaps none of the present ones (check with :meth:`overlaps` first)."""
+        i = bisect_left(self.starts, start)
+        self.starts.insert(i, start)
+        self.ends.insert(i, end)
 
 
 def _links(text: str) -> list[Span]:
@@ -201,14 +236,17 @@ def _is_signed(url: str) -> bool:
 _CLAUSE_END = re.compile(r"[,;|\n]|\.\s|\band\b|\bva\b")
 
 
+def _cue_window(folded: str, start: int) -> str:
+    """The text a cue for ``start`` may sit in: the same clause, at most CUE_WINDOW characters before it."""
+    window = folded[max(0, start - CUE_WINDOW) : start]
+    ends = list(_CLAUSE_END.finditer(window))
+    return window[ends[-1].end() :] if ends else window
+
+
 def _cue_before(folded: str, start: int, cue: re.Pattern[str]) -> bool:
     """A cue in the same clause, at most CUE_WINDOW characters before ``start`` ("DOB 1/2/1985, trip 3/4/2027": the
     trip date is not a birth date)."""
-    window = folded[max(0, start - CUE_WINDOW) : start]
-    ends = list(_CLAUSE_END.finditer(window))
-    if ends:
-        window = window[ends[-1].end() :]
-    return cue.search(window) is not None
+    return cue.search(_cue_window(folded, start)) is not None
 
 
 def _valid(year: int, month: int, day: int) -> dt.date | None:
@@ -253,17 +291,53 @@ def _dates(folded: str, index: list[int], today: dt.date) -> list[Span]:
     return out
 
 
-def _classify(raw: str, number: str, plus: bool, folded: str, start: int) -> str | None:
+class _Cues:
+    """The cues before one start position, each looked up once (every window of a start shares them)."""
+
+    __slots__ = ("_window", "_seen")
+
+    def __init__(self, folded: str, start: int) -> None:
+        self._window = _cue_window(folded, start)
+        self._seen: dict[str, bool] = {}
+
+    def has(self, name: str, cue: re.Pattern[str]) -> bool:
+        if name not in self._seen:
+            self._seen[name] = cue.search(self._window) is not None
+        return self._seen[name]
+
+    def lengths(self, plus: bool) -> frozenset[int]:
+        """The digit counts :func:`_classify` can accept for this start; other windows are not built at all."""
+        phone = plus or self.has("phone", PHONE_CUE)
+        otp = not phone and self.has("otp", OTP_CUE)
+        return _lengths(phone, otp, self.has("passport", PASSPORT_CUE), self.has("id", ID_CUE))
+
+
+@functools.cache
+def _lengths(phone: bool, otp: bool, passport: bool, national_id: bool) -> frozenset[int]:
+    n = set(range(10, 20))  # without a cue or a "+": VN phones (10-12), CCCD (12), NANP (10), cards (13-19)
+    if phone:
+        n.update(range(8, 16))
+    if otp:
+        n.update(range(4, 9))
+    if passport:
+        n.update(range(6, 10))
+    if national_id:
+        n.update((9, 12))
+    return frozenset(n)
+
+
+def _classify(raw: str, number: str, plus: bool, cues: _Cues, luhn: bool | None = None) -> str | None:
+    """``luhn``: the Luhn check of ``number`` when the caller already knows it (prefix sums in :func:`_digit_runs`)."""
     n = len(number)
     if plus and 8 <= n <= 15:
         return "PHONE"
-    if 13 <= n <= 19 and luhn_ok(number):
+    if 13 <= n <= 19 and (luhn if luhn is not None else luhn_ok(number)):
         return "CARD"
-    if 4 <= n <= 8 and _cue_before(folded, start, OTP_CUE) and not _cue_before(folded, start, PHONE_CUE):
+    if 4 <= n <= 8 and cues.has("otp", OTP_CUE) and not cues.has("phone", PHONE_CUE):
         return "OTP"
-    if 6 <= n <= 9 and _cue_before(folded, start, PASSPORT_CUE):
+    if 6 <= n <= 9 and cues.has("passport", PASSPORT_CUE):
         return "PASSPORT"
-    if n in (9, 12) and _cue_before(folded, start, ID_CUE):
+    if n in (9, 12) and cues.has("id", ID_CUE):
         return "NATIONAL_ID"
     if n == 12 and number.startswith("0"):
         return "NATIONAL_ID"
@@ -275,9 +349,30 @@ def _classify(raw: str, number: str, plus: bool, folded: str, start: int) -> str
         return "PHONE"
     if n == 10 and NANP.match(raw.strip()):
         return "PHONE"
-    if 8 <= n <= 15 and _cue_before(folded, start, PHONE_CUE):
+    if 8 <= n <= 15 and cues.has("phone", PHONE_CUE):
         return "PHONE"
     return None
+
+
+def digit_groups(text: str) -> Iterator[list[tuple[int, int, int]]]:
+    """Every run of digit groups in ``text``, as ``(start, end, digit count)`` per group."""
+    for run in DIGIT_RUN.finditer(text):
+        base = run.start()
+        yield [
+            (g.start() + base, g.end() + base, sum(c.isdigit() for c in g.group(0)))
+            for g in DIGIT_GROUP.finditer(run.group(0))
+        ]
+
+
+def window_limits(groups: list[tuple[int, int, int]], i: int, max_digits: int) -> int:
+    """The largest ``j`` such that ``groups[i:j]`` holds at most ``max_digits`` digits (``i`` when one group is
+    already longer). Callers try the windows ``groups[i:j]`` from this ``j`` down, so a start group costs at most
+    ``max_digits`` windows and a run is scanned in linear time."""
+    total, j = 0, i
+    while j < len(groups) and total + groups[j][2] <= max_digits:
+        total += groups[j][2]
+        j += 1
+    return j
 
 
 def _digit_runs(text: str, folded: str, index: list[int]) -> list[Span]:
@@ -285,18 +380,36 @@ def _digit_runs(text: str, folded: str, index: list[int]) -> list[Span]:
     # expanded; cue lookups therefore go through the folded position of the run's start.
     rev = {orig: i for i, orig in reversed(list(enumerate(index)))}
     out: list[Span] = []
-    for run in DIGIT_RUN.finditer(text):
-        groups = [
-            (g.start() + run.start(), g.end() + run.start(), g.group(0)) for g in DIGIT_GROUP.finditer(run.group(0))
-        ]
+    for groups in digit_groups(text):
+        run_digits = "".join(c for c in text[groups[0][0] : groups[-1][1]] if c.isdigit())
+        offsets = [0]  # offsets[k] = digits before group k
+        for g in groups:
+            offsets.append(offsets[-1] + g[2])
+        # Luhn in O(1) per window: prefix sums with even positions plain / odd doubled (luhn_a) and the reverse
+        # (luhn_b); the window's last digit decides which one applies.
+        luhn_a, luhn_b = [0], [0]
+        for p, c in enumerate(run_digits):
+            plain, double = int(c), _LUHN_DOUBLE[c]
+            luhn_a.append(luhn_a[-1] + (plain if p % 2 == 0 else double))
+            luhn_b.append(luhn_b[-1] + (double if p % 2 == 0 else plain))
         i = 0
         while i < len(groups):
             matched = False
-            for j in range(len(groups), i, -1):
-                start, end = groups[i][0], groups[j - 1][1]
-                raw = text[start:end]
-                number = "".join(c for c in raw if c.isdigit())
-                kind = _classify(raw, number, raw.startswith("+"), folded, rev.get(start, start))
+            start = groups[i][0]
+            plus = text[start] == "+"
+            cues = _Cues(folded, rev.get(start, start))
+            lengths = cues.lengths(plus)
+            for j in range(window_limits(groups, i, MAX_WINDOW_DIGITS), i, -1):
+                n = offsets[j] - offsets[i]
+                if n < 4:
+                    break  # shorter windows only get shorter: no kind has fewer than 4 digits
+                if n not in lengths:
+                    continue
+                a, b = offsets[i], offsets[j]
+                number = run_digits[a:b]
+                end = groups[j - 1][1]
+                sums = luhn_a if (b - 1) % 2 == 0 else luhn_b
+                kind = _classify(text[start:end], number, plus, cues, luhn=(sums[b] - sums[a]) % 10 == 0)
                 if kind:
                     out.append(Span(start, end, kind))
                     i, matched = j, True

@@ -71,7 +71,8 @@ _SENSITIVE_EXACT = frozenset(
 # Substring matches: any key containing one of these is a credential.
 _SENSITIVE_PARTS = ("password", "passwd", "secret", "token", "api_key", "apikey", "private_key", "credential")
 
-_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
+# Starts only where a local part can start: a long run without "@" is scanned once, not once per character.
+_EMAIL = re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
 _PHONE = re.compile(r"(?<![\w+])\+\d[\d\s().-]{6,18}\d")
 _BEARER = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}")
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*")

@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import datetime as dt
+import time
 
 import pytest
 
+from app.observability.scrub import scrub_text
+from app.privacy import patterns
 from app.privacy.patterns import find, luhn_ok
 from app.privacy.text import fold, fold_with_map, original_span
 
 TODAY = dt.date(2026, 10, 24)
+# 20,000 characters take about 0.2 s (0.5 s under coverage); the cubic version took hours. Generous for slow CI.
+PERF_BUDGET_S = 3.0
 # A synthetic 12-digit CCCD, built so no 12-digit literal sits in the file (the resource-id scanner reads one as an
 # AWS account id).
 CCCD = "001085" + "012345"
@@ -106,3 +111,29 @@ def test_fold_maps_back_to_the_original() -> None:
     assert folded == "nguyen duc hoa" and fold("Đà Lạt") == "da lat"
     start = folded.index("duc")
     assert text[slice(*original_span(index, start, start + 3))] == "ĐỨC"
+
+
+# ── Review AA-938: cost stays linear (passes 1-2 and the log / Sentry path run on every string) ────────────────────
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        "1 ",
+        "1-",
+        "1.",
+        "(1)",
+        "+1 ",
+        "0912 345 678 ",
+        "Prices: 10 11 12 13 14 15 16 17 18 19 ",
+        "a",
+        "a.",
+    ],
+)
+def test_find_is_linear_on_adversarial_text(shape: str) -> None:
+    # Before the fix a 2,400-char digit list took 1.6 s (cubic); 20,000 characters would have taken hours.
+    text = (shape * (20_000 // len(shape) + 1))[:20_000]
+    for scan in (lambda: patterns.find(text, TODAY), lambda: scrub_text(text)):
+        started = time.perf_counter()
+        scan()
+        assert time.perf_counter() - started < PERF_BUDGET_S, shape
