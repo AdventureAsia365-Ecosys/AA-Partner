@@ -237,10 +237,13 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   Adding a browser call = adding one line there.
 - **Agency picker**: `GET /crm/v1/memberships` -> one active agency is picked automatically, several -> the chooser;
   `/auth/agency` checks the id against the caller's own list before it goes into the session.
-- **EN/VI and dates** (`web/lib/i18n.ts`, `web/lib/dates.ts`, R32): date locale en-AU, en-GB, en-US or vi-VN (the
-  person's cookie, else the agency's `default_locale`, else Accept-Language), UI language from it. Dates are always
-  shown with the month spelled ("3 Apr" en-AU, "Apr 3" en-US); typed dates follow the locale's order and the field
-  shows the reading.
+- **EN/VI and dates** (`web/lib/i18n.ts`, `web/lib/dates.ts`, R32): date locale en-AU, en-GB, en-US or vi-VN, UI
+  language from it. **English by default** (owner rule S249, AA-936): the person's own choice (cookie `aa_crm_locale`,
+  the language switch) -> a language set explicitly on the page's record (only a public form's `locale` today) ->
+  en-AU. The agency's `crm.tenant.default_locale` does not switch the UI and neither does Accept-Language;
+  `default_locale` stays the agency's data language (the API writes trip titles in it, `app/intake/stage1.py`
+  `trip_title`). Dates are always shown with the month spelled ("3 Apr 2026" en-AU, "Apr 3, 2026" en-US,
+  "3 thg 4, 2026" vi-VN); typed dates follow the locale's order and the field shows the reading.
 - **Shell**: the whole agency IA of design v3 §2.2 in the sidebar (each section an empty state that names its card in
   `data-card`), the Content studio cross-link (`CONTENT_STUDIO_URL`), Settings with language and dates. The AA-CIS-App
   portal sidebar links back ("Open CRM").
@@ -257,7 +260,7 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 
 - **Inquiry form (C-01)**: `web/app/c/f/[publicKey]` on the client host renders the Stage 1 form from
   `GET /crm/public/v1/forms/{key}` (field codes from `app/intake/stage1.py`, the server's validator; the web words
-  them EN/VI). The browser posts to `/crm/public/v1/forms/{key}/submissions` on its own origin, so the API's limits
+  them in English unless the form definition sets `locale`, AA-936). The browser posts to `/crm/public/v1/forms/{key}/submissions` on its own origin, so the API's limits
   key on the real viewer address. The proxy's CSP `frame-ancestors` for that page = `'self'` + the form's
   `allowed_origins` (60 s memo; missing keys memoised apart, at most 20 memo misses per viewer per minute before the
   API is asked, the last good definition served when a refresh fails). Honeypot filled -> 202, nothing stored; no

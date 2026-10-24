@@ -16,15 +16,15 @@ export interface ServerContext {
   path: string;
 }
 
-export async function serverContext(agencyDefault?: string | null): Promise<ServerContext> {
+/**
+ * `explicit`: a language set on the page's own record (a public form's `locale`), never the agency's default_locale
+ * nor Accept-Language — without the person's cookie or that, the page is English (lib/i18n.ts resolveLocale).
+ */
+export async function serverContext(explicit?: string | null): Promise<ServerContext> {
   const cfg = config();
   const jar = await cookies();
   const h = await headers();
-  const locale = resolveLocale({
-    cookie: jar.get(LOCALE_COOKIE)?.value,
-    agencyDefault,
-    acceptLanguage: h.get("accept-language"),
-  });
+  const locale = resolveLocale({ cookie: jar.get(LOCALE_COOKIE)?.value, explicit });
   return {
     cfg,
     session: cfg.authConfigured ? readSession(cfg, jar) : null,

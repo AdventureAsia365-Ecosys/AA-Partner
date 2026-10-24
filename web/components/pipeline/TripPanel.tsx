@@ -2,9 +2,12 @@
 // web/components/pipeline/TripPanel.tsx — the trip workspace of Slice 1 (AA-936). Moves follow the API's
 // allowed_moves (a lost trip needs one of the fixed reasons, R23); the owner assigns anyone, others may take an
 // unassigned trip (R8); contact details open per click and the API audits each one (design v3 §4.4).
+// The page is a full server render (the board card is a plain link): until React hydrates, a click on a button does
+// nothing. So the action buttons stay disabled until then and the root carries `data-hydrated="true"` once handlers
+// are attached (AA-936 E2E run 40060691620 clicked "Show email" before hydration and no reveal reached the API).
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Badge, Button, K } from "@/app/_kit";
+import { Badge, Button, K, useHydrated } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
@@ -44,6 +47,7 @@ export function TripPanel({ view, members, role, lang, locale }: { view: TripVie
   const [lostReason, setLostReason] = useState<string>("");
   const [note, setNote] = useState("");
   const [revealed, setRevealed] = useState<Record<string, string>>({});
+  const hydrated = useHydrated();
   const me = members.find((m) => m.is_me);
 
   async function run(path: string, method: "POST" | "PATCH", body: unknown) {
@@ -68,7 +72,7 @@ export function TripPanel({ view, members, role, lang, locale }: { view: TripVie
   const owner = members.find((m) => m.member_id === trip.owner_member_id);
   const canTake = !trip.owner_member_id && role !== "owner" && me;
   return (
-    <div data-testid="crm-trip" data-card="AA-936" style={{ display: "grid", gap: 14, maxWidth: 1080, minWidth: 0 }}>
+    <div data-testid="crm-trip" data-card="AA-936" data-hydrated={hydrated ? "true" : undefined} style={{ display: "grid", gap: 14, maxWidth: 1080, minWidth: 0 }}>
       <a href="/pipeline" style={{ fontSize: 13, color: K.accentDeep }}>
         ← {t(lang, "trip.back")}
       </a>
@@ -77,7 +81,9 @@ export function TripPanel({ view, members, role, lang, locale }: { view: TripVie
           {trip.title}
         </h1>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", fontSize: 13 }}>
-          <Badge tone="accent">{stageLabel(lang, trip.stage)}</Badge>
+          <span data-testid="trip-stage" data-stage={trip.stage} style={{ display: "contents" }}>
+            <Badge tone="accent">{stageLabel(lang, trip.stage)}</Badge>
+          </span>
           {trip.lost_reason_code && <Badge tone="neutral">{codeLabel(lang, "lost", trip.lost_reason_code)}</Badge>}
           <label style={{ display: "flex", gap: 6, alignItems: "center", color: K.muted }}>
             {t(lang, "trip.waitingOn")}
@@ -128,9 +134,12 @@ export function TripPanel({ view, members, role, lang, locale }: { view: TripVie
           {view.allowed_moves
             .filter((s) => s !== "lost")
             .map((s: Stage) => (
-              <Button key={s} size="sm" variant="primary" disabled={busy} onClick={() => void run(`trips/${trip.trip_id}/stage`, "POST", { to: s })}>
-                {trip.stage === "lost" ? t(lang, "trip.reopen") : fmt(t(lang, "trip.moveTo"), { stage: stageLabel(lang, s) })}
-              </Button>
+              // The kit Button is a vendored CIS copy without a test id: the wrapper carries it (display: contents).
+              <span key={s} data-testid={`trip-move-${s}`} style={{ display: "contents" }}>
+                <Button size="sm" variant="primary" disabled={busy || !hydrated} onClick={() => void run(`trips/${trip.trip_id}/stage`, "POST", { to: s })}>
+                  {trip.stage === "lost" ? t(lang, "trip.reopen") : fmt(t(lang, "trip.moveTo"), { stage: stageLabel(lang, s) })}
+                </Button>
+              </span>
             ))}
           {view.allowed_moves.includes("lost") && !lostOpen && (
             <Button size="sm" variant="ghost" disabled={busy} onClick={() => setLostOpen(true)}>
@@ -208,17 +217,21 @@ export function TripPanel({ view, members, role, lang, locale }: { view: TripVie
                     (revealed[`${p.traveler_id}:email`] ? (
                       <code data-testid="revealed-email" style={{ fontSize: 12.5, overflowWrap: "anywhere" }}>{revealed[`${p.traveler_id}:email`]}</code>
                     ) : (
-                      <Button size="sm" variant="ghost" onClick={() => void reveal(p.traveler_id, "email")}>
-                        {t(lang, "trip.showEmail")}
-                      </Button>
+                      <span data-testid="show-email" style={{ display: "contents" }}>
+                        <Button size="sm" variant="ghost" disabled={!hydrated} onClick={() => void reveal(p.traveler_id, "email")}>
+                          {t(lang, "trip.showEmail")}
+                        </Button>
+                      </span>
                     ))}
                   {p.has_phone &&
                     (revealed[`${p.traveler_id}:phone`] ? (
                       <code style={{ fontSize: 12.5 }}>{revealed[`${p.traveler_id}:phone`]}</code>
                     ) : (
-                      <Button size="sm" variant="ghost" onClick={() => void reveal(p.traveler_id, "phone")}>
-                        {t(lang, "trip.showPhone")}
-                      </Button>
+                      <span data-testid="show-phone" style={{ display: "contents" }}>
+                        <Button size="sm" variant="ghost" disabled={!hydrated} onClick={() => void reveal(p.traveler_id, "phone")}>
+                          {t(lang, "trip.showPhone")}
+                        </Button>
+                      </span>
                     ))}
                 </span>
               </li>
@@ -230,7 +243,7 @@ export function TripPanel({ view, members, role, lang, locale }: { view: TripVie
         <Panel title={t(lang, "trip.tasks")} testId="trip-tasks">
           <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8 }}>
             {view.tasks.map((task) => (
-              <li key={task.task_id} style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+              <li key={task.task_id} data-testid="trip-task" data-kind={task.kind} data-status={task.status} style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
                 <span style={{ fontSize: 13.5, textDecoration: task.status === "open" ? "none" : "line-through", color: task.status === "open" ? K.ink : K.muted }}>
                   {codeLabel(lang, "task", task.kind)}
                   {task.due_at && task.status === "open" ? ` · ${fmt(t(lang, "trip.due"), { when: new Date(task.due_at).toLocaleString(locale, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) })}` : ""}
