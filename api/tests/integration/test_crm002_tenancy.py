@@ -37,7 +37,11 @@ EXTRA_POLICIES = {
     ("placeholder_map", "placeholder_map_expired_purge"): ("d", {APP_ROLE}),
     #   crm-012: the signed client link lookup of app.tenancy.client_link_tx() (keyed on app.client_link_hash).
     ("client_link", "client_link_token_lookup"): ("r", {APP_ROLE}),
+    #   crm-014: the RESTRICTIVE margin gate on line money (owner / agent / job only; narrows tenant_isolation).
+    ("booking_line_money", "booking_line_money_margin_roles"): ("r", {APP_ROLE}),
 }
+# Extra policies that must be RESTRICTIVE (ANDed with tenant_isolation); every other extra policy is permissive.
+RESTRICTIVE_POLICIES = {("booking_line_money", "booking_line_money_margin_roles")}
 
 ISS = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_TESTPARTN"
 
@@ -49,6 +53,7 @@ PLATFORM_TABLES = {
     "llm_usage_daily": "LLM usage rollup over every agency (crm-005), no tenant column, no PII",
     "audit_export_tenant": "audit export registry, one row per agency, ids and times only (crm-007, AA-940)",
     "membership_feed_state": "the CIS membership feed cursor, one platform row, no tenant column (crm-013, AA-978)",
+    "fx_rate_platform": "reference FX rates per day, no tenant column, no PII (crm-014, AA-944)",
 }
 # Append-only tenant tables (crm-003): tenant column, RLS and policy as the template, but no updated_at, no trash
 # columns; instead the append-only trigger, and crm_app may only INSERT and SELECT.
@@ -60,6 +65,8 @@ APPEND_ONLY_TABLES = {
     "audit_export_manifest": "the hourly audit export hash chain (crm-007, AA-940)",
     "lifecycle_run": "counts of each lifecycle job run per agency (crm-010, AA-942)",
     "membership_inbox": "one row per CIS membership feed event, ids and codes only (crm-013, AA-978)",
+    "booking_line_money": "money of a booking line, a frozen FX block, corrections supersede (crm-014, AA-944)",
+    "fx_rate_override": "the owner's FX rate of a day, the latest row wins (crm-014, AA-944)",
 }
 # AA-942 (crm-010): append-only tables that erasure must reach. Their trigger is crm.erasable_append_only(): UPDATE and
 # TRUNCATE always refused, DELETE only as crm_owner inside crm.erase_subject / crm.lifecycle_purge_expired. Every other
@@ -67,7 +74,12 @@ APPEND_ONLY_TABLES = {
 ERASABLE_APPEND_ONLY = {"consent", "trip_stage_history", "llm_call"}
 # AA-978 (crm-013): membership_inbox is erased with its agency (tenant scope) through its own copy of that rule
 # (crm-010's Guard 1 pins crm.erasable_append_only() to the three tables above).
-OWN_APPEND_ONLY_TRIGGER = {"membership_inbox": "membership_inbox_append_only"}
+OWN_APPEND_ONLY_TRIGGER = {
+    "membership_inbox": "membership_inbox_append_only",
+    # AA-944 (crm-014): the ledger's append-only tables, erased with their trip / agency.
+    "booking_line_money": "ledger_append_only",
+    "fx_rate_override": "ledger_append_only",
+}
 APPEND_ONLY_COLUMNS = {
     "tenant_id": ("uuid", True),
     "created_at": ("timestamp with time zone", True),
@@ -161,6 +173,8 @@ async def test_every_crm_table_follows_the_base_template(admin: asyncpg.Connecti
                 problems.append(f"{name}.{p['polname']}: policy not listed in EXTRA_POLICIES")
             elif (p["cmd"], set(p["roles"])) != want:
                 problems.append(f"{name}.{p['polname']}: {p['cmd']} TO {sorted(p['roles'])} != {want}")
+            if want is not None and p["polpermissive"] == ((name, p["polname"]) in RESTRICTIVE_POLICIES):
+                problems.append(f"{name}.{p['polname']}: permissive must be {not p['polpermissive']}")
         triggers = await admin.fetch(
             "SELECT p.proname FROM pg_trigger g JOIN pg_proc p ON p.oid = g.tgfoid "
             "WHERE g.tgrelid = $1 AND NOT g.tgisinternal",
