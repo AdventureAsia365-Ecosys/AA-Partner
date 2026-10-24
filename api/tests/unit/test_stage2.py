@@ -156,3 +156,14 @@ def test_free_starts_cross_a_daylight_saving_change() -> None:
     now = datetime(2026, 3, 28, 0, 0, tzinfo=UTC)
     got = [slots.slot_text(s) for s in slots.free_starts(rules, "Australia/Sydney", set(), now)]
     assert got == ["2026-03-28T22:00:00Z", "2026-04-04T23:00:00Z"]
+
+
+def test_a_body_with_too_many_keys_is_refused_before_counting() -> None:
+    """hidden_answers_dropped must stay inside the crm-005 CHECK (0..1000): a key flood is a 422, never a 500."""
+    flood = {**PLAN, **{f"k{n}": 1 for n in range(stage2.MAX_KEYS)}}
+    with pytest.raises(stage2.Stage2Invalid) as refused:
+        stage2.validate(flood, trip_style=None)
+    assert refused.value.fields == ["body"]
+    with pytest.raises(stage1.Stage1Invalid) as refused1:
+        stage1.validate({"consent_contact": True, **{f"k{n}": 1 for n in range(stage1.MAX_KEYS)}}, honeypot_field="w")
+    assert refused1.value.fields == ["body"]

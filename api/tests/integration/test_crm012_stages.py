@@ -249,6 +249,92 @@ async def test_bulk_preview_equals_the_run_and_a_stale_preview_is_refused(
     assert {r["stage"] for r in stages_now} == {"inquiry"}
 
 
+async def test_bulk_override_goes_only_to_trips_whose_gate_still_stands(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection
+) -> None:
+    """Review round 1: a bulk Qualifying -> Proposal with an override where one trip is already at 100 % moves every
+    trip; the complete one carries no override. Wrong reasons are refused before the preview."""
+    keys = _keys()
+    t = await _trip(app_pool, keys)
+    form = await _form(app_pool, t["tenant"], t["owner"])
+    other = answers(email=f"x{uuid.uuid4().hex[:8]}@example.test", phone="+84912345670")
+    await intake.submit(app_pool, keys, SETTINGS, form.public_key, other, origin=None)
+    await _process_all(app_pool, keys, t["tenant"])
+    trips = [r["trip_id"] for r in await _owner_fetch(admin, t["tenant"], "SELECT trip_id FROM crm.trip")]
+    assert len(trips) == 2
+    for trip_id in trips:
+        await _move(app_pool, keys, {**t, "trip": trip_id}, "qualifying")
+    async with tenant_tx(app_pool, t["owner"], t["tenant"]) as ctx:
+        full = await stage2.fill_from_call(ctx, Vault(keys, ctx), t["trip"], PLANNED)
+    assert full["completeness"]["s2"] == 100
+    common: dict[str, Any] = {"to": "proposal", "trip_ids": None, "from_stage": "qualifying", "lost_reason": None}
+    for reason, code in (("manual_booking", "invalid_override_reason"), ("bribe", "invalid_override_reason")):
+        with pytest.raises(Invalid) as refused:
+            async with tenant_tx(app_pool, t["owner"], t["tenant"]) as ctx:
+                await stages.bulk_move(ctx, **common, override_reason=reason, dry_run=True, expected_hash=None)
+        assert refused.value.code == code
+    for kw, code in (
+        ({"to": "lost", "lost_reason": None, "override_reason": None}, "lost_reason_required"),
+        ({"to": "lost", "lost_reason": "price", "override_reason": "other"}, "override_not_needed"),
+        ({"to": "inquiry", "lost_reason": "price", "override_reason": None}, "lost_reason_not_allowed"),
+    ):
+        with pytest.raises(Invalid) as refused:
+            async with tenant_tx(app_pool, t["owner"], t["tenant"]) as ctx:
+                await stages.bulk_move(
+                    ctx, trip_ids=None, from_stage="qualifying", dry_run=True, expected_hash=None, **kw
+                )
+        assert refused.value.code == code
+    async with tenant_tx(app_pool, t["owner"], t["tenant"]) as ctx:
+        preview = await stages.bulk_move(ctx, **common, override_reason="client_in_hurry", dry_run=True,
+                                         expected_hash=None)  # fmt: skip
+    assert len(preview["eligible"]) == 2 and preview["blocked"] == []
+    async with tenant_tx(app_pool, t["owner"], t["tenant"]) as ctx:
+        run = await stages.bulk_move(ctx, **common, override_reason="client_in_hurry", dry_run=False,
+                                     expected_hash=preview["preview_hash"])  # fmt: skip
+    assert run["moved"] == 2
+    rows = await _owner_fetch(
+        admin,
+        t["tenant"],
+        "SELECT trip_id, override_reason_code FROM crm.trip_stage_history WHERE batch_id = $1",
+        uuid.UUID(run["batch_id"]),
+    )
+    assert {r["trip_id"]: r["override_reason_code"] for r in rows} == {
+        t["trip"]: None,
+        next(x for x in trips if x != t["trip"]): "client_in_hurry",
+    }
+
+
+async def test_auto_send_never_blocks_the_move(app_pool: asyncpg.Pool, admin: asyncpg.Connection) -> None:
+    """Review round 1: auto-send on, an archived lead -> the trip still reaches Qualifying (stage2_skipped); an
+    assistant moving a trip not assigned to them moves it without the send (the message rule)."""
+    keys = _keys()
+    t = await _trip(app_pool, keys, "owner", "assistant")
+    async with tenant_tx(app_pool, t["owner"], t["tenant"]) as ctx:
+        await pipeline_settings.update(ctx, {"stage2_auto_send": True})
+        await ctx.conn.execute(
+            "UPDATE crm.traveler SET archived_at = now(), archive_reason = 'agent', archived_by = 'member:test' "
+            "WHERE traveler_id = (SELECT traveler_id FROM crm.trip_traveler WHERE trip_id = $1 AND role = 'lead')",
+            t["trip"],
+        )
+    moved = await _move(app_pool, keys, t, "qualifying")
+    assert moved["stage"] == "qualifying"
+    assert moved["stage2_sent"] is None and moved["stage2_skipped"] == "traveler_archived"
+    links = await _owner_fetch(admin, t["tenant"], "SELECT 1 FROM crm.client_link WHERE trip_id = $1", t["trip"])
+    assert links == []  # the savepoint took the half-made link back
+    async with tenant_tx(app_pool, t["owner"], t["tenant"]) as ctx:
+        await ctx.conn.execute(
+            "UPDATE crm.traveler SET archived_at = NULL, archive_reason = NULL, archived_by = NULL "
+            "WHERE traveler_id = (SELECT traveler_id FROM crm.trip_traveler WHERE trip_id = $1 AND role = 'lead')",
+            t["trip"],
+        )
+    await _move(app_pool, keys, t, "inquiry")
+    moved = await _move(app_pool, keys, t, "qualifying", who=1)  # the assistant; the trip is not assigned to them
+    assert moved["stage"] == "qualifying"
+    assert moved["stage2_sent"] is None and moved["stage2_skipped"] == "assigned_only"
+    dispatch = await _owner_fetch(admin, t["tenant"], "SELECT 1 FROM crm.dispatch_queue WHERE trip_id = $1", t["trip"])
+    assert dispatch == []
+
+
 async def test_cancel_dry_run_then_run(app_pool: asyncpg.Pool, admin: asyncpg.Connection) -> None:
     keys = _keys()
     t = await _trip(app_pool, keys, "owner", "assistant")
@@ -341,10 +427,16 @@ async def test_settings_are_owner_values_checked(app_pool: asyncpg.Pool) -> None
     t = await _trip(app_pool, keys)
     async with tenant_tx(app_pool, t["owner"], t["tenant"]) as ctx:
         assert (await pipeline_settings.read(ctx))["timezone"] == "Asia/Ho_Chi_Minh"
-    for bad in ({"timezone": "Mars/Olympus"}, {"call_slot_rules": {"windows": []}}, {"stage2_auto_send": "yes"}):
-        with pytest.raises(Invalid):
+    for bad, code in (
+        ({"timezone": "Mars/Olympus"}, "invalid_timezone"),
+        ({"timezone": "Singapore"}, "invalid_timezone"),  # in pg_timezone_names, not the Area/Location shape
+        ({"call_slot_rules": {"windows": []}}, "invalid_call_slot_rules"),
+        ({"stage2_auto_send": "yes"}, "invalid_stage2_auto_send"),
+    ):
+        with pytest.raises(Invalid) as refused:
             async with tenant_tx(app_pool, t["owner"], t["tenant"]) as ctx:
                 await pipeline_settings.update(ctx, bad)
+        assert refused.value.code == code
     rules = {"windows": [{"dow": 2, "start": "09:00", "end": "11:00"}], "duration_min": 30, "horizon_days": 7}
     async with tenant_tx(app_pool, t["owner"], t["tenant"]) as ctx:
         out = await pipeline_settings.update(ctx, {"call_slot_rules": rules, "timezone": "Asia/Bangkok"})
@@ -400,6 +492,22 @@ async def test_public_stage2_drops_hidden_answers_and_needs_health_consent(
     ]
     # The link stays usable until it expires (Fix B11); the page knows it was submitted.
     assert (await stage2_public.read(app_pool, keys, token))["submitted"] is True
+
+
+async def test_public_stage2_refuses_a_flood_of_unknown_keys(app_pool: asyncpg.Pool) -> None:
+    """Review round 1: 1500 junk keys (~13 KB, under the body cap) is a 422, never a 500 from the crm-005
+    hidden_answers_dropped CHECK (0..1000); fill from call has the same limit."""
+    keys = _keys()
+    t = await _trip(app_pool, keys)
+    token = await _send(app_pool, keys, t)
+    flood = {**PLANNED, **{f"k{n}": 1 for n in range(1500)}}
+    with pytest.raises(Invalid) as refused:
+        await stage2_public.submit(app_pool, keys, SETTINGS_WITH_ORIGIN, token, flood, origin=PAGE)
+    assert refused.value.code == "invalid_submission"
+    with pytest.raises(Invalid) as refused:
+        async with tenant_tx(app_pool, t["owner"], t["tenant"]) as ctx:
+            await stage2.fill_from_call(ctx, Vault(keys, ctx), t["trip"], flood)
+    assert refused.value.code == "invalid_submission"
 
 
 async def test_public_stage2_tokens_cannot_be_probed(app_pool: asyncpg.Pool) -> None:

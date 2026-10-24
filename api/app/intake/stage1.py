@@ -47,6 +47,9 @@ MAX_CHILDREN = 20
 MAX_ADULTS = 50
 MAX_NIGHTS = 90
 MAX_FLEX = 60
+# A body with more keys than this is refused before anything is counted (hidden_answers_dropped stays inside the
+# crm-005 CHECK, 0..1000).
+MAX_KEYS = 100
 
 _MONTH = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")
 _CONTROL = re.compile(r"[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]")
@@ -232,7 +235,7 @@ def earliest_travel_day(today: date | None = None) -> date:
 def validate(raw: dict[str, Any], *, honeypot_field: str, today: date | None = None) -> Stage1Answers:
     """Normalised answers, or :class:`ConsentMissing` / :class:`Stage1Invalid`. The honeypot is checked by the
     caller first (:func:`honeypot_filled`). A start date or month in the past is refused (``today`` for tests)."""
-    if not isinstance(raw, dict):
+    if not isinstance(raw, dict) or len(raw) > MAX_KEYS:
         raise Stage1Invalid(["body"])
     if raw.get("consent_contact") is not True:
         raise ConsentMissing

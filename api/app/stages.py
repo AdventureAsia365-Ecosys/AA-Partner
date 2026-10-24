@@ -39,6 +39,7 @@ import asyncpg
 
 from app.errors import Conflict, Invalid, NotFound
 from app.intake import completeness
+from app.permissions import Action, decide
 from app.tenancy import AnyContext, TenantContext
 from app.vault import Vault
 
@@ -61,6 +62,8 @@ GATES: dict[tuple[str, str], str] = {
     ("proposal", "booked"): "booking",
     ("booked", "pre_departure"): "stage3",
 }
+# The gate of the one gated edge into each stage (a bulk move checks its override reason against it up front).
+TARGET_GATES: dict[str, str] = {to: gate for (_from, to), gate in GATES.items()}
 # The reasons an override may carry, per gate (crm-012 trip_stage_history_override_chk).
 OVERRIDE_REASONS: dict[str, tuple[str, ...]] = {
     "stage2": ("client_in_hurry", "repeat_client", "info_by_phone", "other"),
@@ -257,9 +260,17 @@ def undo_view(history_id: uuid.UUID, at: dt.datetime) -> dict[str, Any]:
 
 
 async def _check_gate(
-    ctx: AnyContext, vault: Vault | None, trip: Any, to: str, override_reason: str | None
+    ctx: AnyContext,
+    vault: Vault | None,
+    trip: Any,
+    to: str,
+    override_reason: str | None,
+    *,
+    override_if_needed: bool = False,
 ) -> tuple[str | None, str | None]:
-    """(gate to override, reason) for this move, or (None, None) when no gate stands; raises the 409."""
+    """(gate to override, reason) for this move, or (None, None) when no gate stands; raises the 409.
+    ``override_if_needed`` (a bulk move): an override on a Stage 2 gate that is already met is ignored (and not
+    logged) instead of answering 422 ``override_not_needed``."""
     gate = GATES.get((trip["stage"], to))
     if gate is None:
         if override_reason is not None:
@@ -269,7 +280,7 @@ async def _check_gate(
         done = await completeness.refresh(ctx, vault, trip["trip_id"], actor=_actor(ctx)) if vault else None
         s2 = done.s2 if done is not None else _s2(trip["intake_completeness"])
         if s2 >= completeness.STAGE2_GATE:
-            if override_reason is not None:
+            if override_reason is not None and not override_if_needed:
                 raise Invalid("override_not_needed", "Stage 2 is complete enough")
             return None, None
         if override_reason is None:
@@ -312,6 +323,7 @@ async def move(
     vault: Vault | None = None,
     batch_id: uuid.UUID | None = None,
     reopen: bool = False,
+    override_if_needed: bool = False,
 ) -> dict[str, Any]:
     """One move of one trip (the stage menu, a bulk move, the date rule). ``vault`` lets the Stage 2 gate recompute
     completeness (and name what is missing); without it the stored percentage decides. ``reopen``: the legacy Slice 1
@@ -335,7 +347,7 @@ async def move(
         raise Invalid("lost_reason_not_allowed", "a reason goes with lost only")
     if to not in ALLOWED_MOVES.get(stage, ()):
         raise Conflict("transition_not_allowed", allowed=allowed_moves(stage))
-    gate, override = await _check_gate(ctx, vault, trip, to, override_reason)
+    gate, override = await _check_gate(ctx, vault, trip, to, override_reason, override_if_needed=override_if_needed)
     waiting_on = await derive_waiting_on(ctx, trip_id, to)
     try:
         async with ctx.conn.transaction():
@@ -356,7 +368,7 @@ async def move(
     )
     audit_reason = f"override_{override}" if override is not None else reason
     ctx.audit("stage_change", "allowed", "trip", str(trip_id), reason=audit_reason[:40])
-    effects = await _enter_effects(ctx, vault, trip_id, stage, to)
+    effects = await _enter_effects(ctx, vault, trip_id, stage, to, owner_member_id=trip["owner_member_id"])
     if effects.get("stage2_sent"):
         waiting_on = await refresh_waiting_on(ctx, trip_id) or waiting_on
     return {
@@ -372,10 +384,22 @@ async def move(
 
 
 async def _enter_effects(
-    ctx: AnyContext, vault: Vault | None, trip_id: uuid.UUID, from_stage: str, to: str
+    ctx: AnyContext,
+    vault: Vault | None,
+    trip_id: uuid.UUID,
+    from_stage: str,
+    to: str,
+    *,
+    owner_member_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     """What entering a stage starts (in the move's transaction, so Undo takes it back): entering Qualifying opens the
-    planning task below 80 % and, with Stage 2 auto-send on, sends the planning form (card E)."""
+    planning task below 80 % and, with Stage 2 auto-send on, sends the planning form (card E).
+
+    The auto-send never fails the move: it runs in a savepoint, and a trip whose form cannot go out (no lead, the lead
+    archived, ...) moves anyway with ``stage2_sent: null`` and ``stage2_skipped: <code>``. It also follows the message
+    rule of the member who moves (``MESSAGE_SEND``: an assistant only for the trips assigned to them), as the explicit
+    ``POST /trips/{id}/stage2/send`` does; a member the rule refuses moves the trip without the send
+    (``stage2_skipped``: the rule's reason). A move without a member (a job) acts for the agency."""
     if to != "qualifying" or vault is None:
         return {}
     done = await completeness.refresh(ctx, vault, trip_id, actor=_actor(ctx))
@@ -383,8 +407,18 @@ async def _enter_effects(
     if from_stage == "inquiry" and await ctx.conn.fetchval(SETTINGS_SQL) and done is not None and done.s2 < 100:
         from app.intake import stage2
 
-        sent = await stage2.send_link(ctx, vault, trip_id, auto=True)
-        out["stage2_sent"] = sent
+        member = getattr(ctx, "member_id", None)
+        if member is not None:
+            rule = decide(getattr(ctx, "member_role", None) or "", Action.MESSAGE_SEND,
+                          assigned=owner_member_id == member)  # fmt: skip
+            if not rule.allowed:
+                return {**out, "stage2_sent": None, "stage2_skipped": rule.reason}
+        try:
+            async with ctx.conn.transaction():
+                out["stage2_sent"] = await stage2.send_link(ctx, vault, trip_id, auto=True)
+        except (Conflict, NotFound) as exc:
+            out["stage2_sent"] = None
+            out["stage2_skipped"] = exc.code
     return out
 
 
@@ -442,7 +476,13 @@ async def _undo_one(ctx: TenantContext, trip: Any, history_id: uuid.UUID, *, bat
     )
     cancelled = _rows(await ctx.conn.execute(UNDO_DISPATCH_SQL, trip_id, last["at"]))
     revoked = _rows(await ctx.conn.execute(UNDO_LINKS_SQL, trip_id, last["at"]))
-    skipped = _rows(await ctx.conn.execute(UNDO_TASKS_SQL, trip_id, last["at"], f"member:{ctx.member_id}"))
+    # Only entering Qualifying opens tasks (_enter_effects). A planning task the Stage 2 gate's completeness refresh
+    # opened on another move belongs to the trip's earlier stage and stays.
+    skipped = (
+        _rows(await ctx.conn.execute(UNDO_TASKS_SQL, trip_id, last["at"], f"member:{ctx.member_id}"))
+        if last["to_stage"] == "qualifying"
+        else 0
+    )
     ctx.audit("stage_change", "allowed", "trip", str(trip_id), reason="undo")
     return {
         "trip_id": str(trip_id),
@@ -500,6 +540,7 @@ async def bulk_move(
         raise Invalid("too_many_trips", f"1 to {MAX_BULK} trips")
     if from_stage is not None and from_stage not in STAGES:
         raise Invalid("invalid_stage", ", ".join(STAGES))
+    _check_bulk_reasons(to, lost_reason, override_reason)
     rows = await ctx.conn.fetch(BULK_TRIPS_SQL, trip_ids, from_stage, MAX_BULK + 1)
     if len(rows) > MAX_BULK:
         raise Invalid("too_many_trips", f"at most {MAX_BULK} trips per bulk move; filter the column first")
@@ -532,10 +573,31 @@ async def bulk_move(
             override_reason=override_reason if (_stage_of(rows, trip_id), to) in GATES else None,
             vault=vault,
             batch_id=batch_id,
+            override_if_needed=True,
         )
     ctx.audit("bulk_stage_change", "allowed", "pipeline", str(batch_id), reason=to, object_ids=tuple(eligible))
     now = await ctx.conn.fetchval("SELECT now()")
     return {**out, "moved": len(eligible), "batch_id": str(batch_id), "undo": undo_view(batch_id, now)}
+
+
+def _check_bulk_reasons(to: str, lost_reason: str | None, override_reason: str | None) -> None:
+    """The reasons of a bulk move are checked before the preview, so a preview never lists trips the run refuses.
+    An override reason must fit the gate of the one gated edge into ``to``; on a run it is applied only to the trips
+    whose gate still stands (a trip already at 80 % moves without it)."""
+    from app.pipeline import LOST_REASONS
+
+    if to == "lost":
+        if lost_reason not in LOST_REASONS:
+            raise Invalid("lost_reason_required", "pick one of the fixed reasons", reasons=list(LOST_REASONS))
+    elif lost_reason is not None:
+        raise Invalid("lost_reason_not_allowed", "a reason goes with lost only")
+    if override_reason is None:
+        return
+    gate = TARGET_GATES.get(to)
+    if gate is None:
+        raise Invalid("override_not_needed", "no move into this stage has a gate")
+    if override_reason not in OVERRIDE_REASONS[gate]:
+        raise Invalid("invalid_override_reason", ", ".join(OVERRIDE_REASONS[gate]), gate=gate)
 
 
 def _stage_of(rows: list[Any], trip_id: str) -> str:

@@ -660,12 +660,15 @@ class ClientLink:
 
 
 @asynccontextmanager
-async def client_link_tx(pool: asyncpg.Pool, token_hash_hex: str) -> AsyncIterator[tuple[SystemContext, ClientLink]]:
+async def client_link_tx(
+    pool: asyncpg.Pool, token_hash_hex: str, *, purpose: str
+) -> AsyncIterator[tuple[SystemContext, ClientLink]]:
     """A client page opened from a signed link (AA-943, crm-012; the Stage 2 planning form C-02): the token's SHA-256
     (hex) finds one live ``crm.client_link`` row through the SELECT-only policy ``client_link_token_lookup`` before
     any agency is known; then ``app.tenant_id`` = its agency (which must be active) and ``app.actor`` =
-    ``client_link:<id>``, and the row is re-read locked. Unknown, expired, revoked or trashed token, a trashed trip or
-    a locked agency: 404 ``link_not_found`` (the same answer, so tokens cannot be probed). Audit semantics as
+    ``client_link:<id>``, and the row is re-read locked. Unknown, expired, revoked or trashed token, a link made for
+    another ``purpose`` (a page opens only its own kind of link), a trashed trip or a locked agency: 404
+    ``link_not_found`` (the same answer, so tokens cannot be probed). Audit semantics as
     :func:`system_tx`. Only ``app/intake/stage2_public.py`` may open it."""
     if not isinstance(token_hash_hex, str) or len(token_hash_hex) != 64:
         raise NotFound("link_not_found")
@@ -681,7 +684,7 @@ async def client_link_tx(pool: asyncpg.Pool, token_hash_hex: str) -> AsyncIterat
         if await conn.fetchval(TENANT_SQL, tenant_id) != "active":
             raise NotFound("link_not_found")
         row = await conn.fetchrow(CLIENT_LINK_LOCK_SQL, row["link_id"])
-        if row is None:
+        if row is None or row["purpose"] != purpose:
             raise NotFound("link_not_found")
         actor = f"client_link:{row['link_id']}"
         await conn.execute("SELECT set_config('app.actor', $1, true)", actor)

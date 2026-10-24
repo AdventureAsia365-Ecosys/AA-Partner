@@ -278,3 +278,69 @@ async def test_the_hourly_date_rule_hook() -> None:
     )
     assert json.loads(payload) == {"purpose": "hourly_schedule"}
     assert await hook(pool) is None
+
+
+async def test_a_bulk_override_is_ignored_where_the_stage2_gate_is_met() -> None:
+    conn = conn_for("qualifying", 85)
+    moved = await stages.move(tenant_ctx(conn), TRIP, "proposal", override_reason="other", override_if_needed=True)
+    assert moved["override_reason_code"] is None and conn.sql("set_config('app.gate_override'") == []
+    moved = await stages.move(
+        tenant_ctx(conn_for("qualifying", 10)), TRIP, "proposal", override_reason="other", override_if_needed=True
+    )
+    assert moved["override_reason_code"] == "other"
+
+
+@pytest.mark.parametrize(
+    ("to", "lost_reason", "override_reason", "code"),
+    [
+        ("lost", None, None, "lost_reason_required"),
+        ("lost", "bored", None, "lost_reason_required"),
+        ("qualifying", "price", None, "lost_reason_not_allowed"),
+        ("qualifying", None, "other", "override_not_needed"),
+        ("proposal", None, "manual_booking", "invalid_override_reason"),
+        ("booked", None, "other", "invalid_override_reason"),
+        ("proposal", None, "client_in_hurry", None),
+        ("booked", None, "manual_booking", None),
+        ("pre_departure", None, "manual_stage3", None),
+        ("lost", "price", None, None),
+    ],
+)
+async def test_bulk_reasons_are_checked_before_the_preview(
+    to: str, lost_reason: str | None, override_reason: str | None, code: str | None
+) -> None:
+    if code is None:
+        stages._check_bulk_reasons(to, lost_reason, override_reason)
+        return
+    with pytest.raises(Invalid) as refused:
+        stages._check_bulk_reasons(to, lost_reason, override_reason)
+    assert refused.value.code == code
+
+
+class _Done:
+    s2 = 10
+
+    def view(self) -> dict[str, Any]:
+        return {"s1": 0, "s2": 10, "s3": 0}
+
+
+async def test_auto_send_never_fails_the_move(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.intake import completeness, stage2
+
+    async def refresh(*_a: Any, **_k: Any) -> _Done:
+        return _Done()
+
+    async def archived(*_a: Any, **_k: Any) -> dict[str, Any]:
+        raise Conflict("traveler_archived")
+
+    monkeypatch.setattr(completeness, "refresh", refresh)
+    monkeypatch.setattr(stage2, "send_link", archived)
+    vault: Any = object()
+    conn = ScriptedConn().on("SELECT stage2_auto_send", True)
+    out = await stages._enter_effects(tenant_ctx(conn), vault, TRIP, "inquiry", "qualifying", owner_member_id=MEMBER)
+    assert out["stage2_sent"] is None and out["stage2_skipped"] == "traveler_archived"
+    # An assistant moving a trip that is not theirs: no send (the MESSAGE_SEND rule), the move goes on.
+    other = uuid.uuid4()
+    out = await stages._enter_effects(
+        tenant_ctx(conn, role="assistant"), vault, TRIP, "inquiry", "qualifying", owner_member_id=other
+    )
+    assert out["stage2_sent"] is None and out["stage2_skipped"] == "assigned_only"

@@ -45,6 +45,9 @@ VERSION = 1
 LINK_DAYS = 14
 PURPOSE = "stage2_form"
 MAX_DETAIL = 1000
+# A body with more keys than this is refused before anything is counted: hidden_answers_dropped must stay inside the
+# crm-005 CHECK (0..1000), and no real page sends more than a few dozen keys.
+MAX_KEYS = 100
 
 INTERESTS = (
     "culture", "food", "nature", "history", "beaches", "wellness", "photography", "wildlife", "trekking", "cycling",
@@ -187,7 +190,7 @@ def _check(name: str, value: Any) -> Any:
 def validate(raw: Any, *, trip_style: str | None) -> Stage2Answers:
     """The normalised answers, or :class:`Stage2Invalid` (field codes) / :class:`HealthConsentMissing`. Unknown keys
     and answers of a hidden branch are dropped and counted."""
-    if not isinstance(raw, dict):
+    if not isinstance(raw, dict) or len(raw) > MAX_KEYS:
         raise Stage2Invalid(["body"])
     consent = raw.get("health_consent")
     if any(raw.get(h) for h in HEALTH_FIELDS) and consent is not True:

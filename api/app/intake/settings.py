@@ -50,7 +50,10 @@ async def update(ctx: TenantContext, changes: dict[str, Any]) -> dict[str, Any]:
     try:
         async with ctx.conn.transaction():
             await ctx.conn.execute(UPSERT_SQL, zone, merged["stage2_auto_send"], json.dumps(merged["call_slot_rules"]))
-    except asyncpg.CheckViolationError:
+    except asyncpg.CheckViolationError as exc:
+        if exc.constraint_name == "tenant_settings_timezone_chk":
+            # In pg_timezone_names but not the Area/Location shape the database keeps (Singapore, GMT, EST5EDT, ...).
+            raise Invalid("invalid_timezone", "UTC or an IANA Area/Location name, e.g. Asia/Singapore") from None
         raise Invalid(
             "invalid_call_slot_rules",
             "windows (day 1-7, start < end, HH:MM), duration_min 10-240, horizon_days 1-60",

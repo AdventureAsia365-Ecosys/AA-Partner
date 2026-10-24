@@ -388,7 +388,9 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   free text to an encrypted `stage2_free_text` note, the set to a `form_submission` (stage `s2`, outcome `applied`).
   Sent as a signed `client_link` (14 days, SHA-256 only, a re-send revokes the old one) through the dispatcher
   (held / `no_sender` until CRM-17, so the trip page offers "Copy link" from the send answer), automatically on
-  inquiry -> qualifying with `tenant_settings.stage2_auto_send`, or filled in from a call (`PUT /trips/{id}/stage2`).
+  inquiry -> qualifying with `tenant_settings.stage2_auto_send` (never blocking the move: a lead that cannot be
+  messaged, or a mover whose `MESSAGE_SEND` rule refuses the trip, gives `stage2_skipped`), or filled in from a call
+  (`PUT /trips/{id}/stage2`). A signed link opens only the page of its own `purpose`.
 - **Completeness** (`app/intake/completeness.py`): s1 / s2 / s3 percent + missing codes on `trip.intake_completeness`
   and the profile; a Qualifying trip below 80 % has an open `get_planning_info` task, closed at 80 %.
 - **Call slots** (R15, `app/intake/slots.py`): weekly windows in the agency timezone (Settings > Forms,

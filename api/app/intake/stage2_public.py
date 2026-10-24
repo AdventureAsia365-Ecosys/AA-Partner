@@ -10,7 +10,8 @@ crm-012 lookup policy ``client_link_token_lookup``). This module is the only one
   and moves the link to ``submitted``. The link stays usable until it expires (a second device, the spouse: Fix B11);
   a repeated ``client_submission_id`` stores nothing new.
 
-Unknown, expired, revoked or foreign token: 404 ``link_not_found``, the same answer for all (no probing).
+Unknown, expired, revoked or foreign token, or a link of another purpose: 404 ``link_not_found``, the same answer for
+all (no probing).
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ def hash_hex(token: str) -> str:
 
 
 async def read(pool: asyncpg.Pool, keys: KeyProvider, token: str) -> dict[str, Any]:
-    async with client_link_tx(pool, hash_hex(token)) as (ctx, link):
+    async with client_link_tx(pool, hash_hex(token), purpose=stage2.PURPOSE) as (ctx, link):
         trip_style = await ctx.conn.fetchval(TRIP_SQL, link.trip_id)
         agency = await ctx.conn.fetchrow(AGENCY_SQL, link.tenant_id)
         await ctx.conn.execute(OPENED_SQL, link.link_id)
@@ -60,7 +61,7 @@ async def submit(
 ) -> dict[str, Any]:
     if settings.intake_origin_check and not settings.intake_page_origins:
         raise Unavailable("intake_not_configured")
-    async with client_link_tx(pool, hash_hex(token)) as (ctx, link):
+    async with client_link_tx(pool, hash_hex(token), purpose=stage2.PURPOSE) as (ctx, link):
         if not origin_allowed(origin, settings, ()):
             record_drop("stage2_origin", None)
             raise Forbidden("origin_not_allowed")
