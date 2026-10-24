@@ -292,6 +292,9 @@ jobs:
   web-docker-build:
     name: Web Docker Build Check
     runs-on: ubuntu-24.04-arm
+    defaults:
+      run:
+        working-directory: .
     steps:
       - uses: actions/checkout@v7
 
