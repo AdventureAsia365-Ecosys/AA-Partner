@@ -118,9 +118,10 @@ export function offboardingStep(
   return "confirm";
 }
 
-/** The 409 detail of a refused trip delete -> the message key the trip page shows (with "Cancel trip" instead). */
+/** The 409 detail of a refused trip delete -> the message key the trip page shows (a blocker: "Cancel trip" instead;
+ * a legal hold: wait for its release). */
 export function deleteRefusal(detail: string): MessageKey {
-  return ["has_money", "has_signature", "has_commission", "has_aa_line"].includes(detail)
+  return ["has_money", "has_signature", "has_commission", "has_aa_line", "legal_hold"].includes(detail)
     ? (`trip.blocked.${detail}` as MessageKey)
     : "trip.error";
 }

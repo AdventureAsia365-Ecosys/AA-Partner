@@ -22,7 +22,9 @@ Owner steps (``/crm/v1/lifecycle/offboarding``, :mod:`app.routers.lifecycle`):
 
 If the database refuses the erase (a hold placed after the confirmation, CRM16 a table the erase does not know),
 nothing was deleted (one transaction): the request becomes ``failed`` with the code and the agency goes back to
-``active``, so the owner can read why, cancel the request and start again later. A job that fails for another
+``active``, so the owner can read why, cancel the request and start again later. An erase job that meets DRY RUN
+(``LIFECYCLE_DRY_RUN`` switched on after the confirmation) is the same refusal: ``failed`` with
+``deletion_dry_run``, the agency ``active`` again, the job failed at once (review S249). A job that fails for another
 reason (retries exhausted) leaves the agency ``offboarding``; the platform recovery is in
 ``docs/implementation-notes/AA-942.md``.
 
@@ -39,7 +41,7 @@ import hashlib
 import json
 import logging
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import asyncpg
 
@@ -373,14 +375,26 @@ async def _erase(
         # A refusal of the database (a hold placed after the confirmation, a table the erase does not know): nothing
         # was deleted (one transaction); the request shows why, the agency is given back (active: the owner reads the
         # code and cancels) and the job is not retried.
-        async with lifecycle_tx(pool, tenant_id, actor=ACTOR, statuses=statuses) as ctx:
-            await ctx.conn.execute(FAILED_SQL, request_id, exc.code)
-            await ctx.conn.execute(TENANT_BACK_SQL, tenant_id)
-            ctx.audit("offboarding_erase", "denied", "tenant", str(tenant_id), reason=exc.code)
-        log.error("offboarding_erase_refused tenant_id=%s code=%s", tenant_id, exc.code)
-        raise PermanentError(exc.code) from None
+        await _refused(pool, tenant_id, request_id, exc.code)
     log.info("offboarding_erased tenant_id=%s request_id=%s keys=%d", tenant_id, request_id, destroyed)
     return {"request_id": str(request_id), "status": "erased", "keys_destroyed_count": destroyed}
+
+
+async def _refused(pool: asyncpg.Pool, tenant_id: uuid.UUID, request_id: uuid.UUID, code: str) -> NoReturn:
+    """An erase that deleted nothing: the request ``failed`` with ``code``, the agency ``active`` again, a ``denied``
+    audit event, and the job failed at once (:class:`PermanentError`, no retry)."""
+    statuses = frozenset({"offboarding"})
+    try:
+        async with lifecycle_tx(pool, tenant_id, actor=ACTOR, statuses=statuses) as ctx:
+            row = await ctx.conn.fetchrow(REQUEST_SQL, request_id)
+            if row is not None and row["status"] in ("erasing", "failed"):
+                await ctx.conn.execute(FAILED_SQL, request_id, code)
+            await ctx.conn.execute(TENANT_BACK_SQL, tenant_id)
+            ctx.audit("offboarding_erase", "denied", "tenant", str(tenant_id), reason=code)
+    except Forbidden:
+        pass  # the agency is not offboarding (a stale job): nothing to give back
+    log.error("offboarding_erase_refused tenant_id=%s code=%s", tenant_id, code)
+    raise PermanentError(code)
 
 
 def build_handler(
@@ -399,7 +413,7 @@ def build_handler(
             return await _export(pool, tenant_id, request_id, keys, store)
         if mode == "erase":
             if dry_run:
-                raise PermanentError("deletion_dry_run")
+                await _refused(pool, tenant_id, request_id, "deletion_dry_run")
             return await _erase(pool, tenant_id, request_id, keys, store, dek_cache_ttl_s)
         raise PermanentError("bad_mode")
 

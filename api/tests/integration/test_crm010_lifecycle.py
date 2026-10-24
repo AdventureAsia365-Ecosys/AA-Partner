@@ -369,6 +369,32 @@ async def test_erasure_bypasses_the_trash_and_respects_holds(app_pool: asyncpg.P
     assert await _sql(app_pool, a["tenant"], "SELECT 1 FROM crm.consent WHERE traveler_id = $1", a["lead"]) == []
 
 
+async def test_a_held_trip_or_client_is_not_moved_to_the_trash(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection
+) -> None:
+    """Review S249: a trip or client a hold reaches answers 409 legal_hold (a committed denied event) and stays live;
+    released, it goes to the trash as usual."""
+    keys = _keys()
+    a = await _inquiry(app_pool, keys)
+    async with tenant_tx(app_pool, a["owner"], a["tenant"]) as ctx:
+        hold = await policy.place_hold(ctx, "traveler", a["lead"], "dispute")  # the lead's hold reaches their trip
+    for kind, subject in (("trip", a["trip"]), ("traveler", a["lead"])):
+        with _raises(Conflict, "legal_hold") as err:
+            async with tenant_tx(app_pool, a["owner"], a["tenant"]) as ctx:
+                await trash.move_to_trash(ctx, kind, subject)
+        assert err.value.status_code == 409
+    events = await _events(admin, a["tenant"], "delete")
+    assert [(e["object_kind"], e["outcome"], e["reason"]) for e in events] == [
+        ("trip", "denied", "legal_hold"),
+        ("traveler", "denied", "legal_hold"),
+    ]
+    rows = await _sql(app_pool, a["tenant"], "SELECT deleted_at FROM crm.trip WHERE trip_id = $1", a["trip"])
+    assert rows[0]["deleted_at"] is None
+    async with tenant_tx(app_pool, a["owner"], a["tenant"]) as ctx:
+        await policy.release_hold(ctx, uuid.UUID(hold["hold_id"]))
+        await trash.move_to_trash(ctx, "trip", a["trip"])
+
+
 async def test_daily_run_redacts_purges_and_archives(app_pool: asyncpg.Pool, admin: asyncpg.Connection) -> None:
     keys = _keys()
     a = await _inquiry(app_pool, keys)
@@ -568,3 +594,30 @@ async def test_any_hold_suspends_offboarding_and_a_refused_erase_gives_the_agenc
     async with tenant_tx(app_pool, a["owner"], a["tenant"]) as ctx:
         cancelled = await offboarding.cancel(ctx, request_id, store)
     assert cancelled["status"] == "cancelled"
+
+
+async def test_an_erase_job_in_dry_run_is_refused_and_gives_the_agency_back(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection
+) -> None:
+    """Review S249: LIFECYCLE_DRY_RUN switched on after the confirmation. The erase job deletes nothing and treats it
+    like a refusal: request failed (deletion_dry_run), agency active again, the owner cancels."""
+    keys = _keys()
+    store = MemoryDocumentStore()
+    a = await _inquiry(app_pool, keys)
+    async with tenant_tx(app_pool, a["owner"], a["tenant"]) as ctx:
+        req = await offboarding.request(ctx, export_waived=True)
+        request_id = uuid.UUID(req["request_id"])
+        await offboarding.confirm_erase(ctx, request_id, confirm_tenant_id=a["tenant"], dry_run=False)
+    handler = offboarding.build_handler(keys=keys, store=store, dry_run=True, dek_cache_ttl_s=300)
+    [erase_job] = await _jobs(app_pool, "crm_offboard", a["tenant"])
+    with pytest.raises(PermanentError, match="deletion_dry_run"):
+        await handler(app_pool, erase_job)
+    [tenant_row] = await _owner_fetch(admin, a["tenant"], "SELECT status FROM crm.tenant")
+    assert tenant_row["status"] == "active"
+    [req_row] = await _owner_fetch(admin, a["tenant"], "SELECT status, failure_class FROM crm.erasure_request")
+    assert (req_row["status"], req_row["failure_class"]) == ("failed", "deletion_dry_run")
+    assert len(await _sql(app_pool, a["tenant"], "SELECT 1 FROM crm.traveler")) == req["dry_run_counts"]["traveler"]
+    denied = [e for e in await _events(admin, a["tenant"], "offboarding_erase") if e["outcome"] == "denied"]
+    assert [e["reason"] for e in denied] == ["deletion_dry_run"]
+    async with tenant_tx(app_pool, a["owner"], a["tenant"]) as ctx:
+        assert (await offboarding.cancel(ctx, request_id, store))["status"] == "cancelled"

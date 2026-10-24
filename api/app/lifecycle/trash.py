@@ -9,6 +9,11 @@
   cancel_trip`` (the UI turns Delete into Cancel trip, CRM-27). A trip whose AA lines are all released, expired,
   cancelled or declined is deletable. A client on a live trip is not deletable (409 ``traveler_on_trip``,
   ``alternative = archive``).
+- **Legal hold** (trips, clients): what a hold reaches (``crm.legal_hold_blocks``: the agency hold, the trip's or the
+  client's own, a client hold on a trip's party / notes / documents / queued messages, a trip hold on a client's trips)
+  is not moved to the trash: 409 ``legal_hold``, a committed ``denied`` audit event. One rule, the simplest consistent
+  one: the purge could never erase it, so the trash would only hide it from the lists (review S249). Tasks, notes and
+  documents still go to the trash; their purge skips them while a hold reaches them.
 - **Restore** inside the window by the owner or the member who deleted it. A trip with AA lines still open in the
   ledger (requested / held / confirmed) re-checks Booking first (:mod:`app.lifecycle.booking`): holds may have
   expired, and the lines come back with Booking's current status; Booking unreachable = 503, the trip stays in the
@@ -73,6 +78,8 @@ RESTORE_SQL = {
     for k, v in KINDS.items()
 }
 BLOCKERS_SQL = "SELECT crm.trip_delete_blockers($1)"
+HOLD_SQL = "SELECT crm.legal_hold_blocks($1, $2)"
+HELD_KINDS = ("trip", "traveler")
 LIVE_TRIPS_SQL = """
 SELECT count(*) FROM crm.trip_traveler tt JOIN crm.trip t ON t.trip_id = tt.trip_id
  WHERE tt.traveler_id = $1 AND t.deleted_at IS NULL
@@ -153,6 +160,9 @@ async def move_to_trash(ctx: TenantContext, kind: str, object_id: uuid.UUID) -> 
         _refuse(ctx, "delete", kind, object_id, "not_your_trip", "agents delete their own trips")
     if kind == "note" and ctx.member_role != "owner" and row["created_by"] != _me(ctx):
         _refuse(ctx, "delete", kind, object_id, "not_your_note", "a note is deleted by its author or the owner")
+    if kind in HELD_KINDS and await ctx.conn.fetchval(HOLD_SQL, kind, object_id):
+        ctx.audit("delete", "denied", kind, str(object_id), reason="legal_hold")
+        raise Conflict("legal_hold", "an active legal hold reaches this, so it cannot be deleted until it is released")
     if kind == "trip":
         codes = await blockers(ctx, object_id)
         if codes:

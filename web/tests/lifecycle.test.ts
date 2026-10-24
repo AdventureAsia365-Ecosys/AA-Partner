@@ -96,6 +96,8 @@ describe("trip delete refusal", () => {
     expect(deleteRefusal("has_money")).toBe("trip.blocked.has_money");
     expect(MESSAGES.en[deleteRefusal("has_money")]).toContain("Cancel the trip");
     expect(MESSAGES.vi[deleteRefusal("has_aa_line")]).toContain("huỷ chuyến");
+    expect(deleteRefusal("legal_hold")).toBe("trip.blocked.legal_hold");
+    expect(MESSAGES.vi[deleteRefusal("legal_hold")]).toContain("lưu giữ pháp lý");
     expect(deleteRefusal("not_your_trip")).toBe("trip.error");
   });
 });

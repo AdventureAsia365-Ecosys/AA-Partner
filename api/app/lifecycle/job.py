@@ -6,8 +6,8 @@ ahead: the deploy gate and the DB Migrate idle check count a queued row as busy)
 
 1. **Form submissions** past ``redact_after`` (90 days): payload redacted (``payload_enc`` NULL, row kept), unless a
    legal hold reaches the submission's traveller or trip.
-2. **LLM calls** older than 180 days: deleted (``crm.lifecycle_purge_expired``; the daily rollup stays), not under an
-   agency hold.
+2. **LLM calls** older than 180 days: deleted (``crm.lifecycle_purge_expired``; the daily rollup stays), with the
+   crm-009 placeholder maps they still have, not under an agency hold.
 3. **Trash** past ``purge_after``: relationships, tasks, notes, documents, trips, then clients, each through
    ``crm.erase_subject`` in its own savepoint (a hold, a delete block or a client still on a live trip keeps that one
    item and is counted).
@@ -117,6 +117,7 @@ async def run_agency(
     purged = await erase.purge_expired(ctx, dry_run=dry_run)
     counts["llm_call_purged"] = purged.get("llm_call", 0)
     counts["llm_call_held"] = purged.get("held", 0)
+    counts["placeholder_map_purged"] = purged.get("placeholder_map", 0)
 
     vault = Vault(keys, ctx) if keys is not None else None
     for kind in TRASH_ORDER:

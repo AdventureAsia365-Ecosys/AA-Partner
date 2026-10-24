@@ -173,8 +173,9 @@ async def test_a_blocked_trip_names_its_blockers_and_other_errors_pass() -> None
 
 @pytest.mark.asyncio
 async def test_purge_expired() -> None:
-    conn = ScriptedConn().on("crm.lifecycle_purge_expired", '{"llm_call": 3, "held": 0}')
-    assert await erase.purge_expired(lifecycle_ctx(conn), dry_run=True) == {"llm_call": 3, "held": 0}
+    conn = ScriptedConn().on("crm.lifecycle_purge_expired", '{"llm_call": 3, "placeholder_map": 1, "held": 0}')
+    expected = {"llm_call": 3, "placeholder_map": 1, "held": 0}
+    assert await erase.purge_expired(lifecycle_ctx(conn), dry_run=True) == expected
 
 
 # ── Trash ────────────────────────────────────────────────────────────────────────────────────────
@@ -218,6 +219,19 @@ async def test_move_to_trash_refusals() -> None:
     conn = ScriptedConn().on("FROM crm.traveler WHERE", _row()).on("SELECT count(*) FROM crm.trip_traveler", 1)
     with codes(Conflict, "traveler_on_trip"):
         await trash.move_to_trash(tenant_ctx(conn), "traveler", ID)
+    # Review S249: a held trip or client is not moved to the trash (409 legal_hold, a committed denied event).
+    for kind, table in (("trip", "crm.trip"), ("traveler", "crm.traveler")):
+        conn = ScriptedConn().on(f"FROM {table} WHERE", _row()).on("legal_hold_blocks", True)
+        ctx = tenant_ctx(conn)
+        with codes(Conflict, "legal_hold"):
+            await trash.move_to_trash(ctx, kind, ID)
+        assert conn.sql("legal_hold_blocks") == [(kind, ID)]
+        assert (ctx.audit_events[-1].outcome, ctx.audit_events[-1].reason) == ("denied", "legal_hold")
+        assert not conn.sql("SET deleted_at")
+    # Tasks, notes and documents do not ask (their purge skips them while a hold reaches them).
+    conn = ScriptedConn().on("FROM crm.task WHERE", _row()).on("legal_hold_blocks", True).on("SET deleted_at", NOW)
+    await trash.move_to_trash(tenant_ctx(conn), "task", ID)
+    assert not conn.sql("legal_hold_blocks")
 
 
 @pytest.mark.asyncio
@@ -525,7 +539,7 @@ async def test_run_agency_dry_and_applied(monkeypatch: pytest.MonkeyPatch) -> No
         return {kind: 1}
 
     async def fake_purge(ctx: Any, *, dry_run: bool) -> dict[str, int]:
-        return {"llm_call": 2, "held": 0}
+        return {"llm_call": 2, "placeholder_map": 1, "held": 0}
 
     monkeypatch.setattr(lifecycle_job.erase, "erase", fake_erase)
     monkeypatch.setattr(lifecycle_job.erase, "purge_expired", fake_purge)
@@ -546,7 +560,7 @@ async def test_run_agency_dry_and_applied(monkeypatch: pytest.MonkeyPatch) -> No
         assert counts["submission_redacted"] == 1 and counts["submission_held"] == 1
         assert counts["trash_trip_purged"] == 1 and counts["trash_kept_legal_hold"] == 1
         assert counts["trash_kept_no_keys"] == 1 and counts["traveler_auto_archived"] == 1
-        assert counts["llm_call_purged"] == 2
+        assert counts["llm_call_purged"] == 2 and counts["placeholder_map_purged"] == 1
         assert bool(conn.sql("UPDATE crm.form_submission")) is not dry
         assert bool(conn.sql("archive_reason = 'auto_inactive'")) is not dry
         assert conn.sql("INSERT INTO crm.lifecycle_run")[0][1] is dry
@@ -772,8 +786,6 @@ async def test_offboard_handler(monkeypatch: pytest.MonkeyPatch) -> None:
         await handler(object(), Job("j", "crm_offboard", {}, 1, 3))  # type: ignore[arg-type]
     with codes(Unavailable, "key_provider_not_configured"):
         await offboarding.build_handler(keys=None, store=store, dry_run=False)(object(), job("export"))  # type: ignore[arg-type]
-    with pytest.raises(PermanentError, match="deletion_dry_run"):
-        await offboarding.build_handler(keys=keys, store=store, dry_run=True)(object(), job("erase"))  # type: ignore[arg-type]
     with pytest.raises(PermanentError, match="bad_mode"):
         await handler(object(), job("other"))  # type: ignore[arg-type]
 
@@ -830,6 +842,33 @@ async def test_offboard_handler(monkeypatch: pytest.MonkeyPatch) -> None:
         await handler(object(), job("erase"))  # type: ignore[arg-type]
     assert conn.sql("SET status = 'failed'")[0][1] == "legal_hold"
     assert conn.sql("SET status = 'active'"), "a refused erase deleted nothing: the agency is given back"
+
+    # Review S249: an erase job that meets DRY RUN is a refusal like the others: request failed, agency active again.
+    dry = offboarding.build_handler(keys=keys, store=store, dry_run=True)  # type: ignore[arg-type]
+    conn = ScriptedConn().on("FOR UPDATE", _request(status="erasing"))
+    ctx = lifecycle_ctx(conn, status="offboarding")
+    monkeypatch.setattr(offboarding, "lifecycle_tx", fake_tx(ctx))
+    with pytest.raises(PermanentError, match="deletion_dry_run"):
+        await dry(object(), job("erase"))  # type: ignore[arg-type]
+    assert conn.sql("SET status = 'failed'")[0][1] == "deletion_dry_run"
+    assert conn.sql("SET status = 'active'")
+    assert (ctx.audit_events[-1].outcome, ctx.audit_events[-1].reason) == ("denied", "deletion_dry_run")
+    # A request no longer erasing (cancelled) keeps its status; the agency is still given back.
+    conn = ScriptedConn().on("FOR UPDATE", _request(status="cancelled"))
+    monkeypatch.setattr(offboarding, "lifecycle_tx", fake_tx(lifecycle_ctx(conn, status="offboarding")))
+    with pytest.raises(PermanentError, match="deletion_dry_run"):
+        await dry(object(), job("erase"))  # type: ignore[arg-type]
+    assert not conn.sql("SET status = 'failed'") and conn.sql("SET status = 'active'")
+
+    # A stale job of an agency that is not offboarding any more: nothing to give back, the job still fails at once.
+    @asynccontextmanager
+    async def not_offboarding(*_: Any, **__: Any):  # noqa: ANN202
+        raise Forbidden("tenant_status", "the agency is active")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(offboarding, "lifecycle_tx", not_offboarding)
+    with pytest.raises(PermanentError, match="deletion_dry_run"):
+        await dry(object(), job("erase"))  # type: ignore[arg-type]
 
 
 def test_the_web_words_every_rule_and_mechanism() -> None:
