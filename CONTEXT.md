@@ -83,7 +83,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | Prefix | Accepts | Then |
 |---|---|---|
 | `/crm/health`, `/crm/health/ready` | no token (rate limited per `CloudFront-Viewer-Address`, IPv6 per /64) | liveness / readiness |
-| `/crm/public/v1` | no token: the inquiry form only (AA-936), served on the **client host** too (ALB rule `/crm/public/*`) | `GET forms/{key}`, `POST forms/{key}/submissions`; the form key decides the agency inside `intake_tx()`; Origin check, honeypot, consent, per-address and per-form limits |
+| `/crm/public/v1` | no token: the inquiry form only (AA-936), served on the **client host** too (ALB rule `/crm/public/*`) | `GET forms/{key}`, `POST forms/{key}/submissions`; the form key decides the agency inside `intake_tx()`; Origin check, honeypot, consent, per-address limit (before any read) and per-form quota (charged only after every check), body streamed and capped at 32 KiB (413) |
 | `/crm/ci/deploy-gate` | the Deploy Dev workflow's GitHub OIDC token only (`app/auth/ci.py`) | job counts for the deploy guard |
 | `/crm/v1` | PARTNER x {AA-Partner web}; on Dev before AA-939 also EXTERNAL x {`cis-portal`} | `X-AA-Tenant-Id` + `tenant_tx()` (membership in `crm.member`); `GET /crm/v1/memberships` alone needs no header (`caller_memberships()`) |
 | `/crm/ops/v1` | WORKFORCE x {`cis-admin`} | group `cis-admin` reads, `crm-platform-admin` writes |
@@ -259,8 +259,14 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   `GET /crm/public/v1/forms/{key}` (field codes from `app/intake/stage1.py`, the server's validator; the web words
   them EN/VI). The browser posts to `/crm/public/v1/forms/{key}/submissions` on its own origin, so the API's limits
   key on the real viewer address. The proxy's CSP `frame-ancestors` for that page = `'self'` + the form's
-  `allowed_origins` (60 s memo). Honeypot filled -> 202, nothing stored; no contact consent -> 422
-  `consent_required`, nothing stored; each drop is one count-only log line (`intake_dropped reason=...`).
+  `allowed_origins` (60 s memo; missing keys memoised apart, at most 20 memo misses per viewer per minute before the
+  API is asked, the last good definition served when a refresh fails). Honeypot filled -> 202, nothing stored; no
+  contact consent -> 422 `consent_required`, nothing stored; each drop is one count-only log line
+  (`intake_dropped reason=...`).
+- **Intake job** (`crm_intake_process`): dedupe by e-mail then phone blind index under per-agency advisory locks (no
+  unique index on blind indexes); the consent ledger is append-only and `traveler_profile.marketing_ok` follows the
+  latest marketing row. Form consent is unverified: marketing needs double opt-in before anything is sent (CRM-17 /
+  CRM-29).
 - **Board and trip** (`web/app/(crm)/pipeline`, API `app/pipeline.py`, router `app/routers/pipeline.py`): one
   `list_view` audit per board load (display name only, no contact data in lists, design §4.4), one `view` event per
   trip page, one `reveal` event per contact field click. Moves: `inquiry <-> qualifying`, either -> `lost` with a
