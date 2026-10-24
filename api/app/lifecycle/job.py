@@ -4,8 +4,9 @@ Queued **due now** once per UTC day from ``JOB_RETENTION_UTC_HOUR`` by :class:`D
 ahead: the deploy gate and the DB Migrate idle check count a queued row as busy). For every agency of the registry
 (active or locked; an offboarding / offboarded one is the offboarding job's), in one transaction per agency:
 
-1. **Form submissions** past ``redact_after`` (90 days): payload redacted (``payload_enc`` NULL, row kept), unless a
-   legal hold reaches the submission's traveller or trip.
+1. **Form submissions** past ``redact_after`` (90 days): payload redacted (``payload_enc`` NULL, row kept), unless the
+   row is held (crm-010 hold rule 4d, ``crm.hold_row``: its trip or its traveller is held). The run first takes
+   ``LOCK TABLE crm.legal_hold IN SHARE MODE`` (rule 4g), so a hold placed meanwhile waits for the agency's run.
 2. **LLM calls** older than 180 days: deleted (``crm.lifecycle_purge_expired``; the daily rollup stays), with the
    crm-009 placeholder maps they still have, not under an agency hold.
 3. **Trash** past ``purge_after``: relationships, tasks, notes, documents, trips, then clients, each through
@@ -63,9 +64,10 @@ TRASH_TABLE = {
     "traveler": ("traveler", "traveler_id"),
 }
 
+HOLD_LOCK_SQL = "LOCK TABLE crm.legal_hold IN SHARE MODE"
 REDACT_DUE_SQL = """
 SELECT s.submission_id,
-       crm.legal_hold_blocks('traveler', s.traveler_id) OR crm.legal_hold_blocks('trip', s.trip_id) AS held
+       crm.hold_row(s.trip_id, s.traveler_id) AS held
   FROM crm.form_submission s
  WHERE s.payload_redacted_at IS NULL AND s.redact_after <= now()
  ORDER BY s.redact_after, s.submission_id
@@ -106,6 +108,7 @@ async def run_agency(
 ) -> dict[str, int]:
     """The five steps for one agency (inside its :func:`app.tenancy.lifecycle_tx`). Returns the counts."""
     counts: Counter[str] = Counter()
+    await ctx.conn.execute(HOLD_LOCK_SQL)  # hold rule 4g: no hold lands between a check and its change
 
     due = await ctx.conn.fetch(REDACT_DUE_SQL, BATCH)
     free = [r["submission_id"] for r in due if not r["held"]]

@@ -219,8 +219,15 @@ async def test_move_to_trash_refusals() -> None:
     conn = ScriptedConn().on("FROM crm.traveler WHERE", _row()).on("SELECT count(*) FROM crm.trip_traveler", 1)
     with codes(Conflict, "traveler_on_trip"):
         await trash.move_to_trash(tenant_ctx(conn), "traveler", ID)
-    # Review S249: a held trip or client is not moved to the trash (409 legal_hold, a committed denied event).
-    for kind, table in (("trip", "crm.trip"), ("traveler", "crm.traveler")):
+    # Review S249: whatever a hold reaches (legal_hold_blocks = the erase would refuse) is not moved to the trash
+    # (409 legal_hold, a committed denied event), every kind.
+    for kind, table in (
+        ("trip", "crm.trip"),
+        ("traveler", "crm.traveler"),
+        ("task", "crm.task"),
+        ("note", "crm.note"),
+        ("document", "crm.document"),
+    ):
         conn = ScriptedConn().on(f"FROM {table} WHERE", _row()).on("legal_hold_blocks", True)
         ctx = tenant_ctx(conn)
         with codes(Conflict, "legal_hold"):
@@ -228,10 +235,10 @@ async def test_move_to_trash_refusals() -> None:
         assert conn.sql("legal_hold_blocks") == [(kind, ID)]
         assert (ctx.audit_events[-1].outcome, ctx.audit_events[-1].reason) == ("denied", "legal_hold")
         assert not conn.sql("SET deleted_at")
-    # Tasks, notes and documents do not ask (their purge skips them while a hold reaches them).
-    conn = ScriptedConn().on("FROM crm.task WHERE", _row()).on("legal_hold_blocks", True).on("SET deleted_at", NOW)
+    # Not held: the pre-check asks and the item goes to the trash.
+    conn = ScriptedConn().on("FROM crm.task WHERE", _row()).on("legal_hold_blocks", False).on("SET deleted_at", NOW)
     await trash.move_to_trash(tenant_ctx(conn), "task", ID)
-    assert not conn.sql("legal_hold_blocks")
+    assert conn.sql("legal_hold_blocks") == [("task", ID)]
 
 
 @pytest.mark.asyncio
@@ -564,6 +571,9 @@ async def test_run_agency_dry_and_applied(monkeypatch: pytest.MonkeyPatch) -> No
         assert bool(conn.sql("UPDATE crm.form_submission")) is not dry
         assert bool(conn.sql("archive_reason = 'auto_inactive'")) is not dry
         assert conn.sql("INSERT INTO crm.lifecycle_run")[0][1] is dry
+        # Hold rule 4g: the run locks crm.legal_hold first; the redaction asks crm.hold_row per submission (4d).
+        assert conn.calls[0][0] == "LOCK TABLE crm.legal_hold IN SHARE MODE"
+        assert conn.sql("crm.hold_row(s.trip_id, s.traveler_id)")
         assert ctx.audit_events[-1].reason == ("dry_run" if dry else "applied")
     assert erased == [("trip", True), ("trip", False)]
 

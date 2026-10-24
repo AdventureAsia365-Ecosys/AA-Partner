@@ -486,8 +486,8 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
 - **Trash** (`app/lifecycle/trash.py`, `DELETE /crm/v1/{trips,travelers,tasks,notes,documents}/{id}`, `GET /trash`,
   `POST /trash/{kind}/{id}/restore`): window = `tenant_settings.trash_days` (default 7); restore inside the window by
   the owner or whoever deleted it. Who deletes: trip owner / agent (own or unassigned trip); client owner only (R8);
-  task, document owner / agent; note owner or author. A trip or client a legal hold reaches is not moved to the trash
-  (409 `legal_hold`, `crm.legal_hold_blocks`): its purge could never run.
+  task, document owner / agent; note owner or author. Nothing whose erase the hold rule refuses is moved to the trash
+  (409 `legal_hold`, `crm.legal_hold_blocks`, every kind): its purge could never run.
 - **Delete block**: `crm.trip_commitment` is the ledger the money, signature, commission and AA-line cards write
   (CRM-16/19/23/25/27): `has_money` (paid / claimed invoice, succeeded or refunded payment), `has_signature`,
   `has_commission` (claimed / received), `has_aa_line` (held / confirmed) -> 409 with the first code, every blocker and
@@ -499,13 +499,17 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   archived client is refused; a message queued before is **dropped at the dispatcher** (`crm.dispatch_queue`,
   `crm_dispatch`, `app/dispatch/`). A repeat inquiry unarchives the client. Auto-archive after `auto_archive_months`
   without trip activity; the owner then decides on the Settings page.
-- **Legal holds** (`crm.legal_hold`, `POST /lifecycle/holds`, `.../release`): agency, trip or client; a trip hold also
-  holds its travellers, a client hold the trips they are on (or are named on through a note / document / queued
-  message) and both ends of a relation; ANY active hold of the agency suspends its offboarding. A client erasure is
-  also refused when a trip hold names any trip one of the client's notes, documents, submissions or queued messages
-  belongs to, or a client hold names the other end of any of their relations (`crm.erase_subject`: it deletes those
-  rows wherever they sit). A hold placed by `platform:*` is released
-  only by `platform:*`; a hold is never deleted nor trashed (its trash columns stay NULL), it only moves to released.
+- **Legal holds** (`crm.legal_hold`, `POST /lifecycle/holds`, `.../release`): agency, trip or client, under ONE hold
+  rule (crm-010 header item 4) that every deletion path uses: a trip is held by a hold on it or on a traveller on its
+  party (`crm.hold_trip`); a traveller by a hold on them or on a trip whose party they are on (`crm.hold_traveler`,
+  one level); the agency hold holds everything; a row is held when its trip or traveller is (`crm.hold_row`; a
+  relation: either end; a referrer link: the referred client). An erase that would delete or update any held row
+  refuses with CRM10, dry run too, nothing in part (`crm.erase_held`); `crm.legal_hold_blocks(scope, id)` is the same
+  test ("the erase would refuse"), so the trash pre-check, the restore, the daily redaction / purge and offboarding
+  (any active hold) agree. `crm.erase_subject`, `crm.lifecycle_purge_expired` and the daily run take
+  `LOCK TABLE crm.legal_hold IN SHARE MODE` first, so a hold placed meanwhile waits and a hold being placed is seen.
+  A hold placed by `platform:*` is released only by `platform:*`; a hold is never deleted nor trashed (its trash
+  columns stay NULL), it only moves to released.
 - **Erasure** (`POST /travelers/{id}/erasure`, owner): dry run by default; a real run bypasses the trash and leaves an
   `erasure_request` receipt (backup_purge_by = +30 days). CRM-35 (AA-967) adds partial erasure with the signed-agreement
   and accounting exceptions and the data-request log.
