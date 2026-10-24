@@ -29,7 +29,10 @@ export interface PublicForm {
   fields: FormField[];
   honeypot_field: string;
   agency_name: string;
+  /** The agency's data locale; NOT the page language (AA-936). */
   default_locale: string;
+  /** The form's own language when the agency set one ("en" | "vi" | a date locale); absent = English. */
+  locale?: string;
   allowed_origins: string[];
   privacy_notice_url: string | null;
 }

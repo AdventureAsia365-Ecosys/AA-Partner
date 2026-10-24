@@ -4,8 +4,11 @@
 // consent box (required; without it the API stores nothing) and the optional marketing box. A hidden honeypot field
 // (name from the form, off-screen, not focusable) catches bots: the API answers them as if it stored the inquiry.
 // The page's random submission id makes a double click or a retry store one inquiry.
+// Server-rendered: until React hydrates, a click on a destination chip is lost and the submit button would post the
+// form natively (the answers in the URL). So the submit stays disabled until hydration and the form carries
+// `data-hydrated="true"` once its handlers are attached (AA-936; E2E specs wait for it).
 import { useMemo, useState } from "react";
-import { Button, K } from "@/app/_kit";
+import { Button, K, useHydrated } from "@/app/_kit";
 import type { Lang, MessageKey } from "@/lib/i18n";
 import { fmt } from "@/lib/i18n";
 import { parseAges, type PublicForm } from "@/lib/intakeForms";
@@ -42,6 +45,7 @@ export function InquiryForm({ publicKey, form, lang, dict }: { publicKey: string
   const [destinations, setDestinations] = useState<string[]>([]);
   const [companions, setCompanions] = useState<string[]>([""]);
   const [childAges, setChildAges] = useState("");
+  const hydrated = useHydrated();
 
   if (status === "sent") {
     return (
@@ -123,7 +127,7 @@ export function InquiryForm({ publicKey, form, lang, dict }: { publicKey: string
 
   const sending = status === "sending";
   return (
-    <form onSubmit={submit} noValidate data-testid="intake-form" style={{ display: "grid", gap: 14, position: "relative" }}>
+    <form onSubmit={submit} noValidate data-testid="intake-form" data-hydrated={hydrated ? "true" : undefined} style={{ display: "grid", gap: 14, position: "relative" }}>
       <fieldset style={{ border: 0, padding: 0, margin: 0, display: "grid", gap: 12 }}>
         <legend style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: K.muted, marginBottom: 8 }}>
           {t("intake.trip")}
@@ -269,8 +273,8 @@ export function InquiryForm({ publicKey, form, lang, dict }: { publicKey: string
           {error}
         </p>
       )}
-      <div>
-        <Button type="submit" variant="primary" disabled={sending}>
+      <div data-testid="intake-submit">
+        <Button type="submit" variant="primary" disabled={sending || !hydrated}>
           {sending ? t("intake.sending") : t("intake.submit")}
         </Button>
       </div>

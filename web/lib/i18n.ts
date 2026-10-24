@@ -4,11 +4,13 @@
 //   - the date locale (en-AU, en-GB, en-US, vi-VN; lib/dates.ts): how dates are written and read;
 //   - the UI language (en, vi): derived from it (vi-VN -> vi, every en-* -> en).
 //
-// Resolution order: the person's own choice (cookie aa_crm_locale, set on Settings) -> the agency's default
-// (crm.tenant.default_locale, crm-004) -> the browser's Accept-Language -> en-AU. Strings are plain objects, no
-// library; every key exists in both languages (a unit test checks it). Edge-safe.
+// Resolution order (owner rule, S249, AA-936): the person's own choice (cookie aa_crm_locale, set by the language
+// switch in the top bar or on Settings) -> a language set explicitly on the page's own record (today only a public
+// form's `locale`) -> English (en-AU). Nothing else switches the UI language: not the agency's default_locale (that
+// stays the agency's data language, e.g. the trip titles the API writes) and not the browser's Accept-Language.
+// Strings are plain objects, no library; every key exists in both languages (a unit test checks it). Edge-safe.
 
-import { DATE_LOCALES, isDateLocale, type DateLocale } from "./dates";
+import { isDateLocale, type DateLocale } from "./dates";
 
 export type Lang = "en" | "vi";
 export const LOCALE_COOKIE = "aa_crm_locale";
@@ -18,37 +20,18 @@ export function langOf(locale: DateLocale): Lang {
   return locale === "vi-VN" ? "vi" : "en";
 }
 
-/** Best date locale for an Accept-Language header, or null. */
-export function fromAcceptLanguage(header: string | null | undefined): DateLocale | null {
-  if (!header) return null;
-  const tags = header
-    .split(",")
-    .map((part) => {
-      const [tag, ...params] = part.trim().split(";");
-      const q = params.map((p) => p.trim()).find((p) => p.startsWith("q="));
-      return { tag: tag.trim().toLowerCase(), q: q ? Number(q.slice(2)) || 0 : 1 };
-    })
-    .filter((t) => t.tag && t.q > 0)
-    .sort((x, y) => y.q - x.q);
-  for (const { tag } of tags) {
-    const exact = DATE_LOCALES.find((l) => l.toLowerCase() === tag);
-    if (exact) return exact;
-    if (tag === "vi" || tag.startsWith("vi-")) return "vi-VN";
-    if (tag === "en-us") return "en-US";
-    if (tag === "en-gb" || tag === "en-ie") return "en-GB";
-    if (tag === "en" || tag.startsWith("en-")) return "en-AU";
-  }
+/** A locale tag set explicitly on a record ("vi-VN", "en-GB", or the short "vi" / "en"), or null. */
+export function explicitLocale(value: unknown): DateLocale | null {
+  if (isDateLocale(value)) return value;
+  if (value === "vi") return "vi-VN";
+  if (value === "en") return DEFAULT_LOCALE;
   return null;
 }
 
-export function resolveLocale(input: {
-  cookie?: string | null;
-  agencyDefault?: string | null;
-  acceptLanguage?: string | null;
-}): DateLocale {
+/** The person's saved choice, else a language set on the record itself, else English (en-AU). */
+export function resolveLocale(input: { cookie?: string | null; explicit?: string | null }): DateLocale {
   if (isDateLocale(input.cookie)) return input.cookie;
-  if (isDateLocale(input.agencyDefault)) return input.agencyDefault;
-  return fromAcceptLanguage(input.acceptLanguage) ?? DEFAULT_LOCALE;
+  return explicitLocale(input.explicit) ?? DEFAULT_LOCALE;
 }
 
 const en = {

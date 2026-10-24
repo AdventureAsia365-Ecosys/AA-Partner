@@ -13,10 +13,8 @@ export function GET(request: NextRequest) {
   const cfg = config();
   if (!cfg.authConfigured) return redirectTo(cfg, "/signed-out?reason=unavailable", 307, request.nextUrl.origin);
   const next = safeNext(request.nextUrl.searchParams.get("next"));
-  const locale = resolveLocale({
-    cookie: request.cookies.get(LOCALE_COOKIE)?.value,
-    acceptLanguage: request.headers.get("accept-language"),
-  });
+  // The managed-login page speaks the person's saved language, else English (AA-936; no Accept-Language).
+  const locale = resolveLocale({ cookie: request.cookies.get(LOCALE_COOKIE)?.value });
   const tx = { state: randomToken(), verifier: randomToken(48), nonce: randomToken(), next };
   const res = redirectExternal(authorizeUrl(cfg, { ...tx, lang: langOf(locale) }));
   return withCookies(res, [txCookie(cfg, tx)]);

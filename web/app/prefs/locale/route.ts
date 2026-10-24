@@ -1,5 +1,6 @@
 // POST /prefs/locale (form locale, next) — the person's own language and date locale (AA-935, R32). Same-origin
-// only. The cookie holds nothing but the locale tag; it wins over the agency default (lib/i18n.ts resolveLocale).
+// only. The cookie holds nothing but the locale tag; it is the only thing that turns the UI to Vietnamese (or another
+// date locale): without it every page is English (lib/i18n.ts resolveLocale, owner rule S249).
 import type { NextRequest } from "next/server";
 import { config } from "@/lib/config";
 import { isDateLocale } from "@/lib/dates";

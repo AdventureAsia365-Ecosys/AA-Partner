@@ -1,7 +1,8 @@
 // web/app/c/f/[publicKey]/page.tsx — C-01, the inquiry form on the client host (AA-936, card CRM-08; design v3 §2.4).
 // Public: no session, no agency data beyond the form itself. The definition comes from the API's public route
-// (lib/intakeForms.ts, 60 s memo shared with the proxy's CSP); the page words every field in EN/VI (the visitor's
-// cookie / Accept-Language, else the agency's default locale) and the browser posts to /crm/public/v1 on this origin.
+// (lib/intakeForms.ts, 60 s memo shared with the proxy's CSP); the page words every field in English unless the form
+// itself sets another language (`locale` in its definition) or the visitor saved a choice (cookie) — the agency's
+// default_locale does not switch it (AA-936, owner rule S249). The browser posts to /crm/public/v1 on this origin.
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { CenteredCard } from "@/components/CenteredCard";
@@ -40,14 +41,17 @@ export default async function InquiryPage({ params }: { params: Promise<{ public
       </CenteredCard>
     );
   }
-  const { lang } = await serverContext(found.form.default_locale);
+  const { lang } = await serverContext(found.form.locale);
   return (
     <CenteredCard testId="intake-page" wide>
-      <h1 style={{ margin: "0 0 4px", fontSize: 20, color: K.ink, overflowWrap: "anywhere" }}>
-        {fmt(t(lang, "intake.title"), { agency: found.form.agency_name })}
-      </h1>
-      <p style={{ margin: "0 0 16px", fontSize: 13.5, color: K.muted }}>{t(lang, "intake.intro")}</p>
-      <InquiryForm publicKey={publicKey} form={found.form} lang={lang} dict={formMessages(lang)} />
+      {/* The root <html lang> follows the visitor's cookie only; this block states the form's own language. */}
+      <div lang={lang} data-testid="intake-page-body">
+        <h1 style={{ margin: "0 0 4px", fontSize: 20, color: K.ink, overflowWrap: "anywhere" }}>
+          {fmt(t(lang, "intake.title"), { agency: found.form.agency_name })}
+        </h1>
+        <p style={{ margin: "0 0 16px", fontSize: 13.5, color: K.muted }}>{t(lang, "intake.intro")}</p>
+        <InquiryForm publicKey={publicKey} form={found.form} lang={lang} dict={formMessages(lang)} />
+      </div>
     </CenteredCard>
   );
 }
