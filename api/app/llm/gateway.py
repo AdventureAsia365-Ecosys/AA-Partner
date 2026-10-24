@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Protocol
 
+from app.audit import AuditEvent, current_request_id
 from app.tenancy import AnyContext
 
 STAGE_PREFIX = "crm_"
@@ -191,6 +192,20 @@ class LlmGateway:
         )
         await ctx.conn.execute(
             ROLLUP_SQL, stage, self.provider.model, 0 if outcome == "ok" else 1, tokens_in, tokens_out, cost
+        )
+        # Design §4.9 "AI context builds" (AA-940): one agency audit event per gateway call, actor = the AI stage
+        # (the member or job that asked is the llm_call row's created_by). A refusal is a denied event.
+        ctx.audit_events.append(
+            AuditEvent(
+                actor_kind="ai_agent",
+                actor_ref=f"ai:{stage}",
+                action="ai_context_build",
+                outcome="denied" if outcome == "refused" else "allowed",
+                object_kind="llm_call",
+                object_id=str(call_id),
+                reason=refusal or ("provider_error" if outcome == "error" else None),
+                request_id=current_request_id(),
+            )
         )
         return GatewayResult(
             outcome=outcome,

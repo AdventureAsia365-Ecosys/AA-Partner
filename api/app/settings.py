@@ -67,6 +67,15 @@ Documents (AA-937, card CRM-09; ``app.documents``):
 - ``DOCUMENTS_BUCKET``: the ``aa-crm-<env>-documents-*`` bucket (set by Terraform). Objects are encrypted by the app
   with the tenant ``docs`` DEK before the PUT; the bucket adds SSE-KMS. Empty on ``dev`` / ``stg`` / ``prod`` = the
   document routes answer 503 ``documents_not_configured``; on ``test`` / ``local`` empty = an in-memory store.
+
+Audit export (AA-940, card CRM-12; ``app.audit_export``):
+
+- ``AUDIT_BUCKET_COMPLIANCE`` / ``AUDIT_BUCKET_GOVERNANCE``: the two Object Lock audit buckets
+  (``aa-crm-<env>-audit-c-*`` = the 12-month tier, ``aa-crm-<env>-audit-g-*`` = the 7-year tier; set by Terraform).
+  Both or neither. Empty on ``dev`` / ``stg`` / ``prod`` = the hourly export and the daily verification skip (the
+  export lag metric grows and its alarm says so); on ``test`` / ``local`` empty = an in-memory archive.
+- ``AUDIT_RETENTION_DRY_RUN``: ``true`` (default) makes ``crm_audit_retention`` report which audit partitions it would
+  drop without dropping them (DM-7.2). Partitions are still created and verification still runs.
 """
 
 from __future__ import annotations
@@ -131,6 +140,9 @@ class Settings:
     rate_limit_intake_form_per_hour: int = DEFAULT_INTAKE_FORM_PER_HOUR
     intake_page_origins: tuple[str, ...] = ()
     documents_bucket: str = ""
+    audit_bucket_compliance: str = ""
+    audit_bucket_governance: str = ""
+    audit_retention_dry_run: bool = True
 
     def __post_init__(self) -> None:
         if self.environment not in {"dev", "stg", "prod"} | INSECURE_ENVIRONMENTS:
@@ -176,6 +188,16 @@ class Settings:
             raise SettingsError("SENTRY_REQUIRED is on but SENTRY_DSN is empty")
         if self.documents_bucket and not _BUCKET.match(self.documents_bucket):
             raise SettingsError(f"DOCUMENTS_BUCKET must be an S3 bucket name, got {self.documents_bucket!r}")
+        for name, value in (
+            ("AUDIT_BUCKET_COMPLIANCE", self.audit_bucket_compliance),
+            ("AUDIT_BUCKET_GOVERNANCE", self.audit_bucket_governance),
+        ):
+            if value and not _BUCKET.match(value):
+                raise SettingsError(f"{name} must be an S3 bucket name, got {value!r}")
+        if bool(self.audit_bucket_compliance) != bool(self.audit_bucket_governance):
+            raise SettingsError("AUDIT_BUCKET_COMPLIANCE and AUDIT_BUCKET_GOVERNANCE are set together (both tiers)")
+        if self.audit_bucket_compliance and self.audit_bucket_compliance == self.audit_bucket_governance:
+            raise SettingsError("the two audit buckets must differ")
         if self.key_provider not in KEY_PROVIDERS:
             raise SettingsError(f"KEY_PROVIDER must be one of {sorted(KEY_PROVIDERS)}, got {self.key_provider!r}")
         if self.key_provider == "local" and self.environment not in INSECURE_ENVIRONMENTS:
@@ -294,4 +316,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ),
         intake_page_origins=_origins(env.get("INTAKE_PAGE_ORIGINS")),
         documents_bucket=_text(env, "DOCUMENTS_BUCKET"),
+        audit_bucket_compliance=_text(env, "AUDIT_BUCKET_COMPLIANCE"),
+        audit_bucket_governance=_text(env, "AUDIT_BUCKET_GOVERNANCE"),
+        audit_retention_dry_run=_flag(env.get("AUDIT_RETENTION_DRY_RUN"), True, "AUDIT_RETENTION_DRY_RUN"),
     )

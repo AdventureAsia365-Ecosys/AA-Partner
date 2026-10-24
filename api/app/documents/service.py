@@ -231,6 +231,7 @@ async def set_visibility(ctx: TenantContext, document_id: uuid.UUID, visible: bo
 
 async def trash(ctx: TenantContext, document_id: uuid.UUID) -> dict[str, Any]:
     if ctx.member_role == "assistant":
+        ctx.audit("delete", "denied", "document", str(document_id), reason="not_allowed_for_role")
         raise Forbidden("not_allowed_for_role", "owners and agents delete documents")
     row = await ctx.conn.fetchrow(ROW_SQL, document_id)
     if row is None:

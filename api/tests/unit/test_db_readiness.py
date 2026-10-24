@@ -108,7 +108,10 @@ async def test_pool_is_lazy_single_and_requires_ssl(created: list[dict[str, Any]
     assert created[0]["ssl"] == "require"
     assert created[0]["min_size"] == 0
     assert created[0]["max_size"] == 3  # crm_app CONNECTION LIMIT 6 = 3 x 2 tasks (Infra connection budget)
-    assert created[0]["server_settings"] == {"application_name": "crm-api"}
+    assert created[0]["server_settings"] == {
+        "application_name": "crm-api",
+        "idle_in_transaction_session_timeout": "120000",
+    }
     await db.close()
 
 

@@ -26,6 +26,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.audit_export.archive import AuditArchive, build_audit_archive
 from app.auth import identity_config
 from app.auth.ci import GithubDeployVerifier
 from app.auth.identity_verifier import MultiIssuerVerifier
@@ -38,7 +39,7 @@ from app.jobs.worker import Worker
 from app.observability import setup as setup_observability
 from app.observability.request_id import RequestIdMiddleware, unhandled_error_handler
 from app.ratelimit import FixedWindowLimiter
-from app.routers import agency, ci, health, ops, pipeline, public, staff, travellers
+from app.routers import agency, audit, ci, health, ops, pipeline, public, staff, travellers
 from app.settings import INSECURE_ENVIRONMENTS, Settings, load_settings
 from app.vault import KeyProvider, build_key_provider
 
@@ -56,6 +57,7 @@ def create_app(
     deploy_verifier: GithubDeployVerifier | None = None,
     keys: KeyProvider | None | object = _UNSET,
     documents: DocumentStore | None | object = _UNSET,
+    audit_archive: AuditArchive | None | object = _UNSET,
 ) -> FastAPI:
     settings = settings or load_settings()
     db = db or Database(settings)
@@ -67,6 +69,8 @@ def create_app(
         keys = build_key_provider(settings)  # no KMS call here: the client is created on first use
     if documents is _UNSET:
         documents = build_document_store(settings)
+    if audit_archive is _UNSET:
+        audit_archive = build_audit_archive(settings)  # no AWS call here: the client is created on first use
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -77,7 +81,12 @@ def create_app(
         if settings.worker_enabled and db.configured:
             worker = Worker(
                 db.pool,
-                job_handlers.build_handlers(retention_dry_run=settings.job_retention_dry_run, keys=app.state.keys),
+                job_handlers.build_handlers(
+                    retention_dry_run=settings.job_retention_dry_run,
+                    keys=app.state.keys,
+                    audit_archive=app.state.audit_archive,
+                    audit_retention_dry_run=settings.audit_retention_dry_run,
+                ),
                 recurring=job_handlers.RECURRING,
                 hooks=job_handlers.build_hooks(retention_utc_hour=settings.job_retention_utc_hour),
             )
@@ -111,6 +120,7 @@ def create_app(
     app.state.deploy_verifier = deploy_verifier
     app.state.keys = keys  # app.vault.KeyProvider, or None when KMS_DATA_KEY_ID is missing (vault calls answer 503)
     app.state.documents = documents  # app.documents.store, or None without DOCUMENTS_BUCKET (document routes: 503)
+    app.state.audit_archive = audit_archive  # app.audit_export.archive, or None without the two audit buckets (AA-940)
     app.state.public_limiter = FixedWindowLimiter(settings.rate_limit_public_per_minute)
     # AA-936: inquiry-form submissions, per client address per minute and per form per hour.
     app.state.intake_limiter = FixedWindowLimiter(settings.rate_limit_intake_per_minute)
@@ -124,6 +134,7 @@ def create_app(
     app.include_router(agency.router)
     app.include_router(pipeline.router)
     app.include_router(travellers.router)
+    app.include_router(audit.router)
     app.include_router(ops.router)
     app.include_router(staff.router)
     return app

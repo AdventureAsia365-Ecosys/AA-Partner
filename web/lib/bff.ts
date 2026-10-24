@@ -57,6 +57,16 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "POST", pattern: new RegExp(`^documents/${UUID}/download$`), tenant: true, card: "AA-937" },
   { method: "PATCH", pattern: new RegExp(`^documents/${UUID}$`), tenant: true, card: "AA-937" },
   { method: "DELETE", pattern: new RegExp(`^documents/${UUID}$`), tenant: true, card: "AA-937" },
+  // AA-940 (CRM-12): the access log (owner only, the API checks) and its download.
+  { method: "GET", pattern: /^audit\/events$/, tenant: true, card: "AA-940" },
+  { method: "GET", pattern: /^audit\/events\/export$/, tenant: true, card: "AA-940" },
+];
+
+/** Calls only the web server makes (lib/crmApi.ts crmCall), never reachable through /bff from the browser. */
+export const SERVER_ONLY_ROUTES: readonly BffRoute[] = [
+  // AA-940: the sign-in event, sent by /auth/agency after a real sign-in or a chooser pick (a browser route would let
+  // any member add sign-in events at will).
+  { method: "POST", pattern: /^audit\/sign-in$/, tenant: true, card: "AA-940" },
 ];
 
 export function matchBff(method: string, subPath: string, routes: readonly BffRoute[] = BFF_ROUTES): BffRoute | null {

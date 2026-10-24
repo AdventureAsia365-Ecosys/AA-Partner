@@ -32,6 +32,10 @@ export interface Session {
   sub: string;
   cid: string;
   tid: string | null;
+  /** AA-940: set by /auth/callback only (a finished Cognito sign-in), cleared by /auth/agency when it records the
+   *  sign-in for the agency picked. A later GET /auth/agency (which a sibling *.lumiguides.it.com page can trigger
+   *  with the Lax cookie) finds no flag and records nothing. */
+  si?: 1;
   exp: number;
 }
 

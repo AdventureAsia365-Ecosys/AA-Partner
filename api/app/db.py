@@ -44,6 +44,9 @@ READY_SQL = "SELECT coalesce(array_agg(version ORDER BY version), '{}') FROM crm
 
 CONNECT_TIMEOUT_S = 5.0
 PROBE_TIMEOUT_S = 5.0
+# Server side, in milliseconds (asyncpg passes server settings as strings). Two minutes: an S3 call inside the audit
+# export transaction leaves the session idle for well under that.
+IDLE_IN_TX_TIMEOUT_MS = "120000"
 
 
 @dataclass(frozen=True)
@@ -74,8 +77,14 @@ class Database:
                     max_size=3,
                     timeout=CONNECT_TIMEOUT_S,
                     command_timeout=PROBE_TIMEOUT_S,
-                    # Named pool on the shared RDS (pg_stat_activity, data standards C2.2).
-                    server_settings={"application_name": "crm-api"},
+                    # Named pool on the shared RDS (pg_stat_activity, data standards C2.2). AA-940: a transaction left
+                    # idle ends after IDLE_IN_TX_TIMEOUT_MS, far below the audit export's 15-minute read lag, so an
+                    # audit row is never committed after the export already read its hour (it would be missing from
+                    # the archive and fail verification for good).
+                    server_settings={
+                        "application_name": "crm-api",
+                        "idle_in_transaction_session_timeout": IDLE_IN_TX_TIMEOUT_MS,
+                    },
                 )
         return self._pool
 

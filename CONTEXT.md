@@ -28,7 +28,9 @@ client host, `crm_intake_process` (blind-index dedupe, a repeat inquiry attaches
 board and trip workspace, intake-form settings, the two `crm.ops.v1` reads CIS uses, the LLM gateway stub with its
 call log, and the Dev E2E; and **F1 / F2 complete** (AA-937, CRM-09, `crm-006`): `reveal(field, reason)`, the client
 directory and profile, relationships with their inverse, health codes, documents under the tenant `docs` DEK, the
-age band at departure, and the F2 views with the first NOLOGIN reader grants.
+age band at departure, and the F2 views with the first NOLOGIN reader grants; and **F5 audit complete** (AA-940,
+CRM-12, `crm-007`): monthly audit partitions with a verified 12-month drop, the hourly export to both Object Lock
+buckets with a SHA-256 manifest chain, its verify script, and the owner's access log page with download.
 
 > Read this file before designing or changing anything here (AA-Ecosys steering, "CONTEXT.md first"). Change it in the
 > same PR when a boundary, owner, route class or the stack changes.
@@ -155,8 +157,13 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
   through `Vault.decrypt_secret`, allowed by lint in the dispatcher, webhook and health-check modules; no route
   response model may carry a `*_enc`, `*_bidx`, `secret*` or `wrapped_dek` field (`tests/unit/test_vault_rules.py`).
 - **Audit** (`crm.audit_event`, append-only, codes and random ids only): `ctx.audit(...)` queues an event; `tenant_tx()`
-  writes all of them on success and only the `denied` ones (committed) when the block raises. CRM-12 adds partitions,
-  the Object Lock export and the audit page.
+  writes all of them on success and only the `denied` ones (committed) when the block raises. Partitions, export,
+  retention and the access log: section "F5 audit" below (AA-940).
+- **`audit_export_tx(pool, tenant_id)`** (AA-940) is the audit export's read context in one agency: `app.tenant_id`,
+  `app.actor` = `job:crm_audit_export`, no audit queue; unlike `system_tx()` it accepts a locked or trashed agency (an
+  offboarded agency is exported until its partitions drop). Only `app/audit_export/{export,verify,retention}.py` may
+  open it (`test_audit_export_tx_is_used_only_by_the_audit_export_jobs`); the crm-007 platform functions (agency list,
+  partition maker, drop) are called from `app/audit_export/registry.py` only.
 - Personal data never goes into `crm.job` (payloads and results are ids only, `app/jobs/payload_guard.py`, checked at
   enqueue, on every result and by a static scan of `enqueue(...)` calls), into logs (JSON renderer scrubs, ids only by
   rule) or into Sentry (`send_default_pii=False`, scrubbing).
@@ -171,6 +178,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-004` | `api/migrations/004_crm_tenant_directory.sql` | `crm.tenant.display_name` + `default_locale`; SELECT-only lookup policies `member_self_lookup`, `tenant_member_lookup` TO `crm_app` (AA-935) |
 | `crm-005` | `api/migrations/005_crm_intake_pipeline.sql` | Slice 1 (AA-936): `tenant_settings` (AI switches), `form_definition`, `intake_form` (+ `intake_form_public_lookup`), `form_submission` (encrypted payload), `consent` (append-only), `traveler_profile` (F2), `trip` (every stage in the CHECK, Slice 1 moves only, `crm.enforce_stage_transition`), `trip_stage_history` (append-only), `trip_traveler` / `trip_party`, `task`, `note` (encrypted), `llm_call` (append-only, no text), platform rollup `llm_usage_daily` |
 | `crm-006` | `api/migrations/006_crm_f1_f2_complete.sql` | F1 / F2 complete (AA-937): `traveler_relation` (+ trigger-written inverse), `traveler_health` (needs a `health_data` consent), `document` (docs-DEK objects, write-only passports), the full F2 `traveler_profile`, `profile_history`, the age band list on `trip_party`, `audit_event.object_ids` (list views), the views `v_ai_traveler_profile` / `v_ai_trip_party` / `v_ai_trip_context` (`crm_ai_reader`) and `v_insight_fact` (`crm_insights`) |
+| `crm-007` | `api/migrations/007_crm_audit_partitions_export.sql` | F5 audit (AA-940): `audit_event` PARTITION BY RANGE (`at`), the crm-003 table attached as `audit_event_legacy` (MINVALUE to the next month), `at` = insert time (explicit values only from `crm_owner`), `audit_partition_bounds()`, `audit_ensure_partitions()` (three months ahead), `audit_drop_expired_partitions(dry_run)` (12 months + every agency verified), `audit_export_tenant` (registry, RLS enabled not forced, `audit_export_agencies()`), `audit_export_manifest` (hash chain, trigger-enforced, no FK to `tenant`) |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -192,6 +200,8 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 |---|---|---|
 | `crm_heartbeat` | 60 s | Liveness. Always queued; exempt from the deploy gate and from the DB Migrate idle check (Infra `owners.yaml`) |
 | `crm_intake_process` | per stored inquiry (queued in the submission's transaction) | `app/intake/process.py`: e-mail then phone blind-index dedupe; **attach** to the lead's open trip (`inquiry` / `qualifying`, C47 in R6) or create traveller (F1) + profile (F2) + companions + trip at Inquiry + party twins + "Reply within 2 h" task + consent rows; a payload that does not open marks the submission `failed` (permanent). Not deploy-gate exempt |
+| `crm_audit_export` | hourly, queued due now from minute 16 (`HourlyAuditExportSchedule`) | AA-940: keeps the audit partitions three months ahead, then exports every agency's closed hours (15-minute lag, at most 48 per agency per run) to both Object Lock buckets and the manifest chain; `not_configured` without the buckets. Not deploy-gate exempt |
+| `crm_audit_retention` | daily, from `JOB_RETENTION_UTC_HOUR`, due-now hook | AA-940: verifies every agency from `verified_until` (rows, chain, both copies), moves `verified_until`, then drops expired partitions (dry run while `AUDIT_RETENTION_DRY_RUN` is on, the default) |
 | `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
 
 ## CI and release
@@ -342,6 +352,49 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   protects against the readers, not against `crm_app` or the RDS master (the lead of a trip joins F2 to identity
   through `trip_id`); the DPA draft says so.
 
+## F5 audit (AA-940, CRM-12)
+
+- **What is logged** (design §4.9): sign-ins (`POST /crm/v1/audit/sign-in`, sent server side by the web's
+  `/auth/agency`: a GET auto-pick only right after a Cognito sign-in (one-shot `si` session flag), a chooser POST
+  always; not on the browser BFF list), role changes (`provision_agency`: `agency_create`, `member_add`,
+  `member_role_change`, actor `aa_ops` for `platform:` / `system` for `seed:`), one `audit_retention` event per run per
+  active agency (the daily job; the hourly export's per-run record is its manifest row), every F1 reveal (same transaction), list views, views, creates / changes / deletes, refused owner-only
+  actions (`denied`, reason `owner_only` / `not_allowed_for_role`), decrypt denials, key operations (`key_create`,
+  `key_rotate`, `key_rewrap`, `key_destroy`, `app/vault/provider.py`), AI context builds (`ai_context_build`, actor
+  `ai_agent` / `ai:<stage>`, one per LLM gateway call), intake job events, the access log's own views and downloads.
+  Later cards add their actors (L1 writes, support reads, break-glass Decrypts) with the same table.
+- **Partitions and retention** (crm-007): one partition per UTC month; the hourly job keeps three months ahead (no
+  DEFAULT partition: an insert with no partition fails, which fails the request; alarm on `AuditPartitionMonthsAhead`
+  < 1). A partition is dropped only when it ends at or before the start of the UTC month twelve months ago **and**
+  every agency is verified past it; `DROP TABLE` fires no row trigger, so every kept row stays append-only.
+  `verified_until` moves only through `crm.audit_mark_verified()` (forward, never past `exported_until`; `crm_app`
+  updates only `exported_until` / `last_seq`). Accepted risk: the database cannot re-read the buckets, so a
+  compromised `crm_app` could still mark and drop expired partitions; the Object Lock archive stays.
+  The partition maker runs with `lock_timeout` 2 s; the crm-api pool ends a transaction idle for 2 minutes (far below
+  the export's 15-minute read lag).
+- **Export** (`app/audit_export/export.py`, `chain.py`): per agency per closed UTC hour one object
+  `audit/v1/tenants/<tenant>/<yyyy>/<mm>/<dd>/<hh>00Z-<seq>.jsonl` = canonical manifest line + event lines, written to
+  the compliance then the governance bucket (`app/audit_export/archive.py`, SHA-256 checksum, bucket-default Object
+  Lock and SSE-KMS), then the manifest row (trigger-enforced chain: seq + 1, previous hash, contiguous period) and the
+  registry move in the same transaction. A retry rebuilds the same bytes (same rows, same previous hash); empty hours
+  are exported too, so every hour is covered by exactly one manifest.
+- **Verify**: `python -m app.audit_export.verify [--tenant <uuid>] [--since <iso>] [--no-objects]` inside the API
+  container: one JSON line per agency (codes only), exit 1 on any problem (`content_mismatch` = a row deleted, added
+  or changed since the export; `object_missing:<tier>`, `object_mismatch:<tier>`, chain codes, `unexported_rows`,
+  `registry_mismatch`). The daily retention runs it incrementally before any drop.
+- **Offboarding path**: no DELETE on the audit at all; the agency is locked / trashed, the export keeps running for it,
+  its rows leave with the partition drops, then nothing references the tenant row and CRM-35 may delete it (the
+  registry cascades, the manifests stay with the seven-year archive).
+- **Access log** (`app/audit_log.py`, `app/routers/audit.py`, web `/settings/access-log`): owner only (others: 403
+  `owner_only` + a committed `denied` event; the web shows why without calling the API); filters = actor group
+  (`user`, `ai`, `aa_ops`, `aa_support`, `aa_emergency`, `system`), action, result, member, object, dates inside the
+  last 365 days; newest first with a keyset cursor; download as CSV (formula-guarded) or JSON lines, at most 50,000
+  rows (422 `export_too_large`). Lines show the member's role and a short id, never a traveller's name; a client or
+  trip id links to its page.
+- **Metrics** (`AA/Jobs/Crm`, the job sampler): `AuditExportLagMinutes` (Infra alarm at 180),
+  `AuditPartitionMonthsAhead` (alarm below 1) and `AuditVerifyLagHours` (largest exported-minus-verified gap over
+  agencies; alarm at 50: one agency failing verification stops drops for all).
+
 ## Dev seeder (`api/app/seed/`, AA-935)
 
 `python -m app.seed` inside the API container (ECS Exec on `aa-crm-dev-api`; it has the `crm_app` DSN): DRY RUN by
@@ -365,7 +418,9 @@ outside `dev` / `test` / `local`. Output: one JSON line per agency, ids, labels 
 and the key provider `KEY_PROVIDER` (`kms`; `local` only in test / local), `KMS_DATA_KEY_ID` (`alias/crm-<env>/data`),
 `DEK_CACHE_TTL_SECONDS`, and the public intake (AA-936) `INTAKE_PAGE_ORIGINS` (the client host origin; empty on Dev =
 every submission 503 `intake_not_configured`), `RATE_LIMIT_INTAKE_PER_MINUTE` (default 5 per address),
-`RATE_LIMIT_INTAKE_FORM_PER_HOUR` (default 200 per form), and the documents bucket (AA-937) `DOCUMENTS_BUCKET`. Meanings and defaults: `api/app/settings.py`. Live check of the key provider inside the
+`RATE_LIMIT_INTAKE_FORM_PER_HOUR` (default 200 per form), and the documents bucket (AA-937) `DOCUMENTS_BUCKET`, and the
+audit export (AA-940) `AUDIT_BUCKET_COMPLIANCE` / `AUDIT_BUCKET_GOVERNANCE` (both or neither) and
+`AUDIT_RETENTION_DRY_RUN` (default true). Meanings and defaults: `api/app/settings.py`. Live check of the key provider inside the
 container: `python -m app.vault.selftest` (KMS round trip under the nil tenant context, nothing stored).
 
 ## Domain terms
@@ -386,5 +441,7 @@ container: `python -m app.vault.selftest` (KMS round trip under the nil tenant c
   submission of the same e-mail (or phone) while the lead's trip is still `inquiry` / `qualifying` attaches to it.
 - **Intake form**: one public form of an agency (`crm.intake_form`, random `public_key` in its URL); its answers are a
   **submission** (`crm.form_submission`, payload encrypted, redacted after 90 days).
+- **Access log**: the owner's view of the agency audit (`crm.audit_event`), 12 months in the app plus download.
+  **Export manifest**: one row of `crm.audit_export_manifest`, the hash-chained record of one exported hour.
 - **Partner host / client host**: the agency app's host (Dev `partner-dev.`) and the travellers' host (later
   `go-dev.`); never one session across both.

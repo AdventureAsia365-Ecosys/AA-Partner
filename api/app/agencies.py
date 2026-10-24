@@ -124,6 +124,7 @@ RETURNING member_id
 MEMBER_ROLE_UPDATE_SQL = """
 UPDATE crm.member SET role = $3
  WHERE cognito_iss = $1 AND cognito_sub = $2 AND role <> $3 AND deleted_at IS NULL
+RETURNING member_id
 """
 
 
@@ -146,6 +147,7 @@ async def provision_agency(
         )
         if inserted is not None:
             created = True
+            ctx.audit("agency_create", "agency", str(agency.tenant_id))
         else:
             current = await ctx.conn.fetchrow(TENANT_CURRENT_SQL, agency.tenant_id)
             if current is None:  # trashed by someone else between the two statements, or invisible: never guess
@@ -155,14 +157,20 @@ async def provision_agency(
             if (current["display_name"], current["default_locale"]) != (agency.display_name, agency.default_locale):
                 await ctx.conn.execute(TENANT_UPDATE_SQL, agency.tenant_id, agency.display_name, agency.default_locale)
                 updated = True
+        # Design §4.9 "Logged: role changes" (AA-940): a member given a role (added) or moved to another role is an
+        # agency audit event (ids and the column name only; the role value itself is not written).
         for person in people:
             member_id = await ctx.conn.fetchval(MEMBER_INSERT_SQL, person.cognito_iss, person.cognito_sub, person.role)
             if member_id is not None:
                 added += 1
+                ctx.audit("member_add", "member", str(member_id), fields=("role",))
                 continue
-            status = await ctx.conn.execute(MEMBER_ROLE_UPDATE_SQL, person.cognito_iss, person.cognito_sub, person.role)
-            if status.endswith(" 1"):
+            changed = await ctx.conn.fetchval(
+                MEMBER_ROLE_UPDATE_SQL, person.cognito_iss, person.cognito_sub, person.role
+            )
+            if changed is not None:
                 role_changes += 1
+                ctx.audit("member_role_change", "member", str(changed), fields=("role",))
     log.info(
         "agency_provisioned tenant_id=%s created=%s updated=%s members_added=%d members_updated=%d",
         agency.tenant_id,
