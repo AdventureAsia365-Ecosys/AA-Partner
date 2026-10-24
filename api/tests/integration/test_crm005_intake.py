@@ -12,6 +12,7 @@ Plus: the public form lookup policy, stage moves along the DB edges, assignment 
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -338,6 +339,55 @@ async def test_e_repeat_email_attaches_to_the_open_inquiry(app_pool: asyncpg.Poo
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
         assert await conn.fetchval("SELECT max(repeat_count) FROM crm.traveler_profile") == 1
     del owner_id
+
+
+async def test_two_jobs_for_the_same_new_person_at_once_make_one_traveller(app_pool: asyncpg.Pool) -> None:
+    """Two workers overlapping (rolling deploy): the advisory lock serialises the dedupe lookup, so the second job
+    attaches to the trip the first one created instead of creating a twin traveller and trip (R6 / C47)."""
+    keys = _keys()
+    tenant_id, [(owner, _)] = await _agency(app_pool)
+    form = await _form(app_pool, tenant_id, owner)
+    await intake.submit(app_pool, keys, SETTINGS, form.public_key, answers(companions=[]), origin=None)
+    await intake.submit(
+        app_pool, keys, SETTINGS, form.public_key, answers(companions=[], consent_marketing=True), origin=None
+    )
+    async with app_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id::text, payload FROM crm.job WHERE kind = 'crm_intake_process' AND status = 'queued' "
+            "AND payload->>'tenant_id' = $1 ORDER BY created_at, id",
+            str(tenant_id),
+        )
+    handler = build_handler(keys)
+    jobs = [
+        Job(
+            r["id"],
+            "crm_intake_process",
+            json.loads(r["payload"]) if isinstance(r["payload"], str) else dict(r["payload"]),
+            1,
+            5,
+        )
+        for r in rows
+    ]
+    results = await asyncio.gather(*(handler(app_pool, j) for j in jobs))
+    async with app_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE crm.job SET status = 'cancelled', finished_at = now() WHERE id = ANY($1::uuid[])",
+            [j.id for j in jobs],
+        )
+    assert sorted(r["status"] for r in results) == ["attached", "created"]
+    assert results[0]["traveler_id"] == results[1]["traveler_id"] and results[0]["trip_id"] == results[1]["trip_id"]
+    assert await _count(app_pool, tenant_id, "traveler") == 1
+    assert await _count(app_pool, tenant_id, "trip") == 1
+    # The F2 flag follows the latest marketing consent row (no OR-ing, attach path included).
+    async with app_pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        # The attaching job ran second (it saw the first job's trip): its marketing row is the latest one.
+        latest = await conn.fetchval(
+            "SELECT c.value FROM crm.consent c JOIN crm.form_submission s ON s.submission_id = c.submission_id "
+            "WHERE c.purpose = 'marketing' AND s.outcome = 'attached'"
+        )
+        flag = await conn.fetchval("SELECT marketing_ok FROM crm.traveler_profile")
+    assert flag is latest
 
 
 async def test_dedupe_by_phone_and_per_agency(app_pool: asyncpg.Pool) -> None:

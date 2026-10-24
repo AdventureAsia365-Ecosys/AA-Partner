@@ -5,6 +5,15 @@ agency's RLS context, actor ``job:crm_intake_process``) and is idempotent: a sub
 ``received`` is skipped, and the submission row is locked (``FOR UPDATE``) while it is processed.
 
 Dedupe (R6, which absorbs C47): the e-mail's blind index (then the phone's) finds an existing traveller of the agency.
+``crm.traveler`` has no unique index on the blind indexes (a traveller may have no e-mail), so the lookup runs under
+transaction-scoped advisory locks keyed on (agency, e-mail index) and (agency, phone index), always in that order: two
+jobs for the same new person (two workers overlapping in a rolling deploy) are serialised, and the second one finds
+the traveller and the open Inquiry the first one created.
+
+Consent (R6 evidence): every processed submission appends its ``contact`` and ``marketing`` rows to ``crm.consent``
+(latest row per purpose wins) and the F2 flag ``traveler_profile.marketing_ok`` follows that latest marketing row on
+every path. A submission is not verified (anyone may type someone's e-mail), so neither the row nor the flag is enough
+to send marketing: CRM-17 / CRM-29 must confirm by double opt-in before any marketing mail.
 
 - **Attach** (card E test): that traveller leads a trip that is still open (``inquiry`` or ``qualifying``): the
   submission is attached to it — the trip's ``last_inquiry_at`` moves, it waits on the agency again, the reply task is
@@ -63,6 +72,9 @@ BY_PHONE_SQL = """
 SELECT traveler_id, profile_token_enc FROM crm.traveler
  WHERE phone_bidx = $1 AND deleted_at IS NULL ORDER BY created_at, traveler_id LIMIT 1
 """
+DEDUPE_LOCK_SQL = """
+SELECT pg_advisory_xact_lock(hashtextextended($1::text || ':' || $2::text || ':' || encode($3::bytea, 'hex'), 0))
+"""
 OPEN_TRIP_SQL = """
 SELECT t.trip_id, t.owner_member_id FROM crm.trip t
   JOIN crm.trip_traveler tt ON tt.trip_id = t.trip_id AND tt.role = 'lead' AND tt.deleted_at IS NULL
@@ -87,9 +99,10 @@ INSERT INTO crm.traveler_profile (traveler_token, budget_band, pace, marketing_o
 BUMP_PROFILE_SQL = """
 UPDATE crm.traveler_profile
    SET repeat_count = repeat_count + 1, budget_band = coalesce($2, budget_band), pace = coalesce($3, pace),
-       marketing_ok = marketing_ok OR $4
+       marketing_ok = $4
  WHERE traveler_token = $1
 """
+SET_MARKETING_SQL = "UPDATE crm.traveler_profile SET marketing_ok = $2 WHERE traveler_token = $1"
 INSERT_TRIP_SQL = """
 INSERT INTO crm.trip (trip_id, title, start_date, end_date, month, date_flex_days, nights, destinations, party_adults,
                       party_child_ages, party_type, budget_band, trip_style, owner_member_id, intake_form_id,
@@ -179,6 +192,9 @@ async def process_submission(ctx: AnyContext, vault: Vault, submission_id: uuid.
 
     email_idx = await vault.email_index("traveler", "email", answers.email)
     phone_idx = await vault.phone_index("traveler", "phone", answers.phone) if answers.phone else None
+    await ctx.conn.execute(DEDUPE_LOCK_SQL, "crm_intake_email", str(ctx.tenant_id), email_idx)
+    if phone_idx is not None:
+        await ctx.conn.execute(DEDUPE_LOCK_SQL, "crm_intake_phone", str(ctx.tenant_id), phone_idx)
     match = await ctx.conn.fetchrow(BY_EMAIL_SQL, email_idx)
     if match is None and phone_idx is not None:
         match = await ctx.conn.fetchrow(BY_PHONE_SQL, phone_idx)
@@ -192,6 +208,9 @@ async def process_submission(ctx: AnyContext, vault: Vault, submission_id: uuid.
             await _reply_task(ctx, trip_id, open_trip["owner_member_id"])
             await _message_note(ctx, vault, trip_id, traveler_id, answers)
             await _consent(ctx, traveler_id, answers, submission_id)
+            token = await _profile_token(vault, traveler_id, match["profile_token_enc"])
+            if token is not None:  # the flag follows the marketing row just written
+                await ctx.conn.execute(SET_MARKETING_SQL, token, answers.consent_marketing)
             await ctx.conn.execute(DONE_SQL, submission_id, "attached", trip_id, traveler_id)
             ctx.audit("intake_attached", "allowed", "trip", str(trip_id), reason="repeat_inquiry")
             return Outcome("attached", trip_id, traveler_id)

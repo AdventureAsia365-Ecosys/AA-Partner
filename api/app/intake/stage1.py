@@ -24,7 +24,7 @@ import re
 import unicodedata
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from app.vault.blind_index import NormalisationError, normalise_email, normalise_phone
@@ -140,15 +140,21 @@ class Stage1Answers:
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> Stage1Answers:
-        """Rebuild stored answers (already validated when stored)."""
-        return cls(
-            **{
-                **data,
-                "destinations": tuple(data.get("destinations") or ()),
-                "child_ages": tuple(data.get("child_ages") or ()),
-                "companions": tuple(data.get("companions") or ()),
-            }
-        )
+        """Rebuild stored answers (already validated when stored). Stored keys that no longer match the dataclass (a
+        renamed or removed field) raise :class:`Stage1Invalid` ``stored_answers``: a permanent failure, not retried."""
+        if not isinstance(data, dict):
+            raise Stage1Invalid(["stored_answers"])
+        try:
+            return cls(
+                **{
+                    **data,
+                    "destinations": tuple(data.get("destinations") or ()),
+                    "child_ages": tuple(data.get("child_ages") or ()),
+                    "companions": tuple(data.get("companions") or ()),
+                }
+            )
+        except TypeError:
+            raise Stage1Invalid(["stored_answers"]) from None
 
     @property
     def month_date(self) -> date | None:
@@ -203,9 +209,15 @@ def _date(value: Any) -> str | None:
     return date.fromisoformat(value).isoformat()
 
 
-def validate(raw: dict[str, Any], *, honeypot_field: str) -> Stage1Answers:
+def earliest_travel_day(today: date | None = None) -> date:
+    """The earliest start date (or month) a form accepts: yesterday in UTC, so a visitor ahead of UTC choosing
+    "today" is never refused."""
+    return (today or datetime.now(UTC).date()) - timedelta(days=1)
+
+
+def validate(raw: dict[str, Any], *, honeypot_field: str, today: date | None = None) -> Stage1Answers:
     """Normalised answers, or :class:`ConsentMissing` / :class:`Stage1Invalid`. The honeypot is checked by the
-    caller first (:func:`honeypot_filled`)."""
+    caller first (:func:`honeypot_filled`). A start date or month in the past is refused (``today`` for tests)."""
     if not isinstance(raw, dict):
         raise Stage1Invalid(["body"])
     if raw.get("consent_contact") is not True:
@@ -286,6 +298,11 @@ def validate(raw: dict[str, Any], *, honeypot_field: str) -> Stage1Answers:
     take("locale", lambda v: _choice(v, LOCALES) or "en")
     take("client_submission_id", submission_id)
     if not bad:
+        earliest = earliest_travel_day(today)
+        if out.get("start_date") and out["start_date"] < earliest.isoformat():
+            bad.append("start_date")
+        if out.get("month") and out["month"] < earliest.isoformat()[:7]:
+            bad.append("month")
         if out.get("start_date") and out.get("end_date") and out["end_date"] < out["start_date"]:
             bad.append("end_date")
         if out.get("preferred_channel") in ("phone", "sms", "whatsapp") and not out.get("phone"):

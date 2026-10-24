@@ -102,6 +102,8 @@ def test_a_non_object_is_invalid() -> None:
         ({"locale": "fr"}, "locale"),
         ({"client_submission_id": "not-a-uuid"}, "client_submission_id"),
         ({"start_date": "2027-03-10", "end_date": "2027-03-01"}, "end_date"),
+        ({"start_date": "2020-01-01"}, "start_date"),
+        ({"month": "2020-01"}, "month"),
         ({"phone": None, "preferred_channel": "sms"}, "phone"),
     ],
 )
@@ -151,3 +153,28 @@ def test_titles_follow_the_agency_language() -> None:
     )
     many = stage1.validate(raw(destinations=["vietnam", "laos", "cambodia", "thailand"]), honeypot_field="website")
     assert "…" in stage1.trip_title(many, "en-AU")
+
+
+def test_past_dates_allow_yesterday_utc_and_the_current_month() -> None:
+    from datetime import date
+
+    from app.intake.stage1 import Stage1Answers, Stage1Invalid, validate
+
+    today = date(2027, 3, 1)
+    raw = {
+        "destinations": ["laos"],
+        "adults": 1,
+        "budget_band": "under_1000",
+        "name": "An",
+        "email": "an@x.test",
+        "consent_contact": True,
+        "client_submission_id": "00000000-0000-4000-8000-000000000001",
+    }
+    assert validate({**raw, "start_date": "2027-02-28"}, honeypot_field="website", today=today).start_date
+    assert validate({**raw, "month": "2027-02"}, honeypot_field="website", today=today).month == "2027-02"
+    with pytest.raises(Stage1Invalid) as exc:
+        validate({**raw, "start_date": "2027-02-27", "month": "2027-01"}, honeypot_field="website", today=today)
+    assert exc.value.fields == ["month", "start_date"]
+    with pytest.raises(Stage1Invalid) as exc:
+        Stage1Answers.from_json({**raw, "renamed_field": 1})
+    assert exc.value.fields == ["stored_answers"]

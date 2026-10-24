@@ -74,6 +74,14 @@ async def test_new_traveller_trip_party_task_note_consent() -> None:
     out = await process.process_submission(ctx, FakeVault(), SUB)
     assert out.status == "created" and out.trip_id and out.traveler_id
     assert len(conn.sql("INSERT INTO crm.traveler (traveler_id, display_name_enc, email_enc")) == 1
+    # Dedupe runs under the agency's e-mail then phone advisory locks (no unique index on the blind indexes).
+    assert [a[:2] for a in conn.sql("pg_advisory_xact_lock")] == [
+        ("crm_intake_email", str(TENANT)),
+        ("crm_intake_phone", str(TENANT)),
+    ]
+    assert conn.calls.index(next(c for c in conn.calls if "pg_advisory_xact_lock" in c[0])) < conn.calls.index(
+        next(c for c in conn.calls if "WHERE email_bidx" in c[0])
+    )
     assert len(conn.sql("INSERT INTO crm.traveler (traveler_id, display_name_enc, name_bidx")) == 1  # companion
     assert [a[2] for a in conn.sql("INSERT INTO crm.trip_traveler")] == ["lead", "companion"]
     assert len(conn.sql("INSERT INTO crm.trip_party")) == 2 and len(conn.sql("INSERT INTO crm.task")) == 1
@@ -86,10 +94,14 @@ async def test_new_traveller_trip_party_task_note_consent() -> None:
 
 
 async def test_e_repeat_email_with_an_open_inquiry_attaches() -> None:
+    token = uuid.uuid4()
     conn = (
         ScriptedConn()
-        .on("FROM crm.form_submission s", submission(message=None, phone=None))
-        .on("WHERE email_bidx", {"traveler_id": KNOWN, "profile_token_enc": None})
+        .on("FROM crm.form_submission s", submission(message=None, phone=None, consent_marketing=False))
+        .on(
+            "WHERE email_bidx",
+            {"traveler_id": KNOWN, "profile_token_enc": enc("traveler", "profile_token_enc", str(token))},
+        )
         .on("FROM crm.trip t", {"trip_id": OPEN_TRIP, "owner_member_id": None})
     )
     ctx = system_ctx(conn)
@@ -98,6 +110,10 @@ async def test_e_repeat_email_with_an_open_inquiry_attaches() -> None:
     assert conn.sql("INSERT INTO crm.trip (") == [] and conn.sql("INSERT INTO crm.traveler") == []
     assert conn.sql("last_inquiry_at = now()") == [(OPEN_TRIP,)]
     assert conn.sql("INSERT INTO crm.note") == []  # no message, no note
+    assert [a[0] for a in conn.sql("pg_advisory_xact_lock")] == ["crm_intake_email"]  # no phone, one lock
+    # The consent ledger and the F2 flag agree: the latest marketing row (False here) drives marketing_ok.
+    assert [(a[1], a[2]) for a in conn.sql("INSERT INTO crm.consent")] == [("contact", True), ("marketing", False)]
+    assert conn.sql("SET marketing_ok = $2") == [(token, False)]
     assert ctx.audit_events[-1].action == "intake_attached"
 
 
@@ -114,7 +130,8 @@ async def test_known_by_phone_without_open_trip_is_a_repeat_client() -> None:
     ctx = system_ctx(conn)
     out = await process.process_submission(ctx, FakeVault(), SUB)
     assert out.status == "created" and out.traveler_id == KNOWN
-    assert conn.sql("repeat_count = repeat_count + 1")[0][0] == token
+    bump = conn.sql("repeat_count = repeat_count + 1")[0]
+    assert bump[0] == token and bump[3] is True  # marketing_ok = this submission's marketing row, not OR-ed
     assert conn.sql("INSERT INTO crm.traveler") == []
     assert ctx.audit_events[-1].reason == "repeat_client"
 
