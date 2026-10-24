@@ -6,14 +6,16 @@
 - Erasure reaches the append-only ``consent`` / ``trip_stage_history`` / ``llm_call`` only inside the definer
   functions (crm_owner + ``app.erasing``); ``crm_app`` and a plain owner session are refused; the audit never.
 - Legal holds suspend every deletion that reaches the subject (a client hold reaches their trips and both ends of a
-  relation; any hold of the agency suspends its erase); a platform hold is released by a platform actor only, and no
-  hold can be trashed.
+  relation; a trip hold reaches every client whose erase would delete rows of the trip, a client hold every client
+  related to them; any hold of the agency suspends its erase); a platform hold is released by a platform actor only,
+  and no hold can be trashed.
 - The agency erase needs status ``offboarding`` and empties every tenant table outside the keep list.
 - ``crm_eraser`` is the only role that executes the deletion functions.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from typing import Any
@@ -125,8 +127,6 @@ async def _erase(
     async with pool.acquire() as conn, conn.transaction():
         await _ctx(conn, tenant_id)
         await conn.execute("SET LOCAL ROLE crm_eraser")
-        import json
-
         return json.loads(
             await conn.fetchval("SELECT crm.erase_subject($1, $2, $3, $4)", scope, subject, token, dry_run)
         )
@@ -326,7 +326,8 @@ async def test_legal_holds_suspend_deletion(app_pool: asyncpg.Pool) -> None:
     async with app_pool.acquire() as conn, conn.transaction():
         await _ctx(conn, ids["tenant"])
         await conn.execute("SET LOCAL ROLE crm_eraser")
-        assert await conn.fetchval("SELECT crm.lifecycle_purge_expired(false)") == '{"held": 1, "llm_call": 0}'
+        held = '{"held": 1, "llm_call": 0, "placeholder_map": 0}'
+        assert await conn.fetchval("SELECT crm.lifecycle_purge_expired(false)") == held
 
 
 async def _hold(
@@ -460,6 +461,189 @@ async def test_a_client_hold_reaches_their_trips_and_both_ends_of_a_relation(app
     assert (await _erase(app_pool, ids["tenant"], "trip", trip2))["counts"]["trip"] == 1
 
 
+async def _client(pool: asyncpg.Pool, tenant_id: uuid.UUID) -> tuple[uuid.UUID, uuid.UUID]:
+    """A client on no trip, with an F2 profile: (traveler_id, profile token)."""
+    traveler, token = uuid.uuid4(), uuid.uuid4()
+    async with pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, tenant_id, "seed:test")
+        await conn.execute("INSERT INTO crm.traveler_profile (traveler_token) VALUES ($1)", token)
+        await conn.execute(
+            "INSERT INTO crm.traveler (traveler_id, display_name_enc, profile_token_enc) VALUES ($1, $2, $3)",
+            traveler,
+            _blob(),
+            _blob(),
+        )
+    return traveler, token
+
+
+async def _name_on_trip(
+    pool: asyncpg.Pool, tenant_id: uuid.UUID, trip: uuid.UUID, traveler: uuid.UUID, where: str
+) -> dict[str, int]:
+    """Rows of ``trip`` that name ``traveler`` without putting them on its party list; returns the per-table count."""
+    async with pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, tenant_id, "seed:test")
+        if where == "note_and_document":
+            await conn.execute(
+                "INSERT INTO crm.note (trip_id, traveler_id, kind, body_enc) VALUES ($1, $2, 'internal', $3)",
+                trip,
+                traveler,
+                _blob(),
+            )
+            document = uuid.uuid4()
+            await conn.execute(
+                "INSERT INTO crm.document (document_id, trip_id, traveler_id, kind, s3_key, sha256, size_bytes, "
+                "content_type, filename_enc) VALUES ($1, $2, $3, 'ticket', $4, $5, 10, 'application/pdf', $6)",
+                document,
+                trip,
+                traveler,
+                f"tenants/{tenant_id}/documents/{document}",
+                os.urandom(32),
+                _blob(),
+            )
+            return {"note": 1, "document": 1}
+        if where == "submission":
+            definition = await conn.fetchval(
+                "INSERT INTO crm.form_definition (version, schema_key, schema) VALUES (1, 'inquiry', '{}') "
+                "RETURNING form_definition_id"
+            )
+            form = await conn.fetchval(
+                "INSERT INTO crm.intake_form (public_key, label, form_definition_id, honeypot_field) "
+                "VALUES ($1, 'Website', $2, 'website') RETURNING intake_form_id",
+                uuid.uuid4().hex,
+                definition,
+            )
+            await conn.execute(
+                "INSERT INTO crm.form_submission (intake_form_id, schema_key, payload_enc, idempotency_key, trip_id, "
+                "traveler_id) VALUES ($1, 'inquiry', $2, $3, $4, $5)",
+                form,
+                _blob(),
+                f"sub-{uuid.uuid4().hex}",
+                trip,
+                traveler,
+            )
+            return {"form_submission": 1}
+        await conn.execute(
+            "INSERT INTO crm.dispatch_queue (traveler_id, trip_id, channel, purpose, origin) "
+            "VALUES ($1, $2, 'email', 'transactional', 'system')",
+            traveler,
+            trip,
+        )
+        return {"dispatch_queue": 1}
+
+
+async def _rows_of_trip(
+    pool: asyncpg.Pool, tenant_id: uuid.UUID, trip: uuid.UUID, traveler: uuid.UUID, tables: dict[str, int]
+) -> dict[str, int]:
+    """Rows of ``trip`` naming ``traveler``, per table."""
+    sql = "SELECT count(*) FROM crm.{} WHERE trip_id = $1 AND traveler_id = $2"
+    async with pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, tenant_id)
+        return {t: int(await conn.fetchval(sql.format(t), trip, traveler)) for t in tables}
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("where", ["note_and_document", "submission", "dispatch"])
+async def test_a_trip_hold_reaches_a_client_named_on_its_rows_off_the_party_list(
+    app_pool: asyncpg.Pool, where: str, dry_run: bool
+) -> None:
+    """Re-review S249 B1 (probe p1): trip H is on hold; client T is not on H's party list, only named on a note and a
+    document (or a submission, a queued message) of H. The traveller erase deletes those rows whatever their trip, so
+    the hold on H reaches T: CRM10, dry run included, and H keeps every row."""
+    ids = await _agency(app_pool)
+    traveler, token = await _client(app_pool, ids["tenant"])
+    expected = await _name_on_trip(app_pool, ids["tenant"], ids["trip"], traveler, where)
+    hold = await _hold(app_pool, ids["tenant"], "trip", ids["trip"], f"member:{ids['member']}")
+    with pytest.raises(asyncpg.PostgresError, match="legal_hold") as err:
+        await _erase(app_pool, ids["tenant"], "traveler", traveler, token, dry_run=dry_run)
+    assert err.value.sqlstate == "CRM10"
+    assert await _rows_of_trip(app_pool, ids["tenant"], ids["trip"], traveler, expected) == expected
+    assert await _count(app_pool, ids["tenant"], "traveler") == 3
+    # Released, the same erase goes through and takes T's rows of H with it.
+    async with app_pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, ids["tenant"], f"member:{ids['member']}")
+        await conn.execute(
+            "UPDATE crm.legal_hold SET status = 'released', released_at = now(), released_by = 'member:x' "
+            "WHERE hold_id = $1",
+            hold,
+        )
+    done = await _erase(app_pool, ids["tenant"], "traveler", traveler, token, dry_run=dry_run)
+    assert all(done["counts"][t] == n for t, n in expected.items()), done["counts"]
+    left = await _rows_of_trip(app_pool, ids["tenant"], ids["trip"], traveler, expected)
+    assert left == (expected if dry_run else dict.fromkeys(expected, 0))
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+async def test_a_client_hold_reaches_the_erase_of_a_related_client(app_pool: asyncpg.Pool, dry_run: bool) -> None:
+    """Re-review S249 B1 (probe p2): client B is on hold, A and B are related. Erasing A would delete both relation
+    rows (the inverse too), so the hold on B reaches A: CRM10, dry run included; nothing is deleted."""
+    ids = await _agency(app_pool)
+    a, a_token = await _client(app_pool, ids["tenant"])
+    b, _ = await _client(app_pool, ids["tenant"])
+    async with app_pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, ids["tenant"], "seed:test")
+        await conn.execute(
+            "INSERT INTO crm.traveler_relation (from_traveler_id, to_traveler_id, kind) VALUES ($1, $2, 'spouse')", a, b
+        )
+    relations = await _count(app_pool, ids["tenant"], "traveler_relation")
+    assert relations == 2  # the inverse row (crm-006)
+    hold = await _hold(app_pool, ids["tenant"], "traveler", b, f"member:{ids['member']}")
+    with pytest.raises(asyncpg.PostgresError, match="legal_hold") as err:
+        await _erase(app_pool, ids["tenant"], "traveler", a, a_token, dry_run=dry_run)
+    assert err.value.sqlstate == "CRM10"
+    assert await _count(app_pool, ids["tenant"], "traveler_relation") == relations
+    assert await _count(app_pool, ids["tenant"], "traveler") == 4
+    async with app_pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, ids["tenant"], f"member:{ids['member']}")
+        await conn.execute(
+            "UPDATE crm.legal_hold SET status = 'released', released_at = now(), released_by = 'member:x' "
+            "WHERE hold_id = $1",
+            hold,
+        )
+    done = await _erase(app_pool, ids["tenant"], "traveler", a, a_token, dry_run=dry_run)
+    assert done["counts"]["traveler_relation"] == 2
+    assert await _count(app_pool, ids["tenant"], "traveler_relation") == (relations if dry_run else 0)
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+async def test_a_client_hold_reaches_a_trip_that_queues_a_message_to_them(
+    app_pool: asyncpg.Pool, dry_run: bool
+) -> None:
+    """Re-review S249 (minor): a trip erase deletes the trip's queued messages; one addressed to a held client (who is
+    not on the party list) makes the trip held too (crm.legal_hold_blocks), so the erase refuses and the row stays."""
+    ids = await _agency(app_pool)
+    client, _ = await _client(app_pool, ids["tenant"])
+    await _name_on_trip(app_pool, ids["tenant"], ids["trip"], client, "dispatch")
+    await _hold(app_pool, ids["tenant"], "traveler", client, f"member:{ids['member']}")
+    assert await _held(app_pool, ids["tenant"], "trip", ids["trip"])
+    with pytest.raises(asyncpg.PostgresError, match="legal_hold") as err:
+        await _erase(app_pool, ids["tenant"], "trip", ids["trip"], dry_run=dry_run)
+    assert err.value.sqlstate == "CRM10"
+    queued = {"dispatch_queue": 1}
+    assert await _rows_of_trip(app_pool, ids["tenant"], ids["trip"], client, queued) == queued
+    assert await _count(app_pool, ids["tenant"], "trip") == 1
+
+
+async def test_the_deletion_functions_pin_their_search_path(admin: asyncpg.Connection) -> None:
+    """Re-review S249: every crm-010 function runs with search_path = pg_catalog, pg_temp (pg_temp last)."""
+    rows = await admin.fetch(
+        "SELECT p.oid::regprocedure::text AS fn, p.proconfig FROM pg_proc p "
+        "WHERE p.pronamespace = 'crm'::regnamespace AND p.proname = ANY($1::text[])",
+        [
+            "guard_legal_hold",
+            "legal_hold_blocks",
+            "trip_delete_blockers",
+            "erasable_append_only",
+            "erase_rows",
+            "erase_subject",
+            "lifecycle_purge_expired",
+        ],
+    )
+    assert len(rows) == 7
+    assert {r["fn"]: list(r["proconfig"] or []) for r in rows} == {
+        r["fn"]: ["search_path=pg_catalog, pg_temp"] for r in rows
+    }
+
+
 async def test_the_llm_call_purge_keeps_180_days(app_pool: asyncpg.Pool) -> None:
     ids = await _agency(app_pool)
     async with app_pool.acquire() as conn, conn.transaction():
@@ -470,9 +654,56 @@ async def test_the_llm_call_purge_keeps_180_days(app_pool: asyncpg.Pool) -> None
             "(now() - interval '179 days', 'crm_test', 'writer', 'stub', 'stub-1', 'ok')"
         )
         await conn.execute("SET LOCAL ROLE crm_eraser")
-        assert await conn.fetchval("SELECT crm.lifecycle_purge_expired(true)") == '{"held": 0, "llm_call": 1}'
-        assert await conn.fetchval("SELECT crm.lifecycle_purge_expired(false)") == '{"held": 0, "llm_call": 1}'
+        result = '{"held": 0, "llm_call": 1, "placeholder_map": 0}'
+        assert await conn.fetchval("SELECT crm.lifecycle_purge_expired(true)") == result
+        assert await conn.fetchval("SELECT crm.lifecycle_purge_expired(false)") == result
     assert await _count(app_pool, ids["tenant"], "llm_call") == 2
+
+
+async def test_the_llm_call_purge_takes_the_placeholder_maps_of_its_calls(app_pool: asyncpg.Pool) -> None:
+    """Re-review S249: an old call that still has its crm-009 placeholder map (placeholder_map_call_fk) does not stop
+    the 180-day purge: the map goes first; a map of a recent call stays. Before crm-009 the step reports 0."""
+    ids = await _agency(app_pool)
+    async with app_pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, ids["tenant"])
+        calls = []
+        for days in (200, 10):
+            calls.append(
+                await conn.fetchval(
+                    "INSERT INTO crm.llm_call (at, stage, role, provider, model, outcome) "
+                    "VALUES (now() - make_interval(days => $1), 'crm_test', 'writer', 'stub', 'stub-1', 'ok') "
+                    "RETURNING llm_call_id",
+                    days,
+                )
+            )
+        recent = calls[1]
+        has_maps = await conn.fetchval("SELECT to_regclass('crm.placeholder_map') IS NOT NULL")
+        if has_maps:
+            for call in calls:
+                await conn.execute(
+                    "INSERT INTO crm.placeholder_map (placeholder_map_id, llm_call_id, map_enc, placeholder_count, "
+                    "scrubber_version) VALUES ($1, $2, $3, 1, 'f3-1')",
+                    uuid.uuid4(),
+                    call,
+                    _blob(),
+                )
+        maps = 1 if has_maps else 0
+        await conn.execute("SET LOCAL ROLE crm_eraser")
+        assert json.loads(await conn.fetchval("SELECT crm.lifecycle_purge_expired(true)")) == {
+            "held": 0,
+            "llm_call": 1,
+            "placeholder_map": maps,
+        }
+        assert json.loads(await conn.fetchval("SELECT crm.lifecycle_purge_expired(false)")) == {
+            "held": 0,
+            "llm_call": 1,
+            "placeholder_map": maps,
+        }
+    assert await _count(app_pool, ids["tenant"], "llm_call") == 2  # the seed call and the recent one
+    if has_maps:
+        async with app_pool.acquire() as conn, conn.transaction():
+            await _ctx(conn, ids["tenant"])
+            assert await conn.fetchval("SELECT array_agg(llm_call_id) FROM crm.placeholder_map") == [recent]
 
 
 async def test_the_agency_erase_needs_offboarding_and_empties_every_tenant_table(
