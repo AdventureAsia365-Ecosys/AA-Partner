@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 import app.main as main_module
 from app.db import Database
+from app.jobs.kinds import DEPLOY_GATE_EXEMPT
 from app.settings import Settings
 
 
@@ -84,10 +85,13 @@ def test_worker_runs_for_the_app_lifetime_when_enabled() -> None:
         "crm_dispatch",
         "crm_stage_date_rule",
         "crm_fx_fetch",
+        "crm_membership_pull",
     }
-    # Only the heartbeat queues ahead; the daily retention run is a due-now maintenance hook (review round: a
-    # queued-ahead daily row would block the deploy gate and every DB Migrate apply).
-    assert [(r.kind, r.every_seconds) for r in worker.recurring] == [("crm_heartbeat", 60)]
+    # Only the deploy-gate exempt kinds queue ahead (the heartbeat and, AA-978, the CIS membership pull); the daily
+    # retention run is a due-now maintenance hook (review round: a queued-ahead daily row would block the deploy gate
+    # and every DB Migrate apply).
+    assert [(r.kind, r.every_seconds) for r in worker.recurring] == [("crm_heartbeat", 60), ("crm_membership_pull", 20)]
+    assert {r.kind for r in worker.recurring} <= DEPLOY_GATE_EXEMPT
     assert [type(h).__name__ for h in worker.hooks] == [
         "DailyRetentionSchedule",
         "HourlyAuditExportSchedule",

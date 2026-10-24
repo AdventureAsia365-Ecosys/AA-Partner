@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
 
 import app.db as db_module
+from app.cis import feed_state
 from app.db import REQUIRED_SCHEMA_VERSION, REQUIRED_SCHEMA_VERSIONS, Database
 from app.settings import Settings
 
@@ -30,6 +32,13 @@ class FakePool:
     def __init__(self, answers: dict[str, Any]) -> None:
         self._answers = answers
         self.closed = False
+
+    async def fetchrow(self, query: str) -> Any:
+        """crm.membership_feed_state (AA-978), read by the readiness probe when the feed is configured."""
+        answer = self._answers[query]
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
 
     @asynccontextmanager
     async def acquire(self):
@@ -70,7 +79,50 @@ def created(monkeypatch: pytest.MonkeyPatch, answers: dict[str, Any]) -> list[di
 async def test_ready_when_db_answers_and_required_version_registered(created: list[dict[str, Any]]) -> None:
     result = await Database(SETTINGS).readiness()
     assert result.ok
-    assert result.body == {"status": "ok", "db": "ok", "schema_version": REQUIRED_SCHEMA_VERSION}
+    assert result.body == {
+        "status": "ok",
+        "db": "ok",
+        "schema_version": REQUIRED_SCHEMA_VERSION,
+        "membership_feed": "not_configured",
+    }
+
+
+M2M_JSON = (
+    '{"client_id": "abc123", "client_secret": "placeholder", '
+    '"token_url": "https://m2m-auth.example.invalid/oauth2/token", "scopes": ["cis.tenant/read"]}'
+)
+FEED_SETTINGS = Settings(database_url=DSN, cis_api_url="https://api-cis.example.invalid", m2m_client=M2M_JSON)
+
+
+def _feed_row(failures: int = 0, last_ok: dt.timedelta | None = dt.timedelta(seconds=30)) -> dict[str, Any]:
+    now = dt.datetime.now(dt.UTC)
+    return {
+        "feed_cursor": "c1",
+        "failures": failures,
+        "last_error_at": now if failures else None,
+        "last_ok_at": now - last_ok if last_ok is not None else None,
+    }
+
+
+@pytest.mark.parametrize(
+    ("row", "word"),
+    [
+        (_feed_row(), "ok"),
+        (_feed_row(last_ok=None), "pending"),
+        (_feed_row(last_ok=dt.timedelta(minutes=11)), "stale"),
+        (_feed_row(failures=3), "failing"),
+        (RuntimeError("no row"), "unknown"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_the_membership_feed_shows_in_readiness_and_never_fails_it(
+    created: list[dict[str, Any]], answers: dict[str, Any], row: Any, word: str
+) -> None:
+    """AA-978 review round 1: a stuck CIS feed shows on /crm/health/ready (one word), and readiness stays 200."""
+    answers[feed_state.LOAD_SQL] = row
+    result = await Database(FEED_SETTINGS).readiness()
+    assert result.ok
+    assert result.body["membership_feed"] == word
 
 
 @pytest.mark.asyncio

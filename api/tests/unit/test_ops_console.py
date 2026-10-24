@@ -268,7 +268,7 @@ async def test_create_agency_refuses_an_existing_id_and_writes_nothing(monkeypat
 @pytest.mark.asyncio
 async def test_lock_and_unlock() -> None:
     conn = agency_conn("active")
-    conn.on("FOR UPDATE", "active")
+    conn.on("FOR UPDATE", {"status": "active", "lock_source": None})
     out = await console.lock_agency(conn, TENANT, staff_sub=STAFF, reason_code="payment", ticket_ref="SUP-77")  # type: ignore[arg-type]
     assert out["tenant_id"] == str(TENANT)
     assert conn.sql("UPDATE crm.tenant SET status = $2") == [(TENANT, "locked")]
@@ -279,7 +279,7 @@ async def test_lock_and_unlock() -> None:
     assert event["actor_ref"] == "platform:staff-1" and event["actor_kind"] == "aa_ops"
     # Already locked: a no-op without an audit event.
     locked = agency_conn("locked")
-    locked.on("FOR UPDATE", "locked")
+    locked.on("FOR UPDATE", {"status": "locked", "lock_source": "aa_ops"})
     await console.lock_agency(locked, TENANT, staff_sub=STAFF, reason_code="test", ticket_ref="SUP-1")  # type: ignore[arg-type]
     assert not locked.sql("UPDATE crm.tenant") and not audits(locked)
     await console.unlock_agency(locked, TENANT, staff_sub=STAFF, ticket_ref="SUP-2")  # type: ignore[arg-type]
@@ -288,15 +288,30 @@ async def test_lock_and_unlock() -> None:
         ("tenant_unlock", None, ["ticket:SUP-2"])
     ]
     active = agency_conn("active")
-    active.on("FOR UPDATE", "active")
+    active.on("FOR UPDATE", {"status": "active", "lock_source": None})
     await console.unlock_agency(active, TENANT, staff_sub=STAFF, ticket_ref="SUP-3")  # type: ignore[arg-type]
     assert not audits(active)
     with raises(Invalid, "invalid_reason"):
         await console.lock_agency(active, TENANT, staff_sub=STAFF, reason_code="bored", ticket_ref="SUP-1")  # type: ignore[arg-type]
     moved = agency_conn("active")
-    moved.on("FOR UPDATE", "offboarding")
+    moved.on("FOR UPDATE", {"status": "offboarding", "lock_source": None})
     with raises(Conflict, "tenant_status"):
         await console.lock_agency(moved, TENANT, staff_sub=STAFF, reason_code="test", ticket_ref="SUP-1")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("source", ["cis_tenant", "cis_membership"])
+@pytest.mark.asyncio
+async def test_an_aa_lock_takes_over_a_cis_lock(source: str) -> None:
+    """AA-978 review round 1: an L1 lock on an agency the CIS feed locked becomes AA's (lock_source aa_ops, audited),
+    so a later CIS tenant.unlocked cannot lift it. The status does not change."""
+    conn = agency_conn("locked")
+    conn.on("FOR UPDATE", {"status": "locked", "lock_source": source})
+    await console.lock_agency(conn, TENANT, staff_sub=STAFF, reason_code="abuse", ticket_ref="SUP-9")  # type: ignore[arg-type]
+    assert conn.sql("UPDATE crm.tenant SET lock_source = 'aa_ops'") == [(TENANT,)]
+    assert not conn.sql("UPDATE crm.tenant SET status = $2")
+    assert [(e["action"], e["reason"], e["fields"], e["object_ids"]) for e in audits(conn)] == [
+        ("tenant_lock", "abuse", ["lock_source"], ["ticket:SUP-9"])
+    ]
 
 
 # ── First owner ──────────────────────────────────────────────────────────────────────────────────

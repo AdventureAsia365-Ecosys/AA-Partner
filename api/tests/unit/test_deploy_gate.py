@@ -235,7 +235,8 @@ async def test_active_count_empty_queue() -> None:
 
 
 def test_exempt_kinds_are_real_kinds() -> None:
-    assert DEPLOY_GATE_EXEMPT == frozenset({"crm_heartbeat"})
+    # AA-978: the CIS membership pull is Recurring too (always holds its next slot queued).
+    assert DEPLOY_GATE_EXEMPT == frozenset({"crm_heartbeat", "crm_membership_pull"})
     assert DEPLOY_GATE_EXEMPT <= EXPECTED_SECONDS.keys()
 
 
@@ -276,9 +277,9 @@ def test_gate_safe_when_only_exempt_kinds_are_active() -> None:
         "by_status": {},
         "by_kind": {},
         "safe_to_deploy": True,
-        "exempt_kinds": ["crm_heartbeat"],
+        "exempt_kinds": ["crm_heartbeat", "crm_membership_pull"],
     }
-    assert conn.sql("FROM crm.job") == [(["crm_heartbeat"],)]
+    assert conn.sql("FROM crm.job") == [(["crm_heartbeat", "crm_membership_pull"],)]
 
 
 def test_gate_not_safe_with_active_jobs() -> None:

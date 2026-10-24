@@ -13,6 +13,10 @@ really runs. The AA-940 kinds ``crm_audit_export`` (hourly) and ``crm_audit_rete
 and so do the AA-942 kinds: ``crm_lifecycle`` (daily, due-now hook), ``crm_offboard`` and ``crm_dispatch`` (one row per
 event; a message's row waits its 10-second undo delay), AA-943's hourly ``crm_stage_date_rule`` and AA-944's daily
 ``crm_fx_fetch``.
+
+AA-978: ``crm_membership_pull`` (the CIS membership feed) is Recurring every 20 s, so like the heartbeat it always
+holds its next slot's row queued: it is exempt here and in DB Migrate (Infra ``owners.yaml`` ``idle_exempt_kinds``).
+Interrupting it is harmless (each event is its own transaction, recorded once in ``crm.membership_inbox``).
 """
 
 from __future__ import annotations
@@ -36,11 +40,13 @@ DISPATCH = "crm_dispatch"
 STAGE_DATE_RULE = "crm_stage_date_rule"
 # AA-944: the daily platform FX rates (app.fx.fetch), queued due-now once per UTC day, never ahead.
 FX_FETCH = "crm_fx_fetch"
+# AA-978: pull the CIS tenant.membership.v1 feed (app.cis.membership_feed), Recurring every 20 s.
+MEMBERSHIP_PULL = "crm_membership_pull"
 
 DEFAULT_EXPECTED_SECONDS = 300
 OVERDUE_FACTOR = 2
 
-DEPLOY_GATE_EXEMPT: frozenset[str] = frozenset({HEARTBEAT})
+DEPLOY_GATE_EXEMPT: frozenset[str] = frozenset({HEARTBEAT, MEMBERSHIP_PULL})
 
 EXPECTED_SECONDS: dict[str, int] = {
     HEARTBEAT: 30,
@@ -54,6 +60,7 @@ EXPECTED_SECONDS: dict[str, int] = {
     DISPATCH: 30,
     STAGE_DATE_RULE: 120,
     FX_FETCH: 120,
+    MEMBERSHIP_PULL: 30,
 }
 
 

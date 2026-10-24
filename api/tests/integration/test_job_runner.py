@@ -22,6 +22,7 @@ from app.jobs.kinds import (
     HEARTBEAT,
     JOB_RETENTION,
     LIFECYCLE,
+    MEMBERSHIP_PULL,
     PLACEHOLDER_PURGE,
     STAGE_DATE_RULE,
 )
@@ -36,7 +37,9 @@ SELECT kind, status, count(*)::int AS n,
        count(*) FILTER (WHERE status = 'queued' AND run_after <= now())::int AS due
   FROM {table} WHERE status IN ('queued', 'running') AND NOT (kind = ANY($1::text[]))
  GROUP BY kind, status ORDER BY kind, status"""
-INFRA_IDLE_EXEMPT_CRM = frozenset({"crm_heartbeat"})
+# AA-978: + crm_membership_pull (Infra registry branch chore/aa-978-membership-pull-exempt; it must be on Infra main
+# before this code deploys, or every DB Migrate apply waits on the pull's queued-ahead slot).
+INFRA_IDLE_EXEMPT_CRM = frozenset({"crm_heartbeat", "crm_membership_pull"})
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -180,6 +183,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         (HEARTBEAT, False),
         (JOB_RETENTION, True),
         (LIFECYCLE, True),
+        (MEMBERSHIP_PULL, False),  # AA-978: Recurring like the heartbeat, its next slot queued ahead (exempt)
         (PLACEHOLDER_PURGE, True),  # AA-938: the hourly purge, queued due now like the daily retention
         (STAGE_DATE_RULE, True),  # AA-943: the hourly trip date rule, due now too
     ]

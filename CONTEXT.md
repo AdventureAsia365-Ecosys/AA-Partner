@@ -67,7 +67,10 @@ Design sources, in order:
   CRM roles (owner / agent / assistant) and the agency audit (ADR 0010 decision 5). The agency is the controller, AA
   the processor (ADR 0008a decision 1).
 - **Consumes** only through versioned HTTP contracts (root `docs/contracts/`): `booking.b2b.v1` (AA-Booking),
-  `catalog.http.v1`, `tenant.membership.v1` (AA-CIS-App). Service calls use the M2M pool (ADR 0006b decision 7).
+  `catalog.http.v1`, `tenant.membership.v1` (AA-CIS-App). Service calls use the M2M pool (ADR 0006b decision 7):
+  `app/cis/m2m.py` asks the aa-m2m pool for one scope per call (AA-978). `tenant.membership.v1` is pulled by
+  `crm_membership_pull` (section "CIS membership feed" below); CIS is a revocation and lifecycle source there, never a
+  positive gate and never a source of CRM roles.
 - **Publishes** `crm.ops.v1` under `/crm/ops/v1` to the CIS admin (L1 platform console), later `crm.insights.v1`.
 - **Never** grants another app's role anything on `crm`, never reads another app's schema (no cross-schema grants in
   either direction: the isolation probe asserts 42501 both ways), never writes content (ADR 0002), never owns prices
@@ -162,7 +165,13 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
   Only `app/members/recovery.py` and `app/ops/console.py` may open it, and only `app/routers/ops.py` (writes need the
   WORKFORCE group `crm-platform-admin`) calls their platform functions; the helpers a platform context is handed
   (`offboarding.raise_request`, `team.create_invitation`, `queue.retry_failed`) are called only from their module
-  and the console (code-rules tests).
+  and the console (code-rules tests). AA-978: an owner recovery (open / complete) also meets an agency the CIS feed
+  locked for want of an owner (`lock_source = cis_membership`), and completing it unlocks the agency; any other lock
+  stays 409 `tenant_locked`.
+- **`membership_feed_tx(pool, tenant_id)`** (AA-978) is one CIS `tenant.membership.v1` event in one agency: actor
+  `platform:feed-tenant-membership` (audit kind `aa_ops`), opened for an agency in any status and also for a CIS
+  tenant the CRM has no agency for (`ctx.status` None; the event is still recorded in `crm.membership_inbox`). Only
+  `app/cis/membership_feed.py` may open it (code-rules test).
 - **crm-008 membership rules** (DB, whatever the API code does): inside a member request only an owner writes
   `crm.member` / `crm.member_invitation` (CRM02); a member's identity (`tenant_id`, `cognito_iss`, `cognito_sub`) is
   fixed outside platform contexts; no crm_app session deletes a member; an invitation moves only itself, pending ->
@@ -261,6 +270,7 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 | `crm_lifecycle` | daily, from `JOB_RETENTION_UTC_HOUR`, due-now hook (`DailyLifecycleSchedule`) | AA-942: per agency (active / locked): form-submission payloads redacted after 90 days, LLM calls older than 180 days purged (with their crm-009 placeholder maps), trash past its window purged through `crm.erase_subject`, inactive clients auto-archived; one `lifecycle_run` row + one audit event per agency; skips anything under a legal hold or the delete block; DRY RUN (counts only) while `LIFECYCLE_DRY_RUN` is on (default). Not deploy-gate exempt |
 | `crm_offboard` | per owner step (queued in the request's transaction) | AA-942: `mode=export` builds and seals the agency export; `mode=erase` erases the agency, deletes its objects, destroys its keys, writes the receipt. Not deploy-gate exempt |
 | `crm_dispatch` | per queued message (after the 10 s undo delay for a user action) | AA-942: the dispatcher gate at send time (trashed, archived, no marketing consent -> dropped; no sender -> held). Not deploy-gate exempt |
+| `crm_membership_pull` | 20 s, Recurring (next slot queued at each worker maintenance pass, about every 30 s when idle) | AA-978: pulls `<CIS_API_URL>/tenant/membership/v1/events` with an M2M token of scope `cis.tenant/read` (section "CIS membership feed"). Deploy-gate exempt and DB Migrate idle exempt (Infra `owners.yaml`), like the heartbeat; a CIS failure ends the run successfully with the error class in `crm.membership_feed_state` and backs off (20 s doubling to 5 min) |
 | `crm_stage_date_rule` | hourly, due-now hook (`app.stages_job.HourlyStageDateRule`, key per UTC hour) | AA-943: per active agency, "today" in `tenant_settings.timezone`: booked -> travelling on the start date (reason `date_rule_gate_unmet` + an urgent task), pre_departure -> travelling, travelling -> completed on the end date, one `return_date_missing` task for a travelling trip without one. Counts only. Not deploy-gate exempt |
 | `crm_fx_fetch` | daily, due-now hook from 00:00 UTC (`app.fx.fetch.DailyFxSchedule`, key `crm_fx_fetch:<date>`) | AA-944: the platform FX rates in `crm.fx_rate_platform` (`ON CONFLICT DO NOTHING`, the only writer): `FX_PROVIDER=synthetic` a fixed USD table incl. VND (Dev), `live` ExchangeRate-API open access (USD base, VND crosses) + ECB (EUR base), fawazahmed0 stored as a cross-check only (a gap > 1 % is logged and counted). Counts only. Not deploy-gate exempt |
 | `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
@@ -765,8 +775,45 @@ audit export (AA-940) `AUDIT_BUCKET_COMPLIANCE` / `AUDIT_BUCKET_GOVERNANCE` (bot
 (default 10), and the F3 guardrail (AA-938) `SCRUB_GUARDRAIL_ID`, `SCRUB_GUARDRAIL_VERSION`,
 `SCRUB_GUARDRAIL_REGION`, `SCRUB_DETECTOR_TIMEOUT_MS`, and the data lifecycle (AA-942) `LIFECYCLE_DRY_RUN` (default
 true), and the FX source (AA-944) `FX_PROVIDER` (`synthetic` by default on dev / test / local, `live` on stg / prod;
-not set on Dev today). Meanings and defaults: `api/app/settings.py`. Live check of the key provider inside the
+not set on Dev today), and the CIS membership feed (AA-978) `CIS_API_URL` (the CIS API origin) and `M2M_CLIENT` (secret
+`aa-crm/<env>/m2m-booking-client`, the JSON `{client_id, client_secret, token_url, scopes}`; either empty = the pull
+logs `not_configured`). Meanings and defaults: `api/app/settings.py`. Live check of the key provider inside the
 container: `python -m app.vault.selftest` (KMS round trip under the nil tenant context, nothing stored).
+
+## CIS membership feed (AA-978, CRM-P1)
+
+Root contract `tenant.membership.v1` (vendored byte copy and samples in `docs/contracts/`, hash pinned by
+`api/tests/unit/test_cis_contract.py`; the root repo is private, so CI cannot fetch it). `crm_membership_pull`
+(`app/cis/membership_feed.py`):
+
+- Pages of at most 200 events after the stored cursor (`crm.membership_feed_state`, crm-013), at most 5 pages a run;
+  the cursor moves only from the value the run read (compare and set), so overlapping runs never move it back.
+- Each event in its own `membership_feed_tx`: skipped when its `event_id` is already in `crm.membership_inbox`; else
+  checked against the contract (`app/cis/contract.py`: closed objects, the enums; a `crm_role` anywhere is
+  `crm_role_present`; a value of the wrong JSON type is refused, never raised) and applied, then recorded with its
+  outcome (`applied` / `ignored` / `rejected`) and reason code in the same transaction. Rejected events change
+  nothing. Only an agency the CRM holds (active or locked) gets an inbox row: events of unknown or offboarding
+  agencies are ignored without one, so no row outlives its agency's erase.
+- An event the database refuses for a reason of its own (SQLSTATE class `CR` or `23`) is recorded as rejected /
+  `apply_refused` (ERROR log `crm_membership_event_apply_refused`) and the run goes on; any other error stops the run
+  as `apply_error` with the cursor before that event (backoff 20 s doubling to 5 min).
+- Rules: `membership.removed` disables the CRM member with the same `(iss, sub)` in that agency and signs them out of
+  the partner pool after the commit (a withdrawn invitation has no identity: ignored `no_identity`). The feed takes
+  the crm-008 per-agency owner lock first, so a concurrent owner demotion cannot leave the agency without an owner;
+  if they were the last active owner the agency is locked with `lock_source = cis_membership` (only the owner
+  recovery or an AA unlock reopens it). `tenant.locked` / `tenant.deleted` lock an
+  active agency (`cis_tenant`); `tenant.unlocked` lifts only a `cis_tenant` lock. `tenant.created`, `invited`,
+  `activated` and `role_changed` are recorded as ignored: no CIS event creates a CRM member or changes a CRM role.
+  CRM-only members have no CIS row and are never touched.
+- `crm.tenant.lock_source` (crm-013 trigger): a lock that names no source is `aa_ops` (the L1 console's lock, and
+  every lock from before crm-013); leaving `locked` clears it; only the feed actor names a `cis_*` source (CRM21). An
+  L1 lock on an agency the feed locked takes the lock over (`aa_ops`, audited `tenant_lock` with field
+  `lock_source`), so a later CIS `tenant.unlocked` cannot lift it.
+- Each applied change writes the agency's audit (`member_deactivate`, `tenant_lock`, `tenant_unlock`, actor
+  `platform:feed-tenant-membership`, object id `cis_event:<id>`). Job results are counts and codes only.
+- Monitoring: `/crm/health/ready` carries `membership_feed` (`ok` / `pending` / `stale` = no success for 10 minutes /
+  `failing` / `not_configured` / `unknown`; never fails readiness), and from 10 consecutive failures every failed run
+  logs the ERROR line `crm_membership_feed_stuck` (the CloudWatch metric filter and alarm key on it, AA-CIS-Infra).
 
 ## Domain terms
 

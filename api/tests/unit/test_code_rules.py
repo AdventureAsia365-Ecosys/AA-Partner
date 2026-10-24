@@ -52,6 +52,7 @@ DB_MODULES = frozenset(
         "app/audit_export/registry.py",  # crm-007 platform functions: agency list, partition maker, drop (AA-940)
         "app/privacy/purge.py",  # expired placeholder maps, crm-009 DELETE-only purge policy, no reads (AA-938)
         "app/fx/fetch.py",  # crm.fx_rate_platform: platform reference rates, no tenant rows, insert only (AA-944)
+        "app/cis/feed_state.py",  # crm.membership_feed_state: platform singleton, no tenant rows (AA-978)
     }
 )
 # The only modules that may open the platform context provisioning_tx() (no membership check): agency creation and the
@@ -104,6 +105,8 @@ INVITATION_MODULES = frozenset({"app/members/invitations.py"})
 CLIENT_LINK_MODULES = frozenset({"app/intake/stage2_public.py"})
 # AA-942: the lifecycle jobs' context (the daily run, the offboarding steps).
 LIFECYCLE_MODULES = frozenset({"app/lifecycle/job.py", "app/lifecycle/offboarding.py"})
+# AA-978: one CIS membership event in one agency (actor platform:feed-tenant-membership, any agency status).
+MEMBERSHIP_FEED_MODULES = frozenset({"app/cis/membership_feed.py"})
 CONTEXT_TYPES = frozenset(
     {"TenantContext", "SystemContext", "ProvisioningContext", "AnyContext", "ExportContext", "LifecycleContext"}
 )
@@ -145,6 +148,7 @@ CONTEXT_FACTORIES = frozenset(
         "invitation_tx",
         "lifecycle_tx",
         "client_link_tx",
+        "membership_feed_tx",
     }
 )
 
@@ -351,6 +355,16 @@ def test_invitation_tx_is_used_only_by_the_invitations_module() -> None:
 
 def test_client_link_tx_is_used_only_by_the_public_stage2_module() -> None:
     assert _users_of("client_link_tx", CLIENT_LINK_MODULES) == []
+
+
+def test_membership_feed_tx_is_used_only_by_the_feed_module() -> None:
+    """AA-978: the feed's context is a platform actor that may disable the last owner and lock an agency."""
+    assert _users_of("membership_feed_tx", MEMBERSHIP_FEED_MODULES) == []
+
+
+def test_the_feed_state_is_reached_only_by_the_feed() -> None:
+    """Plus the readiness probe in ``app/db.py`` (a DB module, so skipped here): ``feed_state.health``."""
+    assert _users_of("feed_state", MEMBERSHIP_FEED_MODULES | {"app/cis/feed_state.py"}) == []
 
 
 def test_every_router_tenant_tx_names_its_permission_action() -> None:

@@ -180,3 +180,36 @@ def test_scrub_guardrail_values_are_read() -> None:
         "DRAFT",
         1500,
     )
+
+
+M2M_JSON = (
+    '{"client_id": "abc123", "client_secret": "s3cret-value", '
+    '"token_url": "https://m2m-auth.example.invalid/oauth2/token", "scopes": ["cis.tenant/read"]}'
+)
+
+
+def test_cis_feed_values_are_read() -> None:
+    """AA-978: CIS_API_URL + M2M_CLIENT (AA-CIS-Infra crm_app.tf); either empty = the feed is not configured."""
+    default = load_settings({})
+    assert (default.cis_api_url, default.m2m_credentials) == ("", None)
+    got = load_settings({"CIS_API_URL": "https://API-CIS.example.invalid/", "M2M_CLIENT": M2M_JSON})
+    assert got.cis_api_url == "https://api-cis.example.invalid"
+    assert got.m2m_credentials is not None and got.m2m_credentials.client_id == "abc123"
+    assert "s3cret-value" not in repr(got)
+    local = load_settings({"ENVIRONMENT": "test", "CIS_API_URL": "http://127.0.0.1:8080"})
+    assert local.cis_api_url == "http://127.0.0.1:8080"
+
+
+@pytest.mark.parametrize(
+    ("env", "message"),
+    [
+        ({"CIS_API_URL": "http://api-cis.example.invalid"}, "CIS_API_URL"),
+        ({"CIS_API_URL": "https://api-cis.example.invalid/tenant"}, "CIS_API_URL"),
+        ({"M2M_CLIENT": "{not json"}, "M2M_CLIENT must be a JSON object"),
+        ({"M2M_CLIENT": '{"client_id": "abc123"}'}, "M2M_CLIENT lacks client_secret, token_url"),
+    ],
+)
+def test_unsafe_cis_feed_values_are_refused(env: dict[str, str], message: str) -> None:
+    with pytest.raises(SettingsError, match=message) as err:
+        load_settings(env)
+    assert "s3cret" not in str(err.value)
