@@ -275,6 +275,26 @@ async def test_undo_older_than_15_s_or_of_a_cancel_is_refused(
             )
 
 
+async def test_a_forged_history_row_cannot_move_a_trip_past_the_edge_table(app_pool: asyncpg.Pool) -> None:
+    """crm_app can write a history row of its own (only at and created_by are pinned); naming it in app.stage_undo
+    must not move the trip along a non-edge (inquiry -> completed here)."""
+    ids = await _agency(app_pool)
+    async with app_pool.acquire() as conn:
+        async with conn.transaction():
+            await _ctx(conn, ids["tenant"], _member(ids))
+            forged = await conn.fetchval(
+                "INSERT INTO crm.trip_stage_history (trip_id, from_stage, to_stage, reason_code) "
+                "VALUES ($1, 'completed', 'inquiry', 'agent_move') RETURNING history_id",
+                ids["trip"],
+            )
+        with pytest.raises(asyncpg.PostgresError, match="undo_not_allowed") as err:
+            async with conn.transaction():
+                await _ctx(conn, ids["tenant"], _member(ids))
+                await conn.execute("SELECT set_config('app.stage_undo', $1, true)", str(forged))
+                await conn.execute("UPDATE crm.trip SET stage = 'completed' WHERE trip_id = $1", ids["trip"])
+        assert err.value.sqlstate == "CRM20"
+
+
 async def test_crm_app_cannot_backdate_or_reattribute_a_history_row(app_pool: asyncpg.Pool) -> None:
     ids = await _agency(app_pool)
     async with app_pool.acquire() as conn, conn.transaction():
