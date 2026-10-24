@@ -39,6 +39,8 @@ EXTRA_POLICIES = {
     ("client_link", "client_link_token_lookup"): ("r", {APP_ROLE}),
     #   crm-014: the RESTRICTIVE margin gate on line money (owner / agent / job only; narrows tenant_isolation).
     ("booking_line_money", "booking_line_money_margin_roles"): ("r", {APP_ROLE}),
+    #   crm-015: the forward-in address lookup of app.tenancy.ingest_tx() (keyed on app.ingest_local_part).
+    ("ingest_address", "ingest_address_lookup"): ("r", {APP_ROLE}),
 }
 # Extra policies that must be RESTRICTIVE (ANDed with tenant_isolation); every other extra policy is permissive.
 RESTRICTIVE_POLICIES = {("booking_line_money", "booking_line_money_margin_roles")}
