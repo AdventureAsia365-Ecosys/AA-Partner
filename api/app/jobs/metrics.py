@@ -15,6 +15,15 @@ two numbers and sends them in **one** ``PutMetricData`` call to namespace ``AA/J
 
 - ``RevealsPerMemberPeakHour`` (Count, AA-937): the highest number of field reveals / document downloads one member
   made in the last hour in this process (:mod:`app.observability.reveal_meter`, design §4.4 bulk reveal).
+- ``AuditExportLagMinutes`` (Count, AA-940): minutes since the end of the oldest agency's last exported audit hour
+  (``crm.audit_export_agencies()``; 0 without agencies). Healthy is under about 75 (the hour, the 15-minute lag, the
+  hourly schedule); Infra alarms at 180.
+- ``AuditPartitionMonthsAhead`` (Count, AA-940): whole months after the current UTC month that already have an audit
+  partition (``crm.audit_partition_bounds()``; 3 after the hourly job). Infra alarms below 1: without a partition the
+  next month's audit writes, and so the requests that write them, fail.
+
+The two audit values are read in their own statement; before crm-007 (or on any error there) they are left out and the
+job values still go.
 
 Infra alarms on them (``aa-crm-<env>-jobs-queue-age`` > 900 s, ``-jobs-overdue-running`` > 0, the same pair as
 Booking) and the task role may put metrics into ``AA/Jobs/Crm`` only (IAM condition ``cloudwatch:namespace``;
@@ -107,14 +116,51 @@ def backlog_sample(oldest_due_age_s: float | None, running: Iterable[tuple[str, 
     )
 
 
-def metric_data(sample: Sample, reveal_peak: int | None = None) -> list[dict[str, Any]]:
+AUDIT_SQL = """
+SELECT coalesce(extract(epoch FROM now() - (SELECT min(exported_until) FROM crm.audit_export_agencies())) / 60,
+                0)::float8 AS export_lag_min,
+       (SELECT count(*) FROM crm.audit_partition_bounds()
+         WHERE range_start >= (date_trunc('month', now() AT TIME ZONE 'UTC') + interval '1 month') AT TIME ZONE 'UTC'
+       )::int AS months_ahead
+"""
+
+
+@dataclass(frozen=True)
+class AuditSample:
+    export_lag_minutes: float
+    partition_months_ahead: int
+
+
+def metric_data(
+    sample: Sample, reveal_peak: int | None = None, audit: AuditSample | None = None
+) -> list[dict[str, Any]]:
     data = [
         {"MetricName": "OldestQueuedAgeSeconds", "Value": sample.oldest_queued_age_s, "Unit": "Seconds"},
         {"MetricName": "OverdueRunningJobs", "Value": float(sample.overdue_running), "Unit": "Count"},
     ]
     if reveal_peak is not None:
         data.append({"MetricName": "RevealsPerMemberPeakHour", "Value": float(reveal_peak), "Unit": "Count"})
+    if audit is not None:
+        data.append(
+            {"MetricName": "AuditExportLagMinutes", "Value": max(audit.export_lag_minutes, 0.0), "Unit": "Count"}
+        )
+        data.append(
+            {"MetricName": "AuditPartitionMonthsAhead", "Value": float(audit.partition_months_ahead), "Unit": "Count"}
+        )
     return data
+
+
+async def read_audit_sample(pool: asyncpg.Pool) -> AuditSample | None:
+    """The two audit values, or None when they cannot be read (crm-007 not applied yet)."""
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(AUDIT_SQL)
+        return AuditSample(
+            export_lag_minutes=float(row["export_lag_min"]), partition_months_ahead=int(row["months_ahead"])
+        )
+    except Exception as exc:  # noqa: BLE001 — never block the job metrics
+        log.warning("ops_metrics_audit_read_failed error=%s", type(exc).__name__)
+        return None
 
 
 async def read_sample(pool: asyncpg.Pool) -> Sample:
@@ -147,12 +193,14 @@ class JobMetricsSampler:
     async def sample_once(self) -> Sample | None:
         """Read and publish one sample. Returns it when it was published, else None. Never raises."""
         try:
-            sample = await read_sample(await self._pool())
+            pool = await self._pool()
+            sample = await read_sample(pool)
         except Exception as exc:  # noqa: BLE001 — DB down or not migrated: no datapoint (sampling-stopped alarm)
             log.warning("ops_metrics_sample_failed namespace=%s stage=read error=%s", NAMESPACE, type(exc).__name__)
             return None
+        audit = await read_audit_sample(pool)
         try:
-            await asyncio.to_thread(self._put, metric_data(sample, reveal_meter.METER.peak()))
+            await asyncio.to_thread(self._put, metric_data(sample, reveal_meter.METER.peak(), audit))
         except Exception as exc:  # noqa: BLE001 — AccessDenied before the Infra apply, throttling, network
             log.warning(
                 "ops_metrics_sample_failed namespace=%s stage=put error=%s: %s",

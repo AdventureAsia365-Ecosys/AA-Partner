@@ -46,6 +46,11 @@ Two platform contexts without a member, each with the same audit queue as ``tena
   ``app.actor`` = ``job:<kind>``. Only the job handler modules may open it.
 
 A unit test checks the importers of both (``tests/unit/test_code_rules.py``).
+
+One more platform context (AA-940): :func:`audit_export_tx` is the audit export's read context in one agency
+(``app.tenant_id`` only, ``app.actor`` = ``job:crm_audit_export``, no audit queue). Unlike :func:`system_tx` it accepts
+a locked or trashed agency: an offboarded agency's audit is still exported and verified until its partitions are
+dropped (crm-007 offboarding path). Only the ``app/audit_export/`` job modules may open it.
 """
 
 from __future__ import annotations
@@ -200,6 +205,14 @@ class SystemContext:
 
 
 @dataclass(frozen=True)
+class ExportContext:
+    """The audit export's context in one agency (:func:`audit_export_tx`): the connection and the agency only."""
+
+    conn: asyncpg.Connection
+    tenant_id: uuid.UUID
+
+
+@dataclass(frozen=True)
 class IntakeForm:
     """The public form :func:`intake_tx` found (ids, codes and the agency's own settings; no personal data)."""
 
@@ -342,6 +355,24 @@ async def intake_tx(pool: asyncpg.Pool, public_key: str) -> AsyncIterator[tuple[
             await _write_audit(ctx, ctx.audit_events)
     if pending is not None:
         raise pending
+
+
+EXPORT_ACTOR = "job:crm_audit_export"
+TENANT_EXISTS_SQL = "SELECT 1 FROM crm.tenant WHERE tenant_id = $1"
+
+
+@asynccontextmanager
+async def audit_export_tx(pool: asyncpg.Pool, tenant_id: uuid.UUID) -> AsyncIterator[ExportContext]:
+    """One transaction in one agency for the audit export and its verification (AA-940). The agency must exist; a
+    locked or trashed one is accepted (its audit is exported until its partitions go). Commits on a normal exit."""
+    if not isinstance(tenant_id, uuid.UUID):
+        raise TypeError("tenant_id must be a UUID")
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        if await conn.fetchval(TENANT_EXISTS_SQL, tenant_id) is None:
+            raise NotFound("tenant_not_found")
+        await conn.execute("SELECT set_config('app.actor', $1, true)", EXPORT_ACTOR)
+        yield ExportContext(conn=conn, tenant_id=tenant_id)
 
 
 async def _write_audit(ctx: TenantContext | SystemContext, events: list[AuditEvent]) -> None:

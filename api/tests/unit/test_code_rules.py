@@ -49,6 +49,7 @@ DB_MODULES = frozenset(
         "app/jobs/handlers.py",  # crm.job retention (platform table)
         "app/vault/store.py",  # DEK store: crm.tenant_key, only on the connection of a TenantContext (AA-934)
         "app/llm/usage.py",  # crm.llm_usage_daily: platform rollup, no tenant rows (AA-936)
+        "app/audit_export/registry.py",  # crm-007 platform functions: agency list, partition maker, drop (AA-940)
     }
 )
 # The only modules that may open the platform context provisioning_tx() (no membership check): agency creation and the
@@ -57,7 +58,11 @@ PROVISIONING_MODULES = frozenset({"app/agencies.py", "app/seed/__init__.py"})
 # AA-936: the job context in one agency (no member) and the public intake form's context.
 SYSTEM_MODULES = frozenset({"app/intake/process.py", "app/seed/__init__.py"})
 INTAKE_MODULES = frozenset({"app/intake/public.py"})
-CONTEXT_TYPES = frozenset({"TenantContext", "SystemContext", "ProvisioningContext", "AnyContext"})
+# AA-940: the audit export's read context (a locked or trashed agency too): the export, verify and retention jobs only.
+AUDIT_EXPORT_MODULES = frozenset(
+    {"app/audit_export/export.py", "app/audit_export/verify.py", "app/audit_export/retention.py"}
+)
+CONTEXT_TYPES = frozenset({"TenantContext", "SystemContext", "ProvisioningContext", "AnyContext", "ExportContext"})
 THIRD_PARTY = frozenset(
     {
         "asyncpg",
@@ -85,7 +90,7 @@ def _modules() -> list[tuple[str, ast.Module]]:
     return out
 
 
-CONTEXT_FACTORIES = frozenset({"tenant_tx", "provisioning_tx", "system_tx", "intake_tx"})
+CONTEXT_FACTORIES = frozenset({"tenant_tx", "provisioning_tx", "system_tx", "intake_tx", "audit_export_tx"})
 
 
 def _context_names(target: ast.expr | None) -> list[str]:
@@ -254,6 +259,10 @@ def test_system_tx_is_used_only_by_the_job_modules() -> None:
 
 def test_intake_tx_is_used_only_by_the_public_intake_module() -> None:
     assert _users_of("intake_tx", INTAKE_MODULES) == []
+
+
+def test_audit_export_tx_is_used_only_by_the_audit_export_jobs() -> None:
+    assert _users_of("audit_export_tx", AUDIT_EXPORT_MODULES) == []
 
 
 CONTEXT_PARAM_ALLOWED = """

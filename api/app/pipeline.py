@@ -411,6 +411,7 @@ async def assign(ctx: TenantContext, trip_id: uuid.UUID, member_id: uuid.UUID | 
     if ctx.member_role != "owner":
         taking = member_id == ctx.member_id and current["owner_member_id"] is None
         if not taking:
+            ctx.audit("assign", "denied", "trip", str(trip_id), fields=("owner_member_id",), reason="owner_only")
             raise Forbidden("owner_only", "only the owner reassigns; you may take an unassigned trip")
     if member_id is not None and not await ctx.conn.fetchval(ACTIVE_MEMBER_SQL, member_id):
         raise Invalid("invalid_member", "an active member of this agency")

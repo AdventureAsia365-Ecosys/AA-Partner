@@ -29,11 +29,12 @@ from typing import TYPE_CHECKING, Any
 import asyncpg
 
 from app.jobs import queue
-from app.jobs.kinds import HEARTBEAT, INTAKE_PROCESS, JOB_RETENTION
+from app.jobs.kinds import AUDIT_EXPORT, AUDIT_RETENTION, HEARTBEAT, INTAKE_PROCESS, JOB_RETENTION
 from app.jobs.queue import Job
 from app.jobs.worker import Handler, MaintenanceHook, Recurring
 
 if TYPE_CHECKING:  # pragma: no cover
+    from app.audit_export.archive import AuditArchive
     from app.vault import KeyProvider
 
 log = logging.getLogger(__name__)
@@ -97,15 +98,26 @@ def build_job_retention(dry_run: bool) -> Handler:
     return job_retention
 
 
-def build_handlers(*, retention_dry_run: bool, keys: KeyProvider | None = None) -> dict[str, Handler]:
+def build_handlers(
+    *,
+    retention_dry_run: bool,
+    keys: KeyProvider | None = None,
+    audit_archive: AuditArchive | None = None,
+    audit_retention_dry_run: bool = True,
+) -> dict[str, Handler]:
     """Every kind the worker runs. ``keys``: the field-encryption provider the intake kind needs (AA-936); without
-    it ``crm_intake_process`` jobs are retried until the provider is configured."""
+    it ``crm_intake_process`` jobs are retried until the provider is configured. ``audit_archive``: the two audit
+    buckets (AA-940); without them the export keeps the partitions only and the retention never drops anything."""
+    from app.audit_export import export as audit_export
+    from app.audit_export import retention as audit_retention
     from app.intake.process import build_handler as build_intake_handler
 
     return {
         HEARTBEAT: heartbeat,
         JOB_RETENTION: build_job_retention(retention_dry_run),
         INTAKE_PROCESS: build_intake_handler(keys),
+        AUDIT_EXPORT: audit_export.build_handler(audit_archive),
+        AUDIT_RETENTION: audit_retention.build_handler(audit_archive, dry_run=audit_retention_dry_run),
     }
 
 
@@ -146,13 +158,22 @@ class DailyRetentionSchedule:
         return job_id
 
 
-def build_hooks(*, retention_utc_hour: int) -> tuple[MaintenanceHook, ...]:
-    return (DailyRetentionSchedule(retention_utc_hour),)
+def build_hooks(*, retention_utc_hour: int, now: Callable[[], datetime] | None = None) -> tuple[MaintenanceHook, ...]:
+    """The due-now schedules. ``now``: a fixed clock for tests (default: the real UTC clock)."""
+    from app.audit_export.export import HourlyAuditExportSchedule
+    from app.audit_export.retention import DailyAuditRetentionSchedule
+
+    clock = now or (lambda: datetime.now(UTC))
+    return (
+        DailyRetentionSchedule(retention_utc_hour, clock),
+        HourlyAuditExportSchedule(clock),
+        DailyAuditRetentionSchedule(retention_utc_hour, clock),
+    )
 
 
 # Only the heartbeat queues its next slot ahead (it is deploy-gate and DB Migrate idle exempt). A daily or slower kind
 # goes through a due-now maintenance hook instead (DailyRetentionSchedule): never add one here.
 RECURRING: tuple[Recurring, ...] = (Recurring(HEARTBEAT, every_seconds=60, keep_days=2),)
-SCHEDULED_KINDS: frozenset[str] = frozenset({JOB_RETENTION})
+SCHEDULED_KINDS: frozenset[str] = frozenset({JOB_RETENTION, AUDIT_EXPORT, AUDIT_RETENTION})
 # Kinds queued by request code, one row per event (AA-936: each stored inquiry), never scheduled.
 EVENT_KINDS: frozenset[str] = frozenset({INTAKE_PROCESS})

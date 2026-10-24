@@ -106,8 +106,10 @@ class FormChange(_Body):
     privacy_notice_url: str | None = Field(default=None, max_length=500)
 
 
-def _owner(ctx: TenantContext) -> None:
+def _owner(ctx: TenantContext, action: str, form_id: str | None = None) -> None:
     if ctx.member_role != "owner":
+        # AA-940: a refused change is on record too (committed by tenant_tx before the 403).
+        ctx.audit(action, "denied", "intake_form", form_id, reason="owner_only")
         raise Forbidden("owner_only", "only the agency owner changes forms")
 
 
@@ -199,7 +201,7 @@ async def get_forms(request: Request, caller: CallerDep, tenant_id: TenantDep) -
 async def post_form(request: Request, caller: CallerDep, tenant_id: TenantDep, body: FormIn) -> dict[str, Any]:
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id) as ctx:
-        _owner(ctx)
+        _owner(ctx, "create")
         form = await intake_forms.create_form(
             ctx,
             label=body.label,
@@ -217,7 +219,7 @@ async def patch_form(
 ) -> dict[str, Any]:
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id) as ctx:
-        _owner(ctx)
+        _owner(ctx, "update", str(form_id))
         changes = body.model_dump(exclude_unset=True)
         form = await intake_forms.update_form(ctx, form_id, changes)
         ctx.audit("update", "allowed", "intake_form", form.intake_form_id, fields=tuple(sorted(changes)))

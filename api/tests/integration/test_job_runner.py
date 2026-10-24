@@ -7,13 +7,14 @@ guard before any SQL, and the retention kind (DRY RUN counts; a real run deletes
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import asyncpg
 import pytest
 import pytest_asyncio
 
 from app.jobs import handlers, queue
-from app.jobs.kinds import DEPLOY_GATE_EXEMPT, HEARTBEAT, JOB_RETENTION
+from app.jobs.kinds import AUDIT_EXPORT, AUDIT_RETENTION, DEPLOY_GATE_EXEMPT, HEARTBEAT, JOB_RETENTION
 from app.jobs.payload_guard import PersonalDataInPayload
 from app.jobs.queue import Job
 from app.jobs.worker import Recurring, Worker
@@ -141,6 +142,10 @@ async def test_retention_dry_run_then_real_run(app_pool: asyncpg.Pool, admin: as
     ]
 
 
+def CLOCK() -> datetime:  # noqa: N802 — a fixed minute of the current hour: the hourly audit export is due
+    return datetime.now(UTC).replace(minute=30, second=0, microsecond=0)
+
+
 async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migrate(app_pool: asyncpg.Pool) -> None:
     """Review round (AA-933): with the production RECURRING and maintenance hooks, after the worker has run what is due
     the only queued rows are exempt ones. A queued-ahead daily retention row would keep the deploy gate false and make
@@ -151,14 +156,24 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         lambda: _pool(app_pool),
         handlers.build_handlers(retention_dry_run=True),
         recurring=handlers.RECURRING,
-        hooks=handlers.build_hooks(retention_utc_hour=0),
+        hooks=handlers.build_hooks(retention_utc_hour=0, now=CLOCK),
         worker_id="worker-a",
     )
     await worker.maintenance(app_pool)
     rows = await app_pool.fetch("SELECT kind, run_after <= now() AS due FROM crm.job WHERE status = 'queued'")
-    assert sorted((r["kind"], r["due"]) for r in rows) == [(HEARTBEAT, False), (JOB_RETENTION, True)]
-    # The due run counts while it waits (it would be interrupted by a deploy) ...
-    assert (await queue.active_count(app_pool, DEPLOY_GATE_EXEMPT))["by_kind"] == {JOB_RETENTION: 1}
+    # AA-940: at minute 30 the hourly audit export is due too, and the daily audit retention at hour 0.
+    assert sorted((r["kind"], r["due"]) for r in rows) == [
+        (AUDIT_EXPORT, True),
+        (AUDIT_RETENTION, True),
+        (HEARTBEAT, False),
+        (JOB_RETENTION, True),
+    ]
+    # The due runs count while they wait (they would be interrupted by a deploy) ...
+    assert (await queue.active_count(app_pool, DEPLOY_GATE_EXEMPT))["by_kind"] == {
+        JOB_RETENTION: 1,
+        AUDIT_EXPORT: 1,
+        AUDIT_RETENTION: 1,
+    }
     while await worker.run_once():
         pass
     # ... and once it has run, nothing but the exempt heartbeat slot is left, for the gate and for DB Migrate.
@@ -170,7 +185,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         lambda: _pool(app_pool),
         handlers.build_handlers(retention_dry_run=True),
         recurring=handlers.RECURRING,
-        hooks=handlers.build_hooks(retention_utc_hour=0),
+        hooks=handlers.build_hooks(retention_utc_hour=0, now=CLOCK),
         worker_id="worker-b",
     )
     await other.maintenance(app_pool)
