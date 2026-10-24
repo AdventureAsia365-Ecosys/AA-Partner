@@ -354,8 +354,11 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 
 ## F5 audit (AA-940, CRM-12)
 
-- **What is logged** (design §4.9): sign-ins (`POST /crm/v1/audit/sign-in`, sent by the web's `/auth/agency` on each
-  agency pick), every F1 reveal (same transaction), list views, views, creates / changes / deletes, refused owner-only
+- **What is logged** (design §4.9): sign-ins (`POST /crm/v1/audit/sign-in`, sent server side by the web's
+  `/auth/agency`: a GET auto-pick only right after a Cognito sign-in (one-shot `si` session flag), a chooser POST
+  always; not on the browser BFF list), role changes (`provision_agency`: `agency_create`, `member_add`,
+  `member_role_change`, actor `aa_ops` for `platform:` / `system` for `seed:`), one `audit_retention` event per run per
+  active agency (the daily job; the hourly export's per-run record is its manifest row), every F1 reveal (same transaction), list views, views, creates / changes / deletes, refused owner-only
   actions (`denied`, reason `owner_only` / `not_allowed_for_role`), decrypt denials, key operations (`key_create`,
   `key_rotate`, `key_rewrap`, `key_destroy`, `app/vault/provider.py`), AI context builds (`ai_context_build`, actor
   `ai_agent` / `ai:<stage>`, one per LLM gateway call), intake job events, the access log's own views and downloads.
@@ -364,6 +367,11 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   DEFAULT partition: an insert with no partition fails, which fails the request; alarm on `AuditPartitionMonthsAhead`
   < 1). A partition is dropped only when it ends at or before the start of the UTC month twelve months ago **and**
   every agency is verified past it; `DROP TABLE` fires no row trigger, so every kept row stays append-only.
+  `verified_until` moves only through `crm.audit_mark_verified()` (forward, never past `exported_until`; `crm_app`
+  updates only `exported_until` / `last_seq`). Accepted risk: the database cannot re-read the buckets, so a
+  compromised `crm_app` could still mark and drop expired partitions; the Object Lock archive stays.
+  The partition maker runs with `lock_timeout` 2 s; the crm-api pool ends a transaction idle for 2 minutes (far below
+  the export's 15-minute read lag).
 - **Export** (`app/audit_export/export.py`, `chain.py`): per agency per closed UTC hour one object
   `audit/v1/tenants/<tenant>/<yyyy>/<mm>/<dd>/<hh>00Z-<seq>.jsonl` = canonical manifest line + event lines, written to
   the compliance then the governance bucket (`app/audit_export/archive.py`, SHA-256 checksum, bucket-default Object
@@ -383,8 +391,9 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   last 365 days; newest first with a keyset cursor; download as CSV (formula-guarded) or JSON lines, at most 50,000
   rows (422 `export_too_large`). Lines show the member's role and a short id, never a traveller's name; a client or
   trip id links to its page.
-- **Metrics** (`AA/Jobs/Crm`, the job sampler): `AuditExportLagMinutes` (Infra alarm at 180) and
-  `AuditPartitionMonthsAhead` (alarm below 1).
+- **Metrics** (`AA/Jobs/Crm`, the job sampler): `AuditExportLagMinutes` (Infra alarm at 180),
+  `AuditPartitionMonthsAhead` (alarm below 1) and `AuditVerifyLagHours` (largest exported-minus-verified gap over
+  agencies; alarm at 50: one agency failing verification stops drops for all).
 
 ## Dev seeder (`api/app/seed/`, AA-935)
 
