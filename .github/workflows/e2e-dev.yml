@@ -35,29 +35,33 @@ jobs:
       E2ECRMFORMKEY: ${{ vars.E2ECRMFORMKEY }}
       E2ECRMEMAIL: ${{ vars.E2ECRMEMAIL }}
     steps:
-      - uses: actions/checkout@v7
-      - name: Configure AWS credentials (OIDC, read-only mailbox role)
-        uses: aws-actions/configure-aws-credentials@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          role-to-assume: ${{ secrets.E2E_MAIL_ROLE_ARN }}
-          aws-region: us-west-1
-          role-session-name: crm-e2e-dev-${{ github.run_id }}
-      - uses: actions/setup-node@v4
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-      # Exact versions in e2e/package.json; no lockfile on purpose (this folder never ships in an image).
+      # Exact versions in e2e/package.json; no lockfile on purpose (this folder never ships in an image). No install
+      # scripts run, and every step that runs third-party code before the tests does so WITHOUT AWS credentials: the
+      # mailbox role (it reads every e2e inbound mail, sign-in codes included) is configured just before the tests.
       - name: Install Playwright
-        run: npm install --no-audit --no-fund
+        run: npm install --no-audit --no-fund --ignore-scripts
       - name: Install the browser
         run: npx playwright install --with-deps chromium
       - name: Type check
         run: npx tsc --noEmit
+      - name: Configure AWS credentials (OIDC, read-only mailbox role)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.E2E_MAIL_ROLE_ARN }}
+          aws-region: us-west-1
+          role-session-name: crm-e2e-dev-${{ github.run_id }}
       - name: Run
         run: npx playwright test
       # Screenshots only, never the reports (a fill step would name the sign-in code).
       - name: Upload screenshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-dev-${{ github.run_id }}
           path: e2e/results/*.png
