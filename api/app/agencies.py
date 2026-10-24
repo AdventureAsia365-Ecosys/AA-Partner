@@ -117,6 +117,8 @@ RETURNING tenant_id
 """
 TENANT_CURRENT_SQL = "SELECT display_name, default_locale, is_synthetic FROM crm.tenant WHERE tenant_id = $1"
 TENANT_UPDATE_SQL = "UPDATE crm.tenant SET display_name = $2, default_locale = $3 WHERE tenant_id = $1"
+# AA-944 (crm-014): every agency has the built-in Adventure Asia supplier row (M15); idempotent.
+ENSURE_AA_SUPPLIER_SQL = "SELECT crm.ensure_aa_supplier()"
 MEMBER_INSERT_SQL = """
 INSERT INTO crm.member (cognito_iss, cognito_sub, role, status)
 VALUES ($1, $2, $3, 'active')
@@ -166,6 +168,7 @@ async def provision_agency(
             if (current["display_name"], current["default_locale"]) != (agency.display_name, agency.default_locale):
                 await ctx.conn.execute(TENANT_UPDATE_SQL, agency.tenant_id, agency.display_name, agency.default_locale)
                 updated = True
+        await ctx.conn.fetchval(ENSURE_AA_SUPPLIER_SQL)
         # Design §4.9 "Logged: role changes" (AA-940): a member given a role (added) or moved to another role is an
         # agency audit event (ids and the column name only; the role value itself is not written).
         for person in people:

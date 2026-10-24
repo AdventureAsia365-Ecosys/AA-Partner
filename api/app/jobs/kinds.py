@@ -11,7 +11,8 @@ Booking or TripPlanner migration is never blocked by the CRM (card CRM-04 E chec
 deliberately NOT exempt: it is queued only when due (``handlers.DailyRetentionSchedule``), so it blocks only while it
 really runs. The AA-940 kinds ``crm_audit_export`` (hourly) and ``crm_audit_retention`` (daily) follow the same rule,
 and so do the AA-942 kinds: ``crm_lifecycle`` (daily, due-now hook), ``crm_offboard`` and ``crm_dispatch`` (one row per
-event; a message's row waits its 10-second undo delay), and AA-943's hourly ``crm_stage_date_rule``.
+event; a message's row waits its 10-second undo delay), AA-943's hourly ``crm_stage_date_rule`` and AA-944's daily
+``crm_fx_fetch``.
 """
 
 from __future__ import annotations
@@ -33,6 +34,8 @@ DISPATCH = "crm_dispatch"
 # AA-943: the hourly trip date rule (booked / pre-departure -> travelling on the departure date, travelling ->
 # completed on the return date; app.stages_job), queued due-now, never ahead.
 STAGE_DATE_RULE = "crm_stage_date_rule"
+# AA-944: the daily platform FX rates (app.fx.fetch), queued due-now once per UTC day, never ahead.
+FX_FETCH = "crm_fx_fetch"
 
 DEFAULT_EXPECTED_SECONDS = 300
 OVERDUE_FACTOR = 2
@@ -50,6 +53,7 @@ EXPECTED_SECONDS: dict[str, int] = {
     OFFBOARD: 600,
     DISPATCH: 30,
     STAGE_DATE_RULE: 120,
+    FX_FETCH: 120,
 }
 
 

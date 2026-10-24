@@ -18,6 +18,7 @@ from app.jobs.kinds import (
     AUDIT_EXPORT,
     AUDIT_RETENTION,
     DEPLOY_GATE_EXEMPT,
+    FX_FETCH,
     HEARTBEAT,
     JOB_RETENTION,
     LIFECYCLE,
@@ -175,6 +176,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
     assert sorted((r["kind"], r["due"]) for r in rows) == [
         (AUDIT_EXPORT, True),
         (AUDIT_RETENTION, True),
+        (FX_FETCH, True),  # AA-944: the daily FX rates, queued due now from 00:00 UTC
         (HEARTBEAT, False),
         (JOB_RETENTION, True),
         (LIFECYCLE, True),
@@ -189,6 +191,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         PLACEHOLDER_PURGE: 1,
         LIFECYCLE: 1,
         STAGE_DATE_RULE: 1,
+        FX_FETCH: 1,
     }
     while await worker.run_once():
         pass

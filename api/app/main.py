@@ -47,6 +47,7 @@ from app.routers import (
     ci,
     health,
     invitations,
+    ledger,
     lifecycle,
     ops,
     pipeline,
@@ -111,6 +112,7 @@ def create_app(
                     lifecycle_dry_run=settings.lifecycle_dry_run,
                     dek_cache_ttl_s=settings.dek_cache_ttl_seconds,
                     sender=app.state.dispatch_sender,
+                    fx_provider=settings.fx_provider,
                 ),
                 recurring=job_handlers.RECURRING,
                 hooks=job_handlers.build_hooks(retention_utc_hour=settings.job_retention_utc_hour),
@@ -172,6 +174,7 @@ def create_app(
     app.include_router(invitations.public_router)
     app.include_router(invitations.agency_router)
     app.include_router(lifecycle.router)
+    app.include_router(ledger.router)
     app.include_router(ops.router)
     app.include_router(staff.router)
     return app

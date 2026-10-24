@@ -23,7 +23,7 @@ from app.vault import Vault
 
 ERASE_SQL = "SELECT crm.erase_subject($1, $2, $3, $4)"
 PURGE_EXPIRED_SQL = "SELECT crm.lifecycle_purge_expired($1)"
-SCOPES = ("trip", "traveler", "task", "note", "document", "relation", "tenant")
+SCOPES = ("trip", "traveler", "task", "note", "document", "relation", "booking_line", "agency_supplier", "tenant")
 POINTER_SQL = "SELECT profile_token_enc FROM crm.traveler WHERE traveler_id = $1"
 DOC_KEYS_SQL: dict[str, str] = {
     "trip": "SELECT s3_key FROM crm.document WHERE trip_id = $1",
@@ -42,6 +42,9 @@ REFUSALS: dict[str, tuple[type[ServiceError], str]] = {
     "CRM14": (Conflict, "tenant_not_offboarding"),
     "CRM15": (Conflict, "profile_token_mismatch"),
     "CRM16": (Unavailable, "erase_incomplete"),
+    # AA-944 (crm-014): the built-in Adventure Asia supplier, a supplier that booking lines still name.
+    "CRM22": (Conflict, "aa_supplier_builtin"),
+    "CRM27": (Conflict, "supplier_in_use"),
 }
 
 

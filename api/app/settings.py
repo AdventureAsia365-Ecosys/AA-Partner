@@ -20,6 +20,9 @@ Names (set by the ECS task definition in AA-CIS-Infra ``accounts/aa365/crm_app.t
   ``crm_lifecycle`` run (submission redaction, LLM-call purge, trash purge, auto-archive) reports what it would do, and
   an owner's erasure or offboarding erase answers 409 ``deletion_dry_run`` with the counts. Same hour as the job
   retention. Turning it off is an ops decision recorded in the runbook.
+- ``FX_PROVIDER`` (AA-944): where the daily ``crm_fx_fetch`` job gets platform FX rates: ``synthetic`` (the default on
+  ``dev`` / ``test`` / ``local``: a fixed table, no network) or ``live`` (the default on ``stg`` / ``prod``:
+  ExchangeRate-API open access + ECB, cross-checked with fawazahmed0; free sources, ``app.fx.fetch``).
 
 Identity (root ADR 0006b decision 6, ``app.auth.identity_config``). Every value is optional and has **no default**:
 this repo is public, so pool ids never live in code (DM-6.10); Terraform passes them from the pool resources. A route
@@ -140,6 +143,9 @@ _GUARDRAIL_VERSION = re.compile(r"^(DRAFT|[1-9][0-9]{0,7})$")
 _REGION = re.compile(r"^[a-z]{2}(-[a-z]+)+-[0-9]$")
 
 
+FX_PROVIDERS = frozenset({"synthetic", "live"})
+
+
 class SettingsError(ValueError):
     """The environment holds an invalid or unsafe value."""
 
@@ -188,10 +194,13 @@ class Settings:
     scrub_guardrail_region: str = "us-west-1"
     scrub_detector_timeout_ms: int = DEFAULT_SCRUB_TIMEOUT_MS
     lifecycle_dry_run: bool = True
+    fx_provider: str = "synthetic"
 
     def __post_init__(self) -> None:
         if self.environment not in {"dev", "stg", "prod"} | INSECURE_ENVIRONMENTS:
             raise SettingsError(f"ENVIRONMENT must be dev, stg, prod, test or local, got {self.environment!r}")
+        if self.fx_provider not in FX_PROVIDERS:
+            raise SettingsError(f"FX_PROVIDER must be one of {sorted(FX_PROVIDERS)}, got {self.fx_provider!r}")
         if self.db_ssl not in SSL_MODES:
             raise SettingsError(f"DB_SSL must be one of {sorted(SSL_MODES)}, got {self.db_ssl!r}")
         if self.db_ssl == "disable" and self.environment not in INSECURE_ENVIRONMENTS:
@@ -413,4 +422,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             env.get("SCRUB_DETECTOR_TIMEOUT_MS"), DEFAULT_SCRUB_TIMEOUT_MS, "SCRUB_DETECTOR_TIMEOUT_MS"
         ),
         lifecycle_dry_run=_flag(env.get("LIFECYCLE_DRY_RUN"), True, "LIFECYCLE_DRY_RUN"),
+        fx_provider=(env.get("FX_PROVIDER") or ("live" if environment in {"stg", "prod"} else "synthetic"))
+        .strip()
+        .lower(),
     )

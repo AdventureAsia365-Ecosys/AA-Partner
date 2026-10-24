@@ -262,6 +262,7 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 | `crm_offboard` | per owner step (queued in the request's transaction) | AA-942: `mode=export` builds and seals the agency export; `mode=erase` erases the agency, deletes its objects, destroys its keys, writes the receipt. Not deploy-gate exempt |
 | `crm_dispatch` | per queued message (after the 10 s undo delay for a user action) | AA-942: the dispatcher gate at send time (trashed, archived, no marketing consent -> dropped; no sender -> held). Not deploy-gate exempt |
 | `crm_stage_date_rule` | hourly, due-now hook (`app.stages_job.HourlyStageDateRule`, key per UTC hour) | AA-943: per active agency, "today" in `tenant_settings.timezone`: booked -> travelling on the start date (reason `date_rule_gate_unmet` + an urgent task), pre_departure -> travelling, travelling -> completed on the end date, one `return_date_missing` task for a travelling trip without one. Counts only. Not deploy-gate exempt |
+| `crm_fx_fetch` | daily, due-now hook from 00:00 UTC (`app.fx.fetch.DailyFxSchedule`, key `crm_fx_fetch:<date>`) | AA-944: the platform FX rates in `crm.fx_rate_platform` (`ON CONFLICT DO NOTHING`, the only writer): `FX_PROVIDER=synthetic` a fixed USD table incl. VND (Dev), `live` ExchangeRate-API open access (USD base, VND crosses) + ECB (EUR base), fawazahmed0 stored as a cross-check only (a gap > 1 % is logged and counted). Counts only. Not deploy-gate exempt |
 | `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
 
 ## CI and release
@@ -414,6 +415,40 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   reads `/crm/public/v1/s/{token}` on its own origin (the API's limit keys on the visitor, the web server never calls
   the API with the token) and renders the paged planning form (`components/intake/PlanningForm.tsx`, shared with
   Fill in from call; branches in `web/lib/planningForm.ts`). Settings > Forms: timezone, auto-send, call windows.
+
+## CRM-16 agency-line ledger + suppliers (AA-944)
+
+Design v3 §6.3 CRM-16 (M6 non-AA, M15, R17, R18), lane §2.7 / §3.1 / §3.2; migration crm-014. Routes in
+`app/routers/ledger.py`, services in `app/ledger/` (`suppliers.py`, `lines.py`, `fx.py`); decisions in
+`docs/implementation-notes/AA-944.md`.
+
+- **Suppliers** (`/crm/v1/suppliers`, A-13): Adventure Asia is one built-in row per agency (`crm.ensure_aa_supplier()`,
+  called by `provision_agency` and the list; never changed or trashed: 409 `aa_supplier_builtin`); own suppliers with
+  vault-encrypted contact name / e-mail, revealed one field at a time with a reason (`POST .../reveal`, one `reveal`
+  event); one `list_view` event per list. `default_commission_pct` is a margin key (stripped for the assistant) and
+  needs `money_fields_edit` to set. A supplier that live lines name is not trashed (409 `supplier_in_use`).
+- **Lines** (`/crm/v1/trips/{id}/lines`, `/crm/v1/lines/{id}`, the trip's Bookings tab): status planning -> confirmed
+  -> cancelled. Confirm (`POST .../confirm`) runs `crm.booking_line_confirm` (SECURITY DEFINER): the agency's level
+  (Settings > Payments: off / basic default / strict) decides the required fields (409 `line_incomplete` + `missing`),
+  the money is frozen at the rate of the confirmation day in the agency timezone (R17), strict refuses a second
+  confirmed line of one supplier with one number (409 `duplicate_confirmation_no`, card R), and the assistant is never
+  blocked by a missing commission: the line is confirmed and the owner gets the task `add_commission` (R18). AA lines
+  are the Booking feed's (CRM-19): 403 `aa_line_read_only` for members. Only a planning line goes to the trash (kind
+  `booking_line`); a confirmed one is cancelled (hidden from travellers, R22). Agency lines never block a trip delete.
+- **Money** (`PUT /crm/v1/lines/{id}/money`, owner / agent): cost, sell, commission_expected, each a new row through
+  `crm.booking_line_money_put` (frozen rows never change: card E); responses carry money as keyed objects (`cost`,
+  `sell`, `commission_expected`, `margin_base`) that the margin serializer strips; the database returns no money row
+  to the assistant (crm-014 RESTRICTIVE policy), so lines and the ledger have no `money` block for her.
+- **Ledger** (`GET /crm/v1/bookings`, A-11): every live line of live trips (filters status, from, to; 500 max), one
+  `list_view` event; owner / agent also get base-currency totals: confirmed sell, cost, margin, expected commission from
+  frozen amounts, planning sell as pipeline value at today's rate (lines without a rate counted apart).
+- **FX** (`app/ledger/fx.py`): `crm.fx_resolve` decides (override of the day -> platform of the day -> latest earlier
+  day within 30 days, `stale_days`; 409 `fx_rate_missing` on a confirm without any). Settings > Payments
+  (`/crm/v1/settings/payments`, owner): base currency (default USD), validation level, FX mode (manual = overrides
+  only); FX overrides (`/crm/v1/fx/overrides`, owner, append-only). A platform rate shown carries the attribution
+  "Rates By Exchange Rate API"; no rates feed is exposed.
+- **waiting_on**: hook `supplier_lines` (priority 50, AA-943 contract) = `supplier` while a booked / pre-departure trip
+  has a planning agency line; registered when `app.ledger.lines` is imported (the router does).
 
 ## F1 / F2 complete (AA-937, CRM-09)
 
@@ -724,7 +759,8 @@ audit export (AA-940) `AUDIT_BUCKET_COMPLIANCE` / `AUDIT_BUCKET_GOVERNANCE` (bot
 `SES_FROM_ADDRESS`, `SES_CONFIGURATION_SET`, `INVITATION_TTL_HOURS` (default 168), `RATE_LIMIT_CLAIM_PER_MINUTE`
 (default 10), and the F3 guardrail (AA-938) `SCRUB_GUARDRAIL_ID`, `SCRUB_GUARDRAIL_VERSION`,
 `SCRUB_GUARDRAIL_REGION`, `SCRUB_DETECTOR_TIMEOUT_MS`, and the data lifecycle (AA-942) `LIFECYCLE_DRY_RUN` (default
-true). Meanings and defaults: `api/app/settings.py`. Live check of the key provider inside the
+true), and the FX source (AA-944) `FX_PROVIDER` (`synthetic` by default on dev / test / local, `live` on stg / prod;
+not set on Dev today). Meanings and defaults: `api/app/settings.py`. Live check of the key provider inside the
 container: `python -m app.vault.selftest` (KMS round trip under the nil tenant context, nothing stored).
 
 ## Domain terms

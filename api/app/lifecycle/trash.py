@@ -18,7 +18,8 @@
   expired, and the lines come back with Booking's current status; Booking unreachable = 503, the trip stays in the
   trash.
 - Who deletes (design §4.6): trip — owner, an agent their own (or an unassigned) trip; client — owner only (R8);
-  task, document — owner or agent; note — owner or its author. Assistants delete nothing. A refusal is a committed
+  task, document — owner or agent; note — owner or its author; AA-944: a planning booking line, an own supplier that
+  no live line names — owner or agent. Assistants delete nothing. A refusal is a committed
   ``denied`` audit event, like every refused owner-only action (AA-940).
 """
 
@@ -52,6 +53,9 @@ KINDS: dict[str, Kind] = {
     "task": Kind("task", "task_id", frozenset({"owner", "agent"})),
     "note": Kind("note", "note_id", frozenset({"owner", "agent", "assistant"})),
     "document": Kind("document", "document_id", frozenset({"owner", "agent"})),
+    # AA-944 (crm-014): a planning booking line and an own supplier (the ledger checks its rules first).
+    "booking_line": Kind("booking_line", "booking_line_id", frozenset({"owner", "agent"})),
+    "agency_supplier": Kind("agency_supplier", "agency_supplier_id", frozenset({"owner", "agent"})),
 }
 
 _ROW_EXTRA = {
@@ -60,6 +64,8 @@ _ROW_EXTRA = {
     "task": "NULL::uuid AS owner_member_id, trip_id",
     "note": "NULL::uuid AS owner_member_id, trip_id",
     "document": "NULL::uuid AS owner_member_id, trip_id",
+    "booking_line": "NULL::uuid AS owner_member_id, trip_id",
+    "agency_supplier": "NULL::uuid AS owner_member_id, NULL::uuid AS trip_id",
 }
 ROW_SQL = {
     k: f"SELECT deleted_at, deleted_by, purge_after, created_by, {_ROW_EXTRA[k]} FROM crm.{v.table} "  # noqa: S608
@@ -106,6 +112,12 @@ SELECT 'note', note_id, kind, NULL, deleted_at, deleted_by, purge_after
 UNION ALL
 SELECT 'document', document_id, NULL, filename_enc, deleted_at, deleted_by, purge_after
   FROM crm.document WHERE deleted_at IS NOT NULL AND ($1::text IS NULL OR deleted_by = $1)
+UNION ALL
+SELECT 'booking_line', booking_line_id, title, NULL, deleted_at, deleted_by, purge_after
+  FROM crm.booking_line WHERE deleted_at IS NOT NULL AND ($1::text IS NULL OR deleted_by = $1)
+UNION ALL
+SELECT 'agency_supplier', agency_supplier_id, name, NULL, deleted_at, deleted_by, purge_after
+  FROM crm.agency_supplier WHERE deleted_at IS NOT NULL AND ($1::text IS NULL OR deleted_by = $1)
 ORDER BY deleted_at DESC, id
 LIMIT $2
 """

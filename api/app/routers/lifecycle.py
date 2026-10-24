@@ -68,6 +68,8 @@ TRASH_ACTIONS: dict[str, Action] = {
     "task": Action.TASK_UPDATE,
     "note": Action.NOTE_ADD,
     "document": Action.DOCUMENT_DELETE,
+    "booking_line": Action.TRIP_EDIT,  # AA-944: the DELETE routes are in app.routers.ledger
+    "agency_supplier": Action.TRIP_EDIT,
 }
 
 RUNS_SQL = """
@@ -222,7 +224,7 @@ async def post_restore(
     request: Request,
     caller: CallerDep,
     tenant_id: TenantDep,
-    kind: Literal["trip", "traveler", "task", "note", "document"],
+    kind: Literal["trip", "traveler", "task", "note", "document", "booking_line", "agency_supplier"],
     object_id: uuid.UUID,
 ) -> dict[str, Any]:
     pool = await request_pool(request)
