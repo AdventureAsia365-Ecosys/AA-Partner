@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 
 import asyncpg
 import pytest
@@ -112,6 +113,7 @@ async def test_functions_are_for_crm_app_only(admin: asyncpg.Connection) -> None
         "crm.audit_drop_expired_partitions(boolean)",
         "crm.audit_export_agencies()",
         "crm.audit_partition_bounds()",
+        "crm.audit_mark_verified(timestamptz)",
     ):
         assert await admin.fetchval("SELECT has_function_privilege($1, $2, 'EXECUTE')", APP_ROLE, fn), fn
         assert not await admin.fetchval("SELECT has_function_privilege('public', $1, 'EXECUTE')", fn), fn
@@ -212,6 +214,42 @@ async def test_a_new_agency_is_registered_and_sees_only_its_row(app_pool: asyncp
         assert {a, b} <= listed
         with pytest.raises(asyncpg.InsufficientPrivilegeError):
             await conn.execute("DELETE FROM crm.audit_export_tenant")
+
+
+async def test_verified_until_moves_only_through_the_mark_function(app_pool: asyncpg.Pool) -> None:
+    """Review (AA-940): crm_app cannot set verified_until itself; crm.audit_mark_verified() moves it forward only, in
+    the agency of app.tenant_id, never past exported_until."""
+    a, b = await _tenant(app_pool), await _tenant(app_pool)
+    async with app_pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(a))
+        for statement in (
+            "UPDATE crm.audit_export_tenant SET verified_until = exported_until",
+            "UPDATE crm.audit_export_tenant SET created_at = now()",
+        ):
+            with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                async with conn.transaction():
+                    await conn.execute(statement)
+        exported = await conn.fetchval("SELECT exported_until FROM crm.audit_export_tenant")
+        # The export marks stay writable (the export job moves them).
+        await conn.execute("UPDATE crm.audit_export_tenant SET exported_until = exported_until, last_seq = last_seq")
+        mark = "SELECT crm.audit_mark_verified($1::timestamptz + $2::interval)"
+        assert await conn.fetchval(mark, exported, timedelta(hours=1)) is False  # never past exported_until
+        assert await conn.fetchval(mark, exported, timedelta(0)) is True
+        assert await conn.fetchval(mark, exported, timedelta(hours=-1)) is False  # forward only
+        assert await conn.fetchval("SELECT verified_until FROM crm.audit_export_tenant") == exported
+        with pytest.raises(asyncpg.InvalidParameterValueError):
+            async with conn.transaction():
+                await conn.execute("SELECT crm.audit_mark_verified(NULL)")
+    # The other agency's mark did not move.
+    other = await app_pool.fetchval("SELECT verified_until FROM crm.audit_export_agencies() WHERE tenant_id = $1", b)
+    assert other is None
+
+
+async def test_the_partition_maker_bounds_its_parent_lock(admin: asyncpg.Connection) -> None:
+    config = await admin.fetchval(
+        "SELECT proconfig FROM pg_proc WHERE oid = 'crm.audit_ensure_partitions()'::regprocedure"
+    )
+    assert "lock_timeout=2s" in config
 
 
 async def _manifest(
