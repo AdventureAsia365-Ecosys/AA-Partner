@@ -11,9 +11,12 @@ name: Scrub corpus
 # month (design v3 §7 "Guardrails CI corpus ≈ $0.70").
 #
 # Configuration: GitHub environment `scrub-corpus` (deployment-branch policy `main` only; the OIDC role trusts only
-# environment:scrub-corpus), VARIABLES, none of them a secret:
-#   SCRUB_CORPUS_ROLE_ARN    OIDC role aa-crm-dev-scrub-corpus (AA-CIS-Infra crm_scrub.tf output), ApplyGuardrail on
-#                            the scrub guardrail only. While it is unset the job is skipped.
+# environment:scrub-corpus):
+#   SCRUB_CORPUS_ROLE_ARN    SECRET: OIDC role aa-crm-dev-scrub-corpus (AA-CIS-Infra crm_scrub.tf output), ApplyGuardrail
+#                            on the scrub guardrail only. A secret, not a variable: this repo is public and a variable
+#                            in a step env is printed in the run log, account id included (DM-6.10; same as
+#                            E2E_MAIL_ROLE_ARN in e2e-dev.yml). While it is unset the job is skipped.
+# and VARIABLES (not secrets):
 #   SCRUB_GUARDRAIL_ID       the guardrail id (crm_scrub.tf output)
 #   SCRUB_GUARDRAIL_VERSION  its published version (crm_scrub.tf output)
 #   AWS_REGION               default us-west-1
@@ -59,7 +62,7 @@ jobs:
         id: cfg
         working-directory: .
         env:
-          ROLE: ${{ vars.SCRUB_CORPUS_ROLE_ARN }}
+          ROLE: ${{ secrets.SCRUB_CORPUS_ROLE_ARN }}
         run: |
           if [ -z "$ROLE" ]; then
             echo "SCRUB_CORPUS_ROLE_ARN is not set in environment scrub-corpus: skipping (AA-CIS-Infra crm_scrub.tf)"
@@ -91,7 +94,7 @@ jobs:
         if: steps.cfg.outputs.enabled == 'true'
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: ${{ vars.SCRUB_CORPUS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.SCRUB_CORPUS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Run the corpus through all three passes
