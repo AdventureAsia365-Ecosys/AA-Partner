@@ -32,7 +32,9 @@ age band at departure, and the F2 views with the first NOLOGIN reader grants; an
 CRM-12, `crm-007`): monthly audit partitions with a verified 12-month drop, the hourly export to both Object Lock
 buckets with a SHA-256 manifest chain, its verify script, and the owner's access log page with download; and **F4 roles**
 (AA-939, CRM-11, `crm-008`): the permission matrix, the margin serializer on every `/crm/v1` response, the partner pool
-sign-in with required MFA, invitations, team management, the reassign queue, owner recovery and the plan columns.
+sign-in with required MFA, invitations, team management, the reassign queue, owner recovery and the plan columns; and the
+**F3 PII scrubber** (AA-938, CRM-10, `crm-009`): known values -> regex -> Bedrock Guardrails before any LLM call, fail
+closed, the encrypted placeholder map and the EN/VI corpus gate.
 
 > Read this file before designing or changing anything here (AA-Ecosys steering, "CONTEXT.md first"). Change it in the
 > same PR when a boundary, owner, route class or the stack changes.
@@ -187,8 +189,9 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
   open it (`test_audit_export_tx_is_used_only_by_the_audit_export_jobs`); the crm-007 platform functions (agency list,
   partition maker, drop) are called from `app/audit_export/registry.py` only.
 - Personal data never goes into `crm.job` (payloads and results are ids only, `app/jobs/payload_guard.py`, checked at
-  enqueue, on every result and by a static scan of `enqueue(...)` calls), into logs (JSON renderer scrubs, ids only by
-  rule) or into Sentry (`send_default_pii=False`, scrubbing).
+  enqueue, on every result and by a static scan of `enqueue(...)` calls), into logs (JSON renderer scrubs, with the F3
+  pass-2 detectors since AA-938, ids only by rule), into Sentry (`send_default_pii=False`, scrubbing) or into an LLM
+  prompt unscrubbed (F3, AA-938).
 
 ## Migrations
 
@@ -202,6 +205,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-006` | `api/migrations/006_crm_f1_f2_complete.sql` | F1 / F2 complete (AA-937): `traveler_relation` (+ trigger-written inverse), `traveler_health` (needs a `health_data` consent), `document` (docs-DEK objects, write-only passports), the full F2 `traveler_profile`, `profile_history`, the age band list on `trip_party`, `audit_event.object_ids` (list views), the views `v_ai_traveler_profile` / `v_ai_trip_party` / `v_ai_trip_context` (`crm_ai_reader`) and `v_insight_fact` (`crm_insights`) |
 | `crm-007` | `api/migrations/007_crm_audit_partitions_export.sql` | F5 audit (AA-940): `audit_event` PARTITION BY RANGE (`at`), the crm-003 table attached as `audit_event_legacy` (MINVALUE to the next month), `at` = insert time (explicit values only from `crm_owner`), `audit_partition_bounds()`, `audit_ensure_partitions()` (three months ahead), `audit_drop_expired_partitions(dry_run)` (12 months + every agency verified), `audit_export_tenant` (registry, RLS enabled not forced, `audit_export_agencies()`), `audit_export_manifest` (hash chain, trigger-enforced, no FK to `tenant`) |
 | `crm-008` | `api/migrations/008_crm_roles_members.sql` | F4 roles (AA-939): `crm.guard_member_write` (only an owner writes memberships inside a member request, CRM02; the last active owner stays unless a platform context acts, CRM01), `member_invitation` (token hash, encrypted e-mail + blind index, claimed `(iss, sub)`; `invitation_token_lookup`), `owner_recovery_request` (14 days, platform-only open / complete, CRM03 / CRM04), `tenant_entitlement` (plan, member limit, features; platform-only), `tenant_settings.refund_owner_threshold_base`, `UNIQUE (tenant_id, member_id)` on `member` |
+| `crm-009` | `api/migrations/009_crm_scrub_placeholder_map.sql` | F3 scrubber (AA-938): `placeholder_map` (scrub DEK, written once, 24 h CHECK, same-agency key to its `llm_call`, no reader grant; DELETE-only purge policy `placeholder_map_expired_purge` keyed on `app.purge_scope`), `llm_call.scrub_receipt` limited to the receipt keys, `UNIQUE (tenant_id, llm_call_id)`. Needs crm-006 only; independent of crm-007 / crm-008 |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -225,6 +229,7 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 | `crm_intake_process` | per stored inquiry (queued in the submission's transaction) | `app/intake/process.py`: e-mail then phone blind-index dedupe; **attach** to the lead's open trip (`inquiry` / `qualifying`, C47 in R6) or create traveller (F1) + profile (F2) + companions + trip at Inquiry + party twins + "Reply within 2 h" task + consent rows; a payload that does not open marks the submission `failed` (permanent). Not deploy-gate exempt |
 | `crm_audit_export` | hourly, queued due now from minute 16 (`HourlyAuditExportSchedule`) | AA-940: keeps the audit partitions three months ahead, then exports every agency's closed hours (15-minute lag, at most 48 per agency per run) to both Object Lock buckets and the manifest chain; `not_configured` without the buckets. Not deploy-gate exempt |
 | `crm_audit_retention` | daily, from `JOB_RETENTION_UTC_HOUR`, due-now hook | AA-940: verifies every agency from `verified_until` (rows, chain, both copies), moves `verified_until`, then drops expired partitions (dry run while `AUDIT_RETENTION_DRY_RUN` is on, the default) |
+| `crm_placeholder_purge` | hourly, due-now hook (`app.privacy.purge.HourlyPlaceholderPurge`, key per UTC hour) | AA-938: deletes expired F3 placeholder maps of every agency in one DELETE through the crm-009 purge policy (no read); count only. Not deploy-gate exempt (exists only while due / running) |
 | `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
 
 ## CI and release
@@ -317,9 +322,10 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   `GET /crm/ops/v1/llm/usage?from&to` (the `llm_usage_daily` rollup), WORKFORCE `cis-admin` token relayed by the CIS
   API (AA-CIS-App `AppInfo("crm")`).
 - **LLM gateway** (`app/llm/gateway.py`, D12): scrub receipt -> month budget (`tenant_settings.ai_budget_usd`) ->
-  `ai_enabled` (default off) -> call -> one `crm.llm_call` row (no text) + the rollup; every refusal is logged too.
-  Slice 1 ships the stub scrubber / provider pair (a stub scrubber is refused with any real provider); CRM-10 adds the
-  scrubber, CRM-33a Bedrock.
+  `ai_enabled` (default off) -> seal the placeholder map -> call -> one `crm.llm_call` row (no text) + the rollup ->
+  store the map; every refusal is logged too and every non-`ok` result carries `fallback = manual_reply_needed`.
+  Slice 1 shipped the stub scrubber / provider pair (a stub scrubber is refused with any real provider); AA-938 adds
+  the F3 scrubber (below), CRM-33a Bedrock.
 - **Not in Slice 1** (later cards): the prospect's confirmation mail and the agent alert (traveller mail leaves the
   agency's own mailbox, CRM-17), system tags from the catalog (R29), conditional forms and the Stage 2 gate (CRM-15),
   F2 views and reader grants (CRM-09), the `form_submission` 90-day redaction job (CRM-14).
@@ -450,6 +456,36 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   `(crm)` layout, the join pages `web/app/join/*` (`lib/invite.ts`: token and claim answer in sealed cookies on
   `/join`, never in a URL). Runbooks (lost second factor, rollout order): `docs/implementation-notes/AA-939.md`.
 
+## F3 PII scrubber (AA-938, CRM-10)
+
+- **Three passes** (`app/privacy/scrubber.py`, design §4.5), every LLM prompt through `LlmGateway.call(...,
+  known=...)`: (1) **known values** of the trip (`app/privacy/known.py`: travellers, companions, emergency contacts,
+  opened through the vault, one `scrub_known_values` audit event with the traveller ids) -> numbered placeholders
+  `<PERSON_1>`, `<EMAIL_1>`, ...; names are matched folded (no diacritics, any case: "Nguyen Van An" = "Nguyễn Văn
+  An"), a full name and any run of 2+ of its words always, a given name alone only with a capital, a family name alone
+  only after an honorific (anh, chị, ông, bà, Mr, Mrs, ...), never one word inside a known place name ("Bình" in
+  "Ninh Bình", `app/privacy/places.py`); a place-like person ("Florence Lyon", "Hà Giang") is still caught because the
+  pass matches what the agency stored; (2) **regex** (`app/privacy/patterns.py`): signed links, JWTs, e-mail, dates of
+  birth (cue or 2+ years back), Luhn cards, CCCD, passports, phones incl. Vietnamese formats, OTPs; UUIDs never
+  touched; (3) **Bedrock Guardrails** `ApplyGuardrail` in detect mode (`app/privacy/guardrails.py`, acc2 us-west-1,
+  AA-930 §2), `match` never logged.
+- **Fail closed**: any error -> `scrub_failed`, a detector timeout (`SCRUB_DETECTOR_TIMEOUT_MS`, default 3 s) ->
+  `scrub_timeout`; no call, `manual_reply_needed`. No guardrail configured = every scrub refused. Text that already
+  holds a placeholder-shaped token is neutralised to `[KIND_n]` first.
+- **Receipt** (`crm.llm_call.scrub_receipt`): scrubber version, detector, counts per kind and per pass, nothing else
+  (crm-009 CHECK on the keys).
+- **Placeholder map** (`app/privacy/placeholder_store.py`, `crm.placeholder_map`): sealed under the tenant `scrub` DEK
+  before the call, stored against the call after the log, expires after 24 h (reads refuse it at once, the hourly
+  `crm_placeholder_purge` deletes it). `restore_placeholders` only in a member's `TenantContext` (a job context is
+  403), 410 `placeholder_map_expired` after 24 h, one `placeholder_restore` audit event per restore. Model output is
+  kept with placeholders.
+- **Logs**: the JSON log renderer and Sentry scrubber (`app/observability/scrub.py`) also run the pass-2 detectors
+  (cards, CCCD, phones without `+`, passports, OTPs, signed links; not dates).
+- **Corpus gate** (`api/tests/scrub_corpus/`): 242 synthetic EN/VI samples (generator + `--check`), 0 leaks. Offline
+  half (passes 1-2) in every PR's Unit Tests; all three passes in the workflow **Scrub corpus** (nightly 20:30 UTC and
+  on every push to main that changes `api/app/privacy/**` or the corpus; GitHub environment `scrub-corpus`, OIDC role
+  with `bedrock:ApplyGuardrail` only; about $0.72 a month).
+
 ## Dev seeder (`api/app/seed/`, AA-935)
 
 `python -m app.seed` inside the API container (ECS Exec on `aa-crm-dev-api`; it has the `crm_app` DSN): DRY RUN by
@@ -477,7 +513,8 @@ every submission 503 `intake_not_configured`), `RATE_LIMIT_INTAKE_PER_MINUTE` (d
 audit export (AA-940) `AUDIT_BUCKET_COMPLIANCE` / `AUDIT_BUCKET_GOVERNANCE` (both or neither) and
 `AUDIT_RETENTION_DRY_RUN` (default true), and (AA-939) `COGNITO_PARTNER_POOL_ID`, `PARTNER_WEB_ORIGIN`,
 `SES_FROM_ADDRESS`, `SES_CONFIGURATION_SET`, `INVITATION_TTL_HOURS` (default 168), `RATE_LIMIT_CLAIM_PER_MINUTE`
-(default 10). Meanings and defaults: `api/app/settings.py`. Live check of the key provider inside the
+(default 10), and the F3 guardrail (AA-938) `SCRUB_GUARDRAIL_ID`, `SCRUB_GUARDRAIL_VERSION`,
+`SCRUB_GUARDRAIL_REGION`, `SCRUB_DETECTOR_TIMEOUT_MS`. Meanings and defaults: `api/app/settings.py`. Live check of the key provider inside the
 container: `python -m app.vault.selftest` (KMS round trip under the nil tenant context, nothing stored).
 
 ## Domain terms
