@@ -72,7 +72,7 @@ import asyncpg
 
 from app.audit import INSERT_SQL, AuditEvent, current_request_id
 from app.auth.route_guard import Caller
-from app.errors import Forbidden, NotFound
+from app.errors import Conflict, Forbidden, NotFound
 from app.margin import current_member_role
 from app.observability import reveal_meter
 from app.permissions import Action, may
@@ -358,6 +358,11 @@ async def tenant_tx(
             async with conn.transaction():  # savepoint: the route's work
                 yield ctx
         except Exception as exc:
+            if getattr(exc, "sqlstate", None) == LEGAL_HOLD_SQLSTATE:
+                # crm-010 hold rule 4h: the database refused to delete, trash or unlink a held row, whatever route
+                # tried (remove from a party, delete a document, remove a relation...): 409 legal_hold, on record.
+                ctx.audit("change", "denied", "legal_hold", reason="legal_hold")
+                exc = Conflict("legal_hold", "an active legal hold covers this record; it cannot be removed")
             denied = [e for e in ctx.audit_events if e.outcome == "denied"]
             if not denied:
                 raise
@@ -584,6 +589,8 @@ async def invitation_tx(pool: asyncpg.Pool, token_hash_hex: str) -> AsyncIterato
         raise pending
 
 
+# crm-010: SQLSTATE of the hold rule (erase_subject, the hold guard triggers).
+LEGAL_HOLD_SQLSTATE = "CRM10"
 LIFECYCLE_ACTORS = frozenset({"job:crm_lifecycle", "job:crm_offboard"})
 TENANT_STATUS_SQL = "SELECT status FROM crm.tenant WHERE tenant_id = $1"
 ERASER_ROLE = "crm_eraser"

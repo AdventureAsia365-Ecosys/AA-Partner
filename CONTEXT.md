@@ -507,7 +507,12 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   refuses with CRM10, dry run too, nothing in part (`crm.erase_held`); `crm.legal_hold_blocks(scope, id)` is the same
   test ("the erase would refuse"), so the trash pre-check, the restore, the daily redaction / purge and offboarding
   (any active hold) agree. `crm.erase_subject`, `crm.lifecycle_purge_expired` and the daily run take
-  `LOCK TABLE crm.legal_hold IN SHARE MODE` first, so a hold placed meanwhile waits and a hold being placed is seen.
+  `LOCK TABLE crm.legal_hold IN SHARE MODE` first, so a hold placed meanwhile waits and a hold being placed is seen;
+  `erase_subject` then locks its trip / traveller row FOR UPDATE. The database also refuses changing a held row on
+  every other path (rule 4h, `crm.guard_held_change` BEFORE DELETE OR UPDATE triggers on trip, traveler,
+  trip_traveler, trip_party, note, document, traveler_relation, form_submission, task, dispatch_queue,
+  traveler_health): delete, trash or unlink / content change -> CRM10, which `tenant_tx` maps to 409 `legal_hold`
+  for any route (remove from a party, delete a document, remove a relation).
   A hold placed by `platform:*` is released only by `platform:*`; a hold is never deleted nor trashed (its trash
   columns stay NULL), it only moves to released.
 - **Erasure** (`POST /travelers/{id}/erasure`, owner): dry run by default; a real run bypasses the trash and leaves an

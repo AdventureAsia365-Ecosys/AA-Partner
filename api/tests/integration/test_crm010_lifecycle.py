@@ -621,3 +621,56 @@ async def test_an_erase_job_in_dry_run_is_refused_and_gives_the_agency_back(
     assert [e["reason"] for e in denied] == ["deletion_dry_run"]
     async with tenant_tx(app_pool, a["owner"], a["tenant"]) as ctx:
         assert (await offboarding.cancel(ctx, request_id, store))["status"] == "cancelled"
+
+
+@pytest.mark.parametrize("held_by", ["client_hold_on_the_lead", "trip_hold"])
+async def test_n1_removing_someone_from_a_held_party_is_409_legal_hold(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection, held_by: str
+) -> None:
+    """Re-review S249 round 4 (n1 / n1b): remove_from_trip is a plain DELETE of party rows; the hold guard trigger
+    refuses it on a held trip (a client hold on a party member, or a trip hold) and the API answers 409 legal_hold
+    with a denied event; the trip stays held. Released, the removal goes through. Deleting one of its documents is
+    refused the same way."""
+    from app.travellers import service as travellers
+
+    keys = _keys()
+    store = MemoryDocumentStore()
+    a = await _inquiry(app_pool, keys)
+    companion = uuid.uuid4()
+    async with tenant_tx(app_pool, a["owner"], a["tenant"]) as ctx:
+        await ctx.conn.execute(
+            "INSERT INTO crm.traveler (traveler_id, display_name_enc) VALUES ($1, $2)", companion, b"\x00" * 40
+        )
+        await ctx.conn.execute(
+            "INSERT INTO crm.trip_traveler (trip_id, traveler_id, role) VALUES ($1, $2, 'companion')",
+            a["trip"],
+            companion,
+        )
+        doc = await documents.upload(
+            ctx,
+            Vault(keys, ctx),
+            store,
+            traveler_id=companion,
+            trip_id=a["trip"],
+            kind="ticket",
+            filename="ticket.jpg",
+            content_type="image/jpeg",
+            content=JPEG,
+        )
+        scope, subject = ("traveler", a["lead"]) if held_by == "client_hold_on_the_lead" else ("trip", a["trip"])
+        hold = await policy.place_hold(ctx, scope, subject, "dispute")
+    for attempt in ("party", "document"):
+        with _raises(Conflict, "legal_hold") as err:
+            async with tenant_tx(app_pool, a["owner"], a["tenant"]) as ctx:
+                if attempt == "party":
+                    await travellers.remove_from_trip(ctx, Vault(keys, ctx), a["trip"], companion)
+                else:
+                    await documents.trash(ctx, uuid.UUID(doc["document_id"]))
+        assert err.value.status_code == 409
+    rows = await _sql(app_pool, a["tenant"], "SELECT 1 FROM crm.trip_traveler WHERE traveler_id = $1", companion)
+    assert len(rows) == 1
+    denied = [e for e in await _events(admin, a["tenant"], "change") if e["outcome"] == "denied"]
+    assert [e["reason"] for e in denied] == ["legal_hold", "legal_hold"]
+    async with tenant_tx(app_pool, a["owner"], a["tenant"]) as ctx:
+        await policy.release_hold(ctx, uuid.UUID(hold["hold_id"]))
+        assert (await travellers.remove_from_trip(ctx, Vault(keys, ctx), a["trip"], companion))["removed"]

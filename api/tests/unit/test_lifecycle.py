@@ -571,8 +571,8 @@ async def test_run_agency_dry_and_applied(monkeypatch: pytest.MonkeyPatch) -> No
         assert bool(conn.sql("UPDATE crm.form_submission")) is not dry
         assert bool(conn.sql("archive_reason = 'auto_inactive'")) is not dry
         assert conn.sql("INSERT INTO crm.lifecycle_run")[0][1] is dry
-        # Hold rule 4g: the run locks crm.legal_hold first; the redaction asks crm.hold_row per submission (4d).
-        assert conn.calls[0][0] == "LOCK TABLE crm.legal_hold IN SHARE MODE"
+        # Hold rule 4d: the redaction asks crm.hold_row per submission; no table lock in the run itself.
+        assert not conn.sql("LOCK TABLE")
         assert conn.sql("crm.hold_row(s.trip_id, s.traveler_id)")
         assert ctx.audit_events[-1].reason == ("dry_run" if dry else "applied")
     assert erased == [("trip", True), ("trip", False)]

@@ -287,12 +287,13 @@ async def test_legal_holds_suspend_deletion(app_pool: asyncpg.Pool) -> None:
     ids = await _agency(app_pool)
     async with app_pool.acquire() as conn, conn.transaction():
         await _ctx(conn, ids["tenant"], f"member:{ids['member']}")
+        # Trashed before the hold lands (rule 4h refuses trashing a held trip).
+        await conn.execute("UPDATE crm.trip SET deleted_at = now(), deleted_by = 'member:x', purge_after = now()")
         hold = await conn.fetchval(
             "INSERT INTO crm.legal_hold (scope, subject_id, reason_code) "
             "VALUES ('trip', $1, 'dispute') RETURNING hold_id",
             ids["trip"],
         )
-        await conn.execute("UPDATE crm.trip SET deleted_at = now(), deleted_by = 'member:x', purge_after = now()")
     for scope, subject, token in (("trip", ids["trip"], None), ("traveler", ids["lead"], ids["token"])):
         with pytest.raises(asyncpg.PostgresError, match="legal_hold") as err:
             await _erase(app_pool, ids["tenant"], scope, subject, token)
@@ -640,9 +641,10 @@ async def test_the_deletion_functions_pin_their_search_path(admin: asyncpg.Conne
             "hold_traveler",
             "hold_row",
             "erase_held",
+            "guard_held_change",
         ],
     )
-    assert len(rows) == 11
+    assert len(rows) == 12
     assert {r["fn"]: list(r["proconfig"] or []) for r in rows} == {
         r["fn"]: ["search_path=pg_catalog, pg_temp"] for r in rows
     }
@@ -949,6 +951,120 @@ async def test_an_erase_waits_for_a_hold_being_placed_and_then_refuses(app_pool:
             await erase
         assert err.value.sqlstate == "CRM10"
     assert await _count(app_pool, t, "trip") == 1
+
+
+# ── Hold guard triggers (rule 4h), re-review S249 round 4 ───────────────────────────────────────────────────────
+async def _try(pool: asyncpg.Pool, tenant_id: uuid.UUID, sql: str, *args: Any) -> str | None:
+    """Run one statement as crm_app and roll it back; the SQLSTATE it raised, or None."""
+    async with pool.acquire() as conn:
+        tx = conn.transaction()
+        await tx.start()
+        try:
+            await _ctx(conn, tenant_id, "member:m")
+            await conn.execute(sql, *args)
+        except asyncpg.PostgresError as err:
+            return err.sqlstate
+        finally:
+            await tx.rollback()
+    return None
+
+
+async def test_the_database_refuses_changing_held_rows_on_every_path(app_pool: asyncpg.Pool) -> None:
+    """Rule 4h: with a trip hold on T (its party, so lead and companion, are held), every table's guard refuses the
+    delete / trash / unlink / content change of a held row with CRM10; business edits stay allowed; released, the
+    same statements go through (n1: removing someone from a held party; n1b: through a trip hold)."""
+    ids = await _agency(app_pool)
+    t, trip, lead, comp = ids["tenant"], ids["trip"], ids["lead"], ids["companion"]
+    await _name_on_trip(app_pool, t, trip, comp, "note_and_document")
+    await _name_on_trip(app_pool, t, trip, comp, "submission")
+    await _name_on_trip(app_pool, t, trip, comp, "dispatch")
+    async with app_pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, t, "seed:test")
+        await conn.execute(
+            "INSERT INTO crm.traveler_relation (from_traveler_id, to_traveler_id, kind) VALUES ($1, $2, 'friend')",
+            lead,
+            comp,
+        )
+    trash = "SET deleted_at = now(), deleted_by = 'member:x', purge_after = now() + interval '7 days'"
+    refused = [
+        (f"UPDATE crm.trip {trash} WHERE trip_id = $1", trip),
+        (f"UPDATE crm.traveler {trash} WHERE traveler_id = $1", comp),
+        ("DELETE FROM crm.trip_traveler WHERE trip_id = $1 AND traveler_id = $2", trip, comp),
+        ("DELETE FROM crm.trip_party WHERE trip_id = $1", trip),
+        ("DELETE FROM crm.note WHERE trip_id = $1", trip),
+        ("UPDATE crm.note SET body_enc = $2 WHERE trip_id = $1", trip, os.urandom(40)),
+        ("DELETE FROM crm.document WHERE trip_id = $1", trip),
+        (f"UPDATE crm.document {trash} WHERE trip_id = $1", trip),
+        ("DELETE FROM crm.traveler_relation WHERE from_traveler_id = $1", lead),
+        ("UPDATE crm.form_submission SET trip_id = NULL WHERE trip_id = $1", trip),
+        ("UPDATE crm.form_submission SET payload_enc = NULL, payload_redacted_at = now() WHERE trip_id = $1", trip),
+        ("DELETE FROM crm.task WHERE trip_id = $1", trip),
+        ("DELETE FROM crm.dispatch_queue WHERE trip_id = $1", trip),
+    ]
+    allowed = [
+        ("UPDATE crm.trip SET title = 'Renamed while held' WHERE trip_id = $1", trip),
+        ("UPDATE crm.document SET visible_to_travelers = true WHERE trip_id = $1", trip),
+        (
+            "UPDATE crm.dispatch_queue SET status = 'cancelled', gate_result = 'undone', decided_at = now() "
+            "WHERE trip_id = $1",
+            trip,
+        ),
+        ("UPDATE crm.task SET status = 'done', done_at = now(), done_by = 'member:m' WHERE trip_id = $1", trip),
+    ]
+    # Unheld: everything goes through.
+    for sql, *args in refused + allowed:
+        assert await _try(app_pool, t, sql, *args) is None, sql
+    hold = await _hold(app_pool, t, "trip", trip, "member:m")
+    for sql, *args in refused:
+        assert await _try(app_pool, t, sql, *args) == "CRM10", sql
+    for sql, *args in allowed:
+        assert await _try(app_pool, t, sql, *args) is None, sql
+    await _release(app_pool, t, hold)
+    for sql, *args in refused:
+        assert await _try(app_pool, t, sql, *args) is None, sql
+
+
+async def test_a_held_client_keeps_their_rows_on_an_unheld_trip(app_pool: asyncpg.Pool) -> None:
+    """n1 at the database: a client hold on the companion makes trip T held (4a): removing the companion, or any
+    other party member, from T is refused; a link set from NULL (as the intake does) stays allowed."""
+    ids = await _agency(app_pool)
+    t, trip, lead, comp = ids["tenant"], ids["trip"], ids["lead"], ids["companion"]
+    await _hold(app_pool, t, "traveler", comp, "member:m")
+    for who in (comp, lead):
+        assert (
+            await _try(app_pool, t, "DELETE FROM crm.trip_traveler WHERE trip_id = $1 AND traveler_id = $2", trip, who)
+            == "CRM10"
+        )
+    async with app_pool.acquire() as conn, conn.transaction():  # a link set from NULL is not an unlink
+        await _ctx(conn, t, "seed:test")
+        await conn.execute(
+            "UPDATE crm.note SET traveler_id = $2 WHERE trip_id = $1 AND traveler_id IS NULL", trip, lead
+        )
+
+
+async def test_n2_the_erase_locks_its_subject_so_nothing_attaches_to_it_mid_erase(app_pool: asyncpg.Pool) -> None:
+    """n2 / rule 4g: erase_subject locks the traveller row FOR UPDATE after the hold check, so a party row, note or
+    relation that would reference the client (FOR KEY SHARE of its foreign key) waits until the erase ends."""
+    ids = await _agency(app_pool)
+    t = ids["tenant"]
+    s_id, s_token = await _client(app_pool, t)
+    await _hold(app_pool, t, "trip", ids["trip"], "member:m")
+    async with app_pool.acquire() as a, app_pool.acquire() as b:
+        tx = a.transaction()
+        await tx.start()
+        await _ctx(a, t)
+        await a.execute("SET LOCAL ROLE crm_eraser")
+        await a.fetchval("SELECT crm.erase_subject('traveler', $1, $2, true)", s_id, s_token)
+        with pytest.raises(asyncpg.LockNotAvailableError):
+            async with b.transaction():
+                await _ctx(b, t, "member:m")
+                await b.execute("SET LOCAL lock_timeout = '300ms'")
+                await b.execute(
+                    "INSERT INTO crm.trip_traveler (trip_id, traveler_id, role) VALUES ($1, $2, 'companion')",
+                    ids["trip"],
+                    s_id,
+                )
+        await tx.rollback()
 
 
 async def test_the_llm_call_purge_keeps_180_days(app_pool: asyncpg.Pool) -> None:
