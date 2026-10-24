@@ -46,7 +46,7 @@ const NO_ASSISTANT: readonly Role[] = ["owner", "agent"];
 export const SECTIONS: readonly Section[] = [
   { key: "home", path: "/", group: "home", label: "nav.home", icon: "home", roles: ALL, card: "AA-935" },
   { key: "pipeline", path: "/pipeline", group: "crm", label: "nav.pipeline", icon: "kanban", roles: ALL, card: "AA-936", empty: { title: "section.pipeline.title", body: "section.pipeline.body" } },
-  { key: "clients", path: "/clients", group: "crm", label: "nav.clients", icon: "users", roles: ALL, card: "AA-936", empty: { title: "section.clients.title", body: "section.clients.body" } },
+  { key: "clients", path: "/clients", group: "crm", label: "nav.clients", icon: "users", roles: ALL, card: "AA-937", empty: { title: "section.clients.title", body: "section.clients.body" } },
   { key: "inbox", path: "/inbox", group: "crm", label: "nav.inbox", icon: "inbox", roles: ALL, card: "AA-945", empty: { title: "section.inbox.title", body: "section.inbox.body" } },
   { key: "tasks", path: "/tasks", group: "crm", label: "nav.tasks", icon: "check", roles: ALL, card: "AA-959", empty: { title: "section.tasks.title", body: "section.tasks.body" } },
   { key: "payments", path: "/payments", group: "money", label: "nav.payments", icon: "wallet", roles: ALL, card: "AA-952", empty: { title: "section.payments.title", body: "section.payments.body" } },
