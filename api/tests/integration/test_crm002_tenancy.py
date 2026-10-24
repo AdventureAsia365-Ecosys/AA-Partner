@@ -33,6 +33,8 @@ EXTRA_POLICIES = {
     ("intake_form", "intake_form_public_lookup"): ("r", {APP_ROLE}),
     #   crm-008: the invitation claim / accept lookup of app.tenancy.invitation_tx() (keyed on app.invite_token_hash).
     ("member_invitation", "invitation_token_lookup"): ("r", {APP_ROLE}),
+    #   crm-009: the hourly purge of expired F3 placeholder maps (DELETE only, keyed on app.purge_scope + expires_at).
+    ("placeholder_map", "placeholder_map_expired_purge"): ("d", {APP_ROLE}),
 }
 
 ISS = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_TESTPARTN"
