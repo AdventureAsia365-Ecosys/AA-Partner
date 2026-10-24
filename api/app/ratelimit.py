@@ -45,8 +45,10 @@ class FixedWindowLimiter:
         *,
         clock: Callable[[], float] = time.monotonic,
         max_keys: int = MAX_TRACKED_KEYS,
+        window_s: float = WINDOW_S,
     ) -> None:
         self._limit = limit_per_window
+        self.window_s = window_s
         self._clock = clock
         self._max_keys = max_keys
         self._window_start = clock()
@@ -56,7 +58,7 @@ class FixedWindowLimiter:
         if self._limit <= 0:
             return True
         now = self._clock()
-        if now - self._window_start >= WINDOW_S:
+        if now - self._window_start >= self.window_s:
             self._window_start = now
             self._counts.clear()
         count = self._counts.pop(key, 0) + 1

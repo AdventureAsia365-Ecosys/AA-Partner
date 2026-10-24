@@ -1,0 +1,14 @@
+{
+  "name": "aa-crm-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AA-Partner Dev E2E (Playwright): card CRM-08 slice 1 — inquiry form on the client host -> card on the board",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.59.1",
+    "@types/node": "22.20.5",
+    "typescript": "5.9.3"
+  }
+}

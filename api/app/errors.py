@@ -41,6 +41,17 @@ class Unavailable(ServiceError):
     status_code = 503
 
 
+class RateLimited(ServiceError):
+    """429 with ``Retry-After`` (seconds) from inside the service layer (the per-form intake quota)."""
+
+    status_code = 429
+
+    def __init__(self, code: str, retry_after_s: int, message: str = "") -> None:
+        super().__init__(code, message)
+        self.retry_after_s = retry_after_s
+
+
 async def service_error_handler(_: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, ServiceError)  # noqa: S101 — registered for ServiceError only
-    return JSONResponse(status_code=exc.status_code, content=exc.body())
+    headers = {"Retry-After": str(exc.retry_after_s)} if isinstance(exc, RateLimited) else None
+    return JSONResponse(status_code=exc.status_code, content=exc.body(), headers=headers)

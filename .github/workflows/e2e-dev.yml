@@ -1,0 +1,69 @@
+name: E2E Dev
+
+# AA-936 (card CRM-08 "Playwright E2E"): the slice on Dev, end to end — the inquiry form on the client host, the card
+# on the agency board, the trip workspace (e2e/tests/slice1.spec.ts). workflow_dispatch only: nothing runs on push or
+# PR. Prerequisites (outside this repo): the Dev web + API deployed with crm-005 applied; the client host live
+# (AA-CIS-Infra feat/aa-936-client-host); the seeded agency and its e2e owner (python -m app.seed --apply, AA-CIS-Infra
+# tools/identity/crm_dev_identity.py e2e-users); GitHub environment `e2e` with secret E2E_MAIL_ROLE_ARN (the
+# read-only e2e mailbox role, whose trust must list this repo's `e2e` environment on refs/heads/main) and variables
+# E2ECRMCLIENT, E2ECRMPARTNER, E2ECRMFORMKEY, E2ECRMEMAIL.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: e2e-dev
+  cancel-in-progress: false
+
+jobs:
+  slice1:
+    name: Slice 1 (Playwright, Dev)
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: e2e
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: e2e
+    env:
+      E2ECRM: "1"
+      E2ECRMCLIENT: ${{ vars.E2ECRMCLIENT }}
+      E2ECRMPARTNER: ${{ vars.E2ECRMPARTNER }}
+      E2ECRMFORMKEY: ${{ vars.E2ECRMFORMKEY }}
+      E2ECRMEMAIL: ${{ vars.E2ECRMEMAIL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      # Exact versions in e2e/package.json; no lockfile on purpose (this folder never ships in an image). No install
+      # scripts run, and every step that runs third-party code before the tests does so WITHOUT AWS credentials: the
+      # mailbox role (it reads every e2e inbound mail, sign-in codes included) is configured just before the tests.
+      - name: Install Playwright
+        run: npm install --no-audit --no-fund --ignore-scripts
+      - name: Install the browser
+        run: npx playwright install --with-deps chromium
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Configure AWS credentials (OIDC, read-only mailbox role)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.E2E_MAIL_ROLE_ARN }}
+          aws-region: us-west-1
+          role-session-name: crm-e2e-dev-${{ github.run_id }}
+      - name: Run
+        run: npx playwright test
+      # Screenshots only, never the reports (a fill step would name the sign-in code).
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-dev-${{ github.run_id }}
+          path: e2e/results/*.png
+          if-no-files-found: warn
+          retention-days: 14

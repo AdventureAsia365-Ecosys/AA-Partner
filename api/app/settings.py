@@ -52,11 +52,21 @@ Rate limits (ADR 0010 decision 2: CloudFront → VPC origin bypasses API Gateway
 - ``RATE_LIMIT_XFF_HOPS``: **fallback only**. The limiter keys on ``CloudFront-Viewer-Address`` (set by CloudFront,
   not by the viewer); only when that header is missing does it use the ``X-Forwarded-For`` entry this many from the
   right (default 2: the viewer address CloudFront appended, then the address the ALB appended). See ``app.ratelimit``.
+- ``RATE_LIMIT_INTAKE_PER_MINUTE``: inquiry-form submissions per client address per minute (default 5; 0 = off).
+- ``RATE_LIMIT_INTAKE_FORM_PER_HOUR``: submissions per form per hour, whatever the address (default 200; 0 = off).
+
+Public intake (AA-936, card CRM-08; ``app.intake.public``):
+
+- ``INTAKE_PAGE_ORIGINS``: comma list of the https origins whose pages may POST a submission (the client host,
+  ``https://go-dev.…``, set by Terraform). A form's own ``allowed_origins`` are accepted too. Empty on ``dev`` /
+  ``stg`` / ``prod`` = every submission answers 503 ``intake_not_configured`` (fail closed); on ``test`` / ``local``
+  empty means "no Origin check".
 """
 
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
@@ -72,6 +82,8 @@ FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 DEFAULT_RATE_LIMIT_PER_MINUTE = 120
 DEFAULT_XFF_HOPS = 2
 DEFAULT_RETENTION_UTC_HOUR = 19
+DEFAULT_INTAKE_PER_MINUTE = 5
+DEFAULT_INTAKE_FORM_PER_HOUR = 200
 KEY_PROVIDERS = frozenset({"kms", "local"})
 DEFAULT_DEK_CACHE_TTL_S = 300
 MAX_DEK_CACHE_TTL_S = 900
@@ -108,6 +120,9 @@ class Settings:
     kms_data_key_id: str = ""
     local_kek_b64: str = field(default="", repr=False)
     dek_cache_ttl_seconds: int = DEFAULT_DEK_CACHE_TTL_S
+    rate_limit_intake_per_minute: int = DEFAULT_INTAKE_PER_MINUTE
+    rate_limit_intake_form_per_hour: int = DEFAULT_INTAKE_FORM_PER_HOUR
+    intake_page_origins: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.environment not in {"dev", "stg", "prod"} | INSECURE_ENVIRONMENTS:
@@ -165,6 +180,16 @@ class Settings:
             raise SettingsError("KMS_DATA_KEY_ID must be an alias/..., a KMS key ARN or a key id")
         if not 0 <= self.dek_cache_ttl_seconds <= MAX_DEK_CACHE_TTL_S:
             raise SettingsError(f"DEK_CACHE_TTL_SECONDS must be between 0 and {MAX_DEK_CACHE_TTL_S}")
+        if self.rate_limit_intake_per_minute < 0 or self.rate_limit_intake_form_per_hour < 0:
+            raise SettingsError("RATE_LIMIT_INTAKE_PER_MINUTE / RATE_LIMIT_INTAKE_FORM_PER_HOUR must be >= 0")
+        for origin in self.intake_page_origins:
+            if not _ORIGIN.match(origin):
+                raise SettingsError(f"INTAKE_PAGE_ORIGINS entries must be https origins, got {origin!r}")
+
+    @property
+    def intake_origin_check(self) -> bool:
+        """Whether submissions must carry an allowed Origin (always outside test / local)."""
+        return bool(self.intake_page_origins) or self.environment not in INSECURE_ENVIRONMENTS
 
     @property
     def keys_state(self) -> str:
@@ -172,6 +197,13 @@ class Settings:
         if self.key_provider == "kms" and not self.kms_data_key_id:
             return "not_configured"
         return self.key_provider
+
+
+_ORIGIN = re.compile(r"^https://[a-z0-9.-]+(:[0-9]{1,5})?$")
+
+
+def _origins(raw: str | None) -> tuple[str, ...]:
+    return tuple(o.strip().lower().rstrip("/") for o in (raw or "").split(",") if o.strip())
 
 
 def _looks_like_key_id(value: str) -> bool:
@@ -244,4 +276,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         kms_data_key_id=_text(env, "KMS_DATA_KEY_ID"),
         local_kek_b64=_text(env, "LOCAL_KEK_B64"),
         dek_cache_ttl_seconds=_int(env.get("DEK_CACHE_TTL_SECONDS"), DEFAULT_DEK_CACHE_TTL_S, "DEK_CACHE_TTL_SECONDS"),
+        rate_limit_intake_per_minute=_int(
+            env.get("RATE_LIMIT_INTAKE_PER_MINUTE"), DEFAULT_INTAKE_PER_MINUTE, "RATE_LIMIT_INTAKE_PER_MINUTE"
+        ),
+        rate_limit_intake_form_per_hour=_int(
+            env.get("RATE_LIMIT_INTAKE_FORM_PER_HOUR"), DEFAULT_INTAKE_FORM_PER_HOUR, "RATE_LIMIT_INTAKE_FORM_PER_HOUR"
+        ),
+        intake_page_origins=_origins(env.get("INTAKE_PAGE_ORIGINS")),
     )

@@ -7,6 +7,7 @@ import io
 import json
 import unicodedata
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
@@ -120,6 +121,25 @@ class SeedDb:
         self.conn.on("INSERT INTO crm.tenant", self._insert)
         self.conn.on("INSERT INTO crm.member", lambda *a: uuid.uuid4())
         self.conn.on("SELECT count(*) FROM crm.member", 1)
+        # AA-936: the synthetic inquiry form (none yet, then created).
+        self.conn.on("SELECT count(*) FROM crm.intake_form", 0)
+        self.conn.on("INSERT INTO crm.form_definition", uuid.uuid4())
+        self.conn.on("INSERT INTO crm.intake_form", self._form)
+
+    @staticmethod
+    def _form(*args: object) -> dict:
+        return {
+            "intake_form_id": uuid.uuid4(),
+            "public_key": args[0],
+            "label": args[1],
+            "allowed_origins": [],
+            "honeypot_field": args[4],
+            "default_owner_member_id": None,
+            "lead_source": args[6],
+            "privacy_notice_url": None,
+            "status": "active",
+            "created_at": datetime(2026, 10, 24, tzinfo=UTC),
+        }
 
     def _set(self, tid: str) -> None:
         self.current = uuid.UUID(tid)

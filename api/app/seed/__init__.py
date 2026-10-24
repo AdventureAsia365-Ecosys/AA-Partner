@@ -14,9 +14,12 @@ Exec on ``aa-crm-dev-api``::
 - Members come only from ``--member KEY:ROLE:SUB`` (the subjects the e2e user script printed). The issuer is the
   partner pool when ``COGNITO_PARTNER_ISSUER`` is set (after AA-939), else the EXTERNAL pool (the ``cis-portal`` bridge
   on Dev); ``--issuer`` overrides.
-- Travellers: generated (Faker EN/VI, ``app.seed.travellers``) and reported as counts; written by the intake card
-  (AA-936) through the vault (``crm.traveler``, crm-003). Output is one JSON object per agency plus a summary line:
-  ids, labels, counts, never a traveller's data.
+- AA-936: ``--apply`` also makes sure each agency has one inquiry form (``Website (synthetic)``; its public key is
+  printed, it is in the hosted URL anyway). ``--apply --travellers`` stores the agency's Faker EN/VI travellers
+  (``app.seed.travellers``) as Stage 1 inquiries through the same path as the public form
+  (``app.intake.public.store_submission``: encrypted submission + ``crm_intake_process`` job, idempotent per
+  traveller), so they reach ``crm.traveler`` only through the vault. Needs the key provider (KMS on Dev).
+- Output is one JSON object per agency plus a summary line: ids, labels, counts, never a traveller's data.
 """
 
 from __future__ import annotations
@@ -35,13 +38,19 @@ import asyncpg
 from app.agencies import SYNTHETIC_ONLY_ENVIRONMENTS, AgencySpec, MemberSpec, provision_agency, validate_member
 from app.db import Database
 from app.errors import ServiceError
+from app.intake import forms as intake_forms
+from app.intake import stage1
+from app.intake.public import store_submission
 from app.seed.catalogue import AGENCIES, BY_KEY, SyntheticAgency
-from app.seed.travellers import nfc, travellers_for
+from app.seed.travellers import inquiry_for, nfc, travellers_for
 from app.settings import Settings, SettingsError, load_settings
-from app.tenancy import provisioning_tx
+from app.tenancy import provisioning_tx, system_tx
+from app.vault import KeyProvider, Vault, build_key_provider
 
 ACTOR_APPLY = "seed:aa-935"
 ACTOR_READ = "seed:aa-935-dry-run"
+ACTOR_INTAKE = "seed:aa-936"
+SEED_FORM_LABEL = "Website (synthetic)"
 STATE_SQL = "SELECT display_name, default_locale, is_synthetic FROM crm.tenant WHERE tenant_id = $1"
 MEMBER_COUNT_SQL = "SELECT count(*) FROM crm.member WHERE deleted_at IS NULL"
 
@@ -56,6 +65,7 @@ class Plan:
     members: dict[str, tuple[MemberSpec, ...]]
     apply: bool
     issuer: str
+    travellers: bool = False
 
 
 def parse_member(raw: str, issuer: str) -> tuple[str, MemberSpec]:
@@ -79,6 +89,7 @@ def build_plan(argv: Sequence[str], settings: Settings) -> Plan:
     parser.add_argument("--agency", action="append", default=[], help="only this agency key (repeatable)")
     parser.add_argument("--member", action="append", default=[], help="KEY:ROLE:SUB (repeatable)")
     parser.add_argument("--issuer", default="", help="token issuer of the --member subjects")
+    parser.add_argument("--travellers", action="store_true", help="with --apply: store the synthetic inquiries")
     args = parser.parse_args(list(argv))
     if settings.environment not in SYNTHETIC_ONLY_ENVIRONMENTS:
         raise SeedRefused(f"the seeder runs on {sorted(SYNTHETIC_ONLY_ENVIRONMENTS)} only, not {settings.environment}")
@@ -93,7 +104,9 @@ def build_plan(argv: Sequence[str], settings: Settings) -> Plan:
         if key not in {a.key for a in agencies}:
             raise SeedRefused(f"--member {key}: that agency is not selected")
         members.setdefault(key, []).append(member)
-    return Plan(agencies, {k: tuple(v) for k, v in members.items()}, args.apply, issuer)
+    if args.travellers and not args.apply:
+        raise SeedRefused("--travellers writes: use it with --apply")
+    return Plan(agencies, {k: tuple(v) for k, v in members.items()}, args.apply, issuer, args.travellers)
 
 
 def traveller_summary(agency: SyntheticAgency) -> dict[str, Any]:
@@ -106,8 +119,43 @@ def traveller_summary(agency: SyntheticAgency) -> dict[str, Any]:
         "by_language": dict(sorted(by_language.items())),
         "nfc_round_trip": all(nfc(p.full_name) == p.full_name for p in people),
         "written": 0,
-        "write_status": "deferred: traveller writes arrive with AA-936 (crm.traveler through app.vault)",
+        "write_status": "not requested (--apply --travellers stores them as inquiries)",
     }
+
+
+async def ensure_seed_form(pool: asyncpg.Pool, tenant_id: uuid.UUID) -> tuple[intake_forms.FormView, bool]:
+    """The agency's synthetic inquiry form, created once (AA-936)."""
+    async with provisioning_tx(pool, tenant_id, actor=ACTOR_APPLY) as ctx:
+        found = [f for f in await intake_forms.list_forms(ctx) if f.label == SEED_FORM_LABEL]
+        if found:
+            return found[0], False
+        return await intake_forms.create_form(ctx, label=SEED_FORM_LABEL, lead_source="synthetic_seed"), True
+
+
+def seed_answers(agency: SyntheticAgency) -> list[stage1.Stage1Answers]:
+    """Validated Stage 1 answers of the agency's travellers; a fake phone the validator refuses is left out."""
+    out = []
+    for person in travellers_for(agency.key, agency.traveller_locales, agency.traveller_count):
+        raw = inquiry_for(person)
+        try:
+            out.append(stage1.validate(raw, honeypot_field="website"))
+        except stage1.Stage1Invalid:
+            raw["phone"] = None
+            out.append(stage1.validate(raw, honeypot_field="website"))
+    return out
+
+
+async def write_travellers(pool: asyncpg.Pool, keys: KeyProvider, agency: SyntheticAgency, form_id: uuid.UUID) -> int:
+    """Store the agency's synthetic inquiries (idempotent per traveller); returns how many were new."""
+    written = 0
+    async with system_tx(pool, agency.tenant_id, actor=ACTOR_INTAKE) as ctx:
+        vault = Vault(keys, ctx)
+        for index, answers in enumerate(seed_answers(agency)):
+            stored = await store_submission(
+                ctx, vault, form_id, answers, idempotency_key=f"seed:{agency.key}:{index}", created_by=ACTOR_INTAKE
+            )
+            written += int(stored is not None)
+    return written
 
 
 async def read_state(pool: asyncpg.Pool, tenant_id: uuid.UUID) -> dict[str, Any] | None:
@@ -127,7 +175,9 @@ def _action(agency: SyntheticAgency, state: dict[str, Any] | None) -> str:
     return "unchanged"
 
 
-async def run_plan(plan: Plan, pool: asyncpg.Pool | None, environment: str, out: TextIO) -> int:
+async def run_plan(
+    plan: Plan, pool: asyncpg.Pool | None, environment: str, out: TextIO, keys: KeyProvider | None = None
+) -> int:
     totals = {"agencies": 0, "created": 0, "updated": 0, "members_added": 0, "members_updated": 0}
     for agency in plan.agencies:
         members = plan.members.get(agency.key, ())
@@ -164,6 +214,22 @@ async def run_plan(plan: Plan, pool: asyncpg.Pool | None, environment: str, out:
                 out.write(json.dumps(line, ensure_ascii=False) + "\n")
                 out.write(json.dumps({"summary": "failed", "reason": "name round trip"}) + "\n")
                 return 1
+            form, form_created = await ensure_seed_form(pool, agency.tenant_id)
+            line["intake_form"] = {
+                "intake_form_id": form.intake_form_id,
+                "public_key": form.public_key,
+                "created": form_created,
+            }
+            if plan.travellers:
+                if keys is None:
+                    out.write(
+                        json.dumps({"summary": "refused", "reason": "--travellers needs the key provider"}) + "\n"
+                    )
+                    return 2
+                line["travellers"]["written"] = await write_travellers(
+                    pool, keys, agency, uuid.UUID(form.intake_form_id)
+                )
+                line["travellers"]["write_status"] = "queued for crm_intake_process"
         totals["agencies"] += 1
         out.write(json.dumps(line, ensure_ascii=False) + "\n")
     mode = "apply" if plan.apply else "dry_run"
@@ -184,7 +250,8 @@ async def main(argv: Sequence[str], out: TextIO = sys.stdout, settings: Settings
         return 2
     try:
         pool = await db.pool() if db.configured else None
-        return await run_plan(plan, pool, settings.environment, out)
+        keys = build_key_provider(settings) if plan.travellers else None
+        return await run_plan(plan, pool, settings.environment, out, keys)
     except ServiceError as exc:
         out.write(json.dumps({"summary": "refused", "reason": exc.code, "status": exc.status_code}) + "\n")
         return 2

@@ -21,7 +21,7 @@ from app.main import create_app
 from app.settings import Settings, SettingsError
 from tests.tokens import LocalPools
 
-PUBLIC_PREFIXES = ("/crm/health", "/crm/ci/")
+PUBLIC_PREFIXES = ("/crm/health", "/crm/ci/", "/crm/public/v1/")
 
 
 def _probe_routers() -> list[Any]:
