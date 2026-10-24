@@ -7,12 +7,18 @@ agency stored. Matched folded, so "Hoi An" and "Hội An" are both protected.
 
 :func:`is_place` serves pass 3 (option C, AA-938 S249): a detector ``ADDRESS`` finding that is exactly one destination
 is still replaced, but as ``<PLACE_n>`` instead of ``<ADDRESS_n>``, so the model knows a place stood there.
+
+:func:`is_keepable_place` serves pass 3 too (option B, AA-938 S250): a ``NAME`` or ``ADDRESS`` finding that is exactly
+one of the trip's own destinations (:data:`KEEPABLE_PLACES`, by the trip's countries) and cannot be read as a person's
+name is left in clear.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 
+from app.privacy.names import mark, name_like
 from app.privacy.text import fold
 
 _PLACES = """
@@ -61,3 +67,84 @@ def is_place(value: str) -> bool:
     """``value`` (outer punctuation and spaces ignored) is exactly one known destination, matched folded ("Hoi An" =
     "Hội An"). A place plus anything else ("45 Hải Phòng, Đà Nẵng", "Ninh Bình + Hải Dương") is not."""
     return TYPED_PLACE_RE.fullmatch(fold(value.strip(_TRIM))) is not None
+
+
+# Option B (AA-938, S250): the trip's own destinations, left in clear when the detector tags one NAME or ADDRESS.
+# ``crm.trip.destinations`` holds country codes (``app.intake.stage1.DESTINATIONS``), so the scope is the trip's
+# countries, and within them only this explicit list: a place not listed is never kept (fail closed). Every phrase must
+# not read as a person's name (:func:`app.privacy.names.name_like`: first word a family name or an honorific, or every
+# word a common given name), enforced by a test and checked again at run time, so "Hà Giang", "Mai Châu", "Ninh Bình",
+# "Phú Quốc", "Huế", "Long An", "Thanh Hóa", "Hải Dương", "Kim Liên" are never kept. Spellings are listed as written:
+# a phrase is matched case-insensitively with its diacritics ("Hạ Long" is kept, "Hà Long" is not), and an unmarked
+# spelling ("Ha Long") is listed only when it passes the rule read folded (it does not: "Ha" may be "Hà").
+# The name lists are Vietnamese, so the other countries' entries were screened by hand for use as personal names
+# (S250 review): "Mandalay", "Paro" and "Bali" are given names too and are left out; a destination nobody listed is
+# masked as in f3-2, which costs only an over-scrub.
+KEEPABLE_PLACES: dict[str, tuple[str, ...]] = {
+    "vietnam": (
+        "Hạ Long",
+        "Vịnh Hạ Long",
+        "Hạ Long Bay",
+        "Halong",
+        "Halong Bay",
+        "Sa Pa",
+        "Sapa",
+        "Hội An",
+        "Hoi An",
+        "Hội An Ancient Town",
+        "Hoi An Ancient Town",
+        "Đà Lạt",
+        "Da Lat",
+        "Dalat",
+        "Đà Nẵng",
+        "Da Nang",
+        "Danang",
+        "Hanoi",
+        "Saigon",
+        "Sài Gòn",
+        "Tam Cốc",
+        "Tràng An",
+        "Mù Cang Chải",
+        "Cát Bà",
+        "Cat Ba",
+        "Côn Đảo",
+        "Con Dao",
+        "Nha Trang",
+        "Mũi Né",
+        "Mui Ne",
+        "Phong Nha",
+        "Mộc Châu",
+        "Pù Luông",
+        "Pu Luong",
+        "Mekong",
+        "Mekong Delta",
+    ),
+    "cambodia": ("Siem Reap", "Phnom Penh", "Angkor", "Angkor Wat", "Battambang", "Kampot", "Tonle Sap"),
+    "laos": ("Luang Prabang", "Vientiane", "Vang Vieng", "Pakse"),
+    "thailand": ("Bangkok", "Chiang Mai", "Chiang Rai", "Phuket", "Krabi", "Ayutthaya", "Sukhothai"),
+    "myanmar": ("Yangon", "Bagan", "Inle Lake"),
+    "bhutan": ("Thimphu", "Punakha"),
+    "nepal": ("Kathmandu", "Pokhara", "Chitwan"),
+    "indonesia": ("Ubud", "Yogyakarta", "Borobudur", "Komodo"),
+}
+_SEPARATORS = re.compile(r"[\s.\-]+")
+
+
+def keep_key(value: str) -> str:
+    """The comparison form of a keepable phrase: outer punctuation off, separators one space, NFC, case folded,
+    diacritics kept ("Sa-Pa" -> ``sa pa``, "HỘI AN" -> ``hội an``)."""
+    return _SEPARATORS.sub(" ", mark(value.strip(_TRIM))).strip()
+
+
+_KEEPABLE = {country: frozenset(keep_key(p) for p in phrases) for country, phrases in KEEPABLE_PLACES.items()}
+
+
+def is_keepable_place(value: str, countries: Sequence[str]) -> bool:
+    """``value`` is exactly one listed destination of one of ``countries`` (the trip's), matched with its diacritics,
+    and does not read as a person's name. No countries -> never."""
+    key = keep_key(value)
+    return (
+        bool(key)
+        and any(key in _KEEPABLE.get(country, ()) for country in countries)
+        and not name_like(value.strip(_TRIM))
+    )

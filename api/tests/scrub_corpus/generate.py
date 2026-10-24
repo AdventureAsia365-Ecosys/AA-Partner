@@ -13,7 +13,11 @@ One JSON object per line:
 - ``pii``: strings that must not survive in the scrubbed text (a leak fails the corpus);
 - ``keep``: strings that must survive (places, prices, trip dates, catalog ids: over-scrubbing them breaks drafts);
 - ``needs_detector``: true when only pass 3 (Bedrock Guardrails) can find a value (a name nobody stored). The offline
-  run (every CI) skips these; the Guardrails run (nightly and on scrubber change) includes them.
+  run (every CI) skips these; the Guardrails run (nightly and on scrubber change) includes them;
+- ``destinations``: the trip's destination codes (``crm.trip.destinations``, option B: pass 3 leaves the trip's own
+  non-name-like destinations in clear). ``vietnam``, plus ``cambodia`` when the text names Siem Reap;
+- ``outside`` (a few samples only): destinations outside the trip's countries; never a ``keep`` string, because pass 3
+  masks or types them as before option B (checked offline, ``tests/unit/test_scrub_corpus.py``).
 """
 
 from __future__ import annotations
@@ -74,6 +78,38 @@ STRANGERS_VI = ["Trần Minh Khoa", "Nguyễn Thị Hồng Nhung", "Phạm Gia B
 STRANGERS_EN = ["Peter Lawson", "Margaret Ellis", "David Okafor", "Hannah Schmidt"]
 PLACES_VI = ["Hạ Long", "Sa Pa", "Hội An", "Ninh Bình", "Phú Quốc", "Huế", "Mai Châu", "Hà Giang", "Đà Lạt", "Côn Đảo"]
 PLACES_EN = ["Ha Long Bay", "Sapa", "Hoi An", "Ninh Binh", "Phu Quoc", "Hue", "Mekong Delta", "Da Lat", "Siem Reap"]
+# Option B adversarial samples (S250): people nobody stored, named like places that read as names, in the texts of
+# the S249 live probe (the guardrail tagged every one NAME or ADDRESS). On a Vietnam trip they must stay masked: an
+# allow-list widened to a name-like place turns the corpus red with a leak. (text, pii, keep)
+NAME_LIKE_STRANGERS = [
+    ("vi", "Khách Kim Liên (vợ anh Tuấn) muốn đổi phòng.", ["Kim Liên", "Tuấn"], ["muốn đổi phòng"]),
+    ("vi", "Liên hệ chị Hải Dương để nhận vé.", ["Hải Dương"], ["để nhận vé"]),
+    ("en", "Our driver Long An will meet you.", ["Long An"], ["will meet you"]),
+    ("en", "Travellers: Mai Châu and Thái Bình.", ["Mai Châu", "Thái Bình"], []),
+    ("vi", "Danh sách khách: Hà Giang, Kim Liên, Hòa Bình.", ["Hà Giang", "Kim Liên", "Hòa Bình"], []),
+    ("en", "Passengers: Mrs Hà Giang, Mr Long An.", ["Hà Giang", "Long An"], []),
+    ("en", "Room 1: Ninh Bình + Hải Dương. Room 2: Thanh Hóa.", ["Ninh Bình", "Hải Dương", "Thanh Hóa"], ["Room 2"]),
+    ("vi", "Khách Mai Châu và chồng là Thái Bình đi tour Sa Pa.", ["Mai Châu", "Thái Bình"], ["Sa Pa"]),
+    ("en", "Traveller Hà Giang wants to visit Hạ Long.", ["Hà Giang"], ["Hạ Long"]),
+]
+# Option B review (S250, live on acc2 ApplyGuardrail): people named exactly like a keepable destination, after a person
+# cue or next to a family name. The guardrail tagged each one, and before the review fix each was left in clear. They
+# must stay masked: a cue dropped from scrubber.PERSON_CUES turns the corpus red with a leak. (text, pii, keep)
+PERSON_CUE_STRANGERS = [
+    ("en", "Mr.Hội An confirmed the booking.", ["Hội An"], ["confirmed the booking"]),
+    ("en", "(Mrs) Hội An will join the trip.", ["Hội An"], ["will join the trip"]),
+    ("en", "My wife Hội An and I arrive Monday.", ["Hội An"], ["arrive Monday"]),
+    ("vi", "Vợ tôi tên Hội An, đi cùng tôi.", ["Hội An"], ["đi cùng tôi"]),
+    ("en", "Name: Nha Trang, phone later.", ["Nha Trang"], ["phone later"]),
+    ("vi", "Khách Lê Hội An đã cọc 30%.", ["Hội An"], ["30%"]),
+]
+# Option B: a destination outside the trip's countries is masked or typed as in f3-2. (lang, countries, text, keep,
+# outside)
+OUTSIDE_TRIP = [
+    ("en", ["laos"], "Luang Prabang for 3 nights, then Hoi An by air.", ["Luang Prabang"], ["Hoi An"]),
+    ("vi", ["cambodia"], "Đi Siem Reap 3 đêm rồi bay ra Hạ Long.", ["Siem Reap"], ["Hạ Long"]),
+    ("en", ["thailand"], "Chiang Mai first, then Sapa in the north of Vietnam.", ["Chiang Mai"], ["Sapa"]),
+]
 TOURS = ["Hidden Valleys Trek", "Mekong Homestay", "Northern Loop", "Lantern Town Food Walk", "Bay Kayak Day"]
 COMPONENT_IDS = [
     "3f2b8c1e-7d4a-4f6b-9a2e-0c5d8e1f2a3b",
@@ -190,18 +226,29 @@ def build() -> list[dict]:
     rng = random.Random(SEED)  # noqa: S311 — deterministic synthetic data, not crypto
     samples: list[dict] = []
 
-    def add(lang: str, text: str, known: list[dict], pii: list[str], keep: list[str], needs: bool = False) -> None:
-        samples.append(
-            {
-                "id": f"{lang}-{len(samples) + 1:03d}",
-                "lang": lang,
-                "text": text,
-                "known": known,
-                "pii": [p for p in pii if p],
-                "keep": [k for k in keep if k],
-                "needs_detector": needs,
-            }
-        )
+    def add(
+        lang: str,
+        text: str,
+        known: list[dict],
+        pii: list[str],
+        keep: list[str],
+        needs: bool = False,
+        destinations: list[str] | None = None,
+        outside: list[str] | None = None,
+    ) -> None:
+        sample = {
+            "id": f"{lang}-{len(samples) + 1:03d}",
+            "lang": lang,
+            "text": text,
+            "known": known,
+            "pii": [p for p in pii if p],
+            "keep": [k for k in keep if k],
+            "needs_detector": needs,
+            "destinations": destinations or ["vietnam"] + (["cambodia"] if "Siem Reap" in text else []),
+        }
+        if outside:
+            sample["outside"] = outside
+        samples.append(sample)
 
     # ── Vietnamese ─────────────────────────────────────────────────────────────────────────────────
     for i in range(110):
@@ -353,6 +400,13 @@ def build() -> list[dict]:
         flat = fold(person["display_name"])
         add("vi", f"khach {flat} muon doi ngay khoi hanh sang 20/04/2027, so dt cu", [person], [flat], ["20/04/2027"])
         add("vi", f"{flat.upper()} - đã cọc 30%", [person], [flat.upper()], ["30%"])
+    # ── Option B (S250): name-like strangers on a Vietnam trip, and places outside the trip's countries ──
+    for lang, text, pii, keep in NAME_LIKE_STRANGERS:
+        add(lang, text, [], pii, keep, needs=True)
+    for lang, countries, text, keep, outside in OUTSIDE_TRIP:
+        add(lang, text, [], [], keep, destinations=countries, outside=outside)
+    for lang, text, pii, keep in PERSON_CUE_STRANGERS:
+        add(lang, text, [], pii, keep, needs=True)
     return samples
 
 

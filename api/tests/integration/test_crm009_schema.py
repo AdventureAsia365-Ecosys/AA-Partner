@@ -105,6 +105,9 @@ async def test_receipt_takes_counts_and_versions_only(app_pool: asyncpg.Pool) ->
     # Option C (AA-938, S249): the new kind PLACE and version f3-2 fit the existing CHECK, no migration.
     async with in_tenant(app_pool, tenant_id) as conn:
         assert await _call(conn, '{"scrubber": "f3-2", "entities": 3, "counts": {"PERSON": 1, "PLACE": 2}}')
+    # Option B (AA-938, S250): version f3-3 and the PLACE_KEPT count fit it too.
+    async with in_tenant(app_pool, tenant_id) as conn:
+        assert await _call(conn, '{"scrubber": "f3-3", "entities": 1, "counts": {"PERSON": 1, "PLACE_KEPT": 2}}')
     # Review AA-938: closed at every level, so neither a nested key nor a value can carry a name.
     for bad in (
         '{"scrubber": "f3-1", "name": "Hoa"}',
