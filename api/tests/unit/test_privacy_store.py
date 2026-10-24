@@ -21,6 +21,7 @@ MAP_ID = uuid.UUID("00000000-0000-4000-8000-0000000000aa")
 TRIP = uuid.UUID("00000000-0000-4000-8000-0000000000b1")
 LEAD = uuid.UUID("00000000-0000-4000-8000-0000000000c1")
 MATE = uuid.UUID("00000000-0000-4000-8000-0000000000c2")
+SPOUSE = uuid.UUID("00000000-0000-4000-8000-0000000000c3")
 
 
 class RecordingVault(FakeVault):
@@ -95,9 +96,23 @@ async def test_known_values_of_a_trip_and_one_audit_event() -> None:
             "emergency_contact_enc": None,
         },
     ]
+    rows.append(
+        {
+            "traveler_id": SPOUSE,
+            "role": "related",
+            "display_name_enc": enc("traveler", "display_name_enc", "Phạm Quang Khải"),
+            **dict.fromkeys(
+                ("given_name_enc", "family_name_enc", "email_enc", "phone_enc", "passport_no_enc", "dob_enc"), None
+            ),
+            "emergency_contact_enc": None,
+        }
+    )
     ctx = tenant_ctx(ScriptedConn().on("FROM crm.trip_traveler", rows))
     known = await known_values_for_trip(ctx, FakeVault(), TRIP)
-    lead, ec, mate = known.persons
+    lead, ec, mate, spouse = known.persons
+    assert (spouse.role, spouse.display_name) == ("related", "Phạm Quang Khải")
+    [(sql, _)] = ctx.conn.calls[:1]
+    assert "crm.traveler_relation" in sql and "NOT IN (SELECT traveler_id FROM party)" in sql
     assert (lead.role, lead.display_name, lead.emails, lead.phones, lead.passports, lead.dobs) == (
         "traveller",
         "Nguyễn Thị Hoa",
@@ -110,12 +125,12 @@ async def test_known_values_of_a_trip_and_one_audit_event() -> None:
     assert (mate.role, mate.display_name, mate.dobs) == ("companion", "Lê Minh", ())
     [event] = ctx.audit_events
     assert (event.action, event.object_kind, event.object_id) == ("scrub_known_values", "trip", str(TRIP))
-    assert event.object_ids == (str(LEAD), str(MATE)) and "dob" in event.fields
+    assert event.object_ids == (str(LEAD), str(MATE), str(SPOUSE)) and "dob" in event.fields
     empty = tenant_ctx(ScriptedConn())
     assert (await known_values_for_trip(empty, FakeVault(), TRIP)).persons == () and empty.audit_events == []
 
 
-def test_split_contact() -> None:
+async def test_split_contact() -> None:
     assert split_contact("Trần Văn Nam - 0987 654 321") == ("Trần Văn Nam", ("0987 654 321",))
     assert split_contact("+84 912 345 678") == (None, ("+84 912 345 678",))
     assert split_contact("Mum (Anna Smith)") == ("Mum Anna Smith", ())

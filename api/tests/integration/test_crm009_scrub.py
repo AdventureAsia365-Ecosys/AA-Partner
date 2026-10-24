@@ -25,6 +25,7 @@ from app.privacy.placeholder_store import restore_placeholders
 from app.privacy.purge import purge_expired_maps
 from app.privacy.scrubber import Detection, PiiScrubber
 from app.tenancy import system_tx, tenant_tx
+from app.travellers.service import add_relation, create_traveler
 from app.vault import Vault
 from tests.integration.test_crm005_intake import _agency, _keys, _owner_fetch
 from tests.integration.test_crm006_travellers import _inquiry
@@ -181,3 +182,18 @@ async def test_purge_deletes_expired_maps_of_every_agency_only_with_the_scope(
     async with app_pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.purge_scope', 'placeholder_map', true)")
         assert await conn.fetchval("SELECT count(*) FROM crm.placeholder_map") == 0
+
+
+async def test_related_traveller_off_the_trip_is_a_known_value(app_pool: asyncpg.Pool) -> None:
+    # Review AA-938 (non-blocking): crm-006 relations of the party who are not on the trip are loaded too.
+    keys = _keys()
+    tenant_id, owner, trip_id, lead = await _inquiry(app_pool, keys)
+    async with tenant_tx(app_pool, owner, tenant_id) as ctx:
+        vault = Vault(keys, ctx)
+        spouse = await create_traveler(ctx, vault, {"display_name": "Phạm Quang Khải", "phone": "+84 987 111 222"})
+        await add_relation(ctx, uuid.UUID(str(spouse["traveler_id"])), lead, "spouse")
+        known = await known_values_for_trip(ctx, vault, trip_id)
+        scrubbed = await PiiScrubber(FakeGuardrails()).scrub("Chồng chị là anh Pham Quang Khai, 0987 111 222.", known)
+    related = [p for p in known.persons if p.role == "related"]
+    assert [p.display_name for p in related] == ["Phạm Quang Khải"]
+    assert "Khai" not in scrubbed.text and "111 222" not in scrubbed.text

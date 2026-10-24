@@ -1,10 +1,12 @@
 """Pass 1 input: the known values of a trip (design v3 §4.5 step 1; lane §5.4 "every identity value tied to the trip").
 
 :func:`known_values_for_trip` opens, through the vault, the identity fields of every live traveller on the trip (lead
-and companions: display / given / family name, e-mail, phone, passport number, date of birth) and of their emergency
-contacts (the stored text, split into a name and a phone). It runs inside the agency's context (``tenant_tx()`` or a
-job's ``system_tx()``), never on a reader role, and leaves one ``scrub_known_values`` audit event naming the travellers
-whose fields were opened (ids only). The values exist only in memory until the scrubber has replaced them.
+and companions: display / given / family name, e-mail, phone, passport number, date of birth), of the travellers they
+are related to (crm-006 ``traveler_relation``, one hop, not on the trip: a spouse or a parent at home) and of their
+emergency contacts (the stored text, split into a name and a phone). It runs inside the agency's context
+(``tenant_tx()`` or a job's ``system_tx()``), never on a reader role, and leaves one ``scrub_known_values`` audit event
+naming the travellers whose fields were opened (ids only). The values exist only in memory until the scrubber has
+replaced them.
 
 Agency members have no names in the CRM yet (``crm.member`` holds ids and roles) and supplier contacts arrive with
 the supplier cards; callers that hold such names pass them as extra :class:`KnownPerson` rows.
@@ -19,14 +21,32 @@ import uuid
 from app.privacy.scrubber import KnownPerson, KnownValues
 from app.tenancy import AnyContext
 
+# The party of the trip (lead, companions), then the travellers they are related to (crm-006 traveler_relation, one
+# hop, either direction) who are not on the trip themselves: a spouse or a parent at home is named in messages too.
 PARTY_SQL = """
-SELECT t.traveler_id, tt.role, t.display_name_enc, t.given_name_enc, t.family_name_enc, t.email_enc, t.phone_enc,
+WITH party AS (
+    SELECT tt.traveler_id, tt.role, tt.created_at
+      FROM crm.trip_traveler tt
+     WHERE tt.trip_id = $1 AND tt.deleted_at IS NULL
+), related AS (
+    SELECT DISTINCT CASE WHEN r.from_traveler_id = p.traveler_id THEN r.to_traveler_id ELSE r.from_traveler_id END
+                    AS traveler_id
+      FROM crm.traveler_relation r
+      JOIN party p ON p.traveler_id IN (r.from_traveler_id, r.to_traveler_id)
+     WHERE r.deleted_at IS NULL
+), people AS (
+    SELECT traveler_id, role, 0 AS rank, created_at FROM party
+    UNION ALL
+    SELECT traveler_id, 'related', 1, NULL FROM related WHERE traveler_id NOT IN (SELECT traveler_id FROM party)
+)
+SELECT t.traveler_id, pe.role, t.display_name_enc, t.given_name_enc, t.family_name_enc, t.email_enc, t.phone_enc,
        t.passport_no_enc, t.dob_enc, t.emergency_contact_enc
-  FROM crm.trip_traveler tt
-  JOIN crm.traveler t ON t.traveler_id = tt.traveler_id AND t.tenant_id = tt.tenant_id
- WHERE tt.trip_id = $1 AND tt.deleted_at IS NULL AND t.deleted_at IS NULL
- ORDER BY tt.role = 'lead' DESC, tt.created_at, t.traveler_id
+  FROM people pe
+  JOIN crm.traveler t ON t.traveler_id = pe.traveler_id
+ WHERE t.deleted_at IS NULL
+ ORDER BY pe.rank, pe.role = 'lead' DESC, pe.created_at, t.traveler_id
 """
+_ROLES = {"lead": "traveller", "related": "related"}
 FIELDS = ("display_name", "given_name", "family_name", "email", "phone", "passport_no", "dob", "emergency_contact")
 _PHONE_IN_TEXT = re.compile(r"\+?\d[\d\s().-]{6,}\d")
 
@@ -60,7 +80,7 @@ async def known_values_for_trip(ctx: AnyContext, vault, trip_id: uuid.UUID) -> K
                 dob = None
         persons.append(
             KnownPerson(
-                role="traveller" if row["role"] == "lead" else "companion",
+                role=_ROLES.get(row["role"], "companion"),
                 display_name=values["display_name"],
                 given_name=values["given_name"],
                 family_name=values["family_name"],
