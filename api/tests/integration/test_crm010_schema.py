@@ -5,7 +5,9 @@
   append-only stage history.
 - Erasure reaches the append-only ``consent`` / ``trip_stage_history`` / ``llm_call`` only inside the definer
   functions (crm_owner + ``app.erasing``); ``crm_app`` and a plain owner session are refused; the audit never.
-- Legal holds suspend every deletion that reaches the subject; a platform hold is released by a platform actor only.
+- Legal holds suspend every deletion that reaches the subject (a client hold reaches their trips and both ends of a
+  relation; any hold of the agency suspends its erase); a platform hold is released by a platform actor only, and no
+  hold can be trashed.
 - The agency erase needs status ``offboarding`` and empties every tenant table outside the keep list.
 - ``crm_eraser`` is the only role that executes the deletion functions.
 """
@@ -325,6 +327,137 @@ async def test_legal_holds_suspend_deletion(app_pool: asyncpg.Pool) -> None:
         await _ctx(conn, ids["tenant"])
         await conn.execute("SET LOCAL ROLE crm_eraser")
         assert await conn.fetchval("SELECT crm.lifecycle_purge_expired(false)") == '{"held": 1, "llm_call": 0}'
+
+
+async def _hold(
+    pool: asyncpg.Pool, tenant_id: uuid.UUID, scope: str, subject: uuid.UUID | None, actor: str
+) -> uuid.UUID:
+    async with pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, tenant_id, actor)
+        return await conn.fetchval(
+            "INSERT INTO crm.legal_hold (scope, subject_id, reason_code) VALUES ($1, $2, 'litigation') "
+            "RETURNING hold_id",
+            scope,
+            subject,
+        )
+
+
+async def _held(pool: asyncpg.Pool, tenant_id: uuid.UUID, scope: str, subject: uuid.UUID | None) -> bool:
+    async with pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, tenant_id)
+        return bool(await conn.fetchval("SELECT crm.legal_hold_blocks($1, $2)", scope, subject))
+
+
+@pytest.mark.parametrize("scope", ["trip", "traveler"])
+async def test_any_hold_in_the_agency_suspends_its_offboarding_erase(app_pool: asyncpg.Pool, scope: str) -> None:
+    """Review S249: a trip or client hold (not only an agency hold) stops the agency erase, dry run included."""
+    ids = await _agency(app_pool)
+    other = await _agency(app_pool)
+    await _hold(app_pool, ids["tenant"], scope, ids["trip"] if scope == "trip" else ids["companion"], "platform:l1")
+    await _hold(app_pool, other["tenant"], "trip", other["trip"], "platform:l1")
+    async with app_pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, ids["tenant"])
+        await conn.execute("UPDATE crm.tenant SET status = 'offboarding'")
+    assert await _held(app_pool, ids["tenant"], "tenant", None)
+    for dry_run in (True, False):
+        with pytest.raises(asyncpg.PostgresError, match="legal_hold") as err:
+            await _erase(app_pool, ids["tenant"], "tenant", ids["tenant"], dry_run=dry_run)
+        assert err.value.sqlstate == "CRM10"
+    assert await _count(app_pool, ids["tenant"], "trip") == 1
+    assert await _count(app_pool, ids["tenant"], "traveler") == 2
+    # Subject-less data (llm_call) still follows the agency hold only: another subject's hold does not stop it.
+    assert not await _held(app_pool, ids["tenant"], "llm_call", None)
+    # A third agency without a hold is not reached by the others' holds (RLS).
+    third = await _agency(app_pool)
+    assert not await _held(app_pool, third["tenant"], "tenant", None)
+
+
+async def test_a_hold_cannot_be_hidden_through_the_trash_columns(app_pool: asyncpg.Pool) -> None:
+    """Review S249: a member session may not trash a hold (AA's or its own) to make legal_hold_blocks ignore it."""
+    ids = await _agency(app_pool)
+    platform_hold = await _hold(app_pool, ids["tenant"], "tenant", None, "platform:l1")
+    own_hold = await _hold(app_pool, ids["tenant"], "trip", ids["trip"], f"member:{ids['member']}")
+    for hold in (platform_hold, own_hold):
+        with pytest.raises(asyncpg.PostgresError, match="only moves to released") as err:
+            async with app_pool.acquire() as conn, conn.transaction():
+                await _ctx(conn, ids["tenant"], f"member:{ids['member']}")
+                await conn.execute(
+                    "UPDATE crm.legal_hold SET deleted_at = now(), deleted_by = 'member:x', purge_after = now() "
+                    "WHERE hold_id = $1",
+                    hold,
+                )
+        assert err.value.sqlstate == "CRM17"
+    with pytest.raises(asyncpg.PostgresError, match="hold_platform_only"):  # nor rewrite its release fields
+        async with app_pool.acquire() as conn, conn.transaction():
+            await _ctx(conn, ids["tenant"], f"member:{ids['member']}")
+            await conn.execute("UPDATE crm.legal_hold SET released_by = 'member:x' WHERE hold_id = $1", platform_hold)
+    assert await _held(app_pool, ids["tenant"], "tenant", None)
+    # Nor can a hold be stored trashed: the CHECK refuses it.
+    with pytest.raises(asyncpg.CheckViolationError):
+        async with app_pool.acquire() as conn, conn.transaction():
+            await _ctx(conn, ids["tenant"], "platform:l1")
+            await conn.execute(
+                "INSERT INTO crm.legal_hold (scope, subject_id, reason_code, deleted_at, deleted_by, purge_after) "
+                "VALUES ('traveler', $1, 'other', now(), 'platform:l1', now())",
+                ids["lead"],
+            )
+    # A released hold stays released: its release fields do not change any more.
+    async with app_pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, ids["tenant"], f"member:{ids['member']}")
+        await conn.execute(
+            "UPDATE crm.legal_hold SET status = 'released', released_at = now(), released_by = 'member:x' "
+            "WHERE hold_id = $1",
+            own_hold,
+        )
+    with pytest.raises(asyncpg.PostgresError, match="released legal hold does not change"):
+        async with app_pool.acquire() as conn, conn.transaction():
+            await _ctx(conn, ids["tenant"], f"member:{ids['member']}")
+            await conn.execute("UPDATE crm.legal_hold SET released_by = 'member:y' WHERE hold_id = $1", own_hold)
+
+
+async def test_a_client_hold_reaches_their_trips_and_both_ends_of_a_relation(app_pool: asyncpg.Pool) -> None:
+    """Review S249: a hold on one client stops the erase of a trip they are on (their F2 party rows go with it), of a
+    trip whose notes name them, and of a relation from or to them."""
+    ids = await _agency(app_pool)
+    trip2 = uuid.uuid4()
+    async with app_pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, ids["tenant"], f"member:{ids['member']}")
+        await conn.execute("INSERT INTO crm.trip (trip_id, title) VALUES ($1, 'Laos 5 nights')", trip2)
+        await conn.execute(
+            "INSERT INTO crm.note (trip_id, traveler_id, kind, body_enc) VALUES ($1, $2, 'internal', $3)",
+            trip2,
+            ids["companion"],
+            _blob(),
+        )
+        rel_from = await conn.fetchval(
+            "INSERT INTO crm.traveler_relation (from_traveler_id, to_traveler_id, kind) VALUES ($1, $2, 'friend') "
+            "RETURNING relation_id",
+            ids["companion"],
+            ids["lead"],
+        )
+        third = uuid.uuid4()
+        await conn.execute("INSERT INTO crm.traveler (traveler_id, display_name_enc) VALUES ($1, $2)", third, _blob())
+        rel_to = await conn.fetchval(
+            "INSERT INTO crm.traveler_relation (from_traveler_id, to_traveler_id, kind) VALUES ($1, $2, 'friend') "
+            "RETURNING relation_id",
+            third,
+            ids["companion"],
+        )
+    hold = await _hold(app_pool, ids["tenant"], "traveler", ids["companion"], f"member:{ids['member']}")
+    for scope, subject in (("trip", ids["trip"]), ("trip", trip2), ("relation", rel_from), ("relation", rel_to)):
+        with pytest.raises(asyncpg.PostgresError, match="legal_hold") as err:
+            await _erase(app_pool, ids["tenant"], scope, subject)
+        assert err.value.sqlstate == "CRM10", (scope, subject)
+    assert await _count(app_pool, ids["tenant"], "trip_party") == 2
+    async with app_pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, ids["tenant"], f"member:{ids['member']}")
+        await conn.execute(
+            "UPDATE crm.legal_hold SET status = 'released', released_at = now(), released_by = 'member:x' "
+            "WHERE hold_id = $1",
+            hold,
+        )
+    assert (await _erase(app_pool, ids["tenant"], "relation", rel_to))["counts"]["traveler_relation"] == 1
+    assert (await _erase(app_pool, ids["tenant"], "trip", trip2))["counts"]["trip"] == 1
 
 
 async def test_the_llm_call_purge_keeps_180_days(app_pool: asyncpg.Pool) -> None:
