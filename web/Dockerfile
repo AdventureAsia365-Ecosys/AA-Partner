@@ -36,4 +36,7 @@ USER 10001
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD ["node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-CMD ["node", "server.js"]
+# Fargate sets HOSTNAME to the task's own hostname at run time, overriding the ENV above, and the Next standalone
+# server binds to HOSTNAME: it then listens on the private IP only, the 127.0.0.1 HEALTHCHECK fails and ECS replaces
+# the task every few minutes (S249). Force all interfaces at start, without a shell.
+CMD ["node", "-e", "process.env.HOSTNAME='0.0.0.0'; require('./server.js')"]
