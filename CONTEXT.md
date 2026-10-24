@@ -449,6 +449,11 @@ Design v3 §6.3 CRM-16 (M6 non-AA, M15, R17, R18), lane §2.7 / §3.1 / §3.2; m
   "Rates By Exchange Rate API"; no rates feed is exposed.
 - **waiting_on**: hook `supplier_lines` (priority 50, AA-943 contract) = `supplier` while a booked / pre-departure trip
   has a planning agency line; registered when `app.ledger.lines` is imported (the router does).
+- **Web**: the trip workspace's Bookings tab (`components/ledger/LinesPanel.tsx`: Day | Item | Supplier | Conf no |
+  Status | Cost (owner / agent) | Sell | FX (rate @ date) | Collect; add, money, confirm, cancel, delete), `/bookings`
+  (A-11, status filter, totals for owner / agent), `/suppliers` (A-13, AA pinned, contact behind a reveal with a
+  reason), `/settings/payments` (owner; others see why). Refusal codes are worded in `lib/ledger.ts` / `lib/i18n.ts`
+  (EN default, VI); the BFF lines are in `lib/bff.ts` (card AA-944). Dev E2E: `e2e/tests/ledger.spec.ts`.
 
 ## F1 / F2 complete (AA-937, CRM-09)
 
