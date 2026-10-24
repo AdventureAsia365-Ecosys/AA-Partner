@@ -34,6 +34,7 @@ async def _agency(pool: asyncpg.Pool) -> tuple[uuid.UUID, Caller]:
     tenant_id, sub = uuid.uuid4(), f"sub-{uuid.uuid4()}"
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        await conn.execute("SELECT set_config('app.actor', 'seed:test', true)")  # crm-008: crm_app names its actor
         await conn.execute("INSERT INTO crm.tenant (tenant_id) VALUES ($1)", tenant_id)
         await conn.execute(
             "INSERT INTO crm.member (cognito_iss, cognito_sub, role, status) VALUES ($1, $2, 'owner', 'invited')",
@@ -146,9 +147,10 @@ async def test_another_tenants_value_is_denied_and_the_denial_is_committed(app_p
         "integrity_check_failed",
     )
     assert (e["actor_kind"], e["actor_ref"]) == ("user", f"member:{member_id}")
-    # Tenant B sees no event of A.
+    # Tenant B sees no event of A (its own are the AA-940 key_create events of its first DEKs).
     async with tenant_tx(app_pool, who_b, b) as ctx:
-        assert await ctx.conn.fetchval("SELECT count(*) FROM crm.audit_event") == 0
+        assert await ctx.conn.fetchval("SELECT count(*) FROM crm.audit_event WHERE action NOT LIKE 'key_%'") == 0
+        assert await ctx.conn.fetchval("SELECT count(*) FROM crm.audit_event WHERE tenant_id <> $1", b) == 0
 
 
 async def test_rewrap_on_the_table_store_keeps_every_value(app_pool: asyncpg.Pool, admin: asyncpg.Connection) -> None:

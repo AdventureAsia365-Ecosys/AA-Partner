@@ -158,7 +158,9 @@ class KeyProvider:
         if next_version > MAX_VERSION:
             raise KeyUnavailable("key_versions_exhausted")
         self._current.pop((ctx.tenant_id, purpose), None)
-        return await self._provision(ctx, purpose, next_version, after_retire=True)
+        dek = await self._provision(ctx, purpose, next_version, after_retire=True)
+        _audit_key(ctx, "key_rotate", purpose, next_version)
+        return dek
 
     async def rewrap(self, ctx: TenantContext, target: KeyWrapper) -> int:
         """Re-wrap every live DEK of the tenant under ``target`` (another KEK). No ciphertext changes; the plaintext
@@ -174,11 +176,17 @@ class KeyProvider:
             wrapped, kek_id = await target.wrap(key, _context(ctx, row.purpose))
             await self._store.replace_wrapping(ctx, row.purpose, row.key_version, target.provider, kek_id, wrapped)
             count += 1
+        audit = getattr(ctx, "audit", None)
+        if audit is not None:  # design §4.9 "key operations" (AA-940): one event per run
+            audit("key_rewrap", "allowed", "tenant_key", reason=f"to_{target.provider}")
         return count
 
     async def destroy(self, ctx: TenantContext) -> int:
         """Crypto-shred every key of the tenant (offboarding). Values encrypted under them are gone for good."""
         count = await self._store.destroy_all(ctx)
+        audit = getattr(ctx, "audit", None)
+        if audit is not None:
+            audit("key_destroy", "allowed", "tenant_key", reason="crypto_shred")
         self.evict(ctx.tenant_id)
         ctx.dek_memo.clear()
         ctx.dek_current.clear()
@@ -201,6 +209,8 @@ class KeyProvider:
         wrapper = self.wrapper(self._active)
         plaintext, wrapped, kek_id = await wrapper.generate(_context(ctx, purpose))
         if await self._store.insert(ctx, purpose, version, wrapper.provider, kek_id, wrapped):
+            if not after_retire:
+                _audit_key(ctx, "key_create", purpose, version)
             ctx.dek_memo[(purpose, version)] = plaintext
             ctx.dek_current[purpose] = version
             return Dek(ctx.tenant_id, purpose, version, plaintext)
@@ -233,6 +243,14 @@ async def _unwrap_refusal_is_unavailable[T](work: Awaitable[T]) -> T:
         return await work
     except UnwrapDenied:
         raise KeyUnavailable("key_unwrap_refused") from None
+
+
+def _audit_key(ctx: TenantContext, action: str, purpose: str, version: int) -> None:
+    """Design §4.9 "key operations" (AA-940): a DEK created or rotated is an audit event of the agency (codes only).
+    Written with the caller's transaction; a context without an audit queue (none today) records nothing."""
+    audit = getattr(ctx, "audit", None)
+    if audit is not None:
+        audit(action, "allowed", "tenant_key", f"{purpose}:v{version}", reason=f"purpose_{purpose}")
 
 
 def _check_purpose(purpose: str) -> None:

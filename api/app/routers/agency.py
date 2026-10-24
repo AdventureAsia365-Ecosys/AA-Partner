@@ -21,6 +21,7 @@ from fastapi import Depends, Header, HTTPException, Request
 from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
 from app.db import request_pool
+from app.permissions import Action
 from app.tenancy import caller_memberships, tenant_tx
 
 router = class_router(AGENCY, tags=["agency"])
@@ -45,7 +46,7 @@ async def me(
 ) -> dict[str, Any]:
     """Who the caller is in this agency: the membership ``tenant_tx()`` found (ids and role, no personal data)."""
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.SESSION_VIEW) as ctx:
         label = await ctx.conn.fetchrow(TENANT_LABEL_SQL, ctx.tenant_id)
         return {
             "tenant_id": str(ctx.tenant_id),

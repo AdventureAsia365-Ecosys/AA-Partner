@@ -279,3 +279,83 @@ async def prune(pool: asyncpg.Pool, kind: str, keep_days: int) -> int:
         keep_days,
     )
     return int(deleted or 0)
+
+
+async def kind_summary(pool: asyncpg.Pool) -> list[dict[str, Any]]:
+    """Per kind: queued, running, failed in the last 24 h, age of the oldest due queued row (crm.ops.v1
+    ``JobKindRow``; CIS sees CRM jobs, card CRM-08). Counts only."""
+    rows = await pool.fetch(
+        """
+        SELECT kind,
+               count(*) FILTER (WHERE status = 'queued')::int AS queued,
+               count(*) FILTER (WHERE status = 'running')::int AS running,
+               count(*) FILTER (WHERE status = 'failed' AND finished_at > now() - interval '24 hours')::int
+                   AS failed_24h,
+               extract(epoch FROM now() - min(run_after) FILTER (WHERE status = 'queued' AND run_after <= now()))::int
+                   AS oldest_queued_age_s
+          FROM crm.job
+         WHERE status IN ('queued', 'running') OR (status = 'failed' AND finished_at > now() - interval '24 hours')
+         GROUP BY kind
+         ORDER BY kind
+        """
+    )
+    return [dict(r) for r in rows]
+
+
+# ── AA-941: per-agency failed jobs for the L1 console (crm.job has no tenant column: payload->>'tenant_id') ────────
+# Only per-agency kinds whose payload names the agency; never payload or result in the answer (they hold trip /
+# submission ids). Called with the connection of an open platform context, so the read / retry and its audit event
+# commit together.
+RETRYABLE_KINDS: tuple[str, ...] = ("crm_intake_process", "crm_dispatch", "crm_offboard")
+FAILED_JOBS_DAYS = 7
+FAILED_JOBS_LIMIT = 50
+
+
+async def failed_jobs(conn: asyncpg.Connection, tenant_id: str) -> list[dict[str, Any]]:
+    """The agency's failed jobs of the retryable kinds, finished in the last 7 days, newest first (at most 50)."""
+    rows = await conn.fetch(
+        """
+        SELECT id::text AS job_id, kind, attempt, max_attempts, error, finished_at
+          FROM crm.job
+         WHERE status = 'failed' AND kind = ANY($2::text[]) AND payload->>'tenant_id' = $1
+           AND finished_at > now() - make_interval(days => $3)
+         ORDER BY finished_at DESC, id
+         LIMIT $4
+        """,
+        tenant_id,
+        list(RETRYABLE_KINDS),
+        FAILED_JOBS_DAYS,
+        FAILED_JOBS_LIMIT,
+    )
+    return [dict(r) for r in rows]
+
+
+async def failed_count_24h(conn: asyncpg.Connection, tenant_id: str) -> int:
+    """Failed jobs of the agency (any kind whose payload names it) in the last 24 h: the usage meter."""
+    return int(
+        await conn.fetchval(
+            """
+            SELECT count(*) FROM crm.job
+             WHERE status = 'failed' AND payload->>'tenant_id' = $1 AND finished_at > now() - interval '24 hours'
+            """,
+            tenant_id,
+        )
+        or 0
+    )
+
+
+async def retry_failed(conn: asyncpg.Connection, job_id: str, tenant_id: str) -> str | None:
+    """Put one failed job of the agency back in the queue, due now, attempts reset. None when no such job (another
+    agency's id, another status or kind: the same answer, so ids cannot be probed)."""
+    return await conn.fetchval(
+        """
+        UPDATE crm.job SET status = 'queued', attempt = 0, run_after = now(), error = NULL, result = NULL,
+               started_at = NULL, finished_at = NULL, locked_by = NULL, locked_until = NULL, cancel_requested = false,
+               progress = progress - 'releases' - 'released'
+         WHERE id = $1::uuid AND status = 'failed' AND kind = ANY($3::text[]) AND payload->>'tenant_id' = $2
+        RETURNING id::text
+        """,
+        job_id,
+        tenant_id,
+        list(RETRYABLE_KINDS),
+    )

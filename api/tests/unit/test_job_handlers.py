@@ -66,7 +66,7 @@ async def test_retention_deletes_in_batches_and_never_failed_rows() -> None:
 
 async def test_recurring_and_handlers_match() -> None:
     handled = set(handlers.build_handlers(retention_dry_run=True))
-    assert handled == {r.kind for r in handlers.RECURRING} | handlers.SCHEDULED_KINDS
+    assert handled == {r.kind for r in handlers.RECURRING} | handlers.SCHEDULED_KINDS | handlers.EVENT_KINDS
 
 
 async def test_only_deploy_gate_exempt_kinds_queue_ahead() -> None:

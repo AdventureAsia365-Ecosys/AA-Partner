@@ -1,8 +1,9 @@
 // web/lib/crmContext.ts
 // AA-935 — the signed-in agency context of one request, shared by the (crm) layout and its pages through React
-// cache() (one /me and one /memberships call per request, whatever reads it). Redirects when the request cannot be
-// served: no configuration -> /signed-out, no valid access token -> /auth/refresh, no agency picked or no longer a
-// member -> the chooser. An unreachable API is returned as `apiDown` so the layout can show an error state; so is an
+// cache() (one /me and one /memberships call per request, whatever reads it). The UI language is the person's own
+// choice or English (AA-936, owner rule S249): the agency's default_locale from /me does not change it. Redirects
+// when the request cannot be served: no configuration -> /signed-out, no valid access token -> /auth/refresh, no agency picked or no longer a
+// member -> the chooser (a locked agency -> the chooser with "This agency is locked by AA", AA-941). An unreachable API is returned as `apiDown` so the layout can show an error state; so is an
 // API that still answers 401 right after a refresh (`reason: "refused"`, one-shot marker in lib/hosts.ts), which
 // would otherwise loop page -> /auth/refresh -> page.
 
@@ -43,17 +44,18 @@ export const crmContext = cache(async (): Promise<CrmContext> => {
       if (hasRefreshMarker(path)) return { apiDown: true, reason: "refused", cfg, lang: base.lang, locale: base.locale };
       redirect(`/auth/refresh?next=${encodeURIComponent(withRefreshMarker(path))}`);
     }
+    // AA-941: AA locked the agency (L1 console) -> the chooser says so instead of a bare list.
+    if (me.status === 403 && me.detail === "tenant_locked") redirect(`/select-agency?next=${back}&manual=1&locked=1`);
     if (me.status === 403 || me.status === 409 || me.status === 400) redirect(`/select-agency?next=${back}&manual=1`);
     return { apiDown: true, reason: "down", cfg, lang: base.lang, locale: base.locale };
   }
   if (!isRole(me.data.member_role)) redirect(`/select-agency?next=${back}&manual=1`);
   const memberships = await fetchMemberships(cfg, session);
-  const withAgency = await serverContext(me.data.default_locale);
   return {
     apiDown: false,
     cfg,
-    lang: withAgency.lang,
-    locale: withAgency.locale,
+    lang: base.lang,
+    locale: base.locale,
     me: me.data,
     role: me.data.member_role,
     memberships: memberships.ok ? memberships.data : [],

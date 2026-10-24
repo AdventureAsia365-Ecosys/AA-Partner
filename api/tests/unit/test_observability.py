@@ -211,6 +211,20 @@ def test_scrub_text_keeps_ids_and_counts() -> None:
     assert scrub_text(text) == text
 
 
+def test_scrub_text_uses_the_f3_detectors() -> None:
+    """AA-938: phone numbers without '+', card numbers, CCCD, passports, OTPs and signed links in log text."""
+    text = (
+        "client said 0912 345 678, card 4111 1111 1111 1111, "
+        f"CCCD {'001085' + '012345'}, passport C1234567, "  # a synthetic CCCD, built (no 12-digit literal)
+        "mã OTP 482913, link https://b.example/x.pdf?X-Amz-Signature=abc"
+    )
+    assert scrub_text(text) == (
+        "client said [phone], card [card], CCCD [national_id], passport [passport], mã OTP [otp], link [link]"
+    )
+    kept = "job 3f1c2a9e-8f0b-4c1d-9e2a-0b1c2d3e4f50 at 2026-10-24T04:12:26.798436Z took 1234 ms, 12/03/1985"
+    assert scrub_text(kept) == kept  # ids, timestamps, counts and dates stay
+
+
 def test_scrub_query_params_and_pg_detail() -> None:
     assert scrub_text("GET /x?api_key=SECRET&q=1") == "GET /x?api_key=***&q=1"
     assert scrub_text("Key (phone)=(+84901234567) already exists") == "Key (phone)=([Filtered]) already exists"

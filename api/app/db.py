@@ -27,13 +27,28 @@ from app.settings import Settings
 log = logging.getLogger(__name__)
 
 # Every crm-NNN migration this code needs. Readiness fails until ALL of them are registered.
-REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = ("crm-001", "crm-002", "crm-003", "crm-004")
+REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = (
+    "crm-001",
+    "crm-002",
+    "crm-003",
+    "crm-004",
+    "crm-005",
+    "crm-006",
+    "crm-007",
+    "crm-008",
+    "crm-009",
+    "crm-010",
+    "crm-011",
+)
 REQUIRED_SCHEMA_VERSION = max(REQUIRED_SCHEMA_VERSIONS)
 
 READY_SQL = "SELECT coalesce(array_agg(version ORDER BY version), '{}') FROM crm.v_schema_versions"
 
 CONNECT_TIMEOUT_S = 5.0
 PROBE_TIMEOUT_S = 5.0
+# Server side, in milliseconds (asyncpg passes server settings as strings). Two minutes: an S3 call inside the audit
+# export transaction leaves the session idle for well under that.
+IDLE_IN_TX_TIMEOUT_MS = "120000"
 
 
 @dataclass(frozen=True)
@@ -64,8 +79,14 @@ class Database:
                     max_size=3,
                     timeout=CONNECT_TIMEOUT_S,
                     command_timeout=PROBE_TIMEOUT_S,
-                    # Named pool on the shared RDS (pg_stat_activity, data standards C2.2).
-                    server_settings={"application_name": "crm-api"},
+                    # Named pool on the shared RDS (pg_stat_activity, data standards C2.2). AA-940: a transaction left
+                    # idle ends after IDLE_IN_TX_TIMEOUT_MS, far below the audit export's 15-minute read lag, so an
+                    # audit row is never committed after the export already read its hour (it would be missing from
+                    # the archive and fail verification for good).
+                    server_settings={
+                        "application_name": "crm-api",
+                        "idle_in_transaction_session_timeout": IDLE_IN_TX_TIMEOUT_MS,
+                    },
                 )
         return self._pool
 

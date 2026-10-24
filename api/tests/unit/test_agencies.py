@@ -26,6 +26,7 @@ from tests.tokens import EXTERNAL_ISSUER
 from tests.unit.fakes import ScriptedConn
 
 TENANT = uuid.UUID("00000000-0000-4000-8000-0000000000c1")
+MEMBER = uuid.UUID("00000000-0000-4000-8000-0000000000d1")
 SEN_VANG = "Lữ hành Sen Vàng"
 
 
@@ -106,7 +107,7 @@ def test_member_validation() -> None:
 
 @pytest.mark.asyncio
 async def test_create_sets_the_new_tenant_then_inserts() -> None:
-    conn = ScriptedConn().on("INSERT INTO crm.tenant", TENANT).on("INSERT INTO crm.member", uuid.uuid4())
+    conn = ScriptedConn().on("INSERT INTO crm.tenant", TENANT).on("INSERT INTO crm.member", MEMBER)
     result = await provision_agency(
         conn,
         spec(),
@@ -120,6 +121,12 @@ async def test_create_sets_the_new_tenant_then_inserts() -> None:
     assert conn.sql("'app.actor'") == [("seed:test",)]
     assert conn.sql("INSERT INTO crm.tenant")[0] == (TENANT, SEN_VANG, "vi-VN", True)
     assert conn.sql("INSERT INTO crm.member")[0] == (EXTERNAL_ISSUER, "sub-owner", "owner")
+    # AA-940 (design §4.9 "role changes"): the new agency and the member given a role are on the agency audit, as
+    # the seeder (actor kind system), after the writes and in the same transaction.
+    events = conn.sql("INSERT INTO crm.audit_event")
+    assert [e[:3] for e in events] == [("system", "seed:test", "agency_create"), ("system", "seed:test", "member_add")]
+    assert events[0][4:6] == ("agency", str(TENANT)) and events[1][4:7] == ("member", str(MEMBER), ["role"])
+    assert flats[-1].startswith("INSERT INTO crm.audit_event")
 
 
 @pytest.mark.asyncio
@@ -130,7 +137,7 @@ async def test_existing_agency_converges_and_roles_follow_the_spec() -> None:
             "SELECT display_name, default_locale, is_synthetic",
             {"display_name": "Old", "default_locale": "en-AU", "is_synthetic": True},
         )
-        .on("UPDATE crm.member SET role", None)
+        .on("UPDATE crm.member SET role", MEMBER)
     )
     calls: list[str] = []
 
@@ -145,6 +152,22 @@ async def test_existing_agency_converges_and_roles_follow_the_spec() -> None:
     )
     assert (result.created, result.updated, result.members_added, result.members_updated) == (False, True, 0, 1)
     assert conn.sql("UPDATE crm.tenant SET display_name")[0] == (TENANT, SEN_VANG, "vi-VN")
+    # The L1 console (a platform: actor) acts as AA ops; the role change names the member, never the role value.
+    platform = (
+        ScriptedConn()
+        .on(
+            "SELECT display_name, default_locale, is_synthetic",
+            {"display_name": SEN_VANG, "default_locale": "vi-VN", "is_synthetic": True},
+        )
+        .on("UPDATE crm.member SET role", MEMBER)
+    )
+    await provision_agency(
+        platform, spec(), (MemberSpec(EXTERNAL_ISSUER, "sub-a", "owner"),), environment="dev", actor="platform:l1"
+    )
+    events = platform.sql("INSERT INTO crm.audit_event")
+    assert events == [
+        ("aa_ops", "platform:l1", "member_role_change", "allowed", "member", str(MEMBER), ["role"], None, None, [])
+    ]
 
 
 @pytest.mark.asyncio
@@ -153,7 +176,7 @@ async def test_unchanged_agency_writes_nothing_and_the_flag_never_flips() -> Non
     conn = ScriptedConn().on("SELECT display_name, default_locale, is_synthetic", same)
     result = await provision_agency(conn, spec(), environment="dev", actor="seed:test")
     assert (result.created, result.updated) == (False, False)
-    assert conn.sql("UPDATE crm.tenant") == []
+    assert conn.sql("UPDATE crm.tenant") == [] and conn.sql("INSERT INTO crm.audit_event") == []
     flipped = ScriptedConn().on("SELECT display_name, default_locale, is_synthetic", {**same, "is_synthetic": False})
     with pytest.raises(Conflict, match="never changes"):
         await provision_agency(flipped, spec(), environment="stg", actor="seed:test")
@@ -161,6 +184,24 @@ async def test_unchanged_agency_writes_nothing_and_the_flag_never_flips() -> Non
     with pytest.raises(Conflict) as info:
         await provision_agency(gone, spec(), environment="dev", actor="seed:test")
     assert info.value.code == "tenant_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_create_only_refuses_an_existing_agency_and_writes_nothing() -> None:
+    """AA-941 review: the L1 console's create (create_only) never converges: no rename, no member, no audit."""
+    other = {"display_name": "Old", "default_locale": "en-AU", "is_synthetic": True}
+    conn = ScriptedConn().on("SELECT display_name, default_locale, is_synthetic", other)
+    with pytest.raises(Conflict) as info:
+        await provision_agency(
+            conn, spec(), (MemberSpec(EXTERNAL_ISSUER, "sub-a", "owner"),), environment="dev", actor="platform:l1",
+            create_only=True,
+        )  # fmt: skip
+    assert info.value.code == "tenant_exists"
+    assert conn.sql("UPDATE crm.tenant") == [] and conn.sql("INSERT INTO crm.member") == []
+    assert conn.sql("INSERT INTO crm.audit_event") == []
+    created = ScriptedConn().on("INSERT INTO crm.tenant", TENANT)
+    result = await provision_agency(created, spec(), environment="dev", actor="platform:l1", create_only=True)
+    assert result.created and [e[2] for e in created.sql("INSERT INTO crm.audit_event")] == ["agency_create"]
 
 
 @pytest.mark.asyncio

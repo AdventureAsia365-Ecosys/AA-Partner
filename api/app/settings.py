@@ -16,6 +16,10 @@ Names (set by the ECS task definition in AA-CIS-Infra ``accounts/aa365/crm_app.t
   TTL kind are DRY RUN on synthetic agencies). Turn it off once a dry-run result has been checked.
 - ``JOB_RETENTION_UTC_HOUR``: the UTC hour (0-23) from which the day's ``crm_job_retention`` run is queued (default 19,
   02:00 in Vietnam, the hour AA-Booking's retention uses). The run is queued due-now at that hour, never ahead.
+- ``LIFECYCLE_DRY_RUN``: ``true`` (default, AA-942) makes every hard delete of agency data count only: the daily
+  ``crm_lifecycle`` run (submission redaction, LLM-call purge, trash purge, auto-archive) reports what it would do, and
+  an owner's erasure or offboarding erase answers 409 ``deletion_dry_run`` with the counts. Same hour as the job
+  retention. Turning it off is an ops decision recorded in the runbook.
 
 Identity (root ADR 0006b decision 6, ``app.auth.identity_config``). Every value is optional and has **no default**:
 this repo is public, so pool ids never live in code (DM-6.10); Terraform passes them from the pool resources. A route
@@ -52,11 +56,57 @@ Rate limits (ADR 0010 decision 2: CloudFront → VPC origin bypasses API Gateway
 - ``RATE_LIMIT_XFF_HOPS``: **fallback only**. The limiter keys on ``CloudFront-Viewer-Address`` (set by CloudFront,
   not by the viewer); only when that header is missing does it use the ``X-Forwarded-For`` entry this many from the
   right (default 2: the viewer address CloudFront appended, then the address the ALB appended). See ``app.ratelimit``.
+- ``RATE_LIMIT_INTAKE_PER_MINUTE``: inquiry-form submissions per client address per minute (default 5; 0 = off).
+- ``RATE_LIMIT_INTAKE_FORM_PER_HOUR``: submissions per form per hour, whatever the address (default 200; 0 = off).
+
+Public intake (AA-936, card CRM-08; ``app.intake.public``):
+
+- ``INTAKE_PAGE_ORIGINS``: comma list of the https origins whose pages may POST a submission (the client host,
+  ``https://go-dev.…``, set by Terraform). A form's own ``allowed_origins`` are accepted too. Empty on ``dev`` /
+  ``stg`` / ``prod`` = every submission answers 503 ``intake_not_configured`` (fail closed); on ``test`` / ``local``
+  empty means "no Origin check".
+
+Documents (AA-937, card CRM-09; ``app.documents``):
+
+- ``DOCUMENTS_BUCKET``: the ``aa-crm-<env>-documents-*`` bucket (set by Terraform). Objects are encrypted by the app
+  with the tenant ``docs`` DEK before the PUT; the bucket adds SSE-KMS. Empty on ``dev`` / ``stg`` / ``prod`` = the
+  document routes answer 503 ``documents_not_configured``; on ``test`` / ``local`` empty = an in-memory store.
+
+Audit export (AA-940, card CRM-12; ``app.audit_export``):
+
+- ``AUDIT_BUCKET_COMPLIANCE`` / ``AUDIT_BUCKET_GOVERNANCE``: the two Object Lock audit buckets
+  (``aa-crm-<env>-audit-c-*`` = the 12-month tier, ``aa-crm-<env>-audit-g-*`` = the 7-year tier; set by Terraform).
+  Both or neither. Empty on ``dev`` / ``stg`` / ``prod`` = the hourly export and the daily verification skip (the
+  export lag metric grows and its alarm says so); on ``test`` / ``local`` empty = an in-memory archive.
+- ``AUDIT_RETENTION_DRY_RUN``: ``true`` (default) makes ``crm_audit_retention`` report which audit partitions it would
+  drop without dropping them (DM-7.2). Partitions are still created and verification still runs.
+
+Team and roles (AA-939, card CRM-11; ``app.members``):
+
+- ``COGNITO_PARTNER_POOL_ID``: the partner pool (``<region>_<id>``) the invitation claim step creates accounts in
+  (``AdminCreateUser`` / ``ListUsers``) and member removal signs out of (``AdminUserGlobalSignOut``). Must be the pool
+  of ``COGNITO_PARTNER_ISSUER``. Empty on ``dev`` / ``stg`` / ``prod`` = the invitation routes answer 503
+  ``directory_not_configured``; on ``test`` / ``local`` an in-memory directory.
+- ``PARTNER_WEB_ORIGIN``: the https origin of the partner host (the join link in the invitation mail). Required for
+  invitations outside test / local (503 ``invitations_not_configured``).
+- ``SES_FROM_ADDRESS`` / ``SES_CONFIGURATION_SET``: AA system mail (invitations, owner recovery notices) through
+  AA's SES as that sender and configuration set. Empty outside test / local = 503 ``mail_not_configured``.
+- ``INVITATION_TTL_HOURS``: how long an invitation link works (default 168 = 7 days, 1 to 720).
+- ``RATE_LIMIT_CLAIM_PER_MINUTE``: invitation claims per client address per minute (default 10; 0 = off).
+
+F3 PII scrubber (AA-938, card CRM-10; ``app.privacy``):
+
+- ``SCRUB_GUARDRAIL_ID`` / ``SCRUB_GUARDRAIL_VERSION``: the Bedrock guardrail of pass 3 (AA-CIS-Infra
+  ``crm_scrub.tf``, acc2). Both or neither; empty = every scrub fails closed (no LLM call can be made).
+- ``SCRUB_GUARDRAIL_REGION``: its region (default ``us-west-1``).
+- ``SCRUB_DETECTOR_TIMEOUT_MS``: how long pass 3 may take (default 3000, 200..10000); a timeout refuses the call
+  (``scrub_timeout``, the draft says "reply by hand").
 """
 
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
@@ -72,10 +122,22 @@ FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 DEFAULT_RATE_LIMIT_PER_MINUTE = 120
 DEFAULT_XFF_HOPS = 2
 DEFAULT_RETENTION_UTC_HOUR = 19
+DEFAULT_INTAKE_PER_MINUTE = 5
+DEFAULT_INTAKE_FORM_PER_HOUR = 200
+DEFAULT_INVITATION_TTL_HOURS = 168
+MAX_INVITATION_TTL_HOURS = 720
+DEFAULT_CLAIM_PER_MINUTE = 10
+_POOL_ID = re.compile(r"^[a-z]{2}(-[a-z]+)+-[0-9]_[A-Za-z0-9]{1,55}$")
+_EMAIL = re.compile(r"^[^@\s]{1,64}@[a-z0-9.-]{1,189}\.[a-z]{2,}$")
 KEY_PROVIDERS = frozenset({"kms", "local"})
+_BUCKET = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
 DEFAULT_DEK_CACHE_TTL_S = 300
 MAX_DEK_CACHE_TTL_S = 900
 _KMS_KEY_PREFIXES = ("alias/", "arn:aws:kms:")
+DEFAULT_SCRUB_TIMEOUT_MS = 3000
+_GUARDRAIL_ID = re.compile(r"^[a-z0-9]{1,64}$")
+_GUARDRAIL_VERSION = re.compile(r"^(DRAFT|[1-9][0-9]{0,7})$")
+_REGION = re.compile(r"^[a-z]{2}(-[a-z]+)+-[0-9]$")
 
 
 class SettingsError(ValueError):
@@ -108,6 +170,24 @@ class Settings:
     kms_data_key_id: str = ""
     local_kek_b64: str = field(default="", repr=False)
     dek_cache_ttl_seconds: int = DEFAULT_DEK_CACHE_TTL_S
+    rate_limit_intake_per_minute: int = DEFAULT_INTAKE_PER_MINUTE
+    rate_limit_intake_form_per_hour: int = DEFAULT_INTAKE_FORM_PER_HOUR
+    intake_page_origins: tuple[str, ...] = ()
+    documents_bucket: str = ""
+    audit_bucket_compliance: str = ""
+    audit_bucket_governance: str = ""
+    audit_retention_dry_run: bool = True
+    cognito_partner_pool_id: str = ""
+    partner_web_origin: str = ""
+    ses_from_address: str = ""
+    ses_configuration_set: str = ""
+    invitation_ttl_hours: int = DEFAULT_INVITATION_TTL_HOURS
+    rate_limit_claim_per_minute: int = DEFAULT_CLAIM_PER_MINUTE
+    scrub_guardrail_id: str = ""
+    scrub_guardrail_version: str = ""
+    scrub_guardrail_region: str = "us-west-1"
+    scrub_detector_timeout_ms: int = DEFAULT_SCRUB_TIMEOUT_MS
+    lifecycle_dry_run: bool = True
 
     def __post_init__(self) -> None:
         if self.environment not in {"dev", "stg", "prod"} | INSECURE_ENVIRONMENTS:
@@ -151,6 +231,28 @@ class Settings:
             raise SettingsError("SENTRY_DSN must be an https:// URL")  # the value is never echoed
         if self.sentry_required and not self.sentry_dsn:
             raise SettingsError("SENTRY_REQUIRED is on but SENTRY_DSN is empty")
+        if self.documents_bucket and not _BUCKET.match(self.documents_bucket):
+            raise SettingsError(f"DOCUMENTS_BUCKET must be an S3 bucket name, got {self.documents_bucket!r}")
+        for name, value in (
+            ("AUDIT_BUCKET_COMPLIANCE", self.audit_bucket_compliance),
+            ("AUDIT_BUCKET_GOVERNANCE", self.audit_bucket_governance),
+        ):
+            if value and not _BUCKET.match(value):
+                raise SettingsError(f"{name} must be an S3 bucket name, got {value!r}")
+        if bool(self.audit_bucket_compliance) != bool(self.audit_bucket_governance):
+            raise SettingsError("AUDIT_BUCKET_COMPLIANCE and AUDIT_BUCKET_GOVERNANCE are set together (both tiers)")
+        if self.audit_bucket_compliance and self.audit_bucket_compliance == self.audit_bucket_governance:
+            raise SettingsError("the two audit buckets must differ")
+        if bool(self.scrub_guardrail_id) != bool(self.scrub_guardrail_version):
+            raise SettingsError("SCRUB_GUARDRAIL_ID and SCRUB_GUARDRAIL_VERSION are set together or not at all")
+        if self.scrub_guardrail_id and not _GUARDRAIL_ID.match(self.scrub_guardrail_id):
+            raise SettingsError("SCRUB_GUARDRAIL_ID must be a guardrail id (lower-case letters and digits)")
+        if self.scrub_guardrail_version and not _GUARDRAIL_VERSION.match(self.scrub_guardrail_version):
+            raise SettingsError("SCRUB_GUARDRAIL_VERSION must be a published version number or DRAFT")
+        if not _REGION.match(self.scrub_guardrail_region):
+            raise SettingsError(f"SCRUB_GUARDRAIL_REGION must be an AWS region, got {self.scrub_guardrail_region!r}")
+        if not 200 <= self.scrub_detector_timeout_ms <= 10_000:
+            raise SettingsError("SCRUB_DETECTOR_TIMEOUT_MS must be between 200 and 10000")
         if self.key_provider not in KEY_PROVIDERS:
             raise SettingsError(f"KEY_PROVIDER must be one of {sorted(KEY_PROVIDERS)}, got {self.key_provider!r}")
         if self.key_provider == "local" and self.environment not in INSECURE_ENVIRONMENTS:
@@ -165,6 +267,38 @@ class Settings:
             raise SettingsError("KMS_DATA_KEY_ID must be an alias/..., a KMS key ARN or a key id")
         if not 0 <= self.dek_cache_ttl_seconds <= MAX_DEK_CACHE_TTL_S:
             raise SettingsError(f"DEK_CACHE_TTL_SECONDS must be between 0 and {MAX_DEK_CACHE_TTL_S}")
+        if self.rate_limit_intake_per_minute < 0 or self.rate_limit_intake_form_per_hour < 0:
+            raise SettingsError("RATE_LIMIT_INTAKE_PER_MINUTE / RATE_LIMIT_INTAKE_FORM_PER_HOUR must be >= 0")
+        if self.cognito_partner_pool_id:
+            if not _POOL_ID.match(self.cognito_partner_pool_id):
+                raise SettingsError("COGNITO_PARTNER_POOL_ID must be a Cognito user pool id (<region>_<id>)")
+            if not self.cognito_partner_issuer.endswith(f"/{self.cognito_partner_pool_id}"):
+                raise SettingsError("COGNITO_PARTNER_POOL_ID must be the pool of COGNITO_PARTNER_ISSUER")
+        if self.partner_web_origin and not _ORIGIN.match(self.partner_web_origin):
+            raise SettingsError(f"PARTNER_WEB_ORIGIN must be an https origin, got {self.partner_web_origin!r}")
+        if self.ses_from_address and not _EMAIL.match(self.ses_from_address):
+            raise SettingsError("SES_FROM_ADDRESS must be an e-mail address")
+        if bool(self.ses_from_address) != bool(self.ses_configuration_set):
+            raise SettingsError("SES_FROM_ADDRESS and SES_CONFIGURATION_SET are set together")
+        if not 1 <= self.invitation_ttl_hours <= MAX_INVITATION_TTL_HOURS:
+            raise SettingsError(f"INVITATION_TTL_HOURS must be between 1 and {MAX_INVITATION_TTL_HOURS}")
+        if self.rate_limit_claim_per_minute < 0:
+            raise SettingsError("RATE_LIMIT_CLAIM_PER_MINUTE must be >= 0")
+        for origin in self.intake_page_origins:
+            if not _ORIGIN.match(origin):
+                raise SettingsError(f"INTAKE_PAGE_ORIGINS entries must be https origins, got {origin!r}")
+
+    @property
+    def intake_origin_check(self) -> bool:
+        """Whether submissions must carry an allowed Origin (always outside test / local)."""
+        return bool(self.intake_page_origins) or self.environment not in INSECURE_ENVIRONMENTS
+
+    @property
+    def invitation_origin(self) -> str:
+        """The join link's origin: PARTNER_WEB_ORIGIN, or a local placeholder on test / local."""
+        if self.partner_web_origin:
+            return self.partner_web_origin
+        return "https://partner.local.test" if self.environment in INSECURE_ENVIRONMENTS else ""
 
     @property
     def keys_state(self) -> str:
@@ -172,6 +306,13 @@ class Settings:
         if self.key_provider == "kms" and not self.kms_data_key_id:
             return "not_configured"
         return self.key_provider
+
+
+_ORIGIN = re.compile(r"^https://[a-z0-9.-]+(:[0-9]{1,5})?$")
+
+
+def _origins(raw: str | None) -> tuple[str, ...]:
+    return tuple(o.strip().lower().rstrip("/") for o in (raw or "").split(",") if o.strip())
 
 
 def _looks_like_key_id(value: str) -> bool:
@@ -244,4 +385,32 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         kms_data_key_id=_text(env, "KMS_DATA_KEY_ID"),
         local_kek_b64=_text(env, "LOCAL_KEK_B64"),
         dek_cache_ttl_seconds=_int(env.get("DEK_CACHE_TTL_SECONDS"), DEFAULT_DEK_CACHE_TTL_S, "DEK_CACHE_TTL_SECONDS"),
+        rate_limit_intake_per_minute=_int(
+            env.get("RATE_LIMIT_INTAKE_PER_MINUTE"), DEFAULT_INTAKE_PER_MINUTE, "RATE_LIMIT_INTAKE_PER_MINUTE"
+        ),
+        rate_limit_intake_form_per_hour=_int(
+            env.get("RATE_LIMIT_INTAKE_FORM_PER_HOUR"), DEFAULT_INTAKE_FORM_PER_HOUR, "RATE_LIMIT_INTAKE_FORM_PER_HOUR"
+        ),
+        intake_page_origins=_origins(env.get("INTAKE_PAGE_ORIGINS")),
+        documents_bucket=_text(env, "DOCUMENTS_BUCKET"),
+        audit_bucket_compliance=_text(env, "AUDIT_BUCKET_COMPLIANCE"),
+        audit_bucket_governance=_text(env, "AUDIT_BUCKET_GOVERNANCE"),
+        audit_retention_dry_run=_flag(env.get("AUDIT_RETENTION_DRY_RUN"), True, "AUDIT_RETENTION_DRY_RUN"),
+        cognito_partner_pool_id=_text(env, "COGNITO_PARTNER_POOL_ID"),
+        partner_web_origin=_text(env, "PARTNER_WEB_ORIGIN").lower().rstrip("/"),
+        ses_from_address=_text(env, "SES_FROM_ADDRESS").lower(),
+        ses_configuration_set=_text(env, "SES_CONFIGURATION_SET"),
+        invitation_ttl_hours=_int(
+            env.get("INVITATION_TTL_HOURS"), DEFAULT_INVITATION_TTL_HOURS, "INVITATION_TTL_HOURS"
+        ),
+        rate_limit_claim_per_minute=_int(
+            env.get("RATE_LIMIT_CLAIM_PER_MINUTE"), DEFAULT_CLAIM_PER_MINUTE, "RATE_LIMIT_CLAIM_PER_MINUTE"
+        ),
+        scrub_guardrail_id=_text(env, "SCRUB_GUARDRAIL_ID"),
+        scrub_guardrail_version=_text(env, "SCRUB_GUARDRAIL_VERSION"),
+        scrub_guardrail_region=_text(env, "SCRUB_GUARDRAIL_REGION") or "us-west-1",
+        scrub_detector_timeout_ms=_int(
+            env.get("SCRUB_DETECTOR_TIMEOUT_MS"), DEFAULT_SCRUB_TIMEOUT_MS, "SCRUB_DETECTOR_TIMEOUT_MS"
+        ),
+        lifecycle_dry_run=_flag(env.get("LIFECYCLE_DRY_RUN"), True, "LIFECYCLE_DRY_RUN"),
     )

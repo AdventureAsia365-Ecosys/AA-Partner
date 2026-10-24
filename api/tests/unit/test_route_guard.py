@@ -21,7 +21,7 @@ from app.main import create_app
 from app.settings import Settings, SettingsError
 from tests.tokens import LocalPools
 
-PUBLIC_PREFIXES = ("/crm/health", "/crm/ci/")
+PUBLIC_PREFIXES = ("/crm/health", "/crm/ci/", "/crm/public/v1/")
 
 
 def _probe_routers() -> list[Any]:
@@ -32,11 +32,13 @@ def _probe_routers() -> list[Any]:
 
         @router.get("/_probe")
         async def probe(caller: Annotated[Caller, Depends(current_caller)]) -> dict[str, Any]:
+            if caller.route_class == OPS.name:  # AA-941: an ops body passes the L1 key allow-list
+                return {"status": "ok", "role": caller.client_kind}
             return {"class": caller.route_class, "client": caller.client_kind, "issuer": caller.issuer_kind}
 
         @router.post("/_probe_write")
         async def probe_write(caller: Annotated[Caller, Depends(require_group("crm-platform-admin"))]) -> dict:
-            return {"ok": True}
+            return {"status": "ok"}
 
         routers.append(router)
     return routers
@@ -236,3 +238,21 @@ def test_unrouted_paths_under_a_class_prefix_are_404_without_a_token(pools: Loca
         assert c.get("/crm/v1/me").status_code == 401
         r = c.get("/crm/v1/me", headers=_bearer(pools.cis_admin()))
         assert (r.status_code, r.json()["detail"]) == (403, "wrong_audience")
+
+
+def test_every_ops_write_needs_platform_admin_and_every_read_takes_cis_admin(
+    client: TestClient, pools: LocalPools
+) -> None:
+    """AA-941: on every served /crm/ops/v1 path, a cis-admin-only token reads (never 401 / 403) and is refused every
+    POST / PUT with 403 missing_group, before any body is read."""
+    reader = _bearer(pools.cis_admin())
+    paths = [(m, p) for m, p in _served_paths(client) if p.startswith(OPS.prefix + "/") and "_probe" not in p]
+    writes = [(m, p) for m, p in paths if m in ("POST", "PUT", "PATCH", "DELETE")]
+    reads = [(m, p) for m, p in paths if m == "GET"]
+    assert len(writes) >= 11 and len(reads) >= 10
+    for method, path in writes:
+        r = client.request(method, path, headers=reader)
+        assert (r.status_code, r.json()["detail"]) == (403, "missing_group"), (method, path)
+    for method, path in reads:
+        r = client.request(method, path, headers=reader)
+        assert r.status_code not in (401, 403), (method, path, r.status_code)

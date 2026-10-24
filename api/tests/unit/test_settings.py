@@ -80,6 +80,13 @@ def test_identity_values_are_read() -> None:
         ({"KMS_DATA_KEY_ID": "crm-dev/data"}, "KMS_DATA_KEY_ID"),
         ({"DEK_CACHE_TTL_SECONDS": "901"}, "DEK_CACHE_TTL_SECONDS"),
         ({"DEK_CACHE_TTL_SECONDS": "-1"}, "DEK_CACHE_TTL_SECONDS"),
+        ({"SCRUB_GUARDRAIL_ID": "abc123"}, "set together"),
+        ({"SCRUB_GUARDRAIL_VERSION": "1"}, "set together"),
+        ({"SCRUB_GUARDRAIL_ID": "ABC-1", "SCRUB_GUARDRAIL_VERSION": "1"}, "guardrail id"),
+        ({"SCRUB_GUARDRAIL_ID": "abc123", "SCRUB_GUARDRAIL_VERSION": "v1"}, "published version"),
+        ({"SCRUB_GUARDRAIL_REGION": "mars"}, "AWS region"),
+        ({"SCRUB_DETECTOR_TIMEOUT_MS": "100"}, "SCRUB_DETECTOR_TIMEOUT_MS"),
+        ({"SCRUB_DETECTOR_TIMEOUT_MS": "60000"}, "SCRUB_DETECTOR_TIMEOUT_MS"),
     ],
 )
 def test_unsafe_values_are_refused(env: dict[str, str], message: str) -> None:
@@ -108,3 +115,68 @@ def test_key_provider_defaults_per_environment() -> None:
     test = load_settings({"ENVIRONMENT": "test", "LOCAL_KEK_B64": "A" * 44, "DEK_CACHE_TTL_SECONDS": "0"})
     assert (test.key_provider, test.keys_state, test.dek_cache_ttl_seconds) == ("local", "local", 0)
     assert "AAAA" not in repr(test)
+
+
+PARTNER = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_TESTPARTN"
+
+
+def test_team_values_are_read_and_checked() -> None:
+    s = load_settings(
+        {
+            "COGNITO_PARTNER_ISSUER": PARTNER,
+            "COGNITO_PARTNER_POOL_ID": "us-west-1_TESTPARTN",
+            "PARTNER_WEB_ORIGIN": "https://Partner.Example.TEST/",
+            "SES_FROM_ADDRESS": "No-Reply@Example.test",
+            "SES_CONFIGURATION_SET": "aa-email-dev-transactional",
+            "INVITATION_TTL_HOURS": "72",
+            "RATE_LIMIT_CLAIM_PER_MINUTE": "4",
+        }
+    )
+    assert (s.cognito_partner_pool_id, s.partner_web_origin, s.ses_from_address) == (
+        "us-west-1_TESTPARTN",
+        "https://partner.example.test",
+        "no-reply@example.test",
+    )
+    assert (s.invitation_ttl_hours, s.rate_limit_claim_per_minute, s.invitation_origin) == (
+        72,
+        4,
+        "https://partner.example.test",
+    )
+    assert load_settings({}).invitation_origin == ""
+    assert load_settings({"ENVIRONMENT": "test"}).invitation_origin == "https://partner.local.test"
+
+
+@pytest.mark.parametrize(
+    ("env", "message"),
+    [
+        ({"COGNITO_PARTNER_ISSUER": PARTNER, "COGNITO_PARTNER_POOL_ID": "not a pool"}, "COGNITO_PARTNER_POOL_ID"),
+        ({"COGNITO_PARTNER_ISSUER": PARTNER, "COGNITO_PARTNER_POOL_ID": "us-west-1_OTHER"}, "pool of"),
+        ({"PARTNER_WEB_ORIGIN": "http://partner.example.test"}, "PARTNER_WEB_ORIGIN"),
+        ({"SES_FROM_ADDRESS": "nobody", "SES_CONFIGURATION_SET": "x"}, "SES_FROM_ADDRESS"),
+        ({"SES_FROM_ADDRESS": "a@example.test"}, "set together"),
+        ({"INVITATION_TTL_HOURS": "0"}, "INVITATION_TTL_HOURS"),
+        ({"INVITATION_TTL_HOURS": "721"}, "INVITATION_TTL_HOURS"),
+        ({"RATE_LIMIT_CLAIM_PER_MINUTE": "-1"}, "RATE_LIMIT_CLAIM_PER_MINUTE"),
+    ],
+)
+def test_unsafe_team_values_are_refused(env: dict[str, str], message: str) -> None:
+    with pytest.raises(SettingsError, match=message):
+        load_settings(env)
+
+
+def test_scrub_guardrail_values_are_read() -> None:
+    """AA-938: the F3 guardrail of pass 3 (AA-CIS-Infra crm_scrub.tf); without it every scrub fails closed."""
+    default = load_settings({})
+    assert (default.scrub_guardrail_id, default.scrub_guardrail_region, default.scrub_detector_timeout_ms) == (
+        "",
+        "us-west-1",
+        3000,
+    )
+    got = load_settings(
+        {"SCRUB_GUARDRAIL_ID": "abc123", "SCRUB_GUARDRAIL_VERSION": "DRAFT", "SCRUB_DETECTOR_TIMEOUT_MS": "1500"}
+    )
+    assert (got.scrub_guardrail_id, got.scrub_guardrail_version, got.scrub_detector_timeout_ms) == (
+        "abc123",
+        "DRAFT",
+        1500,
+    )

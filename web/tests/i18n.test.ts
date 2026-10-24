@@ -1,6 +1,7 @@
-// EN/VI: both dictionaries complete, Vietnamese diacritics kept as NFC, locale resolution order.
+// EN/VI: both dictionaries complete, Vietnamese diacritics kept as NFC, locale resolution order (English by default).
 import { describe, expect, it } from "vitest";
-import { fromAcceptLanguage, langOf, MESSAGES, resolveLocale, t } from "@/lib/i18n";
+import { formatDate } from "@/lib/dates";
+import { explicitLocale, langOf, MESSAGES, resolveLocale, t } from "@/lib/i18n";
 import { SECTIONS } from "@/lib/nav";
 
 describe("dictionaries", () => {
@@ -25,22 +26,30 @@ describe("dictionaries", () => {
   });
 });
 
-describe("locale resolution", () => {
-  it("prefers the person's cookie, then the agency default, then the browser", () => {
-    expect(resolveLocale({ cookie: "en-US", agencyDefault: "vi-VN", acceptLanguage: "en-GB" })).toBe("en-US");
-    expect(resolveLocale({ cookie: "xx", agencyDefault: "vi-VN", acceptLanguage: "en-GB" })).toBe("vi-VN");
-    expect(resolveLocale({ acceptLanguage: "vi,en;q=0.5" })).toBe("vi-VN");
+describe("locale resolution (owner rule S249, AA-936: English unless the person picks another)", () => {
+  it("uses the person's cookie first, then a language set on the record, else English (en-AU)", () => {
+    expect(resolveLocale({ cookie: "vi-VN", explicit: "en" })).toBe("vi-VN");
+    expect(resolveLocale({ cookie: "en-US" })).toBe("en-US");
+    expect(resolveLocale({ cookie: "xx", explicit: "vi" })).toBe("vi-VN");
+    expect(resolveLocale({ explicit: "en-GB" })).toBe("en-GB");
     expect(resolveLocale({})).toBe("en-AU");
+    expect(resolveLocale({ cookie: null, explicit: null })).toBe("en-AU");
   });
 
-  it("maps Accept-Language tags with quality values", () => {
-    expect(fromAcceptLanguage("fr-FR,en-US;q=0.8,vi;q=0.9")).toBe("vi-VN");
-    expect(fromAcceptLanguage("en-US")).toBe("en-US");
-    expect(fromAcceptLanguage("en-IE")).toBe("en-GB");
-    expect(fromAcceptLanguage("en-NZ")).toBe("en-AU");
-    expect(fromAcceptLanguage("de;q=1,fr;q=0")).toBeNull();
-    expect(fromAcceptLanguage(null)).toBeNull();
+  it("ignores anything that is not an explicit choice (agency default, browser language are not inputs)", () => {
+    // The old inputs are gone from the signature: an agency in vi-VN or a Vietnamese browser no longer switch the UI.
+    const legacy = { agencyDefault: "vi-VN", acceptLanguage: "vi,en;q=0.5" } as unknown as Parameters<typeof resolveLocale>[0];
+    expect(resolveLocale(legacy)).toBe("en-AU");
+    expect(explicitLocale("fr")).toBeNull();
+    expect(explicitLocale(undefined)).toBeNull();
+    expect(explicitLocale("vi")).toBe("vi-VN");
+    expect(explicitLocale("en")).toBe("en-AU");
+  });
+
+  it("derives the UI language and the date reading from the chosen locale", () => {
     expect(langOf("vi-VN")).toBe("vi");
     expect(langOf("en-US")).toBe("en");
+    expect(formatDate("2026-04-03", resolveLocale({}))).toBe("3 Apr 2026");
+    expect(formatDate("2026-04-03", resolveLocale({ cookie: "vi-VN" }))).toBe("3 thg 4, 2026");
   });
 });

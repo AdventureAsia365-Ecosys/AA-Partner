@@ -268,3 +268,22 @@ async def test_after_destroy_new_values_report_key_destroyed_not_a_race() -> Non
         await Vault(keys, make_ctx()).encrypt("traveler", "email_enc", "t2", "b@example.test")
     with pytest.raises(KeyDestroyed):
         await keys.current_dek(make_ctx(), "vault")
+
+
+@pytest.mark.asyncio
+async def test_key_operations_are_audit_events() -> None:
+    """AA-940 (design §4.9 "key operations"): create, rotate, rewrap and destroy each leave one event (codes only)."""
+    keys = _local(MemoryDekStore())
+    ctx = make_ctx()
+    await Vault(keys, ctx).encrypt("traveler", "email_enc", "t1", "a@example.test")
+    await keys.rotate(ctx, "vault")
+    target = LocalKeyWrapper({"kek-2": os.urandom(32)}, "kek-2")
+    keys_two = KeyProvider({"local": target}, "local", store=MemoryDekStore())
+    await keys_two.rewrap(ctx, target)
+    await keys.destroy(ctx)
+    assert [(e.action, e.object_kind, e.object_id, e.reason) for e in ctx.audit_events] == [
+        ("key_create", "tenant_key", "vault:v1", "purpose_vault"),
+        ("key_rotate", "tenant_key", "vault:v2", "purpose_vault"),
+        ("key_rewrap", "tenant_key", None, "to_local"),
+        ("key_destroy", "tenant_key", None, "crypto_shred"),
+    ]

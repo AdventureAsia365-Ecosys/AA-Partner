@@ -5,7 +5,7 @@ import { matchBff, upstreamHeaders, BFF_ROUTES } from "@/lib/bff";
 import { classifyHost, clientPathAllowed, hasRefreshMarker, isPublicPartnerPath, safeNext, withRefreshMarker } from "@/lib/hosts";
 import { activeSection, contentStudioHref, isRole, sectionByKey, visibleSections } from "@/lib/nav";
 import { cookieNames, sessionCookie } from "@/lib/session";
-import { contentSecurityPolicy, proxy } from "@/proxy";
+import { contentSecurityPolicy, gate, proxy } from "@/proxy";
 import { testConfig } from "./helpers";
 
 let cfg = testConfig();
@@ -45,29 +45,29 @@ describe("host classification", () => {
 
 describe("proxy", () => {
   it("answers /healthz for any Host (ALB health checks use the task IP)", () => {
-    expect(proxy(req("http://10.0.0.5:3000/healthz")).headers.get("x-middleware-next")).toBe("1");
+    expect(gate(req("http://10.0.0.5:3000/healthz")).headers.get("x-middleware-next")).toBe("1");
   });
 
   it("404s unknown hosts and non-client paths on the client host", () => {
-    expect(proxy(req("https://evil.example.test/")).status).toBe(404);
-    expect(proxy(req("https://go.example.test/settings")).status).toBe(404);
-    expect(proxy(req("https://go.example.test/c/inquiry")).headers.get("x-middleware-next")).toBe("1");
-    expect(proxy(req("https://go.example.test/robots.txt")).headers.get("x-middleware-next")).toBe("1");
-    expect(proxy(req("https://partner.example.test/c/inquiry")).status).toBe(404);
+    expect(gate(req("https://evil.example.test/")).status).toBe(404);
+    expect(gate(req("https://go.example.test/settings")).status).toBe(404);
+    expect(gate(req("https://go.example.test/c/inquiry")).headers.get("x-middleware-next")).toBe("1");
+    expect(gate(req("https://go.example.test/robots.txt")).headers.get("x-middleware-next")).toBe("1");
+    expect(gate(req("https://partner.example.test/c/inquiry")).status).toBe(404);
   });
 
   it("sends a partner page without a valid session to /auth/refresh with the return path", () => {
-    const res = proxy(req("https://partner.example.test/pipeline?view=board"));
+    const res = gate(req("https://partner.example.test/pipeline?view=board"));
     expect(res.status).toBe(307);
     const loc = new URL(res.headers.get("location")!);
     expect(loc.origin + loc.pathname).toBe("https://partner.example.test/auth/refresh");
     expect(loc.searchParams.get("next")).toBe("/pipeline?view=board");
-    const forged = proxy(req("https://partner.example.test/pipeline", { cookie: `${cookieNames(cfg).session}=forged` }));
+    const forged = gate(req("https://partner.example.test/pipeline", { cookie: `${cookieNames(cfg).session}=forged` }));
     expect(forged.status).toBe(307);
   });
 
   it("lets a valid session through, overwriting forged internal headers, with the CSP", () => {
-    const res = proxy(
+    const res = gate(
       req("https://partner.example.test/clients", { cookie: validCookie(), headers: { "x-aa-path": "/evil" } }),
     );
     expect(res.headers.get("x-middleware-next")).toBe("1");
@@ -79,7 +79,7 @@ describe("proxy", () => {
 
   it("passes public paths and the BFF without a session (the BFF answers 401 itself)", () => {
     for (const path of ["/auth/sign-in", "/signed-out", "/health", "/bff/me", "/prefs/locale", "/robots.txt", "/icon.svg"]) {
-      expect(proxy(req(`https://partner.example.test${path}`)).headers.get("x-middleware-next"), path).toBe("1");
+      expect(gate(req(`https://partner.example.test${path}`)).headers.get("x-middleware-next"), path).toBe("1");
     }
   });
 });

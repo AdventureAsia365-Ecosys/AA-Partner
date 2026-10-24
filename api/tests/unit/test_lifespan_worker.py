@@ -72,11 +72,27 @@ def test_worker_runs_for_the_app_lifetime_when_enabled() -> None:
         assert client.get("/crm/health").status_code == 200
     (worker,) = FakeWorker.instances
     assert worker.started and worker.stopped
-    assert set(worker.handlers) == {"crm_heartbeat", "crm_job_retention"}
+    assert set(worker.handlers) == {
+        "crm_heartbeat",
+        "crm_job_retention",
+        "crm_intake_process",
+        "crm_audit_export",
+        "crm_audit_retention",
+        "crm_placeholder_purge",
+        "crm_lifecycle",
+        "crm_offboard",
+        "crm_dispatch",
+    }
     # Only the heartbeat queues ahead; the daily retention run is a due-now maintenance hook (review round: a
     # queued-ahead daily row would block the deploy gate and every DB Migrate apply).
     assert [(r.kind, r.every_seconds) for r in worker.recurring] == [("crm_heartbeat", 60)]
-    assert [type(h).__name__ for h in worker.hooks] == ["DailyRetentionSchedule"]
+    assert [type(h).__name__ for h in worker.hooks] == [
+        "DailyRetentionSchedule",
+        "HourlyAuditExportSchedule",
+        "DailyAuditRetentionSchedule",
+        "HourlyPlaceholderPurge",
+        "DailyLifecycleSchedule",
+    ]
     assert worker.no_release == frozenset()
     # AA-751: the backlog metrics sampler runs for the app lifetime too and is cancelled on shutdown.
     (sampler,) = FakeSampler.instances

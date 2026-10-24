@@ -4,7 +4,7 @@
 import { redirect } from "next/navigation";
 import { CenteredCard, linkButton } from "@/components/CenteredCard";
 import { EmptyState, ErrorState, K } from "@/app/_kit";
-import { fetchMemberships } from "@/lib/crmApi";
+import { fetchMemberships, lockedNotice } from "@/lib/crmApi";
 import { safeNext, withRefreshMarker } from "@/lib/hosts";
 import { t, type MessageKey } from "@/lib/i18n";
 import { serverContext } from "@/lib/serverContext";
@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 export default async function SelectAgencyPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string; manual?: string; _rf?: string }>;
+  searchParams: Promise<{ next?: string; manual?: string; _rf?: string; locked?: string }>;
 }) {
   const params = await searchParams;
   const next = safeNext(params.next ?? "/");
@@ -50,8 +50,19 @@ export default async function SelectAgencyPage({
       </CenteredCard>
     );
   }
+  const locked = lockedNotice(found.data, session.tid, params.locked);
   return (
     <CenteredCard testId="crm-select-agency" wide>
+      {locked && (
+        <div
+          role="status"
+          data-testid="crm-agency-locked"
+          style={{ margin: "0 0 16px", padding: "10px 12px", borderRadius: 8, border: `1px solid ${K.line}`, background: K.accentTint }}
+        >
+          <div style={{ fontWeight: 600, color: K.danger }}>{t(lang, "locked.title")}</div>
+          <div style={{ fontSize: 13, color: K.muted }}>{t(lang, "locked.help")}</div>
+        </div>
+      )}
       <h1 style={{ margin: "0 0 4px", fontSize: 18, color: K.ink }}>{t(lang, "select.title")}</h1>
       <p style={{ margin: "0 0 16px", fontSize: 13, color: K.muted }}>{t(lang, "select.subtitle")}</p>
       <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8 }}>

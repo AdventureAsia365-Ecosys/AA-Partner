@@ -1,7 +1,7 @@
 """Agency provisioning: the rules for creating a CRM agency (``crm.tenant``) and its first members (AA-935, CRM-07).
 
-Used by the Dev seeder (``app.seed``) now and by the L1 console's "create agency" (``/crm/ops/v1``, CRM-13a / AA-944)
-later, so both refuse the same things the same way:
+Used by the Dev seeder (``app.seed``) and by the L1 console's "create agency" (``POST /crm/ops/v1/tenants``, CRM-13a /
+AA-941, through ``app.ops.console``), so both refuse the same things the same way:
 
 - **Dev holds synthetic agencies only** (ADR 0010 decision 3; card CRM-07 R test): on ``dev`` / ``test`` / ``local`` an
   agency with ``is_synthetic = false`` is refused with **422** ``synthetic_required``. On ``prod`` a synthetic agency is
@@ -15,6 +15,8 @@ later, so both refuse the same things the same way:
 Writes run in :func:`app.tenancy.provisioning_tx` (``app.tenant_id`` = the new agency, so the crm-002 FORCE RLS policy
 admits exactly that agency's rows). Creating the same agency twice converges instead of failing: the label, locale and
 roles are brought to the spec, ``is_synthetic`` never flips (409), a disabled member is never re-activated here.
+That convergence is the seeder's. The L1 console creates with ``create_only=True``: an existing id is 409
+``tenant_exists`` and nothing is written (an L1 call must never rename an agency, whatever its status, AA-941 review).
 """
 
 from __future__ import annotations
@@ -124,6 +126,7 @@ RETURNING member_id
 MEMBER_ROLE_UPDATE_SQL = """
 UPDATE crm.member SET role = $3
  WHERE cognito_iss = $1 AND cognito_sub = $2 AND role <> $3 AND deleted_at IS NULL
+RETURNING member_id
 """
 
 
@@ -134,8 +137,13 @@ async def provision_agency(
     *,
     environment: str,
     actor: str,
+    audit_object_ids: tuple[str, ...] = (),
+    create_only: bool = False,
 ) -> ProvisionResult:
-    """Create (or converge) one agency and its members in one transaction. Validation happens before any SQL."""
+    """Create (or converge) one agency and its members in one transaction. Validation happens before any SQL.
+    ``audit_object_ids`` go on the ``agency_create`` event (AA-941: the L1 console's ``ticket:<REF>``).
+    ``create_only``: an agency that already exists is 409 ``tenant_exists`` and the transaction writes nothing (the
+    L1 console's create; the seeder converges)."""
     agency = validate_agency(spec, environment)
     people = tuple(validate_member(m) for m in members)
     created = updated = False
@@ -146,6 +154,9 @@ async def provision_agency(
         )
         if inserted is not None:
             created = True
+            ctx.audit("agency_create", "agency", str(agency.tenant_id), object_ids=audit_object_ids)
+        elif create_only:
+            raise Conflict("tenant_exists", "an agency with this id already exists; nothing was changed")
         else:
             current = await ctx.conn.fetchrow(TENANT_CURRENT_SQL, agency.tenant_id)
             if current is None:  # trashed by someone else between the two statements, or invisible: never guess
@@ -155,14 +166,20 @@ async def provision_agency(
             if (current["display_name"], current["default_locale"]) != (agency.display_name, agency.default_locale):
                 await ctx.conn.execute(TENANT_UPDATE_SQL, agency.tenant_id, agency.display_name, agency.default_locale)
                 updated = True
+        # Design §4.9 "Logged: role changes" (AA-940): a member given a role (added) or moved to another role is an
+        # agency audit event (ids and the column name only; the role value itself is not written).
         for person in people:
             member_id = await ctx.conn.fetchval(MEMBER_INSERT_SQL, person.cognito_iss, person.cognito_sub, person.role)
             if member_id is not None:
                 added += 1
+                ctx.audit("member_add", "member", str(member_id), fields=("role",))
                 continue
-            status = await ctx.conn.execute(MEMBER_ROLE_UPDATE_SQL, person.cognito_iss, person.cognito_sub, person.role)
-            if status.endswith(" 1"):
+            changed = await ctx.conn.fetchval(
+                MEMBER_ROLE_UPDATE_SQL, person.cognito_iss, person.cognito_sub, person.role
+            )
+            if changed is not None:
                 role_changes += 1
+                ctx.audit("member_role_change", "member", str(changed), fields=("role",))
     log.info(
         "agency_provisioned tenant_id=%s created=%s updated=%s members_added=%d members_updated=%d",
         agency.tenant_id,
