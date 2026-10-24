@@ -2,9 +2,11 @@
 
 - **DB access lint** (design v3 §4.6 "a lint forbids raw queries outside tenant_tx()"): outside the modules in
   :data:`DB_MODULES`, the only allowed asyncpg call is one on ``<ctx>.conn`` written **inside** the body of
-  ``async with tenant_tx(...) as <ctx>`` (the RLS context is set there). Any other receiver (a pool, ``request_pool()``,
-  a connection from ``acquire()``, an alias of ``ctx.conn``, ``ctx.conn`` after the block) fails, and so does rebinding
-  ``<ctx>`` inside the block. Routers reach platform tables through the job queue only.
+  ``async with tenant_tx(...) as <ctx>`` (the RLS context is set there), or of ``provisioning_tx(...)`` in the platform
+  provisioning modules :data:`PROVISIONING_MODULES` only (AA-935: creating an agency, before any member exists). Any
+  other receiver (a pool, ``request_pool()``, a connection from ``acquire()``, an alias of ``ctx.conn``, ``ctx.conn``
+  after the block) fails, and so does rebinding ``<ctx>`` inside the block. Routers reach platform tables through
+  the job queue only.
 - **Import boundary** (ADR 0010 decision 1): app/ imports only the standard library, the pinned third-party packages
   and ``app`` itself — never a CIS or TripPlanner backend module.
 """
@@ -45,12 +47,16 @@ DB_MODULES = frozenset(
         "app/vault/store.py",  # DEK store: crm.tenant_key, only on the connection of a TenantContext (AA-934)
     }
 )
+# The only modules that may open the platform context provisioning_tx() (no membership check): agency creation and the
+# Dev seeder. Never a router: /crm/v1 request code reaches tenant data through tenant_tx() only.
+PROVISIONING_MODULES = frozenset({"app/agencies.py", "app/seed/__init__.py"})
 THIRD_PARTY = frozenset(
     {
         "asyncpg",
         "boto3",
         "botocore",
         "cryptography",
+        "faker",
         "fastapi",
         "jwt",
         "phonenumbers",
@@ -71,12 +77,15 @@ def _modules() -> list[tuple[str, ast.Module]]:
     return out
 
 
+CONTEXT_FACTORIES = frozenset({"tenant_tx", "provisioning_tx"})
+
+
 def _is_tenant_tx(call: ast.expr) -> bool:
     if not isinstance(call, ast.Call):
         return False
     func = call.func
-    return (isinstance(func, ast.Name) and func.id == "tenant_tx") or (
-        isinstance(func, ast.Attribute) and func.attr == "tenant_tx"
+    return (isinstance(func, ast.Name) and func.id in CONTEXT_FACTORIES) or (
+        isinstance(func, ast.Attribute) and func.attr in CONTEXT_FACTORIES
     )
 
 
@@ -175,6 +184,20 @@ FORBIDDEN = {
 }
 
 
+def test_provisioning_tx_is_used_only_by_the_provisioning_modules() -> None:
+    users = []
+    for rel, tree in _modules():
+        if rel in DB_MODULES or rel in PROVISIONING_MODULES:
+            continue
+        for node in ast.walk(tree):
+            name = node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
+            if name == "provisioning_tx":
+                users.append(f"{rel}:{node.lineno}")
+            if isinstance(node, ast.ImportFrom) and any(a.name == "provisioning_tx" for a in node.names):
+                users.append(f"{rel}:{node.lineno} imports provisioning_tx")
+    assert users == [], "provisioning_tx outside agency provisioning: " + ", ".join(users)
+
+
 def test_the_lint_allows_ctx_conn_inside_tenant_tx() -> None:
     assert db_access_offenders(ast.parse(ALLOWED)) == []
 
@@ -204,6 +227,6 @@ def test_imports_stay_inside_the_boundary() -> None:
 
 def test_every_third_party_import_is_pinned() -> None:
     requirements = (APP.parent / "requirements.txt").read_text(encoding="utf-8").lower()
-    pins = {"jwt": "pyjwt==", "sentry_sdk": "sentry-sdk", "phonenumbers": "phonenumberslite=="}
+    pins = {"jwt": "pyjwt==", "sentry_sdk": "sentry-sdk", "phonenumbers": "phonenumberslite==", "faker": "faker=="}
     for package in THIRD_PARTY:
         assert pins.get(package, f"{package}==") in requirements, package

@@ -4,8 +4,11 @@ Every route here is behind the AGENCY guard (partner-pool web client; on Dev bef
 ``cis-portal`` client). ``cis-admin`` and ``breakglass`` tokens get 403. The agency is chosen per request with the
 ``X-AA-Tenant-Id`` header and every read goes through :func:`app.tenancy.tenant_tx` (membership check, RLS context).
 
-Responses are ids and roles only. Margin-bearing fields arrive with later cards behind the per-role serializer
-allow-list (design v3 §4.6).
+Responses are ids, roles and the agency's own label/locale only (never an e-mail or a name from the token).
+Margin-bearing fields arrive with later cards behind the per-role serializer allow-list (design v3 §4.6).
+
+``GET /crm/v1/memberships`` is the one route without ``X-AA-Tenant-Id``: it lists the agencies the caller belongs to
+(:func:`app.tenancy.caller_memberships`, crm-004 lookup policies) so the web can pick the agency to open (AA-935).
 """
 
 from __future__ import annotations
@@ -18,9 +21,11 @@ from fastapi import Depends, Header, HTTPException, Request
 from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
 from app.db import request_pool
-from app.tenancy import tenant_tx
+from app.tenancy import caller_memberships, tenant_tx
 
 router = class_router(AGENCY, tags=["agency"])
+
+TENANT_LABEL_SQL = "SELECT display_name, default_locale FROM crm.tenant WHERE tenant_id = $1"
 
 
 def tenant_header(x_aa_tenant_id: Annotated[str | None, Header()] = None) -> uuid.UUID:
@@ -41,4 +46,31 @@ async def me(
     """Who the caller is in this agency: the membership ``tenant_tx()`` found (ids and role, no personal data)."""
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id) as ctx:
-        return {"tenant_id": str(ctx.tenant_id), "member_id": str(ctx.member_id), "member_role": ctx.member_role}
+        label = await ctx.conn.fetchrow(TENANT_LABEL_SQL, ctx.tenant_id)
+        return {
+            "tenant_id": str(ctx.tenant_id),
+            "member_id": str(ctx.member_id),
+            "member_role": ctx.member_role,
+            "display_name": label["display_name"] if label else None,
+            "default_locale": label["default_locale"] if label else None,
+        }
+
+
+@router.get("/memberships")
+async def memberships(request: Request, caller: Annotated[Caller, Depends(current_caller)]) -> dict[str, Any]:
+    """The agencies the caller is an active member of (locked ones included, flagged), for the agency picker."""
+    pool = await request_pool(request)
+    found = await caller_memberships(pool, caller)
+    return {
+        "memberships": [
+            {
+                "tenant_id": str(m.tenant_id),
+                "member_id": str(m.member_id),
+                "member_role": m.member_role,
+                "display_name": m.display_name,
+                "default_locale": m.default_locale,
+                "tenant_status": m.tenant_status,
+            }
+            for m in found
+        ]
+    }

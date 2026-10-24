@@ -33,4 +33,4 @@ markers = ["integration: needs a real PostgreSQL (CRM_TEST_ADMIN_DSN); skipped o
 
 [tool.coverage.run]
 source = ["app"]
-omit = ["app/auth/identity_verifier.py"]
+omit = ["app/auth/identity_verifier.py", "app/seed/__main__.py"]

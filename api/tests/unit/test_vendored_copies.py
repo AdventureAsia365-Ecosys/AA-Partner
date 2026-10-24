@@ -73,3 +73,19 @@ def test_github_fetch_retries_then_reports(monkeypatch: pytest.MonkeyPatch) -> N
     with pytest.raises(check.FetchError, match="network error"):
         check.github_fetch("shared/jobs/job_table_shape.py", attempts=2, sleep=lambda _s: None)
     assert len(calls) == 2 and calls[0].endswith("/contents/shared/jobs/job_table_shape.py?ref=main")
+
+
+def test_web_kit_copies_exist_and_main_checks_both_sets() -> None:
+    assert all((check.WEB_DIR / name).is_file() for name in check.WEB_COPIES)
+    assert check.WEB_COPIES["app/_kit/primitives.tsx"] == "frontend/app/_kit/primitives.tsx"
+    assert "app/_kit/index.ts" not in check.WEB_COPIES  # the CRM's own barrel
+    by_source = {src: (check.API_DIR / name).read_bytes() for name, src in check.COPIES.items()}
+    by_source |= {src: (check.WEB_DIR / name).read_bytes() for name, src in check.WEB_COPIES.items()}
+    out = io.StringIO()
+    assert check.main(by_source.get, out) == 0
+    assert f"{len(check.WEB_COPIES)} file(s) checked, 0 failed" in out.getvalue()
+    assert "ok    web/lib/bffPath.ts" in out.getvalue()
+    by_source["frontend/lib/bffPath.ts"] = b"drifted"
+    out = io.StringIO()
+    assert check.main(by_source.get, out) == 1
+    assert "FAIL  web/lib/bffPath.ts" in out.getvalue()

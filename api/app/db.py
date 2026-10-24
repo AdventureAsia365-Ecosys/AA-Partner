@@ -27,7 +27,7 @@ from app.settings import Settings
 log = logging.getLogger(__name__)
 
 # Every crm-NNN migration this code needs. Readiness fails until ALL of them are registered.
-REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = ("crm-001", "crm-002", "crm-003")
+REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = ("crm-001", "crm-002", "crm-003", "crm-004")
 REQUIRED_SCHEMA_VERSION = max(REQUIRED_SCHEMA_VERSIONS)
 
 READY_SQL = "SELECT coalesce(array_agg(version ORDER BY version), '{}') FROM crm.v_schema_versions"

@@ -3,7 +3,9 @@ name: CI
 # Required checks (branch protection on main; names like AA-Booking's and AA-CIS-App's so the rules read the same):
 #   Lint, Security Audit, Unit Tests, Integration Tests, Docker Build Check.
 # Non-required: "Vendored CIS copies" (byte copies of AA-CIS-App files: the job table template + comparator, ADR 0003a,
-# and the multi-issuer verifier, ADR 0006 §8 rule 9).
+# the multi-issuer verifier, ADR 0006 §8 rule 9, and the CRM web's UI kit + BFF helpers, AA-935).
+# CRM web (web/, AA-935): "Web Build" (unit tests, next build with the type check, standalone smoke) and "Web Docker
+# Build Check" (native arm64 image, container smoke, Trivy). Both are meant to join the required checks.
 #
 # ARM: the API runs on Fargate ARM64 (ADR 0010 decision 2), so the image is built and smoke-tested on a native arm64
 # runner (ubuntu-24.04-arm, free for public repositories); the Python jobs run on x64 (pure-Python code, the pinned
@@ -75,6 +77,11 @@ jobs:
           pip install pip-audit==2.10.1 --quiet
           pip-audit -r requirements.txt
           pip-audit -r requirements-dev.txt
+
+      # AA-935: the CRM web's npm dependencies (runtime and dev), from the lockfile, failing on high or critical.
+      - name: npm audit (web, failing on high)
+        working-directory: web
+        run: npm audit --audit-level=high
 
   test-unit:
     name: Unit Tests
@@ -207,8 +214,8 @@ jobs:
           output-file: sbom-${{ github.sha }}.cdx.json
           artifact-name: sbom-${{ github.sha }}.cdx.json
 
-  # Non-required: byte copies of AA-CIS-App files (api/tests/job_template/, api/app/auth/identity_verifier.py). Fails
-  # when a copy drifts from CIS main. Stdlib only; the repos are public, github.token only lifts the API rate limit.
+  # Non-required: byte copies of AA-CIS-App files (api/tests/job_template/, api/app/auth/identity_verifier.py, the
+  # web's app/_kit, app/_brand/tokens.ts and lib/ BFF helpers). Fails when a copy drifts from CIS main. Stdlib only; the repos are public, github.token only lifts the API rate limit.
   vendored-copies:
     name: Vendored CIS copies
     runs-on: ubuntu-latest
@@ -219,3 +226,100 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 scripts/check_vendored_copies.py
+
+  # AA-935 — the CRM web (Next.js standalone). Unit tests (vitest: dates/locale, session sealing, OAuth, host routing,
+  # BFF allow-list, route handlers), then `next build` (it runs the TypeScript check), then the standalone server is
+  # started with fake configuration and must answer /healthz, refuse an unknown Host and send a page without a
+  # session to /auth/refresh. NODE_OPTIONS caps the build's heap like the Dockerfile does.
+  web-build:
+    name: Web Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install (lockfile only)
+        run: npm ci --no-audit --no-fund
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build (includes the type check)
+        env:
+          NODE_OPTIONS: --max-old-space-size=1536
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm run build
+
+      - name: Standalone server smoke
+        env:
+          ENVIRONMENT: test
+          PORT: "3005"
+          HOSTNAME: 127.0.0.1
+          WEB_PUBLIC_ORIGIN: http://localhost:3005
+          WEB_PARTNER_HOSTS: localhost:3005
+          CRM_API_ORIGIN: http://127.0.0.1:9
+          COGNITO_DOMAIN: https://auth.example.test
+          COGNITO_CLIENT_ID: ciclient
+          COGNITO_CLIENT_SECRET: x
+          WEB_SESSION_SECRET: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          cp -r .next/static .next/standalone/.next/static
+          cp -r public .next/standalone/public
+          node .next/standalone/server.js > /tmp/web.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://localhost:3005/healthz -o /tmp/healthz.json && break; sleep 1; done
+          cat /tmp/healthz.json; echo
+          jq -e --arg sha "$GIT_SHA" '.status == "ok" and .service == "aa-crm-web" and .git_sha == $sha and .auth_configured == true' /tmp/healthz.json
+          [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example.test' http://localhost:3005/)" = "404" ]
+          loc=$(curl -s -o /dev/null -w '%{redirect_url}' http://localhost:3005/pipeline)
+          echo "$loc" | grep -q '^http://localhost:3005/auth/refresh?next=%2Fpipeline$'
+          [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3005/bff/me)" = "401" ]
+          [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3005/signed-out)" = "200" ]
+          curl -sI http://localhost:3005/signed-out | grep -qi "^content-security-policy: frame-ancestors 'none'"
+
+  # AA-935 — the CRM web image: native arm64 (Fargate ARM64, ADR 0010 decision 2), container answers /healthz with its
+  # commit, Trivy fails on fixable CRITICAL/HIGH like the API image.
+  web-docker-build:
+    name: Web Docker Build Check
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build image (linux/arm64, native)
+        run: |
+          docker build \
+            --build-arg GIT_SHA=${{ github.sha }} \
+            --build-arg APP_VERSION="$(jq -r '."."' .release-please-manifest.json)" \
+            --tag aa-crm-web:ci-${{ github.sha }} \
+            web
+          docker image inspect aa-crm-web:ci-${{ github.sha }} --format '{{.Architecture}}' | grep -qx arm64
+
+      - name: Container answers /healthz without any configuration
+        run: |
+          set -euo pipefail
+          docker run -d --name crm-web-ci -p 3000:3000 aa-crm-web:ci-${{ github.sha }}
+          for i in $(seq 1 30); do curl -sf http://localhost:3000/healthz -o /tmp/healthz.json && break; sleep 1; done
+          cat /tmp/healthz.json; echo
+          jq -e --arg sha "${{ github.sha }}" '.status == "ok" and .git_sha == $sha and .auth_configured == false' /tmp/healthz.json
+          [ "$(docker inspect --format '{{.Config.User}}' crm-web-ci)" = "10001" ]
+          docker rm -f crm-web-ci
+
+      - name: Scan image for vulnerabilities (Trivy, failing on fixable CRITICAL/HIGH)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: "aa-crm-web:ci-${{ github.sha }}"
+          format: "table"
+          severity: "CRITICAL,HIGH"
+          ignore-unfixed: true
+          trivyignores: ".trivyignore"
+          exit-code: "1"
