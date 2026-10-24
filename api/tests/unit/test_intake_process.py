@@ -26,6 +26,18 @@ KNOWN = uuid.UUID("00000000-0000-4000-8000-0000000005b2")
 OPEN_TRIP = uuid.UUID("00000000-0000-4000-8000-0000000005b3")
 
 
+@pytest.fixture(autouse=True)
+def _no_completeness(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """AA-943: completeness has its own tests (test_stage2.py, integration); here it is a recorded no-op."""
+    calls: list[Any] = []
+
+    async def refresh(*args: Any, **kw: Any) -> None:
+        calls.append(args[2])
+
+    monkeypatch.setattr(process.completeness, "refresh", refresh)
+    return calls
+
+
 def answers(**over: Any) -> dict[str, Any]:
     base = {
         "destinations": ["vietnam"],

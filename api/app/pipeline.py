@@ -13,9 +13,11 @@ Personal data on these screens (design v3 §4.4, Fix B15, Decision D7):
 - the e-mail and phone open only on a click (:func:`app.travellers.reveal.reveal`, AA-937: with a reason code), one
   ``reveal`` event per field.
 
-Stage moves (Slice 1): ``inquiry <-> qualifying``, either -> ``lost`` with a reason (R23), ``lost -> inquiry``. The DB
-enforces the edges (``crm.enforce_stage_transition``, crm-005); a refused edge is 409 ``transition_not_allowed``.
-Every move writes ``crm.trip_stage_history`` and an audit event. CRM-15 (AA-943) adds the later stages and gates.
+Stage moves: :mod:`app.stages` (AA-943, CRM-15: every edge, the gates, Undo, bulk moves, cancel); the DB enforces
+the edges and gates (``crm.enforce_stage_transition``, crm-012). Every move writes ``crm.trip_stage_history`` and an
+audit event. The board shows the six open stages plus a Closed group (completed / lost / cancelled), each card with
+its ``waiting_on``, how long it has been quiet (``last_activity_at``, flagged after 3 days) and, on Inquiry /
+Qualifying, its Stage 2 percentage.
 
 Assignment (R8, design §4.6 "Reassign clients and trips: owner"): the owner assigns any active member (or nobody);
 an agent or assistant may only take an unassigned trip for themselves.
@@ -31,10 +33,12 @@ from typing import Any
 
 import asyncpg
 
+from app import stages
 from app.audit import MAX_OBJECT_IDS
 from app.errors import Conflict, Invalid, NotFound
 from app.intake import stage1
 from app.permissions import Action, require
+from app.stages import CANCELLABLE, QUIET_DAYS, allowed_moves, touch
 from app.tenancy import TenantContext
 from app.travellers import age_bands
 from app.vault import Vault
@@ -68,7 +72,9 @@ WITH visible AS (
 )
 SELECT v.trip_id, v.title, v.stage, v.waiting_on, v.owner_member_id, v.month, v.start_date, v.nights,
        v.party_adults, cardinality(v.party_child_ages) AS children, v.budget_band, v.lead_source,
-       v.last_inquiry_at, v.stage_entered_at, v.created_at,
+       v.last_inquiry_at, v.stage_entered_at, v.created_at, v.last_activity_at,
+       (v.intake_completeness ->> 's2')::int AS s2,
+       greatest(0, extract(day FROM now() - v.last_activity_at))::int AS quiet_days,
        lead.traveler_id AS lead_traveler_id, lead.display_name_enc AS lead_name_enc,
        (SELECT count(*) FROM crm.trip_traveler c
          WHERE c.trip_id = v.trip_id AND c.role = 'companion' AND c.deleted_at IS NULL)::int AS companions,
@@ -100,8 +106,14 @@ SELECT waiting_on, count(*)::int AS n FROM crm.trip
 TRIP_SQL = """
 SELECT trip_id, title, stage, stage_entered_at, waiting_on, start_date, end_date, month, date_flex_days, nights,
        destinations, party_adults, party_child_ages, party_type, budget_band, trip_style, owner_member_id,
-       intake_form_id, lead_source, lost_reason_code, last_inquiry_at, created_at, updated_at
+       intake_form_id, lead_source, lost_reason_code, last_inquiry_at, created_at, updated_at, intake_completeness,
+       cancel_reason_code, last_activity_at, greatest(0, extract(day FROM now() - last_activity_at))::int AS quiet_days
   FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL
+"""
+STAGE2_LINK_SQL = """
+SELECT link_id, status, created_at, expires_at, first_opened_at, submitted_at FROM crm.client_link
+ WHERE trip_id = $1 AND purpose = 'stage2_form' AND deleted_at IS NULL
+ ORDER BY created_at DESC LIMIT 1
 """
 PARTY_SQL = """
 SELECT tt.traveler_id, tt.role, tr.display_name_enc, tr.preferred_channel,
@@ -111,7 +123,7 @@ SELECT tt.traveler_id, tt.role, tr.display_name_enc, tr.preferred_channel,
  ORDER BY tt.role DESC, tt.created_at, tt.traveler_id
 """
 TASKS_SQL = """
-SELECT task_id, kind, assignee_member_id, status, due_at, done_at, created_at FROM crm.task
+SELECT task_id, kind, priority, assignee_member_id, status, due_at, done_at, created_at FROM crm.task
  WHERE trip_id = $1 AND deleted_at IS NULL ORDER BY (status = 'open') DESC, due_at NULLS LAST, created_at
 """
 NOTES_SQL = """
@@ -119,7 +131,8 @@ SELECT note_id, kind, body_enc, created_at, created_by FROM crm.note
  WHERE trip_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC, note_id LIMIT 100
 """
 HISTORY_SQL = """
-SELECT from_stage, to_stage, reason_code, at, created_by FROM crm.trip_stage_history
+SELECT history_id, from_stage, to_stage, reason_code, at, created_by, override_reason_code, undo_of, batch_id
+  FROM crm.trip_stage_history
  WHERE trip_id = $1 ORDER BY at, history_id
 """
 SUBMISSIONS_SQL = """
@@ -131,25 +144,20 @@ SELECT member_id, role, status FROM crm.member WHERE deleted_at IS NULL ORDER BY
 """
 ACTIVE_MEMBER_SQL = "SELECT 1 FROM crm.member WHERE member_id = $1 AND status = 'active' AND deleted_at IS NULL"
 LOCK_TRIP_SQL = "SELECT stage, owner_member_id FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL FOR UPDATE"
-MOVE_SQL = """
-UPDATE crm.trip SET stage = $2, stage_entered_at = now(), lost_reason_code = $3 WHERE trip_id = $1
-"""
-HISTORY_INSERT_SQL = """
-INSERT INTO crm.trip_stage_history (trip_id, from_stage, to_stage, reason_code) VALUES ($1, $2, $3, $4)
-"""
 OWNER_SQL = "UPDATE crm.trip SET owner_member_id = $2 WHERE trip_id = $1"
+OWNER_OF_SQL = "SELECT owner_member_id FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL"
 TASK_OWNER_SQL = """
 UPDATE crm.task SET assignee_member_id = $2
  WHERE trip_id = $1 AND status = 'open' AND deleted_at IS NULL
    AND (assignee_member_id IS NULL OR assignee_member_id = $3)
 """
-TASK_LOCK_SQL = "SELECT status FROM crm.task WHERE task_id = $1 AND deleted_at IS NULL FOR UPDATE"
+TASK_LOCK_SQL = "SELECT status, trip_id FROM crm.task WHERE task_id = $1 AND deleted_at IS NULL FOR UPDATE"
 TASK_STATUS_SQL = """
 UPDATE crm.task SET status = $2,
        done_at = CASE WHEN $2 = 'open' THEN NULL ELSE now() END,
        done_by = CASE WHEN $2 = 'open' THEN NULL ELSE $3 END
  WHERE task_id = $1
-RETURNING task_id, kind, assignee_member_id, status, due_at, done_at, created_at
+RETURNING task_id, kind, priority, assignee_member_id, status, due_at, done_at, created_at
 """
 NOTE_INSERT_SQL = """
 INSERT INTO crm.note (note_id, trip_id, kind, body_enc) VALUES ($1, $2, 'internal', $3) RETURNING created_at, created_by
@@ -198,12 +206,13 @@ class BoardFilter:
 
 async def board(ctx: TenantContext, vault: Vault, flt: BoardFilter) -> dict[str, Any]:
     owner = flt.owner_id(ctx)
-    rows = await ctx.conn.fetch(BOARD_SQL, list(BOARD_STAGES), flt.waiting_on, owner, PER_STAGE)
+    rows = await ctx.conn.fetch(BOARD_SQL, [*BOARD_STAGES, *CLOSED_STAGES], flt.waiting_on, owner, PER_STAGE)
     stage_counts = {
-        r["stage"]: r["n"] for r in await ctx.conn.fetch(STAGE_COUNTS_SQL, list(BOARD_STAGES), flt.waiting_on, owner)
+        r["stage"]: r["n"]
+        for r in await ctx.conn.fetch(STAGE_COUNTS_SQL, [*BOARD_STAGES, *CLOSED_STAGES], flt.waiting_on, owner)
     }
     waiting = {r["waiting_on"]: r["n"] for r in await ctx.conn.fetch(WAITING_COUNTS_SQL, list(BOARD_STAGES), owner)}
-    cards: dict[str, list[dict[str, Any]]] = {s: [] for s in BOARD_STAGES}
+    cards: dict[str, list[dict[str, Any]]] = {s: [] for s in (*BOARD_STAGES, *CLOSED_STAGES)}
     for r in rows:
         name = None
         if r["lead_name_enc"] is not None:
@@ -231,6 +240,10 @@ async def board(ctx: TenantContext, vault: Vault, flt: BoardFilter) -> dict[str,
                 "submissions": r["submissions"],
                 "last_inquiry_at": _iso(r["last_inquiry_at"]),
                 "stage_entered_at": _iso(r["stage_entered_at"]),
+                "last_activity_at": _iso(r["last_activity_at"]),
+                "quiet_days": r["quiet_days"],
+                "quiet": r["quiet_days"] > QUIET_DAYS,
+                "stage2_percent": r["s2"] if r["stage"] in ("inquiry", "qualifying") else None,
             }
         )
     if rows:
@@ -247,6 +260,14 @@ async def board(ctx: TenantContext, vault: Vault, flt: BoardFilter) -> dict[str,
             }
             for s in BOARD_STAGES
         ],
+        # Completed / lost / cancelled, newest activity first (the board's "Closed" group).
+        "closed": {
+            "count": sum(stage_counts.get(s, 0) for s in CLOSED_STAGES),
+            "counts": {s: stage_counts.get(s, 0) for s in CLOSED_STAGES},
+            "cards": sorted(
+                (c for s in CLOSED_STAGES for c in cards[s]), key=lambda c: c["last_activity_at"] or "", reverse=True
+            )[:PER_STAGE],
+        },
         "waiting_on_counts": {w: waiting.get(w, 0) for w in WAITING_ON},
         "total": sum(waiting.values()),
         "filter": {"waiting_on": flt.waiting_on, "owner": flt.owner},
@@ -300,6 +321,7 @@ async def trip_detail(ctx: TenantContext, vault: Vault, trip_id: uuid.UUID) -> d
             }
         )
     tasks = [_task(r) for r in await ctx.conn.fetch(TASKS_SQL, trip_id)]
+    link = await ctx.conn.fetchrow(STAGE2_LINK_SQL, trip_id)
     history = [
         {
             "from_stage": r["from_stage"],
@@ -307,6 +329,10 @@ async def trip_detail(ctx: TenantContext, vault: Vault, trip_id: uuid.UUID) -> d
             "reason_code": r["reason_code"],
             "at": _iso(r["at"]),
             "actor": r["created_by"],
+            "history_id": str(r["history_id"]),
+            "override_reason_code": r["override_reason_code"],
+            "undo_of": _id(r["undo_of"]),
+            "batch_id": _id(r["batch_id"]),
         }
         for r in await ctx.conn.fetch(HISTORY_SQL, trip_id)
     ]
@@ -327,6 +353,17 @@ async def trip_detail(ctx: TenantContext, vault: Vault, trip_id: uuid.UUID) -> d
         "history": history,
         "submissions": submissions,
         "allowed_moves": allowed_moves(trip["stage"]),
+        "can_cancel": trip["stage"] in CANCELLABLE,
+        "stage2_link": None
+        if link is None
+        else {
+            "link_id": str(link["link_id"]),
+            "status": link["status"],
+            "sent_at": _iso(link["created_at"]),
+            "expires_at": _iso(link["expires_at"]),
+            "opened_at": _iso(link["first_opened_at"]),
+            "submitted_at": _iso(link["submitted_at"]),
+        },
     }
 
 
@@ -354,13 +391,32 @@ def _trip(r: Any, ctx: TenantContext) -> dict[str, Any]:
         "lost_reason_code": r["lost_reason_code"],
         "last_inquiry_at": _iso(r["last_inquiry_at"]),
         "created_at": _iso(r["created_at"]),
+        **_crm012(r),
     }
+
+
+def _crm012(r: Any) -> dict[str, Any]:
+    """The crm-012 trip columns (AA-943); a row read before the S2 query change (``RETURNING *`` has them too)."""
+    if "intake_completeness" not in r.keys():
+        return {}
+    raw = r["intake_completeness"]
+    completeness = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
+    out: dict[str, Any] = {
+        "intake_completeness": completeness,
+        "cancel_reason_code": r["cancel_reason_code"],
+        "last_activity_at": _iso(r["last_activity_at"]),
+    }
+    if "quiet_days" in r.keys():
+        out["quiet_days"] = r["quiet_days"]
+        out["quiet"] = r["quiet_days"] > QUIET_DAYS
+    return out
 
 
 def _task(r: Any) -> dict[str, Any]:
     return {
         "task_id": str(r["task_id"]),
         "kind": r["kind"],
+        "priority": r["priority"],
         "assignee_member_id": _id(r["assignee_member_id"]),
         "status": r["status"],
         "due_at": _iso(r["due_at"]),
@@ -369,44 +425,29 @@ def _task(r: Any) -> dict[str, Any]:
     }
 
 
-ALLOWED_MOVES: dict[str, tuple[str, ...]] = {
-    "inquiry": ("qualifying", "lost"),
-    "qualifying": ("inquiry", "lost"),
-    "lost": ("inquiry",),
-}
-
-
-def allowed_moves(stage: str) -> list[str]:
-    """The moves Slice 1 opens from ``stage`` (mirrors the crm-005 transition rows; the DB stays the judge)."""
-    return list(ALLOWED_MOVES.get(stage, ()))
-
-
 async def move_stage(
-    ctx: TenantContext, trip_id: uuid.UUID, to: str, *, lost_reason: str | None, undo: bool = False
+    ctx: TenantContext,
+    trip_id: uuid.UUID,
+    to: str,
+    *,
+    lost_reason: str | None,
+    undo: bool = False,
+    override_reason: str | None = None,
+    vault: Vault | None = None,
 ) -> dict[str, Any]:
-    current = await ctx.conn.fetchrow(LOCK_TRIP_SQL, trip_id)
-    if current is None:
+    """One move from the stage menu (:func:`app.stages.move`). ``undo``: the Slice 1 web's reopen flag (lost ->
+    inquiry with reason ``undo``); a real Undo is ``POST /trips/{id}/stage/undo``."""
+    return await stages.move(
+        ctx, trip_id, to, lost_reason=lost_reason, override_reason=override_reason, vault=vault, reopen=undo
+    )
+
+
+async def trip_owner(ctx: TenantContext, trip_id: uuid.UUID) -> uuid.UUID | None:
+    """The trip's owner (404 for an unknown trip): the assistant's ASSIGNED rule reads it."""
+    row = await ctx.conn.fetchrow(OWNER_OF_SQL, trip_id)
+    if row is None:
         raise NotFound("trip_not_found")
-    if current["stage"] == to:
-        raise Conflict("already_in_stage")
-    if to == "lost":
-        if lost_reason not in LOST_REASONS:
-            raise Invalid("lost_reason_required", "pick one of the fixed reasons", reasons=list(LOST_REASONS))
-    elif lost_reason is not None:
-        raise Invalid("lost_reason_not_allowed", "a reason goes with lost only")
-    if to not in ALLOWED_MOVES.get(current["stage"], ()):
-        # crm-012 (AA-943) opens the later edges in the DB behind gates this module does not handle yet: refuse them
-        # here, so the Slice 1 behaviour stays the same until the CRM-15 stage engine replaces this function.
-        raise Conflict("transition_not_allowed", allowed=allowed_moves(current["stage"]))
-    try:
-        async with ctx.conn.transaction():
-            await ctx.conn.execute(MOVE_SQL, trip_id, to, lost_reason if to == "lost" else None)
-    except asyncpg.CheckViolationError:
-        raise Conflict("transition_not_allowed", allowed=allowed_moves(current["stage"])) from None
-    reason = "undo" if undo else (f"lost_{lost_reason}"[:40] if to == "lost" else "agent_move")
-    await ctx.conn.execute(HISTORY_INSERT_SQL, trip_id, current["stage"], to, reason)
-    ctx.audit("stage_change", "allowed", "trip", str(trip_id), reason=reason)
-    return {"trip_id": str(trip_id), "from_stage": current["stage"], "stage": to, "allowed_moves": allowed_moves(to)}
+    return row["owner_member_id"]
 
 
 async def assign(ctx: TenantContext, trip_id: uuid.UUID, member_id: uuid.UUID | None) -> dict[str, Any]:
@@ -492,6 +533,7 @@ async def add_note(ctx: TenantContext, vault: Vault, trip_id: uuid.UUID, body: s
         NOTE_INSERT_SQL, note_id, trip_id, await vault.encrypt("note", "body_enc", note_id, text)
     )
     ctx.audit("create", "allowed", "note", str(note_id))
+    await touch(ctx, trip_id)
     return {
         "note_id": str(note_id),
         "kind": "internal",
@@ -504,9 +546,10 @@ async def add_note(ctx: TenantContext, vault: Vault, trip_id: uuid.UUID, body: s
 async def set_task_status(ctx: TenantContext, task_id: uuid.UUID, status: str) -> dict[str, Any]:
     if status not in TASK_STATUSES:
         raise Invalid("invalid_status", "open, done or skipped")
-    current = await ctx.conn.fetchval(TASK_LOCK_SQL, task_id)
-    if current is None:
+    task = await ctx.conn.fetchrow(TASK_LOCK_SQL, task_id)
+    if task is None:
         raise NotFound("task_not_found")
+    current = task["status"]
     if current == status:
         raise Conflict("already_in_status")
     try:
@@ -515,6 +558,8 @@ async def set_task_status(ctx: TenantContext, task_id: uuid.UUID, status: str) -
     except asyncpg.CheckViolationError:
         raise Conflict("transition_not_allowed") from None
     ctx.audit("update", "allowed", "task", str(task_id), fields=("status",))
+    if task["trip_id"] is not None:
+        await touch(ctx, task["trip_id"])
     return _task(row)
 
 

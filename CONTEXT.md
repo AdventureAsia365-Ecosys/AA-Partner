@@ -99,6 +99,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `/crm/public/v1` | no token: the inquiry form only (AA-936), served on the **client host** too (ALB rule `/crm/public/*`) | `GET forms/{key}`, `POST forms/{key}/submissions`; the form key decides the agency inside `intake_tx()`; Origin check, honeypot, consent, per-address limit (before any read) and per-form quota (charged only after every check), body streamed and capped at 32 KiB (413) |
 | `/crm/ci/deploy-gate` | the Deploy Dev workflow's GitHub OIDC token only (`app/auth/ci.py`) | job counts for the deploy guard |
 | `/crm/public/v1/invitations/claim` | no token (AA-939): the invitation token in the body only; rate limited per address (`RATE_LIMIT_CLAIM_PER_MINUTE`) | `invitation_tx()`; creates or finds the partner-pool account |
+| `/crm/public/v1/s/{token}` | no token (AA-943): the signed client link in the path only (43-character token, SHA-256 stored); served on the client host | `client_link_tx()`; GET the Stage 2 planning form (pages, branches, F2 prefill), POST the answers (Origin check, per-address limit, 32 KiB cap); 404 `link_not_found` for any unusable token |
 | `/crm/v1` | PARTNER x {AA-Partner web}; on Dev also EXTERNAL x {`cis-portal`} until the CRM web switches pools (AA-CIS-Infra `crm_partner_signin_enabled`; removed at P2b, AA-979) | `X-AA-Tenant-Id` + `tenant_tx(action=...)` (membership in `crm.member`, then the permission matrix); `GET /crm/v1/memberships` and `POST /crm/v1/invitations/accept` need no header |
 | `/crm/ops/v1` | WORKFORCE x {`cis-admin`} | group `cis-admin` or `crm-platform-admin` reads, `crm-platform-admin` writes (AA-939: member deactivation, owner recovery; AA-941: the L1 console, section "L1 console" below). Every response passes the L1 key allow-list (`app/ops/serializer.py`) |
 | `/crm/staff/v1` | WORKFORCE x {`crm-staff`} | group `crm-ops` or `crm-support` (+ an owner grant for support, CRM-13b) |
@@ -144,6 +145,11 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
   invitation found decides the agency (must be active), `app.actor` = `invitation:<id>` (audit actor kind `user`).
   Unknown token or locked agency = 404 `invitation_not_found`. The row is then re-read `FOR UPDATE`, so two claims
   or two accepts of one invitation run one after the other. Only `app/members/invitations.py` may open it.
+- **`client_link_tx(pool, token_hash_hex)`** (AA-943) is a client page opened from a signed link (the Stage 2
+  planning form C-02): it sets `app.client_link_hash`, read by the crm-012 SELECT-only policy
+  `client_link_token_lookup` (TO `crm_app`, live links only: not expired, revoked or trashed); the link decides the
+  agency (must be active) and `app.actor` = `client_link:<id>` (audit actor kind `traveler`); the row is re-read
+  `FOR UPDATE`. Any unusable token is 404 `link_not_found`. Only `app/intake/stage2_public.py` may open it.
 - **`system_tx(pool, tenant_id, actor="job:<kind>")`** (AA-936) is a job's context in one agency (no member):
   `app.tenant_id` from the job payload, the agency must be active, the same audit queue as `tenant_tx()` with
   `actor_kind = system`. Actors `job:` / `seed:` only. Only the job handler modules (`app/intake/process.py`) and the
@@ -253,6 +259,7 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 | `crm_lifecycle` | daily, from `JOB_RETENTION_UTC_HOUR`, due-now hook (`DailyLifecycleSchedule`) | AA-942: per agency (active / locked): form-submission payloads redacted after 90 days, LLM calls older than 180 days purged (with their crm-009 placeholder maps), trash past its window purged through `crm.erase_subject`, inactive clients auto-archived; one `lifecycle_run` row + one audit event per agency; skips anything under a legal hold or the delete block; DRY RUN (counts only) while `LIFECYCLE_DRY_RUN` is on (default). Not deploy-gate exempt |
 | `crm_offboard` | per owner step (queued in the request's transaction) | AA-942: `mode=export` builds and seals the agency export; `mode=erase` erases the agency, deletes its objects, destroys its keys, writes the receipt. Not deploy-gate exempt |
 | `crm_dispatch` | per queued message (after the 10 s undo delay for a user action) | AA-942: the dispatcher gate at send time (trashed, archived, no marketing consent -> dropped; no sender -> held). Not deploy-gate exempt |
+| `crm_stage_date_rule` | hourly, due-now hook (`app.stages_job.HourlyStageDateRule`, key per UTC hour) | AA-943: per active agency, "today" in `tenant_settings.timezone`: booked -> travelling on the start date (reason `date_rule_gate_unmet` + an urgent task), pre_departure -> travelling, travelling -> completed on the end date, one `return_date_missing` task for a travelling trip without one. Counts only. Not deploy-gate exempt |
 | `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
 
 ## CI and release
@@ -353,6 +360,41 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   agency's own mailbox, CRM-17), system tags from the catalog (R29), conditional forms and the Stage 2 gate (CRM-15),
   F2 views and reader grants (CRM-09), the `form_submission` 90-day redaction job (CRM-14, done in AA-942).
 - **E2E** (`e2e/`, workflow `E2E Dev`, dispatch on main): form -> card on the board within about a minute -> trip.
+
+## CRM-15 Modules 1 + 2 (AA-943)
+
+- **Stage engine** (`app/stages.py`, routes in `app/routers/pipeline.py`): every edge of crm-012 (`ALLOWED_MOVES`;
+  `lost` before booked only; `cancelled` only through `POST /trips/{id}/cancel`, the generic move answers 409
+  `use_cancel_flow`). Gates: qualifying -> proposal needs Stage 2 >= 80 % or an override reason (else 409
+  `stage2_incomplete` `{s2, missing, override_reasons}`); proposal -> booked and booked -> pre_departure need the
+  override `manual_booking` / `manual_stage3` until CRM-18 / CRM-24a / CRM-25 (409 `gate_unmet`). The override is
+  passed to the DB as `app.gate_override` for the one UPDATE and logged in `trip_stage_history.override_reason_code`.
+  The DB refuses on its own too (SQLSTATE CRM19).
+- **Undo** (Fix B8): each move returns `undo.history_id` / `undo_until`; `POST /trips/{id}/stage/undo` within 10 s, by
+  the member who moved, reverts it (`app.stage_undo`; DB rule CRM20, 15 s) and cancels what the move started in its
+  transaction: dispatch rows (`cancelled` / `undone`), signed links (`revoked`), tasks (`skipped`). Later: 409
+  `undo_expired`. A cancel has no undo. Bulk: `POST /pipeline/bulk-stage` (dry run -> `eligible`, `blocked`,
+  `preview_hash`; the run needs the same hash, else 409 `preview_stale`; at most 200 trips; one `batch_id`) and
+  `POST /pipeline/bulk-stage/undo`.
+- **Cancel** (C12): `POST /trips/{id}/cancel?dry_run=true|false` `{cancel_reason_code}` (owner / agent), from
+  booked / pre_departure / travelling: the dry run lists the effects (dispatch rows cancelled, open tasks skipped,
+  future call slots cancelled, links revoked); later cards add theirs.
+- **waiting_on** is derived on every move (`derive_waiting_on`); cards register hooks for booked / pre-departure trips
+  (`register_waiting_on_hook`, contract in `docs/implementation-notes/AA-943.md`). `last_activity_at` is bumped by
+  moves, notes, task changes and submissions; the board flags a trip quiet after 3 days and shows a Closed group.
+- **Stage 2** (`app/intake/stage2.py`): the `stage2.v1` pages with R31 branches (adventure-only questions, health after
+  the consent); the server drops hidden-branch answers (counted in `hidden_answers_dropped`) and refuses health
+  without consent (422 `health_consent_required`). Answers go to the F2 profile, health codes to `traveler_health`,
+  free text to an encrypted `stage2_free_text` note, the set to a `form_submission` (stage `s2`, outcome `applied`).
+  Sent as a signed `client_link` (14 days, SHA-256 only, a re-send revokes the old one) through the dispatcher
+  (held / `no_sender` until CRM-17, so the trip page offers "Copy link" from the send answer), automatically on
+  inquiry -> qualifying with `tenant_settings.stage2_auto_send`, or filled in from a call (`PUT /trips/{id}/stage2`).
+- **Completeness** (`app/intake/completeness.py`): s1 / s2 / s3 percent + missing codes on `trip.intake_completeness`
+  and the profile; a Qualifying trip below 80 % has an open `get_planning_info` task, closed at 80 %.
+- **Call slots** (R15, `app/intake/slots.py`): weekly windows in the agency timezone (Settings > Forms,
+  `GET/PUT /crm/v1/settings/pipeline`); the public form lists free starts (ISO UTC); `crm_intake_process` books one
+  (`meeting_slot` requested + a `call_scheduled` task) or, when another inquiry won the race, opens an urgent
+  `call_slot_taken` task and keeps the inquiry.
 
 ## F1 / F2 complete (AA-937, CRM-09)
 

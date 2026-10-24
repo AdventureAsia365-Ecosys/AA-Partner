@@ -14,6 +14,13 @@ is decided by the form key inside :func:`app.tenancy.intake_tx`.
   for a chunked body or one whose Content-Length lies: the body is streamed and the read stops at the cap, so no more
   than 32 KiB (plus one chunk) is ever held in memory.
 
+- ``GET  /crm/public/v1/s/{token}`` (AA-943): the Stage 2 planning form a signed link opens
+  (:func:`app.intake.stage2_public.read`): pages with their R31 branches, the trip style, the agency's name and the
+  bands the client already gave (F2 only). 404 ``link_not_found`` for an unknown, expired, revoked or foreign token.
+- ``POST /crm/public/v1/s/{token}``: the answers (:func:`app.intake.stage2_public.submit`): 202; 422
+  ``health_consent_required`` / ``invalid_submission``; 403 ``origin_not_allowed``; the same per-address limit and
+  32 KiB cap as the inquiry form.
+
 Responses never carry an id, a name, or whether an e-mail is already known.
 """
 
@@ -27,6 +34,7 @@ from fastapi.responses import JSONResponse
 
 from app.db import request_pool
 from app.intake import public as intake
+from app.intake import stage2_public
 from app.ratelimit import PublicRateLimit, client_address
 from app.vault.provider import require_keys
 
@@ -34,6 +42,7 @@ router = APIRouter(prefix="/crm/public/v1", tags=["public"])
 
 MAX_BODY_BYTES = 32 * 1024
 PublicKey = Annotated[str, Path(min_length=20, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")]
+LinkToken = Annotated[str, Path(min_length=43, max_length=43, pattern=r"^[A-Za-z0-9_-]+$")]
 NO_STORE = {"Cache-Control": "no-store"}
 
 
@@ -99,3 +108,40 @@ async def post_submission(
         quota_window_s=int(form_limiter.window_s),
     )
     return JSONResponse({"status": "received"}, status_code=202, headers=NO_STORE)
+
+
+async def _json_body(request: Request, content_length: int | None) -> Any:
+    if content_length is not None and content_length > MAX_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="body_too_large")
+    try:
+        body = await read_capped(request)
+    except BodyTooLarge:
+        raise HTTPException(status_code=413, detail="body_too_large") from None
+    try:
+        return json.loads(body or b"null")
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="invalid_json") from None
+
+
+@router.get("/s/{token}")
+async def get_stage2(request: Request, token: LinkToken, _: PublicRateLimit) -> JSONResponse:
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    form = await stage2_public.read(pool, keys, token)
+    return JSONResponse(form, headers={**NO_STORE, "Referrer-Policy": "no-referrer"})
+
+
+@router.post("/s/{token}", status_code=202)
+async def post_stage2(
+    request: Request,
+    token: LinkToken,
+    origin: Annotated[str | None, Header()] = None,
+    content_length: Annotated[int | None, Header()] = None,
+) -> JSONResponse:
+    settings = request.app.state.settings
+    _limit(request, "intake_limiter", client_address(request, settings.rate_limit_xff_hops))
+    raw = await _json_body(request, content_length)
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    result = await stage2_public.submit(pool, keys, settings, token, raw, origin=origin)
+    return JSONResponse(result, status_code=202, headers=NO_STORE)

@@ -130,6 +130,9 @@ async def test_read_form(monkeypatch: pytest.MonkeyPatch) -> None:
         "default_locale": "vi-VN",
         "allowed_origins": ["https://www.agency.example"],
         "privacy_notice_url": None,
+        "call_slots": [],
+        "timezone": "Asia/Ho_Chi_Minh",
+        "call_minutes": None,
     }
 
 

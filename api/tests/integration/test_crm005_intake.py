@@ -464,10 +464,14 @@ async def test_stage_moves_follow_the_db_edges(app_pool: asyncpg.Pool, admin: as
     trip_id = uuid.UUID(r["trip_id"])
     async with tenant_tx(app_pool, owner, tenant_id) as ctx:
         moved = await move_stage(ctx, trip_id, "qualifying", lost_reason=None)
-        assert moved["allowed_moves"] == ["inquiry", "lost"]
+        assert moved["allowed_moves"] == ["inquiry", "proposal", "lost"]
     with pytest.raises(Conflict) as refused:
         async with tenant_tx(app_pool, owner, tenant_id) as ctx:
-            await move_stage(ctx, trip_id, "proposal", lost_reason=None)  # CRM-15 opens it, with its gate
+            await move_stage(ctx, trip_id, "proposal", lost_reason=None)  # CRM-15 (AA-943): the Stage 2 gate
+    assert refused.value.code == "stage2_incomplete"
+    with pytest.raises(Conflict) as refused:
+        async with tenant_tx(app_pool, owner, tenant_id) as ctx:
+            await move_stage(ctx, trip_id, "booked", lost_reason=None)
     assert refused.value.code == "transition_not_allowed"
     with pytest.raises(Invalid):
         async with tenant_tx(app_pool, owner, tenant_id) as ctx:

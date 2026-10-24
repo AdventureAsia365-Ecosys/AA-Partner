@@ -22,6 +22,7 @@ from app.jobs.kinds import (
     JOB_RETENTION,
     LIFECYCLE,
     PLACEHOLDER_PURGE,
+    STAGE_DATE_RULE,
 )
 from app.jobs.payload_guard import PersonalDataInPayload
 from app.jobs.queue import Job
@@ -178,6 +179,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         (JOB_RETENTION, True),
         (LIFECYCLE, True),
         (PLACEHOLDER_PURGE, True),  # AA-938: the hourly purge, queued due now like the daily retention
+        (STAGE_DATE_RULE, True),  # AA-943: the hourly trip date rule, due now too
     ]
     # The due runs count while they wait (they would be interrupted by a deploy) ...
     assert (await queue.active_count(app_pool, DEPLOY_GATE_EXEMPT))["by_kind"] == {
@@ -186,6 +188,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         AUDIT_RETENTION: 1,
         PLACEHOLDER_PURGE: 1,
         LIFECYCLE: 1,
+        STAGE_DATE_RULE: 1,
     }
     while await worker.run_once():
         pass

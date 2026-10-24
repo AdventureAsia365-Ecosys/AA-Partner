@@ -1,0 +1,155 @@
+"""``crm_stage_date_rule``: the date rule of the trip stages (design v3 §3.5, Fix B4; card CRM-15 E), hourly.
+
+Queued **due now** once per UTC hour by :class:`HourlyStageDateRule` (never queued ahead: the deploy gate and the DB
+Migrate idle check count a queued row as busy; not deploy-gate exempt). For every active agency, in one
+:func:`app.tenancy.system_tx` (actor ``job:crm_stage_date_rule``), with "today" in the agency's own timezone
+(``tenant_settings.timezone``, default ``Asia/Ho_Chi_Minh``), so a departure moves near local midnight:
+
+1. ``booked`` with ``start_date <= today`` -> ``travelling`` even though the Stage 3 gate is unmet: history reason
+   ``date_rule_gate_unmet`` and one **urgent** task ``date_rule_gate_unmet`` (Fix B4);
+2. ``pre_departure`` with ``start_date <= today`` -> ``travelling`` (reason ``date_rule``);
+3. ``travelling`` with ``end_date <= today`` -> ``completed`` (reason ``date_rule``);
+4. ``travelling`` without an ``end_date``: one task ``return_date_missing`` per trip, ever (the trip stays).
+
+Payload and result are ids and counts only. An agency that is locked or offboarding is skipped.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections import Counter
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
+
+import asyncpg
+
+from app.audit_export import registry
+from app.errors import Forbidden, NotFound, ServiceError
+from app.jobs import queue
+from app.jobs.kinds import STAGE_DATE_RULE
+from app.jobs.queue import Job
+from app.tenancy import SystemContext, system_tx
+
+log = logging.getLogger(__name__)
+
+ACTOR = "job:crm_stage_date_rule"
+SCHEDULER = "scheduler:crm-stage-date-rule"
+HISTORY_DAYS = 2
+MAX_ATTEMPTS = 3
+BATCH = 500
+DEFAULT_TZ = "Asia/Ho_Chi_Minh"
+
+TODAY_SQL = """
+SELECT (now() AT TIME ZONE coalesce((SELECT timezone FROM crm.tenant_settings LIMIT 1), $1))::date
+"""
+DUE_SQL = """
+SELECT trip_id, stage FROM crm.trip
+ WHERE deleted_at IS NULL
+   AND ((stage IN ('booked', 'pre_departure') AND start_date <= $1)
+        OR (stage = 'travelling' AND end_date <= $1))
+ ORDER BY start_date, trip_id
+ LIMIT $2
+   FOR UPDATE SKIP LOCKED
+"""
+NO_RETURN_SQL = """
+SELECT t.trip_id FROM crm.trip t
+ WHERE t.deleted_at IS NULL AND t.stage = 'travelling' AND t.end_date IS NULL
+   AND NOT EXISTS (SELECT 1 FROM crm.task k WHERE k.trip_id = t.trip_id AND k.kind = 'return_date_missing')
+ LIMIT $1
+"""
+MOVE_SQL = """
+UPDATE crm.trip SET stage = $2, stage_entered_at = now(), waiting_on = 'none', last_activity_at = now()
+ WHERE trip_id = $1
+"""
+HISTORY_SQL = """
+INSERT INTO crm.trip_stage_history (trip_id, from_stage, to_stage, reason_code) VALUES ($1, $2, $3, $4)
+"""
+TASK_SQL = """
+INSERT INTO crm.task (trip_id, kind, priority, assignee_member_id, due_anchor, due_at)
+SELECT $1, $2, $3, t.owner_member_id, 'departure', now() FROM crm.trip t WHERE t.trip_id = $1
+ON CONFLICT (trip_id, kind) WHERE status = 'open' AND deleted_at IS NULL AND trip_id IS NOT NULL DO NOTHING
+"""
+
+
+async def run_agency(ctx: SystemContext) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    today = await ctx.conn.fetchval(TODAY_SQL, DEFAULT_TZ)
+    for row in await ctx.conn.fetch(DUE_SQL, today, BATCH):
+        trip_id, stage = row["trip_id"], row["stage"]
+        if stage == "travelling":
+            to, reason = "completed", "date_rule"
+        elif stage == "booked":
+            to, reason = "travelling", "date_rule_gate_unmet"
+        else:
+            to, reason = "travelling", "date_rule"
+        await ctx.conn.execute(MOVE_SQL, trip_id, to)
+        await ctx.conn.execute(HISTORY_SQL, trip_id, stage, to, reason)
+        ctx.audit("stage_change", "allowed", "trip", str(trip_id), reason=reason)
+        counts[f"{stage}_to_{to}"] += 1
+        if reason == "date_rule_gate_unmet":
+            await ctx.conn.execute(TASK_SQL, trip_id, "date_rule_gate_unmet", "urgent")
+            counts["urgent_tasks"] += 1
+    for row in await ctx.conn.fetch(NO_RETURN_SQL, BATCH):
+        await ctx.conn.execute(TASK_SQL, row["trip_id"], "return_date_missing", "normal")
+        counts["return_date_missing"] += 1
+    return counts
+
+
+async def date_rule(pool: asyncpg.Pool, _job: Job) -> dict[str, Any]:
+    totals: Counter[str] = Counter()
+    done = skipped = failed = 0
+    for agency in await registry.agencies(pool):
+        try:
+            async with system_tx(pool, agency.tenant_id, actor=ACTOR) as ctx:
+                counts = await run_agency(ctx)
+        except (Forbidden, NotFound):
+            skipped += 1  # locked, offboarding or gone
+            continue
+        except ServiceError as exc:
+            failed += 1
+            log.error("stage_date_rule_failed tenant_id=%s code=%s", agency.tenant_id, exc.code)
+            continue
+        except Exception as exc:  # noqa: BLE001 — one agency's error must not skip every later agency
+            failed += 1
+            log.error("stage_date_rule_failed tenant_id=%s error_class=%s", agency.tenant_id, type(exc).__name__)
+            continue
+        done += 1
+        totals.update(counts)
+    if sum(totals.values()):
+        log.info("stage_date_rule %s", " ".join(f"{k}={v}" for k, v in sorted(totals.items())))
+    return {
+        "agency_count": done,
+        "skipped_count": skipped,
+        "failed_count": failed,
+        **{f"{k}_count": int(v) for k, v in sorted(totals.items())},
+    }
+
+
+def schedule_key(now: datetime) -> str:
+    return f"{STAGE_DATE_RULE}:schedule:{now.strftime('%Y-%m-%dT%H')}"
+
+
+class HourlyStageDateRule:
+    """Worker maintenance hook: one ``crm_stage_date_rule`` run per UTC hour, due now (the
+    :class:`app.privacy.purge.HourlyPlaceholderPurge` pattern)."""
+
+    def __init__(self, now: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
+        self._now = now
+        self._done_slot: str | None = None
+
+    async def __call__(self, pool: asyncpg.Pool) -> str | None:
+        key = schedule_key(self._now())
+        if self._done_slot == key:
+            return None
+        job_id = await queue.enqueue(
+            pool,
+            STAGE_DATE_RULE,
+            {"purpose": "hourly_schedule"},
+            idempotency_key=key,
+            max_attempts=MAX_ATTEMPTS,
+            created_by=SCHEDULER,
+        )
+        await queue.prune(pool, STAGE_DATE_RULE, HISTORY_DAYS)
+        self._done_slot = key
+        return job_id

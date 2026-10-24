@@ -49,6 +49,10 @@ def trip_row(**over: Any) -> dict[str, Any]:
         "last_inquiry_at": NOW,
         "created_at": NOW,
         "updated_at": NOW,
+        "intake_completeness": '{"s1": 100, "s2": 40, "s3": 0}',
+        "cancel_reason_code": None,
+        "last_activity_at": NOW,
+        "quiet_days": 0,
     }
     base.update(over)
     return base
@@ -63,6 +67,7 @@ def board_row(**over: Any) -> dict[str, Any]:
         "companions": 1,
         "next_due_at": NOW,
         "submissions": 2,
+        "s2": 40,
     }
     base.update(over)
     return base
@@ -76,6 +81,8 @@ async def test_board_groups_cards_decrypts_names_and_audits_once() -> None:
             [
                 board_row(),
                 board_row(trip_id=uuid.uuid4(), stage="qualifying", lead_name_enc=None, owner_member_id=None),
+                board_row(trip_id=uuid.uuid4(), stage="proposal", quiet_days=5),
+                board_row(trip_id=uuid.uuid4(), stage="lost", lost_reason_code="price"),
             ],
         )
         .on("SELECT stage, count(*)", [{"stage": "inquiry", "n": 3}, {"stage": "qualifying", "n": 1}])
@@ -91,6 +98,10 @@ async def test_board_groups_cards_decrypts_names_and_audits_once() -> None:
     assert view["total"] == 4 and view["filter"] == {"waiting_on": "agency", "owner": "me"}
     assert conn.sql("WITH visible AS")[0][2] == MEMBER  # owner=me filters by the caller
     assert [(e.action, e.fields) for e in ctx.audit_events] == [("list_view", ("display_name",))]
+    # AA-943: the quiet flag, the Stage 2 percentage on early cards, and the Closed group.
+    assert stages["proposal"]["cards"][0]["quiet"] and stages["proposal"]["cards"][0]["stage2_percent"] is None
+    assert stages["inquiry"]["cards"][0]["stage2_percent"] == 40 and not stages["inquiry"]["cards"][0]["quiet"]
+    assert [c["stage"] for c in view["closed"]["cards"]] == ["lost"] and "lost" not in stages
 
 
 async def test_empty_board_writes_no_list_view() -> None:
@@ -155,6 +166,7 @@ async def test_trip_detail_decrypts_party_notes_and_safe_answers() -> None:
                 {
                     "task_id": uuid.uuid4(),
                     "kind": "reply_inquiry",
+                    "priority": "normal",
                     "assignee_member_id": None,
                     "status": "open",
                     "due_at": NOW,
@@ -172,6 +184,10 @@ async def test_trip_detail_decrypts_party_notes_and_safe_answers() -> None:
                     "reason_code": "intake",
                     "at": NOW,
                     "created_by": "job:crm_intake_process",
+                    "history_id": uuid.uuid4(),
+                    "override_reason_code": None,
+                    "undo_of": None,
+                    "batch_id": None,
                 }
             ],
         )
@@ -183,6 +199,8 @@ async def test_trip_detail_decrypts_party_notes_and_safe_answers() -> None:
     assert "email" not in out["submissions"][0]["answers"] and out["submissions"][1]["answers"] is None
     assert out["allowed_moves"] == ["qualifying", "lost"] and out["trip"]["month"] == "2027-03-01"
     assert ctx.audit_events[0].action == "view"
+    assert out["trip"]["intake_completeness"]["s2"] == 40 and out["can_cancel"] is False
+    assert out["stage2_link"] is None and out["tasks"][0]["priority"] == "normal"
 
 
 async def test_trip_detail_unknown_is_404() -> None:
@@ -190,27 +208,18 @@ async def test_trip_detail_unknown_is_404() -> None:
         await pipeline.trip_detail(tenant_ctx(), FakeVault(), TRIP)
 
 
-async def test_move_stage_branches() -> None:
-    conn = ScriptedConn().on("FOR UPDATE", {"stage": "inquiry", "owner_member_id": None})
+async def test_move_stage_delegates_to_the_stage_engine() -> None:
+    conn = (
+        ScriptedConn()
+        .on("FOR UPDATE", trip_row())
+        .on("INSERT INTO crm.trip_stage_history", {"history_id": uuid.uuid4(), "at": NOW})
+    )
     ctx = tenant_ctx(conn)
     moved = await pipeline.move_stage(ctx, TRIP, "qualifying", lost_reason=None)
-    assert moved["allowed_moves"] == ["inquiry", "lost"] and conn.sql("trip_stage_history")[0][3] == "agent_move"
-    with pytest.raises(Conflict):
-        await pipeline.move_stage(ctx, TRIP, "inquiry", lost_reason=None)
-    with pytest.raises(Invalid):
-        await pipeline.move_stage(ctx, TRIP, "lost", lost_reason="bored")
-    with pytest.raises(Invalid):
-        await pipeline.move_stage(ctx, TRIP, "qualifying", lost_reason="price")
-    lost = await pipeline.move_stage(ctx, TRIP, "lost", lost_reason="price")
-    assert lost["stage"] == "lost" and conn.sql("trip_stage_history")[-1][3] == "lost_price"
+    assert moved["allowed_moves"] == ["inquiry", "proposal", "lost"] and moved["undo"]["history_id"]
+    assert conn.sql("trip_stage_history")[0][3] == "agent_move"
     await pipeline.move_stage(ctx, TRIP, "qualifying", lost_reason=None, undo=True)
     assert conn.sql("trip_stage_history")[-1][3] == "undo"
-    conn.on("UPDATE crm.trip SET stage", asyncpg.CheckViolationError("not allowed"))
-    with pytest.raises(Conflict) as refused:
-        await pipeline.move_stage(ctx, TRIP, "proposal", lost_reason=None)
-    assert refused.value.code == "transition_not_allowed"
-    with pytest.raises(NotFound):
-        await pipeline.move_stage(tenant_ctx(), TRIP, "qualifying", lost_reason=None)
 
 
 async def test_assign_rules() -> None:
@@ -268,9 +277,15 @@ async def test_add_note_and_task_status() -> None:
         "done_at": NOW,
         "created_at": NOW,
     }
-    tconn = ScriptedConn().on("SELECT status FROM crm.task", "open").on("UPDATE crm.task SET status", row)
+    row["priority"] = "normal"
+    tconn = (
+        ScriptedConn()
+        .on("SELECT status, trip_id FROM crm.task", {"status": "open", "trip_id": TRIP})
+        .on("UPDATE crm.task SET status", row)
+    )
     out = await pipeline.set_task_status(tenant_ctx(tconn), task, "done")
     assert out["status"] == "done" and tconn.sql("UPDATE crm.task SET status")[0][2] == f"member:{MEMBER}"
+    assert tconn.sql("SET last_activity_at") == [(TRIP,)]
     with pytest.raises(Conflict):
         await pipeline.set_task_status(tenant_ctx(tconn), task, "open" if False else "open")  # noqa: SIM210
     with pytest.raises(Invalid):
