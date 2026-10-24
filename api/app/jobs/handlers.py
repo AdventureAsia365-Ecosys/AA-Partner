@@ -34,9 +34,12 @@ from app.jobs import queue
 from app.jobs.kinds import (
     AUDIT_EXPORT,
     AUDIT_RETENTION,
+    DISPATCH,
     HEARTBEAT,
     INTAKE_PROCESS,
     JOB_RETENTION,
+    LIFECYCLE,
+    OFFBOARD,
     PLACEHOLDER_PURGE,
 )
 from app.jobs.queue import Job
@@ -44,6 +47,8 @@ from app.jobs.worker import Handler, MaintenanceHook, Recurring
 
 if TYPE_CHECKING:  # pragma: no cover
     from app.audit_export.archive import AuditArchive
+    from app.dispatch.worker import Sender
+    from app.documents.store import DocumentStore
     from app.vault import KeyProvider
 
 log = logging.getLogger(__name__)
@@ -113,13 +118,23 @@ def build_handlers(
     keys: KeyProvider | None = None,
     audit_archive: AuditArchive | None = None,
     audit_retention_dry_run: bool = True,
+    documents: DocumentStore | None = None,
+    lifecycle_dry_run: bool = True,
+    dek_cache_ttl_s: int = 300,
+    sender: Sender | None = None,
 ) -> dict[str, Handler]:
     """Every kind the worker runs. ``keys``: the field-encryption provider the intake kind needs (AA-936); without
     it ``crm_intake_process`` jobs are retried until the provider is configured. ``audit_archive``: the two audit
-    buckets (AA-940); without them the export keeps the partitions only and the retention never drops anything."""
+    buckets (AA-940); without them the export keeps the partitions only and the retention never drops anything.
+    AA-942: ``documents`` (the bucket the purges and the offboarding export use), ``lifecycle_dry_run``
+    (``LIFECYCLE_DRY_RUN``), ``dek_cache_ttl_s`` (reported on the offboarding receipt), ``sender`` (none until CRM-17:
+    messages that pass the dispatcher gate are held)."""
     from app.audit_export import export as audit_export
     from app.audit_export import retention as audit_retention
+    from app.dispatch import worker as dispatch_worker
     from app.intake.process import build_handler as build_intake_handler
+    from app.lifecycle import job as lifecycle_job
+    from app.lifecycle import offboarding
     from app.privacy.purge import purge_expired_maps
 
     return {
@@ -129,6 +144,11 @@ def build_handlers(
         AUDIT_EXPORT: audit_export.build_handler(audit_archive),
         AUDIT_RETENTION: audit_retention.build_handler(audit_archive, dry_run=audit_retention_dry_run),
         PLACEHOLDER_PURGE: purge_expired_maps,
+        LIFECYCLE: lifecycle_job.build_handler(dry_run=lifecycle_dry_run, keys=keys, store=documents),
+        OFFBOARD: offboarding.build_handler(
+            keys=keys, store=documents, dry_run=lifecycle_dry_run, dek_cache_ttl_s=dek_cache_ttl_s
+        ),
+        DISPATCH: dispatch_worker.build_handler(sender),
     }
 
 
@@ -173,6 +193,7 @@ def build_hooks(*, retention_utc_hour: int, now: Callable[[], datetime] | None =
     """The due-now schedules. ``now``: a fixed clock for tests (default: the real UTC clock)."""
     from app.audit_export.export import HourlyAuditExportSchedule
     from app.audit_export.retention import DailyAuditRetentionSchedule
+    from app.lifecycle.job import DailyLifecycleSchedule
     from app.privacy.purge import HourlyPlaceholderPurge
 
     clock = now or (lambda: datetime.now(UTC))
@@ -181,12 +202,15 @@ def build_hooks(*, retention_utc_hour: int, now: Callable[[], datetime] | None =
         HourlyAuditExportSchedule(clock),
         DailyAuditRetentionSchedule(retention_utc_hour, clock),
         HourlyPlaceholderPurge(clock),
+        DailyLifecycleSchedule(retention_utc_hour, clock),
     )
 
 
 # Only the heartbeat queues its next slot ahead (it is deploy-gate and DB Migrate idle exempt). A daily or slower kind
 # goes through a due-now maintenance hook instead (DailyRetentionSchedule): never add one here.
 RECURRING: tuple[Recurring, ...] = (Recurring(HEARTBEAT, every_seconds=60, keep_days=2),)
-SCHEDULED_KINDS: frozenset[str] = frozenset({JOB_RETENTION, AUDIT_EXPORT, AUDIT_RETENTION, PLACEHOLDER_PURGE})
+SCHEDULED_KINDS: frozenset[str] = frozenset(
+    {JOB_RETENTION, AUDIT_EXPORT, AUDIT_RETENTION, PLACEHOLDER_PURGE, LIFECYCLE}
+)
 # Kinds queued by request code, one row per event (AA-936: each stored inquiry), never scheduled.
-EVENT_KINDS: frozenset[str] = frozenset({INTAKE_PROCESS})
+EVENT_KINDS: frozenset[str] = frozenset({INTAKE_PROCESS, OFFBOARD, DISPATCH})

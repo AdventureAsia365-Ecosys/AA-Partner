@@ -131,7 +131,7 @@ describe("BFF allow-list (AA-937 lines)", () => {
       expect(matchBff(method, path)?.tenant, `${method} ${path}`).toBe(true);
     }
     for (const [method, path] of [
-      ["DELETE", `travelers/${ID}`],
+      ["DELETE", `travelers/${ID}/profile`], // AA-942 opened DELETE travelers/<id> (to the trash), nothing below it
       ["GET", `documents/${ID}`],
       ["GET", `travelers/${ID}/reveal`],
       ["PUT", `travelers/${ID}`],

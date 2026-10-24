@@ -93,6 +93,11 @@ INSERT INTO crm.traveler (traveler_id, display_name_enc, name_bidx, name_token_b
                           owner_member_id, lead_source, referrer_traveler_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)
 """
+UNARCHIVE_SQL = """
+UPDATE crm.traveler SET archived_at = NULL, archive_reason = NULL, archived_by = NULL
+ WHERE traveler_id = $1 AND archived_at IS NOT NULL
+RETURNING traveler_id
+"""
 INSERT_PROFILE_SQL = """
 INSERT INTO crm.traveler_profile (traveler_token, budget_band, pace, marketing_ok) VALUES ($1, $2, $3, $4)
 """
@@ -201,6 +206,10 @@ async def process_submission(ctx: AnyContext, vault: Vault, submission_id: uuid.
 
     if match is not None:
         traveler_id = match["traveler_id"]
+        # AA-942 (R23): an archived client who writes again is back: unarchive, so the agency can answer (archived
+        # clients are stopped at the dispatcher). One audit event, like every archive change.
+        if await ctx.conn.fetchval(UNARCHIVE_SQL, traveler_id):
+            ctx.audit("unarchive", "allowed", "traveler", str(traveler_id), reason="repeat_inquiry")
         open_trip = await ctx.conn.fetchrow(OPEN_TRIP_SQL, traveler_id, list(OPEN_STAGES))
         if open_trip is not None:
             trip_id = open_trip["trip_id"]

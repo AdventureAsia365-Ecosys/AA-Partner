@@ -108,7 +108,8 @@ describe("BFF allow-list (AA-936 lines)", () => {
     expect(matchBff("GET", "members")).not.toBeNull();
     expect(matchBff("POST", "intake-forms")).not.toBeNull();
     expect(matchBff("PATCH", `intake-forms/${ID}`)).not.toBeNull();
-    expect(matchBff("DELETE", `trips/${ID}`)).toBeNull();
+    expect(matchBff("DELETE", `trips/${ID}`)?.card).toBe("AA-942"); // to the trash, opened by CRM-14
+    expect(matchBff("DELETE", `trips/${ID}/stage`)).toBeNull();
     expect(matchBff("GET", "trips/not-a-uuid")).toBeNull();
     expect(matchBff("POST", `trips/${ID}/cancel`)).toBeNull();
     expect(matchBff("GET", `travelers/${ID}/reveal`)).toBeNull();

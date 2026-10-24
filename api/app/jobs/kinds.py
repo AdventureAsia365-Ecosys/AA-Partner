@@ -9,7 +9,9 @@ always-queued liveness kind (one row per minute slot): counting it would block e
 harmless. It is also idle-exempt in AA-CIS-Infra DB Migrate (``db/owners.yaml`` ``idle_exempt_kinds``), so a CIS,
 Booking or TripPlanner migration is never blocked by the CRM (card CRM-04 E check). ``crm_job_retention`` is
 deliberately NOT exempt: it is queued only when due (``handlers.DailyRetentionSchedule``), so it blocks only while it
-really runs. The AA-940 kinds ``crm_audit_export`` (hourly) and ``crm_audit_retention`` (daily) follow the same rule.
+really runs. The AA-940 kinds ``crm_audit_export`` (hourly) and ``crm_audit_retention`` (daily) follow the same rule,
+and so do the AA-942 kinds: ``crm_lifecycle`` (daily, due-now hook), ``crm_offboard`` and ``crm_dispatch`` (one row per
+event; a message's row waits its 10-second undo delay).
 """
 
 from __future__ import annotations
@@ -23,6 +25,11 @@ AUDIT_EXPORT = "crm_audit_export"
 AUDIT_RETENTION = "crm_audit_retention"
 # AA-938: hourly delete of expired F3 placeholder maps (app.privacy.purge), queued due-now, never ahead.
 PLACEHOLDER_PURGE = "crm_placeholder_purge"
+# AA-942: the daily data lifecycle run (redaction, LLM-call purge, trash purge, auto-archive), the agency offboarding
+# steps (export, erase) and one outbound message through the dispatcher gate.
+LIFECYCLE = "crm_lifecycle"
+OFFBOARD = "crm_offboard"
+DISPATCH = "crm_dispatch"
 
 DEFAULT_EXPECTED_SECONDS = 300
 OVERDUE_FACTOR = 2
@@ -36,6 +43,9 @@ EXPECTED_SECONDS: dict[str, int] = {
     AUDIT_EXPORT: 300,
     AUDIT_RETENTION: 900,
     PLACEHOLDER_PURGE: 60,
+    LIFECYCLE: 900,
+    OFFBOARD: 600,
+    DISPATCH: 30,
 }
 
 

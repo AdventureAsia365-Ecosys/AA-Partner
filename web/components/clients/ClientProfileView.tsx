@@ -118,7 +118,22 @@ export function ClientProfileView({ view, members, role, lang, locale }: { view:
               {t(lang, "clients.source")}: <span style={{ color: K.ink }}>{traveler.lead_source}</span>
             </span>
           )}
+          {role !== "assistant" && (
+            // AA-942 (R23): archived clients are hidden from lists and stopped at the dispatcher.
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() =>
+                void (traveler.archived
+                  ? send("POST", `travelers/${id}/unarchive`)
+                  : send("POST", `travelers/${id}/archive`, { reason: "agent" }))
+              }
+            >
+              {t(lang, traveler.archived ? "client.unarchive" : "client.archive")}
+            </Button>
+          )}
         </div>
+        {traveler.archived && <p style={{ margin: 0, fontSize: 13, color: K.muted }}>{t(lang, "client.archivedNote")}</p>}
         {error && (
           <p role="alert" style={{ margin: 0, color: K.danger, fontSize: 13 }}>
             {error}

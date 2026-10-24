@@ -16,6 +16,7 @@ import { RevealField } from "@/components/clients/RevealField";
 import { Panel } from "@/components/PageTitle";
 import type { DocumentRow } from "@/lib/clients";
 import { bffSend } from "@/lib/bffClient";
+import { deleteRefusal } from "@/lib/lifecycle";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, type Lang, type MessageKey, t } from "@/lib/i18n";
 import type { Role } from "@/lib/nav";
@@ -159,6 +160,26 @@ export function TripPanel({
           {view.allowed_moves.includes("lost") && !lostOpen && (
             <Button size="sm" variant="ghost" disabled={busy} onClick={() => setLostOpen(true)}>
               {t(lang, "trip.markLost")}
+            </Button>
+          )}
+          {role !== "assistant" && (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={async () => {
+                // AA-942: to the trash (Settings > Data and privacy restores it); a trip with money, a signature, a
+                // commission or a held / confirmed AA line is refused and the agent is told to cancel it instead.
+                if (!window.confirm(t(lang, "trip.deleteConfirm"))) return;
+                setBusy(true);
+                setError(null);
+                const res = await bffSend("DELETE", `trips/${trip.trip_id}`);
+                setBusy(false);
+                if (res.ok) router.push("/pipeline");
+                else setError(t(lang, deleteRefusal(res.detail)));
+              }}
+            >
+              {t(lang, "trip.delete")}
             </Button>
           )}
           {lostOpen && (

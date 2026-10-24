@@ -104,6 +104,7 @@ class Action(StrEnum):
     PLAN_VIEW = "plan_view"
     SETTINGS_FORMS_MANAGE = "settings_forms_manage"  # the public inquiry forms (Settings > Forms)
     ACCESS_LOG_VIEW = "access_log_view"
+    DATA_SETTINGS = "data_settings"  # AA-942: trash window, auto-archive, legal holds (Settings > Data and privacy)
 
 
 A, D = Rule.ALLOW, Rule.DENY
@@ -156,6 +157,7 @@ _TABLE: dict[Action, tuple[Rule, Rule, Rule]] = {
     Action.PLAN_VIEW: (A, D, D),
     Action.SETTINGS_FORMS_MANAGE: (A, D, D),
     Action.ACCESS_LOG_VIEW: (A, D, D),
+    Action.DATA_SETTINGS: (A, D, D),
 }
 
 MATRIX: dict[str, dict[Action, Rule]] = {

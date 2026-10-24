@@ -29,6 +29,7 @@ import asyncpg
 
 from app.audit import MAX_OBJECT_IDS
 from app.errors import Conflict, Invalid, NotFound
+from app.lifecycle.window import trash_days
 from app.tenancy import TenantContext
 from app.travellers import age_bands
 from app.travellers.fields import (
@@ -47,7 +48,6 @@ from app.vault.blind_index import NormalisationError, name_tokens
 
 PAGE_SIZE = 50
 MAX_PAGE = 200
-TRASH_DAYS = 7
 
 LIST_SQL = """
 SELECT tr.traveler_id, tr.display_name_enc, tr.owner_member_id, tr.lead_source, tr.archived_at, tr.created_at,
@@ -569,7 +569,7 @@ async def remove_relation(ctx: TenantContext, traveler_id: uuid.UUID, relation_i
     row = await ctx.conn.fetchrow(RELATION_SQL, relation_id, traveler_id)
     if row is None:
         raise NotFound("relation_not_found")
-    await ctx.conn.execute(TRASH_RELATION_SQL, relation_id, f"member:{ctx.member_id}", TRASH_DAYS)
+    await ctx.conn.execute(TRASH_RELATION_SQL, relation_id, f"member:{ctx.member_id}", await trash_days(ctx))
     if row["kind"] == "referrer":
         await ctx.conn.execute(CLEAR_REFERRER_SQL, row["from_traveler_id"], row["to_traveler_id"])
     elif row["kind"] == "referred":

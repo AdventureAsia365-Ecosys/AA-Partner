@@ -20,6 +20,7 @@ from app.jobs.kinds import (
     DEPLOY_GATE_EXEMPT,
     HEARTBEAT,
     JOB_RETENTION,
+    LIFECYCLE,
     PLACEHOLDER_PURGE,
 )
 from app.jobs.payload_guard import PersonalDataInPayload
@@ -168,12 +169,14 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
     )
     await worker.maintenance(app_pool)
     rows = await app_pool.fetch("SELECT kind, run_after <= now() AS due FROM crm.job WHERE status = 'queued'")
-    # AA-940: at minute 30 the hourly audit export is due too, and the daily audit retention at hour 0.
+    # AA-940: at minute 30 the hourly audit export is due too, and the daily audit retention at hour 0; AA-942: the
+    # daily lifecycle run too.
     assert sorted((r["kind"], r["due"]) for r in rows) == [
         (AUDIT_EXPORT, True),
         (AUDIT_RETENTION, True),
         (HEARTBEAT, False),
         (JOB_RETENTION, True),
+        (LIFECYCLE, True),
         (PLACEHOLDER_PURGE, True),  # AA-938: the hourly purge, queued due now like the daily retention
     ]
     # The due runs count while they wait (they would be interrupted by a deploy) ...
@@ -182,6 +185,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         AUDIT_EXPORT: 1,
         AUDIT_RETENTION: 1,
         PLACEHOLDER_PURGE: 1,
+        LIFECYCLE: 1,
     }
     while await worker.run_once():
         pass

@@ -36,6 +36,11 @@ export default async function SettingsPage() {
         </a>
       </Panel>
       <Panel title={t(lang, "settings.privacy")} testId="settings-privacy">
+        <p style={{ margin: "0 0 8px", fontSize: 13 }}>
+          <a href="/settings/data" data-testid="settings-data-link">
+            {t(lang, "data.link")}
+          </a>
+        </p>
         <p style={{ margin: "0 0 8px", fontSize: 13, color: K.muted }}>{t(lang, "settings.accessLogHelp")}</p>
         {ctx.role === "owner" ? (
           <a href="/settings/access-log" style={{ fontSize: 13.5 }} data-testid="settings-access-log-link">
