@@ -3,7 +3,11 @@
 - ``tests/job_template/job_table_template.sql`` and ``job_table_shape.py`` = AA-CIS-App ``shared/jobs/`` (AA-751, X6;
   ADR 0003a decision 2: one DDL template, owned by CIS; every owner's CI compares its job table with it);
 - ``app/auth/identity_verifier.py`` = AA-CIS-App ``api/core/identity_verifier.py`` (AA-680 Phase 2; root ADR 0006 §8
-  rule 9: the multi-issuer verifier is copied byte-identical into each app repo).
+  rule 9: the multi-issuer verifier is copied byte-identical into each app repo);
+- the CRM web's UI kit and BFF helpers (``web/``, AA-935): ``web/app/_kit/*`` and ``web/app/_brand/tokens.ts`` =
+  AA-CIS-App ``frontend/app/_kit/*`` / ``frontend/app/_brand/tokens.ts`` (one kit for portal and CRM until the shared
+  package AA-655, design-final §4.2), ``web/lib/{sameOrigin,crossSiteGuard,bffPath,proxyResponse}.ts`` = AA-CIS-App
+  ``frontend/lib/*`` (the AA-911 cross-site rule and the AA-577 path rule of every BFF).
 
 This check fails when a copy differs from the file on AA-CIS-App ``main`` by even one byte, or is not on main yet.
 Modelled on AA-CIS-Infra ``db/check_migration_copies.py``. CI job "Vendored CIS copies" (non-required).
@@ -33,11 +37,20 @@ ORG = "AdventureAsia365-Ecosys"
 REPO = "AA-CIS-App"
 BRANCH = "main"
 API_DIR = Path(__file__).resolve().parent.parent
+WEB_DIR = API_DIR.parent / "web"
 # path under api/ -> path in AA-CIS-App
 COPIES: dict[str, str] = {
     "tests/job_template/job_table_template.sql": "shared/jobs/job_table_template.sql",
     "tests/job_template/job_table_shape.py": "shared/jobs/job_table_shape.py",
     "app/auth/identity_verifier.py": "api/core/identity_verifier.py",
+}
+_WEB_KIT = ("tokens.ts", "primitives.tsx", "Toast.tsx", "theme.ts", "useTheme.ts", "useHydrated.ts")
+_WEB_LIB = ("sameOrigin.ts", "crossSiteGuard.ts", "bffPath.ts", "proxyResponse.ts")
+# path under web/ -> path in AA-CIS-App (AA-935). web/app/_kit/index.ts is the CRM's own barrel, not a copy.
+WEB_COPIES: dict[str, str] = {
+    **{f"app/_kit/{name}": f"frontend/app/_kit/{name}" for name in _WEB_KIT},
+    "app/_brand/tokens.ts": "frontend/app/_brand/tokens.ts",
+    **{f"lib/{name}": f"frontend/lib/{name}" for name in _WEB_LIB},
 }
 
 
@@ -57,9 +70,9 @@ def first_difference(a: bytes, b: bytes) -> str:
     return f"one file is a prefix of the other ({len(a)} vs {len(b)} bytes)"
 
 
-def check_copy(name: str, base_dir: Path, fetch: Fetcher) -> str | None:
+def check_copy(name: str, base_dir: Path, fetch: Fetcher, copies: dict[str, str] = COPIES) -> str | None:
     """The problem with one copy, or None when it is a byte copy of CIS main."""
-    source = COPIES[name]
+    source = copies[name]
     where = f"{ORG}/{REPO}@{BRANCH}:{source}"
     local_path = base_dir / name
     if not local_path.is_file():
@@ -120,11 +133,17 @@ def github_fetch(path: str, attempts: int = 3, sleep: Callable[[float], None] = 
     raise FetchError(f"could not read {REPO}:{path} from GitHub: {last}{hint}")
 
 
-def run(base_dir: Path = API_DIR, fetch: Fetcher = github_fetch, out: TextIO = sys.stdout) -> int:
+def run(
+    base_dir: Path = API_DIR,
+    fetch: Fetcher = github_fetch,
+    out: TextIO = sys.stdout,
+    copies: dict[str, str] = COPIES,
+    prefix: str = "api",
+) -> int:
     failed = 0
-    for name in COPIES:
-        problem = check_copy(name, base_dir, fetch)
-        rel = f"api/{name}"
+    for name in copies:
+        problem = check_copy(name, base_dir, fetch, copies)
+        rel = f"{prefix}/{name}"
         if problem:
             failed += 1
             print(f"FAIL  {rel}: {problem}", file=out)
@@ -132,9 +151,16 @@ def run(base_dir: Path = API_DIR, fetch: Fetcher = github_fetch, out: TextIO = s
                 print(f"::error file={rel}::{problem}", file=out)
         else:
             print(f"ok    {rel}", file=out)
-    print(f"{len(COPIES)} file(s) checked, {failed} failed", file=out)
+    print(f"{len(copies)} file(s) checked, {failed} failed", file=out)
     return 1 if failed else 0
 
 
+def main(fetch: Fetcher = github_fetch, out: TextIO = sys.stdout) -> int:
+    """Both sets: the API's copies (under api/) and the web's (under web/)."""
+    api = run(API_DIR, fetch, out)
+    web = run(WEB_DIR, fetch, out, WEB_COPIES, "web")
+    return 1 if (api or web) else 0
+
+
 if __name__ == "__main__":
-    sys.exit(run())
+    sys.exit(main())

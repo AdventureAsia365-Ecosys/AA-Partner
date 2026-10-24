@@ -11,7 +11,7 @@ from app.auth.route_guard import Caller
 from app.db import Database
 from app.errors import Forbidden
 from app.main import create_app
-from app.tenancy import READER_ROLES, tenant_tx
+from app.tenancy import MAX_MEMBERSHIPS, READER_ROLES, caller_memberships, tenant_tx
 from tests.tokens import PARTNER_ISSUER, SUB, LocalPools
 from tests.unit.fakes import ScriptedConn
 
@@ -96,6 +96,7 @@ def test_me_route_goes_through_tenant_tx() -> None:
     pools = LocalPools()
     settings = pools.settings()
     conn = _conn(member={"member_id": MEMBER, "role": "owner"})
+    conn.on("SELECT display_name, default_locale", {"display_name": "Lữ hành Sen Vàng", "default_locale": "vi-VN"})
     app = create_app(settings, FakeDatabase(conn, settings), pools.verifier(settings))
     headers = {"Authorization": f"Bearer {pools.partner_web()}"}
     with TestClient(app) as c:
@@ -103,7 +104,13 @@ def test_me_route_goes_through_tenant_tx() -> None:
         assert c.get("/crm/v1/me", headers={**headers, "X-AA-Tenant-Id": "nope"}).json() == {"detail": "invalid_tenant"}
         r = c.get("/crm/v1/me", headers={**headers, "X-AA-Tenant-Id": str(TENANT)})
     assert r.status_code == 200
-    assert r.json() == {"tenant_id": str(TENANT), "member_id": str(MEMBER), "member_role": "owner"}
+    assert r.json() == {
+        "tenant_id": str(TENANT),
+        "member_id": str(MEMBER),
+        "member_role": "owner",
+        "display_name": "Lữ hành Sen Vàng",
+        "default_locale": "vi-VN",
+    }
 
 
 def test_me_for_a_non_member_is_403() -> None:
@@ -183,3 +190,54 @@ def test_audit_events_carry_codes_only() -> None:
     for change in bad:
         with pytest.raises(ValueError):
             AuditEvent(**{**base, **change})
+
+
+# ── Caller memberships (AA-935): the agency list before tenant_tx() ─────────────────────────────────
+
+
+MEMBERSHIP_ROW = {
+    "tenant_id": TENANT,
+    "display_name": "Lữ hành Sen Vàng",
+    "default_locale": "vi-VN",
+    "tenant_status": "active",
+    "member_id": MEMBER,
+    "role": "agent",
+}
+
+
+@pytest.mark.asyncio
+async def test_caller_memberships_sets_the_caller_identity_and_never_a_tenant() -> None:
+    conn = ScriptedConn().on("FROM crm.member m", [MEMBERSHIP_ROW, {**MEMBERSHIP_ROW, "role": "nonsense"}])
+    found = await caller_memberships(conn, CALLER)
+    assert [(m.tenant_id, m.member_role, m.display_name) for m in found] == [(TENANT, "agent", "Lữ hành Sen Vàng")]
+    assert conn.sql("'app.caller_iss'") == [(PARTNER_ISSUER,)]
+    assert conn.sql("'app.caller_sub'") == [(SUB,)]
+    assert conn.sql("'app.tenant_id'") == []
+    assert conn.sql("FROM crm.member m")[0] == (PARTNER_ISSUER, SUB, MAX_MEMBERSHIPS)
+    with pytest.raises(Forbidden):
+        await caller_memberships(conn, Caller("agency", "partner", "partner-web", PARTNER_ISSUER, "", ()))
+
+
+def test_memberships_route_needs_no_tenant_header() -> None:
+    pools = LocalPools()
+    settings = pools.settings()
+    conn = ScriptedConn().on("FROM crm.member m", [MEMBERSHIP_ROW])
+    app = create_app(settings, FakeDatabase(conn, settings), pools.verifier(settings))
+    with TestClient(app) as c:
+        r = c.get("/crm/v1/memberships", headers={"Authorization": f"Bearer {pools.cis_portal()}"})
+        foreign = c.get("/crm/v1/memberships", headers={"Authorization": f"Bearer {pools.cis_admin()}"})
+        anonymous = c.get("/crm/v1/memberships")
+    assert r.status_code == 200
+    assert r.json() == {
+        "memberships": [
+            {
+                "tenant_id": str(TENANT),
+                "member_id": str(MEMBER),
+                "member_role": "agent",
+                "display_name": "Lữ hành Sen Vàng",
+                "default_locale": "vi-VN",
+                "tenant_status": "active",
+            }
+        ]
+    }
+    assert (foreign.status_code, anonymous.status_code) == (403, 401)

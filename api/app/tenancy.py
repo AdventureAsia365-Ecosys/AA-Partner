@@ -24,6 +24,18 @@ Events are inserted as ``crm_app`` (``SET LOCAL ROLE NONE`` first when a reader 
 privilege on the audit table). Rolling back or committing ends every ``SET LOCAL``. The DB access lint in
 ``tests/unit/test_code_rules.py`` fails when request code reaches the database any other way than ``ctx.conn`` inside
 ``async with tenant_tx(...) as ctx``.
+
+Two more entry points, each one transaction with its own narrow context (AA-935):
+
+- :func:`caller_memberships` lists the agencies the caller belongs to (the web needs a tenant id before it can open
+  ``tenant_tx()``). It sets ``app.caller_iss`` / ``app.caller_sub`` from the verified token, which the crm-004
+  SELECT-only policies ``member_self_lookup`` / ``tenant_member_lookup`` read; it never sets ``app.tenant_id``.
+- :func:`provisioning_tx` is the platform context that creates an agency and its first members (the Dev seeder
+  ``app.seed`` now, the L1 console ``/crm/ops/v1`` with CRM-13a): ``app.tenant_id`` = the new agency, ``app.actor`` =
+  the platform actor, no membership check (there is no member yet). Request code of ``/crm/v1`` never uses it (a unit
+  test checks the importers).
+
+Both commit when the block exits normally and roll back on any exception (no audit queue).
 """
 
 from __future__ import annotations
@@ -47,6 +59,41 @@ MEMBER_SQL = """
 SELECT member_id, role FROM crm.member
  WHERE tenant_id = $1 AND cognito_iss = $2 AND cognito_sub = $3 AND status = 'active' AND deleted_at IS NULL
 """
+
+
+MEMBERSHIPS_SQL = """
+SELECT t.tenant_id, t.display_name, t.default_locale, t.status AS tenant_status, m.member_id, m.role
+  FROM crm.member m
+  JOIN crm.tenant t ON t.tenant_id = m.tenant_id
+ WHERE m.cognito_iss = $1 AND m.cognito_sub = $2 AND m.status = 'active' AND m.deleted_at IS NULL
+   AND t.deleted_at IS NULL
+ ORDER BY t.display_name, t.tenant_id
+ LIMIT $3
+"""
+# A person belongs to a handful of agencies; the cap keeps one response bounded whatever the data says.
+MAX_MEMBERSHIPS = 50
+PROVISION_ACTOR_PREFIXES = ("platform:", "seed:")
+
+
+@dataclass(frozen=True)
+class Membership:
+    """One agency the caller belongs to (ids, the agency label and role; no personal data)."""
+
+    tenant_id: uuid.UUID
+    display_name: str
+    default_locale: str
+    tenant_status: str
+    member_id: uuid.UUID
+    member_role: str
+
+
+@dataclass(frozen=True)
+class ProvisioningContext:
+    """What platform provisioning may use inside :func:`provisioning_tx`."""
+
+    conn: asyncpg.Connection
+    tenant_id: uuid.UUID
+    actor: str
 
 
 @dataclass(frozen=True)
@@ -141,3 +188,40 @@ async def _write_audit(ctx: TenantContext, events: list[AuditEvent]) -> None:
     if ctx.reader_role is not None:
         await ctx.conn.execute("SET LOCAL ROLE NONE")
     await ctx.conn.executemany(INSERT_SQL, [e.row() for e in events])
+
+
+async def caller_memberships(pool: asyncpg.Pool, caller: Caller) -> list[Membership]:
+    """The caller's active memberships in agencies that are not trashed (locked ones included, with their status)."""
+    if not caller.iss or not caller.sub:
+        raise Forbidden("not_a_member")
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.caller_iss', $1, true)", caller.iss)
+        await conn.execute("SELECT set_config('app.caller_sub', $1, true)", caller.sub)
+        rows = await conn.fetch(MEMBERSHIPS_SQL, caller.iss, caller.sub, MAX_MEMBERSHIPS)
+    return [
+        Membership(
+            tenant_id=r["tenant_id"],
+            display_name=r["display_name"],
+            default_locale=r["default_locale"],
+            tenant_status=r["tenant_status"],
+            member_id=r["member_id"],
+            member_role=r["role"],
+        )
+        for r in rows
+        if r["role"] in MEMBER_ROLES
+    ]
+
+
+@asynccontextmanager
+async def provisioning_tx(
+    pool: asyncpg.Pool, tenant_id: uuid.UUID, *, actor: str
+) -> AsyncIterator[ProvisioningContext]:
+    """Platform context for creating one agency and its first members (no membership check: none exists yet)."""
+    if not isinstance(tenant_id, uuid.UUID):
+        raise TypeError("tenant_id must be a UUID")
+    if not actor.startswith(PROVISION_ACTOR_PREFIXES) or len(actor) > 120:
+        raise ValueError(f"provisioning actor must start with one of {PROVISION_ACTOR_PREFIXES}")
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        await conn.execute("SELECT set_config('app.actor', $1, true)", actor)
+        yield ProvisioningContext(conn=conn, tenant_id=tenant_id, actor=actor)

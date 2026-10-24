@@ -17,3 +17,5 @@ botocore==1.43.49
 structlog==25.5.0
 # Error tracking, same SDK as AA-CIS-App and AA-Booking; off unless SENTRY_DSN is set.
 sentry-sdk[fastapi]==2.70.0
+# Synthetic Dev data only (app.seed, AA-935): EN/VI travellers for the synthetic agencies. Never used by a request.
+Faker==40.40.0

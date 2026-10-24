@@ -6,8 +6,8 @@ type: explanation
 status: active
 owner: nghiep
 audience: [engineer, agent]
-applies_to: [aa-crm-api]
-last_reviewed: 2026-10-23
+applies_to: [aa-crm-api, aa-crm-web]
+last_reviewed: 2026-10-24
 review_every_days: 90
 related: [ARCH-01, ARCH-06-booking, docs/adr/README.md]
 ---
@@ -16,12 +16,14 @@ related: [ARCH-01, ARCH-06-booking, docs/adr/README.md]
 
 AA-Partner is the fourth app of the Adventure Asia ecosystem: the CRM that AA gives to partner travel agencies to run
 their own B2C clients, with live AA supply inside it and privacy by architecture, plus (after the portal move) the
-tenant Content studio, so an agency has one host, one sign-in and one sidebar. Today the repo holds the **skeleton**
-(AA-933, design card CRM-05): API health routes, the three route classes and their token-audience guards,
-`tenant_tx()` on FORCE row level security, the base table template (`crm-002`), the `crm.job` runner (heartbeat and
-job-table retention), CI and the Dev deploy workflow; and the **identity vault** (AA-934, CRM-06): the `KeyProvider`
-with per-tenant DEKs under the KMS data key, AES-GCM field encryption, blind indexes and the append-only audit of
-denials (`crm-003`).
+tenant Content studio, so an agency has one host, one sign-in and one sidebar. Today the repo holds the **walking
+skeleton**: the API (AA-933, design card CRM-05: health routes, the three route classes and their token-audience
+guards, `tenant_tx()` on FORCE row level security, the base table template `crm-002`, the `crm.job` runner); the
+**identity vault** (AA-934, CRM-06: the `KeyProvider` with per-tenant DEKs under the KMS data key, AES-GCM field
+encryption, blind indexes and the append-only audit of denials, `crm-003`); and the web (AA-935, card CRM-07: the
+Next.js agency shell on the partner host with Cognito sign-in, a server session, the BFF allow-list, host routing,
+EN/VI with locale dates, a health page), the agency directory `crm-004` and the Dev seeder of the synthetic agencies,
+CI and the two Dev deploy workflows.
 
 > Read this file before designing or changing anything here (AA-Ecosys steering, "CONTEXT.md first"). Change it in the
 > same PR when a boundary, owner, route class or the stack changes.
@@ -67,7 +69,8 @@ Design sources, in order:
 | Runtime | ECS Fargate **ARM64** service `aa-crm-dev-api` on `aa-cis-dev-cluster` (acc2, us-west-1), desired 0 until the first image |
 | Edge | CloudFront `partner-dev.` -> VPC origin -> internal NLB -> ALB host + `X-AA-Origin` + `/crm/*` rule -> the service (AA-931 spike, ADR 0010 decision 2) |
 | Image | ECR `aa-crm-dev-api`, IMMUTABLE, tag = git SHA, built natively on an arm64 runner |
-| Frontend | `web/` (Next.js) arrives with CRM-07 (AA-935); `portal/` with CRM-P2a (AA-979) |
+| Web | `web/`: Next.js 16 standalone (React 19, TypeScript, vitest), the AA UI kit vendored from AA-CIS-App (inline styles from the kit tokens); ECS Fargate **ARM64** service `aa-crm-dev-web` (port 3000, `/healthz`), ECR `aa-crm-dev-web`, desired 0 until the first image (AA-CIS-Infra `crm_web.tf`). `portal/` arrives with CRM-P2a (AA-979) |
+| Edge for the web | the same CloudFront distribution: the ALB rule `crm_api` (`/crm`, `/crm/*`) stays above `crm_partner_default`, which forwards every other path of the partner host to the web target group |
 
 AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everything `aa-crm-<env>-*`, tag `App = crm`
 (the product is AA-Partner, the resource prefix is `crm`).
@@ -78,7 +81,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 |---|---|---|
 | `/crm/health`, `/crm/health/ready` | no token (rate limited per `CloudFront-Viewer-Address`, IPv6 per /64) | liveness / readiness |
 | `/crm/ci/deploy-gate` | the Deploy Dev workflow's GitHub OIDC token only (`app/auth/ci.py`) | job counts for the deploy guard |
-| `/crm/v1` | PARTNER x {AA-Partner web}; on Dev before AA-939 also EXTERNAL x {`cis-portal`} | `X-AA-Tenant-Id` + `tenant_tx()` (membership in `crm.member`) |
+| `/crm/v1` | PARTNER x {AA-Partner web}; on Dev before AA-939 also EXTERNAL x {`cis-portal`} | `X-AA-Tenant-Id` + `tenant_tx()` (membership in `crm.member`); `GET /crm/v1/memberships` alone needs no header (`caller_memberships()`) |
 | `/crm/ops/v1` | WORKFORCE x {`cis-admin`} | group `cis-admin` reads, `crm-platform-admin` writes |
 | `/crm/staff/v1` | WORKFORCE x {`crm-staff`} | group `crm-ops` or `crm-support` (+ an owner grant for support, CRM-13b) |
 
@@ -102,6 +105,18 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
   `app/db.py`, `app/tenancy.py` and the `app/jobs/` queue modules, only asyncpg calls on `ctx.conn` written inside
   `async with tenant_tx(...) as ctx`; a pool, `request_pool()`, `acquire()`, an alias of `ctx.conn` or a call after
   the block fails.
+- **`caller_memberships(pool, caller)`** (`app/tenancy.py`, AA-935) lists the caller's agencies before any tenant is
+  chosen: one transaction that sets `app.caller_iss` / `app.caller_sub` from the verified token (never
+  `app.tenant_id`), read by the crm-004 SELECT-only policies `member_self_lookup` and `tenant_member_lookup` (TO
+  `crm_app` only). Inside `tenant_tx()` those settings are unset, so `tenant_isolation` alone decides.
+- **`provisioning_tx(pool, tenant_id, actor=...)`** is the platform context that creates an agency and its first
+  members (no membership exists yet): `app.tenant_id` = the new agency, `app.actor` = `seed:*` / `platform:*`. Only
+  `app/agencies.py` and the seeder may use it (`test_provisioning_tx_is_used_only_by_the_provisioning_modules`);
+  `/crm/v1` request code never does.
+- **Agency provisioning** (`app/agencies.py`): on `dev` / `test` / `local` an agency with `is_synthetic = false` is
+  refused with **422** `synthetic_required` (card CRM-07 R test); on `prod` a synthetic one with 422
+  `synthetic_not_allowed`. Names are NFC-normalised (a Vietnamese name round-trips byte for byte). Creating the same
+  agency again converges (label, locale, roles), never flips `is_synthetic`, never re-activates a disabled member.
 - **Base table template** (`api/db/templates/tenant_table.sql`, design v3 §3.2): `tenant_id`, `created_at`,
   `created_by`, `updated_at`; trash columns `deleted_at`, `deleted_by`, `purge_after` from the first migration (set
   together); ENABLE + FORCE RLS with one `tenant_isolation` policy `TO` the six CRM roles (`crm_owner`, `crm_app`,
@@ -162,6 +177,8 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 
 ## CI and release
 
+- Web checks (AA-935): **Web Build** (vitest, `next build` with the type check, standalone smoke) and **Web Docker Build
+  Check** (native arm64 image, container smoke, Trivy); Security Audit also runs `npm audit` for `web/`.
 - Required checks: **Lint**, **Security Audit** (DM-6.10 resource-ID scan, pip-audit), **Unit Tests** (coverage >= 90 %),
   **Integration Tests** (PostgreSQL 15, no skips), **Docker Build Check** (native arm64 build, container smoke, Trivy,
   SBOM); plus **Docs lint**, **PR title**, **gitleaks**. Non-required: **Vendored CIS copies**.
@@ -186,6 +203,50 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 - release-please (manifest mode) keeps one release PR; the version is baked into the image and returned by
   `/crm/health`.
 
+## Web (`web/`, AA-935)
+
+- **Hosts** (`web/lib/hosts.ts`, `web/proxy.ts`): the partner host serves the agency app; the client host
+  (`WEB_CLIENT_HOSTS`, later `go-dev.`) serves `/c/*` only; any other Host is 404; `/healthz` answers any Host (the ALB
+  health check sends the task IP). Cookies are host-only, so the two hosts never share a session.
+- **Sign-in**: Cognito managed login, authorization code + PKCE, confidential client (on Dev the EXTERNAL `cis-portal`
+  client until AA-939, design v3 Fix C10). The portal itself still signs in with its tenant API key, so there is no
+  shared session until AA-979 P2b (design-final §4.4).
+- **Server session** (`web/lib/session.ts`, `web/lib/seal.ts`): sealed (AES-256-GCM, HKDF key per purpose) httpOnly
+  cookies `__Host-aa_crm_s` (access token, identity, agency picked) and `__Secure-aa_crm_r` (refresh token, Path
+  `/auth` only); no token reaches page JavaScript. The proxy sends a page without a valid access token to
+  `/auth/refresh`, which renews it or falls back to sign-in.
+- **BFF allow-list** (`web/lib/bff.ts`): the browser calls `/bff/<path>` on its own origin; only listed (method, path)
+  pairs are forwarded to `/crm/v1/<path>`, with the session's token and the session's agency (`X-AA-Tenant-Id` never
+  comes from the browser). Cross-site writes are refused first (vendored `lib/crossSiteGuard.ts`, AA-911 rule).
+  Adding a browser call = adding one line there.
+- **Agency picker**: `GET /crm/v1/memberships` -> one active agency is picked automatically, several -> the chooser;
+  `/auth/agency` checks the id against the caller's own list before it goes into the session.
+- **EN/VI and dates** (`web/lib/i18n.ts`, `web/lib/dates.ts`, R32): date locale en-AU, en-GB, en-US or vi-VN (the
+  person's cookie, else the agency's `default_locale`, else Accept-Language), UI language from it. Dates are always
+  shown with the month spelled ("3 Apr" en-AU, "Apr 3" en-US); typed dates follow the locale's order and the field
+  shows the reading.
+- **Shell**: the whole agency IA of design v3 §2.2 in the sidebar (each section an empty state that names its card in
+  `data-card`), the Content studio cross-link (`CONTENT_STUDIO_URL`), Settings with language and dates. The AA-CIS-App
+  portal sidebar links back ("Open CRM").
+- **UI kit**: `web/app/_kit/*`, `web/app/_brand/tokens.ts` and `web/lib/{sameOrigin,crossSiteGuard,bffPath,proxyResponse}.ts`
+  are byte copies of AA-CIS-App `frontend/` (CI "Vendored CIS copies"); `web/app/_kit/index.ts` is the CRM's barrel.
+- **Configuration** (task environment, AA-CIS-Infra `crm_web.tf`; meanings in `web/lib/config.ts`): `ENVIRONMENT`,
+  `WEB_PUBLIC_ORIGIN`, `WEB_PARTNER_HOSTS`, `WEB_CLIENT_HOSTS`, `CRM_API_ORIGIN`, `COGNITO_DOMAIN`, `COGNITO_CLIENT_ID`,
+  `CONTENT_STUDIO_URL`, and from Secrets Manager `COGNITO_CLIENT_SECRET`, `WEB_SESSION_SECRET`. Missing identity values
+  turn sign-in off (the pages say so) while `/healthz` stays up.
+- **Deploy**: `.github/workflows/deploy-web-dev.yml` (same model as the API deploy, no job guard: the web runs no
+  worker), gated by the `dev` environment variable `CRM_WEB_ENABLED`.
+
+## Dev seeder (`api/app/seed/`, AA-935)
+
+`python -m app.seed` inside the API container (ECS Exec on `aa-crm-dev-api`; it has the `crm_app` DSN): DRY RUN by
+default (reads state, writes nothing), `--apply` creates or converges the three synthetic agencies of
+`app/seed/catalogue.py` (fixed UUIDv5 ids, one with a Vietnamese name, default locales vi-VN / en-AU / en-US) and the
+members given as `--member KEY:ROLE:SUB` (the subjects the AA-CIS-Infra e2e user script prints; issuer = partner pool
+when set, else EXTERNAL). Faker EN/VI travellers (`app/seed/travellers.py`, deterministic, NFC, `.invalid` e-mail) are
+generated and counted; they are written by the intake card (AA-936) into `crm.traveler` through `app.vault`. Refuses to run
+outside `dev` / `test` / `local`. Output: one JSON line per agency, ids, labels and counts only.
+
 ## Configuration (environment of the ECS task, AA-CIS-Infra `crm_app.tf`)
 
 `DATABASE_URL` (secret `crm/dev/database-url`), `DB_SSL`, `ENVIRONMENT`, `WORKER_ENABLED`, `JOB_RETENTION_DRY_RUN`,
@@ -207,3 +268,7 @@ container: `python -m app.vault.selftest` (KMS round trip under the nil tenant c
 - **DEK / KEK**: a tenant data key (one per agency per purpose and version) and the key that wraps it (the KMS data
   key, or an agency's own key under BYOK later). **Blind index**: a keyed, truncated hash of a normalised value for
   exact match without decrypting.
+- **Synthetic agency**: a Dev agency with `is_synthetic = true` and invented data (`app/seed/`); the only kind Dev
+  accepts (ADR 0010 decision 3).
+- **Partner host / client host**: the agency app's host (Dev `partner-dev.`) and the travellers' host (later
+  `go-dev.`); never one session across both.

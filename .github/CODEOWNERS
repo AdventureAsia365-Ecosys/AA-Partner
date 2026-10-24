@@ -22,5 +22,19 @@
 /api/app/tenancy.py                           @pqnghiep1354
 /api/app/jobs/payload_guard.py                @pqnghiep1354
 
+# CRM web sign-in, session cookies, host routing and the BFF allow-list (AA-935)
+/web/proxy.ts                                 @pqnghiep1354
+/web/app/auth/                                @pqnghiep1354
+/web/app/bff/                                 @pqnghiep1354
+/web/lib/session.ts                           @pqnghiep1354
+/web/lib/seal.ts                              @pqnghiep1354
+/web/lib/oauth.ts                             @pqnghiep1354
+/web/lib/bff.ts                               @pqnghiep1354
+/web/lib/hosts.ts                             @pqnghiep1354
+
+# Agency provisioning (the Dev synthetic-only rule) and the seeder
+/api/app/agencies.py                          @pqnghiep1354
+/api/app/seed/                                @pqnghiep1354
+
 # Agent rules
 /.claude/                                     @pqnghiep1354
