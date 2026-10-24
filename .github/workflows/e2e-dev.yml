@@ -12,6 +12,8 @@ name: E2E Dev
 # AA-CIS-Infra tools/identity/crm_dev_identity.py e2e-users --pool partner). Empty = e-mail code sign-in (EXTERNAL).
 # The one-off "invite -> active < 5 min" run (e2e/tests/invite.spec.ts) is the `invite` input, with variable
 # E2ECRMINVITEE (the invitee address; reset its account first: crm_dev_identity.py invitee-reset --apply).
+# AA-943 (CRM-15): e2e/tests/slice2-m1m2.spec.ts runs in the same job (stage engine, planning form, call slot, gates,
+# Undo, bulk preview, cancel); it needs crm-012 applied and the AA-943 API + web deployed. Longer job timeout for it.
 on:
   workflow_dispatch:
     inputs:
@@ -34,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     environment: e2e
-    timeout-minutes: 15
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: e2e

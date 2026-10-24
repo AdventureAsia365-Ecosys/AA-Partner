@@ -3,9 +3,12 @@
 // and the pure helpers the pages use: stage order, the moves Slice 1 opens, short names for cards, "reply in 2 h",
 // party and month labels. No personal data is formatted here beyond the display name the API already decrypted
 // for this page view (one list_view audit event per board load, design v3 §4.4). Edge-safe, unit-tested.
+// AA-943 (CRM-15): every crm-012 edge, the gates and their override reasons, the cancel reasons, the Closed group,
+// the quiet flag, Stage 2 completeness and the answers of the stage-engine routes (moves, Undo, bulk, cancel).
 
 import { formatDate, type DateLocale } from "./dates";
 import { fmt, type Lang, type MessageKey, t } from "./i18n";
+import type { PlanPage } from "./planningForm";
 
 export const BOARD_STAGES = ["inquiry", "qualifying", "proposal", "booked", "pre_departure", "travelling"] as const;
 export type BoardStage = (typeof BOARD_STAGES)[number];
@@ -25,16 +28,60 @@ export const LOST_REASONS = [
 ] as const;
 export type LostReason = (typeof LOST_REASONS)[number];
 
-/** The moves Slice 1 opens (mirrors crm-005; the database stays the judge, CRM-15 opens the rest). */
-export const MOVES: Partial<Record<Stage, readonly Stage[]>> = {
+export const CLOSED_STAGES = ["completed", "lost", "cancelled"] as const;
+export type ClosedStage = (typeof CLOSED_STAGES)[number];
+
+/** Every edge of crm-012 a move may take (mirrors API app/stages.py ALLOWED_MOVES; the database stays the judge).
+ * `cancelled` is reached only through the cancel flow (dry run first), never by a move or a drop. */
+export const MOVES: Record<Stage, readonly Stage[]> = {
   inquiry: ["qualifying", "lost"],
-  qualifying: ["inquiry", "lost"],
+  qualifying: ["inquiry", "proposal", "lost"],
+  proposal: ["qualifying", "booked", "lost"],
+  booked: ["pre_departure", "travelling"],
+  pre_departure: ["travelling"],
+  travelling: ["completed"],
+  completed: [],
   lost: ["inquiry"],
+  cancelled: [],
 };
 
 export function canMove(from: Stage, to: Stage): boolean {
   return (MOVES[from] ?? []).includes(to);
 }
+
+/** The gated edges (crm-012): Stage 2 >= 80 % or an override; booking / Stage 3 by override only until CRM-18 / 25. */
+export type Gate = "stage2" | "booking" | "stage3";
+export const GATES: Partial<Record<`${Stage}>${Stage}`, Gate>> = {
+  "qualifying>proposal": "stage2",
+  "proposal>booked": "booking",
+  "booked>pre_departure": "stage3",
+};
+export const OVERRIDE_REASONS: Record<Gate, readonly string[]> = {
+  stage2: ["client_in_hurry", "repeat_client", "info_by_phone", "other"],
+  booking: ["manual_booking"],
+  stage3: ["manual_stage3"],
+};
+export function gateOf(from: Stage, to: Stage): Gate | null {
+  return GATES[`${from}>${to}`] ?? null;
+}
+
+export const CANCEL_REASONS = [
+  "client_request",
+  "client_illness",
+  "travel_advisory",
+  "force_majeure",
+  "supplier_failure",
+  "aa_cancelled",
+  "payment_not_received",
+  "duplicate",
+  "other",
+] as const;
+export type CancelReason = (typeof CANCEL_REASONS)[number];
+export const CANCELLABLE: readonly Stage[] = ["booked", "pre_departure", "travelling"];
+/** The Stage 2 percentage the Proposal gate needs (API app/intake/completeness.py STAGE2_GATE). */
+export const STAGE2_GATE = 80;
+/** How long a move, a bulk move or a send can be taken back (API UNDO_SECONDS; the DB allows 15 s). */
+export const UNDO_MS = 10_000;
 
 export interface Card {
   trip_id: string;
@@ -56,10 +103,22 @@ export interface Card {
   submissions: number;
   last_inquiry_at: string;
   stage_entered_at: string;
+  // AA-943: optional so a board from before the crm-012 API still renders.
+  last_activity_at?: string | null;
+  quiet_days?: number;
+  quiet?: boolean;
+  /** Stage 2 % on Inquiry / Qualifying cards, else null. */
+  stage2_percent?: number | null;
+}
+
+export interface ClosedCard extends Omit<Card, "stage"> {
+  stage: ClosedStage;
 }
 
 export interface Board {
   stages: { stage: BoardStage; count: number; cards: Card[]; truncated: boolean }[];
+  /** AA-943: completed / lost / cancelled, newest activity first. */
+  closed?: { count: number; counts: Record<ClosedStage, number>; cards: ClosedCard[] };
   waiting_on_counts: Record<WaitingOn, number>;
   total: number;
   filter: { waiting_on: WaitingOn | null; owner: "anyone" | "me" };
@@ -88,16 +147,145 @@ export interface Trip {
   lost_reason_code: LostReason | null;
   last_inquiry_at: string;
   created_at: string;
+  // AA-943 (crm-012)
+  intake_completeness?: Partial<Record<"s1" | "s2" | "s3", number>>;
+  cancel_reason_code?: CancelReason | null;
+  last_activity_at?: string | null;
+  quiet_days?: number;
+  quiet?: boolean;
+}
+
+export interface Stage2Link {
+  link_id: string;
+  status: "sent" | "opened" | "submitted" | "expired" | "revoked";
+  sent_at: string;
+  expires_at: string;
+  opened_at: string | null;
+  submitted_at: string | null;
+}
+
+export interface HistoryRow {
+  from_stage: Stage | null;
+  to_stage: Stage;
+  reason_code: string;
+  at: string;
+  actor: string;
+  history_id?: string;
+  override_reason_code?: string | null;
+  undo_of?: string | null;
+  batch_id?: string | null;
 }
 
 export interface TripView {
   trip: Trip;
   party: { traveler_id: string; role: "lead" | "companion"; display_name: string; preferred_channel: string | null; has_email: boolean; has_phone: boolean }[];
-  tasks: { task_id: string; kind: string; assignee_member_id: string | null; status: "open" | "done" | "skipped"; due_at: string | null; done_at: string | null }[];
+  tasks: {
+    task_id: string;
+    kind: string;
+    priority?: "normal" | "urgent";
+    assignee_member_id: string | null;
+    status: "open" | "done" | "skipped";
+    due_at: string | null;
+    done_at: string | null;
+  }[];
   notes: { note_id: string; kind: string; body: string; created_at: string; created_by: string }[];
-  history: { from_stage: Stage | null; to_stage: Stage; reason_code: string; at: string; actor: string }[];
-  submissions: { submission_id: string; outcome: "created" | "attached" | null; status: string; created_at: string; answers: Record<string, unknown> | null }[];
+  history: HistoryRow[];
+  submissions: { submission_id: string; outcome: "created" | "attached" | "applied" | null; status: string; created_at: string; answers: Record<string, unknown> | null }[];
   allowed_moves: Stage[];
+  /** AA-943: owner / agent may cancel (the API checks the role too). */
+  can_cancel?: boolean;
+  stage2_link?: Stage2Link | null;
+}
+
+/** GET /trips/{id}/stage2: the planning form's pages, completeness with the missing codes, and the F2 answers. */
+export interface Completeness {
+  s1: number;
+  s2: number;
+  s3: number;
+  missing_s1: string[];
+  missing_s2: string[];
+  stage2_gate: number;
+}
+
+export interface Stage2View {
+  schema_key: string;
+  version: number;
+  pages: PlanPage[];
+  completeness: Completeness;
+  answers: Record<string, unknown>;
+}
+
+/** Every move / undo answers with this (POST /trips/{id}/stage, /stage/undo). */
+export interface UndoToken {
+  history_id: string;
+  undo_until: string;
+}
+
+export interface MoveResult {
+  trip_id: string;
+  from_stage?: Stage;
+  stage: Stage;
+  waiting_on: WaitingOn;
+  allowed_moves: Stage[];
+  override_reason_code?: string | null;
+  undo?: UndoToken;
+  stage2_sent?: SendResult | null;
+  stage2_skipped?: string;
+}
+
+export interface SendResult {
+  link_id: string;
+  link_path: string;
+  expires_at: string;
+  dispatch_id: string;
+  send_after: string;
+  reissued_from: string | null;
+}
+
+export interface BulkPreview {
+  to: Stage;
+  eligible: string[];
+  blocked: { trip_id: string; code: string }[];
+  preview_hash: string;
+  moved?: number;
+  batch_id?: string;
+  undo?: UndoToken;
+}
+
+export interface CancelPreview {
+  trip_id: string;
+  from_stage: Stage;
+  cancel_reason_code: CancelReason;
+  dry_run: boolean;
+  effects: { kind: string; count: number }[];
+  stage?: "cancelled";
+}
+
+/** A 409 of the stage engine that a dialog can answer: the gate and the override reasons the API offers. */
+export interface GateRefusal {
+  detail: "stage2_incomplete" | "gate_unmet";
+  gate: Gate;
+  s2?: number;
+  missing: string[];
+  override_reasons: string[];
+}
+
+/** Reads a refused move's body: a gate the member may override, or null for any other refusal. */
+export function gateRefusal(body: unknown, from: Stage, to: Stage): GateRefusal | null {
+  if (!body || typeof body !== "object") return null;
+  const b = body as Record<string, unknown>;
+  if (b.detail !== "stage2_incomplete" && b.detail !== "gate_unmet") return null;
+  const gate = (typeof b.gate === "string" ? b.gate : gateOf(from, to)) as Gate | null;
+  if (!gate || !(gate in OVERRIDE_REASONS)) return null;
+  const offered = Array.isArray(b.override_reasons) ? b.override_reasons.filter((r): r is string => typeof r === "string") : [];
+  return {
+    detail: b.detail,
+    gate,
+    s2: typeof b.s2 === "number" ? b.s2 : undefined,
+    missing: Array.isArray(b.missing) ? b.missing.filter((m): m is string => typeof m === "string") : [],
+    // Only reasons this web knows how to word; the API's list wins when it narrows ours.
+    override_reasons: (offered.length ? offered : [...OVERRIDE_REASONS[gate]]).filter((r) => OVERRIDE_REASONS[gate].includes(r)),
+  };
 }
 
 export interface Member {
@@ -142,6 +330,27 @@ export function dueIn(dueAt: string | null, now: number = Date.now()): { label: 
   const hours = Math.round(minutes / 60);
   if (hours < 48) return { label: `${hours} h`, overdue: false };
   return { label: `${Math.round(hours / 24)} d`, overdue: false };
+}
+
+/** The board's move refusal message: a known code worded, anything else the generic one. */
+export function moveErrorKey(detail: string): MessageKey {
+  const known = ["transition_not_allowed", "use_cancel_flow", "undo_expired", "already_in_stage", "preview_stale", "too_many_trips", "nothing_to_move", "lost_reason_required"];
+  return (known.includes(detail) ? `move.error.${detail}` : "trip.error") as MessageKey;
+}
+
+/** "Quiet 4 d" on cards not touched for more than 3 days (crm-012 last_activity_at; the API sets `quiet`). */
+export function quietDays(card: Pick<Card, "quiet" | "quiet_days">): number | null {
+  return card.quiet && typeof card.quiet_days === "number" ? card.quiet_days : null;
+}
+
+/** The trip ids a column's bulk move covers: the whole column when no filter is set (the API reads the stage, at most
+ * 200 trips), otherwise only the cards on screen (a filtered board must not move trips the member cannot see). */
+export function bulkScope(
+  column: { stage: BoardStage; cards: Pick<Card, "trip_id">[] },
+  filter: Board["filter"],
+): { from_stage: BoardStage } | { trip_ids: string[] } {
+  if (!filter.waiting_on && filter.owner === "anyone") return { from_stage: column.stage };
+  return { trip_ids: column.cards.map((c) => c.trip_id) };
 }
 
 export function waitingLabel(lang: Lang, waiting: WaitingOn): string {

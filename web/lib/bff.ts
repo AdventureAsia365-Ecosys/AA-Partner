@@ -88,6 +88,18 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   // AA-941 (CRM-13a): the owner confirms an export / deletion request AA raised (decline = cancel).
   { method: "POST", pattern: new RegExp(`^lifecycle/offboarding/${UUID}/accept$`), tenant: true, card: "AA-941" },
   { method: "GET", pattern: new RegExp(`^lifecycle/offboarding/${UUID}/export$`), tenant: true, card: "AA-942" },
+  // AA-943 (CRM-15): Undo of a move, cancel (dry run first: ?dry_run=true|false), bulk moves and their Undo, the
+  // Traveller info panel (Stage 2: read, send the planning form, fill in from a call), Settings > Forms (timezone,
+  // auto-send, call slots; owner only, the API checks).
+  { method: "POST", pattern: new RegExp(`^trips/${UUID}/stage/undo$`), tenant: true, card: "AA-943" },
+  { method: "POST", pattern: new RegExp(`^trips/${UUID}/cancel$`), tenant: true, card: "AA-943" },
+  { method: "POST", pattern: /^pipeline\/bulk-stage$/, tenant: true, card: "AA-943" },
+  { method: "POST", pattern: /^pipeline\/bulk-stage\/undo$/, tenant: true, card: "AA-943" },
+  { method: "GET", pattern: new RegExp(`^trips/${UUID}/stage2$`), tenant: true, card: "AA-943" },
+  { method: "PUT", pattern: new RegExp(`^trips/${UUID}/stage2$`), tenant: true, card: "AA-943" },
+  { method: "POST", pattern: new RegExp(`^trips/${UUID}/stage2/send$`), tenant: true, card: "AA-943" },
+  { method: "GET", pattern: /^settings\/pipeline$/, tenant: true, card: "AA-943" },
+  { method: "PUT", pattern: /^settings\/pipeline$/, tenant: true, card: "AA-943" },
 ];
 
 /** Calls only the web server makes (lib/crmApi.ts crmCall), never reachable through /bff from the browser. */

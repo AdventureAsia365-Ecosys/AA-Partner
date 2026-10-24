@@ -252,6 +252,8 @@ def _system_actor_kind(actor: str) -> str:
         return "aa_ops"
     if actor.startswith("invitation:"):
         return "user"  # the invited person accepting (AA-939)
+    if actor.startswith("client_link:"):
+        return "traveler"  # a client filling a form from a signed link (AA-943)
     return "system"
 
 
@@ -617,6 +619,87 @@ async def invitation_tx(pool: asyncpg.Pool, token_hash_hex: str) -> AsyncIterato
         try:
             async with conn.transaction():  # savepoint: the step's work
                 yield ctx, invitation
+        except Exception as exc:
+            denied = [e for e in ctx.audit_events if e.outcome == "denied"]
+            if not denied:
+                raise
+            await _write_audit(ctx, denied)
+            pending = exc
+        else:
+            await _write_audit(ctx, ctx.audit_events)
+    if pending is not None:
+        raise pending
+
+
+CLIENT_LINK_SQL = """
+SELECT link_id, tenant_id FROM crm.client_link
+ WHERE token_hash = decode($1, 'hex') AND status IN ('sent', 'opened', 'submitted') AND expires_at > now()
+   AND deleted_at IS NULL
+"""
+# The same row again inside the agency, locked (two submissions through one link run one after the other) and still
+# live: a link revoked or expired between the two reads is gone too.
+CLIENT_LINK_LOCK_SQL = """
+SELECT l.link_id, l.trip_id, l.traveler_id, l.purpose, l.status, l.expires_at
+  FROM crm.client_link l JOIN crm.trip t ON t.trip_id = l.trip_id AND t.deleted_at IS NULL
+ WHERE l.link_id = $1 AND l.status IN ('sent', 'opened', 'submitted') AND l.expires_at > now()
+   AND l.deleted_at IS NULL
+   FOR UPDATE OF l
+"""
+
+
+@dataclass(frozen=True)
+class ClientLink:
+    """The live signed link :func:`client_link_tx` found by its token (ids and codes only)."""
+
+    link_id: uuid.UUID
+    tenant_id: uuid.UUID
+    trip_id: uuid.UUID
+    traveler_id: uuid.UUID | None
+    purpose: str
+    status: str
+
+
+@asynccontextmanager
+async def client_link_tx(
+    pool: asyncpg.Pool, token_hash_hex: str, *, purpose: str
+) -> AsyncIterator[tuple[SystemContext, ClientLink]]:
+    """A client page opened from a signed link (AA-943, crm-012; the Stage 2 planning form C-02): the token's SHA-256
+    (hex) finds one live ``crm.client_link`` row through the SELECT-only policy ``client_link_token_lookup`` before
+    any agency is known; then ``app.tenant_id`` = its agency (which must be active) and ``app.actor`` =
+    ``client_link:<id>``, and the row is re-read locked. Unknown, expired, revoked or trashed token, a link made for
+    another ``purpose`` (a page opens only its own kind of link), a trashed trip or a locked agency: 404
+    ``link_not_found`` (the same answer, so tokens cannot be probed). Audit semantics as
+    :func:`system_tx`. Only ``app/intake/stage2_public.py`` may open it."""
+    if not isinstance(token_hash_hex, str) or len(token_hash_hex) != 64:
+        raise NotFound("link_not_found")
+    pending: Exception | None = None
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.client_link_hash', $1, true)", token_hash_hex)
+        row = await conn.fetchrow(CLIENT_LINK_SQL, token_hash_hex)
+        await conn.execute("SELECT set_config('app.client_link_hash', '', true)")
+        if row is None:
+            raise NotFound("link_not_found")
+        tenant_id = row["tenant_id"]
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        if await conn.fetchval(TENANT_SQL, tenant_id) != "active":
+            raise NotFound("link_not_found")
+        row = await conn.fetchrow(CLIENT_LINK_LOCK_SQL, row["link_id"])
+        if row is None or row["purpose"] != purpose:
+            raise NotFound("link_not_found")
+        actor = f"client_link:{row['link_id']}"
+        await conn.execute("SELECT set_config('app.actor', $1, true)", actor)
+        link = ClientLink(
+            link_id=row["link_id"],
+            tenant_id=tenant_id,
+            trip_id=row["trip_id"],
+            traveler_id=row["traveler_id"],
+            purpose=row["purpose"],
+            status=row["status"],
+        )
+        ctx = SystemContext(conn=conn, tenant_id=tenant_id, actor=actor)
+        try:
+            async with conn.transaction():  # savepoint: the page's work
+                yield ctx, link
         except Exception as exc:
             denied = [e for e in ctx.audit_events if e.outcome == "denied"]
             if not denied:

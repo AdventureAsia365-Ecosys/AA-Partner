@@ -35,6 +35,12 @@ export interface PublicForm {
   locale?: string;
   allowed_origins: string[];
   privacy_notice_url: string | null;
+  /** AA-943: the page grouping the hosted form shows (trip, party, contact); absent on an older API. */
+  pages?: { key: string; fields: string[] }[];
+  /** AA-943 (R15): the free call starts (ISO UTC), the agency timezone and the call length; [] = no slots offered. */
+  call_slots?: string[];
+  timezone?: string;
+  call_minutes?: number | null;
 }
 
 export type FormLookup = { ok: true; form: PublicForm } | { ok: false; status: number };
@@ -154,4 +160,60 @@ export function parseAges(text: string): number[] | null {
   const parts = text.split(/[,;\s]+/).filter(Boolean);
   const ages = parts.map((p) => (/^\d{1,2}$/.test(p) ? Number(p) : NaN));
   return ages.every((a) => Number.isInteger(a) && a >= 0 && a <= 17) ? ages : null;
+}
+
+/** AA-943 (R15): the offered call starts grouped by day in the viewer's timezone, worded in the page locale. The value
+ * stays the API's ISO UTC string (the submission names it; the API checks it is still offered). */
+export function slotOptions(
+  slots: string[],
+  locale: string,
+  timeZone: string,
+): { day: string; options: { value: string; label: string }[] }[] {
+  const day = new Intl.DateTimeFormat(locale, { weekday: "short", day: "numeric", month: "short", timeZone });
+  const time = new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", timeZone });
+  const groups = new Map<string, { value: string; label: string }[]>();
+  for (const value of slots) {
+    const at = new Date(value);
+    if (Number.isNaN(at.getTime())) continue;
+    const key = day.format(at);
+    const list = groups.get(key) ?? [];
+    list.push({ value, label: time.format(at) });
+    groups.set(key, list);
+  }
+  return [...groups].map(([d, options]) => ({ day: d, options }));
+}
+
+/** The form's fields in page order (the page grouping when the API sends one, else the field list). */
+export function fieldOrder(form: Pick<PublicForm, "fields" | "pages">): string[] {
+  const grouped = (form.pages ?? []).flatMap((p) => p.fields);
+  const rest = form.fields.map((f) => f.name).filter((n) => !grouped.includes(n));
+  return [...grouped, ...rest];
+}
+
+/** The first refused field in page order (the form scrolls to it and focuses it), or null. */
+export function firstBadField(form: Pick<PublicForm, "fields" | "pages">, bad: string[]): string | null {
+  return fieldOrder(form).find((n) => bad.includes(n)) ?? bad[0] ?? null;
+}
+
+/** AA-943 (R15): Settings > Forms, the call-slot rules as the API stores them (crm-012 crm.call_slot_rules_ok). */
+export interface SlotWindow {
+  /** ISO weekday, Monday = 1. */
+  dow: number;
+  start: string;
+  end: string;
+}
+
+export interface PipelineSettings {
+  timezone: string;
+  stage2_auto_send: boolean;
+  call_slot_rules: { windows?: SlotWindow[]; duration_min?: number; horizon_days?: number };
+}
+
+export const SLOT_DEFAULTS = { duration_min: 30, horizon_days: 14, max_windows: 21 } as const;
+
+/** The rules body: {} when there is no window (no call offered), else windows sorted by day and start. */
+export function callSlotRules(windows: SlotWindow[], durationMin: number, horizonDays: number): PipelineSettings["call_slot_rules"] {
+  if (windows.length === 0) return {};
+  const sorted = [...windows].sort((a, b) => a.dow - b.dow || a.start.localeCompare(b.start));
+  return { windows: sorted.map((w) => ({ dow: w.dow, start: w.start, end: w.end })), duration_min: durationMin, horizon_days: horizonDays };
 }

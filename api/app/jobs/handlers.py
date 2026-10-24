@@ -6,6 +6,7 @@
   :mod:`app.intake.process`.
 - ``crm_placeholder_purge`` (AA-938, hourly, :class:`app.privacy.purge.HourlyPlaceholderPurge`): expired F3
   placeholder maps (24 h), every agency in one DELETE through the crm-009 purge policy.
+- ``crm_stage_date_rule`` (AA-943, hourly, :class:`app.stages_job.HourlyStageDateRule`): the trip date rule.
 - ``crm_job_retention`` (daily, :class:`DailyRetentionSchedule`): data standards §7 row ``crm.job`` — succeeded rows
   30 days, cancelled 90 days after ``finished_at``; queued / running never. **Failed rows are kept**: §7 says "archive
   before delete: failed rows only", and the CRM has no archive bucket yet (CRM-04 rest), so nothing that must be
@@ -41,6 +42,7 @@ from app.jobs.kinds import (
     LIFECYCLE,
     OFFBOARD,
     PLACEHOLDER_PURGE,
+    STAGE_DATE_RULE,
 )
 from app.jobs.queue import Job
 from app.jobs.worker import Handler, MaintenanceHook, Recurring
@@ -136,6 +138,7 @@ def build_handlers(
     from app.lifecycle import job as lifecycle_job
     from app.lifecycle import offboarding
     from app.privacy.purge import purge_expired_maps
+    from app.stages_job import date_rule
 
     return {
         HEARTBEAT: heartbeat,
@@ -149,6 +152,7 @@ def build_handlers(
             keys=keys, store=documents, dry_run=lifecycle_dry_run, dek_cache_ttl_s=dek_cache_ttl_s
         ),
         DISPATCH: dispatch_worker.build_handler(sender),
+        STAGE_DATE_RULE: date_rule,
     }
 
 
@@ -195,6 +199,7 @@ def build_hooks(*, retention_utc_hour: int, now: Callable[[], datetime] | None =
     from app.audit_export.retention import DailyAuditRetentionSchedule
     from app.lifecycle.job import DailyLifecycleSchedule
     from app.privacy.purge import HourlyPlaceholderPurge
+    from app.stages_job import HourlyStageDateRule
 
     clock = now or (lambda: datetime.now(UTC))
     return (
@@ -203,6 +208,7 @@ def build_hooks(*, retention_utc_hour: int, now: Callable[[], datetime] | None =
         DailyAuditRetentionSchedule(retention_utc_hour, clock),
         HourlyPlaceholderPurge(clock),
         DailyLifecycleSchedule(retention_utc_hour, clock),
+        HourlyStageDateRule(clock),
     )
 
 
@@ -210,7 +216,7 @@ def build_hooks(*, retention_utc_hour: int, now: Callable[[], datetime] | None =
 # goes through a due-now maintenance hook instead (DailyRetentionSchedule): never add one here.
 RECURRING: tuple[Recurring, ...] = (Recurring(HEARTBEAT, every_seconds=60, keep_days=2),)
 SCHEDULED_KINDS: frozenset[str] = frozenset(
-    {JOB_RETENTION, AUDIT_EXPORT, AUDIT_RETENTION, PLACEHOLDER_PURGE, LIFECYCLE}
+    {JOB_RETENTION, AUDIT_EXPORT, AUDIT_RETENTION, PLACEHOLDER_PURGE, LIFECYCLE, STAGE_DATE_RULE}
 )
 # Kinds queued by request code, one row per event (AA-936: each stored inquiry), never scheduled.
 EVENT_KINDS: frozenset[str] = frozenset({INTAKE_PROCESS, OFFBOARD, DISPATCH})

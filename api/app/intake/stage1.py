@@ -47,9 +47,21 @@ MAX_CHILDREN = 20
 MAX_ADULTS = 50
 MAX_NIGHTS = 90
 MAX_FLEX = 60
+# A body with more keys than this is refused before anything is counted (hidden_answers_dropped stays inside the
+# crm-005 CHECK, 0..1000).
+MAX_KEYS = 100
 
 _MONTH = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")
 _CONTROL = re.compile(r"[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]")
+
+TRIP_PAGE = ("destinations", "month", "start_date", "end_date", "date_flex_days", "nights", "trip_style", "budget_band")
+PARTY_PAGE = ("adults", "child_ages", "party_type", "companions")
+CONTACT_PAGE = (
+    "name", "email", "phone", "preferred_channel", "heard_from", "message", "call_slot", "consent_contact",
+    "consent_marketing",
+)  # fmt: skip
+PAGES: tuple[tuple[str, tuple[str, ...]], ...] = (("trip", TRIP_PAGE), ("party", PARTY_PAGE), ("contact", CONTACT_PAGE))
+_SLOT = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00Z$")
 
 # Keys the page sends that are not answers (the honeypot field is the form's own name and handled first).
 META_KEYS = frozenset({"client_submission_id", "locale"})
@@ -98,9 +110,13 @@ def definition() -> dict[str, Any]:
                 "max_items": MAX_COMPANIONS,
                 "collapsed": True,
             },
+            {"name": "call_slot", "type": "call_slot", "required": False},
             {"name": "consent_contact", "type": "consent", "required": True},
             {"name": "consent_marketing", "type": "consent", "required": False},
         ],
+        # AA-943 (CRM-15): the page grouping the hosted form shows (jump to the first error); the fields above stay the
+        # validator's list.
+        "pages": [{"key": key, "fields": list(names)} for key, names in PAGES],
     }
 
 
@@ -126,6 +142,7 @@ class Stage1Answers:
     message: str | None = None
     companions: tuple[str, ...] = ()
     consent_marketing: bool = False
+    call_slot: str | None = None
     locale: str = "en"
     client_submission_id: str = ""
     hidden_answers_dropped: int = field(default=0, compare=False)
@@ -218,7 +235,7 @@ def earliest_travel_day(today: date | None = None) -> date:
 def validate(raw: dict[str, Any], *, honeypot_field: str, today: date | None = None) -> Stage1Answers:
     """Normalised answers, or :class:`ConsentMissing` / :class:`Stage1Invalid`. The honeypot is checked by the
     caller first (:func:`honeypot_filled`). A start date or month in the past is refused (``today`` for tests)."""
-    if not isinstance(raw, dict):
+    if not isinstance(raw, dict) or len(raw) > MAX_KEYS:
         raise Stage1Invalid(["body"])
     if raw.get("consent_contact") is not True:
         raise ConsentMissing
@@ -296,6 +313,7 @@ def validate(raw: dict[str, Any], *, honeypot_field: str, today: date | None = N
     take("companions", companions)
     take("consent_marketing", flag)
     take("locale", lambda v: _choice(v, LOCALES) or "en")
+    take("call_slot", _call_slot)
     take("client_submission_id", submission_id)
     if not bad:
         earliest = earliest_travel_day(today)
@@ -323,6 +341,17 @@ def honeypot_filled(raw: Any, honeypot_field: str) -> bool:
 def _required(value: Any) -> Any:
     if value in (None, ""):
         raise ValueError
+    return value
+
+
+def _call_slot(value: Any) -> str | None:
+    """A slot start the form offered (ISO UTC, ``2026-11-02T03:00:00Z``); whether it is still offered is checked
+    against the agency's rules at submit (:mod:`app.intake.slots`)."""
+    if value in (None, ""):
+        return None
+    if not isinstance(value, str) or not _SLOT.match(value):
+        raise ValueError
+    datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")  # a real date and time
     return value
 
 

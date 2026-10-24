@@ -98,10 +98,12 @@ EXPORT_TABLES: dict[str, str] = {
     "intake_form": "intake_form_id",
     "form_submission": "submission_id",
     "dispatch_queue": "dispatch_id",
+    "client_link": "link_id",  # AA-943 (crm-012): without its token hash (NEVER_EXPORT_COLUMNS)
+    "meeting_slot": "slot_id",
     "legal_hold": "hold_id",
     "llm_call": "llm_call_id",
 }
-NEVER_EXPORT_COLUMNS = frozenset({"profile_token_enc"})
+NEVER_EXPORT_COLUMNS = frozenset({"profile_token_enc", "token_hash"})
 
 OPEN_SQL = """
 SELECT request_id, status, requested_by, owner_accepted_at FROM crm.erasure_request

@@ -8,10 +8,17 @@
 // AA-937 (CRM-09): a reveal asks why (RevealField, one event with the reason); names link to the client profile;
 // companions are added by name only (Fix E5) or taken off the trip; start / end dates (a changed start date moves the
 // party's age bands, R32); the trip's documents.
+// AA-943 (CRM-15): the stage menu offers every allowed move; a gated move answered 409 opens the gate dialog (go ahead
+// with a logged override reason); every move shows the Undo toast (10 s, POST /trips/{id}/stage/undo, which also takes
+// back the planning form an auto-send queued); Cancel trip runs the dry run first (owner / agent); the Traveller info
+// panel (completeness, planning form, fill in from call); the timeline names override, date-rule and undo reasons.
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
 import { DocumentsPanel } from "@/components/clients/DocumentsPanel";
+import { CancelDialog, GateDialog } from "@/components/pipeline/StageDialogs";
+import { TravellerInfoPanel } from "@/components/pipeline/TravellerInfoPanel";
+import { toast, UndoToast, type ToastState } from "@/components/pipeline/UndoToast";
 import { RevealField } from "@/components/clients/RevealField";
 import { Panel } from "@/components/PageTitle";
 import type { DocumentRow } from "@/lib/clients";
@@ -22,15 +29,21 @@ import { fmt, type Lang, type MessageKey, t } from "@/lib/i18n";
 import type { Role } from "@/lib/nav";
 import {
   codeLabel,
+  gateRefusal,
   LOST_REASONS,
   memberLabel,
+  moveErrorKey,
   partySummary,
   stageLabel,
   waitingLabel,
   WAITING_ON,
   whenLabel,
+  type GateRefusal,
+  type HistoryRow,
   type Member,
+  type MoveResult,
   type Stage,
+  type Stage2View,
   type TripView,
 } from "@/lib/pipeline";
 
@@ -52,6 +65,8 @@ export function TripPanel({
   lang,
   locale,
   documents = [],
+  stage2,
+  clientOrigin = null,
 }: {
   view: TripView;
   members: Member[];
@@ -59,6 +74,9 @@ export function TripPanel({
   lang: Lang;
   locale: DateLocale;
   documents?: DocumentRow[];
+  /** AA-943: GET /trips/{id}/stage2 (null = it failed; undefined = not asked, the panel is left out). */
+  stage2?: Stage2View | null;
+  clientOrigin?: string | null;
 }) {
   const router = useRouter();
   const { trip } = view;
@@ -70,7 +88,45 @@ export function TripPanel({
   const hydrated = useHydrated();
   const [companion, setCompanion] = useState("");
   const [dates, setDates] = useState({ start: trip.start_date ?? "", end: trip.end_date ?? "" });
+  const [gate, setGate] = useState<{ to: Stage; refusal: GateRefusal } | null>(null);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [fillOpen, setFillOpen] = useState(false);
+  const [toastState, setToast] = useState<ToastState | null>(null);
   const me = members.find((m) => m.is_me);
+
+  async function undoMove(historyId: string) {
+    const res = await bffSend<{ dispatch_cancelled: number; stage: Stage }>("POST", `trips/${trip.trip_id}/stage/undo`, { history_id: historyId });
+    if (res.ok) {
+      const n = res.data.dispatch_cancelled;
+      setToast(toast(n > 0 ? fmt(t(lang, "undo.undoneCancelled"), { n }) : t(lang, "pipeline.undone"), { data: { "undone-stage": res.data.stage, "dispatch-cancelled": n } }));
+    } else setToast(toast(t(lang, moveErrorKey(res.detail)), { tone: "error" }));
+    router.refresh();
+  }
+
+  /** One move of the stage menu: a gate refusal opens the gate dialog, every success offers Undo for 10 s. */
+  async function move(to: Stage, extra: { lost_reason?: string; override_reason?: string } = {}): Promise<boolean> {
+    setBusy(true);
+    setError(null);
+    const res = await bffSend<MoveResult>("POST", `trips/${trip.trip_id}/stage`, { to, ...extra });
+    setBusy(false);
+    if (!res.ok) {
+      const refusal = gateRefusal(res.body, trip.stage, to);
+      if (refusal && !extra.override_reason) setGate({ to, refusal });
+      else setError(t(lang, moveErrorKey(res.detail)));
+      return false;
+    }
+    const data = res.data;
+    const stage = stageLabel(lang, data.stage);
+    const message = data.stage2_sent
+      ? fmt(t(lang, "undo.movedSent"), { stage })
+      : data.stage2_skipped
+        ? fmt(t(lang, "undo.notSent"), { stage, why: t(lang, (`skip.${data.stage2_skipped}` as MessageKey)) ?? t(lang, "skip.other") })
+        : fmt(t(lang, "pipeline.moved"), { stage });
+    const historyId = data.undo?.history_id;
+    setToast(toast(message, { undo: historyId ? () => undoMove(historyId) : undefined, data: { stage: data.stage, "stage2-sent": data.stage2_sent ? "true" : "false" } }));
+    router.refresh();
+    return true;
+  }
 
   async function run(path: string, method: "POST" | "PATCH" | "DELETE", body?: unknown) {
     setBusy(true);
@@ -101,6 +157,12 @@ export function TripPanel({
             <Badge tone="accent">{stageLabel(lang, trip.stage)}</Badge>
           </span>
           {trip.lost_reason_code && <Badge tone="neutral">{codeLabel(lang, "lost", trip.lost_reason_code)}</Badge>}
+          {trip.cancel_reason_code && <Badge tone="danger">{codeLabel(lang, "cancel", trip.cancel_reason_code)}</Badge>}
+          {trip.quiet && typeof trip.quiet_days === "number" && (
+            <span data-testid="trip-quiet" style={{ display: "contents" }}>
+              <Badge tone="warning">{fmt(t(lang, "trip.quiet"), { n: trip.quiet_days })}</Badge>
+            </span>
+          )}
           <label style={{ display: "flex", gap: 6, alignItems: "center", color: K.muted }}>
             {t(lang, "trip.waitingOn")}
             <select
@@ -152,7 +214,7 @@ export function TripPanel({
             .map((s: Stage) => (
               // The kit Button is a vendored CIS copy without a test id: the wrapper carries it (display: contents).
               <span key={s} data-testid={`trip-move-${s}`} style={{ display: "contents" }}>
-                <Button size="sm" variant="primary" disabled={busy || !hydrated} onClick={() => void run(`trips/${trip.trip_id}/stage`, "POST", { to: s })}>
+                <Button size="sm" variant="primary" disabled={busy || !hydrated} onClick={() => void move(s)}>
                   {trip.stage === "lost" ? t(lang, "trip.reopen") : fmt(t(lang, "trip.moveTo"), { stage: stageLabel(lang, s) })}
                 </Button>
               </span>
@@ -161,6 +223,13 @@ export function TripPanel({
             <Button size="sm" variant="ghost" disabled={busy} onClick={() => setLostOpen(true)}>
               {t(lang, "trip.markLost")}
             </Button>
+          )}
+          {view.can_cancel && role !== "assistant" && (
+            <span data-testid="trip-cancel" style={{ display: "contents" }}>
+              <Button size="sm" variant="danger" disabled={busy || !hydrated} onClick={() => setCancelOpen(true)}>
+                {t(lang, "cancelTrip.open")}
+              </Button>
+            </span>
           )}
           {role !== "assistant" && (
             <Button
@@ -197,7 +266,7 @@ export function TripPanel({
                 variant="danger"
                 disabled={busy || !lostReason}
                 onClick={async () => {
-                  if (await run(`trips/${trip.trip_id}/stage`, "POST", { to: "lost", lost_reason: lostReason })) setLostOpen(false);
+                  if (await move("lost", { lost_reason: lostReason })) setLostOpen(false);
                 }}
               >
                 {t(lang, "trip.confirmLost")}
@@ -215,7 +284,19 @@ export function TripPanel({
         )}
       </header>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14, alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(300px, 100%), 1fr))", gap: 14, alignItems: "start" }}>
+        {stage2 !== undefined && (
+          <TravellerInfoPanel
+            view={view}
+            stage2={stage2}
+            clientOrigin={clientOrigin}
+            lang={lang}
+            locale={locale}
+            fillOpen={fillOpen}
+            setFillOpen={setFillOpen}
+            notify={setToast}
+          />
+        )}
         <Panel title={t(lang, "trip.details")} testId="trip-details">
           <dl style={{ display: "grid", gridTemplateColumns: "max-content 1fr", gap: "6px 14px", margin: 0, fontSize: 13.5 }}>
             <dt style={{ color: K.muted }}>{t(lang, "trip.destinations")}</dt>
@@ -307,7 +388,7 @@ export function TripPanel({
             {view.tasks.map((task) => (
               <li key={task.task_id} data-testid="trip-task" data-kind={task.kind} data-status={task.status} style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
                 <span style={{ fontSize: 13.5, textDecoration: task.status === "open" ? "none" : "line-through", color: task.status === "open" ? K.ink : K.muted }}>
-                  {codeLabel(lang, "task", task.kind)}
+                  {task.priority === "urgent" && task.status === "open" && <Badge tone="danger">{t(lang, "trip.urgent")}</Badge>} {codeLabel(lang, "task", task.kind)}
                   {task.due_at && task.status === "open" ? ` · ${fmt(t(lang, "trip.due"), { when: new Date(task.due_at).toLocaleString(locale, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) })}` : ""}
                 </span>
                 <Button
@@ -384,18 +465,54 @@ export function TripPanel({
         <Panel title={t(lang, "trip.history")} testId="trip-history">
           <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 6 }}>
             {view.history.map((h, i) => (
-              <li key={i} style={{ fontSize: 12.5, color: K.body }}>
-                {formatDate(h.at, locale)} · {historyLabel(lang, h.reason_code)} → {stageLabel(lang, h.to_stage)}
+              <li key={h.history_id ?? i} data-reason={h.reason_code} style={{ fontSize: 12.5, color: K.body }}>
+                {formatDate(h.at, locale)} · {historyLabel(lang, h)} → {stageLabel(lang, h.to_stage)}
+                {h.override_reason_code ? ` · ${fmt(t(lang, "history.override"), { reason: codeLabel(lang, "override", h.override_reason_code) })}` : ""}
               </li>
             ))}
           </ul>
         </Panel>
       </div>
+      {gate && (
+        <GateDialog
+          refusal={gate.refusal}
+          lang={lang}
+          onClose={() => setGate(null)}
+          onFill={
+            stage2
+              ? () => {
+                  setGate(null);
+                  setFillOpen(true);
+                }
+              : undefined
+          }
+          onConfirm={async (reason) => {
+            // Closed either way: a refusal of the override is shown on the page.
+            await move(gate.to, { override_reason: reason });
+            setGate(null);
+          }}
+        />
+      )}
+      {cancelOpen && (
+        <CancelDialog
+          tripId={trip.trip_id}
+          lang={lang}
+          onClose={() => setCancelOpen(false)}
+          onDone={() => {
+            setCancelOpen(false);
+            setToast(toast(t(lang, "cancelTrip.done")));
+            router.refresh();
+          }}
+        />
+      )}
+      <UndoToast state={toastState} lang={lang} onClose={() => setToast(null)} />
     </div>
   );
 }
 
-function historyLabel(lang: Lang, reason: string): string {
+export function historyLabel(lang: Lang, h: Pick<HistoryRow, "reason_code">): string {
+  const reason = h.reason_code;
   if (reason.startsWith("lost_")) return t(lang, "reason.lost");
+  if (reason.startsWith("cancel_")) return `${t(lang, "reason.cancel")}: ${codeLabel(lang, "cancel", reason.slice("cancel_".length))}`;
   return t(lang, `reason.${reason}` as MessageKey) ?? reason;
 }

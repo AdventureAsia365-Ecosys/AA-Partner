@@ -47,12 +47,14 @@ const FORM: PublicForm = {
 };
 
 describe("board helpers", () => {
-  it("opens only the Slice 1 moves", () => {
+  it("opens the crm-012 edges only (AA-943 opened the rest of Slice 1's)", () => {
     expect(canMove("inquiry", "qualifying")).toBe(true);
     expect(canMove("qualifying", "inquiry")).toBe(true);
     expect(canMove("lost", "inquiry")).toBe(true);
+    expect(canMove("qualifying", "proposal")).toBe(true);
     expect(canMove("inquiry", "proposal")).toBe(false);
-    expect(canMove("booked", "lost")).toBe(false);
+    expect(canMove("booked", "lost")).toBe(false); // lost only before booked
+    expect(canMove("booked", "cancelled")).toBe(false); // cancel flow only
   });
 
   it("shortens names for cards and counts companions", () => {
@@ -111,7 +113,8 @@ describe("BFF allow-list (AA-936 lines)", () => {
     expect(matchBff("DELETE", `trips/${ID}`)?.card).toBe("AA-942"); // to the trash, opened by CRM-14
     expect(matchBff("DELETE", `trips/${ID}/stage`)).toBeNull();
     expect(matchBff("GET", "trips/not-a-uuid")).toBeNull();
-    expect(matchBff("POST", `trips/${ID}/cancel`)).toBeNull();
+    expect(matchBff("POST", `trips/${ID}/cancel`)?.card).toBe("AA-943"); // the cancel flow, opened by CRM-15
+    expect(matchBff("POST", `trips/${ID}/archive`)).toBeNull();
     expect(matchBff("GET", `travelers/${ID}/reveal`)).toBeNull();
     expect(matchBff("GET", "pipeline/../me")).toBeNull();
   });

@@ -34,7 +34,7 @@ from typing import Any
 import asyncpg
 
 from app.errors import Forbidden, Invalid, RateLimited, Unavailable
-from app.intake import stage1
+from app.intake import slots, stage1
 from app.jobs import queue
 from app.jobs.kinds import INTAKE_PROCESS
 from app.settings import Settings
@@ -85,6 +85,8 @@ async def read_form(pool: asyncpg.Pool, public_key: str) -> dict[str, Any]:
             "default_locale": row["default_locale"],
             "allowed_origins": list(form.allowed_origins),
             "privacy_notice_url": form.privacy_notice_url,
+            # AA-943 (R15): the free call slots (ISO UTC starts only), the agency timezone and the slot length.
+            **await slots.offered(ctx),
         }
 
 
@@ -125,6 +127,9 @@ async def submit(
         except stage1.Stage1Invalid as exc:
             record_drop("invalid", form.intake_form_id)
             raise Invalid("invalid_submission", "some answers are not valid", fields=exc.fields) from None
+        if answers.call_slot is not None and not await slots.is_offered(ctx, answers.call_slot):
+            record_drop("invalid", form.intake_form_id)
+            raise Invalid("invalid_submission", "the call slot is no longer free", fields=["call_slot"])
         if form_quota is not None and not form_quota():
             record_drop("form_quota", form.intake_form_id)
             raise RateLimited("form_rate_limited", quota_window_s)

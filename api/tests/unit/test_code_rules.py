@@ -89,7 +89,9 @@ PLATFORM_HELPERS = {
     "retry_failed": frozenset({"app/jobs/queue.py", "app/ops/console.py"}),
 }
 # AA-936: the job context in one agency (no member) and the public intake form's context (AA-942: the dispatcher).
-SYSTEM_MODULES = frozenset({"app/intake/process.py", "app/seed/__init__.py", "app/dispatch/worker.py"})
+SYSTEM_MODULES = frozenset(
+    {"app/intake/process.py", "app/seed/__init__.py", "app/dispatch/worker.py", "app/stages_job.py"}
+)
 INTAKE_MODULES = frozenset({"app/intake/public.py"})
 # AA-940: the audit export's read context (a locked or trashed agency too): the export, verify and retention jobs only.
 AUDIT_EXPORT_MODULES = frozenset(
@@ -97,6 +99,8 @@ AUDIT_EXPORT_MODULES = frozenset(
 )
 # AA-939: the invitation claim / accept context (token hash lookup, actor invitation:<id>).
 INVITATION_MODULES = frozenset({"app/members/invitations.py"})
+# AA-943: the signed client link context (token hash lookup, actor client_link:<id>): the public Stage 2 form only.
+CLIENT_LINK_MODULES = frozenset({"app/intake/stage2_public.py"})
 # AA-942: the lifecycle jobs' context (the daily run, the offboarding steps).
 LIFECYCLE_MODULES = frozenset({"app/lifecycle/job.py", "app/lifecycle/offboarding.py"})
 CONTEXT_TYPES = frozenset(
@@ -139,6 +143,7 @@ CONTEXT_FACTORIES = frozenset(
         "audit_export_tx",
         "invitation_tx",
         "lifecycle_tx",
+        "client_link_tx",
     }
 )
 
@@ -341,6 +346,10 @@ def test_audit_export_tx_is_used_only_by_the_audit_export_jobs() -> None:
 
 def test_invitation_tx_is_used_only_by_the_invitations_module() -> None:
     assert _users_of("invitation_tx", INVITATION_MODULES) == []
+
+
+def test_client_link_tx_is_used_only_by_the_public_stage2_module() -> None:
+    assert _users_of("client_link_tx", CLIENT_LINK_MODULES) == []
 
 
 def test_every_router_tenant_tx_names_its_permission_action() -> None:

@@ -41,7 +41,7 @@ from typing import Any
 import asyncpg
 
 from app.errors import Forbidden
-from app.intake import stage1
+from app.intake import completeness, slots, stage1
 from app.jobs.queue import Job
 from app.jobs.worker import Handler, PermanentError
 from app.tenancy import AnyContext, system_tx
@@ -221,6 +221,7 @@ async def process_submission(ctx: AnyContext, vault: Vault, submission_id: uuid.
             if token is not None:  # the flag follows the marketing row just written
                 await ctx.conn.execute(SET_MARKETING_SQL, token, answers.consent_marketing)
             await ctx.conn.execute(DONE_SQL, submission_id, "attached", trip_id, traveler_id)
+            await _after(ctx, vault, answers, trip_id, traveler_id, submission_id, open_trip["owner_member_id"])
             ctx.audit("intake_attached", "allowed", "trip", str(trip_id), reason="repeat_inquiry")
             return Outcome("attached", trip_id, traveler_id)
         token = await _profile_token(vault, traveler_id, match["profile_token_enc"])
@@ -293,10 +294,30 @@ async def process_submission(ctx: AnyContext, vault: Vault, submission_id: uuid.
     await _message_note(ctx, vault, trip_id, traveler_id, answers)
     await _consent(ctx, traveler_id, answers, submission_id)
     await ctx.conn.execute(DONE_SQL, submission_id, "created", trip_id, traveler_id)
+    await _after(ctx, vault, answers, trip_id, traveler_id, submission_id, owner)
     ctx.audit(
         "intake_created", "allowed", "trip", str(trip_id), reason="new_inquiry" if match is None else "repeat_client"
     )
     return Outcome("created", trip_id, traveler_id)
+
+
+async def _after(
+    ctx: AnyContext,
+    vault: Vault,
+    answers: stage1.Stage1Answers,
+    trip_id: uuid.UUID,
+    traveler_id: uuid.UUID,
+    submission_id: uuid.UUID,
+    owner: uuid.UUID | None,
+) -> None:
+    """AA-943 (CRM-15): the call slot the inquiry picked (R15), the trip's Stage 1 completeness, its last activity."""
+    if answers.call_slot is not None:
+        await slots.book(
+            ctx, slot=answers.call_slot, trip_id=trip_id, traveler_id=traveler_id, submission_id=submission_id,
+            owner=owner,
+        )  # fmt: skip
+    await completeness.refresh(ctx, vault, trip_id, actor=ACTOR)
+    await ctx.conn.execute("UPDATE crm.trip SET last_activity_at = now() WHERE trip_id = $1", trip_id)
 
 
 async def _reply_task(ctx: AnyContext, trip_id: uuid.UUID, owner: uuid.UUID | None) -> None:
