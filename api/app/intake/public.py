@@ -11,7 +11,10 @@ read an agency's form by its URL key (crm-005 policy ``intake_form_public_lookup
    learns nothing);
 3. the contact consent box is not ticked -> **422** ``consent_required``, nothing written, one count-only log line;
 4. any other invalid answer -> 422 ``invalid_submission`` with the field codes (never the values);
-5. otherwise the normalised answers are encrypted (vault DEK, AAD = the submission id) into ``crm.form_submission``
+5. the form's hourly quota (``form_quota``, ``RATE_LIMIT_INTAKE_FORM_PER_HOUR``) is charged only now, by a submission
+   that passed every check above, so forged-origin, honeypot or invalid requests cannot use up a form's allowance
+   (429 ``form_rate_limited``, nothing written);
+6. otherwise the normalised answers are encrypted (vault DEK, AAD = the submission id) into ``crm.form_submission``
    and a ``crm_intake_process`` job (ids only) is queued **in the same transaction**; a repeated
    ``client_submission_id`` stores nothing new (idempotent) and answers the same 202.
 
@@ -24,12 +27,13 @@ import json
 import logging
 import uuid
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 import asyncpg
 
-from app.errors import Forbidden, Invalid, Unavailable
+from app.errors import Forbidden, Invalid, RateLimited, Unavailable
 from app.intake import stage1
 from app.jobs import queue
 from app.jobs.kinds import INTAKE_PROCESS
@@ -101,6 +105,8 @@ async def submit(
     raw: Any,
     *,
     origin: str | None,
+    form_quota: Callable[[], bool] | None = None,
+    quota_window_s: int = 3600,
 ) -> Submitted:
     if settings.intake_origin_check and not settings.intake_page_origins:
         raise Unavailable("intake_not_configured")
@@ -119,6 +125,9 @@ async def submit(
         except stage1.Stage1Invalid as exc:
             record_drop("invalid", form.intake_form_id)
             raise Invalid("invalid_submission", "some answers are not valid", fields=exc.fields) from None
+        if form_quota is not None and not form_quota():
+            record_drop("form_quota", form.intake_form_id)
+            raise RateLimited("form_rate_limited", quota_window_s)
         stored = await store_submission(
             ctx,
             Vault(keys, ctx),

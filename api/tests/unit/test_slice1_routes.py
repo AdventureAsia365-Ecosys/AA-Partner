@@ -9,10 +9,11 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
+from fastapi import Request
 from fastapi.testclient import TestClient
 
 from app import tenancy
-from app.errors import Forbidden, NotFound
+from app.errors import Forbidden, NotFound, RateLimited
 from app.intake import public as intake_public
 from app.main import create_app
 from app.routers import ops as ops_router
@@ -56,7 +57,7 @@ def test_public_form_and_submission(client: TestClient, monkeypatch: pytest.Monk
     async def read_form(pool: Any, key: str) -> dict[str, Any]:
         return {"schema_key": "stage1.v1", "key": key}
 
-    async def submit(pool: Any, keys: Any, settings: Any, key: str, raw: Any, *, origin: str | None) -> Any:
+    async def submit(pool: Any, keys: Any, settings: Any, key: str, raw: Any, *, origin: str | None, **_: Any) -> Any:
         seen.append({"raw": raw, "origin": origin})
         return intake_public.Submitted(stored=True)
 
@@ -73,9 +74,72 @@ def test_public_form_and_submission(client: TestClient, monkeypatch: pytest.Monk
     )
     assert bad.status_code == 400
     big = client.post(f"/crm/public/v1/forms/{KEY}/submissions", content=b"x" * (33 * 1024))
-    assert big.status_code in (413, 429)
+    assert big.status_code == 413 and big.json()["detail"] == "body_too_large"
     # Three per address per minute (this client's limit): the next one is refused.
     assert client.post(f"/crm/public/v1/forms/{KEY}/submissions", json={}).status_code == 429
+
+
+def test_chunked_body_over_the_cap_is_refused_without_a_content_length(client: TestClient) -> None:
+    def chunks() -> Iterator[bytes]:
+        for _ in range(40):
+            yield b"x" * 1024  # 40 KiB, sent with Transfer-Encoding: chunked (no Content-Length)
+
+    res = client.post(f"/crm/public/v1/forms/{KEY}/submissions", content=chunks())
+    assert res.status_code == 413 and res.json()["detail"] == "body_too_large"
+
+
+def test_lying_content_length_is_capped_too(client: TestClient) -> None:
+    res = client.post(
+        f"/crm/public/v1/forms/{KEY}/submissions", content=b"x" * (40 * 1024), headers={"Content-Length": "10"}
+    )
+    assert res.status_code in (400, 413)  # the server never trusts the header to size its read
+
+
+@pytest.mark.asyncio
+async def test_read_capped_stops_reading_at_the_cap() -> None:
+    sent = 0
+
+    async def receive() -> dict[str, Any]:
+        nonlocal sent
+        sent += 1
+        return {"type": "http.request", "body": b"x" * 4096, "more_body": sent < 1000}  # a 4 MB body
+
+    request = Request({"type": "http", "method": "POST", "headers": [], "path": "/"}, receive)
+    with pytest.raises(public_router.BodyTooLarge):
+        await public_router.read_capped(request)
+    assert sent == public_router.MAX_BODY_BYTES // 4096 + 1  # stopped right after the cap, not after 4 MB
+
+    small = Request(
+        {"type": "http", "method": "POST", "headers": [], "path": "/"},
+        _once(b'{"a": 1}'),
+    )
+    assert await public_router.read_capped(small) == b'{"a": 1}'
+
+
+def _once(data: bytes) -> Any:
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": data, "more_body": False}
+
+    return receive
+
+
+def test_form_quota_answers_429_with_retry_after(pools: LocalPools, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = pools.settings(rate_limit_intake_per_minute=0, rate_limit_intake_form_per_hour=1)
+    app = create_app(settings, verifier=pools.verifier(settings), keys=object())
+    monkeypatch.setattr(public_router, "request_pool", _pool)
+
+    async def submit(pool: Any, keys: Any, settings: Any, key: str, raw: Any, **kw: Any) -> Any:
+        if not kw["form_quota"]():
+            raise RateLimited("form_rate_limited", kw["quota_window_s"])
+        return intake_public.Submitted(stored=True)
+
+    monkeypatch.setattr(intake_public, "submit", submit)
+    with TestClient(app) as c:
+        assert c.post(f"/crm/public/v1/forms/{KEY}/submissions", json={}).status_code == 202
+        res = c.post(f"/crm/public/v1/forms/{KEY}/submissions", json={})
+    assert (
+        res.status_code == 429 and res.headers["retry-after"] == "3600" and res.json()["detail"] == "form_rate_limited"
+    )
 
 
 def test_public_routes_need_no_token_and_carry_no_agency_header(

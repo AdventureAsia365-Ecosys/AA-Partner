@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from app.errors import Forbidden, Invalid, NotFound, Unavailable
+from app.errors import Forbidden, Invalid, NotFound, RateLimited, Unavailable
 from app.intake import forms, public
 from app.settings import Settings
 from tests.unit.fakes import ScriptedConn
@@ -78,6 +78,30 @@ async def test_stored_submission_queues_one_job_in_the_same_transaction(intake: 
     intake.on("INSERT INTO crm.form_submission", None)  # the same page submission again
     again = await public.submit(None, None, TEST, "k" * 22, body(), origin=None)  # type: ignore[arg-type]
     assert again.dropped == "duplicate" and len(intake.sql("INSERT INTO crm.job")) == 1
+
+
+async def test_form_quota_is_charged_only_by_a_submission_that_passed_every_check(intake: ScriptedConn) -> None:
+    charged: list[int] = []
+
+    def quota() -> bool:
+        charged.append(1)
+        return len(charged) <= 1
+
+    key = "k" * 22
+    with pytest.raises(Forbidden):
+        await public.submit(None, None, DEV, key, body(), origin="https://evil.example", form_quota=quota)  # type: ignore[arg-type]
+    await public.submit(None, None, DEV, key, body(website="x"), origin=PAGE, form_quota=quota)  # type: ignore[arg-type]
+    with pytest.raises(Invalid):
+        await public.submit(None, None, DEV, key, body(consent_contact=False), origin=PAGE, form_quota=quota)  # type: ignore[arg-type]
+    with pytest.raises(Invalid):
+        await public.submit(None, None, DEV, key, body(email="x"), origin=PAGE, form_quota=quota)  # type: ignore[arg-type]
+    assert charged == []  # forged origin, honeypot, no consent, invalid: none of them used the form's allowance
+    assert (await public.submit(None, None, DEV, key, body(), origin=PAGE, form_quota=quota)).stored  # type: ignore[arg-type]
+    before = len(intake.sql("INSERT INTO crm.form_submission"))
+    with pytest.raises(RateLimited) as exc:
+        await public.submit(None, None, DEV, key, body(), origin=PAGE, form_quota=quota, quota_window_s=3600)  # type: ignore[arg-type]
+    assert exc.value.status_code == 429 and exc.value.retry_after_s == 3600 and exc.value.code == "form_rate_limited"
+    assert len(intake.sql("INSERT INTO crm.form_submission")) == before  # nothing written over the quota
 
 
 async def test_origin_rules(intake: ScriptedConn) -> None:
