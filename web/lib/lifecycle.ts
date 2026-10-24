@@ -103,12 +103,17 @@ export function confirmsErase(typed: string, tenantId: string): boolean {
   return typed.trim().toLowerCase() === tenantId.toLowerCase() && tenantId.length > 0;
 }
 
-/** Which offboarding step the owner can take next. */
-export function offboardingStep(o: Offboarding | null | undefined): "request" | "wait_export" | "confirm" | "running" | "done" {
+/**
+ * Which offboarding step the owner can take next. A failed request means the database refused the erase and deleted
+ * nothing; the agency is active again (the owner can see this page), so the owner reads the code and cancels.
+ */
+export function offboardingStep(
+  o: Offboarding | null | undefined,
+): "request" | "wait_export" | "confirm" | "running" | "failed" | "done" {
   if (!o || o.status === "cancelled") return "request";
   if (o.status === "erased") return "done";
   if (o.status === "erasing") return "running";
-  if (o.status === "failed") return "running";
+  if (o.status === "failed") return "failed";
   if (o.status === "requested" && !o.export_waived) return "wait_export";
   return "confirm";
 }

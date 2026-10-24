@@ -572,13 +572,23 @@ async def test_the_daily_handler_and_its_schedule(monkeypatch: pytest.MonkeyPatc
             raise ServiceError("boom")
         return {"trash_trip_purged": 2}
 
-    calls = iter([{"trash_trip_purged": 2}])
+    agencies.extend(type("A", (), {"tenant_id": uuid.uuid4()})() for _ in range(2))
+    # TENANT ok, ID skipped (tx), REQ a service error, then an unexpected DB error that must not stop the run
+    # (review S249), then one more agency that still runs.
+    outcomes = iter(
+        [
+            {"trash_trip_purged": 2},
+            Unavailable("key_unwrap_refused"),
+            asyncpg.ForeignKeyViolationError("fk"),
+            {"trash_trip_purged": 1},
+        ]
+    )
 
     async def run_once(ctx: Any, **_: Any) -> dict[str, int]:
-        try:
-            return next(calls)
-        except StopIteration:
-            raise Unavailable("key_unwrap_refused") from None
+        outcome = next(outcomes)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
 
     monkeypatch.setattr(lifecycle_job.registry, "agencies", list_agencies)
     monkeypatch.setattr(lifecycle_job, "lifecycle_tx", tx)
@@ -586,10 +596,10 @@ async def test_the_daily_handler_and_its_schedule(monkeypatch: pytest.MonkeyPatc
     result = await lifecycle_job.build_handler(dry_run=True)(object(), Job("j", "crm_lifecycle", {}, 1, 3))  # type: ignore[arg-type]
     assert result == {
         "dry_run": True,
-        "agency_count": 1,
+        "agency_count": 2,
         "skipped_count": 1,
-        "failed_count": 1,
-        "trash_trip_purged_count": 2,
+        "failed_count": 2,
+        "trash_trip_purged_count": 3,
     }
     check_payload(result, what="result")
     assert run  # (kept for readability of the branches above)
@@ -662,6 +672,9 @@ async def test_offboarding_cancel_download_confirm(monkeypatch: pytest.MonkeyPat
     conn = ScriptedConn().on("FOR UPDATE", _request(status="erasing"))
     with codes(Conflict, "not_cancellable"):
         await offboarding.cancel(tenant_ctx(conn), REQ, store)
+    conn = ScriptedConn().on("FOR UPDATE", _request(status="failed", failure_class="legal_hold"))
+    await offboarding.cancel(tenant_ctx(conn), REQ, store)  # a refused erase: the owner cancels it
+    assert conn.sql("SET status = 'cancelled'")
     store.objects["exports/x"] = b"z"
     conn = ScriptedConn().on("FOR UPDATE", _request(export_object_key="exports/x"))
     await offboarding.cancel(tenant_ctx(conn), REQ, store)
@@ -816,6 +829,7 @@ async def test_offboard_handler(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(PermanentError, match="legal_hold"):
         await handler(object(), job("erase"))  # type: ignore[arg-type]
     assert conn.sql("SET status = 'failed'")[0][1] == "legal_hold"
+    assert conn.sql("SET status = 'active'"), "a refused erase deleted nothing: the agency is given back"
 
 
 def test_the_web_words_every_rule_and_mechanism() -> None:

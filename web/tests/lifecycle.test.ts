@@ -86,7 +86,7 @@ describe("offboarding", () => {
     expect(offboardingStep(off({ export_waived: true }))).toBe("confirm");
     expect(offboardingStep(off({ status: "export_ready", export_ready: true }))).toBe("confirm");
     expect(offboardingStep(off({ status: "erasing" }))).toBe("running");
-    expect(offboardingStep(off({ status: "failed" }))).toBe("running");
+    expect(offboardingStep(off({ status: "failed", failure_class: "legal_hold" }))).toBe("failed");
     expect(offboardingStep(off({ status: "erased" }))).toBe("done");
   });
 });

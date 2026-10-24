@@ -159,6 +159,10 @@ def build_handler(*, dry_run: bool, keys: KeyProvider | None = None, store: Docu
                 failed += 1
                 log.error("lifecycle_failed tenant_id=%s code=%s", agency.tenant_id, exc.code)
                 continue
+            except Exception as exc:  # noqa: BLE001 — one agency's unexpected error must not skip every later agency
+                failed += 1
+                log.error("lifecycle_failed tenant_id=%s error_class=%s", agency.tenant_id, type(exc).__name__)
+                continue
             done += 1
             totals.update(counts)
             log.info(

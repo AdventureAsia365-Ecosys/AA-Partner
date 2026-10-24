@@ -30,6 +30,7 @@ from app.documents.store import MemoryDocumentStore
 from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.intake import public as intake
 from app.jobs.queue import Job
+from app.jobs.worker import PermanentError
 from app.lifecycle import booking, erase, offboarding, policy, trash
 from app.lifecycle.job import build_handler as build_lifecycle
 from app.tenancy import tenant_tx
@@ -259,8 +260,12 @@ async def test_e_a_trip_whose_aa_lines_all_expired_can_be_deleted_and_is_purged(
     assert listed["trash_days"] == 7
     await _sql(app_pool, a["tenant"], "UPDATE crm.trip SET purge_after = now() - interval '1 minute'")
     # DRY RUN (the default): counted, nothing purged.
+    # The job totals span every agency in the database (other tests leave trashed rows behind): assert on this
+    # agency's own crm.lifecycle_run row, never on the job-wide totals.
     dry = await build_lifecycle(dry_run=True, keys=keys, store=store)(app_pool, Job("j1", "crm_lifecycle", {}, 1, 3))
-    assert dry["dry_run"] is True and dry["trash_trip_purged_count"] == 1
+    assert dry["dry_run"] is True and dry["trash_trip_purged_count"] >= 1
+    [dry_run_row] = await _sql(app_pool, a["tenant"], "SELECT dry_run, counts FROM crm.lifecycle_run")
+    assert dry_run_row["dry_run"] is True and json.loads(dry_run_row["counts"])["trash_trip_purged"] == 1
     assert len(await _sql(app_pool, a["tenant"], "SELECT 1 FROM crm.trip")) == 1 and store.objects
     done = await build_lifecycle(dry_run=False, keys=keys, store=store)(app_pool, Job("j2", "crm_lifecycle", {}, 1, 3))
     assert done["trash_trip_purged_count"] >= 1
@@ -511,3 +516,55 @@ async def test_offboarding_exports_then_erases_and_shreds_the_keys(
     assert sealed_export
     # Another agency is untouched.
     assert len(await _sql(app_pool, other["tenant"], "SELECT 1 FROM crm.traveler")) == 2
+
+
+async def test_any_hold_suspends_offboarding_and_a_refused_erase_gives_the_agency_back(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection
+) -> None:
+    """Review S249: a trip or client hold (not only an agency hold) refuses the request, the confirmation and the erase
+    job; a refused erase deleted nothing, so the agency is active again and the owner cancels the failed request."""
+    keys = _keys()
+    store = MemoryDocumentStore()
+    a = await _inquiry(app_pool, keys)
+    async with tenant_tx(app_pool, a["owner"], a["tenant"]) as ctx:
+        trip_hold = await policy.place_hold(ctx, "trip", a["trip"], "dispute")
+    with _raises(Conflict, "legal_hold"):
+        async with tenant_tx(app_pool, a["owner"], a["tenant"]) as ctx:
+            await offboarding.request(ctx, export_waived=True)
+    async with tenant_tx(app_pool, a["owner"], a["tenant"]) as ctx:
+        await policy.release_hold(ctx, uuid.UUID(trip_hold["hold_id"]))
+        req = await offboarding.request(ctx, export_waived=True)
+        client_hold = await policy.place_hold(ctx, "traveler", a["lead"], "litigation")
+    request_id = uuid.UUID(req["request_id"])
+    with _raises(Conflict, "legal_hold"):
+        async with tenant_tx(app_pool, a["owner"], a["tenant"]) as ctx:
+            await offboarding.confirm_erase(ctx, request_id, confirm_tenant_id=a["tenant"], dry_run=False)
+    async with tenant_tx(app_pool, a["owner"], a["tenant"]) as ctx:
+        await policy.release_hold(ctx, uuid.UUID(client_hold["hold_id"]))
+        assert (await offboarding.confirm_erase(ctx, request_id, confirm_tenant_id=a["tenant"], dry_run=False))[
+            "status"
+        ] == "erasing"
+    # AA places a client hold after the confirmation (no member context opens on an offboarding agency).
+    async with app_pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(a["tenant"]))
+        await conn.execute("SELECT set_config('app.actor', 'platform:l1', true)")
+        await conn.execute(
+            "INSERT INTO crm.legal_hold (scope, subject_id, reason_code) VALUES ('traveler', $1, 'regulator_request')",
+            a["lead"],
+        )
+    handler = offboarding.build_handler(keys=keys, store=store, dry_run=False, dek_cache_ttl_s=300)
+    [erase_job] = await _jobs(app_pool, "crm_offboard", a["tenant"])
+    with pytest.raises(PermanentError, match="legal_hold"):
+        await handler(app_pool, erase_job)
+    [tenant_row] = await _owner_fetch(admin, a["tenant"], "SELECT status FROM crm.tenant")
+    assert tenant_row["status"] == "active", "nothing was deleted: the agency is given back"
+    [req_row] = await _owner_fetch(admin, a["tenant"], "SELECT status, failure_class FROM crm.erasure_request")
+    assert (req_row["status"], req_row["failure_class"]) == ("failed", "legal_hold")
+    assert len(await _sql(app_pool, a["tenant"], "SELECT 1 FROM crm.traveler")) == req["dry_run_counts"]["traveler"]
+    keys_left = await _owner_fetch(admin, a["tenant"], "SELECT destroyed_at FROM crm.tenant_key")
+    assert keys_left and all(k["destroyed_at"] is None for k in keys_left), "no crypto-shred on a refused erase"
+    denied = [e for e in await _events(admin, a["tenant"], "offboarding_erase") if e["outcome"] == "denied"]
+    assert [e["reason"] for e in denied] == ["legal_hold", "legal_hold"]  # the confirmation, then the job
+    async with tenant_tx(app_pool, a["owner"], a["tenant"]) as ctx:
+        cancelled = await offboarding.cancel(ctx, request_id, store)
+    assert cancelled["status"] == "cancelled"

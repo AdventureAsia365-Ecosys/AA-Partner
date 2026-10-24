@@ -326,10 +326,16 @@ export function DataLifecycleView({
               </div>
             </div>
           )}
-          {step === "running" && off && (
-            <p style={{ margin: 0, fontSize: 13, color: off.status === "failed" ? K.danger : K.ink }}>
-              {off.status === "failed" ? fmt(t(lang, "data.off.failed"), { code: off.failure_class ?? "error" }) : t(lang, "data.off.running")}
-            </p>
+          {step === "running" && off && <p style={{ margin: 0, fontSize: 13 }}>{t(lang, "data.off.running")}</p>}
+          {step === "failed" && off && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <span style={{ fontSize: 13, color: K.danger }} data-testid="data-offboarding-failed">
+                {fmt(t(lang, "data.off.failed"), { code: off.failure_class ?? "error" })}
+              </span>
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => send("POST", `lifecycle/offboarding/${off.request_id}/cancel`)}>
+                {t(lang, "data.off.cancel")}
+              </Button>
+            </div>
           )}
           {step === "done" && off && (
             <p style={{ margin: 0, fontSize: 13 }}>

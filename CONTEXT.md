@@ -499,7 +499,9 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   `crm_dispatch`, `app/dispatch/`). A repeat inquiry unarchives the client. Auto-archive after `auto_archive_months`
   without trip activity; the owner then decides on the Settings page.
 - **Legal holds** (`crm.legal_hold`, `POST /lifecycle/holds`, `.../release`): agency, trip or client; a trip hold also
-  holds its travellers; a hold placed by `platform:*` is released only by `platform:*`.
+  holds its travellers, a client hold the trips they are on (or are named on through a note / document) and both ends
+  of a relation; ANY active hold of the agency suspends its offboarding. A hold placed by `platform:*` is released
+  only by `platform:*`; a hold is never deleted nor trashed (its trash columns stay NULL), it only moves to released.
 - **Erasure** (`POST /travelers/{id}/erasure`, owner): dry run by default; a real run bypasses the trash and leaves an
   `erasure_request` receipt (backup_purge_by = +30 days). CRM-35 (AA-967) adds partial erasure with the signed-agreement
   and accounting exceptions and the data-request log.
@@ -508,7 +510,9 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   DEK, documents bucket `exports/tenants/<tenant>/<request>.jsonl.enc`, 7-day bucket rule) -> download (audited) ->
   typed confirmation (the agency id) -> agency `offboarding` -> erase job: `erase_subject('tenant')`, objects deleted,
   `KeyProvider.destroy` (crypto-shred; other tasks' DEK caches expire within `DEK_CACHE_TTL_SECONDS`, stated on the
-  receipt), agency `offboarded`. The audit and its export registry / chain stay (AA-940 offboarding path).
+  receipt), agency `offboarded`. The audit and its export registry / chain stay (AA-940 offboarding path). An erase
+  the database refuses (a hold placed after the confirmation, CRM16) deleted nothing: the request is `failed`, the
+  agency is `active` again and the owner cancels the request.
 - **DRY RUN**: `LIFECYCLE_DRY_RUN` (default true) makes the daily run count only and every owner erasure / offboarding
   erase answer 409 `deletion_dry_run` with the counts.
 - **Backups (V1)**: AA-CIS-Infra's snapshot expiry function publishes the oldest backup copy per instance; an alarm

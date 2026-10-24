@@ -3,21 +3,28 @@
 Owner steps (``/crm/v1/lifecycle/offboarding``, :mod:`app.routers.lifecycle`):
 
 1. **Request**: the dry-run counts of everything the erase would delete are stored on a new ``crm.erasure_request``
-   (scope ``tenant``); refused under a legal hold (409 ``legal_hold``) or while one is open (409 ``offboarding_open``).
+   (scope ``tenant``); refused while ANY legal hold of the agency is active (agency, trip or client hold: 409
+   ``legal_hold``) or while one is open (409 ``offboarding_open``).
    Unless the owner waives it, a ``crm_offboard`` job builds the **export**: every row of the agency's tenant tables,
    personal fields decrypted, as JSON lines (``*_bidx`` index columns, the F2 pointer and integration secrets left
    out; document files are listed, their content comes with CRM-35), sealed with the agency's ``export`` DEK and put
    in the documents bucket under ``exports/tenants/<tenant>/<request>.jsonl.enc`` (bucket rule: gone after 7 days).
    Status ``export_ready``; the owner downloads it (audited).
 2. **Erase** (owner, typed confirmation = the agency id): refused in DRY RUN (409 ``deletion_dry_run`` with the
-   counts), without an export unless waived, under a legal hold. The agency moves to ``offboarding`` (no member context
-   opens any more) and a ``crm_offboard`` job erases: ``crm.erase_subject('tenant')`` as ``crm_eraser`` (every tenant
-   table except the keep list: the agency row, the destroyed key rows, the audit and its export registry / chain, the
-   receipts, lifecycle counts and holds), the documents' objects and the export object, then
-   :meth:`KeyProvider.destroy` (**crypto-shred**: wrapped DEKs nulled, ``destroyed_at`` set, this process's cache
+   counts), without an export unless waived, under any active legal hold. The agency moves to ``offboarding`` (no
+   member context opens any more) and a ``crm_offboard`` job erases: ``crm.erase_subject('tenant')`` as
+   ``crm_eraser`` (every tenant table except the keep list: the agency row, the destroyed key rows, the audit and its
+   export registry / chain, the receipts, lifecycle counts and holds), the documents' objects and the export object,
+   then :meth:`KeyProvider.destroy` (**crypto-shred**: wrapped DEKs nulled, ``destroyed_at`` set, this process's cache
    evicted), all in one transaction. The receipt (counts, ``backup_purge_by`` = today + 30 days, the time by which
    every other task's DEK cache has expired = destroy + ``DEK_CACHE_TTL_SECONDS``, the copies outside AA's control)
    goes on the request; the agency becomes ``offboarded``.
+
+If the database refuses the erase (a hold placed after the confirmation, CRM16 a table the erase does not know),
+nothing was deleted (one transaction): the request becomes ``failed`` with the code and the agency goes back to
+``active``, so the owner can read why, cancel the request and start again later. A job that fails for another
+reason (retries exhausted) leaves the agency ``offboarding``; the platform recovery is in
+``docs/implementation-notes/AA-942.md``.
 
 The audit is not erased: it has no personal data, the hourly export keeps running for an offboarded agency until its
 partitions drop (crm-007 offboarding path), and the Object Lock archive keeps it 7 years.
@@ -111,6 +118,7 @@ DOWNLOADED_SQL = "UPDATE crm.erasure_request SET export_downloaded_at = now() WH
 CONFIRM_SQL = "UPDATE crm.erasure_request SET status = 'erasing', confirmed_by = $2 WHERE request_id = $1"
 TENANT_OFFBOARDING_SQL = "UPDATE crm.tenant SET status = 'offboarding' WHERE tenant_id = $1"
 TENANT_OFFBOARDED_SQL = "UPDATE crm.tenant SET status = 'offboarded' WHERE tenant_id = $1"
+TENANT_BACK_SQL = "UPDATE crm.tenant SET status = 'active' WHERE tenant_id = $1 AND status = 'offboarding'"
 ERASED_SQL = """
 UPDATE crm.erasure_request
    SET status = 'erased', executed_at = now(), keys_destroyed_at = now(), backup_purge_by = $2, receipt = $3::jsonb,
@@ -119,6 +127,7 @@ UPDATE crm.erasure_request
 """
 FAILED_SQL = "UPDATE crm.erasure_request SET status = 'failed', failure_class = $2 WHERE request_id = $1"
 RETRY_SQL = "UPDATE crm.erasure_request SET status = 'erasing', failure_class = NULL WHERE request_id = $1"
+# Scope tenant = ANY active hold of the agency (agency, trip or client): the erase reaches every subject.
 HOLD_SQL = "SELECT crm.legal_hold_blocks('tenant', NULL)"
 
 
@@ -168,7 +177,7 @@ async def request(ctx: TenantContext, *, export_waived: bool) -> dict[str, Any]:
         raise Conflict("offboarding_open", "an offboarding request is already open")
     if await ctx.conn.fetchval(HOLD_SQL):
         ctx.audit("offboarding_request", "denied", "tenant", str(ctx.tenant_id), reason="legal_hold")
-        raise Conflict("legal_hold", "a legal hold on the agency suspends deletion")
+        raise Conflict("legal_hold", "an active legal hold in the agency suspends offboarding")
     counts = await erase.erase(ctx, "tenant", ctx.tenant_id, dry_run=True)
     row = await ctx.conn.fetchrow(INSERT_SQL, ctx.tenant_id, json.dumps(counts), export_waived)
     if not export_waived:
@@ -200,7 +209,8 @@ async def _open_request(ctx: TenantContext, request_id: uuid.UUID) -> Any:
 async def cancel(ctx: TenantContext, request_id: uuid.UUID, store: DocumentStore | None) -> dict[str, Any]:
     _owner(ctx, "offboarding_cancel")
     row = await _open_request(ctx, request_id)
-    if row["status"] not in ("requested", "export_ready"):
+    # A failed request is cancellable once the agency is active again (the refused erase deleted nothing).
+    if row["status"] not in ("requested", "export_ready", "failed"):
         raise Conflict("not_cancellable", "the erase has started")
     await ctx.conn.execute(CANCEL_SQL, request_id)
     if row["export_object_key"] and store is not None:
@@ -240,7 +250,7 @@ async def confirm_erase(
         raise Conflict("export_not_ready", "wait for the export, or waive it")
     if await ctx.conn.fetchval(HOLD_SQL):
         ctx.audit("offboarding_erase", "denied", "tenant", str(ctx.tenant_id), reason="legal_hold")
-        raise Conflict("legal_hold", "a legal hold on the agency suspends deletion")
+        raise Conflict("legal_hold", "an active legal hold in the agency suspends offboarding")
     if dry_run:
         counts = await erase.erase(ctx, "tenant", ctx.tenant_id, dry_run=True)
         raise Conflict(
@@ -361,9 +371,12 @@ async def _erase(
             ctx.audit("offboarding_erase", "allowed", "tenant", str(tenant_id), reason="erased")
     except ServiceError as exc:
         # A refusal of the database (a hold placed after the confirmation, a table the erase does not know): nothing
-        # was deleted (one transaction); the request shows why and the job is not retried.
+        # was deleted (one transaction); the request shows why, the agency is given back (active: the owner reads the
+        # code and cancels) and the job is not retried.
         async with lifecycle_tx(pool, tenant_id, actor=ACTOR, statuses=statuses) as ctx:
             await ctx.conn.execute(FAILED_SQL, request_id, exc.code)
+            await ctx.conn.execute(TENANT_BACK_SQL, tenant_id)
+            ctx.audit("offboarding_erase", "denied", "tenant", str(tenant_id), reason=exc.code)
         log.error("offboarding_erase_refused tenant_id=%s code=%s", tenant_id, exc.code)
         raise PermanentError(exc.code) from None
     log.info("offboarding_erased tenant_id=%s request_id=%s keys=%d", tenant_id, request_id, destroyed)
