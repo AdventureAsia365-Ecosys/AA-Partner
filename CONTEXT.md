@@ -297,19 +297,28 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   an F1 field beyond the display name (names, e-mail, phone, DOB, nationality, passport, emergency contact, health
   codes). A reason code is required (`contact_client`, `prepare_booking`, `verify_identity`, `client_request`,
   `fill_forms`, `ops_handoff`, `other`); one `reveal` event per field in the same transaction. Every role may reveal
-  (design §4.6). **No public route may reach it**: `tests/unit/test_reveal_boundary.py` walks the import graph of every
-  router with a `/crm/public` or `/crm/client` prefix. A traveller sees their own record only through
+  (design §4.6). Health codes come back only while the traveller's latest `health_data` consent is true (else 409
+  `health_consent_withdrawn` and a denied event). **No public route may reach it**: `tests/unit/test_reveal_boundary.py`
+  walks the import graph of every router under `/crm/public` or `/crm/client` (found by `APIRouter(prefix=)`, by
+  `class_router(<RouteClass>)` and by the live routes). **Reveals per member per hour** (design §4.4):
+  `app/observability/reveal_meter.py` counts committed allowed reveals (fields and document downloads) per agency and
+  member over a sliding hour; the job metrics sampler publishes the peak as `AA/Jobs/Crm` `RevealsPerMemberPeakHour`
+  (Infra alarm `aa-crm-<env>-bulk-reveal`), and 60 in an hour logs `crm_bulk_reveal`. A traveller sees their own record only through
   `app/travellers/self_reveal.py` `traveller_self_reveal(session)` (masked passport, own trip only; the OTP session
   is CRM-24a).
-- **List views** (design §4.4): the board, the client directory (`GET /crm/v1/travelers`, exact search by e-mail /
-  phone blind index or name tokens confirmed after decrypting) and a trip's document list decrypt display names (file
+- **List views** (design §4.4): the board, the client directory (`GET /crm/v1/travelers`; exact search by e-mail /
+  phone blind index or name tokens confirmed after decrypting is `POST /crm/v1/travelers/search`, the term in the body,
+  and `GET ?q=` answers 422 `search_by_post`; the web keeps the term in a sealed 15-minute cookie on `/clients`, never
+  in a URL) and a trip's document list decrypt display names (file
   names) only and write one `list_view` event per load with the ids shown (`audit_event.object_ids`). No contact data
   and no partial digits in any list; the profile shows which fields are filled, not their value.
-- **Client profile** (`GET /crm/v1/travelers/{id}`, one `view` event): masked F1, consent (latest per purpose), the F2
+- **Client profile** (`GET /crm/v1/travelers/{id}`, one `view` event naming the related travellers and documents
+  shown in `object_ids`; the trip page's `view` names its party the same way): masked F1, consent (latest per purpose), the F2
   profile (bands and codes, reached through `traveler.profile_token_enc`), relationships, trips with the age band at
   departure, documents. Edits: F1 fields (encrypted, blind indexes in step, 409 `duplicate_traveler` on a known e-mail
   or phone), the F2 profile, health codes (`PUT .../health`, consent required, dietary / mobility mirrored to F2),
-  relationships (the DB writes the inverse), the party of a trip (`trip_traveler` + `trip_party` together; a
+  relationships (the DB writes the inverse; an explicit referrer relation overwrites the intake's
+  `referrer_traveler_id`), the party of a trip (`trip_traveler` + `trip_party` together; a
   companion needs a name only).
 - **Age band at departure** (R32): recomputed only when a DOB or a trip's start date really changes, or for the one
   new row when someone joins a trip; one `age_band_recompute` event per run (`app/travellers/age_bands.py`).
@@ -317,13 +326,19 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   `content`, document id) before it reaches the documents bucket (`DOCUMENTS_BUCKET`, SSE-KMS as the second layer);
   key `tenants/<tenant>/documents/<document>`, SHA-256 of the stored object checked before decrypting, the file name
   encrypted, at most 7 MiB (base64 JSON through the BFF), passport scans write-only. Download is a reveal (reason
-  required). Without `DOCUMENTS_BUCKET` on dev the document routes answer 503 `documents_not_configured`.
+  required). Without `DOCUMENTS_BUCKET` on dev the document routes answer 503 `documents_not_configured`; a missing
+  object (S3 `NoSuchKey`, or `AccessDenied` since the role has no `ListBucket`) answers 503 `document_missing`.
+- **Same-agency keys** (crm-006): every new reference to a traveller, trip or profile is a `(tenant_id, id)` foreign
+  key (referential checks bypass FORCE RLS), and `document.s3_key` must equal `tenants/<its tenant>/documents/<its id>`.
+  The crm-003 / crm-005 single-column references (`trip_traveler`, `trip_party`, ...) get the same in a later file.
 - **Readers** (design §4.3, Fix A1): `crm_ai_reader` reads `v_ai_traveler_profile`, `v_ai_trip_party`,
   `v_ai_trip_context`; `crm_insights` reads `v_insight_fact` (no token, no trip id). The views run with `crm_owner`'s
   rights under FORCE RLS (one agency, the one of `app.tenant_id`); neither role has any base table. No reader reaches
   an F1 table (`traveler`, `traveler_health`, `traveler_relation`, `document`, `trip_traveler`, `note`, `consent`,
   `form_submission`, `tenant_key`, `integration_credential`, `member`): 42501, checked by the crm-006 guard and the
-  integration tests. `crm_support_reader` stays without grants until CRM-13b (AA-971). **Threat model**: the split
+  integration tests. `crm_support_reader` stays without grants until CRM-13b (AA-971). `v_insight_fact` shows one
+  agency at a time (FORCE RLS on `app.tenant_id`), so CRM-34's cross-agency aggregate (n >= 10, >= 3 agencies) needs
+  its own path (for example a `SECURITY DEFINER` aggregate owned by `crm_owner`), not this view. **Threat model**: the split
   protects against the readers, not against `crm_app` or the RDS master (the lead of a trip joins F2 to identity
   through `trip_id`); the DPA draft says so.
 
