@@ -13,6 +13,10 @@ sequence, or, for values with 6+ digits, the same digits anywhere in the text on
 must be 0 (a one-word value inside a known place name is the place, not a leak). An **over-scrub** = a ``keep``
 string that did not survive; reported, and the run fails above
 :data:`MAX_OVERSCRUB_RATE` (a given name that is also a place, "Hà" in "Hà Giang", is a known, accepted cost).
+A **typed place** = a ``keep`` string that is back once only the ``<PLACE_n>`` placeholders are restored (option C,
+S249: the detector's ADDRESS finding on a bare destination is still masked, but typed, so the model knows a place
+stood there). It is neither an over-scrub nor a pass; it is reported on its own (``typed_place``, rate over the keep
+strings). Leaks are counted exactly as before: a ``<PLACE_n>`` hides its value like every placeholder.
 The report has ids and counts only, never a sample's values (the corpus is synthetic, but the habit stays).
 """
 
@@ -30,7 +34,7 @@ from pathlib import Path
 
 from app.privacy import patterns
 from app.privacy.places import place_spans
-from app.privacy.scrubber import Detection, KnownPerson, KnownValues, PiiScrubber
+from app.privacy.scrubber import PLACE, Detection, KnownPerson, KnownValues, PiiScrubber, restore
 from app.privacy.text import digits, fold
 
 CORPUS = Path(__file__).with_name("corpus.jsonl")
@@ -54,11 +58,16 @@ class Report:
     skipped: int = 0
     leaks: list[str] = field(default_factory=list)  # "<id>:<pii index>"
     overscrubbed: list[str] = field(default_factory=list)
+    typed_place: list[str] = field(default_factory=list)  # keep strings masked as <PLACE_n> (option C)
     keep_total: int = 0
 
     @property
     def overscrub_rate(self) -> float:
         return len(self.overscrubbed) / self.keep_total if self.keep_total else 0.0
+
+    @property
+    def typed_place_rate(self) -> float:
+        return len(self.typed_place) / self.keep_total if self.keep_total else 0.0
 
     def ok(self) -> bool:
         return not self.leaks and self.overscrub_rate <= MAX_OVERSCRUB_RATE
@@ -72,6 +81,10 @@ class Report:
             "overscrubbed": len(self.overscrubbed),
             "overscrub_rate": round(self.overscrub_rate, 4),
             "overscrub_ids": self.overscrubbed[:50],
+            "keep_total": self.keep_total,
+            "typed_place": len(self.typed_place),
+            "typed_place_rate": round(self.typed_place_rate, 4),
+            "typed_place_ids": self.typed_place[:50],
         }
 
 
@@ -110,6 +123,11 @@ def _readable(value: str, scrubbed: str) -> bool:
     return False
 
 
+def places_only(placeholders: dict[str, str] | None) -> dict[str, str]:
+    """The ``<PLACE_n>`` entries of a placeholder map (option C)."""
+    return {ph: v for ph, v in (placeholders or {}).items() if ph.startswith(f"<{PLACE}_")}
+
+
 async def evaluate(scrubber: PiiScrubber, samples: list[dict], *, offline: bool) -> Report:
     report = Report()
     for s in samples:
@@ -119,10 +137,12 @@ async def evaluate(scrubber: PiiScrubber, samples: list[dict], *, offline: bool)
         report.samples += 1
         result = await scrubber.scrub(s["text"], known_of(s))
         report.leaks += [f"{s['id']}:{i}" for i, v in enumerate(s["pii"]) if _readable(v, result.text)]
+        places_back = restore(result.text, places_only(result.placeholders))
         for i, keep in enumerate(s.get("keep", [])):
             report.keep_total += 1
-            if keep not in result.text:
-                report.overscrubbed.append(f"{s['id']}:{i}")
+            if keep in result.text:
+                continue
+            (report.typed_place if keep in places_back else report.overscrubbed).append(f"{s['id']}:{i}")
     return report
 
 

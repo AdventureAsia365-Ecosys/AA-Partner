@@ -97,7 +97,7 @@ async def test_e_known_values_scrubbed_map_sealed_and_restored_only_in_the_agenc
         "JOIN crm.llm_call c ON c.llm_call_id = p.llm_call_id WHERE p.placeholder_map_id = $1",
         uuid.UUID(result.placeholder_map_id),
     )
-    assert row["placeholder_count"] >= 3 and row["scrubber_version"] == "f3-1"
+    assert row["placeholder_count"] >= 3 and row["scrubber_version"] == "f3-2"
     assert row["ttl"].total_seconds() == 24 * 3600
     assert b"Hoa" not in bytes(row["map_enc"]) and b"Lawson" not in bytes(row["map_enc"])  # encrypted
     receipt = json.loads(row["scrub_receipt"])

@@ -550,7 +550,13 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   `ApplyGuardrail` in detect mode (`app/privacy/guardrails.py`, acc2 us-west-1, AA-930 §2), `match` never logged.
   Every finding of a mapped kind is replaced: located across whitespace, case, word boundaries and diacritics, the
   placeholders inside a finding kept and every other fragment replaced, overlapping findings merged; a finding that
-  cannot be located (or has no value) refuses the scrub.
+  cannot be located (or has no value) refuses the scrub. **Typed places** (option C, S249, scrubber `f3-2`): an
+  `ADDRESS` finding that is exactly one known destination (`app.privacy.places.is_place`, folded: "Hà Giang", "Hoi
+  An", "Huế") is still replaced, as `<PLACE_n>`, so the model knows a place stood there; it is sealed in the same map
+  and restored with the rest. A place plus anything else stays `<ADDRESS_n>`; a `NAME` finding stays `<PERSON_n>`
+  even when it equals a place (never hint that a person is a place). Nothing is left unmasked: no "keep known
+  places" rule, because many destinations are also Vietnamese personal names. The scrubber `VERSION` is bumped
+  whenever the same input can scrub differently.
 - **Fail closed**: any error -> `scrub_failed`, a scrub over its deadline (`SCRUB_DETECTOR_TIMEOUT_MS`, default 3 s,
   passes 1-3 together) -> `scrub_timeout`; no call, `manual_reply_needed`. No guardrail configured = every scrub refused. Text that already
   holds a placeholder-shaped token is neutralised to `[KIND_n]` first.
@@ -564,8 +570,10 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   kept with placeholders.
 - **Logs**: the JSON log renderer and Sentry scrubber (`app/observability/scrub.py`) also run the pass-2 detectors
   (cards, CCCD, phones without `+`, passports, OTPs, signed links; not dates).
-- **Corpus gate** (`api/tests/scrub_corpus/`): 242 synthetic EN/VI samples (generator + `--check`), 0 leaks. Offline
-  half (passes 1-2) in every PR's Unit Tests; all three passes in the workflow **Scrub corpus** (nightly 20:30 UTC and
+- **Corpus gate** (`api/tests/scrub_corpus/`): 242 synthetic EN/VI samples (generator + `--check`), 0 leaks,
+  over-scrub of `keep` strings <= 5 %; a `keep` string back once only the `<PLACE_n>` placeholders are restored is a
+  **typed place**, reported apart (`typed_place`, `typed_place_rate`), not an over-scrub. Offline half (passes 1-2, and
+  a detector that tags every destination `ADDRESS` like the live guardrail) in every PR's Unit Tests; all three passes in the workflow **Scrub corpus** (nightly 20:30 UTC and
   on every push to main that changes `api/app/privacy/**` or the corpus; GitHub environment `scrub-corpus`, OIDC role
   with `bedrock:ApplyGuardrail` only; about $0.72 a month). A red run opens or comments on the issue "Scrub corpus is
   red on main".
