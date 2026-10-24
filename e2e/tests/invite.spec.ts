@@ -57,6 +57,14 @@ test.describe("CRM-11 invite -> active on Dev", () => {
     await owner.goto(`${PARTNER}/settings/team`);
     await expect(owner.getByTestId("team-admin")).toHaveAttribute("data-hydrated", "true", { timeout: 15_000 });
 
+    // A run that failed after sending leaves its invitation pending ("already has a pending invitation"), and the
+    // list masks addresses: the synthetic agency only ever has this test's invitations, so revoke every pending one.
+    const pending = owner.getByTestId("team-invitations").getByRole("button", { name: /withdraw|thu hồi/i });
+    for (let left = await pending.count(); left > 0; left -= 1) {
+      await pending.first().click();
+      await expect(pending).toHaveCount(left - 1, { timeout: 15_000 });
+    }
+
     const before = await baseline();
     const started = Date.now();
     await owner.getByTestId("team-invite-email").fill(INVITEE);
