@@ -100,9 +100,25 @@ async def test_receipt_takes_counts_and_versions_only(app_pool: asyncpg.Pool) ->
     )
     async with in_tenant(app_pool, tenant_id) as conn:
         assert await _call(conn, full) and await _call(conn, '{"scrubber": "stub-0", "entities": 0}')
-    with pytest.raises(asyncpg.CheckViolationError):
-        async with in_tenant(app_pool, tenant_id) as conn:
-            await _call(conn, '{"scrubber": "f3-1", "name": "Hoa"}')
+    async with in_tenant(app_pool, tenant_id) as conn:
+        assert await _call(conn, "{}") and await _call(conn, '{"scrubber": "unavailable", "counts": {}}')
+    # Review AA-938: closed at every level, so neither a nested key nor a value can carry a name.
+    for bad in (
+        '{"scrubber": "f3-1", "name": "Hoa"}',
+        '{"counts": {"Hoa Nguyen": 1}}',
+        '{"counts": {"PERSON": "Nguyễn Thị Hoa"}}',
+        '{"counts": ["PERSON"]}',
+        '{"passes": {"known": 1, "Hoa": 1}}',
+        '{"passes": {"known": "Hoa"}}',
+        '{"scrubber": "Nguyen Thi Hoa"}',
+        '{"detector": "Hoa Nguyen"}',
+        '{"detector": 1}',
+        '{"entities": "Hoa"}',
+        '{"known_persons": {"Hoa": 1}}',
+    ):
+        with pytest.raises(asyncpg.CheckViolationError):
+            async with in_tenant(app_pool, tenant_id) as conn:
+                await _call(conn, bad)
 
 
 async def test_purge_policy_deletes_expired_maps_of_every_agency_only_with_the_scope(
