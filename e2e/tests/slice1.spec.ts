@@ -20,6 +20,7 @@
 // AWS credentials of the read-only mailbox role come from the job.
 import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs";
+import { submitIntake } from "../helpers/intake";
 import { landOnPartner, signIn } from "../helpers/signin";
 
 const env = (name: string) => (process.env[name] ?? "").trim().replace(/\/+$/, "");
@@ -62,11 +63,12 @@ test.describe("CRM-08 slice 1 on Dev", () => {
     await page.locator('input[name="name"]').fill(PROSPECT.name);
     await page.locator('input[name="email"]').fill(PROSPECT.email);
     await page.locator('textarea[name="message"]').fill("E2E run: Ha Giang and Hoi An, slow pace.");
-    await page.getByTestId("intake-submit").getByRole("button").click();
-    await expect(page.getByTestId("intake-error")).toBeVisible(); // R: no consent -> refused, nothing stored
+    // Submits go through submitIntake: it waits out the per-address limit once (the specs share the runner's address).
+    expect(await submitIntake(page)).toBe(422); // R: no consent -> refused (consent_required), nothing stored
+    await expect(page.getByTestId("intake-error")).toBeVisible();
     await shot(page, "01-no-consent-refused");
     await page.getByTestId("intake-consent").check();
-    await page.getByTestId("intake-submit").getByRole("button").click();
+    expect(await submitIntake(page)).toBe(202);
     await expect(page.getByTestId("intake-thanks")).toBeVisible({ timeout: 15_000 });
     await shot(page, "02-thanks");
 

@@ -17,6 +17,7 @@
 // can take up to a minute to show the new windows: the page is reloaded until it does.
 import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs";
+import { submitIntake } from "../helpers/intake";
 import { landOnPartner, signIn } from "../helpers/signin";
 
 const env = (name: string) => (process.env[name] ?? "").trim().replace(/\/+$/, "");
@@ -112,7 +113,7 @@ test.describe("CRM-15 modules 1 + 2 on Dev", () => {
       await slot.selectOption({ index: 1 });
       await client.getByTestId("intake-consent").check();
       await shot(client, "02-inquiry-with-slot");
-      await client.getByTestId("intake-submit").getByRole("button").click();
+      expect(await submitIntake(client)).toBe(202); // waits out the per-address limit once
       await expect(client.getByTestId("intake-thanks")).toBeVisible({ timeout: 15_000 });
 
       const card = page.getByTestId("trip-card").filter({ hasText: CARD_TOKEN });
