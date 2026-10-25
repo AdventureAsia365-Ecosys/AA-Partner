@@ -6,10 +6,13 @@
 // planning form's link opens on the first client host. AA-944 (CRM-16): the Bookings tab under the workspace
 // (GET /trips/{id}/lines, money for owner / agent only; the supplier list for the add form). AA-945 (CRM-17): the
 // Messages tab (the trip's conversations, the composer with saved replies, autosaved drafts, Undo, held messages).
+// AA-946 (CRM-18): the Proposal tab (GET /trips/{id}/lifecycle: proposals, payment schedule, portal progress; the
+// published booking terms from GET /agreements); its client links open on the first client host.
 import { notFound } from "next/navigation";
 import { ErrorState } from "@/app/_kit";
 import { LinesPanel } from "@/components/ledger/LinesPanel";
 import { MessagesPanel } from "@/components/mail/MessagesPanel";
+import { ProposalPanel } from "@/components/proposals/ProposalPanel";
 import { TripPanel } from "@/components/pipeline/TripPanel";
 import type { DocumentRow } from "@/lib/clients";
 import { crmCall } from "@/lib/crmApi";
@@ -18,6 +21,7 @@ import { t } from "@/lib/i18n";
 import type { SuppliersView, TripLines } from "@/lib/ledger";
 import type { Conversation, SavedReply } from "@/lib/mail";
 import type { Member, Stage2View, TripView } from "@/lib/pipeline";
+import type { Agreement, LifecycleView } from "@/lib/proposals";
 import { serverContext } from "@/lib/serverContext";
 
 export const dynamic = "force-dynamic";
@@ -32,7 +36,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
   const { session } = await serverContext();
   if (!session) return null;
   const tripQuery = new URLSearchParams({ trip_id: tripId });
-  const [trip, members, docs, stage2, lines, suppliers, convs, replies] = await Promise.all([
+  const [trip, members, docs, stage2, lines, suppliers, convs, replies, lifecycle, agreements] = await Promise.all([
     crmCall<TripView>(ctx.cfg, session, "GET", `trips/${tripId}`),
     crmCall<{ members: Member[] }>(ctx.cfg, session, "GET", "members"),
     crmCall<{ documents: DocumentRow[] }>(ctx.cfg, session, "GET", `trips/${tripId}/documents`),
@@ -41,6 +45,8 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
     crmCall<SuppliersView>(ctx.cfg, session, "GET", "suppliers"),
     crmCall<{ conversations: Conversation[] }>(ctx.cfg, session, "GET", "conversations", { query: tripQuery }),
     crmCall<{ saved_replies: SavedReply[] }>(ctx.cfg, session, "GET", "saved-replies"),
+    crmCall<LifecycleView>(ctx.cfg, session, "GET", `trips/${tripId}/lifecycle`),
+    crmCall<{ agreements: Agreement[] }>(ctx.cfg, session, "GET", "agreements"),
   ]);
   const clientHost = ctx.cfg.clientHosts[0];
   if (!trip.ok) {
@@ -61,6 +67,17 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
       stage2={stage2.ok ? stage2.data : null}
       clientOrigin={clientHost ? `https://${clientHost}` : null}
     />
+    {lifecycle.ok && (
+      <ProposalPanel
+        view={lifecycle.data}
+        terms={agreements.ok ? agreements.data.agreements.filter((d) => d.kind === "booking_terms" && d.status === "published") : []}
+        party={trip.data.party}
+        role={ctx.role}
+        lang={ctx.lang}
+        locale={ctx.locale}
+        clientOrigin={clientHost ? `https://${clientHost}` : null}
+      />
+    )}
     {lines.ok && (
       <LinesPanel
         tripId={tripId}

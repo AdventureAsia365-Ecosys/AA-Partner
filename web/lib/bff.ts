@@ -141,6 +141,19 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "POST", pattern: /^saved-replies$/, tenant: true, card: "AA-945" },
   { method: "PATCH", pattern: new RegExp(`^saved-replies/${UUID}$`), tenant: true, card: "AA-945" },
   { method: "DELETE", pattern: new RegExp(`^saved-replies/${UUID}$`), tenant: true, card: "AA-945" },
+  // AA-946 (CRM-18): the trip's Proposal tab (proposals, send / withdraw, the payment schedule, mark paid / void,
+  // portal invites per traveller and revoke), Settings > Agreements (owner; the API checks the roles).
+  { method: "GET", pattern: new RegExp(`^trips/${UUID}/lifecycle$`), tenant: true, card: "AA-946" },
+  { method: "POST", pattern: new RegExp(`^trips/${UUID}/proposals$`), tenant: true, card: "AA-946" },
+  { method: "PATCH", pattern: new RegExp(`^proposals/${UUID}$`), tenant: true, card: "AA-946" },
+  { method: "POST", pattern: new RegExp(`^proposals/${UUID}/(send|withdraw)$`), tenant: true, card: "AA-946" },
+  { method: "POST", pattern: new RegExp(`^schedule/${UUID}/(mark-paid|void)$`), tenant: true, card: "AA-946" },
+  { method: "POST", pattern: new RegExp(`^trips/${UUID}/portal-access$`), tenant: true, card: "AA-946" },
+  { method: "POST", pattern: new RegExp(`^portal-access/${UUID}/revoke$`), tenant: true, card: "AA-946" },
+  { method: "GET", pattern: /^agreements$/, tenant: true, card: "AA-946" },
+  { method: "POST", pattern: /^agreements$/, tenant: true, card: "AA-946" },
+  { method: "PATCH", pattern: new RegExp(`^agreements/${UUID}$`), tenant: true, card: "AA-946" },
+  { method: "POST", pattern: new RegExp(`^agreements/${UUID}/publish$`), tenant: true, card: "AA-946" },
 ];
 
 /** Calls only the web server makes (lib/crmApi.ts crmCall), never reachable through /bff from the browser. */

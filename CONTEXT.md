@@ -598,8 +598,10 @@ Design v3 §6.3 CRM-18 (M4 base, M7 manual, M11 base, M12 v0); migration crm-016
 - **Stage 3 gate**: s3 = done (traveller x [details, waiver]) / all, stored on `trip.intake_completeness.s3`; 100
   opens booked -> pre_departure (API and DB); the `waiting_on` hook `portal_stage3` (60) answers `client` for a booked
   trip below 100 whose travellers have portal access.
-- **Web**: the trip's Proposal tab (`components/lifecycle/ProposalPanel.tsx`), Settings > Agreements, the client pages
-  `/c/p/[token]` (proposal + accept) and `/c/t/[token]` (portal). Dev E2E: `e2e/tests/lifecycle-thin.spec.ts`.
+- **Web**: the trip's Proposal tab (`components/proposals/ProposalPanel.tsx`), Settings > Agreements (`components/settings/AgreementsView.tsx`), the client pages
+  `/c/p/[token]` (`components/proposals/ProposalPage.tsx`) and `/c/t/[token]` (`components/portal/PortalPage.tsx`; the
+  session cookie never reaches page script; only the `client.*` strings ship, `lib/clientMessages.ts`), BFF lines card
+  AA-946 in `lib/bff.ts`. Dev E2E: `e2e/tests/lifecycle-thin.spec.ts` (portal steps need `PORTAL_OTP_DEV_ECHO`).
 
 ## F1 / F2 complete (AA-937, CRM-09)
 
