@@ -17,6 +17,12 @@ name: E2E Dev
 # AA-946 (CRM-18): e2e/tests/lifecycle-thin.spec.ts runs in the same job (agreements, proposal accept, mark paid, the
 # portal and its Stage 3 lock, e-sign v0); it needs crm-016 applied and the AA-946 API + web deployed; its portal steps
 # need PORTAL_OTP_DEV_ECHO=true on the Dev API (skipped with a note otherwise). Job timeout 25 -> 35 minutes.
+# AA-947 (CRM-19): e2e/tests/aa-lines.spec.ts runs in the same job (Add AA item -> "AA pending" -> quoted with the
+# "from"-price warning, card R 403s, Hold -> held + delete refused, Lost + Undo keeps the hold, Lost releases it). It
+# needs the AA-947 API + web, the AA-973 synthetic supply on Booking, a Booking partner row and a per-person price hint
+# on the seed plan (the spec checks both first), and variable E2ECRMAATOUR (the seed tour's CIS source_id). Optional:
+# variable E2ECRMASSISTANTEMAIL with secrets E2ECRMASSISTANTPASSWORD / E2ECRMASSISTANTTOTP (the same agency's
+# assistant: her confirm is refused 403); without them that step is a note. Job timeout 35 -> 50 minutes.
 on:
   workflow_dispatch:
     inputs:
@@ -39,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     environment: e2e
-    timeout-minutes: 35
+    timeout-minutes: 50
     defaults:
       run:
         working-directory: e2e
@@ -51,6 +57,8 @@ jobs:
       E2ECRMEMAIL: ${{ vars.E2ECRMEMAIL }}
       E2ECRMINVITE: ${{ inputs.invite && '1' || '0' }}
       E2ECRMINVITEE: ${{ vars.E2ECRMINVITEE }}
+      E2ECRMAATOUR: ${{ vars.E2ECRMAATOUR }}
+      E2ECRMASSISTANTEMAIL: ${{ vars.E2ECRMASSISTANTEMAIL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -74,10 +82,12 @@ jobs:
           aws-region: us-west-1
           role-session-name: crm-e2e-dev-${{ github.run_id }}
       - name: Run
-        # The owner's partner-pool credentials reach this step only (never the install steps above).
+        # The partner-pool credentials (owner; optional assistant) reach this step only (never the install steps above).
         env:
           E2ECRMPASSWORD: ${{ secrets.E2ECRMPASSWORD }}
           E2ECRMTOTP: ${{ secrets.E2ECRMTOTP }}
+          E2ECRMASSISTANTPASSWORD: ${{ secrets.E2ECRMASSISTANTPASSWORD }}
+          E2ECRMASSISTANTTOTP: ${{ secrets.E2ECRMASSISTANTTOTP }}
         run: npx playwright test
       # Screenshots only, never the reports (a fill step would name the sign-in code).
       - name: Upload screenshots
