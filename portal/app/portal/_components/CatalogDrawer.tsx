@@ -39,7 +39,7 @@ function CompareRow({ label, yours, onEdit }: { label: string; yours: string; on
               setEditing(true);
               setVal(yours);
             }}
-            style={{ background: "none", border: "none", cursor: "pointer", color: T.gold, fontSize: 10, fontFamily: sans }}
+            style={{ background: "none", border: "none", cursor: "pointer", color: T.goldDeep, fontSize: 10, fontFamily: sans }}
           >
             <span aria-hidden>✏</span> Edit
           </button>
@@ -103,7 +103,7 @@ function HighlightsCompare({ yours, onChange }: { yours: string[]; onChange: (v:
         ))}
         <button
           onClick={() => onChange([...yours, ""])}
-          style={{ fontSize: 11, color: T.gold, background: "none", border: "none", cursor: "pointer", fontFamily: sans }}
+          style={{ fontSize: 11, color: T.goldDeep, background: "none", border: "none", cursor: "pointer", fontFamily: sans }}
         >
           + Add
         </button>
@@ -119,7 +119,7 @@ function ItineraryCompare({ yours, expand, setExpand }: { yours: string; expand:
         <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.muted }}>Itinerary</div>
         <button
           onClick={() => setExpand(!expand)}
-          style={{ fontSize: 11, color: T.gold, background: T.goldTint, border: `1px solid ${T.goldSoft}`, borderRadius: 4, padding: "2px 10px", cursor: "pointer", fontFamily: sans, fontWeight: 600 }}
+          style={{ fontSize: 11, color: T.goldDeep, background: T.goldTint, border: `1px solid ${T.goldSoft}`, borderRadius: 4, padding: "2px 10px", cursor: "pointer", fontFamily: sans, fontWeight: 600 }}
         >
           {expand ? "▲ Collapse" : "▼ Expand"}
         </button>

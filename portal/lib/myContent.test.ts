@@ -13,7 +13,11 @@ import {
   monthStart,
   NO_FILTERS,
   pieceTitle,
+  pieceTitleOrTour,
   placeTopic,
+  angleLabel,
+  exportFileStem,
+  withDocumentTitle,
   publishBlock,
   regenerateBlock,
   sanitizeView,
@@ -56,11 +60,61 @@ test("words skip markdown marks and links; no text is null", () => {
   assert.equal(wordCount("Đi bộ qua cầu tre"), 5);
 });
 
-test("title is the first heading, else the angle, else Untitled", () => {
+test("title is the H1, else the angle, else Untitled", () => {
   assert.equal(pieceTitle(row()), "Where Two Worlds Meet");
   assert.equal(pieceTitle(row({ content_text: "Plain social post", angle: { name: "Golden hour" } })), "Golden hour");
   assert.equal(pieceTitle(row({ content_text: null, angle: null })), "Untitled");
-  assert.ok(pieceTitle(row({ content_text: `## ${"x".repeat(200)}` })).length <= 118);
+  assert.ok(pieceTitle(row({ content_text: `# ${"x".repeat(200)}` })).length <= 118);
+});
+
+test("S251: a search result with no H1 and no angle shows the tour, not Untitled", () => {
+  assert.equal(pieceTitleOrTour(row({ content_text: "Plain post", angle: null })), "Sapa Trek");
+  assert.equal(pieceTitleOrTour(row({ content_text: null, angle: null, tour: null })), "Untitled piece");
+  assert.equal(pieceTitleOrTour(row()), "Where Two Worlds Meet");
+});
+
+test("S251: a long H1 cut with an ellipsis hides an angle name that starts the same way", () => {
+  const long = "Sapa at dawn ".repeat(12).trim();
+  assert.equal(angleLabel(row({ content_text: `# ${long}\n\nBody`, angle: { name: long } })), null);
+  assert.equal(angleLabel(row({ content_text: `# ${long}\n\nBody`, angle: { name: "Golden hour" } })), "Golden hour");
+});
+
+test("S251 D5: a blog's first ## section heading is not its title", () => {
+  const blog = row({
+    content_text: "There is a quality to heritage.\n\n## Dewathang and the Border\n\nText.\n\n## Khaling\n\nMore.",
+    angle: { name: "Bhutan's Living Heritage" },
+  });
+  assert.equal(pieceTitle(blog), "Bhutan's Living Heritage");
+  assert.equal(pieceTitle(row({ content_text: "## Section\n\n# Real Title\n\nBody" })), "Real Title");
+});
+
+test("S251 D2: the angle label is the name when it differs from the title, never the writing brief", () => {
+  const brief = "Hook-Insight-CTA: Hook on the surprise that a ruined monastery carries weight";
+  // Title = angle name (no H1): nothing more to say.
+  assert.equal(angleLabel(row({ content_text: "Body only", angle: { name: "Golden hour", formula_fit: brief } })), null);
+  assert.equal(angleLabel(row()), null); // H1 equals the angle name
+  // A different H1: the angle name is a useful second line.
+  const other = row({ content_text: "# Sapa at dawn\n\nBody", angle: { name: "Golden hour", formula_fit: brief } });
+  assert.equal(angleLabel(other), "Golden hour");
+  assert.equal(angleLabel(row({ angle: null })), null);
+  for (const r of [other, row({ angle: { name: "x", formula_fit: brief } })]) {
+    assert.ok(!(angleLabel(r) ?? "").includes("Hook-Insight-CTA"));
+  }
+});
+
+test("export file name and <title> follow the piece title", () => {
+  assert.equal(exportFileStem("Bhutan's Living Heritage: What the Dzongs Reveal"), "bhutan-s-living-heritage-what-the-dzongs-reveal");
+  assert.equal(exportFileStem("Khövsgöl Lake, Mongolia"), "khovsgol-lake-mongolia");
+  assert.equal(exportFileStem("", "blog"), "blog");
+  assert.equal(exportFileStem("———"), "content");
+  assert.ok(exportFileStem("a ".repeat(100)).length <= 60);
+  assert.ok(!exportFileStem("a ".repeat(100)).endsWith("-"));
+  const page = "<!DOCTYPE html><html><head><title>Blog post</title></head><body></body></html>";
+  assert.equal(
+    withDocumentTitle(page, "Tea & <Temples> $1"),
+    "<!DOCTYPE html><html><head><title>Tea &amp; &lt;Temples&gt; $1</title></head><body></body></html>",
+  );
+  assert.equal(withDocumentTitle("<article><p>x</p></article>", "T"), "<article><p>x</p></article>");
 });
 
 test("place / topic: tour, route hub, activity, or nothing", () => {
@@ -106,6 +160,9 @@ test("a stored view is sanitized, never trusted", () => {
   assert.deepEqual(got.filters, NO_FILTERS);
   assert.deepEqual(got.sorting, [{ id: "words", desc: true }]);
   assert.deepEqual(sanitizeView(null).filters, NO_FILTERS);
+  // S251: the Angle column is gone; a view saved while it was sorted by it falls back to no sort.
+  assert.deepEqual(sanitizeView({ sorting: [{ id: "angle", desc: false }, { id: "created", desc: true }] }).sorting,
+    [{ id: "created", desc: true }]);
 });
 
 test("publish: ready + supported channel + its connection, else a reason", () => {

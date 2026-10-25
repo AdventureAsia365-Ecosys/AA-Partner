@@ -5,6 +5,7 @@
 
 import { apiGet } from "@/app/_kit";
 import type { ServedFields } from "./ServedBadge";
+import { exportFileStem, withDocumentTitle } from "@/lib/myContent";
 
 export interface ReviewGoal { key: string; label: string }
 export interface ReviewAngle {
@@ -98,28 +99,28 @@ export async function publishPiece(pieceId: string): Promise<PublishResult> {
  * Fetch an export blob for a piece and trigger a browser download. Kept client-side (the proxy
  * forwards Content-Type but not Content-Disposition, so a plain <a href> would open inline).
  * The backend audit-logs each export per tenant/channel (AA-613/AA-614).
+ * S251 D5: the file name and, for an HTML page, its <title> are the piece title (lib/myContent.ts pieceTitle), the
+ * same title the list and the drawer show; CIS writes a fixed "Blog post" <title>, replaced here.
  */
 export async function exportPiece(
   // AA-668 — only these fields are read, so the Writer panel can export a just-written piece too.
-  item: Pick<ReviewItem, "piece_id" | "channel"> & { angle?: { name: string } | null },
+  item: Pick<ReviewItem, "piece_id" | "channel"> & { title?: string | null; angle?: { name: string } | null },
   format: "text" | "html",
   mode: "document" | "fragment" = "document",
 ): Promise<void> {
   const qs = format === "html" ? `format=html&mode=${mode}` : "format=text";
   const r = await fetch(`/api/tenant/v1/content-writing/pieces/${item.piece_id}/export?${qs}`);
   if (!r.ok) throw new Error(`Export failed (${r.status})`);
-  const blob = await r.blob();
+  const title = (item.title || item.angle?.name || "").trim();
+  let blob = await r.blob();
+  if (format === "html" && mode === "document" && title) {
+    blob = new Blob([withDocumentTitle(await blob.text(), title)], { type: blob.type || "text/html" });
+  }
   const url = URL.createObjectURL(blob);
-  const safeTitle =
-    (item.angle?.name || item.channel || "content")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 60) || "content";
   const ext = format === "html" ? (mode === "fragment" ? "fragment.html" : "html") : "txt";
   const a = document.createElement("a");
   a.href = url;
-  a.download = `${safeTitle}.${ext}`;
+  a.download = `${exportFileStem(title, item.channel || "content")}.${ext}`;
   document.body.appendChild(a);
   a.click();
   a.remove();

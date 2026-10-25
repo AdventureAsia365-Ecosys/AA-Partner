@@ -35,6 +35,7 @@ import { AiContentNotice } from "./AiContentNotice";
 import { PUBLISHABLE_CHANNELS, exportPiece, publishPiece } from "./reviewListApi";
 import { channelName } from "./channelLabels";
 import { MarkdownBody } from "./markdownText";
+import { pieceTitle } from "@/lib/myContent";
 
 /** What the Slate hands the panel when a Subject is picked (or reopened this session). */
 export interface WriterTarget {
@@ -145,7 +146,7 @@ function FinishedPiece({ piece }: { piece: ContentPiece }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 10, fontFamily: sans }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: T.body }}>
         <CheckCircle2 size={15} color={T.green} />
-        <span>Your post is ready and saved in <Link href={`/portal/content?piece=${piece.piece_id}`} style={{ color: T.gold, fontWeight: 600 }}>My Content</Link>, where you can edit it.</span>
+        <span>Your post is ready and saved in <Link href={`/portal/content?piece=${piece.piece_id}`} style={{ color: T.goldDeep, fontWeight: 600 }}>My Content</Link>, where you can edit it.</span>
       </div>
       <div
         data-testid="writer-panel-result"
@@ -173,7 +174,10 @@ function ResultActions({ piece, target, confirmPublish, setConfirmPublish }: {
   const router = useRouter();
   const [publishing, setPublishing] = useState(false);
   const channel = piece.channel ?? target.channel;
-  const exportable = { piece_id: piece.piece_id, channel, angle: { name: target.title } };
+  // S251 D5: the piece's H1 when it has one (pieceTitle), else the subject's title.
+  const exportable = {
+    piece_id: piece.piece_id, channel, title: pieceTitle({ content_text: piece.content_text, angle: { name: target.title } }),
+  };
 
   async function doExport(format: "text" | "html") {
     try {

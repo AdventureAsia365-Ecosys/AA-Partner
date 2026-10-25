@@ -99,7 +99,7 @@ export function AccountMembers() {
             data-testid="members-request-change"
             style={{
               display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 999,
-              border: `1px solid ${T.gold}`, color: T.gold, fontSize: 12.5, fontWeight: 600, textDecoration: "none",
+              border: `1px solid ${T.gold}`, color: T.goldDeep, fontSize: 12.5, fontWeight: 600, textDecoration: "none",
             }}
           >
             <Mail size={13} aria-hidden /> Request a change
