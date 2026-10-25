@@ -385,6 +385,12 @@ original CIS commit). P2a moves the code only:
   unmetered portal session, cross-site write refusal, lockfile tracked, deploy on `portal/**` only).
 - **Smoke**: `e2e/smoke-portal/` with `e2e/playwright.portal.config.ts` (host checks always; logged-in pages with
   `E2E_TENANT_API_KEY`).
+- **Account pages (AA-761)**: Billing = plan card, rewrite meter (used / quota and reset date from CIS `GET /v1/quota`,
+  overage so far from `GET /v1/billing`) and an invoices empty state (CIS stores no invoices yet); Activity = kit
+  DataTable with server paging over CIS `GET /v1/account/activity` (type and UTC-date filters) and a CSV export of the
+  whole filtered set (`GET /v1/account/activity/export`); Integrations = each channel's health and test (Publish only
+  shows a summary that links here) and the API key (`GET /v1/account/api-key`: masked, issued, last used; a new key
+  by email to AA). Pure helpers in `portal/lib/account.ts`, tested by `npm test` (node --test, in Portal Build).
 - **The AA-CIS-App copy** of `portal/` is frozen (a CIS CI guard fails on any change) and no longer deployed; it is
   deleted 7 or more days after P2b. Portal changes are made here only.
 - **P2b (later)**: CloudFront to Fargate on the partner host, the partner pool sign-in, re-enrolment by invitation and
