@@ -8,7 +8,9 @@ import {
   connectionHealth,
   exportFilename,
   fmtDay,
+  fmtMonth,
   hasFilters,
+  keyUseText,
   NO_FILTERS,
   usageMeter,
   type Quota,
@@ -79,4 +81,16 @@ test("labels and health", () => {
   assert.equal(connectionHealth({ connected: true }), "untested");
   assert.equal(fmtDay("2026-11-01"), "1 Nov 2026");
   assert.equal(fmtDay(null), "—");
+});
+
+test("API key use: exact time, else the rolled-up month, else none", () => {
+  const at = (iso: string) => `AT ${iso}`;
+  assert.equal(fmtMonth("2026-05"), "May 2026");
+  assert.equal(fmtMonth("2026-05-01"), "May 2026");
+  assert.equal(fmtMonth(null), "—");
+  assert.equal(fmtMonth("garbage"), "—");
+  assert.equal(keyUseText("2026-10-05T00:00:00+00:00", "2026-05", at, "Never"), "AT 2026-10-05T00:00:00+00:00");
+  assert.equal(keyUseText(null, "2026-05", at, "Never"), "In May 2026");
+  assert.equal(keyUseText(null, undefined, at, "None yet"), "None yet");
+  assert.equal(keyUseText(undefined, null, at, "Never"), "Never");
 });

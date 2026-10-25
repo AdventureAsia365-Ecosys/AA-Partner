@@ -74,6 +74,23 @@ export function fmtDay(ymd: string | null | undefined): string {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 }
 
+/** "May 2026" from YYYY-MM (or YYYY-MM-DD), UTC, English. */
+export function fmtMonth(ym: string | null | undefined): string {
+  if (!ym) return "—";
+  const d = new Date(`${ym.slice(0, 7)}-01T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
+/** An API key use: the exact time when CIS has it, else the month from the usage rollup (raw rows are kept 90
+ *  days, AA-825), else `none`. `fmtAt` formats the exact timestamp (the kit's formatDateTime in the card). */
+export function keyUseText(at: string | null | undefined, month: string | null | undefined,
+  fmtAt: (iso: string) => string, none: string): string {
+  if (at) return fmtAt(at);
+  if (month) return `In ${fmtMonth(month)}`;
+  return none;
+}
+
 export function fmtUsd(n: number): string {
   return `$${n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 }
@@ -196,5 +213,9 @@ export interface ApiKeyFacts {
   issued_at: string | null;
   last_sign_in_at: string | null;
   last_api_call_at: string | null;
+  /** YYYY-MM: newest month with API calls, set only when no raw call is left (raw kept 90 days, AA-825). */
+  last_api_call_month?: string | null;
   last_used_at: string | null;
+  /** YYYY-MM: set (and last_used_at null) when that month is newer than every exact use. */
+  last_used_month?: string | null;
 }
