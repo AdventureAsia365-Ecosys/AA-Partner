@@ -1,0 +1,270 @@
+name: Vercel Deploy (portal)
+
+# AA-979 (CRM-P2a) — deploys the tenant portal (Content studio, portal/) to its Vercel project aa-cis-portal (Root
+# Directory `portal`, host portal.lumiguides.it.com). Port of AA-CIS-App's vercel-deploy-portal.yml (AA-885): the
+# portal moved here with its history; the Vercel project, its host and its env vars are unchanged until P2b (root
+# ADR 0010 §6). The Vercel Git integration is off (portal/vercel.json `git.deploymentEnabled: false`), so deployments
+# are created only here. The Hobby team cap is ~100 deployments / 24 h for the whole team: only portal/** and the two
+# portal workflows trigger this file (plus, on a PR only, the portal smoke specs and their config).
+#
+#   pull_request            -> preview of the PR head commit (+ one PR comment, + the portal UI smoke on it)
+#   push to main            -> production
+#   workflow_dispatch       -> preview or production (production only from main)
+#
+# Needs (repo level, set by the orchestrator; values never in this public repo):
+#   - secret VERCEL_TOKEN: a team-scoped Vercel token for this repo (not the AA-CIS-App one);
+#   - VARIABLE VERCEL_PORTAL_PROJECT_ID: the aa-cis-portal project id (prj_...). While it is empty the job FAILS red,
+#     like a missing token;
+#   - secret VERCEL_PORTAL_BYPASS_SECRET: the project's "Protection Bypass for Automation" value, for the production
+#     check and the preview smoke (optional: without it the production status is only logged);
+#   - secret E2E_TENANT_API_KEY: the tenant test key for the logged-in smoke (ui-smoke-portal.yml).
+# portal/** is not in deploy-dev.yml or deploy-web-dev.yml: a portal change never redeploys ECS.
+# Fork PRs and Dependabot runs get no secrets and are skipped by the job `if:`.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "portal/**"
+      - ".github/workflows/vercel-deploy-portal.yml"
+      - ".github/workflows/ui-smoke-portal.yml"
+      # The smoke itself (specs, config, Playwright pin): a PR that changes only the smoke still gets a preview to run
+      # it against. PR only: a smoke-only change on main has nothing new to deploy to production.
+      - "e2e/smoke-portal/**"
+      - "e2e/playwright.portal.config.ts"
+      - "e2e/package.json"
+  push:
+    branches: [main]
+    paths:
+      - "portal/**"
+      - ".github/workflows/vercel-deploy-portal.yml"
+      - ".github/workflows/ui-smoke-portal.yml"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "preview, or production (production only from main)"
+        required: true
+        type: choice
+        options: [preview, production]
+        default: preview
+
+permissions:
+  contents: read
+
+concurrency:
+  # One group per ref AND target, so a manual preview on main can never cancel a production deploy.
+  group: vercel-deploy-portal-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'preview' || (github.event_name == 'push' && 'production' || inputs.target) }}
+  # A newer push cancels an in-flight PREVIEW only; a production deploy is never cancelled mid-way.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.target == 'preview') }}
+
+env:
+  VERCEL_ORG_ID: team_zHOmLxnHRN3EC6hXHbXgTG81
+  VERCEL_PROJECT_ID: ${{ vars.VERCEL_PORTAL_PROJECT_ID }} # aa-cis-portal (repo variable)
+  VERCEL_CLI: vercel@60.0.1
+  VERCEL_TELEMETRY_DISABLED: "1"
+
+jobs:
+  deploy:
+    name: Vercel deploy (portal)
+    runs-on: ubuntu-latest
+    # PRs from forks get no secrets: never try to deploy them. Neither do runs Dependabot triggers (`github.actor` is
+    # dependabot[bot] on its PR events and their re-runs), so the job shows as skipped instead of red. A push to main
+    # or a dispatch always deploys, so a production deploy that cannot run still fails red.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.actor != 'dependabot[bot]' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      enabled: ${{ steps.plan.outputs.enabled }}
+      target: ${{ steps.plan.outputs.target }}
+      sha: ${{ steps.plan.outputs.sha }}
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      # All values reach `run:` through env (never `${{ }}` interpolation inside the script).
+      - name: Plan (target, commit, token present?)
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TARGET: ${{ inputs.target }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          HAS_TOKEN: ${{ secrets.VERCEL_TOKEN != '' }}
+          PROJECT_ID: ${{ vars.VERCEL_PORTAL_PROJECT_ID }}
+        run: |
+          case "$EVENT" in
+            pull_request) TARGET=preview ;;
+            push) TARGET=production ;;
+            *) TARGET="${INPUT_TARGET:-preview}" ;;
+          esac
+          if [ "$TARGET" = "production" ] && [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::Production deploys only from main (this run is on $REF)."
+            exit 1
+          fi
+          # No token = no deployment at all (the Git integration is off), so fail RED on every target: a green run
+          # with nothing deployed would pass a "CI green" check while production stays old.
+          if [ "$HAS_TOKEN" != "true" ]; then
+            if [ "$TARGET" = "production" ]; then
+              echo "::error::VERCEL_TOKEN is not set — this commit was NOT deployed to Vercel production (the Git integration is off). Set the secret, then re-run this workflow or dispatch it with target=production."
+            else
+              echo "::error::VERCEL_TOKEN is not set — no preview was deployed (the Git integration is off). Set the secret, then re-run this workflow."
+            fi
+            exit 1
+          fi
+          if [ -z "$PROJECT_ID" ]; then
+            echo "::error::Repo variable VERCEL_PORTAL_PROJECT_ID is not set — no portal deployment was made. Set it to the aa-cis-portal project id (prj_…), then re-run."
+            exit 1
+          fi
+          {
+            echo "target=$TARGET"
+            echo "sha=$SHA"
+            echo "enabled=true"
+          } >> "$GITHUB_OUTPUT"
+          echo "Target: $TARGET | commit: $SHA"
+
+      - name: Checkout the commit to deploy
+        if: steps.plan.outputs.enabled == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The PR HEAD commit (not the synthetic merge commit).
+          ref: ${{ steps.plan.outputs.sha }}
+          persist-credentials: false
+
+      - name: Set up Node 22
+        if: steps.plan.outputs.enabled == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      # stdout of `vercel deploy` is the deployment URL; progress and build logs go to stderr. The CLI waits for the
+      # remote build and exits non-zero when it fails. It runs from the repo root: the project's Root Directory
+      # (`portal`) selects the app; the root .vercelignore keeps the other apps out of the upload. The CLI reads the
+      # token from the VERCEL_TOKEN env var, so it never appears on a command line (process list, debug logs).
+      - name: Deploy (remote build of portal/ via the project's Root Directory)
+        if: steps.plan.outputs.enabled == 'true'
+        id: deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          TARGET: ${{ steps.plan.outputs.target }}
+        run: |
+          set -euo pipefail
+          ARGS=(deploy --yes --scope "$VERCEL_ORG_ID")
+          if [ "$TARGET" = "production" ]; then ARGS+=(--prod); fi
+          npx --yes "$VERCEL_CLI" "${ARGS[@]}" > "$RUNNER_TEMP/vercel-deploy.out"
+          URL=$(grep -Eo 'https://[^[:space:]]+' "$RUNNER_TEMP/vercel-deploy.out" | tail -n1 || true)
+          if [ -z "$URL" ]; then
+            echo "::error::vercel deploy printed no deployment URL."
+            exit 1
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Deployed ($TARGET): $URL"
+
+      # Production protection keeps the deployment URL behind Vercel auth (custom domains are public), so the URL is
+      # checked with the automation-bypass header when that secret exists; otherwise the status is only logged.
+      - name: Check the production deployment answers
+        if: steps.plan.outputs.target == 'production' && steps.deploy.outputs.url != ''
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+          BYPASS: ${{ secrets.VERCEL_PORTAL_BYPASS_SECRET }}
+        run: |
+          CODE=000
+          for _ in 1 2 3; do
+            if [ -n "$BYPASS" ]; then
+              CODE=$(curl -sS -L -o /dev/null -w '%{http_code}' --max-time 30 \
+                       -H "x-vercel-protection-bypass: $BYPASS" "$URL/" || echo 000)
+            else
+              CODE=$(curl -sS -L -o /dev/null -w '%{http_code}' --max-time 30 "$URL/" || echo 000)
+            fi
+            [ "$CODE" = "200" ] && break
+            sleep 10
+          done
+          echo "GET $URL/ -> HTTP $CODE"
+          if [ "$CODE" != "200" ]; then
+            if [ -n "$BYPASS" ]; then
+              echo "::error::Production deployment answered HTTP $CODE (expected 200)."
+              exit 1
+            fi
+            echo "::notice::No VERCEL_PORTAL_BYPASS_SECRET — status only logged (401/403 = deployment protection)."
+          fi
+
+      # The custom domain is public (no deployment protection): its sign-in page must answer 200 once the alias moves.
+      - name: Check the public portal host answers
+        if: steps.plan.outputs.target == 'production' && steps.deploy.outputs.url != ''
+        env:
+          PUBLIC_URL: https://portal.lumiguides.it.com/tenant-login
+        run: |
+          CODE=000
+          for _ in 1 2 3 4 5 6; do
+            CODE=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$PUBLIC_URL" || echo 000)
+            [ "$CODE" = "200" ] && break
+            sleep 10
+          done
+          echo "GET $PUBLIC_URL -> HTTP $CODE"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::$PUBLIC_URL answered HTTP $CODE (expected 200)."
+            exit 1
+          fi
+
+      - name: Job summary
+        if: always() && steps.plan.outputs.enabled == 'true'
+        env:
+          TARGET: ${{ steps.plan.outputs.target }}
+          SHA: ${{ steps.plan.outputs.sha }}
+          URL: ${{ steps.deploy.outputs.url }}
+          OUTCOME: ${{ steps.deploy.outcome }}
+        run: |
+          {
+            echo "### Vercel deploy (portal) — $TARGET"
+            echo ""
+            echo "- Commit: \`$SHA\`"
+            echo "- Result: $OUTCOME"
+            echo "- URL: ${URL:-n/a}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # One comment on the PR, edited in place on later pushes.
+      - name: Comment the preview URL on the PR
+        if: always() && github.event_name == 'pull_request' && steps.plan.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ steps.plan.outputs.sha }}
+          URL: ${{ steps.deploy.outputs.url }}
+          OUTCOME: ${{ steps.deploy.outcome }}
+          SERVER_URL: ${{ github.server_url }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          MARKER="<!-- vercel-preview-deploy-portal -->"
+          RUN_URL="$SERVER_URL/$REPO/actions/runs/$RUN_ID"
+          if [ "$OUTCOME" = "success" ] && [ -n "$URL" ]; then STATUS="✅ ready"; else STATUS="❌ failed"; fi
+          # shellcheck disable=SC2016  # the backticks are literal Markdown
+          BODY=$(printf '%s\n### Vercel preview (portal) — %s\n\nCommit: `%s`\n\nPreview: %s\n\n[Deploy run](%s)\n' \
+                   "$MARKER" "$STATUS" "$SHA" "${URL:-n/a}" "$RUN_URL")
+          EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                       --jq ".[] | select(.body | contains(\"$MARKER\")) | .id" 2>/dev/null | head -n1 || true)
+          if [ -n "$EXISTING" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$EXISTING" -f body="$BODY" >/dev/null
+            echo "Updated comment $EXISTING"
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -f body="$BODY" >/dev/null
+            echo "Created a new comment"
+          fi
+
+  # The portal UI smoke on the fresh PREVIEW.
+  smoke:
+    name: UI smoke (portal)
+    needs: deploy
+    if: needs.deploy.outputs.target == 'preview' && needs.deploy.outputs.url != ''
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/ui-smoke-portal.yml
+    with:
+      base_url: ${{ needs.deploy.outputs.url }}
+      sha: ${{ needs.deploy.outputs.sha }}
+    # Only the two secrets the smoke declares; never `inherit` (that would hand VERCEL_TOKEN to the smoke job).
+    secrets:
+      VERCEL_PORTAL_BYPASS_SECRET: ${{ secrets.VERCEL_PORTAL_BYPASS_SECRET }}
+      E2E_TENANT_API_KEY: ${{ secrets.E2E_TENANT_API_KEY }}
