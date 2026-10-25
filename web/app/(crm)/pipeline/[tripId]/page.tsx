@@ -7,7 +7,8 @@
 // (GET /trips/{id}/lines, money for owner / agent only; the supplier list for the add form). AA-945 (CRM-17): the
 // Messages tab (the trip's conversations, the composer with saved replies, autosaved drafts, Undo, held messages).
 // AA-946 (CRM-18): the Proposal tab (GET /trips/{id}/lifecycle: proposals, payment schedule, portal progress; the
-// published booking terms from GET /agreements); its client links open on the first client host.
+// published booking terms from GET /agreements); its client links open on the first client host. AA-947 (CRM-19): AA
+// lines in the Bookings tab; the Lost picker pre-selects the reason the AA lines suggest (lost_reason_hint).
 import { notFound } from "next/navigation";
 import { ErrorState } from "@/app/_kit";
 import { LinesPanel } from "@/components/ledger/LinesPanel";
@@ -66,6 +67,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
       documents={docs.ok ? docs.data.documents : []}
       stage2={stage2.ok ? stage2.data : null}
       clientOrigin={clientHost ? `https://${clientHost}` : null}
+      lostHint={lines.ok ? (lines.data.lost_reason_hint ?? null) : null}
     />
     {lifecycle.ok && (
       <ProposalPanel

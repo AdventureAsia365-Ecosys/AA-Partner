@@ -3,11 +3,16 @@
 // R18, R22, R25): Day | Item | Supplier | Conf no | Status | Cost | Sell | FX (rate @ date) | Collect. Cost, commission
 // and the FX of cost are shown only when the API sent them (owner, agent: the assistant gets no money block). Actions:
 // add a planning line, set the money (owner / agent), confirm (the agency's validation level decides; refusals are
-// worded from their codes), cancel, delete a planning line. Adventure Asia lines are read-only (from the Booking feed).
+// worded from their codes), cancel, delete a planning line. Adventure Asia lines are read-only (AA-947, CRM-19): they
+// come from a Booking quote / hold / feed event; the row shows the AA status ("AA pending" while Booking has not
+// answered, with the next try when it is down), "no longer offered", the hold expiry and the "from"-price warning, and
+// offers only the asks the API lists (Hold, Confirm with AA, Release, Re-quote). "Add AA item" opens AaItemForm.
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
 import { DateInput } from "@/components/DateInput";
+import { AaItemForm } from "@/components/ledger/AaItemForm";
+import { aaErrorKey, isRetrying, statusKey, type AaAction } from "@/lib/aa";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
@@ -39,6 +44,18 @@ const field: React.CSSProperties = {
 const cell: React.CSSProperties = { padding: "7px 8px", borderTop: `1px solid ${K.line}`, verticalAlign: "top", fontSize: 13 };
 const head: React.CSSProperties = { ...cell, borderTop: "none", color: K.muted, fontSize: 11.5, fontWeight: 600, textAlign: "left" };
 const TONE = { planning: "neutral", confirmed: "success", cancelled: "danger" } as const;
+const AA_TONE: Record<string, "neutral" | "info" | "success" | "warning" | "danger"> = {
+  pending: "warning",
+  quoted: "info",
+  held: "info",
+  on_request: "warning",
+  sold_out: "danger",
+  declined: "danger",
+  expired: "neutral",
+  released: "neutral",
+  not_served: "danger",
+  failed: "danger",
+};
 
 export function LinesPanel({
   tripId,
@@ -63,11 +80,13 @@ export function LinesPanel({
   const [message, setMessage] = useState<{ tone: "danger" | "success"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [addingAa, setAddingAa] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [money, setMoney] = useState<Partial<Record<MoneyKind, string>>>({});
   const [currency, setCurrency] = useState(view.base_currency);
 
   function refusal(detail: string, body: unknown): string {
+    if (aaErrorKey(detail) !== "ledger.error.other") return tr(aaErrorKey(detail));
     const text = tr(errorKey(detail));
     if (detail !== "line_incomplete") return text;
     const missing = missingCodes(body).map((m) => tr(`ledger.missing.${m}`));
@@ -115,6 +134,39 @@ export function LinesPanel({
 
   const confirmNote = (data: unknown) =>
     (data as { owner_task?: unknown } | null)?.owner_task ? tr("ledger.ownerTask") : tr("ledger.confirmed");
+
+  function aaStatus(line: Line) {
+    const aa = line.aa;
+    if (!aa) return null;
+    const key = statusKey(aa);
+    return (
+      <span style={{ display: "grid", gap: 2, marginTop: 4 }} data-testid="aa-status">
+        <Badge tone={aa.pending ? "warning" : (AA_TONE[aa.sub_status ?? ""] ?? "neutral")}>{tr(key)}</Badge>
+        {aa.pending && <span style={{ color: K.muted, fontSize: 11.5 }}>{tr(`aa.ask.${aa.pending.kind}`)}</span>}
+        {isRetrying(aa) && aa.pending && (
+          <span style={{ color: K.muted, fontSize: 11.5 }} data-testid="aa-retrying">
+            {fmt(tr("aa.retrying"), { at: formatDate(aa.pending.next_attempt_at.slice(0, 10), locale), n: aa.pending.attempts })}
+          </span>
+        )}
+        {aa.result_code && !aa.pending && <span style={{ color: K.muted, fontSize: 11.5 }}>{tr(`aa.result.${aa.result_code}`) ?? aa.result_code}</span>}
+      </span>
+    );
+  }
+
+  function aaDetails(line: Line) {
+    const aa = line.aa;
+    if (!aa) return null;
+    const pax = aa.pax ?? {};
+    return (
+      <span style={{ display: "grid", gap: 2, color: K.muted, fontSize: 11.5 }}>
+        <span>{fmt(tr("aa.pax"), { adults: pax.adult ?? 0, children: pax.child ?? 0 })}</span>
+        {aa.hold_expires_at && aa.sub_status === "held" && (
+          <span>{fmt(tr("aa.heldUntil"), { date: formatDate(aa.hold_expires_at.slice(0, 10), locale) })}</span>
+        )}
+        {aa.no_longer_offered && <Badge tone="danger">{tr("aa.noLongerOffered")}</Badge>}
+      </span>
+    );
+  }
 
   function amount(line: Line, kind: MoneyKind) {
     const m = line.money?.[kind];
@@ -170,7 +222,10 @@ export function LinesPanel({
               {view.lines.map((line) => (
                 <tr key={line.booking_line_id} data-testid={`line-${line.booking_line_id}`}>
                   <td style={cell}>{line.service_from ? formatDate(line.service_from, locale) : "—"}</td>
-                  <td style={cell}>{line.title}</td>
+                  <td style={cell}>
+                    {line.title}
+                    {aaDetails(line)}
+                  </td>
                   <td style={cell}>
                     {line.supplier_name}
                     {line.read_only && <div style={{ color: K.muted, fontSize: 11.5 }}>{tr("ledger.aaReadOnly")}</div>}
@@ -178,12 +233,31 @@ export function LinesPanel({
                   <td style={cell}>{line.confirmation_no ?? "—"}</td>
                   <td style={cell}>
                     <Badge tone={TONE[line.status]}>{tr(`ledger.status.${line.status}`)}</Badge>
+                    {aaStatus(line)}
                   </td>
                   {margin && <td style={cell}>{amount(line, "cost")}</td>}
-                  <td style={cell}>{line.money ? amount(line, "sell") : "—"}</td>
+                  <td style={cell}>
+                    {line.money ? amount(line, "sell") : "—"}
+                    {line.aa?.below_from_price && (
+                      <div style={{ marginTop: 4 }} data-testid="aa-below-from">
+                        <Badge tone="warning">{tr("aa.belowFrom")}</Badge>
+                      </div>
+                    )}
+                  </td>
                   <td style={cell}>{fxCell(line)}</td>
                   <td style={cell}>{tr(`ledger.collect.${line.collect}`)}</td>
                   <td style={{ ...cell, whiteSpace: "nowrap" }}>
+                    {(line.aa?.actions ?? []).map((action: AaAction) => (
+                      <Button
+                        key={action}
+                        size="sm"
+                        variant={action === "confirm" || action === "hold" ? "primary" : "ghost"}
+                        disabled={!hydrated || busy}
+                        onClick={() => run("POST", `lines/${line.booking_line_id}/aa/${action}`, undefined, () => tr("aa.asked"))}
+                      >
+                        {tr(`aa.action.${action}`)}
+                      </Button>
+                    ))}
                     {!line.read_only && line.status === "planning" && (
                       <Button size="sm" variant="primary" disabled={!hydrated || busy} onClick={() => run("POST", `lines/${line.booking_line_id}/confirm`, undefined, confirmNote)}>
                         {tr("ledger.confirm")}
@@ -233,11 +307,24 @@ export function LinesPanel({
           </table>
         </div>
       )}
-      <div style={{ marginTop: 12 }}>
-        {!adding ? (
-          <Button size="sm" disabled={!hydrated || own.length === 0} onClick={() => setAdding(true)}>
-            {tr("ledger.add")}
-          </Button>
+      <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+        {addingAa ? (
+          <AaItemForm tripId={tripId} baseCurrency={view.base_currency} canSell={margin} lang={lang} locale={locale} onClose={() => setAddingAa(false)} />
+        ) : (
+          !adding && (
+            <div>
+              <Button size="sm" disabled={!hydrated} onClick={() => setAddingAa(true)}>
+                {tr("aa.add.open")}
+              </Button>
+            </div>
+          )
+        )}
+        {addingAa ? null : !adding ? (
+          <div>
+            <Button size="sm" disabled={!hydrated || own.length === 0} onClick={() => setAdding(true)}>
+              {tr("ledger.add")}
+            </Button>
+          </div>
         ) : (
           <form action={add} style={{ display: "grid", gap: 8, maxWidth: 520 }} data-testid="ledger-add-form">
             <label style={{ display: "grid", gap: 2, fontSize: 12 }}>

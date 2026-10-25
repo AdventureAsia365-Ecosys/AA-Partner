@@ -119,6 +119,12 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "PUT", pattern: /^settings\/payments$/, tenant: true, card: "AA-944" },
   { method: "GET", pattern: /^fx\/overrides$/, tenant: true, card: "AA-944" },
   { method: "POST", pattern: /^fx\/overrides$/, tenant: true, card: "AA-944" },
+  // AA-947 (CRM-19): AA supply: the catalog cache search, one product's parts / departures / "from" price (live from
+  // Booking), a new AA line from a quote, and the asks on an AA line (the line itself is never edited).
+  { method: "GET", pattern: /^aa\/catalog$/, tenant: true, card: "AA-947" },
+  { method: "GET", pattern: /^aa\/products\/[A-Za-z0-9._:%-]{1,200}$/, tenant: true, card: "AA-947" },
+  { method: "POST", pattern: new RegExp(`^trips/${UUID}/aa-lines$`), tenant: true, card: "AA-947" },
+  { method: "POST", pattern: new RegExp(`^lines/${UUID}/aa/(hold|confirm|release|requote)$`), tenant: true, card: "AA-947" },
   // AA-945 (CRM-17): Settings > Mailbox (own mailbox: every role; the agency's: owner, the API checks), the forward-in
   // address, the sender table, conversations (trip Messages tab, Unmatched inbox, link to a client), drafts (autosave,
   // discard), send / Undo / back to draft, saved replies, the import progress. The mbox / CSV upload is API-only in v1
