@@ -104,6 +104,15 @@ F3 PII scrubber (AA-938, card CRM-10; ``app.privacy``):
 - ``SCRUB_GUARDRAIL_REGION``: its region (default ``us-west-1``).
 - ``SCRUB_DETECTOR_TIMEOUT_MS``: how long pass 3 may take (default 3000, 200..10000); a timeout refuses the call
   (``scrub_timeout``, the draft says "reply by hand").
+
+CIS membership feed (AA-978, ``app.cis``):
+
+- ``CIS_API_URL``: the origin of the CIS public API (``https://api-cis.…``, no path, no trailing slash; Terraform
+  ``var.crm_cis_api_url``). The worker pulls ``<CIS_API_URL>/tenant/membership/v1/events``.
+- ``M2M_CLIENT``: the CRM's aa-m2m client as the JSON of its secret ``{client_id, client_secret, token_url, scopes}``
+  (``aa-crm/<env>/m2m-booking-client``). ``crm_membership_pull`` asks for scope ``cis.tenant/read`` with it.
+  Either empty = the job logs ``not_configured`` and does nothing. A value that is not that JSON refuses to start
+  (the value is never echoed).
 """
 
 from __future__ import annotations
@@ -112,6 +121,8 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+
+from app.cis.m2m import CredentialsError, M2mCredentials, parse_credentials
 
 SERVICE_NAME = "aa-crm-api"
 
@@ -195,6 +206,8 @@ class Settings:
     scrub_detector_timeout_ms: int = DEFAULT_SCRUB_TIMEOUT_MS
     lifecycle_dry_run: bool = True
     fx_provider: str = "synthetic"
+    cis_api_url: str = ""
+    m2m_client: str = field(default="", repr=False)
 
     def __post_init__(self) -> None:
         if self.environment not in {"dev", "stg", "prod"} | INSECURE_ENVIRONMENTS:
@@ -296,6 +309,16 @@ class Settings:
         for origin in self.intake_page_origins:
             if not _ORIGIN.match(origin):
                 raise SettingsError(f"INTAKE_PAGE_ORIGINS entries must be https origins, got {origin!r}")
+        insecure = self.environment in INSECURE_ENVIRONMENTS
+        if self.cis_api_url and not (
+            _ORIGIN.match(self.cis_api_url) or (insecure and _HTTP_ORIGIN.match(self.cis_api_url))
+        ):
+            raise SettingsError(f"CIS_API_URL must be an https origin without a path, got {self.cis_api_url!r}")
+        if self.m2m_client:
+            try:
+                parse_credentials(self.m2m_client, allow_http=insecure)
+            except CredentialsError as exc:
+                raise SettingsError(str(exc)) from None  # names the problem, never the value
 
     @property
     def intake_origin_check(self) -> bool:
@@ -310,6 +333,13 @@ class Settings:
         return "https://partner.local.test" if self.environment in INSECURE_ENVIRONMENTS else ""
 
     @property
+    def m2m_credentials(self) -> M2mCredentials | None:
+        """The CRM's aa-m2m client (AA-978), or None when ``M2M_CLIENT`` is empty."""
+        if not self.m2m_client:
+            return None
+        return parse_credentials(self.m2m_client, allow_http=self.environment in INSECURE_ENVIRONMENTS)
+
+    @property
     def keys_state(self) -> str:
         """``kms`` / ``local`` when field encryption can run, else ``not_configured`` (readiness body)."""
         if self.key_provider == "kms" and not self.kms_data_key_id:
@@ -318,6 +348,7 @@ class Settings:
 
 
 _ORIGIN = re.compile(r"^https://[a-z0-9.-]+(:[0-9]{1,5})?$")
+_HTTP_ORIGIN = re.compile(r"^http://[a-z0-9.-]+(:[0-9]{1,5})?$")  # test / local only (CIS_API_URL)
 
 
 def _origins(raw: str | None) -> tuple[str, ...]:
@@ -425,4 +456,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         fx_provider=(env.get("FX_PROVIDER") or ("live" if environment in {"stg", "prod"} else "synthetic"))
         .strip()
         .lower(),
+        cis_api_url=_text(env, "CIS_API_URL").lower().rstrip("/"),
+        m2m_client=_text(env, "M2M_CLIENT"),
     )

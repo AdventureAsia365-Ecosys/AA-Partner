@@ -55,6 +55,10 @@ One more platform context (AA-940): :func:`audit_export_tx` is the audit export'
 a locked or trashed agency: an offboarded agency's audit is still exported and verified until its partitions are
 dropped (crm-007 offboarding path). Only the ``app/audit_export/`` job modules may open it.
 
+One more (AA-978): :func:`membership_feed_tx` is one CIS membership event in one agency (actor
+``platform:feed-tenant-membership``), opened whatever the agency's status and also for a tenant the CRM does not know
+(the event is still recorded). Only ``app/cis/membership_feed.py`` may open it.
+
 One more (AA-942): :func:`lifecycle_tx` is a lifecycle job's context in one agency (the daily ``crm_lifecycle`` run, the
 ``crm_offboard`` steps): ``app.tenant_id``, ``app.actor`` = ``job:<kind>``, the audit queue of :func:`system_tx`, and
 the agency statuses the caller names (a locked agency still has retention; an offboarding one is being erased). Only
@@ -430,6 +434,35 @@ async def platform_tx(
         raise ValueError(f"statuses must be a non-empty subset of {sorted(TENANT_STATUSES)}")
     async with _agency_tx(pool, tenant_id, actor, statuses=statuses) as ctx:
         yield ctx
+
+
+# AA-978: the CIS membership feed's actor. crm-013 lets only this actor name a cis_* lock source
+# (crm.tenant.lock_source); a platform: actor, so the crm-008 guards let it disable a member, the last owner included.
+MEMBERSHIP_FEED_ACTOR = "platform:feed-tenant-membership"
+
+
+@asynccontextmanager
+async def membership_feed_tx(pool: asyncpg.Pool, tenant_id: uuid.UUID) -> AsyncIterator[SystemContext]:
+    """One CIS ``tenant.membership.v1`` event in one agency (AA-978, ``crm_membership_pull``): ``app.tenant_id`` = the
+    event's tenant, ``app.actor`` = :data:`MEMBERSHIP_FEED_ACTOR` (audit actor kind ``aa_ops``: CIS is AA's directory).
+
+    Unlike :func:`platform_tx` it refuses no agency: CIS reports every CIS tenant, most of which have no CRM agency, and
+    the event must still be recorded in ``crm.membership_inbox`` (FORCE RLS on ``app.tenant_id``, no foreign key).
+    ``ctx.status`` is the agency's status, ``None`` when the CRM has no (untrashed) agency with that id; the caller
+    decides what each status allows. The work runs in a savepoint; queued audit events are written on success, only
+    when the agency exists (``crm.audit_event`` references it). Any exception rolls the whole event back. Only
+    ``app/cis/membership_feed.py`` may open it (``tests/unit/test_code_rules.py``)."""
+    if not isinstance(tenant_id, uuid.UUID):
+        raise TypeError("tenant_id must be a UUID")
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        status = await conn.fetchval(TENANT_SQL, tenant_id)
+        await conn.execute("SELECT set_config('app.actor', $1, true)", MEMBERSHIP_FEED_ACTOR)
+        ctx = SystemContext(conn=conn, tenant_id=tenant_id, actor=MEMBERSHIP_FEED_ACTOR, status=status)
+        async with conn.transaction():  # savepoint: the event's work
+            yield ctx
+        if status is not None:
+            await _write_audit(ctx, ctx.audit_events)
 
 
 @asynccontextmanager

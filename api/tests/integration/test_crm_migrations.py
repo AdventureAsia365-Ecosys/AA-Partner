@@ -112,4 +112,31 @@ async def test_readiness_as_crm_app(migrated_app_dsn: str) -> None:
     # requirement while a migration lands before the code that reads it (D8 / MIG-4).
     newest = f"crm-{MIGRATIONS[-1].name[:3]}"
     assert newest >= max(REQUIRED_SCHEMA_VERSIONS)
-    assert result.body == {"status": "ok", "db": "ok", "schema_version": newest}
+    assert result.body == {
+        "status": "ok",
+        "db": "ok",
+        "schema_version": newest,
+        "membership_feed": "not_configured",  # AA-978: no CIS_API_URL / M2M_CLIENT here
+    }
+
+
+async def test_readiness_reads_the_membership_feed_state_as_crm_app(migrated_app_dsn: str) -> None:
+    """AA-978 review round 1: with the feed configured, crm_app reads crm.membership_feed_state for readiness (any
+    word but ``unknown``: the row exists and the grant holds; other tests move its state)."""
+    m2m = (
+        '{"client_id": "abc123", "client_secret": "placeholder", '
+        '"token_url": "https://m2m-auth.example.invalid/oauth2/token", "scopes": ["cis.tenant/read"]}'
+    )
+    settings = Settings(
+        database_url=migrated_app_dsn,
+        db_ssl="disable",
+        environment="test",
+        cis_api_url="https://api-cis.example.invalid",
+        m2m_client=m2m,
+    )
+    db = Database(settings)
+    try:
+        result = await db.readiness()
+    finally:
+        await db.close()
+    assert result.ok and result.body["membership_feed"] in {"ok", "pending", "stale", "failing"}

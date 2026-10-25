@@ -52,7 +52,7 @@ def base_conn(status: str | None = "active") -> ScriptedConn:
     """One scripted pool answering every query the ops routes run, with a plausible row."""
     rules: list[tuple[str, Any]] = [
         ("SELECT status FROM crm.tenant WHERE tenant_id = $1 AND deleted_at IS NULL", status),
-        ("FROM crm.tenant WHERE tenant_id = $1 FOR UPDATE", status),
+        ("FROM crm.tenant WHERE tenant_id = $1 FOR UPDATE", {"status": status, "lock_source": None}),
         (
             "FROM crm.tenant t",
             {
@@ -249,7 +249,8 @@ SCENARIOS: list[tuple[str, str, str, Any, Any, str, int, str | None]] = [
      "admin", 409, "tenant_status"),
     ("POST", "/tenants/{tenant_id}/unlock", f"{T}/unlock", {"ticket_ref": TICKET},
      lambda c: (c.on("SELECT status FROM crm.tenant WHERE tenant_id = $1 AND deleted_at IS NULL", "locked"),
-                c.on("FROM crm.tenant WHERE tenant_id = $1 FOR UPDATE", "locked")), "admin", 200, None),
+                c.on("FROM crm.tenant WHERE tenant_id = $1 FOR UPDATE", {"status": "locked", "lock_source": "aa_ops"})),
+     "admin", 200, None),
     ("POST", "/tenants/{tenant_id}/owner-invite", f"{T}/owner-invite",
      {"owner_email": "owner@agency.example", "ticket_ref": TICKET}, None, "admin", 202, None),
     ("POST", "/tenants/{tenant_id}/owner-invite", f"{T}/owner-invite",

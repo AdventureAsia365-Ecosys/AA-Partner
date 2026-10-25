@@ -8,6 +8,8 @@
   placeholder maps (24 h), every agency in one DELETE through the crm-009 purge policy.
 - ``crm_stage_date_rule`` (AA-943, hourly, :class:`app.stages_job.HourlyStageDateRule`): the trip date rule.
 - ``crm_fx_fetch`` (AA-944, daily, :class:`app.fx.fetch.DailyFxSchedule`): the platform FX rates (``FX_PROVIDER``).
+- ``crm_membership_pull`` (AA-978, every 20 s, Recurring): the CIS membership feed, :mod:`app.cis.membership_feed`.
+  Deploy-gate and DB Migrate idle exempt, like the heartbeat.
 - ``crm_job_retention`` (daily, :class:`DailyRetentionSchedule`): data standards §7 row ``crm.job`` — succeeded rows
   30 days, cancelled 90 days after ``finished_at``; queued / running never. **Failed rows are kept**: §7 says "archive
   before delete: failed rows only", and the CRM has no archive bucket yet (CRM-04 rest), so nothing that must be
@@ -42,6 +44,7 @@ from app.jobs.kinds import (
     INTAKE_PROCESS,
     JOB_RETENTION,
     LIFECYCLE,
+    MEMBERSHIP_PULL,
     OFFBOARD,
     PLACEHOLDER_PURGE,
     STAGE_DATE_RULE,
@@ -51,8 +54,10 @@ from app.jobs.worker import Handler, MaintenanceHook, Recurring
 
 if TYPE_CHECKING:  # pragma: no cover
     from app.audit_export.archive import AuditArchive
+    from app.cis.membership_feed import FeedConfig
     from app.dispatch.worker import Sender
     from app.documents.store import DocumentStore
+    from app.members.directory import PartnerDirectory
     from app.vault import KeyProvider
 
 log = logging.getLogger(__name__)
@@ -127,15 +132,20 @@ def build_handlers(
     dek_cache_ttl_s: int = 300,
     sender: Sender | None = None,
     fx_provider: str = "synthetic",
+    membership_feed: FeedConfig | None = None,
+    directory: PartnerDirectory | None = None,
 ) -> dict[str, Handler]:
     """Every kind the worker runs. ``keys``: the field-encryption provider the intake kind needs (AA-936); without
     it ``crm_intake_process`` jobs are retried until the provider is configured. ``audit_archive``: the two audit
     buckets (AA-940); without them the export keeps the partitions only and the retention never drops anything.
     AA-942: ``documents`` (the bucket the purges and the offboarding export use), ``lifecycle_dry_run``
     (``LIFECYCLE_DRY_RUN``), ``dek_cache_ttl_s`` (reported on the offboarding receipt), ``sender`` (none until CRM-17:
-    messages that pass the dispatcher gate are held). AA-944: ``fx_provider`` (``FX_PROVIDER``, synthetic or live)."""
+    messages that pass the dispatcher gate are held). AA-944: ``fx_provider`` (``FX_PROVIDER``, synthetic or live).
+    AA-978: ``membership_feed`` (CIS_API_URL + the M2M token; None = the pull logs not_configured) and ``directory``
+    (members the feed disables are signed out of the partner pool)."""
     from app.audit_export import export as audit_export
     from app.audit_export import retention as audit_retention
+    from app.cis.membership_feed import MembershipFeed
     from app.dispatch import worker as dispatch_worker
     from app.fx import fetch as fx_fetch
     from app.intake.process import build_handler as build_intake_handler
@@ -158,6 +168,7 @@ def build_handlers(
         DISPATCH: dispatch_worker.build_handler(sender),
         STAGE_DATE_RULE: date_rule,
         FX_FETCH: fx_fetch.build_handler(fx_provider),
+        MEMBERSHIP_PULL: MembershipFeed(membership_feed, directory),
     }
 
 
@@ -219,9 +230,14 @@ def build_hooks(*, retention_utc_hour: int, now: Callable[[], datetime] | None =
     )
 
 
-# Only the heartbeat queues its next slot ahead (it is deploy-gate and DB Migrate idle exempt). A daily or slower kind
-# goes through a due-now maintenance hook instead (DailyRetentionSchedule): never add one here.
-RECURRING: tuple[Recurring, ...] = (Recurring(HEARTBEAT, every_seconds=60, keep_days=2),)
+# Only deploy-gate and DB Migrate idle exempt kinds queue their next slot ahead: the heartbeat and (AA-978) the CIS
+# membership pull. A daily or slower kind goes through a due-now maintenance hook instead (DailyRetentionSchedule):
+# never add one here. The worker schedules the next slot at each maintenance pass (about every 30 s when idle), so a
+# CIS change reaches the CRM within about a minute.
+RECURRING: tuple[Recurring, ...] = (
+    Recurring(HEARTBEAT, every_seconds=60, keep_days=2),
+    Recurring(MEMBERSHIP_PULL, every_seconds=20, keep_days=1),
+)
 SCHEDULED_KINDS: frozenset[str] = frozenset(
     {JOB_RETENTION, AUDIT_EXPORT, AUDIT_RETENTION, PLACEHOLDER_PURGE, LIFECYCLE, STAGE_DATE_RULE, FX_FETCH}
 )

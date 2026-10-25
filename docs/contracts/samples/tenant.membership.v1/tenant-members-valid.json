@@ -1,0 +1,25 @@
+{
+  "contract": "tenant.membership.v1",
+  "schema": "TenantMembers",
+  "expect": "valid",
+  "why": "Membership keyed by (iss, sub) with the Content studio role only",
+  "payload": {
+    "tenant_id": "0b9d6c7e-3f43-4c1e-9a52-6d0c3b8f1a01",
+    "tenant_state": "active",
+    "members": [
+      {
+        "membership_id": "1e2d3c4b-5a69-4788-9a0b-1c2d3e4f5a6b",
+        "tenant_id": "0b9d6c7e-3f43-4c1e-9a52-6d0c3b8f1a01",
+        "identity": {
+          "iss": "https://cognito-idp.us-west-1.amazonaws.com/partner-pool-example",
+          "sub": "7a1b2c3d-0000-4000-8000-000000000001"
+        },
+        "content_studio_role": "owner",
+        "status": "active",
+        "invitation_id": "5f0b7a52-1d7e-4a3e-8a8f-2f7a9c1d0e11",
+        "updated_at": "2026-11-20T04:00:00Z"
+      }
+    ],
+    "as_of": "2026-11-20T04:00:05Z"
+  }
+}
