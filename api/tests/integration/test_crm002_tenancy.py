@@ -69,6 +69,7 @@ APPEND_ONLY_TABLES = {
     "membership_inbox": "one row per CIS membership feed event, ids and codes only (crm-013, AA-978)",
     "booking_line_money": "money of a booking line, a frozen FX block, corrections supersede (crm-014, AA-944)",
     "fx_rate_override": "the owner's FX rate of a day, the latest row wins (crm-014, AA-944)",
+    "payment": "a payment the agency marked received against a schedule row (crm-016, AA-946)",
 }
 # AA-942 (crm-010): append-only tables that erasure must reach. Their trigger is crm.erasable_append_only(): UPDATE and
 # TRUNCATE always refused, DELETE only as crm_owner inside crm.erase_subject / crm.lifecycle_purge_expired. Every other
@@ -81,6 +82,8 @@ OWN_APPEND_ONLY_TRIGGER = {
     # AA-944 (crm-014): the ledger's append-only tables, erased with their trip / agency.
     "booking_line_money": "ledger_append_only",
     "fx_rate_override": "ledger_append_only",
+    # AA-946 (crm-016): the manual payments, the same ledger rule.
+    "payment": "ledger_append_only",
 }
 APPEND_ONLY_COLUMNS = {
     "tenant_id": ("uuid", True),
