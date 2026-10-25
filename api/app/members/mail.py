@@ -8,7 +8,8 @@ Two messages, each in English then Vietnamese in one mail (the person's language
 - the **owner recovery notice** (Q1 6.3): AA opened an owner recovery, the date it can complete, and how to cancel
   (any member, from the banner in the CRM);
 - the **data request notice** (AA-941, S-01): AA raised an agency export or deletion request that only the owner can
-  confirm or decline, in Settings > Data and privacy.
+  confirm or decline, in Settings > Data and privacy;
+- the **mailbox disconnected** alert (AA-945, errata S247 §3 item 3): a sending mailbox of the agency stopped working.
 
 Mail bodies hold no client data. Nothing here is logged except ids and the SES message id.
 
@@ -42,7 +43,7 @@ class Message:
     to: str
     subject: str
     text: str
-    kind: str  # invitation | recovery_notice | data_request_notice
+    kind: str  # invitation | recovery_notice | data_request_notice | mailbox_disconnected (AA-945)
 
 
 class Mailer(Protocol):
@@ -134,6 +135,40 @@ def data_request_message(to: str, *, agency: str, kind: str, link: str) -> Messa
     )
     subject = f"Data request for {agency} / Yêu cầu về dữ liệu của {agency}"
     return Message(to=to, subject=subject[:200], text=text, kind="data_request_notice")
+
+
+def mailbox_disconnected_message(to: str, *, agency: str, link: str) -> Message:
+    """AA-945 (errata S247 §3 item 3, R24): a sending mailbox of the agency stopped working (token revoked, password
+    changed). Client messages wait (``held_reconnect``) until someone reconnects it; nothing is sent another way."""
+    text = "\n".join(
+        [
+            f"A mailbox of {agency} on AA Partner stopped working (it was disconnected or its access was revoked).",
+            "Messages to clients from it are held and nothing is sent until the mailbox is connected again.",
+            f"Reconnect it in Settings > Mailbox: {link}/settings/mailbox",
+            "",
+            "---",
+            "",
+            f"Một hộp thư của {agency} trên AA Partner đã ngừng hoạt động (bị ngắt kết nối hoặc bị thu hồi quyền).",
+            "Thư gửi khách từ hộp thư này đang được giữ lại và sẽ không gửi đi cho tới khi kết nối lại.",
+            f"Kết nối lại trong Cài đặt > Hộp thư: {link}/settings/mailbox",
+            "",
+            "Adventure Asia — AA Partner",
+        ]
+    )
+    subject = f"Mailbox disconnected for {agency} / Hộp thư của {agency} đã ngắt kết nối"
+    return Message(to=to, subject=subject[:200], text=text, kind="mailbox_disconnected")
+
+
+def mailbox_test_message(to: str, *, agency: str) -> Message:
+    """Not sent through SES: the body of the Settings > Mailbox test the agency's own mailbox sends to the member."""
+    text = "\n".join(
+        [
+            f"This is a test from AA Partner: the mailbox of {agency} can send.",
+            "",
+            f"Đây là thư thử từ AA Partner: hộp thư của {agency} gửi được thư.",
+        ]
+    )
+    return Message(to=to, subject="AA Partner mailbox test / Thư thử hộp thư", text=text, kind="mailbox_test")
 
 
 class SesMailer:

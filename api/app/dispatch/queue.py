@@ -7,6 +7,7 @@ a client archived while the message waits is caught at send time by :mod:`app.di
 
 from __future__ import annotations
 
+import time
 import uuid
 from typing import Any
 
@@ -23,9 +24,15 @@ MAX_ATTEMPTS = 5
 
 TRAVELER_SQL = "SELECT archived_at, deleted_at FROM crm.traveler WHERE traveler_id = $1"
 INSERT_SQL = """
-INSERT INTO crm.dispatch_queue (traveler_id, trip_id, channel, purpose, origin, message_ref, not_before)
-VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(secs => $7))
+INSERT INTO crm.dispatch_queue (traveler_id, trip_id, channel, purpose, origin, message_ref, not_before, message_id)
+VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(secs => $7), $8)
 RETURNING dispatch_id, not_before
+"""
+# AA-945: a mailbox reconnected -> its held rows go back to the queue (now, no undo delay: the agent sent them already).
+REQUEUE_SQL = """
+UPDATE crm.dispatch_queue SET status = 'queued', gate_result = NULL, decided_at = NULL, not_before = now()
+ WHERE dispatch_id = ANY($1::uuid[]) AND status = 'held' AND gate_result IN ('held_reconnect', 'no_sender')
+RETURNING dispatch_id
 """
 UNDO_SQL = """
 UPDATE crm.dispatch_queue SET status = 'cancelled', gate_result = 'undone', decided_at = now()
@@ -43,6 +50,7 @@ async def enqueue_message(
     origin: str,
     trip_id: uuid.UUID | None = None,
     message_ref: uuid.UUID | None = None,
+    message_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     if channel not in CHANNELS or purpose not in PURPOSES or origin not in ORIGINS:
         raise Invalid("invalid_dispatch", "channel, purpose or origin")
@@ -52,7 +60,9 @@ async def enqueue_message(
     if row["archived_at"] is not None:
         raise Conflict("traveler_archived", "unarchive the client before messaging them")
     delay = UNDO_SECONDS if origin == "user_action" else 0
-    queued = await ctx.conn.fetchrow(INSERT_SQL, traveler_id, trip_id, channel, purpose, origin, message_ref, delay)
+    queued = await ctx.conn.fetchrow(
+        INSERT_SQL, traveler_id, trip_id, channel, purpose, origin, message_ref, delay, message_id
+    )
     await jobs.enqueue(
         ctx.conn,
         DISPATCH,
@@ -70,3 +80,22 @@ async def undo(ctx: AnyContext, dispatch_id: uuid.UUID) -> dict[str, Any]:
     if await ctx.conn.fetchval(UNDO_SQL, dispatch_id) is None:
         raise Conflict("already_dispatched", "the message has left the queue")
     return {"dispatch_id": str(dispatch_id), "status": "cancelled"}
+
+
+async def requeue(ctx: AnyContext, dispatch_ids: list[uuid.UUID], *, reason: str) -> int:
+    """AA-945: put held rows back in the queue (a reconnected mailbox) with a fresh ``crm_dispatch`` job each (the
+    first job's idempotency key is spent, so the key carries the requeue time). Returns how many went back."""
+    if not dispatch_ids:
+        return 0
+    back = [r["dispatch_id"] for r in await ctx.conn.fetch(REQUEUE_SQL, dispatch_ids)]
+    stamp = int(time.time())
+    for dispatch_id in back:
+        await jobs.enqueue(
+            ctx.conn,
+            DISPATCH,
+            {"tenant_id": str(ctx.tenant_id), "dispatch_id": str(dispatch_id), "reason_code": reason},
+            idempotency_key=f"{DISPATCH}:{dispatch_id}:requeue:{stamp}",
+            max_attempts=MAX_ATTEMPTS,
+            created_by="dispatch",
+        )
+    return len(back)

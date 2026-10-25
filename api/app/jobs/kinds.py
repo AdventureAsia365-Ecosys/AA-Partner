@@ -12,7 +12,8 @@ deliberately NOT exempt: it is queued only when due (``handlers.DailyRetentionSc
 really runs. The AA-940 kinds ``crm_audit_export`` (hourly) and ``crm_audit_retention`` (daily) follow the same rule,
 and so do the AA-942 kinds: ``crm_lifecycle`` (daily, due-now hook), ``crm_offboard`` and ``crm_dispatch`` (one row per
 event; a message's row waits its 10-second undo delay), AA-943's hourly ``crm_stage_date_rule`` and AA-944's daily
-``crm_fx_fetch``.
+``crm_fx_fetch``, and AA-945's ``crm_mail_ingest`` (queued only while forwarded mail waits), ``crm_mail_health``
+(daily) and ``crm_mail_history_import`` (one per upload).
 
 AA-978: ``crm_membership_pull`` (the CIS membership feed) is Recurring every 20 s, so like the heartbeat it always
 holds its next slot's row queued: it is exempt here and in DB Migrate (Infra ``owners.yaml`` ``idle_exempt_kinds``).
@@ -42,6 +43,11 @@ STAGE_DATE_RULE = "crm_stage_date_rule"
 FX_FETCH = "crm_fx_fetch"
 # AA-978: pull the CIS tenant.membership.v1 feed (app.cis.membership_feed), Recurring every 20 s.
 MEMBERSHIP_PULL = "crm_membership_pull"
+# AA-945: forwarded mail from the ingest bucket (queued per minute only while raw/ holds objects, app.mail.ingest),
+# the daily mailbox health check (due-now hook, app.mail.health) and one mbox / CSV history import per upload.
+MAIL_INGEST = "crm_mail_ingest"
+MAIL_HEALTH = "crm_mail_health"
+MAIL_IMPORT = "crm_mail_history_import"
 
 DEFAULT_EXPECTED_SECONDS = 300
 OVERDUE_FACTOR = 2
@@ -61,6 +67,9 @@ EXPECTED_SECONDS: dict[str, int] = {
     STAGE_DATE_RULE: 120,
     FX_FETCH: 120,
     MEMBERSHIP_PULL: 30,
+    MAIL_INGEST: 120,
+    MAIL_HEALTH: 300,
+    MAIL_IMPORT: 120,  # one slice (history_import.SLICE messages)
 }
 
 

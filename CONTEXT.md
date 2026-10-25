@@ -154,6 +154,11 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
   `client_link_token_lookup` (TO `crm_app`, live links only: not expired, revoked or trashed); the link decides the
   agency (must be active) and `app.actor` = `client_link:<id>` (audit actor kind `traveler`); the row is re-read
   `FOR UPDATE`. Any unusable token is 404 `link_not_found`. Only `app/intake/stage2_public.py` may open it.
+- **`ingest_tx(pool, local_part)`** (AA-945) is the forward-in mail's context: the recipient's local part (an
+  unauthenticated sender chose it) sets `app.ingest_local_part`, read by the crm-015 SELECT-only policy
+  `ingest_address_lookup` (TO `crm_app`, active and live addresses only); the address decides the agency (must be
+  active), `app.actor` = `job:crm_mail_ingest`. Unknown, inactive or a locked agency = 404 `address_not_found` (the mail
+  is discarded, card R). Only `app/mail/ingest.py` may open it.
 - **`system_tx(pool, tenant_id, actor="job:<kind>")`** (AA-936) is a job's context in one agency (no member):
   `app.tenant_id` from the job payload, the agency must be active, the same audit queue as `tenant_tx()` with
   `actor_kind = system`. Actors `job:` / `seed:` only. Only the job handler modules (`app/intake/process.py`) and the
@@ -211,7 +216,8 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
   `decrypt_denied` and leaves an `audit_event` with outcome `denied` that survives the request's rollback.
   `KeyProvider.rotate` adds a DEK version, `rewrap` moves every DEK to another KEK without touching ciphertext (BYOK
   path), `destroy` crypto-shreds an agency. Integration secrets (`crm.integration_credential.secret_enc`) open only
-  through `Vault.decrypt_secret`, allowed by lint in the dispatcher, webhook and health-check modules; no route
+  through `Vault.decrypt_secret`, allowed by lint in the dispatcher, webhook and health-check modules and the mail
+  sender `app/mail/sender.py` (AA-945; the mailbox health check opens credentials through it); no route
   response model may carry a `*_enc`, `*_bidx`, `secret*` or `wrapped_dek` field (`tests/unit/test_vault_rules.py`).
 - **Audit** (`crm.audit_event`, append-only, codes and random ids only): `ctx.audit(...)` queues an event; `tenant_tx()`
   writes all of them on success and only the `denied` ones (committed) when the block raises. Partitions, export,
@@ -275,6 +281,9 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 | `crm_membership_pull` | 20 s, Recurring (next slot queued at each worker maintenance pass, about every 30 s when idle) | AA-978: pulls `<CIS_API_URL>/tenant/membership/v1/events` with an M2M token of scope `cis.tenant/read` (section "CIS membership feed"). Deploy-gate exempt and DB Migrate idle exempt (Infra `owners.yaml`), like the heartbeat; a CIS failure ends the run successfully with the error class in `crm.membership_feed_state` and backs off (20 s doubling to 5 min) |
 | `crm_stage_date_rule` | hourly, due-now hook (`app.stages_job.HourlyStageDateRule`, key per UTC hour) | AA-943: per active agency, "today" in `tenant_settings.timezone`: booked -> travelling on the start date (reason `date_rule_gate_unmet` + an urgent task), pre_departure -> travelling, travelling -> completed on the end date, one `return_date_missing` task for a travelling trip without one. Counts only. Not deploy-gate exempt |
 | `crm_fx_fetch` | daily, due-now hook from 00:00 UTC (`app.fx.fetch.DailyFxSchedule`, key `crm_fx_fetch:<date>`) | AA-944: the platform FX rates in `crm.fx_rate_platform` (`ON CONFLICT DO NOTHING`, the only writer): `FX_PROVIDER=synthetic` a fixed USD table incl. VND (Dev), `live` ExchangeRate-API open access (USD base, VND crosses) + ECB (EUR base), fawazahmed0 stored as a cross-check only (a gap > 1 % is logged and counted). Counts only. Not deploy-gate exempt |
+| `crm_mail_ingest` | per UTC minute, only while `raw/` of the ingest bucket holds objects (`app.mail.ingest.MailIngestScan` hook lists one key; payload `{"purpose": "mail_ingest"}`, never an object key) | AA-945: up to 50 forwarded mails per run: parse, `ingest_tx`, thread, store under the mail DEK, keep allowed attachments as documents, delete the raw object; an unknown address is deleted and counted (`MailIngestDropped`, card R). Not deploy-gate exempt |
+| `crm_mail_health` | daily, from `JOB_RETENTION_UTC_HOUR`, due-now hook (`app.mail.health.DailyMailHealthSchedule`) | AA-945: every agency's mailboxes: token refresh / SMTP login + NOOP; passing -> connected (held messages re-queued), revoked -> disconnected + one owner alert, unreachable -> needs attention. Counts only. Not deploy-gate exempt |
+| `crm_mail_history_import` | per mbox / CSV upload (queued in the upload's transaction) | AA-945: parses the upload from `imports/<tenant>/<id>`, stores each mail through the ingest path (`imported`), counts on `crm.mail_import`, deletes the object. Not deploy-gate exempt |
 | `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
 
 ## CI and release
@@ -504,6 +513,58 @@ Design v3 §6.3 CRM-16 (M6 non-AA, M15, R17, R18), lane §2.7 / §3.1 / §3.2; m
   (A-11, status filter, totals for owner / agent), `/suppliers` (A-13, AA pinned, contact behind a reveal with a
   reason), `/settings/payments` (owner; others see why). Refusal codes are worded in `lib/ledger.ts` / `lib/i18n.ts`
   (EN default, VI); the BFF lines are in `lib/bff.ts` (card AA-944). Dev E2E: `e2e/tests/ledger.spec.ts`.
+
+## CRM-17 Module 5 e-mail (AA-945)
+
+Design v3 §6.3 CRM-17 (M5, R24, Q2 4.1), lane §2.8 / §6.5, **as changed by the BYO errata S247** (ADR 0010 decision 9):
+send-as through the agency's own **Gmail, Microsoft 365 or SMTP** (send only), `allow_platform_sender` **removed**, sender
+kinds `agency_mailbox | system` only. Migration crm-015; code in `app/mail/`, routes in `app/routers/mail.py`; decisions
+in `docs/implementation-notes/AA-945.md`. AA-CIS-Infra `crm_mail.tf`: MX `crm-in.<zone>`, the SES receipt rule
+`aa-crm-dev-ingest` in the region's one active set (after `e2e-cognito`), the task-role grants on the ingest bucket,
+secret `crm/<env>/mail-oauth`.
+
+- **Receive (forward-in)**: an agency forwards or BCCs to `<local_part>@<CRM_INGEST_DOMAIN>` (`GET /crm/v1/mailbox/ingest-address`,
+  created on first read as `<slug>-<16 hex>`, 64 random bits). AA's SES stores the raw mail under `raw/` (bucket default SSE-KMS, <= 1
+  day); `crm_mail_ingest` parses it (stdlib `email`), finds the agency by `ingest_tx`, threads it (`app/mail/threads.py`:
+  In-Reply-To / References hash -> `[ref:<trip mail_token>]` in the subject or `+tag` (card E) -> the sender's blind
+  index (the traveller e-mail index) -> Unmatched), stores subject / text / HTML / From / To / the Message-ID under the
+  tenant `mail` DEK, keeps PDF / image attachments of at most 7 MiB as documents (`uploaded_by_kind = mail`, only when
+  the conversation has a client or trip; else a note code), and deletes the raw object. A Message-ID already stored is
+  a duplicate (BCC + forward). Google's forwarding confirmation code goes to the address (shown in Settings > Mailbox).
+  A copy of the agency's own sent mail (From = one of its mailboxes **and** SES's verdicts PASS with DKIM / DMARC
+  aligned to the From domain, read from SES's own topmost `Authentication-Results`) is stored as a sent outbound
+  message; a From that is only claimed is stored inbound. The recipient comes from SES's own topmost `Received ... for`
+  line when it has one. A parser error deletes the object; a store error keeps it for the next run until it is 1 hour
+  old, then it is dropped (`failed_permanent`); the job pages past failing objects so they never starve new mail.
+- **Send (send-as)**: `POST /crm/v1/messages` seals the draft and queues one dispatch row (`message_id`, 10 s Undo);
+  the dispatcher's gate runs, then `app/mail/sender.py` (the crm-010 `Sender`) builds the MIME message (trip tag in the
+  subject, In-Reply-To the client's latest mail) and sends it through the member's own mailbox, else the agency's
+  (`app/mail/providers/`: Gmail `users.messages.send`, Graph `me/sendMail` MIME, SMTP with TLS required on ports
+  25 / 465 / 587 / 2525, the host resolved once and the socket opened to that vetted public address (no DNS
+  rebinding into the VPC); stdlib `urllib` / `smtplib`, no new dependency). A refresh token the provider rotates
+  (Microsoft: on every refresh) is sealed again in place. A send that keeps failing until the dispatch job's last
+  attempt fails the message (`retries_exhausted`) and drops the row `send_failed`. A dead token or refused login -> `held_reconnect` (message and dispatch
+  row), mailbox + credential `disconnected`, one AA system mail alert to the owners; **never** sent another way (card
+  R). Reconnecting (OAuth or SMTP) or a passing health check re-queues the held rows. The sender table
+  (`app/mail/senders.py`, `GET /crm/v1/mail/senders`) lists every send path; a unit test fails when one is missing.
+- **Mailboxes**: own (every role, `OWN_MAILBOX_CONNECT`) or the agency's (owner, `INTEGRATIONS_MANAGE`); OAuth with
+  PKCE, the state sealed under the agency's mail DEK and bound to the member (`app/mail/oauth.py`, 10 minutes, no
+  server-side store); SMTP is logged in once before it is stored, and only after the caller's membership and
+  permission for the scope were checked (the check dials a host the caller names). Credentials are `crm.integration_credential` per
+  member (crm-015); Disconnect deletes the credential and keeps the mailbox row.
+- **Work**: conversations by trip / client / Unmatched (`GET /crm/v1/conversations`, ids and counts only, one
+  `list_view`), a thread decrypted for the agent (one `view`), link an Unmatched thread to a client (`CLIENT_EDIT`),
+  drafts autosaved by an id the composer picks (`PUT /messages/drafts/{id}`; only the author; crm-015 lets crm_app
+  delete drafts only), Undo within 10 s, a held / failed message back to a draft (`POST /messages/{id}/edit`), saved
+  replies (agency-wide: owner via `WORKFLOW_EDIT`; own: every role), the mbox / CSV history import
+  (`POST /crm/v1/mail/imports`, raw body, 25 MB; API only in v1; one job per 500-message slice, each slice queues the
+  next, so sends and forwarded mail run between slices; the last failed attempt marks the import `failed`).
+- **Web**: Settings > Mailbox (`components/mail/MailboxSettings.tsx`: connect, SMTP, Test, Disconnect, who pays, the
+  forward-in address and Gmail code, the Microsoft 365 BCC help, the sender table), `/connect/mail/callback` (no side
+  effect: hands code + state to Settings > Mailbox, which completes through the BFF), the trip's Messages tab
+  (`MessagesPanel.tsx`: HTML only in `<iframe sandbox="" srcdoc>` behind a CSP `<meta>` that blocks every remote
+  load, autosave every 3 s, Undo, the held chip), `/inbox`
+  (Unmatched, link to a client), Settings > Saved replies, the red banner when a mailbox is disconnected.
 
 ## F1 / F2 complete (AA-937, CRM-09)
 
@@ -815,9 +876,11 @@ audit export (AA-940) `AUDIT_BUCKET_COMPLIANCE` / `AUDIT_BUCKET_GOVERNANCE` (bot
 (default 10), and the F3 guardrail (AA-938) `SCRUB_GUARDRAIL_ID`, `SCRUB_GUARDRAIL_VERSION`,
 `SCRUB_GUARDRAIL_REGION`, `SCRUB_DETECTOR_TIMEOUT_MS`, and the data lifecycle (AA-942) `LIFECYCLE_DRY_RUN` (default
 true), and the FX source (AA-944) `FX_PROVIDER` (`synthetic` by default on dev / test / local, `live` on stg / prod;
-not set on Dev today), and the CIS membership feed (AA-978) `CIS_API_URL` (the CIS API origin) and `M2M_CLIENT` (secret
+not set on Dev today), the CIS membership feed (AA-978) `CIS_API_URL` (the CIS API origin) and `M2M_CLIENT` (secret
 `aa-crm/<env>/m2m-booking-client`, the JSON `{client_id, client_secret, token_url, scopes}`; either empty = the pull
-logs `not_configured`). Meanings and defaults: `api/app/settings.py`. Live check of the key provider inside the
+logs `not_configured`), and mail (AA-945) `CRM_INGEST_BUCKET`, `CRM_INGEST_DOMAIN`, `MAIL_OAUTH_REDIRECT_BASE` and the
+secret `MAIL_OAUTH` (`crm/<env>/mail-oauth`, mapped only once it has a value). Meanings and defaults:
+`api/app/settings.py`. Live check of the key provider inside the
 container: `python -m app.vault.selftest` (KMS round trip under the nil tenant context, nothing stored).
 
 ## CIS membership feed (AA-978, CRM-P1)

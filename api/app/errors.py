@@ -45,6 +45,12 @@ class Unavailable(ServiceError):
     status_code = 503
 
 
+class PayloadTooLarge(ServiceError):
+    """413 (AA-945: the mail history upload over its cap)."""
+
+    status_code = 413
+
+
 class RateLimited(ServiceError):
     """429 with ``Retry-After`` (seconds) from inside the service layer (the per-form intake quota)."""
 

@@ -1,8 +1,8 @@
 """Static rules for encrypted data (AA-934; errata S247 row CRM-06):
 
 - **Integration secrets are decrypted only where they are used**: ``.decrypt_secret(`` may appear only in the
-  dispatcher, webhook and health-check modules (``app/integrations/dispatch*``, ``webhook*``, ``health*``) and in the
-  vault itself.
+  dispatcher, webhook and health-check modules (``app/integrations/dispatch*``, ``webhook*``, ``health*``), the mail
+  sender (``app/mail/sender.py``, AA-945) and in the vault itself.
 - **No route returns ciphertext, an index or a secret**: no response model of any served route (nested models
   included) has a field named ``*_enc``, ``*_bidx``, ``secret*`` or ``wrapped_dek``; no router module names the
   columns ``secret_enc`` or ``wrapped_dek``.
@@ -22,7 +22,10 @@ from app.main import create_app
 from app.settings import Settings
 
 APP = Path(__file__).resolve().parents[2] / "app"
-SECRET_DECRYPT_ALLOWED = re.compile(r"^app/(vault/vault\.py|integrations/(dispatch|webhook|health)[a-z_]*\.py)$")
+# AA-945: the mail sender (app/mail/sender.py, the dispatcher's Sender; the health check opens credentials through it).
+SECRET_DECRYPT_ALLOWED = re.compile(
+    r"^app/(vault/vault\.py|integrations/(dispatch|webhook|health)[a-z_]*\.py|mail/sender\.py)$"
+)
 FORBIDDEN_FIELD = re.compile(r"(_enc|_bidx)$|^secret|^wrapped_dek$")
 
 

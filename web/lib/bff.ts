@@ -119,6 +119,28 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "PUT", pattern: /^settings\/payments$/, tenant: true, card: "AA-944" },
   { method: "GET", pattern: /^fx\/overrides$/, tenant: true, card: "AA-944" },
   { method: "POST", pattern: /^fx\/overrides$/, tenant: true, card: "AA-944" },
+  // AA-945 (CRM-17): Settings > Mailbox (own mailbox: every role; the agency's: owner, the API checks), the forward-in
+  // address, the sender table, conversations (trip Messages tab, Unmatched inbox, link to a client), drafts (autosave,
+  // discard), send / Undo / back to draft, saved replies, the import progress. The mbox / CSV upload is API-only in v1
+  // (the BFF forwards JSON bodies only).
+  { method: "GET", pattern: /^mailbox$/, tenant: true, card: "AA-945" },
+  { method: "DELETE", pattern: /^mailbox$/, tenant: true, card: "AA-945" },
+  { method: "POST", pattern: /^mailbox\/(oauth\/start|oauth\/complete|test)$/, tenant: true, card: "AA-945" },
+  { method: "PUT", pattern: /^mailbox\/smtp$/, tenant: true, card: "AA-945" },
+  { method: "GET", pattern: /^mailbox\/ingest-address$/, tenant: true, card: "AA-945" },
+  { method: "GET", pattern: /^mail\/senders$/, tenant: true, card: "AA-945" },
+  { method: "GET", pattern: new RegExp(`^mail/imports/${UUID}$`), tenant: true, card: "AA-945" },
+  { method: "GET", pattern: /^conversations$/, tenant: true, card: "AA-945" },
+  { method: "GET", pattern: new RegExp(`^conversations/${UUID}/messages$`), tenant: true, card: "AA-945" },
+  { method: "POST", pattern: new RegExp(`^conversations/${UUID}/link$`), tenant: true, card: "AA-945" },
+  { method: "PUT", pattern: new RegExp(`^messages/drafts/${UUID}$`), tenant: true, card: "AA-945" },
+  { method: "DELETE", pattern: new RegExp(`^messages/drafts/${UUID}$`), tenant: true, card: "AA-945" },
+  { method: "POST", pattern: /^messages$/, tenant: true, card: "AA-945" },
+  { method: "POST", pattern: new RegExp(`^messages/${UUID}/(undo|edit)$`), tenant: true, card: "AA-945" },
+  { method: "GET", pattern: /^saved-replies$/, tenant: true, card: "AA-945" },
+  { method: "POST", pattern: /^saved-replies$/, tenant: true, card: "AA-945" },
+  { method: "PATCH", pattern: new RegExp(`^saved-replies/${UUID}$`), tenant: true, card: "AA-945" },
+  { method: "DELETE", pattern: new RegExp(`^saved-replies/${UUID}$`), tenant: true, card: "AA-945" },
 ];
 
 /** Calls only the web server makes (lib/crmApi.ts crmCall), never reachable through /bff from the browser. */

@@ -64,10 +64,16 @@ One more (AA-942): :func:`lifecycle_tx` is a lifecycle job's context in one agen
 the agency statuses the caller names (a locked agency still has retention; an offboarding one is being erased). Only
 the ``app/lifecycle/`` job modules may open it. :func:`as_eraser` switches an open context to ``crm_eraser`` for one
 call of the crm-010 deletion functions and back (``SET LOCAL ROLE``; the eraser has no table privilege of its own).
+
+One more (AA-945): :func:`ingest_tx` is the mail ingest's context: the forward-in recipient's local part (an
+unauthenticated sender chose it) finds the agency through the crm-015 SELECT-only policy ``ingest_address_lookup``
+(``app.ingest_local_part``), then ``app.tenant_id`` and ``app.actor`` = ``job:crm_mail_ingest``. Only
+``app/mail/ingest.py`` may open it.
 """
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -733,6 +739,61 @@ async def client_link_tx(
         try:
             async with conn.transaction():  # savepoint: the page's work
                 yield ctx, link
+        except Exception as exc:
+            denied = [e for e in ctx.audit_events if e.outcome == "denied"]
+            if not denied:
+                raise
+            await _write_audit(ctx, denied)
+            pending = exc
+        else:
+            await _write_audit(ctx, ctx.audit_events)
+    if pending is not None:
+        raise pending
+
+
+INGEST_ADDRESS_SQL = """
+SELECT ingest_address_id, tenant_id FROM crm.ingest_address
+ WHERE local_part = $1 AND active AND deleted_at IS NULL
+"""
+INGEST_ACTOR = "job:crm_mail_ingest"
+_LOCAL_PART = re.compile(r"^[a-z0-9][a-z0-9-]{6,62}[a-z0-9]$")
+
+
+@dataclass(frozen=True)
+class IngestAddress:
+    """The active forward-in address :func:`ingest_tx` found by its local part (ids only)."""
+
+    ingest_address_id: uuid.UUID
+    tenant_id: uuid.UUID
+
+
+@asynccontextmanager
+async def ingest_tx(pool: asyncpg.Pool, local_part: str) -> AsyncIterator[tuple[SystemContext, IngestAddress]]:
+    """The mail ingest's context (AA-945, crm-015): the recipient's local part finds one active
+    ``crm.ingest_address`` through the SELECT-only policy ``ingest_address_lookup`` before any agency is known (an
+    unauthenticated sender chose the address); then ``app.tenant_id`` = its agency (which must be active) and
+    ``app.actor`` = ``job:crm_mail_ingest``. An unknown, inactive or trashed address, or an agency that is not active:
+    404 ``address_not_found`` (the caller discards the mail, card R). Audit semantics as :func:`system_tx`. Only
+    ``app/mail/ingest.py`` may open it."""
+    if not isinstance(local_part, str) or not _LOCAL_PART.match(local_part):
+        raise NotFound("address_not_found")
+    pending: Exception | None = None
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.ingest_local_part', $1, true)", local_part)
+        row = await conn.fetchrow(INGEST_ADDRESS_SQL, local_part)
+        await conn.execute("SELECT set_config('app.ingest_local_part', '', true)")
+        if row is None:
+            raise NotFound("address_not_found")
+        tenant_id = row["tenant_id"]
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        if await conn.fetchval(TENANT_SQL, tenant_id) != "active":
+            raise NotFound("address_not_found")
+        await conn.execute("SELECT set_config('app.actor', $1, true)", INGEST_ACTOR)
+        address = IngestAddress(ingest_address_id=row["ingest_address_id"], tenant_id=tenant_id)
+        ctx = SystemContext(conn=conn, tenant_id=tenant_id, actor=INGEST_ACTOR, status="active")
+        try:
+            async with conn.transaction():  # savepoint: the mail's work
+                yield ctx, address
         except Exception as exc:
             denied = [e for e in ctx.audit_events if e.outcome == "denied"]
             if not denied:

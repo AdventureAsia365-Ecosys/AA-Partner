@@ -111,8 +111,9 @@ class FakeSender:
     def __init__(self) -> None:
         self.sent: list[uuid.UUID] = []
 
-    async def send(self, ctx: Any, dispatch_id: uuid.UUID, channel: str, message_ref: uuid.UUID | None) -> None:
+    async def send(self, ctx: Any, dispatch_id: uuid.UUID, channel: str, message_id: uuid.UUID | None) -> str:
         self.sent.append(dispatch_id)
+        return "sent"  # AA-945: the Sender answers the gate code
 
 
 async def _jobs(pool: asyncpg.Pool, kind: str, tenant_id: uuid.UUID) -> list[Job]:

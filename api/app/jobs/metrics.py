@@ -26,6 +26,8 @@ two numbers and sends them in **one** ``PutMetricData`` call to namespace ``AA/J
   registered while it was never verified); 0 when the verification is level with the export. Healthy is under about
   26 (one daily run); Infra alarms at 50. One agency that keeps failing its verification stops partition drops for
   every agency (the drop needs all of them verified), so this is the alarm for that, not the job log line.
+- ``MailIngestDropped`` (Count, AA-945): forwarded mails discarded since the last sample because their forward-in
+  address is unknown or inactive (card R: nothing is stored; :mod:`app.mail.metrics`).
 
 The three audit values are read in their own statement; before crm-007 (or on any error there) they are left out and the
 job values still go.
@@ -54,6 +56,7 @@ from typing import Any, Protocol
 import asyncpg
 
 from app.jobs.kinds import overdue_after_seconds
+from app.mail import metrics as mail_metrics
 from app.observability import reveal_meter
 
 log = logging.getLogger(__name__)
@@ -141,12 +144,14 @@ class AuditSample:
 
 
 def metric_data(
-    sample: Sample, reveal_peak: int | None = None, audit: AuditSample | None = None
+    sample: Sample, reveal_peak: int | None = None, audit: AuditSample | None = None, mail_dropped: int | None = None
 ) -> list[dict[str, Any]]:
     data = [
         {"MetricName": "OldestQueuedAgeSeconds", "Value": sample.oldest_queued_age_s, "Unit": "Seconds"},
         {"MetricName": "OverdueRunningJobs", "Value": float(sample.overdue_running), "Unit": "Count"},
     ]
+    if mail_dropped is not None:
+        data.append({"MetricName": "MailIngestDropped", "Value": float(mail_dropped), "Unit": "Count"})
     if reveal_peak is not None:
         data.append({"MetricName": "RevealsPerMemberPeakHour", "Value": float(reveal_peak), "Unit": "Count"})
     if audit is not None:
@@ -212,7 +217,8 @@ class JobMetricsSampler:
             return None
         audit = await read_audit_sample(pool)
         try:
-            await asyncio.to_thread(self._put, metric_data(sample, reveal_meter.METER.peak(), audit))
+            dropped = mail_metrics.DROPPED.take()
+            await asyncio.to_thread(self._put, metric_data(sample, reveal_meter.METER.peak(), audit, dropped))
         except Exception as exc:  # noqa: BLE001 — AccessDenied before the Infra apply, throttling, network
             log.warning(
                 "ops_metrics_sample_failed namespace=%s stage=put error=%s: %s",

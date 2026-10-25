@@ -113,10 +113,23 @@ CIS membership feed (AA-978, ``app.cis``):
   (``aa-crm/<env>/m2m-booking-client``). ``crm_membership_pull`` asks for scope ``cis.tenant/read`` with it.
   Either empty = the job logs ``not_configured`` and does nothing. A value that is not that JSON refuses to start
   (the value is never echoed).
+
+Mail (AA-945, card CRM-17; ``app.mail``; AA-CIS-Infra ``crm_mail.tf``):
+
+- ``CRM_INGEST_BUCKET``: the ``aa-crm-<env>-ingest-*`` bucket the forward-in receipt rule writes ``raw/`` to (and the
+  history import's ``imports/``). Empty on ``dev`` / ``stg`` / ``prod`` = no ingest scan, and the import route answers
+  503 ``mail_ingest_not_configured``; on ``test`` / ``local`` empty = an in-memory store.
+- ``CRM_INGEST_DOMAIN``: the forward-in domain (``crm-in.<zone>``); an agency's address is ``<local_part>@`` it.
+- ``MAIL_OAUTH_REDIRECT_BASE``: the https origin of the partner host; the OAuth redirect URI is
+  ``<it>/connect/mail/callback`` (the web route).
+- ``MAIL_OAUTH`` (Secrets Manager ``crm/<env>/mail-oauth``, JSON ``google_client_id``, ``google_client_secret``,
+  ``ms_client_id``, ``ms_client_secret``): AA's own OAuth clients for the agencies' Gmail / Microsoft 365 send-as.
+  Without a provider's pair its connect answers 503 ``mail_oauth_not_configured``; SMTP needs none.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from collections.abc import Mapping
@@ -208,6 +221,11 @@ class Settings:
     fx_provider: str = "synthetic"
     cis_api_url: str = ""
     m2m_client: str = field(default="", repr=False)
+    crm_ingest_bucket: str = ""
+    crm_ingest_domain: str = ""
+    mail_oauth_redirect_base: str = ""
+    # (key, value) pairs of MAIL_OAUTH (a tuple keeps Settings hashable); read through mail_oauth_client().
+    mail_oauth: tuple[tuple[str, str], ...] = field(default=(), repr=False)
 
     def __post_init__(self) -> None:
         if self.environment not in {"dev", "stg", "prod"} | INSECURE_ENVIRONMENTS:
@@ -319,6 +337,16 @@ class Settings:
                 parse_credentials(self.m2m_client, allow_http=insecure)
             except CredentialsError as exc:
                 raise SettingsError(str(exc)) from None  # names the problem, never the value
+        if self.crm_ingest_bucket and not _BUCKET.match(self.crm_ingest_bucket):
+            raise SettingsError(f"CRM_INGEST_BUCKET must be an S3 bucket name, got {self.crm_ingest_bucket!r}")
+        if self.crm_ingest_domain and not _DOMAIN.match(self.crm_ingest_domain):
+            raise SettingsError(f"CRM_INGEST_DOMAIN must be a domain name, got {self.crm_ingest_domain!r}")
+        if self.mail_oauth_redirect_base and not _ORIGIN.match(self.mail_oauth_redirect_base):
+            raise SettingsError("MAIL_OAUTH_REDIRECT_BASE must be an https origin")
+        keys = {k for k, _ in self.mail_oauth}
+        if keys - MAIL_OAUTH_KEYS or not all(isinstance(v, str) for _, v in self.mail_oauth):
+            # values are never echoed
+            raise SettingsError(f"MAIL_OAUTH holds only string values of {sorted(MAIL_OAUTH_KEYS)}")
 
     @property
     def intake_origin_check(self) -> bool:
@@ -331,6 +359,13 @@ class Settings:
         if self.partner_web_origin:
             return self.partner_web_origin
         return "https://partner.local.test" if self.environment in INSECURE_ENVIRONMENTS else ""
+
+    def mail_oauth_client(self, provider: str) -> tuple[str, str] | None:
+        """(client id, client secret) of AA's OAuth app for ``google`` / ``microsoft``, or None when not set."""
+        prefix = {"google": "google", "microsoft": "ms"}.get(provider)
+        values = dict(self.mail_oauth)
+        client_id, secret = values.get(f"{prefix}_client_id"), values.get(f"{prefix}_client_secret")
+        return (client_id, secret) if prefix and client_id and secret else None
 
     @property
     def m2m_credentials(self) -> M2mCredentials | None:
@@ -349,6 +384,21 @@ class Settings:
 
 _ORIGIN = re.compile(r"^https://[a-z0-9.-]+(:[0-9]{1,5})?$")
 _HTTP_ORIGIN = re.compile(r"^http://[a-z0-9.-]+(:[0-9]{1,5})?$")  # test / local only (CIS_API_URL)
+_DOMAIN = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$")
+MAIL_OAUTH_KEYS = frozenset({"google_client_id", "google_client_secret", "ms_client_id", "ms_client_secret"})
+
+
+def _mail_oauth(raw: str | None) -> tuple[tuple[str, str], ...]:
+    """``MAIL_OAUTH``: the secret's JSON object; empty values dropped. A value that is not JSON fails closed."""
+    if raw is None or not raw.strip():
+        return ()
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        raise SettingsError("MAIL_OAUTH must be a JSON object") from None
+    if not isinstance(value, dict):
+        raise SettingsError("MAIL_OAUTH must be a JSON object")
+    return tuple(sorted((str(k), v.strip() if isinstance(v, str) else v) for k, v in value.items() if v))
 
 
 def _origins(raw: str | None) -> tuple[str, ...]:
@@ -458,4 +508,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         .lower(),
         cis_api_url=_text(env, "CIS_API_URL").lower().rstrip("/"),
         m2m_client=_text(env, "M2M_CLIENT"),
+        crm_ingest_bucket=_text(env, "CRM_INGEST_BUCKET"),
+        crm_ingest_domain=_text(env, "CRM_INGEST_DOMAIN").lower(),
+        mail_oauth_redirect_base=_text(env, "MAIL_OAUTH_REDIRECT_BASE").lower().rstrip("/"),
+        mail_oauth=_mail_oauth(env.get("MAIL_OAUTH")),
     )
