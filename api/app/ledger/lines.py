@@ -365,8 +365,9 @@ async def _own_supplier(ctx: TenantContext, supplier_id: uuid.UUID) -> None:
     if row is None or row["deleted_at"] is not None:
         raise Invalid("invalid_agency_supplier_id", "a supplier of the agency's directory")
     if row["kind"] == "aa":
-        # AA lines come from the Booking feed (CRM-19), never from a member.
-        raise Invalid("aa_line_read_only", "Adventure Asia lines come from your AA bookings")
+        # AA lines come from a Booking quote / hold / feed (CRM-19, POST /crm/v1/trips/{id}/aa-lines), never typed by a
+        # member: the same 403 as editing one.
+        raise Forbidden("aa_line_read_only", "Adventure Asia lines come from your AA bookings")
 
 
 async def create_line(ctx: TenantContext, trip_id: uuid.UUID, body: dict[str, Any]) -> dict[str, Any]:

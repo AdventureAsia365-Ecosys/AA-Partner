@@ -168,7 +168,7 @@ async def test_quote_line_refuses_what_it_cannot_read(mutate: Any) -> None:
         contract.quote_line(q, "L1")
 
 
-def test_hold_booking_events_parity_products() -> None:
+async def test_hold_booking_events_parity_products() -> None:
     hold = contract.hold({"hold_id": "h1", "status": "active", "expires_at": "2026-10-27T00:00:00Z",
                           "lines": [{"line_ref": "L1", "line_status": "on_request"}, "x"]}, "L1")  # fmt: skip
     assert (hold.hold_id, hold.status, hold.line_status) == ("h1", "active", "on_request")

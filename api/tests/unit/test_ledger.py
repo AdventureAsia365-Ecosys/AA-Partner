@@ -195,7 +195,7 @@ async def test_the_ledger_has_totals_for_owner_and_agent_only() -> None:
 async def test_create_line_needs_an_own_supplier() -> None:
     body = {"agency_supplier_id": str(SUPPLIER), "title": "Hanoi 2 nights", "collect": "agency"}
     aa = _conn(**{"SELECT kind, deleted_at FROM crm.agency_supplier": {"kind": "aa", "deleted_at": None}})
-    with _raises(Invalid, "aa_line_read_only"):
+    with _raises(Forbidden, "aa_line_read_only"):
         await lines.create_line(tenant_ctx(aa), TRIP, body)
     gone = _conn(**{"SELECT kind, deleted_at FROM crm.agency_supplier": None})
     with _raises(Invalid, "invalid_agency_supplier_id"):
