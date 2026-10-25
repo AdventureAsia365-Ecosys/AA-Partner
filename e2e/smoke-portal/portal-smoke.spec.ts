@@ -41,6 +41,7 @@ const PORTAL_PAGES: PageSpec[] = [
   { id: 'account-billing', label: 'Billing', path: '/portal/account/billing', readySelector: RENDERED },
   { id: 'account-activity', label: 'Activity', path: '/portal/account/activity', readySelector: RENDERED },
   { id: 'account-settings', label: 'Account settings', path: '/portal/account/settings', readySelector: RENDERED },
+  { id: 'account-members', label: 'Members', path: '/portal/account/members', readySelector: RENDERED },
   { id: 'account-api', label: 'API', path: '/portal/account/api', readySelector: RENDERED },
   { id: 'account-integrations', label: 'Integrations', path: '/portal/account/integrations', readySelector: RENDERED },
   { id: 'help-facebook', label: 'Connect your Facebook Page', path: '/portal/help/facebook', readySelector: RENDERED },
