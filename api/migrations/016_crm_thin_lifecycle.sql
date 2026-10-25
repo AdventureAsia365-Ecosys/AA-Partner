@@ -25,22 +25,28 @@
 --      set at send), link_id (the client_link it went out on, SET NULL when that link is erased), status draft ->
 --      sent -> accepted | superseded | withdrawn. Acceptance pins accepted_price_hash = price_hash, the terms version
 --      and the typed full name (accepted_name_enc, pii:name). One accepted version per trip. Sealed after draft
---      (CRM31).
+--      (CRM31). A traveller erasure replaces the typed name with accepted_name_erased_at (11b).
 --   3. crm.payment_schedule (base template; design group F, M7 manual): the accepted proposal's deposit and balance
 --      rows (kind, amount, currency, due_on), status due -> paid | void, paid_at. One live row per (proposal, kind).
---      Sealed once paid or void (CRM31).
+--      Sealed once paid or void (CRM31). A deposit row is never void (a deposit taken outside the CRM is marked paid
+--      with its method), so an accepted proposal always keeps the way to Booked and to the portal.
 --   4. crm.payment (append-only variant, crm.ledger_append_only of crm-014: DELETE only inside crm.erase_subject): one
 --      manual payment the agency recorded against one schedule row (amount, currency, method, received_on). One per
 --      schedule row in this card (partial payments, card payments and refunds: CRM-23).
 --   5. crm.traveler_access (base template; design group E, M11 base): one traveller's portal access on one trip:
 --      role lead | companion, link_id (the purpose portal client_link), status invited -> active, or revoked,
---      last_sign_in_at, stage3_submitted_at. crm.guard_traveler_access: stage3_submitted_at is set only while the
---      trip's accepted proposal has a paid deposit (CRM32 stage3_locked, card R in the database).
+--      last_sign_in_at, stage3_submitted_at. crm.guard_traveler_access: stage3_submitted_at is set only while
+--      crm.portal_unlocked(trip) holds (CRM32 stage3_locked, card R in the database): a paid deposit of the trip's
+--      accepted proposal, or a move into Booked through the manual_booking override (the deposit was taken outside
+--      the CRM) that was not undone.
 --   6. crm.otp_challenge (base template; design group E, M11 / M12): a 6-digit e-mail code per person: purpose
 --      sign_in | sign, code_hash (SHA-256 of the row id and the code; the code is never stored), attempts (<= 5),
 --      expires_at (<= 10 minutes), status pending -> verified | failed | expired, and the portal session it opened
 --      (session_hash, session_expires_at <= 12 hours), consumed_at for a signing code. Retention 24 hours (DM-7 row):
 --      crm_app deletes expired rows (the hourly date-rule job). No hold guard: a credential row, nothing to keep.
+--      The code mail (message_id) is stored with the code masked; the code itself waits in code_enc (vault DEK)
+--      only while the code is pending and until the agency's mailbox sent it, so nobody at the agency can read it
+--      in the Messages tab. delivery = dev_echo marks a code the Dev echo also returned in the API answer.
 --   7. crm.signature_request (base template; design group E, M12 v0): one traveller's signature of one waiver
 --      version: doc_sha256 pinned at signing, signed_name_enc (pii:name), the verified signing code (otp_id, SET
 --      NULL when the 24-hour purge deletes the code row), evidence_sha256 (SHA-256 of the evidence record), status
@@ -56,12 +62,15 @@
 --      a. crm.erase_held, the crm-015 text plus: a trip erase also reaches the travellers its portal rows name, a
 --         traveller erase the trips theirs name;
 --      b. crm.erase_subject, the crm-015 text plus: trip scope deletes signatures, codes, portal access, payments,
---         schedule rows and proposals first; traveller scope their signatures, codes and portal access; the agency
+--         schedule rows and proposals first; traveller scope their signatures, codes and portal access, and the
+--         name they typed to accept a proposal (accepted_name_enc := NULL, accepted_name_erased_at set: the
+--         proposal of a trashed trip may outlive them while its money keeps the trip); the agency
 --         erase all of them and the agreement versions. The signed-agreement and accounting exceptions of the DM-7
 --         rows (kept beyond an erasure) are CRM-23 / CRM-25's: v0 erases them with the trip (Dev, synthetic data).
 --      c. crm.guard_held_change (4h) on agreement_doc (agency hold), proposal, payment_schedule (trip_id),
 --         traveler_access and signature_request (trip_id, traveler_id).
 --   No NOLOGIN reader gets anything on the new tables.
+--   crm.guard_sealed_row lets only crm.erase_subject (crm_owner with app.erasing on) change a sealed column.
 --   SQLSTATEs CRM31 (row_sealed) and CRM32 (stage3_locked) are this file's; the next key
 --   starts at CRM33.
 --
@@ -112,6 +121,11 @@ BEGIN
     IF o->>'status' = TG_ARGV[0] THEN
         RETURN NEW;
     END IF;
+    -- crm.erase_subject (SECURITY DEFINER, crm_owner, app.erasing on for its own transaction) may clear a sealed
+    -- personal value (the typed name of an acceptance). The runtime role can never be crm_owner.
+    IF current_user = 'crm_owner' AND current_setting('app.erasing', true) = 'on' THEN
+        RETURN NEW;
+    END IF;
     FOR i IN 1 .. TG_NARGS - 1 LOOP
         c := TG_ARGV[i];
         IF (n->c) IS DISTINCT FROM (o->c) THEN
@@ -123,7 +137,7 @@ BEGIN
 END;
 $$;
 REVOKE ALL ON FUNCTION crm.guard_sealed_row() FROM PUBLIC;
-COMMENT ON FUNCTION crm.guard_sealed_row() IS 'AA-946 (crm-016): BEFORE UPDATE trigger; argument 1 = the status in which the row may change, the others = sealed columns: once the row left that status a sealed column keeps its value, else CRM31 row_sealed (a sent proposal, a paid schedule row, a published agreement, a signed signature).';
+COMMENT ON FUNCTION crm.guard_sealed_row() IS 'AA-946 (crm-016): BEFORE UPDATE trigger; argument 1 = the status in which the row may change, the others = sealed columns: once the row left that status a sealed column keeps its value, else CRM31 row_sealed (a sent proposal, a paid schedule row, a published agreement, a signed signature); only crm.erase_subject (crm_owner with app.erasing on) may change one.';
 
 -- ── 1. crm.agreement_doc ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS crm.agreement_doc (
@@ -197,6 +211,7 @@ CREATE TABLE IF NOT EXISTS crm.proposal (
     sent_at               TIMESTAMPTZ,
     accepted_at           TIMESTAMPTZ,
     accepted_name_enc     BYTEA,
+    accepted_name_erased_at TIMESTAMPTZ,
     accepted_price_hash   BYTEA,
     accepted_terms_doc_id UUID,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -230,7 +245,8 @@ CREATE TABLE IF NOT EXISTS crm.proposal (
     ),
     CONSTRAINT proposal_accepted_chk CHECK (
         (status = 'accepted') = (accepted_at IS NOT NULL)
-        AND (accepted_at IS NULL) = (accepted_name_enc IS NULL)
+        AND (accepted_at IS NULL) = (accepted_name_enc IS NULL AND accepted_name_erased_at IS NULL)
+        AND (accepted_name_enc IS NULL OR accepted_name_erased_at IS NULL)
         AND (accepted_at IS NULL) = (accepted_price_hash IS NULL)
         AND (accepted_price_hash IS NULL OR accepted_price_hash = price_hash)
         AND (accepted_terms_doc_id IS NULL OR accepted_terms_doc_id = terms_doc_id)
@@ -256,7 +272,8 @@ REVOKE DELETE, TRUNCATE ON crm.proposal FROM crm_app;
 COMMENT ON TABLE crm.proposal IS 'AA-946 (crm-016; design v3 group E, M4 base): one version of a trip''s text proposal. The text is under the tenant vault DEK; total, deposit and balance date are the client''s sell amounts (no net, cost or margin here). draft -> sent (price_hash = SHA-256 of what the client sees, one sent version per trip, a new send supersedes the old) -> accepted on the signed link (typed full name, the terms version and the price hash pinned; one accepted version per trip) | superseded | withdrawn. Sealed after draft (crm.guard_sealed_row, CRM31). crm_app never deletes one; erasure through crm.erase_subject.';
 COMMENT ON COLUMN crm.proposal.body_enc IS 'pii:free_text; the proposal text the agent wrote, AES-256-GCM under the tenant vault DEK (AAD tenant, proposal, body_enc, row id)';
 COMMENT ON COLUMN crm.proposal.price_hash IS 'SHA-256 of the canonical record the client sees (version, currency, amounts, balance date, text hash, terms hash), set at send; acceptance must name the same hash';
-COMMENT ON COLUMN crm.proposal.accepted_name_enc IS 'pii:name; the full name the client typed to accept, AES-256-GCM under the tenant vault DEK';
+COMMENT ON COLUMN crm.proposal.accepted_name_enc IS 'pii:name; the full name the client typed to accept, AES-256-GCM under the tenant vault DEK; NULL once crm.erase_subject erased the traveller who accepted (accepted_name_erased_at)';
+COMMENT ON COLUMN crm.proposal.accepted_name_erased_at IS 'when crm.erase_subject (traveller scope) removed the typed acceptance name; the acceptance time, price hash and terms version stay';
 
 -- ── 3. crm.payment_schedule ──────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS crm.payment_schedule (
@@ -286,6 +303,7 @@ CREATE TABLE IF NOT EXISTS crm.payment_schedule (
     CONSTRAINT payment_schedule_currency_chk CHECK (currency ~ '^[A-Z]{3}$'),
     CONSTRAINT payment_schedule_status_chk CHECK (status IN ('due', 'paid', 'void')),
     CONSTRAINT payment_schedule_paid_chk CHECK ((status = 'paid') = (paid_at IS NOT NULL)),
+    CONSTRAINT payment_schedule_deposit_void_chk CHECK (kind <> 'deposit' OR status <> 'void'),
     CONSTRAINT payment_schedule_trash_chk CHECK (
         (deleted_at IS NULL) = (deleted_by IS NULL) AND (deleted_at IS NULL) = (purge_after IS NULL)
     )
@@ -298,7 +316,7 @@ INSERT INTO crm.status_transition (table_name, from_status, to_status) VALUES
     ('payment_schedule', 'due', 'void')
 ON CONFLICT DO NOTHING;
 REVOKE DELETE, TRUNCATE ON crm.payment_schedule FROM crm_app;
-COMMENT ON TABLE crm.payment_schedule IS 'AA-946 (crm-016; design v3 group F, M7 manual): the deposit and balance rows of a trip''s accepted proposal (kind, amount, currency, due date), due -> paid (the agency marked a payment received) | void. One live row per proposal and kind. Sealed once paid or void (CRM31). A paid deposit of the accepted proposal opens the gate proposal -> booked (crm.enforce_stage_transition). crm_app never deletes one; erasure through crm.erase_subject.';
+COMMENT ON TABLE crm.payment_schedule IS 'AA-946 (crm-016; design v3 group F, M7 manual): the deposit and balance rows of a trip''s accepted proposal (kind, amount, currency, due date), due -> paid (the agency marked a payment received) | void (a balance row only: a deposit taken outside the CRM is marked paid with its method). One live row per proposal and kind. Sealed once paid or void (CRM31). A paid deposit of the accepted proposal opens the gate proposal -> booked (crm.enforce_stage_transition). crm_app never deletes one; erasure through crm.erase_subject.';
 
 -- ── 4. crm.payment ───────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS crm.payment (
@@ -375,6 +393,25 @@ ON CONFLICT DO NOTHING;
 REVOKE DELETE, TRUNCATE ON crm.traveler_access FROM crm_app;
 COMMENT ON TABLE crm.traveler_access IS 'AA-946 (crm-016; design v3 group E, M11 base, R22): one traveller''s portal access on one trip: their own signed link (client_link purpose portal; a re-issue replaces link_id), role lead | companion, invited -> active (first sign-in with the e-mail code) | revoked, the last sign-in, and when they sent Stage 3. stage3_submitted_at is set only after the deposit (crm.guard_traveler_access, CRM32). crm_app never deletes one; erasure through crm.erase_subject.';
 
+-- The portal's lock (card R): the API (app.stages.PORTAL_UNLOCKED_SQL) and the guard below read this one predicate.
+CREATE OR REPLACE FUNCTION crm.portal_unlocked(p_trip uuid) RETURNS boolean
+    LANGUAGE sql
+    STABLE
+    SET search_path = pg_catalog, pg_temp
+AS $$
+    SELECT EXISTS (SELECT 1 FROM crm.payment_schedule s
+                     JOIN crm.proposal p ON p.proposal_id = s.proposal_id
+                    WHERE s.trip_id = p_trip AND s.kind = 'deposit' AND s.status = 'paid' AND s.deleted_at IS NULL
+                      AND p.status = 'accepted' AND p.deleted_at IS NULL)
+        OR EXISTS (SELECT 1 FROM crm.trip_stage_history h
+                    WHERE h.trip_id = p_trip AND h.to_stage = 'booked' AND h.override_reason_code = 'manual_booking'
+                      AND NOT EXISTS (SELECT 1 FROM crm.trip_stage_history u
+                                       WHERE u.trip_id = p_trip AND u.undo_of = h.history_id))
+$$;
+REVOKE ALL ON FUNCTION crm.portal_unlocked(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION crm.portal_unlocked(uuid) TO crm_app;
+COMMENT ON FUNCTION crm.portal_unlocked(uuid) IS 'AA-946 (crm-016, card R): true when the trip''s portal Stage 3 and waiver signing are open: a paid deposit of the trip''s accepted proposal, or a move into booked with the manual_booking override (the deposit was taken outside the CRM) that was not undone. Invoker rights (RLS: one agency).';
+
 CREATE OR REPLACE FUNCTION crm.guard_traveler_access() RETURNS trigger
     LANGUAGE plpgsql
     SET search_path = pg_catalog, pg_temp
@@ -382,18 +419,14 @@ AS $$
 BEGIN
     IF NEW.stage3_submitted_at IS NOT NULL
        AND (TG_OP = 'INSERT' OR NEW.stage3_submitted_at IS DISTINCT FROM OLD.stage3_submitted_at)
-       AND NOT EXISTS (
-           SELECT 1 FROM crm.payment_schedule s
-             JOIN crm.proposal p ON p.proposal_id = s.proposal_id
-            WHERE s.trip_id = NEW.trip_id AND s.kind = 'deposit' AND s.status = 'paid' AND s.deleted_at IS NULL
-              AND p.status = 'accepted' AND p.deleted_at IS NULL) THEN
+       AND NOT crm.portal_unlocked(NEW.trip_id) THEN
         RAISE EXCEPTION 'crm: stage3_locked (Stage 3 opens after the deposit is paid)' USING ERRCODE = 'CRM32';
     END IF;
     RETURN NEW;
 END;
 $$;
 REVOKE ALL ON FUNCTION crm.guard_traveler_access() FROM PUBLIC;
-COMMENT ON FUNCTION crm.guard_traveler_access() IS 'AA-946 (crm-016, card R): Stage 3 is recorded (stage3_submitted_at) only while the trip''s accepted proposal has a paid deposit, else CRM32 stage3_locked. Invoker rights (RLS: one agency).';
+COMMENT ON FUNCTION crm.guard_traveler_access() IS 'AA-946 (crm-016, card R): Stage 3 is recorded (stage3_submitted_at) only while crm.portal_unlocked(trip) holds (a paid deposit of the accepted proposal, or a manual_booking override into booked that was not undone), else CRM32 stage3_locked. Invoker rights (RLS: one agency).';
 CREATE OR REPLACE TRIGGER traveler_access_stage3_guard
     BEFORE INSERT OR UPDATE ON crm.traveler_access
     FOR EACH ROW EXECUTE FUNCTION crm.guard_traveler_access();
@@ -415,6 +448,9 @@ CREATE TABLE IF NOT EXISTS crm.otp_challenge (
     session_hash        BYTEA,
     session_expires_at  TIMESTAMPTZ,
     consumed_at         TIMESTAMPTZ,
+    message_id          UUID,
+    code_enc            BYTEA,
+    delivery            TEXT NOT NULL DEFAULT 'mailbox',
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_by          TEXT NOT NULL DEFAULT COALESCE(NULLIF(current_setting('app.actor', true), ''), current_user::text),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -422,6 +458,12 @@ CREATE TABLE IF NOT EXISTS crm.otp_challenge (
     deleted_by          TEXT,
     purge_after         TIMESTAMPTZ,
     CONSTRAINT otp_challenge_tenant_id_uq UNIQUE (tenant_id, otp_id),
+    CONSTRAINT otp_challenge_message_fk FOREIGN KEY (tenant_id, message_id)
+        REFERENCES crm.message (tenant_id, message_id) ON DELETE SET NULL (message_id),
+    CONSTRAINT otp_challenge_delivery_chk CHECK (delivery IN ('mailbox', 'dev_echo')),
+    CONSTRAINT otp_challenge_code_enc_chk CHECK (
+        code_enc IS NULL OR (status = 'pending' AND octet_length(code_enc) >= 30)
+    ),
     CONSTRAINT otp_challenge_session_uq UNIQUE (session_hash),
     CONSTRAINT otp_challenge_access_fk FOREIGN KEY (tenant_id, access_id, trip_id, traveler_id)
         REFERENCES crm.traveler_access (tenant_id, access_id, trip_id, traveler_id),
@@ -449,6 +491,8 @@ CREATE TABLE IF NOT EXISTS crm.otp_challenge (
 );
 CREATE INDEX IF NOT EXISTS otp_challenge_access_idx ON crm.otp_challenge (tenant_id, access_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS otp_challenge_created_idx ON crm.otp_challenge (tenant_id, created_at);
+CREATE INDEX IF NOT EXISTS otp_challenge_message_idx ON crm.otp_challenge (tenant_id, message_id)
+    WHERE message_id IS NOT NULL;
 INSERT INTO crm.status_transition (table_name, from_status, to_status) VALUES
     ('otp_challenge', 'pending', 'verified'),
     ('otp_challenge', 'pending', 'failed'),
@@ -458,6 +502,9 @@ ON CONFLICT DO NOTHING;
 REVOKE TRUNCATE ON crm.otp_challenge FROM crm_app;
 COMMENT ON TABLE crm.otp_challenge IS 'AA-946 (crm-016; design v3 group E, M11 / M12, §2.9 rule 1): a 6-digit e-mail code for one traveller''s portal access: purpose sign_in (opens a portal session of at most 12 hours: session_hash = SHA-256 of the session token, never the token) or sign (asked again at signing, consumed once). code_hash = SHA-256 of the row id and the code; at most 5 attempts; valid 10 minutes. Retention 24 hours (DM-7): crm_app deletes older rows (the hourly crm_stage_date_rule run). No hold guard: a credential row.';
 COMMENT ON COLUMN crm.otp_challenge.code_hash IS 'conf:credential; SHA-256 of (otp_id bytes || the 6-digit code); the code itself is never stored';
+COMMENT ON COLUMN crm.otp_challenge.code_enc IS 'conf:credential; the 6-digit code under the tenant vault DEK, kept only while the code is pending and its mail (message_id) is not sent yet: the mail sender puts it into the mail at send time and clears it; the stored message shows the code masked';
+COMMENT ON COLUMN crm.otp_challenge.message_id IS 'the code mail (crm.message, stored with the code masked) the agency''s mailbox sends; SET NULL when that message is erased';
+COMMENT ON COLUMN crm.otp_challenge.delivery IS 'mailbox (the code reached only the traveller''s e-mail) | dev_echo (PORTAL_OTP_DEV_ECHO, Dev only: the API answer carried the code too); written into the signature evidence';
 COMMENT ON COLUMN crm.otp_challenge.session_hash IS 'conf:credential; SHA-256 of the portal session token a verified sign-in code opened (never the token)';
 
 -- ── 7. crm.signature_request ─────────────────────────────────────────────────────────────────────
@@ -559,7 +606,7 @@ BEGIN
     -- The acceptance is written on the move sent -> accepted only, and never changes afterwards.
     EXECUTE 'CREATE OR REPLACE TRIGGER proposal_acceptance_sealed BEFORE UPDATE ON crm.proposal FOR EACH ROW '
             'EXECUTE FUNCTION crm.guard_sealed_row(''sent'', ''accepted_at'', ''accepted_name_enc'', '
-            '''accepted_price_hash'', ''accepted_terms_doc_id'')';
+            '''accepted_name_erased_at'', ''accepted_price_hash'', ''accepted_terms_doc_id'')';
     EXECUTE 'CREATE OR REPLACE TRIGGER payment_schedule_sealed BEFORE UPDATE ON crm.payment_schedule FOR EACH ROW '
             'EXECUTE FUNCTION crm.guard_sealed_row(''due'', ''trip_id'', ''proposal_id'', ''kind'', ''amount'', '
             '''currency'', ''due_on'', ''paid_at'', ''tenant_id'')';
@@ -945,8 +992,11 @@ BEGIN
         END LOOP;
     ELSIF p_scope = 'traveler' THEN
         -- crm-012: their call slots (also those their submissions booked) before the submissions, their links after.
-        -- crm-015: the messages of their conversations, then those. crm-016: their signatures, codes and portal access.
+        -- crm-015: the messages of their conversations, then those. crm-016: the name they typed to accept a proposal
+        -- (the proposal's link names them; before their links go), their signatures, codes and portal access.
         FOREACH v_step SLICE 1 IN ARRAY ARRAY[
+            ['proposal', 'accepted_name_enc IS NOT NULL AND link_id IN (SELECT l.link_id FROM crm.client_link l '
+                         'WHERE l.traveler_id = $1)', 'accepted_name_enc = NULL, accepted_name_erased_at = now()'],
             ['signature_request', 'traveler_id = $1', ''],
             ['otp_challenge', 'traveler_id = $1', ''],
             ['traveler_access', 'traveler_id = $1', ''],
@@ -971,7 +1021,8 @@ BEGIN
             ['traveler', 'traveler_id = $1', '']
         ] LOOP
             v_counts := v_counts || jsonb_build_object(
-                v_step[1] || CASE WHEN v_step[3] <> '' THEN '_referrer_unlinked' ELSE '' END,
+                v_step[1] || CASE WHEN v_step[3] = '' THEN '' WHEN v_step[1] = 'proposal' THEN '_acceptance_name_erased'
+                                  ELSE '_referrer_unlinked' END,
                 crm.erase_rows(v_step[1], v_step[2], p_subject, p_profile_token, p_dry_run, NULLIF(v_step[3], '')));
         END LOOP;
     ELSIF p_scope IN ('task', 'note', 'document') THEN
@@ -1064,7 +1115,7 @@ END;
 $$;
 REVOKE ALL ON FUNCTION crm.erase_subject(text, uuid, uuid, boolean) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION crm.erase_subject(text, uuid, uuid, boolean) TO crm_eraser;
-COMMENT ON FUNCTION crm.erase_subject(text, uuid, uuid, boolean) IS 'AA-942 (crm-010, design §4.10, Fix B16), extended by AA-943 (crm-012) to client_link and meeting_slot, by AA-978 (crm-013) to membership_inbox (agency scope), by AA-944 (crm-014) to the ledger (trip and agency scopes: booking_line_money, booking_line; agency scope: agency_supplier, fx_rate_override; new scopes booking_line and agency_supplier for the trash purge), by AA-945 (crm-015) to mail (trip, traveller and agency scopes: message, conversation; agency scope: saved_reply, mail_import, ingest_address, channel_account; new scope conversation for the trash purge) and by AA-946 (crm-016) to the lifecycle tables (trip and agency scopes: signature_request, otp_challenge, traveler_access, payment, payment_schedule, proposal; traveller scope: signature_request, otp_challenge, traveler_access; agency scope: agreement_doc): the only hard-delete path of agency data. Scopes trip, traveler (needs the decrypted F2 profile token), task, note, document, relation, booking_line, agency_supplier, conversation, tenant (status offboarding, except a dry run; every tenant table except the keep list). Used by the trash purge and by erasure / offboarding (which skip the trash). Refuses: CRM10 legal_hold (the hold rule: any held row among those the erase would delete or update, crm.erase_held), CRM11 delete_blocked, CRM12 traveler_on_trip, CRM13 subject_not_found, CRM14 tenant_not_offboarding, CRM15 profile token, CRM16 erase_incomplete, CRM22 the Adventure Asia supplier row, CRM27 a supplier lines name. Never touches audit_event. Takes LOCK TABLE crm.legal_hold IN SHARE MODE first (serialised with hold placement). EXECUTE: crm_eraser only (SET LOCAL ROLE inside the lifecycle context).';
+COMMENT ON FUNCTION crm.erase_subject(text, uuid, uuid, boolean) IS 'AA-942 (crm-010, design §4.10, Fix B16), extended by AA-943 (crm-012) to client_link and meeting_slot, by AA-978 (crm-013) to membership_inbox (agency scope), by AA-944 (crm-014) to the ledger (trip and agency scopes: booking_line_money, booking_line; agency scope: agency_supplier, fx_rate_override; new scopes booking_line and agency_supplier for the trash purge), by AA-945 (crm-015) to mail (trip, traveller and agency scopes: message, conversation; agency scope: saved_reply, mail_import, ingest_address, channel_account; new scope conversation for the trash purge) and by AA-946 (crm-016) to the lifecycle tables (trip and agency scopes: signature_request, otp_challenge, traveler_access, payment, payment_schedule, proposal; traveller scope: signature_request, otp_challenge, traveler_access, and the typed acceptance name of the proposals their links carried (accepted_name_enc := NULL); agency scope: agreement_doc): the only hard-delete path of agency data. Scopes trip, traveler (needs the decrypted F2 profile token), task, note, document, relation, booking_line, agency_supplier, conversation, tenant (status offboarding, except a dry run; every tenant table except the keep list). Used by the trash purge and by erasure / offboarding (which skip the trash). Refuses: CRM10 legal_hold (the hold rule: any held row among those the erase would delete or update, crm.erase_held), CRM11 delete_blocked, CRM12 traveler_on_trip, CRM13 subject_not_found, CRM14 tenant_not_offboarding, CRM15 profile token, CRM16 erase_incomplete, CRM22 the Adventure Asia supplier row, CRM27 a supplier lines name. Never touches audit_event. Takes LOCK TABLE crm.legal_hold IN SHARE MODE first (serialised with hold placement). EXECUTE: crm_eraser only (SET LOCAL ROLE inside the lifecycle context).';
 
 
 -- ── Guard 1: the shape this file promises ────────────────────────────────────────────────────────
@@ -1112,7 +1163,15 @@ BEGIN
        OR NOT pg_catalog.has_function_privilege('crm_eraser', 'crm.erase_subject(text,uuid,uuid,boolean)', 'EXECUTE') THEN
         RAISE EXCEPTION 'crm-016: crm.erase_subject must be executable by crm_eraser only';
     END IF;
+    IF NOT pg_catalog.has_function_privilege('crm_app', 'crm.portal_unlocked(uuid)', 'EXECUTE') THEN
+        RAISE EXCEPTION 'crm-016: crm_app must execute crm.portal_unlocked (the API reads the portal lock with it)';
+    END IF;
+    IF position('accepted_name_erased_at' IN (SELECT prosrc FROM pg_catalog.pg_proc
+                 WHERE oid = 'crm.erase_subject(text,uuid,uuid,boolean)'::regprocedure)) = 0 THEN
+        RAISE EXCEPTION 'crm-016: crm.erase_subject does not erase the typed acceptance name';
+    END IF;
     FOREACH t IN ARRAY ARRAY['crm.guard_sealed_row()', 'crm.guard_traveler_access()', 'crm.set_agreement_doc_sha256()', 'crm.enforce_stage_transition()',
+                             'crm.portal_unlocked(uuid)',
                              'crm.erase_held(text,uuid,uuid)', 'crm.erase_subject(text,uuid,uuid,boolean)'] LOOP
         IF pg_catalog.has_function_privilege('public', t, 'EXECUTE') THEN
             RAISE EXCEPTION 'crm-016: % is executable by PUBLIC (SEC-4)', t;
@@ -1143,7 +1202,7 @@ BEGIN
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('crm-016', now(), 'AA-946: CRM-18 thin full lifecycle (agreement_doc, proposal with accept, payment_schedule + manual payment, traveler_access, otp_challenge, signature_request (e-sign v0), client_link purposes proposal / portal, computable booking and Stage 3 gates, Stage 3 locked before the deposit (CRM32), sealed rows (CRM31), erase_subject + hold rule for the new tables)')
+VALUES ('crm-016', now(), 'AA-946: CRM-18 thin full lifecycle (agreement_doc, proposal with accept, payment_schedule + manual payment, traveler_access, otp_challenge, signature_request (e-sign v0), client_link purposes proposal / portal, computable booking and Stage 3 gates, Stage 3 locked before the deposit or a manual_booking override (CRM32, crm.portal_unlocked), code mail stored masked, sealed rows (CRM31), erase_subject + hold rule for the new tables incl. the typed acceptance name)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

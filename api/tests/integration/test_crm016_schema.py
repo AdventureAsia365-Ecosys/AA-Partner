@@ -1,14 +1,17 @@
 """crm-016 (AA-946, card CRM-18) on PostgreSQL 15 with the RDS role shape: the thin full lifecycle.
 
 - **R** (card) in the database: Stage 3 is recorded (``traveler_access.stage3_submitted_at``) only after the deposit
-  of the accepted proposal is paid, else CRM32 ``stage3_locked``.
+  of the accepted proposal is paid, else CRM32 ``stage3_locked``; a ``manual_booking`` override into Booked (deposit
+  taken outside the CRM, not undone) opens it too (``crm.portal_unlocked``). A deposit row is never void.
 - The gates: proposal -> booked opens with a paid deposit of the accepted proposal (else CRM19 ``gate_unmet:booking``,
   unless ``app.gate_override = booking``); booked -> pre_departure opens at ``s3 = 100`` (else CRM19).
 - Sealed rows (CRM31): a sent proposal, a paid schedule row, a published agreement, a signed signature never change;
   the agreement hash is set by the database whatever the writer sends. ``crm.payment`` is append-only for crm_app.
 - Shapes: amounts and balance date, one accepted / one sent version per trip, the code expiry (<= 10 minutes) and the
   session (<= 12 hours), link purposes, the readers have nothing.
-- Erasure: trip, traveller and agency erases take every new table (no CRM16); a trip hold reaches the portal rows.
+- Erasure: trip, traveller and agency erases take every new table (no CRM16); a traveller erase also clears the name
+  they typed to accept a proposal; a trip hold reaches the portal rows.
+- The code mail: ``otp_challenge.code_enc`` is kept only while the code is pending.
 """
 
 from __future__ import annotations
@@ -217,6 +220,47 @@ async def test_r_stage3_is_locked_until_the_deposit_is_paid(app_pool: asyncpg.Po
     )  # fmt: skip
 
 
+async def _history(pool: asyncpg.Pool, ids: dict[str, Any], *values: Any) -> uuid.UUID:
+    return await _run(
+        pool,
+        ids["tenant"],
+        "INSERT INTO crm.trip_stage_history (trip_id, from_stage, to_stage, reason_code, override, "
+        "override_reason_code, undo_of) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING history_id",
+        ids["trip"],
+        *values,
+    )
+
+
+async def test_r_a_manual_booking_override_opens_the_portal(app_pool: asyncpg.Pool) -> None:
+    """Review S251: a trip booked with the manual_booking override (deposit taken outside the CRM) is not locked
+    for ever; an override that was undone does not count."""
+    ids = await _lifecycle(app_pool)
+    unlocked = "SELECT crm.portal_unlocked($1)"
+    assert await _run(app_pool, ids["tenant"], unlocked, ids["trip"]) is False
+    async with app_pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, ids["tenant"], "member:test")
+        await conn.execute("SELECT set_config('app.gate_override', 'booking', true)")
+        await conn.execute("UPDATE crm.trip SET stage = 'booked' WHERE trip_id = $1", ids["trip"])
+    first = await _history(app_pool, ids, "proposal", "booked", "agent_move", True, "manual_booking", None)
+    assert await _run(app_pool, ids["tenant"], unlocked, ids["trip"]) is True
+    # Undone (the exact reverse within 15 s): locked again until a new override.
+    await _history(app_pool, ids, "booked", "proposal", "undo", False, None, first)
+    assert await _run(app_pool, ids["tenant"], unlocked, ids["trip"]) is False
+    set_s3 = "UPDATE crm.traveler_access SET stage3_submitted_at = now() WHERE access_id = $1"
+    with pytest.raises(asyncpg.PostgresError, match="stage3_locked"):
+        await _run(app_pool, ids["tenant"], set_s3, ids["access_lead"])
+    await _history(app_pool, ids, "proposal", "booked", "agent_move", True, "manual_booking", None)
+    await _run(app_pool, ids["tenant"], set_s3, ids["access_lead"])
+
+
+async def test_a_deposit_row_is_never_void(app_pool: asyncpg.Pool) -> None:
+    ids = await _lifecycle(app_pool)
+    void = "UPDATE crm.payment_schedule SET status = 'void' WHERE schedule_id = $1"
+    with pytest.raises(asyncpg.CheckViolationError):
+        await _run(app_pool, ids["tenant"], void, ids["deposit"])
+    await _run(app_pool, ids["tenant"], void, ids["balance"])
+
+
 async def test_the_booking_gate_opens_with_the_paid_deposit(app_pool: asyncpg.Pool) -> None:
     ids = await _lifecycle(app_pool)
     to_booked = "UPDATE crm.trip SET stage = 'booked' WHERE trip_id = $1"
@@ -272,6 +316,7 @@ async def test_the_stage3_gate_opens_at_s3_100(app_pool: asyncpg.Pool) -> None:
         ("proposal", "proposal", "total_amount = 1200"),
         ("proposal", "proposal", "body_enc = body_enc || '\\x00'::bytea"),
         ("proposal", "proposal", "accepted_name_enc = accepted_name_enc || '\\x00'::bytea"),
+        ("proposal", "proposal", "accepted_name_enc = NULL, accepted_name_erased_at = now()"),
         ("agreement_doc", "terms", "body_text = 'Changed after publishing.'"),
         ("agreement_doc", "terms", "version_label = 'v2'"),
     ],
@@ -476,9 +521,22 @@ async def test_codes_live_ten_minutes_and_sessions_twelve_hours(app_pool: asyncp
         with pytest.raises(asyncpg.CheckViolationError):  # six attempts
             async with conn.transaction():
                 await conn.execute("UPDATE crm.otp_challenge SET attempts = 6 WHERE otp_id = $1", otp)
+        # The code itself waits (sealed) only while it is pending: leaving pending clears it.
+        await conn.execute("UPDATE crm.otp_challenge SET code_enc = $2 WHERE otp_id = $1", otp, _blob())
+        with pytest.raises(asyncpg.CheckViolationError):
+            async with conn.transaction():
+                await conn.execute(
+                    "UPDATE crm.otp_challenge SET status = 'verified', verified_at = now(), session_hash = $2, "
+                    "session_expires_at = now() + interval '12 hours' WHERE otp_id = $1",
+                    otp,
+                    _hash(),
+                )
+        with pytest.raises(asyncpg.CheckViolationError):  # a delivery code outside the list
+            async with conn.transaction():
+                await conn.execute("UPDATE crm.otp_challenge SET delivery = 'sms' WHERE otp_id = $1", otp)
         await conn.execute(
             "UPDATE crm.otp_challenge SET status = 'verified', verified_at = now(), session_hash = $2, "
-            "session_expires_at = now() + interval '12 hours' WHERE otp_id = $1",
+            "session_expires_at = now() + interval '12 hours', code_enc = NULL WHERE otp_id = $1",
             otp,
             _hash(),
         )
@@ -573,9 +631,16 @@ async def test_the_traveller_erase_takes_their_portal_rows(app_pool: asyncpg.Poo
     done = await _erase(app_pool, ids["tenant"], "traveler", ids["lead"], ids["token"])
     assert done["counts"]["signature_request"] == 1
     assert done["counts"]["traveler_access"] == 1
-    # The proposal's link to the lead is gone; the proposal (the trip's) stays until the trip is erased.
-    assert await _run(app_pool, ids["tenant"], "SELECT link_id FROM crm.proposal WHERE proposal_id = $1",
-                      ids["proposal"]) is None  # fmt: skip
+    # The proposal's link to the lead is gone; the proposal (the trip's) stays until the trip is erased, but the name
+    # the lead typed to accept it is erased with them (review S251); the acceptance time and hash stay.
+    assert done["counts"]["proposal_acceptance_name_erased"] == 1
+    row = await _run(
+        app_pool, ids["tenant"],
+        "SELECT row(link_id IS NULL, accepted_name_enc IS NULL, accepted_name_erased_at IS NOT NULL, "
+        "accepted_at IS NOT NULL, status) FROM crm.proposal WHERE proposal_id = $1",
+        ids["proposal"],
+    )  # fmt: skip
+    assert tuple(row) == (True, True, True, True, "accepted")
     assert await _count(app_pool, ids["tenant"], "traveler_access") == 1  # the companion's
 
 
@@ -613,6 +678,7 @@ async def test_the_erase_text_names_the_new_tables(admin: asyncpg.Connection) ->
         assert f"'{table}'" in source, table
     for table in ("traveler_access", "signature_request", "otp_challenge"):
         assert f"crm.{table}" in held, table
+    assert "accepted_name_erased_at" in source
     guards = {
         r["relname"]
         for r in await admin.fetch(
