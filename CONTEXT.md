@@ -1,12 +1,12 @@
 ---
 id: ARCH-06-partner
 title: "AA-Partner — Repo Context"
-description: Stack, boundaries, ownership, route classes, tenancy rules and working rules of AA-Partner (partner CRM API, crm.job worker, later the CRM web and the moved Content studio); read it before designing or changing code in this repo.
+description: Stack, boundaries, ownership, route classes, tenancy rules and working rules of AA-Partner (partner CRM API, crm.job worker, CRM web, and the tenant Content studio moved from AA-CIS-App); read it before designing or changing code in this repo.
 type: explanation
 status: active
 owner: nghiep
 audience: [engineer, agent]
-applies_to: [aa-crm-api, aa-crm-web]
+applies_to: [aa-crm-api, aa-crm-web, aa-cis-portal]
 last_reviewed: 2026-10-25
 review_every_days: 90
 related: [ARCH-01, ARCH-06-booking, docs/adr/README.md]
@@ -15,8 +15,9 @@ related: [ARCH-01, ARCH-06-booking, docs/adr/README.md]
 # AA-Partner — Repo Context
 
 AA-Partner is the fourth app of the Adventure Asia ecosystem: the CRM that AA gives to partner travel agencies to run
-their own B2C clients, with live AA supply inside it and privacy by architecture, plus (after the portal move) the
-tenant Content studio, so an agency has one host, one sign-in and one sidebar. Today the repo holds the **walking
+their own B2C clients, with live AA supply inside it and privacy by architecture, plus the tenant Content studio
+(`portal/`, moved here from AA-CIS-App by CRM-P2a, AA-979, 25/10/2026), so that after P2b an agency has one host, one
+sign-in and one sidebar. Today the repo holds the **walking
 skeleton**: the API (AA-933, design card CRM-05: health routes, the three route classes and their token-audience
 guards, `tenant_tx()` on FORCE row level security, the base table template `crm-002`, the `crm.job` runner); the
 **identity vault** (AA-934, CRM-06: the `KeyProvider` with per-tenant DEKs under the KMS data key, AES-GCM field
@@ -85,10 +86,10 @@ Design sources, in order:
 | DB access | asyncpg with plain SQL, no ORM; `ssl="require"`; pool `max_size=3` |
 | Jobs | `crm.job` (ADR 0003a template, kinds `crm_*`), worker loop inside the API process |
 | Lint / tests | ruff, pytest + pytest-asyncio; integration tests on PostgreSQL 15 with the RDS role shape |
-| Runtime | ECS Fargate **ARM64** service `aa-crm-dev-api` on `aa-cis-dev-cluster` (acc2, us-west-1), desired 0 until the first image |
+| Runtime | ECS Fargate **ARM64** service `aa-crm-dev-api` on `aa-cis-dev-cluster` (acc2, us-west-1); desired 1, running 1 on 25/10/2026 |
 | Edge | CloudFront `partner-dev.` -> VPC origin -> internal NLB -> ALB host + `X-AA-Origin` + `/crm/*` rule -> the service (AA-931 spike, ADR 0010 decision 2) |
 | Image | ECR `aa-crm-dev-api`, IMMUTABLE, tag = git SHA, built natively on an arm64 runner |
-| Web | `web/`: Next.js 16 standalone (React 19, TypeScript, vitest), the AA UI kit vendored from AA-CIS-App (inline styles from the kit tokens); ECS Fargate **ARM64** service `aa-crm-dev-web` (port 3000, `/healthz`), ECR `aa-crm-dev-web`, desired 0 until the first image (AA-CIS-Infra `crm_web.tf`) |
+| Web | `web/`: Next.js 16 standalone (React 19, TypeScript, vitest), the AA UI kit vendored from AA-CIS-App (inline styles from the kit tokens); ECS Fargate **ARM64** service `aa-crm-dev-web` (port 3000, `/healthz`), ECR `aa-crm-dev-web` (AA-CIS-Infra `crm_web.tf`); desired 1, running 1 on 25/10/2026 |
 | Portal | `portal/`: the tenant Content studio (Next.js 16, React 19, TypeScript), moved from AA-CIS-App with its history by CRM-P2a (AA-979). Still on Vercel (project `aa-cis-portal`, host `portal.lumiguides.it.com`) and still the CIS tenant API-key sign-in until P2b; section "Tenant portal" below |
 | Edge for the web | the same CloudFront distribution: the ALB rule `crm_api` (`/crm`, `/crm/*`) stays above `crm_partner_default`, which forwards every other path of the partner host to the web target group |
 
