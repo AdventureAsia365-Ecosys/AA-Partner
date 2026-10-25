@@ -360,6 +360,10 @@ jobs:
       - name: Type-check (tsc --noEmit)
         run: npx tsc --noEmit -p .
 
+      # AA-761 — the pure helpers under lib/ (node --test, no extra dependency; *.test.ts is outside tsconfig).
+      - name: Unit tests (node --test)
+        run: npm test
+
       - name: Build (next build)
         env:
           NODE_OPTIONS: --max-old-space-size=1536
