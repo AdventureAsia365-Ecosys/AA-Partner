@@ -10,6 +10,9 @@
 - ``crm_fx_fetch`` (AA-944, daily, :class:`app.fx.fetch.DailyFxSchedule`): the platform FX rates (``FX_PROVIDER``).
 - ``crm_membership_pull`` (AA-978, every 20 s, Recurring): the CIS membership feed, :mod:`app.cis.membership_feed`.
   Deploy-gate and DB Migrate idle exempt, like the heartbeat.
+- ``crm_booking_sync`` (AA-947, every 60 s, Recurring, plus one-agency nudges): the AA outage queue and the Booking
+  event feed, :mod:`app.booking.sync`. Exempt like the membership pull. ``crm_catalog_sync`` (AA-947, hourly,
+  :class:`app.catalog.sync.HourlyCatalogSync`): the AA tour cache.
 - ``crm_job_retention`` (daily, :class:`DailyRetentionSchedule`): data standards §7 row ``crm.job`` — succeeded rows
   30 days, cancelled 90 days after ``finished_at``; queued / running never. **Failed rows are kept**: §7 says "archive
   before delete: failed rows only", and the CRM has no archive bucket yet (CRM-04 rest), so nothing that must be
@@ -38,6 +41,8 @@ from app.jobs import queue
 from app.jobs.kinds import (
     AUDIT_EXPORT,
     AUDIT_RETENTION,
+    BOOKING_SYNC,
+    CATALOG_SYNC,
     DISPATCH,
     FX_FETCH,
     HEARTBEAT,
@@ -57,6 +62,8 @@ from app.jobs.worker import Handler, MaintenanceHook, Recurring
 
 if TYPE_CHECKING:  # pragma: no cover
     from app.audit_export.archive import AuditArchive
+    from app.booking.client import BookingClient
+    from app.catalog.client import CatalogConfig
     from app.cis.membership_feed import FeedConfig
     from app.dispatch.worker import Sender
     from app.documents.store import DocumentStore
@@ -142,6 +149,8 @@ def build_handlers(
     mail_runtime: MailRuntime | None = None,
     ingest_store: IngestStore | None = None,
     ingest_domain: str = "",
+    booking_client: BookingClient | None = None,
+    catalog: CatalogConfig | None = None,
 ) -> dict[str, Handler]:
     """Every kind the worker runs. ``keys``: the field-encryption provider the intake kind needs (AA-936); without
     it ``crm_intake_process`` jobs are retried until the provider is configured. ``audit_archive``: the two audit
@@ -153,9 +162,13 @@ def build_handlers(
     (members the feed disables are signed out of the partner pool).
     AA-945: ``mail_runtime`` (providers, system mailer, directory: the mailbox health check), ``ingest_store`` +
     ``ingest_domain`` (``CRM_INGEST_BUCKET`` / ``CRM_INGEST_DOMAIN``: the forward-in ingest and the history import;
-    without them the ingest answers not_configured and the import is retried)."""
+    without them the ingest answers not_configured and the import is retried).
+    AA-947: ``booking_client`` (``BOOKING_API_URL`` + the M2M token: the AA outage queue and the Booking feed; None =
+    the sync logs not_configured) and ``catalog`` (``CIS_API_URL`` + the token: the AA tour cache)."""
     from app.audit_export import export as audit_export
     from app.audit_export import retention as audit_retention
+    from app.booking.sync import BookingSync
+    from app.catalog.sync import CatalogSync
     from app.cis.membership_feed import MembershipFeed
     from app.dispatch import worker as dispatch_worker
     from app.fx import fetch as fx_fetch
@@ -187,6 +200,8 @@ def build_handlers(
         MAIL_INGEST: mail_ingest.build_handler(ingest_store, documents, keys, ingest_domain),
         MAIL_HEALTH: mail_health.build_handler(mail_runtime or _MailRuntime(keys=keys)),
         MAIL_IMPORT: history_import.build_handler(ingest_store, documents, keys, ingest_domain),
+        BOOKING_SYNC: BookingSync(booking_client),
+        CATALOG_SYNC: CatalogSync(catalog),
     }
 
 
@@ -234,6 +249,7 @@ def build_hooks(
     ``ingest_store`` (the forward-in scan; none = no scan)."""
     from app.audit_export.export import HourlyAuditExportSchedule
     from app.audit_export.retention import DailyAuditRetentionSchedule
+    from app.catalog.sync import HourlyCatalogSync
     from app.fx.fetch import DailyFxSchedule
     from app.lifecycle.job import DailyLifecycleSchedule
     from app.mail.health import DailyMailHealthSchedule
@@ -252,6 +268,7 @@ def build_hooks(
         DailyFxSchedule(now=clock),
         DailyMailHealthSchedule(retention_utc_hour, clock),
         MailIngestScan(ingest_store, clock),
+        HourlyCatalogSync(clock),
     )
 
 
@@ -262,6 +279,7 @@ def build_hooks(
 RECURRING: tuple[Recurring, ...] = (
     Recurring(HEARTBEAT, every_seconds=60, keep_days=2),
     Recurring(MEMBERSHIP_PULL, every_seconds=20, keep_days=1),
+    Recurring(BOOKING_SYNC, every_seconds=60, keep_days=1),
 )
 SCHEDULED_KINDS: frozenset[str] = frozenset(
     {
@@ -274,6 +292,7 @@ SCHEDULED_KINDS: frozenset[str] = frozenset(
         FX_FETCH,
         MAIL_INGEST,
         MAIL_HEALTH,
+        CATALOG_SYNC,
     }
 )
 # Kinds queued by request code, one row per event (AA-936: each stored inquiry), never scheduled.
