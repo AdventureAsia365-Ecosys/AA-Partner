@@ -14,7 +14,9 @@ Migrate idle check count a queued row as busy; not deploy-gate exempt). For ever
    CRM-18 too);
 5. AA-946 T-21 tick (design F8.5): a ``booked`` trip starting within :data:`T21_DAYS` days whose Stage 3 is not
    complete gets one task ``stage3_due_t21`` per trip, ever;
-6. AA-946: e-mail codes (``crm.otp_challenge``) older than 24 hours are deleted (DM-7 row; count only).
+6. AA-946: a pending e-mail code past its 10 minutes becomes ``expired`` and loses its sealed copy (``code_enc``,
+   kept for the mail sender: a code mail held or never sent must not keep it until the purge); then codes
+   (``crm.otp_challenge``) older than 24 hours are deleted (DM-7 row; counts only).
 
 Payload and result are ids and counts only. An agency that is locked or offboarding is skipped.
 """
@@ -79,6 +81,9 @@ SELECT t.trip_id FROM crm.trip t
    AND NOT EXISTS (SELECT 1 FROM crm.task k WHERE k.trip_id = t.trip_id AND k.kind = 'stage3_due_t21')
  LIMIT $3
 """
+OTP_EXPIRE_SQL = """
+UPDATE crm.otp_challenge SET status = 'expired', code_enc = NULL WHERE status = 'pending' AND expires_at <= now()
+"""
 OTP_PURGE_SQL = "DELETE FROM crm.otp_challenge WHERE created_at < now() - interval '24 hours'"
 TASK_SQL = """
 INSERT INTO crm.task (trip_id, kind, priority, assignee_member_id, due_anchor, due_at)
@@ -114,6 +119,9 @@ async def run_agency(ctx: SystemContext) -> Counter[str]:
         if (await progress.refresh(ctx, row["trip_id"])).s3 < stages.STAGE3_GATE:
             await ctx.conn.execute(TASK_SQL, row["trip_id"], "stage3_due_t21", "normal")
             counts["stage3_due_t21"] += 1
+    expired = stages._rows(await ctx.conn.execute(OTP_EXPIRE_SQL))
+    if expired:
+        counts["codes_expired"] += expired
     purged = await ctx.conn.execute(OTP_PURGE_SQL)
     if stages._rows(purged):
         counts["codes_purged"] += stages._rows(purged)

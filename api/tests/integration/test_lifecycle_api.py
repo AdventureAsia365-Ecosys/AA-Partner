@@ -11,7 +11,11 @@
   the date rule moves a booked trip with Stage 3 missing as ``date_rule_gate_unmet`` + an urgent task, one with
   Stage 3 complete as ``date_rule``; the T-21 tick and the 24-hour code purge.
 - Code delivery through the agency's own mailbox (a queued ``crm.message`` + dispatch row), never without one; the
-  stored message shows the code masked and the code waits sealed on its ``otp_challenge`` row (review S251).
+  stored message shows the code masked and the code waits sealed on its ``otp_challenge`` row (review S251); the real
+  sender (``MailSender`` through the dispatcher, a fake provider) puts the code into the mail and clears the sealed
+  copy, and a code superseded or past its 10 minutes is never sent (``code_expired``; the hourly run expires it).
+- Re-review S251: the signature keeps ``code_delivery`` and the canonical evidence record, re-verifiable after the
+  code purge; a signing code is refused while signing is locked.
 - Review S251: a trip booked with the ``manual_booking`` override opens the portal without a CRM deposit; a deposit
   row is never void (409 ``deposit_not_voidable``).
 - The gates in the API: proposal -> booked without the deposit is 409 ``gate_unmet``.
@@ -20,6 +24,9 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
+import re
 import uuid
 from decimal import Decimal
 from typing import Any
@@ -28,7 +35,12 @@ import asyncpg
 import pytest
 
 from app import stages, stages_job
+from app.dispatch.worker import build_handler as build_dispatch
 from app.errors import Conflict, Forbidden, Invalid
+from app.jobs.queue import Job
+from app.mail import mailbox as mailboxes
+from app.mail.sender import MailSender
+from app.mail.state import MailRuntime
 from app.permissions import Action
 from app.portal import access, progress
 from app.portal import public as portal
@@ -40,6 +52,7 @@ from app.tenancy import system_tx, tenant_tx
 from app.travellers import service as travellers
 from app.vault import Vault
 from tests.integration.test_crm005_intake import _agency, _keys
+from tests.unit.mail_fakes import FakeProvider
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -283,6 +296,21 @@ async def test_the_thin_lifecycle_end_to_end(app_pool: asyncpg.Pool) -> None:
     assert err.value.extra["fields"] == ["dob"]
     signed, answer = await _sign(app_pool, s, lead_token, lead_session, "Grace Lee")
     assert signed and answer["status"] == "signed"
+    # Re-review S251: the signature keeps the delivery and the exact hashed record (no PII), sealed; after the code
+    # row is purged the hash still re-verifies and the delivery is still known.
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        await ctx.conn.execute("DELETE FROM crm.otp_challenge WHERE traveler_id = $1 AND purpose = 'sign'", s["lead"])
+        evidence = await ctx.conn.fetchrow(
+            "SELECT otp_id, code_delivery, evidence_record, evidence_sha256 FROM crm.signature_request "
+            "WHERE traveler_id = $1 AND status = 'signed'",
+            s["lead"],
+        )
+    record = bytes(evidence["evidence_record"])
+    assert evidence["otp_id"] is None and evidence["code_delivery"] == "dev_echo"
+    assert hashlib.sha256(record).digest() == bytes(evidence["evidence_sha256"])
+    parsed = json.loads(record)
+    assert parsed["code_delivery"] == "dev_echo" and parsed["traveler_id"] == str(s["lead"])
+    assert parsed["typed_name_sha256"] == hashlib.sha256(b"Grace Lee").hexdigest() and b"Grace" not in record
     async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
         enc = await ctx.conn.fetchval("SELECT passport_no_enc FROM crm.traveler WHERE traveler_id = $1", s["lead"])
         assert b"PA1234567" not in bytes(enc)
@@ -368,6 +396,96 @@ async def test_codes_go_through_the_agencys_mailbox_or_not_at_all(app_pool: asyn
     with pytest.raises(Exception) as err:
         await portal.request_code(app_pool, s["keys"], PLAIN, token, purpose="sign_in", session=None, origin=None)
     assert getattr(err.value, "code", None) == "too_many_codes"
+
+
+async def _dispatch_code_mail(pool: asyncpg.Pool, s: dict[str, Any], otp_id: uuid.UUID, provider: FakeProvider) -> dict:
+    async with tenant_tx(pool, s["who"]["agent"], s["tenant"]) as ctx:
+        dispatch_id = await ctx.conn.fetchval(
+            "SELECT q.dispatch_id FROM crm.dispatch_queue q JOIN crm.otp_challenge o ON o.message_id = q.message_id "
+            "WHERE o.otp_id = $1",
+            otp_id,
+        )
+    job = Job("j", "crm_dispatch", {"tenant_id": str(s["tenant"]), "dispatch_id": str(dispatch_id)}, 1, 5)
+    return await build_dispatch(MailSender(MailRuntime(keys=s["keys"], providers={"gmail": provider})))(pool, job)
+
+
+async def _codes(pool: asyncpg.Pool, s: dict[str, Any]) -> list[Any]:
+    async with tenant_tx(pool, s["who"]["agent"], s["tenant"]) as ctx:
+        return await ctx.conn.fetch(
+            "SELECT o.otp_id, o.status, o.code_enc, o.code_hash, m.status AS mail_status, m.body_enc, m.message_id "
+            "FROM crm.otp_challenge o JOIN crm.message m ON m.message_id = o.message_id ORDER BY o.created_at"
+        )
+
+
+async def test_the_mail_sender_fills_in_the_code_and_clears_it(app_pool: asyncpg.Pool) -> None:
+    """Review nit S251: MailSender on PostgreSQL with the real vault for a queued code mail."""
+    s = await _setup(app_pool)
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"], action=Action.OWN_MAILBOX_CONNECT) as ctx:
+        await mailboxes.connect(
+            ctx,
+            Vault(s["keys"], ctx),
+            scope="own",
+            provider="google",
+            secret={"refresh_token": "rt", "address": "agent@senvang.example"},
+        )
+        token = _token((await access.invite(ctx, s["trip"], s["lead"]))["link_path"])
+    sent = await portal.request_code(app_pool, s["keys"], PLAIN, token, purpose="sign_in", session=None, origin=None)
+    assert sent["sent"] is True
+    (first,) = await _codes(app_pool, s)
+    provider = FakeProvider()
+    assert (await _dispatch_code_mail(app_pool, s, first["otp_id"], provider))["status"] == "sent"
+    raw = provider.sent[-1][0].decode()
+    assert CODE_MASK not in raw
+    stored_hash = bytes(first["code_hash"])
+    code = next(c for c in re.findall(r"\b\d{6}\b", raw) if portal.code_hash(first["otp_id"], c) == stored_hash)
+    (after,) = await _codes(app_pool, s)
+    assert after["mail_status"] == "sent" and after["code_enc"] is None and after["status"] == "pending"
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        body = await Vault(s["keys"], ctx).decrypt(
+            "message", "body_enc", after["message_id"], after["body_enc"], purpose="mail"
+        )
+    assert CODE_MASK in body and code not in body  # the stored mail still shows the code masked
+    session, _ = await portal.verify_code(app_pool, PLAIN, token, code, origin=None)
+    assert session is not None
+
+    # A superseded code is never sent: the next request expires it (and clears its sealed copy) before its mail goes.
+    await portal.request_code(app_pool, s["keys"], PLAIN, token, purpose="sign_in", session=None, origin=None)
+    await portal.request_code(app_pool, s["keys"], PLAIN, token, purpose="sign_in", session=None, origin=None)
+    _, superseded, latest = await _codes(app_pool, s)
+    assert superseded["status"] == "expired" and superseded["code_enc"] is None
+    held = len(provider.sent)
+    answer = await _dispatch_code_mail(app_pool, s, superseded["otp_id"], provider)
+    assert answer.get("status") != "sent" and len(provider.sent) == held
+    assert (await _codes(app_pool, s))[1]["mail_status"] == "failed"
+
+    # A code whose 10 minutes ran out while its mail waited: the hourly run expires it and drops the sealed copy;
+    # its mail then fails as code_expired.
+    async with app_pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(s["tenant"]))
+        await conn.execute(
+            "UPDATE crm.otp_challenge SET created_at = now() - interval '20 minutes', "
+            "expires_at = now() - interval '10 minutes' WHERE otp_id = $1",
+            latest["otp_id"],
+        )
+    counts = await _date_rule(app_pool, s["tenant"])
+    assert counts["codes_expired"] == 1
+    *_, stale = await _codes(app_pool, s)
+    assert stale["status"] == "expired" and stale["code_enc"] is None
+    answer = await _dispatch_code_mail(app_pool, s, latest["otp_id"], provider)
+    assert answer.get("status") != "sent" and len(provider.sent) == held
+
+
+async def test_a_signing_code_waits_for_the_unlock(app_pool: asyncpg.Pool) -> None:
+    """Re-review S251: a sign code before the portal unlocks spends neither a mail nor one of the hourly codes."""
+    s = await _setup(app_pool)
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        token = _token((await access.invite(ctx, s["trip"], s["lead"]))["link_path"])
+    session = await _sign_in(app_pool, s, token)
+    with pytest.raises(Forbidden) as err:
+        await portal.request_code(app_pool, s["keys"], ECHO, token, purpose="sign", session=session, origin=None)
+    assert err.value.code == "stage3_locked"
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        assert await ctx.conn.fetchval("SELECT count(*) FROM crm.otp_challenge WHERE purpose = 'sign'") == 0
 
 
 async def test_five_wrong_codes_fail_the_code(app_pool: asyncpg.Pool) -> None:
@@ -490,10 +608,13 @@ async def test_e_the_date_ticks(app_pool: asyncpg.Pool) -> None:
         access_id = uuid.UUID((await access.invite(ctx, complete, s["lead"]))["access_id"])
         await ctx.conn.execute(
             "UPDATE crm.signature_request SET status = 'signed', signed_at = now(), signed_name_enc = $2, "
-            "doc_sha256 = $3, evidence_sha256 = $3 WHERE access_id = $1",
+            "doc_sha256 = $3, evidence_sha256 = $4, evidence_record = $5, code_delivery = 'mailbox' "
+            "WHERE access_id = $1",
             access_id,
             b"z" * 40,
             b"h" * 32,
+            hashlib.sha256(b"{}").digest(),
+            b"{}",
         )
         await ctx.conn.execute(
             "INSERT INTO crm.otp_challenge (access_id, trip_id, traveler_id, purpose, code_hash, expires_at, "
@@ -507,6 +628,7 @@ async def test_e_the_date_ticks(app_pool: asyncpg.Pool) -> None:
     counts = await _date_rule(app_pool, s["tenant"])
     assert counts["booked_to_travelling"] == 2 and counts["urgent_tasks"] == 1
     assert counts["return_date_missing"] >= 1 and counts["stage3_due_t21"] == 1 and counts["codes_purged"] == 1
+    assert counts["codes_expired"] == 1  # the old pending code expired first (code_enc cleared), then purged
     async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
 
         async def stage_and_reason(trip: uuid.UUID) -> tuple[str, str | None]:

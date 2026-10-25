@@ -12,9 +12,12 @@ masked e-mail hint of the traveller's own address.
   message shows the code masked** (:data:`CODE_MASK`): the code itself waits under the vault DEK in
   ``otp_challenge.code_enc`` and the mail sender (:mod:`app.mail.sender`) puts it into the mail at send time and
   clears it, so nobody at the agency can read a code in the Messages tab (review S251: an agent who could read a
-  signing code could sign as the traveller). No mailbox -> 409 ``code_delivery_unavailable`` unless
-  ``PORTAL_OTP_DEV_ECHO`` (Dev) returns the code in the answer; such a code is marked ``delivery = dev_echo`` and the
-  signature evidence says so.
+  signing code could sign as the traveller). **E-sign v0 limit** (re-review S251, CONTEXT.md): the mail provider
+  keeps a Sent copy of the code mail in the sending mailbox, so ``delivery = mailbox`` means "sent from the agency's
+  mailbox to the traveller's address", not "only the traveller saw the code". No mailbox -> 409
+  ``code_delivery_unavailable`` unless ``PORTAL_OTP_DEV_ECHO`` (Dev) returns the code in the answer; such a code is
+  marked ``delivery = dev_echo``. A ``sign`` code is refused (403 ``stage3_locked``) while signing is locked, so it
+  never spends a mail or one of the hourly codes.
 - :func:`verify_code`: at most :data:`MAX_ATTEMPTS` tries per code; the answer of a wrong code is returned, not raised,
   so the attempt counter commits. A good code opens a portal session of :data:`SESSION_HOURS` hours (the router sets
   it as an httpOnly cookie; only its SHA-256 is stored) and moves the access invited -> active.
@@ -26,7 +29,9 @@ masked e-mail hint of the traveller's own address.
   fields written under the vault DEK (write-only: never read back here), Stage 3 time on the access, the trip's
   ``s3`` and ``waiting_on`` refreshed.
 - :func:`sign`: e-sign v0: the published waiver version and its SHA-256 as shown, the typed full name, the consent tick
-  and a fresh ``sign`` code; locked before the deposit like Stage 3.
+  and a fresh ``sign`` code; locked before the deposit like Stage 3. The signature row keeps the code's delivery
+  (``code_delivery``) and the canonical evidence record (no PII: the typed name only as its SHA-256) beside its
+  SHA-256, all sealed, so the hash can be re-verified after the 24-hour code purge.
 
 Unknown, expired, revoked or foreign link, a link of another purpose or a revoked access: 404 ``link_not_found``.
 """
@@ -164,7 +169,7 @@ INSERT INTO crm.signature_request (request_id, trip_id, traveler_id, access_id, 
 """
 SIGN_SQL = """
 UPDATE crm.signature_request SET status = 'signed', signed_at = $2, signed_name_enc = $3, doc_sha256 = $4,
-       evidence_sha256 = $5, otp_id = $6
+       evidence_sha256 = $5, otp_id = $6, code_delivery = $7, evidence_record = $8
  WHERE request_id = $1
 """
 COMMITMENT_SQL = """
@@ -299,6 +304,7 @@ async def request_code(
         access = await _access(ctx, link)
         if purpose == "sign":
             await _session(ctx, access, session)
+            await _require_unlocked(ctx, access, "portal_code")
         if int(await ctx.conn.fetchval(RECENT_CODES_SQL, access["access_id"]) or 0) >= CODES_PER_HOUR:
             raise RateLimited("too_many_codes", 3600, "wait before asking for another code")
         await ctx.conn.execute(EXPIRE_PENDING_SQL, access["access_id"], purpose)
@@ -549,8 +555,9 @@ async def sign(
             doc_id=str(waiver["doc_id"]),
             doc_sha256=sha.hex(),
             otp_id=str(otp_id),
-            # mailbox: the code reached only the traveller's own e-mail (the stored mail is masked); dev_echo: the
-            # Dev API answer carried it too (PORTAL_OTP_DEV_ECHO), so the record does not claim e-mail control.
+            # mailbox: sent from the agency's mailbox to the traveller's address (the stored mail is masked, but the
+            # provider keeps a Sent copy its owner can read: e-sign v0 limit); dev_echo: the Dev API answer carried
+            # it too (PORTAL_OTP_DEV_ECHO). Also stored on the row (sealed) so it outlives the code purge.
             code_delivery=verified["delivery"],
             signed_at=signed_at.isoformat(),
             typed_name_sha256=hashlib.sha256(name.encode()).hexdigest(),  # type: ignore[union-attr]
@@ -564,6 +571,8 @@ async def sign(
             sha,
             hashlib.sha256(evidence).digest(),
             otp_id,
+            verified["delivery"],
+            evidence,
         )
         await ctx.conn.execute(COMMITMENT_SQL, access["trip_id"], f"signature:{request_id}")
         await progress.refresh(ctx, access["trip_id"])

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import json
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -557,6 +558,12 @@ async def test_request_code_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     _portal(monkeypatch, base)
     with _raises(Forbidden, "portal_sign_in_required"):
         await portal.request_code(object(), object(), ECHO, TOKEN, purpose="sign", session=None, origin=None)  # type: ignore[arg-type]
+    # A signing code while signing is locked: refused before a code row or a mail (re-review S251).
+    locked = _signed_in(ScriptedConn()).on("crm.portal_unlocked", False)
+    _portal(monkeypatch, locked)
+    with _raises(Forbidden, "stage3_locked"):
+        await portal.request_code(object(), object(), ECHO, TOKEN, purpose="sign", session="s", origin=None)  # type: ignore[arg-type]
+    assert not locked.sql("INSERT INTO crm.otp_challenge") and not locked.sql("INSERT INTO crm.message")
     busy = ScriptedConn().on("FROM crm.traveler_access a JOIN crm.trip t", _access_row()).on("interval '1 hour'", 5)
     _portal(monkeypatch, busy)
     with pytest.raises(RateLimited):
@@ -757,6 +764,9 @@ async def test_sign_records_the_evidence(monkeypatch: pytest.MonkeyPatch) -> Non
     request_id = conn.sql("INSERT INTO crm.signature_request")[0][0]
     sign = conn.sql("SET status = 'signed', signed_at")[0]
     assert sign[0] == request_id and sign[3] == b"\x01" * 32 and len(sign[4]) == 32 and sign[5] == OTP
+    # The delivery and the exact hashed record are stored too (re-review S251): re-verifiable after the code purge.
+    assert sign[6] == "mailbox" and hashlib.sha256(sign[7]).digest() == sign[4]
+    assert json.loads(sign[7])["code_delivery"] == "mailbox" and "Grace" not in sign[7].decode()
     assert conn.sql("consumed_at = now()") == [(OTP,)]
     assert conn.sql("'signature', 'signed'")[0][1] == f"signature:{request_id}"
 
@@ -863,15 +873,23 @@ async def test_the_date_ticks(monkeypatch: pytest.MonkeyPatch) -> None:
         .on("$1 + $2::int", [{"trip_id": soon}, {"trip_id": complete}])
     )
     conn.on("DELETE FROM crm.otp_challenge", None)
+    conn.on("UPDATE crm.otp_challenge", None)
 
     async def execute(sql: str, *args: Any) -> str:
         conn._answer(sql, args)
-        return "DELETE 2" if "otp_challenge" in sql else "OK"
+        if "otp_challenge" in sql:
+            return "UPDATE 1" if sql.lstrip().startswith("UPDATE") else "DELETE 2"
+        return "OK"
 
     conn.execute = execute  # type: ignore[method-assign]
     counts = await stages_job.run_agency(system_ctx(conn))
     assert counts["booked_to_travelling"] == 2 and counts["urgent_tasks"] == 1
     assert counts["return_date_missing"] == 1 and counts["stage3_due_t21"] == 1 and counts["codes_purged"] == 2
+    assert counts["codes_expired"] == 1
+    # The stale pending codes expire (and lose code_enc) before the purge.
+    expire = next(i for i, (sql, _) in enumerate(conn.calls) if "UPDATE crm.otp_challenge" in sql)
+    purge = next(i for i, (sql, _) in enumerate(conn.calls) if "DELETE FROM crm.otp_challenge" in sql)
+    assert expire < purge
     reasons = {args[0]: args[3] for args in conn.sql("INSERT INTO crm.trip_stage_history")}
     assert reasons == {complete: "date_rule", missing: "date_rule_gate_unmet"}
 

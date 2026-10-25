@@ -593,10 +593,22 @@ Design v3 §6.3 CRM-18 (M4 base, M7 manual, M11 base, M12 v0); migration crm-016
   a 6-digit e-mail code (10 min, 5 tries, 5 an hour) sent from the agency's own mailbox (trip owner's, else the
   agency's; none -> 409 `code_delivery_unavailable`; `PORTAL_OTP_DEV_ECHO` on Dev returns it) opens a 12-hour session
   cookie. The stored code mail shows the code masked (`app/portal/codes.py`); the sender fills it in from
-  `otp_challenge.code_enc` at send time and clears it, so no agency member can read a code. Home: own Stage 3 progress (codes, never values), the waiver, for the lead the party's progress and the
+  `otp_challenge.code_enc` at send time and clears it, so no agency member can read a code in the Messages tab (the
+  provider's Sent copy is the v0 limit below); the hourly date-rule run expires a pending code past its 10 minutes and
+  drops its sealed copy. A `sign` code is 403 `stage3_locked` while signing is locked. Home: own Stage 3 progress (codes, never values), the waiver, for the lead the party's progress and the
   payment schedule. **Stage 3** (the F1 identity fields, write-only) and **signing** are 403 `stage3_locked` until the
   deposit is paid or the trip was booked with the `manual_booking` override (`crm.portal_unlocked`; DB CRM32 too). **E-sign v0**: published waiver + its hash, typed name, consent tick and a fresh
-  signing code -> `signature_request` signed with an evidence hash and a `trip_commitment` signature.
+  signing code -> `signature_request` signed with a `trip_commitment` signature; the row keeps (sealed) the code's
+  `code_delivery` and the canonical evidence record (no PII: the typed name only as its SHA-256) whose SHA-256 is
+  `evidence_sha256` (DB CHECK), so the evidence re-verifies after the 24 h code purge.
+- **E-sign v0 limit (known, re-review S251; the fix is Nghiệp's decision):** the code mail goes out from the agency's
+  own mailbox (errata S247: never a platform sender) and Gmail / Microsoft / SMTP keep a **Sent copy** that the owner of
+  that mailbox can read, and the same staff are shown each traveller's portal link. So `code_delivery = mailbox`
+  proves "sent to the traveller's address from the agency's mailbox", **not** "only the traveller saw the code": the
+  agency mailbox owner could sign in and sign as a traveller. Options in `docs/implementation-notes/AA-946.md`
+  (Microsoft `saveToSentItems=false`, Gmail delete the Sent copy, an SES exception for code mails only, or no portal
+  links shown to staff). Until then a v0 signature is agency-attested evidence, not proof of the traveller's sole
+  control.
 - **Stage 3 gate**: s3 = done (traveller x [details, waiver]) / all, stored on `trip.intake_completeness.s3`; 100
   opens booked -> pre_departure (API and DB); the `waiting_on` hook `portal_stage3` (60) answers `client` for a booked
   trip below 100 whose travellers have portal access.

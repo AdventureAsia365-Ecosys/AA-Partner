@@ -486,7 +486,7 @@ async def void(ctx: TenantContext, schedule_id: uuid.UUID) -> dict[str, Any]:
         raise Conflict(
             "deposit_not_voidable",
             "a deposit stays: mark it paid with the method used (cash, other) when it was taken outside the CRM, "
-            "or cancel the trip",
+            "or mark the trip lost (or cancel it once booked)",
         )
     try:
         await ctx.conn.execute(VOID_SQL, schedule_id)
