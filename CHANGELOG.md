@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.5.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.4.0...v0.5.0) (2026-10-25)
+
+
+### Features
+
+* AA-978 follow-ups (crm-018 inbox purge, ops summary lock source and feed lag, portal Members) ([#54](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/54)) ([e83aef5](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/e83aef55ea3926f3a5a02cd66eb55fcaaa338eec))
+* crm-016 thin lifecycle tables, computable gates and Stage 3 lock ([#49](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/49)) ([6ccb9dc](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/6ccb9dc5a7ea1c04a98047893abae7c50cbcee31))
+* crm-017 AA lines, outage queue, Booking feed inbox and catalog cache ([#56](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/56)) ([dd8557b](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/dd8557b9c3f6d07a0c91b1203178411f55baddca))
+* CRM-18 thin full lifecycle (proposal accept, mark paid, traveller portal, e-sign v0) ([#50](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/50)) ([b5c99ee](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/b5c99eec203ab7176a762599d8941ac0dbbadff1))
+* CRM-19 B2B client and AA lines (quote/hold/feed, outage queue, catalog cache) ([#55](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/55)) ([ccd8baa](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/ccd8baa4eca43ac4b2d083d5898d7bfae0adddf9))
+* My Content table with place, angle, words, published columns, views and row actions ([#53](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/53)) ([3973f13](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/3973f13c3337fe935fff754db4211871edf44a44))
+* portal Account pages with real data (billing meter, activity trail, integrations and API key) ([#51](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/51)) ([0f8cb1b](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/0f8cb1b0b7b6c45e2d0ca1e9a23c0d7b8a4e8966))
+
+
+### Bug Fixes
+
+* My Content table fits 1440 without the angle brief; piece title, activity format labels, aria-sort, link contrast ([#59](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/59)) ([9b5d488](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/9b5d4889d907526edf81b10ceb8c4c0b8a893134))
+* write gitleaks sample Google API keys without a literal key ([#57](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/57)) ([214af96](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/214af96162da9bad178a2e21086cfbcfdb40b62e))
+
 ## [0.4.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.3.0...v0.4.0) (2026-10-25)
 
 
