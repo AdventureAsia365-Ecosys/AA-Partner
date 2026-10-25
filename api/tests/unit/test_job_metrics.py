@@ -127,7 +127,8 @@ async def test_sample_once_puts_one_call_in_the_crm_namespace(caplog: pytest.Log
     await sampler.sample_once()
     assert len(made) == 1  # the client is created once and reused
     assert len(cw.calls) == 2
-    assert cw.calls[0] == {"Namespace": "AA/Jobs/Crm", "MetricData": metric_data(sample, 0)}
+    assert cw.calls[0] == {"Namespace": "AA/Jobs/Crm", "MetricData": metric_data(sample, 0, mail_dropped=0)}
+    assert {"MetricName": "MailIngestDropped", "Value": 0.0, "Unit": "Count"} in cw.calls[0]["MetricData"]  # AA-945
     assert cw.calls[0]["MetricData"][-1] == {"MetricName": "RevealsPerMemberPeakHour", "Value": 0.0, "Unit": "Count"}
     assert "ops_metrics_sampled namespace=AA/Jobs/Crm oldest_queued_age_s=1000" in caplog.text
     assert "overdue_running_jobs=1 running=1" in caplog.text

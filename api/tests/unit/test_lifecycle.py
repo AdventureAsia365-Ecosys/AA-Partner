@@ -439,6 +439,7 @@ def _dispatch_row(**over: Any) -> dict[str, Any]:
         "channel": "email",
         "purpose": "transactional",
         "message_ref": None,
+        "message_id": None,
         "traveler_id": REQ,
         "trip_id": None,
         "archived_at": None,
@@ -466,11 +467,13 @@ def test_the_gate(over: dict[str, Any], code: str | None) -> None:
 
 
 class Sender:
-    def __init__(self) -> None:
+    def __init__(self, outcome: str = "sent") -> None:
         self.sent: list[uuid.UUID] = []
+        self.outcome = outcome
 
-    async def send(self, ctx: Any, dispatch_id: uuid.UUID, channel: str, message_ref: Any) -> None:
+    async def send(self, ctx: Any, dispatch_id: uuid.UUID, channel: str, message_id: Any) -> str:
         self.sent.append(dispatch_id)
+        return self.outcome
 
 
 @pytest.mark.asyncio
@@ -485,6 +488,10 @@ async def test_dispatch_handler(monkeypatch: pytest.MonkeyPatch) -> None:
         (_dispatch_row(archived_at=NOW), None, "dropped"),
         (_dispatch_row(), None, "held"),
         (_dispatch_row(), Sender(), "sent"),
+        (_dispatch_row(), Sender("held_reconnect"), "held"),
+        (_dispatch_row(), Sender("no_message"), "held"),
+        (_dispatch_row(message_id=ID), Sender("send_failed"), "dropped"),
+        (_dispatch_row(message_id=ID, archived_at=NOW), None, "dropped"),
     ):
         conn = ScriptedConn().on("FROM crm.dispatch_queue d", row)
         monkeypatch.setattr(dispatch_worker, "system_tx", fake_tx(system_ctx(conn)))
@@ -499,6 +506,27 @@ async def test_dispatch_handler(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(dispatch_worker, "system_tx", locked)
     assert (await dispatch_worker.build_handler()(object(), job))["reason_code"] == "tenant_inactive"  # type: ignore[arg-type]
+
+
+class FlakySender:
+    async def send(self, ctx: Any, dispatch_id: uuid.UUID, channel: str, message_id: Any) -> str:
+        raise ConnectionError("provider unreachable")
+
+
+@pytest.mark.asyncio
+async def test_dispatch_retries_then_fails_the_message_on_the_last_attempt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review S250: a sender that keeps raising is retried; the last attempt drops the row ``send_failed`` and marks
+    the message ``failed`` (``retries_exhausted``), so neither stays ``queued`` for good."""
+    conn = ScriptedConn().on("FROM crm.dispatch_queue d", _dispatch_row(message_id=ID))
+    monkeypatch.setattr(dispatch_worker, "system_tx", fake_tx(system_ctx(conn)))
+    payload = {"tenant_id": str(TENANT), "dispatch_id": str(ID)}
+    with pytest.raises(ConnectionError):
+        await dispatch_worker.build_handler(FlakySender())(object(), Job("j", "crm_dispatch", payload, 1, 5))  # type: ignore[arg-type]
+    assert conn.sql("UPDATE crm.message SET status = 'failed'") == []
+    result = await dispatch_worker.build_handler(FlakySender())(object(), Job("j", "crm_dispatch", payload, 5, 5))  # type: ignore[arg-type]
+    assert result == {"dispatch_id": str(ID), "status": "dropped", "reason_code": "send_failed"}
+    assert conn.sql("UPDATE crm.message SET status = 'failed'") == [(ID, "retries_exhausted")]
+    assert conn.sql("SET status = $2, gate_result = $3")[-1][1:] == ("dropped", "send_failed")
 
 
 @pytest.mark.asyncio
@@ -526,7 +554,7 @@ async def test_dispatch_queue() -> None:
         tenant_ctx(conn), traveler_id=ID, channel="sms", purpose="transactional", origin="user_action"
     )
     assert got["dispatch_id"] == str(REQ)
-    assert conn.sql("INSERT INTO crm.dispatch_queue")[0][-1] == dispatch_queue.UNDO_SECONDS
+    assert conn.sql("INSERT INTO crm.dispatch_queue")[0][-2] == dispatch_queue.UNDO_SECONDS
     with codes(Conflict, "already_dispatched"):
         await dispatch_queue.undo(tenant_ctx(), REQ)
     assert (await dispatch_queue.undo(tenant_ctx(ScriptedConn().on("SET status = 'cancelled'", REQ)), REQ))[

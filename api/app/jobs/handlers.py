@@ -44,6 +44,9 @@ from app.jobs.kinds import (
     INTAKE_PROCESS,
     JOB_RETENTION,
     LIFECYCLE,
+    MAIL_HEALTH,
+    MAIL_IMPORT,
+    MAIL_INGEST,
     MEMBERSHIP_PULL,
     OFFBOARD,
     PLACEHOLDER_PURGE,
@@ -57,6 +60,8 @@ if TYPE_CHECKING:  # pragma: no cover
     from app.cis.membership_feed import FeedConfig
     from app.dispatch.worker import Sender
     from app.documents.store import DocumentStore
+    from app.mail.state import MailRuntime
+    from app.mail.store import IngestStore
     from app.members.directory import PartnerDirectory
     from app.vault import KeyProvider
 
@@ -134,6 +139,9 @@ def build_handlers(
     fx_provider: str = "synthetic",
     membership_feed: FeedConfig | None = None,
     directory: PartnerDirectory | None = None,
+    mail_runtime: MailRuntime | None = None,
+    ingest_store: IngestStore | None = None,
+    ingest_domain: str = "",
 ) -> dict[str, Handler]:
     """Every kind the worker runs. ``keys``: the field-encryption provider the intake kind needs (AA-936); without
     it ``crm_intake_process`` jobs are retried until the provider is configured. ``audit_archive``: the two audit
@@ -142,7 +150,10 @@ def build_handlers(
     (``LIFECYCLE_DRY_RUN``), ``dek_cache_ttl_s`` (reported on the offboarding receipt), ``sender`` (none until CRM-17:
     messages that pass the dispatcher gate are held). AA-944: ``fx_provider`` (``FX_PROVIDER``, synthetic or live).
     AA-978: ``membership_feed`` (CIS_API_URL + the M2M token; None = the pull logs not_configured) and ``directory``
-    (members the feed disables are signed out of the partner pool)."""
+    (members the feed disables are signed out of the partner pool).
+    AA-945: ``mail_runtime`` (providers, system mailer, directory: the mailbox health check), ``ingest_store`` +
+    ``ingest_domain`` (``CRM_INGEST_BUCKET`` / ``CRM_INGEST_DOMAIN``: the forward-in ingest and the history import;
+    without them the ingest answers not_configured and the import is retried)."""
     from app.audit_export import export as audit_export
     from app.audit_export import retention as audit_retention
     from app.cis.membership_feed import MembershipFeed
@@ -151,6 +162,10 @@ def build_handlers(
     from app.intake.process import build_handler as build_intake_handler
     from app.lifecycle import job as lifecycle_job
     from app.lifecycle import offboarding
+    from app.mail import health as mail_health
+    from app.mail import history_import
+    from app.mail import ingest as mail_ingest
+    from app.mail.state import MailRuntime as _MailRuntime
     from app.privacy.purge import purge_expired_maps
     from app.stages_job import date_rule
 
@@ -169,6 +184,9 @@ def build_handlers(
         STAGE_DATE_RULE: date_rule,
         FX_FETCH: fx_fetch.build_handler(fx_provider),
         MEMBERSHIP_PULL: MembershipFeed(membership_feed, directory),
+        MAIL_INGEST: mail_ingest.build_handler(ingest_store, documents, keys, ingest_domain),
+        MAIL_HEALTH: mail_health.build_handler(mail_runtime or _MailRuntime(keys=keys)),
+        MAIL_IMPORT: history_import.build_handler(ingest_store, documents, keys, ingest_domain),
     }
 
 
@@ -209,12 +227,17 @@ class DailyRetentionSchedule:
         return job_id
 
 
-def build_hooks(*, retention_utc_hour: int, now: Callable[[], datetime] | None = None) -> tuple[MaintenanceHook, ...]:
-    """The due-now schedules. ``now``: a fixed clock for tests (default: the real UTC clock)."""
+def build_hooks(
+    *, retention_utc_hour: int, now: Callable[[], datetime] | None = None, ingest_store: IngestStore | None = None
+) -> tuple[MaintenanceHook, ...]:
+    """The due-now schedules. ``now``: a fixed clock for tests (default: the real UTC clock). AA-945:
+    ``ingest_store`` (the forward-in scan; none = no scan)."""
     from app.audit_export.export import HourlyAuditExportSchedule
     from app.audit_export.retention import DailyAuditRetentionSchedule
     from app.fx.fetch import DailyFxSchedule
     from app.lifecycle.job import DailyLifecycleSchedule
+    from app.mail.health import DailyMailHealthSchedule
+    from app.mail.ingest import MailIngestScan
     from app.privacy.purge import HourlyPlaceholderPurge
     from app.stages_job import HourlyStageDateRule
 
@@ -227,6 +250,8 @@ def build_hooks(*, retention_utc_hour: int, now: Callable[[], datetime] | None =
         DailyLifecycleSchedule(retention_utc_hour, clock),
         HourlyStageDateRule(clock),
         DailyFxSchedule(now=clock),
+        DailyMailHealthSchedule(retention_utc_hour, clock),
+        MailIngestScan(ingest_store, clock),
     )
 
 
@@ -239,7 +264,17 @@ RECURRING: tuple[Recurring, ...] = (
     Recurring(MEMBERSHIP_PULL, every_seconds=20, keep_days=1),
 )
 SCHEDULED_KINDS: frozenset[str] = frozenset(
-    {JOB_RETENTION, AUDIT_EXPORT, AUDIT_RETENTION, PLACEHOLDER_PURGE, LIFECYCLE, STAGE_DATE_RULE, FX_FETCH}
+    {
+        JOB_RETENTION,
+        AUDIT_EXPORT,
+        AUDIT_RETENTION,
+        PLACEHOLDER_PURGE,
+        LIFECYCLE,
+        STAGE_DATE_RULE,
+        FX_FETCH,
+        MAIL_INGEST,
+        MAIL_HEALTH,
+    }
 )
 # Kinds queued by request code, one row per event (AA-936: each stored inquiry), never scheduled.
-EVENT_KINDS: frozenset[str] = frozenset({INTAKE_PROCESS, OFFBOARD, DISPATCH})
+EVENT_KINDS: frozenset[str] = frozenset({INTAKE_PROCESS, OFFBOARD, DISPATCH, MAIL_IMPORT})

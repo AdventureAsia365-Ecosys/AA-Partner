@@ -38,6 +38,10 @@ from app.errors import ServiceError, service_error_handler
 from app.jobs import handlers as job_handlers
 from app.jobs.metrics import JobMetricsSampler
 from app.jobs.worker import Worker
+from app.mail.providers.registry import build_providers
+from app.mail.sender import MailSender
+from app.mail.state import MailRuntime
+from app.mail.store import IngestStore, MemoryIngestStore, S3IngestStore
 from app.members.directory import CognitoDirectory, MemoryDirectory, PartnerDirectory
 from app.members.mail import Mailer, MemoryMailer, SesMailer
 from app.observability import setup as setup_observability
@@ -51,6 +55,7 @@ from app.routers import (
     invitations,
     ledger,
     lifecycle,
+    mail,
     ops,
     pipeline,
     public,
@@ -78,6 +83,8 @@ def create_app(
     audit_archive: AuditArchive | None | object = _UNSET,
     directory: PartnerDirectory | None | object = _UNSET,
     mailer: Mailer | None | object = _UNSET,
+    ingest_store: IngestStore | None | object = _UNSET,
+    mail_runtime: MailRuntime | None | object = _UNSET,
 ) -> FastAPI:
     settings = settings or load_settings()
     db = db or Database(settings)
@@ -95,6 +102,16 @@ def create_app(
         directory = build_directory(settings)
     if mailer is _UNSET:
         mailer = build_mailer(settings)
+    if ingest_store is _UNSET:
+        ingest_store = build_ingest_store(settings)
+    if mail_runtime is _UNSET:
+        mail_runtime = MailRuntime(
+            keys=keys,  # type: ignore[arg-type]
+            providers=build_providers(settings),
+            mailer=mailer,  # type: ignore[arg-type]
+            directory=directory,  # type: ignore[arg-type]
+            web_origin=settings.invitation_origin,
+        )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -117,9 +134,15 @@ def create_app(
                     fx_provider=settings.fx_provider,
                     membership_feed=build_membership_feed(settings),
                     directory=app.state.directory,
+                    mail_runtime=app.state.mail_runtime,
+                    ingest_store=app.state.ingest_store,
+                    ingest_domain=settings.crm_ingest_domain,
                 ),
                 recurring=job_handlers.RECURRING,
-                hooks=job_handlers.build_hooks(retention_utc_hour=settings.job_retention_utc_hour),
+                hooks=job_handlers.build_hooks(
+                    retention_utc_hour=settings.job_retention_utc_hour,
+                    ingest_store=app.state.ingest_store if settings.crm_ingest_domain else None,
+                ),
             )
             task = asyncio.create_task(worker.run_forever(stop), name="crm-job-worker")
             # Independent of the worker task: a stuck worker loop must still show in the metrics.
@@ -156,10 +179,13 @@ def create_app(
     app.state.directory = directory
     app.state.mailer = mailer
     app.state.claim_limiter = FixedWindowLimiter(settings.rate_limit_claim_per_minute)
-    # AA-942: the Booking line re-check a trip restore needs (CRM-19 plugs the B2B client in) and the outbound sender
-    # behind the dispatcher gate (CRM-17); both None until those cards.
+    # AA-942: the Booking line re-check a trip restore needs (CRM-19 plugs the B2B client in). AA-945 (CRM-17): the
+    # e-mail sender behind the dispatcher gate (the agency's own mailbox; never AA's SES), the mail runtime (send-as
+    # providers, system mailer for the mailbox alert, directory) and the ingest bucket (forward-in + history import).
     app.state.booking_checker = None
-    app.state.dispatch_sender = None
+    app.state.mail_runtime = mail_runtime
+    app.state.dispatch_sender = MailSender(mail_runtime) if isinstance(mail_runtime, MailRuntime) else None
+    app.state.ingest_store = ingest_store
     app.state.public_limiter = FixedWindowLimiter(settings.rate_limit_public_per_minute)
     # AA-936: inquiry-form submissions, per client address per minute and per form per hour.
     app.state.intake_limiter = FixedWindowLimiter(settings.rate_limit_intake_per_minute)
@@ -179,6 +205,7 @@ def create_app(
     app.include_router(invitations.agency_router)
     app.include_router(lifecycle.router)
     app.include_router(ledger.router)
+    app.include_router(mail.router)
     app.include_router(ops.router)
     app.include_router(staff.router)
     return app
@@ -200,6 +227,15 @@ def build_membership_feed(settings: Settings) -> FeedConfig | None:
     if not settings.cis_api_url or credentials is None:
         return None
     return FeedConfig(base_url=settings.cis_api_url, tokens=TokenProvider(credentials))
+
+
+def build_ingest_store(settings: Settings) -> IngestStore | None:
+    """The ingest bucket when configured; an in-memory store on test / local; else None (AA-945)."""
+    if settings.crm_ingest_bucket:
+        return S3IngestStore(settings.crm_ingest_bucket)  # no AWS call here: the client is created on first use
+    if settings.environment in INSECURE_ENVIRONMENTS:
+        return MemoryIngestStore()
+    return None
 
 
 def build_directory(settings: Settings) -> PartnerDirectory | None:

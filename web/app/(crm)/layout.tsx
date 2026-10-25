@@ -3,12 +3,14 @@
 // and the shell around the page. An unreachable API, or one that refuses a just-refreshed token, shows an error state
 // instead of the shell.
 import { ErrorState } from "@/app/_kit";
+import { MailboxBanner } from "@/components/mail/MailboxBanner";
 import { RecoveryBanner } from "@/components/team/RecoveryBanner";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { dictionary, t } from "@/lib/i18n";
 import { contentStudioHref } from "@/lib/nav";
 import { serverContext } from "@/lib/serverContext";
+import { disconnected, type MailboxView } from "@/lib/mail";
 import type { Recovery } from "@/lib/team";
 import { CrmShell } from "./_shell/CrmShell";
 
@@ -37,6 +39,9 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
   const { session } = await serverContext();
   const pending = session ? await crmCall<{ recovery: Recovery | null }>(ctx.cfg, session, "GET", "recovery") : null;
   const recovery = pending && pending.ok ? pending.data.recovery : null;
+  // AA-945 (R24): a disconnected mailbox holds every client message; the red banner says so on every page.
+  const mail = session ? await crmCall<MailboxView>(ctx.cfg, session, "GET", "mailbox") : null;
+  const down = disconnected(mail && mail.ok ? mail.data : null);
   return (
     <CrmShell
       dict={dictionary(ctx.lang)}
@@ -48,6 +53,7 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
       syntheticBadge={ctx.cfg.environment !== "prod"}
     >
       {recovery && <RecoveryBanner recovery={recovery} lang={ctx.lang} locale={ctx.locale} />}
+      {down.length > 0 && <MailboxBanner lang={ctx.lang} />}
       {children}
     </CrmShell>
   );

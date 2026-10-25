@@ -22,6 +22,7 @@ from app.jobs.kinds import (
     HEARTBEAT,
     JOB_RETENTION,
     LIFECYCLE,
+    MAIL_HEALTH,
     MEMBERSHIP_PULL,
     PLACEHOLDER_PURGE,
     STAGE_DATE_RULE,
@@ -183,6 +184,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         (HEARTBEAT, False),
         (JOB_RETENTION, True),
         (LIFECYCLE, True),
+        (MAIL_HEALTH, True),  # AA-945: the daily mailbox health check, due now from JOB_RETENTION_UTC_HOUR
         (MEMBERSHIP_PULL, False),  # AA-978: Recurring like the heartbeat, its next slot queued ahead (exempt)
         (PLACEHOLDER_PURGE, True),  # AA-938: the hourly purge, queued due now like the daily retention
         (STAGE_DATE_RULE, True),  # AA-943: the hourly trip date rule, due now too
@@ -196,6 +198,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         LIFECYCLE: 1,
         STAGE_DATE_RULE: 1,
         FX_FETCH: 1,
+        MAIL_HEALTH: 1,
     }
     while await worker.run_once():
         pass

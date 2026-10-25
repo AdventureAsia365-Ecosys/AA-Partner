@@ -92,7 +92,15 @@ PLATFORM_HELPERS = {
 }
 # AA-936: the job context in one agency (no member) and the public intake form's context (AA-942: the dispatcher).
 SYSTEM_MODULES = frozenset(
-    {"app/intake/process.py", "app/seed/__init__.py", "app/dispatch/worker.py", "app/stages_job.py"}
+    {
+        "app/intake/process.py",
+        "app/seed/__init__.py",
+        "app/dispatch/worker.py",
+        "app/stages_job.py",
+        # AA-945: the mailbox health check and the history import (one agency per transaction, actor job:<kind>).
+        "app/mail/health.py",
+        "app/mail/history_import.py",
+    }
 )
 INTAKE_MODULES = frozenset({"app/intake/public.py"})
 # AA-940: the audit export's read context (a locked or trashed agency too): the export, verify and retention jobs only.
@@ -103,6 +111,8 @@ AUDIT_EXPORT_MODULES = frozenset(
 INVITATION_MODULES = frozenset({"app/members/invitations.py"})
 # AA-943: the signed client link context (token hash lookup, actor client_link:<id>): the public Stage 2 form only.
 CLIENT_LINK_MODULES = frozenset({"app/intake/stage2_public.py"})
+# AA-945: the forward-in mail ingest context (the recipient's local part picks the agency): the ingest job only.
+INGEST_MODULES = frozenset({"app/mail/ingest.py"})
 # AA-942: the lifecycle jobs' context (the daily run, the offboarding steps).
 LIFECYCLE_MODULES = frozenset({"app/lifecycle/job.py", "app/lifecycle/offboarding.py"})
 # AA-978: one CIS membership event in one agency (actor platform:feed-tenant-membership, any agency status).
@@ -149,6 +159,7 @@ CONTEXT_FACTORIES = frozenset(
         "lifecycle_tx",
         "client_link_tx",
         "membership_feed_tx",
+        "ingest_tx",
     }
 )
 
@@ -365,6 +376,10 @@ def test_membership_feed_tx_is_used_only_by_the_feed_module() -> None:
 def test_the_feed_state_is_reached_only_by_the_feed() -> None:
     """Plus the readiness probe in ``app/db.py`` (a DB module, so skipped here): ``feed_state.health``."""
     assert _users_of("feed_state", MEMBERSHIP_FEED_MODULES | {"app/cis/feed_state.py"}) == []
+
+
+def test_ingest_tx_is_used_only_by_the_mail_ingest_job() -> None:
+    assert _users_of("ingest_tx", INGEST_MODULES) == []
 
 
 def test_every_router_tenant_tx_names_its_permission_action() -> None:
