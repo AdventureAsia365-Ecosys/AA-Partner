@@ -51,6 +51,7 @@ from app.routers import (
     agency,
     audit,
     ci,
+    client_pages,
     health,
     invitations,
     ledger,
@@ -58,6 +59,7 @@ from app.routers import (
     mail,
     ops,
     pipeline,
+    proposals,
     public,
     staff,
     team,
@@ -196,6 +198,7 @@ def create_app(
     app.include_router(health.router)
     app.include_router(ci.router)
     app.include_router(public.router)
+    app.include_router(client_pages.router)
     app.include_router(agency.router)
     app.include_router(pipeline.router)
     app.include_router(travellers.router)
@@ -205,6 +208,7 @@ def create_app(
     app.include_router(invitations.agency_router)
     app.include_router(lifecycle.router)
     app.include_router(ledger.router)
+    app.include_router(proposals.router)
     app.include_router(mail.router)
     app.include_router(ops.router)
     app.include_router(staff.router)

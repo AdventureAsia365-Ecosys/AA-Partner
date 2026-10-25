@@ -44,6 +44,7 @@ REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = (
     "crm-013",
     "crm-014",
     "crm-015",
+    "crm-016",
 )
 REQUIRED_SCHEMA_VERSION = max(REQUIRED_SCHEMA_VERSIONS)
 

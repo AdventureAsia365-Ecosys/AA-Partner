@@ -50,12 +50,19 @@ async def test_the_edge_map_mirrors_the_design() -> None:
 
 
 async def test_bulk_block_codes_and_the_preview_hash() -> None:
-    assert stages._blocked_code("inquiry", "inquiry", 0, None) == "already_in_stage"
-    assert stages._blocked_code("inquiry", "booked", 0, None) == "transition_not_allowed"
-    assert stages._blocked_code("qualifying", "proposal", 79, None) == "stage2_incomplete"
-    assert stages._blocked_code("qualifying", "proposal", 80, None) is None
-    assert stages._blocked_code("proposal", "booked", 100, None) == "gate_unmet"
-    assert stages._blocked_code("proposal", "booked", 0, "manual_booking") is None
+    def row(stage: str, s2: int = 0, s3: int = 0, deposit_paid: bool = False) -> dict[str, Any]:
+        return {"stage": stage, "intake_completeness": {"s1": 0, "s2": s2, "s3": s3}, "deposit_paid": deposit_paid}
+
+    assert stages._blocked_code(row("inquiry"), "inquiry", None) == "already_in_stage"
+    assert stages._blocked_code(row("inquiry"), "booked", None) == "transition_not_allowed"
+    assert stages._blocked_code(row("qualifying", 79), "proposal", None) == "stage2_incomplete"
+    assert stages._blocked_code(row("qualifying", 80), "proposal", None) is None
+    assert stages._blocked_code(row("proposal", 100), "booked", None) == "gate_unmet"
+    assert stages._blocked_code(row("proposal"), "booked", "manual_booking") is None
+    # AA-946: the booking gate opens with the paid deposit, the Stage 3 gate at s3 = 100.
+    assert stages._blocked_code(row("proposal", deposit_paid=True), "booked", None) is None
+    assert stages._blocked_code(row("booked", s3=99), "pre_departure", None) == "gate_unmet"
+    assert stages._blocked_code(row("booked", s3=100), "pre_departure", None) is None
     one = stages.preview_hash("qualifying", ["b", "a"], None, None)
     assert (
         one
@@ -239,6 +246,8 @@ async def test_waiting_on_hooks_answer_for_booked_trips_only() -> None:
         return "nobody"
 
     ctx = tenant_ctx(ScriptedConn())
+    saved = list(stages.WAITING_ON_HOOKS)  # AA-946: app.portal.progress registers one at import
+    stages.WAITING_ON_HOOKS.clear()
     try:
         assert await stages.derive_waiting_on(ctx, TRIP, "booked") == "none"
         stages.register_waiting_on_hook(50, "supplier_lines", supplier)
@@ -251,7 +260,7 @@ async def test_waiting_on_hooks_answer_for_booked_trips_only() -> None:
         with pytest.raises(ValueError, match="broken"):
             await stages.derive_waiting_on(ctx, TRIP, "booked")
     finally:
-        stages.WAITING_ON_HOOKS.clear()
+        stages.WAITING_ON_HOOKS[:] = saved
     assert (
         await stages.derive_waiting_on(tenant_ctx(ScriptedConn().on("crm.client_link", True)), TRIP, "qualifying")
         == "client"
