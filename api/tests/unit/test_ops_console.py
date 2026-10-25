@@ -20,7 +20,7 @@ from app.audit_export.registry import Agency
 from app.errors import Conflict, Invalid, NotFound
 from app.members.directory import MemoryDirectory
 from app.members.mail import MemoryMailer
-from app.ops import console
+from app.ops import console, serializer
 from app.tenancy import ProvisioningContext
 from tests.unit.fakes import ScriptedConn
 from tests.unit.slice_fakes import FakeVault
@@ -50,6 +50,12 @@ def summary_row(tenant: uuid.UUID = TENANT, status: str = "active", **over: Any)
         "created_at": NOW,
         "has_owner": False,
         "holds_travellers": False,
+        # AA-978 follow-up (crm.ops.v1 1.2): the lock source and the CIS feed singleton joined into the summary.
+        "lock_source": None,
+        "feed_failures": 0,
+        "feed_last_ok_at": NOW - dt.timedelta(seconds=30),
+        "feed_last_error_at": None,
+        "read_at": NOW,
     }
     row.update(over)
     return row
@@ -125,6 +131,9 @@ async def test_list_agencies_pages_by_id_and_audits_each_agency(monkeypatch: pyt
         "has_owner": False,
         "holds_travellers": True,
         "created_at": NOW.isoformat(),
+        "lock_source": "aa_ops",  # locked before crm-013 (NULL): an AA lock
+        "membership_feed_state": "ok",
+        "membership_feed_lag_s": 30,
     }
     events = audits(conn)
     assert [(e["action"], e["reason"], e["actor_kind"]) for e in events] == [("ops_read", "list", "aa_ops")] * 2
@@ -545,3 +554,29 @@ def test_every_write_needs_and_every_read_skips_a_ticket() -> None:
     for name in ("list_agencies", "agency_summary", "agency_usage", "agency_entitlements", "agency_data_requests",
                  "agency_failed_jobs"):  # fmt: skip
         assert "ticket_ref" not in inspect.signature(getattr(console, name)).parameters, name
+
+
+@pytest.mark.parametrize(
+    ("over", "lock_source", "feed", "lag"),
+    [
+        ({"status": "active"}, None, "ok", 30),
+        ({"status": "locked", "lock_source": "cis_membership"}, "cis_membership", "ok", 30),
+        (
+            {"status": "locked", "lock_source": "cis_tenant", "feed_failures": 3, "feed_last_error_at": NOW},
+            "cis_tenant",
+            "failing",
+            30,
+        ),  # fmt: skip
+        ({"feed_last_ok_at": None}, None, "pending", None),
+        ({"feed_last_ok_at": NOW - dt.timedelta(minutes=11)}, None, "stale", 660),
+        ({"feed_failures": None, "feed_last_ok_at": None}, None, "unknown", None),  # no crm-013 row
+    ],
+)
+def test_the_summary_carries_the_lock_source_and_the_feed(
+    over: dict[str, Any], lock_source: str | None, feed: str, lag: int | None
+) -> None:
+    """AA-978 follow-up (crm.ops.v1 1.2): who locked the agency, and the CIS membership feed's word and lag."""
+    status = over.pop("status", "active")
+    got = console._summary(summary_row(status=status, **over))
+    assert (got["lock_source"], got["membership_feed_state"], got["membership_feed_lag_s"]) == (lock_source, feed, lag)
+    assert all(serializer.key_allowed(k) for k in got)

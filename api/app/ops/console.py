@@ -31,6 +31,7 @@ import asyncpg
 
 from app import agencies
 from app.audit_export import registry
+from app.cis import feed_state
 from app.errors import Conflict, Invalid, NotFound
 from app.jobs import queue
 from app.lifecycle import offboarding
@@ -51,12 +52,18 @@ FEATURES = ("ai_assist", "whatsapp_sms", "stripe_connect", "campaigns", "custom_
 DATA_REQUEST_PURPOSE = {"agency_export": "export_only", "agency_deletion": "offboard"}
 MAX_PAGE = 200
 
+# AA-978 follow-up (crm.ops.v1 1.2): who locked the agency (crm-013 lock_source) and the CIS membership feed's state
+# (the crm.membership_feed_state platform singleton, crm_app SELECT): the S-01 page tells a CIS lock from an AA one and
+# sees when CIS changes stopped reaching the CRM.
 SUMMARY_SQL = """
-SELECT t.tenant_id, t.display_name, t.status, t.is_synthetic, t.created_at,
+SELECT t.tenant_id, t.display_name, t.status, t.lock_source, t.is_synthetic, t.created_at,
        EXISTS (SELECT 1 FROM crm.member m
                 WHERE m.role = 'owner' AND m.status = 'active' AND m.deleted_at IS NULL) AS has_owner,
-       (EXISTS (SELECT 1 FROM crm.traveler) OR EXISTS (SELECT 1 FROM crm.form_submission)) AS holds_travellers
+       (EXISTS (SELECT 1 FROM crm.traveler) OR EXISTS (SELECT 1 FROM crm.form_submission)) AS holds_travellers,
+       f.failures AS feed_failures, f.last_ok_at AS feed_last_ok_at, f.last_error_at AS feed_last_error_at,
+       now() AS read_at
   FROM crm.tenant t
+  LEFT JOIN crm.membership_feed_state f ON true
  WHERE t.tenant_id = $1
 """
 TENANT_LOCK_SQL = "SELECT status, lock_source FROM crm.tenant WHERE tenant_id = $1 FOR UPDATE"
@@ -106,15 +113,32 @@ def _usd(value: Any) -> str:
     return f"{Decimal(value or 0).quantize(Decimal('0.0001')):f}"
 
 
+def _feed(row: asyncpg.Record | dict[str, Any]) -> tuple[str, int | None]:
+    """The CIS membership feed for the summary: :func:`app.cis.feed_state.health_word` (``failing`` / ``pending`` /
+    ``stale`` / ``ok``, or ``unknown`` without the crm-013 row) and the seconds since its last successful pull (None
+    before the first one). The same words as ``/crm/health/ready`` minus ``not_configured`` (a setting, not data)."""
+    if row["feed_failures"] is None:
+        return "unknown", None
+    last_ok, now = row["feed_last_ok_at"], row["read_at"]
+    state = feed_state.FeedState(None, int(row["feed_failures"]), row["feed_last_error_at"], last_ok)
+    lag = max(0, int((now - last_ok).total_seconds())) if last_ok is not None else None
+    return feed_state.health_word(state, now), lag
+
+
 def _summary(row: asyncpg.Record | dict[str, Any]) -> dict[str, Any]:
+    feed, lag = _feed(row)
     return {
         "tenant_id": str(row["tenant_id"]),
         "agency_name": row["display_name"],
         "state": row["status"],
+        # NULL on an agency locked before crm-013 (an AA lock, the trigger's reading) -> aa_ops; None when not locked.
+        "lock_source": (row["lock_source"] or "aa_ops") if row["status"] == "locked" else None,
         "is_synthetic": bool(row["is_synthetic"]),
         "has_owner": bool(row["has_owner"]),
         "holds_travellers": bool(row["holds_travellers"]),
         "created_at": _iso(row["created_at"]),
+        "membership_feed_state": feed,
+        "membership_feed_lag_s": lag,
     }
 
 

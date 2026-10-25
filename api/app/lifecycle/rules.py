@@ -16,6 +16,7 @@ DEFAULT_AUTO_ARCHIVE_MONTHS = 36
 MIN_AUTO_ARCHIVE_MONTHS, MAX_AUTO_ARCHIVE_MONTHS = 12, 120
 SUBMISSION_REDACT_DAYS = 90  # crm-005 form_submission.redact_after default
 LLM_CALL_DAYS = 180  # crm-010 crm.lifecycle_purge_expired
+MEMBERSHIP_INBOX_DAYS = 90  # crm-018 crm.lifecycle_purge_expired (DM-7, AA-978)
 BACKUP_PURGE_DAYS = 30  # V1: erased data leaves backups and DEK copies within 30 days
 EXPORT_FILE_DAYS = 7  # AA-CIS-Infra crm_storage.tf rule exports-7d
 
@@ -53,6 +54,7 @@ RULES: tuple[Rule, ...] = (
     Rule("trash", "setting", None, "trash_purge", "crm_lifecycle", "trash_days"),
     Rule("form_submissions", "days", SUBMISSION_REDACT_DAYS, "payload_redacted", "crm_lifecycle"),
     Rule("llm_calls", "days", LLM_CALL_DAYS, "purge_keep_daily_rollup", "crm_lifecycle"),
+    Rule("membership_events", "days", MEMBERSHIP_INBOX_DAYS, "purge", "crm_lifecycle"),
     Rule("audit_in_app", "months", 12, "partition_drop_after_verified_export", "crm_audit_retention"),
     Rule("audit_archive", "months", 84, "object_lock_archive", "crm_audit_export"),
     Rule("placeholder_map", "days", 1, "purge", "AA-938"),

@@ -9,7 +9,8 @@ ahead: the deploy gate and the DB Migrate idle check count a queued row as busy)
    check and the update makes the hold guard trigger refuse it (rule 4h, CRM10): the agency counts as failed and the
    next run retries. (No table lock here: the SHARE lock is only taken by ``crm.erase_subject``.)
 2. **LLM calls** older than 180 days: deleted (``crm.lifecycle_purge_expired``; the daily rollup stays), with the
-   crm-009 placeholder maps they still have, not under an agency hold.
+   crm-009 placeholder maps they still have, not under an agency hold. The same call deletes the agency's CIS
+   membership inbox rows received more than 90 days ago (crm-018, DM-7; AA-978 follow-up).
 3. **Trash** past ``purge_after``: relationships, tasks, notes, documents, trips, then clients, each through
    ``crm.erase_subject`` in its own savepoint (a hold, a delete block or a client still on a live trip keeps that one
    item and is counted).
@@ -123,6 +124,7 @@ async def run_agency(
     counts["llm_call_purged"] = purged.get("llm_call", 0)
     counts["llm_call_held"] = purged.get("held", 0)
     counts["placeholder_map_purged"] = purged.get("placeholder_map", 0)
+    counts["membership_inbox_purged"] = purged.get("membership_inbox", 0)  # crm-018; absent (0) before it is applied
 
     vault = Vault(keys, ctx) if keys is not None else None
     for kind in TRASH_ORDER:
