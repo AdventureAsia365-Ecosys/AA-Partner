@@ -58,9 +58,18 @@ export function wordCount(text: string | null | undefined): number | null {
  *  picked; a blog body starts at its first section, so its first `##` is a section heading, never the title: S251
  *  D5). One title everywhere: the list, the drawer, the export file name and the exported page's <title>. */
 export function pieceTitle(r: Pick<ContentRow, "content_text" | "angle">): string {
+  return headline(r) ?? "Untitled";
+}
+
+/** pieceTitle for a search result: a piece with no H1 and no angle (yet) shows its tour's name, not "Untitled". */
+export function pieceTitleOrTour(r: Pick<ContentRow, "content_text" | "angle" | "tour">): string {
+  return headline(r) ?? (r.tour?.name?.trim() || "Untitled piece");
+}
+
+function headline(r: Pick<ContentRow, "content_text" | "angle">): string | null {
   const heading = r.content_text?.match(/^\s{0,3}#\s+(.+?)\s*#*\s*$/m)?.[1]?.trim();
   if (heading) return heading.length > 120 ? `${heading.slice(0, 117)}…` : heading;
-  return r.angle?.name?.trim() || "Untitled";
+  return r.angle?.name?.trim() || null;
 }
 
 /** The angle as a short label for the table: its name, only when it says something the title does not (most
@@ -70,7 +79,9 @@ export function angleLabel(r: Pick<ContentRow, "content_text" | "angle">): strin
   const name = r.angle?.name?.trim();
   if (!name) return null;
   const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-  if (norm(name) === norm(pieceTitle(r).replace(/…$/, ""))) return null;
+  const title = pieceTitle(r);
+  // A long H1 is cut at 117 characters + "…": an angle name that starts with the cut title says nothing new.
+  if (title.endsWith("…") ? norm(name).startsWith(norm(title.slice(0, -1))) : norm(name) === norm(title)) return null;
   return name.length > 80 ? `${name.slice(0, 77)}…` : name;
 }
 

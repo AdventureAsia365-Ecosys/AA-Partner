@@ -13,6 +13,7 @@ import {
   monthStart,
   NO_FILTERS,
   pieceTitle,
+  pieceTitleOrTour,
   placeTopic,
   angleLabel,
   exportFileStem,
@@ -64,6 +65,18 @@ test("title is the H1, else the angle, else Untitled", () => {
   assert.equal(pieceTitle(row({ content_text: "Plain social post", angle: { name: "Golden hour" } })), "Golden hour");
   assert.equal(pieceTitle(row({ content_text: null, angle: null })), "Untitled");
   assert.ok(pieceTitle(row({ content_text: `# ${"x".repeat(200)}` })).length <= 118);
+});
+
+test("S251: a search result with no H1 and no angle shows the tour, not Untitled", () => {
+  assert.equal(pieceTitleOrTour(row({ content_text: "Plain post", angle: null })), "Sapa Trek");
+  assert.equal(pieceTitleOrTour(row({ content_text: null, angle: null, tour: null })), "Untitled piece");
+  assert.equal(pieceTitleOrTour(row()), "Where Two Worlds Meet");
+});
+
+test("S251: a long H1 cut with an ellipsis hides an angle name that starts the same way", () => {
+  const long = "Sapa at dawn ".repeat(12).trim();
+  assert.equal(angleLabel(row({ content_text: `# ${long}\n\nBody`, angle: { name: long } })), null);
+  assert.equal(angleLabel(row({ content_text: `# ${long}\n\nBody`, angle: { name: "Golden hour" } })), "Golden hour");
 });
 
 test("S251 D5: a blog's first ## section heading is not its title", () => {

@@ -20,7 +20,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { Download, ExternalLink, Eye, FileDown, RefreshCw, Save, Send, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { T, sans } from "./ui";
 import { ServedBadge, plainError } from "./ServedBadge";
 import {
@@ -190,7 +190,8 @@ function ReviewListInner() {
   // ── actions ──
   async function onExport(item: ReviewItem, format: "text" | "html", mode?: "document" | "fragment") {
     try {
-      await exportPiece(item, format, mode);
+      // S251 D5: name the file and the page <title> from the same title the list and the drawer show.
+      await exportPiece({ ...item, title: pieceTitle(item) }, format, mode);
     } catch {
       toast.error("Export failed — try again.");
     }
@@ -303,13 +304,23 @@ function ReviewListInner() {
         id: "goal",
         accessorFn: (r) => r.goal?.label ?? "",
         header: "Goal",
-        // AA-760: "Trust-building" broke at the hyphen, so the hyphen is a non-breaking one. S251 D1: the label
-        // may wrap between words ("Introduction / Awareness" on two lines) to keep the table inside the screen.
-        cell: (c) => (
-          <span style={{ color: T.body, lineHeight: 1.45 }}>
-            {c.row.original.goal?.label.replace(/-/g, "\u2011") ?? "—"}
-          </span>
-        ),
+        // AA-760: "Trust-building" broke at the hyphen, so each hyphenated word sits in a nowrap span (the text
+        // people copy keeps its plain "-"). S251 D1: the label may wrap between words ("Introduction / Awareness"
+        // on two lines) to keep the table inside the screen.
+        cell: (c) => {
+          const label = c.row.original.goal?.label;
+          if (!label) return <span style={{ color: T.body, lineHeight: 1.45 }}>—</span>;
+          return (
+            <span style={{ color: T.body, lineHeight: 1.45 }}>
+              {label.split(" ").map((w, i) => (
+                <Fragment key={i}>
+                  {i > 0 ? " " : null}
+                  {w.includes("-") ? <span style={{ whiteSpace: "nowrap" }}>{w}</span> : w}
+                </Fragment>
+              ))}
+            </span>
+          );
+        },
       },
       {
         id: "status",
