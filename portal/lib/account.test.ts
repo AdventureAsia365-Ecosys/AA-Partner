@@ -56,6 +56,10 @@ test("activity query: empties dropped, dates checked, reversed dates swapped", (
   assert.deepEqual(cleanFilters({ category: "", since: "2026-10-31", until: "2026-10-01" }),
     { category: "", since: "2026-10-01", until: "2026-10-31" });
   assert.equal(hasFilters({ category: "", since: "x", until: "" }), false);
+  // outside the API window (a year still being typed, or a far future): dropped, never a 400
+  assert.deepEqual(cleanFilters({ category: "", since: "0002-10-01", until: "9999-12-31" }), NO_FILTERS);
+  assert.deepEqual(cleanFilters({ category: "", since: "2000-01-01", until: "2100-12-31" }),
+    { category: "", since: "2000-01-01", until: "2100-12-31" });
   assert.equal(hasFilters({ category: "tours", since: "", until: "" }), true);
 });
 

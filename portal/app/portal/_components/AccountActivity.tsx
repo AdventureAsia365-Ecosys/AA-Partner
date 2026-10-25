@@ -12,6 +12,8 @@ import { useMemo, useState } from "react";
 import { Badge, type ColumnDef, DataTable, apiGet, downloadCsv, type Tone } from "@/app/_kit";
 import { formatDateTime } from "@/app/_kit/tokens";
 import {
+  ACTIVITY_DATE_MAX,
+  ACTIVITY_DATE_MIN,
   ACTIVITY_PAGE_SIZES,
   NO_FILTERS,
   activityQuery,
@@ -166,12 +168,14 @@ export default function AccountActivity() {
               </select>
               <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: T.muted }}>
                 From
-                <input type="date" aria-label="From date" value={filters.since} max={filters.until || undefined}
+                <input type="date" aria-label="From date" value={filters.since}
+                  min={ACTIVITY_DATE_MIN} max={filters.until || ACTIVITY_DATE_MAX}
                   style={control} onChange={(e) => setFilter({ since: e.target.value })} />
               </label>
               <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: T.muted }}>
                 To
-                <input type="date" aria-label="To date" value={filters.until} min={filters.since || undefined}
+                <input type="date" aria-label="To date" value={filters.until}
+                  min={filters.since || ACTIVITY_DATE_MIN} max={ACTIVITY_DATE_MAX}
                   style={control} onChange={(e) => setFilter({ until: e.target.value })} />
               </label>
               {filtered && (

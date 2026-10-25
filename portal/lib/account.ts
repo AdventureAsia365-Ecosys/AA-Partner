@@ -112,10 +112,16 @@ export const NO_FILTERS: ActivityFilters = { category: "", since: "", until: "" 
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
-/** A filter value the API accepts, else "" (a half-typed date never reaches the server). */
+/** The date window the API accepts (CIS tenant_account.DATE_FILTER_MIN/MAX); outside it the API answers 400. */
+export const ACTIVITY_DATE_MIN = "2000-01-01";
+export const ACTIVITY_DATE_MAX = "2100-12-31";
+
+const okDay = (d: string): boolean => YMD.test(d) && d >= ACTIVITY_DATE_MIN && d <= ACTIVITY_DATE_MAX;
+
+/** A filter value the API accepts, else "" (a half-typed date such as year 0002 never reaches the server). */
 export function cleanFilters(f: ActivityFilters): ActivityFilters {
-  const since = YMD.test(f.since) ? f.since : "";
-  const until = YMD.test(f.until) ? f.until : "";
+  const since = okDay(f.since) ? f.since : "";
+  const until = okDay(f.until) ? f.until : "";
   // The API refuses since > until (400): swap them, that is what the person meant.
   if (since && until && since > until) return { category: f.category, since: until, until: since };
   return { category: f.category, since, until };
