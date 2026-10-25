@@ -20,8 +20,12 @@ async function sendOnce(page: Page): Promise<{ status: number; detail: string }>
   );
   await page.getByTestId("intake-submit").getByRole("button").click();
   const res = await answer;
+  const status = res.status();
+  // Read the body only on a 429: the form never reads a 202 body, and Playwright's res.json() on a response the page
+  // did not read never resolves in Chromium (run 40195809905 hung every 202 until the test timeout, S251).
+  if (status !== 429) return { status, detail: "" };
   const body = (await res.json().catch(() => ({}))) as { detail?: unknown };
-  return { status: res.status(), detail: typeof body.detail === "string" ? body.detail : "" };
+  return { status, detail: typeof body.detail === "string" ? body.detail : "" };
 }
 
 /**
