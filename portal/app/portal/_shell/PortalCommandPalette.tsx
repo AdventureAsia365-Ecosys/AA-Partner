@@ -20,6 +20,7 @@ import { K, Modal, RADIUS, alpha, apiGet, sans } from "@/app/_kit";
 import { fetchMyVersions } from "../_components/catalogApi";
 import { fetchReviews } from "../_components/reviewListApi";
 import { channelName } from "../_components/channelLabels";
+import { pieceTitle } from "@/lib/myContent";
 import { ROUTES, allEntries } from "./portalNav";
 import { MY_VERSIONS_KEY } from "./useShellData";
 
@@ -107,7 +108,8 @@ function Palette({ onClose, onSearchTours }: { onClose: () => void; onSearchTour
         .some((s) => (s ?? "").toLowerCase().includes(needle)))
       .slice(0, 5)
       .map((r) => ({
-        kind: "link", key: `piece:${r.piece_id}`, label: r.angle?.name || r.tour?.name || "Untitled piece",
+        // S251 D5: the same title as My Content (the H1, else the angle's name).
+        kind: "link", key: `piece:${r.piece_id}`, label: r.angle || r.content_text ? pieceTitle(r) : r.tour?.name || "Untitled piece",
         sub: [channelName(r.channel), r.tour?.name].filter(Boolean).join(" · "), icon: <FileText size={16} />,
         href: `${ROUTES.content}?piece=${encodeURIComponent(r.piece_id)}`,
       }));

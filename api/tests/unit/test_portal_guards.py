@@ -12,6 +12,8 @@ Ported from the portal side of the AA-CIS-App unit tests (the admin side stays t
 - test_aa911_bff_cross_site: every portal BFF write route refuses a cross-site request before it reads a cookie or a
   body.
 - test_login_pages_no_cross_links: the tenant sign-in page does not link the staff console.
+- S251 (portal UI check D7): link text uses the accent-deep token, which reads at AA in both themes (the accent itself
+  is 2.3:1 on the cream page), and placeholders use muted2 in both themes.
 
 The vendored UI-kit byte checks are in ``scripts/check_vendored_copies.py`` (``PORTAL_COPIES``). These tests only
 read files; the behaviour is checked live by the portal UI smoke (``e2e/smoke-portal/``).
@@ -313,6 +315,39 @@ def test_muted2_stays_the_quieter_tone(theme: str) -> None:
     block = _block(theme)
     card = _token(block, "card")
     assert contrast(_token(block, "muted"), card) >= contrast(_token(block, "muted2"), card)
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("surface", ["card", "bg", "accent-tint"])
+def test_link_text_token_reads_at_aa(theme: str, surface: str) -> None:
+    block = _block(theme)
+    fg, bg = _token(block, "accent-deep"), _token(block, surface)
+    ratio = contrast(fg, bg)
+    assert ratio >= 4.5, f"portal {theme}: --aa-accent-deep {fg} on --aa-{surface} {bg} is {ratio:.2f}:1 (< 4.5:1)"
+
+
+# Decorative or non-text uses of the accent colour that may stay: list bullets, the spinner icon and icons on the
+# dark panel (which is the same dark navy in both themes).
+_GOLD_OK = ("•", "Loader2", "T.darkPanel")
+
+
+def test_portal_text_never_uses_the_bare_accent_colour() -> None:
+    pattern = re.compile(r"color:\s*(?:[^,}]*\?\s*)?(?:T\.gold|K\.accent)\b(?!Deep|Tint|Soft|Border)")
+    offenders = []
+    for path in sorted((PORTAL / "app").rglob("*.tsx")):
+        if "_kit" in path.parts or "_brand" in path.parts:
+            continue
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if pattern.search(line) and not any(ok in line for ok in _GOLD_OK):
+                offenders.append(f"{path.relative_to(REPO)}:{n}: {line.strip()[:120]}")
+    assert not offenders, "use T.goldDeep / K.accentDeep for text (S251 D7):\n" + "\n".join(offenders)
+
+
+def test_placeholders_use_muted2_in_both_themes() -> None:
+    css = _read("portal/app/globals.css")
+    m = re.search(r"(?m)^input::placeholder,\s*\ntextarea::placeholder,[^{]*\{([^}]*)\}", css)
+    assert m, "globals.css needs a theme-independent input/textarea ::placeholder rule"
+    assert "var(--aa-muted2)" in m.group(1) and "opacity: 1" in m.group(1)
 
 
 def test_brand_ts_matches_the_light_tokens() -> None:

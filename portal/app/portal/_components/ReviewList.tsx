@@ -1,9 +1,11 @@
 "use client";
 // portal/app/portal/_components/ReviewList.tsx — My Content (/portal/content, was t10-review).
 // AA-669: the shared UI-kit DataTable over GET /v1/content-writing/reviews (react-query).
-//   - columns: title, channel, place / topic, goal, angle, status (published / ready / writing / not ready),
-//     words, created, published at, actions (view in the drawer, export HTML / fragment / text, publish,
-//     write again)
+//   - columns: title (+ the angle's name under it when it differs from the title), channel, place / topic, goal,
+//     status (published / ready / writing / not ready), words, created, published at, actions (view in the drawer,
+//     export HTML / fragment / text, publish, write again)
+//   - S251 D1/D2: the table fits a 1440 px screen without a sideways scroll (kit `compact` cells, no separate Angle
+//     column, titles wrap between words only); the angle's writing brief (formula_fit) is never shown in the list
 //   - filters: channel, status, goal, date range (created or published), place search, plus the table's own search
 //   - sort: any column; views: "All content", "Ready to publish", "Published this month" and the tenant's own saved
 //     views (filters + sort, localStorage through the kit's savedViews store)
@@ -57,6 +59,7 @@ import {
   CONTENT_STATUS_LABEL,
   contentStatus,
   exportFormat,
+  angleLabel,
   hasFilters,
   liveIsEarlierVersion,
   matchesFilters,
@@ -263,9 +266,17 @@ function ReviewListInner() {
         header: "Title",
         cell: (c) => {
           const it = c.row.original;
+          const angle = angleLabel(it);
+          // S251 D1: a real minimum width and wrapping between words only (overflowWrap "anywhere" let the column
+          // shrink to ~68 px and broke words mid-letter).
           return (
-            <div style={{ minWidth: 0, maxWidth: 320 }}>
-              <div style={{ fontWeight: 600, color: T.ink, overflowWrap: "anywhere" }}>{pieceTitle(it)}</div>
+            <div style={{ minWidth: 160, maxWidth: 300 }} data-testid="my-content-title">
+              <div style={{ fontWeight: 600, color: T.ink, overflowWrap: "break-word", lineHeight: 1.4 }}>{pieceTitle(it)}</div>
+              {angle && (
+                <div style={{ marginTop: 2, color: T.muted, fontSize: 12, lineHeight: 1.4, overflowWrap: "break-word" }}>
+                  Angle: {angle}
+                </div>
+              )}
               {/* AA-986 L3: persistent badge when AA no longer serves (or has paused) the tour */}
               {it.served_notice && <div style={{ marginTop: 4 }}><ServedBadge fields={it} /></div>}
             </div>
@@ -283,30 +294,22 @@ function ReviewListInner() {
         accessorFn: (r) => placeTopic(r) ?? "",
         header: "Place / topic",
         cell: (c) => (
-          <span style={{ color: T.body, fontSize: 12.5 }}>{placeTopic(c.row.original) ?? "—"}</span>
+          <span style={{ display: "inline-block", color: T.body, fontSize: 12.5, minWidth: 110, maxWidth: 220, lineHeight: 1.45 }}>
+            {placeTopic(c.row.original) ?? "—"}
+          </span>
         ),
       },
       {
         id: "goal",
         accessorFn: (r) => r.goal?.label ?? "",
         header: "Goal",
-        // AA-760 — one line: "Trust-building" broke at the hyphen.
-        cell: (c) => <span style={{ color: T.body, whiteSpace: "nowrap" }}>{c.row.original.goal?.label ?? "—"}</span>,
-      },
-      {
-        id: "angle",
-        accessorFn: (r) => r.angle?.name ?? "",
-        header: "Angle",
-        cell: (c) => {
-          const a = c.row.original.angle;
-          if (!a) return <span style={{ color: T.muted2 }}>—</span>;
-          return (
-            <div style={{ minWidth: 0, maxWidth: 220 }}>
-              <div style={{ color: T.body, fontSize: 12.5 }}>{a.name}</div>
-              {a.formula_fit && <div style={{ color: T.muted2, fontSize: 11 }}>{a.formula_fit}</div>}
-            </div>
-          );
-        },
+        // AA-760: "Trust-building" broke at the hyphen, so the hyphen is a non-breaking one. S251 D1: the label
+        // may wrap between words ("Introduction / Awareness" on two lines) to keep the table inside the screen.
+        cell: (c) => (
+          <span style={{ color: T.body, lineHeight: 1.45 }}>
+            {c.row.original.goal?.label.replace(/-/g, "\u2011") ?? "—"}
+          </span>
+        ),
       },
       {
         id: "status",
@@ -355,7 +358,7 @@ function ReviewListInner() {
                 <a href={it.published_url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
                    aria-label="Open the published post"
                    title={liveIsEarlierVersion(it) ? "Open the published post (it shows an earlier version of this text)" : "Open the published post"}
-                   style={{ color: T.gold, display: "inline-flex" }}>
+                   style={{ color: T.goldDeep, display: "inline-flex" }}>
                   <ExternalLink size={12} />
                 </a>
               )}
@@ -402,12 +405,13 @@ function ReviewListInner() {
         error={isError ? (error instanceof Error ? error.message : "Could not load your content") : null}
         onRetry={() => refetch()}
         searchable
-        searchPlaceholder="Search title, angle, place…"
+        searchPlaceholder="Search title, place…"
         enableSelection
         enableCsv
         csvFilename="my-content"
         pageSize={25}
-        tableMinWidth={1180}
+        tableMinWidth={1040}
+        compact
         sorting={sorting}
         onSortingChange={(next) => { setSorting(next); setViewId(""); }}
         emptyTitle={filtered ? "Nothing matches these filters" : "Nothing written yet"}
@@ -462,14 +466,23 @@ function ReviewListInner() {
               aria-label="Place or topic"
               style={{ ...sel, cursor: "text", width: isPhone ? undefined : 150 }}
             />
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 4, flexWrap: "wrap", ...(isPhone ? { flex: "1 1 100%" } : {}) }}>
-              <select value={filters.dateField} onChange={(e) => changeFilters({ dateField: e.target.value as ContentFilters["dateField"] })} style={sel} aria-label="Date">
+            {/* S251 D6: on a phone the date field takes its own line and "from – to" share the next one evenly (the
+                "to" label and the second field used to wrap apart). On a desktop it stays one group. */}
+            <div
+              data-testid="my-content-date-range"
+              style={isPhone
+                ? { display: "flex", flexWrap: "wrap", gap: 8, flex: "1 1 100%", minWidth: 0 }
+                : { display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "nowrap" }}
+            >
+              <select value={filters.dateField} onChange={(e) => changeFilters({ dateField: e.target.value as ContentFilters["dateField"] })} style={isPhone ? { ...sel, flex: "1 1 100%" } : sel} aria-label="Date">
                 <option value="created">Created</option>
                 <option value="published">Published</option>
               </select>
-              <input type="date" value={filters.from} max={filters.to || undefined} onChange={(e) => changeFilters({ from: e.target.value })} style={{ ...sel, cursor: "text" }} aria-label="From" />
-              <span style={{ color: T.muted2, fontSize: 12 }}>to</span>
-              <input type="date" value={filters.to} min={filters.from || undefined} onChange={(e) => changeFilters({ to: e.target.value })} style={{ ...sel, cursor: "text" }} aria-label="To" />
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap", minWidth: 0, ...(isPhone ? { flex: "1 1 100%" } : {}) }}>
+                <input type="date" value={filters.from} max={filters.to || undefined} onChange={(e) => changeFilters({ from: e.target.value })} style={{ ...dateInput, ...(isPhone ? { flex: "1 1 0" } : {}) }} aria-label="From" />
+                <span style={{ color: T.muted, fontSize: 12, flexShrink: 0 }}>to</span>
+                <input type="date" value={filters.to} min={filters.from || undefined} onChange={(e) => changeFilters({ to: e.target.value })} style={{ ...dateInput, ...(isPhone ? { flex: "1 1 0" } : {}) }} aria-label="To" />
+              </div>
             </div>
             {filtered && (
               <button style={linkBtn} onClick={() => { setFilters(NO_FILTERS); setViewId(""); }}>
@@ -643,12 +656,14 @@ const selectStyle: React.CSSProperties = {
   boxSizing: "border-box",
 };
 
+const dateInput: React.CSSProperties = { ...selectStyle, cursor: "text", minWidth: 0 };
+
 const iconBtn: React.CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
   justifyContent: "center",
-  width: 30,
-  height: 30,
+  width: 28,
+  height: 28,
   borderRadius: 8,
   border: `1px solid ${T.line}`,
   background: T.card,
@@ -663,7 +678,8 @@ const linkBtn: React.CSSProperties = {
   gap: 4,
   background: "none",
   border: "none",
-  color: T.gold,
+  // S251 D7: link text in the accent-deep token (5.2:1 on the cream page, 11:1 in dark); the accent itself is 2.3:1.
+  color: T.goldDeep,
   fontSize: 12.5,
   fontWeight: 600,
   cursor: "pointer",
@@ -673,7 +689,7 @@ const linkBtn: React.CSSProperties = {
 
 const menuStyle: React.CSSProperties = {
   position: "absolute",
-  top: 34,
+  top: 32,
   right: 0,
   zIndex: 20,
   minWidth: 220,
@@ -706,7 +722,7 @@ const bulkBtn: React.CSSProperties = {
   borderRadius: 999,
   border: `1px solid ${T.gold}`,
   background: T.goldTint,
-  color: T.gold,
+  color: T.goldDeep,
   fontSize: 12,
   fontWeight: 600,
   cursor: "pointer",

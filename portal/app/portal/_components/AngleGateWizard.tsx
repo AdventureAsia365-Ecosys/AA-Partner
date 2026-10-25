@@ -766,7 +766,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
               <div style={{ fontSize: 12.5, color: T.body, lineHeight: 1.5 }}>
                 This piece needs a call to action before it can be written — what should the
                 reader do next?{" "}
-                <Link href="/portal/brand" style={{ color: T.gold, fontWeight: 600 }}>
+                <Link href="/portal/brand" style={{ color: T.goldDeep, fontWeight: 600 }}>
                   Set a default call to action in Brand Identity
                 </Link>{" "}
                 so you aren&rsquo;t asked again.
@@ -816,7 +816,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
               Content ready.{" "}
               <a
                 onClick={() => router.push(`/portal/content?piece=${piece.piece_id}`)}
-                style={{ color: T.gold, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}
+                style={{ color: T.goldDeep, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}
               >
                 View, edit, or export it in My Content
               </a>

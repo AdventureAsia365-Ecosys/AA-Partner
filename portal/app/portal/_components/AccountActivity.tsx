@@ -16,6 +16,7 @@ import {
   ACTIVITY_DATE_MIN,
   ACTIVITY_PAGE_SIZES,
   NO_FILTERS,
+  activityDetail,
   activityQuery,
   actorLabel,
   exportFilename,
@@ -99,7 +100,7 @@ export default function AccountActivity() {
         return (
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>{r.label}</div>
-            {r.detail && <div style={{ fontSize: 11.5, color: T.muted, marginTop: 2 }}>{r.detail}</div>}
+            {r.detail && <div style={{ fontSize: 11.5, color: T.muted, marginTop: 2 }}>{activityDetail(r.action, r.detail)}</div>}
           </div>
         );
       },
