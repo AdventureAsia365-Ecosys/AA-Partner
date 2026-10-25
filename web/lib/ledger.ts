@@ -4,6 +4,8 @@
 // commission_expected, margin_base); the API's margin serializer removes cost / commission / margin for the assistant,
 // and lines carry no `money` block at all for her, so a missing key always means "not shown", never "zero".
 
+import type { AaBlock } from "@/lib/aa";
+
 export type LineStatus = "planning" | "confirmed" | "cancelled";
 export type Level = "off" | "basic" | "strict";
 
@@ -47,6 +49,8 @@ export interface Line {
   visible_to_travelers: boolean;
   confirmed_at: string | null;
   read_only: boolean;
+  /** AA-947: Adventure Asia lines only (status, "AA pending", the "from"-price warning, the asks allowed now). */
+  aa?: AaBlock;
   money?: LineMoney;
   trip_title?: string;
   trip_stage?: string;
@@ -57,6 +61,8 @@ export interface TripLines {
   lines: Line[];
   base_currency: string;
   booking_validation_level: Level;
+  /** AA-947: the Lost reason the dialog pre-selects from the AA lines (declined / sold out); null without a signal. */
+  lost_reason_hint?: string | null;
 }
 
 export interface LedgerTotals {

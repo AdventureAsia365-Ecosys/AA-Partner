@@ -18,6 +18,12 @@ event; a message's row waits its 10-second undo delay), AA-943's hourly ``crm_st
 AA-978: ``crm_membership_pull`` (the CIS membership feed) is Recurring every 20 s, so like the heartbeat it always
 holds its next slot's row queued: it is exempt here and in DB Migrate (Infra ``owners.yaml`` ``idle_exempt_kinds``).
 Interrupting it is harmless (each event is its own transaction, recorded once in ``crm.membership_inbox``).
+
+AA-947: ``crm_booking_sync`` (the AA outage queue and the Booking event feed) is Recurring every 60 s, plus one-agency
+nudge rows queued by the AA requests: exempt here and in DB Migrate for the same reason (Infra ``owners.yaml``
+``idle_exempt_kinds``); every request and every event is its own short transaction, and a request a stopped run held
+is sent again only after its lease (with the same Idempotency-Key). ``crm_catalog_sync`` (hourly, due-now hook) is not
+exempt.
 """
 
 from __future__ import annotations
@@ -48,11 +54,15 @@ MEMBERSHIP_PULL = "crm_membership_pull"
 MAIL_INGEST = "crm_mail_ingest"
 MAIL_HEALTH = "crm_mail_health"
 MAIL_IMPORT = "crm_mail_history_import"
+# AA-947: the AA outage queue + the Booking /events feed (app.booking.sync), Recurring every 60 s, nudged per request;
+# the hourly cache of published AA tours from CIS catalog.http.v1 (app.catalog.sync), queued due-now.
+BOOKING_SYNC = "crm_booking_sync"
+CATALOG_SYNC = "crm_catalog_sync"
 
 DEFAULT_EXPECTED_SECONDS = 300
 OVERDUE_FACTOR = 2
 
-DEPLOY_GATE_EXEMPT: frozenset[str] = frozenset({HEARTBEAT, MEMBERSHIP_PULL})
+DEPLOY_GATE_EXEMPT: frozenset[str] = frozenset({HEARTBEAT, MEMBERSHIP_PULL, BOOKING_SYNC})
 
 EXPECTED_SECONDS: dict[str, int] = {
     HEARTBEAT: 30,
@@ -70,6 +80,8 @@ EXPECTED_SECONDS: dict[str, int] = {
     MAIL_INGEST: 120,
     MAIL_HEALTH: 300,
     MAIL_IMPORT: 120,  # one slice (history_import.SLICE messages)
+    BOOKING_SYNC: 60,
+    CATALOG_SYNC: 300,
 }
 
 

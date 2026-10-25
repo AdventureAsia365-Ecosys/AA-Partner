@@ -72,6 +72,8 @@ Design sources, in order:
   `app/cis/m2m.py` asks the aa-m2m pool for one scope per call (AA-978). `tenant.membership.v1` is pulled by
   `crm_membership_pull` (section "CIS membership feed" below); CIS is a revocation and lifecycle source there, never a
   positive gate and never a source of CRM roles.
+  AA-947: `booking.b2b.v1` (quotes, holds, confirms, the `/events` feed) through `app/booking/` and `catalog.http.v1`
+  (the AA tour cache) through `app/catalog/`, with the same M2M client (section "CRM-19" below).
 - **Publishes** `crm.ops.v1` under `/crm/ops/v1` to the CIS admin (L1 platform console), later `crm.insights.v1`.
 - **Never** grants another app's role anything on `crm`, never reads another app's schema (no cross-schema grants in
   either direction: the isolation probe asserts 42501 both ways), never writes content (ADR 0002), never owns prices
@@ -256,6 +258,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-014` | `api/migrations/014_crm_ledger_suppliers.sql` | CRM-16 agency-line ledger + suppliers (AA-944; needs crm-012 + crm-013): `tenant_settings.base_currency` (default USD, an assumption) / `booking_validation_level` (`off` / `basic` default / `strict`) / `fx_mode` (`automatic` / `manual`); `agency_supplier` (vault-encrypted contact, one built-in Adventure Asia row per agency from `crm.ensure_aa_supplier()`, never changed by crm_app, CRM22; no trash while live lines name it, CRM27); `booking_line` (planning -> confirmed -> cancelled, AA lines only from a `job:` / `platform:` actor, CRM24; an agency line is confirmed only through `crm.booking_line_confirm()`, CRM26; trigger-kept `conf_unique_key` + `booking_line_conf_uq` = the strict duplicate check); `booking_line_money` (append-only chains per line and kind, frozen FX block, RESTRICTIVE `booking_line_money_margin_roles`: owner / agent / job only; writes only through `crm.booking_line_money_put()` / `crm.booking_line_confirm()`; view `v_booking_line_money_current`, security_invoker); `crm.booking_line_confirm_check()` (missing codes only, CRM23 on confirm); `crm.fx_resolve()` (override of the day -> platform of the day -> latest earlier day within 30 days, `stale_days`; CRM25 when none); `fx_rate_platform` (platform reference rates, no tenant, crm_app SELECT + INSERT); `fx_rate_override` (append-only); `crm.erase_subject` = the crm-013 text + the ledger (scopes trip, tenant, and new `booking_line` / `agency_supplier`), `crm.erase_held` + hold guards on the new tables |
 | `crm-015` | `api/migrations/015_crm_mail.sql` | CRM-17 Module 5 e-mail (AA-945; needs crm-014): `integration_credential.member_id` + `UNIQUE NULLS NOT DISTINCT (tenant_id, provider, member_id)` (own mailboxes, design §4.6); `channel_account` (one sending mailbox per member or agency-level, gmail / microsoft / smtp, `crm.guard_channel_account` CRM30); `ingest_address` (forward-in local part, one active per agency, Gmail forwarding code; `ingest_address_lookup` on `app.ingest_local_part`); `conversation` (both subjects NULL = Unmatched); `message` (mail-DEK content, `received` or draft_autosaved -> queued -> sent / held_reconnect / failed, sender kinds `agency_mailbox` / `system` only per errata S247, Message-ID hash unique per agency; `crm.guard_message`: crm_app discards drafts only CRM28, a non-draft is sealed CRM29, hold rule through the conversation); `saved_reply`; `mail_import` (counts only); `trip.mail_token` (the `[ref:<token>]` subject tag); `dispatch_queue.message_id` + gate codes `held_reconnect` / `send_failed` / `no_message`; `document.uploaded_by_kind` `mail`; `crm.erase_subject` / `crm.erase_held` = the crm-014 text + the mail tables (scopes trip, traveler, tenant and new `conversation`) |
 | `crm-016` | `api/migrations/016_crm_thin_lifecycle.sql` | CRM-18 thin full lifecycle (AA-946; needs crm-015): `agreement_doc` (booking terms / waiver versions, trigger-set `body_sha256`, one published per kind), `proposal` (text under the vault DEK, sell total / deposit / balance date, `price_hash`, accepted with the typed name + pinned hash + terms; one sent and one accepted version per trip), `payment_schedule` (deposit / balance, due -> paid / void; a deposit row is never void), `payment` (append-only manual payments, `crm.ledger_append_only`), `traveler_access` (per-person portal access, Stage 3 time; `crm.guard_traveler_access`: Stage 3 only while `crm.portal_unlocked` holds: a paid deposit or a `manual_booking` override into Booked that was not undone, CRM32), `otp_challenge` (6-digit code hash, 10 min, 5 attempts, the 12 h portal session hash; the code mail is stored masked and the code waits in `code_enc` only until the sender sent it; `delivery` mailbox / dev_echo, where mailbox means sent from the agency's mailbox, whose provider Sent copy its owner can read: e-sign v0 limit; 24 h retention, crm_app deletes), `signature_request` (e-sign v0: typed name, pinned document hash, the signing code, sealed `code_delivery` and `evidence_record` (the canonical evidence JSON, no PII) with `evidence_sha256` tied to it by CHECK, so a signature can be re-verified after the 24 h code purge); `crm.guard_sealed_row` (CRM31: a sent proposal, a paid schedule row, a published agreement, a signed signature never change); client_link purposes `proposal` / `portal`; `crm.enforce_stage_transition` with computable gates (paid deposit -> booked, s3 = 100 -> pre_departure, overrides still logged); `crm.erase_subject` / `crm.erase_held` = the crm-015 text + the new tables (a traveller erase also clears the typed acceptance name, `accepted_name_erased_at`) |
+| `crm-017` | `api/migrations/017_crm_aa_lines.sql` | CRM-19 B2B client + AA lines (AA-947; needs crm-016): `booking_line` AA columns (tour and component, quote id / price hash / validity / version, hold expiry, pax counts, "from" price + `below_from_price`, Booking's decline and result codes; NULL on agency lines) and sub-statuses `pending` / `quoted` / `sold_out` / `released` / `not_served` / `failed`; `aa_request` (the outage queue: quote, requote, hold, confirm, release, refresh; pending -> done / failed / cancelled, attempts, backoff, claim lease; one live request per line and kind); `booking_feed_state` (the Booking `/events` cursor per agency); `inbox_events` (append-only, unique per event); `aa_catalog_tour` + `aa_catalog_state` (platform cache of published AA tours); `crm.aa_line_request()` (the only member path: a pending line titled from the cache, CRM33 / CRM34) and `crm.booking_line_aa_money()` (job actor only, frozen at the quote's FX lock); `crm.erase_subject` = the crm-016 text + the new tables; hold guard on `aa_request` |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -289,6 +292,8 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 | `crm_mail_ingest` | per UTC minute, only while `raw/` of the ingest bucket holds objects (`app.mail.ingest.MailIngestScan` hook lists one key; payload `{"purpose": "mail_ingest"}`, never an object key) | AA-945: up to 50 forwarded mails per run: parse, `ingest_tx`, thread, store under the mail DEK, keep allowed attachments as documents, delete the raw object; an unknown address is deleted and counted (`MailIngestDropped`, card R). Not deploy-gate exempt |
 | `crm_mail_health` | daily, from `JOB_RETENTION_UTC_HOUR`, due-now hook (`app.mail.health.DailyMailHealthSchedule`) | AA-945: every agency's mailboxes: token refresh / SMTP login + NOOP; passing -> connected (held messages re-queued), revoked -> disconnected + one owner alert, unreachable -> needs attention. Counts only. Not deploy-gate exempt |
 | `crm_mail_history_import` | per mbox / CSV upload (queued in the upload's transaction) | AA-945: parses the upload from `imports/<tenant>/<id>`, stores each mail through the ingest path (`imported`), counts on `crm.mail_import`, deletes the object. Not deploy-gate exempt |
+| `crm_booking_sync` | 60 s, Recurring, plus a one-agency nudge per AA request (payload `tenant_id`, `aa_request_id`) | AA-947: sends the due `crm.aa_request` rows of every active agency to Booking (`<BOOKING_API_URL>/booking/b2b/v1`, one M2M scope per call; holds / confirms with a stable `Idempotency-Key`), applies the answers (line, money at the quote lock, `trip_commitment`, `waiting_on`), keeps a request pending with a backoff while Booking is down, then pulls the agency's `/events` into `crm.inbox_events` (section "CRM-19"). Deploy-gate exempt and DB Migrate idle exempt (Infra `owners.yaml`), like the membership pull; `not_configured` without `BOOKING_API_URL` / `M2M_CLIENT` |
+| `crm_catalog_sync` | hourly, due-now hook (`app.catalog.sync.HourlyCatalogSync`, key per UTC hour) | AA-947: refreshes `crm.aa_catalog_tour` from `<CIS_API_URL>/catalog/v1` (scope `cis.catalog/read`): full passes comparing `content_hash`, a changed tour fetched with `If-None-Match`, tours no longer listed re-checked (410 retired, 404 paused); bounded per run, the pass continues next run; a CIS failure backs off. Not deploy-gate exempt |
 | `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
 
 ## CI and release
@@ -617,6 +622,52 @@ Design v3 §6.3 CRM-18 (M4 base, M7 manual, M11 base, M12 v0); migration crm-016
   session cookie never reaches page script; only the `client.*` strings ship, `lib/clientMessages.ts`), BFF lines card
   AA-946 in `lib/bff.ts`. Dev E2E: `e2e/tests/lifecycle-thin.spec.ts` (portal steps need `PORTAL_OTP_DEV_ECHO`).
 
+## CRM-19 B2B client + AA lines (AA-947)
+
+Design v3 §6.3 CRM-19 (M3 supply, M6 AA lines, R17, R18, R23; checklist: M2M client, catalog cache, lines from quote /
+hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); migration crm-017; code in `app/booking/`
+(`client.py`, `contract.py`, `aa_lines.py`, `sync.py`, `views.py`, `products.py`, `checker.py`) and `app/catalog/`
+(`client.py`, `store.py`, `sync.py`), routes in `app/routers/aa.py`; decisions in `docs/implementation-notes/AA-947.md`.
+
+- **M2M client**: `booking.b2b.v1` 1.1 and `catalog.http.v1` 1.2 over the aa-m2m pool with one `TokenProvider` for the
+  process (one cached token per scope; the scope each call needs only). Booking calls carry `X-AA-Tenant-Id` (Booking
+  checks its `b2b_partners` row; an agency AA has not activated is 409 `aa_partner_not_active` / a failed request
+  `unknown_partner`). Answers are read tolerantly (unknown fields and event types never stop the CRM).
+- **Lines from quote / hold / feed only** (card R): the agent asks, never types. `POST /crm/v1/trips/{id}/aa-lines`
+  (tour from the catalog cache, a Booking component, date or a fixed departure, pax counts, quote currency, owner /
+  agent: a sell amount) -> `crm.aa_line_request()` creates the line `planning` / "AA pending" titled from the cache and
+  the quote request; `POST /crm/v1/lines/{id}/aa/{hold|confirm|release|requote}` queue the asks the line's `aa.actions`
+  list (confirm: a held line once the trip is booked or later; release: anything AA has not booked). Editing, money,
+  cancel, confirm and trash of an AA line stay 403 `aa_line_read_only` (route, crm-014 guard, money functions).
+- **Outage queue** (card E): `crm.aa_request` rows are sent by `crm_booking_sync`; a transient failure keeps the row
+  pending (attempts, `next_attempt_at` 30 s doubling to 15 min, `last_error_class`) and the line reads "AA pending" with
+  the next try; no duplicates: one live request per (line, kind), stable `Idempotency-Key` per request (and quote
+  version), a quote owns its one line, a repeated quote writes no new money head. A hold answered `price_changed` is
+  re-quoted once and held at the new price. Final refusals become the line's sub-status / `aa_result_code`. When
+  Booking gives no answer at all (timeout, unreachable, 5xx, token pool down) the rest of the agency's batch goes back
+  unsent and the feed waits: one timeout per agency and run. An answer is applied to the line as it is under the lock,
+  not as claimed: a hold that lands after its line was released keeps only its hold id and queues the release.
+- **Money of AA lines**: cost = the quote's `b2b_price`, sell = the agency's, frozen at once (`aa_quote_lock`,
+  `quote_lock`; a non-USD base crosses USD through `crm.fx_resolve`). Only the job writes it.
+- **Feed**: per agency with a `crm.booking_feed_state` row, `GET /events` pages into `crm.inbox_events` (each event in
+  its own transaction, a replay applies nothing): `hold.expired`, `hold.extended` (refresh), `line.confirmed`,
+  `line.declined` (cancelled / declined + an urgent `aa_line_declined` task), `booking.cancelled`; `departure.*`
+  recorded only (the incident banner is a later card).
+- **"From"-price warning**: `GET /price-parity` in the quote currency for a whole-tour line; `below_from_price` = sell
+  per person (adults + children) below it. Warns, never blocks (ADR 0005a decision 1); the add form warns before
+  asking too (`GET /crm/v1/aa/products/{source_id}?currency=`).
+- **AA-aware Lost**: `GET /trips/{id}/lines` answers `lost_reason_hint` (declined -> `aa_on_request_declined`, or
+  `aa_sold_out` when Booking said sold out); the Lost picker pre-selects it. Lost (and cancel) holds the waiting
+  quote / requote / hold / refresh requests back by the Undo window and queues a release of every line AA has not
+  booked, sent after the window; Undo cancels the release and the waiting requests then run as asked; without an Undo
+  the sync drops them (`trip_closed`, Booking not called). AA
+  bookings are left to the cancellation card (CRM-27, Booking's fee) and listed in the cancel dry run.
+- **Catalog cache**: `crm.aa_catalog_tour` (platform, no tenant), refreshed hourly; `GET /crm/v1/aa/catalog?q=`
+  searches served tours; a retired tour's lines read "no longer offered".
+- **Web**: the Bookings tab (`components/ledger/LinesPanel.tsx`: AA status, retry note, warning, the listed asks) and
+  "Add AA item" (`components/ledger/AaItemForm.tsx`), helpers `lib/aa.ts`, BFF lines card AA-947 in `lib/bff.ts`, EN
+  default with VI strings; the trip page passes `lost_reason_hint` to the Lost picker.
+
 ## F1 / F2 complete (AA-937, CRM-09)
 
 - **Reveal** (`app/travellers/reveal.py`): `reveal(ctx, vault, traveler_id, field, reason)` is the only agency path to
@@ -797,8 +848,8 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   `has_commission` (claimed / received), `has_aa_line` (held / confirmed) -> 409 with the first code, every blocker and
   `alternative = cancel_trip`. Released, expired, cancelled and declined AA lines do not block.
 - **Restore re-checks Booking**: an AA line the ledger still shows open goes through `app.state.booking_checker`
-  (`app/lifecycle/booking.py`, the seam CRM-19 fills); none configured = 503 `booking_not_configured`, the trip stays in
-  the trash.
+  (`app/lifecycle/booking.py`; AA-947 fills it with `app.booking.checker.BookingChecker`: `GET /holds/{id}` per hold);
+  none configured = 503 `booking_not_configured`, Booking down = 503 `booking_unavailable`, the trip stays in the trash.
 - **Archive** (R23, `POST /travelers/{id}/archive|unarchive`): hidden from lists and search; queueing a message to an
   archived client is refused; a message queued before is **dropped at the dispatcher** (`crm.dispatch_queue`,
   `crm_dispatch`, `app/dispatch/`). A repeat inquiry unarchives the client. Auto-archive after `auto_archive_months`
@@ -929,7 +980,9 @@ audit export (AA-940) `AUDIT_BUCKET_COMPLIANCE` / `AUDIT_BUCKET_GOVERNANCE` (bot
 true), and the FX source (AA-944) `FX_PROVIDER` (`synthetic` by default on dev / test / local, `live` on stg / prod;
 not set on Dev today), the CIS membership feed (AA-978) `CIS_API_URL` (the CIS API origin) and `M2M_CLIENT` (secret
 `aa-crm/<env>/m2m-booking-client`, the JSON `{client_id, client_secret, token_url, scopes}`; either empty = the pull
-logs `not_configured`), and mail (AA-945) `CRM_INGEST_BUCKET`, `CRM_INGEST_DOMAIN`, `MAIL_OAUTH_REDIRECT_BASE` and the
+logs `not_configured`; AA-947: the same client asks `cis.catalog/read` for the catalog cache and `booking.b2b/*` for
+Booking), the Booking API (AA-947) `BOOKING_API_URL` (the Booking API origin; empty = AA requests stay "AA pending" and
+the product look-up is 503 `booking_not_configured`), and mail (AA-945) `CRM_INGEST_BUCKET`, `CRM_INGEST_DOMAIN`, `MAIL_OAUTH_REDIRECT_BASE` and the
 secret `MAIL_OAUTH` (`crm/<env>/mail-oauth`, mapped only once it has a value), and the portal (AA-946)
 `PORTAL_OTP_DEV_ECHO` (default false; refused outside dev / test / local; on, the portal code answer carries the code
 for the synthetic Dev agencies that have no mailbox). Meanings and defaults:

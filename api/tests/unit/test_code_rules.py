@@ -53,6 +53,7 @@ DB_MODULES = frozenset(
         "app/privacy/purge.py",  # expired placeholder maps, crm-009 DELETE-only purge policy, no reads (AA-938)
         "app/fx/fetch.py",  # crm.fx_rate_platform: platform reference rates, no tenant rows, insert only (AA-944)
         "app/cis/feed_state.py",  # crm.membership_feed_state: platform singleton, no tenant rows (AA-978)
+        "app/catalog/store.py",  # crm.aa_catalog_tour / aa_catalog_state: platform cache, no tenant rows (AA-947)
     }
 )
 # The only modules that may open the platform context provisioning_tx() (no membership check): agency creation and the
@@ -100,6 +101,8 @@ SYSTEM_MODULES = frozenset(
         # AA-945: the mailbox health check and the history import (one agency per transaction, actor job:<kind>).
         "app/mail/health.py",
         "app/mail/history_import.py",
+        # AA-947: the AA outage queue and the Booking feed (one agency per transaction, actor job:crm_booking_sync).
+        "app/booking/sync.py",
     }
 )
 INTAKE_MODULES = frozenset({"app/intake/public.py"})

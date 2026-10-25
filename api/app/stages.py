@@ -414,6 +414,11 @@ async def move(
     audit_reason = f"override_{override}" if override is not None else reason
     ctx.audit("stage_change", "allowed", "trip", str(trip_id), reason=audit_reason[:40])
     effects = await _enter_effects(ctx, vault, trip_id, stage, to, owner_member_id=trip["owner_member_id"])
+    if to == "lost":
+        # AA-947: a lost trip gives its AA holds back (queued after the Undo window; Undo cancels them).
+        from app.booking import aa_lines
+
+        effects["aa_releases_queued"] = await aa_lines.close_trip(ctx, trip_id)
     if effects.get("stage2_sent"):
         waiting_on = await refresh_waiting_on(ctx, trip_id) or waiting_on
     return {
@@ -521,6 +526,10 @@ async def _undo_one(ctx: TenantContext, trip: Any, history_id: uuid.UUID, *, bat
     )
     cancelled = _rows(await ctx.conn.execute(UNDO_DISPATCH_SQL, trip_id, last["at"]))
     revoked = _rows(await ctx.conn.execute(UNDO_LINKS_SQL, trip_id, last["at"]))
+    if last["to_stage"] == "lost":
+        from app.booking import aa_lines  # AA-947: the AA releases the Lost move queued
+
+        await aa_lines.undo_close(ctx, trip_id, last["at"])
     # Only entering Qualifying opens tasks (_enter_effects). A planning task the Stage 2 gate's completeness refresh
     # opened on another move belongs to the trip's earlier stage and stays.
     skipped = (
@@ -687,12 +696,18 @@ async def cancel(ctx: TenantContext, trip_id: uuid.UUID, *, reason: str | None, 
     if trip["stage"] not in CANCELLABLE:
         raise Conflict("transition_not_allowed", "only a booked, pre-departure or travelling trip is cancelled",
                        allowed=allowed_moves(trip["stage"]))  # fmt: skip
+    from app.booking import aa_lines
+
     counts = await ctx.conn.fetchrow(CANCEL_EFFECTS_SQL, trip_id)
+    aa = await aa_lines.close_effects(ctx, trip_id)
     effects = [
         {"kind": "dispatch_cancelled", "count": counts["dispatch"]},
         {"kind": "tasks_skipped", "count": counts["tasks"]},
         {"kind": "call_slots_cancelled", "count": counts["slots"]},
         {"kind": "client_links_revoked", "count": counts["links"]},
+        # AA-947: AA holds are released; lines AA already booked wait for the cancellation card (CRM-27, the fee).
+        {"kind": "aa_holds_released", "count": aa["held"]},
+        {"kind": "aa_bookings_kept", "count": aa["booked"]},
     ]
     out: dict[str, Any] = {
         "trip_id": str(trip_id),
@@ -716,5 +731,6 @@ async def cancel(ctx: TenantContext, trip_id: uuid.UUID, *, reason: str | None, 
     await ctx.conn.execute(
         HISTORY_SQL, trip_id, trip["stage"], "cancelled", f"cancel_{reason}", False, None, None, None
     )
+    await aa_lines.close_trip(ctx, trip_id)
     ctx.audit("trip_cancel", "allowed", "trip", str(trip_id), reason=reason)
     return {**out, "stage": "cancelled"}
