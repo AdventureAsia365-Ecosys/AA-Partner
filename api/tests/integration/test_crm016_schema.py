@@ -52,6 +52,12 @@ def _hash() -> bytes:
     return os.urandom(32)
 
 
+def _evidence(delivery: str = "mailbox") -> tuple[bytes, bytes]:
+    """(a canonical evidence record, its SHA-256): the pair signature_request_evidence_chk ties together."""
+    record = json.dumps({"code_delivery": delivery, "consent": {"agree": True}}, sort_keys=True, separators=(",", ":"))
+    return record.encode(), hashlib.sha256(record.encode()).digest()
+
+
 async def _run(pool: asyncpg.Pool, tenant: uuid.UUID, sql: str, *args: Any, actor: str = "member:test") -> Any:
     async with pool.acquire() as conn, conn.transaction():
         await _ctx(conn, tenant, actor)
@@ -359,29 +365,44 @@ async def test_a_paid_row_and_a_signed_signature_are_sealed(app_pool: asyncpg.Po
             ids["access_lead"],
             ids["waiver"],
         )
-        await conn.execute(
+        sign = (
             "UPDATE crm.signature_request SET status = 'signed', signed_at = now(), signed_name_enc = $2, "
-            "doc_sha256 = $3, evidence_sha256 = $4, otp_id = $5 WHERE request_id = $1",
-            request,
-            _blob(),
-            _hash(),
-            _hash(),
-            otp,
+            "doc_sha256 = $3, evidence_sha256 = $4, otp_id = $5, evidence_record = $6, code_delivery = $7 "
+            "WHERE request_id = $1"
         )
-    with pytest.raises(asyncpg.PostgresError, match="row_sealed"):
-        await _run(
-            app_pool,
-            ids["tenant"],
-            "UPDATE crm.signature_request SET doc_sha256 = $2 WHERE request_id = $1",
-            request,
-            _hash(),
-        )
-    # The 24-hour purge of the code row keeps the signature (otp_id SET NULL is not a sealed column).
+        record, digest = _evidence()
+        # A signature needs its delivery and its evidence record, and the record must be what the hash hashes.
+        for bad in ((record, _hash(), "mailbox"), (None, digest, "mailbox"), (record, digest, None)):
+            with pytest.raises(asyncpg.CheckViolationError):
+                async with conn.transaction():
+                    await conn.execute(sign, request, _blob(), _hash(), bad[1], otp, bad[0], bad[2])
+        with pytest.raises(asyncpg.CheckViolationError):  # a delivery outside the list
+            async with conn.transaction():
+                await conn.execute(sign, request, _blob(), _hash(), digest, otp, record, "sms")
+        await conn.execute(sign, request, _blob(), _hash(), digest, otp, record, "mailbox")
+    for column, value in (("doc_sha256", _hash()), ("code_delivery", "dev_echo"), ("evidence_record", b"{}")):
+        with pytest.raises(asyncpg.PostgresError, match="row_sealed"):
+            await _run(
+                app_pool,
+                ids["tenant"],
+                f"UPDATE crm.signature_request SET {column} = $2 WHERE request_id = $1",
+                request,
+                value,
+            )
+    # The 24-hour purge of the code row keeps the signature (otp_id SET NULL is not a sealed column), and the
+    # delivery and the evidence record stay, so evidence_sha256 can still be re-verified.
     await _run(app_pool, ids["tenant"], "DELETE FROM crm.otp_challenge WHERE otp_id = $1", otp)
-    assert (
-        await _run(app_pool, ids["tenant"], "SELECT otp_id FROM crm.signature_request WHERE request_id = $1", request)
-        is None
-    )
+    async with app_pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, ids["tenant"], "member:test")
+        row = await conn.fetchrow(
+            "SELECT otp_id, code_delivery, evidence_record, evidence_sha256 FROM crm.signature_request "
+            "WHERE request_id = $1",
+            request,
+        )
+    assert row["otp_id"] is None
+    assert row["code_delivery"] == "mailbox"
+    assert hashlib.sha256(bytes(row["evidence_record"])).digest() == bytes(row["evidence_sha256"])
+    assert json.loads(bytes(row["evidence_record"]))["code_delivery"] == "mailbox"
 
 
 async def test_the_agreement_hash_is_the_databases(app_pool: asyncpg.Pool) -> None:
@@ -586,18 +607,20 @@ async def _all_rows(pool: asyncpg.Pool, ids: dict[str, Any]) -> None:
             otp,
         )
         await _otp(conn, ids, "companion")
+        record, digest = _evidence()
         await conn.execute(
             "INSERT INTO crm.signature_request (trip_id, traveler_id, access_id, doc_id, status, signed_at, "
-            "signed_name_enc, doc_sha256, evidence_sha256, otp_id) VALUES ($1, $2, $3, $4, 'signed', now(), $5, $6, "
-            "$7, $8)",
+            "signed_name_enc, doc_sha256, evidence_sha256, otp_id, evidence_record, code_delivery) "
+            "VALUES ($1, $2, $3, $4, 'signed', now(), $5, $6, $7, $8, $9, 'mailbox')",
             ids["trip"],
             ids["lead"],
             ids["access_lead"],
             ids["waiver"],
             _blob(),
             _hash(),
-            _hash(),
+            digest,
             otp,
+            record,
         )
         await conn.execute(
             "INSERT INTO crm.signature_request (trip_id, traveler_id, access_id, doc_id) VALUES ($1, $2, $3, $4)",
