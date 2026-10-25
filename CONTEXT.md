@@ -673,7 +673,9 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
   searches served tours; a retired tour's lines read "no longer offered".
 - **Web**: the Bookings tab (`components/ledger/LinesPanel.tsx`: AA status, retry note, warning, the listed asks) and
   "Add AA item" (`components/ledger/AaItemForm.tsx`), helpers `lib/aa.ts`, BFF lines card AA-947 in `lib/bff.ts`, EN
-  default with VI strings; the trip page passes `lost_reason_hint` to the Lost picker.
+  default with VI strings; the trip page passes `lost_reason_hint` to the Lost picker. Dev E2E:
+  `e2e/tests/aa-lines.spec.ts` (needs the AA-973 seed tour in `E2ECRMAATOUR`, a Booking partner row for the synthetic
+  agency and a per-person price hint on the seed plan; card E stays in the integration tests).
 
 ## F1 / F2 complete (AA-937, CRM-09)
 
