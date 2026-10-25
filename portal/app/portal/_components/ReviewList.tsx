@@ -1,52 +1,119 @@
 "use client";
-// portal/app/portal/_components/ReviewList.tsx — My Content (t10-review).
-// AA-669: migrated from an expand-card list to the shared UI-kit DataTable + react-query.
-//   - columns: title, channel, goal, status, created, actions
-//   - filters: channel, status, goal, search; sort any column; saved views; CSV export
-//   - bulk actions: export selected (text), publish selected (eligible pieces)
+// portal/app/portal/_components/ReviewList.tsx — My Content (/portal/content, was t10-review).
+// AA-669: the shared UI-kit DataTable over GET /v1/content-writing/reviews (react-query).
+//   - columns: title, channel, place / topic, goal, angle, status (published / ready / writing / not ready),
+//     words, created, published at, actions (view in the drawer, export HTML / fragment / text, publish,
+//     write again)
+//   - filters: channel, status, goal, date range (created or published), place search, plus the table's own search
+//   - sort: any column; views: "All content", "Ready to publish", "Published this month" and the tenant's own saved
+//     views (filters + sort, localStorage through the kit's savedViews store)
+//   - bulk: export selected (blog as HTML, other channels as text), publish selected (blog pieces, WordPress
+//     connected only)
 //   - row click → ReviewDrawer (content with copy-lock, context, flags, inline edit, exports)
-// Constraints kept from AA-501/AA-519/AA-614: tenant-safe projection (no gate data), copy-lock,
-// ready_state semantics. Deep-link ?piece= still opens that piece's drawer.
+// The rules (status, words, title, place, filters, views, who may be published) live in lib/myContent.ts (unit
+// tested). Constraints kept from AA-501/AA-519/AA-614: tenant-safe projection (no gate data; a held piece is
+// "ready" and its publish is refused by the API without a reason), copy-lock (no content text in the table, only
+// its title and word count). Deep link ?piece= opens that piece's drawer; ?view= picks a built-in view.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
-import { Download, Send } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Download, ExternalLink, Eye, FileDown, RefreshCw, Save, Send, Trash2, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { T, sans } from "./ui";
 import { ServedBadge, plainError } from "./ServedBadge";
 import {
   Badge,
+  ConfirmModal,
   type ColumnDef,
   DataTable,
   Drawer,
   formatDate,
+  StatusBadge,
   ToastProvider,
+  deleteView,
+  listViews,
+  saveView,
+  useHydrated,
   useIsPhone,
   useToast,
 } from "@/app/_kit";
 import { ReviewDrawer } from "./ReviewDrawer";
+import { channelName } from "./channelLabels";
+import { useWordPressStatus } from "./WordPressConnect";
+import { useFacebookStatus } from "./FacebookConnect";
+import { usePortalShell } from "./PortalShellContext";
 import {
-  channelLabel,
   exportPiece,
   fetchReviews,
   publishPiece,
+  regeneratePiece,
   savePieceText,
   type ReviewItem,
 } from "./reviewListApi";
-import { WORK_STATUS_LABEL, WorkStatusBadge, activePollInterval, pieceWorkStatus } from "./workStatus";
+import { activePollInterval, pieceWorkStatus } from "./workStatus";
+import {
+  builtInViews,
+  bulkPublishPlan,
+  CONTENT_STATUS_LABEL,
+  contentStatus,
+  exportFormat,
+  hasFilters,
+  liveIsEarlierVersion,
+  matchesFilters,
+  NO_FILTERS,
+  pieceTitle,
+  placeTopic,
+  publishBlock,
+  regenerateBlock,
+  sanitizeView,
+  wordCount,
+  type ContentFilters,
+  type ContentStatus,
+  type ContentView,
+  type SortRule,
+} from "@/lib/myContent";
 
+const VIEWS_TABLE = "my-content-views";
+/** Kit Badge tone per status (writing uses the spinning StatusBadge instead). */
+const STATUS_TONE: Record<Exclude<ContentStatus, "writing">, "accent" | "success" | "danger"> = {
+  published: "accent",
+  ready: "success",
+  not_ready: "danger",
+};
+
+type Confirm =
+  | { kind: "publish"; rows: ReviewItem[]; skipped: number }
+  | { kind: "regenerate"; row: ReviewItem }
+  | null;
 
 function ReviewListInner() {
   const toast = useToast();
   const qc = useQueryClient();
   const searchParams = useSearchParams();
-  const focusPieceId = searchParams.get("piece");
+  const isPhone = useIsPhone();
+  const { tenantName } = usePortalShell();
+  const viewsUser = tenantName || "tenant";
 
-  const [channelFilter, setChannelFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [goalFilter, setGoalFilter] = useState("all");
+  const builtIns = useMemo(() => builtInViews(new Date()), []);
+  const initialView = builtIns.find((v) => v.id === searchParams.get("view")) ?? builtIns[0];
+  const [viewId, setViewId] = useState<string>(initialView.id);
+  const [filters, setFilters] = useState<ContentFilters>(initialView.filters);
+  const [sorting, setSorting] = useState<SortRule[]>(initialView.sorting);
+  // Bumped after a save / delete so the stored views are read again (no setState in an effect).
+  const [viewsRev, setViewsRev] = useState(0);
+  const hydrated = useHydrated();
   // Open drawer: initialise from ?piece= as a lazy value (client-only), no setState-in-effect.
-  const [openPieceId, setOpenPieceId] = useState<string | null>(() => focusPieceId);
+  const [openPieceId, setOpenPieceId] = useState<string | null>(() => searchParams.get("piece"));
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<Confirm>(null);
+
+  // The tenant's own views (localStorage via the kit store, client only; a malformed entry is sanitized).
+  const userViews = useMemo<ContentView[]>(
+    () => (hydrated ? readUserViews(viewsUser) : []),
+    // viewsRev: re-read after a save / delete.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [hydrated, viewsUser, viewsRev],
+  );
 
   const { data: items = [], isLoading, isError, error, refetch } = useQuery({
     queryKey: ["content-reviews"],
@@ -57,6 +124,12 @@ function ReviewListInner() {
       return activePollInterval(rows.map(pieceWorkStatus));
     },
   });
+  const wp = useWordPressStatus();
+  const fb = useFacebookStatus();
+  const connections = useMemo(
+    () => ({ wordpress: !!wp.status?.connected, facebook: !!fb.status?.connected }),
+    [wp.status, fb.status],
+  );
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["content-reviews"] });
 
@@ -69,30 +142,49 @@ function ReviewListInner() {
     onError: () => toast.error("Couldn't save — try again."),
   });
 
-  const channels = useMemo(() => [...new Set(items.map((i) => i.channel))], [items]);
-  const isPhone = useIsPhone();
-  const sel: React.CSSProperties = isPhone ? { ...selectStyle, flex: "1 1 140px", minWidth: 0 } : selectStyle;
+  const channels = useMemo(() => [...new Set(items.map((i) => i.channel))].sort(), [items]);
   const goals = useMemo(
-    () => [...new Set(items.map((i) => i.goal?.label).filter(Boolean))] as string[],
+    () => ([...new Set(items.map((i) => i.goal?.label).filter(Boolean))] as string[]).sort(),
     [items],
   );
-
-  const visible = useMemo(
-    () =>
-      items.filter((it) => {
-        const mc = channelFilter === "all" || it.channel === channelFilter;
-        const ms = statusFilter === "all" || it.ready_state === statusFilter;
-        const mg = goalFilter === "all" || (it.goal?.label ?? "") === goalFilter;
-        return mc && ms && mg;
-      }),
-    [items, channelFilter, statusFilter, goalFilter],
-  );
-
+  const visible = useMemo(() => items.filter((it) => matchesFilters(it, filters)), [items, filters]);
   const openItem = useMemo(
     () => (openPieceId ? items.find((i) => i.piece_id === openPieceId) ?? null : null),
     [items, openPieceId],
   );
 
+  // ── views ──
+  const allViews = [...builtIns, ...userViews];
+  function applyView(id: string) {
+    const v = allViews.find((x) => x.id === id);
+    if (!v) return;
+    setViewId(v.id);
+    setFilters(v.filters);
+    setSorting(v.sorting);
+  }
+  function changeFilters(next: Partial<ContentFilters>) {
+    setFilters((f) => ({ ...f, ...next }));
+    setViewId("");
+  }
+  function saveCurrentView() {
+    const name = typeof window !== "undefined" ? window.prompt("Save this view as:")?.trim() : "";
+    if (!name) return;
+    saveView(VIEWS_TABLE, viewsUser, name.slice(0, 60), { filters, sorting });
+    setViewsRev((n) => n + 1);
+    setViewId(`user:${name.slice(0, 60).toLowerCase().replace(/\s+/g, "-")}`);
+    toast.success(`View "${name}" saved`);
+  }
+  function deleteCurrentView() {
+    if (!viewId.startsWith("user:")) return;
+    deleteView(VIEWS_TABLE, viewsUser, viewId.slice(5));
+    setViewsRev((n) => n + 1);
+    const all = builtIns[0];
+    setViewId(all.id);
+    setFilters(all.filters);
+    setSorting(all.sorting);
+  }
+
+  // ── actions ──
   async function onExport(item: ReviewItem, format: "text" | "html", mode?: "document" | "fragment") {
     try {
       await exportPiece(item, format, mode);
@@ -102,56 +194,78 @@ function ReviewListInner() {
   }
 
   async function bulkExport(rows: ReviewItem[]) {
-    const exportable = rows.filter((r) => r.content_text !== null);
+    const exportable = rows.filter((r) => exportFormat(r) !== null);
     if (exportable.length === 0) {
-      toast.info("No exportable pieces selected.");
+      toast.info("Nothing to export yet in the selection.");
       return;
     }
     for (const r of exportable) {
-      await onExport(r, "text");
+      await onExport(r, exportFormat(r) ?? "text");
     }
-    toast.success(`Exported ${exportable.length} piece(s)`);
+    toast.success(`Exported ${exportable.length} piece${exportable.length === 1 ? "" : "s"}`);
   }
 
-  async function bulkPublish(rows: ReviewItem[]) {
-    const eligible = rows.filter((r) => r.ready_state === "ready");
-    if (eligible.length === 0) {
-      toast.info("Only ready pieces can be published — none selected.");
+  function askBulkPublish(rows: ReviewItem[]) {
+    if (!connections.wordpress) {
+      toast.info("Connect WordPress to publish blog posts from here (Account › Integrations).");
       return;
     }
-    let ok = 0;
-    const failures: string[] = [];
-    for (const r of eligible) {
-      try {
-        await publishPiece(r.piece_id);
-        ok += 1;
-      } catch (e) {
-        failures.push(`${r.angle?.name || r.channel}: ${plainError(e, "failed")}`);
-      }
+    const plan = bulkPublishPlan(rows, connections);
+    if (plan.eligible.length === 0) {
+      toast.info("Only ready blog posts that are not published yet can be published together.");
+      return;
     }
-    invalidate();
-    if (ok > 0) toast.success(`Published ${ok} piece(s)`);
-    if (failures.length > 0) toast.error(`${failures.length} could not publish`);
+    setConfirm({ kind: "publish", rows: plan.eligible as ReviewItem[], skipped: plan.skipped });
   }
+
+  const publishM = useMutation({
+    mutationFn: async (rows: ReviewItem[]) => {
+      let ok = 0;
+      const failures: string[] = [];
+      for (const r of rows) {
+        try {
+          await publishPiece(r.piece_id);
+          ok += 1;
+        } catch (e) {
+          failures.push(`${pieceTitle(r)}: ${plainError(e, "failed")}`);
+        }
+      }
+      return { ok, failures };
+    },
+    onSuccess: ({ ok, failures }) => {
+      invalidate();
+      qc.invalidateQueries({ queryKey: ["publish-log"] });
+      if (ok > 0) toast.success(`Published ${ok} piece${ok === 1 ? "" : "s"}`);
+      if (failures.length === 1) toast.error(failures[0]);
+      else if (failures.length > 1) toast.error(`${failures.length} could not publish — ${failures[0]}`);
+      setConfirm(null);
+    },
+  });
+
+  const regenerateM = useMutation({
+    mutationFn: (row: ReviewItem) => regeneratePiece(row.request_id),
+    onSuccess: () => {
+      toast.success("Writing a new version — it shows here as Writing, then Ready.");
+      invalidate();
+      setConfirm(null);
+    },
+    onError: (e) => {
+      toast.error(plainError(e, "Could not start the rewrite."));
+      setConfirm(null);
+    },
+  });
 
   const columns = useMemo<ColumnDef<ReviewItem, unknown>[]>(
     () => [
       {
         id: "title",
-        accessorFn: (r) => r.angle?.name || "Untitled",
+        accessorFn: (r) => pieceTitle(r),
         header: "Title",
         cell: (c) => {
           const it = c.row.original;
           return (
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontWeight: 600, color: T.ink, display: "flex", alignItems: "center", gap: 6 }}>
-                {it.angle?.name || "Untitled"}
-              </div>
-              {it.tour && (
-                <div style={{ fontSize: 11.5, color: T.muted2 }}>
-                  {tourLine(it.tour)}
-                </div>
-              )}
+            <div style={{ minWidth: 0, maxWidth: 320 }}>
+              <div style={{ fontWeight: 600, color: T.ink, overflowWrap: "anywhere" }}>{pieceTitle(it)}</div>
               {/* AA-986 L3: persistent badge when AA no longer serves (or has paused) the tour */}
               {it.served_notice && <div style={{ marginTop: 4 }}><ServedBadge fields={it} /></div>}
             </div>
@@ -159,26 +273,67 @@ function ReviewListInner() {
         },
       },
       {
-        accessorKey: "channel",
+        id: "channel",
+        accessorFn: (r) => channelName(r.channel),
         header: "Channel",
-        cell: (c) => <Badge tone="neutral">{channelLabel(c.row.original.channel)}</Badge>,
+        cell: (c) => <Badge tone="neutral">{channelName(c.row.original.channel)}</Badge>,
+      },
+      {
+        id: "place",
+        accessorFn: (r) => placeTopic(r) ?? "",
+        header: "Place / topic",
+        cell: (c) => (
+          <span style={{ color: T.body, fontSize: 12.5 }}>{placeTopic(c.row.original) ?? "—"}</span>
+        ),
       },
       {
         id: "goal",
-        accessorFn: (r) => r.goal?.label ?? "—",
+        accessorFn: (r) => r.goal?.label ?? "",
         header: "Goal",
-        // AA-760 — one line: "Trust-building" broke at the hyphen, "Introduction / Awareness" wrapped.
+        // AA-760 — one line: "Trust-building" broke at the hyphen.
         cell: (c) => <span style={{ color: T.body, whiteSpace: "nowrap" }}>{c.row.original.goal?.label ?? "—"}</span>,
       },
       {
+        id: "angle",
+        accessorFn: (r) => r.angle?.name ?? "",
+        header: "Angle",
+        cell: (c) => {
+          const a = c.row.original.angle;
+          if (!a) return <span style={{ color: T.muted2 }}>—</span>;
+          return (
+            <div style={{ minWidth: 0, maxWidth: 220 }}>
+              <div style={{ color: T.body, fontSize: 12.5 }}>{a.name}</div>
+              {a.formula_fit && <div style={{ color: T.muted2, fontSize: 11 }}>{a.formula_fit}</div>}
+            </div>
+          );
+        },
+      },
+      {
         id: "status",
-        accessorFn: (r) => r.ready_state,
+        accessorFn: (r) => CONTENT_STATUS_LABEL[contentStatus(r)],
         header: "Status",
-        cell: (c) => <WorkStatusBadge status={pieceWorkStatus(c.row.original)} />,
+        cell: (c) => {
+          const s = contentStatus(c.row.original);
+          // "writing" spins (StatusBadge running); the others are plain tones: published = gold, ready = green.
+          return s === "writing"
+            ? <StatusBadge status="running" label={CONTENT_STATUS_LABEL[s]} />
+            : <Badge tone={STATUS_TONE[s]} dot>{CONTENT_STATUS_LABEL[s]}</Badge>;
+        },
+      },
+      {
+        id: "words",
+        accessorFn: (r) => wordCount(r.content_text) ?? undefined,
+        header: "Words",
+        sortUndefined: "last",
+        meta: { align: "right" },
+        cell: (c) => {
+          const n = wordCount(c.row.original.content_text);
+          return <span style={{ color: T.muted, fontSize: 12 }}>{n == null ? "—" : n.toLocaleString("en")}</span>;
+        },
       },
       {
         id: "created",
-        accessorFn: (r) => (r.created_at ? new Date(r.created_at).getTime() : 0),
+        accessorFn: (r) => r.created_at ?? "",
         header: "Created",
         cell: (c) => (
           <span style={{ color: T.muted, fontSize: 12, whiteSpace: "nowrap" }}>
@@ -186,9 +341,55 @@ function ReviewListInner() {
           </span>
         ),
       },
+      {
+        id: "published",
+        accessorFn: (r) => r.published_at ?? "",
+        header: "Published",
+        cell: (c) => {
+          const it = c.row.original;
+          if (!it.published_at) return <span style={{ color: T.muted2 }}>—</span>;
+          return (
+            <span style={{ color: T.muted, fontSize: 12, whiteSpace: "nowrap", display: "inline-flex", gap: 4, alignItems: "center" }}>
+              {formatDate(it.published_at)}
+              {it.published_url && (
+                <a href={it.published_url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
+                   aria-label="Open the published post"
+                   title={liveIsEarlierVersion(it) ? "Open the published post (it shows an earlier version of this text)" : "Open the published post"}
+                   style={{ color: T.gold, display: "inline-flex" }}>
+                  <ExternalLink size={12} />
+                </a>
+              )}
+            </span>
+          );
+        },
+      },
+      {
+        id: "actions",
+        header: "",
+        enableSorting: false,
+        enableHiding: false,
+        meta: { hideLabelOnCard: true },
+        cell: (c) => (
+          <RowActions
+            item={c.row.original}
+            menuOpen={menuFor === c.row.original.piece_id}
+            onMenu={(open) => setMenuFor(open ? c.row.original.piece_id : null)}
+            publishReason={publishBlock(c.row.original, connections)}
+            onView={() => setOpenPieceId(c.row.original.piece_id)}
+            onExport={(format, mode) => { setMenuFor(null); void onExport(c.row.original, format, mode); }}
+            onPublish={() => setConfirm({ kind: "publish", rows: [c.row.original], skipped: 0 })}
+            onRegenerate={() => setConfirm({ kind: "regenerate", row: c.row.original })}
+          />
+        ),
+      },
     ],
-    [],
+    // onExport is stable in behaviour (reads nothing from render state but the toast).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [menuFor, connections],
   );
+
+  const sel: React.CSSProperties = isPhone ? { ...selectStyle, flex: "1 1 140px", minWidth: 0 } : selectStyle;
+  const filtered = hasFilters(filters);
 
   return (
     <>
@@ -201,39 +402,80 @@ function ReviewListInner() {
         error={isError ? (error instanceof Error ? error.message : "Could not load your content") : null}
         onRetry={() => refetch()}
         searchable
-        searchPlaceholder="Search title, tour…"
+        searchPlaceholder="Search title, angle, place…"
         enableSelection
-        enableSavedViews
         enableCsv
         csvFilename="my-content"
         pageSize={25}
-        emptyTitle="Nothing written yet"
-        emptyDescription="Once you've written content from Social Posts or Articles, it'll show up here to review before publishing."
+        tableMinWidth={1180}
+        sorting={sorting}
+        onSortingChange={(next) => { setSorting(next); setViewId(""); }}
+        emptyTitle={filtered ? "Nothing matches these filters" : "Nothing written yet"}
+        emptyDescription={
+          filtered
+            ? "Clear the filters or pick another view."
+            : "Once you've written content from Social Posts or Articles, it'll show up here to review before publishing."
+        }
+        emptyAction={filtered ? (
+          <button style={linkBtn} onClick={() => applyView("all")}>Show all content</button>
+        ) : undefined}
         onRowClick={(r) => setOpenPieceId(r.piece_id)}
         toolbarExtra={
-          // AA-836 — the three selects wrap inside their own row on a phone (they overflowed 390px).
-          // AA-760 — on a phone the selects share the row evenly (flex 1 1 140px) instead of leaving
-          // "All goals" alone on a ragged second line.
+          // AA-836 / AA-760 — the controls wrap inside their own row on a phone and share it evenly.
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", maxWidth: "100%", minWidth: 0, ...(isPhone ? { flex: "1 1 100%" } : {}) }}>
-            <select value={channelFilter} onChange={(e) => setChannelFilter(e.target.value)} style={sel}>
-              <option value="all">All channels</option>
-              {channels.map((c) => (
-                <option key={c} value={c}>{channelLabel(c)}</option>
-              ))}
+            <select value={viewId} onChange={(e) => applyView(e.target.value)} style={{ ...sel, fontWeight: 600 }} aria-label="View" data-testid="my-content-view">
+              {viewId === "" && <option value="">Custom view</option>}
+              {builtIns.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+              {userViews.length > 0 && (
+                <optgroup label="Your views">
+                  {userViews.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                </optgroup>
+              )}
             </select>
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={sel}>
+            <button style={iconBtn} onClick={saveCurrentView} title="Save these filters and sort as a view" aria-label="Save view">
+              <Save size={13} />
+            </button>
+            {viewId.startsWith("user:") && (
+              <button style={iconBtn} onClick={deleteCurrentView} title="Delete this saved view" aria-label="Delete view">
+                <Trash2 size={13} />
+              </button>
+            )}
+            <select value={filters.channel} onChange={(e) => changeFilters({ channel: e.target.value })} style={sel} aria-label="Channel">
+              <option value="all">All channels</option>
+              {channels.map((c) => <option key={c} value={c}>{channelName(c)}</option>)}
+            </select>
+            <select value={filters.status} onChange={(e) => changeFilters({ status: e.target.value as ContentFilters["status"] })} style={sel} aria-label="Status">
               <option value="all">All statuses</option>
-              <option value="ready">Ready</option>
-              <option value="in_progress">{WORK_STATUS_LABEL.writing}</option>
-              <option value="not_ready">{WORK_STATUS_LABEL.failed}</option>
+              {(Object.keys(CONTENT_STATUS_LABEL) as ContentStatus[]).map((s) => (
+                <option key={s} value={s}>{CONTENT_STATUS_LABEL[s]}</option>
+              ))}
             </select>
             {/* AA-760 — always there (disabled until goals exist) so the toolbar does not shift on load. */}
-            <select value={goalFilter} onChange={(e) => setGoalFilter(e.target.value)} style={sel} disabled={goals.length === 0} aria-label="Goal">
+            <select value={filters.goal} onChange={(e) => changeFilters({ goal: e.target.value })} style={sel} disabled={goals.length === 0} aria-label="Goal">
               <option value="all">All goals</option>
-              {goals.map((g) => (
-                <option key={g} value={g}>{g}</option>
-              ))}
+              {goals.map((g) => <option key={g} value={g}>{g}</option>)}
             </select>
+            <input
+              value={filters.place}
+              onChange={(e) => changeFilters({ place: e.target.value.slice(0, 100) })}
+              placeholder="Place or topic"
+              aria-label="Place or topic"
+              style={{ ...sel, cursor: "text", width: isPhone ? undefined : 150 }}
+            />
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 4, flexWrap: "wrap", ...(isPhone ? { flex: "1 1 100%" } : {}) }}>
+              <select value={filters.dateField} onChange={(e) => changeFilters({ dateField: e.target.value as ContentFilters["dateField"] })} style={sel} aria-label="Date">
+                <option value="created">Created</option>
+                <option value="published">Published</option>
+              </select>
+              <input type="date" value={filters.from} max={filters.to || undefined} onChange={(e) => changeFilters({ from: e.target.value })} style={{ ...sel, cursor: "text" }} aria-label="From" />
+              <span style={{ color: T.muted2, fontSize: 12 }}>to</span>
+              <input type="date" value={filters.to} min={filters.from || undefined} onChange={(e) => changeFilters({ to: e.target.value })} style={{ ...sel, cursor: "text" }} aria-label="To" />
+            </div>
+            {filtered && (
+              <button style={linkBtn} onClick={() => { setFilters(NO_FILTERS); setViewId(""); }}>
+                <X size={12} /> Clear filters
+              </button>
+            )}
           </div>
         }
         bulkActions={({ selectedRows, clearSelection }) => (
@@ -241,7 +483,11 @@ function ReviewListInner() {
             <button style={bulkBtn} onClick={() => bulkExport(selectedRows)}>
               <Download size={13} /> Export selected
             </button>
-            <button style={bulkBtn} onClick={() => { bulkPublish(selectedRows); clearSelection(); }}>
+            <button
+              style={bulkBtn}
+              onClick={() => { askBulkPublish(selectedRows); clearSelection(); }}
+              title={connections.wordpress ? "Publish the selected blog posts to WordPress" : "Connect WordPress to publish"}
+            >
               <Send size={13} /> Publish selected
             </button>
           </>
@@ -255,8 +501,8 @@ function ReviewListInner() {
         title={
           openItem ? (
             <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-              {openItem.angle?.name || "Untitled"}
-              <Badge tone="neutral">{channelLabel(openItem.channel)}</Badge>
+              {pieceTitle(openItem)}
+              <Badge tone="neutral">{channelName(openItem.channel)}</Badge>
             </span>
           ) : (
             ""
@@ -275,18 +521,111 @@ function ReviewListInner() {
         )}
       </Drawer>
 
+      <ConfirmModal
+        open={confirm?.kind === "publish"}
+        onClose={() => !publishM.isPending && setConfirm(null)}
+        onConfirm={() => confirm?.kind === "publish" && publishM.mutate(confirm.rows)}
+        busy={publishM.isPending}
+        title={confirm?.kind === "publish" && confirm.rows.length > 1 ? `Publish ${confirm.rows.length} posts?` : "Publish this piece?"}
+        confirmLabel={publishM.isPending ? "Publishing…" : "Publish"}
+        body={confirm?.kind === "publish" ? (
+          <div style={{ fontSize: 13, color: T.body, lineHeight: 1.55 }}>
+            {confirm.rows.length === 1
+              ? <>&ldquo;{pieceTitle(confirm.rows[0])}&rdquo; goes live on your {confirm.rows[0].channel === "blog" ? "WordPress site" : "Facebook Page"}.</>
+              : <>These {confirm.rows.length} blog posts go live on your WordPress site, one after the other.</>}
+            {confirm.skipped > 0 && (
+              <div style={{ marginTop: 8, color: T.muted }}>
+                {confirm.skipped} other selected piece{confirm.skipped === 1 ? " is" : "s are"} left out: only ready blog posts
+                that are not published yet go out together. Publish other channels one by one, or export them.
+              </div>
+            )}
+          </div>
+        ) : null}
+      />
+
+      <ConfirmModal
+        open={confirm?.kind === "regenerate"}
+        onClose={() => !regenerateM.isPending && setConfirm(null)}
+        onConfirm={() => confirm?.kind === "regenerate" && regenerateM.mutate(confirm.row)}
+        busy={regenerateM.isPending}
+        title="Write this piece again?"
+        confirmLabel={regenerateM.isPending ? "Starting…" : "Write again"}
+        body={confirm?.kind === "regenerate" ? (
+          <div style={{ fontSize: 13, color: T.body, lineHeight: 1.55 }}>
+            A new version of &ldquo;{pieceTitle(confirm.row)}&rdquo; is written with the same angle and call to action. It
+            replaces this one in My Content; your edits to this version are not carried over.
+          </div>
+        ) : null}
+      />
+
       {/* StatusBadge "running" uses animation: spin */}
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </>
   );
 }
 
-/** "Tour name · Country", without the country when the name already starts with it
- *  ("Mongolia: Khövsgöl Lake …" was followed by "· Mongolia"). */
-function tourLine(t: { name: string; destination?: string | null }): string {
-  const dest = (t.destination ?? "").trim();
-  if (!dest || t.name.toLowerCase().startsWith(dest.toLowerCase())) return t.name;
-  return `${t.name} · ${dest}`;
+function readUserViews(user: string): ContentView[] {
+  return listViews<unknown>(VIEWS_TABLE, user).map((v) => ({
+    id: `user:${v.id}`, name: v.name, builtIn: false, ...sanitizeView(v.state),
+  }));
+}
+
+/** One row's actions. Every control stops the click so the row does not also open the drawer. */
+function RowActions({
+  item, menuOpen, onMenu, publishReason, onView, onExport, onPublish, onRegenerate,
+}: {
+  item: ReviewItem;
+  menuOpen: boolean;
+  onMenu: (open: boolean) => void;
+  publishReason: string | null;
+  onView: () => void;
+  onExport: (format: "text" | "html", mode?: "document" | "fragment") => void;
+  onPublish: () => void;
+  onRegenerate: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onMenu(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [menuOpen, onMenu]);
+  const canExport = exportFormat(item) !== null;
+  const stop = (fn: () => void) => (e: React.MouseEvent) => { e.stopPropagation(); fn(); };
+  const status = contentStatus(item);
+  const regenReason = regenerateBlock(item);
+  return (
+    <div ref={ref} style={{ display: "inline-flex", gap: 4, alignItems: "center", position: "relative" }} onClick={(e) => e.stopPropagation()}>
+      <button style={iconBtn} onClick={stop(onView)} title="View" aria-label="View"><Eye size={13} /></button>
+      <button style={{ ...iconBtn, opacity: canExport ? 1 : 0.4 }} disabled={!canExport} onClick={stop(() => onMenu(!menuOpen))}
+              title={canExport ? "Export" : "Nothing to export yet"} aria-label="Export" aria-haspopup="menu" aria-expanded={menuOpen}>
+        <FileDown size={13} />
+      </button>
+      {status !== "published" && (
+        <button style={{ ...iconBtn, opacity: publishReason ? 0.4 : 1 }} disabled={!!publishReason} onClick={stop(onPublish)}
+                title={publishReason ?? "Publish"} aria-label="Publish">
+          <Send size={13} />
+        </button>
+      )}
+      <button style={{ ...iconBtn, opacity: regenReason ? 0.4 : 1 }} disabled={!!regenReason} onClick={stop(onRegenerate)}
+              title={regenReason ?? "Write again"} aria-label="Write again">
+        <RefreshCw size={13} />
+      </button>
+      {menuOpen && canExport && (
+        <div role="menu" style={menuStyle}>
+          {item.channel === "blog" && (
+            <>
+              <button role="menuitem" style={menuItem} onClick={stop(() => onExport("html", "document"))}>HTML page</button>
+              <button role="menuitem" style={menuItem} onClick={stop(() => onExport("html", "fragment"))}>HTML fragment (paste into a CMS)</button>
+            </>
+          )}
+          <button role="menuitem" style={menuItem} onClick={stop(() => onExport("text"))}>Plain text</button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 const selectStyle: React.CSSProperties = {
@@ -301,6 +640,62 @@ const selectStyle: React.CSSProperties = {
   fontFamily: sans,
   cursor: "pointer",
   outline: "none",
+  boxSizing: "border-box",
+};
+
+const iconBtn: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 30,
+  height: 30,
+  borderRadius: 8,
+  border: `1px solid ${T.line}`,
+  background: T.card,
+  color: T.body,
+  cursor: "pointer",
+  padding: 0,
+};
+
+const linkBtn: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+  background: "none",
+  border: "none",
+  color: T.gold,
+  fontSize: 12.5,
+  fontWeight: 600,
+  cursor: "pointer",
+  fontFamily: sans,
+  padding: "4px 2px",
+};
+
+const menuStyle: React.CSSProperties = {
+  position: "absolute",
+  top: 34,
+  right: 0,
+  zIndex: 20,
+  minWidth: 220,
+  background: T.card,
+  border: `1px solid ${T.line}`,
+  borderRadius: 10,
+  boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+  padding: 4,
+  display: "flex",
+  flexDirection: "column",
+};
+
+const menuItem: React.CSSProperties = {
+  textAlign: "left",
+  background: "none",
+  border: "none",
+  padding: "8px 10px",
+  borderRadius: 6,
+  color: T.body,
+  fontSize: 12.5,
+  cursor: "pointer",
+  fontFamily: sans,
 };
 
 const bulkBtn: React.CSSProperties = {

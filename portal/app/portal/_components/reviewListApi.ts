@@ -44,6 +44,12 @@ export interface ReviewItem extends ServedFields {
   created_at: string | null;
   route_hub_name: string | null;
   route_segment_count: number | null;
+  /** AA-669 — the request's live post (CIS joins the newest 'published' publish_log row of any piece of the
+   *  request). Optional: absent from a CIS build before AA-669, read as "not published". */
+  published_at?: string | null;
+  published_url?: string | null;
+  /** The piece whose post is live (differs from piece_id when the post shows an earlier version). */
+  published_piece_id?: string | null;
 }
 
 export function fetchReviews(): Promise<ReviewItem[]> {
@@ -118,6 +124,26 @@ export async function exportPiece(
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+/**
+ * AA-669 — write the piece again (same request, same angle): POST .../requests/{id}/write, 202. The new piece
+ * becomes the request's latest (the list shows it as Writing, then Ready); the old one stays in history. Not
+ * offered on a published row (lib/myContent.ts regenerateBlock): the tenant unpublishes the live post first. No CTA is sent: the request's (or the brand's) CTA is
+ * used, as for the first write. 409 = busy / tour closed, 422 = no CTA anywhere (write it from Create instead).
+ */
+export async function regeneratePiece(requestId: string): Promise<{ piece_id: string }> {
+  const r = await fetch(`/api/tenant/v1/content-writing/requests/${requestId}/write`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    if (r.status === 422) throw new Error("Add a call to action first: open it from Create and write it there.");
+    throw new Error(typeof e.detail === "string" ? e.detail : `Could not start the rewrite (${r.status})`);
+  }
+  return r.json();
 }
 
 export function channelLabel(channel: string): string {
