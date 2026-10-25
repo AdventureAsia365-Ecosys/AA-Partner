@@ -56,6 +56,8 @@ PLATFORM_TABLES = {
     "audit_export_tenant": "audit export registry, one row per agency, ids and times only (crm-007, AA-940)",
     "membership_feed_state": "the CIS membership feed cursor, one platform row, no tenant column (crm-013, AA-978)",
     "fx_rate_platform": "reference FX rates per day, no tenant column, no PII (crm-014, AA-944)",
+    "aa_catalog_tour": "published AA tour content cached from CIS catalog.http.v1, no tenant column (crm-017, AA-947)",
+    "aa_catalog_state": "the catalog sync's one platform row, no tenant column (crm-017, AA-947)",
 }
 # Append-only tenant tables (crm-003): tenant column, RLS and policy as the template, but no updated_at, no trash
 # columns; instead the append-only trigger, and crm_app may only INSERT and SELECT.
@@ -70,6 +72,7 @@ APPEND_ONLY_TABLES = {
     "booking_line_money": "money of a booking line, a frozen FX block, corrections supersede (crm-014, AA-944)",
     "fx_rate_override": "the owner's FX rate of a day, the latest row wins (crm-014, AA-944)",
     "payment": "a payment the agency marked received against a schedule row (crm-016, AA-946)",
+    "inbox_events": "one row per consumed Booking feed event, ids and codes only (crm-017, AA-947)",
 }
 # AA-942 (crm-010): append-only tables that erasure must reach. Their trigger is crm.erasable_append_only(): UPDATE and
 # TRUNCATE always refused, DELETE only as crm_owner inside crm.erase_subject / crm.lifecycle_purge_expired. Every other
@@ -84,6 +87,8 @@ OWN_APPEND_ONLY_TRIGGER = {
     "fx_rate_override": "ledger_append_only",
     # AA-946 (crm-016): the manual payments, the same ledger rule.
     "payment": "ledger_append_only",
+    # AA-947 (crm-017): the Booking feed inbox, erased with its agency.
+    "inbox_events": "ledger_append_only",
 }
 APPEND_ONLY_COLUMNS = {
     "tenant_id": ("uuid", True),
