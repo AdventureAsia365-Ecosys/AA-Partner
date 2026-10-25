@@ -63,6 +63,11 @@ def base_conn(status: str | None = "active") -> ScriptedConn:
                 "created_at": NOW,
                 "has_owner": False,
                 "holds_travellers": False,
+                "lock_source": "cis_membership" if status == "locked" else None,
+                "feed_failures": 0,
+                "feed_last_ok_at": NOW,
+                "feed_last_error_at": None,
+                "read_at": NOW,
             },
         ),  # fmt: skip
         (

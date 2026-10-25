@@ -133,8 +133,10 @@ def boundary_offenders(sources: dict[str, str]) -> list[str]:
 
 def test_the_public_router_is_found() -> None:
     # AA-939: the invitation claim route is public too (no token: the person has no account yet).
-    assert public_router_modules(_sources()) == ["app.routers.invitations", "app.routers.public"]
-    assert live_public_router_modules() == {"app.routers.invitations", "app.routers.public"}
+    # AA-946: the proposal page and the traveller portal (app.routers.client_pages).
+    found = ["app.routers.client_pages", "app.routers.invitations", "app.routers.public"]
+    assert public_router_modules(_sources()) == found
+    assert live_public_router_modules() == set(found)
 
 
 def test_a_class_router_with_a_client_route_class_is_a_root(monkeypatch) -> None:  # noqa: ANN001
@@ -159,8 +161,12 @@ def test_no_public_route_reaches_the_generic_reveal() -> None:
 def test_r_a_public_route_importing_reveal_fails() -> None:
     sources = _sources()
     sources["app.routers.public"] += "\nfrom app.travellers.reveal import reveal  # a reviewer must never see this\n"
+    line = "app.routers.public:" + str(sources["app.routers.public"].count("\n")) + " imports reveal"
+    # AA-946: app.routers.client_pages imports helpers of app.routers.public, so it is reached the same way.
     assert boundary_offenders(sources) == [
-        "app.routers.public: app.routers.public:" + str(sources["app.routers.public"].count("\n")) + " imports reveal",
+        f"app.routers.client_pages: {line}",
+        "app.routers.client_pages: reaches app.travellers.reveal",
+        f"app.routers.public: {line}",
         "app.routers.public: reaches app.travellers.reveal",
     ]
 
@@ -168,7 +174,10 @@ def test_r_a_public_route_importing_reveal_fails() -> None:
 def test_r_reaching_reveal_through_a_helper_fails_too() -> None:
     sources = _sources()
     sources["app.intake.public"] += "\nimport app.travellers.reveal\n"
-    assert boundary_offenders(sources) == ["app.routers.public: reaches app.travellers.reveal"]
+    assert boundary_offenders(sources) == [
+        "app.routers.client_pages: reaches app.travellers.reveal",
+        "app.routers.public: reaches app.travellers.reveal",
+    ]
     sources = _sources()
     sources["app.routers.client_portal"] = (
         "from fastapi import APIRouter\n"

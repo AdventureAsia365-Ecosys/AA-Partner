@@ -114,6 +114,14 @@ CIS membership feed (AA-978, ``app.cis``):
   Either empty = the job logs ``not_configured`` and does nothing. A value that is not that JSON refuses to start
   (the value is never echoed).
 
+AA supply (AA-947, card CRM-19; ``app.booking``, ``app.catalog``):
+
+- ``BOOKING_API_URL``: the origin of the Booking public API (``https://api-booking.…``, no path; Terraform
+  ``var.crm_booking_api_url``). The CRM calls ``<BOOKING_API_URL>/booking/b2b/v1/...`` with the same ``M2M_CLIENT``
+  (one scope per call: ``booking.b2b/read``, ``/quote``, ``/hold``, ``/book``). Empty = ``crm_booking_sync`` logs
+  ``not_configured``, AA requests stay "AA pending" and the product look-up answers 503 ``booking_not_configured``.
+- The catalog cache (``crm_catalog_sync``) reads ``<CIS_API_URL>/catalog/v1`` with scope ``cis.catalog/read``.
+
 Mail (AA-945, card CRM-17; ``app.mail``; AA-CIS-Infra ``crm_mail.tf``):
 
 - ``CRM_INGEST_BUCKET``: the ``aa-crm-<env>-ingest-*`` bucket the forward-in receipt rule writes ``raw/`` to (and the
@@ -125,6 +133,12 @@ Mail (AA-945, card CRM-17; ``app.mail``; AA-CIS-Infra ``crm_mail.tf``):
 - ``MAIL_OAUTH`` (Secrets Manager ``crm/<env>/mail-oauth``, JSON ``google_client_id``, ``google_client_secret``,
   ``ms_client_id``, ``ms_client_secret``): AA's own OAuth clients for the agencies' Gmail / Microsoft 365 send-as.
   Without a provider's pair its connect answers 503 ``mail_oauth_not_configured``; SMTP needs none.
+
+Traveller portal (AA-946, card CRM-18; ``app.portal``):
+
+- ``PORTAL_OTP_DEV_ECHO``: ``true`` returns the portal sign-in / signing code in the API answer (``dev_code``) instead
+  of only mailing it through the agency's mailbox, so the synthetic Dev agencies (no mailbox) can sign in. Default
+  ``false``; refused at start-up unless ``ENVIRONMENT`` is ``dev``, ``test`` or ``local``.
 """
 
 from __future__ import annotations
@@ -220,12 +234,14 @@ class Settings:
     lifecycle_dry_run: bool = True
     fx_provider: str = "synthetic"
     cis_api_url: str = ""
+    booking_api_url: str = ""
     m2m_client: str = field(default="", repr=False)
     crm_ingest_bucket: str = ""
     crm_ingest_domain: str = ""
     mail_oauth_redirect_base: str = ""
     # (key, value) pairs of MAIL_OAUTH (a tuple keeps Settings hashable); read through mail_oauth_client().
     mail_oauth: tuple[tuple[str, str], ...] = field(default=(), repr=False)
+    portal_otp_dev_echo: bool = False
 
     def __post_init__(self) -> None:
         if self.environment not in {"dev", "stg", "prod"} | INSECURE_ENVIRONMENTS:
@@ -261,6 +277,8 @@ class Settings:
             raise SettingsError("the WORKFORCE client ids (cis-admin, breakglass, crm-staff) must differ")
         if self.cognito_cis_portal_client_id and self.environment not in PORTAL_BRIDGE_ENVIRONMENTS:
             raise SettingsError("COGNITO_CIS_PORTAL_CLIENT_ID is a Dev-only bridge (ADR 0006b decision 6)")
+        if self.portal_otp_dev_echo and self.environment not in PORTAL_BRIDGE_ENVIRONMENTS:
+            raise SettingsError("PORTAL_OTP_DEV_ECHO is a Dev-only aid (AA-946): never on stg or prod")
         if self.rate_limit_public_per_minute < 0:
             raise SettingsError("RATE_LIMIT_PUBLIC_PER_MINUTE must be >= 0")
         if not 1 <= self.rate_limit_xff_hops <= 5:
@@ -332,6 +350,10 @@ class Settings:
             _ORIGIN.match(self.cis_api_url) or (insecure and _HTTP_ORIGIN.match(self.cis_api_url))
         ):
             raise SettingsError(f"CIS_API_URL must be an https origin without a path, got {self.cis_api_url!r}")
+        if self.booking_api_url and not (
+            _ORIGIN.match(self.booking_api_url) or (insecure and _HTTP_ORIGIN.match(self.booking_api_url))
+        ):
+            raise SettingsError(f"BOOKING_API_URL must be an https origin without a path, got {self.booking_api_url!r}")
         if self.m2m_client:
             try:
                 parse_credentials(self.m2m_client, allow_http=insecure)
@@ -507,9 +529,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         .strip()
         .lower(),
         cis_api_url=_text(env, "CIS_API_URL").lower().rstrip("/"),
+        booking_api_url=_text(env, "BOOKING_API_URL").lower().rstrip("/"),
         m2m_client=_text(env, "M2M_CLIENT"),
         crm_ingest_bucket=_text(env, "CRM_INGEST_BUCKET"),
         crm_ingest_domain=_text(env, "CRM_INGEST_DOMAIN").lower(),
         mail_oauth_redirect_base=_text(env, "MAIL_OAUTH_REDIRECT_BASE").lower().rstrip("/"),
         mail_oauth=_mail_oauth(env.get("MAIL_OAUTH")),
+        portal_otp_dev_echo=_flag(env.get("PORTAL_OTP_DEV_ECHO"), False, "PORTAL_OTP_DEV_ECHO"),
     )

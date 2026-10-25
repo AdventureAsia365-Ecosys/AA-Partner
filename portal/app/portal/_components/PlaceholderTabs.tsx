@@ -1,6 +1,6 @@
 "use client";
 // portal/app/portal/_components/PlaceholderTabs.tsx
-// Activity Log, Billing and Settings.
+// Billing and Settings. (AA-761: the Activity Log moved to AccountActivity.tsx, on GET /v1/account/activity.)
 //
 // AA-636: these three pages were largely mock UI — every tenant saw "WanderLux Travel" /
 // "sara@wanderlux.com" in Settings, a Growth-is-current plan table with hardcoded "300 RPM" /
@@ -10,18 +10,19 @@
 // no tenant self-service endpoint exists for them.
 
 import { useState } from "react";
-import { Check, X, RefreshCw, Mail, ExternalLink, KeyRound, LogOut, Clock, AlertTriangle } from "lucide-react";
-import { SkeletonBar, SkeletonStyle, useIsPhone } from "@/app/_kit";
-import { T, sans, Card, CardSkeleton, PageHeader, Btn, fmtDateTime, fmtBillingMonth } from "./ui";
-import { usePortalShell, type ShellActivityView, type ShellBilling } from "./PortalShellContext";
-import { ActivityStateBadge } from "./workStatus";
+import { useQuery } from "@tanstack/react-query";
+import { Check, Mail, ExternalLink, KeyRound, LogOut, AlertTriangle, FileText } from "lucide-react";
+import { EmptyState as KitEmptyState, Modal, SkeletonBar, SkeletonStyle, apiGet } from "@/app/_kit";
+import { T, sans, Card, CardSkeleton, PageHeader, Btn, ProgressBar, fmtBillingMonth } from "./ui";
+import { usePortalShell, type ShellBilling } from "./PortalShellContext";
+import { fmtDay, fmtUsd, usageMeter, type Quota } from "@/lib/account";
 import { SUPPORT_EMAIL, SITE_URL } from "@/app/_brand/tokens";
 
 
 const titleCase = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
-// AA-760 — "Couldn't load …" + Retry, shared by the Activity and Billing pages (a failed /v1/billing
-// call used to read as "No activity yet" / "$0 · Custom pricing").
+// AA-760 — "Couldn't load …" + Retry on the Billing page (a failed /v1/billing call used to read as
+// "$0 · Custom pricing").
 function LoadError({ what, onRetry }: { what: string; onRetry: () => void }) {
   return (
     <Card>
@@ -34,106 +35,31 @@ function LoadError({ what, onRetry }: { what: string; onRetry: () => void }) {
   );
 }
 
-// ─── Activity Log ─────────────────────────────────────────────────────────────
-export function ActivityLogTab({ activity }: { activity: ShellActivityView[] }) {
-  const { tenantName, billingStatus, retryBilling } = usePortalShell();
-  const phone = useIsPhone();
-  // AA-760 — icon + badge from the job-backed state (ShellActivityView.state), not the row status.
-  // An unknown state (versions still loading) gets a neutral icon, not the amber "running" one.
-  const sc = (s: ShellActivityView["state"]) =>
-    s === null ? { bg: T.line2, color: T.muted2, Icon: Clock } :
-    s === "approved" ? { bg: T.greenSoft, color: T.green, Icon: Check } :
-    s === "rejected" || s === "failed" ? { bg: T.redSoft, color: T.red, Icon: X } :
-    { bg: T.amberSoft, color: T.amber, Icon: RefreshCw };
-
-  return (
-    <div style={{ maxWidth: 760 }}>
-      <PageHeader title="Activity Log" sub={`Recent rewrite and catalog actions${tenantName ? ` for ${tenantName}` : ""}.`} />
-      {/* AA-760 — the empty state only once /v1/billing answered: while it loads, skeleton rows; on
-          failure, an error with Retry (a tenant with history was told "No activity yet"). */}
-      {billingStatus === "pending" ? (
-        <Card style={{ padding: 0, overflow: "hidden" }}>
-          <div aria-busy="true" aria-label="Loading activity">
-            <SkeletonStyle />
-            {[0, 1, 2, 3, 4].map(i => (
-              <div key={i} style={{ display: "grid", gridTemplateColumns: "36px minmax(0,1fr)", alignItems: "center", gap: 14, padding: "14px 20px", borderBottom: i < 4 ? `1px solid ${T.line2}` : "none" }}>
-                <SkeletonBar w={36} h={36} r={8} />
-                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  <SkeletonBar w={`${60 - i * 6}%`} h={13} />
-                  <SkeletonBar w="35%" h={10} />
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-      ) : billingStatus === "error" ? (
-        <LoadError what="your activity" onRetry={retryBilling} />
-      ) : activity.length === 0 ? (
-        <Card><div style={{ textAlign: "center", padding: 40, color: T.muted2, fontSize: 13 }}>No activity yet. Rewrite a tour and it will show up here.</div></Card>
-      ) : (
-        <Card style={{ padding: 0, overflow: "hidden" }}>
-          {activity.map((a, i) => {
-            const s = sc(a.state);
-            // AA-760 — on a phone the badge moves under the meta line and the name may wrap to 2
-            // lines (the badge column squeezed every name to 12–15 characters at 390 px).
-            return (
-              <div key={a.id} style={{ display: "grid", gridTemplateColumns: phone ? "36px minmax(0,1fr)" : "36px minmax(0,1fr) auto", alignItems: phone ? "start" : "center", gap: phone ? 12 : 14, padding: phone ? "14px 16px" : "14px 20px", borderBottom: i < activity.length - 1 ? `1px solid ${T.line2}` : "none" }}>
-                <div style={{ width: 36, height: 36, borderRadius: 8, background: s.bg, color: s.color, display: "grid", placeItems: "center" }}>
-                  <s.Icon size={15} strokeWidth={2.2} />
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div title={a.tour_name || "Tour"} style={{ fontSize: 13, fontWeight: 500, color: T.ink, overflow: "hidden", ...(phone
-                    ? { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const }
-                    : { textOverflow: "ellipsis", whiteSpace: "nowrap" as const }) }}>{a.tour_name || "Tour"}</div>
-                  <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>
-                    {a.version_number != null ? `v${a.version_number} · ` : ""}
-                    {a.edit_source === "ai_generated" ? "AI rewrite" : "Edited by you"}
-                    {a.country ? ` · ${a.country}` : ""} · {fmtDateTime(a.created_at)}
-                  </div>
-                  {phone && <div style={{ marginTop: 6 }}><ActivityStateBadge state={a.state} /></div>}
-                </div>
-                {!phone && <ActivityStateBadge state={a.state} />}
-              </div>
-            );
-          })}
-        </Card>
-      )}
-    </div>
-  );
-}
-
 // ─── Contact modal (plan / account changes) ───────────────────────────────────
+// AA-761 — on the kit Modal (focus trap, Escape, scroll lock); was a hand-rolled dialog (AA-732 kit rule).
 function ContactModal({ heading, body, subject, onClose }: {
   heading: string; body: string; subject: string; onClose: () => void;
 }) {
   return (
-    <div role="dialog" aria-modal="true" aria-label={heading}
-      style={{ position: "fixed", inset: 0, background: "rgba(31,41,51,0.45)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
-      onClick={onClose}>
-      <div style={{ background: T.card, borderRadius: 16, padding: 32, maxWidth: 460, width: "100%", boxShadow: "0 20px 60px rgba(0,0,0,0.25)" }}
-        onClick={e => e.stopPropagation()}>
-        <div style={{ fontFamily: "inherit", fontSize: 22, fontWeight: 600, color: T.ink, marginBottom: 10, letterSpacing: "-0.01em" }}>{heading}</div>
-        <p style={{ fontSize: 13, color: T.muted, lineHeight: 1.6, margin: "0 0 18px" }}>{body}</p>
-        <div style={{ padding: "12px 14px", background: T.bg, border: `1px solid ${T.line}`, borderRadius: 10, marginBottom: 16 }}>
-          <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.12em", color: T.muted, fontWeight: 600, marginBottom: 4 }}>Email</div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: T.ink, userSelect: "all" }}>{SUPPORT_EMAIL}</div>
-          <div style={{ fontSize: 11.5, color: T.muted2, marginTop: 4 }}>Subject: {subject}</div>
-        </div>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <a href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}`}
-            style={{ flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "11px 18px", background: T.gold, color: T.ink, borderRadius: 999, fontSize: 13, fontWeight: 700, textDecoration: "none", minWidth: 160 }}>
-            <Mail size={15} /> Email us
-          </a>
-          <a href={SITE_URL} target="_blank" rel="noreferrer"
-            style={{ flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "10px 18px", background: T.card, border: `1px solid ${T.line}`, color: T.ink3, borderRadius: 999, fontSize: 13, fontWeight: 500, textDecoration: "none", minWidth: 160 }}>
-            adventure.asia <ExternalLink size={13} />
-          </a>
-        </div>
-        <button onClick={onClose} style={{ marginTop: 14, width: "100%", padding: "8px 0", background: "none", border: "none", color: T.muted2, cursor: "pointer", fontSize: 12, fontFamily: sans }}>
-          Close
-        </button>
+    <Modal open onClose={onClose} title={heading} width={460}
+      footer={<Btn size="sm" variant="ghost" onClick={onClose}>Close</Btn>}>
+      <p style={{ fontSize: 13, color: T.muted, lineHeight: 1.6, margin: "0 0 18px" }}>{body}</p>
+      <div style={{ padding: "12px 14px", background: T.bg, border: `1px solid ${T.line}`, borderRadius: 10, marginBottom: 16 }}>
+        <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.12em", color: T.muted, fontWeight: 600, marginBottom: 4 }}>Email</div>
+        <div style={{ fontSize: 14, fontWeight: 600, color: T.ink, userSelect: "all" }}>{SUPPORT_EMAIL}</div>
+        <div style={{ fontSize: 11.5, color: T.muted2, marginTop: 4 }}>Subject: {subject}</div>
       </div>
-    </div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <a href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}`}
+          style={{ flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "11px 18px", background: T.gold, color: T.ink, borderRadius: 999, fontSize: 13, fontWeight: 700, textDecoration: "none", minWidth: 160 }}>
+          <Mail size={15} /> Email us
+        </a>
+        <a href={SITE_URL} target="_blank" rel="noreferrer"
+          style={{ flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "10px 18px", background: T.card, border: `1px solid ${T.line}`, color: T.ink3, borderRadius: 999, fontSize: 13, fontWeight: 500, textDecoration: "none", minWidth: 160 }}>
+          adventure.asia <ExternalLink size={13} />
+        </a>
+      </div>
+    </Modal>
   );
 }
 
@@ -150,6 +76,8 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
   const b: BillingRecord | null = billing;
   const { tenantName, billingStatus, retryBilling } = usePortalShell();
   const [contactPlan, setContactPlan] = useState<string | null>(null);
+  // AA-761 — the rewrite meter's used / quota / reset date (GET /v1/quota, the counter the rewrite route charges).
+  const quotaQ = useQuery({ queryKey: ["quota"], queryFn: () => apiGet<Quota>("/api/tenant/v1/quota") });
 
   // AA-760 — real figures only once /v1/billing answered: before that the page showed invented facts
   // ("Custom pricing", "$0 · Plan fee, no overage"), and forever if the call failed.
@@ -173,7 +101,6 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
   const noPlan     = b?.plan_attached === false;
   const plan       = noPlan ? "" : String(b?.plan_tier ?? "");
   const price      = Number(b?.price_usd_monthly ?? 0);
-  const toursUsed  = Number(b?.tours_rewritten ?? 0);
   const toursTotal = b?.tours_quota_monthly == null ? null : Number(b.tours_quota_monthly);
   const apiUsed    = Number(b?.api_calls_used ?? 0);
   const apiTotal   = b?.api_calls_quota_monthly == null ? null : Number(b.api_calls_quota_monthly);
@@ -220,14 +147,17 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
         </div>
       </Card>
 
+      {/* AA-761 — the rewrite meter: used vs quota and the reset date (/v1/quota), overage so far (/v1/billing). */}
+      <UsageMeterCard quota={quotaQ.data ?? null} billing={b} loading={quotaQ.isPending}
+        failed={quotaQ.isError} onRetry={() => quotaQ.refetch()} month={month} />
+
       {/* This period */}
       <Card style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted, marginBottom: 16 }}>This period — {month}</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 16 }}>
           {[
-            { l: "Rewrites used", v: `${toursUsed.toLocaleString()} / ${fmtQuota(toursTotal)}`, sub: `${pct(toursUsed, toursTotal).toFixed(0)}% used` },
             { l: "API calls",       v: `${apiUsed.toLocaleString()} / ${fmtQuota(apiTotal)}`,     sub: `${pct(apiUsed, apiTotal).toFixed(0)}% used` },
-            { l: "Amount due",      v: noPlan ? "—" : `$${(price + overage).toLocaleString(undefined, { maximumFractionDigits: 2 })}`, sub: noPlan ? "No plan attached" : overage > 0 ? `Includes $${overage.toLocaleString()} overage` : "Plan fee, no overage" },
+            { l: "Amount due so far", v: noPlan ? "—" : `$${(price + overage).toLocaleString(undefined, { maximumFractionDigits: 2 })}`, sub: noPlan ? "No plan attached" : overage > 0 ? `Includes $${overage.toLocaleString()} overage` : "Plan fee, no overage" },
           ].map(({ l, v, sub }) => (
             <div key={l} style={{ padding: "14px 16px", background: T.bg, borderRadius: 8, border: `1px solid ${T.line}` }}>
               <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.1em", color: T.muted, fontWeight: 600, marginBottom: 6 }}>{l}</div>
@@ -241,6 +171,20 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
           API calls are the requests your own systems send to the API with a token from your API key. Using this
           portal, including the API playground, is not counted; it does share your rate limit.
         </p>
+      </Card>
+
+      {/* AA-761 — AA-issued invoices. CIS stores none yet (the billing provider is still open): the empty state. */}
+      <Card style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted, marginBottom: 4 }}>Invoices</div>
+        <div data-testid="billing-invoices">
+          <KitEmptyState
+            icon={<FileText size={28} />}
+            title="No invoices yet"
+            description="Invoices Adventure Asia issues to you will be listed here. For a copy of an earlier invoice, email us."
+            action={<a href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(`Invoice copy — ${tenantName}`)}`}
+              style={{ fontSize: 12.5, fontWeight: 600, color: T.ink3 }}>Email {SUPPORT_EMAIL}</a>}
+          />
+        </div>
       </Card>
 
       {/* Plan comparison — from shared.membership_plans via /v1/billing */}
@@ -273,6 +217,52 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
         </Card>
       )}
     </div>
+  );
+}
+
+// ─── AA-761: rewrite meter ───────────────────────────────────────────────────
+function UsageMeterCard({ quota, billing, loading, failed, onRetry, month }: {
+  quota: Quota | null; billing: BillingRecord; loading: boolean; failed: boolean; onRetry: () => void; month: string;
+}) {
+  if (failed) return <div style={{ marginBottom: 16 }}><LoadError what="your rewrite usage" onRetry={onRetry} /></div>;
+  if (loading || !quota) {
+    return <div style={{ marginBottom: 16 }}><CardSkeleton lines={2} label="Loading your rewrite usage" /></div>;
+  }
+  const m = usageMeter(quota, billing);
+  const limitText = m.state === "unlimited" ? "Unlimited" : m.quota == null ? "—" : m.quota.toLocaleString();
+  const tone = m.state === "over" ? T.red : m.state === "near" ? T.amber : T.green;
+  return (
+    <Card style={{ marginBottom: 16 }}>
+      <div data-testid="billing-usage-meter" data-state={m.state}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted }}>Rewrites — {month}</div>
+          <div style={{ fontSize: 12, color: T.muted }}>Resets {fmtDay(m.resetsAt)}</div>
+        </div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
+          <span style={{ fontSize: 28, fontWeight: 700, color: T.ink, fontVariantNumeric: "tabular-nums" }}>{m.used.toLocaleString()}</span>
+          <span style={{ fontSize: 14, color: T.muted, fontVariantNumeric: "tabular-nums" }}>of {limitText} rewrites</span>
+        </div>
+        {(m.state === "ok" || m.state === "near" || m.state === "over") && (
+          <div role="meter" aria-label="Rewrites used this period" aria-valuemin={0} aria-valuemax={m.quota ?? 0}
+            aria-valuenow={Math.min(m.used, m.quota ?? 0)}>
+            <ProgressBar pct={m.pct} warn={m.state !== "ok"} />
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, fontSize: 12.5, color: T.body, flexWrap: "wrap" }}>
+          <span style={{ width: 8, height: 8, borderRadius: 999, background: tone, flexShrink: 0 }} aria-hidden />
+          {m.state === "no_plan" && <span>No plan attached: rewrites are not billed yet.</span>}
+          {m.state === "unlimited" && <span>Your plan has no rewrite limit.</span>}
+          {m.state === "ok" && <span>{m.remaining?.toLocaleString()} rewrites left this period.</span>}
+          {m.state === "near" && <span>{m.remaining?.toLocaleString()} rewrites left. Extra rewrites are billed as overage.</span>}
+          {m.state === "over" && (
+            <span>
+              {m.overTours.toLocaleString()} over your quota · {fmtUsd(m.overageUsd)} overage so far
+              {m.ratePerTour ? ` (${fmtUsd(m.ratePerTour)} per extra rewrite)` : ""}.
+            </span>
+          )}
+        </div>
+      </div>
+    </Card>
   );
 }
 

@@ -7,7 +7,7 @@
 
 import {
   LayoutDashboard, Globe2, BookOpen, Store, Sparkles, Share2, FileText, Eye, CreditCard,
-  Activity, Settings, Code2, Plug,
+  Activity, Settings, Code2, Plug, Users,
 } from "lucide-react";
 
 /** Every portal page path, in one place (links in components use these, not string literals). */
@@ -25,6 +25,7 @@ export const ROUTES = {
   billing: "/portal/account/billing",
   activity: "/portal/account/activity",
   settings: "/portal/account/settings",
+  members: "/portal/account/members",
   api: "/portal/account/api",
   integrations: "/portal/account/integrations",
   helpFacebook: "/portal/help/facebook",
@@ -74,6 +75,8 @@ export const NAV_GROUPS: NavGroup[] = [
     { href: ROUTES.billing, label: "Billing", icon: <CreditCard size={16} />, keywords: "plan invoice upgrade quota" },
     { href: ROUTES.activity, label: "Activity", icon: <Activity size={16} />, keywords: "history log" },
     { href: ROUTES.settings, label: "Account settings", icon: <Settings size={16} />, keywords: "account team sign out profile" },
+    // AA-978 follow-up — the workspace's members from the CIS directory (read only).
+    { href: ROUTES.members, label: "Members", icon: <Users size={16} />, keywords: "team members users roles owner editor viewer invite" },
     { href: ROUTES.api, label: "API", icon: <Code2 size={16} />, keywords: "api key docs developer playground" },
     { href: ROUTES.integrations, label: "Integrations", icon: <Plug size={16} />, keywords: "wordpress facebook connect channel connection" },
   ] },

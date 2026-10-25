@@ -166,8 +166,8 @@ export function WordPressConnectForm({ onConnected }: { onConnected?: () => void
   );
 }
 
-/** Read-only connection summary + re-test action, used on the manage-connection page and
- * (once connected) at the top of /portal/content/publish. */
+/** Read-only connection summary + re-test action, on Account › Integrations (AA-761: Publish shows only
+ * ConnectionSummary and links here). */
 export function WordPressStatusCard({ status, onRetest, onDisconnected }: {
   status: WordPressStatus; onRetest: () => void;
   /** AA-815 — when given, the card shows a Disconnect action (confirm step) and calls this after. */

@@ -41,6 +41,7 @@ DESIGN: dict[str, tuple[str, str, str]] = {
     "recovery_cancel": (Y, Y, Y),
     "view_margin": (Y, Y, N),
     "money_fields_edit": (Y, Y, N),
+    "aa_confirm": (Y, Y, N),  # AA-947 (S251 decision): confirming an AA hold books with AA; not the assistant
     "proposal_publish": (Y, Y, N),
     "message_send": (Y, Y, ASG),
     "ai_draft_approve": (Y, Y, ASG),

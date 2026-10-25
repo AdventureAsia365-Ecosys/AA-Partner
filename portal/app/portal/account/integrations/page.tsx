@@ -6,8 +6,13 @@
 // credentials or disconnect each publish channel after the first inline connect on
 // /portal/content/publish. Shares the connect forms / status cards with that page.
 // AA-815: Facebook Page next to WordPress, and Disconnect (confirm step) on both cards.
+// AA-761: each channel's health next to its title (the last test's result) — the "Test connection" lives here now,
+// Publish only shows a summary that links back — and the API key (masked, last used, request a new one).
 import { useState } from "react";
+import { Badge, type Tone } from "@/app/_kit";
+import { HEALTH_LABEL, connectionHealth, type ConnectionHealth } from "@/lib/account";
 import { T, sans, CardSkeleton, PageHeader } from "../../_components/ui";
+import { ApiKeyCard } from "../../_components/ApiKeyCard";
 import { useWordPressStatus, WordPressConnectForm, WordPressStatusCard } from "../../_components/WordPressConnect";
 import { useFacebookStatus, FacebookConnectForm, FacebookStatusCard } from "../../_components/FacebookConnect";
 
@@ -21,6 +26,19 @@ const sectionTitle: React.CSSProperties = {
   fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em",
   color: T.muted, margin: "0 0 2px",
 };
+
+const HEALTH_TONE: Record<ConnectionHealth, Tone> = {
+  not_connected: "neutral", healthy: "success", failing: "danger", untested: "warning",
+};
+
+function SectionTitle({ title, health, testId }: { title: string; health: ConnectionHealth | null; testId: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+      <h2 style={sectionTitle}>{title}</h2>
+      {health && <span data-testid={testId} data-health={health}><Badge tone={HEALTH_TONE[health]}>{HEALTH_LABEL[health]}</Badge></span>}
+    </div>
+  );
+}
 
 export default function T11PublishConnectionPage() {
   const wp = useWordPressStatus();
@@ -41,12 +59,12 @@ export default function T11PublishConnectionPage() {
           is not a sidebar item, so the link named a place the tenant could not find. */}
       <PageHeader
         title="Integrations"
-        sub="Manage the WordPress site and the Facebook Page your content is published to."
+        sub="Your publishing channels and your API key: check that each connection works, test it again, or change it."
       />
 
       <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
         <section style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <h2 style={sectionTitle}>WordPress</h2>
+          <SectionTitle title="WordPress" health={wpPending ? null : connectionHealth(wp.status)} testId="wp-health" />
           {wpPending && <CardSkeleton label="Loading WordPress connection" />}
           {!wpPending && wpConnected && wp.status && !changingWp && (
             <>
@@ -60,7 +78,7 @@ export default function T11PublishConnectionPage() {
         </section>
 
         <section style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <h2 style={sectionTitle}>Facebook Page</h2>
+          <SectionTitle title="Facebook Page" health={fbPending ? null : connectionHealth(fb.status)} testId="fb-health" />
           {fbPending && <CardSkeleton label="Loading Facebook connection" />}
           {!fbPending && fbConnected && fb.status && !changingFb && (
             <>
@@ -71,6 +89,11 @@ export default function T11PublishConnectionPage() {
           {!fbPending && (!fbConnected || changingFb) && (
             <FacebookConnectForm onConnected={() => { setChangingFb(false); fb.refresh(); }} />
           )}
+        </section>
+
+        <section style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <h2 style={sectionTitle}>API access</h2>
+          <ApiKeyCard />
         </section>
       </div>
     </div>

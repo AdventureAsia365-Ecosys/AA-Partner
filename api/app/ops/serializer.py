@@ -56,6 +56,9 @@ OPS_ALLOWED_KEYS: frozenset[str] = frozenset(
         "has_owner",
         "holds_travellers",
         "created_at",
+        "lock_source",  # 1.2 (AA-978 follow-up): aa_ops | cis_tenant | cis_membership while locked
+        "membership_feed_state",  # 1.2: ok | pending | stale | failing | unknown
+        "membership_feed_lag_s",  # 1.2: seconds since the last successful CIS feed pull
         # usage meters
         "period_start",
         "period_end",

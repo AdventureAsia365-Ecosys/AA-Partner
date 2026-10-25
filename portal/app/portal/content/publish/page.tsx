@@ -10,12 +10,15 @@
 // AA-815: two channels — WordPress (blog) and a Facebook Page — each with its own connect form /
 // status card, the pending list gated per channel, and a "Published" list with Unpublish
 // (PublishedList). An Unpublish puts the piece back in Ready to Publish (reloadSignal).
+// AA-761: a connected channel shows a one-line summary (health of the last test + "Manage"); the status card with
+// "Test connection", "Change credentials" and Disconnect lives on Account › Integrations.
 import Link from "next/link";
 import { useState } from "react";
 import { Settings2 } from "lucide-react";
 import { T, sans, CardSkeleton, PageHeader } from "../../_components/ui";
-import { useWordPressStatus, WordPressConnectForm, WordPressStatusCard } from "../../_components/WordPressConnect";
-import { useFacebookStatus, FacebookConnectForm, FacebookStatusCard } from "../../_components/FacebookConnect";
+import { useWordPressStatus, WordPressConnectForm } from "../../_components/WordPressConnect";
+import { useFacebookStatus, FacebookConnectForm } from "../../_components/FacebookConnect";
+import { ConnectionSummary } from "../../_components/ConnectionSummary";
 import { PublishPendingList } from "../../_components/PublishPendingList";
 import { PublishedList } from "../../_components/PublishedList";
 
@@ -56,11 +59,11 @@ export default function T11PublishPage() {
         }}>
           {wpPending ? <CardSkeleton label="Loading WordPress connection" />
             : wpConnected && wp.status
-              ? <WordPressStatusCard status={wp.status} onRetest={wp.refresh} />
+              ? <ConnectionSummary channel="WordPress" target={wp.status.site_url} status={wp.status} testId="publish-wp-summary" />
               : <WordPressConnectForm onConnected={wp.refresh} />}
           {fbPending ? <CardSkeleton label="Loading Facebook connection" />
             : fbConnected && fb.status
-              ? <FacebookStatusCard status={fb.status} onRetest={fb.refresh} />
+              ? <ConnectionSummary channel="Facebook Page" target={fb.status.page_id ? `Page ${fb.status.page_id}` : null} status={fb.status} testId="publish-fb-summary" />
               : <FacebookConnectForm onConnected={fb.refresh} />}
         </div>
 

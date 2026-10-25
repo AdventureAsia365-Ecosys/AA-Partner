@@ -45,6 +45,11 @@ export default async function SettingsPage() {
           {t(lang, "settings.forms")}
         </a>
       </Panel>
+      <Panel title={t(lang, "agreements.title")} testId="settings-agreements">
+        <a href="/settings/agreements" style={{ fontSize: 13.5 }} data-testid="settings-agreements-link">
+          {t(lang, "agreements.link")}
+        </a>
+      </Panel>
       <Panel title={t(lang, "payments.title")} testId="settings-payments">
         <a href="/settings/payments" style={{ fontSize: 13.5 }} data-testid="settings-payments-link">
           {t(lang, ctx.role === "owner" ? "payments.link" : "payments.ownerOnly")}

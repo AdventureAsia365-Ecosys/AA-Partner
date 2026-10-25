@@ -107,7 +107,8 @@ async def erase(
 
 
 async def purge_expired(ctx: TenantContext | LifecycleContext, *, dry_run: bool) -> dict[str, int]:
-    """The agency's LLM calls older than 180 days and their placeholder maps (``crm.lifecycle_purge_expired``)."""
+    """The agency's LLM calls older than 180 days and their placeholder maps, and (crm-018) its CIS membership inbox
+    rows older than 90 days (``crm.lifecycle_purge_expired``)."""
     async with as_eraser(ctx):
         raw = await ctx.conn.fetchval(PURGE_EXPIRED_SQL, dry_run)
     result: dict[str, Any] = json.loads(raw) if isinstance(raw, str) else dict(raw)

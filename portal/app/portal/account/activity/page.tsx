@@ -1,13 +1,11 @@
 "use client";
 // portal/app/portal/account/activity/page.tsx — AA-430 route migration.
 // AA-759: was /portal/activity (308 from the old slug, next.config.ts).
-// Was the "activity" tab in the old portal/page.tsx. Not a T-stage (utility page), so
-// no T-prefix — see AA-430 implementation notes.
-import { ActivityLogTab } from "../../_components/PlaceholderTabs";
-import { usePortalShell } from "../../_components/PortalShellContext";
+// AA-761: the tenant's own activity trail (GET /v1/account/activity), kit DataTable with server paging, type and
+// date filters and a CSV export of the filtered set (_components/AccountActivity.tsx). Was the five-row rewrite
+// feed of /v1/billing (ActivityLogTab), which the dashboard and the bell still show.
+import AccountActivity from "../../_components/AccountActivity";
 
 export default function ActivityPage() {
-  // AA-760 — the shell's activity view (each row's state read from its version's job).
-  const { activity } = usePortalShell();
-  return <ActivityLogTab activity={activity} />;
+  return <AccountActivity />;
 }

@@ -67,6 +67,7 @@ export function TripPanel({
   documents = [],
   stage2,
   clientOrigin = null,
+  lostHint = null,
 }: {
   view: TripView;
   members: Member[];
@@ -77,6 +78,8 @@ export function TripPanel({
   /** AA-943: GET /trips/{id}/stage2 (null = it failed; undefined = not asked, the panel is left out). */
   stage2?: Stage2View | null;
   clientOrigin?: string | null;
+  /** AA-947: the Lost reason the AA lines suggest (GET /trips/{id}/lines lost_reason_hint); pre-selected, changeable. */
+  lostHint?: string | null;
 }) {
   const router = useRouter();
   const { trip } = view;
@@ -220,7 +223,15 @@ export function TripPanel({
               </span>
             ))}
           {view.allowed_moves.includes("lost") && !lostOpen && (
-            <Button size="sm" variant="ghost" disabled={busy} onClick={() => setLostOpen(true)}>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => {
+                if (lostHint && LOST_REASONS.includes(lostHint as (typeof LOST_REASONS)[number])) setLostReason(lostHint);
+                setLostOpen(true);
+              }}
+            >
               {t(lang, "trip.markLost")}
             </Button>
           )}
@@ -274,6 +285,11 @@ export function TripPanel({
               <Button size="sm" variant="ghost" onClick={() => setLostOpen(false)}>
                 {t(lang, "trip.cancel")}
               </Button>
+              {lostHint && lostReason === lostHint && (
+                <span style={{ fontSize: 12, color: K.muted }} data-testid="trip-lost-hint">
+                  {t(lang, "aa.lostHint")}
+                </span>
+              )}
             </span>
           )}
         </div>
