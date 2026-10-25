@@ -182,6 +182,33 @@ export function actorLabel(a: string): string {
   return ACTOR_LABEL[a as ActivityActor] ?? "Automatic";
 }
 
+/** File format codes CIS writes into an export row's detail ("Blog · HTML", "LinkedIn · TEXT", "DOCX · v3"), in
+ *  words a tenant reads (S251 D3). */
+export const FORMAT_LABEL: Record<string, string> = {
+  TEXT: "Plain text",
+  TXT: "Plain text",
+  HTML: "HTML file",
+  MARKDOWN: "Markdown",
+  MD: "Markdown",
+  DOCX: "Word document",
+  PDF: "PDF",
+  JSON: "JSON file",
+  CSV: "CSV file",
+  XLSX: "Excel file",
+};
+
+const EXPORT_ACTIONS = new Set(["content_piece.exported", "tenant_tour_version.exported"]);
+
+/** The detail line of an activity row as shown: on a download, each " · " part that is a bare format code becomes its
+ *  label; every other row's detail passes through unchanged. */
+export function activityDetail(action: string, detail: string): string {
+  if (!detail || !EXPORT_ACTIONS.has(action)) return detail;
+  return detail
+    .split(" · ")
+    .map((part) => FORMAT_LABEL[part.trim().toUpperCase()] ?? part)
+    .join(" · ");
+}
+
 // ── Integrations ────────────────────────────────────────────────────────────────────────────────
 
 export interface ConnectionFacts {
