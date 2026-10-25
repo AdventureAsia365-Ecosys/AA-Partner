@@ -54,11 +54,55 @@ export function wordCount(text: string | null | undefined): number | null {
   return plain.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
 }
 
-/** The piece's own headline: the first markdown heading (blog, landing page), else the angle's name. */
+/** The piece's own headline: its markdown H1 when the text has one, else the angle's name (the headline the tenant
+ *  picked; a blog body starts at its first section, so its first `##` is a section heading, never the title: S251
+ *  D5). One title everywhere: the list, the drawer, the export file name and the exported page's <title>. */
 export function pieceTitle(r: Pick<ContentRow, "content_text" | "angle">): string {
-  const heading = r.content_text?.match(/^\s{0,3}#{1,3}\s+(.+?)\s*#*\s*$/m)?.[1]?.trim();
+  return headline(r) ?? "Untitled";
+}
+
+/** pieceTitle for a search result: a piece with no H1 and no angle (yet) shows its tour's name, not "Untitled". */
+export function pieceTitleOrTour(r: Pick<ContentRow, "content_text" | "angle" | "tour">): string {
+  return headline(r) ?? (r.tour?.name?.trim() || "Untitled piece");
+}
+
+function headline(r: Pick<ContentRow, "content_text" | "angle">): string | null {
+  const heading = r.content_text?.match(/^\s{0,3}#\s+(.+?)\s*#*\s*$/m)?.[1]?.trim();
   if (heading) return heading.length > 120 ? `${heading.slice(0, 117)}…` : heading;
-  return r.angle?.name?.trim() || "Untitled";
+  return r.angle?.name?.trim() || null;
+}
+
+/** The angle as a short label for the table: its name, only when it says something the title does not (most
+ *  titles ARE the angle's name). Never the angle's writing brief (`formula_fit`, "Hook-Insight-CTA: …"): that is an
+ *  internal instruction to the writer, not something to show in the list (S251 D2). Null = nothing to show. */
+export function angleLabel(r: Pick<ContentRow, "content_text" | "angle">): string | null {
+  const name = r.angle?.name?.trim();
+  if (!name) return null;
+  const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  const title = pieceTitle(r);
+  // A long H1 is cut at 117 characters + "…": an angle name that starts with the cut title says nothing new.
+  if (title.endsWith("…") ? norm(name).startsWith(norm(title.slice(0, -1))) : norm(name) === norm(title)) return null;
+  return name.length > 80 ? `${name.slice(0, 77)}…` : name;
+}
+
+/** A download's file name stem from the piece title: lower case, a-z / 0-9 runs joined by "-", at most 60 chars. */
+export function exportFileStem(title: string | null | undefined, fallback = "content"): string {
+  const stem = (title ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60)
+    .replace(/-+$/g, "");
+  return stem || fallback;
+}
+
+/** An exported HTML page with its <title> set to the piece title (CIS writes a fixed "Blog post"). A page without
+ *  a <title> element is returned unchanged. */
+export function withDocumentTitle(html: string, title: string): string {
+  const esc = title.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return html.replace(/<title>[\s\S]*?<\/title>/i, () => `<title>${esc}</title>`);
 }
 
 /** "Tour name · Country", without the country when the name already starts with it. */
@@ -97,6 +141,11 @@ export const NO_FILTERS: ContentFilters = {
 };
 
 export type SortRule = { id: string; desc: boolean };
+
+/** The table's sortable columns. A saved view naming another column (the Angle column before S251) drops it. */
+export const SORT_COLUMNS: readonly string[] = [
+  "title", "channel", "place", "goal", "status", "words", "created", "published",
+];
 
 /** A saved view: the filters and the sort. Built-in views are computed (their dates follow today). */
 export interface ContentView {
@@ -191,7 +240,8 @@ export function sanitizeView(raw: unknown): { filters: ContentFilters; sorting: 
   const sorting = Array.isArray(o.sorting)
     ? (o.sorting as unknown[])
         .filter((s): s is SortRule =>
-          !!s && typeof s === "object" && typeof (s as SortRule).id === "string" && typeof (s as SortRule).desc === "boolean")
+          !!s && typeof s === "object" && typeof (s as SortRule).id === "string" && typeof (s as SortRule).desc === "boolean" &&
+          SORT_COLUMNS.includes((s as SortRule).id))
         .slice(0, 3)
     : [];
   return { filters, sorting };

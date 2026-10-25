@@ -115,7 +115,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
           } />
           {/* Active pill — in normal flow under the title (was position:absolute on top of it) */}
           <div style={{ marginTop: 2 }}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 9px", background: "rgba(219,150,40,0.15)", color: T.gold, borderRadius: 999, fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 9px", background: "rgba(219,150,40,0.15)", color: T.goldDeep, borderRadius: 999, fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase" }}>
               <span style={{ width: 5, height: 5, background: T.gold, borderRadius: "50%", display: "block" }} />Active
             </span>
           </div>

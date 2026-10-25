@@ -2,6 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  activityDetail,
   activityQuery,
   actorLabel,
   cleanFilters,
@@ -93,4 +94,15 @@ test("API key use: exact time, else the rolled-up month, else none", () => {
   assert.equal(keyUseText(null, "2026-05", at, "Never"), "In May 2026");
   assert.equal(keyUseText(null, undefined, at, "None yet"), "None yet");
   assert.equal(keyUseText(undefined, null, at, "Never"), "Never");
+});
+
+test("S251 D3: a download's format code reads as words; other details pass through", () => {
+  assert.equal(activityDetail("content_piece.exported", "LinkedIn · TEXT"), "LinkedIn · Plain text");
+  assert.equal(activityDetail("content_piece.exported", "Blog · HTML"), "Blog · HTML file");
+  assert.equal(activityDetail("content_piece.exported", "TEXT"), "Plain text");
+  assert.equal(activityDetail("tenant_tour_version.exported", "DOCX · v3"), "Word document · v3");
+  assert.equal(activityDetail("tenant_tour_version.exported", "ZIP · v2"), "ZIP · v2");
+  assert.equal(activityDetail("tenant.login", "API"), "API");
+  assert.equal(activityDetail("content_piece.published", "Blog · failed"), "Blog · failed");
+  assert.equal(activityDetail("content_piece.exported", ""), "");
 });

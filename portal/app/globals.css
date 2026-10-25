@@ -311,9 +311,14 @@ body {
   color: var(--aa-ink);
   border-color: var(--aa-line);
 }
+/* S251 D7 — placeholders in both themes read in the muted2 token (light 5.4:1, dark 6.0:1 on the card). Without
+   this, light mode fell back to Tailwind's preflight placeholder (the text colour at 50%: about 2.9:1 on white). */
+input::placeholder,
+textarea::placeholder,
 [data-theme="dark"] input::placeholder,
 [data-theme="dark"] textarea::placeholder {
   color: var(--aa-muted2);
+  opacity: 1;
 }
 [data-theme="dark"] option {
   background-color: var(--aa-card);

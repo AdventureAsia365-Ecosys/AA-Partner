@@ -35,6 +35,6 @@ function btn(active: boolean): React.CSSProperties {
   return {
     flex: 1, minHeight: 44, display: "flex", flexDirection: "column", alignItems: "center",
     justifyContent: "center", gap: 2, border: "none", background: "transparent", textDecoration: "none",
-    cursor: "pointer", color: active ? K.accent : K.muted, padding: "6px 2px", fontFamily: sans,
+    cursor: "pointer", color: active ? K.accentDeep : K.muted, padding: "6px 2px", fontFamily: sans,
   };
 }

@@ -369,7 +369,7 @@ function DetailPanel({ tour, expandItin, setExpandItin }: {
             {!expandItin && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 40, background: "linear-gradient(transparent, var(--aa-card))" }} />}
           </div>
           <button onClick={() => setExpandItin(!expandItin)}
-            style={{ marginTop: 6, width: "100%", padding: "6px 0", fontSize: 12, color: T.gold, background: T.goldTint, border: `1px solid ${T.goldSoft}`, borderRadius: 6, cursor: "pointer", fontWeight: 600, fontFamily: sans }}>
+            style={{ marginTop: 6, width: "100%", padding: "6px 0", fontSize: 12, color: T.goldDeep, background: T.goldTint, border: `1px solid ${T.goldSoft}`, borderRadius: 6, cursor: "pointer", fontWeight: 600, fontFamily: sans }}>
             {expandItin ? "▲ Collapse" : "▼ Show full itinerary"}
           </button>
         </Section>

@@ -37,11 +37,11 @@ const ENDPOINTS = [
   { method: "GET",   path: "/v1/tours/pool",                color: T.green,  label: "Browse published tour pool (paginated)" },
   { method: "GET",   path: "/v1/tours/my-versions",         color: T.green,  label: "List your rewritten catalog" },
   { method: "GET",   path: "/v1/tours/versions/{id}",       color: T.green,  label: "Get version detail + history" },
-  { method: "POST",  path: "/v1/tours/pool/{id}/rewrite",   color: T.gold,   label: "Trigger a tour rewrite" },
+  { method: "POST",  path: "/v1/tours/pool/{id}/rewrite",   color: T.goldDeep, label: "Trigger a tour rewrite" },
   { method: "PATCH", path: "/v1/tours/versions/{id}",       color: "var(--aa-purple-strong)", label: "Approve / reject / edit inline" },
   { method: "GET",   path: "/admin/billing",          color: T.green,  label: "Quota, spend, activity" },
   { method: "GET",   path: "/admin/brand-identity",   color: T.green,  label: "Get brand rules + version history" },
-  { method: "POST",  path: "/admin/brand-identity",   color: T.gold,   label: "Save new brand rules version" },
+  { method: "POST",  path: "/admin/brand-identity",   color: T.goldDeep, label: "Save new brand rules version" },
 ];
 
 type Section = "overview" | "endpoints" | "webhooks";
@@ -76,7 +76,7 @@ export default function ApiTab() {
             whiteSpace: "nowrap", flexShrink: 0,
             padding: "9px 18px", fontSize: 13, fontWeight: 600,
             border: "none", background: "none", cursor: "pointer", fontFamily: sans,
-            color: activeSection === t.id ? T.gold : T.muted,
+            color: activeSection === t.id ? T.goldDeep : T.muted,
             borderBottom: `2px solid ${activeSection === t.id ? T.gold : "transparent"}`,
             marginBottom: -1, transition: "all .15s",
           }}>
