@@ -119,6 +119,12 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "PUT", pattern: /^settings\/payments$/, tenant: true, card: "AA-944" },
   { method: "GET", pattern: /^fx\/overrides$/, tenant: true, card: "AA-944" },
   { method: "POST", pattern: /^fx\/overrides$/, tenant: true, card: "AA-944" },
+  // AA-947 (CRM-19): AA supply: the catalog cache search, one product's parts / departures / "from" price (live from
+  // Booking), a new AA line from a quote, and the asks on an AA line (the line itself is never edited).
+  { method: "GET", pattern: /^aa\/catalog$/, tenant: true, card: "AA-947" },
+  { method: "GET", pattern: /^aa\/products\/[A-Za-z0-9._:%-]{1,200}$/, tenant: true, card: "AA-947" },
+  { method: "POST", pattern: new RegExp(`^trips/${UUID}/aa-lines$`), tenant: true, card: "AA-947" },
+  { method: "POST", pattern: new RegExp(`^lines/${UUID}/aa/(hold|confirm|release|requote)$`), tenant: true, card: "AA-947" },
   // AA-945 (CRM-17): Settings > Mailbox (own mailbox: every role; the agency's: owner, the API checks), the forward-in
   // address, the sender table, conversations (trip Messages tab, Unmatched inbox, link to a client), drafts (autosave,
   // discard), send / Undo / back to draft, saved replies, the import progress. The mbox / CSV upload is API-only in v1
@@ -141,6 +147,19 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "POST", pattern: /^saved-replies$/, tenant: true, card: "AA-945" },
   { method: "PATCH", pattern: new RegExp(`^saved-replies/${UUID}$`), tenant: true, card: "AA-945" },
   { method: "DELETE", pattern: new RegExp(`^saved-replies/${UUID}$`), tenant: true, card: "AA-945" },
+  // AA-946 (CRM-18): the trip's Proposal tab (proposals, send / withdraw, the payment schedule, mark paid / void,
+  // portal invites per traveller and revoke), Settings > Agreements (owner; the API checks the roles).
+  { method: "GET", pattern: new RegExp(`^trips/${UUID}/lifecycle$`), tenant: true, card: "AA-946" },
+  { method: "POST", pattern: new RegExp(`^trips/${UUID}/proposals$`), tenant: true, card: "AA-946" },
+  { method: "PATCH", pattern: new RegExp(`^proposals/${UUID}$`), tenant: true, card: "AA-946" },
+  { method: "POST", pattern: new RegExp(`^proposals/${UUID}/(send|withdraw)$`), tenant: true, card: "AA-946" },
+  { method: "POST", pattern: new RegExp(`^schedule/${UUID}/(mark-paid|void)$`), tenant: true, card: "AA-946" },
+  { method: "POST", pattern: new RegExp(`^trips/${UUID}/portal-access$`), tenant: true, card: "AA-946" },
+  { method: "POST", pattern: new RegExp(`^portal-access/${UUID}/revoke$`), tenant: true, card: "AA-946" },
+  { method: "GET", pattern: /^agreements$/, tenant: true, card: "AA-946" },
+  { method: "POST", pattern: /^agreements$/, tenant: true, card: "AA-946" },
+  { method: "PATCH", pattern: new RegExp(`^agreements/${UUID}$`), tenant: true, card: "AA-946" },
+  { method: "POST", pattern: new RegExp(`^agreements/${UUID}/publish$`), tenant: true, card: "AA-946" },
 ];
 
 /** Calls only the web server makes (lib/crmApi.ts crmCall), never reachable through /bff from the browser. */

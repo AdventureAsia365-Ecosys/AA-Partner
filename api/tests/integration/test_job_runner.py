@@ -17,6 +17,8 @@ from app.jobs import handlers, queue
 from app.jobs.kinds import (
     AUDIT_EXPORT,
     AUDIT_RETENTION,
+    BOOKING_SYNC,
+    CATALOG_SYNC,
     DEPLOY_GATE_EXEMPT,
     FX_FETCH,
     HEARTBEAT,
@@ -40,7 +42,8 @@ SELECT kind, status, count(*)::int AS n,
  GROUP BY kind, status ORDER BY kind, status"""
 # AA-978: + crm_membership_pull (Infra registry branch chore/aa-978-membership-pull-exempt; it must be on Infra main
 # before this code deploys, or every DB Migrate apply waits on the pull's queued-ahead slot).
-INFRA_IDLE_EXEMPT_CRM = frozenset({"crm_heartbeat", "crm_membership_pull"})
+# AA-947: + crm_booking_sync (Infra branch feat/aa-947-crm-booking-url; on Infra main before this code deploys).
+INFRA_IDLE_EXEMPT_CRM = frozenset({"crm_heartbeat", "crm_membership_pull", "crm_booking_sync"})
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -180,6 +183,8 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
     assert sorted((r["kind"], r["due"]) for r in rows) == [
         (AUDIT_EXPORT, True),
         (AUDIT_RETENTION, True),
+        (BOOKING_SYNC, False),  # AA-947: Recurring every minute, its next slot queued ahead (exempt)
+        (CATALOG_SYNC, True),  # AA-947: the hourly AA tour cache, due now
         (FX_FETCH, True),  # AA-944: the daily FX rates, queued due now from 00:00 UTC
         (HEARTBEAT, False),
         (JOB_RETENTION, True),
@@ -199,6 +204,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         STAGE_DATE_RULE: 1,
         FX_FETCH: 1,
         MAIL_HEALTH: 1,
+        CATALOG_SYNC: 1,
     }
     while await worker.run_once():
         pass

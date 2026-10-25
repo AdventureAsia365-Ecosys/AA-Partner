@@ -14,7 +14,9 @@ Rules the database holds (crm-014) and this module words:
   by owner and agent (the database's RESTRICTIVE policy returns nothing to the assistant), and every response shapes
   it as keyed objects (``cost``, ``commission_expected``, ``margin_base``) that the margin serializer
   (:mod:`app.margin`) strips for any other role: a list of ``{"kind": "cost"}`` rows would not be caught.
-- **AA lines** come from the Booking feed (CRM-19); members cannot write them (403 ``aa_line_read_only``).
+- **AA lines** come from a Booking quote, hold or feed event (CRM-19, :mod:`app.booking`); members cannot write them
+  (403 ``aa_line_read_only``). Their view carries an ``aa`` block (:func:`app.booking.views.aa_block`: sub-status,
+  "AA pending", the "from"-price warning, what the agent may ask for) and the trip's lines a ``lost_reason_hint``.
 - **waiting_on** (AA-943 contract, ``app.stages``): hook ``supplier_lines`` (priority 50) answers ``supplier`` while a
   booked / pre-departure trip has a live agency line still planning. Registered when this module is imported (the
   ledger router imports it, so the API and the in-process worker both have it).
@@ -31,6 +33,7 @@ from typing import Any
 import asyncpg
 
 from app import stages
+from app.booking import views as aa_views
 from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.ledger import fx, refusal
 from app.margin import sees_margin
@@ -47,7 +50,16 @@ ADD_COMMISSION_TASK = "add_commission"
 _LINE_COLUMNS = """
 l.booking_line_id, l.trip_id, l.supplier_kind, l.agency_supplier_id, s.name AS supplier_name, l.status,
 l.aa_sub_status, l.title, l.confirmation_no, l.service_from, l.service_to, l.collect, l.confirm_class,
-l.visible_to_travelers, l.confirmed_at, l.departure_id, l.created_at, l.updated_at
+l.visible_to_travelers, l.confirmed_at, l.departure_id, l.created_at, l.updated_at,
+l.aa_tour_source_id, l.aa_component_kind, l.aa_currency, l.aa_pax, l.quote_valid_until, l.hold_expires_at,
+l.from_price, l.below_from_price, l.aa_decline_code, l.aa_result_code, l.bk_hold_id, l.bk_booking_id,
+(SELECT c.served_state FROM crm.aa_catalog_tour c
+  WHERE c.source_system = 'cis' AND c.source_id = l.aa_tour_source_id) AS aa_catalog_state,
+(SELECT jsonb_build_object('aa_request_id', r.aa_request_id, 'kind', r.kind, 'attempts', r.attempts,
+                           'next_attempt_at', r.next_attempt_at, 'last_error_class', r.last_error_class)
+   FROM crm.aa_request r
+  WHERE r.booking_line_id = l.booking_line_id AND r.status = 'pending' AND r.deleted_at IS NULL
+  ORDER BY r.created_at LIMIT 1) AS aa_pending
 """
 LINES_SQL = f"""
 SELECT {_LINE_COLUMNS}
@@ -240,7 +252,7 @@ def _money(rows: list[Any]) -> dict[str, Any]:
     return out
 
 
-def _line_view(row: Any, money: dict[str, Any] | None) -> dict[str, Any]:
+def _line_view(row: Any, money: dict[str, Any] | None, trip_stage: str | None = None) -> dict[str, Any]:
     out: dict[str, Any] = {
         "booking_line_id": str(row["booking_line_id"]),
         "trip_id": str(row["trip_id"]),
@@ -259,6 +271,9 @@ def _line_view(row: Any, money: dict[str, Any] | None) -> dict[str, Any]:
         "confirmed_at": row["confirmed_at"].isoformat() if row["confirmed_at"] else None,
         "read_only": row["supplier_kind"] == "aa",
     }
+    aa = aa_views.aa_block(row, trip_stage)
+    if aa is not None:
+        out["aa"] = aa
     if money is not None:
         out["money"] = money
     return out
@@ -279,16 +294,19 @@ async def _money_by_line(ctx: TenantContext, line_ids: list[uuid.UUID]) -> dict[
 
 
 async def trip_lines(ctx: TenantContext, trip_id: uuid.UUID) -> dict[str, Any]:
-    if await ctx.conn.fetchval(TRIP_SQL, trip_id) is None:
+    stage = await ctx.conn.fetchval(TRIP_SQL, trip_id)
+    if stage is None:
         raise NotFound("trip_not_found")
     rows = await ctx.conn.fetch(LINES_SQL, trip_id)
     money = await _money_by_line(ctx, [r["booking_line_id"] for r in rows])
     settings = await fx.settings(ctx)
     return {
         "trip_id": str(trip_id),
-        "lines": [_line_view(r, money.get(r["booking_line_id"]) if money is not None else None) for r in rows],
+        "lines": [_line_view(r, money.get(r["booking_line_id"]) if money is not None else None, stage) for r in rows],
         "base_currency": settings["base_currency"],
         "booking_validation_level": settings["booking_validation_level"],
+        # AA-947: the Lost dialog pre-selects this reason (a declined or sold-out AA line); null = no AA signal.
+        "lost_reason_hint": aa_views.lost_reason_hint(rows),
     }
 
 
@@ -297,7 +315,8 @@ async def line(ctx: TenantContext, line_id: uuid.UUID, *, extra: dict[str, Any] 
     if row is None:
         raise NotFound("line_not_found")
     money = await _money_by_line(ctx, [line_id])
-    view = _line_view(row, money.get(line_id) if money is not None else None)
+    stage = await ctx.conn.fetchval(TRIP_SQL, row["trip_id"]) if row["supplier_kind"] == "aa" else None
+    view = _line_view(row, money.get(line_id) if money is not None else None, stage)
     return {**view, **(extra or {})}
 
 
@@ -312,7 +331,7 @@ async def ledger(
     settings = await fx.settings(ctx)
     items = []
     for r in rows:
-        view = _line_view(r, money.get(r["booking_line_id"]) if money is not None else None)
+        view = _line_view(r, money.get(r["booking_line_id"]) if money is not None else None, r["trip_stage"])
         view.update({"trip_title": r["trip_title"], "trip_stage": r["trip_stage"]})
         items.append(view)
     out: dict[str, Any] = {
@@ -346,8 +365,9 @@ async def _own_supplier(ctx: TenantContext, supplier_id: uuid.UUID) -> None:
     if row is None or row["deleted_at"] is not None:
         raise Invalid("invalid_agency_supplier_id", "a supplier of the agency's directory")
     if row["kind"] == "aa":
-        # AA lines come from the Booking feed (CRM-19), never from a member.
-        raise Invalid("aa_line_read_only", "Adventure Asia lines come from your AA bookings")
+        # AA lines come from a Booking quote / hold / feed (CRM-19, POST /crm/v1/trips/{id}/aa-lines), never typed by a
+        # member: the same 403 as editing one.
+        raise Forbidden("aa_line_read_only", "Adventure Asia lines come from your AA bookings")
 
 
 async def create_line(ctx: TenantContext, trip_id: uuid.UUID, body: dict[str, Any]) -> dict[str, Any]:
@@ -386,6 +406,9 @@ async def update_line(ctx: TenantContext, line_id: uuid.UUID, changes: dict[str,
     current = await ctx.conn.fetchrow(TRIP_OF_LINE_SQL, line_id)
     if current is None:
         raise NotFound("line_not_found")
+    if current["supplier_kind"] == "aa":
+        # Card R (CRM-19): an AA line follows Booking; the database refuses it too (crm-014 CRM24).
+        raise Forbidden("aa_line_read_only", "Adventure Asia lines come from your AA bookings")
     sets: list[str] = []
     args: list[Any] = [line_id]
     for field in EDITABLE:
@@ -476,6 +499,9 @@ async def cancel(ctx: TenantContext, line_id: uuid.UUID) -> dict[str, Any]:
     current = await ctx.conn.fetchrow(TRIP_OF_LINE_SQL, line_id)
     if current is None:
         raise NotFound("line_not_found")
+    if current["supplier_kind"] == "aa":
+        # An AA line is released through Booking (POST /lines/{id}/aa/release), never cancelled by hand.
+        raise Forbidden("aa_line_read_only", "Adventure Asia lines come from your AA bookings")
     try:
         async with ctx.conn.transaction():
             done = await ctx.conn.fetchval(CANCEL_SQL, line_id)

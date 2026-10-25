@@ -30,6 +30,10 @@ from app.audit_export.archive import AuditArchive, build_audit_archive
 from app.auth import identity_config
 from app.auth.ci import GithubDeployVerifier
 from app.auth.identity_verifier import MultiIssuerVerifier
+from app.booking.checker import BookingChecker
+from app.booking.client import BookingClient, BookingConfig
+from app.booking.products import ProductCache
+from app.catalog.client import CatalogConfig
 from app.cis.m2m import TokenProvider
 from app.cis.membership_feed import FeedConfig
 from app.db import Database
@@ -48,9 +52,11 @@ from app.observability import setup as setup_observability
 from app.observability.request_id import RequestIdMiddleware, unhandled_error_handler
 from app.ratelimit import FixedWindowLimiter
 from app.routers import (
+    aa,
     agency,
     audit,
     ci,
+    client_pages,
     health,
     invitations,
     ledger,
@@ -58,6 +64,7 @@ from app.routers import (
     mail,
     ops,
     pipeline,
+    proposals,
     public,
     staff,
     team,
@@ -85,6 +92,7 @@ def create_app(
     mailer: Mailer | None | object = _UNSET,
     ingest_store: IngestStore | None | object = _UNSET,
     mail_runtime: MailRuntime | None | object = _UNSET,
+    booking_client: BookingClient | None | object = _UNSET,
 ) -> FastAPI:
     settings = settings or load_settings()
     db = db or Database(settings)
@@ -104,6 +112,11 @@ def create_app(
         mailer = build_mailer(settings)
     if ingest_store is _UNSET:
         ingest_store = build_ingest_store(settings)
+    # AA-947: one token provider for every M2M call (one cached token per scope), shared by the CIS feed, the catalog
+    # cache and the Booking client.
+    tokens = build_tokens(settings)
+    if booking_client is _UNSET:
+        booking_client = build_booking_client(settings, tokens)
     if mail_runtime is _UNSET:
         mail_runtime = MailRuntime(
             keys=keys,  # type: ignore[arg-type]
@@ -132,7 +145,9 @@ def create_app(
                     dek_cache_ttl_s=settings.dek_cache_ttl_seconds,
                     sender=app.state.dispatch_sender,
                     fx_provider=settings.fx_provider,
-                    membership_feed=build_membership_feed(settings),
+                    membership_feed=build_membership_feed(settings, tokens),
+                    booking_client=app.state.booking_client,
+                    catalog=build_catalog(settings, tokens),
                     directory=app.state.directory,
                     mail_runtime=app.state.mail_runtime,
                     ingest_store=app.state.ingest_store,
@@ -182,7 +197,9 @@ def create_app(
     # AA-942: the Booking line re-check a trip restore needs (CRM-19 plugs the B2B client in). AA-945 (CRM-17): the
     # e-mail sender behind the dispatcher gate (the agency's own mailbox; never AA's SES), the mail runtime (send-as
     # providers, system mailer for the mailbox alert, directory) and the ingest bucket (forward-in + history import).
-    app.state.booking_checker = None
+    app.state.booking_client = booking_client  # AA-947 (CRM-19): booking.b2b.v1, None without BOOKING_API_URL
+    app.state.booking_checker = BookingChecker(booking_client) if isinstance(booking_client, BookingClient) else None
+    app.state.aa_products = ProductCache(booking_client) if isinstance(booking_client, BookingClient) else None
     app.state.mail_runtime = mail_runtime
     app.state.dispatch_sender = MailSender(mail_runtime) if isinstance(mail_runtime, MailRuntime) else None
     app.state.ingest_store = ingest_store
@@ -196,6 +213,7 @@ def create_app(
     app.include_router(health.router)
     app.include_router(ci.router)
     app.include_router(public.router)
+    app.include_router(client_pages.router)
     app.include_router(agency.router)
     app.include_router(pipeline.router)
     app.include_router(travellers.router)
@@ -205,6 +223,8 @@ def create_app(
     app.include_router(invitations.agency_router)
     app.include_router(lifecycle.router)
     app.include_router(ledger.router)
+    app.include_router(aa.router)
+    app.include_router(proposals.router)
     app.include_router(mail.router)
     app.include_router(ops.router)
     app.include_router(staff.router)
@@ -220,13 +240,33 @@ def build_document_store(settings: Settings) -> DocumentStore | None:
     return None
 
 
-def build_membership_feed(settings: Settings) -> FeedConfig | None:
+def build_tokens(settings: Settings) -> TokenProvider | None:
+    """The CRM's aa-m2m client (AA-978), or None without M2M_CLIENT. No network call here."""
+    credentials = settings.m2m_credentials
+    return TokenProvider(credentials) if credentials is not None else None
+
+
+def build_membership_feed(settings: Settings, tokens: TokenProvider | None = None) -> FeedConfig | None:
     """The CIS membership feed's endpoint and M2M token (AA-978); None when CIS_API_URL or M2M_CLIENT is empty (the
     pull then logs not_configured). No network call here: the first token is asked for on the first pull."""
-    credentials = settings.m2m_credentials
-    if not settings.cis_api_url or credentials is None:
+    tokens = tokens or build_tokens(settings)
+    if not settings.cis_api_url or tokens is None:
         return None
-    return FeedConfig(base_url=settings.cis_api_url, tokens=TokenProvider(credentials))
+    return FeedConfig(base_url=settings.cis_api_url, tokens=tokens)
+
+
+def build_catalog(settings: Settings, tokens: TokenProvider | None) -> CatalogConfig | None:
+    """CIS catalog.http.v1 for the AA tour cache (AA-947); None when CIS_API_URL or M2M_CLIENT is empty."""
+    if not settings.cis_api_url or tokens is None:
+        return None
+    return CatalogConfig(base_url=settings.cis_api_url, tokens=tokens)
+
+
+def build_booking_client(settings: Settings, tokens: TokenProvider | None) -> BookingClient | None:
+    """booking.b2b.v1 (AA-947); None when BOOKING_API_URL or M2M_CLIENT is empty (requests stay "AA pending")."""
+    if not settings.booking_api_url or tokens is None:
+        return None
+    return BookingClient(BookingConfig(base_url=settings.booking_api_url, tokens=tokens))
 
 
 def build_ingest_store(settings: Settings) -> IngestStore | None:
