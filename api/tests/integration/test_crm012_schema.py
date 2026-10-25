@@ -523,7 +523,8 @@ async def test_a_link_moves_along_its_statuses_and_keeps_its_shape(app_pool: asy
             "UPDATE crm.client_link SET status = 'revoked' WHERE link_id = $1",  # revoked_at goes with it
             "UPDATE crm.client_link SET expires_at = created_at + interval '31 days' WHERE link_id = $1",
             "UPDATE crm.client_link SET token_hash = '\\x00'::bytea WHERE link_id = $1",
-            "UPDATE crm.client_link SET purpose = 'proposal' WHERE link_id = $1",
+            # crm-016 (AA-946) added proposal and portal; an unknown purpose still fails.
+            "UPDATE crm.client_link SET purpose = 'contract' WHERE link_id = $1",
             "UPDATE crm.client_link SET traveler_id = NULL WHERE link_id = $1",
             "UPDATE crm.client_link SET reissued_from = link_id WHERE link_id = $1",
         ):
