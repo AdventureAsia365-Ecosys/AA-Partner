@@ -10,13 +10,17 @@
   quote's FX lock (``aa_quote_lock``), the "from"-price warning, confirm -> on request -> the feed confirms it; a
   replayed feed page applies nothing twice.
 - AA-aware Lost: a declined line pre-selects ``aa_sold_out`` and opens the owner task; moving to Lost queues the
-  release after the Undo window, Undo cancels it, and a later Lost releases the hold in Booking.
+  release after the Undo window, Undo cancels it, and a later Lost releases the hold in Booking. A request still
+  waiting for Booking survives an Undo (it runs as asked) and is dropped (``trip_closed``) when the Lost stays.
+- Races and outages: a hold that lands after another run released its line is given back to Booking; Booking down
+  costs one timeout per agency and run (the rest of the batch and the feed wait).
 - The catalog sync: served, changed, retired (lines read "no longer offered"), paused.
 """
 
 from __future__ import annotations
 
 import uuid
+from collections import Counter
 from typing import Any
 
 import asyncpg
@@ -322,7 +326,111 @@ async def test_a_declined_line_preselects_the_lost_reason(app_pool: asyncpg.Pool
     )
 
 
+async def test_undo_of_lost_leaves_a_waiting_request_to_run(app_pool: asyncpg.Pool) -> None:
+    s = await _setup(app_pool, stage="proposal")
+    fake = FakeBooking(down=True)
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        line_id = uuid.UUID((await aa_lines.request_line(ctx, s["trip"], _body()))["booking_line_id"])
+    await _sync(app_pool, fake, s["tenant"])  # Booking down: "AA pending"
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        moved = await move(ctx, s["trip"], "lost", lost_reason="went_elsewhere")
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        await undo(ctx, s["trip"], uuid.UUID(moved["undo"]["history_id"]))
+    fake.down = False
+    await _due_now(app_pool, s["tenant"])
+    await _sync(app_pool, fake, s["tenant"])
+    line = await _line(app_pool, s, line_id)
+    assert line["status"] == "planning" and line["aa"]["sub_status"] == "quoted" and line["aa"]["pending"] is None
+    assert fake.quotes == 1 and "hold" in line["aa"]["actions"]
+    assert (
+        await _scalar(app_pool, s["tenant"], "SELECT count(*) FROM crm.aa_request WHERE result_code = 'trip_closed'")
+        == 0
+    )
+
+    # A requote still waits when the trip goes Lost for good: dropped without calling Booking, the line released.
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        await aa_lines.ask(ctx, line_id, "requote")
+        await move(ctx, s["trip"], "lost", lost_reason="went_elsewhere")
+    # Past the Undo window (only the requote made due here, so it runs before the release).
+    await _scalar(app_pool, s["tenant"], "UPDATE crm.aa_request SET next_attempt_at = now() WHERE kind = 'requote'")
+    await _sync(app_pool, fake, s["tenant"], feed=False)
+    assert await _scalar(app_pool, s["tenant"], "SELECT result_code FROM crm.aa_request WHERE kind = 'requote'") == (
+        "trip_closed"
+    )
+    assert fake.quotes == 1
+    await _due_now(app_pool, s["tenant"])
+    await _sync(app_pool, fake, s["tenant"], feed=False)
+    closed = await _line(app_pool, s, line_id)
+    assert closed["status"] == "cancelled" and closed["aa"]["sub_status"] == "released"
+
+
+async def test_a_hold_that_lands_after_its_line_was_released_is_given_back(app_pool: asyncpg.Pool) -> None:
+    s = await _setup(app_pool, stage="proposal")
+    fake = FakeBooking()
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        line_id = uuid.UUID((await aa_lines.request_line(ctx, s["trip"], _body()))["booking_line_id"])
+    await _sync(app_pool, fake, s["tenant"])
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        await aa_lines.ask(ctx, line_id, "hold")
+
+    async def release_meanwhile() -> None:
+        # Another run sends the line's release while the hold call is on its way (the line has no hold id yet): it
+        # releases the line and cancels the leased hold request.
+        await _scalar(
+            app_pool,
+            s["tenant"],
+            "INSERT INTO crm.aa_request (trip_id, booking_line_id, kind) VALUES ($1, $2, 'release') "
+            "RETURNING aa_request_id",
+            s["trip"],
+            line_id,
+        )
+        await _sync(app_pool, fake, s["tenant"], feed=False)
+
+    fake.on_hold = release_meanwhile
+    await _sync(app_pool, fake, s["tenant"], feed=False)
+    line = await _line(app_pool, s, line_id)
+    assert line["status"] == "cancelled" and line["aa"]["sub_status"] == "released" and line["aa"]["hold_id"] == "h1"
+    assert await _scalar(app_pool, s["tenant"], "SELECT status FROM crm.aa_request WHERE kind = 'hold'") == (
+        "cancelled"
+    )
+    assert (
+        await _scalar(
+            app_pool, s["tenant"], "SELECT count(*) FROM crm.aa_request WHERE kind = 'release' AND status = 'pending'"
+        )
+        == 1
+    )
+    assert fake.holds["h1"]["status"] == "active"
+
+    await _sync(app_pool, fake, s["tenant"], feed=False)
+    assert fake.holds["h1"]["status"] == "released"
+    assert await _scalar(
+        app_pool, s["tenant"], "SELECT line_status FROM crm.trip_commitment WHERE source_ref = 'h1'"
+    ) == ("released")
+    assert await _scalar(app_pool, s["tenant"], "SELECT crm.trip_delete_blockers($1)", s["trip"]) == []
+    assert (await _line(app_pool, s, line_id))["status"] == "cancelled"
+
+
+async def test_an_outage_costs_one_timeout_per_agency_and_run(app_pool: asyncpg.Pool) -> None:
+    s = await _setup(app_pool)
+    fake = FakeBooking(down=True)
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        first = uuid.UUID((await aa_lines.request_line(ctx, s["trip"], _body()))["booking_line_id"])
+        second = uuid.UUID((await aa_lines.request_line(ctx, s["trip"], _body()))["booking_line_id"])
+    counts: Counter[str] = Counter()
+    await BookingSync(booking_client(fake)).run_agency(app_pool, s["tenant"], counts, feed=True)
+    assert fake.calls["down"] == 1  # one quote tried; the other request and the feed were not sent
+    assert counts["outage"] == 1 and counts["requests_retry"] == 2 and "feed_failed" not in counts
+    for line_id in (first, second):
+        pending = (await _line(app_pool, s, line_id))["aa"]["pending"]
+        assert pending["attempts"] == 1 and pending["last_error_class"] == "booking_timeout"
+    fake.down = False
+    await _due_now(app_pool, s["tenant"])
+    await _sync(app_pool, fake, s["tenant"])
+    assert fake.quotes == 2
+
+
 async def test_the_catalog_cache_follows_cis(app_pool: asyncpg.Pool) -> None:
+    # Keep this test last in the file: it retires T-100 and leaves the shared catalog state in backoff.
     s = await _setup(app_pool)
     cis = FakeCis(tours={"T-100": tour_body(), "T-200": tour_body("T-200", "Sapa trek")})
     sync = CatalogSync(catalog_config(cis))

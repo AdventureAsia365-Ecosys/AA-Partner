@@ -16,7 +16,14 @@ crm-014 line guard lets a job write AA lines; crm-017 ``crm.booking_line_aa_mone
    quote's FX lock), ``crm.trip_commitment`` (the delete block: held / confirmed / expired / released / declined), the
    request (done / failed with a code), ``waiting_on``. A transient failure (Booking down, a timeout, a 5xx, a 401)
    keeps the request pending with a backoff (:func:`backoff_seconds`): the line reads "AA pending" with the next try.
-   After :data:`MAX_ATTEMPTS` the request fails ``gave_up``.
+   After :data:`MAX_ATTEMPTS` the request fails ``gave_up``. ``apply`` decides from the line and trip as they are under
+   the line lock, not as claimed: a hold that lands after its line was released keeps only its hold id and queues the
+   release that gives the seats back.
+
+A quote / requote / hold / refresh whose trip is Lost or cancelled is dropped (``trip_closed``) without calling Booking
+(the Lost move held it back by the Undo window first, so an Undo leaves it to run). When Booking gives no answer at all
+(:data:`OUTAGE_CLASSES`) the rest of the agency's batch goes back to the queue unsent and the feed waits: one timeout
+per agency and run, so an outage never holds the worker for minutes.
 
 **Feed** (``GET /events``, agencies with a ``crm.booking_feed_state`` row): up to :data:`FEED_MAX_PAGES` pages; each
 event in its own transaction, recorded once in ``crm.inbox_events`` (a replayed page applies nothing twice); the
@@ -60,6 +67,13 @@ FEED_PAGE = 200
 FEED_MAX_PAGES = 5
 STUCK_FAILURES = 10
 DECLINE_TASK = "aa_line_declined"
+CLOSED_STAGES = ("lost", "cancelled")
+# Requests that make no sense once the trip is closed: dropped (``trip_closed``) without calling Booking. A Lost or a
+# cancel holds them back by the Undo window first (app.booking.aa_lines.close_trip), so an Undo leaves them to run.
+DROP_ON_CLOSE = ("quote", "requote", "hold", "refresh")
+# Booking (or the token pool) gave no answer at all: the rest of the batch is not sent this run (card E: one timeout per
+# agency and run, never one per request, so an outage does not hold the one-job-at-a-time worker for minutes).
+OUTAGE_CLASSES = frozenset({"booking_timeout", "booking_unreachable", "booking_unavailable", "token_unavailable"})
 
 CLAIM_SQL = """
 UPDATE crm.aa_request r SET lease_until = now() + make_interval(secs => $2), attempts = r.attempts + 1
@@ -106,6 +120,9 @@ SUB_SQL = "UPDATE crm.booking_line SET aa_sub_status = $2, aa_result_code = $3 W
 HELD_SQL = """
 UPDATE crm.booking_line SET aa_sub_status = 'held', bk_hold_id = $2, hold_expires_at = $3, aa_result_code = NULL
  WHERE booking_line_id = $1
+"""
+ORPHAN_HOLD_SQL = """
+UPDATE crm.booking_line SET bk_hold_id = $2, hold_expires_at = $3 WHERE booking_line_id = $1
 """
 HOLD_STATE_SQL = """
 UPDATE crm.booking_line SET aa_sub_status = $2, hold_expires_at = $3 WHERE booking_line_id = $1
@@ -175,6 +192,9 @@ UPDATE crm.booking_feed_state
    SET failures = least(failures + 1, 1000000), last_error_class = $1, last_error_at = now()
 RETURNING failures
 """
+# A release calls Booking for a hold in these sub-statuses ("released": a hold that landed after its line was released;
+# apply() keeps its id and queues the release).
+RELEASABLE = frozenset({"held", "pending", "quoted", "failed", "sold_out", "not_served", "released"})
 HOLD_STATUS = {"active": "held", "confirmed": "confirmed", "expired": "expired", "released": "released"}
 
 
@@ -198,7 +218,8 @@ def proposal_ref(line_id: uuid.UUID) -> str:
 @dataclass
 class Outcome:
     """The answer of one request, as values (no DB here). ``retry``: a transient error class (stay pending);
-    ``code``: the result code of a final answer; ``again``: re-run the request now (a hold after its re-quote)."""
+    ``code``: the result code of a final answer; ``again``: re-run the request now (a hold after its re-quote);
+    ``cancelled``: the request is dropped, Booking was not called (its trip or line closed)."""
 
     quote: contract.QuoteLine | None = None
     from_price: Decimal | None = None
@@ -209,6 +230,7 @@ class Outcome:
     failed: bool = False
     retry: str | None = None
     again: bool = False
+    cancelled: bool = False
 
 
 @dataclass(frozen=True)
@@ -303,7 +325,7 @@ async def _confirm(client: BookingClient, tenant_id: uuid.UUID, w: Work) -> Outc
 
 async def _release(client: BookingClient, tenant_id: uuid.UUID, w: Work) -> Outcome:
     hold_id = w.line["bk_hold_id"]
-    if hold_id and w.line["aa_sub_status"] in ("held", "pending", "quoted", "failed", "sold_out", "not_served"):
+    if hold_id and w.line["aa_sub_status"] in RELEASABLE:
         try:
             await client.release(tenant_id, hold_id)
         except BookingRefusal as exc:
@@ -390,19 +412,33 @@ async def _apply_quote(ctx: SystemContext, w: Work, out: Outcome) -> None:
 
 
 async def apply(ctx: SystemContext, w: Work, out: Outcome) -> str:
-    """Store one answer; returns ``retry`` / ``again`` / the request's final status."""
-    request_id, line_id, trip_id = w.request["aa_request_id"], w.line_id, w.line["trip_id"]
+    """Store one answer; returns ``retry`` / ``again`` / the request's final status.
+
+    Decides from the line and trip as they are under the line lock (``cur``), never from the claim-time snapshot in
+    ``w``: while the call was on its way another run may have released the line (and cancelled this request) or the
+    trip may have closed. ``w.line`` still gives what was sent (the quote version, pax, the sell at claim)."""
+    request_id, line_id = w.request["aa_request_id"], w.line_id
     status = await ctx.conn.fetchval(REQUEST_STATUS_SQL, request_id)
     await ctx.conn.execute(LOCK_LINE_SQL, line_id)
+    cur = dict(await ctx.conn.fetchrow(LINE_SQL, line_id))
+    trip_id = cur["trip_id"]
+    kind = w.request["kind"]
+    line_closed = cur["status"] == "cancelled"
+    if out.cancelled or (line_closed and out.quote is not None and out.hold is None):
+        # Dropped before the call (closed trip), or a quote answer for a line that closed meanwhile: nothing to store.
+        code = out.code if out.cancelled else "line_closed"
+        if status == "pending":
+            await ctx.conn.execute(FINISH_SQL, request_id, "cancelled", code)
+        ctx.audit("aa_sync", "allowed", "booking_line", str(line_id), reason=f"{kind}_{code}"[:40])
+        return "cancelled"
     if out.retry is not None:
         if w.request["attempts"] >= MAX_ATTEMPTS:
             await ctx.conn.execute(FINISH_SQL, request_id, "failed", "gave_up")
-            if w.line["aa_sub_status"] == "pending":
+            if cur["aa_sub_status"] == "pending":
                 await ctx.conn.execute(SUB_SQL, line_id, "failed", "gave_up")
             return "failed"
         await ctx.conn.execute(RETRY_SQL, request_id, out.retry, backoff_seconds(w.request["attempts"]))
         return "retry"
-    kind = w.request["kind"]
     if out.quote is not None:
         await _apply_quote(ctx, w, out)
     if out.again:
@@ -410,7 +446,7 @@ async def apply(ctx: SystemContext, w: Work, out: Outcome) -> str:
         return "again"
     if out.failed:
         sub = REFUSED_SUB.get(out.code or "")
-        if sub is None and w.line["aa_sub_status"] == "pending":
+        if sub is None and cur["aa_sub_status"] == "pending":
             sub = "failed"  # a first quote Booking refused: "Ask AA"
         if sub is not None:
             await ctx.conn.execute(SUB_SQL, line_id, sub, out.code)
@@ -418,17 +454,23 @@ async def apply(ctx: SystemContext, w: Work, out: Outcome) -> str:
             await ctx.conn.execute(
                 "UPDATE crm.booking_line SET aa_result_code = $2 WHERE booking_line_id = $1", line_id, out.code
             )
-        if sub == "expired" and w.line["bk_hold_id"]:
-            await ctx.conn.execute(COMMIT_SQL, trip_id, "expired", w.line["bk_hold_id"])
+        if sub == "expired" and cur["bk_hold_id"]:
+            await ctx.conn.execute(COMMIT_SQL, trip_id, "expired", cur["bk_hold_id"])
     if out.hold is not None:
         line_sub = HOLD_STATUS[out.hold.status]
-        if kind == "hold":
+        orphan = kind == "hold" and (line_closed or status == "cancelled")
+        if orphan:
+            # The line was released (or its request cancelled) while the hold was on its way: the line stays closed,
+            # only the hold id is kept so the release below can give the seats back. Booking holds them until then,
+            # so the commitment says held (the release turns it to released).
+            await ctx.conn.execute(ORPHAN_HOLD_SQL, line_id, out.hold.hold_id, out.hold.expires_at)
+        elif kind == "hold":
             await ctx.conn.execute(HELD_SQL, line_id, out.hold.hold_id, out.hold.expires_at)
-        elif line_sub != "confirmed":
+        elif line_sub != "confirmed" and not line_closed:
             await ctx.conn.execute(HOLD_STATE_SQL, line_id, line_sub, out.hold.expires_at)
         await ctx.conn.execute(COMMIT_SQL, trip_id, line_sub, out.hold.hold_id)
-        if kind == "hold" and (w.line["status"] == "cancelled" or w.line["trip_stage"] in ("lost", "cancelled")):
-            # The trip closed while the hold was on its way: give the seats back.
+        if kind == "hold" and (orphan or cur["trip_stage"] in CLOSED_STAGES):
+            # The line or the trip closed while the hold was on its way: give the seats back.
             await ctx.conn.fetchval(REFRESH_SQL, trip_id, line_id, "release")
     if out.booking is not None:
         b = out.booking
@@ -441,13 +483,13 @@ async def apply(ctx: SystemContext, w: Work, out: Outcome) -> str:
     if out.released:
         await ctx.conn.execute(CLOSE_LINE_SQL, line_id, "released", None, None)
         await ctx.conn.execute(CANCEL_OTHERS_SQL, line_id, request_id)
-        if w.line["bk_hold_id"]:
-            await ctx.conn.execute(COMMIT_SQL, trip_id, "released", w.line["bk_hold_id"])
+        if cur["bk_hold_id"]:
+            await ctx.conn.execute(COMMIT_SQL, trip_id, "released", cur["bk_hold_id"])
     final = "failed" if out.failed else "done"
     if status == "pending":
         await ctx.conn.execute(FINISH_SQL, request_id, final, out.code)
     ctx.audit("aa_sync", "allowed", "booking_line", str(line_id), reason=f"{kind}_{out.code or final}"[:40])
-    if w.line["trip_deleted_at"] is None:
+    if cur["trip_deleted_at"] is None:
         await stages.refresh_waiting_on(ctx, trip_id)
     return final
 
@@ -566,6 +608,7 @@ class BookingSync:
 
     async def run_agency(self, pool: asyncpg.Pool, tenant_id: uuid.UUID, counts: Counter[str], *, feed: bool) -> None:
         sent = 0
+        outage: str | None = None
         while sent < MAX_REQUESTS:
             async with system_tx(pool, tenant_id, actor=ACTOR) as ctx:
                 claimed = [dict(r) for r in await ctx.conn.fetch(CLAIM_SQL, MAX_REQUESTS - sent, LEASE_S)]
@@ -578,13 +621,23 @@ class BookingSync:
             again = False
             for w in work:
                 sent += 1
-                outcome = await perform(self.client, tenant_id, w)  # type: ignore[arg-type]
+                if w.request["kind"] in DROP_ON_CLOSE and w.line["trip_stage"] in CLOSED_STAGES:
+                    outcome = Outcome(code="trip_closed", cancelled=True)
+                elif outage is not None:
+                    outcome = Outcome(retry=outage)  # not sent: Booking just gave no answer to this run
+                else:
+                    outcome = await perform(self.client, tenant_id, w)  # type: ignore[arg-type]
+                    if outcome.retry in OUTAGE_CLASSES:
+                        outage = outcome.retry
                 async with system_tx(pool, tenant_id, actor=ACTOR) as ctx:
                     result = await apply(ctx, w, outcome)
                 counts[f"requests_{result}"] += 1
                 again = again or result == "again"
-            if not again and len(work) < MAX_REQUESTS:
+            if outage is not None or (not again and len(work) < MAX_REQUESTS):
                 break
+        if outage is not None:
+            counts["outage"] += 1
+            return  # the feed waits for the next run too
         if feed:
             await self.pull_feed(pool, tenant_id, counts)
 

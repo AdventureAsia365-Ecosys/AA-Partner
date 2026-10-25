@@ -8,7 +8,7 @@ import json
 import urllib.parse
 import uuid
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
@@ -33,7 +33,9 @@ def _resp(status: int, body: Any = None, headers: Mapping[str, str] | None = Non
 class FakeBooking:
     """Booking as the CRM sees it. ``down``: every call fails (no HTTP answer). ``lose_next_answer``: the next write
     is done in Booking but its answer is lost (a timeout after the commit), so the CRM must retry with the same
-    Idempotency-Key and get the same hold / booking back."""
+    Idempotency-Key and get the same hold / booking back. ``on_hold``: awaited once while a new hold call is on its
+    way (after Booking made the hold, before the CRM gets the answer), to race another sync run against it. Calls
+    made while ``down`` count under ``calls["down"]``."""
 
     down: bool = False
     lose_next_answer: bool = False
@@ -50,6 +52,7 @@ class FakeBooking:
     events: list[dict[str, Any]] = field(default_factory=list)
     tenants: list[str] = field(default_factory=list)
     quotes: int = 0
+    on_hold: Callable[[], Awaitable[None]] | None = None
 
     async def __call__(
         self, method: str, url: str, headers: Mapping[str, str], body: bytes | None, timeout_s: float
@@ -57,6 +60,7 @@ class FakeBooking:
         if url == TOKEN_URL:
             return _resp(200, {"access_token": "tok", "token_type": "Bearer", "expires_in": 3600})
         if self.down:
+            self.calls["down"] += 1
             raise HttpError("timeout")
         parsed = urllib.parse.urlsplit(url)
         path = parsed.path.removeprefix("/booking/b2b/v1")
@@ -66,6 +70,9 @@ class FakeBooking:
         key = f"{method} {path.split('/')[1] if '/' in path else path}"
         self.calls[key] += 1
         answer = self._route(method, path, query, data, headers.get("Idempotency-Key"))
+        if self.on_hold is not None and method == "POST" and path == "/holds":
+            hook, self.on_hold = self.on_hold, None
+            await hook()
         if self.lose_next_answer and method != "GET":
             self.lose_next_answer = False
             raise HttpError("timeout")

@@ -10,7 +10,8 @@ stays read-only for members (card R): they never type its title, price or status
 - :func:`ask`: hold, confirm (trip booked or later: after the deposit), release, re-quote of one AA line; one live
   request per (line, kind) (409 ``aa_request_pending``).
 - :func:`close_trip`: Lost or a cancelled trip releases its AA holds (queued after the stage Undo window; Undo cancels
-  them, :func:`undo_close`) and cancels the requests still waiting.
+  them, :func:`undo_close`) and holds the requests still waiting back by the same window (an Undo leaves them to run;
+  otherwise the sync drops them).
 """
 
 from __future__ import annotations
@@ -57,11 +58,13 @@ VALUES ($1, $2, $3, $4, now() + make_interval(secs => $5))
 ON CONFLICT (tenant_id, booking_line_id, kind) WHERE status = 'pending' AND deleted_at IS NULL DO NOTHING
 RETURNING aa_request_id
 """
-# Lost / cancel: the requests that would act on a closed trip stop (not the ones a run holds right now: their answer
-# is applied, and a hold that lands on a closed trip is released by the sync).
-CLOSE_CANCEL_SQL = """
-UPDATE crm.aa_request SET status = 'cancelled', finished_at = now(), result_code = 'trip_closed', lease_until = NULL
- WHERE trip_id = $1 AND status = 'pending' AND kind IN ('quote', 'requote', 'hold', 'refresh')
+# Lost / cancel: the requests that would act on a closed trip wait out the Undo window like the release (not the ones
+# a run holds right now: their answer is applied, and a hold that lands on a closed trip is released by the sync).
+# They are not cancelled here: an Undo leaves them pending and they run as asked; once the window is over the sync
+# drops the ones whose trip is still closed (``trip_closed``, Booking not called: app.booking.sync).
+CLOSE_DEFER_SQL = """
+UPDATE crm.aa_request SET next_attempt_at = greatest(next_attempt_at, now() + make_interval(secs => $2))
+ WHERE trip_id = $1 AND status = 'pending' AND deleted_at IS NULL AND kind IN ('quote', 'requote', 'hold', 'refresh')
    AND (lease_until IS NULL OR lease_until < now())
 """
 CLOSE_LINES_SQL = """
@@ -260,9 +263,10 @@ async def close_effects(ctx: AnyContext, trip_id: uuid.UUID) -> dict[str, int]:
 
 
 async def close_trip(ctx: AnyContext, trip_id: uuid.UUID) -> int:
-    """Lost or cancelled: stop the waiting requests and queue one release per line Booking has not booked (sent after
-    :data:`RELEASE_DELAY_S`, so a stage Undo can cancel it first). Returns the releases queued."""
-    await ctx.conn.execute(CLOSE_CANCEL_SQL, trip_id)
+    """Lost or cancelled: hold the waiting requests back and queue one release per line Booking has not booked, all
+    sent after :data:`RELEASE_DELAY_S` (so a stage Undo cancels the releases first and the other requests then run as
+    asked; without an Undo the sync drops them, ``trip_closed``). Returns the releases queued."""
+    await ctx.conn.execute(CLOSE_DEFER_SQL, trip_id, RELEASE_DELAY_S)
     queued = 0
     for row in await ctx.conn.fetch(CLOSE_LINES_SQL, trip_id):
         request_id = await ctx.conn.fetchval(ASK_SQL, trip_id, row["booking_line_id"], "release", None, RELEASE_DELAY_S)

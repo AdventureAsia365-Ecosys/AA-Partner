@@ -643,7 +643,10 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
   pending (attempts, `next_attempt_at` 30 s doubling to 15 min, `last_error_class`) and the line reads "AA pending" with
   the next try; no duplicates: one live request per (line, kind), stable `Idempotency-Key` per request (and quote
   version), a quote owns its one line, a repeated quote writes no new money head. A hold answered `price_changed` is
-  re-quoted once and held at the new price. Final refusals become the line's sub-status / `aa_result_code`.
+  re-quoted once and held at the new price. Final refusals become the line's sub-status / `aa_result_code`. When
+  Booking gives no answer at all (timeout, unreachable, 5xx, token pool down) the rest of the agency's batch goes back
+  unsent and the feed waits: one timeout per agency and run. An answer is applied to the line as it is under the lock,
+  not as claimed: a hold that lands after its line was released keeps only its hold id and queues the release.
 - **Money of AA lines**: cost = the quote's `b2b_price`, sell = the agency's, frozen at once (`aa_quote_lock`,
   `quote_lock`; a non-USD base crosses USD through `crm.fx_resolve`). Only the job writes it.
 - **Feed**: per agency with a `crm.booking_feed_state` row, `GET /events` pages into `crm.inbox_events` (each event in
@@ -654,8 +657,10 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
   per person (adults + children) below it. Warns, never blocks (ADR 0005a decision 1); the add form warns before
   asking too (`GET /crm/v1/aa/products/{source_id}?currency=`).
 - **AA-aware Lost**: `GET /trips/{id}/lines` answers `lost_reason_hint` (declined -> `aa_on_request_declined`, or
-  `aa_sold_out` when Booking said sold out); the Lost picker pre-selects it. Lost (and cancel) cancels the waiting
-  requests and queues a release of every line AA has not booked, sent after the Undo window; Undo cancels it. AA
+  `aa_sold_out` when Booking said sold out); the Lost picker pre-selects it. Lost (and cancel) holds the waiting
+  quote / requote / hold / refresh requests back by the Undo window and queues a release of every line AA has not
+  booked, sent after the window; Undo cancels the release and the waiting requests then run as asked; without an Undo
+  the sync drops them (`trip_closed`, Booking not called). AA
   bookings are left to the cancellation card (CRM-27, Booking's fee) and listed in the cancel dry run.
 - **Catalog cache**: `crm.aa_catalog_tour` (platform, no tenant), refreshed hourly; `GET /crm/v1/aa/catalog?q=`
   searches served tours; a retired tour's lines read "no longer offered".
