@@ -378,8 +378,11 @@ def test_membership_feed_tx_is_used_only_by_the_feed_module() -> None:
 
 
 def test_the_feed_state_is_reached_only_by_the_feed() -> None:
-    """Plus the readiness probe in ``app/db.py`` (a DB module, so skipped here): ``feed_state.health``."""
-    assert _users_of("feed_state", MEMBERSHIP_FEED_MODULES | {"app/cis/feed_state.py"}) == []
+    """Plus the readiness probe in ``app/db.py`` (a DB module, so skipped here): ``feed_state.health``, and the L1
+    console's agency summary (AA-978 follow-up, crm.ops.v1 1.2), which reads the row in its own SQL and only calls the
+    pure ``feed_state.health_word``."""
+    allowed = MEMBERSHIP_FEED_MODULES | {"app/cis/feed_state.py", "app/ops/console.py"}
+    assert _users_of("feed_state", allowed) == []
 
 
 def test_ingest_tx_is_used_only_by_the_mail_ingest_job() -> None:

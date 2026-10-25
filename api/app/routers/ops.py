@@ -73,6 +73,10 @@ class ConsoleOut(_Out):
 TenantState = Literal["active", "locked", "offboarding", "offboarded"]
 
 
+LockSource = Literal["aa_ops", "cis_tenant", "cis_membership"]
+FeedState = Literal["ok", "pending", "stale", "failing", "unknown"]
+
+
 class TenantSummary(_Out):
     tenant_id: str
     agency_name: str
@@ -81,6 +85,10 @@ class TenantSummary(_Out):
     has_owner: bool
     holds_travellers: bool
     created_at: str
+    # crm.ops.v1 1.2 (AA-978 follow-up): additive and optional for a 1.1 reader.
+    lock_source: LockSource | None = None
+    membership_feed_state: FeedState = "unknown"
+    membership_feed_lag_s: int | None = None
 
 
 class TenantPage(_Out):
