@@ -19,6 +19,7 @@ from app import stages, stages_job
 from app.errors import Conflict, Forbidden, Invalid, NotFound, RateLimited, ServiceError, Unavailable
 from app.portal import access, progress
 from app.portal import public as portal
+from app.portal.codes import CODE_MASK
 from app.proposals import agreements, service
 from app.proposals import public as proposal_page
 from app.settings import Settings
@@ -300,7 +301,12 @@ async def test_void_only_a_due_row() -> None:
     paid = ScriptedConn().on("FROM crm.payment_schedule s", _schedule_row(status="paid"))
     with _raises(Conflict, "schedule_not_due"):
         await service.void(tenant_ctx(paid), SCHEDULE)
-    conn = ScriptedConn().on("FROM crm.payment_schedule s", _schedule_row())
+    # A deposit row is never void (review S251: the accepted proposal keeps its way to Booked and to the portal).
+    deposit = ScriptedConn().on("FROM crm.payment_schedule s", _schedule_row())
+    with _raises(Conflict, "deposit_not_voidable"):
+        await service.void(tenant_ctx(deposit), SCHEDULE)
+    assert not any("SET status = 'void'" in sql for sql, _ in deposit.calls)
+    conn = ScriptedConn().on("FROM crm.payment_schedule s", _schedule_row(kind="balance"))
     assert (await service.void(tenant_ctx(conn), SCHEDULE))["status"] == "void"
 
 
@@ -569,6 +575,7 @@ async def test_request_code_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     assert out["sent"] is False and len(out["dev_code"]) == 6 and out["dev_code"].isdigit()
     stored = echo.sql("INSERT INTO crm.otp_challenge")[0]
     assert stored[5] == portal.code_hash(stored[0], out["dev_code"])  # only the hash is stored
+    assert stored[7] == "dev_echo"  # the evidence will say the API answer carried this code
     _portal(monkeypatch, echo)
     with _raises(Conflict, "code_delivery_unavailable"):
         await portal.request_code(object(), object(), PLAIN, TOKEN, purpose="sign_in", session=None, origin=None)  # type: ignore[arg-type]
@@ -588,8 +595,18 @@ async def test_the_code_mail_leaves_the_agency_mailbox(monkeypatch: pytest.Monke
     _portal(monkeypatch, conn)
     out = await portal.request_code(object(), object(), PLAIN, TOKEN, purpose="sign_in", session=None, origin=None)  # type: ignore[arg-type]
     assert out == {"sent": True, "to_hint": "g***@e******.test", "expires_in_s": 600}
-    body = conn.sql("INSERT INTO crm.message")[0][4].decode()
-    assert "valid for 10 minutes" in body and "dev_code" not in out
+    message = conn.sql("INSERT INTO crm.message")[0]
+    body = message[4].decode()
+    # Review S251: the stored mail (the trip's Messages tab) shows the code masked; the code waits sealed on the
+    # otp_challenge row for the sender, which puts it into the mail at send time.
+    assert "valid for 10 minutes" in body and CODE_MASK in body and "dev_code" not in out
+    stored = conn.sql("INSERT INTO crm.otp_challenge")[0]
+    assert stored[7] == "mailbox"
+    otp_id, message_id, sealed = conn.sql("SET message_id = $2, code_enc = $3")[0]
+    assert otp_id == stored[0] and message_id == message[0]
+    code = sealed.decode().split(":", 2)[2]
+    assert sealed.startswith(b"enc:otp_challenge.code_enc:") and code not in body
+    assert stored[5] == portal.code_hash(otp_id, code)
 
 
 @pytest.mark.asyncio
@@ -667,7 +684,7 @@ async def test_stage3_is_locked_before_the_deposit(monkeypatch: pytest.MonkeyPat
 )
 @pytest.mark.asyncio
 async def test_stage3_answers_are_checked(monkeypatch: pytest.MonkeyPatch, raw: Any, fields: list[str]) -> None:
-    _portal(monkeypatch, _signed_in(ScriptedConn()).on("s.status = 'paid'", True))
+    _portal(monkeypatch, _signed_in(ScriptedConn()).on("crm.portal_unlocked", True))
     with _raises(Invalid, "invalid_submission") as err:
         await portal.submit_stage3(object(), object(), ECHO, TOKEN, "session", raw, origin=None)  # type: ignore[arg-type]
     assert err.value.extra["fields"] == fields
@@ -675,7 +692,7 @@ async def test_stage3_answers_are_checked(monkeypatch: pytest.MonkeyPatch, raw: 
 
 @pytest.mark.asyncio
 async def test_stage3_writes_the_f1_fields(monkeypatch: pytest.MonkeyPatch) -> None:
-    conn = _signed_in(ScriptedConn()).on("s.status = 'paid'", True)
+    conn = _signed_in(ScriptedConn()).on("crm.portal_unlocked", True)
     _portal(monkeypatch, conn)
     out = await portal.submit_stage3(
         object(),
@@ -693,7 +710,7 @@ async def test_stage3_writes_the_f1_fields(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def _sign_conn(**over: Any) -> ScriptedConn:
-    conn = _signed_in(ScriptedConn()).on("s.status = 'paid'", True)
+    conn = _signed_in(ScriptedConn()).on("crm.portal_unlocked", True)
     conn.on("SELECT doc_id, version_label, body_text, body_sha256 FROM crm.agreement_doc",
             over.get("waiver", {"doc_id": DOC, "body_sha256": b"\x01" * 32}))  # fmt: skip
     conn.on("FROM crm.signature_request WHERE trip_id", over.get("signature"))
@@ -727,11 +744,16 @@ async def test_sign_refusals(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_sign_records_the_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
-    code = {"otp_id": OTP, "code_hash": portal.code_hash(OTP, "654321"), "attempts": 0, "expired": False}
+    code = {"otp_id": OTP, "code_hash": portal.code_hash(OTP, "654321"), "attempts": 0, "expired": False,
+            "delivery": "mailbox"}  # fmt: skip
     conn = _sign_conn(code=code)
     _portal(monkeypatch, conn)
+    evidence: list[dict[str, Any]] = []
+    real = portal.evidence_record
+    monkeypatch.setattr(portal, "evidence_record", lambda **parts: evidence.append(parts) or real(**parts))
     signed, answer = await portal.sign(object(), object(), ECHO, TOKEN, "s", SIGN, origin=None)  # type: ignore[arg-type]
     assert signed and answer == {"status": "signed", "signed_at": NOW.isoformat()}
+    assert evidence[0]["code_delivery"] == "mailbox" and evidence[0]["otp_id"] == str(OTP)
     request_id = conn.sql("INSERT INTO crm.signature_request")[0][0]
     sign = conn.sql("SET status = 'signed', signed_at")[0]
     assert sign[0] == request_id and sign[3] == b"\x01" * 32 and len(sign[4]) == 32 and sign[5] == OTP

@@ -8,8 +8,13 @@ masked e-mail hint of the traveller's own address.
 - :func:`request_code`: a code of purpose ``sign_in`` (or ``sign``, which needs a session: "code asked again at
   signing"), 10 minutes, at most :data:`CODES_PER_HOUR` per access; older pending codes of the purpose expire. The
   code goes out as a message from the agency's mailbox (the trip owner's own, else the agency's; errata S247: never a
-  platform sender) in the trip conversation with that traveller, dispatched at once (origin ``system``). No mailbox ->
-  409 ``code_delivery_unavailable`` unless ``PORTAL_OTP_DEV_ECHO`` (Dev) returns the code in the answer.
+  platform sender) in the trip conversation with that traveller, dispatched at once (origin ``system``). **The stored
+  message shows the code masked** (:data:`CODE_MASK`): the code itself waits under the vault DEK in
+  ``otp_challenge.code_enc`` and the mail sender (:mod:`app.mail.sender`) puts it into the mail at send time and
+  clears it, so nobody at the agency can read a code in the Messages tab (review S251: an agent who could read a
+  signing code could sign as the traveller). No mailbox -> 409 ``code_delivery_unavailable`` unless
+  ``PORTAL_OTP_DEV_ECHO`` (Dev) returns the code in the answer; such a code is marked ``delivery = dev_echo`` and the
+  signature evidence says so.
 - :func:`verify_code`: at most :data:`MAX_ATTEMPTS` tries per code; the answer of a wrong code is returned, not raised,
   so the attempt counter commits. A good code opens a portal session of :data:`SESSION_HOURS` hours (the router sets
   it as an httpOnly cookie; only its SHA-256 is stored) and moves the access invited -> active.
@@ -17,8 +22,9 @@ masked e-mail hint of the traveller's own address.
   never values), the waiver to sign, and for the lead the party's progress (counts and roles, no names) and the
   payment schedule. Without a session: the agency name and ``signed_in: false`` only.
 - :func:`submit_stage3`: **403 ``stage3_locked`` before the deposit is paid** (card R; the database refuses too,
-  CRM32), then the F1 identity fields written under the vault DEK (write-only: never read back here), Stage 3 time on
-  the access, the trip's ``s3`` and ``waiting_on`` refreshed.
+  CRM32; a ``manual_booking`` override into Booked opens it as well: ``crm.portal_unlocked``), then the F1 identity
+  fields written under the vault DEK (write-only: never read back here), Stage 3 time on the access, the trip's
+  ``s3`` and ``waiting_on`` refreshed.
 - :func:`sign`: e-sign v0: the published waiver version and its SHA-256 as shown, the typed full name, the consent tick
   and a fresh ``sign`` code; locked before the deposit like Stage 3.
 
@@ -44,6 +50,7 @@ from app.intake import stage1
 from app.intake.public import origin_allowed, record_drop
 from app.mail import threads
 from app.portal import progress
+from app.portal.codes import CODE_MASK
 from app.settings import Settings
 from app.tenancy import AnyContext, ClientLink, client_link_tx
 from app.travellers import age_bands
@@ -77,33 +84,37 @@ RECENT_CODES_SQL = """
 SELECT count(*) FROM crm.otp_challenge WHERE access_id = $1 AND created_at > now() - interval '1 hour'
 """
 EXPIRE_PENDING_SQL = """
-UPDATE crm.otp_challenge SET status = 'expired' WHERE access_id = $1 AND purpose = $2 AND status = 'pending'
+UPDATE crm.otp_challenge SET status = 'expired', code_enc = NULL
+ WHERE access_id = $1 AND purpose = $2 AND status = 'pending'
 """
 INSERT_CODE_SQL = """
-INSERT INTO crm.otp_challenge (otp_id, access_id, trip_id, traveler_id, purpose, code_hash, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(mins => $7))
+INSERT INTO crm.otp_challenge (otp_id, access_id, trip_id, traveler_id, purpose, code_hash, expires_at, delivery)
+VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(mins => $7), $8)
 """
+CODE_MAIL_SQL = "UPDATE crm.otp_challenge SET message_id = $2, code_enc = $3 WHERE otp_id = $1"
 PENDING_CODE_SQL = """
-SELECT otp_id, code_hash, attempts, expires_at <= now() AS expired FROM crm.otp_challenge
+SELECT otp_id, code_hash, attempts, delivery, expires_at <= now() AS expired FROM crm.otp_challenge
  WHERE access_id = $1 AND purpose = $2 AND status = 'pending'
  ORDER BY created_at DESC LIMIT 1
    FOR UPDATE
 """
 ATTEMPT_SQL = """
 UPDATE crm.otp_challenge SET attempts = attempts + 1,
-       status = CASE WHEN attempts + 1 >= $2 THEN 'failed' ELSE status END
+       status = CASE WHEN attempts + 1 >= $2 THEN 'failed' ELSE status END,
+       code_enc = CASE WHEN attempts + 1 >= $2 THEN NULL ELSE code_enc END
  WHERE otp_id = $1
 RETURNING attempts, status
 """
-EXPIRE_CODE_SQL = "UPDATE crm.otp_challenge SET status = 'expired' WHERE otp_id = $1"
+EXPIRE_CODE_SQL = "UPDATE crm.otp_challenge SET status = 'expired', code_enc = NULL WHERE otp_id = $1"
 SIGNED_IN_SQL = """
 UPDATE crm.otp_challenge SET status = 'verified', verified_at = now(), session_hash = $2,
-       session_expires_at = now() + make_interval(hours => $3)
+       session_expires_at = now() + make_interval(hours => $3), code_enc = NULL
  WHERE otp_id = $1
 RETURNING session_expires_at
 """
 CONSUME_SQL = """
-UPDATE crm.otp_challenge SET status = 'verified', verified_at = now(), consumed_at = now() WHERE otp_id = $1
+UPDATE crm.otp_challenge SET status = 'verified', verified_at = now(), consumed_at = now(), code_enc = NULL
+ WHERE otp_id = $1
 """
 ACTIVATE_SQL = """
 UPDATE crm.traveler_access SET last_sign_in_at = now(),
@@ -219,18 +230,22 @@ async def _session(ctx: AnyContext, access: Any, session: str | None) -> uuid.UU
     raise Forbidden("portal_sign_in_required", "sign in with the code we e-mail you")
 
 
-async def _deposit_paid(ctx: AnyContext, trip_id: uuid.UUID) -> bool:
-    return bool(await ctx.conn.fetchval(stages.DEPOSIT_PAID_SQL, trip_id))
+async def _unlocked(ctx: AnyContext, trip_id: uuid.UUID) -> bool:
+    """The portal lock (card R): a paid deposit, or a manual_booking override into Booked (crm.portal_unlocked)."""
+    return bool(await ctx.conn.fetchval(stages.PORTAL_UNLOCKED_SQL, trip_id))
 
 
 async def _require_unlocked(ctx: AnyContext, access: Any, action: str) -> None:
-    if not await _deposit_paid(ctx, access["trip_id"]):
+    if not await _unlocked(ctx, access["trip_id"]):
         ctx.audit(action, "denied", "traveler_access", str(access["access_id"]), reason="stage3_locked")
         raise Forbidden("stage3_locked", "Stage 3 opens after the deposit is paid")
 
 
-async def _deliver(ctx: AnyContext, vault: Vault, access: Any, purpose: str, code: str) -> str | None:
-    """Queue the code mail from the agency's own mailbox; the masked address, or None when no mailbox can send."""
+async def _deliver(
+    ctx: AnyContext, vault: Vault, access: Any, purpose: str, otp_id: uuid.UUID, code: str
+) -> str | None:
+    """Queue the code mail from the agency's own mailbox; the masked address, or None when no mailbox can send.
+    The stored message carries :data:`CODE_MASK`; the code waits sealed on its ``otp_challenge`` row for the sender."""
     blob = await ctx.conn.fetchval(EMAIL_SQL, access["traveler_id"])
     if blob is None:
         raise Conflict("no_email_on_file", "your agent has no e-mail address for you")
@@ -248,8 +263,11 @@ async def _deliver(ctx: AnyContext, vault: Vault, access: Any, purpose: str, cod
         mailbox,
         await vault.encrypt("message", "subject_enc", message_id, subject, purpose=MAIL_PURPOSE),
         await vault.encrypt(
-            "message", "body_enc", message_id, body.format(code=code, minutes=CODE_MINUTES), purpose=MAIL_PURPOSE
+            "message", "body_enc", message_id, body.format(code=CODE_MASK, minutes=CODE_MINUTES), purpose=MAIL_PURPOSE
         ),
+    )
+    await ctx.conn.execute(
+        CODE_MAIL_SQL, otp_id, message_id, await vault.encrypt("otp_challenge", "code_enc", otp_id, code)
     )
     await ctx.conn.execute(TOUCH_CONVERSATION_SQL, conversation)
     await dispatch.enqueue_message(
@@ -295,8 +313,9 @@ async def request_code(
             purpose,
             code_hash(otp_id, code),
             CODE_MINUTES,
+            "dev_echo" if settings.portal_otp_dev_echo else "mailbox",
         )
-        hint = await _deliver(ctx, Vault(keys, ctx), access, purpose, code)  # type: ignore[arg-type]
+        hint = await _deliver(ctx, Vault(keys, ctx), access, purpose, otp_id, code)  # type: ignore[arg-type]
         if hint is None and not settings.portal_otp_dev_echo:
             raise Conflict("code_delivery_unavailable", "your agent cannot e-mail a code right now; ask them")
         ctx.audit("portal_code", "allowed", "traveler_access", str(access["access_id"]), reason=purpose)
@@ -306,9 +325,9 @@ async def request_code(
         return out
 
 
-async def _check_code(ctx: AnyContext, access: Any, purpose: str, code: Any) -> tuple[uuid.UUID | None, dict]:
-    """(the verified code's id, {}) or (None, the refusal answer). Never raises on a wrong code, so the attempt
-    counter is kept."""
+async def _check_code(ctx: AnyContext, access: Any, purpose: str, code: Any) -> tuple[Any, dict]:
+    """(the verified code's row (otp_id, delivery), {}) or (None, the refusal answer). Never raises on a wrong code,
+    so the attempt counter is kept."""
     row = await ctx.conn.fetchrow(PENDING_CODE_SQL, access["access_id"], purpose)
     if row is None:
         return None, {"detail": "code_invalid", "attempts_left": 0}
@@ -317,7 +336,7 @@ async def _check_code(ctx: AnyContext, access: Any, purpose: str, code: Any) -> 
         return None, {"detail": "code_expired", "attempts_left": 0}
     good = isinstance(code, str) and len(code) == 6 and code.isdigit()
     if good and hmac.compare_digest(code_hash(row["otp_id"], code), bytes(row["code_hash"])):
-        return row["otp_id"], {}
+        return row, {}
     after = await ctx.conn.fetchrow(ATTEMPT_SQL, row["otp_id"], MAX_ATTEMPTS)
     ctx.audit("portal_code_check", "denied", "traveler_access", str(access["access_id"]), reason="code_invalid")
     return None, {"detail": "code_invalid", "attempts_left": max(MAX_ATTEMPTS - int(after["attempts"]), 0)}
@@ -330,11 +349,11 @@ async def verify_code(
     check_origin(settings, origin)
     async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
         access = await _access(ctx, link)
-        otp_id, refusal = await _check_code(ctx, access, "sign_in", code)
-        if otp_id is None:
+        verified, refusal = await _check_code(ctx, access, "sign_in", code)
+        if verified is None:
             return None, refusal
         session = secrets.token_urlsafe(32)
-        expires = await ctx.conn.fetchval(SIGNED_IN_SQL, otp_id, session_hash(session), SESSION_HOURS)
+        expires = await ctx.conn.fetchval(SIGNED_IN_SQL, verified["otp_id"], session_hash(session), SESSION_HOURS)
         await ctx.conn.execute(ACTIVATE_SQL, access["access_id"])
         ctx.audit("portal_sign_in", "allowed", "traveler_access", str(access["access_id"]))
         return session, {"signed_in": True, "session_expires_at": expires.isoformat()}
@@ -380,7 +399,7 @@ async def home(pool: asyncpg.Pool, token: str, session: str | None) -> dict[str,
                 "stage": access["stage"],
             },
             "stage3": {
-                "locked": not await _deposit_paid(ctx, access["trip_id"]),
+                "locked": not await _unlocked(ctx, access["trip_id"]),
                 "fields": list(STAGE3_FIELDS),
                 "missing": list(mine.missing) if mine is not None else list(STAGE3_FIELDS),
                 "done": bool(mine and mine.details_done),
@@ -509,9 +528,10 @@ async def sign(
         signature = await ctx.conn.fetchrow(SIGNATURE_SQL, access["trip_id"], access["traveler_id"], waiver["doc_id"])
         if signature is not None and signature["status"] == "signed":
             return True, {"status": "already_signed", "signed_at": _iso(signature["signed_at"])}
-        otp_id, refusal = await _check_code(ctx, access, "sign", raw.get("code"))
-        if otp_id is None:
+        verified, refusal = await _check_code(ctx, access, "sign", raw.get("code"))
+        if verified is None:
             return False, refusal
+        otp_id = verified["otp_id"]
         await ctx.conn.execute(CONSUME_SQL, otp_id)
         request_id = signature["request_id"] if signature is not None else uuid.uuid4()
         if signature is None:
@@ -529,6 +549,9 @@ async def sign(
             doc_id=str(waiver["doc_id"]),
             doc_sha256=sha.hex(),
             otp_id=str(otp_id),
+            # mailbox: the code reached only the traveller's own e-mail (the stored mail is masked); dev_echo: the
+            # Dev API answer carried it too (PORTAL_OTP_DEV_ECHO), so the record does not claim e-mail control.
+            code_delivery=verified["delivery"],
             signed_at=signed_at.isoformat(),
             typed_name_sha256=hashlib.sha256(name.encode()).hexdigest(),  # type: ignore[union-attr]
             consent={"agree": True},

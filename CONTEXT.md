@@ -587,13 +587,15 @@ Design v3 §6.3 CRM-18 (M4 base, M7 manual, M11 base, M12 v0); migration crm-016
   -> deposit + balance schedule rows, a `collect_deposit` task.
 - **Mark paid** (owner / agent `PAYMENT_MARK_RECEIVED`): one append-only `crm.payment`, the row paid, a
   `trip_commitment` payment (delete block); the deposit moves a trip at Proposal to Booked (`deposit_paid`, the
-  computable booking gate) and invites every traveller to the portal. Void a due row.
+  computable booking gate) and invites every traveller to the portal. Void a due balance row (a deposit row is never
+  void: 409 `deposit_not_voidable`; a deposit taken outside the CRM is marked paid with its method).
 - **Portal base** (`/c/t/<token>`, one link per traveller, `client_link` purpose `portal`, 30 days, re-issue revokes):
   a 6-digit e-mail code (10 min, 5 tries, 5 an hour) sent from the agency's own mailbox (trip owner's, else the
   agency's; none -> 409 `code_delivery_unavailable`; `PORTAL_OTP_DEV_ECHO` on Dev returns it) opens a 12-hour session
-  cookie. Home: own Stage 3 progress (codes, never values), the waiver, for the lead the party's progress and the
+  cookie. The stored code mail shows the code masked (`app/portal/codes.py`); the sender fills it in from
+  `otp_challenge.code_enc` at send time and clears it, so no agency member can read a code. Home: own Stage 3 progress (codes, never values), the waiver, for the lead the party's progress and the
   payment schedule. **Stage 3** (the F1 identity fields, write-only) and **signing** are 403 `stage3_locked` until the
-  deposit is paid (DB CRM32 too). **E-sign v0**: published waiver + its hash, typed name, consent tick and a fresh
+  deposit is paid or the trip was booked with the `manual_booking` override (`crm.portal_unlocked`; DB CRM32 too). **E-sign v0**: published waiver + its hash, typed name, consent tick and a fresh
   signing code -> `signature_request` signed with an evidence hash and a `trip_commitment` signature.
 - **Stage 3 gate**: s3 = done (traveller x [details, waiver]) / all, stored on `trip.intake_completeness.s3`; 100
   opens booked -> pre_departure (API and DB); the `waiting_on` hook `portal_stage3` (60) answers `client` for a booked

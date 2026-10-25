@@ -10,7 +10,10 @@
 - **E** (card): a travelling trip without a return date stays Travelling and gets one ``return_date_missing`` task;
   the date rule moves a booked trip with Stage 3 missing as ``date_rule_gate_unmet`` + an urgent task, one with
   Stage 3 complete as ``date_rule``; the T-21 tick and the 24-hour code purge.
-- Code delivery through the agency's own mailbox (a queued ``crm.message`` + dispatch row), never without one.
+- Code delivery through the agency's own mailbox (a queued ``crm.message`` + dispatch row), never without one; the
+  stored message shows the code masked and the code waits sealed on its ``otp_challenge`` row (review S251).
+- Review S251: a trip booked with the ``manual_booking`` override opens the portal without a CRM deposit; a deposit
+  row is never void (409 ``deposit_not_voidable``).
 - The gates in the API: proposal -> booked without the deposit is 409 ``gate_unmet``.
 """
 
@@ -29,6 +32,7 @@ from app.errors import Conflict, Forbidden, Invalid
 from app.permissions import Action
 from app.portal import access, progress
 from app.portal import public as portal
+from app.portal.codes import CODE_MASK
 from app.proposals import agreements, service
 from app.proposals import public as proposal_page
 from app.settings import Settings
@@ -342,6 +346,20 @@ async def test_codes_go_through_the_agencys_mailbox_or_not_at_all(app_pool: asyn
             "JOIN crm.dispatch_queue q ON q.message_id = m.message_id"
         )
     assert dict(row) == {"status": "queued", "sender_kind": "agency_mailbox", "origin": "system", "linked": True}
+    # Review S251: nobody at the agency reads the code in the stored mail; it waits sealed for the sender only.
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        vault = Vault(s["keys"], ctx)
+        mail = await ctx.conn.fetchrow("SELECT message_id, body_enc FROM crm.message")
+        body = await vault.decrypt("message", "body_enc", mail["message_id"], mail["body_enc"], purpose="mail")
+        otp = await ctx.conn.fetchrow("SELECT otp_id, message_id, code_enc, delivery FROM crm.otp_challenge")
+        code = await vault.decrypt("otp_challenge", "code_enc", otp["otp_id"], otp["code_enc"])
+    assert CODE_MASK in body and code not in body and len(code) == 6
+    assert otp["message_id"] == mail["message_id"] and otp["delivery"] == "mailbox"
+    session, _ = await portal.verify_code(app_pool, PLAIN, token, code, origin=None)
+    assert session is not None
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        left = await ctx.conn.fetchval("SELECT code_enc FROM crm.otp_challenge WHERE otp_id = $1", otp["otp_id"])
+    assert left is None
     # A signing code needs a session; five codes an hour per traveller at most.
     with pytest.raises(Forbidden):
         await portal.request_code(app_pool, s["keys"], PLAIN, token, purpose="sign", session=None, origin=None)
@@ -391,12 +409,36 @@ async def test_proposal_rules(app_pool: asyncpg.Pool) -> None:
     await _accept(app_pool, s, second)
     overview = await _schedule(app_pool, s)
     assert [r["kind"] for r in overview["schedule"]] == ["deposit"]  # paid in full by the deposit
+    with pytest.raises(Conflict) as err:  # review S251: a deposit row is never void
+        async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+            await service.void(ctx, uuid.UUID(overview["schedule"][0]["schedule_id"]))
+    assert err.value.code == "deposit_not_voidable"
     with pytest.raises(Conflict) as err:
         async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
             await service.create_draft(ctx, Vault(s["keys"], ctx), s["trip"], body="v3", currency="USD",
                                        total=Decimal("1"), deposit=Decimal("1"), balance_due_on=None,
                                        terms_doc_id=None)  # fmt: skip
     assert err.value.code == "proposal_already_accepted"
+
+
+async def test_a_manual_booking_opens_the_portal(app_pool: asyncpg.Pool) -> None:
+    """Review S251: the deposit was taken outside the CRM and the trip booked with the manual_booking override (no
+    proposal at all): Stage 3 and the waiver open (the undone override: test_crm016_schema)."""
+    s = await _setup(app_pool)
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        token = _token((await access.invite(ctx, s["trip"], s["lead"]))["link_path"])
+    session = await _sign_in(app_pool, s, token)
+    assert (await portal.home(app_pool, token, session))["stage3"]["locked"]
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        vault = Vault(s["keys"], ctx)
+        moved = await stages.move(ctx, s["trip"], "booked", vault=vault, override_reason="manual_booking")
+    assert moved["override_reason_code"] == "manual_booking"
+    assert not (await portal.home(app_pool, token, session))["stage3"]["locked"]
+    assert (await _schedule(app_pool, s))["portal_unlocked"]
+    done = await portal.submit_stage3(app_pool, s["keys"], ECHO, token, session, STAGE3, origin=None)
+    assert done["status"] == "received"
+    signed, _ = await _sign(app_pool, s, token, session, "Grace Lee")
+    assert signed
 
 
 async def test_a_published_agreement_never_changes(app_pool: asyncpg.Pool) -> None:

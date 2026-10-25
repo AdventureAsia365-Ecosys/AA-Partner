@@ -70,6 +70,8 @@ export interface LifecycleView {
   schedule: ScheduleRow[];
   payments: PaymentRow[];
   deposit_paid: boolean;
+  /** Stage 3 and signing are open: a paid deposit, or Booked with the manual_booking override (crm.portal_unlocked). */
+  portal_unlocked: boolean;
   portal: { s3: number; waiver_required: boolean; travellers: TravellerProgress[] };
 }
 
@@ -141,6 +143,7 @@ const ERROR_CODES = new Set([
   "invalid_amount",
   "body_required",
   "schedule_not_due",
+  "deposit_not_voidable",
   "proposal_not_accepted",
   "received_in_future",
   "trip_closed",

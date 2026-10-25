@@ -12,7 +12,9 @@ M7 manual, F6; A-05 / A-10 thin). Routes in :mod:`app.routers.proposals`; the cl
 - **Mark paid** (``PAYMENT_MARK_RECEIVED``, owner / agent): one ``crm.payment`` row, the schedule row paid, a
   ``trip_commitment`` (kind ``payment``, succeeded: the delete block). A paid deposit of the accepted proposal moves a
   trip at Proposal to Booked (reason ``deposit_paid``) and invites every traveller to the portal (F6.6).
-- **Void** a due schedule row (owner / agent).
+- **Void** a due balance row (owner / agent). A deposit row is never void (409 ``deposit_not_voidable``; crm-016
+  ``payment_schedule_deposit_void_chk``): a deposit taken outside the CRM is marked paid with its method (cash /
+  other), so the accepted proposal always keeps its way to Booked and to the portal (review S251).
 
 Every function takes the open context and never opens one. Amounts are the client's sell amounts only (no net, cost
 or margin key: nothing for the margin serializer to strip).
@@ -263,6 +265,7 @@ async def trip_overview(ctx: TenantContext, vault: Vault, trip_id: uuid.UUID) ->
         "schedule": [_schedule_view(r) for r in await ctx.conn.fetch(SCHEDULE_SQL, trip_id)],
         "payments": payments,
         "deposit_paid": bool(await ctx.conn.fetchval(stages.DEPOSIT_PAID_SQL, trip_id)),
+        "portal_unlocked": bool(await ctx.conn.fetchval(stages.PORTAL_UNLOCKED_SQL, trip_id)),
         "portal": portal.view(),
     }
 
@@ -479,6 +482,12 @@ async def void(ctx: TenantContext, schedule_id: uuid.UUID) -> dict[str, Any]:
         raise NotFound("schedule_not_found")
     if row["status"] != "due":
         raise Conflict("schedule_not_due", "a paid row stays (refunds: CRM-23)")
+    if row["kind"] == "deposit":
+        raise Conflict(
+            "deposit_not_voidable",
+            "a deposit stays: mark it paid with the method used (cash, other) when it was taken outside the CRM, "
+            "or cancel the trip",
+        )
     try:
         await ctx.conn.execute(VOID_SQL, schedule_id)
     except asyncpg.PostgresError as exc:  # pragma: no cover — the status check above runs first

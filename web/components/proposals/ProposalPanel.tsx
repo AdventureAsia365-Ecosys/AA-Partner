@@ -290,9 +290,12 @@ export function ProposalPanel({
                       <Button size="sm" disabled={!hydrated || busy} onClick={() => setPaying(row.schedule_id)}>
                         {tr("proposal.markPaid")}
                       </Button>
-                      <Button size="sm" variant="ghost" disabled={!hydrated || busy} onClick={() => voidRow(row.schedule_id)}>
-                        {tr("proposal.void")}
-                      </Button>
+                      {/* A deposit row is never void (409 deposit_not_voidable): it is marked paid, whatever the method. */}
+                      {row.kind !== "deposit" && (
+                        <Button size="sm" variant="ghost" disabled={!hydrated || busy} onClick={() => voidRow(row.schedule_id)}>
+                          {tr("proposal.void")}
+                        </Button>
+                      )}
                     </>
                   )}
                 </div>
@@ -336,7 +339,7 @@ export function ProposalPanel({
             <h3 style={{ margin: 0, fontSize: 13, color: K.ink }}>
               {fmt(tr("proposal.portalTitle"), { s3: view.portal.s3 })}
             </h3>
-            <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{tr(view.deposit_paid ? "proposal.portalOpen" : "proposal.portalLocked")}</p>
+            <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{tr(view.portal_unlocked ? "proposal.portalOpen" : "proposal.portalLocked")}</p>
             {view.portal.travellers.map((x) => (
               <div key={x.traveler_id} data-testid="portal-row" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 13, padding: "6px 0", borderTop: `1px solid ${K.line}` }}>
                 <strong style={{ overflowWrap: "anywhere" }}>{name(x.traveler_id)}</strong>

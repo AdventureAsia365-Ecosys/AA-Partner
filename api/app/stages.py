@@ -146,6 +146,10 @@ SELECT EXISTS (SELECT 1 FROM crm.payment_schedule s
                 WHERE s.trip_id = $1 AND s.kind = 'deposit' AND s.status = 'paid' AND s.deleted_at IS NULL
                   AND p.status = 'accepted' AND p.deleted_at IS NULL)
 """
+# AA-946 review (S251): the portal lock (card R) = crm-016 crm.portal_unlocked: a paid deposit of the accepted proposal,
+# or a manual_booking override into Booked (the deposit was taken outside the CRM) that was not undone. The database
+# guard crm.guard_traveler_access (CRM32) reads the same function.
+PORTAL_UNLOCKED_SQL = "SELECT crm.portal_unlocked($1)"
 AA_LINE_OPEN_SQL = """
 SELECT EXISTS (SELECT 1 FROM crm.trip_commitment
                 WHERE trip_id = $1 AND kind = 'aa_line' AND line_status IN ('requested', 'held') AND deleted_at IS NULL)

@@ -16,6 +16,10 @@ For one dispatch row whose gate passed (inside the dispatcher's ``system_tx``):
 5. sent -> ``sent`` with the Message-ID hash (and the id itself under the mail DEK) and the provider's id; a refresh
    token the provider rotated is sealed again in place (:func:`store_rotated`).
 
+A portal code mail (AA-946 review S251: an ``otp_challenge`` row names the message) is stored with the code masked
+(:data:`app.portal.codes.CODE_MASK`); the code is opened from ``otp_challenge.code_enc`` here, put into the mail and
+cleared once sent. A code that is no longer pending or has expired -> the message ``failed`` (``code_expired``).
+
 Nothing here logs an address, a subject or a body.
 """
 
@@ -30,6 +34,7 @@ from app.mail import compose
 from app.mail.parse import id_hash
 from app.mail.providers import AuthRevoked, Rejected
 from app.mail.state import MailRuntime, alert_owners, mark_disconnected
+from app.portal.codes import CODE_MASK
 from app.tenancy import AnyContext, SystemContext
 from app.vault import Vault
 
@@ -72,6 +77,12 @@ CREDENTIAL_OK_SQL = """
 UPDATE crm.integration_credential SET last_ok_at = now(), last_checked_at = now() WHERE integration_credential_id = $1
 """
 ROTATE_SQL = "UPDATE crm.integration_credential SET secret_enc = $2 WHERE integration_credential_id = $1"
+CODE_SQL = """
+SELECT otp_id, code_enc, status <> 'pending' OR expires_at <= now() AS expired FROM crm.otp_challenge
+ WHERE message_id = $1
+   FOR UPDATE
+"""
+CODE_SENT_SQL = "UPDATE crm.otp_challenge SET code_enc = NULL WHERE otp_id = $1"
 PURPOSE = "mail"
 
 
@@ -133,6 +144,14 @@ class MailSender:
             if row["body_enc"]
             else ""
         )
+        code = await ctx.conn.fetchrow(CODE_SQL, message_id)
+        if code is not None:
+            if code["expired"] or code["code_enc"] is None:
+                await ctx.conn.execute(FAIL_SQL, message_id, "code_expired")
+                return "send_failed"
+            text = text.replace(
+                CODE_MASK, await vault.decrypt("otp_challenge", "code_enc", code["otp_id"], code["code_enc"])
+            )
         reply = await ctx.conn.fetchrow(REPLY_TO_SQL, row["conversation_id"])
         in_reply_to = (
             await vault.decrypt(
@@ -167,5 +186,7 @@ class MailSender:
         await ctx.conn.execute(SENT_SQL, message_id, id_hash(built.message_id), sealed_id, result.external_id)
         await ctx.conn.execute(TOUCH_SQL, row["conversation_id"])
         await ctx.conn.execute(CREDENTIAL_OK_SQL, mailbox["credential_id"])
+        if code is not None:
+            await ctx.conn.execute(CODE_SENT_SQL, code["otp_id"])
         await store_rotated(ctx, vault, mailbox["credential_id"], result.rotated_secret)
         return "sent"

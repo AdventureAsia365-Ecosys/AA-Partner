@@ -23,6 +23,7 @@ from app.mail.sender import MailSender
 from app.mail.state import MailRuntime
 from app.members.directory import MemoryDirectory
 from app.members.mail import MemoryMailer
+from app.portal.codes import CODE_MASK
 from tests.unit.fakes import ScriptedConn
 from tests.unit.mail_fakes import REVOKED, FakeProvider, MailVault, secret_blob
 from tests.unit.slice_fakes import enc, system_ctx, tenant_ctx
@@ -112,6 +113,30 @@ async def test_sent_through_the_agency_mailbox() -> None:
     (sent,) = conn.sql("SET status = 'sent'")
     assert sent[0] == MESSAGE and len(sent[1]) == 32 and sent[3] == "gm-1"
     assert mailer.sent == []  # nothing through AA's SES
+
+
+@pytest.mark.asyncio
+async def test_a_portal_code_mail_gets_its_code_only_at_send_time() -> None:
+    """AA-946 review S251: the stored code mail shows the code masked (the agency's Messages tab); the sender opens the
+    sealed code on its otp_challenge row, puts it into the mail and clears it. An expired code is never sent."""
+    otp = uuid.uuid4()
+    masked = enc("message", "body_enc", f"Your code to open your trip page is {CODE_MASK}. It is valid for 10 minutes.")
+    provider = FakeProvider()
+    runtime, _, _ = _runtime(provider)
+    conn = _conn(_message(body_enc=masked))
+    conn.on("FROM crm.otp_challenge", {"otp_id": otp, "code_enc": enc("otp_challenge", "code_enc", "482913"),
+                                        "expired": False})  # fmt: skip
+    assert await MailSender(runtime).send(system_ctx(conn), DISPATCH, "email", MESSAGE) == "sent"
+    ((raw, _, _),) = provider.sent
+    text = email.message_from_bytes(raw, policy=email.policy.default).get_body(("plain",)).get_content()
+    assert "is 482913. It is valid" in text and CODE_MASK not in text
+    assert conn.sql("SET code_enc = NULL WHERE otp_id") == [(otp,)]
+    stale = _conn(_message(body_enc=masked))
+    stale.on("FROM crm.otp_challenge", {"otp_id": otp, "code_enc": None, "expired": True})
+    late = FakeProvider()
+    runtime, _, _ = _runtime(late)
+    assert await MailSender(runtime).send(system_ctx(stale), DISPATCH, "email", MESSAGE) == "send_failed"
+    assert late.sent == [] and stale.sql("SET status = 'failed'") == [(MESSAGE, "code_expired")]
 
 
 @pytest.mark.asyncio
