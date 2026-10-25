@@ -5,11 +5,18 @@ Migrate idle check count a queued row as busy; not deploy-gate exempt). For ever
 :func:`app.tenancy.system_tx` (actor ``job:crm_stage_date_rule``), with "today" in the agency's own timezone
 (``tenant_settings.timezone``, default ``Asia/Ho_Chi_Minh``), so a departure moves near local midnight:
 
-1. ``booked`` with ``start_date <= today`` -> ``travelling`` even though the Stage 3 gate is unmet: history reason
-   ``date_rule_gate_unmet`` and one **urgent** task ``date_rule_gate_unmet`` (Fix B4);
+1. ``booked`` with ``start_date <= today`` -> ``travelling``: reason ``date_rule`` when Stage 3 is complete (s3 = 100,
+   recomputed first, :mod:`app.portal.progress`), else ``date_rule_gate_unmet`` and one **urgent** task
+   ``date_rule_gate_unmet`` (Fix B4: "Stage 3 or the waiver is still missing"; AA-946);
 2. ``pre_departure`` with ``start_date <= today`` -> ``travelling`` (reason ``date_rule``);
 3. ``travelling`` with ``end_date <= today`` -> ``completed`` (reason ``date_rule``);
-4. ``travelling`` without an ``end_date``: one task ``return_date_missing`` per trip, ever (the trip stays).
+4. ``travelling`` without an ``end_date``: one task ``return_date_missing`` per trip, ever (the trip stays; card E of
+   CRM-18 too);
+5. AA-946 T-21 tick (design F8.5): a ``booked`` trip starting within :data:`T21_DAYS` days whose Stage 3 is not
+   complete gets one task ``stage3_due_t21`` per trip, ever;
+6. AA-946: a pending e-mail code past its 10 minutes becomes ``expired`` and loses its sealed copy (``code_enc``,
+   kept for the mail sender: a code mail held or never sent must not keep it until the purge); then codes
+   (``crm.otp_challenge``) older than 24 hours are deleted (DM-7 row; counts only).
 
 Payload and result are ids and counts only. An agency that is locked or offboarding is skipped.
 """
@@ -24,11 +31,13 @@ from typing import Any
 
 import asyncpg
 
+from app import stages
 from app.audit_export import registry
 from app.errors import Forbidden, NotFound, ServiceError
 from app.jobs import queue
 from app.jobs.kinds import STAGE_DATE_RULE
 from app.jobs.queue import Job
+from app.portal import progress
 from app.tenancy import SystemContext, system_tx
 
 log = logging.getLogger(__name__)
@@ -39,6 +48,7 @@ HISTORY_DAYS = 2
 MAX_ATTEMPTS = 3
 BATCH = 500
 DEFAULT_TZ = "Asia/Ho_Chi_Minh"
+T21_DAYS = 21
 
 TODAY_SQL = """
 SELECT (now() AT TIME ZONE coalesce((SELECT timezone FROM crm.tenant_settings LIMIT 1), $1))::date
@@ -65,6 +75,16 @@ UPDATE crm.trip SET stage = $2, stage_entered_at = now(), waiting_on = 'none', l
 HISTORY_SQL = """
 INSERT INTO crm.trip_stage_history (trip_id, from_stage, to_stage, reason_code) VALUES ($1, $2, $3, $4)
 """
+T21_SQL = """
+SELECT t.trip_id FROM crm.trip t
+ WHERE t.deleted_at IS NULL AND t.stage = 'booked' AND t.start_date > $1 AND t.start_date <= $1 + $2::int
+   AND NOT EXISTS (SELECT 1 FROM crm.task k WHERE k.trip_id = t.trip_id AND k.kind = 'stage3_due_t21')
+ LIMIT $3
+"""
+OTP_EXPIRE_SQL = """
+UPDATE crm.otp_challenge SET status = 'expired', code_enc = NULL WHERE status = 'pending' AND expires_at <= now()
+"""
+OTP_PURGE_SQL = "DELETE FROM crm.otp_challenge WHERE created_at < now() - interval '24 hours'"
 TASK_SQL = """
 INSERT INTO crm.task (trip_id, kind, priority, assignee_member_id, due_anchor, due_at)
 SELECT $1, $2, $3, t.owner_member_id, 'departure', now() FROM crm.trip t WHERE t.trip_id = $1
@@ -80,7 +100,9 @@ async def run_agency(ctx: SystemContext) -> Counter[str]:
         if stage == "travelling":
             to, reason = "completed", "date_rule"
         elif stage == "booked":
-            to, reason = "travelling", "date_rule_gate_unmet"
+            done = await progress.refresh(ctx, trip_id)
+            met = done.s3 >= stages.STAGE3_GATE
+            to, reason = "travelling", "date_rule" if met else "date_rule_gate_unmet"
         else:
             to, reason = "travelling", "date_rule"
         await ctx.conn.execute(MOVE_SQL, trip_id, to)
@@ -93,6 +115,16 @@ async def run_agency(ctx: SystemContext) -> Counter[str]:
     for row in await ctx.conn.fetch(NO_RETURN_SQL, BATCH):
         await ctx.conn.execute(TASK_SQL, row["trip_id"], "return_date_missing", "normal")
         counts["return_date_missing"] += 1
+    for row in await ctx.conn.fetch(T21_SQL, today, T21_DAYS, BATCH):
+        if (await progress.refresh(ctx, row["trip_id"])).s3 < stages.STAGE3_GATE:
+            await ctx.conn.execute(TASK_SQL, row["trip_id"], "stage3_due_t21", "normal")
+            counts["stage3_due_t21"] += 1
+    expired = stages._rows(await ctx.conn.execute(OTP_EXPIRE_SQL))
+    if expired:
+        counts["codes_expired"] += expired
+    purged = await ctx.conn.execute(OTP_PURGE_SQL)
+    if stages._rows(purged):
+        counts["codes_purged"] += stages._rows(purged)
     return counts
 
 

@@ -8,10 +8,11 @@ The database is the judge (crm-012 ``crm.enforce_stage_transition``); this modul
   cancel flow (:func:`cancel`, from booked / pre_departure / travelling); the generic move refuses it with 409
   ``use_cancel_flow``. Anything else is 409 ``transition_not_allowed``.
 - **Gates** (:data:`GATES`): qualifying -> proposal needs Stage 2 at least 80 % or an override with a logged reason,
-  else 409 ``stage2_incomplete`` ``{s2, missing}``; proposal -> booked and booked -> pre_departure need an override
-  (``manual_booking`` / ``manual_stage3``) until CRM-18 / CRM-24a / CRM-25 make them computable (409 ``gate_unmet``).
-  An override sets ``app.gate_override`` for the one UPDATE and is written to ``trip_stage_history``
-  (``override_reason_code``) and the audit.
+  else 409 ``stage2_incomplete`` ``{s2, missing}``; proposal -> booked needs a paid deposit of the accepted proposal
+  and booked -> pre_departure needs Stage 3 complete (``s3`` = 100: every traveller's Stage 3 details and signed
+  waiver, :mod:`app.portal.progress`) since CRM-18 (AA-946), else 409 ``gate_unmet`` unless an override
+  (``manual_booking`` / ``manual_stage3``) is given. An override sets ``app.gate_override`` for the one UPDATE and is
+  written to ``trip_stage_history`` (``override_reason_code``) and the audit.
 - **Undo** (Fix B8): every move returns its history id; :func:`undo` within :data:`UNDO_SECONDS` reverts it (the DB
   checks the same rule with ``app.stage_undo``) and cancels what the move queued in the same transaction: dispatch
   rows (``cancelled`` / ``undone``), signed links (``revoked``) and the tasks it opened (``skipped``). Later than that:
@@ -138,14 +139,30 @@ SELECT EXISTS (SELECT 1 FROM crm.client_link
                 WHERE trip_id = $1 AND purpose = 'stage2_form' AND status IN ('sent', 'opened')
                   AND expires_at > now() AND deleted_at IS NULL)
 """
+# AA-946 (crm-016): the booking gate's fact, the same predicate as crm.enforce_stage_transition.
+DEPOSIT_PAID_SQL = """
+SELECT EXISTS (SELECT 1 FROM crm.payment_schedule s
+                 JOIN crm.proposal p ON p.proposal_id = s.proposal_id
+                WHERE s.trip_id = $1 AND s.kind = 'deposit' AND s.status = 'paid' AND s.deleted_at IS NULL
+                  AND p.status = 'accepted' AND p.deleted_at IS NULL)
+"""
+# AA-946 review (S251): the portal lock (card R) = crm-016 crm.portal_unlocked: a paid deposit of the accepted proposal,
+# or a manual_booking override into Booked (the deposit was taken outside the CRM) that was not undone. The database
+# guard crm.guard_traveler_access (CRM32) reads the same function.
+PORTAL_UNLOCKED_SQL = "SELECT crm.portal_unlocked($1)"
 AA_LINE_OPEN_SQL = """
 SELECT EXISTS (SELECT 1 FROM crm.trip_commitment
                 WHERE trip_id = $1 AND kind = 'aa_line' AND line_status IN ('requested', 'held') AND deleted_at IS NULL)
 """
 BULK_TRIPS_SQL = """
-SELECT trip_id, stage, intake_completeness FROM crm.trip
- WHERE deleted_at IS NULL AND (trip_id = ANY($1::uuid[]) OR ($1::uuid[] IS NULL AND stage = $2))
- ORDER BY trip_id
+SELECT t.trip_id, t.stage, t.intake_completeness,
+       EXISTS (SELECT 1 FROM crm.payment_schedule s
+                 JOIN crm.proposal p ON p.proposal_id = s.proposal_id
+                WHERE s.trip_id = t.trip_id AND s.kind = 'deposit' AND s.status = 'paid' AND s.deleted_at IS NULL
+                  AND p.status = 'accepted' AND p.deleted_at IS NULL) AS deposit_paid
+  FROM crm.trip t
+ WHERE t.deleted_at IS NULL AND (t.trip_id = ANY($1::uuid[]) OR ($1::uuid[] IS NULL AND t.stage = $2))
+ ORDER BY t.trip_id
  LIMIT $3
 """
 CANCEL_EFFECTS_SQL = """
@@ -251,8 +268,15 @@ def allowed_moves(stage: str) -> list[str]:
 
 
 def _s2(raw: Any) -> int:
+    return _stored(raw, "s2")
+
+
+def _stored(raw: Any, key: str) -> int:
     value = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
-    return int(value.get("s2", 0))
+    return int(value.get(key, 0))
+
+
+STAGE3_GATE = 100
 
 
 def undo_view(history_id: uuid.UUID, at: dt.datetime) -> dict[str, Any]:
@@ -291,12 +315,30 @@ async def _check_gate(
                 missing=list(done.missing_s2) if done is not None else [],
                 override_reasons=list(OVERRIDE_REASONS[gate]),
             )
-    elif override_reason is None:
-        raise Conflict("gate_unmet", f"the {gate} gate needs an override", gate=gate,
-                       override_reasons=list(OVERRIDE_REASONS[gate]))  # fmt: skip
+    else:
+        if await _gate_met(ctx, vault, trip, gate):
+            if override_reason is not None and not override_if_needed:
+                raise Invalid("override_not_needed", f"the {gate} gate is met")
+            return None, None
+        if override_reason is None:
+            raise Conflict("gate_unmet", f"the {gate} gate needs an override", gate=gate,
+                           override_reasons=list(OVERRIDE_REASONS[gate]))  # fmt: skip
     if override_reason not in OVERRIDE_REASONS[gate]:
         raise Invalid("invalid_override_reason", ", ".join(OVERRIDE_REASONS[gate]), gate=gate)
     return gate, override_reason
+
+
+async def _gate_met(ctx: AnyContext, vault: Vault | None, trip: Any, gate: str) -> bool:
+    """CRM-18 (AA-946): the booking gate is a paid deposit of the accepted proposal; the Stage 3 gate is s3 = 100
+    (recomputed when a vault is at hand, else the stored value)."""
+    if gate == "booking":
+        return bool(await ctx.conn.fetchval(DEPOSIT_PAID_SQL, trip["trip_id"]))
+    if vault is not None:
+        from app.portal import progress
+
+        done = await progress.refresh(ctx, trip["trip_id"])
+        return done.s3 >= STAGE3_GATE
+    return _stored(trip["intake_completeness"], "s3") >= STAGE3_GATE
 
 
 def _actor(ctx: AnyContext) -> str:
@@ -324,10 +366,12 @@ async def move(
     batch_id: uuid.UUID | None = None,
     reopen: bool = False,
     override_if_needed: bool = False,
+    reason: str | None = None,
 ) -> dict[str, Any]:
     """One move of one trip (the stage menu, a bulk move, the date rule). ``vault`` lets the Stage 2 gate recompute
     completeness (and name what is missing); without it the stored percentage decides. ``reopen``: the legacy Slice 1
-    "undo" flag of the web (lost -> inquiry), kept as reason ``undo`` until the web uses :func:`undo`."""
+    "undo" flag of the web (lost -> inquiry), kept as reason ``undo`` until the web uses :func:`undo`. ``reason``: the
+    history code of a move a system rule makes (``deposit_paid``, AA-946) instead of ``agent_move``."""
     from app.pipeline import LOST_REASONS
 
     if to not in STAGES:
@@ -360,9 +404,10 @@ async def move(
         if isinstance(exc, asyncpg.CheckViolationError) or getattr(exc, "sqlstate", None) == GATE_SQLSTATE:
             raise _db_refusal(exc, stage) from None
         raise
-    reason = "undo" if reopen else (f"lost_{lost_reason}"[:40] if to == "lost" else "agent_move")
-    if batch_id is not None and to != "lost":
-        reason = "bulk_move"
+    if reason is None:
+        reason = "undo" if reopen else (f"lost_{lost_reason}"[:40] if to == "lost" else "agent_move")
+        if batch_id is not None and to != "lost":
+            reason = "bulk_move"
     history = await ctx.conn.fetchrow(
         HISTORY_SQL, trip_id, stage, to, reason, override is not None, override, None, batch_id
     )
@@ -503,15 +548,20 @@ def preview_hash(to: str, eligible: list[str], override_reason: str | None, lost
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def _blocked_code(stage: str, to: str, s2: int, override_reason: str | None) -> str | None:
+def _blocked_code(row: Any, to: str, override_reason: str | None) -> str | None:
+    stage = row["stage"]
     if stage == to:
         return "already_in_stage"
     if to not in ALLOWED_MOVES.get(stage, ()):
         return "transition_not_allowed"
     gate = GATES.get((stage, to))
-    if gate == "stage2" and s2 < completeness.STAGE2_GATE and override_reason is None:
+    if gate == "stage2" and _s2(row["intake_completeness"]) < completeness.STAGE2_GATE and override_reason is None:
         return "stage2_incomplete"
-    if gate in ("booking", "stage3") and override_reason is None:
+    met = {
+        "booking": bool(row["deposit_paid"]),
+        "stage3": _stored(row["intake_completeness"], "s3") >= STAGE3_GATE,
+    }
+    if gate in met and not met[gate] and override_reason is None:
         return "gate_unmet"
     return None
 
@@ -550,7 +600,7 @@ async def bulk_move(
         {"trip_id": str(t), "code": "trip_not_found"} for t in (trip_ids or []) if t not in found
     ]
     for r in rows:
-        code = _blocked_code(r["stage"], to, _s2(r["intake_completeness"]), override_reason)
+        code = _blocked_code(r, to, override_reason)
         if code is None:
             eligible.append(str(r["trip_id"]))
         else:

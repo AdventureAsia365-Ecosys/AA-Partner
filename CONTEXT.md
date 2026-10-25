@@ -105,6 +105,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `/crm/ci/deploy-gate` | the Deploy Dev workflow's GitHub OIDC token only (`app/auth/ci.py`) | job counts for the deploy guard |
 | `/crm/public/v1/invitations/claim` | no token (AA-939): the invitation token in the body only; rate limited per address (`RATE_LIMIT_CLAIM_PER_MINUTE`) | `invitation_tx()`; creates or finds the partner-pool account |
 | `/crm/public/v1/s/{token}` | no token (AA-943): the signed client link in the path only (43-character token, SHA-256 stored); served on the client host | `client_link_tx()`; GET the Stage 2 planning form (pages, branches, F2 prefill), POST the answers (Origin check, per-address limit, 32 KiB cap); 404 `link_not_found` for any unusable token |
+| `/crm/public/v1/p/{token}`, `/crm/public/v1/portal/{token}` | no token (AA-946): the signed link in the path (purpose `proposal` / `portal`), plus in the portal the session cookie `aa_portal_s` a verified e-mail code set (httpOnly, Secure, SameSite=Strict, Path = that portal's own path, 12 h; SHA-256 stored); served on the client host | `client_link_tx()` of the purpose; the proposal page and accept (409 `price_changed` / `terms_changed`), the portal home, codes, session, Stage 3 (403 `stage3_locked` before the deposit), e-sign v0; writes: Origin check, per-address limit, 32 KiB cap; 404 `link_not_found` for any unusable link |
 | `/crm/v1` | PARTNER x {AA-Partner web}; on Dev also EXTERNAL x {`cis-portal`} until the CRM web switches pools (AA-CIS-Infra `crm_partner_signin_enabled`; removed at P2b, AA-979) | `X-AA-Tenant-Id` + `tenant_tx(action=...)` (membership in `crm.member`, then the permission matrix); `GET /crm/v1/memberships` and `POST /crm/v1/invitations/accept` need no header |
 | `/crm/ops/v1` | WORKFORCE x {`cis-admin`} | group `cis-admin` or `crm-platform-admin` reads, `crm-platform-admin` writes (AA-939: member deactivation, owner recovery; AA-941: the L1 console, section "L1 console" below). Every response passes the L1 key allow-list (`app/ops/serializer.py`) |
 | `/crm/staff/v1` | WORKFORCE x {`crm-staff`} | group `crm-ops` or `crm-support` (+ an owner grant for support, CRM-13b) |
@@ -154,7 +155,9 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
   planning form C-02): it sets `app.client_link_hash`, read by the crm-012 SELECT-only policy
   `client_link_token_lookup` (TO `crm_app`, live links only: not expired, revoked or trashed); the link decides the
   agency (must be active) and `app.actor` = `client_link:<id>` (audit actor kind `traveler`); the row is re-read
-  `FOR UPDATE`. Any unusable token is 404 `link_not_found`. Only `app/intake/stage2_public.py` may open it.
+  `FOR UPDATE`. Any unusable token is 404 `link_not_found`. Only `app/intake/stage2_public.py` may open it; AA-946
+  adds the purposes `proposal` (`app/proposals/public.py`) and `portal` (`app/portal/public.py`), each module opening
+  only its own purpose.
 - **`ingest_tx(pool, local_part)`** (AA-945) is the forward-in mail's context: the recipient's local part (an
   unauthenticated sender chose it) sets `app.ingest_local_part`, read by the crm-015 SELECT-only policy
   `ingest_address_lookup` (TO `crm_app`, active and live addresses only); the address decides the agency (must be
@@ -281,7 +284,7 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 | `crm_offboard` | per owner step (queued in the request's transaction) | AA-942: `mode=export` builds and seals the agency export; `mode=erase` erases the agency, deletes its objects, destroys its keys, writes the receipt. Not deploy-gate exempt |
 | `crm_dispatch` | per queued message (after the 10 s undo delay for a user action) | AA-942: the dispatcher gate at send time (trashed, archived, no marketing consent -> dropped; no sender -> held). Not deploy-gate exempt |
 | `crm_membership_pull` | 20 s, Recurring (next slot queued at each worker maintenance pass, about every 30 s when idle) | AA-978: pulls `<CIS_API_URL>/tenant/membership/v1/events` with an M2M token of scope `cis.tenant/read` (section "CIS membership feed"). Deploy-gate exempt and DB Migrate idle exempt (Infra `owners.yaml`), like the heartbeat; a CIS failure ends the run successfully with the error class in `crm.membership_feed_state` and backs off (20 s doubling to 5 min) |
-| `crm_stage_date_rule` | hourly, due-now hook (`app.stages_job.HourlyStageDateRule`, key per UTC hour) | AA-943: per active agency, "today" in `tenant_settings.timezone`: booked -> travelling on the start date (reason `date_rule_gate_unmet` + an urgent task), pre_departure -> travelling, travelling -> completed on the end date, one `return_date_missing` task for a travelling trip without one. Counts only. Not deploy-gate exempt |
+| `crm_stage_date_rule` | hourly, due-now hook (`app.stages_job.HourlyStageDateRule`, key per UTC hour) | AA-943: per active agency, "today" in `tenant_settings.timezone`: booked -> travelling on the start date (reason `date_rule_gate_unmet` + an urgent task), pre_departure -> travelling, travelling -> completed on the end date, one `return_date_missing` task for a travelling trip without one. AA-946: booked -> travelling says `date_rule` when Stage 3 is complete (s3 = 100, recomputed) and `date_rule_gate_unmet` + the urgent task only when it is not; one `stage3_due_t21` task for a booked trip within 21 days of departure with s3 < 100; deletes e-mail codes older than 24 hours. Counts only. Not deploy-gate exempt |
 | `crm_fx_fetch` | daily, due-now hook from 00:00 UTC (`app.fx.fetch.DailyFxSchedule`, key `crm_fx_fetch:<date>`) | AA-944: the platform FX rates in `crm.fx_rate_platform` (`ON CONFLICT DO NOTHING`, the only writer): `FX_PROVIDER=synthetic` a fixed USD table incl. VND (Dev), `live` ExchangeRate-API open access (USD base, VND crosses) + ECB (EUR base), fawazahmed0 stored as a cross-check only (a gap > 1 % is logged and counted). Counts only. Not deploy-gate exempt |
 | `crm_mail_ingest` | per UTC minute, only while `raw/` of the ingest bucket holds objects (`app.mail.ingest.MailIngestScan` hook lists one key; payload `{"purpose": "mail_ingest"}`, never an object key) | AA-945: up to 50 forwarded mails per run: parse, `ingest_tx`, thread, store under the mail DEK, keep allowed attachments as documents, delete the raw object; an unknown address is deleted and counted (`MailIngestDropped`, card R). Not deploy-gate exempt |
 | `crm_mail_health` | daily, from `JOB_RETENTION_UTC_HOUR`, due-now hook (`app.mail.health.DailyMailHealthSchedule`) | AA-945: every agency's mailboxes: token refresh / SMTP login + NOOP; passing -> connected (held messages re-queued), revoked -> disconnected + one owner alert, unreachable -> needs attention. Counts only. Not deploy-gate exempt |
@@ -567,6 +570,52 @@ secret `crm/<env>/mail-oauth`.
   (`MessagesPanel.tsx`: HTML only in `<iframe sandbox="" srcdoc>` behind a CSP `<meta>` that blocks every remote
   load, autosave every 3 s, Undo, the held chip), `/inbox`
   (Unmatched, link to a client), Settings > Saved replies, the red banner when a mailbox is disconnected.
+
+## CRM-18 thin full lifecycle (AA-946)
+
+Design v3 §6.3 CRM-18 (M4 base, M7 manual, M11 base, M12 v0); migration crm-016; code in `app/proposals/`
+(`service.py`, `public.py`, `agreements.py`), `app/portal/` (`access.py`, `public.py`, `progress.py`), routes in
+`app/routers/proposals.py` (`/crm/v1`) and `app/routers/client_pages.py` (`/crm/public/v1`); decisions in
+`docs/implementation-notes/AA-946.md`.
+
+- **Agreements** (Settings > Agreements, owner `TERMS_PUBLISH`): booking terms and waiver versions; publishing retires
+  the published one of the kind; a published version never changes (DB CRM31), its SHA-256 is the database's.
+- **Proposal** (the trip's Proposal tab): a text version with the client's sell amounts (currency, total, deposit,
+  balance date) and the terms version; draft (every role) -> send (owner / agent, trip at Proposal): `price_hash`
+  fixed, earlier sent version superseded, a `proposal` link for the lead through the dispatcher, path returned once
+  ("Copy link") -> the client accepts on C-03/C-04 (`/c/p/<token>`: typed full name, terms tick, the same price hash)
+  -> deposit + balance schedule rows, a `collect_deposit` task.
+- **Mark paid** (owner / agent `PAYMENT_MARK_RECEIVED`): one append-only `crm.payment`, the row paid, a
+  `trip_commitment` payment (delete block); the deposit moves a trip at Proposal to Booked (`deposit_paid`, the
+  computable booking gate) and invites every traveller to the portal. Void a due balance row (a deposit row is never
+  void: 409 `deposit_not_voidable`; a deposit taken outside the CRM is marked paid with its method).
+- **Portal base** (`/c/t/<token>`, one link per traveller, `client_link` purpose `portal`, 30 days, re-issue revokes):
+  a 6-digit e-mail code (10 min, 5 tries, 5 an hour) sent from the agency's own mailbox (trip owner's, else the
+  agency's; none -> 409 `code_delivery_unavailable`; `PORTAL_OTP_DEV_ECHO` on Dev returns it) opens a 12-hour session
+  cookie. The stored code mail shows the code masked (`app/portal/codes.py`); the sender fills it in from
+  `otp_challenge.code_enc` at send time and clears it, so no agency member can read a code in the Messages tab (the
+  provider's Sent copy is the v0 limit below); the hourly date-rule run expires a pending code past its 10 minutes and
+  drops its sealed copy. A `sign` code is 403 `stage3_locked` while signing is locked. Home: own Stage 3 progress (codes, never values), the waiver, for the lead the party's progress and the
+  payment schedule. **Stage 3** (the F1 identity fields, write-only) and **signing** are 403 `stage3_locked` until the
+  deposit is paid or the trip was booked with the `manual_booking` override (`crm.portal_unlocked`; DB CRM32 too). **E-sign v0**: published waiver + its hash, typed name, consent tick and a fresh
+  signing code -> `signature_request` signed with a `trip_commitment` signature; the row keeps (sealed) the code's
+  `code_delivery` and the canonical evidence record (no PII: the typed name only as its SHA-256) whose SHA-256 is
+  `evidence_sha256` (DB CHECK), so the evidence re-verifies after the 24 h code purge.
+- **E-sign v0 limit (known, re-review S251; the fix is Nghiệp's decision):** the code mail goes out from the agency's
+  own mailbox (errata S247: never a platform sender) and Gmail / Microsoft / SMTP keep a **Sent copy** that the owner of
+  that mailbox can read, and the same staff are shown each traveller's portal link. So `code_delivery = mailbox`
+  proves "sent to the traveller's address from the agency's mailbox", **not** "only the traveller saw the code": the
+  agency mailbox owner could sign in and sign as a traveller. Options in `docs/implementation-notes/AA-946.md`
+  (Microsoft `saveToSentItems=false`, Gmail delete the Sent copy, an SES exception for code mails only, or no portal
+  links shown to staff). Until then a v0 signature is agency-attested evidence, not proof of the traveller's sole
+  control.
+- **Stage 3 gate**: s3 = done (traveller x [details, waiver]) / all, stored on `trip.intake_completeness.s3`; 100
+  opens booked -> pre_departure (API and DB); the `waiting_on` hook `portal_stage3` (60) answers `client` for a booked
+  trip below 100 whose travellers have portal access.
+- **Web**: the trip's Proposal tab (`components/proposals/ProposalPanel.tsx`), Settings > Agreements (`components/settings/AgreementsView.tsx`), the client pages
+  `/c/p/[token]` (`components/proposals/ProposalPage.tsx`) and `/c/t/[token]` (`components/portal/PortalPage.tsx`; the
+  session cookie never reaches page script; only the `client.*` strings ship, `lib/clientMessages.ts`), BFF lines card
+  AA-946 in `lib/bff.ts`. Dev E2E: `e2e/tests/lifecycle-thin.spec.ts` (portal steps need `PORTAL_OTP_DEV_ECHO`).
 
 ## F1 / F2 complete (AA-937, CRM-09)
 
@@ -881,7 +930,9 @@ true), and the FX source (AA-944) `FX_PROVIDER` (`synthetic` by default on dev /
 not set on Dev today), the CIS membership feed (AA-978) `CIS_API_URL` (the CIS API origin) and `M2M_CLIENT` (secret
 `aa-crm/<env>/m2m-booking-client`, the JSON `{client_id, client_secret, token_url, scopes}`; either empty = the pull
 logs `not_configured`), and mail (AA-945) `CRM_INGEST_BUCKET`, `CRM_INGEST_DOMAIN`, `MAIL_OAUTH_REDIRECT_BASE` and the
-secret `MAIL_OAUTH` (`crm/<env>/mail-oauth`, mapped only once it has a value). Meanings and defaults:
+secret `MAIL_OAUTH` (`crm/<env>/mail-oauth`, mapped only once it has a value), and the portal (AA-946)
+`PORTAL_OTP_DEV_ECHO` (default false; refused outside dev / test / local; on, the portal code answer carries the code
+for the synthetic Dev agencies that have no mailbox). Meanings and defaults:
 `api/app/settings.py`. Live check of the key provider inside the
 container: `python -m app.vault.selftest` (KMS round trip under the nil tenant context, nothing stored).
 

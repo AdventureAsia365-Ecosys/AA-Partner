@@ -14,6 +14,9 @@ name: E2E Dev
 # E2ECRMINVITEE (the invitee address; reset its account first: crm_dev_identity.py invitee-reset --apply).
 # AA-943 (CRM-15): e2e/tests/slice2-m1m2.spec.ts runs in the same job (stage engine, planning form, call slot, gates,
 # Undo, bulk preview, cancel); it needs crm-012 applied and the AA-943 API + web deployed. Longer job timeout for it.
+# AA-946 (CRM-18): e2e/tests/lifecycle-thin.spec.ts runs in the same job (agreements, proposal accept, mark paid, the
+# portal and its Stage 3 lock, e-sign v0); it needs crm-016 applied and the AA-946 API + web deployed; its portal steps
+# need PORTAL_OTP_DEV_ECHO=true on the Dev API (skipped with a note otherwise). Job timeout 25 -> 35 minutes.
 on:
   workflow_dispatch:
     inputs:
@@ -36,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     environment: e2e
-    timeout-minutes: 25
+    timeout-minutes: 35
     defaults:
       run:
         working-directory: e2e

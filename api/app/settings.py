@@ -125,6 +125,12 @@ Mail (AA-945, card CRM-17; ``app.mail``; AA-CIS-Infra ``crm_mail.tf``):
 - ``MAIL_OAUTH`` (Secrets Manager ``crm/<env>/mail-oauth``, JSON ``google_client_id``, ``google_client_secret``,
   ``ms_client_id``, ``ms_client_secret``): AA's own OAuth clients for the agencies' Gmail / Microsoft 365 send-as.
   Without a provider's pair its connect answers 503 ``mail_oauth_not_configured``; SMTP needs none.
+
+Traveller portal (AA-946, card CRM-18; ``app.portal``):
+
+- ``PORTAL_OTP_DEV_ECHO``: ``true`` returns the portal sign-in / signing code in the API answer (``dev_code``) instead
+  of only mailing it through the agency's mailbox, so the synthetic Dev agencies (no mailbox) can sign in. Default
+  ``false``; refused at start-up unless ``ENVIRONMENT`` is ``dev``, ``test`` or ``local``.
 """
 
 from __future__ import annotations
@@ -226,6 +232,7 @@ class Settings:
     mail_oauth_redirect_base: str = ""
     # (key, value) pairs of MAIL_OAUTH (a tuple keeps Settings hashable); read through mail_oauth_client().
     mail_oauth: tuple[tuple[str, str], ...] = field(default=(), repr=False)
+    portal_otp_dev_echo: bool = False
 
     def __post_init__(self) -> None:
         if self.environment not in {"dev", "stg", "prod"} | INSECURE_ENVIRONMENTS:
@@ -261,6 +268,8 @@ class Settings:
             raise SettingsError("the WORKFORCE client ids (cis-admin, breakglass, crm-staff) must differ")
         if self.cognito_cis_portal_client_id and self.environment not in PORTAL_BRIDGE_ENVIRONMENTS:
             raise SettingsError("COGNITO_CIS_PORTAL_CLIENT_ID is a Dev-only bridge (ADR 0006b decision 6)")
+        if self.portal_otp_dev_echo and self.environment not in PORTAL_BRIDGE_ENVIRONMENTS:
+            raise SettingsError("PORTAL_OTP_DEV_ECHO is a Dev-only aid (AA-946): never on stg or prod")
         if self.rate_limit_public_per_minute < 0:
             raise SettingsError("RATE_LIMIT_PUBLIC_PER_MINUTE must be >= 0")
         if not 1 <= self.rate_limit_xff_hops <= 5:
@@ -512,4 +521,5 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         crm_ingest_domain=_text(env, "CRM_INGEST_DOMAIN").lower(),
         mail_oauth_redirect_base=_text(env, "MAIL_OAUTH_REDIRECT_BASE").lower().rstrip("/"),
         mail_oauth=_mail_oauth(env.get("MAIL_OAUTH")),
+        portal_otp_dev_echo=_flag(env.get("PORTAL_OTP_DEV_ECHO"), False, "PORTAL_OTP_DEV_ECHO"),
     )

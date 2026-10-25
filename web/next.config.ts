@@ -27,6 +27,9 @@ const nextConfig: NextConfig = {
       { source: "/(.*)", headers: SECURITY_HEADERS },
       // AA-943: the planning form's path carries the signed link's token: never send it on as a Referer.
       { source: "/c/s/:token*", headers: [{ key: "Referrer-Policy", value: "no-referrer" }] },
+      // AA-946: the proposal page and the traveller portal carry their signed link's token in the path too.
+      { source: "/c/p/:token*", headers: [{ key: "Referrer-Policy", value: "no-referrer" }] },
+      { source: "/c/t/:token*", headers: [{ key: "Referrer-Policy", value: "no-referrer" }] },
     ];
   },
 };
