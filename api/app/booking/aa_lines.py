@@ -8,7 +8,8 @@ stays read-only for members (card R): they never type its title, price or status
 - :func:`request_line`: a new AA line from a quote: ``crm.aa_line_request()`` (crm-017 definer) creates the pending
   line (title from the catalog cache) and the quote request in one call.
 - :func:`ask`: hold, confirm (trip booked or later: after the deposit), release, re-quote of one AA line; one live
-  request per (line, kind) (409 ``aa_request_pending``).
+  request per (line, kind) (409 ``aa_request_pending``). Confirm books with AA, so it needs ``aa_confirm`` (owner and
+  agent; the assistant gets 403 ``role_forbidden``).
 - :func:`close_trip`: Lost or a cancelled trip releases its AA holds (queued after the stage Undo window; Undo cancels
   them, :func:`undo_close`) and holds the requests still waiting back by the same window (an Undo leaves them to run;
   otherwise the sync drops them).
@@ -30,6 +31,7 @@ from app.errors import Conflict, Invalid, NotFound
 from app.jobs import queue
 from app.jobs.kinds import BOOKING_SYNC
 from app.ledger import lines as ledger_lines
+from app.permissions import Action, require
 from app.tenancy import AnyContext, TenantContext
 
 ACTIONS = ("hold", "confirm", "release", "requote")
@@ -225,6 +227,8 @@ async def ask(ctx: TenantContext, line_id: uuid.UUID, action: str, body: dict[st
     """One of :data:`ACTIONS` for an AA line; the rules of :func:`app.booking.views.actions`, worded as 409s."""
     if action not in ACTIONS:
         raise Invalid("invalid_action", ", ".join(ACTIONS))
+    if action == "confirm":  # a confirm creates a real AA booking: owner and agent only (403 for the assistant)
+        require(ctx, Action.AA_CONFIRM, object_kind="booking_line", object_id=str(line_id))
     row = await ctx.conn.fetchrow(LINE_SQL, line_id)
     if row is None:
         raise NotFound("line_not_found")

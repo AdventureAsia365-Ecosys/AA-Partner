@@ -4,7 +4,7 @@
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { aaErrorKey, aaLineBody, belowFromPrice, isRetrying, statusKey, type AaBlock, AA_SUB_STATUSES } from "@/lib/aa";
+import { aaErrorKey, aaLineBody, allowedAaActions, belowFromPrice, isRetrying, statusKey, type AaBlock, AA_SUB_STATUSES } from "@/lib/aa";
 import { matchBff } from "@/lib/bff";
 import { MESSAGES, type MessageKey } from "@/lib/i18n";
 import type { Line, TripLines } from "@/lib/ledger";
@@ -132,6 +132,17 @@ describe("Bookings tab with an AA line", () => {
     expect(html).not.toContain("Cancel line");
     expect(html).not.toContain(">Money<");
     expect(html).toContain("Add AA item");
+  });
+
+  it("offers 'Confirm with AA' to the owner and the agent only (a confirm books with AA)", () => {
+    const held = line({ aa_sub_status: "held", aa: aa({ sub_status: "held", actions: ["confirm", "release"] }) });
+    expect(render([held], "agent")).toContain("Confirm with AA");
+    expect(render([held], "owner")).toContain("Confirm with AA");
+    const assistant = render([held], "assistant");
+    expect(assistant).not.toContain("Confirm with AA");
+    expect(assistant).toContain("Release");
+    expect(allowedAaActions(["hold", "confirm", "release"], "assistant")).toEqual(["hold", "release"]);
+    expect(allowedAaActions(["confirm"], "owner")).toEqual(["confirm"]);
   });
 
   it("shows 'AA pending' with the next try while Booking is down, and 'No longer offered'", () => {

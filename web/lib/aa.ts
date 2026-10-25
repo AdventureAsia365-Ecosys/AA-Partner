@@ -78,6 +78,13 @@ export interface AaProduct {
   from_price: { amount: string; currency: string } | null;
 }
 
+/** The asks this role may make: a confirm creates a real AA booking, so only the owner and the agent see it (the
+ * API's aa_confirm refuses the assistant with 403). The other asks are open to every role. */
+export function allowedAaActions(actions: readonly AaAction[], role: string): AaAction[] {
+  const confirms = role === "owner" || role === "agent";
+  return actions.filter((action) => action !== "confirm" || confirms);
+}
+
 /** The sub-status message key; a pending request shows "AA pending" whatever the line's last state was. */
 export function statusKey(aa: AaBlock): string {
   if (aa.pending) return "aa.status.pending";

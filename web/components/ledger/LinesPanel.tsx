@@ -12,7 +12,7 @@ import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
 import { DateInput } from "@/components/DateInput";
 import { AaItemForm } from "@/components/ledger/AaItemForm";
-import { aaErrorKey, isRetrying, statusKey, type AaAction } from "@/lib/aa";
+import { aaErrorKey, allowedAaActions, isRetrying, statusKey, type AaAction } from "@/lib/aa";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
@@ -247,7 +247,7 @@ export function LinesPanel({
                   <td style={cell}>{fxCell(line)}</td>
                   <td style={cell}>{tr(`ledger.collect.${line.collect}`)}</td>
                   <td style={{ ...cell, whiteSpace: "nowrap" }}>
-                    {(line.aa?.actions ?? []).map((action: AaAction) => (
+                    {allowedAaActions(line.aa?.actions ?? [], role).map((action: AaAction) => (
                       <Button
                         key={action}
                         size="sm"

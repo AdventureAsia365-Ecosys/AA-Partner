@@ -78,6 +78,7 @@ class Action(StrEnum):
     # Money and selling.
     VIEW_MARGIN = "view_margin"  # B2B price ("net"), cost, margin, commission
     MONEY_FIELDS_EDIT = "money_fields_edit"
+    AA_CONFIRM = "aa_confirm"  # AA-947: confirm a held AA line, which creates a real AA booking (S251)
     PROPOSAL_PUBLISH = "proposal_publish"
     MESSAGE_SEND = "message_send"
     AI_DRAFT_APPROVE = "ai_draft_approve"
@@ -132,6 +133,7 @@ _TABLE: dict[Action, tuple[Rule, Rule, Rule]] = {
     Action.RECOVERY_CANCEL: (A, A, A),
     Action.VIEW_MARGIN: (A, A, D),
     Action.MONEY_FIELDS_EDIT: (A, A, D),
+    Action.AA_CONFIRM: (A, A, D),
     Action.PROPOSAL_PUBLISH: (A, A, D),
     Action.MESSAGE_SEND: (A, A, Rule.ASSIGNED),
     Action.AI_DRAFT_APPROVE: (A, A, Rule.ASSIGNED),

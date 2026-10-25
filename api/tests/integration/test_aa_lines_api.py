@@ -136,6 +136,15 @@ async def test_an_aa_line_from_quote_hold_confirm_and_feed(app_pool: asyncpg.Poo
     ) == ("held")
     assert await _scalar(app_pool, s["tenant"], "SELECT crm.trip_delete_blockers($1)", s["trip"]) == ["has_aa_line"]
 
+    # A confirm books with AA: the assistant is refused (403, audited, nothing queued); the agent may.
+    with pytest.raises(Forbidden) as denied:
+        async with tenant_tx(app_pool, s["who"]["assistant"], s["tenant"]) as ctx:
+            await aa_lines.ask(ctx, line_id, "confirm")
+    assert denied.value.code == "role_forbidden" and denied.value.status_code == 403
+    assert await _scalar(
+        app_pool, s["tenant"], "SELECT count(*) FROM crm.aa_request WHERE booking_line_id = $1 AND kind = 'confirm'",
+        line_id,
+    ) == 0  # fmt: skip
     async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
         await aa_lines.ask(ctx, line_id, "confirm")
     await _sync(app_pool, fake, s["tenant"])

@@ -8,13 +8,15 @@ Route                                          What                             
 ``POST /trips/{id}/aa-lines``                  a new AA line from a quote ("AA pending")      every role (a sell
                                                                                               amount: owner, agent)
 ``POST /lines/{id}/aa/{action}``               hold / confirm / release / requote             every role (a new
-                                                                                              sell: owner, agent)
+                                                                                              sell: owner, agent;
+                                                                                              confirm: owner, agent)
 =============================================  =============================================  ======================
 
 Every ask is queued in ``crm.aa_request`` and sent by ``crm_booking_sync`` (:mod:`app.booking.sync`); the answer is
 the line as it stands (``aa.pending`` while Booking has not answered). An AA line is never edited (403
-``aa_line_read_only`` on the ledger routes). The product look-up calls Booking live after the membership check, outside
-the database transaction.
+``aa_line_read_only`` on the ledger routes). A confirm creates a real AA booking, so it needs ``aa_confirm`` (owner
+and agent; the assistant gets 403 ``role_forbidden``, checked in :func:`app.booking.aa_lines.ask`). The product
+look-up calls Booking live after the membership check, outside the database transaction.
 """
 
 from __future__ import annotations
