@@ -2,7 +2,8 @@
 // AA-669 — My Content table: the pure rules behind the columns, filters, views and bulk actions. No React and no
 // imports, so `node --test` runs lib/myContent.test.ts directly (the AA-761 pattern). Shapes follow GET
 // /v1/content-writing/reviews (CIS fetch_review_list: tenant-safe, no gate data); `published_at` / `published_url`
-// come from the piece's live post (CIS AA-669) and are optional, so this works before that CIS change ships.
+// come from the request's live post (CIS AA-669: any piece of the request, so a rewrite of a published piece keeps
+// the row published) and are optional, so this works before that CIS change ships.
 
 /** The fields of a review item these rules read (a subset of reviewListApi.ReviewItem). */
 export interface ContentRow {
@@ -20,6 +21,8 @@ export interface ContentRow {
   created_at: string | null;
   published_at?: string | null;
   published_url?: string | null;
+  /** The piece whose post is live; differs from piece_id when the post shows an earlier version of the text. */
+  published_piece_id?: string | null;
   served_status?: "served" | "paused" | "retired" | null;
 }
 
@@ -230,8 +233,22 @@ export function exportFormat(r: Pick<ContentRow, "channel" | "content_text">): "
   return r.channel === "blog" ? "html" : "text";
 }
 
-/** A piece can be written again unless it is being written right now or its tour is closed to new work. */
+/** Why a piece cannot be written again (null = it can). A published piece is refused: the rewrite would become the
+ *  request's latest version while the old post stays live, and publishing it would put a second post up for the
+ *  same request (review S251). The tenant unpublishes first (Publish > Published), then writes again. */
+export function regenerateBlock(r: ContentRow): string | null {
+  if (contentStatus(r) === "published") return "Unpublish the live post first to write a new version";
+  if (r.ready_state === "in_progress") return "Being written now";
+  if (r.served_status === "retired" || r.served_status === "paused") return "Closed for this tour";
+  return null;
+}
+
 export function canRegenerate(r: ContentRow): boolean {
-  if (r.ready_state === "in_progress") return false;
-  return r.served_status !== "retired" && r.served_status !== "paused";
+  return regenerateBlock(r) === null;
+}
+
+/** The live post shows an earlier version than the text in the list (a rewrite made before this rule, or through
+ *  the API). Unknown (older CIS without published_piece_id) reads false. */
+export function liveIsEarlierVersion(r: Pick<ContentRow, "piece_id" | "published_at" | "published_piece_id">): boolean {
+  return !!r.published_at && !!r.published_piece_id && r.published_piece_id !== r.piece_id;
 }

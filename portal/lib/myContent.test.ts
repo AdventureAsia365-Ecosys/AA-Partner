@@ -8,12 +8,14 @@ import {
   contentStatus,
   exportFormat,
   hasFilters,
+  liveIsEarlierVersion,
   matchesFilters,
   monthStart,
   NO_FILTERS,
   pieceTitle,
   placeTopic,
   publishBlock,
+  regenerateBlock,
   sanitizeView,
   wordCount,
   type ContentRow,
@@ -136,4 +138,26 @@ test("export format and regenerate", () => {
   assert.ok(canRegenerate(row()));
   assert.ok(!canRegenerate(row({ ready_state: "in_progress" })));
   assert.ok(!canRegenerate(row({ served_status: "paused" })));
+});
+
+test("a published row can be neither written again nor published again (review S251)", () => {
+  const live = row({ published_at: "2026-10-12T00:00:00Z", published_url: "https://blog.example.com/v1", published_piece_id: "p1" });
+  assert.equal(regenerateBlock(live), "Unpublish the live post first to write a new version");
+  assert.ok(!canRegenerate(live));
+  assert.ok(!canRegenerate(row({ published_at: "2026-10-12T00:00:00Z", ready_state: "not_ready" })));
+  // The request's live post belongs to an earlier piece (CIS reads it request-wide): the newer text is still
+  // "published" for the table, so no second post and no further rewrite until the old post is unpublished.
+  const rewritten = row({ piece_id: "p2", published_at: "2026-10-12T00:00:00Z", published_piece_id: "p1" });
+  assert.equal(contentStatus(rewritten), "published");
+  assert.equal(publishBlock(rewritten, BOTH), "Already published");
+  assert.deepEqual(bulkPublishPlan([rewritten], BOTH).eligible, []);
+  assert.ok(!canRegenerate(rewritten));
+  assert.ok(liveIsEarlierVersion(rewritten));
+  assert.ok(!liveIsEarlierVersion(live));
+  assert.ok(!liveIsEarlierVersion(row({ published_at: "2026-10-12T00:00:00Z" })));  // older CIS: unknown
+  assert.ok(!liveIsEarlierVersion(row({ published_piece_id: "p0" })));  // not live
+  // Unpublished since: the newest text is publishable and can be written again.
+  const down = row({ piece_id: "p2" });
+  assert.equal(publishBlock(down, BOTH), null);
+  assert.ok(canRegenerate(down));
 });

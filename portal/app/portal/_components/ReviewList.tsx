@@ -54,16 +54,17 @@ import { activePollInterval, pieceWorkStatus } from "./workStatus";
 import {
   builtInViews,
   bulkPublishPlan,
-  canRegenerate,
   CONTENT_STATUS_LABEL,
   contentStatus,
   exportFormat,
   hasFilters,
+  liveIsEarlierVersion,
   matchesFilters,
   NO_FILTERS,
   pieceTitle,
   placeTopic,
   publishBlock,
+  regenerateBlock,
   sanitizeView,
   wordCount,
   type ContentFilters,
@@ -352,7 +353,9 @@ function ReviewListInner() {
               {formatDate(it.published_at)}
               {it.published_url && (
                 <a href={it.published_url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
-                   aria-label="Open the published post" title="Open the published post" style={{ color: T.gold, display: "inline-flex" }}>
+                   aria-label="Open the published post"
+                   title={liveIsEarlierVersion(it) ? "Open the published post (it shows an earlier version of this text)" : "Open the published post"}
+                   style={{ color: T.gold, display: "inline-flex" }}>
                   <ExternalLink size={12} />
                 </a>
               )}
@@ -551,7 +554,6 @@ function ReviewListInner() {
           <div style={{ fontSize: 13, color: T.body, lineHeight: 1.55 }}>
             A new version of &ldquo;{pieceTitle(confirm.row)}&rdquo; is written with the same angle and call to action. It
             replaces this one in My Content; your edits to this version are not carried over.
-            {confirm.row.published_at && " The published post stays live until you unpublish it."}
           </div>
         ) : null}
       />
@@ -593,6 +595,7 @@ function RowActions({
   const canExport = exportFormat(item) !== null;
   const stop = (fn: () => void) => (e: React.MouseEvent) => { e.stopPropagation(); fn(); };
   const status = contentStatus(item);
+  const regenReason = regenerateBlock(item);
   return (
     <div ref={ref} style={{ display: "inline-flex", gap: 4, alignItems: "center", position: "relative" }} onClick={(e) => e.stopPropagation()}>
       <button style={iconBtn} onClick={stop(onView)} title="View" aria-label="View"><Eye size={13} /></button>
@@ -606,8 +609,8 @@ function RowActions({
           <Send size={13} />
         </button>
       )}
-      <button style={{ ...iconBtn, opacity: canRegenerate(item) ? 1 : 0.4 }} disabled={!canRegenerate(item)} onClick={stop(onRegenerate)}
-              title={canRegenerate(item) ? "Write again" : "Not available while writing or when the tour is closed"} aria-label="Write again">
+      <button style={{ ...iconBtn, opacity: regenReason ? 0.4 : 1 }} disabled={!!regenReason} onClick={stop(onRegenerate)}
+              title={regenReason ?? "Write again"} aria-label="Write again">
         <RefreshCw size={13} />
       </button>
       {menuOpen && canExport && (

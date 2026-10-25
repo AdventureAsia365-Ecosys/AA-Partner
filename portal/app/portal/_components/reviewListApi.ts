@@ -44,10 +44,12 @@ export interface ReviewItem extends ServedFields {
   created_at: string | null;
   route_hub_name: string | null;
   route_segment_count: number | null;
-  /** AA-669 — the piece's live post (CIS joins its 'published' publish_log row). Optional: absent from a CIS
-   *  build before AA-669, read as "not published". */
+  /** AA-669 — the request's live post (CIS joins the newest 'published' publish_log row of any piece of the
+   *  request). Optional: absent from a CIS build before AA-669, read as "not published". */
   published_at?: string | null;
   published_url?: string | null;
+  /** The piece whose post is live (differs from piece_id when the post shows an earlier version). */
+  published_piece_id?: string | null;
 }
 
 export function fetchReviews(): Promise<ReviewItem[]> {
@@ -126,8 +128,8 @@ export async function exportPiece(
 
 /**
  * AA-669 — write the piece again (same request, same angle): POST .../requests/{id}/write, 202. The new piece
- * becomes the request's latest (the list shows it as Writing, then Ready); the old one stays in history and a
- * published post stays live until the tenant unpublishes it. No CTA is sent: the request's (or the brand's) CTA is
+ * becomes the request's latest (the list shows it as Writing, then Ready); the old one stays in history. Not
+ * offered on a published row (lib/myContent.ts regenerateBlock): the tenant unpublishes the live post first. No CTA is sent: the request's (or the brand's) CTA is
  * used, as for the first write. 409 = busy / tour closed, 422 = no CTA anywhere (write it from Create instead).
  */
 export async function regeneratePiece(requestId: string): Promise<{ piece_id: string }> {
