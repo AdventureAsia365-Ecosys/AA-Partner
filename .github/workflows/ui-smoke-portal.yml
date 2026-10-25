@@ -54,12 +54,6 @@ jobs:
       run:
         working-directory: e2e
     env:
-      # Portal previews are behind Vercel SSO: the bypass secret lets Playwright reach them. The helpers read it as
-      # VERCEL_AUTOMATION_BYPASS_SECRET and send it only to the BASE_URL origin, and only when present.
-      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_PORTAL_BYPASS_SECRET }}
-      # The tenant test account's API key (Secrets Manager aa-cis/dev/e2e-tenant/<slug>, copied by the orchestrator;
-      # re-copy after a key rotation). Without it the logged-in portal tests skip.
-      E2E_TENANT_API_KEY: ${{ secrets.E2E_TENANT_API_KEY }}
       BASE_URL: ${{ inputs.base_url }}
     steps:
       - name: Checkout the deployed commit
@@ -83,7 +77,15 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
+      # The secrets live on this step only (not the job): npm install, the browser install and tsc never see them.
       - name: Run the portal UI smoke
+        env:
+          # Portal previews are behind Vercel SSO: the bypass secret lets Playwright reach them. The helpers read it as
+          # VERCEL_AUTOMATION_BYPASS_SECRET and send it only to the BASE_URL origin, and only when present.
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_PORTAL_BYPASS_SECRET }}
+          # The tenant test account's API key (Secrets Manager aa-cis/dev/e2e-tenant/<slug>, copied by the
+          # orchestrator; re-copy after a key rotation). Without it the logged-in portal tests skip.
+          E2E_TENANT_API_KEY: ${{ secrets.E2E_TENANT_API_KEY }}
         run: npx playwright test -c playwright.portal.config.ts
 
       - name: Upload smoke artifacts (screenshots + HTML report only, NO auth state)

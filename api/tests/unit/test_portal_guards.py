@@ -19,6 +19,7 @@ read files; the behaviour is checked live by the portal UI smoke (``e2e/smoke-po
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -140,6 +141,49 @@ def test_portal_workflow_deploys_its_own_project_on_portal_paths_only() -> None:
     # A portal change never redeploys ECS (the API or the CRM web).
     for name in ("deploy-dev.yml", "deploy-web-dev.yml"):
         assert "portal/" not in (WORKFLOWS / name).read_text(), f"{name} must not watch portal/"
+
+
+def test_portal_deploy_hands_the_smoke_only_its_two_secrets() -> None:
+    """No `secrets: inherit` (it would pass VERCEL_TOKEN to the smoke); the secrets sit on the smoke step only."""
+    portal = (WORKFLOWS / "vercel-deploy-portal.yml").read_text()
+    assert "secrets: inherit" not in portal
+    passed = re.search(r"^    secrets:\n((?:      \S.*\n)+)", portal, re.M)
+    assert passed, "vercel-deploy-portal.yml: the smoke call must pass an explicit secrets block"
+    names = set(re.findall(r"^\s+(\w+):", passed.group(1), re.M))
+    assert names == {"VERCEL_PORTAL_BYPASS_SECRET", "E2E_TENANT_API_KEY"}, names
+    assert '--token "$VERCEL_TOKEN"' not in portal, "the CLI reads VERCEL_TOKEN from env; keep it off the command line"
+    smoke = (WORKFLOWS / "ui-smoke-portal.yml").read_text()
+    job_env = smoke[smoke.index("    env:\n") : smoke.index("    steps:\n")]
+    assert "secrets." not in job_env, "ui-smoke-portal.yml: secrets belong on the smoke step, not the job env"
+
+
+def test_portal_version_is_not_bumped_by_release_please() -> None:
+    """The portal never reads its package version at runtime, so release-please must not edit anything in portal/."""
+    cfg = json.loads(_read("release-please-config.json"))
+    under_portal = [
+        f["path"]
+        for pkg in cfg["packages"].values()
+        for f in pkg.get("extra-files", [])
+        if (f["path"] if isinstance(f, dict) else f).startswith("portal/")
+    ]
+    assert under_portal == [], f"release-please extra-files under portal/: {under_portal}"
+    assert all(not path.startswith("portal") for path in cfg["packages"]), "portal/ is not a release-please package"
+
+
+def test_portal_build_reads_nothing_outside_portal() -> None:
+    """The root .vercelignore drops the other apps from the upload; that is safe only while no portal import leaves
+    portal/. Every ignore line is anchored, so `/api` never matches portal/app/api/ (the BFF routes)."""
+    escapes = []
+    for p in _portal_source_files():
+        for m in re.finditer(r"""(?:from|import|require\(|url\()\s*['"]?(\.{1,2}/[^'")\s]+)""", p.read_text()):
+            target = (p.parent / m.group(1)).resolve()
+            if PORTAL.resolve() not in target.parents:
+                escapes.append(f"{p.relative_to(REPO)}: {m.group(1)}")
+    assert escapes == [], "portal imports a file outside portal/ (fix .vercelignore first):\n" + "\n".join(escapes)
+    lines = [ln.strip() for ln in _read(".vercelignore").splitlines() if ln.strip() and not ln.startswith("#")]
+    assert lines, ".vercelignore is empty"
+    for ln in lines:
+        assert ln.startswith("/") and not ln.startswith("/portal") and "*" not in ln, f".vercelignore: {ln!r}"
 
 
 def test_portal_smoke_uploads_no_auth_state() -> None:

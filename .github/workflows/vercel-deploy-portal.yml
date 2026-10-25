@@ -5,7 +5,7 @@ name: Vercel Deploy (portal)
 # portal moved here with its history; the Vercel project, its host and its env vars are unchanged until P2b (root
 # ADR 0010 §6). The Vercel Git integration is off (portal/vercel.json `git.deploymentEnabled: false`), so deployments
 # are created only here. The Hobby team cap is ~100 deployments / 24 h for the whole team: only portal/** and the two
-# portal workflows trigger this file.
+# portal workflows trigger this file (plus, on a PR only, the portal smoke specs and their config).
 #
 #   pull_request            -> preview of the PR head commit (+ one PR comment, + the portal UI smoke on it)
 #   push to main            -> production
@@ -28,6 +28,11 @@ on:
       - "portal/**"
       - ".github/workflows/vercel-deploy-portal.yml"
       - ".github/workflows/ui-smoke-portal.yml"
+      # The smoke itself (specs, config, Playwright pin): a PR that changes only the smoke still gets a preview to run
+      # it against. PR only: a smoke-only change on main has nothing new to deploy to production.
+      - "e2e/smoke-portal/**"
+      - "e2e/playwright.portal.config.ts"
+      - "e2e/package.json"
   push:
     branches: [main]
     paths:
@@ -135,7 +140,8 @@ jobs:
 
       # stdout of `vercel deploy` is the deployment URL; progress and build logs go to stderr. The CLI waits for the
       # remote build and exits non-zero when it fails. It runs from the repo root: the project's Root Directory
-      # (`portal`) selects the app.
+      # (`portal`) selects the app; the root .vercelignore keeps the other apps out of the upload. The CLI reads the
+      # token from the VERCEL_TOKEN env var, so it never appears on a command line (process list, debug logs).
       - name: Deploy (remote build of portal/ via the project's Root Directory)
         if: steps.plan.outputs.enabled == 'true'
         id: deploy
@@ -144,7 +150,7 @@ jobs:
           TARGET: ${{ steps.plan.outputs.target }}
         run: |
           set -euo pipefail
-          ARGS=(deploy --yes --token "$VERCEL_TOKEN" --scope "$VERCEL_ORG_ID")
+          ARGS=(deploy --yes --scope "$VERCEL_ORG_ID")
           if [ "$TARGET" = "production" ]; then ARGS+=(--prod); fi
           npx --yes "$VERCEL_CLI" "${ARGS[@]}" > "$RUNNER_TEMP/vercel-deploy.out"
           URL=$(grep -Eo 'https://[^[:space:]]+' "$RUNNER_TEMP/vercel-deploy.out" | tail -n1 || true)
@@ -181,6 +187,24 @@ jobs:
               exit 1
             fi
             echo "::notice::No VERCEL_PORTAL_BYPASS_SECRET — status only logged (401/403 = deployment protection)."
+          fi
+
+      # The custom domain is public (no deployment protection): its sign-in page must answer 200 once the alias moves.
+      - name: Check the public portal host answers
+        if: steps.plan.outputs.target == 'production' && steps.deploy.outputs.url != ''
+        env:
+          PUBLIC_URL: https://portal.lumiguides.it.com/tenant-login
+        run: |
+          CODE=000
+          for _ in 1 2 3 4 5 6; do
+            CODE=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$PUBLIC_URL" || echo 000)
+            [ "$CODE" = "200" ] && break
+            sleep 10
+          done
+          echo "GET $PUBLIC_URL -> HTTP $CODE"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::$PUBLIC_URL answered HTTP $CODE (expected 200)."
+            exit 1
           fi
 
       - name: Job summary
@@ -240,4 +264,7 @@ jobs:
     with:
       base_url: ${{ needs.deploy.outputs.url }}
       sha: ${{ needs.deploy.outputs.sha }}
-    secrets: inherit
+    # Only the two secrets the smoke declares; never `inherit` (that would hand VERCEL_TOKEN to the smoke job).
+    secrets:
+      VERCEL_PORTAL_BYPASS_SECRET: ${{ secrets.VERCEL_PORTAL_BYPASS_SECRET }}
+      E2E_TENANT_API_KEY: ${{ secrets.E2E_TENANT_API_KEY }}
