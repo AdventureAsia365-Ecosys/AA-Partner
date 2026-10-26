@@ -73,6 +73,7 @@ import { T, serif, sans, mono, Card, CardHead, Badge, Btn, LoadingScreen, EmptyS
 import LiveWriter from "./LiveWriter";
 import { CtaReviewNotice, ctaWarningFrom, useCtaReviewCheck, type CtaWarning } from "./CtaReviewNotice";
 import { channelName, humanizeKey } from "./channelLabels";
+import { atomReplacedNote, type AtomReplacement } from "@/lib/myContent";
 
 /** AA-668 — the goal's name from the 8-value list (`GET /v1/angle-gate/goals`), never its key:
  *  "introduction_awareness" → "Introduction / Awareness". Before the list loads, the key as words. */
@@ -140,6 +141,28 @@ interface AngleGateRequest {
   subject_place: string | null;
   subject_action: string | null;
   subject_hub_name: string | null;
+  // AA-990 (CIS D2) — Adventure Asia rewrote the part of the tour this request was planned from (its atom is no
+  // longer live): nothing more can be generated or written on it (T8/T9 answer 409 atom_replaced). The wizard shows
+  // the state and turns every action off; the way out is a new post from Social Posts. atom_replacement = the unique
+  // matching part of the rewritten tour, when CIS finds exactly one (a hint only).
+  atom_replaced?: boolean;
+  atom_replacement?: AtomReplacement | null;
+}
+
+// AA-990 — the replaced-request card: one clear state instead of a 409 after a click.
+function AtomReplacedNotice({ req, onNewPost }: { req: AngleGateRequest; onNewPost: () => void }) {
+  return (
+    <div role="status" data-testid="atom-replaced"
+      style={{ padding: "12px 14px", background: T.goldTint, border: `1px solid ${T.gold}`, borderRadius: 8, fontFamily: sans }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: T.ink, marginBottom: 4 }}>
+        <AlertTriangle size={13} color={T.goldDeep} aria-hidden /> This part of the tour was updated
+      </div>
+      <div style={{ fontSize: 12.5, color: T.body, lineHeight: 1.5, marginBottom: 10 }}>
+        {atomReplacedNote(req.atom_replacement)}
+      </div>
+      <Btn variant="primary" size="sm" onClick={onNewPost}><Compass size={12} /> Go to Social Posts</Btn>
+    </div>
+  );
 }
 
 // AA-450/AA-613/AA-614 — mirrors the tenant-safe piece shape every tenant-facing read now
@@ -517,6 +540,8 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
           if (latest.ready_state === "in_progress") { setWriting(true); pollPiece(latest.piece_id); }
           return;
         }
+        // AA-990 — a replaced request cannot be written (409 atom_replaced): the notice says so instead.
+        if (req.atom_replaced) return;
         // No piece written yet under this angle: write immediately. AA-668 — this used to ask
         // for a CTA up front whenever req.cta was NULL (every real request), even though the
         // server fills it from the brand's default CTA (AA-771). writeContent() handles the one
@@ -578,6 +603,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
   if (initialLoading) return <LoadingScreen message="Loading…" />;
 
   const step = currentStep(req);
+  const replaced = !!req?.atom_replaced; // AA-990: every generate / choose / write action is off
   const chosenAngle = req?.angles.find(a => a.chosen) ?? null;
   // AA-668 — inside the Writer panel the drawer is the frame, so the step cards drop their own
   // border/padding instead of nesting a card in a card.
@@ -603,9 +629,13 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
 
       {req && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", borderBottom: `1px solid ${T.line2}` }}>
-          <Stepper step={step} canChangeAngle={req.status === "approved"} onChangeAngle={changeAngle} />
+          <Stepper step={step} canChangeAngle={req.status === "approved" && !replaced} onChangeAngle={changeAngle} />
           {!embedded && <Btn variant="ghost" size="sm" onClick={reset}><RotateCcw size={12} /> Start over</Btn>}
         </div>
+      )}
+
+      {req && replaced && (
+        <AtomReplacedNotice req={req} onNewPost={() => router.push("/portal/create/social")} />
       )}
 
       {error && (
@@ -634,7 +664,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
             {goals.map(g => {
               const on = selectedGoal === g.key;
               return (
-                <button key={g.key} role="radio" aria-checked={on} disabled={generating}
+                <button key={g.key} role="radio" aria-checked={on} disabled={generating || replaced}
                   data-testid={`goal-${g.key}`}
                   onClick={() => setSelectedGoal(g.key)} style={{
                     textAlign: "left", padding: "10px 14px", borderRadius: 8,
@@ -649,7 +679,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
             })}
           </div>
           <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <Btn variant="primary" disabled={!selectedGoal || generating} onClick={submitGoal}>
+            <Btn variant="primary" disabled={!selectedGoal || generating || replaced} onClick={submitGoal}>
               {generating ? <>Generating 3 angles…</> : <><Sparkles size={13} /> Generate 3 angles</>}
             </Btn>
             {generating && (
@@ -701,7 +731,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
                   {!a.chosen && (
                     <div style={{ marginTop: 10 }}>
                       <Btn variant={a.recommended ? "primary" : "secondary"} size="sm"
-                        disabled={choosing !== null} onClick={() => choose(a.idx)}>
+                        disabled={choosing !== null || replaced} onClick={() => choose(a.idx)}>
                         {busy ? "Starting…" : <><Sparkles size={12} /> Write with this angle</>}
                       </Btn>
                     </div>
@@ -726,7 +756,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
                 <span style={{ color: T.muted2 }}> · </span>
                 <strong>Channel:</strong> {req.channel ? channelName(req.channel) : "—"}
               </div>
-              {!writing && (
+              {!writing && !replaced && (
                 <Btn size="sm" variant="secondary" disabled={reopening} onClick={changeAngle}>
                   {reopening ? "Reopening…" : "Change angle"}
                 </Btn>
@@ -761,7 +791,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
             </div>
           )}
 
-          {needsCtaInput && !writing && (
+          {needsCtaInput && !writing && !replaced && (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ fontSize: 12.5, color: T.body, lineHeight: 1.5 }}>
                 This piece needs a call to action before it can be written — what should the
@@ -796,7 +826,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
                 <AlertTriangle size={13} /> Something went wrong while writing this content
               </div>
               <div>
-                <Btn size="sm" variant="primary" onClick={() => writeContent(req.request_id)}>
+                <Btn size="sm" variant="primary" disabled={replaced} onClick={() => writeContent(req.request_id)}>
                   <Sparkles size={13} /> Retry
                 </Btn>
               </div>
