@@ -147,8 +147,11 @@ def test_compose_tags_the_subject_once_and_threads_the_reply() -> None:
     )
     msg = email.message_from_bytes(built.raw, policy=email.policy.default)
     assert msg["Subject"] == "Re: Our trip [ref:ref000000001]"
-    assert msg["In-Reply-To"] == "<abc-1@mail.example.test>" and msg["References"] == "<abc-1@mail.example.test>"
     assert msg["Message-ID"].strip("<>") == built.message_id and built.message_id.endswith("@sunshine.example")
+    # References: the client's mail, then our own Message-ID last (S252: Gmail's API replaces the Message-ID; the
+    # client's reply still carries ours through References).
+    assert msg["In-Reply-To"] == "<abc-1@mail.example.test>"
+    assert msg["References"].split() == ["<abc-1@mail.example.test>", msg["Message-ID"]]
     assert "Sunshine Travel" in msg["From"]
     assert compose.tagged_subject("Hi [ref:ref000000001]", "ref000000001") == "Hi [ref:ref000000001]"
     assert compose.tagged_subject("  Hi  there ", None) == "Hi there"

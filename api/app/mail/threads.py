@@ -3,7 +3,8 @@
 In order, first match wins:
 
 1. **reply_header**: an In-Reply-To / References hash equals the Message-ID hash of a stored message of the agency ->
-   that message's conversation;
+   that message's conversation. For a mail the CRM sent, the stored id is the one it generated; when the provider
+   replaced it (Gmail's API does), the client's reply still carries ours in References (:mod:`app.mail.compose`);
 2. **trip_token**: ``[ref:<token>]`` in the subject (or ``local+<token>@``) is a live trip's ``mail_token`` (card E:
    a forwarded thread without ``References``) -> that trip's conversation with the client;
 3. **sender**: the From address's blind index (the traveller e-mail index) names exactly one live client -> their most

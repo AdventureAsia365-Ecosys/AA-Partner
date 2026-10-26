@@ -11,13 +11,15 @@ import ast
 import email
 import email.policy
 import uuid
+from email.message import EmailMessage
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from app.jobs.queue import Job
-from app.mail import health, senders, state
+from app.mail import health, senders, state, threads
+from app.mail.parse import id_hash, parse
 from app.mail.providers import Rejected, Transient
 from app.mail.sender import MailSender
 from app.mail.state import MailRuntime
@@ -25,7 +27,7 @@ from app.members.directory import MemoryDirectory
 from app.members.mail import MemoryMailer
 from app.portal.codes import CODE_MASK
 from tests.unit.fakes import ScriptedConn
-from tests.unit.mail_fakes import REVOKED, FakeProvider, MailVault, secret_blob
+from tests.unit.mail_fakes import INGEST_DOMAIN, REVOKED, FakeProvider, MailVault, raw_mail, secret_blob
 from tests.unit.slice_fakes import enc, system_ctx, tenant_ctx
 
 MESSAGE = uuid.UUID("00000000-0000-4000-8000-00000000d001")
@@ -342,3 +344,85 @@ def test_the_sender_table_covers_every_send_path() -> None:
             module = "app." + ".".join(path.relative_to(APP).with_suffix("").parts)
             assert module in senders_modules, module
     assert senders.table()["senders"][0]["sender_kind"] == "agency_mailbox"
+
+
+# S252 live finding: Gmail's users.messages.send replaced the Message-ID the CRM generated (the client received
+# <...@mail.gmail.com>), so a reply whose In-Reply-To is the delivered id did not match the stored hash and went to
+# Unmatched. The CRM's own id now ends References, which providers keep and a reply carries on.
+PROVIDER_ID = "<CAKnvzAQx-Q=WQ3_providerid@mail.gmail.com>"
+
+
+def _delivered(raw: bytes, *, rewrites: bool) -> EmailMessage:
+    """What the client receives: Gmail / Graph may put their own Message-ID on it, SMTP keeps ours."""
+    msg = email.message_from_bytes(raw, policy=email.policy.default)
+    if rewrites:
+        del msg["Message-ID"]
+        msg["Message-ID"] = PROVIDER_ID
+    assert isinstance(msg, EmailMessage)
+    return msg
+
+
+def _client_reply(parent: EmailMessage, *, keep_references: bool = True) -> bytes:
+    """A mail program's reply (RFC 5322 §3.6.4): In-Reply-To = the parent's Message-ID, References = the parent's
+    References + its Message-ID; no trip tag in the subject, from someone who is not a client."""
+    parent_id = str(parent["Message-ID"])
+    references = f"{parent['References']} {parent_id}" if keep_references and parent["References"] else parent_id
+    return raw_mail(
+        sender="Spouse <spouse@example.test>",
+        subject="Re: Your Hoi An plan",
+        message_id="<reply-1@example.test>",
+        in_reply_to=parent_id,
+        references=references,
+    )
+
+
+async def _sent(kind: str, *, reply_to: bool = True) -> tuple[bytes, bytes]:
+    provider = FakeProvider()
+    runtime, _, _ = _runtime(provider)
+    runtime.providers[kind] = provider
+    conn = _conn(mailbox=_mailbox(kind=kind))
+    if not reply_to:
+        conn.on("WHERE conversation_id = $1 AND direction = 'in'", None)
+    assert await MailSender(runtime).send(system_ctx(conn), DISPATCH, "email", MESSAGE) == "sent"
+    ((raw, _secret, _rcpt),) = provider.sent
+    (sent,) = conn.sql("SET status = 'sent'")
+    return raw, sent[1]
+
+
+@pytest.mark.parametrize("kind", ["gmail", "microsoft", "smtp"])
+@pytest.mark.parametrize("rewrites", [False, True], ids=["id-kept", "id-replaced"])
+@pytest.mark.parametrize("reply_to", [True, False], ids=["reply", "first-mail"])
+@pytest.mark.asyncio
+async def test_a_reply_threads_by_header_whatever_the_provider_does_to_our_message_id(
+    kind: str, rewrites: bool, reply_to: bool
+) -> None:
+    raw, stored_hash = await _sent(kind, reply_to=reply_to)
+    ours = email.message_from_bytes(raw, policy=email.policy.default)
+    own_id = str(ours["Message-ID"])
+    assert stored_hash == id_hash(own_id)
+    # Our id ends References (after the client's mail we answer, when there is one).
+    assert str(ours["References"]).split() == (["<p@x.t>", own_id] if reply_to else [own_id])
+    reply = parse(_client_reply(_delivered(raw, rewrites=rewrites)), ingest_domain=INGEST_DOMAIN)
+    assert stored_hash in reply.references_hashes
+    # The threading lookup (hash = ANY(...)) finds A's conversation, before the token / sender / Unmatched rules.
+    a_conversation = {"conversation_id": CONV, "trip_id": None, "traveler_id": CLIENT}
+    conn = ScriptedConn().on(
+        "FROM crm.message m JOIN crm.conversation c", lambda hashes: a_conversation if stored_hash in hashes else None
+    )
+    refs = list(reply.references_hashes)
+    if reply.in_reply_to_hash and reply.in_reply_to_hash not in refs:
+        refs.append(reply.in_reply_to_hash)
+    found = await threads.thread(
+        system_ctx(conn), reference_hashes=refs, trip_token=reply.trip_token, client_bidxs=[], sender_bidx=b"s"
+    )
+    assert (found.conversation_id, found.match_method) == (CONV, "reply_header")
+
+
+@pytest.mark.parametrize("kind", ["gmail", "microsoft", "smtp"])
+@pytest.mark.asyncio
+async def test_in_reply_to_alone_threads_when_the_provider_kept_our_message_id(kind: str) -> None:
+    """A mail program that sets only In-Reply-To (no References) threads when the Message-ID reached the client as we
+    wrote it (SMTP; Gmail / Graph when they keep it): In-Reply-To = the Message-ID the CRM put on the raw message."""
+    raw, stored_hash = await _sent(kind)
+    reply = parse(_client_reply(_delivered(raw, rewrites=False), keep_references=False), ingest_domain=INGEST_DOMAIN)
+    assert reply.in_reply_to_hash == stored_hash
