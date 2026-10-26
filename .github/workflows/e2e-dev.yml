@@ -46,7 +46,8 @@ concurrency:
 jobs:
   slice1:
     name: Slice 1 (Playwright, Dev)
-    runs-on: ubuntu-latest
+    # Pinned (S252, 26/10/2026): ubuntu-latest moved to 26.04 and Playwright does not support Chromium there yet.
+    runs-on: ubuntu-24.04
     if: github.ref == 'refs/heads/main'
     environment: e2e
     timeout-minutes: 60

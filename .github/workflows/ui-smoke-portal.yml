@@ -47,7 +47,8 @@ concurrency:
 jobs:
   smoke:
     name: UI smoke portal (Playwright)
-    runs-on: ubuntu-latest
+    # Pinned (S252, 26/10/2026): ubuntu-latest moved to 26.04 and Playwright does not support Chromium there yet.
+    runs-on: ubuntu-24.04
     if: inputs.base_url != ''
     timeout-minutes: 20
     defaults:
