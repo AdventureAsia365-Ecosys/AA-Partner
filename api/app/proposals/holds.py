@@ -14,14 +14,21 @@ migration crm-021). Called by :mod:`app.proposals.public` in steps, so no connec
    ``proposal_version`` = the version, ``line_ref`` = the option). A line the quote answers ``sold_out`` stops it
    there and the current hold is kept (card E: the caller marks the option sold out and the block falls back to its
    default, which the kept hold may well cover). Then the quote is written down as the request in flight
-   (``remember``, a short transaction), the version's old hold released (Booking keeps one active set per
-   (proposal_ref, version)), and ``POST /holds`` with the request's key. A ``replay`` sends the remembered key and
-   quote again: Booking answers with the hold it made when the first answer was lost (a timeout after its commit),
-   or makes it now.
+   (``remember``, a short transaction, only while the version is still ``sent``), the version's old hold released
+   (Booking keeps one active set per (proposal_ref, version)), and ``POST /holds`` with the request's key. A
+   ``replay`` sends the remembered key and quote again: Booking answers with the hold it made when the first answer
+   was lost (a timeout after its commit), or makes it now. Booking's quote leaves the version's own live hold out of
+   its seat count (AA-Booking ``app.b2b.quotes``), so the seats this client holds never read as sold out to them.
 3. :func:`finish` (a new transaction): a hold goes on the version row (id, quote, expiry, the AA choice it covers),
    with the count; when the old hold was released and no new one came, the hold columns are cleared (the page then
-   shows "check availability", never a hold Booking no longer has); the request in flight is cleared once Booking
-   answered, kept when the answer was lost (the next request replays it).
+   shows "check availability", never a hold Booking no longer has); when the release itself got no answer (a timeout
+   or a 5xx: Booking may have released it), the hold leaves the hold columns too and waits in ``hold_release_id``:
+   it is never shown or accepted again, and the next request releases it once more first (a no-op when Booking had
+   released it), so Booking never refuses the next hold for a set it still keeps. The request in flight is cleared
+   once Booking answered, kept when the answer of ``POST /holds`` was lost (the next request replays it).
+
+:func:`in_flight` tells accept that a hold request of the version is still running (or lost its answer): accept is
+refused then, so it never seals a hold that request is about to release.
 
 No personal data goes to Booking: counts by age band and the agent's rooms only.
 """
@@ -50,9 +57,10 @@ UPDATE crm.proposal SET hold_attempt = $2, hold_pending_key = $3, hold_pending_a
        hold_pending_price_hash = NULL, hold_pending_selection_sha256 = NULL
  WHERE proposal_id = $1
 """
+# Only while the version is still open: a request that lost a race with accept never releases the accepted hold.
 REMEMBER_SQL = """
 UPDATE crm.proposal SET hold_pending_quote_id = $3, hold_pending_price_hash = $4, hold_pending_selection_sha256 = $5
- WHERE proposal_id = $1 AND hold_pending_key = $2
+ WHERE proposal_id = $1 AND hold_pending_key = $2 AND status = 'sent'
 RETURNING proposal_id
 """
 FORGET_SQL = """
@@ -71,6 +79,13 @@ UPDATE crm.proposal SET hold_id = NULL, hold_quote_id = NULL, hold_expires_at = 
        hold_placed_at = NULL
  WHERE proposal_id = $1 AND hold_id = $2
 """
+# The release got no answer: the hold leaves the row's hold columns and waits to be released again.
+PARK_SQL = """
+UPDATE crm.proposal SET hold_release_id = hold_id, hold_id = NULL, hold_quote_id = NULL, hold_expires_at = NULL,
+       hold_selection_sha256 = NULL, hold_placed_at = NULL
+ WHERE proposal_id = $1 AND hold_id = $2
+"""
+RELEASED_SQL = "UPDATE crm.proposal SET hold_release_id = NULL WHERE proposal_id = $1 AND hold_release_id = $2"
 SOLD_OUT_SQL = """
 UPDATE crm.option SET availability = 'sold_out', availability_checked_at = now()
  WHERE option_id = ANY($1::uuid[]) AND availability <> 'sold_out'
@@ -110,11 +125,23 @@ class Placed:
     sold_out: list[str] = field(default_factory=list)
     code: str | None = None
     released: str | None = None  # the old hold Booking released on the way
+    release_unknown: str | None = None  # the old hold whose release got no answer (Booking may have released it)
     answered: bool = True  # False: the answer of POST /holds was lost (the request stays in flight)
 
 
 def utc_today(now: dt.datetime) -> dt.date:
     return now.astimezone(dt.UTC).date()
+
+
+def in_flight(row: Any, now: dt.datetime) -> str | None:
+    """Why accept must wait for the version's hold request: ``hold_in_progress`` while one runs (another screen is
+    quoting, releasing or holding), ``hold_required`` when one lost its answer (the next "check availability"
+    replays it); None when there is none. The row's hold may be released by that request at any moment."""
+    if row["hold_pending_key"] is None:
+        return None
+    if row["hold_pending_at"] > now - PENDING_STALE:
+        return "hold_in_progress"
+    return "hold_required" if row["hold_pending_quote_id"] is not None else None
 
 
 def _lines(row: Any, s: dict[str, Any], aa_ids: list[str]) -> list[dict[str, Any]]:
@@ -184,6 +211,8 @@ async def plan(ctx: AnyContext, row: Any, s: dict[str, Any], pick_rows: list[dic
     out.action = "place"
     if live:
         out.release_hold_id = row["hold_id"]  # stale: Booking holds one set per version
+    elif row["hold_release_id"] is not None:
+        out.release_hold_id = row["hold_release_id"]  # its release got no answer: release it again (a no-op if done)
     out.body = {
         "proposal_ref": ref,
         "proposal_version": int(row["version"]),
@@ -250,7 +279,9 @@ async def place(client: BookingClient, tenant_id: uuid.UUID, p: Plan, remember: 
         except BookingRefusal:
             pass  # gone, expired or confirmed: nothing to release
         except BookingUnavailable:
-            return Placed(outcome="unavailable", code="booking_unavailable")
+            # A timeout or a 5xx may come after Booking released it: the hold is no longer the version's to show or
+            # accept; the next request releases it again. No POST /holds was sent: nothing stays in flight.
+            return Placed(outcome="unavailable", code="booking_unavailable", release_unknown=p.release_hold_id)
         released = p.release_hold_id
     body = {
         "quote_id": first.quote_id,
@@ -271,6 +302,8 @@ async def finish(ctx: AnyContext, row: Any, p: Plan, placed: Placed) -> int | No
     """Step 3 (``row`` locked again by the caller): the version row after Booking's answer. Returns the version's hold
     count when a new hold went on the row, else None."""
     count = None
+    if placed.released is not None:
+        await ctx.conn.execute(RELEASED_SQL, p.proposal_id, placed.released)  # a hold waiting for its release
     if placed.outcome == "held":
         assert placed.hold is not None and p.selection_sha256 is not None  # noqa: S101
         if row["hold_id"] != placed.hold.hold_id:  # a replay another screen stored already adds nothing
@@ -280,6 +313,8 @@ async def finish(ctx: AnyContext, row: Any, p: Plan, placed: Placed) -> int | No
     elif placed.released is not None:
         # Booking let the old hold go and no new one came: the row must not show a hold Booking no longer has.
         await ctx.conn.execute(CLEAR_HOLD_SQL, p.proposal_id, placed.released)
+    elif placed.release_unknown is not None:
+        await ctx.conn.execute(PARK_SQL, p.proposal_id, placed.release_unknown)
     if placed.answered and placed.outcome != "busy" and p.idempotency_key is not None:
         await ctx.conn.execute(FORGET_SQL, p.proposal_id, p.idempotency_key)
     return count

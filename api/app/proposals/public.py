@@ -21,8 +21,9 @@ to a device. The agent's "Re-issue link" revokes the old token (:func:`app.propo
 - :func:`accept`: Origin check, typed full name, terms tick, the ``price_hash`` and terms version the page showed
   (409 ``price_changed`` / ``terms_changed``). A builder version also needs the ``selection_hash`` the page showed (409
   ``choice_changed``), a choice that keeps the agency's rules (409 ``option_conflict``: card E's fallback may break
-  one), the rooms confirmed (Fix B10), and, when AA items are chosen, a live hold covering them: 409
-  ``hold_required`` / ``hold_expired`` with the re-quote offer (card R). The schedule follows the accepted picks.
+  one), the rooms confirmed (Fix B10), no hold request of the version running (409 ``hold_in_progress``: another
+  screen may be releasing the very hold this page shows), and, when AA items are chosen, a live hold covering them:
+  409 ``hold_required`` / ``hold_expired`` with the re-quote offer (card R). The schedule follows the accepted picks.
 - :func:`change_request`: "Ask for a change" (F5.4, R19): one bundled diff of the client's choice for the agent (an
   event with the bell and a task); a reason code, never free text.
 
@@ -61,7 +62,7 @@ SELECT p.proposal_id, p.trip_id, p.version, p.status, p.kind, p.body_enc, p.curr
        p.room_config, p.deposit_pct, p.starts_on, p.view_count, p.first_viewed_at, p.hold_id, p.hold_quote_id,
        p.hold_expires_at, p.hold_selection_sha256, p.hold_count, p.recheck_day, p.recheck_count_day,
        p.hold_attempt, p.hold_pending_key, p.hold_pending_at, p.hold_pending_quote_id, p.hold_pending_price_hash,
-       p.hold_pending_selection_sha256,
+       p.hold_pending_selection_sha256, p.hold_release_id,
        p.accepted_total_amount, p.accepted_deposit_amount, p.link_id,
        t.title, t.start_date, t.end_date, t.owner_member_id, t.party_adults, t.party_child_ages
   FROM crm.proposal p JOIN crm.trip t ON t.trip_id = p.trip_id AND t.deleted_at IS NULL
@@ -524,6 +525,14 @@ async def accept(
                 body = _conflict_body(s, found)
                 raise Conflict("option_conflict", body["message"], violations=body["violations"])
             aa_ids = client_page.aa_chosen(state["choice"], builder._option_map(s))
+            running = holds.in_flight(row, now) if aa_ids else None
+            if running == "hold_in_progress":
+                # Another screen's hold request may release the hold this page shows: never seal it meanwhile.
+                ctx.audit("proposal_accept", "denied", "proposal", str(row["proposal_id"]), reason="hold_in_progress")
+                raise Conflict("hold_in_progress", "availability is being checked on another screen; try again "
+                               "in a moment", requote=_requote(row, now))  # fmt: skip
+            if running == "hold_required":
+                raise Conflict("hold_required", "check availability first", requote=_requote(row, now))
             hold_box = client_page.hold_state(row, aa_ids, now)
             if hold_box["status"] in ("missing", "stale"):
                 raise Conflict("hold_required", "check availability first", requote=_requote(row, now))

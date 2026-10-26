@@ -70,7 +70,7 @@ def _row(**over: Any) -> dict[str, Any]:
            "hold_quote_id": None, "hold_expires_at": None, "hold_selection_sha256": None, "hold_count": 0,
            "recheck_day": None, "recheck_count_day": 0, "hold_attempt": 0, "hold_pending_key": None,
            "hold_pending_at": None, "hold_pending_quote_id": None, "hold_pending_price_hash": None,
-           "hold_pending_selection_sha256": None}  # fmt: skip
+           "hold_pending_selection_sha256": None, "hold_release_id": None}  # fmt: skip
     row.update(over)
     return row
 
@@ -303,6 +303,36 @@ async def test_place_replays_the_lost_request() -> None:
     # A replay Booking refuses (another quote under that key): "gone", a new request follows.
     p.replay_body = {**p.replay_body, "quote_id": "q7"}  # type: ignore[dict-item]
     assert (await holds.place(booking_client(fake), uuid.uuid4(), p, never)).outcome == "gone"
+
+
+@pytest.mark.asyncio
+async def test_an_unanswered_release_is_parked_and_released_again() -> None:
+    # Fix round 3: a hold whose release got no answer is released again by the next request (a no-op if done).
+    parked = await holds.plan(_Ctx(), _row(hold_count=1, hold_attempt=1, hold_release_id="h1"), _s(), [], NOW)
+    assert parked.action == "place" and parked.release_hold_id == "h1"
+    # The release done, its answer lost: the hold is reported as possibly released; no POST /holds was sent, so
+    # nothing stays in flight.
+    lost = FakeBooking(lose_next_release_answer=True)
+    lost.holds["h9"] = {"hold_id": "h9", "status": "active"}
+    out = await _placed(lost, release_hold_id="h9")
+    assert out.outcome == "unavailable" and out.answered and out.release_unknown == "h9" and out.released is None
+    assert lost.holds["h9"]["status"] == "released" and lost.calls["POST holds"] == 0
+    # The release failed before Booking did anything: the same answer (the CRM cannot tell the two apart).
+    failed = FakeBooking(fail_next_release=True)
+    failed.holds["h9"] = {"hold_id": "h9", "status": "active"}
+    out = await _placed(failed, release_hold_id="h9")
+    assert out.release_unknown == "h9" and failed.holds["h9"]["status"] == "active"
+
+
+def test_in_flight_tells_accept_to_wait() -> None:
+    key = f"crm-proposal:{P}:v2:a1"
+    assert holds.in_flight(_row(), NOW) is None
+    running = _row(hold_attempt=1, hold_pending_key=key, hold_pending_at=NOW - dt.timedelta(seconds=20))
+    assert holds.in_flight(running, NOW) == "hold_in_progress"
+    lost = {**running, "hold_pending_at": NOW - dt.timedelta(minutes=10), "hold_pending_quote_id": "q1"}
+    assert holds.in_flight(lost, NOW) == "hold_required"  # its answer was lost: "check availability" replays it
+    died = {**running, "hold_pending_at": NOW - dt.timedelta(minutes=10)}
+    assert holds.in_flight(died, NOW) is None  # never reached its quote: it releases nothing (REMEMBER needs 'sent')
 
 
 @pytest.mark.asyncio
