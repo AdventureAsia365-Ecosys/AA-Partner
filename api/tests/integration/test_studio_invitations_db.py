@@ -126,3 +126,19 @@ async def test_an_overdue_invitation_is_marked_expired_and_can_be_reissued(app_p
     token = await _issue(app_pool, cis_id, mailer)
     assert (await _row(app_pool, cis_id))["status"] == "pending"
     assert (await studio.claim(app_pool, directory, token)).state == "created"
+
+
+async def test_synthetic_agency_reads_the_crm_flag_under_row_security(app_pool: asyncpg.Pool) -> None:
+    """AA-979 / ADR 0006a A10b-1: the Dev-only E2E CIS admin's relay needs a synthetic CRM agency. As crm_app through
+    crm-002 FORCE RLS: a synthetic agency is True, a real one False, an id the CRM does not hold False."""
+    from app.agencies import AgencySpec, provision_agency
+    from app.tenancy import synthetic_agency
+
+    synthetic_id, real_id = uuid.uuid4(), uuid.uuid4()
+    await provision_agency(app_pool, AgencySpec(synthetic_id, "Synthetic Studio"), environment="test", actor="seed:it")
+    await provision_agency(
+        app_pool, AgencySpec(real_id, "Real Studio", is_synthetic=False), environment="stg", actor="seed:it"
+    )
+    assert await synthetic_agency(app_pool, synthetic_id) is True
+    assert await synthetic_agency(app_pool, real_id) is False
+    assert await synthetic_agency(app_pool, uuid.uuid4()) is False

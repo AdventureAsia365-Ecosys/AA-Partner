@@ -37,6 +37,13 @@ the AA system mail and owns the claim (:mod:`app.members.studio`). ``{id}`` is t
 agency. Writers: any OPS caller, ``cis-admin`` included (orchestrator decision Q4: the CIS route already requires
 ``tenant.write``, and CIS decides the Content studio role; this call grants nothing in the CRM). The address is never
 echoed, logged or stored in clear.
+
+AA-979 / root ADR 0006a A10b-1 (S252 security review): the Dev-only E2E CIS admin (a ``cis-admin`` token whose
+``email`` claim is the A10b address, ``Caller.e2e_read_only``, :mod:`app.auth.e2e_staff`) is read-only here: every
+``crm-platform-admin`` write refuses it with 403 ``e2e_read_only`` (:func:`require_group`), ``/console`` says
+``can_write: false``, and the studio-invitation relay takes it only on the terms of
+:func:`app.members.studio.check_e2e_invitation` (synthetic CRM agency, E2E mailbox address, an ``invited`` ``viewer`` /
+``editor`` membership at CIS; 403 ``e2e_read_only`` otherwise, 503 ``cis_unavailable`` when CIS cannot answer).
 """
 
 from __future__ import annotations
@@ -357,8 +364,9 @@ async def data_coverage(request: Request, caller: Reader) -> dict:
 # ── AA-941: the console ──────────────────────────────────────────────────────────────────────────
 @router.get("/console", response_model=ConsoleOut)
 async def get_console(caller: Reader) -> dict:
-    """What the S-01 page may offer: write buttons only for ``crm-platform-admin``. No database access."""
-    return {"can_write": caller.in_group(GROUP_CRM_PLATFORM_ADMIN)}
+    """What the S-01 page may offer: write buttons only for ``crm-platform-admin`` (never the read-only Dev E2E CIS
+    admin, root ADR 0006a A10b). No database access."""
+    return {"can_write": caller.in_group(GROUP_CRM_PLATFORM_ADMIN) and not caller.e2e_read_only}
 
 
 @router.get("/tenants", response_model=TenantPage)
@@ -429,9 +437,21 @@ class StudioInvitationAccepted(_Out):
 
 @router.post("/tenants/{tenant_id}/studio-invitations", response_model=StudioInvitationAccepted, status_code=202)
 async def studio_invitation(request: Request, tenant_id: uuid.UUID, body: StudioInvitationIn, caller: Reader) -> dict:
-    """AA-979: deliver a CIS Content studio invitation (``tenant_id`` = the CIS tenant; no CRM agency needed)."""
+    """AA-979: deliver a CIS Content studio invitation (``tenant_id`` = the CIS tenant; no CRM agency needed).
+
+    The Dev-only E2E CIS admin (root ADR 0006a A10b-1) only on the terms of :func:`studio.check_e2e_invitation`
+    (synthetic CRM agency, E2E mailbox address, an invited viewer / editor membership at CIS)."""
     pool = await request_pool(request)
     settings = request.app.state.settings
+    if caller.e2e_read_only:
+        await studio.check_e2e_invitation(
+            pool,
+            environment=settings.environment,
+            cis_tenant_id=tenant_id,
+            cis_invitation_id=body.cis_invitation_id,
+            email=body.email,
+            cis=request.app.state.studio_activation,
+        )
     return await studio.issue(
         pool,
         cis_tenant_id=tenant_id,

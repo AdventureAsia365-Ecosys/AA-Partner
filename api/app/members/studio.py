@@ -38,10 +38,13 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
+from app.agencies import SYNTHETIC_ONLY_ENVIRONMENTS
+from app.auth import e2e_staff
 from app.auth.route_guard import Caller
+from app.cis import invitation_lookup
 from app.cis.activation import ActivationConfig, Outcome
 from app.cis.activation import activate as cis_activate
-from app.errors import Conflict, Forbidden, Gone, Invalid, ServiceError
+from app.errors import Conflict, Forbidden, Gone, Invalid, ServiceError, Unavailable
 from app.jobs import queue
 from app.jobs.kinds import STUDIO_ACTIVATION
 from app.jobs.queue import Job
@@ -51,7 +54,7 @@ from app.members.invitations import Claimed, token_hash_hex
 from app.members.mail import Mailer, studio_invitation_message
 from app.members.recovery import platform_actor
 from app.members.team import new_token, normalise_email
-from app.tenancy import STUDIO_ACTIVATION_ACTOR, studio_invitation_tx, studio_platform_tx
+from app.tenancy import STUDIO_ACTIVATION_ACTOR, studio_invitation_tx, studio_platform_tx, synthetic_agency
 
 log = logging.getLogger(__name__)
 
@@ -125,6 +128,55 @@ def open_email(token: str, cis_invitation_id: uuid.UUID, blob: bytes) -> str:
     except Exception:  # noqa: BLE001 — InvalidTag and friends: a wrong token or a changed row
         raise Forbidden("decrypt_denied", "the invitation cannot be opened") from None
     return plain.decode("utf-8")
+
+
+# ── 0. the Dev-only E2E CIS admin (root ADR 0006a A10b-1) ─────────────────────────────────────────────────────────
+
+
+def _refuse_e2e(cis_tenant_id: uuid.UUID, reason: str) -> Forbidden:
+    log.warning("crm_studio_invitation_e2e_refused cis_tenant_id=%s reason=%s", cis_tenant_id, reason)
+    return Forbidden(e2e_staff.E2E_READ_ONLY, "the E2E CIS admin may not send this invitation")
+
+
+async def check_e2e_invitation(
+    pool: asyncpg.Pool,
+    *,
+    environment: str,
+    cis_tenant_id: uuid.UUID,
+    cis_invitation_id: uuid.UUID,
+    email: str,
+    cis: ActivationConfig | None,
+) -> None:
+    """The terms on which the Dev-only E2E CIS admin (``Caller.e2e_read_only``) may issue or re-issue a studio
+    invitation; every other OPS caller skips this. The same terms CIS checks before it relays (AA-CIS-App
+    ``admin_tenant360._refuse_e2e_invitation``), checked again here because the CRM is reachable without CIS:
+
+    1. an environment that holds synthetic agencies only (``dev`` / ``test`` / ``local``);
+    2. the address is on the E2E mailbox domain (:func:`app.auth.e2e_staff.is_e2e_mailbox_address`);
+    3. the CRM holds a synthetic agency with this id (:func:`app.tenancy.synthetic_agency`; no agency = refused);
+    4. CIS (``tenant.membership.v1`` getTenantMembers, M2M) has an ``invited`` membership of this tenant with this
+       invitation id and the role ``viewer`` or ``editor`` (never the body's word: the body has no role).
+
+    403 ``e2e_read_only`` on any refusal (reason in the log line, never the address); 503 ``cis_unavailable`` when CIS
+    cannot answer (fail closed, this caller only)."""
+    if environment not in SYNTHETIC_ONLY_ENVIRONMENTS:
+        raise _refuse_e2e(cis_tenant_id, "environment")
+    if not e2e_staff.is_e2e_mailbox_address(email):
+        raise _refuse_e2e(cis_tenant_id, "address")
+    if not await synthetic_agency(pool, cis_tenant_id):
+        raise _refuse_e2e(cis_tenant_id, "tenant_not_synthetic")
+    if cis is None:
+        raise Unavailable("cis_unavailable", "CIS is not configured; the invitation cannot be checked")
+    found = await invitation_lookup.invitation(cis, cis_tenant_id, cis_invitation_id)
+    if found.kind == "error":
+        log.warning("crm_studio_invitation_e2e_lookup_failed cis_tenant_id=%s code=%s", cis_tenant_id, found.code)
+        raise Unavailable("cis_unavailable", "CIS did not answer; try again in a minute")
+    if found.kind == "missing":
+        raise _refuse_e2e(cis_tenant_id, "invitation_not_found")
+    if found.status != "invited":
+        raise _refuse_e2e(cis_tenant_id, "invitation_status")
+    if found.role not in e2e_staff.E2E_INVITE_ROLES:
+        raise _refuse_e2e(cis_tenant_id, "role")
 
 
 # ── 1. issue / re-issue (AA staff through the CIS relay) ─────────────────────────────────────────────────────────

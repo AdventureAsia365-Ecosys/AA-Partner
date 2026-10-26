@@ -12,7 +12,8 @@ The guard, in order:
    (a ``cis-admin`` or ``breakglass`` token on ``/crm/v1``, a partner token on ``/crm/ops/v1``, ...);
 4. the class needs a group and the token holds none of them -> **403** ``missing_group``.
 
-Then the route gets a :class:`Caller` (no e-mail or name: ids only). Tenant membership is not checked here: the agency
+Then the route gets a :class:`Caller` (no e-mail or name: ids only, plus the ``e2e_read_only`` flag of the Dev-only
+E2E CIS admin, :mod:`app.auth.e2e_staff`). Tenant membership is not checked here: the agency
 routes open :func:`app.tenancy.tenant_tx`, which checks it.
 """
 
@@ -26,7 +27,8 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.auth.identity_config import Identity, RouteClass
+from app.auth import e2e_staff
+from app.auth.identity_config import WORKFORCE, Identity, RouteClass
 from app.auth.identity_verifier import AuthUnavailable, InvalidToken, MultiIssuerVerifier
 
 log = logging.getLogger(__name__)
@@ -44,6 +46,9 @@ class Caller:
     iss: str
     sub: str
     groups: tuple[str, ...]
+    # The Dev-only E2E CIS admin (root ADR 0006a A10b; :mod:`app.auth.e2e_staff`): a WORKFORCE token whose ``email``
+    # claim is that address. A boolean only: the address itself is not kept.
+    e2e_read_only: bool = False
 
     def in_group(self, group: str) -> bool:
         return group in self.groups
@@ -94,6 +99,7 @@ def guard_for(route_class: RouteClass) -> Callable[..., Awaitable[Caller]]:
             iss=principal.iss,
             sub=principal.sub,
             groups=principal.groups,
+            e2e_read_only=issuer_kind == WORKFORCE and e2e_staff.is_e2e_cis_admin(principal.email),
         )
         request.state.caller = caller
         return caller
@@ -128,9 +134,15 @@ def current_caller(request: Request) -> Caller:
 
 
 def require_group(group: str) -> Callable[[Caller], Caller]:
-    """A route-level dependency for a write that needs one specific group (e.g. ``crm-platform-admin`` on ops)."""
+    """A route-level dependency for a write that needs one specific group (e.g. ``crm-platform-admin`` on ops).
+
+    The Dev-only E2E CIS admin is refused with 403 ``e2e_read_only`` whatever groups its token holds (root ADR 0006a
+    A10b: read-only; the trigger never issues it a write group, this is the second lock)."""
 
     def dependency(caller: Annotated[Caller, Depends(current_caller)]) -> Caller:
+        if caller.e2e_read_only:
+            log.warning("route_guard_e2e_read_only class=%s group=%s", caller.route_class, group)
+            raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
         if not caller.in_group(group):
             raise HTTPException(status_code=403, detail="missing_group")
         return caller
