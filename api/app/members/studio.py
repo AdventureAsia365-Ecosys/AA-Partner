@@ -155,7 +155,10 @@ async def check_e2e_invitation(
     2. the address is on the E2E mailbox domain (:func:`app.auth.e2e_staff.is_e2e_mailbox_address`);
     3. the CRM holds a synthetic agency with this id (:func:`app.tenancy.synthetic_agency`; no agency = refused);
     4. CIS (``tenant.membership.v1`` getTenantMembers, M2M) has an ``invited`` membership of this tenant with this
-       invitation id and the role ``viewer`` or ``editor`` (never the body's word: the body has no role).
+       invitation id and the role ``viewer`` or ``editor`` (never the body's word: the body has no role);
+    5. in the same answer CIS marks the tenant synthetic (contract 1.2 ``is_synthetic`` exactly ``true``, from
+       ``shared.tenants.is_canary``). Term 3 alone is weak on Dev, where the CRM marks every agency synthetic; an
+       answer without the field (a 1.1 CIS) or with ``false`` / ``null`` is refused.
 
     403 ``e2e_read_only`` on any refusal (reason in the log line, never the address); 503 ``cis_unavailable`` when CIS
     cannot answer (fail closed, this caller only)."""
@@ -173,6 +176,8 @@ async def check_e2e_invitation(
         raise Unavailable("cis_unavailable", "CIS did not answer; try again in a minute")
     if found.kind == "missing":
         raise _refuse_e2e(cis_tenant_id, "invitation_not_found")
+    if found.synthetic is not True:
+        raise _refuse_e2e(cis_tenant_id, "cis_synthetic_unknown" if found.synthetic is None else "cis_not_synthetic")
     if found.status != "invited":
         raise _refuse_e2e(cis_tenant_id, "invitation_status")
     if found.role not in e2e_staff.E2E_INVITE_ROLES:

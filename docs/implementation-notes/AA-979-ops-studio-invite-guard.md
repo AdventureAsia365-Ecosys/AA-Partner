@@ -80,3 +80,23 @@ re-send a real tenant's invitation (an owner one included) to the E2E mailbox an
   root worktree `root-ops-invite-guard` (branch `docs/crm-ops-studio-invite-a10b-guard`), a local commit, no version bump
   (no shape change, new error codes only); the root contracts checker passes.
 - No migration, no Infra change, no new secret or scope.
+
+## Follow-up: CIS confirms the tenant is synthetic (contract `tenant.membership.v1` 1.2)
+
+Branch `feat/a10b-check-cis-is-synthetic`, based on `fix/crm-ops-studio-invite-write-guard` (#83, not on main when
+this was written).
+
+- Decisions: term 3 (`crm.tenant.is_synthetic`) is weak on Dev, where the CRM forces every agency synthetic. Root
+  contract 1.2 adds `TenantMembers.is_synthetic` (CIS `shared.tenants.is_canary`, NULL = false, never null); the
+  lookup reads it from the getTenantMembers answer it already fetches (no new call, no new scope) and
+  `check_e2e_invitation` adds term 5: it must be exactly `true`. Missing or null (a 1.1 CIS) refuses with reason
+  `cis_synthetic_unknown`, false with `cis_not_synthetic` (403 `e2e_read_only`); a non-boolean value is a contract
+  error (503 `cis_unavailable`, like any malformed answer).
+- Changed: `app/cis/invitation_lookup.py` (`Lookup.synthetic`), `app/members/studio.py` (term 5), vendored contract
+  copy + the root samples (`tenant-members-*.json`), sha256 pin in `tests/unit/test_cis_contract.py`, tests in
+  `tests/unit/test_ops_e2e_staff.py` (false / null / missing refused, non-boolean 503, real admin never asks CIS, the
+  lookup on the vendored 1.2 samples) and `test_cis_contract.py` (the field is a required boolean).
+- Tradeoffs: refusing a 1.1 answer (instead of falling back to term 3) means the phase 2 `a10b` run fails with 403
+  until CIS serves 1.2. Accepted: fail closed is the point of the check, and the order below avoids the gap.
+- Should know: merge and deploy order is root contract 1.2, then AA-CIS-App (serves the field), then this branch. A
+  real CIS admin is unchanged (no CIS call, no synthetic read).
