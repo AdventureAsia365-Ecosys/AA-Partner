@@ -374,8 +374,11 @@ original CIS commit). P2a moves the code only:
 
 - **Same Vercel project and host**: `aa-cis-portal` (Root Directory `portal`, Git integration off by
   `portal/vercel.json`), `portal.lumiguides.it.com`, same env vars (`API_URL`, `NEXT_PUBLIC_CRM_URL`). Deployments come
-  only from `.github/workflows/vercel-deploy-portal.yml` (preview on a PR touching `portal/**`, production on main,
-  then the UI smoke `ui-smoke-portal.yml` on the preview). Repo values: variable `VERCEL_PORTAL_PROJECT_ID`, secrets
+  only from `.github/workflows/vercel-deploy-portal.yml` (preview on a PR touching `portal/**`, then the UI smoke
+  `ui-smoke-portal.yml` on the preview; production by dispatch from main only since the P2b freeze, AA-979: the
+  Vercel project is the rollback target of the DNS cutover, and `portal/vercel.json` answers 301 from
+  `aa-cis-portal.vercel.app/<path>` to `portal.lumiguides.it.com/<path>`, conditioned on that host so a rollback does
+  not loop). Repo values: variable `VERCEL_PORTAL_PROJECT_ID`, secrets
   `VERCEL_TOKEN`, `VERCEL_PORTAL_BYPASS_SECRET`, `E2E_TENANT_API_KEY`.
 - **Same sign-in**: the tenant API key through the portal BFF (`portal/app/api/auth/tenant-login`), which calls CIS
   `POST /auth/tenant-login` with `client: "portal"` (portal page loads are not metered as API calls, AA-760) and keeps
