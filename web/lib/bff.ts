@@ -34,7 +34,13 @@ export const DOCUMENT_BODY_BYTES = 10 * 1024 * 1024;
  * (the proxy's 10 MiB clone limit would cut a larger file short without an error).
  */
 export const MAIL_IMPORT_BODY_BYTES = 25 * 1024 * 1024;
-/** The proxy matcher leaves out every path under this prefix (proxy.ts); the BFF route checks the host itself. */
+/** Raw uploads (<= 25 MiB each) one web process reads / forwards at once (the task has 512 MB); more -> 503. */
+export const MAX_RAW_IN_FLIGHT = 2;
+/**
+ * The proxy matcher leaves out every path under this prefix (proxy.ts); the BFF route checks the host itself. The raw
+ * route's upstream timeout (50 s) stays under the CloudFront origin read timeout (60 s), so the browser gets the BFF's
+ * own 504 `api_timeout`, not CloudFront's.
+ */
 export const UNPROXIED_BFF_PREFIX = "/bff/mail/imports";
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -166,7 +172,7 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "PUT", pattern: /^mailbox\/smtp$/, tenant: true, card: "AA-945" },
   { method: "GET", pattern: /^mailbox\/ingest-address$/, tenant: true, card: "AA-945" },
   { method: "GET", pattern: /^mail\/senders$/, tenant: true, card: "AA-945" },
-  { method: "POST", pattern: /^mail\/imports$/, tenant: true, card: "AA-945", maxBody: MAIL_IMPORT_BODY_BYTES, raw: true, timeoutMs: 120_000 },
+  { method: "POST", pattern: /^mail\/imports$/, tenant: true, card: "AA-945", maxBody: MAIL_IMPORT_BODY_BYTES, raw: true, timeoutMs: 50_000 },
   { method: "GET", pattern: new RegExp(`^mail/imports/${UUID}$`), tenant: true, card: "AA-945" },
   { method: "GET", pattern: /^conversations$/, tenant: true, card: "AA-945" },
   { method: "GET", pattern: new RegExp(`^conversations/${UUID}/messages$`), tenant: true, card: "AA-945" },

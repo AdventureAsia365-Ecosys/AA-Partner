@@ -3,8 +3,8 @@
 // (bytes unchanged, capped, never cut short) and the proxy matcher that keeps Next from cloning (and cutting) it.
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { POST as bffPost } from "@/app/bff/[...path]/route";
-import { MAIL_IMPORT_BODY_BYTES, matchBff, UNPROXIED_BFF_PREFIX } from "@/lib/bff";
+import { GET as bffGet, POST as bffPost } from "@/app/bff/[...path]/route";
+import { MAIL_IMPORT_BODY_BYTES, matchBff, MAX_RAW_IN_FLIGHT, UNPROXIED_BFF_PREFIX } from "@/lib/bff";
 import { readCapped } from "@/lib/bffBody";
 import type { BffResult } from "@/lib/bffClient";
 import { MESSAGES } from "@/lib/i18n";
@@ -179,7 +179,9 @@ describe("error texts", () => {
     expect(importErrorKey(503, "mail_ingest_not_configured")).toBe("mail.error.mail_ingest_not_configured");
     expect(importErrorKey(403, "role_forbidden")).toBe("mail.error.role_forbidden");
     expect(importErrorKey(422, "something_new")).toBe("");
-    for (const code of ["empty_upload", "invalid_source_kind", "mail_ingest_not_configured", "mail_import_not_found", "api_timeout", "api_unreachable", "body_incomplete"]) {
+    expect(importErrorKey(503, "upload_busy")).toBe("mail.error.upload_busy");
+    expect(importErrorKey(400, "body_incomplete")).toBe("mail.error.body_incomplete");
+    for (const code of ["empty_upload", "invalid_source_kind", "mail_ingest_not_configured", "mail_import_not_found", "api_timeout", "api_unreachable", "body_incomplete", "upload_busy"]) {
       expect(MESSAGES.en[`mail.error.${code}` as keyof typeof MESSAGES.en], code).toBeTruthy();
       expect(MESSAGES.vi[`mail.error.${code}` as keyof typeof MESSAGES.vi], code).toBeTruthy();
     }
@@ -257,39 +259,89 @@ describe("BFF raw upload", () => {
     return `${s.name}=${s.value}; ${r.name}=${r.value}`;
   }
 
-  function post(body: Uint8Array<ArrayBuffer>, headers: Record<string, string> = {}, host = "partner.example.test") {
-    const h = new Headers({ host, cookie: cookie(), "content-type": "application/octet-stream", ...headers });
-    return new NextRequest(`https://${host}/bff/mail/imports?source_kind=mbox`, { method: "POST", headers: h, body });
+  function req(
+    path: string,
+    init: { method?: string; body?: BodyInit; headers?: Record<string, string>; host?: string; session?: boolean } = {},
+  ) {
+    const host = init.host ?? "partner.example.test";
+    const h = new Headers({ host, "content-type": "application/octet-stream", ...init.headers });
+    if (init.session !== false) h.set("cookie", cookie());
+    const streamed = init.body instanceof ReadableStream;
+    const options = { method: init.method ?? "POST", headers: h, body: init.body, ...(streamed ? { duplex: "half" } : {}) };
+    return new NextRequest(`https://${host}${path}`, options as ConstructorParameters<typeof NextRequest>[1]);
+  }
+  function post(body: BodyInit, headers: Record<string, string> = {}, host?: string) {
+    return req("/bff/mail/imports?source_kind=mbox", { body, headers, host });
   }
   const params = { params: Promise.resolve({ path: ["mail", "imports"] }) };
+  const statusParams = { params: Promise.resolve({ path: ["mail", "imports", ID] }) };
 
-  it("is on the allow-list as a raw route of 25 MiB, outside the proxy matcher", () => {
+  /** A body stream that counts how often it was pulled (highWaterMark 0: nothing is read ahead). */
+  function countedBody(bytes = new Uint8Array([1, 2, 3])) {
+    const seen = { pulls: 0 };
+    const stream = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          seen.pulls += 1;
+          if (seen.pulls === 1) controller.enqueue(bytes);
+          else controller.close();
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    return { stream, seen };
+  }
+
+  it("is on the allow-list as a raw route of 25 MiB with a timeout under CloudFront's 60 s", () => {
     const route = matchBff("POST", "mail/imports");
     expect(route?.raw).toBe(true);
     expect(route?.maxBody).toBe(MAIL_IMPORT_BODY_BYTES);
+    expect(route?.timeoutMs).toBe(50_000);
+    expect(MAX_RAW_IN_FLIGHT).toBe(2);
+  });
+
+  it("proxy matcher: the upload paths are left out; encoded and look-alike paths are still host-checked by the route", async () => {
     const matcher = new RegExp(`^${proxyConfig.matcher[0]}$`);
     expect(UNPROXIED_BFF_PREFIX).toBe("/bff/mail/imports");
     expect(matcher.test("/bff/mail/imports")).toBe(false);
     expect(matcher.test(`/bff/mail/imports/${ID}`)).toBe(false);
     expect(matcher.test("/bff/me")).toBe(true);
     expect(matcher.test("/settings/mailbox")).toBe(true);
+    // Next runs the proxy when the raw OR the decoded path matches: the encoded form still goes through the proxy
+    // (body cloned and possibly cut: the route's Content-Length check then answers 400), and is host-checked there.
+    expect(matcher.test("/bff/mail/%69mports")).toBe(true);
+    // A look-alike is excluded by the prefix; the allow-list does not know it.
+    expect(matcher.test("/bff/mail/importsX")).toBe(false);
+    expect(matchBff("POST", "mail/importsX")).toBeNull();
+
+    const upstream = vi.fn(async () => Response.json({}));
+    vi.stubGlobal("fetch", upstream);
+    // Whatever the proxy did, the route itself refuses a foreign host for every one of these paths.
+    const foreign = "go.example.test";
+    expect((await bffGet(req("/bff/mail/%69mports", { method: "GET", host: foreign }), { params: Promise.resolve({ path: ["mail", "imports"] }) })).status).toBe(404);
+    expect((await bffGet(req(`/bff/mail/imports/${ID}`, { method: "GET", host: foreign }), statusParams)).status).toBe(404);
+    expect((await bffPost(req("/bff/mail/importsX", { body: new Uint8Array(1), host: foreign }), { params: Promise.resolve({ path: ["mail", "importsX"] }) })).status).toBe(404);
+    expect((await bffPost(req("/bff/mail/importsX", { body: new Uint8Array(1) }), { params: Promise.resolve({ path: ["mail", "importsX"] }) })).status).toBe(404);
+    expect((await bffGet(req(`/bff/mail/imports/${ID}`, { method: "GET", host: "unknown.example.test" }), statusParams)).status).toBe(404);
+    expect(upstream).not.toHaveBeenCalled();
   });
 
-  it("forwards the bytes unchanged (not as text) with the session's token, agency and the kind", async () => {
+  it("forwards the bytes unchanged (a Blob, not text) with the session's token, agency and the kind", async () => {
     const upstream = vi.fn(async () => Response.json({ mail_import_id: ID, status: "queued" }, { status: 202 }));
     vi.stubGlobal("fetch", upstream);
-    const bytes = new Uint8Array([0x46, 0x72, 0x6f, 0x6d, 0x20, 0xff, 0xfe, 0x00, 0xe9]); // not valid UTF-8
+    const bytes = new Uint8Array([0x46, 0x72, 0x6f, 0x6d, 0x20, 0xff, 0xfe, 0x00, 0xe9, 0xc3, 0x28]); // not valid UTF-8
     const res = await bffPost(post(bytes, { "content-length": String(bytes.byteLength) }), params);
     expect(res.status).toBe(202);
     const [url, init] = upstream.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe(`${cfg.crmApiOrigin}/crm/v1/mail/imports?source_kind=mbox`);
-    expect(Array.from(init.body as Uint8Array)).toEqual(Array.from(bytes));
+    expect(init.body).toBeInstanceOf(Blob);
+    expect(Array.from(new Uint8Array(await (init.body as Blob).arrayBuffer()))).toEqual(Array.from(bytes));
     const h = init.headers as Headers;
     expect(h.get("content-type")).toBe("application/octet-stream");
     expect(h.get("x-aa-tenant-id")).toBe("tenant-a");
   });
 
-  it("refuses a body over 25 MiB (declared or streamed), one cut short, and a foreign host, before the API", async () => {
+  it("refuses a body over 25 MiB (declared), one cut short, a cross-site POST and no session, before the API", async () => {
     const upstream = vi.fn(async () => Response.json({}));
     vi.stubGlobal("fetch", upstream);
     const over = await bffPost(post(new Uint8Array(4), { "content-length": String(MAIL_IMPORT_BODY_BYTES + 1) }), params);
@@ -297,12 +349,81 @@ describe("BFF raw upload", () => {
     expect(await over.json()).toEqual({ detail: "body_too_large" });
     const short = await bffPost(post(new Uint8Array(4), { "content-length": "10" }), params);
     expect(short.status).toBe(400);
-    const foreign = await bffPost(post(new Uint8Array(4), {}, "go.example.test"), params);
-    expect(foreign.status).toBe(404);
+    expect(await short.json()).toEqual({ detail: "body_incomplete" });
+
+    const cross = countedBody();
+    const evil = await bffPost(post(cross.stream, { origin: "https://evil.example" }), params);
+    expect(evil.status).toBe(403);
+    expect(cross.seen.pulls).toBe(0);
+
+    const anon = countedBody();
+    const noSession = await bffPost(req("/bff/mail/imports?source_kind=mbox", { body: anon.stream, session: false }), params);
+    expect(noSession.status).toBe(401);
+    expect(anon.seen.pulls).toBe(0);
     expect(upstream).not.toHaveBeenCalled();
   });
 
-  it("readCapped stops reading as soon as the cap is passed", async () => {
+  it("answers 400 body_incomplete when the upload breaks off mid-way (no unhandled 500)", async () => {
+    const upstream = vi.fn(async () => Response.json({}));
+    vi.stubGlobal("fetch", upstream);
+    let pulls = 0;
+    const broken = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          pulls += 1;
+          if (pulls === 1) controller.enqueue(new Uint8Array(8));
+          else controller.error(new Error("aborted by the client"));
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const res = await bffPost(post(broken), params);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ detail: "body_incomplete" });
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("caps raw uploads in flight: the third waits outside with 503 upload_busy + Retry-After, unread; the slot frees after", async () => {
+    const release: Array<() => void> = [];
+    const upstream = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          release.push(() => resolve(Response.json({ mail_import_id: ID, status: "queued" }, { status: 202 })));
+        }),
+    );
+    vi.stubGlobal("fetch", upstream);
+    const first = bffPost(post(new Uint8Array([1])), params);
+    const second = bffPost(post(new Uint8Array([2])), params);
+    await vi.waitFor(() => expect(upstream).toHaveBeenCalledTimes(MAX_RAW_IN_FLIGHT));
+
+    const waiting = countedBody();
+    const busy = await bffPost(post(waiting.stream), params);
+    expect(busy.status).toBe(503);
+    expect(busy.headers.get("retry-after")).toBe("10");
+    expect(await busy.json()).toEqual({ detail: "upload_busy" });
+    expect(waiting.seen.pulls).toBe(0);
+    // A status read is not an upload: never counted.
+    const statusUp = bffGet(req(`/bff/mail/imports/${ID}`, { method: "GET" }), statusParams);
+    await vi.waitFor(() => expect(upstream).toHaveBeenCalledTimes(MAX_RAW_IN_FLIGHT + 1));
+
+    for (const r of release.splice(0)) r();
+    expect((await first).status).toBe(202);
+    expect((await second).status).toBe(202);
+    expect((await statusUp).status).toBe(202);
+    const again = bffPost(post(new Uint8Array([3])), params);
+    await vi.waitFor(() => expect(release).toHaveLength(1));
+    release[0]();
+    expect((await again).status).toBe(202);
+  });
+
+  it("frees the slot when the API is unreachable too", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("down"); }));
+    for (let i = 0; i < MAX_RAW_IN_FLIGHT + 1; i++) {
+      expect((await bffPost(post(new Uint8Array([1])), params)).status).toBe(502);
+    }
+  });
+
+  it("readCapped stops reading as soon as the cap is passed, and reports a broken stream", async () => {
     let pulled = 0;
     const stream = new ReadableStream<Uint8Array>({
       pull(controller) {
@@ -314,7 +435,10 @@ describe("BFF raw upload", () => {
     expect(await readCapped(stream, 25)).toBe("too_large");
     expect(pulled).toBeLessThan(10);
     const ok = await readCapped(new Blob([new Uint8Array([1, 2, 3])]).stream(), 3);
-    expect(Array.from(ok as Uint8Array)).toEqual([1, 2, 3]);
-    expect(await readCapped(null, 3)).toEqual(new Uint8Array(0));
+    expect(ok).toBeInstanceOf(Blob);
+    expect(Array.from(new Uint8Array(await (ok as Blob).arrayBuffer()))).toEqual([1, 2, 3]);
+    expect(((await readCapped(null, 3)) as Blob).size).toBe(0);
+    const broken = new ReadableStream<Uint8Array>({ pull: (c) => c.error(new Error("reset")) });
+    expect(await readCapped(broken, 3)).toBe("aborted");
   });
 });

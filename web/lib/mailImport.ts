@@ -95,6 +95,8 @@ const IMPORT_ERRORS = new Set([
   "role_forbidden",
   "api_timeout",
   "api_unreachable",
+  "body_incomplete",
+  "upload_busy",
   "network",
 ]);
 

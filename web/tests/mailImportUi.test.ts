@@ -176,7 +176,7 @@ describe("Import mail history", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the API's 413 as the size message, a known code by its text, an unknown 4xx by the API's message", async () => {
+  it("shows the API's 413 as the size message, known codes (incl. the BFF's upload_busy) by their text, an unknown 4xx by the API's message", async () => {
     const c = await mount();
     fakeXhr(413, { detail: "import_too_large", message: "at most 25 MB" });
     await pick(c, file("a.mbox"));
@@ -188,6 +188,11 @@ describe("Import mail history", () => {
     await act(async () => startButton(c).click());
     await settle();
     expect(c.querySelector('[data-testid="mail-import-message"]')?.textContent).toBe(EN["mail.error.mail_ingest_not_configured"]);
+
+    fakeXhr(503, { detail: "upload_busy" });
+    await act(async () => startButton(c).click());
+    await settle();
+    expect(c.querySelector('[data-testid="mail-import-message"]')?.textContent).toBe(EN["mail.error.upload_busy"]);
 
     fakeXhr(422, { detail: "some_new_rule", message: "The mailbox export is from another member." });
     await act(async () => startButton(c).click());
