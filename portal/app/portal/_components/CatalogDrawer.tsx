@@ -12,6 +12,7 @@ import { Download, Save, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { T, mono, sans, Btn, LoadingScreen, parseContent, parseHighlights, fmtDateTime } from "./ui";
 import { AiContentNotice } from "./AiContentNotice";
+import { MasterNewerNotice } from "./MasterNewerNotice";
 import { SeeOriginalToggle } from "./SeeOriginalToggle";
 import { fetchVersionDetail, type Version } from "./catalogApi";
 
@@ -240,6 +241,14 @@ export function CatalogDrawer(props: CatalogDrawerBody) {
           <span>Created: {fmtDateTime(detail.created_at)}</span>
           {detail.edited_at && <span>· Edited: {fmtDateTime(detail.edited_at)}</span>}
         </div>
+
+        {/* AA-990: AA updated the tour after this version. Informational only; the tenant's text stays as it is. */}
+        <MasterNewerNotice
+          version={detail.master_newer != null ? detail : group}
+          onRewrite={props.onRequestRewrite}
+          rewriting={rewriting}
+          style={{ marginBottom: 14 }}
+        />
 
         <CompareRow label="Summary" yours={summaryVal} onEdit={markSummary} />
         <HighlightsCompare yours={highlightsVal} onChange={markHighlights} />
