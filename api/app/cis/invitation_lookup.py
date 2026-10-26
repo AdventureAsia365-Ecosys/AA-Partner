@@ -8,7 +8,11 @@ read from CIS, never from the body. Outcomes (:class:`Lookup`):
 - ``found``    200 and a membership of that tenant with that ``invitation_id`` (its ``content_studio_role``,
                ``status``);
 - ``missing``  200 without it, or 404 (CIS has no such tenant);
-- ``error``    a transport failure, a token failure, any other status or a body that is not the contract shape.
+- ``error``    a transport failure, a token failure, any other status or a body that is not the contract shape
+               (``is_synthetic`` present but not a boolean included).
+
+Every 200 also carries ``synthetic``: the tenant's ``is_synthetic`` (contract 1.2, CIS ``shared.tenants.is_canary``),
+or None when CIS left it out or sent null (a 1.1 server). The caller treats only ``True`` as synthetic.
 
 Nothing from the body is logged or kept.
 """
@@ -33,6 +37,7 @@ class Lookup:
     role: str | None = None
     status: str | None = None
     code: str = "ok"
+    synthetic: bool | None = None  # TenantMembers.is_synthetic (1.2); None = not sent
 
 
 async def invitation(config: Any, tenant_id: uuid.UUID, invitation_id: uuid.UUID) -> Lookup:
@@ -61,6 +66,9 @@ async def invitation(config: Any, tenant_id: uuid.UUID, invitation_id: uuid.UUID
         return Lookup("error", code="cis_contract")
     if not isinstance(members, list) or _id(data.get("tenant_id")) != str(tenant_id):
         return Lookup("error", code="cis_contract")
+    synthetic = data.get("is_synthetic")
+    if synthetic is not None and not isinstance(synthetic, bool):
+        return Lookup("error", code="cis_contract")
     for member in members:
         if not isinstance(member, dict) or _id(member.get("invitation_id")) != str(invitation_id):
             continue
@@ -69,8 +77,8 @@ async def invitation(config: Any, tenant_id: uuid.UUID, invitation_id: uuid.UUID
         role, status = member.get("content_studio_role"), member.get("status")
         if not isinstance(role, str) or not isinstance(status, str):
             return Lookup("error", code="cis_contract")
-        return Lookup("found", role=role, status=status)
-    return Lookup("missing", code="cis_invitation_not_found")
+        return Lookup("found", role=role, status=status, synthetic=synthetic)
+    return Lookup("missing", code="cis_invitation_not_found", synthetic=synthetic)
 
 
 def _id(value: Any) -> str | None:

@@ -8,7 +8,8 @@ For one dispatch row whose gate passed (inside the dispatcher's ``system_tx``):
    SES (errata S247 §1 removed ``allow_platform_sender``; card R);
 3. the credential is decrypted here (``Vault.decrypt_secret``: lint-allowed in this module and :mod:`app.mail.health`
    only), the client's address and the message text under their DEKs, the MIME message is built
-   (:mod:`app.mail.compose`: trip tag, In-Reply-To the client's latest mail) and the provider sends it;
+   (:mod:`app.mail.compose`: trip tag, In-Reply-To the client's latest mail, References ending with our own
+   Message-ID) and the provider sends it;
 4. :class:`~app.mail.providers.AuthRevoked` -> the message ``held_reconnect``, the mailbox and credential
    ``disconnected`` with the failure class, one alert to the owners through AA's SES (once, when it newly
    disconnects); :class:`~app.mail.providers.Rejected` -> the message ``failed`` and ``send_failed`` (dropped);

@@ -1,0 +1,22 @@
+{
+  "contract": "tenant.membership.v1",
+  "schema": "TenantMembers",
+  "expect": "invalid",
+  "why": "1.2: is_synthetic is required (the CRM's E2E admin check refuses a 1.1 answer without it)",
+  "payload": {
+    "tenant_id": "0b9d6c7e-3f43-4c1e-9a52-6d0c3b8f1a01",
+    "tenant_state": "active",
+    "members": [
+      {
+        "membership_id": "2e2d3c4b-5a69-4788-9a0b-1c2d3e4f5a6c",
+        "tenant_id": "0b9d6c7e-3f43-4c1e-9a52-6d0c3b8f1a01",
+        "identity": null,
+        "content_studio_role": "viewer",
+        "status": "invited",
+        "invitation_id": "6f0b7a52-1d7e-4a3e-8a8f-2f7a9c1d0e12",
+        "updated_at": "2026-11-20T04:00:00Z"
+      }
+    ],
+    "as_of": "2026-11-20T04:00:05Z"
+  }
+}

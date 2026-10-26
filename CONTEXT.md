@@ -588,7 +588,8 @@ secret `crm/<env>/mail-oauth`.
   old, then it is dropped (`failed_permanent`); the job pages past failing objects so they never starve new mail.
 - **Send (send-as)**: `POST /crm/v1/messages` seals the draft and queues one dispatch row (`message_id`, 10 s Undo);
   the dispatcher's gate runs, then `app/mail/sender.py` (the crm-010 `Sender`) builds the MIME message (trip tag in the
-  subject, In-Reply-To the client's latest mail) and sends it through the member's own mailbox, else the agency's
+  subject, In-Reply-To the client's latest mail, References ending with the CRM's own Message-ID: Gmail's API replaces
+  the Message-ID and the client's reply still threads by References, S252) and sends it through the member's own mailbox, else the agency's
   (`app/mail/providers/`: Gmail `users.messages.send`, Graph `me/sendMail` MIME, SMTP with TLS required on ports
   25 / 465 / 587 / 2525, the host resolved once and the socket opened to that vetted public address (no DNS
   rebinding into the VPC); stdlib `urllib` / `smtplib`, no new dependency). A refresh token the provider rotates
@@ -1186,7 +1187,9 @@ have no CRM agency):
   (`dev` / `test` / `local`), an address on the E2E mailbox domain, a **synthetic CRM agency** with that id
   (`tenancy.synthetic_agency`; a studio-only tenant without a CRM agency is refused, so the phase 2 tenant needs one),
   and an `invited` `viewer` / `editor` membership with that invitation id at CIS (`tenant.membership.v1`
-  getTenantMembers, M2M `cis.tenant/read`, `app/cis/invitation_lookup.py`; the body carries no role). 403
+  getTenantMembers, M2M `cis.tenant/read`, `app/cis/invitation_lookup.py`; the body carries no role), in an answer
+  where CIS also marks the tenant synthetic (contract 1.2 `is_synthetic` exactly `true`, CIS `shared.tenants.is_canary`;
+  the CRM flag alone is weak on Dev, where every agency is synthetic; a 1.1 answer without the field is refused). 403
   `e2e_read_only` otherwise, 503 `cis_unavailable` when CIS cannot answer. Every other caller is unchanged.
 
 ## Domain terms
