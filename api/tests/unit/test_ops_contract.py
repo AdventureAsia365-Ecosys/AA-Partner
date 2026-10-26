@@ -140,6 +140,21 @@ def base_conn(status: str | None = "active") -> ScriptedConn:
             "GROUP BY kind",
             [{"kind": "crm_intake_process", "queued": 0, "running": 0, "failed_24h": 1, "oldest_queued_age_s": None}],
         ),  # fmt: skip
+        # crm.ops.v1 1.3 (AA-992): /data-coverage
+        ("SELECT is_synthetic FROM crm.tenant WHERE tenant_id = $1", True),
+        ("FROM crm.member WHERE deleted_at IS NULL GROUP BY status", [{"status": "active", "n": 2}]),
+        (
+            "FROM crm.aa_catalog_state s",
+            {
+                "served": 892,
+                "paused": 0,
+                "retired": 1,
+                "last_full_pass_at": NOW,
+                "last_ok_at": NOW,
+                "failures": 0,
+                "last_error_class": None,
+            },
+        ),  # fmt: skip
         (
             "FROM crm.llm_usage_daily",
             [
@@ -220,6 +235,7 @@ SCENARIOS: list[tuple[str, str, str, Any, Any, str, int, str | None]] = [
     ("GET", "/llm/usage", f"{PREFIX}/llm/usage?from=2026-10-01&to=2026-10-24", None, None, "reader", 200, None),
     ("GET", "/llm/usage", f"{PREFIX}/llm/usage?from=2026-10-24&to=2026-10-01", None, None, "reader", 422,
      "invalid_range"),
+    ("GET", "/data-coverage", f"{PREFIX}/data-coverage", None, None, "reader", 200, None),
     ("GET", "/console", f"{PREFIX}/console", None, None, "reader", 200, None),
     ("GET", "/console", f"{PREFIX}/console", None, None, "admin", 200, None),
     ("GET", "/tenants", f"{PREFIX}/tenants?limit=10", None, None, "reader", 200, None),

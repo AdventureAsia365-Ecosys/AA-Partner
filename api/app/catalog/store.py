@@ -87,6 +87,25 @@ class SyncState:
     last_error_at: dt.datetime | None
 
 
+# crm.ops.v1 1.3 (AA-992): what the CIS admin page /admin/data-coverage reads about the cache: counts per served state
+# and the sync's state row. Counts and timestamps only (no source id, no title).
+COVERAGE_SQL = """
+SELECT (SELECT count(*) FROM crm.aa_catalog_tour WHERE served_state = 'served')::int AS served,
+       (SELECT count(*) FROM crm.aa_catalog_tour WHERE served_state = 'paused')::int AS paused,
+       (SELECT count(*) FROM crm.aa_catalog_tour WHERE served_state = 'retired')::int AS retired,
+       s.last_full_pass_at, s.last_ok_at, s.failures, s.last_error_class
+  FROM crm.aa_catalog_state s
+"""
+
+
+async def coverage(pool: asyncpg.Pool) -> dict[str, Any]:
+    """Cached AA tours per served state + the sync state (crm.ops.v1 ``CatalogCacheCounts``)."""
+    row = await pool.fetchrow(COVERAGE_SQL)
+    if row is None:  # crm-017 inserts the row
+        raise RuntimeError("crm.aa_catalog_state has no row (crm-017)")
+    return dict(row)
+
+
 async def load_state(pool: asyncpg.Pool) -> SyncState:
     row = await pool.fetchrow(STATE_SQL)
     if row is None:  # crm-017 inserts the row

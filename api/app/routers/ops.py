@@ -8,6 +8,8 @@ agency's own audit (actor ``platform:<staff sub>``, kind ``aa_ops``; reads as ``
 reference as ``ticket:<REF>``).
 
 AA-936 (card CRM-08, what CIS #975 reads): ``GET /jobs/summary`` (``crm.job`` per kind), ``GET /llm/usage``.
+AA-992 (crm.ops.v1 1.3, the CIS admin page /admin/data-coverage): ``GET /data-coverage``, platform-wide counts only
+(agencies and members per status, the AA catalog cache); no per-agency audit event (:func:`console.platform_coverage`).
 AA-939 (card CRM-11, Q1 6.3): members, member deactivation, owner recovery open / complete.
 AA-941 (card CRM-13a, design S-01), :mod:`app.ops.console`:
 
@@ -245,6 +247,38 @@ class LlmUsage(_Out):
     rows: list[LlmUsageRow]
 
 
+# crm.ops.v1 1.3 (AA-992): platform-wide counts for the CIS admin page /admin/data-coverage. Counts only.
+class AgencyCounts(_Out):
+    active: int
+    locked: int
+    offboarding: int
+    offboarded: int
+    synthetic: int
+
+
+class MemberCounts(_Out):
+    active: int
+    invited: int
+    disabled: int
+
+
+class CatalogCacheCounts(_Out):
+    served: int
+    paused: int
+    retired: int
+    last_full_pass_at: str | None
+    last_ok_at: str | None
+    failures: int
+    last_error_class: str | None
+
+
+class DataCoverage(_Out):
+    as_of: str
+    agencies: AgencyCounts
+    members: MemberCounts
+    catalog_cache: CatalogCacheCounts
+
+
 # ── Request bodies ───────────────────────────────────────────────────────────────────────────────
 class TenantCreate(_In):
     tenant_id: uuid.UUID
@@ -311,6 +345,13 @@ async def get_llm_usage(
         raise HTTPException(status_code=422, detail="invalid_range")
     pool = await request_pool(request)
     return {"from": from_.isoformat(), "to": to.isoformat(), "rows": await llm_usage(pool, from_, to)}
+
+
+# ── AA-992: what the CIS admin page /admin/data-coverage reads (crm.ops.v1 1.3) ───────────────────────────────
+@router.get("/data-coverage", response_model=DataCoverage)
+async def data_coverage(request: Request, caller: Reader) -> dict:
+    pool = await request_pool(request)
+    return await console.platform_coverage(pool, staff_sub=caller.sub)
 
 
 # ── AA-941: the console ──────────────────────────────────────────────────────────────────────────

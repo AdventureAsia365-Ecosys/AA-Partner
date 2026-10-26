@@ -6,7 +6,9 @@ and each read lands in **that agency's own audit** with actor kind ``aa_ops`` (t
 - reads write one ``ops_read`` event (reason ``list`` / ``summary`` / ``usage`` / ``entitlements`` /
   ``data_requests`` / ``jobs``; design §4.9 "AA ops reads");
 - writes write their own event with the L1 ticket reference as an object id ``ticket:<REF>`` (the audit takes codes
-  and ids only, never free text).
+  and ids only, never free text);
+- one exception, :func:`platform_coverage` (crm.ops.v1 1.3, AA-992): platform-wide status counts, no agency's data,
+  no per-agency event (see there).
 
 Only ``app.routers.ops`` calls these functions (writes need the WORKFORCE group ``crm-platform-admin``), and only this
 module and ``app/members/recovery.py`` open ``platform_tx`` (``tests/unit/test_code_rules.py``).
@@ -31,6 +33,7 @@ import asyncpg
 
 from app import agencies
 from app.audit_export import registry
+from app.catalog import store as catalog_store
 from app.cis import feed_state
 from app.errors import Conflict, Invalid, NotFound
 from app.jobs import queue
@@ -453,3 +456,52 @@ async def retry_agency_job(
         ctx.audit("job_retry", "allowed", "job", str(job_id), object_ids=ticket_ids(ticket_ref))
     log.info("crm_ops_job_retry tenant_id=%s job_id=%s", tenant_id, job_id)
     return {"job_id": str(job_id), "status": "queued"}
+
+
+# ── crm.ops.v1 1.3 (AA-992): platform-wide counts for the CIS admin page /admin/data-coverage ───────────────────────
+# Counts only: agencies per lifecycle status (plus how many are synthetic), members per status, and the AA catalog
+# cache. No agency id, name, trip, proposal, traveller or money figure (ADR 0008a: the agency is the controller of its
+# business data). ``crm.tenant`` / ``crm.member`` are FORCE RLS, so the agencies come from the crm-007 registry and each
+# is counted inside its own platform context, like list_agencies. Unlike every other read here it writes NO
+# ``ops_read`` event into the agencies' audits: it reads no agency's data, only its status and member statuses, and the
+# CIS page refreshes it every 10 minutes (one event per agency per refresh would bury the owner's access log). The
+# read is logged once per call (``crm_ops_data_coverage``, the agency count only); /jobs/summary writes no event either.
+AGENCY_STATUSES = ("active", "locked", "offboarding", "offboarded")
+MEMBER_STATUSES = ("active", "invited", "disabled")
+COVERAGE_SYNTHETIC_SQL = "SELECT is_synthetic FROM crm.tenant WHERE tenant_id = $1"
+COVERAGE_MEMBERS_SQL = "SELECT status, count(*)::int AS n FROM crm.member WHERE deleted_at IS NULL GROUP BY status"
+
+
+async def platform_coverage(pool: asyncpg.Pool, *, staff_sub: str) -> dict[str, Any]:
+    agencies_n = dict.fromkeys(AGENCY_STATUSES, 0) | {"synthetic": 0}
+    members_n = dict.fromkeys(MEMBER_STATUSES, 0)
+    for agency in await registry.agencies(pool):
+        try:
+            async with platform_tx(
+                pool, agency.tenant_id, actor=platform_actor(staff_sub), statuses=TENANT_STATUSES
+            ) as ctx:
+                if ctx.status in agencies_n:
+                    agencies_n[ctx.status] += 1
+                if await ctx.conn.fetchval(COVERAGE_SYNTHETIC_SQL, ctx.tenant_id):
+                    agencies_n["synthetic"] += 1
+                for row in await ctx.conn.fetch(COVERAGE_MEMBERS_SQL):
+                    if row["status"] in members_n:
+                        members_n[row["status"]] += int(row["n"])
+        except NotFound:
+            continue  # registered but trashed: not an agency
+    cache = await catalog_store.coverage(pool)
+    log.info("crm_ops_data_coverage agencies=%d", sum(agencies_n[s] for s in AGENCY_STATUSES))
+    return {
+        "as_of": dt.datetime.now(dt.UTC).isoformat(),
+        "agencies": agencies_n,
+        "members": members_n,
+        "catalog_cache": {
+            "served": int(cache["served"] or 0),
+            "paused": int(cache["paused"] or 0),
+            "retired": int(cache["retired"] or 0),
+            "last_full_pass_at": _iso(cache["last_full_pass_at"]),
+            "last_ok_at": _iso(cache["last_ok_at"]),
+            "failures": int(cache["failures"] or 0),
+            "last_error_class": cache["last_error_class"],
+        },
+    }
