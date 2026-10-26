@@ -677,6 +677,58 @@ async def test_a_lost_request_is_replayed_even_when_the_rows_hold_covers_the_cho
     assert (await _release_row(app_pool, s))["accepted_hold_id"] == "h3"
 
 
+@pytest.mark.parametrize("refusal", ["sold_out", "rehold_limit"])
+async def test_a_refused_replay_never_answers_held_on_a_hold_the_lost_request_released(
+    app_pool: asyncpg.Pool, refusal: str
+) -> None:
+    # Fix round 5 (same class as round 4, through a replay Booking refuses): a request released h1 and died before
+    # Booking made a new hold; the client goes back to the pick h1 covers. The replay is refused (the upgrade sold out
+    # once h1 freed its seats, or Booking's own re-hold limit): h1 may be gone at Booking, so it is parked, never
+    # answered "held" and never sealed by accept.
+    s = await _sent(app_pool)
+    fake = s["fake"]
+    await _hold(app_pool, s)  # h1 holds the default
+    await _swap_to_upgrade(app_pool, s)
+
+    async def died() -> None:
+        raise _Died  # Booking released h1; the CRM dies before POST /holds
+
+    fake.on_release = died
+    with pytest.raises(_Died):
+        await _hold(app_pool, s)
+    assert fake.holds["h1"]["status"] == "released" and len(fake.holds) == 1 and fake.calls["POST holds"] == 1
+    row = await _release_row(app_pool, s)
+    assert row["hold_id"] == "h1" and row["hold_release_id"] is None and row["hold_pending_key"] is not None
+    await _raw(app_pool, s, "UPDATE crm.proposal SET hold_pending_at = now() - interval '5 minutes' "
+               "WHERE proposal_id = $1", _pid(s["v"]))  # fmt: skip
+    await _choose(app_pool, s, "Day tour", 0)  # back to the default, which the row's h1 covers
+    fake.hold_refusal = refusal
+    status, out = await _hold(app_pool, s)
+    assert not (status == 200 and out.get("outcome") == "held")
+    assert out["page"]["hold"]["status"] == "missing"
+    row = await _release_row(app_pool, s)
+    assert row["hold_id"] is None and row["hold_pending_key"] is None
+    if refusal == "rehold_limit":
+        # Booking's per-departure limit: nothing more this time; h1 waits to be released again.
+        assert status == 429 and out["detail"] == "recheck_limit" and row["hold_release_id"] == "h1"
+    else:
+        # The replay is gone; the new request released h1 again (a no-op) and Booking refused that hold too.
+        assert status == 409 and out["detail"] == "hold_unavailable" and row["hold_release_id"] is None
+        assert fake.calls["DELETE holds"] == 2
+    with pytest.raises(Conflict) as err:
+        await _accept(app_pool, s, out["page"])
+    assert err.value.code == "hold_required"
+    assert (await _release_row(app_pool, s))["accepted_hold_id"] is None
+    # Booking holds again: the next check places a new hold for the default, which accept seals.
+    fake.hold_refusal = None
+    status, out = await _hold(app_pool, s)
+    assert status == 200 and out["page"]["hold"]["status"] == "active" and fake.holds["h2"]["status"] == "active"
+    row = await _release_row(app_pool, s)
+    assert row["hold_id"] == "h2" and row["hold_release_id"] is None and row["hold_pending_key"] is None
+    assert (await _accept(app_pool, s, out["page"]))["status"] == "accepted"
+    assert (await _release_row(app_pool, s))["accepted_hold_id"] == "h2"
+
+
 async def test_accept_waits_while_another_screen_places_the_hold(app_pool: asyncpg.Pool) -> None:
     s = await _sent(app_pool)
     fake = s["fake"]

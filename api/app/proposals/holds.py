@@ -26,7 +26,8 @@ migration crm-021). Called by :mod:`app.proposals.public` in steps, so no connec
    it is never shown or accepted again, and the next request releases it once more first (a no-op when Booking had
    released it), so Booking never refuses the next hold for a set it still keeps; a new hold stored on the row
    (also one a replay recovered) clears ``hold_release_id``, since Booking made it only once that set was gone
-   (one active set per version). The request in flight is cleared
+   (one active set per version); a replay that stores no hold (refused, gone, or unanswered) parks the row's hold the
+   same way, since the lost request may have released it before it died. The request in flight is cleared
    once Booking answered, kept when the answer of ``POST /holds`` was lost (the next request replays it).
 
 :func:`in_flight` tells accept that a hold request of the version is still running (or lost its answer): accept is
@@ -323,6 +324,12 @@ async def finish(ctx: AnyContext, row: Any, p: Plan, placed: Placed) -> int | No
         await ctx.conn.execute(CLEAR_HOLD_SQL, p.proposal_id, placed.released)
     elif placed.release_unknown is not None:
         await ctx.conn.execute(PARK_SQL, p.proposal_id, placed.release_unknown)
+    elif p.action == "replay" and row["hold_id"] is not None and row["hold_pending_key"] == p.idempotency_key:
+        # A replay that stored no hold (refused, gone or unanswered): the lost request may have released the row's
+        # hold before it died, so that hold is in doubt. It is parked (never shown or accepted again); the next request
+        # releases it once more (a no-op if Booking already let it go) before it holds (fix round 5). Only while that
+        # request is still the row's own: once another screen settled it, the row's hold is that screen's (newer).
+        await ctx.conn.execute(PARK_SQL, p.proposal_id, row["hold_id"])
     if placed.answered and placed.outcome != "busy" and p.idempotency_key is not None:
         await ctx.conn.execute(FORGET_SQL, p.proposal_id, p.idempotency_key)
     return count

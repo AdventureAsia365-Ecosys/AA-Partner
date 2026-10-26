@@ -80,6 +80,9 @@ class FakeBooking:
     quote_excludes_own_hold: bool = True
     quote_seats: dict[str, dict[str, int]] = field(default_factory=dict)
     on_quote: Callable[[], Awaitable[None]] | None = None
+    # AA-950 fix round 5: ``on_release``: awaited once after a ``DELETE /holds/{id}`` was done, before the CRM gets
+    # the answer (e.g. the process dies between the release and ``POST /holds``).
+    on_release: Callable[[], Awaitable[None]] | None = None
     confirm_line_status: str = "on_request"
     calls: Counter[str] = field(default_factory=Counter)
     holds: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -111,6 +114,9 @@ class FakeBooking:
         answer = self._route(method, path, query, data, headers.get("Idempotency-Key"))
         if self.on_quote is not None and method == "POST" and path == "/quotes":
             hook, self.on_quote = self.on_quote, None
+            await hook()
+        if self.on_release is not None and method == "DELETE":
+            hook, self.on_release = self.on_release, None
             await hook()
         if self.lose_next_release_answer and method == "DELETE":
             self.lose_next_release_answer = False

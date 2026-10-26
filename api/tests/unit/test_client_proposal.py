@@ -332,6 +332,37 @@ async def test_an_unanswered_release_is_parked_and_released_again() -> None:
     assert out.release_unknown == "h9" and failed.holds["h9"]["status"] == "active"
 
 
+@pytest.mark.asyncio
+async def test_a_replay_that_stores_no_hold_parks_the_rows_hold() -> None:
+    # Fix round 5: the lost request may have released the row's hold before it died; a replay that stores no hold
+    # (gone, refused by Booking's re-hold limit, or no answer) parks it, so it is never shown, reused or sealed.
+    key = f"crm-proposal:{P}:v2:a1"
+    row = _row(hold_id="h1", hold_count=1, hold_attempt=1, hold_pending_key=key, hold_pending_quote_id="q2")
+    replay = _plan(action="replay")
+    for placed, forgotten in (
+        (holds.Placed(outcome="gone", code="hold_sold_out"), True),
+        (holds.Placed(outcome="refused", code="recheck_limit"), True),
+        (holds.Placed(outcome="unavailable", code="booking_unavailable", answered=False), False),
+    ):
+        ctx = _Ctx()
+        assert await holds.finish(ctx, row, replay, placed) is None  # type: ignore[arg-type]
+        assert _writes(ctx, holds.PARK_SQL) == [(P, "h1")]
+        assert _writes(ctx, holds.FORGET_SQL) == ([(P, key)] if forgotten else [])
+    # A new request refused before any release keeps the row's hold (nothing was released on the way).
+    ctx = _Ctx()
+    await holds.finish(ctx, row, _plan(), holds.Placed(outcome="refused", code="hold_refused"))  # type: ignore[arg-type]
+    assert _writes(ctx, holds.PARK_SQL) == []
+    # Another screen settled that request already (and may have placed a newer hold): its hold is not in doubt.
+    ctx = _Ctx()
+    settled = {**row, "hold_id": "h3", "hold_pending_key": None, "hold_pending_quote_id": None}
+    await holds.finish(ctx, settled, replay, holds.Placed(outcome="gone"))  # type: ignore[arg-type]
+    assert _writes(ctx, holds.PARK_SQL) == []
+    # No hold on the row: nothing to park.
+    ctx = _Ctx()
+    await holds.finish(ctx, _row(), replay, holds.Placed(outcome="gone"))  # type: ignore[arg-type]
+    assert _writes(ctx, holds.PARK_SQL) == []
+
+
 def test_in_flight_tells_accept_to_wait() -> None:
     key = f"crm-proposal:{P}:v2:a1"
     assert holds.in_flight(_row(), NOW) is None
