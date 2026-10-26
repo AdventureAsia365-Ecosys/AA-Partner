@@ -105,9 +105,11 @@ def test_portal_nav_has_no_t_number_slug() -> None:
 def test_portal_proxy_is_tenant_only() -> None:
     gate = _read("portal/proxy.ts")
     assert "export async function proxy" in gate
-    assert '"/portal/:path*"' in gate and '"/tenant-login"' in gate
+    # AA-979 P2b: the gate sees every path but the Next assets (both prefixes), the health check and the favicon, so
+    # the Host guard covers the BFF and the legal pages too.
+    assert 'matcher: ["/((?!_next/|portal-assets/|healthz|favicon.ico).*)"]' in gate
     route = _read("portal/app/api/tenant/[...path]/route.ts")
-    assert "requireTenant" in route and "proxyPath" in route
+    assert "requireStudio" in route and "proxyPath" in route
 
 
 def test_portal_sets_security_headers() -> None:
@@ -373,10 +375,13 @@ def test_billing_page_says_what_api_calls_count() -> None:
 
 WRITE_EXPORT = re.compile(r"export\s+(?:const\s+|(?:async\s+)?function\s+)(POST|PUT|PATCH|DELETE)\b")
 REEXPORT = re.compile(r"export\s*\{[^}]*\bas\s+(POST|PUT|PATCH|DELETE)\b")
-GUARD_CALL = "refuseCrossSiteWrite(req)"
-GUARD_IMPORT = 'import { refuseCrossSiteWrite } from "@/lib/crossSiteGuard";'
+# AA-979 P2b (critic C2): the studio's own guard (lib/writeGuard.ts) hands the vendored rule the PUBLIC origin, so a
+# same-origin POST behind CloudFront -> ALB is not refused for the standalone server's bind address.
+GUARD_CALL = "refuseForeignWrite(req)"
+GUARD_IMPORT = 'from "@/lib/writeGuard";'
 FIRST_WORK = re.compile(
-    r"requireAdmin\(|requireTenant\(|\.cookies\.get\(|req\.(?:text|json|arrayBuffer|formData)\(|handleRefreshKeepAlive\("
+    r"requireAdmin\(|requireTenant\(|requireStudio\(|partnerSession\(|\.cookies\.get\(|"
+    r"req\.(?:text|json|arrayBuffer|formData)\(|handleRefreshKeepAlive\("
 )
 # Sign-in reads no session cookie, so a cross-site POST cannot act as a signed-in user (AA-911 notes).
 EXEMPT = {"portal/app/api/auth/tenant-login/route.ts"}
@@ -444,3 +449,86 @@ def test_tenant_login_has_no_link_to_the_staff_console() -> None:
     text = re.sub(r"/\*.*?\*/|//[^\n]*", "", _read("portal/app/tenant-login/page.tsx"), flags=re.S)
     for needle in ("STAFF_LOGIN_URL", "ADMIN_BASE_URL", "aa-cis.lumiguides", "Staff login", 'href="/login"'):
         assert needle not in text, needle
+
+
+# --- AA-979 P2b: the studio on Fargate behind the agency host ---------------------------------------------------------
+
+
+def test_no_route_calls_the_vendored_cross_site_guard_directly() -> None:
+    """The vendored rule compares with the request's own origin, which on Fargate is the bind address (critic C2)."""
+    offenders = [
+        str(p.relative_to(REPO))
+        for p in (PORTAL / "app").rglob("route.ts")
+        if "refuseCrossSiteWrite" in _strip_comments(p.read_text())
+    ]
+    assert offenders == []
+    guard = _read("portal/lib/writeGuard.ts")
+    assert "cfg.publicOrigin || req.nextUrl.origin" in guard
+
+
+@pytest.mark.parametrize("name", ["session.ts", "seal.ts"])
+def test_the_studio_reads_the_crm_web_session_with_byte_copies(name: str) -> None:
+    """portal/lib/{session,seal}.ts are byte copies of web/lib/ (one sealed cookie format, read only by the studio)."""
+    assert (PORTAL / "lib" / name).read_bytes() == (REPO / "web" / "lib" / name).read_bytes(), (
+        f"portal/lib/{name} differs from web/lib/{name}: copy it byte for byte (cp)"
+    )
+
+
+def test_the_studio_never_writes_the_crm_session() -> None:
+    for p in _portal_source_files():
+        text = _strip_comments(p.read_text())
+        for writer in ("sessionCookie(", "refreshCookie(", "txCookie(", "clearedCookies("):
+            if p.name == "session.ts":
+                continue
+            assert writer not in text, f"{p.relative_to(REPO)} writes the CRM web session ({writer})"
+
+
+def test_the_fargate_build_is_standalone_with_its_own_asset_prefix() -> None:
+    cfg = _read("portal/next.config.ts")
+    assert 'output: "standalone" as const' in cfg and 'ASSET_PREFIX = "/portal-assets"' in cfg
+    assert 'process.env.PORTAL_STANDALONE === "1"' in cfg
+    docker = _read("portal/Dockerfile")
+    assert "PORTAL_STANDALONE=1" in docker
+    assert """CMD ["node", "-e", "process.env.HOSTNAME='0.0.0.0'; require('./server.js')"]""" in docker  # S249
+    assert "USER 10001" in docker and ".npmrc" not in docker.split("COPY package.json", 1)[1].split("\n", 1)[0]
+
+
+def test_healthz_is_public_and_outside_the_gate() -> None:
+    route = _read("portal/app/healthz/route.ts")
+    assert "export function GET" in route and "fetch(" not in route  # no dependency: a CIS outage keeps the target
+    assert "healthz" in _read("portal/proxy.ts").split("matcher:", 1)[1]
+
+
+def test_api_key_sign_in_only_behind_its_flag() -> None:
+    route = _read("portal/app/api/auth/tenant-login/route.ts")
+    assert "if (!config().apiKeySignIn)" in route and "status: 404" in route
+    assert 'viewerKey(req.headers.get("cloudfront-viewer-address"))' in route  # critic S2
+    gate = _read("portal/proxy.ts")
+    assert "cfg.apiKeySignIn" in gate
+    assert 'apiKeySignIn: text(env, "PORTAL_API_KEY_SIGNIN").toLowerCase() !== "false"' in _read("portal/lib/config.ts")
+
+
+def test_the_gate_keeps_api_key_sessions_before_the_partner_path() -> None:
+    """Critic C3: an API-key session that existed at the DNS flip survives it; the partner path comes second."""
+    gate = _strip_comments(_read("portal/proxy.ts"))
+    api_key = gate.index("!isPartnerToken(token) && cfg.apiKeySignIn")
+    partner = gate.index("if (partner) {")
+    refresh = gate.index("if (cfg.partnerSignIn) return toPartnerSignIn(request);")
+    assert api_key < partner < refresh
+    assert "publicUrl(" in gate and "request.url)" in gate and "new URL(LOGIN_PATH, request.url)" not in gate
+
+
+def test_portal_fargate_deploy_watches_the_portal_only() -> None:
+    deploy = (WORKFLOWS / "deploy-portal-dev.yml").read_text()
+    assert '"portal/**"' in deploy and '"web/**"' not in deploy and '"api/**"' not in deploy
+    assert "CRM_PORTAL_ENABLED" in deploy and "aa-crm-dev-portal" in deploy
+    assert "--connect-to" in deploy  # the smoke reaches the agency distribution before the DNS cutover
+    ci = (WORKFLOWS / "ci.yml").read_text()
+    assert "name: Portal Docker Build Check" in ci and "/portal-assets/_next/static/" in ci
+
+
+def test_sentry_sends_no_personal_data() -> None:
+    for name in ("portal/instrumentation.ts", "portal/instrumentation-client.ts"):
+        src = _read(name)
+        assert "beforeSend: scrubEvent" in src and "userInfo: false" in src and "cookies: false" in src, name
+        assert "tracesSampleRate: 0" in src, name

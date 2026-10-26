@@ -1,0 +1,182 @@
+name: Deploy Portal Dev
+
+# AA-979 (CRM-P2b) — the Content studio (portal/, Next.js standalone) to ECS Dev: the Fargate service
+# aa-crm-dev-portal behind the agency host portal.<zone> (AA-CIS-Infra accounts/aa365/crm_portal.tf +
+# crm_agency_edge.tf). Same model as Deploy Web Dev: build on a native arm64 runner -> push to ECR with the immutable
+# git-SHA tag -> new task definition revision copied from the family's LATEST revision with only the image swapped ->
+# update the service -> wait stable -> verify the running image -> live smoke. Same OIDC deploy role
+# (aa-crm-dev-app-deploy; crm_app.tf extends it to the portal repository, family and service).
+#
+# No job guard: the studio runs no crm.job worker. Nothing here touches DNS: until the cutover (AA-CIS-Infra
+# crm_agency_live) portal.<zone> still points at Vercel, so the smoke reaches the new distribution by its CloudFront
+# name with Host / SNI = portal.<zone> (curl --connect-to), exactly what the pre-cutover runbook check does.
+#
+# Configuration (GitHub environment `dev`, VARIABLES, none secret):
+#   AWS_ROLE_ARN              the deploy role (shared with Deploy Dev)
+#   CRM_PORTAL_ENABLED        "true" once crm_portal.tf is applied; otherwise the deploy is skipped with a warning
+#   AWS_REGION                default us-west-1
+#   ECR_PORTAL_REPOSITORY     default aa-crm-dev-portal
+#   ECS_CLUSTER               default aa-cis-dev-cluster
+#   ECS_PORTAL_SERVICE        default aa-crm-dev-portal
+#   ECS_PORTAL_TASK_FAMILY    default aa-crm-dev-portal
+#   PORTAL_HOST               default portal.lumiguides.it.com
+#   CRM_AGENCY_CF_DOMAIN      the crm_agency distribution's *.cloudfront.net name (Terraform output crm_agency_edge);
+#                             empty = the smoke goes through DNS (after the cutover)
+#   PORTAL_PUBLIC_SENTRY_DSN  the browser Sentry DSN (public by design), baked in at build time; empty = off
+#
+# Pushes that only change the portal's tests or the Vercel-only file do not deploy. Never changes the desired count.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "portal/**"
+      - "!portal/lib/*.test.ts"
+      - "!portal/vercel.json"
+      - ".github/workflows/deploy-portal-dev.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-portal-dev
+  cancel-in-progress: false
+
+jobs:
+  config:
+    name: Deploy configuration
+    runs-on: ubuntu-latest
+    environment: dev
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - name: Check AWS_ROLE_ARN and CRM_PORTAL_ENABLED
+        id: check
+        env:
+          ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+          PORTAL_ENABLED: ${{ vars.CRM_PORTAL_ENABLED }}
+        run: |
+          if [ -z "${ROLE_ARN}" ] || [ "${PORTAL_ENABLED}" != "true" ]; then
+            echo "::warning::AWS_ROLE_ARN unset or CRM_PORTAL_ENABLED != true on environment 'dev' — portal deploy skipped (AA-CIS-Infra crm_portal.tf not applied yet?)."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy:
+    name: Deploy portal to ECS Dev
+    needs: config
+    if: needs.config.outputs.enabled == 'true'
+    runs-on: ubuntu-24.04-arm
+    environment: dev
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-west-1' }}
+      ECR_REPOSITORY: ${{ vars.ECR_PORTAL_REPOSITORY || 'aa-crm-dev-portal' }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER || 'aa-cis-dev-cluster' }}
+      ECS_SERVICE: ${{ vars.ECS_PORTAL_SERVICE || 'aa-crm-dev-portal' }}
+      ECS_TASK_FAMILY: ${{ vars.ECS_PORTAL_TASK_FAMILY || 'aa-crm-dev-portal' }}
+      PORTAL_HOST: ${{ vars.PORTAL_HOST || 'portal.lumiguides.it.com' }}
+      CF_DOMAIN: ${{ vars.CRM_AGENCY_CF_DOMAIN }}
+      PUBLIC_SENTRY_DSN: ${{ vars.PORTAL_PUBLIC_SENTRY_DSN }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image (git-SHA tag only)
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          IMAGE="${REGISTRY}/${ECR_REPOSITORY}:${GITHUB_SHA}"
+          APP_VERSION=$(jq -r '."."' .release-please-manifest.json)
+          [[ "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad version in the manifest: $APP_VERSION"; exit 1; }
+          # IMMUTABLE repository: a re-deploy of the same commit reuses the image already pushed for this SHA.
+          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "image for ${GITHUB_SHA} already in ECR: reusing it (no build, no push)"
+          else
+            docker build --build-arg GIT_SHA="${GITHUB_SHA}" --build-arg APP_VERSION="${APP_VERSION}" \
+              --build-arg NEXT_PUBLIC_SENTRY_DSN="${PUBLIC_SENTRY_DSN}" -t "$IMAGE" portal
+            docker image inspect "$IMAGE" --format '{{.Architecture}}' | grep -qx arm64
+            docker push "$IMAGE"
+          fi
+          echo "DEPLOY_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
+
+      - name: Register task definition and update service
+        run: |
+          set -euo pipefail
+          aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].serviceName' --output text | grep -qx "$ECS_SERVICE" \
+            || { echo "::error::service $ECS_SERVICE not found"; exit 1; }
+          aws ecs describe-task-definition --task-definition "$ECS_TASK_FAMILY" --query 'taskDefinition' --output json > /tmp/td.json
+          echo "base task definition: $(jq -r '.taskDefinitionArn' /tmp/td.json)"
+          [ "$(jq '.containerDefinitions | length' /tmp/td.json)" = "1" ] || { echo "::error::expected exactly one container"; exit 1; }
+          jq --arg img "$DEPLOY_IMAGE" \
+            'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy,.deregisteredAt) | .containerDefinitions[0].image = $img' \
+            /tmp/td.json > /tmp/td_new.json
+          NEW_TD=$(aws ecs register-task-definition --cli-input-json file:///tmp/td_new.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "registered: $NEW_TD"
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" \
+            --task-definition "$NEW_TD" >/dev/null
+
+      - name: Wait for the service to be stable
+        run: aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
+
+      - name: Verify the running image
+        run: |
+          set -euo pipefail
+          TD=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].taskDefinition' --output text)
+          RUNNING=$(aws ecs describe-task-definition --task-definition "$TD" \
+            --query 'taskDefinition.containerDefinitions[0].image' --output text)
+          echo "service image: $RUNNING"
+          [ "$RUNNING" = "$DEPLOY_IMAGE" ] || { echo "::error::service runs $RUNNING, expected $DEPLOY_IMAGE"; exit 1; }
+          DESIRED=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].desiredCount' --output text)
+          echo "DESIRED_COUNT=$DESIRED" >> "$GITHUB_ENV"
+
+      # Through the agency distribution with Host / SNI = the agency host (before the cutover DNS still says Vercel).
+      # /healthz is not checked here: on the agency host the ALB sends it to the CRM web (the task health check and the
+      # target group check the studio's own /healthz).
+      - name: Smoke test (sign-in page, sign-in redirect, assets, the CRM API rule)
+        run: |
+          set -uo pipefail
+          if [ "${DESIRED_COUNT}" = "0" ]; then
+            echo "::warning::desired count is 0 — no task is running, smoke skipped (scale to 1 is a separate step)."
+            exit 0
+          fi
+          BASE="https://${PORTAL_HOST}"
+          VIA=()
+          if [ -n "${CF_DOMAIN}" ]; then VIA=(--connect-to "${PORTAL_HOST}:443:${CF_DOMAIN}:443"); fi
+          fail=0
+          code=$(curl -s --max-time 20 "${VIA[@]}" -o /tmp/login.html -w "%{http_code}" "$BASE/tenant-login")
+          [ "$code" = "200" ] || { echo "::error::/tenant-login -> $code"; fail=1; }
+          ASSET=$(grep -o '/portal-assets/_next/static/[^"]*\.js' /tmp/login.html | head -n1)
+          if [ -z "$ASSET" ] || [ "$(curl -s --max-time 20 "${VIA[@]}" -o /dev/null -w '%{http_code}' "$BASE$ASSET")" != "200" ]; then
+            echo "::error::the studio's /portal-assets/_next/static assets are not served"; fail=1
+          fi
+          # Only the Fargate studio sends a signed-out visitor to the CRM web's refresh (the Vercel copy sends /tenant-login).
+          loc=$(curl -s --max-time 20 "${VIA[@]}" -o /dev/null -w "%{redirect_url}" "$BASE/portal/dashboard")
+          case "$loc" in
+            "$BASE/auth/refresh?next=%2Fportal%2Fdashboard") ;;
+            *) echo "::error::/portal/dashboard without a session redirected to '$loc'"; fail=1 ;;
+          esac
+          code=$(curl -s --max-time 20 "${VIA[@]}" -o /tmp/crm.json -w "%{http_code}" "$BASE/crm/health")
+          if [ "$code" = "200" ]; then
+            jq -e '.service == "aa-crm-api"' /tmp/crm.json >/dev/null || { echo "::error::/crm/health is not the API"; fail=1; }
+          elif [ "$code" != "503" ]; then
+            echo "::error::/crm/health -> $code: the agency host's API rule must stay above the web default"; fail=1
+          fi
+          [ "$fail" = "0" ] && echo "Smoke passed" || exit 1

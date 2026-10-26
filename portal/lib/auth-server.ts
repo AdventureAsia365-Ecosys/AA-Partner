@@ -7,6 +7,16 @@
 // Route handlers always fail closed (no dev carve-out): there is no page to redirect to and the
 // Bearer must not be forwarded on an unverified cookie.
 import { NextRequest, NextResponse } from "next/server";
+import { config } from "./config";
+import {
+  cookieOptions,
+  exchange,
+  isPartnerToken,
+  needsRenewal,
+  partnerSession,
+  studioCookies,
+  type CookieSpec,
+} from "./tenantSession";
 
 // Same TTL as the admin app had for tenants (S241: the tenant cache keeps 20 s). Every entry is also
 // capped at the token's own `exp`, so an expired JWT is never served from cache.
@@ -124,4 +134,52 @@ export async function requireTenant(request: NextRequest): Promise<RequireTenant
   const verified = await verifyTenantToken(token);
   if (!verified.ok) return { ok: false, response: unauthorized() };
   return { ok: true, tenantId: verified.tenantId, name: verified.name, planTier: verified.planTier, token };
+}
+
+// ── AA-979 P2b: the partner-pool studio session (lib/tenantSession.ts) ─────────────────────────────────────────────
+
+/** Header on a BFF 401 when the partner sign-in is configured: the shell reloads the page, so the page proxy can renew
+ * the session through the CRM web's /auth/refresh (client fetches never pass the page proxy, critic S1). */
+export const SESSION_EXPIRED_HEADER = "x-aa-session";
+
+export type RequireStudioResult =
+  | { ok: true; tenantId: string; name: string; planTier: string; token: string; renewed: CookieSpec[] }
+  | { ok: false; response: NextResponse };
+
+function unauthorizedStudio(): NextResponse {
+  const res = unauthorized();
+  if (config().partnerSignIn) res.headers.set(SESSION_EXPIRED_HEADER, "expired");
+  return res;
+}
+
+/**
+ * The BFF's tenant check (AA-979: replaces requireTenant in the BFF routes). Exchanged studio tokens live at most
+ * 15 minutes, so when the cookie holds a partner token that is missing or about to expire and the CRM web's partner
+ * session is still valid, it is exchanged again here (the caller sets `renewed` on its response). Then the token is
+ * verified at CIS exactly as before. API-key tokens are never renewed (they live 24 h, as on Vercel).
+ */
+export async function requireStudio(request: NextRequest): Promise<RequireStudioResult> {
+  let token = request.cookies.get(TENANT_TOKEN_COOKIE)?.value;
+  let renewed: CookieSpec[] = [];
+  if (!token || (isPartnerToken(token) && needsRenewal(token))) {
+    const partner = partnerSession(config(), request.cookies);
+    if (partner) {
+      const chosen = request.cookies.get("cis_tenant_id")?.value ?? null;
+      const result = await exchange(API_URL, partner.at, chosen);
+      if (result.ok) {
+        token = result.session.token;
+        renewed = studioCookies(result.session);
+      }
+    }
+  }
+  if (!token) return { ok: false, response: unauthorizedStudio() };
+  const verified = await verifyTenantToken(token);
+  if (!verified.ok) return { ok: false, response: unauthorizedStudio() };
+  return { ok: true, tenantId: verified.tenantId, name: verified.name, planTier: verified.planTier, token, renewed };
+}
+
+/** Set the renewed studio cookies (if any) on a BFF response. */
+export function withRenewed<T extends NextResponse>(res: T, renewed: CookieSpec[]): T {
+  for (const c of renewed) res.cookies.set(c.name, c.value, cookieOptions(c.maxAge));
+  return res;
 }

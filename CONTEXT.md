@@ -405,8 +405,22 @@ original CIS commit). P2a moves the code only:
   by email to AA). Pure helpers in `portal/lib/account.ts`, tested by `npm test` (node --test, in Portal Build).
 - **The AA-CIS-App copy** of `portal/` is frozen (a CIS CI guard fails on any change) and no longer deployed; it is
   deleted 7 or more days after P2b. Portal changes are made here only.
-- **P2b (later)**: CloudFront to Fargate on the partner host, the partner pool sign-in, re-enrolment by invitation and
-  a 301 for `/trip/*`.
+- **P2b (AA-979, prepared S252; the DNS cutover is a separate, later step)**: the studio runs as the Fargate service
+  `aa-crm-dev-portal` (`portal/Dockerfile`: standalone, Next assets under `/portal-assets/`, `/healthz`; deploy
+  `.github/workflows/deploy-portal-dev.yml`, CI "Portal Docker Build Check") behind the agency host `portal.` (AA-CIS-Infra
+  `crm_agency_edge.tf`: its own CloudFront distribution; the ALB sends `/portal*`, `/api/*`, `/tenant-login*`, `/terms`,
+  `/privacy`, `/assets/*` to the studio, `/crm*` to the API, everything else to the CRM web). The cutover switch is the
+  `portal.` CNAME only (`crm_agency_live`). Configuration (`portal/lib/config.ts`): `PORTAL_HOSTS` (Host guard),
+  `PORTAL_PUBLIC_ORIGIN` (redirects and the write guard `portal/lib/writeGuard.ts`, never the bind address),
+  `PORTAL_API_KEY_SIGNIN` (on during the window), `WEB_SESSION_SECRET` (the CRM web's session key), `API_URL`,
+  `SENTRY_DSN`. **Sign-in** (`portal/proxy.ts`, `portal/lib/tenantSession.ts`): an API-key session keeps working while
+  the flag is on; else the CRM web's partner session (its sealed cookie, read only: `portal/lib/session.ts` and
+  `seal.ts` are byte copies of `web/lib/`, guarded by `test_portal_guards.py`) is exchanged at CIS `POST
+  /auth/tenant-session` for a tenant JWT of at most 15 minutes in the same five `cis_*` cookies; several studios ->
+  `/portal-access/select`, none -> `/portal-access/none`; no session -> the web's `/auth/refresh`. The BFF renews an
+  expiring exchanged token itself and answers 401 + `x-aa-session: expired` when it cannot (the shell reloads once).
+  One sign-out: the studio clears its cookies, then posts the web's `/auth/sign-out`. Sentry (`instrumentation*.ts`):
+  only with a DSN, no PII. On Vercel (no P2b env) the same code behaves like P2a: API-key sign-in only.
 
 ## Slice 1: intake, pipeline, LLM gateway (AA-936)
 

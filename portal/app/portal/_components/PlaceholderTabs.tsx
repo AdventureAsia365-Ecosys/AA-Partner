@@ -10,6 +10,7 @@
 // no tenant self-service endpoint exists for them.
 
 import { useState } from "react";
+import { signOutEverywhere } from "@/lib/signOut";
 import { useQuery } from "@tanstack/react-query";
 import { Check, Mail, ExternalLink, KeyRound, LogOut, AlertTriangle, FileText } from "lucide-react";
 import { EmptyState as KitEmptyState, Modal, SkeletonBar, SkeletonStyle, apiGet } from "@/app/_kit";
@@ -287,9 +288,8 @@ export function SettingsTab() {
   );
 
   async function signOut() {
-    // AA-427: tenant cookies are httpOnly — cleared server-side.
-    try { await fetch("/api/auth/tenant-logout", { method: "POST" }); } catch { /* redirect regardless */ }
-    window.location.href = "/tenant-login";
+    // AA-427: tenant cookies are httpOnly — cleared server-side. AA-979: one sign-out with the CRM (lib/signOut.ts).
+    await signOutEverywhere();
   }
 
   return (

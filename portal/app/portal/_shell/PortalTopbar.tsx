@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronDown, LogOut, Menu, Monitor, Moon, Search, Settings, Sun, CreditCard } from "lucide-react";
+import { signOutEverywhere } from "@/lib/signOut";
 import { Breadcrumb, K, SkeletonBar, SkeletonStyle, sans, serif, useThemeChoice, type ThemeChoice } from "@/app/_kit";
 import { PRIVACY_PATH, TERMS_PATH } from "@/lib/hosts";
 import NotificationsBell from "../_components/NotificationsBell";
@@ -122,10 +123,9 @@ function AccountMenu({ tenantName, planTier }: { tenantName: string; planTier: s
   }, [open]);
 
   async function logout() {
-    // AA-427: the tenant cookies are httpOnly — cleared server-side. Redirect either way; the page
-    // gate re-verifies the token on the next request.
-    try { await fetch("/api/auth/tenant-logout", { method: "POST" }); } catch { /* ignore */ }
-    window.location.href = "/tenant-login";
+    // AA-427: the tenant cookies are httpOnly — cleared server-side. AA-979: a partner sign-in also ends the CRM
+    // session on the same host (lib/signOut.ts).
+    await signOutEverywhere();
   }
 
   return (

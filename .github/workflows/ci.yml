@@ -7,8 +7,9 @@ name: CI
 # CRM web (web/, AA-935): "Web Build" (unit tests, next build with the type check, standalone smoke) and "Web Docker
 # Build Check" (native arm64 image, container smoke, Trivy). Both are meant to join the required checks.
 # Tenant portal (portal/, AA-979 CRM-P2a, moved from AA-CIS-App with its history): "Portal Build" (npm ci, tsc, next
-# build; meant to join the required checks) and "Portal Lint" (ESLint, non-required, like in AA-CIS-App). The portal
-# deploys to Vercel from vercel-deploy-portal.yml, never from here.
+# build; meant to join the required checks) and "Portal Lint" (ESLint, non-required, like in AA-CIS-App). AA-979 P2b:
+# "Portal Docker Build Check" (the Fargate image, container smoke, Trivy, SBOM; to join the required checks). The
+# portal deploys from deploy-portal-dev.yml (Fargate) and, for the rollback window only, vercel-deploy-portal.yml.
 #
 # ARM: the API runs on Fargate ARM64 (ADR 0010 decision 2), so the image is built and smoke-tested on a native arm64
 # runner (ubuntu-24.04-arm, free for public repositories); the Python jobs run on x64 (pure-Python code, the pinned
@@ -334,6 +335,73 @@ jobs:
           ignore-unfixed: true
           trivyignores: ".trivyignore"
           exit-code: "1"
+
+  # AA-979 (CRM-P2b) — the Content studio image for Fargate (portal/Dockerfile: standalone + /portal-assets prefix):
+  # native arm64 build, container smoke as the ALB and CloudFront will call it (health on any Host, the Host guard, the
+  # asset prefix, redirects and the write guard on the PUBLIC origin, never the bind address: critic C2), Trivy, SBOM.
+  portal-docker-build:
+    name: Portal Docker Build Check
+    runs-on: ubuntu-24.04-arm
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build image (linux/arm64, native)
+        run: |
+          docker build \
+            --build-arg GIT_SHA=${{ github.sha }} \
+            --build-arg APP_VERSION="$(jq -r '."."' .release-please-manifest.json)" \
+            --tag aa-crm-portal:ci-${{ github.sha }} \
+            portal
+          docker image inspect aa-crm-portal:ci-${{ github.sha }} --format '{{.Architecture}}' | grep -qx arm64
+
+      - name: Container smoke (health, Host guard, asset prefix, public-origin redirects and write guard)
+        run: |
+          set -euo pipefail
+          PUBLIC=https://portal.example.test
+          docker run -d --name crm-portal-ci -p 3000:3000 \
+            -e ENVIRONMENT=dev -e PORTAL_HOSTS=portal.example.test -e PORTAL_PUBLIC_ORIGIN="$PUBLIC" \
+            -e WEB_SESSION_SECRET=ci-only-session-secret-not-real-0123456789 -e API_URL=http://127.0.0.1:9 \
+            aa-crm-portal:ci-${{ github.sha }}
+          H=(-H "Host: portal.example.test")
+          for i in $(seq 1 30); do curl -sf http://localhost:3000/healthz -o /tmp/healthz.json && break; sleep 1; done
+          cat /tmp/healthz.json; echo
+          jq -e --arg sha "${{ github.sha }}" '.ok == true and .service == "aa-partner-portal" and .sha == $sha' /tmp/healthz.json
+          [ "$(docker inspect --format '{{.Config.User}}' crm-portal-ci)" = "10001" ]
+          # Host guard: any other Host is 404 (the health check above answered the task's own address).
+          [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example' http://localhost:3000/tenant-login)" = "404" ]
+          # The API-key sign-in page (on during the P2b window) and its assets under /portal-assets/.
+          [ "$(curl -s -o /tmp/login.html -w '%{http_code}' "${H[@]}" http://localhost:3000/tenant-login)" = "200" ]
+          ASSET=$(grep -o '/portal-assets/_next/static/[^"]*\.js' /tmp/login.html | head -n1)
+          [ -n "$ASSET" ] || { echo "::error::no /portal-assets/_next/static asset in the page"; exit 1; }
+          [ "$(curl -s -o /dev/null -w '%{http_code}' "${H[@]}" "http://localhost:3000$ASSET")" = "200" ]
+          # No session: the page gate sends the browser to the CRM web's refresh on the PUBLIC origin.
+          LOC=$(curl -s -o /dev/null -w '%{redirect_url}' "${H[@]}" http://localhost:3000/portal/dashboard)
+          [ "$LOC" = "$PUBLIC/auth/refresh?next=%2Fportal%2Fdashboard" ] || { echo "::error::redirect to '$LOC'"; exit 1; }
+          # Write guard on the public origin: same origin passes (200), another origin is 403.
+          [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${H[@]}" -H "Origin: $PUBLIC" http://localhost:3000/api/auth/tenant-logout)" = "200" ]
+          [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${H[@]}" -H 'Origin: https://evil.example' http://localhost:3000/api/auth/tenant-logout)" = "403" ]
+          docker rm -f crm-portal-ci
+
+      - name: Scan image for vulnerabilities (Trivy, failing on fixable CRITICAL/HIGH)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: "aa-crm-portal:ci-${{ github.sha }}"
+          format: "table"
+          severity: "CRITICAL,HIGH"
+          ignore-unfixed: true
+          trivyignores: ".trivyignore"
+          exit-code: "1"
+
+      - name: Generate SBOM (syft, CycloneDX)
+        uses: anchore/sbom-action@v0.24.3
+        with:
+          image: "aa-crm-portal:ci-${{ github.sha }}"
+          format: cyclonedx-json
+          output-file: sbom-portal-${{ github.sha }}.cdx.json
+          artifact-name: sbom-portal-${{ github.sha }}.cdx.json
 
   # AA-979 (CRM-P2a) — the tenant portal (portal/, Next.js, Vercel project aa-cis-portal): type check and production
   # build. It builds without any secret or env var (the app reads its API URL at runtime). No local `next build` on the
