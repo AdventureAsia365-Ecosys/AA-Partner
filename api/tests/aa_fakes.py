@@ -31,6 +31,11 @@ CIS_URL = "https://cis.local.test"
 HASH = "a" * 64
 
 
+def _seats(line: dict[str, Any]) -> int:
+    pax = line.get("pax") or {}
+    return int(pax.get("adult", 0)) + int(pax.get("child", 0))  # infants take no seat (Booking's rule)
+
+
 def _resp(status: int, body: Any = None, headers: Mapping[str, str] | None = None) -> HttpResponse:
     raw = b"" if body is None else json.dumps(body).encode()
     return HttpResponse(status, raw, dict(headers or {}))
@@ -52,6 +57,32 @@ class FakeBooking:
     availability: str = "available"
     per_night: bool = False  # b2b_price is a night's price: a quote line costs it times its nights (1 when absent)
     hold_refusal: str | None = None
+    # AA-950: a quote answers every line (the hold set of a proposal version quotes all its AA items at once);
+    # ``line_availability`` overrides ``availability`` per line_ref; ``hold_expires_in`` sets a new hold's expiry.
+    line_availability: dict[str, str] = field(default_factory=dict)
+    hold_expires_in: timedelta | None = None
+    # AA-950 fix round 2: Booking's own rules for one proposal version (``strict_version_set``): a used
+    # Idempotency-Key with another quote is 422 ``invalid``; one active set per (proposal_ref, version): the same quote
+    # returns it, another quote is 422 ``invalid`` until it is released. ``lose_next_hold_answer``: the next
+    # ``POST /holds`` is made but its answer is lost (a timeout after Booking's commit).
+    strict_version_set: bool = False
+    lose_next_hold_answer: bool = False
+    hold_meta: dict[str, tuple[str, str, Any]] = field(default_factory=dict)
+    # AA-950 fix round 3: ``lose_next_release_answer``: the next ``DELETE /holds/{id}`` is done but its answer is lost;
+    # ``fail_next_release``: the next one fails before Booking released anything (a 5xx). ``seat_capacity``: seats
+    # per line_ref (a departure's capacity, simplified to one line): a quote answers ``sold_out`` when the seats asked
+    # do not fit beside the live holds (``quote_excludes_own_hold``: the version's own live hold is left out, as
+    # AA-Booking's quote does since AA-950), a hold refuses ``sold_out`` counting every live hold. ``on_quote``:
+    # awaited once after a quote was made, before the CRM gets it.
+    lose_next_release_answer: bool = False
+    fail_next_release: bool = False
+    seat_capacity: dict[str, int] = field(default_factory=dict)
+    quote_excludes_own_hold: bool = True
+    quote_seats: dict[str, dict[str, int]] = field(default_factory=dict)
+    on_quote: Callable[[], Awaitable[None]] | None = None
+    # AA-950 fix round 5: ``on_release``: awaited once after a ``DELETE /holds/{id}`` was done, before the CRM gets
+    # the answer (e.g. the process dies between the release and ``POST /holds``).
+    on_release: Callable[[], Awaitable[None]] | None = None
     confirm_line_status: str = "on_request"
     calls: Counter[str] = field(default_factory=Counter)
     holds: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -77,22 +108,66 @@ class FakeBooking:
         self.tenants.append(headers.get("X-AA-Tenant-Id", ""))
         key = f"{method} {path.split('/')[1] if '/' in path else path}"
         self.calls[key] += 1
+        if self.fail_next_release and method == "DELETE":
+            self.fail_next_release = False
+            raise HttpError("timeout")  # Booking released nothing
         answer = self._route(method, path, query, data, headers.get("Idempotency-Key"))
+        if self.on_quote is not None and method == "POST" and path == "/quotes":
+            hook, self.on_quote = self.on_quote, None
+            await hook()
+        if self.on_release is not None and method == "DELETE":
+            hook, self.on_release = self.on_release, None
+            await hook()
+        if self.lose_next_release_answer and method == "DELETE":
+            self.lose_next_release_answer = False
+            raise HttpError("timeout")  # released, the answer lost
         if self.on_hold is not None and method == "POST" and path == "/holds":
             hook, self.on_hold = self.on_hold, None
             await hook()
+        if self.lose_next_hold_answer and method == "POST" and path == "/holds":
+            self.lose_next_hold_answer = False
+            raise HttpError("timeout")
         if self.lose_next_answer and method != "GET":
             self.lose_next_answer = False
             raise HttpError("timeout")
         return answer
 
+    def _live(self, hold_id: str) -> bool:
+        h = self.holds[hold_id]
+        return h["status"] == "active" and datetime.fromisoformat(h["expires_at"]) > datetime.now(UTC)
+
+    def held_seats(self, line_ref: str, *, exclude: tuple[str, Any] | None = None) -> int:
+        """Seats of ``line_ref`` taken by live holds, leaving out the holds of ``exclude`` (proposal_ref, version)."""
+        return sum(
+            self.quote_seats.get(meta[0], {}).get(line_ref, 0)
+            for hid, meta in self.hold_meta.items()
+            if self._live(hid) and (exclude is None or (meta[1], meta[2]) != exclude)
+        )
+
+    def _quote_availability(self, data: Any, line: dict[str, Any]) -> str:
+        ref = line["line_ref"]
+        answer = self.line_availability.get(ref, self.availability)
+        cap = self.seat_capacity.get(ref)
+        if cap is not None:
+            own = (data["proposal_ref"], data.get("proposal_version")) if self.quote_excludes_own_hold else None
+            if _seats(line) > cap - self.held_seats(ref, exclude=own):
+                return "sold_out"
+        return answer
+
     def _route(self, method: str, path: str, query: dict[str, str], data: Any, key: str | None) -> HttpResponse:
         if method == "POST" and path == "/quotes":
             self.quotes += 1
-            line = data["lines"][0]
-            price = self.b2b_price
-            if self.per_night:
-                price = str(Decimal(self.b2b_price) * int(line.get("nights") or 1))
+            answered = []
+            for line in data["lines"]:
+                price = self.b2b_price
+                if self.per_night:
+                    price = str(Decimal(self.b2b_price) * int(line.get("nights") or 1))
+                answered.append({"line_ref": line["line_ref"],
+                                 "b2b_price": {"amount": price, "currency": data["currency"]}, "unit": "per_line",
+                                 "availability": self._quote_availability(data, line),
+                                 "departure_id": None})  # fmt: skip
+            self.quote_seats[f"q{self.quotes}"] = {line["line_ref"]: _seats(line) for line in data["lines"]}
+            total = str(sum(Decimal(a["b2b_price"]["amount"]) for a in answered))
             return _resp(201, {
                 "quote_id": f"q{self.quotes}",
                 "currency": data["currency"],
@@ -100,9 +175,8 @@ class FakeBooking:
                        "rate_date": "2026-10-25", "source": "test"},
                 "valid_until": _in_two_days(),
                 "price_hash": HASH[:-1] + str(self.quotes % 10),
-                "lines": [{"line_ref": line["line_ref"], "b2b_price": {"amount": price, "currency": data["currency"]},
-                           "unit": "per_line", "availability": self.availability, "departure_id": None}],
-                "total_b2b_price": {"amount": price, "currency": data["currency"]},
+                "lines": answered,
+                "total_b2b_price": {"amount": total, "currency": data["currency"]},
                 "x_future_field": True,
             })  # fmt: skip
         if method == "GET" and path == "/price-parity":
@@ -115,12 +189,33 @@ class FakeBooking:
                 return _resp(409 if self.hold_refusal == "price_changed" else 422,
                              {"error": self.hold_refusal, "message": "refused"})  # fmt: skip
             if key in self.hold_keys:
-                return _resp(201, self.holds[self.hold_keys[key]])
+                used = self.hold_keys[key]
+                if self.strict_version_set and self.hold_meta[used][0] != data["quote_id"]:
+                    return _resp(422, {"error": "invalid", "message": "Idempotency-Key used for another request"})
+                return _resp(201, self.holds[used])
+            if self.strict_version_set:
+                for hid, (quote_id, ref, version) in self.hold_meta.items():
+                    h = self.holds[hid]
+                    live = h["status"] == "confirmed" or (
+                        h["status"] == "active" and datetime.fromisoformat(h["expires_at"]) > datetime.now(UTC)
+                    )
+                    if live and (ref, version) == (data["proposal_ref"], data.get("proposal_version")):
+                        if quote_id != data["quote_id"]:
+                            return _resp(422, {"error": "invalid", "message": "release the version's hold first"})
+                        self.hold_keys[key or ""] = hid
+                        return _resp(201, h)
+            for ref, seats in self.quote_seats.get(data["quote_id"], {}).items():
+                cap = self.seat_capacity.get(ref)
+                if cap is not None and seats > cap - self.held_seats(ref):
+                    return _resp(422, {"error": "sold_out", "message": f"line {ref}: not enough seats"})
             hold_id = f"h{len(self.holds) + 1}"
             self.hold_keys[key or ""] = hold_id
+            self.hold_meta[hold_id] = (data["quote_id"], data["proposal_ref"], data.get("proposal_version"))
             self.holds[hold_id] = {
                 "hold_id": hold_id, "quote_id": data["quote_id"], "status": "active",
-                "expires_at": _in_two_days(), "extended_count": 0,
+                "expires_at": _in_two_days() if self.hold_expires_in is None else (
+                    datetime.now(UTC) + self.hold_expires_in).replace(microsecond=0).isoformat(),
+                "extended_count": 0,
                 "lines": [{"line_ref": data["proposal_ref"].removeprefix("crm-line:"), "line_status": "available"}],
             }  # fmt: skip
             return _resp(201, self.holds[hold_id])

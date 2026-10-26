@@ -125,7 +125,7 @@ async def test_the_skeleton_follows_stage_1_and_2(app_pool: asyncpg.Pool) -> Non
     async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
         with pytest.raises(Conflict) as err:
             await service.send(ctx, Vault(s["keys"], ctx), _pid(v))
-        assert err.value.code == "proposal_is_builder"
+        assert err.value.code == "proposal_not_published"  # AA-950: a builder version is sent once published
     overview = await _as(app_pool, s, "agent", service.trip_overview, s["trip"])
     assert overview["proposals"][0]["kind"] == "builder"
 

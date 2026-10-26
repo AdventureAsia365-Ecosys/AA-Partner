@@ -35,6 +35,12 @@ export interface Proposal {
   /** AA-949: "builder" versions are built and published in the day-list builder (A-04), not in this tab's form. */
   kind?: "text" | "builder";
   published_at?: string | null;
+  /** AA-950: what the client did with it (R4 viewed, the hold set, the accepted picks' amounts). */
+  view_count?: number;
+  last_viewed_at?: string | null;
+  hold_expires_at?: string | null;
+  hold_count?: number;
+  accepted_total_amount?: string | null;
 }
 
 export interface ScheduleRow {
@@ -157,6 +163,8 @@ const ERROR_CODES = new Set([
   "version_label_taken",
   "role_forbidden",
   "assigned_only",
+  "proposal_not_published",
+  "proposal_not_sent",
 ]);
 
 /** The i18n key of an API refusal code on the agency side (proposal.error.<code>, else a generic one). */

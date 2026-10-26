@@ -28,3 +28,8 @@
 # scan goes red. Its PR head stays fetchable, so it is pinned by commit.
 eebb0f3d4465fa3f971c8b4cb07d86e2833baf23:canary/aa981-canary.tfvars:credential-key-literal:2
 eebb0f3d4465fa3f971c8b4cb07d86e2833baf23:canary/aa981-canary.tfvars:terraform-plaintext-secret:2
+
+# AA-979 (S252): closed PR #79 (branch deleted, its head stays fetchable) held a TOTP unit test fixture
+# "Secret key: <16 base32 chars>" = the base32 of the RFC 6238 Appendix B example seed "1234567890" (80 bits, a public
+# test vector, never a credential). The same test now builds it at run time (#80). Pinned by commit.
+46d556d67e8cdbec4750da8a3b138e4cbdec35ae:e2e/unit/totp.spec.ts:generic-api-key:86
