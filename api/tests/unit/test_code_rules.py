@@ -121,8 +121,18 @@ INGEST_MODULES = frozenset({"app/mail/ingest.py"})
 LIFECYCLE_MODULES = frozenset({"app/lifecycle/job.py", "app/lifecycle/offboarding.py"})
 # AA-978: one CIS membership event in one agency (actor platform:feed-tenant-membership, any agency status).
 MEMBERSHIP_FEED_MODULES = frozenset({"app/cis/membership_feed.py"})
+# AA-979 P2b: Content studio invitations (crm-020 platform table): the platform / job context and the token context.
+STUDIO_MODULES = frozenset({"app/members/studio.py"})
 CONTEXT_TYPES = frozenset(
-    {"TenantContext", "SystemContext", "ProvisioningContext", "AnyContext", "ExportContext", "LifecycleContext"}
+    {
+        "TenantContext",
+        "SystemContext",
+        "ProvisioningContext",
+        "AnyContext",
+        "ExportContext",
+        "LifecycleContext",
+        "StudioContext",
+    }
 )
 THIRD_PARTY = frozenset(
     {
@@ -164,6 +174,8 @@ CONTEXT_FACTORIES = frozenset(
         "client_link_tx",
         "membership_feed_tx",
         "ingest_tx",
+        "studio_platform_tx",
+        "studio_invitation_tx",
     }
 )
 
@@ -383,6 +395,11 @@ def test_the_feed_state_is_reached_only_by_the_feed() -> None:
     pure ``feed_state.health_word``."""
     allowed = MEMBERSHIP_FEED_MODULES | {"app/cis/feed_state.py", "app/ops/console.py"}
     assert _users_of("feed_state", allowed) == []
+
+
+def test_studio_contexts_are_used_only_by_the_studio_module() -> None:
+    assert _users_of("studio_platform_tx", STUDIO_MODULES) == []
+    assert _users_of("studio_invitation_tx", STUDIO_MODULES) == []
 
 
 def test_ingest_tx_is_used_only_by_the_mail_ingest_job() -> None:

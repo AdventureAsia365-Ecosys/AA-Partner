@@ -43,7 +43,7 @@ class Message:
     to: str
     subject: str
     text: str
-    kind: str  # invitation | recovery_notice | data_request_notice | mailbox_disconnected (AA-945)
+    kind: str  # invitation | recovery_notice | data_request_notice | mailbox_disconnected (AA-945) | studio_invitation
 
 
 class Mailer(Protocol):
@@ -82,6 +82,40 @@ def invitation_message(to: str, *, agency: str, role: str, link: str, expires_at
     )
     subject = f"Invitation to {agency} on AA Partner / Lời mời tham gia {agency}"
     return Message(to=to, subject=subject[:200], text=text, kind="invitation")
+
+
+def studio_invitation_message(to: str, *, link: str, expires_at: dt.datetime) -> Message:
+    """AA-979 P2b: Adventure Asia invites a person to an agency's Content studio (re-enrolment in the partner pool).
+    The agency name is not known to the CRM for a studio-only tenant, so the mail names the product only; the link is
+    the same join page as a CRM invitation."""
+    text = "\n".join(
+        [
+            "Adventure Asia invites you to the Content studio on AA Partner.",
+            "",
+            f"Accept the invitation: {link}",
+            "",
+            "You will get a one-time sign-in password on that page (or sign in with your AA Partner account if you",
+            "have one), then choose your own password and set up an authenticator app (two-step sign-in is required).",
+            "After that you open the Content studio with that account; the old API-key sign-in stops later.",
+            f"The link works once and expires on {_date(expires_at)}. If you did not expect it, ignore this mail.",
+            "",
+            "---",
+            "",
+            "Adventure Asia mời bạn sử dụng Content studio trên AA Partner.",
+            "",
+            f"Nhận lời mời: {link}",
+            "",
+            "Trang đó sẽ hiện một mật khẩu đăng nhập dùng một lần (hoặc đăng nhập bằng tài khoản AA Partner",
+            "nếu bạn đã có), sau đó bạn tự đặt mật khẩu và cài ứng dụng xác thực (bắt buộc đăng nhập hai bước).",
+            "Từ đó bạn mở Content studio bằng tài khoản này; cách đăng nhập bằng API key cũ sẽ ngừng sau.",
+            f"Liên kết chỉ dùng được một lần và hết hạn vào {_date(expires_at)}.",
+            "Nếu bạn không chờ thư này, hãy bỏ qua.",
+            "",
+            "Adventure Asia — AA Partner",
+        ]
+    )
+    subject = "Invitation to the AA Partner Content studio / Lời mời sử dụng Content studio"
+    return Message(to=to, subject=subject, text=text, kind="studio_invitation")
 
 
 def recovery_message(to: str, *, agency: str, eligible_at: dt.datetime, link: str) -> Message:
