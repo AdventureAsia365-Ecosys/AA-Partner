@@ -212,8 +212,9 @@ test.describe("CRM-21a proposal builder on Dev", () => {
     v = await builder(page, proposalId);
     const settings = await bff(page, "PATCH", `proposals/${proposalId}/builder`, {
       seq: v.edit_seq,
-      starts_on: inputDate(120),
-      balance_due_on: inputDate(60),
+      // Inside the AA-973 seed contract window (today .. today + 90): a later day 1 is refused as aa_quote_refused.
+      starts_on: inputDate(30),
+      balance_due_on: inputDate(10),
     });
     expect(settings.status).toBe(200);
 
