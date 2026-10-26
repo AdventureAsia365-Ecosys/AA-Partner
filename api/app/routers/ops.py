@@ -43,7 +43,8 @@ AA-979 / root ADR 0006a A10b-1 (S252 security review): the Dev-only E2E CIS admi
 ``crm-platform-admin`` write refuses it with 403 ``e2e_read_only`` (:func:`require_group`), ``/console`` says
 ``can_write: false``, and the studio-invitation relay takes it only on the terms of
 :func:`app.members.studio.check_e2e_invitation` (synthetic CRM agency, E2E mailbox address, an ``invited`` ``viewer`` /
-``editor`` membership at CIS; 403 ``e2e_read_only`` otherwise, 503 ``cis_unavailable`` when CIS cannot answer).
+``editor`` membership at CIS in an answer that marks the tenant synthetic, contract 1.2 ``is_synthetic``; 403
+``e2e_read_only`` otherwise, 503 ``cis_unavailable`` when CIS cannot answer).
 """
 
 from __future__ import annotations
@@ -440,7 +441,8 @@ async def studio_invitation(request: Request, tenant_id: uuid.UUID, body: Studio
     """AA-979: deliver a CIS Content studio invitation (``tenant_id`` = the CIS tenant; no CRM agency needed).
 
     The Dev-only E2E CIS admin (root ADR 0006a A10b-1) only on the terms of :func:`studio.check_e2e_invitation`
-    (synthetic CRM agency, E2E mailbox address, an invited viewer / editor membership at CIS)."""
+    (synthetic CRM agency, E2E mailbox address, an invited viewer / editor membership at CIS, which also marks the
+    tenant synthetic)."""
     pool = await request_pool(request)
     settings = request.app.state.settings
     if caller.e2e_read_only:

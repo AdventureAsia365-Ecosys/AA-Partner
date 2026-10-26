@@ -2,8 +2,9 @@
 
 The identity holds exactly ``cis-admin`` (like a real CIS admin) and is told apart by its access token's ``email``
 claim. It is read-only on every ``crm-platform-admin`` write and may use the studio-invitation relay only for a
-synthetic CRM agency, an E2E mailbox address and an invited ``viewer`` / ``editor`` membership CIS confirms. A real CIS
-admin is unchanged (no CIS lookup, no synthetic read). Scripted connection and a fake CIS transport: no network, no DB.
+synthetic CRM agency, an E2E mailbox address and an invited ``viewer`` / ``editor`` membership CIS confirms, in an
+answer where CIS marks the tenant synthetic too (contract 1.2 ``is_synthetic``). A real CIS admin is unchanged (no CIS
+lookup, no synthetic read). Scripted connection and a fake CIS transport: no network, no DB.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import datetime as dt
 import json
 import uuid
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -42,6 +44,7 @@ A10B = e2e_staff.E2E_CIS_ADMIN_EMAIL
 E2E_INVITEE = "e2e-test-studio-viewer@e2e-mail.lumiguides.it.com"
 CIS_BASE = "https://cis.example.test"
 SYNTHETIC_SQL = "SELECT is_synthetic IS TRUE FROM crm.tenant"
+SAMPLES = Path(__file__).resolve().parents[3] / "docs" / "contracts" / "samples" / "tenant.membership.v1"
 
 
 class FakeTokens:
@@ -72,8 +75,15 @@ def member(role: str = "viewer", status: str = "invited", invitation: uuid.UUID 
     }
 
 
-def snapshot(*members: dict[str, Any]) -> dict[str, Any]:
-    return {"tenant_id": str(TENANT), "tenant_state": "active", "members": list(members), "as_of": NOW.isoformat()}
+OMIT = object()
+
+
+def snapshot(*members: dict[str, Any], synthetic: Any = True) -> dict[str, Any]:
+    """A getTenantMembers 200 body; ``synthetic`` is the 1.2 ``is_synthetic`` (``OMIT`` = a 1.1 body without it)."""
+    body = {"tenant_id": str(TENANT), "tenant_state": "active", "members": list(members), "as_of": NOW.isoformat()}
+    if synthetic is not OMIT:
+        body["is_synthetic"] = synthetic
+    return body
 
 
 class FakeCis:
@@ -232,9 +242,37 @@ def test_a10b_needs_an_invited_membership_at_cis(env: dict[str, Any], status: in
 
 
 @pytest.mark.parametrize(
+    "synthetic",
+    [False, None, OMIT],
+    ids=["cis-real-tenant", "cis-null", "cis-1.1-without-the-field"],
+)
+def test_a10b_needs_cis_to_mark_the_tenant_synthetic(env: dict[str, Any], synthetic: Any) -> None:
+    """Contract 1.2: the CRM agency is synthetic (term 3, every Dev agency is) but CIS must say so too, in the same
+    getTenantMembers answer; a 1.1 answer without ``is_synthetic`` is refused (fail closed)."""
+    env["cis"].body = snapshot(member(), synthetic=synthetic)
+    assert refused(send(env, a10b(env["pools"])))
+    assert env["conn"].sql(SYNTHETIC_SQL) == [(TENANT,)] and len(env["cis"].calls) == 1
+    assert wrote_nothing(env)
+
+
+def test_a_real_cis_admin_does_not_need_cis_synthetic(env: dict[str, Any]) -> None:
+    """The new term binds the A10b identity only: a real admin on a real tenant never asks CIS."""
+    env["cis"].body = snapshot(member(), synthetic=False)
+    r = send(env, bearer(env["pools"].cis_admin(email="staff@aa.example")), email="owner@agency.example")
+    assert r.status_code == 202, r.json()
+    assert env["cis"].calls == []
+
+
+@pytest.mark.parametrize(
     "cis",
-    [FakeCis(raises=True), FakeCis(status=503), FakeCis(body={"members": "nope"}), FakeCis(status=401)],
-    ids=["network", "5xx", "bad-shape", "401"],
+    [
+        FakeCis(raises=True),
+        FakeCis(status=503),
+        FakeCis(body={"members": "nope"}),
+        FakeCis(status=401),
+        FakeCis(body=snapshot(member(), synthetic="true")),
+    ],
+    ids=["network", "5xx", "bad-shape", "401", "is-synthetic-not-a-boolean"],
 )
 def test_a10b_fails_closed_when_cis_cannot_answer(env: dict[str, Any], cis: FakeCis) -> None:
     env["app"].state.studio_activation = ActivationConfig(base_url=CIS_BASE, tokens=env["tokens"], transport=cis)
@@ -308,7 +346,7 @@ async def test_the_lookup_reads_ids_in_any_case_and_refuses_a_foreign_tenant_row
     upper["members"][0]["invitation_id"] = str(CIS_INV).upper()
     cfg = ActivationConfig(base_url=CIS_BASE, tokens=FakeTokens(), transport=FakeCis(body=upper))
     found = await invitation_lookup.invitation(cfg, TENANT, CIS_INV)
-    assert (found.kind, found.role, found.status) == ("found", "editor", "invited")
+    assert (found.kind, found.role, found.status, found.synthetic) == ("found", "editor", "invited", True)
     foreign = snapshot(member())
     foreign["members"][0]["tenant_id"] = str(uuid.uuid4())
     cfg = ActivationConfig(base_url=CIS_BASE, tokens=FakeTokens(), transport=FakeCis(body=foreign))
@@ -325,3 +363,25 @@ def test_e2e_address_rules() -> None:
     for bad in (A10B, "@e2e-mail.lumiguides.it.com", "a@b@e2e-mail.lumiguides.it.com", "K@e2e-mail.lumiguides.it.com",
                 "x@sub.e2e-mail.lumiguides.it.com", "x@lumiguides.it.com", None):  # fmt: skip
         assert not e2e_staff.is_e2e_mailbox_address(bad), bad
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sample", "kind", "synthetic"),
+    [
+        ("tenant-members-synthetic-valid.json", "found", True),
+        ("tenant-members-valid.json", "missing", False),  # a real agency, and not this invitation
+        ("tenant-members-synthetic-null-invalid.json", "found", None),
+        ("tenant-members-synthetic-missing-invalid.json", "found", None),
+    ],
+)
+async def test_the_lookup_reads_is_synthetic_from_the_contract_samples(sample: str, kind: str, synthetic: Any) -> None:
+    """The root samples of tenant.membership.v1 1.2 (vendored in docs/contracts/samples): only an explicit true is
+    synthetic; null and a missing field come back None, which check_e2e_invitation refuses."""
+    body = json.loads((SAMPLES / sample).read_text(encoding="utf-8"))["payload"]
+    tenant = uuid.UUID(body["tenant_id"])
+    invited = next((m for m in body["members"] if m["status"] == "invited"), None)
+    invitation = uuid.UUID(invited["invitation_id"]) if invited else CIS_INV
+    cfg = ActivationConfig(base_url=CIS_BASE, tokens=FakeTokens(), transport=FakeCis(body=body))
+    found = await invitation_lookup.invitation(cfg, tenant, invitation)
+    assert (found.kind, found.synthetic) == (kind, synthetic)
