@@ -44,10 +44,18 @@ const OLD_SLUG_REDIRECTS: { source: string; destination: string }[] = [
   { source: "/portal/api", destination: "/portal/account/api" },
 ];
 
+// AA-979 P2b — the Fargate build (portal/Dockerfile sets PORTAL_STANDALONE=1): a standalone server, and the Next
+// assets under /portal-assets/ so the ALB can tell them from the CRM web's /_next/ on the shared agency host (the
+// ALB rule /portal* covers them). The Vercel build sets neither and stays exactly as in P2a (the rollback target).
+// The "/" redirect below never reaches the studio on the agency host: the ALB sends "/" to the CRM web.
+const STANDALONE = process.env.PORTAL_STANDALONE === "1";
+export const ASSET_PREFIX = "/portal-assets";
+
 const nextConfig: NextConfig = {
   turbopack: {
     root: path.resolve(__dirname),
   },
+  ...(STANDALONE ? { output: "standalone" as const, outputFileTracingRoot: path.resolve(__dirname), assetPrefix: ASSET_PREFIX } : {}),
   poweredByHeader: false,
   async redirects() {
     return [
@@ -56,6 +64,12 @@ const nextConfig: NextConfig = {
       { source: "/", destination: "/portal/dashboard", permanent: false },
       ...OLD_SLUG_REDIRECTS.map((r) => ({ ...r, permanent: true })),
     ];
+  },
+  // AA-979: the Next multi-zone pattern: requests under the asset prefix are served from Next's own /_next/ (kept even
+  // where Next already serves the prefix itself; the container smoke checks /portal-assets/_next/static/* is 200).
+  async rewrites() {
+    if (!STANDALONE) return [];
+    return { beforeFiles: [{ source: `${ASSET_PREFIX}/_next/:path+`, destination: "/_next/:path+" }], afterFiles: [], fallback: [] };
   },
   async headers() {
     return [{ source: "/(.*)", headers: SECURITY_HEADERS }];

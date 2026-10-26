@@ -9,6 +9,16 @@ import { TENANT_STATE } from './smoke-helpers';
 
 export const PORTAL_RESULTS_DIR = 'results/smoke-portal';
 
+/**
+ * AA-979 P2b — which studio the smoke checks: `fargate` (the agency host portal.: the studio behind CloudFront -> ALB,
+ * sharing the host with the CRM web; PORTAL_TARGET=fargate) or the Vercel copy (default, the rollback target and the
+ * PR previews). On the agency host a signed-out page goes to the CRM web's /auth/refresh (partner sign-in), "/" is the
+ * CRM home, and the paths the studio does not own belong to the CRM web.
+ */
+export const FARGATE = process.env.PORTAL_TARGET === 'fargate';
+/** Where a signed-out /portal/* page is sent. */
+export const SIGNED_OUT_PATH = FARGATE ? '/auth/refresh' : '/tenant-login';
+
 export { TENANT_STATE };
 
 /** True when the tenant test key is in the environment (CI secret E2E_TENANT_API_KEY). */

@@ -9,15 +9,21 @@
 // surface name/plan_tier too — and hands the client back only the display
 // fields it actually needs. The token itself never reaches the response.
 import { NextRequest, NextResponse } from "next/server";
-import { requireTenant } from "@/lib/auth-server";
+import { requireStudio, withRenewed } from "@/lib/auth-server";
+import { isPartnerToken } from "@/lib/tenantSession";
 
 export async function GET(req: NextRequest) {
-  const auth = await requireTenant(req);
+  const auth = await requireStudio(req);
   if (!auth.ok) return auth.response;
 
-  return NextResponse.json({
-    tenant_id: auth.tenantId,
-    tenant_name: auth.name,
-    plan_tier: auth.planTier,
-  });
+  return withRenewed(
+    NextResponse.json({
+      tenant_id: auth.tenantId,
+      tenant_name: auth.name,
+      plan_tier: auth.planTier,
+      // AA-979 P2b: how the session was opened (the shell's sign-out ends the CRM session too for "partner").
+      sign_in: isPartnerToken(auth.token) ? "partner" : "api_key",
+    }),
+    auth.renewed,
+  );
 }

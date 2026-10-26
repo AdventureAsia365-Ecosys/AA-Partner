@@ -12,7 +12,7 @@
 import { test, expect, request as pwRequest, type APIRequestContext } from '@playwright/test';
 import fs from 'fs';
 import { baseUrl } from './smoke-helpers';
-import { NO_KEY_REASON, TENANT_STATE, hasTenantState } from './portal-helpers';
+import { FARGATE, NO_KEY_REASON, SIGNED_OUT_PATH, TENANT_STATE, hasTenantState } from './portal-helpers';
 
 async function apiContext(cookie?: string): Promise<APIRequestContext> {
   const headers: Record<string, string> = {};
@@ -50,25 +50,28 @@ const FORGED: Record<string, string> = {
 };
 
 test.describe('AA-885 — portal host', () => {
-  test('unauthenticated /portal/dashboard redirects to /tenant-login', async () => {
+  test(`unauthenticated /portal/dashboard redirects to ${SIGNED_OUT_PATH}`, async () => {
     const ctx = await apiContext();
     try {
       const res = await ctx.get('/portal/dashboard', { maxRedirects: 0, timeout: 15000 });
       expect(res.status(), 'expected a redirect').toBeGreaterThanOrEqual(300);
       expect(res.status()).toBeLessThan(400);
-      expect(pathOf(res.headers()['location'] ?? '')).toBe('/tenant-login');
+      const location = res.headers()['location'] ?? '';
+      expect(pathOf(location)).toBe(SIGNED_OUT_PATH);
+      // AA-979 (critic C2): on the agency host the redirect stays on the public origin, never the bind address.
+      if (FARGATE) expect(new URL(location, baseUrl()).origin).toBe(new URL(baseUrl()).origin);
     } finally {
       await ctx.dispose();
     }
   });
 
-  test('/ redirects into /portal/dashboard', async () => {
+  test(FARGATE ? '/ is the CRM home (signed out: the partner sign-in)' : '/ redirects into /portal/dashboard', async () => {
     const ctx = await apiContext();
     try {
       const res = await ctx.get('/', { maxRedirects: 0, timeout: 15000 });
       expect(res.status()).toBeGreaterThanOrEqual(300);
       expect(res.status()).toBeLessThan(400);
-      expect(pathOf(res.headers()['location'] ?? '')).toBe('/portal/dashboard');
+      expect(pathOf(res.headers()['location'] ?? '')).toBe(FARGATE ? '/auth/refresh' : '/portal/dashboard');
     } finally {
       await ctx.dispose();
     }
@@ -98,7 +101,7 @@ test.describe('AA-885 — portal host', () => {
         const page = await ctx.get('/portal/dashboard', { maxRedirects: 0, timeout: 15000 });
         expect(page.status(), `${label}: /portal/dashboard must redirect`).toBeGreaterThanOrEqual(300);
         expect(page.status()).toBeLessThan(400);
-        expect(pathOf(page.headers()['location'] ?? '')).toBe('/tenant-login');
+        expect(pathOf(page.headers()['location'] ?? '')).toBe(SIGNED_OUT_PATH);
         for (const p of ['/api/tenant/me', '/api/tenant/v1/billing']) {
           const res = await ctx.get(p, { maxRedirects: 0, timeout: 15000 });
           expect(res.status(), `${label}: GET ${p}`).toBe(401);
@@ -118,7 +121,11 @@ test.describe('AA-885 — portal host', () => {
     try {
       for (const p of ['/admin/overview', '/api/admin/health', '/login', '/api/auth/login']) {
         const res = await ctx.get(p, { maxRedirects: 0, timeout: 15000 });
-        expect(res.status(), `GET ${p} on the portal host`).toBe(404);
+        // AA-979: on the agency host the paths the studio does not own are the CRM web's (signed out: its sign-in);
+        // the studio's own /api/* still has no admin route.
+        const crmWebPath = FARGATE && !p.startsWith('/api/');
+        if (crmWebPath) expect(pathOf(res.headers()['location'] ?? ''), `GET ${p} on the agency host`).toBe('/auth/refresh');
+        else expect(res.status(), `GET ${p} on the portal host`).toBe(404);
       }
     } finally {
       await ctx.dispose();

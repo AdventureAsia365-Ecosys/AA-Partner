@@ -12,9 +12,11 @@
 //     slash-carrying segment can rewrite it after the checks);
 //   - AA-441: multipart/form-data bodies pass through as bytes (brand-guide upload), JSON as text;
 //   - S241: the upstream body is streamed through (lib/proxyResponse.ts, Content-Type only).
+//   - AA-979 P2b: the write guard compares with PORTAL_PUBLIC_ORIGIN (lib/writeGuard.ts, Fargate) and the tenant check
+//     renews an exchanged (partner) studio token that is about to expire (lib/auth-server.ts requireStudio).
 import { NextRequest, NextResponse } from "next/server";
-import { refuseCrossSiteWrite } from "@/lib/crossSiteGuard";
-import { API_URL, requireTenant } from "@/lib/auth-server";
+import { API_URL, requireStudio, withRenewed } from "@/lib/auth-server";
+import { refuseForeignWrite } from "@/lib/writeGuard";
 import { proxyPath } from "@/lib/bffPath";
 import { streamUpstream } from "@/lib/proxyResponse";
 
@@ -23,9 +25,9 @@ async function handler(
   { params }: { params: Promise<{ path: string[] }> }
 ) {
   // AA-911 — refuse a cross-site write before any cookie or body is read (lib/sameOrigin.ts).
-  const refused = refuseCrossSiteWrite(req);
+  const refused = refuseForeignWrite(req);
   if (refused) return refused;
-  const auth = await requireTenant(req);
+  const auth = await requireStudio(req);
   if (!auth.ok) return auth.response;
 
   const { path } = await params;
@@ -53,7 +55,7 @@ async function handler(
 
   try {
     const res = await fetch(url, { method: req.method, headers, body });
-    return streamUpstream(res);
+    return withRenewed(streamUpstream(res), auth.renewed);
   } catch {
     return NextResponse.json({ detail: "Upstream connection error" }, { status: 502 });
   }

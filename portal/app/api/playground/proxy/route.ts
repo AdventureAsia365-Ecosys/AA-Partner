@@ -1,7 +1,7 @@
 // portal/app/api/playground/proxy/route.ts (AA-885: moved from the admin app)
 import { NextRequest, NextResponse } from "next/server";
-import { refuseCrossSiteWrite } from "@/lib/crossSiteGuard";
-import { API_URL, requireTenant } from "@/lib/auth-server";
+import { API_URL, requireStudio } from "@/lib/auth-server";
+import { refuseForeignWrite } from "@/lib/writeGuard";
 
 // Only these exact paths are reachable through the playground — must match
 // endpoints-config.ts's own displayed endpoint list 1:1 (AA-582: the previous
@@ -22,11 +22,11 @@ function isAllowed(endpoint: string): boolean {
 
 export async function POST(req: NextRequest) {
   // AA-911 — refuse a cross-site write before any cookie or body is read (lib/sameOrigin.ts).
-  const refused = refuseCrossSiteWrite(req);
+  const refused = refuseForeignWrite(req);
   if (refused) return refused;
   // Auth — reuse the same cookie-based pattern as /api/tenant/[...path]
   // AA-656: verify the tenant JWT here too (was: token presence only), like every other BFF proxy.
-  const auth = await requireTenant(req);
+  const auth = await requireStudio(req);
   if (!auth.ok) return auth.response;
   const token = auth.token; // the token that was just verified
 

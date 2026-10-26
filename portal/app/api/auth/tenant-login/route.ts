@@ -21,12 +21,28 @@
 // httpOnly Set-Cookie header carries it. Returning it in the body would
 // defeat httpOnly entirely (page JS / XSS can read a fetch response body
 // just as easily as a plain cookie).
+//
+// AA-979 P2b: kept for the P2b window only, behind PORTAL_API_KEY_SIGNIN (404 when off: the clean-up); and counted per
+// browser (CloudFront-Viewer-Address) before CIS is called, so one tenant's typos never lock the others out of the
+// shared NAT address's CIS throttle (lib/viewerLimit.ts, critic S2).
 import { NextRequest, NextResponse } from "next/server";
 import { API_URL } from "@/lib/auth-server";
+import { config } from "@/lib/config";
+import { ViewerLimiter, viewerKey } from "@/lib/viewerLimit";
 
 const COOKIE_MAX_AGE = 60 * 60 * 24; // 24h — matches backend JWT_EXPIRY_H (api/routers/auth.py)
+const limiter = new ViewerLimiter();
 
 export async function POST(req: NextRequest) {
+  if (!config().apiKeySignIn) {
+    return NextResponse.json({ detail: "api_key_signin_off" }, { status: 404 });
+  }
+  if (!limiter.allow(viewerKey(req.headers.get("cloudfront-viewer-address")))) {
+    return NextResponse.json(
+      { detail: "Too many sign-in attempts. Try again in a few minutes." },
+      { status: 429, headers: { "Retry-After": "300" } },
+    );
+  }
   const body = await req.json().catch(() => ({}));
   const apiKey = typeof body?.api_key === "string" ? body.api_key : "";
 
