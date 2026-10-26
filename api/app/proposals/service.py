@@ -52,14 +52,16 @@ SELECT trip_id, stage, owner_member_id FROM crm.trip WHERE trip_id = $1 AND dele
 """
 LIST_SQL = """
 SELECT proposal_id, version, status, kind, body_enc, currency, total_amount, deposit_amount, balance_due_on,
-       terms_doc_id, price_hash, sent_at, accepted_at, published_at, created_at, updated_at
+       terms_doc_id, price_hash, sent_at, accepted_at, published_at, created_at, updated_at, view_count,
+       first_viewed_at, last_viewed_at, hold_expires_at, hold_count, accepted_total_amount, accepted_deposit_amount
   FROM crm.proposal WHERE trip_id = $1 AND deleted_at IS NULL
  ORDER BY version DESC
  LIMIT 50
 """
 ONE_SQL = """
 SELECT p.proposal_id, p.trip_id, p.version, p.status, p.kind, p.body_enc, p.currency, p.total_amount,
-       p.deposit_amount, p.balance_due_on, p.terms_doc_id, p.price_hash, p.link_id, t.stage, t.owner_member_id
+       p.deposit_amount, p.balance_due_on, p.terms_doc_id, p.price_hash, p.link_id, p.published_at, t.stage,
+       t.owner_member_id
   FROM crm.proposal p JOIN crm.trip t ON t.trip_id = p.trip_id AND t.deleted_at IS NULL
  WHERE p.proposal_id = $1 AND p.deleted_at IS NULL
    FOR UPDATE OF p
@@ -101,6 +103,19 @@ UPDATE crm.proposal SET status = 'sent', price_hash = $2, sent_at = now(), link_
 RETURNING sent_at
 """
 WITHDRAW_SQL = "UPDATE crm.proposal SET status = 'withdrawn' WHERE proposal_id = $1"
+# AA-950 (CRM-21b)
+REUSE_MIN_DAYS = 3
+LINK_SQL = "SELECT link_id, traveler_id, status, expires_at FROM crm.client_link WHERE link_id = $1"
+SEND_BUILDER_SQL = """
+UPDATE crm.proposal SET status = 'sent', sent_at = now(), link_id = $2 WHERE proposal_id = $1 RETURNING sent_at
+"""
+MOVE_LINK_SQL = "UPDATE crm.proposal SET link_id = $3 WHERE trip_id = $1 AND link_id = $2"
+ACTIVITY_SQL = """
+SELECT proposal_id, version, status, kind, currency, total_amount, deposit_pct, balance_due_on, view_count,
+       first_viewed_at, last_viewed_at, nudged_at, hold_id, hold_expires_at, hold_selection_sha256, hold_count,
+       recheck_day, recheck_count_day
+  FROM crm.proposal WHERE proposal_id = $1 AND deleted_at IS NULL
+"""
 LEAD_SQL = "SELECT traveler_id FROM crm.trip_traveler WHERE trip_id = $1 AND role = 'lead' AND deleted_at IS NULL"
 SCHEDULE_SQL = """
 SELECT schedule_id, proposal_id, kind, amount, currency, due_on, status, paid_at FROM crm.payment_schedule
@@ -208,8 +223,7 @@ async def _terms(ctx: AnyContext, terms_doc_id: uuid.UUID | None, *, published: 
 
 
 def _text_only(row: Any) -> None:
-    """AA-949: a builder version is edited in the builder and published there; sending a published builder version
-    (the C-03 link) is CRM-21b (AA-950)."""
+    """AA-949: a builder version is edited in the builder and published there (its send: :func:`send`)."""
     if row.get("kind") == "builder":
         raise Conflict("proposal_is_builder", "edit and publish this version in the builder")
 
@@ -230,6 +244,15 @@ async def _view(vault: Vault, row: Any) -> dict[str, Any]:
         "price_hash": bytes(row["price_hash"]).hex() if row["price_hash"] else None,
         "sent_at": _iso(row["sent_at"]),
         "accepted_at": _iso(row["accepted_at"]),
+        # AA-950: what the client did with it (R4 viewed, the hold, the accepted picks' amounts).
+        "view_count": row.get("view_count", 0),
+        "last_viewed_at": _iso(row.get("last_viewed_at")),
+        "hold_expires_at": _iso(row.get("hold_expires_at")),
+        "hold_count": row.get("hold_count", 0),
+        "accepted_total_amount": _money(row["accepted_total_amount"]) if row.get("accepted_total_amount") else None,
+        "accepted_deposit_amount": _money(row["accepted_deposit_amount"])
+        if row.get("accepted_deposit_amount")
+        else None,
     }
 
 
@@ -361,7 +384,8 @@ async def send(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID) -> dict
     row = await ctx.conn.fetchrow(ONE_SQL, proposal_id)
     if row is None:
         raise NotFound("proposal_not_found")
-    _text_only(row)
+    if row.get("kind") == "builder":
+        return await _send_builder(ctx, row)
     if row["status"] != "draft":
         raise Conflict("proposal_not_draft", "only a draft is sent; draft a new version")
     if row["stage"] != "proposal":
@@ -424,6 +448,146 @@ async def send(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID) -> dict
         "dispatch_id": queued["dispatch_id"],
         "superseded": str(previous["proposal_id"]) if previous is not None else None,
     }
+
+
+async def _new_link(
+    ctx: TenantContext, trip_id: uuid.UUID, lead: uuid.UUID, reissued_from: uuid.UUID | None
+) -> tuple[uuid.UUID, str, Any, str]:
+    """A fresh ``proposal`` link for the lead, queued through the dispatcher: (link id, token, expiry, dispatch id)."""
+    token = secrets.token_urlsafe(32)
+    link_id = uuid.uuid4()
+    expires_at = await ctx.conn.fetchval(
+        INSERT_LINK_SQL, link_id, trip_id, lead, LINK_PURPOSE, access.token_hash(token), LINK_DAYS, reissued_from
+    )
+    queued = await dispatch.enqueue_message(
+        ctx, traveler_id=lead, channel="email", purpose="transactional", origin="user_action", trip_id=trip_id,
+        message_ref=link_id,
+    )  # fmt: skip
+    await ctx.conn.execute(LINK_DISPATCH_SQL, link_id, uuid.UUID(queued["dispatch_id"]))
+    return link_id, token, expires_at, queued["dispatch_id"]
+
+
+async def _send_builder(ctx: TenantContext, row: Any) -> dict[str, Any]:
+    """AA-950 (CRM-21b, F4 "Send"): a **published** builder version goes to the client. The version sent before it
+    is superseded; when its link is still live (and for the same lead, at least :data:`REUSE_MIN_DAYS` days left) the
+    new version **takes over that link**, so the client's cookie and bookmarks keep working and the page shows one
+    bundled notice of what changed (:func:`app.proposals.client_page.version_notice`); otherwise a new link is made
+    and its path returned once ("Copy link"). The price hash was fixed at publish."""
+    proposal_id, trip_id = row["proposal_id"], row["trip_id"]
+    if row["status"] != "published":
+        raise Conflict("proposal_not_published", "publish this version in the builder first")
+    if row["stage"] != "proposal":
+        raise Conflict("trip_not_in_proposal", "move the trip to Proposal first (the Stage 2 gate)")
+    lead = await ctx.conn.fetchval(LEAD_SQL, trip_id)
+    if lead is None:
+        raise Conflict("no_lead_traveller", "the trip has no lead traveller to send the proposal to")
+    await _terms(ctx, row["terms_doc_id"], published=True)
+    previous = await ctx.conn.fetchrow(OPEN_SENT_SQL, trip_id)
+    reuse = None
+    if previous is not None and previous["link_id"] is not None:
+        link = await ctx.conn.fetchrow(LINK_SQL, previous["link_id"])
+        if (
+            link is not None
+            and link["status"] in ("sent", "opened")
+            and link["traveler_id"] == lead
+            and link["expires_at"] > dt.datetime.now(dt.UTC) + dt.timedelta(days=REUSE_MIN_DAYS)
+        ):
+            reuse = link
+    if previous is not None:
+        await ctx.conn.execute(SUPERSEDE_SQL, previous["proposal_id"])
+        if reuse is None and previous["link_id"] is not None:
+            await ctx.conn.execute(REVOKE_LINK_SQL, previous["link_id"])
+    token = None
+    if reuse is not None:
+        link_id, expires_at = reuse["link_id"], reuse["expires_at"]
+        queued = await dispatch.enqueue_message(
+            ctx, traveler_id=lead, channel="email", purpose="transactional", origin="user_action", trip_id=trip_id,
+            message_ref=link_id,
+        )  # fmt: skip
+        dispatch_id = queued["dispatch_id"]
+    else:
+        old = previous["link_id"] if previous is not None else None
+        link_id, token, expires_at, dispatch_id = await _new_link(ctx, trip_id, lead, old)
+    sent_at = await ctx.conn.fetchval(SEND_BUILDER_SQL, proposal_id, link_id)
+    await stages.refresh_waiting_on(ctx, trip_id)
+    await stages.touch(ctx, trip_id)
+    ctx.audit(
+        "proposal_send", "allowed", "proposal", str(proposal_id), reason="builder_link_reused" if reuse else "builder"
+    )
+    return {
+        "proposal_id": str(proposal_id),
+        "status": "sent",
+        "price_hash": bytes(row["price_hash"]).hex(),
+        "sent_at": sent_at.isoformat(),
+        "link_path": f"/c/p/{token}" if token else None,
+        "link_reused": reuse is not None,
+        "expires_at": expires_at.isoformat(),
+        "dispatch_id": dispatch_id,
+        "superseded": str(previous["proposal_id"]) if previous is not None else None,
+    }
+
+
+async def reissue_link(ctx: TenantContext, proposal_id: uuid.UUID) -> dict[str, Any]:
+    """Fix B11 "[Re-issue link]": a sent version's link is revoked (every device that exchanged it loses access) and a
+    new one goes to the lead; its path is returned once. Every version that carried the old link moves to the new one
+    (the notice of a new version keeps working)."""
+    row = await ctx.conn.fetchrow(ONE_SQL, proposal_id)
+    if row is None:
+        raise NotFound("proposal_not_found")
+    if row["status"] != "sent":
+        raise Conflict("proposal_not_sent", "only a sent proposal has a link to re-issue")
+    lead = await ctx.conn.fetchval(LEAD_SQL, row["trip_id"])
+    if lead is None:
+        raise Conflict("no_lead_traveller", "the trip has no lead traveller to send the proposal to")
+    old = row["link_id"]
+    if old is not None:
+        await ctx.conn.execute(REVOKE_LINK_SQL, old)
+    link_id, token, expires_at, dispatch_id = await _new_link(ctx, row["trip_id"], lead, old)
+    if old is not None:
+        await ctx.conn.execute(MOVE_LINK_SQL, row["trip_id"], old, link_id)
+    else:
+        await ctx.conn.execute("UPDATE crm.proposal SET link_id = $2 WHERE proposal_id = $1", proposal_id, link_id)
+    ctx.audit("proposal_link_reissue", "allowed", "proposal", str(proposal_id))
+    return {
+        "proposal_id": str(proposal_id),
+        "link_path": f"/c/p/{token}",
+        "expires_at": expires_at.isoformat(),
+        "dispatch_id": dispatch_id,
+    }
+
+
+async def client_activity(ctx: TenantContext, proposal_id: uuid.UUID) -> dict[str, Any]:
+    """What the client did with a version (A-03): viewed (R4), the hold set and re-checks (Fix A3), the choice against
+    the defaults (R19), change requests and the latest events. Ids, codes, titles and amounts only."""
+    from app.proposals import builder, client_page, events
+
+    row = await ctx.conn.fetchrow(ACTIVITY_SQL, proposal_id)
+    if row is None:
+        raise NotFound("proposal_not_found")
+    out: dict[str, Any] = {
+        "proposal_id": str(proposal_id),
+        "version": row["version"],
+        "status": row["status"],
+        "kind": row["kind"],
+        "view_count": row["view_count"],
+        "first_viewed_at": _iso(row["first_viewed_at"]),
+        "last_viewed_at": _iso(row["last_viewed_at"]),
+        "nudged_at": _iso(row["nudged_at"]),
+        "choices": [],
+        "hold": None,
+    }
+    if row["kind"] == "builder" and row["status"] in ("sent", "accepted"):
+        s = await builder._structure(ctx, proposal_id)
+        picks = [dict(r) for r in await ctx.conn.fetch(builder.PICKS_SQL, proposal_id)]
+        out["choices"] = client_page.choice_diff(s, picks)
+        state = client_page.effective(s, picks)
+        aa_ids = client_page.aa_chosen(state["choice"], builder._option_map(s))
+        out["hold"] = {**client_page.hold_state(row, aa_ids, dt.datetime.now(dt.UTC)), "hold_count": row["hold_count"]}
+        t = client_page.totals(s, row, state["picks"])
+        out["totals"] = {"published": _money(row["total_amount"]), "current": t["total"], "currency": row["currency"]}
+    out["events"] = await events.proposal_events(ctx, proposal_id, events.NAMES)
+    ctx.audit("view", "allowed", "proposal", str(proposal_id), fields=("client_activity",))
+    return out
 
 
 async def withdraw(ctx: TenantContext, proposal_id: uuid.UUID) -> dict[str, Any]:

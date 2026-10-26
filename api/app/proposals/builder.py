@@ -45,7 +45,7 @@ from app.intake import completeness, stage2
 from app.margin import sees_margin
 from app.proposals import rules
 from app.proposals.service import ACCEPTED_EXISTS_SQL, DRAFTABLE_STAGES, MAX_BODY, MAX_VERSIONS, NEXT_VERSION_SQL
-from app.tenancy import TenantContext
+from app.tenancy import AnyContext, TenantContext
 from app.vault import Vault
 
 KIND = "builder"
@@ -1379,7 +1379,7 @@ async def _carry_picks(ctx: TenantContext, row: Any, s: dict[str, Any], base: An
 
 
 async def record_pick(
-    ctx: TenantContext,
+    ctx: AnyContext,
     proposal_id: uuid.UUID,
     block_id: uuid.UUID,
     option_id: uuid.UUID,

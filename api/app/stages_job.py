@@ -16,7 +16,9 @@ Migrate idle check count a queued row as busy; not deploy-gate exempt). For ever
    complete gets one task ``stage3_due_t21`` per trip, ever;
 6. AA-946: a pending e-mail code past its 10 minutes becomes ``expired`` and loses its sealed copy (``code_enc``,
    kept for the mail sender: a code mail held or never sent must not keep it until the purge); then codes
-   (``crm.otp_challenge``) older than 24 hours are deleted (DM-7 row; counts only).
+   (``crm.otp_challenge``) older than 24 hours are deleted (DM-7 row; counts only);
+7. AA-950 (R4): a sent proposal the client viewed 2 days ago without choosing anything or accepting gives the trip
+   owner one ``proposal_follow_up`` task and a bell item, once per version (:func:`app.proposals.events.nudge_due`).
 
 Payload and result are ids and counts only. An agency that is locked or offboarding is skipped.
 """
@@ -38,6 +40,7 @@ from app.jobs import queue
 from app.jobs.kinds import STAGE_DATE_RULE
 from app.jobs.queue import Job
 from app.portal import progress
+from app.proposals import events
 from app.tenancy import SystemContext, system_tx
 
 log = logging.getLogger(__name__)
@@ -125,6 +128,9 @@ async def run_agency(ctx: SystemContext) -> Counter[str]:
     purged = await ctx.conn.execute(OTP_PURGE_SQL)
     if stages._rows(purged):
         counts["codes_purged"] += stages._rows(purged)
+    nudged = await events.nudge_due(ctx)
+    if nudged:
+        counts["proposal_nudges"] += nudged
     return counts
 
 

@@ -789,6 +789,9 @@ def _page_row(**over: Any) -> dict[str, Any]:
         "start_date": TODAY,
         "end_date": None,
         "accepted_at": None,
+        "kind": "text",  # AA-950: the page of a builder version is tested in test_client_proposal.py
+        "view_count": 0,
+        "owner_member_id": None,
     }
     row.update(over)
     return row

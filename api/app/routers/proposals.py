@@ -9,6 +9,10 @@ Route                                           What                            
 ``PATCH /proposals/{id}``                       edit a draft                                     every role
 ``POST /proposals/{id}/send``                   send (price hash, signed link once)              owner, agent
 ``POST /proposals/{id}/withdraw``               withdraw a draft or a sent version               owner, agent
+``POST /proposals/{id}/reissue-link``           AA-950: revoke the client's link, send a new one owner, agent
+``GET  /proposals/{id}/client-activity``        AA-950: viewed, hold, choices (R19), events      every role
+``GET  /bell``                                  AA-950: my unseen events, bundled                every role
+``POST /bell/seen``                             AA-950: mark them seen (all, or some trips')     every role
 ``POST /schedule/{id}/mark-paid``               record a payment received (deposit -> Booked)    owner, agent
 ``POST /schedule/{id}/void``                    void a due row                                   owner, agent
 ``POST /trips/{id}/portal-access``              invite one traveller (or re-issue their link)    owner, agent;
@@ -41,7 +45,7 @@ from app.db import request_pool
 from app.permissions import Action, require
 from app.pipeline import trip_owner
 from app.portal import access
-from app.proposals import agreements, service
+from app.proposals import agreements, events, service
 from app.routers.agency import tenant_header
 from app.tenancy import tenant_tx
 from app.vault import Vault
@@ -144,6 +148,44 @@ async def post_proposal_send(
     keys = require_keys(request.app.state.keys)
     async with tenant_tx(pool, caller, tenant_id, action=Action.PROPOSAL_PUBLISH) as ctx:
         return await service.send(ctx, Vault(keys, ctx), proposal_id)
+
+
+@router.post("/proposals/{proposal_id}/reissue-link")
+async def post_proposal_reissue_link(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, proposal_id: uuid.UUID
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PROPOSAL_PUBLISH) as ctx:
+        return await service.reissue_link(ctx, proposal_id)
+
+
+@router.get("/proposals/{proposal_id}/client-activity")
+async def get_proposal_client_activity(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, proposal_id: uuid.UUID
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_VIEW) as ctx:
+        return await service.client_activity(ctx, proposal_id)
+
+
+@router.get("/bell")
+async def get_bell(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_VIEW) as ctx:
+        return await events.bell(ctx)
+
+
+class BellSeenBody(_Body):
+    trip_ids: list[uuid.UUID] | None = Field(default=None, max_length=50)
+
+
+@router.post("/bell/seen")
+async def post_bell_seen(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, body: BellSeenBody
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_VIEW) as ctx:
+        return await events.mark_seen(ctx, body.trip_ids)
 
 
 @router.post("/proposals/{proposal_id}/withdraw")

@@ -6,6 +6,13 @@ origin (no CORS) and the per-address limits key on the real visitor.
 - ``GET  /crm/public/v1/p/{token}``: the proposal (:func:`app.proposals.public.read`).
 - ``POST /crm/public/v1/p/{token}/accept``: accept with the typed full name, the terms tick and the price hash
   (:func:`app.proposals.public.accept`); 409 ``price_changed`` / ``terms_changed``.
+- AA-950 (CRM-21b, Fix B11): the same page **by cookie**. The web exchanges the link's token for the host-only cookie
+  ``aa_proposal_link`` (httpOnly, Secure, SameSite=Strict, Path ``/crm/public/v1/proposal``) and strips it from the
+  URL; the token stays valid until the link expires, so a second device opening the link gets in too.
+  ``GET /proposal``, ``POST /proposal/pick`` (Keep / Swap / Choose later), ``POST /proposal/hold`` (the version's hold
+  set: 200, 409 ``option_sold_out`` / ``hold_unavailable``, 429 ``recheck_limit``, 503 ``booking_unavailable``, each
+  with the fresh page), ``POST /proposal/accept`` (409 ``hold_expired`` with the re-quote offer, ``choice_changed``),
+  ``POST /proposal/change-request``. No cookie, or an unusable link: 404 ``link_not_found``.
 - ``GET  /crm/public/v1/portal/{token}``: the portal home (``signed_in: false`` without a session).
 - ``POST /crm/public/v1/portal/{token}/code``: e-mail a code (``{"purpose": "sign_in" | "sign"}``).
 - ``POST /crm/public/v1/portal/{token}/session``: check a sign-in code; 200 sets the session cookie
@@ -23,12 +30,14 @@ anything is read, a 32 KiB body cap. 404 ``link_not_found`` for any unusable lin
 
 from __future__ import annotations
 
+import re
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Cookie, Header, Request
 from fastapi.responses import JSONResponse
 
 from app.db import request_pool
+from app.errors import NotFound
 from app.portal import public as portal
 from app.proposals import public as proposal_page
 from app.ratelimit import PublicRateLimit, client_address
@@ -39,6 +48,9 @@ router = APIRouter(prefix="/crm/public/v1", tags=["client-pages"])
 
 HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
 SessionCookie = Annotated[str | None, Cookie(alias=portal.SESSION_COOKIE)]
+PROPOSAL_COOKIE = "aa_proposal_link"
+ProposalCookie = Annotated[str | None, Cookie(alias=PROPOSAL_COOKIE)]
+_TOKEN = re.compile(r"^[A-Za-z0-9_-]{43}$")
 
 
 def _write_limit(request: Request) -> None:
@@ -77,6 +89,81 @@ async def post_proposal_accept(
     keys = require_keys(request.app.state.keys)
     result = await proposal_page.accept(pool, keys, request.app.state.settings, token, raw, origin=origin)
     return _json(result)
+
+
+# ── proposal by cookie (AA-950, Fix B11) ─────────────────────────────────────────────────────────
+
+
+def _cookie_token(token: str | None) -> str:
+    if not token or not _TOKEN.match(token):
+        raise NotFound("link_not_found")
+    return token
+
+
+@router.get("/proposal")
+async def get_proposal_by_cookie(request: Request, _: PublicRateLimit, token: ProposalCookie = None) -> JSONResponse:
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    return _json(await proposal_page.read(pool, keys, _cookie_token(token)))
+
+
+@router.post("/proposal/pick")
+async def post_proposal_pick(
+    request: Request,
+    token: ProposalCookie = None,
+    origin: Annotated[str | None, Header()] = None,
+    content_length: Annotated[int | None, Header()] = None,
+) -> JSONResponse:
+    _write_limit(request)
+    raw = await _json_body(request, content_length)
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    settings = request.app.state.settings
+    return _json(await proposal_page.pick(pool, keys, settings, _cookie_token(token), raw, origin=origin))
+
+
+@router.post("/proposal/hold")
+async def post_proposal_hold(
+    request: Request, token: ProposalCookie = None, origin: Annotated[str | None, Header()] = None
+) -> JSONResponse:
+    _write_limit(request)
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    booking = getattr(request.app.state, "booking_client", None)
+    status, body = await proposal_page.hold(
+        pool, keys, request.app.state.settings, booking, _cookie_token(token), origin=origin
+    )
+    return _json(body, status)
+
+
+@router.post("/proposal/accept")
+async def post_proposal_accept_by_cookie(
+    request: Request,
+    token: ProposalCookie = None,
+    origin: Annotated[str | None, Header()] = None,
+    content_length: Annotated[int | None, Header()] = None,
+) -> JSONResponse:
+    _write_limit(request)
+    raw = await _json_body(request, content_length)
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    settings = request.app.state.settings
+    return _json(await proposal_page.accept(pool, keys, settings, _cookie_token(token), raw, origin=origin))
+
+
+@router.post("/proposal/change-request")
+async def post_proposal_change_request(
+    request: Request,
+    token: ProposalCookie = None,
+    origin: Annotated[str | None, Header()] = None,
+    content_length: Annotated[int | None, Header()] = None,
+) -> JSONResponse:
+    _write_limit(request)
+    raw = await _json_body(request, content_length)
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    settings = request.app.state.settings
+    return _json(await proposal_page.change_request(pool, keys, settings, _cookie_token(token), raw, origin=origin))
 
 
 # ── portal (C-05 .. C-08, C-10 view) ─────────────────────────────────────────────────────────────

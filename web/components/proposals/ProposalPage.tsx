@@ -4,13 +4,18 @@
 // route on this origin, shows the text, the total with the deposit and the balance apart, and the agency's booking
 // terms; the client ticks the terms, types their full name and accepts with the price hash the page showed (409
 // price_changed: the page reloads the new version). After acceptance the deposit / balance schedule shows.
+// AA-950 (card CRM-21b): the page reads /crm/public/v1/proposal with the host-only link cookie the /c/p/<token> landing
+// set (Fix B11; same-origin credentials, the token never reaches page script); a day-by-day version renders
+// ClientBuilderProposal (C-03 Keep / Swap, C-04 hold + accept, C-12).
 import { useEffect, useState } from "react";
 import { K } from "@/app/_kit";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, type MessageKey } from "@/lib/i18n";
+import { isBuilderPage, PROPOSAL_API, type AnyClientPage } from "@/lib/clientProposal";
 import { clientErrorKey, formatAmount, type PublicProposal } from "@/lib/proposals";
+import { ClientBuilderProposal } from "./ClientBuilderProposal";
 
-type Load = { state: "loading" } | { state: "ready"; page: PublicProposal } | { state: "failed"; status: number };
+type Load = { state: "loading" } | { state: "ready"; page: AnyClientPage } | { state: "failed"; status: number };
 
 const box: React.CSSProperties = {
   font: "inherit",
@@ -24,7 +29,7 @@ const box: React.CSSProperties = {
   boxSizing: "border-box",
 };
 
-export function ProposalPage({ token, dict, locale }: { token: string; dict: Partial<Record<MessageKey, string>>; locale: DateLocale }) {
+export function ProposalPage({ dict, locale }: { dict: Partial<Record<MessageKey, string>>; locale: DateLocale }) {
   const t = (k: string) => dict[k as MessageKey] ?? k;
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const [name, setName] = useState("");
@@ -32,14 +37,14 @@ export function ProposalPage({ token, dict, locale }: { token: string; dict: Par
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [round, setRound] = useState(0);
-  const url = `/crm/public/v1/p/${encodeURIComponent(token)}`;
+  const url = PROPOSAL_API;
 
   useEffect(() => {
     let live = true;
-    fetch(url, { headers: { Accept: "application/json" }, cache: "no-store", credentials: "omit" })
+    fetch(url, { headers: { Accept: "application/json" }, cache: "no-store", credentials: "same-origin" })
       .then(async (res) => {
         if (!live) return;
-        setLoad(res.ok ? { state: "ready", page: (await res.json()) as PublicProposal } : { state: "failed", status: res.status });
+        setLoad(res.ok ? { state: "ready", page: (await res.json()) as AnyClientPage } : { state: "failed", status: res.status });
       })
       .catch(() => live && setLoad({ state: "failed", status: 0 }));
     return () => {
@@ -54,7 +59,7 @@ export function ProposalPage({ token, dict, locale }: { token: string; dict: Par
       const res = await fetch(`${url}/accept`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "omit",
+        credentials: "same-origin",
         body: JSON.stringify({ full_name: name, accept_terms: agree, price_hash: page.price_hash, terms_doc_id: page.terms?.doc_id ?? null }),
       });
       const body = (await res.json().catch(() => ({}))) as { detail?: string };
@@ -77,7 +82,10 @@ export function ProposalPage({ token, dict, locale }: { token: string; dict: Par
       </p>
     );
   }
-  const { page } = load;
+  if (isBuilderPage(load.page)) {
+    return <ClientBuilderProposal key={`${load.page.version}:${load.page.status}`} initial={load.page} dict={dict} locale={locale} />;
+  }
+  const page: PublicProposal = load.page;
   const accepted = page.status === "accepted";
   return (
     <div data-testid="client-proposal" data-status={page.status} style={{ display: "grid", gap: 14 }}>
