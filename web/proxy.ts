@@ -15,7 +15,7 @@
 // browser cannot forge them.
 
 import { NextResponse, type NextRequest } from "next/server";
-import { config as webConfig } from "./lib/config";
+import { config as webConfig, forHost } from "./lib/config";
 import { classifyHost, clientPathAllowed, isPublicPartnerPath, type HostKind } from "./lib/hosts";
 import { formKey, frameAncestors, loadForm, viewerKey } from "./lib/intakeForms";
 import { accessValid, readSession } from "./lib/session";
@@ -58,7 +58,8 @@ export function gate(request: NextRequest): NextResponse {
   const { pathname, search } = request.nextUrl;
   if (pathname === "/healthz") return pass(request, "unknown");
 
-  const cfg = webConfig();
+  // AA-979 P2b: the public origin of THIS host (partner-dev. or portal.), so the refresh redirect stays on it.
+  const cfg = forHost(webConfig(), request.headers.get("host"));
   const kind = classifyHost(request.headers.get("host"), cfg);
   if (kind === "unknown") return notFound();
   const ancestors = formKey(pathname) ? "'self'" : undefined;

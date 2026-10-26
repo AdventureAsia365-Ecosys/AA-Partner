@@ -4,7 +4,7 @@
 import type { NextRequest } from "next/server";
 import { directoryHref, SEARCH_MAX } from "@/lib/clients";
 import { searchCookie } from "@/lib/clientSearch";
-import { config } from "@/lib/config";
+import { requestConfig } from "@/lib/config";
 import { redirectTo } from "@/lib/respond";
 import { readSession } from "@/lib/session";
 import { refuseForeignWrite } from "@/lib/writeGuard";
@@ -12,7 +12,7 @@ import { refuseForeignWrite } from "@/lib/writeGuard";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
-  const cfg = config();
+  const cfg = requestConfig(request);
   const refused = refuseForeignWrite(cfg, request);
   if (refused) return refused;
   const form = await request.formData();
@@ -34,5 +34,5 @@ export async function POST(request: NextRequest) {
 
 /** A GET here (e.g. after a session refresh replayed the URL) has no term: back to the directory. */
 export async function GET(request: NextRequest) {
-  return redirectTo(config(), "/clients", 303, request.nextUrl.origin);
+  return redirectTo(requestConfig(request), "/clients", 303, request.nextUrl.origin);
 }

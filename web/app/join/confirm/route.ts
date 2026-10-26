@@ -2,7 +2,7 @@
 // the session token's (iss, sub) (POST /crm/v1/invitations/accept with the sealed invitation token); on success both
 // invitation cookies are cleared and the session switches to the agency just joined.
 import type { NextRequest } from "next/server";
-import { config } from "@/lib/config";
+import { requestConfig } from "@/lib/config";
 import { crmCall } from "@/lib/crmApi";
 import { clearedInviteCookies, inviteCookieNames, joinError, openInvite } from "@/lib/invite";
 import { redirectTo, withCookies } from "@/lib/respond";
@@ -12,7 +12,7 @@ import { refuseForeignWrite } from "@/lib/writeGuard";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
-  const cfg = config();
+  const cfg = requestConfig(request);
   const refused = refuseForeignWrite(cfg, request);
   if (refused) return refused;
   const session = readSession(cfg, request.cookies);

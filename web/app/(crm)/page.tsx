@@ -12,7 +12,7 @@ export default async function HomePage() {
   const ctx = await crmContext();
   if (ctx.apiDown) return null;
   const { lang, locale } = ctx;
-  const studio = contentStudioHref(ctx.cfg.contentStudioUrl);
+  const studio = contentStudioHref(ctx.cfg.contentStudioUrl, ctx.cfg.publicOrigin);
   const steps: { key: MessageKey; done: boolean; href?: string | null }[] = [
     { key: "home.check.signin", done: true },
     { key: "home.check.agency", done: true },
