@@ -269,18 +269,22 @@ async def test_option_source_shapes(app_pool: asyncpg.Pool) -> None:
     b = await _builder(app_pool, ids)
     insert = (
         "INSERT INTO crm.option (proposal_id, trip_id, option_block_id, source, title, availability, "
-        "choose_later_allowed, aa_tour_source_id, aa_component_id, aa_component_kind) "
-        "VALUES ($1, $2, $3, $4, 'X', $5, $6, $7, $8, $9)"
+        "choose_later_allowed, aa_tour_source_id, aa_component_id, aa_component_kind, aa_nights) "
+        "VALUES ($1, $2, $3, $4, 'X', $5, $6, $7, $8, $9, $10)"
     )
     base = (b["proposal"], ids["trip"], b["block"])
-    await _run(app_pool, ids["tenant"], insert, *base, "aa", "on_request", False, "T-1", "tp:1", "trip_plan")
-    await _run(app_pool, ids["tenant"], insert, *base, "agency", "agency", True, None, None, None)
+    await _run(app_pool, ids["tenant"], insert, *base, "aa", "on_request", False, "T-1", "tp:1", "trip_plan", None)
+    await _run(app_pool, ids["tenant"], insert, *base, "aa", "instant", False, "T-1", "hr:1", "hotel_room", 3)
+    await _run(app_pool, ids["tenant"], insert, *base, "agency", "agency", True, None, None, None, None)
     for bad in (
-        ("aa", "on_request", True, "T-1", "tp:1", "trip_plan"),  # choose later is for agency items only (Fix B9)
-        ("aa", "agency", False, "T-1", "tp:1", "trip_plan"),
-        ("aa", "instant", False, None, "tp:1", "trip_plan"),
-        ("agency", "instant", False, None, None, None),
-        ("agency", "agency", False, "T-1", None, None),
+        ("aa", "on_request", True, "T-1", "tp:1", "trip_plan", None),  # choose later: agency items only (Fix B9)
+        ("aa", "agency", False, "T-1", "tp:1", "trip_plan", None),
+        ("aa", "instant", False, None, "tp:1", "trip_plan", None),
+        ("aa", "instant", False, "T-1", "hr:1", "hotel_room", None),  # a hotel room is quoted for its nights
+        ("aa", "instant", False, "T-1", "hr:1", "hotel_room", 61),
+        ("agency", "instant", False, None, None, None, None),
+        ("agency", "agency", False, "T-1", None, None, None),
+        ("agency", "agency", False, None, None, None, 2),
     ):
         with pytest.raises(asyncpg.CheckViolationError):
             await _run(app_pool, ids["tenant"], insert, *base, *bad)
