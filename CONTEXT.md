@@ -691,22 +691,26 @@ migration crm-019; code in `app/proposals/` (`builder.py`, `rules.py` pure, `aa_
   sent version (CRM-21b writes them through `builder.record_pick`).
 - **Skeleton from Stage 1/2** (`POST /crm/v1/trips/{id}/builder`, every role): one day per date (or nights + 1), day 0,
   a Lodging block per night, the day zone from the destination, the rooms from the party (the agent edits them, Fix
-  B10), 30 % deposit; the lodging default follows the lead's Stage 2 accommodation tier. Or a working copy of an
+  B10), 30 % deposit; the lodging default follows the lead's Stage 2 accommodation tier until the agent picks a
+  default by hand (`option_block.default_pinned`: then no add / edit / delete moves it). Or a working copy of an
   earlier version (`from_proposal_id`). One builder draft per trip.
 - **Every write sends the `edit_seq` it read**: another value is 409 `version_conflict` (`reason: edited`). Publish of a
   working copy whose base version got client picks since the copy is 409 `version_conflict` (`reason:
   client_selected`, the picks listed) until the agent sends `acknowledge_selection_seq`; the picks then carry over
   (`carried`). A rule the defaults (or a pick) break is 422 `option_conflict` (card R).
 - **Publish vN** (`PROPOSAL_PUBLISH`, owner / agent): checks (a default per block, none sold out, rules hold, something
-  to charge, balance date, AA quotes valid), the amounts from the defaults (pay-on-arrival items listed, never charged),
+  to charge, a balance date exactly when a balance is left, AA quotes valid, every AA item priced), the amounts from the defaults (pay-on-arrival items listed, never charged),
   the price hash, status `published` (one per trip, the previous one superseded). The database keeps a published
   version's rows unchanged (CRM35) except an option's availability. Sending it (the C-03 link) is CRM-21b (AA-950):
   `sent_at` is set-once so a published version can still be sent.
 - **AA items**: the drawer searches the catalog cache and Booking's product look-up (AA-947 routes), then
   `POST .../blocks/{id}/aa-options` quotes live (`proposal_ref crm-proposal:<id>`, the version, `line_ref` = the
   option) between two transactions; net = b2b price, availability from the quote, sold out cannot be added, Booking
-  down = 503 and nothing stored; "Refresh AA prices" re-quotes. No hold, no AA line, no money row: those come after the
-  client accepts (CRM-21b).
+  down = 503 and nothing stored. A hotel room needs its nights (`option.aa_nights`, 422 `invalid_nights`). Without a
+  sell in the request the sell stays 0 (never the b2b price: the assistant reads the sell) and Publish waits for an
+  owner / agent to price it (`aa_item_unpriced`). "Refresh AA prices" re-quotes with the same nights, the oldest quote
+  first, 40 a run; an item left over is reported `refresh_limit` (`refresh.skipped`), an undated one
+  `day_has_no_date`. No hold, no AA line, no money row: those come after the client accepts (CRM-21b).
 - **Roles**: every role builds; sell / net / deposit share need `MONEY_FIELDS_EDIT`; net and margin are built only for
   owner / agent (and stripped by the serializer).
 - **Web**: `/pipeline/<trip>/proposal/<proposal>` (`components/proposals/BuilderPage.tsx`, the drawer
