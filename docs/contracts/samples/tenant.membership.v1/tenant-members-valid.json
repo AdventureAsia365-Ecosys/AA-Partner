@@ -2,10 +2,11 @@
   "contract": "tenant.membership.v1",
   "schema": "TenantMembers",
   "expect": "valid",
-  "why": "Membership keyed by (iss, sub) with the Content studio role only",
+  "why": "Membership keyed by (iss, sub) with the Content studio role only; a real agency (is_synthetic false, 1.2)",
   "payload": {
     "tenant_id": "0b9d6c7e-3f43-4c1e-9a52-6d0c3b8f1a01",
     "tenant_state": "active",
+    "is_synthetic": false,
     "members": [
       {
         "membership_id": "1e2d3c4b-5a69-4788-9a0b-1c2d3e4f5a6b",
