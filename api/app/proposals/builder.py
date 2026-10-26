@@ -395,7 +395,7 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
                 "nights": o["aa_nights"],
                 "unpriced": Decimal(o["sell_amount"]) == 0,
                 "quote_valid_until": _iso(o["aa_quote_valid_until"]),
-                "quote_expired": o["aa_quote_valid_until"] is not None and o["aa_quote_valid_until"] < now,
+                "quote_expired": _quote_expired(o, now),
                 "from_price": _amount(o["aa_from_price"]),
                 "below_from_price": o["below_from_price"],
                 "no_longer_offered": o["aa_served_state"] == "retired",
@@ -510,6 +510,18 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
     return out
 
 
+def _quote_expired(o: Any, now: dt.datetime) -> bool:
+    """An AA option whose quote ran out and must be refreshed before Publish. A sold-out option is left out: refresh
+    marks it sold out without a new quote, so its old quote stays expired for good; it can never be the default (a
+    sold-out default is ``default_sold_out``) and a client cannot pick it, so its price is never charged."""
+    return (
+        o["source"] == "aa"
+        and o["availability"] != "sold_out"
+        and o["aa_quote_valid_until"] is not None
+        and o["aa_quote_valid_until"] < now
+    )
+
+
 def _checks(row: Any, s: dict[str, Any], now: dt.datetime) -> dict[str, Any]:
     """What blocks Publish, and the warnings that never block (the "from" price, ADR 0005a decision 1)."""
     blocking: list[str] = []
@@ -526,8 +538,7 @@ def _checks(row: Any, s: dict[str, Any], now: dt.datetime) -> dict[str, Any]:
             blocking.append("default_sold_out")
     if _conflicts(s):
         blocking.append("option_conflict")
-    if any(o["source"] == "aa" and o["aa_quote_valid_until"] is not None and o["aa_quote_valid_until"] < now
-           for o in s["options"]):  # fmt: skip
+    if any(_quote_expired(o, now) for o in s["options"]):
         blocking.append("aa_prices_stale")
     if any(o["source"] == "aa" and Decimal(o["sell_amount"]) == 0 for o in s["options"]):
         # An AA item added without a sell (the assistant never sets one, §4.6): an owner / agent prices it first.

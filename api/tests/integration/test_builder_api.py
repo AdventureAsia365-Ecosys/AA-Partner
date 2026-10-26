@@ -400,6 +400,33 @@ async def test_a_hotel_room_is_re_quoted_for_its_nights(app_pool: asyncpg.Pool) 
     assert failed == [] and o["net_amount"] == "300.00" and o["sell_amount"] == "420.00"
 
 
+async def test_a_sold_out_aa_alternative_with_an_expired_quote_never_blocks_publish(app_pool: asyncpg.Pool) -> None:
+    """Review finding: refresh marks a sold-out AA item without a new quote, so its old quote expires for good. When
+    the item is not the default it is never charged (it cannot be the default or a client pick): Publish stays open
+    (no aa_prices_stale, no quote_expired flag), and the item still shows as sold out."""
+    s = await _setup(app_pool)
+    await _catalog_tour(app_pool)
+    fake = FakeBooking(b2b_price="900.00")
+    v = await _publishable(app_pool, s)
+    v = await _aa(app_pool, s, fake, v, sell_amount=Decimal("1500"))
+    aa = next(o for o in _block(v, 1)["options"] if o["source"] == "aa")
+    assert not aa["is_default"]
+    fake.availability = "sold_out"
+    plans = await _as_plain(app_pool, s, builder.aa_refresh_plan, _pid(v), v["edit_seq"])
+    answers, failed = await aa_options.refresh(booking_client(fake), s["tenant"], plans)
+    v = await _as(app_pool, s, "agent", builder.apply_refresh, _pid(v), v["edit_seq"], answers)
+    assert failed == []
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:  # the old quote runs out
+        await ctx.conn.execute("UPDATE crm.option SET aa_quote_valid_until = now() - interval '1 hour' "
+                               "WHERE option_id = $1", uuid.UUID(aa["option_id"]))  # fmt: skip
+    v = await _as(app_pool, s, "agent", builder.view, _pid(v))
+    aa = next(o for o in _block(v, 1)["options"] if o["source"] == "aa")
+    assert aa["availability"] == "sold_out" and not aa["aa"]["quote_expired"]
+    assert v["checks"]["publishable"] and "aa_prices_stale" not in v["checks"]["blocking"]
+    out = await _as(app_pool, s, "agent", builder.publish, _pid(v), v["edit_seq"], acknowledge_selection_seq=None)
+    assert out["status"] == "published"
+
+
 async def test_a_full_deposit_with_a_balance_date_is_a_check_not_a_500(app_pool: asyncpg.Pool) -> None:
     s = await _setup(app_pool)
     v = await _publishable(app_pool, s)  # has a balance date

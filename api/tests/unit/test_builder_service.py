@@ -176,6 +176,22 @@ async def test_checks_list_what_blocks_publish() -> None:
     assert err.value.extra["blocking"] == ["balance_due_on_not_needed"]
 
 
+async def test_a_sold_out_aa_alternative_with_an_expired_quote_does_not_block_publish() -> None:
+    """Refresh marks a sold-out AA item without a new quote, so its old quote stays expired; a non-default one is
+    never charged, so it neither blocks Publish (aa_prices_stale) nor shows as an expired quote. A live expired one
+    still blocks."""
+    options = _options()  # O2: the AA alternative in block 1 (O1 is the default)
+    options[1].update(availability="sold_out", aa_quote_valid_until=NOW - dt.timedelta(hours=1))
+    v = await _run(builder.view, P, conn=_conn(options=options), role="owner")
+    aa = v["days"][1]["blocks"][0]["options"][1]
+    assert aa["availability"] == "sold_out" and not aa["aa"]["quote_expired"]
+    assert v["checks"] == {"publishable": True, "blocking": [], "warnings": []}
+    options[1]["availability"] = "instant"
+    live = await _run(builder.view, P, conn=_conn(options=options), role="owner")
+    assert live["days"][1]["blocks"][0]["options"][1]["aa"]["quote_expired"]
+    assert live["checks"]["blocking"] == ["aa_prices_stale"]
+
+
 async def test_an_aa_item_without_a_sell_never_shows_its_b2b_price() -> None:
     """Design §4.6: an AA item added without a sell (the assistant cannot send one) keeps sell 0, so nothing she reads
     carries the b2b price; Publish waits for an owner / agent to price it (aa_item_unpriced)."""
