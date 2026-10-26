@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { CenteredCard, linkButton } from "@/components/CenteredCard";
 import { EmptyState, ErrorState, K } from "@/app/_kit";
 import { fetchMemberships, lockedNotice } from "@/lib/crmApi";
+import { CONTENT_STUDIO_PATH, contentStudioHref } from "@/lib/nav";
 import { safeNext, withRefreshMarker } from "@/lib/hosts";
 import { t, type MessageKey } from "@/lib/i18n";
 import { serverContext } from "@/lib/serverContext";
@@ -44,6 +45,10 @@ export default async function SelectAgencyPage({
     </form>
   );
   if (found.data.length === 0) {
+    // AA-979 P2b: a person with no CRM agency may be a Content-studio-only member. On the agency host (the studio is
+    // same-origin) go straight to it: the studio decides access from CIS memberships and says so when there is none.
+    const studio = contentStudioHref(cfg.contentStudioUrl, cfg.publicOrigin);
+    if (studio === CONTENT_STUDIO_PATH) redirect(CONTENT_STUDIO_PATH);
     return (
       <CenteredCard testId="crm-select-agency">
         <EmptyState title={t(lang, "select.none")} description={t(lang, "select.noneHelp")} action={signOut} />

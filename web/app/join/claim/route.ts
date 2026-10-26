@@ -3,7 +3,7 @@
 // one-time temporary password, is kept only in a sealed 15-minute cookie on /join (lib/invite.ts) and shown by
 // /join/invite; never in a URL or a log line.
 import type { NextRequest } from "next/server";
-import { config } from "@/lib/config";
+import { requestConfig } from "@/lib/config";
 import { claimCookie, claimInvitation, inviteCookieNames, joinError, openInvite } from "@/lib/invite";
 import { redirectTo, withCookies } from "@/lib/respond";
 import { refuseForeignWrite } from "@/lib/writeGuard";
@@ -11,7 +11,7 @@ import { refuseForeignWrite } from "@/lib/writeGuard";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
-  const cfg = config();
+  const cfg = requestConfig(request);
   const refused = refuseForeignWrite(cfg, request);
   if (refused) return refused;
   const token = openInvite(cfg, request.cookies.get(inviteCookieNames(cfg).token)?.value);

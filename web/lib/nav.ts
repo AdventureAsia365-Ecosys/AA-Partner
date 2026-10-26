@@ -89,7 +89,15 @@ export function activeSection(pathname: string): Section | null {
   return sectionByKey(first);
 }
 
-/** The Content studio link (cross-link, design v3 Fix C10): the portal host's dashboard, or null when not set. */
-export function contentStudioHref(contentStudioUrl: string): string | null {
-  return contentStudioUrl ? `${contentStudioUrl}/portal/dashboard` : null;
+export const CONTENT_STUDIO_PATH = "/portal/dashboard";
+
+/**
+ * The Content studio link (cross-link, design v3 Fix C10): the portal host's dashboard, or null when not set.
+ * AA-979 P2b: on the agency host itself (`publicOrigin` = CONTENT_STUDIO_URL's origin) it is the same-origin path, one
+ * host and one sign-in; from partner-dev. it stays the absolute portal. URL.
+ */
+export function contentStudioHref(contentStudioUrl: string, publicOrigin = ""): string | null {
+  if (!contentStudioUrl) return null;
+  if (publicOrigin && new URL(contentStudioUrl).origin === publicOrigin) return CONTENT_STUDIO_PATH;
+  return `${contentStudioUrl}${CONTENT_STUDIO_PATH}`;
 }

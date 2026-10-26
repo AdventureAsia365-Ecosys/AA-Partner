@@ -195,7 +195,8 @@ describe("sign-out, locale, healthz", () => {
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toContain("https://auth.example.test/logout");
     expect(revoke).toHaveBeenCalledTimes(1);
-    expect(res.headers.getSetCookie().filter((c) => /Max-Age=0/i.test(c)).length).toBe(3);
+    // AA-979 P2b: 3 CRM web cookies + the 5 cis_* Content studio cookies.
+    expect(res.headers.getSetCookie().filter((c) => /Max-Age=0/i.test(c)).length).toBe(8);
   });
 
   it("stores a valid locale and refuses others", async () => {
