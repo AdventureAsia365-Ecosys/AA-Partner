@@ -77,5 +77,6 @@ re-send a real tenant's invitation (an owner one included) to the E2E mailbox an
 - The A10b detection relies on the WORKFORCE pre token trigger putting `email` into access tokens (it does on
   AA-CIS-Infra main). A token without the claim would be treated as a normal `cis-admin`.
 - Contract text changes (crm.ops.v1: the relay is no longer "any OPS caller" for A10b; new 403 / 503 codes):
-  root worktree `root-ops-invite-guard`, a local commit, no version bump (no shape change, new error codes only).
+  root worktree `root-ops-invite-guard` (branch `docs/crm-ops-studio-invite-a10b-guard`), a local commit, no version bump
+  (no shape change, new error codes only); the root contracts checker passes.
 - No migration, no Infra change, no new secret or scope.
