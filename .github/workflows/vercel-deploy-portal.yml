@@ -66,7 +66,8 @@ env:
 jobs:
   deploy:
     name: Vercel deploy (portal)
-    runs-on: ubuntu-latest
+    # Pinned (S252, 26/10/2026): ubuntu-latest moved to 26.04 and Playwright does not support Chromium there yet.
+    runs-on: ubuntu-24.04
     # PRs from forks get no secrets: never try to deploy them. Neither do runs Dependabot triggers (`github.actor` is
     # dependabot[bot] on its PR events and their re-runs), so the job shows as skipped instead of red. A push to main
     # or a dispatch always deploys, so a production deploy that cannot run still fails red.
