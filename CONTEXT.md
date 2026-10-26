@@ -678,6 +678,41 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
   `e2e/tests/aa-lines.spec.ts` (needs the AA-973 seed tour in `E2ECRMAATOUR`, a Booking partner row for the synthetic
   agency and a per-person price hint on the seed plan; card E stays in the integration tests).
 
+## CRM-21a proposal model + day-list builder (AA-949)
+
+Design v3 §6.3 CRM-21a (M3 agent side, spec rule 5, §11.2 concurrent edits, R33, R38 slot; Fix B10, E1, A5 / D1);
+migration crm-019; code in `app/proposals/` (`builder.py`, `rules.py` pure, `aa_options.py` the live quote), routes in
+`app/routers/builder.py`; decisions in `docs/implementation-notes/AA-949.md`.
+
+- **A builder version is a `crm.proposal` row with `kind = builder`** (AA-946's text versions are `kind = text`); its
+  days (`proposal_day`, day 0 = "Before you go", IANA `tz` per day), option blocks (`option_block`, default option,
+  "client may swap" on by default), options (`option`: agency items, or AA items priced by a live Booking quote) and
+  rules (`option_rule`, requires / excludes: the Advanced section). Picks (`selection`) exist only on a published or
+  sent version (CRM-21b writes them through `builder.record_pick`).
+- **Skeleton from Stage 1/2** (`POST /crm/v1/trips/{id}/builder`, every role): one day per date (or nights + 1), day 0,
+  a Lodging block per night, the day zone from the destination, the rooms from the party (the agent edits them, Fix
+  B10), 30 % deposit; the lodging default follows the lead's Stage 2 accommodation tier. Or a working copy of an
+  earlier version (`from_proposal_id`). One builder draft per trip.
+- **Every write sends the `edit_seq` it read**: another value is 409 `version_conflict` (`reason: edited`). Publish of a
+  working copy whose base version got client picks since the copy is 409 `version_conflict` (`reason:
+  client_selected`, the picks listed) until the agent sends `acknowledge_selection_seq`; the picks then carry over
+  (`carried`). A rule the defaults (or a pick) break is 422 `option_conflict` (card R).
+- **Publish vN** (`PROPOSAL_PUBLISH`, owner / agent): checks (a default per block, none sold out, rules hold, something
+  to charge, balance date, AA quotes valid), the amounts from the defaults (pay-on-arrival items listed, never charged),
+  the price hash, status `published` (one per trip, the previous one superseded). The database keeps a published
+  version's rows unchanged (CRM35) except an option's availability. Sending it (the C-03 link) is CRM-21b (AA-950):
+  `sent_at` is set-once so a published version can still be sent.
+- **AA items**: the drawer searches the catalog cache and Booking's product look-up (AA-947 routes), then
+  `POST .../blocks/{id}/aa-options` quotes live (`proposal_ref crm-proposal:<id>`, the version, `line_ref` = the
+  option) between two transactions; net = b2b price, availability from the quote, sold out cannot be added, Booking
+  down = 503 and nothing stored; "Refresh AA prices" re-quotes. No hold, no AA line, no money row: those come after the
+  client accepts (CRM-21b).
+- **Roles**: every role builds; sell / net / deposit share need `MONEY_FIELDS_EDIT`; net and margin are built only for
+  owner / agent (and stripped by the serializer).
+- **Web**: `/pipeline/<trip>/proposal/<proposal>` (`components/proposals/BuilderPage.tsx`, the drawer
+  `BuilderAaDrawer.tsx`, helpers `lib/builder.ts`), started from the trip's Proposal tab (section "Day-by-day proposal");
+  BFF lines card AA-949; EN + VI. Dev E2E: `e2e/tests/proposal-builder.spec.ts`.
+
 ## F1 / F2 complete (AA-937, CRM-09)
 
 - **Reveal** (`app/travellers/reveal.py`): `reveal(ctx, vault, traveler_id, field, reason)` is the only agency path to
