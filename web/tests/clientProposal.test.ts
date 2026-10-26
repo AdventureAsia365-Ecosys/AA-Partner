@@ -138,6 +138,8 @@ describe("the pure helpers", () => {
 
   it("refusal codes, notice lines, the bell line and the page kind", () => {
     expect(interactiveErrorKey("recheck_limit")).toBe("client.proposalError.recheck_limit");
+    expect(interactiveErrorKey("hold_in_progress")).toBe("client.proposalError.hold_in_progress");
+    expect(interactiveErrorKey("option_conflict")).toBe("client.proposalError.option_conflict");
     expect(interactiveErrorKey("link_not_found")).toBeNull();
     expect(noticeLine({ kind: "days", from: 5, to: 6 })).toEqual({ key: "client.notice.days", vars: { from: 5, to: 6 } });
     expect(noticeLine({ kind: "added", title: "X" }).key).toBe("client.notice.added");

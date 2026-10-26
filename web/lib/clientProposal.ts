@@ -131,6 +131,7 @@ const HOLD_CODES = new Set([
   "option_sold_out",
   "recheck_limit",
   "hold_unavailable",
+  "hold_in_progress",
   "booking_unavailable",
   "hold_required",
   "hold_expired",
