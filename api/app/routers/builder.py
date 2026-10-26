@@ -24,7 +24,8 @@ Route                                              What                         
 ``DELETE /proposals/{id}/options/{option}``        delete an item (its rules go too)              every role
 ``POST   /proposals/{id}/rules``                   add a requires / excludes rule (Advanced)      every role
 ``DELETE /proposals/{id}/rules/{rule}``            delete a rule                                  every role
-``POST   /proposals/{id}/aa-refresh``              quote every AA item again (live)               every role
+``POST   /proposals/{id}/aa-refresh``              quote the AA items again (live, oldest first,  every role
+                                                   40 a run; the rest reported ``refresh_limit``)
 ``POST   /proposals/{id}/publish``                 publish vN                                     owner, agent
 =================================================  =============================================  =====================
 
@@ -147,7 +148,7 @@ class AaOptionIn(_Body):
     component_id: str = Field(pattern=r"^[A-Za-z0-9:_.-]{1,64}$")
     component_kind: ComponentKind
     departure_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9:_.-]{1,64}$")
-    nights: int | None = Field(default=None, ge=1, le=60)
+    nights: int | None = Field(default=None, ge=1, le=60)  # required for a hotel_room (422 invalid_nights)
     tier: Tier | None = None
     sell_amount: Money | None = None
 
@@ -182,7 +183,7 @@ class PublishIn(_Body):
 def _money_check(ctx: TenantContext, body: BaseModel, names: tuple[str, ...], object_id: uuid.UUID) -> None:
     """Sell, net and the deposit share are money fields: the assistant prepares drafts without them (§4.6)."""
     given = body.model_dump(exclude_unset=True)
-    if any(given.get(n) is not None for n in names):
+    if any(n in given for n in names):  # an explicit null clears the field: a money edit too
         require(ctx, Action.MONEY_FIELDS_EDIT, object_kind="proposal", object_id=str(object_id))
 
 
@@ -394,7 +395,8 @@ async def post_aa_refresh(
     answers, failed = await aa_options.refresh(client, tenant_id, plans)
     async with tenant_tx(pool, caller, tenant_id, action=Action.PROPOSAL_DRAFT) as ctx:
         out = await builder.apply_refresh(ctx, Vault(keys, ctx), proposal_id, body.seq, answers)
-    return {**out, "refresh": {"quoted": len(answers), "failed": failed}}
+    skipped = sum(1 for f in failed if f["code"] == "refresh_limit")
+    return {**out, "refresh": {"quoted": len(answers), "failed": failed, "skipped": skipped}}
 
 
 @router.post("/proposals/{proposal_id}/publish")

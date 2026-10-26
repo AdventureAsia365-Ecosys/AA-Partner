@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import uuid
 from decimal import Decimal
 from typing import Any
@@ -346,6 +347,94 @@ async def test_aa_items_come_from_a_live_quote(app_pool: asyncpg.Pool) -> None:
         await _as(app_pool, s, "agent", builder.update_option, _pid(v), v["edit_seq"], uuid.UUID(o["option_id"]),
                   {"net_amount": Decimal("1")})  # fmt: skip
     assert getattr(typed.value, "code", "") == "aa_net_from_quote"
+
+
+async def _catalog_tour(pool: asyncpg.Pool) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO crm.aa_catalog_tour (source_id, title, country_code, duration_days, served_state) "
+            "VALUES ('T-949', 'Everest view 3 days', 'NP', 3, 'served') "
+            "ON CONFLICT (source_system, source_id) DO UPDATE SET served_state = 'served'"
+        )
+
+
+async def test_an_aa_item_added_without_a_sell_never_shows_the_b2b_price(app_pool: asyncpg.Pool) -> None:
+    """Design §4.6: the assistant adds AA items (no sell: she may not send one), and nothing she reads carries the
+    b2b price (conf:commercial); Publish waits until an owner / agent prices the item (aa_item_unpriced)."""
+    s = await _setup(app_pool)
+    await _catalog_tour(app_pool)
+    fake = FakeBooking(b2b_price="987.65")
+    v = await _create(app_pool, s)
+    v = await _aa(app_pool, s, fake, v, role="assistant")
+    seen = await _as(app_pool, s, "assistant", builder.view, _pid(v))
+    o = _block(seen, 1)["options"][0]
+    assert o["sell_amount"] == "0.00" and o["aa"]["unpriced"] and seen["totals"]["sell_total"] == "0.00"
+    assert "987.65" not in json.dumps(v) and "987.65" not in json.dumps(seen)
+    assert "aa_item_unpriced" in seen["checks"]["blocking"]
+    # The owner sees the net, prices the item, and the check clears.
+    owner = await _as(app_pool, s, "owner", builder.view, _pid(v))
+    assert _block(owner, 1)["options"][0]["net_amount"] == "987.65"
+    v = await _as(app_pool, s, "owner", builder.update_option, _pid(v), owner["edit_seq"], uuid.UUID(o["option_id"]),
+                  {"sell_amount": Decimal("1400")})  # fmt: skip
+    assert "aa_item_unpriced" not in v["checks"]["blocking"]
+
+
+async def test_a_hotel_room_is_re_quoted_for_its_nights(app_pool: asyncpg.Pool) -> None:
+    """Refresh AA prices sends the nights an item was quoted for: a 3-night room keeps a 3-night net (Booking prices
+    per night here), and a hotel room without nights is refused as in AA-947 (invalid_nights)."""
+    s = await _setup(app_pool)
+    await _catalog_tour(app_pool)
+    fake = FakeBooking(b2b_price="100.00", per_night=True)
+    v = await _create(app_pool, s)
+    with pytest.raises(Invalid) as err:
+        await _aa(app_pool, s, fake, v, component_id="hr:1", component_kind="hotel_room")
+    assert err.value.code == "invalid_nights" and fake.calls["POST quotes"] == 0
+    v = await _aa(app_pool, s, fake, v, component_id="hr:1", component_kind="hotel_room", nights=3,
+                  sell_amount=Decimal("420"))  # fmt: skip
+    o = _block(v, 1)["options"][0]
+    assert o["net_amount"] == "300.00" and o["aa"]["nights"] == 3
+    plans = await _as_plain(app_pool, s, builder.aa_refresh_plan, _pid(v), v["edit_seq"])
+    answers, failed = await aa_options.refresh(booking_client(fake), s["tenant"], plans)
+    v = await _as(app_pool, s, "agent", builder.apply_refresh, _pid(v), v["edit_seq"], answers)
+    o = _block(v, 1)["options"][0]
+    assert failed == [] and o["net_amount"] == "300.00" and o["sell_amount"] == "420.00"
+
+
+async def test_a_full_deposit_with_a_balance_date_is_a_check_not_a_500(app_pool: asyncpg.Pool) -> None:
+    s = await _setup(app_pool)
+    v = await _publishable(app_pool, s)  # has a balance date
+    v = await _as(app_pool, s, "agent", builder.update_settings, _pid(v), v["edit_seq"],
+                  {"deposit_pct": Decimal("100")})  # fmt: skip
+    assert v["checks"]["blocking"] == ["balance_due_on_not_needed"]
+    with pytest.raises(Invalid) as err:
+        await _as(app_pool, s, "agent", builder.publish, _pid(v), v["edit_seq"], acknowledge_selection_seq=None)
+    assert err.value.code == "not_publishable" and err.value.extra["blocking"] == ["balance_due_on_not_needed"]
+    v = await _as(app_pool, s, "agent", builder.update_settings, _pid(v), v["edit_seq"], {"balance_due_on": None})
+    out = await _as(app_pool, s, "agent", builder.publish, _pid(v), v["edit_seq"], acknowledge_selection_seq=None)
+    assert out["status"] == "published" and out["totals"]["deposit"] == out["totals"]["sell_total"] == "1000.00"
+
+
+async def test_rule_5_never_moves_a_default_the_agent_chose(app_pool: asyncpg.Pool) -> None:
+    s = await _setup(app_pool, tier="comfort")
+    v = await _create(app_pool, s)
+    block = _block(v, 1)
+    v = await _option(app_pool, s, v, block, title="Guesthouse", tier="comfort", sell_amount=Decimal("100"))
+    v = await _option(app_pool, s, v, block, title="Dwarika's", tier="premium", sell_amount=Decimal("400"))
+    assert [o["is_default"] for o in _block(v, 1)["options"]] == [True, False]  # rule 5: the comfort option
+    premium = _block(v, 1)["options"][1]["option_id"]
+    v = await _as(app_pool, s, "agent", builder.update_block, _pid(v), v["edit_seq"],
+                  uuid.UUID(block["option_block_id"]), {"default_option_id": uuid.UUID(premium)})  # fmt: skip
+    assert _block(v, 1)["default_pinned"] is True
+    # Adding, editing and deleting other options leaves the agent's choice alone.
+    v = await _option(app_pool, s, v, block, title="Comfort inn", tier="comfort", sell_amount=Decimal("120"))
+    third = _block(v, 1)["options"][2]["option_id"]
+    v = await _as(app_pool, s, "agent", builder.update_option, _pid(v), v["edit_seq"], uuid.UUID(third),
+                  {"tier": "comfort"})  # fmt: skip
+    v = await _as(app_pool, s, "agent", builder.delete_option, _pid(v), v["edit_seq"], uuid.UUID(third))
+    assert _block(v, 1)["default_option_id"] == premium and v["totals"]["sell_total"] == "400.00"
+    # Deleting the chosen default hands the block back to rule 5.
+    v = await _as(app_pool, s, "agent", builder.delete_option, _pid(v), v["edit_seq"], uuid.UUID(premium))
+    assert _block(v, 1)["options"][0]["is_default"] and _block(v, 1)["default_pinned"] is False
 
 
 async def _as_plain(pool: asyncpg.Pool, s: dict[str, Any], fn: Any, *args: Any) -> Any:

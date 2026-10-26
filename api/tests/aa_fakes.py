@@ -43,6 +43,7 @@ class FakeBooking:
     currency_rate: str = "1"
     from_price: str | None = "800.00"
     availability: str = "available"
+    per_night: bool = False  # b2b_price is a night's price: a quote line costs it times its nights (1 when absent)
     hold_refusal: str | None = None
     confirm_line_status: str = "on_request"
     calls: Counter[str] = field(default_factory=Counter)
@@ -82,6 +83,9 @@ class FakeBooking:
         if method == "POST" and path == "/quotes":
             self.quotes += 1
             line = data["lines"][0]
+            price = self.b2b_price
+            if self.per_night:
+                price = str(Decimal(self.b2b_price) * int(line.get("nights") or 1))
             return _resp(201, {
                 "quote_id": f"q{self.quotes}",
                 "currency": data["currency"],
@@ -89,10 +93,9 @@ class FakeBooking:
                        "rate_date": "2026-10-25", "source": "test"},
                 "valid_until": "2026-10-27T00:00:00+00:00",
                 "price_hash": HASH[:-1] + str(self.quotes % 10),
-                "lines": [{"line_ref": line["line_ref"], "b2b_price": {"amount": self.b2b_price,
-                                                                      "currency": data["currency"]},
+                "lines": [{"line_ref": line["line_ref"], "b2b_price": {"amount": price, "currency": data["currency"]},
                            "unit": "per_line", "availability": self.availability, "departure_id": None}],
-                "total_b2b_price": {"amount": self.b2b_price, "currency": data["currency"]},
+                "total_b2b_price": {"amount": price, "currency": data["currency"]},
                 "x_future_field": True,
             })  # fmt: skip
         if method == "GET" and path == "/price-parity":

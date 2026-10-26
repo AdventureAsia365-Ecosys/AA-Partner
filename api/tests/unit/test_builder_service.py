@@ -6,6 +6,7 @@ end-to-end flows run on PostgreSQL in tests/integration/test_builder_api.py and 
 from __future__ import annotations
 
 import datetime as dt
+import json
 import uuid
 from decimal import Decimal
 from typing import Any
@@ -59,9 +60,9 @@ def _days() -> list[dict[str, Any]]:
 def _blocks(default1: uuid.UUID | None = O1, swap2: bool = True) -> list[dict[str, Any]]:
     return [
         {"option_block_id": B1, "proposal_day_id": D1, "sort_order": 0, "title": "Lodging", "type": "lodging",
-         "client_may_swap": True, "default_option_id": default1, "source_block_id": None},
+         "client_may_swap": True, "default_option_id": default1, "default_pinned": False, "source_block_id": None},
         {"option_block_id": B2, "proposal_day_id": D2, "sort_order": 0, "title": "Activity", "type": "activity",
-         "client_may_swap": swap2, "default_option_id": O3, "source_block_id": None},
+         "client_may_swap": swap2, "default_option_id": O3, "default_pinned": False, "source_block_id": None},
     ]  # fmt: skip
 
 
@@ -71,7 +72,8 @@ def _opt(oid: uuid.UUID, block: uuid.UUID, title: str, sell: str, **over: Any) -
         "tier": None, "agency_supplier_id": None, "sell_amount": Decimal(sell), "net_amount": Decimal(sell) / 2,
         "pay_on_arrival": False, "choose_later_allowed": False, "availability": "agency",
         "availability_checked_at": None, "aa_tour_source_id": None, "aa_component_id": None,
-        "aa_component_kind": None, "aa_departure_id": None, "aa_quote_id": None, "aa_quote_valid_until": None,
+        "aa_component_kind": None, "aa_departure_id": None, "aa_nights": None, "aa_quote_id": None,
+        "aa_quote_valid_until": None,
         "aa_from_price": None, "below_from_price": None, "source_option_id": None, "aa_served_state": None,
     }  # fmt: skip
     row.update(over)
@@ -162,6 +164,30 @@ async def test_checks_list_what_blocks_publish() -> None:
     assert v["checks"]["warnings"] == ["aa_no_longer_offered", "below_from_price", "net_missing"]
     empty = await _run(builder.view, P, conn=_conn(options=[], blocks=[]))
     assert empty["checks"]["blocking"] == ["no_options", "nothing_to_charge"]
+    # The deposit covers the total (100 %): a balance date would break proposal_amounts_chk at publish (no 500).
+    full = await _run(builder.view, P, conn=_conn(proposal=_proposal(deposit_pct=Decimal("100"))))
+    assert full["checks"]["blocking"] == ["balance_due_on_not_needed"]
+    none_left = await _run(builder.view, P, conn=_conn(proposal=_proposal(deposit_pct=Decimal("100"),
+                                                                           balance_due_on=None)))  # fmt: skip
+    assert none_left["checks"]["publishable"]
+    with pytest.raises(Invalid) as err:
+        await _run(builder.publish, P, 5, acknowledge_selection_seq=None,
+                   conn=_conn(proposal=_proposal(deposit_pct=Decimal("100"))))  # fmt: skip
+    assert err.value.extra["blocking"] == ["balance_due_on_not_needed"]
+
+
+async def test_an_aa_item_without_a_sell_never_shows_its_b2b_price() -> None:
+    """Design §4.6: an AA item added without a sell (the assistant cannot send one) keeps sell 0, so nothing she reads
+    carries the b2b price; Publish waits for an owner / agent to price it (aa_item_unpriced)."""
+    options = _options()
+    options[1].update(sell_amount=Decimal("0"), net_amount=Decimal("987.65"), below_from_price=None)
+    for role in ("assistant", "owner"):
+        v = await _run(builder.view, P, conn=_conn(options=options), role=role)
+        aa_item = v["days"][1]["blocks"][0]["options"][1]
+        assert aa_item["aa"]["unpriced"] and aa_item["sell_amount"] == "0.00"
+        assert v["checks"]["blocking"] == ["aa_item_unpriced"]
+        if role == "assistant":
+            assert "987.65" not in json.dumps(v) and "net_amount" not in aa_item
 
 
 async def test_create_a_skeleton_or_a_copy() -> None:
@@ -218,6 +244,8 @@ async def test_settings() -> None:
     args = conn.sql("UPDATE crm.proposal SET price_visibility")[0]
     assert args[1] == "total_only" and args[3] == Decimal("50") and b"Hi" in args[7]
     for change, code in (({"price_visibility": "per_line"}, "invalid_price_visibility"),
+                         ({"deposit_pct": None}, "invalid_deposit_pct"),
+                         ({"room_config": None}, "invalid_room_config"),
                          ({"room_config": [{"type": "suite", "adults": 1}]}, "invalid_room_config"),
                          ({"deposit_pct": Decimal("0")}, "invalid_deposit_pct"),
                          ({"intro": "x" * 20_001}, "body_too_long")):  # fmt: skip
@@ -278,7 +306,7 @@ async def test_blocks() -> None:
     conn = _conn()
     await _run(builder.update_block, P, 5, B1, {"default_option_id": O2, "client_may_swap": False, "title": "Stay",
                                                "type": "lodging", "sort_order": 3}, conn=conn)  # fmt: skip
-    assert conn.sql("UPDATE crm.option_block SET title")[0] == (B1, "Stay", "lodging", False, O2, 3)
+    assert conn.sql("UPDATE crm.option_block SET title")[0] == (B1, "Stay", "lodging", False, O2, 3, True)  # pinned
     with pytest.raises(Invalid) as err:
         await _run(builder.update_block, P, 5, B1, {"default_option_id": O3})
     assert err.value.code == "invalid_default_option"
@@ -304,7 +332,7 @@ async def test_options() -> None:
                                                                                 "kind": "agency"})  # fmt: skip
     await _run(builder.add_agency_option, P, 5, B1, {"title": "Camp", "sell_amount": Decimal("1.50"),
                "agency_supplier_id": BASE, "tier": "budget"}, conn=conn)  # fmt: skip
-    assert conn.sql("SET default_option_id = $2")[0] == (B1, O1)  # rule 5 fallback: the first open option
+    assert conn.sql("SET default_option_id = $2")[0] == (B1, O1, False)  # rule 5 fallback: the first open option
     with pytest.raises(Invalid):
         await _run(builder.add_agency_option, P, 5, B1, {"title": "Camp", "tier": "gold"})
     with pytest.raises(Invalid):
@@ -329,8 +357,35 @@ async def test_options() -> None:
     with pytest.raises(NotFound):
         await _run(builder.update_option, P, 5, uuid.uuid4(), {})
     conn = _conn()
+    await _run(builder.update_option, P, 5, O1, {"pay_on_arrival": None, "choose_later_allowed": None}, conn=conn)
+    assert conn.sql("UPDATE crm.option SET title")[0][6:8] == (False, False)  # null keeps the current value
+    conn = _conn()
     await _run(builder.delete_option, P, 5, O1, conn=conn)
     assert conn.sql("DELETE FROM crm.option WHERE option_id")[0] == (O1,)
+    assert any("default_pinned = false" in flat for flat, _ in conn.calls if "SET default_option_id = NULL" in flat)
+
+
+async def test_rule_5_never_moves_a_default_the_agent_chose(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Stage 2 tier (comfort here) sets a lodging default only until the agent picks one by hand."""
+    monkeypatch.setattr(builder, "_tier", _tier_of("comfort"))
+    o9 = uuid.UUID(int=9)
+    extra = _opt(o9, B1, "Guesthouse", "150", tier="comfort")
+    for pinned, moved in ((False, True), (True, False)):
+        blocks = _blocks(default1=O2)  # the premium AA lodge is the default
+        blocks[0]["default_pinned"] = pinned
+        options = [_opt(O2, B1, "Lodge", "300", tier="premium"), extra, _opt(O3, B2, "Rafting", "100")]
+        conn = _conn(blocks=blocks, options=options)
+        await _run(builder.add_agency_option, P, 5, B1, {"title": "Camp", "tier": "budget"}, conn=conn)
+        assert bool(conn.sql("SET default_option_id = $2, default_pinned")) is moved
+        if moved:
+            assert conn.sql("SET default_option_id = $2, default_pinned")[0] == (B1, o9, False)
+
+
+def _tier_of(value: str | None) -> Any:
+    async def tier(*_args: Any) -> str | None:
+        return value
+
+    return tier
 
 
 async def test_aa_items() -> None:
@@ -347,17 +402,42 @@ async def test_aa_items() -> None:
     with pytest.raises(Invalid):
         await builder.aa_plan(tenant_ctx(_conn(proposal=_proposal(starts_on=None)).on(
             "SELECT source_id, title, country_code", tour)), P, 5, B1, {"tour_source_id": "T-1"})  # fmt: skip
+    with pytest.raises(Invalid) as err:  # a hotel room is quoted for its nights (as AA-947 aa_lines)
+        await builder.aa_plan(tenant_ctx(_conn().on("SELECT source_id, title, country_code", tour)), P, 5, B1,
+                              {"tour_source_id": "T-1", "component_id": "hr:1",
+                               "component_kind": "hotel_room"})  # fmt: skip
+    assert err.value.code == "invalid_nights"
     quote = AaQuote("q9", Decimal("120"), "on_request", NOW, Decimal("100"))
     conn = _conn()
     await _run(builder.add_aa_option, plan, quote, {"sell_amount": None}, conn=conn)
     row = conn.sql("INSERT INTO crm.option (")[0]
-    assert row[9] == Decimal("120.00") and row[10] == Decimal("120.00") and row[13] == "on_request"
-    assert row[22] is True  # 120 for two is 60 a person, below the 100 "from" price (a warning)
+    # No sell given: the sell stays 0, never the b2b price (the assistant reads the sell, §4.6); no warning yet.
+    assert row[9] == Decimal("0.00") and row[10] == Decimal("120.00") and row[13] == "on_request"
+    assert row[22] is None and row[24] is None  # below_from_price, aa_nights
+    conn = _conn()
+    await _run(builder.add_aa_option, plan, quote, {"sell_amount": Decimal("120")}, conn=conn)
+    row = conn.sql("INSERT INTO crm.option (")[0]
+    assert row[9] == Decimal("120") and row[22] is True  # 60 a person, below the 100 "from" price (a warning)
+    hotel = {**plan, "component_id": "hr:1", "component_kind": "hotel_room", "nights": 3}
+    conn = _conn()
+    await _run(builder.add_aa_option, hotel, quote, {"sell_amount": Decimal("500")}, conn=conn)
+    assert conn.sql("INSERT INTO crm.option (")[0][24] == 3  # the nights are kept for every re-quote
     with pytest.raises(Conflict) as err:
         await _run(builder.add_aa_option, plan, AaQuote("q9", Decimal("1"), "sold_out", NOW, None), {})
     assert err.value.code == "aa_sold_out"
     plans = await builder.aa_refresh_plan(tenant_ctx(_conn()), P, 5)
     assert [p["option_id"] for p in plans] == [str(O2)]
+    # The nights go out again, the oldest quote first, a day without a date is listed (refresh reports it).
+    o4, o5 = uuid.UUID(int=4), uuid.UUID(int=5)
+    aa = dict(source="aa", availability="instant", aa_tour_source_id="T-1", aa_component_kind="hotel_room",
+              aa_component_id="hr:1", aa_quote_id="q", aa_nights=3)  # fmt: skip
+    many = [*_options(), _opt(o4, B2, "Hotel A", "300", **aa, aa_quote_valid_until=NOW - dt.timedelta(days=2)),
+            _opt(o5, B2, "Hotel B", "300", **aa, aa_quote_valid_until=None)]  # fmt: skip
+    ordered = await builder.aa_refresh_plan(tenant_ctx(_conn(options=many)), P, 5)
+    assert [p["option_id"] for p in ordered] == [str(o5), str(o4), str(O2)]
+    assert ordered[1]["nights"] == 3 and ordered[2]["nights"] is None
+    undated = await builder.aa_refresh_plan(tenant_ctx(_conn(proposal=_proposal(starts_on=None))), P, 5)
+    assert undated[0]["service_date"] is None
     conn = _conn()
     await _run(builder.apply_refresh, P, 5, [(plans[0], AaQuote("q10", Decimal("130"), "available", NOW,
                                                                   Decimal("200"))),

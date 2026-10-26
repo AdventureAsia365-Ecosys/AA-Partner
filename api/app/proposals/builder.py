@@ -16,10 +16,11 @@ A builder version is a ``crm.proposal`` row with ``kind = builder``:
   409 ``version_conflict`` (two editors or two tabs, §11.2) and nothing is written. A rule set the defaults break is
   422 ``option_conflict`` (card R).
 - **Publish vN** (``PROPOSAL_PUBLISH``, owner / agent): checks (a default per block, none sold out, the rules hold,
-  something to charge, the balance date, AA quotes still valid), then — when the working copy came from a version
-  the client picked on since it was copied — 409 ``version_conflict`` with those picks until the agent acknowledges
-  them (card E, §11.2). Then the price hash is fixed, the amounts computed, the published v(N-1) superseded and the
-  client's picks carried over to the copied options (``carried``). Sending a published version is CRM-21b (AA-950).
+  something to charge, the balance date only when a balance is left, AA quotes still valid, every AA item priced),
+  then — when the working copy came from a version the client picked on since it was copied — 409
+  ``version_conflict`` with those picks until the agent acknowledges them (card E, §11.2). Then the price hash is
+  fixed, the amounts computed, the published v(N-1) superseded and the client's picks carried over to the copied
+  options (``carried``). Sending a published version is CRM-21b (AA-950).
 - **Picks** (:func:`record_pick`, the seam CRM-21b's client page calls): one pick per block of a published / sent
   version; a swap the block does not allow, a sold-out option or a rule break is refused; every pick moves
   ``selection_seq``.
@@ -91,13 +92,14 @@ SELECT proposal_day_id, day_no, title, place, tz, notes_enc, source_day_id FROM 
  WHERE proposal_id = $1 ORDER BY day_no
 """
 BLOCKS_SQL = """
-SELECT option_block_id, proposal_day_id, sort_order, title, type, client_may_swap, default_option_id, source_block_id
+SELECT option_block_id, proposal_day_id, sort_order, title, type, client_may_swap, default_option_id, default_pinned,
+       source_block_id
   FROM crm.option_block WHERE proposal_id = $1 ORDER BY sort_order, created_at
 """
 OPTIONS_SQL = """
 SELECT o.option_id, o.option_block_id, o.sort_order, o.source, o.title, o.tier, o.agency_supplier_id, o.sell_amount,
        o.net_amount, o.pay_on_arrival, o.choose_later_allowed, o.availability, o.availability_checked_at,
-       o.aa_tour_source_id, o.aa_component_id, o.aa_component_kind, o.aa_departure_id, o.aa_quote_id,
+       o.aa_tour_source_id, o.aa_component_id, o.aa_component_kind, o.aa_departure_id, o.aa_nights, o.aa_quote_id,
        o.aa_quote_valid_until, o.aa_from_price, o.below_from_price, o.source_option_id,
        c.served_state AS aa_served_state
   FROM crm.option o
@@ -155,17 +157,19 @@ INSERT INTO crm.option_block (option_block_id, proposal_id, trip_id, proposal_da
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 """
 UPDATE_BLOCK_SQL = """
-UPDATE crm.option_block SET title = $2, type = $3, client_may_swap = $4, default_option_id = $5, sort_order = $6
+UPDATE crm.option_block SET title = $2, type = $3, client_may_swap = $4, default_option_id = $5, sort_order = $6,
+       default_pinned = $7
  WHERE option_block_id = $1
 """
-SET_DEFAULT_SQL = "UPDATE crm.option_block SET default_option_id = $2 WHERE option_block_id = $1"
+SET_DEFAULT_SQL = "UPDATE crm.option_block SET default_option_id = $2, default_pinned = $3 WHERE option_block_id = $1"
 INSERT_OPTION_SQL = """
 INSERT INTO crm.option (option_id, proposal_id, trip_id, option_block_id, sort_order, source, title, tier,
                         agency_supplier_id, sell_amount, net_amount, pay_on_arrival, choose_later_allowed,
                         availability, availability_checked_at, aa_tour_source_id, aa_component_id, aa_component_kind,
                         aa_departure_id, aa_quote_id, aa_quote_valid_until, aa_from_price, below_from_price,
-                        source_option_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+                        source_option_id, aa_nights)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24,
+        $25)
 """
 UPDATE_OPTION_SQL = """
 UPDATE crm.option SET title = $2, tier = $3, agency_supplier_id = $4, sell_amount = $5, net_amount = $6,
@@ -388,6 +392,8 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
                 "component_id": o["aa_component_id"],
                 "component_kind": o["aa_component_kind"],
                 "departure_id": o["aa_departure_id"],
+                "nights": o["aa_nights"],
+                "unpriced": Decimal(o["sell_amount"]) == 0,
                 "quote_valid_until": _iso(o["aa_quote_valid_until"]),
                 "quote_expired": o["aa_quote_valid_until"] is not None and o["aa_quote_valid_until"] < now,
                 "from_price": _amount(o["aa_from_price"]),
@@ -410,6 +416,7 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
             "sort_order": b["sort_order"],
             "client_may_swap": b["client_may_swap"],
             "default_option_id": str(b["default_option_id"]) if b["default_option_id"] else None,
+            "default_pinned": b["default_pinned"],
             "options": by_block.get(str(b["option_block_id"]), []),
         })  # fmt: skip
     days = []
@@ -522,6 +529,9 @@ def _checks(row: Any, s: dict[str, Any], now: dt.datetime) -> dict[str, Any]:
     if any(o["source"] == "aa" and o["aa_quote_valid_until"] is not None and o["aa_quote_valid_until"] < now
            for o in s["options"]):  # fmt: skip
         blocking.append("aa_prices_stale")
+    if any(o["source"] == "aa" and Decimal(o["sell_amount"]) == 0 for o in s["options"]):
+        # An AA item added without a sell (the assistant never sets one, §4.6): an owner / agent prices it first.
+        blocking.append("aa_item_unpriced")
     if any(o["below_from_price"] for o in s["options"]):
         warnings.append("below_from_price")
     if any(o["aa_served_state"] == "retired" for o in s["options"]):
@@ -533,6 +543,9 @@ def _checks(row: Any, s: dict[str, Any], now: dt.datetime) -> dict[str, Any]:
         blocking.append("nothing_to_charge")
     elif sums["deposit"] < sums["sell_total"] and row["balance_due_on"] is None:
         blocking.append("balance_due_on_required")
+    elif sums["deposit"] >= sums["sell_total"] and row["balance_due_on"] is not None:
+        # The deposit is the whole total (proposal_amounts_chk: no balance date then).
+        blocking.append("balance_due_on_not_needed")
     return {"publishable": not blocking, "blocking": sorted(set(blocking)), "warnings": sorted(set(warnings))}
 
 
@@ -682,12 +695,12 @@ async def _copy(
             o["net_amount"], o["pay_on_arrival"], o["choose_later_allowed"], o["availability"],
             o["availability_checked_at"], o["aa_tour_source_id"], o["aa_component_id"], o["aa_component_kind"],
             o["aa_departure_id"], o["aa_quote_id"], o["aa_quote_valid_until"], o["aa_from_price"],
-            o["below_from_price"], o["option_id"],
+            o["below_from_price"], o["option_id"], o["aa_nights"],
         )  # fmt: skip
     for b in s["blocks"]:
         if b["default_option_id"] is not None:
             await ctx.conn.execute(SET_DEFAULT_SQL, block_map[str(b["option_block_id"])],
-                                   option_map[str(b["default_option_id"])])  # fmt: skip
+                                   option_map[str(b["default_option_id"])], b["default_pinned"])  # fmt: skip
     for r in s["rules"]:
         await ctx.conn.execute(INSERT_RULE_SQL, uuid.uuid4(), proposal_id, trip["trip_id"], r["kind"],
                                option_map[str(r["option_id"])], option_map[str(r["target_option_id"])])  # fmt: skip
@@ -709,6 +722,8 @@ async def update_settings(
             rooms = rules.check_rooms(changes["room_config"])
         except ValueError as exc:
             raise Invalid("invalid_room_config", str(exc)) from None
+    if "deposit_pct" in changes and changes["deposit_pct"] is None:
+        raise Invalid("invalid_deposit_pct", "1 to 100")
     pct = Decimal(str(changes["deposit_pct"])) if "deposit_pct" in changes else row["deposit_pct"]
     if pct is None or not (Decimal("1") <= pct <= Decimal("100")) or pct != pct.quantize(rules.CENT):
         raise Invalid("invalid_deposit_pct", "1 to 100")
@@ -801,7 +816,9 @@ async def _delete_blocks(ctx: TenantContext, block_ids: list[uuid.UUID]) -> None
         block_ids,
     )
     await ctx.conn.execute(
-        "UPDATE crm.option_block SET default_option_id = NULL WHERE option_block_id = ANY($1::uuid[])", block_ids
+        "UPDATE crm.option_block SET default_option_id = NULL, default_pinned = false"
+        " WHERE option_block_id = ANY($1::uuid[])",
+        block_ids,
     )
     await ctx.conn.execute("DELETE FROM crm.option WHERE option_block_id = ANY($1::uuid[])", block_ids)
     await ctx.conn.execute("DELETE FROM crm.option_block WHERE option_block_id = ANY($1::uuid[])", block_ids)
@@ -875,20 +892,22 @@ async def update_block(
     s = await _structure(ctx, proposal_id)
     block = _block(s, block_id)
     default = block["default_option_id"]
+    pinned = block["default_pinned"]
     if "default_option_id" in changes:
         default = changes["default_option_id"]
+        pinned = default is not None  # chosen by hand: the Stage 2 tier rule no longer moves it
         option = _option_map(s).get(str(default)) if default is not None else None
         if default is not None and (option is None or option["option_block_id"] != block_id):
             raise Invalid("invalid_default_option", "one of this block's own options")
         if option is not None and option["availability"] == "sold_out":
             raise Conflict("option_sold_out", "a sold-out option cannot be the default")
-    sort_order = int(changes.get("sort_order", block["sort_order"]))
+    sort_order = block["sort_order"] if changes.get("sort_order") is None else int(changes["sort_order"])
     if not 0 <= sort_order <= 99:
         raise Invalid("invalid_sort_order")
     title = _text(changes["title"], "title", 120, required=True) if "title" in changes else block["title"]
     kind = _block_type(changes["type"]) if "type" in changes else block["type"]
-    swap = bool(changes["client_may_swap"]) if "client_may_swap" in changes else block["client_may_swap"]
-    await ctx.conn.execute(UPDATE_BLOCK_SQL, block_id, title, kind, swap, default, sort_order)
+    swap = block["client_may_swap"] if changes.get("client_may_swap") is None else bool(changes["client_may_swap"])
+    await ctx.conn.execute(UPDATE_BLOCK_SQL, block_id, title, kind, swap, default, sort_order, pinned)
     _raise_conflicts(_conflicts(await _structure(ctx, proposal_id)), s)
     return await _done(ctx, vault, proposal_id, "block_edit")
 
@@ -911,18 +930,21 @@ async def _tier(ctx: TenantContext, vault: Vault, row: Any) -> str | None:
 
 async def _settle_default(ctx: TenantContext, proposal_id: uuid.UUID, block_id: uuid.UUID, tier: str | None) -> None:
     """Spec rule 5: a lodging block's default is the option of the lead's Stage 2 accommodation tier when it has one;
-    any block without a default takes its first option that is not sold out."""
+    any block without a default takes its first option that is not sold out. A default the agent chose by hand
+    (``default_pinned``) is never moved: what the client is offered changes only when the agent changes it."""
     s = await _structure(ctx, proposal_id)
     block = _block(s, block_id)
     options = [o for o in s["options"] if o["option_block_id"] == block_id]
     current = _option_map(s).get(str(block["default_option_id"])) if block["default_option_id"] else None
+    if current is not None and block["default_pinned"]:
+        return
     want = rules.tier_default(options, tier) if block["type"] == "lodging" else None
     if want is not None and (current is None or current["tier"] != tier):
-        await ctx.conn.execute(SET_DEFAULT_SQL, block_id, uuid.UUID(want))
+        await ctx.conn.execute(SET_DEFAULT_SQL, block_id, uuid.UUID(want), False)
     elif current is None:
         first = next((o["option_id"] for o in options if o["availability"] != "sold_out"), None)
         if first is not None:
-            await ctx.conn.execute(SET_DEFAULT_SQL, block_id, first)
+            await ctx.conn.execute(SET_DEFAULT_SQL, block_id, first, False)
 
 
 def _tier_in(value: Any) -> str | None:
@@ -959,7 +981,7 @@ async def add_agency_option(
         await _supplier(ctx, body.get("agency_supplier_id")), _money_in(body.get("sell_amount"), "sell_amount") or 0,
         _money_in(body.get("net_amount"), "net_amount"), bool(body.get("pay_on_arrival", False)),
         bool(body.get("choose_later_allowed", False)), "agency", None, None, None, None, None, None, None, None, None,
-        None,
+        None, None,
     )  # fmt: skip
     await _settle_default(ctx, proposal_id, block_id, await _tier(ctx, vault, row))
     _raise_conflicts(_conflicts(await _structure(ctx, proposal_id)), s)
@@ -974,9 +996,14 @@ def _option(s: dict[str, Any], option_id: uuid.UUID) -> dict[str, Any]:
 
 
 def _below_from(option: dict[str, Any], sell: Decimal, pax: int) -> bool | None:
-    if option.get("aa_from_price") is None or option.get("aa_component_kind") != "trip_plan" or pax < 1:
-        return None
+    if option.get("aa_from_price") is None or option.get("aa_component_kind") != "trip_plan" or pax < 1 or sell <= 0:
+        return None  # an unpriced AA item (sell 0) is blocked by aa_item_unpriced, not warned about
     return sell / pax < Decimal(option["aa_from_price"])
+
+
+def _flag(changes: dict[str, Any], name: str, current: dict[str, Any]) -> bool:
+    """A yes / no field of a PATCH: absent or null keeps the current value."""
+    return bool(current[name]) if changes.get(name) is None else bool(changes[name])
 
 
 def _party(row: Any) -> int:
@@ -1010,8 +1037,7 @@ async def update_option(
         UPDATE_OPTION_SQL, option_id,
         _text(changes["title"], "title", 200, required=True) if "title" in changes else o["title"],
         _tier_in(changes["tier"]) if "tier" in changes else o["tier"], supplier, sell, net,
-        bool(changes.get("pay_on_arrival", o["pay_on_arrival"])),
-        bool(changes.get("choose_later_allowed", o["choose_later_allowed"])),
+        _flag(changes, "pay_on_arrival", o), _flag(changes, "choose_later_allowed", o),
         _below_from(o, Decimal(sell), _party(row)) if aa else None,
     )  # fmt: skip
     if "tier" in changes:
@@ -1031,7 +1057,8 @@ async def delete_option(
         option_id,
     )
     await ctx.conn.execute(
-        "UPDATE crm.option_block SET default_option_id = NULL WHERE option_block_id = $1 AND default_option_id = $2",
+        "UPDATE crm.option_block SET default_option_id = NULL, default_pinned = false"
+        " WHERE option_block_id = $1 AND default_option_id = $2",
         o["option_block_id"],
         option_id,
     )
@@ -1053,6 +1080,8 @@ async def aa_plan(
     block = _block(s, block_id)
     if len([o for o in s["options"] if o["option_block_id"] == block_id]) >= MAX_OPTIONS_PER_BLOCK:
         raise Conflict("too_many_options", f"at most {MAX_OPTIONS_PER_BLOCK} options a block")
+    if body.get("component_kind") == "hotel_room" and body.get("nights") is None:
+        raise Invalid("invalid_nights", "a hotel room needs its nights")  # as AA-947 aa_lines
     tour = await catalog.tour(ctx, body["tour_source_id"])
     if tour is None or tour["served_state"] != "served":
         raise Conflict("aa_tour_not_served", "AA no longer offers this tour")
@@ -1088,7 +1117,9 @@ async def add_aa_option(
     body: dict[str, Any],
 ) -> dict[str, Any]:
     """Step 2, in a new transaction: the option with the live quote (net = b2b price, availability). A sold-out
-    answer adds nothing (409 ``aa_sold_out``: "Sold out (cannot add)", WF-4)."""
+    answer adds nothing (409 ``aa_sold_out``: "Sold out (cannot add)", WF-4). Without a sell in the request the sell
+    stays 0 (never the b2b price: the assistant reads the sell, §4.6) and Publish waits for an owner / agent to set it
+    (``aa_item_unpriced``)."""
     proposal_id = uuid.UUID(plan["proposal_id"])
     block_id = uuid.UUID(plan["block_id"])
     row = await _lock(ctx, proposal_id, int(plan["seq"]))
@@ -1096,11 +1127,9 @@ async def add_aa_option(
         raise Conflict("aa_sold_out", "AA has no space for this item on that date")
     s = await _structure(ctx, proposal_id)
     in_block = [o for o in s["options"] if o["option_block_id"] == _block(s, block_id)["option_block_id"]]
-    sell = _money_in(body.get("sell_amount"), "sell_amount")
-    if sell is None:
-        sell = rules.money(quote.b2b_price)  # no margin until the agent sets the sell (shown as 0 % margin)
+    sell = _money_in(body.get("sell_amount"), "sell_amount") or Decimal("0.00")
     below = None
-    if quote.from_price is not None and plan["component_kind"] == "trip_plan" and plan["party"] >= 1:
+    if quote.from_price is not None and plan["component_kind"] == "trip_plan" and plan["party"] >= 1 and sell > 0:
         below = sell / plan["party"] < quote.from_price
     title = plan["title"] if plan["component_kind"] == "trip_plan" else f"{plan['title']} ({plan['component_kind']})"
     await ctx.conn.execute(
@@ -1109,7 +1138,7 @@ async def add_aa_option(
         None, sell, rules.money(quote.b2b_price), False, False, AVAILABILITY_FROM_QUOTE[quote.availability],
         dt.datetime.now(dt.UTC), plan["tour_source_id"], plan["component_id"], plan["component_kind"],
         plan["departure_id"], quote.quote_id, quote.valid_until,
-        rules.money(quote.from_price) if quote.from_price is not None else None, below, None,
+        rules.money(quote.from_price) if quote.from_price is not None else None, below, None, plan.get("nights"),
     )  # fmt: skip
     await _settle_default(ctx, proposal_id, block_id, await _tier(ctx, vault, row))
     _raise_conflicts(_conflicts(await _structure(ctx, proposal_id)), s)
@@ -1117,25 +1146,28 @@ async def add_aa_option(
 
 
 async def aa_refresh_plan(ctx: TenantContext, proposal_id: uuid.UUID, seq: int) -> list[dict[str, Any]]:
-    """ "Refresh AA prices": every AA item of the draft, with what to quote again."""
+    """ "Refresh AA prices": every AA item of the draft, with what to quote again (the same nights it was quoted
+    for), the oldest quote first (an expired or never-checked one before a fresh one), so a draft with more AA items
+    than one run quotes (:data:`app.proposals.aa_options.MAX_REFRESH`) catches up run after run. An item on a day with
+    no date has ``service_date`` None (reported, not quoted)."""
     row = await _lock(ctx, proposal_id, seq)
     s = await _structure(ctx, proposal_id)
     days = {d["proposal_day_id"]: d for d in s["days"]}
     blocks = {b["option_block_id"]: b for b in s["blocks"]}
     pax = rules.room_pax(_jsonb(row["room_config"]), int(row["party_adults"]), row["party_child_ages"] or [])
+    oldest = dt.datetime.min.replace(tzinfo=dt.UTC)
+    aa = sorted((o for o in s["options"] if o["source"] == "aa"),
+                key=lambda o: o["aa_quote_valid_until"] or oldest)  # fmt: skip
     out = []
-    for o in s["options"]:
-        if o["source"] != "aa":
-            continue
+    for o in aa:
         date = _day_date(row["starts_on"], days[blocks[o["option_block_id"]]["proposal_day_id"]]["day_no"])
-        if date is None:
-            continue
         out.append({
             "option_id": str(o["option_id"]), "proposal_id": str(proposal_id), "version": row["version"],
             "currency": row["currency"], "tour_source_id": o["aa_tour_source_id"],
             "component_id": o["aa_component_id"], "component_kind": o["aa_component_kind"],
-            "departure_id": o["aa_departure_id"], "nights": None, "service_date": date.isoformat(), "pax": pax,
-            "party": _party(row), "sell": str(o["sell_amount"]), "seq": seq,
+            "departure_id": o["aa_departure_id"], "nights": o["aa_nights"],
+            "service_date": date.isoformat() if date else None, "pax": pax, "party": _party(row),
+            "sell": str(o["sell_amount"]), "seq": seq,
         })  # fmt: skip
     return out
 
@@ -1152,7 +1184,7 @@ async def apply_refresh(
             continue
         sell = Decimal(plan["sell"])
         below = None
-        if quote.from_price is not None and plan["component_kind"] == "trip_plan" and plan["party"] >= 1:
+        if quote.from_price is not None and plan["component_kind"] == "trip_plan" and plan["party"] >= 1 and sell > 0:
             below = sell / plan["party"] < quote.from_price
         await ctx.conn.execute(
             QUOTE_UPDATE_SQL, uuid.UUID(plan["option_id"]), rules.money(quote.b2b_price),
@@ -1246,6 +1278,7 @@ def price_hash(row: Any, body: str, terms_sha256: bytes | None, s: dict[str, Any
                 o["pay_on_arrival"],
                 o["choose_later_allowed"],
                 o["availability"],
+                o["aa_nights"],
             ]
             for o in s["options"]
         ],  # fmt: skip

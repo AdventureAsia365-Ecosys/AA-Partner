@@ -133,6 +133,11 @@ def test_the_assistant_prepares_drafts_without_money(
         ("post", f"{base}/blocks/{X}/options", {"seq": 3, "title": "Homestay", "sell_amount": "280"}),
         ("post", f"{base}/blocks/{X}/options", {"seq": 3, "title": "Homestay", "net_amount": "140"}),
         ("patch", f"{base}/options/{X}", {"seq": 3, "sell_amount": "1"}),
+        # An explicit null is a money edit too (it clears a field she may neither edit nor see).
+        ("patch", f"{base}/options/{X}", {"seq": 3, "net_amount": None}),
+        ("patch", f"{base}/options/{X}", {"seq": 3, "sell_amount": None}),
+        ("post", f"{base}/blocks/{X}/options", {"seq": 3, "title": "Homestay", "net_amount": None}),
+        ("patch", f"{base}/builder", {"seq": 3, "deposit_pct": None}),
         ("post", f"{base}/blocks/{X}/aa-options", {"seq": 3, "tour_source_id": "T-1", "component_id": "tp:1",
                                                    "component_kind": "trip_plan", "sell_amount": "1"}),
         ("post", f"{base}/publish", {"seq": 3}),
@@ -162,7 +167,7 @@ def test_aa_routes_quote_between_two_transactions(
     assert [c[0] for c in calls] == ["aa_plan", "quote", "add_aa_option"]
     calls.clear()
     r = client.post(f"{base}/aa-refresh", headers=h, json={"seq": 3})
-    assert r.status_code == 200 and r.json()["refresh"] == {"quoted": 1, "failed": []}
+    assert r.status_code == 200 and r.json()["refresh"] == {"quoted": 1, "failed": [], "skipped": 0}
     assert [c[0] for c in calls] == ["aa_refresh_plan", "refresh", "apply_refresh"]
 
 

@@ -99,11 +99,21 @@ async def quote(client: BookingClient, tenant_id: uuid.UUID, plan: dict[str, Any
 async def refresh(
     client: BookingClient, tenant_id: uuid.UUID, plans: list[dict[str, Any]]
 ) -> tuple[list[tuple[dict[str, Any], AaQuote]], list[dict[str, str]]]:
-    """Quote every AA item again (at most :data:`MAX_REFRESH`). Booking down stops the run (503, nothing stored); an
-    item Booking refuses is reported and left as it was."""
+    """Quote the AA items again, at most :data:`MAX_REFRESH` per run, in the order given (the builder sends the oldest
+    quote first, so another run quotes the rest). Nothing is dropped silently: an item past the limit is reported as
+    ``refresh_limit``, an item on a day without a date as ``day_has_no_date``, an item Booking refuses with its code
+    (each left as it was). Booking down stops the run (503, nothing stored)."""
     answers: list[tuple[dict[str, Any], AaQuote]] = []
     failed: list[dict[str, str]] = []
-    for plan in plans[:MAX_REFRESH]:
+    asked = 0
+    for plan in plans:
+        if plan.get("service_date") is None:
+            failed.append({"option_id": plan["option_id"], "code": "day_has_no_date"})
+            continue
+        if asked >= MAX_REFRESH:
+            failed.append({"option_id": plan["option_id"], "code": "refresh_limit"})
+            continue
+        asked += 1
         try:
             answers.append((plan, await quote(client, tenant_id, plan)))
         except (Conflict, Invalid) as exc:

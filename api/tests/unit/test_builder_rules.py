@@ -132,6 +132,20 @@ async def test_quotes_and_refusals() -> None:
     assert answers[0][1].availability == "sold_out" and failed == []
 
 
+@pytest.mark.asyncio
+async def test_refresh_reports_every_item_it_did_not_quote(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nothing is dropped silently: past MAX_REFRESH an item is ``refresh_limit``, an undated one ``day_has_no_date``;
+    the run quotes in the order given (the builder sends the oldest quote first)."""
+    monkeypatch.setattr(aa_options, "MAX_REFRESH", 2)
+    fake = FakeBooking(b2b_price="900.00")
+    plans = [{**PLAN, "option_id": f"00000000-0000-4000-8000-00000000010{n}"} for n in range(4)]
+    plans[1]["service_date"] = None
+    answers, failed = await aa_options.refresh(booking_client(fake), PLAN_TENANT, plans)
+    assert [p["option_id"] for p, _q in answers] == [plans[0]["option_id"], plans[2]["option_id"]]
+    assert failed == [{"option_id": plans[1]["option_id"], "code": "day_has_no_date"},
+                      {"option_id": plans[3]["option_id"], "code": "refresh_limit"}]  # fmt: skip
+
+
 @pytest.mark.parametrize(
     ("code", "kind", "detail"),
     [
