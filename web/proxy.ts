@@ -93,6 +93,11 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   return res;
 }
 
+// AA-945: /bff/mail/imports (the mail history upload, up to 25 MiB, and its status) is left out. When the proxy runs,
+// Next clones the request body for it and silently cuts it at 10 MiB (`proxyClientMaxBodySize`), so a larger file would
+// reach the API short. The BFF route repeats the host check for these paths (lib/bff.ts UNPROXIED_BFF_PREFIX); it
+// answers 401 itself without a session, as for every /bff/* path. Next reads this literal statically: keep it in step
+// with UNPROXIED_BFF_PREFIX (tests/mailImport.test.ts checks it).
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|bff/mail/imports).*)"],
 };

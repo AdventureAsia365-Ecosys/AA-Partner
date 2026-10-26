@@ -32,6 +32,7 @@ describe("mail BFF allow-list", () => {
       ["PUT", "mailbox/smtp"],
       ["GET", "mailbox/ingest-address"],
       ["GET", "mail/senders"],
+      ["POST", "mail/imports"],
       ["GET", `mail/imports/${ID}`],
       ["GET", "conversations"],
       ["GET", `conversations/${ID}/messages`],
@@ -52,7 +53,8 @@ describe("mail BFF allow-list", () => {
       expect(route?.tenant).toBe(true);
     }
     for (const [method, path] of [
-      ["POST", "mail/imports"], // raw upload: API only in v1
+      ["PUT", "mail/imports"],
+      ["POST", `mail/imports/${ID}`],
       ["GET", "mailbox/smtp"],
       ["DELETE", "messages"],
       ["POST", `messages/${ID}/send`],
@@ -61,7 +63,7 @@ describe("mail BFF allow-list", () => {
     ]) {
       expect(matchBff(method, path), `${method} ${path}`).toBeNull();
     }
-    expect(BFF_ROUTES.filter((r) => r.card === "AA-945")).toHaveLength(18);
+    expect(BFF_ROUTES.filter((r) => r.card === "AA-945")).toHaveLength(19);
   });
 });
 

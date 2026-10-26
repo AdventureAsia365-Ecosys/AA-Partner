@@ -608,8 +608,11 @@ secret `crm/<env>/mail-oauth`.
   drafts autosaved by an id the composer picks (`PUT /messages/drafts/{id}`; only the author; crm-015 lets crm_app
   delete drafts only), Undo within 10 s, a held / failed message back to a draft (`POST /messages/{id}/edit`), saved
   replies (agency-wide: owner via `WORKFLOW_EDIT`; own: every role), the mbox / CSV history import
-  (`POST /crm/v1/mail/imports`, raw body, 25 MB; API only in v1; one job per 500-message slice, each slice queues the
-  next, so sends and forwarded mail run between slices; the last failed attempt marks the import `failed`).
+  (`POST /crm/v1/mail/imports`, raw body, 25 MB; one job per 500-message slice, each slice queues the
+  next, so sends and forwarded mail run between slices; the last failed attempt marks the import `failed`). S252: the
+  web's Settings > Mailbox "Import mail history" sends the file through the BFF raw route `POST /bff/mail/imports`
+  (bytes unchanged, capped at 25 MiB while it streams in) and polls `GET .../imports/{id}`; `/bff/mail/imports*` is
+  outside the proxy matcher (`web/proxy.ts`) because Next cuts a proxied body at 10 MiB without an error.
 - **Web**: Settings > Mailbox (`components/mail/MailboxSettings.tsx`: connect, SMTP, Test, Disconnect, who pays, the
   forward-in address and Gmail code, the Microsoft 365 BCC help, the sender table), `/connect/mail/callback` (no side
   effect: hands code + state to Settings > Mailbox, which completes through the BFF), the trip's Messages tab
