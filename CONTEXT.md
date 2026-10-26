@@ -774,11 +774,13 @@ activity), routes in `app/routers/client_pages.py` and `app/routers/proposals.py
   a re-hold rings the trip owner's bell. The old hold is released only after a clean quote; when it was released and
   no new hold came, the row's hold columns are cleared (never a hold Booking no longer has); when the release itself got
   no answer the hold moves to `hold_release_id` (not shown, not accepted) and the next request releases it again
-  first (a no-op when done), so Booking never keeps a second set for the version. Booking's quote leaves the
+  first (a no-op when done), so Booking never keeps a second set for the version. A hold stored on the row (a replay too)
+  clears `hold_release_id`: Booking made it only once no other set of the version was active. Booking's quote leaves the
   version's own live hold out of its seat count (AA-Booking, AA-950), so seats this client holds never read as sold
   out to them. The request in flight
   (`hold_pending_*`, written before `POST /holds`) is replayed with the same key and quote when its answer was lost,
-  which recovers the hold Booking made; another screen meanwhile gets 409 `hold_in_progress`. A chosen option Booking
+  which recovers the hold Booking made (before any reuse of the row's hold: that request may have released it);
+  another screen meanwhile gets 409 `hold_in_progress`. A chosen option Booking
   answers sold out -> marked sold out, the pick dropped, 409 `option_sold_out` with the fresh page (card E); a choice
   that then breaks an agency rule is neither held nor accepted (409 `option_conflict`). Booking down -> 503, one bell
   an hour.
