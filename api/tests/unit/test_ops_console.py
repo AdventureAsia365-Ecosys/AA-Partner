@@ -582,7 +582,7 @@ def test_the_summary_carries_the_lock_source_and_the_feed(
     assert all(serializer.key_allowed(k) for k in got)
 
 
-# ── crm.ops.v1 1.3 (AA-992): platform-wide counts for CIS /admin/data-coverage ─────────────────────────────────────
+# ── crm.ops.v1 1.4 (AA-992): platform-wide counts for CIS /admin/data-coverage ─────────────────────────────────────
 @pytest.mark.asyncio
 async def test_platform_coverage_counts_states_and_members_without_an_agency_audit(
     monkeypatch: pytest.MonkeyPatch,

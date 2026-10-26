@@ -1,10 +1,14 @@
-# Data coverage (AA-992) — CRM part: crm.ops.v1 1.3 `GET /crm/ops/v1/data-coverage`
+# Data coverage (AA-992) — CRM part: crm.ops.v1 1.4 `GET /crm/ops/v1/data-coverage`
 
 The CIS admin page `/admin/data-coverage` (S252 design `.tmp-session/s252/datacov/design.md` §1.9, §3.4) shows CRM
 counts. ADR 0008a decision 1 forbids any AA role USAGE on schema `crm` (the isolation probe asserts 42501 both ways),
-so the numbers come over HTTP, one more read of the L1 contract `crm.ops.v1`, minor 1.3 (additive).
+so the numbers come over HTTP, one more read of the L1 contract `crm.ops.v1`, minor 1.4 (additive).
 
 ## Decisions
+
+- **Minor 1.4, not 1.3 (fix round 2).** AA-979 P2b shipped `POST /tenants/{id}/studio-invitations` as
+  crm.ops.v1 1.3 (root #267, this repo #74) while this branch was open; the branch was rebased on it and the data
+  coverage read renumbered 1.4.
 
 - **No crm migration.** `crm.tenant` / `crm.member` are FORCE RLS; the agencies come from the crm-007 registry
   (`crm.audit_export_agencies()`) and each one is counted inside its own `platform_tx`, exactly like `list_agencies`.
@@ -13,7 +17,7 @@ so the numbers come over HTTP, one more read of the L1 contract `crm.ops.v1`, mi
 - **Audit (critic B12 / Q3): no per-agency `ops_read` event.** The route reads no agency's data, only statuses and
   member statuses, and the CIS page refreshes it every 10 minutes; one event per agency per refresh would bury the
   owner's access log. There is no platform-level audit table, so the read is logged once per call
-  (`crm_ops_data_coverage agencies=<n>`), the same as `/jobs/summary` (no event either). The 1.3 contract text says so.
+  (`crm_ops_data_coverage agencies=<n>`), the same as `/jobs/summary` (no event either). The 1.4 contract text says so.
 - **Response** `{as_of, agencies{active,locked,offboarding,offboarded,synthetic}, members{active,invited,disabled},
   catalog_cache{served,paused,retired,last_full_pass_at,last_ok_at,failures,last_error_class}}`; `synthetic` counts
   synthetic agencies of any status (also counted under their status). No trip, proposal, traveller, revenue or id.
@@ -29,7 +33,7 @@ so the numbers come over HTTP, one more read of the L1 contract `crm.ops.v1`, mi
 - Tests: `test_ops_contract.py` scenario (every served ops route must be exercised) + scripted rows;
   `test_ops_console.py::test_platform_coverage_counts_states_and_members_without_an_agency_audit`.
 - `CONTEXT.md`: "CIS sees the CRM" bullet.
-- Root PR (same day): `docs/contracts/crm.ops.v1.openapi.yaml` 1.2 → 1.3 + samples `samples/crm.ops.v1/data-coverage-*`.
+- Root PR (same day): `docs/contracts/crm.ops.v1.openapi.yaml` 1.3 → 1.4 + samples `samples/crm.ops.v1/data-coverage-*`.
 
 ## Tradeoffs
 
@@ -39,6 +43,6 @@ so the numbers come over HTTP, one more read of the L1 contract `crm.ops.v1`, mi
 
 ## Should know
 
-- Unit suite: 1674 passed; ruff check + format clean. No integration test added (no new SQL object; the SQL reads
+- Unit suite: 1704 passed after the rebase on #74 (fix round 2; 1674 before); ruff check + format clean. No integration test added (no new SQL object; the SQL reads
   columns that the crm-017 / crm-001 integration tests already cover). Run `GET /crm/ops/v1/data-coverage` against
   Dev after deploy with a `cis-admin` token (CIS page does it).

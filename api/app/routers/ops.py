@@ -8,7 +8,7 @@ agency's own audit (actor ``platform:<staff sub>``, kind ``aa_ops``; reads as ``
 reference as ``ticket:<REF>``).
 
 AA-936 (card CRM-08, what CIS #975 reads): ``GET /jobs/summary`` (``crm.job`` per kind), ``GET /llm/usage``.
-AA-992 (crm.ops.v1 1.3, the CIS admin page /admin/data-coverage): ``GET /data-coverage``, platform-wide counts only
+AA-992 (crm.ops.v1 1.4, the CIS admin page /admin/data-coverage): ``GET /data-coverage``, platform-wide counts only
 (agencies and members per status, the AA catalog cache); no per-agency audit event (:func:`console.platform_coverage`).
 AA-939 (card CRM-11, Q1 6.3): members, member deactivation, owner recovery open / complete.
 AA-941 (card CRM-13a, design S-01), :mod:`app.ops.console`:
@@ -247,7 +247,7 @@ class LlmUsage(_Out):
     rows: list[LlmUsageRow]
 
 
-# crm.ops.v1 1.3 (AA-992): platform-wide counts for the CIS admin page /admin/data-coverage. Counts only.
+# crm.ops.v1 1.4 (AA-992): platform-wide counts for the CIS admin page /admin/data-coverage. Counts only.
 class AgencyCounts(_Out):
     active: int
     locked: int
@@ -347,7 +347,7 @@ async def get_llm_usage(
     return {"from": from_.isoformat(), "to": to.isoformat(), "rows": await llm_usage(pool, from_, to)}
 
 
-# ── AA-992: what the CIS admin page /admin/data-coverage reads (crm.ops.v1 1.3) ───────────────────────────────
+# ── AA-992: what the CIS admin page /admin/data-coverage reads (crm.ops.v1 1.4) ───────────────────────────────
 @router.get("/data-coverage", response_model=DataCoverage)
 async def data_coverage(request: Request, caller: Reader) -> dict:
     pool = await request_pool(request)

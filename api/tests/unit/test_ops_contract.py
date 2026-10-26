@@ -140,7 +140,7 @@ def base_conn(status: str | None = "active") -> ScriptedConn:
             "GROUP BY kind",
             [{"kind": "crm_intake_process", "queued": 0, "running": 0, "failed_24h": 1, "oldest_queued_age_s": None}],
         ),  # fmt: skip
-        # crm.ops.v1 1.3 (AA-992): /data-coverage
+        # crm.ops.v1 1.4 (AA-992): /data-coverage
         ("SELECT is_synthetic FROM crm.tenant WHERE tenant_id = $1", True),
         ("FROM crm.member WHERE deleted_at IS NULL GROUP BY status", [{"status": "active", "n": 2}]),
         (

@@ -87,7 +87,7 @@ class SyncState:
     last_error_at: dt.datetime | None
 
 
-# crm.ops.v1 1.3 (AA-992): what the CIS admin page /admin/data-coverage reads about the cache: counts per served state
+# crm.ops.v1 1.4 (AA-992): what the CIS admin page /admin/data-coverage reads about the cache: counts per served state
 # and the sync's state row. Counts and timestamps only (no source id, no title).
 COVERAGE_SQL = """
 SELECT (SELECT count(*) FROM crm.aa_catalog_tour WHERE served_state = 'served')::int AS served,

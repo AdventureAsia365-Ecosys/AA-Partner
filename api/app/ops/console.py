@@ -7,7 +7,7 @@ and each read lands in **that agency's own audit** with actor kind ``aa_ops`` (t
   ``data_requests`` / ``jobs``; design §4.9 "AA ops reads");
 - writes write their own event with the L1 ticket reference as an object id ``ticket:<REF>`` (the audit takes codes
   and ids only, never free text);
-- one exception, :func:`platform_coverage` (crm.ops.v1 1.3, AA-992): platform-wide status counts, no agency's data,
+- one exception, :func:`platform_coverage` (crm.ops.v1 1.4, AA-992): platform-wide status counts, no agency's data,
   no per-agency event (see there).
 
 Only ``app.routers.ops`` calls these functions (writes need the WORKFORCE group ``crm-platform-admin``), and only this
@@ -458,7 +458,7 @@ async def retry_agency_job(
     return {"job_id": str(job_id), "status": "queued"}
 
 
-# ── crm.ops.v1 1.3 (AA-992): platform-wide counts for the CIS admin page /admin/data-coverage ───────────────────────
+# ── crm.ops.v1 1.4 (AA-992): platform-wide counts for the CIS admin page /admin/data-coverage ───────────────────────
 # Counts only: agencies per lifecycle status (plus how many are synthetic), members per status, and the AA catalog
 # cache. No agency id, name, trip, proposal, traveller or money figure (ADR 0008a: the agency is the controller of its
 # business data). ``crm.tenant`` / ``crm.member`` are FORCE RLS, so the agencies come from the crm-007 registry and each

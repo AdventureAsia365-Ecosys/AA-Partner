@@ -121,7 +121,7 @@ OPS_ALLOWED_KEYS: frozenset[str] = frozenset(
         "input_tokens",
         "output_tokens",
         "cost_usd",
-        # data coverage (crm.ops.v1 1.3, AA-992, CIS /admin/data-coverage): platform-wide counts only
+        # data coverage (crm.ops.v1 1.4, AA-992, CIS /admin/data-coverage): platform-wide counts only
         "as_of",
         "agencies",
         "active",
