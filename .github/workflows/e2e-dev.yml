@@ -27,6 +27,11 @@ name: E2E Dev
 # Nepal days at UTC+05:45, agency items, card R 422 option_conflict, a stale write 409 version_conflict, Publish v1,
 # a new version, Publish v2). It needs crm-019 applied and the AA-949 API + web; E2ECRMAATOUR (optional here) adds an AA
 # item from a live quote. Job timeout 50 -> 60 minutes.
+# AA-950 (CRM-21b): e2e/tests/client-proposal.spec.ts runs in the same job (a published day-by-day version sent from the
+# Proposal tab; the link exchanged for the host-only cookie and stripped from the URL (Fix B11); Keep / Swap and
+# Choose later at 390 px with no sideways scroll; the same link on a second device; Re-issue link revokes the old one;
+# the hold box and accept; viewed, the R19 choices and the bell on the agency side). It needs crm-021 applied and the
+# AA-950 API + web; E2ECRMAATOUR (optional) adds an AA item, so the hold set is placed on Booking. Job timeout 60 -> 70.
 on:
   workflow_dispatch:
     inputs:
@@ -50,7 +55,7 @@ jobs:
     runs-on: ubuntu-24.04
     if: github.ref == 'refs/heads/main'
     environment: e2e
-    timeout-minutes: 60
+    timeout-minutes: 70
     defaults:
       run:
         working-directory: e2e
