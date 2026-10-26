@@ -23,6 +23,10 @@ name: E2E Dev
 # on the seed plan (the spec checks both first), and variable E2ECRMAATOUR (the seed tour's CIS source_id). Optional:
 # variable E2ECRMASSISTANTEMAIL with secrets E2ECRMASSISTANTPASSWORD / E2ECRMASSISTANTTOTP (the same agency's
 # assistant: her confirm is refused 403); without them that step is a note. Job timeout 35 -> 50 minutes.
+# AA-949 (CRM-21a): e2e/tests/proposal-builder.spec.ts runs in the same job (Start the builder -> Stage 2 skeleton,
+# Nepal days at UTC+05:45, agency items, card R 422 option_conflict, a stale write 409 version_conflict, Publish v1,
+# a new version, Publish v2). It needs crm-019 applied and the AA-949 API + web; E2ECRMAATOUR (optional here) adds an AA
+# item from a live quote. Job timeout 50 -> 60 minutes.
 on:
   workflow_dispatch:
     inputs:
@@ -45,7 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     environment: e2e
-    timeout-minutes: 50
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: e2e
