@@ -185,7 +185,7 @@ export function MailImport({ lang, pollMs = IMPORT_POLL_MS }: { lang: Lang; poll
                 setKind(e.currentTarget.value === "csv" ? "csv" : "mbox");
                 setGuessed(false);
               }}
-              style={field}
+              style={{ ...field, width: "100%", minWidth: 0 }}
             >
               <option value="mbox">{tr("mail.import.kind.mbox")}</option>
               <option value="csv">{tr("mail.import.kind.csv")}</option>
