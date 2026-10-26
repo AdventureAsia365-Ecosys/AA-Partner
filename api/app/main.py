@@ -34,6 +34,7 @@ from app.booking.checker import BookingChecker
 from app.booking.client import BookingClient, BookingConfig
 from app.booking.products import ProductCache
 from app.catalog.client import CatalogConfig
+from app.cis.activation import ActivationConfig
 from app.cis.m2m import TokenProvider
 from app.cis.membership_feed import FeedConfig
 from app.db import Database
@@ -147,6 +148,7 @@ def create_app(
                     sender=app.state.dispatch_sender,
                     fx_provider=settings.fx_provider,
                     membership_feed=build_membership_feed(settings, tokens),
+                    studio_activation=app.state.studio_activation,
                     booking_client=app.state.booking_client,
                     catalog=build_catalog(settings, tokens),
                     directory=app.state.directory,
@@ -202,6 +204,9 @@ def create_app(
     app.state.booking_checker = BookingChecker(booking_client) if isinstance(booking_client, BookingClient) else None
     app.state.aa_products = ProductCache(booking_client) if isinstance(booking_client, BookingClient) else None
     app.state.mail_runtime = mail_runtime
+    # AA-979 P2b: CIS activateInvitation for accepted Content studio invitations (None without CIS_API_URL /
+    # M2M_CLIENT: the accept answers "accepted" and the crm_studio_activation job waits).
+    app.state.studio_activation = build_studio_activation(settings, tokens)
     app.state.dispatch_sender = MailSender(mail_runtime) if isinstance(mail_runtime, MailRuntime) else None
     app.state.ingest_store = ingest_store
     app.state.public_limiter = FixedWindowLimiter(settings.rate_limit_public_per_minute)
@@ -255,6 +260,13 @@ def build_membership_feed(settings: Settings, tokens: TokenProvider | None = Non
     if not settings.cis_api_url or tokens is None:
         return None
     return FeedConfig(base_url=settings.cis_api_url, tokens=tokens)
+
+
+def build_studio_activation(settings: Settings, tokens: TokenProvider | None) -> ActivationConfig | None:
+    """CIS tenant.membership.v1 activateInvitation (AA-979); None when CIS_API_URL or M2M_CLIENT is empty."""
+    if not settings.cis_api_url or tokens is None:
+        return None
+    return ActivationConfig(base_url=settings.cis_api_url, tokens=tokens)
 
 
 def build_catalog(settings: Settings, tokens: TokenProvider | None) -> CatalogConfig | None:

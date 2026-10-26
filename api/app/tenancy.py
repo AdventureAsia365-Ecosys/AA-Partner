@@ -670,6 +670,83 @@ async def invitation_tx(pool: asyncpg.Pool, token_hash_hex: str) -> AsyncIterato
         raise pending
 
 
+# ── AA-979 P2b: Content studio invitations (crm-020, platform table crm.studio_invitation) ────────────────────────────
+STUDIO_INVITATION_BY_LOOKUP_SQL = """
+SELECT studio_invitation_id, cis_tenant_id, cis_invitation_id, email_enc, status, locale, expires_at,
+       expires_at <= now() AS expired, cognito_iss, cognito_sub, activation_attempts
+  FROM crm.studio_invitation WHERE token_hash = decode($1, 'hex')
+   FOR UPDATE
+"""
+STUDIO_ACTIVATION_ACTOR = "job:crm_studio_activation"
+
+
+@dataclass(frozen=True)
+class StudioContext:
+    """A Content studio invitation context (AA-979): no agency (the CIS tenant may have none), so no ``tenant_id``,
+    no vault and no CRM audit (``crm.audit_event`` belongs to an agency); the code logs ids and codes instead."""
+
+    conn: asyncpg.Connection
+    actor: str
+
+
+@dataclass(frozen=True)
+class StudioInvitation:
+    """The row :func:`studio_invitation_tx` found by its token (ids, codes and the token-sealed e-mail)."""
+
+    studio_invitation_id: uuid.UUID
+    cis_tenant_id: uuid.UUID
+    cis_invitation_id: uuid.UUID
+    email_enc: bytes
+    status: str
+    locale: str
+    expired: bool
+    cognito_iss: str | None
+    cognito_sub: str | None
+
+
+@asynccontextmanager
+async def studio_platform_tx(pool: asyncpg.Pool, *, actor: str) -> AsyncIterator[StudioContext]:
+    """AA staff (``platform:<staff sub>``, the L1 relay of a CIS invitation) or the activation job
+    (:data:`STUDIO_ACTIVATION_ACTOR`) on ``crm.studio_invitation``: the crm-020 row security lets exactly these actors
+    reach the rows, and its guard (CRM37) decides what each may change. One transaction. Only
+    ``app/members/studio.py`` may open it (``tests/unit/test_code_rules.py``)."""
+    if not (actor.startswith(PLATFORM_ACTOR_PREFIX) or actor == STUDIO_ACTIVATION_ACTOR) or len(actor) > 100:
+        raise ValueError("studio actor must be platform:<sub> or the activation job")
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.actor', $1, true)", actor)
+        yield StudioContext(conn=conn, actor=actor)
+
+
+@asynccontextmanager
+async def studio_invitation_tx(
+    pool: asyncpg.Pool, token_hash_hex: str
+) -> AsyncIterator[tuple[StudioContext, StudioInvitation]]:
+    """The studio claim / accept context (AA-979): the token's SHA-256 (hex) finds and locks one
+    ``crm.studio_invitation`` row through the crm-020 token policies, ``app.actor`` = ``invitation:<id>`` (the token
+    holder). Unknown token: 404 ``invitation_not_found``. Only ``app/members/studio.py`` may open it."""
+    if not isinstance(token_hash_hex, str) or len(token_hash_hex) != 64:
+        raise NotFound("invitation_not_found")
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.invite_token_hash', $1, true)", token_hash_hex)
+        row = await conn.fetchrow(STUDIO_INVITATION_BY_LOOKUP_SQL, token_hash_hex)
+        if row is None:
+            raise NotFound("invitation_not_found")
+        actor = f"invitation:{row['studio_invitation_id']}"
+        await conn.execute("SELECT set_config('app.actor', $1, true)", actor)
+        invitation = StudioInvitation(
+            studio_invitation_id=row["studio_invitation_id"],
+            cis_tenant_id=row["cis_tenant_id"],
+            cis_invitation_id=row["cis_invitation_id"],
+            email_enc=bytes(row["email_enc"]),
+            status=row["status"],
+            locale=row["locale"],
+            expired=bool(row["expired"]),
+            cognito_iss=row["cognito_iss"],
+            cognito_sub=row["cognito_sub"],
+        )
+        yield StudioContext(conn=conn, actor=actor), invitation
+
+
 CLIENT_LINK_SQL = """
 SELECT link_id, tenant_id FROM crm.client_link
  WHERE token_hash = decode($1, 'hex') AND status IN ('sent', 'opened', 'submitted') AND expires_at > now()

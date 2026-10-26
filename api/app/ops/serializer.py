@@ -71,10 +71,11 @@ OPS_ALLOWED_KEYS: frozenset[str] = frozenset(
         "ai_budget_usd_month",
         "failed_jobs_24h",
         "last_activity_at",
-        # first-owner invite
+        # first-owner invite; AA-979 studio invitation (+ reissued: the same CIS invitation sent again)
         "invitation_id",
         "status",
         "expires_at",
+        "reissued",
         # entitlements, insights opt-out
         "plan",
         "features_allowed",

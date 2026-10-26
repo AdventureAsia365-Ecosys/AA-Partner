@@ -1,0 +1,10 @@
+{
+  "contract": "tenant.membership.v1",
+  "schema": "ActivationRequest",
+  "expect": "invalid",
+  "why": "AA-979 (1.1): the activation carries only the identity; CIS decides the Content studio role",
+  "payload": {
+    "identity": {"iss": "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_EXAMPLE00", "sub": "s"},
+    "content_studio_role": "owner"
+  }
+}

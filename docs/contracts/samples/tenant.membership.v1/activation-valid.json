@@ -1,0 +1,9 @@
+{
+  "contract": "tenant.membership.v1",
+  "schema": "ActivationRequest",
+  "expect": "valid",
+  "why": "AA-979 (1.1): the CRM binds the accepted person's partner-pool identity; no role, no e-mail",
+  "payload": {
+    "identity": {"iss": "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_EXAMPLE00", "sub": "6c1e0f4a-0000-4000-8000-0000000000aa"}
+  }
+}
