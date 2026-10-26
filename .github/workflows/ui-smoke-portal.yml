@@ -34,6 +34,17 @@ on:
         required: false
         type: string
         default: ""
+      target:
+        description: "AA-979: vercel (the Vercel copy / previews) or fargate (the studio on the agency host)"
+        required: false
+        type: choice
+        options: [vercel, fargate]
+        default: vercel
+      resolve_via:
+        description: "AA-979 pre-cutover: a CloudFront name (*.cloudfront.net) the base URL's host is pinned to on the runner (/etc/hosts); empty = DNS"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -56,7 +67,24 @@ jobs:
         working-directory: e2e
     env:
       BASE_URL: ${{ inputs.base_url }}
+      PORTAL_TARGET: ${{ inputs.target || 'vercel' }}
     steps:
+      # AA-979 pre-cutover check: the agency host still resolves to Vercel, so pin it to the new CloudFront
+      # distribution for this run only (Playwright's browser and its request API both read /etc/hosts).
+      - name: Pin the base URL's host to the CloudFront distribution (pre-cutover only)
+        if: inputs.resolve_via != ''
+        working-directory: .
+        env:
+          VIA: ${{ inputs.resolve_via }}
+        run: |
+          set -euo pipefail
+          [[ "$VIA" =~ ^[a-z0-9]+\.cloudfront\.net$ ]] || { echo "::error::resolve_via must be a *.cloudfront.net name"; exit 1; }
+          HOST=$(python3 -c 'import os,urllib.parse;print(urllib.parse.urlsplit(os.environ["BASE_URL"]).hostname)')
+          IP=$(getent ahostsv4 "$VIA" | awk 'NR==1{print $1}')
+          [ -n "$IP" ] || { echo "::error::cannot resolve $VIA"; exit 1; }
+          echo "$IP $HOST" | sudo tee -a /etc/hosts
+          getent hosts "$HOST"
+
       - name: Checkout the deployed commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

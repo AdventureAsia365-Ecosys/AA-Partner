@@ -10,6 +10,7 @@
     "test": "node --test --experimental-strip-types lib/*.test.ts"
   },
   "dependencies": {
+    "@sentry/nextjs": "11.6.0",
     "@tanstack/react-query": "^5.99.0",
     "@tanstack/react-table": "^8.21.3",
     "lucide-react": "^1.8.0",
