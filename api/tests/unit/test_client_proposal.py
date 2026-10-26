@@ -68,7 +68,9 @@ def _row(**over: Any) -> dict[str, Any]:
            "price_visibility": "total_with_deltas", "room_config": '[{"type": "double", "adults": 2, "children": 0}]',
            "starts_on": dt.date(2026, 12, 1), "party_adults": 2, "party_child_ages": [], "hold_id": None,
            "hold_quote_id": None, "hold_expires_at": None, "hold_selection_sha256": None, "hold_count": 0,
-           "recheck_day": None, "recheck_count_day": 0}  # fmt: skip
+           "recheck_day": None, "recheck_count_day": 0, "hold_attempt": 0, "hold_pending_key": None,
+           "hold_pending_at": None, "hold_pending_quote_id": None, "hold_pending_price_hash": None,
+           "hold_pending_selection_sha256": None}  # fmt: skip
     row.update(over)
     return row
 
@@ -167,6 +169,10 @@ class _Ctx:
         self.conn = _Conn()
 
 
+def _writes(ctx: _Ctx, sql: str) -> list[tuple[Any, ...]]:
+    return [args for q, args in ctx.conn.executed if q == sql]
+
+
 @pytest.mark.asyncio
 async def test_plan_reuses_reserves_and_refuses_the_fourth_recheck() -> None:
     s = _s()
@@ -174,50 +180,129 @@ async def test_plan_reuses_reserves_and_refuses_the_fourth_recheck() -> None:
     none = await holds.plan(ctx, _row(), {**s, "options": s["options"][:2], "blocks": s["blocks"][:1]}, [], NOW)
     assert none.action == "none"
     first = await holds.plan(ctx, _row(), s, [], NOW)
-    assert first.action == "place" and not first.rehold and ctx.conn.executed == []  # the first hold is free
-    assert first.idempotency_key == f"crm-proposal:{P}:v2:h1" and first.body["lines"][0]["line_ref"] == str(T1)
+    assert first.action == "place" and not first.rehold and _writes(ctx, holds.RESERVE_SQL) == []  # the first is free
+    # A fresh key per new request, written down before Booking is asked.
+    assert first.idempotency_key == f"crm-proposal:{P}:v2:a1" and first.body["lines"][0]["line_ref"] == str(T1)
+    assert _writes(ctx, holds.ATTEMPT_SQL) == [(P, 1, first.idempotency_key)]
+    assert first.selection_sha256 == client_page.aa_hash([str(T1)])
     assert first.body["lines"][0]["service_date"] == "2026-12-02" and first.body["lines"][0]["pax"]["adult"] == 2
     digest = client_page.aa_hash([str(T1)])
-    held = {"hold_id": "h1", "hold_quote_id": "q1", "hold_selection_sha256": digest, "hold_count": 1}
+    held = {"hold_id": "h1", "hold_quote_id": "q1", "hold_selection_sha256": digest, "hold_count": 1,
+            "hold_attempt": 1}  # fmt: skip
     reuse = await holds.plan(ctx, _row(**held, hold_expires_at=NOW + dt.timedelta(hours=1)), s, [], NOW)
     assert reuse.action == "reuse"
     expired = _row(**held, hold_expires_at=NOW - dt.timedelta(minutes=1), recheck_day=NOW.date(), recheck_count_day=2)
     again = await holds.plan(ctx, expired, s, [], NOW)
     assert again.action == "place" and again.rehold and again.rechecks_left == 0 and again.release_hold_id is None
-    assert ctx.conn.executed[-1][1] == (P, NOW.date(), 3)  # reserved before Booking is asked
+    assert _writes(ctx, holds.RESERVE_SQL) == [(P, NOW.date(), 3)]  # reserved before Booking is asked
+    assert again.idempotency_key == f"crm-proposal:{P}:v2:a2"
     refused = await holds.plan(ctx, {**expired, "recheck_count_day": 3}, s, [], NOW)
-    assert refused.action == "refused" and len(ctx.conn.executed) == 1
-    # A changed AA pick while the old hold is still active: it is released first.
+    assert refused.action == "refused" and len(_writes(ctx, holds.RESERVE_SQL)) == 1
+    # A changed AA pick while the old hold is still active: it is released (after a clean quote).
     changed = await holds.plan(ctx, _row(**held, hold_expires_at=NOW + dt.timedelta(hours=1)), s,
                                [_pick(TOUR, T2)], NOW)  # fmt: skip
     assert changed.action == "place" and changed.release_hold_id == "h1"
 
 
-async def _placed(fake: FakeBooking, **kw: Any) -> holds.Placed:
-    p = holds.Plan(action="place", proposal_id=P, version=2, aa_ids=[str(T1)],
-                   body={"proposal_ref": f"crm-proposal:{P}", "proposal_version": 2, "currency": "USD",
-                         "lines": [{"line_ref": str(T1), "component_id": "tp:1", "service_date": "2026-12-02",
-                                    "pax": {"adult": 2, "child": 0, "infant": 0}}]},
-                   idempotency_key=f"crm-proposal:{P}:v2:h1", **kw)  # fmt: skip
-    return await holds.place(booking_client(fake), uuid.uuid4(), p)
+@pytest.mark.asyncio
+async def test_plan_replays_the_request_in_flight_and_waits_for_another_screen() -> None:
+    s = _s()
+    ctx = _Ctx()
+    key = f"crm-proposal:{P}:v2:a1"
+    quoted = _row(hold_attempt=1, hold_pending_key=key, hold_pending_at=NOW - dt.timedelta(minutes=10),
+                  hold_pending_quote_id="q1", hold_pending_price_hash="a" * 64,
+                  hold_pending_selection_sha256=client_page.aa_hash([str(T1)]))  # fmt: skip
+    replay = await holds.plan(ctx, quoted, s, [], NOW)
+    assert replay.action == "replay" and replay.idempotency_key == key and ctx.conn.executed == []  # no re-check
+    assert replay.replay_body == {"quote_id": "q1", "price_hash": "a" * 64, "proposal_ref": f"crm-proposal:{P}",
+                                  "proposal_version": 2}  # fmt: skip
+    quoting = _row(hold_attempt=1, hold_pending_key=key, hold_pending_at=NOW - dt.timedelta(seconds=20))
+    assert (await holds.plan(ctx, quoting, s, [], NOW)).action == "busy"
+    died = _row(hold_attempt=1, hold_pending_key=key, hold_pending_at=NOW - dt.timedelta(minutes=5))
+    fresh = await holds.plan(ctx, died, s, [], NOW)
+    assert fresh.action == "place" and fresh.idempotency_key == f"crm-proposal:{P}:v2:a2"
+
+
+@pytest.mark.asyncio
+async def test_plan_refuses_a_choice_that_breaks_a_rule() -> None:
+    s = _s()
+    s["rules"] = [{"option_rule_id": uuid.uuid4(), "kind": "requires", "option_id": L2, "target_option_id": T2}]
+    out = await holds.plan(_Ctx(), _row(), s, [_pick(LODGE, L2)], NOW)
+    assert out.action == "conflict" and out.conflicts[0]["kind"] == "requires"
+
+
+def _plan(**kw: Any) -> holds.Plan:
+    kw.setdefault("action", "place")
+    return holds.Plan(proposal_id=P, version=2, aa_ids=[str(T1)],
+                      body={"proposal_ref": f"crm-proposal:{P}", "proposal_version": 2, "currency": "USD",
+                            "lines": [{"line_ref": str(T1), "component_id": "tp:1", "service_date": "2026-12-02",
+                                       "pax": {"adult": 2, "child": 0, "infant": 0}}]},
+                      idempotency_key=f"crm-proposal:{P}:v2:a1", selection_sha256=client_page.aa_hash([str(T1)]),
+                      **kw)  # fmt: skip
+
+
+async def _placed(fake: FakeBooking, remembered: list | None = None, ok: bool = True, **kw: Any) -> holds.Placed:
+    async def remember(key: str, quote_id: str, price_hash: str, sha: bytes) -> bool:
+        if remembered is not None:
+            remembered.append((key, quote_id))
+        return ok
+
+    return await holds.place(booking_client(fake), uuid.uuid4(), _plan(**kw), remember)
 
 
 @pytest.mark.asyncio
 async def test_place_against_booking() -> None:
     fake = FakeBooking()
-    held = await _placed(fake)
+    seen: list = []
+    held = await _placed(fake, seen)
     assert held.outcome == "held" and held.hold is not None and held.hold.status == "active"
     assert fake.calls["POST quotes"] == 1 and fake.calls["POST holds"] == 1
+    assert seen == [(f"crm-proposal:{P}:v2:a1", "q1")]  # the quote is written down before POST /holds
     sold = FakeBooking(line_availability={str(T1): "sold_out"})
-    out = await _placed(sold)
+    sold.holds["h9"] = {"hold_id": "h9", "status": "active"}
+    out = await _placed(sold, release_hold_id="h9")
     assert out.outcome == "sold_out" and out.sold_out == [str(T1)] and sold.calls["POST holds"] == 0
-    assert (await _placed(FakeBooking(hold_refusal="rehold_limit"))).code == "recheck_limit"
+    assert sold.calls["DELETE holds"] == 0 and out.released is None  # the old hold is kept on a sold-out quote
+    refused = await _placed(FakeBooking(hold_refusal="rehold_limit"))
+    assert refused.code == "recheck_limit" and refused.answered
     assert (await _placed(FakeBooking(hold_refusal="sold_out"))).code == "hold_sold_out"
     assert (await _placed(FakeBooking(down=True))).outcome == "unavailable"
     release = FakeBooking()
     release.holds["h9"] = {"hold_id": "h9", "status": "active"}
-    await _placed(release, release_hold_id="h9")
-    assert release.calls["DELETE holds"] == 1 and release.holds["h9"]["status"] == "released"
+    out = await _placed(release, release_hold_id="h9")
+    assert release.calls["DELETE holds"] == 1 and release.holds["h9"]["status"] == "released" and out.released == "h9"
+    # Released, then the hold refused: the caller clears the row's hold columns.
+    gone = FakeBooking(hold_refusal="invalid")
+    gone.holds["h9"] = {"hold_id": "h9", "status": "active"}
+    out = await _placed(gone, release_hold_id="h9")
+    assert out.outcome == "refused" and out.released == "h9"
+    # The answer of POST /holds lost: the request stays in flight (replayed next time).
+    lost = FakeBooking(lose_next_hold_answer=True)
+    out = await _placed(lost)
+    assert out.outcome == "unavailable" and not out.answered and lost.holds["h1"]["status"] == "active"
+    # Another screen took the request over between the quote and the hold: nothing is released or held.
+    other = FakeBooking()
+    other.holds["h9"] = {"hold_id": "h9", "status": "active"}
+    out = await _placed(other, ok=False, release_hold_id="h9")
+    assert out.outcome == "busy" and other.calls["DELETE holds"] == 0 and other.calls["POST holds"] == 0
+
+
+@pytest.mark.asyncio
+async def test_place_replays_the_lost_request() -> None:
+    fake = FakeBooking(strict_version_set=True, lose_next_hold_answer=True)
+    first = await _placed(fake)
+    assert not first.answered
+    p = _plan(action="replay", replay_body={"quote_id": "q1", "price_hash": "a" * 63 + "1",
+                                            "proposal_ref": f"crm-proposal:{P}", "proposal_version": 2})  # fmt: skip
+
+    async def never(*_: Any) -> bool:
+        raise AssertionError("a replay quotes nothing")
+
+    out = await holds.place(booking_client(fake), uuid.uuid4(), p, never)
+    assert out.outcome == "held" and out.hold is not None and out.hold.hold_id == "h1" and fake.quotes == 1
+    # A replay Booking refuses (another quote under that key): "gone", a new request follows.
+    p.replay_body = {**p.replay_body, "quote_id": "q7"}  # type: ignore[dict-item]
+    assert (await holds.place(booking_client(fake), uuid.uuid4(), p, never)).outcome == "gone"
 
 
 @pytest.mark.asyncio

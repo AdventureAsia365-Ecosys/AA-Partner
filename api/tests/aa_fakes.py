@@ -56,6 +56,13 @@ class FakeBooking:
     # ``line_availability`` overrides ``availability`` per line_ref; ``hold_expires_in`` sets a new hold's expiry.
     line_availability: dict[str, str] = field(default_factory=dict)
     hold_expires_in: timedelta | None = None
+    # AA-950 fix round 2: Booking's own rules for one proposal version (``strict_version_set``): a used
+    # Idempotency-Key with another quote is 422 ``invalid``; one active set per (proposal_ref, version): the same quote
+    # returns it, another quote is 422 ``invalid`` until it is released. ``lose_next_hold_answer``: the next
+    # ``POST /holds`` is made but its answer is lost (a timeout after Booking's commit).
+    strict_version_set: bool = False
+    lose_next_hold_answer: bool = False
+    hold_meta: dict[str, tuple[str, str, Any]] = field(default_factory=dict)
     confirm_line_status: str = "on_request"
     calls: Counter[str] = field(default_factory=Counter)
     holds: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -85,6 +92,9 @@ class FakeBooking:
         if self.on_hold is not None and method == "POST" and path == "/holds":
             hook, self.on_hold = self.on_hold, None
             await hook()
+        if self.lose_next_hold_answer and method == "POST" and path == "/holds":
+            self.lose_next_hold_answer = False
+            raise HttpError("timeout")
         if self.lose_next_answer and method != "GET":
             self.lose_next_answer = False
             raise HttpError("timeout")
@@ -124,9 +134,24 @@ class FakeBooking:
                 return _resp(409 if self.hold_refusal == "price_changed" else 422,
                              {"error": self.hold_refusal, "message": "refused"})  # fmt: skip
             if key in self.hold_keys:
-                return _resp(201, self.holds[self.hold_keys[key]])
+                used = self.hold_keys[key]
+                if self.strict_version_set and self.hold_meta[used][0] != data["quote_id"]:
+                    return _resp(422, {"error": "invalid", "message": "Idempotency-Key used for another request"})
+                return _resp(201, self.holds[used])
+            if self.strict_version_set:
+                for hid, (quote_id, ref, version) in self.hold_meta.items():
+                    h = self.holds[hid]
+                    live = h["status"] == "confirmed" or (
+                        h["status"] == "active" and datetime.fromisoformat(h["expires_at"]) > datetime.now(UTC)
+                    )
+                    if live and (ref, version) == (data["proposal_ref"], data.get("proposal_version")):
+                        if quote_id != data["quote_id"]:
+                            return _resp(422, {"error": "invalid", "message": "release the version's hold first"})
+                        self.hold_keys[key or ""] = hid
+                        return _resp(201, h)
             hold_id = f"h{len(self.holds) + 1}"
             self.hold_keys[key or ""] = hold_id
+            self.hold_meta[hold_id] = (data["quote_id"], data["proposal_ref"], data.get("proposal_version"))
             self.holds[hold_id] = {
                 "hold_id": hold_id, "quote_id": data["quote_id"], "status": "active",
                 "expires_at": _in_two_days() if self.hold_expires_in is None else (

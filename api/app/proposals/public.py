@@ -15,10 +15,13 @@ to a device. The agent's "Re-issue link" revokes the old token (:func:`app.propo
   version at read time).
 - :func:`hold`: the version's one hold set (:mod:`app.proposals.holds`): ``(status, body)``: 200 ``held`` /
   ``not_needed``; 409 ``option_sold_out`` with the fallback (card E); 429 ``recheck_limit`` ("Ask your agent", card
-  R); 409 ``hold_unavailable`` / 503 ``booking_unavailable`` (the agent is told).
+  R); 409 ``option_conflict`` (the choice breaks a rule: nothing is held); 409 ``hold_in_progress`` (another screen
+  is placing this version's hold); 409 ``hold_unavailable`` / 503 ``booking_unavailable`` (the agent is told). A
+  request whose answer was lost is replayed with its key and quote, so a hold Booking made is recovered.
 - :func:`accept`: Origin check, typed full name, terms tick, the ``price_hash`` and terms version the page showed
   (409 ``price_changed`` / ``terms_changed``). A builder version also needs the ``selection_hash`` the page showed (409
-  ``choice_changed``), the rooms confirmed (Fix B10), and, when AA items are chosen, a live hold covering them: 409
+  ``choice_changed``), a choice that keeps the agency's rules (409 ``option_conflict``: card E's fallback may break
+  one), the rooms confirmed (Fix B10), and, when AA items are chosen, a live hold covering them: 409
   ``hold_required`` / ``hold_expired`` with the re-quote offer (card R). The schedule follows the accepted picks.
 - :func:`change_request`: "Ask for a change" (F5.4, R19): one bundled diff of the client's choice for the agent (an
   event with the bell and a task); a reason code, never free text.
@@ -57,6 +60,8 @@ SELECT p.proposal_id, p.trip_id, p.version, p.status, p.kind, p.body_enc, p.curr
        p.deposit_amount, p.balance_due_on, p.terms_doc_id, p.price_hash, p.accepted_at, p.price_visibility,
        p.room_config, p.deposit_pct, p.starts_on, p.view_count, p.first_viewed_at, p.hold_id, p.hold_quote_id,
        p.hold_expires_at, p.hold_selection_sha256, p.hold_count, p.recheck_day, p.recheck_count_day,
+       p.hold_attempt, p.hold_pending_key, p.hold_pending_at, p.hold_pending_quote_id, p.hold_pending_price_hash,
+       p.hold_pending_selection_sha256,
        p.accepted_total_amount, p.accepted_deposit_amount, p.link_id,
        t.title, t.start_date, t.end_date, t.owner_member_id, t.party_adults, t.party_child_ages
   FROM crm.proposal p JOIN crm.trip t ON t.trip_id = p.trip_id AND t.deleted_at IS NULL
@@ -64,7 +69,7 @@ SELECT p.proposal_id, p.trip_id, p.version, p.status, p.kind, p.body_enc, p.curr
    FOR UPDATE OF p
 """
 PREVIOUS_SQL = """
-SELECT proposal_id, version, total_amount FROM crm.proposal
+SELECT proposal_id, version, currency, deposit_pct, balance_due_on FROM crm.proposal
  WHERE link_id = $1 AND trip_id = $2 AND version < $3 AND status = 'superseded' AND kind = 'builder'
    AND deleted_at IS NULL
  ORDER BY version DESC LIMIT 1
@@ -155,14 +160,18 @@ async def _builder_state(ctx: AnyContext, row: Any) -> tuple[dict[str, Any], lis
     return s, picks
 
 
-async def _notice(ctx: AnyContext, row: Any, s: dict[str, Any]) -> dict[str, Any] | None:
-    """A new version on the same link: what changed since the version the client saw (one bundled notice)."""
+async def _notice(ctx: AnyContext, row: Any, s: dict[str, Any], total_now: str) -> dict[str, Any] | None:
+    """A new version on the same link: what changed since the version the client saw (one bundled notice). The totals
+    are the client's: the superseded version with the picks they had made on it, and this page's total (their picks
+    carried over included), never the published (defaults') totals."""
     prev = await ctx.conn.fetchrow(PREVIOUS_SQL, row["link_id"], row["trip_id"], row["version"])
     if prev is None:
         return None
     before = await builder._structure(ctx, prev["proposal_id"])
+    before_picks = [dict(r) for r in await ctx.conn.fetch(builder.PICKS_SQL, prev["proposal_id"])]
+    total_before = client_page.totals(before, prev, client_page.effective(before, before_picks)["picks"])["total"]
     carried = int(await ctx.conn.fetchval(CARRIED_SQL, row["proposal_id"]))
-    notice = client_page.version_notice(before, s, prev["total_amount"], row["total_amount"], carried)
+    notice = client_page.version_notice(before, s, total_before, total_now, carried)
     notice["from_version"] = prev["version"]
     return notice
 
@@ -198,8 +207,8 @@ async def _page(ctx: AnyContext, keys: KeyProvider, link: Any, row: Any) -> dict
     if row["kind"] == "builder":
         s, picks = await _builder_state(ctx, row)
         out.update(await client_page.view(ctx, vault, row, s, picks, _now()))
-        out["notice"] = await _notice(ctx, row, s) if row["status"] == "sent" else None
         t = out["totals"]
+        out["notice"] = await _notice(ctx, row, s, t["total"]) if row["status"] == "sent" else None
         out["total_amount"], out["deposit_amount"] = t["total"], t["deposit"]
         out["balance_amount"], out["balance_due_on"] = t["balance"], t["balance_due_on"]
         if row["status"] == "accepted":
@@ -287,6 +296,21 @@ def _requote(row: Any, now: dt.datetime) -> dict[str, Any]:
     return {"available": left > 0, "rechecks_left": left}
 
 
+MAX_HOLD_STEPS = 3  # a replay of the request in flight, then (when it held nothing usable) a new request
+
+
+def _conflict_body(s: dict[str, Any], found: list[dict[str, str]]) -> dict[str, Any]:
+    titles = {str(o["option_id"]): o["title"] for o in s["options"]}
+    return {
+        "detail": "option_conflict",
+        "message": "Some of your choices do not go together any more. Please change one of them.",
+        "violations": [
+            {"kind": v["kind"], "option": titles.get(v["option_id"]), "with": titles.get(v["target_option_id"])}
+            for v in found
+        ],  # fmt: skip
+    }
+
+
 async def hold(
     pool: asyncpg.Pool,
     keys: KeyProvider,
@@ -296,9 +320,30 @@ async def hold(
     *,
     origin: str | None,
 ) -> tuple[int, dict[str, Any]]:
-    """Hold the AA items of the client's choice (C-04 "Continue", C-12 "Check availability again")."""
+    """Hold the AA items of the client's choice (C-04 "Continue", C-12 "Check availability again"). A request whose
+    answer was lost is replayed first (:mod:`app.proposals.holds`); when that holds nothing usable for the current
+    choice, a new request follows in the same call."""
     check_origin(settings, origin)
     hashed = hash_hex(token)
+    for _ in range(MAX_HOLD_STEPS):
+        status, body, again = await _hold_step(pool, keys, booking, hashed)
+        if not again:
+            return status, body
+    async with client_link_tx(pool, hashed, purpose=PURPOSE) as (ctx, link):
+        return 409, await _busy(ctx, keys, link, await _row(ctx, link))
+
+
+async def _busy(ctx: AnyContext, keys: KeyProvider, link: Any, row: Any) -> dict[str, Any]:
+    return {
+        "detail": "hold_in_progress",
+        "message": "We are checking availability for this proposal on another screen. Try again in a moment.",
+        "page": await _page(ctx, keys, link, row),
+    }
+
+
+async def _hold_step(
+    pool: asyncpg.Pool, keys: KeyProvider, booking: BookingClient | None, hashed: str
+) -> tuple[int, dict[str, Any], bool]:
     now = _now()
     async with client_link_tx(pool, hashed, purpose=PURPOSE) as (ctx, link):
         row = await _row(ctx, link)
@@ -310,35 +355,59 @@ async def hold(
             await events.record(ctx, row["trip_id"], events.RECHECK_REFUSED, proposal_id=row["proposal_id"],
                                 detail={"version": row["version"]}, bell=True)  # fmt: skip
             ctx.audit("proposal_hold", "denied", "proposal", str(row["proposal_id"]), reason="recheck_limit")
-            return 429, {
-                "detail": "recheck_limit",
-                "message": "You checked availability 3 times today. Ask your agent.",
-                "page": await _page(ctx, keys, link, row),
-            }
+            return (
+                429,
+                {
+                    "detail": "recheck_limit",
+                    "message": "You checked availability 3 times today. Ask your agent.",
+                    "page": await _page(ctx, keys, link, row),
+                },
+                False,
+            )
+        if p.action == "conflict":
+            ctx.audit("proposal_hold", "denied", "proposal", str(row["proposal_id"]), reason="option_conflict")
+            return 409, {**_conflict_body(s, p.conflicts), "page": await _page(ctx, keys, link, row)}, False
+        if p.action == "busy":
+            return 409, await _busy(ctx, keys, link, row), False
         if p.action in ("none", "reuse"):
             return 200, {"outcome": "not_needed" if p.action == "none" else "held",
-                         "page": await _page(ctx, keys, link, row)}  # fmt: skip
-        if booking is None:
-            placed = holds.Placed(outcome="unavailable", code="booking_unavailable")
-    if booking is not None:
-        placed = await holds.place(booking, link.tenant_id, p)
+                         "page": await _page(ctx, keys, link, row)}, False  # fmt: skip
+        tenant_id = link.tenant_id
+
+    async def remember(key: str, quote_id: str, price_hash: str, sha: bytes) -> bool:
+        async with client_link_tx(pool, hashed, purpose=PURPOSE) as (rctx, _):
+            return await holds.remember(rctx, p.proposal_id, key, quote_id, price_hash, sha)
+
+    if booking is None:
+        placed = holds.Placed(outcome="unavailable", code="booking_unavailable", answered=False)
+    else:
+        placed = await holds.place(booking, tenant_id, p, remember)
     async with client_link_tx(pool, hashed, purpose=PURPOSE) as (ctx, link):
         row = await _row(ctx, link)
         _require_builder_open(row)
+        count = await holds.finish(ctx, row, p, placed)
         base = {"version": row["version"], "rechecks_left": p.rechecks_left}
+        if placed.outcome == "gone":
+            return 0, {}, True  # the replayed request held nothing: a new request follows
+        if placed.outcome == "busy":
+            return 409, await _busy(ctx, keys, link, row), False
         if placed.outcome == "held":
-            count = await holds.store(ctx, p, placed)
-            rehold = count > 1
-            await events.record(ctx, row["trip_id"], events.REHOLD if rehold else events.HOLD_PLACED,
-                                proposal_id=row["proposal_id"], bell=rehold,
-                                detail={**base, "hold_count": count, "aa_items": len(p.aa_ids)})  # fmt: skip
-            ctx.audit(
-                "proposal_hold", "allowed", "proposal", str(row["proposal_id"]), reason="rehold" if rehold else "hold"
-            )
+            if count is not None:
+                rehold = count > 1
+                await events.record(ctx, row["trip_id"], events.REHOLD if rehold else events.HOLD_PLACED,
+                                    proposal_id=row["proposal_id"], bell=rehold,
+                                    detail={**base, "hold_count": count, "aa_items": len(p.aa_ids),
+                                            "replayed": p.action == "replay"})  # fmt: skip
+                ctx.audit("proposal_hold", "allowed", "proposal", str(row["proposal_id"]),
+                          reason="rehold" if rehold else "hold")  # fmt: skip
             row = await _row(ctx, link)
-            return 200, {"outcome": "held", "page": await _page(ctx, keys, link, row)}
+            page = await _page(ctx, keys, link, row)
+            if p.action == "replay" and page["hold"]["status"] == "stale":
+                return 0, {}, True  # recovered a hold of an earlier choice: hold the current one now
+            return 200, {"outcome": "held", "page": page}, False
         if placed.outcome == "sold_out":
             # Card E: the option sold out mid-session: the block falls back to its default, the total is recomputed.
+            # The current hold was kept (nothing released before a clean quote): it may cover the fallback.
             structure = await builder._structure(ctx, row["proposal_id"])
             titles = {str(o["option_id"]): o["title"] for o in structure["options"]}
             blocks = await holds.sell_out(ctx, row["proposal_id"], placed.sold_out)
@@ -354,37 +423,50 @@ async def hold(
             )  # fmt: skip
             if default_out:  # the default itself is gone: only the agent can fix the proposal
                 await ctx.conn.execute(HOLD_TASK_SQL, row["trip_id"], row["owner_member_id"])
-            return 409, {
-                "detail": "option_sold_out",
-                "message": "An option you chose is no longer available; we switched back to the included one.",
-                "fallback_blocks": blocks,
-                "ask_agent": default_out,
-                "page": page,
-            }
+            return (
+                409,
+                {
+                    "detail": "option_sold_out",
+                    "message": "An option you chose is no longer available; we switched back to the included one.",
+                    "fallback_blocks": blocks,
+                    "ask_agent": default_out,
+                    "page": page,
+                },
+                False,
+            )
+        row = await _row(ctx, link)  # the hold columns may have been cleared above
         if placed.outcome == "unavailable":
             # F5.5: Booking down: "last checked", Accept disabled, the agent alerted (once an hour).
             if not await events.recent(ctx, row["proposal_id"], events.BOOKING_UNAVAILABLE, OUTAGE_EVENT_EVERY_S):
                 await events.record(ctx, row["trip_id"], events.BOOKING_UNAVAILABLE, proposal_id=row["proposal_id"],
                                     bell=True, detail=base)  # fmt: skip
-            return 503, {
-                "detail": "booking_unavailable",
-                "message": "We cannot check availability right now. Please try again later.",
-                "page": await _page(ctx, keys, link, row),
-            }
+            return (
+                503,
+                {
+                    "detail": "booking_unavailable",
+                    "message": "We cannot check availability right now. Please try again later.",
+                    "page": await _page(ctx, keys, link, row),
+                },
+                False,
+            )
         code = placed.code or "hold_refused"
         if code == "recheck_limit":
             await events.record(ctx, row["trip_id"], events.RECHECK_REFUSED, proposal_id=row["proposal_id"],
                                 detail={**base, "source": "booking"}, bell=True)  # fmt: skip
             return 429, {"detail": "recheck_limit", "message": "Ask your agent.",
-                         "page": await _page(ctx, keys, link, row)}  # fmt: skip
+                         "page": await _page(ctx, keys, link, row)}, False  # fmt: skip
         await events.record(ctx, row["trip_id"], events.HOLD_FAILED, proposal_id=row["proposal_id"], bell=True,
                             detail={**base, "code": code})  # fmt: skip
         await ctx.conn.execute(HOLD_TASK_SQL, row["trip_id"], row["owner_member_id"])
-        return 409, {
-            "detail": "hold_unavailable",
-            "message": "We could not hold your places. Your agent will contact you.",
-            "page": await _page(ctx, keys, link, row),
-        }
+        return (
+            409,
+            {
+                "detail": "hold_unavailable",
+                "message": "We could not hold your places. Your agent will contact you.",
+                "page": await _page(ctx, keys, link, row),
+            },
+            False,
+        )
 
 
 def _checked(raw: Any) -> tuple[str, str, str | None]:
@@ -435,6 +517,12 @@ async def accept(
             if raw.get("selection_hash") != shown:
                 raise Conflict("choice_changed", "your choices changed (on another device?); check them again",
                                selection_hash=shown)  # fmt: skip
+            found = builder._conflicts(s, state["picks"])
+            if found:
+                # A choice that breaks the agency's rules (e.g. a pick that needed an option which sold out since).
+                ctx.audit("proposal_accept", "denied", "proposal", str(row["proposal_id"]), reason="option_conflict")
+                body = _conflict_body(s, found)
+                raise Conflict("option_conflict", body["message"], violations=body["violations"])
             aa_ids = client_page.aa_chosen(state["choice"], builder._option_map(s))
             hold_box = client_page.hold_state(row, aa_ids, now)
             if hold_box["status"] in ("missing", "stale"):

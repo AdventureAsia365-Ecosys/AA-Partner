@@ -55,9 +55,11 @@ async def _aa(pool: asyncpg.Pool, s: dict[str, Any], fake: FakeBooking, v: dict[
     return await _as(pool, s, "agent", builder.add_aa_option, plan, quote, body)
 
 
-async def _sent(pool: asyncpg.Pool) -> dict[str, Any]:
+async def _sent(pool: asyncpg.Pool, *, riverside_requires_upgrade: bool = False) -> dict[str, Any]:
     """A sent builder version: four lodging nights (day 1: Lodge 1 or Riverside +40), a fixed park fee paid on
-    arrival, an AA day tour on day 2 (500, or the 650 upgrade) and an agency dinner on day 4 that may wait."""
+    arrival, an AA day tour on day 2 (500, or the 650 upgrade) and an agency dinner on day 4 that may wait. Booking
+    keeps its own rules for one version (``strict_version_set``). ``riverside_requires_upgrade``: the agency's rule
+    "Riverside 1 requires the 650 upgrade"."""
     s = await _setup(pool)
     async with pool.acquire() as conn:
         await conn.execute(
@@ -65,7 +67,7 @@ async def _sent(pool: asyncpg.Pool) -> dict[str, Any]:
             "VALUES ('T-950', 'Kathmandu valley day tour', 'NP', 1, 'served') "
             "ON CONFLICT (source_system, source_id) DO UPDATE SET served_state = 'served'"
         )
-    fake = FakeBooking(b2b_price="300.00", availability="available")
+    fake = FakeBooking(b2b_price="300.00", availability="available", strict_version_set=True)
     v = await _publishable(pool, s)
     day2 = next(d for d in v["days"] if d["day_no"] == 2)
     v = await _as(pool, s, "agent", builder.add_block, _pid(v), v["edit_seq"], uuid.UUID(day2["proposal_day_id"]),
@@ -77,6 +79,11 @@ async def _sent(pool: asyncpg.Pool) -> dict[str, Any]:
                   {"title": "Dinner", "type": "meal"})  # fmt: skip
     v = await _option(pool, s, v, _block(v, 4, 1), title="Cooking class dinner", sell_amount=Decimal("60"),
                       choose_later_allowed=True)  # fmt: skip
+    if riverside_requires_upgrade:
+        riverside = next(o for o in _block(v, 1)["options"] if o["title"] == "Riverside 1")
+        v = await _as(pool, s, "agent", builder.add_rule, _pid(v), v["edit_seq"],
+                      {"kind": "requires", "option_id": uuid.UUID(riverside["option_id"]),
+                       "target_option_id": uuid.UUID(_block(v, 2, 1)["options"][1]["option_id"])})  # fmt: skip
     v = await _as(pool, s, "agent", builder.publish, _pid(v), v["edit_seq"], acknowledge_selection_seq=None)
     async with tenant_tx(pool, s["who"]["agent"], s["tenant"]) as ctx:
         sent = await service.send(ctx, Vault(s["keys"], ctx), _pid(v))
@@ -323,7 +330,8 @@ async def test_a_new_version_takes_over_the_link_with_one_bundled_notice(app_poo
     notice = p["notice"]
     assert notice["from_version"] == 1 and notice["picks_carried"] == 1
     assert {"kind": "added", "title": "Jungle lodge"} in notice["changes"]
-    assert notice["total_from"] == "1560.00"
+    # The client's totals: v1 with their Riverside pick (not v1's published 1560), and this page's total.
+    assert notice["total_from"] == "1600.00" and notice["total_to"] == p["totals"]["total"]
 
 
 async def test_ask_for_a_change_bundles_the_choice_diff(app_pool: asyncpg.Pool) -> None:
@@ -386,3 +394,146 @@ async def test_another_agency_sees_no_activity_and_no_bell(app_pool: asyncpg.Poo
         assert (await events.bell(ctx))["items"] == []
         with pytest.raises(NotFound):
             await service.reissue_link(ctx, _pid(s["v"]))
+
+
+# ── Fix round 2: the hold row never claims a hold Booking let go; a lost answer is recovered; the rules hold ──
+
+
+async def _swap_to_upgrade(pool: asyncpg.Pool, s: dict[str, Any]) -> dict[str, Any]:
+    p = await page.read(pool, s["keys"], s["token"])
+    tour = _blk(p, "Kathmandu valley day tour")
+    return await page.pick(pool, s["keys"], PLAIN, s["token"], {"block_id": tour["option_block_id"],
+                           "option_id": tour["options"][1]["option_id"]}, origin=None)  # fmt: skip
+
+
+async def _hold_row(pool: asyncpg.Pool, s: dict[str, Any]) -> Any:
+    rows = await _raw(pool, s, "SELECT hold_id, hold_count, hold_attempt, recheck_count_day, hold_pending_key, "
+                      "hold_pending_quote_id FROM crm.proposal WHERE proposal_id = $1", _pid(s["v"]))  # fmt: skip
+    return rows[0]
+
+
+async def test_card_e_a_sold_out_swap_keeps_the_hold_of_the_default(app_pool: asyncpg.Pool) -> None:
+    s = await _sent(app_pool)
+    fake = s["fake"]
+    status, out = await _hold(app_pool, s)  # the default AA option is held (h1)
+    assert status == 200 and out["page"]["hold"]["status"] == "active"
+    p = await _swap_to_upgrade(app_pool, s)
+    fake.line_availability[_blk(p, "Kathmandu valley day tour")["options"][1]["option_id"]] = "sold_out"
+    status, out = await _hold(app_pool, s)
+    assert status == 409 and out["detail"] == "option_sold_out"
+    # The quote said sold out before anything was released: h1 is still held at Booking and covers the fallback.
+    assert fake.calls["DELETE holds"] == 0 and fake.holds["h1"]["status"] == "active"
+    assert out["page"]["hold"]["status"] == "active" and out["page"]["totals"]["total"] == "1560.00"
+    done = await _accept(app_pool, s, out["page"])
+    assert done["status"] == "accepted"
+    rows = await _raw(app_pool, s, "SELECT accepted_hold_id FROM crm.proposal WHERE proposal_id = $1", _pid(s["v"]))
+    assert rows[0]["accepted_hold_id"] == "h1" and fake.holds["h1"]["status"] == "active"
+
+
+async def test_a_refused_rehold_after_the_release_leaves_no_phantom_hold(app_pool: asyncpg.Pool) -> None:
+    s = await _sent(app_pool)
+    fake = s["fake"]
+    await _hold(app_pool, s)  # h1 holds the default
+    await _swap_to_upgrade(app_pool, s)
+    fake.hold_refusal = "sold_out"  # the quote is clean, Booking refuses the hold itself (after h1 was released)
+    status, out = await _hold(app_pool, s)
+    assert status == 409 and out["detail"] == "hold_unavailable"
+    assert fake.holds["h1"]["status"] == "released"
+    assert out["page"]["hold"]["status"] == "missing"
+    row = await _hold_row(app_pool, s)
+    assert row["hold_id"] is None and row["hold_pending_key"] is None  # Booking answered: nothing in flight
+    # The client swaps back by hand: the default's old hold is gone at Booking, so it is not shown as held.
+    p = await page.read(app_pool, s["keys"], s["token"])
+    tour = _blk(p, "Kathmandu valley day tour")
+    p = await page.pick(app_pool, s["keys"], PLAIN, s["token"], {"block_id": tour["option_block_id"],
+                        "option_id": tour["options"][0]["option_id"]}, origin=None)  # fmt: skip
+    assert p["hold"]["status"] == "missing"
+    with pytest.raises(Conflict) as err:
+        await _accept(app_pool, s, p)
+    assert err.value.code == "hold_required"
+
+
+async def test_a_booking_outage_after_the_release_clears_the_hold_too(app_pool: asyncpg.Pool) -> None:
+    s = await _sent(app_pool)
+    fake = s["fake"]
+    await _hold(app_pool, s)
+    await _swap_to_upgrade(app_pool, s)
+    fake.lose_next_hold_answer = True  # h1 released, the new hold made, its answer lost
+    status, out = await _hold(app_pool, s)
+    assert status == 503 and out["page"]["hold"]["status"] == "missing"
+    row = await _hold_row(app_pool, s)
+    assert row["hold_id"] is None and row["hold_pending_quote_id"] is not None  # kept for the replay
+
+
+async def test_a_lost_hold_answer_is_replayed_and_recovered(app_pool: asyncpg.Pool) -> None:
+    s = await _sent(app_pool)
+    fake = s["fake"]
+    fake.lose_next_hold_answer = True  # Booking makes h1, the CRM never hears back
+    status, out = await _hold(app_pool, s)
+    assert status == 503 and out["page"]["hold"]["status"] == "missing" and fake.holds["h1"]["status"] == "active"
+    row = await _hold_row(app_pool, s)
+    assert row["hold_pending_key"] == f"crm-proposal:{s['v']['proposal_id']}:v1:a1"
+    quotes = fake.quotes
+    status, out = await _hold(app_pool, s)  # the same key and quote again: Booking answers with h1
+    assert status == 200 and out["outcome"] == "held" and out["page"]["hold"]["status"] == "active"
+    assert fake.quotes == quotes and len(fake.holds) == 1
+    row = await _hold_row(app_pool, s)
+    assert row["hold_id"] == "h1" and row["hold_count"] == 1 and row["recheck_count_day"] == 0
+    assert row["hold_pending_key"] is None
+    done = await _accept(app_pool, s, out["page"])
+    assert done["status"] == "accepted"
+
+
+async def test_a_lost_answer_for_an_earlier_choice_is_recovered_then_replaced(app_pool: asyncpg.Pool) -> None:
+    s = await _sent(app_pool)
+    fake = s["fake"]
+    fake.lose_next_hold_answer = True
+    await _hold(app_pool, s)  # h1 for the default, answer lost
+    await _swap_to_upgrade(app_pool, s)
+    # One press: the replay recovers h1 (it blocks the version at Booking), then the upgrade is held in its place.
+    status, out = await _hold(app_pool, s)
+    assert status == 200 and out["page"]["hold"]["status"] == "active"
+    assert fake.holds["h1"]["status"] == "released" and fake.holds["h2"]["status"] == "active"
+    row = await _hold_row(app_pool, s)
+    assert row["hold_id"] == "h2" and row["hold_count"] == 2 and row["hold_attempt"] == 2
+    assert row["recheck_count_day"] == 1 and row["hold_pending_key"] is None
+
+
+async def test_a_second_screen_waits_while_the_first_is_quoting(app_pool: asyncpg.Pool) -> None:
+    s = await _sent(app_pool)
+    fake = s["fake"]
+    key = f"crm-proposal:{s['v']['proposal_id']}:v1:a1"
+    await _raw(app_pool, s, "UPDATE crm.proposal SET hold_attempt = 1, hold_pending_key = $2, hold_pending_at = now() "
+               "WHERE proposal_id = $1", _pid(s["v"]), key)  # fmt: skip
+    quotes = fake.quotes
+    status, out = await _hold(app_pool, s)
+    assert status == 409 and out["detail"] == "hold_in_progress" and fake.quotes == quotes
+    # A request that never reached its quote within 2 minutes died: a new one (a fresh key) replaces it.
+    await _raw(app_pool, s, "UPDATE crm.proposal SET hold_pending_at = now() - interval '5 minutes' "
+               "WHERE proposal_id = $1", _pid(s["v"]))  # fmt: skip
+    status, out = await _hold(app_pool, s)
+    assert status == 200 and out["page"]["hold"]["status"] == "active"
+    assert fake.hold_keys.get(f"crm-proposal:{s['v']['proposal_id']}:v1:a2") == "h1"
+
+
+async def test_card_e_a_fallback_that_breaks_a_rule_is_neither_held_nor_accepted(app_pool: asyncpg.Pool) -> None:
+    s = await _sent(app_pool, riverside_requires_upgrade=True)
+    fake = s["fake"]
+    p = await _swap_to_upgrade(app_pool, s)
+    upgrade = _blk(p, "Kathmandu valley day tour")["options"][1]["option_id"]
+    p = await _pick(app_pool, s, "Riverside 1")  # allowed: the upgrade it requires is chosen
+    fake.line_availability[upgrade] = "sold_out"
+    status, out = await _hold(app_pool, s)
+    assert status == 409 and out["detail"] == "option_sold_out"
+    # The tour fell back to the default; Riverside 1 still needs the upgrade: no hold, no accept.
+    holds_before = fake.calls["POST holds"]
+    status, out = await _hold(app_pool, s)
+    assert status == 409 and out["detail"] == "option_conflict" and fake.calls["POST holds"] == holds_before
+    assert out["violations"][0]["option"] == "Riverside 1"
+    with pytest.raises(Conflict) as err:
+        await _accept(app_pool, s, out["page"])
+    assert err.value.code == "option_conflict"
+    # Keeping Lodge 1 instead fixes it.
+    p = await _pick(app_pool, s, "Lodge 1")
+    status, out = await _hold(app_pool, s)
+    assert status == 200 and out["page"]["hold"]["status"] == "active"

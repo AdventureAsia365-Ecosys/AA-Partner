@@ -259,7 +259,8 @@ def choice_diff(s: dict[str, Any], pick_rows: list[dict[str, Any]]) -> list[dict
 def version_notice(prev: dict[str, Any], cur: dict[str, Any], prev_total: Any, cur_total: Any,
                    carried: int) -> dict[str, Any]:  # fmt: skip
     """The bundled notice of a new version on the same link: what changed since the version the client saw (titles
-    only: no per-line price, §2.9 rule 3), the total before and after, and how many of their picks carried over."""
+    only: no per-line price, §2.9 rule 3), the client's total before (the superseded version with their picks) and now
+    (this page's total), and how many of their picks carried over."""
     changes: list[dict[str, Any]] = []
     prev_opts = {str(o["option_id"]): o for o in prev["options"]}
     sources = {str(o["source_option_id"]) for o in cur["options"] if o["source_option_id"]}
