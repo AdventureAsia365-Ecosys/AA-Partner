@@ -108,6 +108,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `/crm/public/v1/invitations/claim` | no token (AA-939): the invitation token in the body only; rate limited per address (`RATE_LIMIT_CLAIM_PER_MINUTE`) | `invitation_tx()`; creates or finds the partner-pool account |
 | `/crm/public/v1/s/{token}` | no token (AA-943): the signed client link in the path only (43-character token, SHA-256 stored); served on the client host | `client_link_tx()`; GET the Stage 2 planning form (pages, branches, F2 prefill), POST the answers (Origin check, per-address limit, 32 KiB cap); 404 `link_not_found` for any unusable token |
 | `/crm/public/v1/p/{token}`, `/crm/public/v1/portal/{token}` | no token (AA-946): the signed link in the path (purpose `proposal` / `portal`), plus in the portal the session cookie `aa_portal_s` a verified e-mail code set (httpOnly, Secure, SameSite=Strict, Path = that portal's own path, 12 h; SHA-256 stored); served on the client host | `client_link_tx()` of the purpose; the proposal page and accept (409 `price_changed` / `terms_changed`), the portal home, codes, session, Stage 3 (403 `stage3_locked` before the deposit), e-sign v0; writes: Origin check, per-address limit, 32 KiB cap; 404 `link_not_found` for any unusable link |
+| `/crm/public/v1/proposal[/pick\|/hold\|/accept\|/change-request]` | no token in the URL (AA-950, Fix B11): the host-only cookie `aa_proposal_link` the web set when the client opened `/c/p/<token>` (httpOnly, Secure, SameSite=Strict, Path `/crm/public/v1/proposal`); served on the client host | `client_link_tx()` of purpose `proposal` (`app/proposals/public.py`); C-03 / C-04 / C-12 of a builder version (Keep / Swap, Choose later, the hold set, accept 409 `hold_expired`, Ask for a change); writes: Origin check, per-address limit, 32 KiB cap; no cookie or an unusable link: 404 `link_not_found` |
 | `/crm/v1` | PARTNER x {AA-Partner web}; on Dev also EXTERNAL x {`cis-portal`} until the CRM web switches pools (AA-CIS-Infra `crm_partner_signin_enabled`; removed at P2b, AA-979) | `X-AA-Tenant-Id` + `tenant_tx(action=...)` (membership in `crm.member`, then the permission matrix); `GET /crm/v1/memberships` and `POST /crm/v1/invitations/accept` need no header |
 | `/crm/ops/v1` | WORKFORCE x {`cis-admin`} | group `cis-admin` or `crm-platform-admin` reads, `crm-platform-admin` writes (AA-939: member deactivation, owner recovery; AA-941: the L1 console, section "L1 console" below). Every response passes the L1 key allow-list (`app/ops/serializer.py`). AA-979: `POST /tenants/{id}/studio-invitations` (the CIS staff relay of a Content studio invitation) takes any OPS caller, `cis-admin` included (section "Content studio invitations") |
 | `/crm/staff/v1` | WORKFORCE x {`crm-staff`} | group `crm-ops` or `crm-support` (+ an owner grant for support, CRM-13b) |
@@ -262,6 +263,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-018` | `api/migrations/018_crm_membership_inbox_purge.sql` | AA-978 follow-up (needs crm-013 only; applies after crm-016 / crm-017): `crm.lifecycle_purge_expired()` also deletes the agency's `crm.membership_inbox` rows received more than 90 days ago (DM-7), returned as `membership_inbox`; Guard 0 refuses a purge function a later key extended. No table, grant or policy change |
 | `crm-019` | `api/migrations/019_crm_proposal_builder.sql` | CRM-21a proposal model + day-list builder (AA-949; needs crm-017 + crm-018): `proposal.kind` text / builder, `price_visibility` (`total_with_deltas` default / `total_only`, D1), `room_config` (Fix B10), `deposit_pct`, `starts_on`, the version counters `edit_seq` (stale write = 409 `version_conflict`) and `selection_seq` / `based_on_selection_seq` (a client pick made since the working copy was copied is surfaced at publish), status `published` (builder: draft -> published -> sent / superseded / withdrawn; one published per trip), `sent_at` set once (`crm.guard_set_once`, so CRM-21b can send a published version); `proposal_day` (day 0 = Before you go, IANA `tz`, notes under the vault DEK), `option_block` (`client_may_swap` default true, `default_option_id`, `default_pinned`), `option` (agency / AA source, `net_amount` conf:commercial, pay on arrival, choose later agency only, availability, AA quote reference with `aa_nights` (required for a hotel room) and "from"-price warning), `option_rule` (requires / excludes), `selection` (one pick per block of a published / sent version); `crm.guard_proposal_draft` (CRM35: builder rows change only in a draft, an option's availability excepted) and `crm.guard_selection` (CRM36); no ON DELETE actions (a referential action reads every agency's holds), the two circular keys deferred; `crm.erase_subject` = the crm-017 text + the five tables; hold guard on all five |
 | `crm-020` | `api/migrations/020_crm_studio_invitation.sql` | CRM-P2b Content studio invitations (AA-979; needs crm-019): `crm.studio_invitation`, a PLATFORM table (no `tenant_id`: the CIS tenant may have no CRM agency; `cis_tenant_id` without foreign key, `cis_invitation_id` UNIQUE = CIS's invitation, re-issued in place), the e-mail sealed under a key derived from the invitation token (the database alone cannot open it), `token_hash`, locale, status pending -> claimed -> accepted -> activated (expired / revoked; expired -> pending on re-issue), the partner-pool identity the claim bound, activation attempts and the last error code; FORCE RLS: a platform actor or the activation job, or the token holder (SELECT + UPDATE on `app.invite_token_hash`); `crm.guard_studio_invitation_write()` CRM37; no reader grant, no DELETE. erase / hold / purge functions unchanged |
+| `crm-021` | `api/migrations/021_crm_client_proposal.sql` | CRM-21b client proposal (AA-950; needs crm-019; crm-020 is AA-979's and independent, either order): `proposal` viewed counters (`view_count`, `first_viewed_at`, `last_viewed_at`, `nudged_at`, R4), the version's hold set (`hold_set_ref` = the Booking `proposal_ref` `crm-proposal:<id>`, UNIQUE; `hold_id`, `hold_quote_id`, `hold_expires_at`, `hold_selection_sha256`, `hold_placed_at`, `hold_count`; `recheck_day` / `recheck_count_day` <= 3, Fix A3), the builder acceptance (`accepted_selection_sha256`, `accepted_total_amount`, `accepted_deposit_amount`, `accepted_hold_id`) under the crm-016 acceptance seal; `crm.metric_event` (base template; the bell: `bell_member_id`, `seen_at` set once by `crm.guard_metric_event`, crm_app inserts / reads and has a column grant on `seen_at` only); `crm.erase_subject` = the crm-019 text + `metric_event`. No new SQLSTATE (crm-020 has CRM37; next CRM38) |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -746,6 +748,41 @@ migration crm-019; code in `app/proposals/` (`builder.py`, `rules.py` pure, `aa_
 - **Web**: `/pipeline/<trip>/proposal/<proposal>` (`components/proposals/BuilderPage.tsx`, the drawer
   `BuilderAaDrawer.tsx`, helpers `lib/builder.ts`), started from the trip's Proposal tab (section "Day-by-day proposal");
   BFF lines card AA-949; EN + VI. Dev E2E: `e2e/tests/proposal-builder.spec.ts`.
+
+## CRM-21b client proposal + accept + hold (AA-950)
+
+Design v3 §6.3 CRM-21b (M3 client side, R4, R19, R26, C31; Fix A3, B9, B11; cards R / E); migration crm-021; code in
+`app/proposals/` (`client_page.py` the choice and the client view, `holds.py` the hold set, `events.py` events / bell /
+nudge, `public.py` the client page), `app/proposals/service.py` (send of a builder version, re-issue, client
+activity), routes in `app/routers/client_pages.py` and `app/routers/proposals.py`; decisions in
+`docs/implementation-notes/AA-950.md`.
+
+- **Send** (`PROPOSAL_PUBLISH`): a published builder version -> sent; the version sent before is superseded. When its
+  link is live (same lead, 3+ days left) the new version takes over that link (`link_reused`, no path returned) and the
+  client's page shows one bundled notice of what changed; otherwise a new link, its path returned once.
+  **Re-issue link** revokes the link (every device loses it) and moves every version on it to the new one.
+- **Link cookie (Fix B11)**: `/c/p/<token>` (web route handler) sets `aa_proposal_link` and redirects to `/c/p`; the
+  page calls `/crm/public/v1/proposal` with same-origin credentials. The token stays valid until it expires: a second
+  device that opens the link gets in (card E). `/p/{token}` GET / accept stay for old links.
+- **C-03**: one option per block (the pick, else the default; a sold-out pick falls back), the sell difference per
+  option (D1; nothing for `total_only`), confirmation classes (R26), rule clashes greyed with the reason, "Choose
+  later" = the default marked for later, agency items only (Fix B9). Never a net, margin or per-line price.
+- **Hold set (Fix A3)**: one Booking hold per version covering the chosen AA options (one multi-line quote, then
+  `POST /holds`, `Idempotency-Key crm-proposal:<id>:v<N>:h<n>`), reused while it covers the choice and is live; every
+  later hold is a re-check: at most 3 a UTC day per version, the 4th refused before Booking (429 `recheck_limit`, "Ask
+  your agent"); a re-hold rings the trip owner's bell. A chosen option Booking answers sold out -> marked sold out,
+  the pick dropped, 409 `option_sold_out` with the fresh page (card E). Booking down -> 503, one bell an hour.
+- **Accept**: price hash, terms, rooms confirmed (Fix B10), `selection_hash` (409 `choice_changed`), a live hold over
+  the AA choice (409 `hold_required` / `hold_expired` + `requote`, card R); the schedule follows the accepted picks; the
+  `collect_deposit` task is due at the hold expiry (C31). AA lines from the accepted hold set are CRM-23.
+- **Agent side**: the lifecycle list carries viewed / hold / accepted total; `GET /proposals/{id}/client-activity`
+  (R19 choices, events); `GET /bell`, `POST /bell/seen` (the caller's unseen `crm.metric_event` items, bundled per
+  proposal and event). R4 nudge: the hourly `crm_stage_date_rule` gives the owner one `proposal_follow_up` task and a
+  bell item 2 days after the first view without a pick.
+- **Web**: `app/c/p/[token]/route.ts` (exchange), `app/c/p/page.tsx`, `components/proposals/ClientBuilderProposal.tsx`
+  (phone first, 390 px), `components/proposals/BuilderClientRow.tsx` (Send / Re-issue / viewed / choices),
+  `components/BellMenu.tsx` (top bar), `lib/clientProposal.ts`, `lib/bell.ts`; BFF lines card AA-950; EN + VI. Dev E2E:
+  `e2e/tests/client-proposal.spec.ts`.
 
 ## F1 / F2 complete (AA-937, CRM-09)
 
