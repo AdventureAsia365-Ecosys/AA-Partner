@@ -2,9 +2,14 @@
 clients (AA-945; lane §6.5; errata S247 §1). One class, two endpoint sets: each send refreshes an access token from the
 stored refresh token, then posts the RFC 5322 message we built:
 
-- Gmail ``users/me/messages/send`` with ``{"raw": base64url}``: Google keeps our Message-ID and returns its id;
-- Graph ``me/sendMail`` with the MIME message base64 (``Content-Type: text/plain``): 202, no id. The trip token in the
-  subject threads the client's reply either way (card E).
+- Gmail ``users/me/messages/send`` with ``{"raw": base64url}``: returns ``{id, threadId}`` and **replaces our
+  Message-ID** with its own (S252 live finding). Reading the new one back (``users.messages.get``) needs a read scope
+  (``gmail.metadata`` / ``gmail.readonly``) that ``gmail.send`` does not grant, so it is not read;
+- Graph ``me/sendMail`` with the MIME message base64 (``Content-Type: text/plain``): 202, no id, and it may replace the
+  Message-ID too.
+
+Both keep the References we wrote, which ends with our own Message-ID (:mod:`app.mail.compose`), so the client's reply
+still threads by header; the trip token in the subject is the second net (card E).
 
 Refresh-token rotation: Microsoft returns a new refresh token on every refresh (each one valid for at most 90 days) and
 Google sometimes does. :meth:`OAuthMailProvider.access_token` hands the new one back, and ``send`` / ``check`` return

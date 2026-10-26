@@ -9,10 +9,14 @@ provider and an in-memory ingest bucket.
 - Review round S250: a rotated refresh token replaces the stored credential; the agency's own BCC copy is "sent" only
   when SES authenticated its From (a spoofed one is inbound); a history import runs in slices with added counts; a
   send whose retries run out fails the message instead of leaving it queued.
+- S252 live finding: a reply carrying only the Message-ID the CRM put on the sent mail (In-Reply-To when the provider
+  kept it, References when it replaced it, as Gmail's API does) threads to that mail's conversation, every mailbox kind.
 """
 
 from __future__ import annotations
 
+import email
+import email.policy
 import uuid
 from typing import Any
 
@@ -271,3 +275,52 @@ async def test_a_send_whose_retries_run_out_fails_the_message(app_pool: asyncpg.
         app_pool, d["tenant"], "SELECT status || ':' || failure_code FROM crm.message WHERE message_id = $1", message_id
     )
     assert status == "failed:retries_exhausted"
+
+
+PROVIDER_ID = "<CAKnvzAQx-Q=WQ3_providerid@mail.gmail.com>"
+PROVIDER_OF = {"gmail": "google", "microsoft": "microsoft", "smtp": "smtp"}
+
+
+@pytest.mark.parametrize("kind", ["gmail", "microsoft", "smtp"])
+@pytest.mark.parametrize("rewrites", [False, True], ids=["id-kept", "id-replaced"])
+async def test_a_header_only_reply_threads_to_the_sent_mail(app_pool: asyncpg.Pool, kind: str, rewrites: bool) -> None:
+    """S252 live finding: Gmail's API put its own Message-ID on mail A, so the client's reply (In-Reply-To = the id it
+    received, no trip tag) went to Unmatched. A reply that carries the id the CRM put on the raw message, in
+    In-Reply-To (provider kept it) or in References (provider replaced it), lands in A's conversation by header, for
+    every mailbox kind; the sender is not a client, so no other rule could place it there."""
+    d = await _setup(app_pool)
+    if kind != "gmail":
+        async with tenant_tx(app_pool, d["owner"], d["tenant"], action=Action.OWN_MAILBOX_CONNECT) as ctx:
+            await mailbox.connect(
+                ctx,
+                Vault(d["keys"], ctx),
+                scope="own",
+                provider=PROVIDER_OF[kind],
+                secret={"refresh_token": "rt", "address": "minh@senvang.example"},
+            )
+    provider = FakeProvider(external_id=None)
+    message_id, job = await _send(app_pool, d)
+    sent = await build_dispatch(MailSender(MailRuntime(keys=d["keys"], providers={kind: provider})))(app_pool, job)
+    assert sent["status"] == "sent"
+    delivered = email.message_from_bytes(provider.sent[0][0], policy=email.policy.default)
+    if rewrites:
+        del delivered["Message-ID"]
+        delivered["Message-ID"] = PROVIDER_ID
+    parent_id = str(delivered["Message-ID"])
+    store = MemoryIngestStore()
+    store.objects["raw/reply"] = raw_mail(
+        to=d["address"],
+        sender="Spouse <spouse@example.test>",
+        subject="Re: Your plan",
+        message_id="<reply-1@example.test>",
+        in_reply_to=parent_id,
+        references=f"{delivered['References']} {parent_id}",
+    )
+    assert await ingest.build_handler(store, None, d["keys"], DOMAIN)(app_pool, JOB) == {"stored_count": 1}
+    rows = await _rows(
+        app_pool,
+        d["tenant"],
+        "SELECT r.match_method, r.conversation_id = a.conversation_id AS same FROM crm.message r, crm.message a"
+        f" WHERE r.direction = 'in' AND a.message_id = '{message_id}'",  # noqa: S608 — a uuid we made
+    )
+    assert [tuple(r) for r in rows] == [("reply_header", True)]
