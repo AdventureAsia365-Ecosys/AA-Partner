@@ -58,6 +58,9 @@ MAIL_IMPORT = "crm_mail_history_import"
 # the hourly cache of published AA tours from CIS catalog.http.v1 (app.catalog.sync), queued due-now.
 BOOKING_SYNC = "crm_booking_sync"
 CATALOG_SYNC = "crm_catalog_sync"
+# AA-979 P2b: tell CIS which partner-pool identity accepted a Content studio invitation (app.members.studio), one row
+# per accepted invitation, queued in the accept transaction. Not deploy-gate exempt (exists only while due / retried).
+STUDIO_ACTIVATION = "crm_studio_activation"
 
 DEFAULT_EXPECTED_SECONDS = 300
 OVERDUE_FACTOR = 2
@@ -82,6 +85,7 @@ EXPECTED_SECONDS: dict[str, int] = {
     MAIL_IMPORT: 120,  # one slice (history_import.SLICE messages)
     BOOKING_SYNC: 60,
     CATALOG_SYNC: 300,
+    STUDIO_ACTIVATION: 30,
 }
 
 

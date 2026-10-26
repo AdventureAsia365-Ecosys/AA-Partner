@@ -26,7 +26,15 @@ GET    ``/tenants/{id}/data-requests``             latest agency export / deleti
 POST   ``/tenants/{id}/data-requests``             raise one the owner confirms, 202
 GET    ``/tenants/{id}/jobs``                      failed jobs of the agency (7 days)
 POST   ``/tenants/{id}/jobs/{job_id}/retry``       re-queue one, 202
+POST   ``/tenants/{id}/studio-invitations``         AA-979 P2b: deliver a CIS Content studio invitation, 202
 =====  ==========================================  =============================================================
+
+AA-979 (crm.ops.v1 1.3): ``POST /tenants/{id}/studio-invitations`` ``{email, cis_invitation_id, locale}`` — the CIS
+staff relay (Tenant 360 Members invite / send again) hands over the address of an invitation CIS created; the CRM sends
+the AA system mail and owns the claim (:mod:`app.members.studio`). ``{id}`` is the CIS tenant, which may have no CRM
+agency. Writers: any OPS caller, ``cis-admin`` included (orchestrator decision Q4: the CIS route already requires
+``tenant.write``, and CIS decides the Content studio role; this call grants nothing in the CRM). The address is never
+echoed, logged or stored in clear.
 """
 
 from __future__ import annotations
@@ -43,7 +51,7 @@ from app.auth.route_guard import Caller, class_router, current_caller, require_g
 from app.db import request_pool
 from app.jobs import queue
 from app.llm.usage import MAX_DAYS, llm_usage
-from app.members import recovery
+from app.members import recovery, studio
 from app.members.mail import require_mailer
 from app.ops import console
 from app.vault.provider import require_keys
@@ -362,6 +370,38 @@ async def lock_tenant(request: Request, tenant_id: uuid.UUID, body: LockIn, call
 async def unlock_tenant(request: Request, tenant_id: uuid.UUID, body: TicketIn, caller: PlatformAdmin) -> dict:
     pool = await request_pool(request)
     return await console.unlock_agency(pool, tenant_id, staff_sub=caller.sub, ticket_ref=body.ticket_ref)
+
+
+class StudioInvitationIn(_In):
+    email: str = Field(min_length=3, max_length=254)
+    cis_invitation_id: uuid.UUID
+    locale: Literal["en", "vi"] = "en"
+
+
+class StudioInvitationAccepted(_Out):
+    invitation_id: str
+    tenant_id: str
+    status: Literal["pending"]
+    expires_at: str
+    reissued: bool
+
+
+@router.post("/tenants/{tenant_id}/studio-invitations", response_model=StudioInvitationAccepted, status_code=202)
+async def studio_invitation(request: Request, tenant_id: uuid.UUID, body: StudioInvitationIn, caller: Reader) -> dict:
+    """AA-979: deliver a CIS Content studio invitation (``tenant_id`` = the CIS tenant; no CRM agency needed)."""
+    pool = await request_pool(request)
+    settings = request.app.state.settings
+    return await studio.issue(
+        pool,
+        cis_tenant_id=tenant_id,
+        cis_invitation_id=body.cis_invitation_id,
+        email=body.email,
+        locale=body.locale,
+        staff_sub=caller.sub,
+        mailer=require_mailer(request.app.state.mailer),
+        web_origin=settings.invitation_origin,
+        ttl_hours=settings.invitation_ttl_hours,
+    )
 
 
 @router.post("/tenants/{tenant_id}/owner-invite", response_model=OwnerInviteAccepted, status_code=202)
