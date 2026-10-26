@@ -2,6 +2,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  ATOM_REPLACED_BLOCK,
+  atomReplacedNote,
   builtInViews,
   bulkPublishPlan,
   canRegenerate,
@@ -217,4 +219,23 @@ test("a published row can be neither written again nor published again (review S
   const down = row({ piece_id: "p2" });
   assert.equal(publishBlock(down, BOTH), null);
   assert.ok(canRegenerate(down));
+});
+
+test("AA-990: a request whose part of the tour was rewritten cannot be written again", () => {
+  const replaced = row({ atom_replaced: true });
+  assert.equal(regenerateBlock(replaced), ATOM_REPLACED_BLOCK);
+  assert.ok(!canRegenerate(replaced));
+  assert.ok(canRegenerate(row({ atom_replaced: false })));
+  // a closed tour says so first; a live post still asks to unpublish first
+  assert.equal(regenerateBlock(row({ atom_replaced: true, served_status: "retired" })), "Closed for this tour");
+  assert.equal(regenerateBlock(row({ atom_replaced: true, published_at: "2026-10-12T00:00:00Z" })),
+    "Unpublish the live post first to write a new version");
+});
+
+test("AA-990: the replaced note names the unique replacement when CIS gives one", () => {
+  assert.match(atomReplacedNote(null), /Start a new post from Social Posts\.$/);
+  assert.match(atomReplacedNote({ atom_id: "a", place: "Hoi An Ancient Town", itinerary_day: 3 }),
+    /the tour now covers Hoi An Ancient Town \(day 3\)\.$/);
+  assert.match(atomReplacedNote({ atom_id: "a", place: "Sapa", itinerary_day: null }), /covers Sapa\.$/);
+  assert.match(atomReplacedNote({ atom_id: "a", place: "  ", itinerary_day: 2 }), /Social Posts\.$/);
 });
