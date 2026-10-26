@@ -4,7 +4,7 @@
 // agent (the API never builds them for the assistant); amounts are decimal strings and are never re-computed here
 // except the margin share shown next to the totals.
 
-import type { MessageKey } from "@/lib/i18n";
+import { fmt, type MessageKey } from "@/lib/i18n";
 
 export type BuilderStatus = "draft" | "published" | "sent" | "accepted" | "superseded" | "withdrawn";
 export type BlockType = "lodging" | "activity" | "transport" | "meal" | "guide" | "other";
@@ -36,6 +36,8 @@ export interface BuilderOption {
     component_id: string;
     component_kind: string;
     departure_id: string | null;
+    nights: number | null;
+    unpriced: boolean;
     quote_valid_until: string | null;
     quote_expired: boolean;
     from_price: string | null;
@@ -51,6 +53,7 @@ export interface BuilderBlock {
   sort_order: number;
   client_may_swap: boolean;
   default_option_id: string | null;
+  default_pinned: boolean;
   options: BuilderOption[];
 }
 
@@ -108,7 +111,7 @@ export interface BuilderView {
   checks: { publishable: boolean; blocking: string[]; warnings: string[] };
   stage2: { accommodation_tier: string | null; group_pref: string | null; pace: string | null; party_adults: number; party_children: number };
   publish?: { published_at: string; price_hash: string; superseded: string[]; picks_carried: number };
-  refresh?: { quoted: number; failed: { option_id: string; code: string }[] };
+  refresh?: { quoted: number; failed: { option_id: string; code: string }[]; skipped: number };
 }
 
 /** The 409 the API answers when the page is stale (another editor) or the client picked on the base version. */
@@ -183,9 +186,23 @@ export function builderErrorKey(detail: string): MessageKey {
     terms_not_published: "proposal.error.terms_not_published",
     trip_not_open_for_proposal: "builder.err.trip_not_open",
     option_sold_out: "builder.err.aa_sold_out",
+    invalid_nights: "aa.error.nights",
     aa_net_from_quote: "builder.err.aa_net_from_quote",
   };
   return known[detail] ?? "builder.err.generic";
+}
+
+/** What "Refresh AA prices" says: how many were checked, how many are left for another run (40 a run, the oldest
+ *  quotes first) and how many Booking refused or could not quote (no date). */
+export function refreshMessage(
+  r: { quoted: number; failed: { option_id: string; code: string }[]; skipped: number },
+  tr: (key: string) => string,
+): { tone: "danger" | "success"; text: string } {
+  const failed = r.failed.filter((f) => f.code !== "refresh_limit").length;
+  const parts = [fmt(tr("builder.aa.refreshed"), { n: r.quoted })];
+  if (r.skipped > 0) parts.push(fmt(tr("builder.aa.refreshSkipped"), { n: r.skipped }));
+  if (failed > 0) parts.push(fmt(tr("builder.aa.refreshFailed"), { n: failed }));
+  return { tone: failed > 0 || r.skipped > 0 ? "danger" : "success", text: parts.join(" ") };
 }
 
 /** The blocking checks and warnings the API lists, worded. */
@@ -196,6 +213,8 @@ export function checkKey(code: string): MessageKey {
     default_sold_out: "builder.check.default_sold_out",
     option_conflict: "builder.check.option_conflict",
     aa_prices_stale: "builder.check.aa_prices_stale",
+    aa_item_unpriced: "builder.check.aa_item_unpriced",
+    balance_due_on_not_needed: "builder.check.balance_due_on_not_needed",
     nothing_to_charge: "builder.check.nothing_to_charge",
     balance_due_on_required: "builder.check.balance_due_on_required",
     below_from_price: "builder.check.below_from_price",

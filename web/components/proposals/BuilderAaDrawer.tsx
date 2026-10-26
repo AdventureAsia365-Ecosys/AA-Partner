@@ -110,6 +110,11 @@ export function BuilderAaDrawer({
       setError(tr("builder.err.generic"));
       return;
     }
+    // A hotel room is quoted for its nights (the API answers 422 invalid_nights otherwise, as AA-947 lines do).
+    if (component.kind === "hotel_room" && !(nights && /^\d{1,2}$/.test(nights) && Number(nights) >= 1 && Number(nights) <= 60)) {
+      setError(tr("aa.error.nights"));
+      return;
+    }
     const body: Record<string, unknown> = {
       tour_source_id: tour.source_id,
       component_id: component.component_id,

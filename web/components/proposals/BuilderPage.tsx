@@ -24,6 +24,7 @@ import {
   moneyInput,
   offsetLabel,
   optionLabel,
+  refreshMessage,
   ROOM_TYPES,
   roomsBody,
   roomsSummary,
@@ -103,6 +104,11 @@ export function BuilderPage({
 
   /** One builder write: adds the seq the page read; on success the answer is the whole page. */
   async function write(method: Method, path: string, body: Record<string, unknown> = {}): Promise<boolean> {
+    return (await send(method, path, body)) !== null;
+  }
+
+  /** As write, answering the new page (null when refused: the message or the conflict banner is shown). */
+  async function send(method: Method, path: string, body: Record<string, unknown> = {}): Promise<BuilderView | null> {
     setBusy(true);
     setMessage(null);
     const res =
@@ -113,12 +119,12 @@ export function BuilderPage({
     if (res.ok) {
       setView(res.data);
       setRooms(res.data.room_config);
-      return true;
+      return res.data;
     }
     const vc = versionConflict(res.status, res.detail, res.body);
     if (vc) {
       setConflict(vc);
-      return false;
+      return null;
     }
     let text = tr(builderErrorKey(res.detail));
     const violations = (res.body as { violations?: { option_id: string; kind: string; target_option_id: string }[] })?.violations;
@@ -127,7 +133,7 @@ export function BuilderPage({
       text += ` ${violations.map((v) => `${optionLabel(view, v.option_id, dayWord)} ${tr(`builder.rule.${v.kind}`)} ${optionLabel(view, v.target_option_id, dayWord)}`).join("; ")}`;
     }
     setMessage({ tone: "danger", text });
-    return false;
+    return null;
   }
 
   async function publish(acknowledge?: number) {
@@ -137,6 +143,12 @@ export function BuilderPage({
       setMessage({ tone: "success", text: fmt(tr("builder.published"), { n: view.version }) });
       router.refresh();
     }
+  }
+
+  /** Refresh AA prices: the oldest quotes first, 40 a run; says how many were checked, left or refused. */
+  async function refreshAa() {
+    const r = (await send("POST", `proposals/${view.proposal_id}/aa-refresh`))?.refresh;
+    if (r) setMessage(refreshMessage(r, tr));
   }
 
   async function newVersion() {
@@ -237,6 +249,7 @@ export function BuilderPage({
         <span style={{ flex: "1 1 160px", color: K.ink, overflowWrap: "anywhere" }}>
           {o.title}
           {o.source === "aa" && <span style={{ color: K.muted }}> · AA</span>}
+          {o.aa?.nights ? <span style={{ color: K.muted }}> · {fmt(tr("builder.option.nights"), { n: o.aa.nights })}</span> : null}
           {o.tier && <span style={{ color: K.muted }}> · {tr(`builder.tier.${o.tier}`)}</span>}
         </span>
         <Badge tone={AVAIL_TONE[o.availability]}>{tr(`builder.avail.${o.availability}`)}</Badge>
@@ -244,6 +257,7 @@ export function BuilderPage({
         {o.choose_later_allowed && <Badge tone="neutral">{tr("builder.option.chooseLater")}</Badge>}
         {o.aa?.below_from_price && <Badge tone="warning">{tr("aa.belowFrom")}</Badge>}
         {o.aa?.quote_expired && <Badge tone="warning">{tr("builder.check.aa_prices_stale")}</Badge>}
+        {o.aa?.unpriced && <Badge tone="danger">{tr("builder.option.unpriced")}</Badge>}
         {canMoney && o.net_amount !== undefined && (
           <span style={{ color: K.muted }} data-testid="builder-option-net">
             {fmt(tr("builder.option.net"), { amount: money(o.net_amount) })}
@@ -268,6 +282,7 @@ export function BuilderPage({
   }
 
   const tripDays = view.days.filter((d) => d.day_no >= 1);
+  const hasAa = allOptions(view).some((x) => x.option.source === "aa");
   const pct = marginPct(view.totals.sell_total, view.totals.margin_total);
 
   return (
@@ -281,6 +296,11 @@ export function BuilderPage({
           <Badge tone={STATUS_TONE[view.status]}>{tr(`builder.status.${view.status}`)}</Badge>
           {view.published_at && <span style={{ fontSize: 12.5, color: K.muted }}>{fmt(tr("builder.publishedOn"), { date: formatDate(view.published_at.slice(0, 10), locale) })}</span>}
           <span style={{ flex: 1 }} />
+          {draft && hasAa && (
+            <Button size="sm" disabled={!hydrated || busy} onClick={refreshAa} data-testid="builder-aa-refresh">
+              {tr("builder.aa.refresh")}
+            </Button>
+          )}
           {draft && canPublish && (
             <Button variant="primary" size="sm" disabled={!hydrated || busy || !view.checks.publishable} onClick={() => publish()}>
               {fmt(tr("builder.publish"), { n: view.version })}

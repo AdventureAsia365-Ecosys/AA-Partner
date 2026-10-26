@@ -8,6 +8,7 @@ import {
   moneyInput,
   offsetLabel,
   optionLabel,
+  refreshMessage,
   roomsBody,
   roomsSummary,
   versionConflict,
@@ -58,6 +59,7 @@ function view(): BuilderView {
             sort_order: 0,
             client_may_swap: true,
             default_option_id: "o1",
+            default_pinned: false,
             options: [
               { option_id: "o1", source: "agency", title: "Homestay", tier: null, agency_supplier_id: null, sell_amount: "200.00", sell_delta: "0.00", pay_on_arrival: false, choose_later_allowed: false, availability: "agency", availability_checked_at: null, is_default: true, picked: false },
             ],
@@ -114,7 +116,7 @@ describe("builder helpers", () => {
   });
 
   it("word every refusal and check in both languages", () => {
-    for (const code of ["version_conflict", "option_conflict", "aa_sold_out", "booking_unavailable", "role_forbidden", "something_new"]) {
+    for (const code of ["version_conflict", "option_conflict", "aa_sold_out", "booking_unavailable", "role_forbidden", "invalid_nights", "something_new"]) {
       const key = builderErrorKey(code);
       expect(MESSAGES.en[key]).toBeTruthy();
       expect(MESSAGES.vi[key]).toBeTruthy();
@@ -122,6 +124,22 @@ describe("builder helpers", () => {
     for (const code of ["no_options", "aa_prices_stale", "below_from_price", "net_missing", "unknown"]) {
       expect(MESSAGES.vi[checkKey(code)]).toBeTruthy();
     }
+    for (const code of ["aa_item_unpriced", "balance_due_on_not_needed"]) {
+      expect(checkKey(code)).toBe(`builder.check.${code}`);
+      expect(MESSAGES.en[checkKey(code)]).toBeTruthy();
+      expect(MESSAGES.vi[checkKey(code)]).toBeTruthy();
+    }
+  });
+
+  it("say what Refresh AA prices did, the items left for another run included", () => {
+    const tr = (key: string) => MESSAGES.en[key as keyof typeof MESSAGES.en];
+    expect(refreshMessage({ quoted: 3, failed: [], skipped: 0 }, tr)).toEqual({ tone: "success", text: "3 AA prices checked." });
+    const partial = refreshMessage(
+      { quoted: 40, skipped: 2, failed: [{ option_id: "a", code: "refresh_limit" }, { option_id: "b", code: "refresh_limit" }, { option_id: "c", code: "day_has_no_date" }] },
+      tr,
+    );
+    expect(partial.tone).toBe("danger");
+    expect(partial.text).toBe("40 AA prices checked. 2 more AA items to check: refresh again. 1 AA items could not be checked.");
   });
 });
 

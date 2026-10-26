@@ -10,7 +10,8 @@
 //   5. §11.2: a write with a stale seq (another editor) -> 409 version_conflict {reason: edited}; the UI banner on a
 //      stale page offers Reload;
 //   6. (optional) the AA drawer: with E2ECRMAATOUR set and the AA-947 Booking partner row in place, an AA item is added
-//      from a live quote (net = Booking's b2b price, availability badge); else a note;
+//      from a live quote with the owner's sell (net = Booking's b2b price, availability badge), then "Refresh AA
+//      prices" from the page reports the prices it checked; else a note;
 //   7. Settings: day 1 date + balance date; Publish v1 -> "Published"; a write to it -> 409 proposal_not_draft;
 //   8. "New version from this" -> working copy v2 (lineage) -> Publish v2 -> v1 replaced;
 //   9. clean-up: the trip goes to the trash (proposals block nothing).
@@ -227,12 +228,21 @@ test.describe("CRM-21a proposal builder on Dev", () => {
           tour_source_id: AA_TOUR,
           component_id: component.component_id,
           component_kind: component.kind,
+          // The owner prices it now: an AA item without a sell blocks Publish (aa_item_unpriced, design §4.6).
+          sell_amount: "1500.00",
+          ...(component.kind === "hotel_room" ? { nights: 2 } : {}),
         });
         expect([201, 409], `AA option answered ${added.status} ${added.body?.detail ?? ""}`).toContain(added.status);
         if (added.status === 201) {
           const aa = added.body.days[1].blocks[0].options.find((o: any) => o.source === "aa");
           expect(aa.net_amount).not.toBeNull();
+          expect(aa.aa.unpriced).toBe(false);
           expect(["instant", "on_request"]).toContain(aa.availability);
+          // Refresh AA prices from the page: it says how many prices it checked.
+          await page.reload();
+          await hydrated(page, "builder");
+          await page.getByTestId("builder-aa-refresh").click();
+          await expect(page.getByText(/AA prices checked/)).toBeVisible({ timeout: 30_000 });
         } else {
           test.info().annotations.push({ type: "note", description: `AA item not added: ${added.body.detail}` });
         }
