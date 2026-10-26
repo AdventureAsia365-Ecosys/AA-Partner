@@ -471,6 +471,21 @@ async def membership_feed_tx(pool: asyncpg.Pool, tenant_id: uuid.UUID) -> AsyncI
             await _write_audit(ctx, ctx.audit_events)
 
 
+# AA-979 (root ADR 0006a A10b-1): the one fact the Dev-only E2E CIS admin's studio-invitation relay needs from the CRM.
+SYNTHETIC_AGENCY_SQL = "SELECT is_synthetic IS TRUE FROM crm.tenant WHERE tenant_id = $1 AND deleted_at IS NULL"
+
+
+async def synthetic_agency(pool: asyncpg.Pool, tenant_id: uuid.UUID) -> bool:
+    """True when the CRM holds an (untrashed) agency with this id and ``is_synthetic`` is true; False when the agency
+    is real or the CRM has none. One read-only transaction with ``app.tenant_id`` = that id (crm-002 FORCE RLS), no
+    actor, no audit: it reads one flag. Used by :func:`app.members.studio.check_e2e_invitation` only."""
+    if not isinstance(tenant_id, uuid.UUID):
+        raise TypeError("tenant_id must be a UUID")
+    async with pool.acquire() as conn, conn.transaction(readonly=True):
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        return bool(await conn.fetchval(SYNTHETIC_AGENCY_SQL, tenant_id))
+
+
 @asynccontextmanager
 async def _agency_tx(
     pool: asyncpg.Pool, tenant_id: uuid.UUID, actor: str, *, statuses: frozenset[str] | None = None
