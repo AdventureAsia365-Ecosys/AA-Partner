@@ -38,6 +38,7 @@ import { K, ToastProvider, useThemeChoice, type ThemeChoice } from "@/app/_kit";
 import type { DateLocale } from "@/lib/dates";
 import type { MessageKey } from "@/lib/i18n";
 import { GROUP_LABEL, GROUP_ORDER, visibleSections, type IconName, type Role, type Section } from "@/lib/nav";
+import { BellMenu } from "@/components/BellMenu";
 import { LocaleSwitch } from "@/components/LocaleSwitch";
 
 type Dict = Record<MessageKey, string>;
@@ -270,6 +271,7 @@ export function CrmShell({
             <div data-crm="hide-phone">
               <LocaleSwitch locale={locale} label={dict["shell.language"]} next={pathname} compact />
             </div>
+            <BellMenu dict={dict} buttonStyle={iconButton} />
             <ThemeButton label={dict["shell.theme"]} />
             <form action="/auth/sign-out" method="post">
               <button

@@ -11,6 +11,7 @@ import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
 import { DateInput } from "@/components/DateInput";
 import { Panel } from "@/components/PageTitle";
+import { BuilderClientRow } from "@/components/proposals/BuilderClientRow";
 import { bffSend } from "@/lib/bffClient";
 import { builderErrorKey } from "@/lib/builder";
 import { formatDate, type DateLocale } from "@/lib/dates";
@@ -253,6 +254,20 @@ export function ProposalPanel({
                 <Link href={`/pipeline/${view.trip_id}/proposal/${p.proposal_id}`} style={{ color: K.accent }} data-testid="builder-open">
                   {tr("builder.open")}
                 </Link>
+                <BuilderClientRow
+                  p={p}
+                  canSend={canSend}
+                  hydrated={hydrated}
+                  busy={busy}
+                  tr={tr}
+                  locale={locale}
+                  onLink={(path) => setCopies([{ label: tr("proposal.clientLink"), url: clientUrl(clientOrigin, path) }])}
+                  onDone={(text) => {
+                    setMessage({ tone: "success", text });
+                    router.refresh();
+                  }}
+                  onError={(code) => setMessage({ tone: "danger", text: tr(proposalErrorKey(code)) })}
+                />
               </div>
             ))}
             {!builderVersions.some((p) => p.status === "draft") && (
