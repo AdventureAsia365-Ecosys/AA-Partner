@@ -24,7 +24,9 @@ migration crm-021). Called by :mod:`app.proposals.public` in steps, so no connec
    shows "check availability", never a hold Booking no longer has); when the release itself got no answer (a timeout
    or a 5xx: Booking may have released it), the hold leaves the hold columns too and waits in ``hold_release_id``:
    it is never shown or accepted again, and the next request releases it once more first (a no-op when Booking had
-   released it), so Booking never refuses the next hold for a set it still keeps. The request in flight is cleared
+   released it), so Booking never refuses the next hold for a set it still keeps; a new hold stored on the row
+   (also one a replay recovered) clears ``hold_release_id``, since Booking made it only once that set was gone
+   (one active set per version). The request in flight is cleared
    once Booking answered, kept when the answer of ``POST /holds`` was lost (the next request replays it).
 
 :func:`in_flight` tells accept that a hold request of the version is still running (or lost its answer): accept is
@@ -68,9 +70,12 @@ UPDATE crm.proposal SET hold_pending_key = NULL, hold_pending_at = NULL, hold_pe
        hold_pending_price_hash = NULL, hold_pending_selection_sha256 = NULL
  WHERE proposal_id = $1 AND hold_pending_key = $2
 """
+# A new active hold of the version proves a hold waiting for its release is gone (Booking keeps one active or confirmed
+# set per (proposal_ref, version) and refuses a second): it is forgotten here too. This matters for a replay, which has
+# no release step: its request may have released that hold before its answer was lost (fix round 4).
 STORE_SQL = """
 UPDATE crm.proposal SET hold_set_ref = $2, hold_id = $3, hold_quote_id = $4, hold_expires_at = $5,
-       hold_selection_sha256 = $6, hold_placed_at = now(), hold_count = hold_count + 1
+       hold_selection_sha256 = $6, hold_placed_at = now(), hold_count = hold_count + 1, hold_release_id = NULL
  WHERE proposal_id = $1
 RETURNING hold_count
 """
@@ -182,7 +187,10 @@ async def plan(ctx: AnyContext, row: Any, s: dict[str, Any], pick_rows: list[dic
         return out
     sha = client_page.aa_hash(aa_ids)
     live = row["hold_id"] is not None and row["hold_expires_at"] > now
-    if live and bytes(row["hold_selection_sha256"]) == sha:
+    # A request that lost its answer (accept answers hold_required for it) is replayed even when the row's hold covers
+    # the choice: that request may have released the row's hold, and only a replay ever clears it (fix round 4).
+    lost = in_flight(row, now) == "hold_required"
+    if live and bytes(row["hold_selection_sha256"]) == sha and not lost:
         out.action = "reuse"
         return out
     ref = proposal_ref(row["proposal_id"])

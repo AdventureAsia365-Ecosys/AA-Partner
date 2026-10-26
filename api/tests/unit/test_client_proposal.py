@@ -221,6 +221,14 @@ async def test_plan_replays_the_request_in_flight_and_waits_for_another_screen()
     died = _row(hold_attempt=1, hold_pending_key=key, hold_pending_at=NOW - dt.timedelta(minutes=5))
     fresh = await holds.plan(ctx, died, s, [], NOW)
     assert fresh.action == "place" and fresh.idempotency_key == f"crm-proposal:{P}:v2:a2"
+    # Fix round 4: a lost request is replayed even when the row's live hold covers the choice (that request may have
+    # released it); while the request still runs, the covering hold is reused (accept waits: hold_in_progress).
+    digest = client_page.aa_hash([str(T1)])
+    covered = {"hold_id": "h1", "hold_quote_id": "q0", "hold_selection_sha256": digest, "hold_count": 1,
+               "hold_expires_at": NOW + dt.timedelta(hours=1), "hold_placed_at": NOW}  # fmt: skip
+    assert (await holds.plan(ctx, {**quoted, **covered}, s, [], NOW)).action == "replay"
+    running = {**quoted, **covered, "hold_pending_at": NOW - dt.timedelta(seconds=20)}
+    assert (await holds.plan(ctx, running, s, [], NOW)).action == "reuse"
 
 
 @pytest.mark.asyncio

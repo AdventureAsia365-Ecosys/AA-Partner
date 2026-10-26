@@ -609,6 +609,74 @@ async def test_a_release_that_failed_at_booking_is_sent_again_before_the_next_ho
     assert row["hold_id"] == "h2" and row["hold_release_id"] is None
 
 
+class _Died(Exception):
+    """The process stopped mid-request (a restart, a dropped connection): nothing after it runs."""
+
+
+async def test_a_replay_while_a_hold_waits_for_its_release_stores_the_new_hold(app_pool: asyncpg.Pool) -> None:
+    # Fix round 4: a parked hold (its release got no answer), then a request that dies after Booking made the new
+    # hold: the replay must store it and forget the parked one (Booking keeps one active set per version).
+    s = await _sent(app_pool)
+    fake = s["fake"]
+    await _hold(app_pool, s)  # h1 holds the default
+    await _swap_to_upgrade(app_pool, s)
+    fake.lose_next_release_answer = True  # Booking released h1; the CRM never heard back
+    status, _ = await _hold(app_pool, s)
+    assert status == 503
+    row = await _release_row(app_pool, s)
+    assert row["hold_id"] is None and row["hold_release_id"] == "h1" and row["hold_pending_key"] is None
+
+    async def died() -> None:
+        raise _Died  # Booking released h1 (again) and made h2; the CRM never reaches finish()
+
+    fake.on_hold = died
+    with pytest.raises(_Died):
+        await _hold(app_pool, s)
+    assert fake.holds["h1"]["status"] == "released" and fake.holds["h2"]["status"] == "active"
+    row = await _release_row(app_pool, s)
+    assert row["hold_id"] is None and row["hold_release_id"] == "h1" and row["hold_pending_key"] is not None
+    # The next check replays the request in flight: Booking answers h2, which goes on the row; h1 is forgotten.
+    status, out = await _hold(app_pool, s)
+    assert status == 200 and out["page"]["hold"]["status"] == "active"
+    assert fake.calls["POST holds"] == 3 and fake.calls["DELETE holds"] == 2 and len(fake.holds) == 2
+    row = await _release_row(app_pool, s)
+    assert row["hold_id"] == "h2" and row["hold_release_id"] is None and row["hold_pending_key"] is None
+    assert (await _accept(app_pool, s, out["page"]))["status"] == "accepted"
+    assert (await _release_row(app_pool, s))["accepted_hold_id"] == "h2"
+
+
+async def test_a_lost_request_is_replayed_even_when_the_rows_hold_covers_the_choice(app_pool: asyncpg.Pool) -> None:
+    # Fix round 4 (same class): a request dies after Booking released h1 and made h2 for another pick; the client goes
+    # back to the pick h1 covers. Accept refuses (hold_required: a request lost its answer), so "check availability"
+    # must replay that request, not answer "held" with h1 (Booking no longer has it) and leave the request forever.
+    s = await _sent(app_pool)
+    fake = s["fake"]
+    await _hold(app_pool, s)  # h1 holds the default
+
+    async def died() -> None:
+        raise _Died
+
+    await _swap_to_upgrade(app_pool, s)
+    fake.on_hold = died
+    with pytest.raises(_Died):
+        await _hold(app_pool, s)
+    assert fake.holds["h1"]["status"] == "released" and fake.holds["h2"]["status"] == "active"
+    await _raw(app_pool, s, "UPDATE crm.proposal SET hold_pending_at = now() - interval '5 minutes' "
+               "WHERE proposal_id = $1", _pid(s["v"]))  # fmt: skip
+    p = await _choose(app_pool, s, "Day tour", 0)  # back to the default, which the row's h1 covers
+    with pytest.raises(Conflict) as err:
+        await _accept(app_pool, s, p)
+    assert err.value.code == "hold_required"
+    # The check replays the lost request (h2, the upgrade), then holds the current choice (h2 released, h3).
+    status, out = await _hold(app_pool, s)
+    assert status == 200 and out["page"]["hold"]["status"] == "active"
+    assert fake.holds["h2"]["status"] == "released" and fake.holds["h3"]["status"] == "active"
+    row = await _release_row(app_pool, s)
+    assert row["hold_id"] == "h3" and row["hold_release_id"] is None and row["hold_pending_key"] is None
+    assert (await _accept(app_pool, s, out["page"]))["status"] == "accepted"
+    assert (await _release_row(app_pool, s))["accepted_hold_id"] == "h3"
+
+
 async def test_accept_waits_while_another_screen_places_the_hold(app_pool: asyncpg.Pool) -> None:
     s = await _sent(app_pool)
     fake = s["fake"]
