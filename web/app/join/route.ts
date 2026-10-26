@@ -2,14 +2,14 @@
 // path /join (lib/invite.ts) and the browser goes to /join/invite at once, so the token leaves the address bar and
 // the history. A malformed or missing token goes to the same page, which then says the link is not valid.
 import type { NextRequest } from "next/server";
-import { config } from "@/lib/config";
+import { requestConfig } from "@/lib/config";
 import { inviteCookie, isInviteToken } from "@/lib/invite";
 import { redirectTo, withCookies } from "@/lib/respond";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const cfg = config();
+  const cfg = requestConfig(request);
   const token = request.nextUrl.searchParams.get("t");
   const res = redirectTo(cfg, "/join/invite", 303, request.nextUrl.origin);
   res.headers.set("Referrer-Policy", "no-referrer");

@@ -335,6 +335,13 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 - **Hosts** (`web/lib/hosts.ts`, `web/proxy.ts`): the partner host serves the agency app; the client host
   (`WEB_CLIENT_HOSTS`, later `go-dev.`) serves `/c/*` only; any other Host is 404; `/healthz` answers any Host (the ALB
   health check sends the task IP). Cookies are host-only, so the two hosts never share a session.
+  **AA-979 P2b window**: the agency host `portal.` is a partner host too (`WEB_PARTNER_HOSTS` lists both
+  `partner-dev.` and `portal.`), and each partner host answers with its OWN public origin (`lib/config.ts`
+  `forHost` / `requestConfig`): redirects, the OAuth redirect / logout URIs and the same-origin write guard stay on
+  the host the person is on, so the DNS cutover of `portal.` needs no web or API change. `WEB_PUBLIC_ORIGIN` is the
+  fallback for any other Host. On `portal.` the Content studio link is the same-origin `/portal/dashboard`, a person
+  with no CRM agency goes straight to it (a Content-studio-only member), and sign-out also expires the studio's five
+  `cis_*` cookies (`lib/studioCookies.ts`): one host, one sign-in, one sign-out.
 - **Sign-in**: Cognito managed login, authorization code + PKCE, confidential client: the partner pool's `partner-web`
   client (MFA required) once AA-CIS-Infra `crm_partner_signin_enabled` is on, the EXTERNAL `cis-portal` client before
   (design v3 Fix C10). The web reads the domain and client from its environment only. The portal itself still signs in with its tenant API key, so there is no

@@ -76,7 +76,12 @@ describe("sign-out behind the ALB", () => {
     expect(logout.searchParams.get("logout_uri")).toBe(`${PUBLIC}/signed-out`);
     expect(revoke).toHaveBeenCalledTimes(1);
     const cleared = res.headers.getSetCookie().filter((c) => /Max-Age=0/i.test(c));
-    expect(cleared.map((c) => c.split("=")[0]).sort()).toEqual(["__Host-aa_crm_s", "__Secure-aa_crm_r", "__Secure-aa_crm_tx"]);
+    // AA-979 P2b: + the Content studio's five cis_* cookies (one sign-out for both apps on the agency host).
+    expect(cleared.map((c) => c.split("=")[0]).sort()).toEqual([
+      "__Host-aa_crm_s", "__Secure-aa_crm_r", "__Secure-aa_crm_tx",
+      "cis_role", "cis_tenant_id", "cis_tenant_name", "cis_tenant_plan", "cis_tenant_token",
+    ]);
+    expect(cleared.find((c) => c.startsWith("cis_tenant_token="))).toMatch(/Path=\/(;|$)/);
     expect(cleared.find((c) => c.startsWith("__Host-aa_crm_s="))).toMatch(/Path=\/(;|$)/);
     expect(cleared.find((c) => c.startsWith("__Secure-aa_crm_r="))).toMatch(/Path=\/auth/);
   });

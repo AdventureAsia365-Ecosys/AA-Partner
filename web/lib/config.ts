@@ -7,7 +7,9 @@
 // guessing, while /healthz keeps answering so the target group stays healthy.
 //
 //   WEB_PUBLIC_ORIGIN      https://<partner host>              the origin users see (callback / sign-out URLs)
-//   WEB_PARTNER_HOSTS      comma list of agency hosts           host routing (lib/hosts.ts); default = the origin's host
+//   WEB_PARTNER_HOSTS      comma list of agency hosts           host routing (lib/hosts.ts); default = the origin's host.
+//                                                              AA-979 P2b: partner-dev. AND portal. during the window;
+//                                                              each answers with its OWN public origin (forHost below)
 //   WEB_CLIENT_HOSTS       comma list of traveller hosts        client pages only (go-dev., later); may be empty
 //   CRM_API_ORIGIN         https://<partner host>              where the BFF reaches /crm/v1 (server to server)
 //   COGNITO_DOMAIN         https://<managed login domain>      EXTERNAL pool until AA-939, then the partner pool
@@ -114,6 +116,25 @@ export function loadConfig(env: Env = process.env): WebConfig {
     problems,
     secureCookies,
   };
+}
+
+/**
+ * AA-979 P2b (critic C4) — the configuration as seen from one request's Host. A Host listed in WEB_PARTNER_HOSTS gets
+ * its own public origin (`https://<host>`), so redirects, the OAuth redirect / logout URIs and the same-origin write
+ * guard all stay on the host the person is on (the OAuth transaction cookie is host-only: the callback must come back
+ * to the host that started the sign-in). Any other Host (the task IP of a health check, an unknown name) keeps
+ * WEB_PUBLIC_ORIGIN. Never the server's bind address. Local http development keeps WEB_PUBLIC_ORIGIN unchanged.
+ */
+export function forHost(cfg: WebConfig, hostHeader: string | null | undefined): WebConfig {
+  const host = (hostHeader ?? "").trim().toLowerCase();
+  if (!host || !cfg.publicOrigin.startsWith("https://") || !cfg.partnerHosts.includes(host)) return cfg;
+  const origin = `https://${host}`;
+  return origin === cfg.publicOrigin ? cfg : { ...cfg, publicOrigin: origin };
+}
+
+/** The process configuration for one request (its Host header, see {@link forHost}). */
+export function requestConfig(request: { headers: { get(name: string): string | null } }): WebConfig {
+  return forHost(config(), request.headers.get("host"));
 }
 
 let cached: WebConfig | null = null;
