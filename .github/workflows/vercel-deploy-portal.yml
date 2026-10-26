@@ -8,8 +8,15 @@ name: Vercel Deploy (portal)
 # portal workflows trigger this file (plus, on a PR only, the portal smoke specs and their config).
 #
 #   pull_request            -> preview of the PR head commit (+ one PR comment, + the portal UI smoke on it)
-#   push to main            -> production
 #   workflow_dispatch       -> preview or production (production only from main)
+#
+# AA-979 P2b (critic C5): NO production deploy on push to main any more. The portal moves to Fargate behind
+# portal.lumiguides.it.com (AA-Partner deploy-portal-dev.yml); this Vercel project stays only as the rollback target of
+# the DNS cutover for 7 days, frozen at the P2a code + the host-conditioned 301 of portal/vercel.json
+# (aa-cis-portal.vercel.app/<path> -> portal.lumiguides.it.com/<path>). One dispatch with target=production from main
+# ships that 301 BEFORE the P2b portal PR merges; after that, production is dispatched only for the rollback drill.
+# PR previews stay until the clean-up (a P2b preview runs without PORTAL_PUBLIC_ORIGIN and WEB_SESSION_SECRET, so it
+# behaves like the P2a portal: API-key sign-in only).
 #
 # Needs (repo level, set by the orchestrator; values never in this public repo):
 #   - secret VERCEL_TOKEN: a team-scoped Vercel token for this repo (not the AA-CIS-App one);
@@ -33,12 +40,6 @@ on:
       - "e2e/smoke-portal/**"
       - "e2e/playwright.portal.config.ts"
       - "e2e/package.json"
-  push:
-    branches: [main]
-    paths:
-      - "portal/**"
-      - ".github/workflows/vercel-deploy-portal.yml"
-      - ".github/workflows/ui-smoke-portal.yml"
   workflow_dispatch:
     inputs:
       target:
@@ -53,7 +54,7 @@ permissions:
 
 concurrency:
   # One group per ref AND target, so a manual preview on main can never cancel a production deploy.
-  group: vercel-deploy-portal-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'preview' || (github.event_name == 'push' && 'production' || inputs.target) }}
+  group: vercel-deploy-portal-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'preview' || inputs.target }}
   # A newer push cancels an in-flight PREVIEW only; a production deploy is never cancelled mid-way.
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.target == 'preview') }}
 
@@ -69,8 +70,8 @@ jobs:
     # Pinned (S252, 26/10/2026): ubuntu-latest moved to 26.04 and Playwright does not support Chromium there yet.
     runs-on: ubuntu-24.04
     # PRs from forks get no secrets: never try to deploy them. Neither do runs Dependabot triggers (`github.actor` is
-    # dependabot[bot] on its PR events and their re-runs), so the job shows as skipped instead of red. A push to main
-    # or a dispatch always deploys, so a production deploy that cannot run still fails red.
+    # dependabot[bot] on its PR events and their re-runs), so the job shows as skipped instead of red. A dispatch always
+    # deploys, so a production deploy that cannot run still fails red.
     if: >-
       github.event_name != 'pull_request' ||
       (github.actor != 'dependabot[bot]' &&
@@ -97,7 +98,6 @@ jobs:
         run: |
           case "$EVENT" in
             pull_request) TARGET=preview ;;
-            push) TARGET=production ;;
             *) TARGET="${INPUT_TARGET:-preview}" ;;
           esac
           if [ "$TARGET" = "production" ] && [ "$REF" != "refs/heads/main" ]; then
