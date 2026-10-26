@@ -32,8 +32,8 @@ async function bucket(): Promise<string> {
   return `${BUCKET_PREFIX}${account}`;
 }
 
-async function keys(b: string): Promise<{ key: string; at: number }[]> {
-  const out = await aws(["s3api", "list-objects-v2", "--bucket", b, "--prefix", PREFIX]);
+async function keys(b: string, prefix: string = PREFIX): Promise<{ key: string; at: number }[]> {
+  const out = await aws(["s3api", "list-objects-v2", "--bucket", b, "--prefix", prefix]);
   const parsed = (out.trim() ? JSON.parse(out) : {}) as { Contents?: { Key: string; LastModified: string }[] };
   return (parsed.Contents ?? []).map((o) => ({ key: o.Key, at: Date.parse(o.LastModified) }));
 }
@@ -49,18 +49,34 @@ async function read(b: string, key: string): Promise<string> {
   }
 }
 
-/** Keys already in the mailbox: a code mail must be new. */
-export async function baseline(): Promise<Set<string>> {
-  return new Set((await keys(await bucket())).map((k) => k.key));
+/**
+ * Keys already in the mailbox: a code mail must be new. `prefix` defaults to inbound/ (the e2e-cognito rule); the
+ * Dev-only CIS admin's codes land under inbound-admin/ (root ADR 0006a A10b), readable only by the MFA admin role.
+ */
+export async function baseline(prefix: string = PREFIX): Promise<Set<string>> {
+  return new Set((await keys(await bucket(), prefix)).map((k) => k.key));
+}
+
+/**
+ * AA-979 P2b phase 2: the keys stored BEFORE `sinceMs` (epoch ms): for a mail sent outside the run (the orchestrator's
+ * staff invitation call), so only a mail that arrived after that moment counts. Allow a little clock skew.
+ */
+export async function baselineBefore(sinceMs: number, prefix: string = PREFIX): Promise<Set<string>> {
+  return new Set((await keys(await bucket(), prefix)).filter((k) => k.at < sinceMs).map((k) => k.key));
 }
 
 /** The 6-8 digit code of the newest mail to `recipient` that is not in `before` (bounded wait). */
-export async function waitForCode(recipient: string, before: Set<string>, timeoutMs = 90_000): Promise<string> {
+export async function waitForCode(
+  recipient: string,
+  before: Set<string>,
+  timeoutMs = 90_000,
+  prefix: string = PREFIX,
+): Promise<string> {
   const b = await bucket();
   const deadline = Date.now() + timeoutMs;
   const needle = recipient.toLowerCase();
   while (Date.now() < deadline) {
-    const fresh = (await keys(b)).filter((k) => !before.has(k.key)).sort((x, y) => y.at - x.at);
+    const fresh = (await keys(b, prefix)).filter((k) => !before.has(k.key)).sort((x, y) => y.at - x.at);
     for (const { key } of fresh) {
       const raw = await read(b, key);
       const head = raw.split(/\r?\n\r?\n/)[0].replace(/\r?\n[ \t]+/g, " ").toLowerCase();
@@ -73,7 +89,6 @@ export async function waitForCode(recipient: string, before: Set<string>, timeou
   }
   throw new Error("no sign-in code mail arrived in time");
 }
-
 
 /** AA-939: the join link (/join?t=<token>) of the newest invitation mail to `recipient` not in `before`. */
 export async function waitForInviteLink(recipient: string, before: Set<string>, timeoutMs = 90_000): Promise<string> {

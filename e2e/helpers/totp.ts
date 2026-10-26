@@ -21,23 +21,45 @@ export function base32Decode(secret: string): Buffer {
   return Buffer.from(bytes);
 }
 
-export function totp(secret: string, at: number = Date.now(), step = 30): string {
+export interface TotpOptions {
+  /** Time step in seconds (RFC 6238 X; default 30). */
+  step?: number;
+  /** Code length (RFC 4226 Digit; default 6, the authenticator apps' length; the RFC 6238 vectors use 8). */
+  digits?: number;
+  /** HMAC hash (default sha1, what Cognito uses; RFC 6238 also lists sha256 / sha512). */
+  algorithm?: "sha1" | "sha256" | "sha512";
+}
+
+/**
+ * RFC 6238 TOTP over a raw key: T = floor(at / 1000 / step) as an 8-byte big-endian counter, HMAC, RFC 4226 dynamic
+ * truncation, modulo 10^digits. Node's crypto only (no dependency).
+ */
+export function totpFromKey(key: Buffer, at: number, opts: TotpOptions = {}): string {
+  const { step = 30, digits = 6, algorithm = "sha1" } = opts;
+  if (!Number.isInteger(digits) || digits < 6 || digits > 10) throw new Error("digits must be 6..10");
   const counter = Buffer.alloc(8);
   counter.writeBigUInt64BE(BigInt(Math.floor(at / 1000 / step)));
-  const mac = createHmac("sha1", base32Decode(secret)).update(counter).digest();
+  const mac = createHmac(algorithm, key).update(counter).digest();
   const offset = mac[mac.length - 1] & 0x0f;
-  const code = (mac.readUInt32BE(offset) & 0x7fffffff) % 1_000_000;
-  return code.toString().padStart(6, "0");
+  const code = BigInt(mac.readUInt32BE(offset) & 0x7fffffff) % 10n ** BigInt(digits);
+  return code.toString().padStart(digits, "0");
+}
+
+/** The 6-digit SHA-1 code of a base32 secret (the managed login authenticator's), at `at` (epoch ms). */
+export function totp(secret: string, at: number = Date.now(), step = 30): string {
+  return totpFromKey(base32Decode(secret), at, { step });
 }
 
 /**
  * The secret from the managed login (v2) authenticator setup page: the "Show secret key" control reveals
  * `<p class="qr-secret-key">Secret key: <52 base32 chars></p>`. Tolerates a label, spaces / hyphens between groups,
- * lower case and `=` padding; undefined when the text holds no base32 secret.
+ * lower case and `=` padding; undefined when the text holds no base32 secret. At least 26 characters: RFC 4226 §4 (R6)
+ * requires a shared secret of at least 128 bits, so a short run of letters (a button label such as "Scan the QR code
+ * with your app", 24 letters that are all base32) is never taken for a secret.
  */
 export function parseSetupSecret(text: string): string | undefined {
   const value = text.replace(/^[^:]*:/, "").replace(/[\s-]/g, "").replace(/=+$/, "").toUpperCase();
-  return /^[A-Z2-7]{16,128}$/.test(value) ? value : undefined;
+  return /^[A-Z2-7]{26,128}$/.test(value) ? value : undefined;
 }
 
 // Cognito refuses a code it has already accepted (replay) for the same user within its 30 s step, so a second sign-in
