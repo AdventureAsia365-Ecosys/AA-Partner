@@ -3,10 +3,11 @@
 // member's own mailbox and (owner) the agency's: Gmail / Microsoft 365 by OAuth, SMTP with an app password; health,
 // Test, Disconnect, who pays; the forward-in address with the Gmail forwarding code and the Microsoft 365 BCC help;
 // the sender table. After the provider's consent, /connect/mail/callback brings code + state back here and this
-// view posts them to the API (same-origin BFF write).
+// view posts them to the API (same-origin BFF write). S252: the mail history import section (MailImport.tsx).
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Button, K, useHydrated } from "@/app/_kit";
+import { MailImport } from "@/components/mail/MailImport";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
@@ -258,6 +259,7 @@ export function MailboxSettings({
           <p style={{ margin: 0, fontSize: 13, color: K.muted }}>{tr("mail.forward.notConfigured")}</p>
         )}
       </Panel>
+      <MailImport lang={lang} />
       <Panel title={tr("mail.senders.title")} testId="mailbox-senders">
         <p style={{ margin: "0 0 8px", fontSize: 12.5, color: K.muted }}>{tr("mail.senders.help")}</p>
         <table style={{ borderCollapse: "collapse", fontSize: 13, width: "100%" }}>

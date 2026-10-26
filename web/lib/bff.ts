@@ -19,10 +19,23 @@ export interface BffRoute {
   card: string;
   /** Largest request body the BFF forwards for this route (default 256 KiB, app/bff/[...path]/route.ts). */
   maxBody?: number;
+  /** AA-945: the body is raw bytes (a file), forwarded unchanged as application/octet-stream, not JSON text. */
+  raw?: true;
+  /** Upstream timeout for this route (default 15 s, app/bff/[...path]/route.ts). */
+  timeoutMs?: number;
 }
 
 /** AA-937: a document upload is base64 JSON of at most 7 MiB (~9.4 MiB), under the proxy's 10 MiB body clone limit. */
 export const DOCUMENT_BODY_BYTES = 10 * 1024 * 1024;
+
+/**
+ * AA-945: the mail history upload (mbox / CSV) is the raw file of at most 25 MiB (the API's
+ * history_import.MAX_BYTES). Its path is left out of the proxy matcher (proxy.ts), so Next does not clone the body
+ * (the proxy's 10 MiB clone limit would cut a larger file short without an error).
+ */
+export const MAIL_IMPORT_BODY_BYTES = 25 * 1024 * 1024;
+/** The proxy matcher leaves out every path under this prefix (proxy.ts); the BFF route checks the host itself. */
+export const UNPROXIED_BFF_PREFIX = "/bff/mail/imports";
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 
@@ -145,14 +158,15 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "POST", pattern: new RegExp(`^proposals/${UUID}/blocks/${UUID}/(options|aa-options)$`), tenant: true, card: "AA-949" },
   // AA-945 (CRM-17): Settings > Mailbox (own mailbox: every role; the agency's: owner, the API checks), the forward-in
   // address, the sender table, conversations (trip Messages tab, Unmatched inbox, link to a client), drafts (autosave,
-  // discard), send / Undo / back to draft, saved replies, the import progress. The mbox / CSV upload is API-only in v1
-  // (the BFF forwards JSON bodies only).
+  // discard), send / Undo / back to draft, saved replies, the history import (S252: the raw mbox / CSV upload and its
+  // progress).
   { method: "GET", pattern: /^mailbox$/, tenant: true, card: "AA-945" },
   { method: "DELETE", pattern: /^mailbox$/, tenant: true, card: "AA-945" },
   { method: "POST", pattern: /^mailbox\/(oauth\/start|oauth\/complete|test)$/, tenant: true, card: "AA-945" },
   { method: "PUT", pattern: /^mailbox\/smtp$/, tenant: true, card: "AA-945" },
   { method: "GET", pattern: /^mailbox\/ingest-address$/, tenant: true, card: "AA-945" },
   { method: "GET", pattern: /^mail\/senders$/, tenant: true, card: "AA-945" },
+  { method: "POST", pattern: /^mail\/imports$/, tenant: true, card: "AA-945", maxBody: MAIL_IMPORT_BODY_BYTES, raw: true, timeoutMs: 120_000 },
   { method: "GET", pattern: new RegExp(`^mail/imports/${UUID}$`), tenant: true, card: "AA-945" },
   { method: "GET", pattern: /^conversations$/, tenant: true, card: "AA-945" },
   { method: "GET", pattern: new RegExp(`^conversations/${UUID}/messages$`), tenant: true, card: "AA-945" },
@@ -192,15 +206,20 @@ export function matchBff(method: string, subPath: string, routes: readonly BffRo
   return routes.find((r) => r.method === m && r.pattern.test(subPath)) ?? null;
 }
 
-/** Request headers the BFF builds for the upstream call. Nothing from the browser is copied except the body type. */
+/**
+ * Request headers the BFF builds for the upstream call. Nothing from the browser is copied except the body type:
+ * JSON, or for a raw route (AA-945 upload) always application/octet-stream.
+ */
 export function upstreamHeaders(
   accessToken: string,
   tenantId: string | null,
   contentType: string | null,
   requestId: string,
+  raw = false,
 ): Headers {
   const h = new Headers({ Accept: "application/json", Authorization: `Bearer ${accessToken}`, "X-Request-Id": requestId });
   if (tenantId) h.set("X-AA-Tenant-Id", tenantId);
-  if (contentType && contentType.toLowerCase().startsWith("application/json")) h.set("Content-Type", "application/json");
+  if (raw) h.set("Content-Type", "application/octet-stream");
+  else if (contentType && contentType.toLowerCase().startsWith("application/json")) h.set("Content-Type", "application/json");
   return h;
 }
