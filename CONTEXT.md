@@ -456,7 +456,11 @@ original CIS commit). P2a moves the code only:
   link, embed code, owner-only create / on-off / allowed origins.
 - **CIS sees the CRM** (`crm.ops.v1`): `GET /crm/ops/v1/jobs/summary` (crm.job per kind) and
   `GET /crm/ops/v1/llm/usage?from&to` (the `llm_usage_daily` rollup), WORKFORCE `cis-admin` token relayed by the CIS
-  API (AA-CIS-App `AppInfo("crm")`).
+  API (AA-CIS-App `AppInfo("crm")`). `crm.ops.v1` 1.4 (AA-992): `GET /crm/ops/v1/data-coverage` for the CIS admin page
+  `/admin/data-coverage`: agencies per status (+ synthetic), members per status and the AA catalog cache (served /
+  paused / retired, last full pass, last ok, failures, last error class). Counts only, no agency id or business
+  figure; counted through one platform context per registered agency WITHOUT an `ops_read` event (no agency data is
+  read; one event per agency every 10 minutes would bury the owner's access log), logged once per call instead.
 - **LLM gateway** (`app/llm/gateway.py`, D12): scrub receipt -> month budget (`tenant_settings.ai_budget_usd`) ->
   `ai_enabled` (default off) -> seal the placeholder map -> call -> one `crm.llm_call` row (no text) + the rollup ->
   store the map; every refusal is logged too and every non-`ok` result carries `fallback = manual_reply_needed`.

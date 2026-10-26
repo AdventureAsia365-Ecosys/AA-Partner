@@ -580,3 +580,43 @@ def test_the_summary_carries_the_lock_source_and_the_feed(
     got = console._summary(summary_row(status=status, **over))
     assert (got["lock_source"], got["membership_feed_state"], got["membership_feed_lag_s"]) == (lock_source, feed, lag)
     assert all(serializer.key_allowed(k) for k in got)
+
+
+# ── crm.ops.v1 1.4 (AA-992): platform-wide counts for CIS /admin/data-coverage ─────────────────────────────────────
+@pytest.mark.asyncio
+async def test_platform_coverage_counts_states_and_members_without_an_agency_audit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = [uuid.UUID(f"00000000-0000-4000-8000-00000000000{i}") for i in range(1, 5)]
+    status = {ids[0]: "active", ids[1]: "locked", ids[2]: "active"}  # ids[3]: registered but trashed
+
+    async def registered(pool: Any) -> list[Agency]:
+        return [Agency(tenant_id=i, exported_until=NOW, verified_until=None, last_seq=0) for i in ids]
+
+    monkeypatch.setattr(console.registry, "agencies", registered)
+    conn = ScriptedConn()
+    conn.on("SELECT status FROM crm.tenant WHERE tenant_id = $1 AND deleted_at IS NULL", lambda tid: status.get(tid))
+    conn.on("SELECT is_synthetic FROM crm.tenant WHERE tenant_id = $1", lambda tid: tid == ids[2])
+    conn.on(
+        "FROM crm.member WHERE deleted_at IS NULL GROUP BY status",
+        [{"status": "active", "n": 2}, {"status": "invited", "n": 1}, {"status": "disabled", "n": 1}],
+    )
+    conn.on(
+        "FROM crm.aa_catalog_state s",
+        {"served": 892, "paused": 1, "retired": 2, "last_full_pass_at": NOW, "last_ok_at": NOW, "failures": 0,
+         "last_error_class": None},
+    )  # fmt: skip
+    out = await console.platform_coverage(conn, staff_sub=STAFF)  # type: ignore[arg-type]
+    assert out["agencies"] == {"active": 2, "locked": 1, "offboarding": 0, "offboarded": 0, "synthetic": 1}
+    assert out["members"] == {"active": 6, "invited": 3, "disabled": 3}  # three agencies, the trashed one skipped
+    assert out["catalog_cache"] == {
+        "served": 892,
+        "paused": 1,
+        "retired": 2,
+        "last_full_pass_at": NOW.isoformat(),
+        "last_ok_at": NOW.isoformat(),
+        "failures": 0,
+        "last_error_class": None,
+    }
+    assert audits(conn) == []  # platform-wide counts: no ops_read event in any agency's audit
+    assert serializer.bad_keys(out) == set()
