@@ -21,12 +21,18 @@ export async function POST(request: NextRequest) {
   }
   const token = openInvite(cfg, request.cookies.get(inviteCookieNames(cfg).token)?.value);
   if (!token) return redirectTo(cfg, "/join/accept?error=no_invitation", 303, request.nextUrl.origin);
-  const res = await crmCall<{ tenant_id: string; member_id: string; member_role: string }>(cfg, session, "POST", "invitations/accept", {
+  const res = await crmCall<{ tenant_id: string; member_id?: string; member_role?: string; kind?: string; status?: string }>(cfg, session, "POST", "invitations/accept", {
     body: { token },
   });
   if (!res.ok) {
     console.warn(JSON.stringify({ event: "crm_web_invite_accept_failed", status: res.status, detail: joinError(res.detail) }));
     return redirectTo(cfg, `/join/accept?error=${joinError(res.detail)}`, 303, request.nextUrl.origin);
+  }
+  // AA-979 P2b: a Content studio invitation (CIS tenant, no CRM agency): the session keeps its agency; the page says
+  // whether the studio is ready (CIS activated the membership) or still being set up, and links the studio.
+  if (res.data.kind === "studio") {
+    const status = res.data.status === "activated" ? "activated" : "accepted";
+    return withCookies(redirectTo(cfg, `/join/accept?studio=${status}`, 303, request.nextUrl.origin), clearedInviteCookies(cfg));
   }
   const { v: _v, exp: _exp, ...rest } = session;
   return withCookies(redirectTo(cfg, "/", 303, request.nextUrl.origin), [

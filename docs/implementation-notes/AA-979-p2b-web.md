@@ -32,3 +32,11 @@ with `partner-dev.` kept) and Q12 (both hosts serve during the window).
 - Tests: `web/tests/perHostOrigin.test.ts`; `writeGuard.test.ts` / `routes.test.ts` expect the 5 extra expired cookies.
 - Deploy with Deploy Web Dev (no job guard); smoke `partner-dev.` CRM as usual. `portal.` is checked pre-cutover through
   the agency distribution (`crm_edge_live_check.py --agency-cf-domain`).
+
+## Second commit: the join pages and a Content studio invitation
+
+- The API's accept answers `{kind: "studio", tenant_id, status}` for a Content studio invitation (API PR
+  `feat/aa-979-studio-invitations-api`). `/join/confirm` then clears the invitation cookies, leaves the CRM session
+  and its agency untouched (no CRM membership was created) and goes to `/join/accept?studio=activated|accepted`, which
+  says "ready" or "being set up" and links the Content studio. EN/VI keys `join.studioReady`, `join.studioPending`,
+  `join.toStudio`. This web change is harmless before the API PR deploys (the answer simply never has `kind`).
