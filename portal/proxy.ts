@@ -115,7 +115,9 @@ export async function proxy(request: NextRequest) {
       if (verified.ok) return NextResponse.next();
     }
     const chosen = request.cookies.get("cis_tenant_id")?.value ?? null;
-    const result = await exchange(API_URL, partner.at, chosen);
+    let result = await exchange(API_URL, partner.at, chosen);
+    // A cis_tenant_id cookie left by another session (an API-key sign-in of another agency): ask again without it.
+    if (!result.ok && result.reason === "tenant_not_member" && chosen) result = await exchange(API_URL, partner.at, null);
     if (result.ok) return passWith(request, studioCookies(result.session));
     if (result.reason === "choose_tenant" || result.reason === "tenant_not_member") return toStudioPage(request, SELECT_PATH);
     if (result.reason === "no_membership") return toStudioPage(request, NO_ACCESS_PATH);
