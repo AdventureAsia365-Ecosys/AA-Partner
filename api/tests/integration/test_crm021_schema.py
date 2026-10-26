@@ -86,6 +86,27 @@ async def test_the_hold_set_of_a_version(app_pool: asyncpg.Pool) -> None:
             await _run(app_pool, ids["tenant"], sql, p)
     await _run(app_pool, ids["tenant"], "UPDATE crm.proposal SET view_count = 2, first_viewed_at = now(), "
                "last_viewed_at = now() WHERE proposal_id = $1", p)  # fmt: skip
+    # The hold request in flight: key + start together, then the quote it presents (all three); the hold columns
+    # may all go back to NULL (a released hold whose replacement failed).
+    key = f"crm-proposal:{p}:v1:a1"
+    await _run(app_pool, ids["tenant"], "UPDATE crm.proposal SET hold_attempt = 1, hold_pending_key = $2, "
+               "hold_pending_at = now() WHERE proposal_id = $1", p, key)  # fmt: skip
+    await _run(app_pool, ids["tenant"], "UPDATE crm.proposal SET hold_pending_quote_id = 'q2', "
+               "hold_pending_price_hash = $2, hold_pending_selection_sha256 = $3 WHERE proposal_id = $1", p, "b" * 64,
+               os.urandom(32))  # fmt: skip
+    for sql in (
+        "UPDATE crm.proposal SET hold_pending_at = NULL WHERE proposal_id = $1",
+        "UPDATE crm.proposal SET hold_pending_price_hash = NULL WHERE proposal_id = $1",
+        "UPDATE crm.proposal SET hold_pending_key = 'crm-proposal:x:v1:a1' WHERE proposal_id = $1",
+        "UPDATE crm.proposal SET hold_attempt = 0 WHERE proposal_id = $1",
+        "UPDATE crm.proposal SET hold_pending_key = NULL, hold_pending_at = NULL WHERE proposal_id = $1",
+    ):
+        with pytest.raises(asyncpg.CheckViolationError):
+            await _run(app_pool, ids["tenant"], sql, p)
+    await _run(app_pool, ids["tenant"], "UPDATE crm.proposal SET hold_pending_key = NULL, hold_pending_at = NULL, "
+               "hold_pending_quote_id = NULL, hold_pending_price_hash = NULL, hold_pending_selection_sha256 = NULL, "
+               "hold_id = NULL, hold_quote_id = NULL, hold_expires_at = NULL, hold_selection_sha256 = NULL, "
+               "hold_placed_at = NULL WHERE proposal_id = $1", p)  # fmt: skip
     # A text version holds nothing.
     text = uuid.uuid4()
     await _run(app_pool, ids["tenant"], "INSERT INTO crm.proposal (proposal_id, trip_id, version, body_enc, currency, "
