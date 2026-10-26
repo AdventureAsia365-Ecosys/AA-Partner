@@ -22,9 +22,9 @@ from app.cis import contract
 DOCS = Path(__file__).resolve().parents[3] / "docs" / "contracts"
 SPEC = DOCS / "tenant.membership.v1.openapi.yaml"
 SAMPLES = DOCS / "samples" / "tenant.membership.v1"
-# sha256 of the root file docs/contracts/tenant.membership.v1.openapi.yaml (S250 root PR R1, the AA-978 text fix, and
-# review round 1: a withdrawn invitation has a null identity).
-ROOT_CONTRACT_SHA256 = "d05404dac29827fd2267d61923916ebeefff6add1fc22955781d942ebd5154e8"
+# sha256 of the root file docs/contracts/tenant.membership.v1.openapi.yaml: 1.1 (AA-979 activateInvitation, S252),
+# which also brought the root file in line with this copy (review round 1: a withdrawn invitation has a null identity).
+ROOT_CONTRACT_SHA256 = "d74fdaa2849fe784eb96e885a613f73f037c084a04b320136a85183137da1377"
 
 TENANT = "0b9d6c7e-3f43-4c1e-9a52-6d0c3b8f1a01"
 

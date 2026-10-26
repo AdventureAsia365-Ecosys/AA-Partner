@@ -244,9 +244,16 @@ def test_every_ops_write_needs_platform_admin_and_every_read_takes_cis_admin(
     client: TestClient, pools: LocalPools
 ) -> None:
     """AA-941: on every served /crm/ops/v1 path, a cis-admin-only token reads (never 401 / 403) and is refused every
-    POST / PUT with 403 missing_group, before any body is read."""
+    POST / PUT with 403 missing_group, before any body is read. AA-979 (Q4): the one exception is the Content studio
+    invitation relay, which a cis-admin token may call (CIS requires tenant.write first; it grants no CRM right)."""
     reader = _bearer(pools.cis_admin())
     paths = [(m, p) for m, p in _served_paths(client) if p.startswith(OPS.prefix + "/") and "_probe" not in p]
+    studio = [(m, p) for m, p in paths if p.endswith("/studio-invitations")]
+    assert studio == [("POST", OPS.prefix + "/tenants/00000000-0000-4000-8000-000000000001/studio-invitations")]
+    for method, path in studio:
+        r = client.request(method, path, headers=reader)
+        assert r.status_code not in (401, 403), (method, path, r.status_code)
+    paths = [mp for mp in paths if mp not in studio]
     writes = [(m, p) for m, p in paths if m in ("POST", "PUT", "PATCH", "DELETE")]
     reads = [(m, p) for m, p in paths if m == "GET"]
     assert len(writes) >= 11 and len(reads) >= 10

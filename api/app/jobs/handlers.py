@@ -56,6 +56,7 @@ from app.jobs.kinds import (
     OFFBOARD,
     PLACEHOLDER_PURGE,
     STAGE_DATE_RULE,
+    STUDIO_ACTIVATION,
 )
 from app.jobs.queue import Job
 from app.jobs.worker import Handler, MaintenanceHook, Recurring
@@ -64,6 +65,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from app.audit_export.archive import AuditArchive
     from app.booking.client import BookingClient
     from app.catalog.client import CatalogConfig
+    from app.cis.activation import ActivationConfig
     from app.cis.membership_feed import FeedConfig
     from app.dispatch.worker import Sender
     from app.documents.store import DocumentStore
@@ -151,6 +153,7 @@ def build_handlers(
     ingest_domain: str = "",
     booking_client: BookingClient | None = None,
     catalog: CatalogConfig | None = None,
+    studio_activation: ActivationConfig | None = None,
 ) -> dict[str, Handler]:
     """Every kind the worker runs. ``keys``: the field-encryption provider the intake kind needs (AA-936); without
     it ``crm_intake_process`` jobs are retried until the provider is configured. ``audit_archive``: the two audit
@@ -164,7 +167,8 @@ def build_handlers(
     ``ingest_domain`` (``CRM_INGEST_BUCKET`` / ``CRM_INGEST_DOMAIN``: the forward-in ingest and the history import;
     without them the ingest answers not_configured and the import is retried).
     AA-947: ``booking_client`` (``BOOKING_API_URL`` + the M2M token: the AA outage queue and the Booking feed; None =
-    the sync logs not_configured) and ``catalog`` (``CIS_API_URL`` + the token: the AA tour cache)."""
+    the sync logs not_configured) and ``catalog`` (``CIS_API_URL`` + the token: the AA tour cache).
+    AA-979: ``studio_activation`` (``CIS_API_URL`` + the token: CIS activateInvitation; None = the job is retried)."""
     from app.audit_export import export as audit_export
     from app.audit_export import retention as audit_retention
     from app.booking.sync import BookingSync
@@ -179,6 +183,7 @@ def build_handlers(
     from app.mail import history_import
     from app.mail import ingest as mail_ingest
     from app.mail.state import MailRuntime as _MailRuntime
+    from app.members import studio
     from app.privacy.purge import purge_expired_maps
     from app.stages_job import date_rule
 
@@ -202,6 +207,7 @@ def build_handlers(
         MAIL_IMPORT: history_import.build_handler(ingest_store, documents, keys, ingest_domain),
         BOOKING_SYNC: BookingSync(booking_client),
         CATALOG_SYNC: CatalogSync(catalog),
+        STUDIO_ACTIVATION: studio.build_handler(studio_activation),
     }
 
 
@@ -296,4 +302,5 @@ SCHEDULED_KINDS: frozenset[str] = frozenset(
     }
 )
 # Kinds queued by request code, one row per event (AA-936: each stored inquiry), never scheduled.
-EVENT_KINDS: frozenset[str] = frozenset({INTAKE_PROCESS, OFFBOARD, DISPATCH, MAIL_IMPORT})
+# AA-979: one crm_studio_activation row per accepted Content studio invitation.
+EVENT_KINDS: frozenset[str] = frozenset({INTAKE_PROCESS, OFFBOARD, DISPATCH, MAIL_IMPORT, STUDIO_ACTIVATION})
