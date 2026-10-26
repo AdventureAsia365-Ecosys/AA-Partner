@@ -125,6 +125,18 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "GET", pattern: /^aa\/products\/[A-Za-z0-9._:%-]{1,200}$/, tenant: true, card: "AA-947" },
   { method: "POST", pattern: new RegExp(`^trips/${UUID}/aa-lines$`), tenant: true, card: "AA-947" },
   { method: "POST", pattern: new RegExp(`^lines/${UUID}/aa/(hold|confirm|release|requote)$`), tenant: true, card: "AA-947" },
+  // AA-949 (CRM-21a): the day-list builder: create (Stage 2 skeleton or a working copy), the page, settings, days
+  // (add, edit, delete, order), blocks, agency and AA items (live quote), rules, Refresh AA prices, Publish vN. Roles,
+  // money fields and the version counter are the API's.
+  { method: "POST", pattern: new RegExp(`^trips/${UUID}/builder$`), tenant: true, card: "AA-949" },
+  { method: "GET", pattern: new RegExp(`^proposals/${UUID}/builder$`), tenant: true, card: "AA-949" },
+  { method: "PATCH", pattern: new RegExp(`^proposals/${UUID}/builder$`), tenant: true, card: "AA-949" },
+  { method: "POST", pattern: new RegExp(`^proposals/${UUID}/(days|rules|aa-refresh|publish)$`), tenant: true, card: "AA-949" },
+  { method: "PUT", pattern: new RegExp(`^proposals/${UUID}/days/order$`), tenant: true, card: "AA-949" },
+  { method: "PATCH", pattern: new RegExp(`^proposals/${UUID}/(days|blocks|options)/${UUID}$`), tenant: true, card: "AA-949" },
+  { method: "DELETE", pattern: new RegExp(`^proposals/${UUID}/(days|blocks|options|rules)/${UUID}$`), tenant: true, card: "AA-949" },
+  { method: "POST", pattern: new RegExp(`^proposals/${UUID}/days/${UUID}/blocks$`), tenant: true, card: "AA-949" },
+  { method: "POST", pattern: new RegExp(`^proposals/${UUID}/blocks/${UUID}/(options|aa-options)$`), tenant: true, card: "AA-949" },
   // AA-945 (CRM-17): Settings > Mailbox (own mailbox: every role; the agency's: owner, the API checks), the forward-in
   // address, the sender table, conversations (trip Messages tab, Unmatched inbox, link to a client), drafts (autosave,
   // discard), send / Undo / back to draft, saved replies, the import progress. The mbox / CSV upload is API-only in v1

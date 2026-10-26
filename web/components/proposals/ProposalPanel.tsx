@@ -5,12 +5,14 @@
 // to Booked and gives every traveller their own portal link, shown once to copy) and "Void", and the travellers'
 // Stage 3 / waiver progress with "Send portal link" (re-issue) per person. Every refusal is worded from its code
 // (lib/proposals.ts). Buttons wait for hydration (the page is a full server render, AA-936 lesson).
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
 import { DateInput } from "@/components/DateInput";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
+import { builderErrorKey } from "@/lib/builder";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import {
@@ -39,7 +41,7 @@ const field: React.CSSProperties = {
   minWidth: 0,
   maxWidth: "100%",
 };
-const STATUS_TONE = { draft: "neutral", sent: "info", accepted: "success", superseded: "neutral", withdrawn: "danger" } as const;
+const STATUS_TONE = { draft: "neutral", published: "info", sent: "info", accepted: "success", superseded: "neutral", withdrawn: "danger" } as const;
 const ROW_TONE = { due: "warning", paid: "success", void: "neutral" } as const;
 
 type Copy = { label: string; url: string };
@@ -66,7 +68,11 @@ export function ProposalPanel({
   const router = useRouter();
   const hydrated = useHydrated();
   const tr = (key: string) => t(lang, key as MessageKey);
-  const current = currentProposal(view.proposals);
+  // AA-949: builder versions live in the day-list builder (their own section below); this form handles text versions.
+  const textProposals = view.proposals.filter((p) => (p.kind ?? "text") === "text");
+  const builderVersions = view.proposals.filter((p) => p.kind === "builder");
+  const current = currentProposal(textProposals);
+  const [builderCurrency, setBuilderCurrency] = useState("USD");
   const canSend = role === "owner" || role === "agent";
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "danger" | "success"; text: string } | null>(null);
@@ -121,6 +127,19 @@ export function ProposalPanel({
       setMessage({ tone: "success", text: tr("proposal.sent") });
       router.refresh();
     }
+  }
+
+  async function startBuilder() {
+    setBusy(true);
+    setMessage(null);
+    const res = await bffSend<{ proposal_id: string }>("POST", `trips/${view.trip_id}/builder`, { currency: builderCurrency });
+    setBusy(false);
+    const existing = res.ok ? res.data.proposal_id : (res.body as { proposal_id?: string } | undefined)?.proposal_id;
+    if (res.ok || (res.detail === "builder_draft_exists" && existing)) {
+      router.push(`/pipeline/${view.trip_id}/proposal/${existing}`);
+      return;
+    }
+    setMessage({ tone: "danger", text: tr(builderErrorKey(res.detail)) });
   }
 
   async function withdraw(p: Proposal) {
@@ -219,6 +238,38 @@ export function ProposalPanel({
                 </Button>
               )}
             </div>
+          </section>
+        )}
+
+        {current?.status !== "accepted" && (
+          <section data-testid="proposal-builder" style={{ display: "grid", gap: 6, padding: 10, borderRadius: 8, background: K.bg }}>
+            <h3 style={{ margin: 0, fontSize: 13, color: K.ink }}>{tr("builder.section")}</h3>
+            <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{tr("builder.sectionHint")}</p>
+            {builderVersions.map((p) => (
+              <div key={p.proposal_id} data-testid="builder-version" data-status={p.status} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 13 }}>
+                <strong>{fmt(tr("proposal.version"), { n: p.version })}</strong>
+                <Badge tone={STATUS_TONE[p.status]}>{tr(`builder.status.${p.status}`)}</Badge>
+                <span style={{ color: K.muted }}>{formatAmount(p.total_amount, p.currency, locale)}</span>
+                <Link href={`/pipeline/${view.trip_id}/proposal/${p.proposal_id}`} style={{ color: K.accent }} data-testid="builder-open">
+                  {tr("builder.open")}
+                </Link>
+              </div>
+            ))}
+            {!builderVersions.some((p) => p.status === "draft") && (
+              <div style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap" }}>
+                {builderVersions.length === 0 && (
+                  <label style={{ display: "grid", gap: 2, fontSize: 12.5 }}>
+                    {tr("proposal.currency")}
+                    <input value={builderCurrency} maxLength={3} onChange={(e) => setBuilderCurrency(e.target.value.toUpperCase())} style={{ ...field, width: 72 }} data-testid="builder-currency" />
+                  </label>
+                )}
+                {builderVersions.length === 0 && (
+                  <Button size="sm" disabled={!hydrated || busy || !/^[A-Z]{3}$/.test(builderCurrency)} onClick={startBuilder}>
+                    {tr("builder.start")}
+                  </Button>
+                )}
+              </div>
+            )}
           </section>
         )}
 
