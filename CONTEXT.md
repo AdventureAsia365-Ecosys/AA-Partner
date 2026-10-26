@@ -328,7 +328,14 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   `go.sum`, `node_modules/`, images, lock files); UTF-16 files are transcoded to UTF-8 and scanned too.
 - Deploy Dev (`.github/workflows/deploy-dev.yml`): OIDC role `aa-crm-dev-app-deploy` (GitHub environment `dev`,
   variable `AWS_ROLE_ARN`), job guard via `/crm/ci/deploy-gate`, immutable SHA tag, latest task definition revision with
-  only the image swapped, smoke on `/crm/health` + `/crm/health/ready`.
+  only the image swapped, then the post-deploy verify.
+- Post-deploy verify (AA-993 V2, ADR 0016 D3): `deploy-dev.yml` calls `post-deploy-verify.yml` after `deploy` (also
+  dispatchable with `expected_sha`; its own concurrency group, never `deploy-dev`). Script
+  `.github/scripts/post_deploy_verify.sh` (byte-identical to AA-Booking's), HTTP rows `.github/verify/crm.rows` (a PR
+  that adds an endpoint worth guarding adds a row). Red, never a warning: ECS rollout not COMPLETED, desired count 0
+  (no automatic scale-up), a running image other than `<registry>/<repo>:<sha>`, `/crm/health` `git_sha`/`version` off,
+  `/crm/health/ready` not 200 or below the newest `REQUIRED_SCHEMA_VERSIONS` key of the deployed commit, or
+  `AWS_ROLE_ARN` unset (the `config` job fails). The **Deploy Dev result** job is red when any job did not succeed.
 - release-please (manifest mode) keeps one release PR; the version is baked into the image and returned by
   `/crm/health`.
 
