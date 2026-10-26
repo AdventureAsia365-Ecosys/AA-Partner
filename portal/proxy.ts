@@ -104,7 +104,14 @@ export async function proxy(request: NextRequest) {
       if (process.env.NODE_ENV === "development") return NextResponse.next();
       return toLogin(request, false); // unreachable: fail closed, keep the cookies
     }
-    if (!partner) return toLogin(request, true); // refused, and no partner session to fall back to
+    if (!partner) {
+      // Refused, and no partner session to fall back to: on the agency host the sign-in is the CRM web's
+      // /auth/refresh (step 3), on Vercel the API-key page; the refused cookies are cleared either way.
+      if (!cfg.partnerSignIn) return toLogin(request, true);
+      const res = toPartnerSignIn(request);
+      for (const name of TENANT_COOKIES) res.cookies.delete(name);
+      return res;
+    }
   }
 
   // 2. The partner session of the CRM web (same host).
