@@ -102,6 +102,8 @@ def base_conn(status: str | None = "active") -> ScriptedConn:
         ("FROM crm.member_invitation WHERE role = 'owner'", None),
         ("SELECT EXISTS (SELECT 1 FROM crm.traveler) OR EXISTS", False),
         ("INSERT INTO crm.member_invitation", NOW + dt.timedelta(days=7)),
+        ("FROM crm.studio_invitation WHERE cis_invitation_id = $1", None),
+        ("INSERT INTO crm.studio_invitation", {"studio_invitation_id": JOB, "expires_at": NOW + dt.timedelta(days=7)}),
         ("SELECT display_name FROM crm.tenant", "Lữ hành Sen Vàng"),
         (
             "INSERT INTO crm.tenant_entitlement (allowed_features)",
@@ -307,7 +309,19 @@ SCENARIOS: list[tuple[str, str, str, Any, Any, str, int, str | None]] = [
     ("POST", "/tenants/{tenant_id}/owner-recovery/{request_id}/complete", f"{T}/owner-recovery/{REQ}/complete",
      {"ticket_ref": TICKET}, lambda c: c.on("SET status = 'completed'", PgError("CRM03")), "admin", 409,
      "recovery_not_due"),
+    # AA-979 P2b: the Content studio invitation relay; a cis-admin token may write it (Q4).
+    ("POST", "/tenants/{tenant_id}/studio-invitations", f"{T}/studio-invitations",
+     {"email": "editor@agency.example", "cis_invitation_id": str(REQ), "locale": "vi"}, None, "reader", 202, None),
+    ("POST", "/tenants/{tenant_id}/studio-invitations", f"{T}/studio-invitations",
+     {"email": "editor@agency.example", "cis_invitation_id": str(REQ)},
+     lambda c: c.on("FROM crm.studio_invitation WHERE cis_invitation_id = $1",
+                    {"studio_invitation_id": JOB, "cis_tenant_id": TENANT, "status": "claimed"}),
+     "reader", 409, "invitation_claimed"),
+    ("POST", "/tenants/{tenant_id}/studio-invitations", f"{T}/studio-invitations",
+     {"email": "not an address", "cis_invitation_id": str(REQ)}, None, "admin", 422, "invalid_email"),
 ]  # fmt: skip
+# AA-979: routes that write no agency audit (the CIS tenant of a studio invitation may have no CRM agency).
+NO_AGENCY_AUDIT = {"/tenants/{tenant_id}/studio-invitations"}
 
 
 def test_every_ops_route_answers_inside_the_allow_list(ops_app: Any, pools: LocalPools) -> None:
@@ -326,7 +340,7 @@ def test_every_ops_route_answers_inside_the_allow_list(ops_app: Any, pools: Loca
         assert bad_keys(data) == set(), label
         if detail is not None:
             assert data["detail"] == detail and set(data) <= {"detail", "message", "fields", "state", "member_limit"}
-        if status < 300 and method != "GET":
+        if status < 300 and method != "GET" and route not in NO_AGENCY_AUDIT:
             events = [args for args in conn.sql("INSERT INTO crm.audit_event")]
             assert events and all(e[0] == "aa_ops" for e in events), label  # every write is on record
         if status >= 400 and method != "GET":

@@ -270,3 +270,45 @@ def test_build_directory_and_mailer(pools: LocalPools) -> None:
         environment="dev", ses_from_address="no-reply@example.test", ses_configuration_set="aa-email-dev-transactional"
     )
     assert isinstance(build_mailer(ses), SesMailer)
+
+
+def test_claim_and_accept_fall_back_to_a_studio_invitation(
+    app_client: Any, pools: LocalPools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AA-979 P2b: a token no CRM invitation has is tried as a Content studio invitation (one join page for both)."""
+    from app.errors import NotFound
+    from app.members import studio as studio_service
+
+    client, app = app_client
+    app.state.claim_limiter.allow = lambda key: True
+
+    async def no_crm_invitation(*args: Any, **kwargs: Any) -> Any:
+        raise NotFound("invitation_not_found")
+
+    async def studio_claim(pool: Any, directory: Any, token: str) -> Any:
+        return invitation_service.Claimed(state="existing", email="lan@agency.example")
+
+    async def studio_accept(pool: Any, caller: Any, token: str, activation: Any) -> dict[str, Any]:
+        return {"kind": "studio", "tenant_id": str(TENANT), "status": "activated"}
+
+    monkeypatch.setattr(invitation_service, "claim", no_crm_invitation)
+    monkeypatch.setattr(invitation_service, "accept", no_crm_invitation)
+    monkeypatch.setattr(studio_service, "claim", studio_claim)
+    monkeypatch.setattr(studio_service, "accept", studio_accept)
+    res = client.post("/crm/public/v1/invitations/claim", json={"token": TOKEN})
+    assert res.status_code == 200 and res.json() == {"state": "existing", "email": "lan@agency.example"}
+    res = client.post(
+        "/crm/v1/invitations/accept", json={"token": TOKEN}, headers={"Authorization": f"Bearer {pools.partner_web()}"}
+    )
+    assert res.status_code == 200 and res.json() == {"kind": "studio", "tenant_id": str(TENANT), "status": "activated"}
+
+    async def other_404(*args: Any, **kwargs: Any) -> Any:
+        raise NotFound("tenant_not_found")
+
+    monkeypatch.setattr(invitation_service, "claim", other_404)
+    monkeypatch.setattr(invitation_service, "accept", other_404)
+    assert client.post("/crm/public/v1/invitations/claim", json={"token": TOKEN}).json()["detail"] == "tenant_not_found"
+    res = client.post(
+        "/crm/v1/invitations/accept", json={"token": TOKEN}, headers={"Authorization": f"Bearer {pools.partner_web()}"}
+    )
+    assert res.json()["detail"] == "tenant_not_found"

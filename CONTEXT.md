@@ -109,7 +109,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `/crm/public/v1/s/{token}` | no token (AA-943): the signed client link in the path only (43-character token, SHA-256 stored); served on the client host | `client_link_tx()`; GET the Stage 2 planning form (pages, branches, F2 prefill), POST the answers (Origin check, per-address limit, 32 KiB cap); 404 `link_not_found` for any unusable token |
 | `/crm/public/v1/p/{token}`, `/crm/public/v1/portal/{token}` | no token (AA-946): the signed link in the path (purpose `proposal` / `portal`), plus in the portal the session cookie `aa_portal_s` a verified e-mail code set (httpOnly, Secure, SameSite=Strict, Path = that portal's own path, 12 h; SHA-256 stored); served on the client host | `client_link_tx()` of the purpose; the proposal page and accept (409 `price_changed` / `terms_changed`), the portal home, codes, session, Stage 3 (403 `stage3_locked` before the deposit), e-sign v0; writes: Origin check, per-address limit, 32 KiB cap; 404 `link_not_found` for any unusable link |
 | `/crm/v1` | PARTNER x {AA-Partner web}; on Dev also EXTERNAL x {`cis-portal`} until the CRM web switches pools (AA-CIS-Infra `crm_partner_signin_enabled`; removed at P2b, AA-979) | `X-AA-Tenant-Id` + `tenant_tx(action=...)` (membership in `crm.member`, then the permission matrix); `GET /crm/v1/memberships` and `POST /crm/v1/invitations/accept` need no header |
-| `/crm/ops/v1` | WORKFORCE x {`cis-admin`} | group `cis-admin` or `crm-platform-admin` reads, `crm-platform-admin` writes (AA-939: member deactivation, owner recovery; AA-941: the L1 console, section "L1 console" below). Every response passes the L1 key allow-list (`app/ops/serializer.py`) |
+| `/crm/ops/v1` | WORKFORCE x {`cis-admin`} | group `cis-admin` or `crm-platform-admin` reads, `crm-platform-admin` writes (AA-939: member deactivation, owner recovery; AA-941: the L1 console, section "L1 console" below). Every response passes the L1 key allow-list (`app/ops/serializer.py`). AA-979: `POST /tenants/{id}/studio-invitations` (the CIS staff relay of a Content studio invitation) takes any OPS caller, `cis-admin` included (section "Content studio invitations") |
 | `/crm/staff/v1` | WORKFORCE x {`crm-staff`} | group `crm-ops` or `crm-support` (+ an owner grant for support, CRM-13b) |
 
 - One verifier (`app/auth/identity_verifier.py`, **byte copy** of AA-CIS-App `api/core/identity_verifier.py`, checked
@@ -297,6 +297,7 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 | `crm_mail_history_import` | per mbox / CSV upload (queued in the upload's transaction) | AA-945: parses the upload from `imports/<tenant>/<id>`, stores each mail through the ingest path (`imported`), counts on `crm.mail_import`, deletes the object. Not deploy-gate exempt |
 | `crm_booking_sync` | 60 s, Recurring, plus a one-agency nudge per AA request (payload `tenant_id`, `aa_request_id`) | AA-947: sends the due `crm.aa_request` rows of every active agency to Booking (`<BOOKING_API_URL>/booking/b2b/v1`, one M2M scope per call; holds / confirms with a stable `Idempotency-Key`), applies the answers (line, money at the quote lock, `trip_commitment`, `waiting_on`), keeps a request pending with a backoff while Booking is down, then pulls the agency's `/events` into `crm.inbox_events` (section "CRM-19"). Deploy-gate exempt and DB Migrate idle exempt (Infra `owners.yaml`), like the membership pull; `not_configured` without `BOOKING_API_URL` / `M2M_CLIENT` |
 | `crm_catalog_sync` | hourly, due-now hook (`app.catalog.sync.HourlyCatalogSync`, key per UTC hour) | AA-947: refreshes `crm.aa_catalog_tour` from `<CIS_API_URL>/catalog/v1` (scope `cis.catalog/read`): full passes comparing `content_hash`, a changed tour fetched with `If-None-Match`, tours no longer listed re-checked (410 retired, 404 paused); bounded per run, the pass continues next run; a CIS failure backs off. Not deploy-gate exempt |
+| `crm_studio_activation` | per accepted Content studio invitation (queued in the accept transaction, idempotency key per invitation, 12 attempts) | AA-979: CIS `tenant.membership.v1` 1.1 `activateInvitation` with an M2M token of scope `cis.tenant/activate` (`app/members/studio.py`, `app/cis/activation.py`); a CIS outage / 5xx / 401 / 403 retries with backoff, a CIS 404 / 409 fails it permanently with the code on the row. Not deploy-gate exempt |
 | `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
 
 ## CI and release
@@ -1080,6 +1081,26 @@ Root contract `tenant.membership.v1` (vendored byte copy and samples in `docs/co
   alarm.
 - Retention: inbox rows are deleted 90 days after they were received by the daily `crm_lifecycle` run
   (`crm.lifecycle_purge_expired`, crm-018; count `membership_inbox_purged`) and with the agency at offboarding.
+
+## Content studio invitations (AA-979 CRM-P2b, root ADR 0010a)
+
+CIS owns the Content studio roles; only this API creates partner-pool accounts. So a studio invitation is CIS-created and
+CRM-delivered (`app/members/studio.py`, table `crm.studio_invitation`, crm-020, a platform table: the CIS tenant may
+have no CRM agency):
+
+- **Issue / send again**: `POST /crm/ops/v1/tenants/{cis tenant}/studio-invitations` `{email, cis_invitation_id,
+  locale}` from the CIS staff relay (Tenant 360 Members). One row per CIS invitation id; a new single-use token; the
+  address sealed under a key derived from that token (HKDF-SHA256 -> AES-256-GCM: the database alone cannot open it);
+  the AA system mail (`studio_invitation`, EN + VI) with `<PARTNER_WEB_ORIGIN>/join?t=<token>`, sent inside the
+  transaction. Sending again re-issues the same row while it is pending or expired; claimed / accepted rows are left
+  alone (409). Context `studio_platform_tx()` (actor `platform:<staff sub>`).
+- **Claim / accept**: the same public claim route and `/crm/v1/invitations/accept` as a CRM invitation; the token is
+  tried as a CRM invitation first, then as a studio invitation (`studio_invitation_tx()`, actor `invitation:<id>`).
+  Accept binds nothing in the CRM (no `crm.member`): the row becomes `accepted`, a `crm_studio_activation` job is
+  queued, one activation is tried at once; the answer is `{kind: "studio", tenant_id: <CIS tenant>, status:
+  accepted | activated}`.
+- **Activate**: CIS binds the identity (contract `tenant.membership.v1` 1.1); CIS decides the Content studio role.
+- No agency audit (no agency may exist); log lines carry ids and codes only, never the address.
 
 ## Domain terms
 
