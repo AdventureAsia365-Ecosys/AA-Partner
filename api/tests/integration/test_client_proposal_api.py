@@ -1,0 +1,388 @@
+"""AA-950 (card CRM-21b) end to end on PostgreSQL with the RDS role shape: the client's proposal page of a builder
+version through ``client_link_tx()``, with real field encryption and an in-memory Booking (``tests/aa_fakes.py``).
+
+- C-03: the choice with the deltas of D1 and the groups of R26; no net, margin or per-line price; "viewed" (R4) with
+  one bell item for the first view; Keep / Swap re-prices; "Choose later" for agency items only (Fix B9).
+- Fix A3: one hold set per version (a same-choice hold is reused, a changed AA pick re-holds after releasing the old
+  one), a bell per re-hold; **card R**: a 4th re-check in a day is refused without calling Booking ("Ask your agent").
+- **Card R**: accept after the hold expired -> 409 ``hold_expired`` with the re-quote offer; a re-check then lets the
+  client accept, and the schedule follows the accepted picks.
+- **Card E**: an option sells out mid-session -> the block falls back to its default and the total is recomputed; the
+  same link works from a second device until it is re-issued (Fix B11).
+- A new version on the same link shows one bundled notice; "Ask for a change" bundles the choice diff (R19); the nudge
+  after 2 days (R4); Booking down; another agency sees nothing.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import json
+import uuid
+from decimal import Decimal
+from typing import Any
+
+import asyncpg
+import pytest
+
+from app.errors import Conflict, Invalid, NotFound
+from app.proposals import aa_options, builder, events, service
+from app.proposals import public as page
+from app.settings import Settings
+from app.tenancy import system_tx, tenant_tx
+from app.vault import Vault
+from tests.aa_fakes import FakeBooking, booking_client
+from tests.integration.test_builder_api import _as, _block, _create, _option, _pid, _publishable, _setup
+
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+
+PLAIN = Settings(environment="test", db_ssl="disable")
+
+
+async def _raw(pool: asyncpg.Pool, s: dict[str, Any], sql: str, *args: Any) -> Any:
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(s["tenant"]))
+        await conn.execute("SELECT set_config('app.actor', 'seed:test', true)")
+        return await conn.fetch(sql, *args)
+
+
+async def _aa(pool: asyncpg.Pool, s: dict[str, Any], fake: FakeBooking, v: dict[str, Any], block: dict[str, Any],
+              sell: str) -> dict[str, Any]:  # fmt: skip
+    body = {"tour_source_id": "T-950", "component_id": "tp:1", "component_kind": "trip_plan",
+            "sell_amount": Decimal(sell)}  # fmt: skip
+    async with tenant_tx(pool, s["who"]["agent"], s["tenant"]) as ctx:
+        plan = await builder.aa_plan(ctx, _pid(v), v["edit_seq"], uuid.UUID(block["option_block_id"]), body)
+    quote = await aa_options.quote(booking_client(fake), s["tenant"], plan)
+    return await _as(pool, s, "agent", builder.add_aa_option, plan, quote, body)
+
+
+async def _sent(pool: asyncpg.Pool) -> dict[str, Any]:
+    """A sent builder version: four lodging nights (day 1: Lodge 1 or Riverside +40), a fixed park fee paid on
+    arrival, an AA day tour on day 2 (500, or the 650 upgrade) and an agency dinner on day 4 that may wait."""
+    s = await _setup(pool)
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO crm.aa_catalog_tour (source_id, title, country_code, duration_days, served_state) "
+            "VALUES ('T-950', 'Kathmandu valley day tour', 'NP', 1, 'served') "
+            "ON CONFLICT (source_system, source_id) DO UPDATE SET served_state = 'served'"
+        )
+    fake = FakeBooking(b2b_price="300.00", availability="available")
+    v = await _publishable(pool, s)
+    day2 = next(d for d in v["days"] if d["day_no"] == 2)
+    v = await _as(pool, s, "agent", builder.add_block, _pid(v), v["edit_seq"], uuid.UUID(day2["proposal_day_id"]),
+                  {"title": "Day tour", "type": "activity"})  # fmt: skip
+    v = await _aa(pool, s, fake, v, _block(v, 2, 1), "500")
+    v = await _aa(pool, s, fake, v, _block(v, 2, 1), "650")
+    day4 = next(d for d in v["days"] if d["day_no"] == 4)
+    v = await _as(pool, s, "agent", builder.add_block, _pid(v), v["edit_seq"], uuid.UUID(day4["proposal_day_id"]),
+                  {"title": "Dinner", "type": "meal"})  # fmt: skip
+    v = await _option(pool, s, v, _block(v, 4, 1), title="Cooking class dinner", sell_amount=Decimal("60"),
+                      choose_later_allowed=True)  # fmt: skip
+    v = await _as(pool, s, "agent", builder.publish, _pid(v), v["edit_seq"], acknowledge_selection_seq=None)
+    async with tenant_tx(pool, s["who"]["agent"], s["tenant"]) as ctx:
+        sent = await service.send(ctx, Vault(s["keys"], ctx), _pid(v))
+    assert sent["status"] == "sent" and sent["link_path"].startswith("/c/p/") and not sent["link_reused"]
+    s.update(fake=fake, v=v, sent=sent, token=sent["link_path"].rsplit("/", 1)[1])
+    return s
+
+
+def _opt(p: dict[str, Any], title: str) -> dict[str, Any]:
+    return next(o for d in p["days"] for b in d["blocks"] for o in b["options"] if o["title"] == title)
+
+
+def _blk(p: dict[str, Any], title: str) -> dict[str, Any]:
+    return next(b for d in p["days"] for b in d["blocks"] if any(o["title"] == title for o in b["options"]))
+
+
+async def _pick(pool: asyncpg.Pool, s: dict[str, Any], title: str, **kw: Any) -> dict[str, Any]:
+    p = await page.read(pool, s["keys"], s["token"])
+    body = {"block_id": _blk(p, title)["option_block_id"], "option_id": _opt(p, title)["option_id"], **kw}
+    return await page.pick(pool, s["keys"], PLAIN, s["token"], body, origin=None)
+
+
+async def _hold(pool: asyncpg.Pool, s: dict[str, Any], fake: FakeBooking | None = None) -> tuple[int, dict]:
+    return await page.hold(pool, s["keys"], PLAIN, booking_client(fake or s["fake"]), s["token"], origin=None)
+
+
+async def _accept(pool: asyncpg.Pool, s: dict[str, Any], p: dict[str, Any], **kw: Any) -> dict[str, Any]:
+    body = {"full_name": "Grace Lee", "accept_terms": True, "price_hash": p["price_hash"], "terms_doc_id": None,
+            "selection_hash": p["selection_hash"], "rooms_confirmed": True, **kw}  # fmt: skip
+    return await page.accept(pool, s["keys"], PLAIN, s["token"], body, origin=None)
+
+
+async def _bell(pool: asyncpg.Pool, s: dict[str, Any], role: str = "agent") -> dict[str, Any]:
+    async with tenant_tx(pool, s["who"][role], s["tenant"]) as ctx:
+        return await events.bell(ctx)
+
+
+def _bell_line(b: dict[str, Any], name: str) -> dict[str, Any] | None:
+    return next((i for i in b["items"] if i["name"] == name), None)
+
+
+async def test_c03_shows_the_choice_with_deltas_groups_and_viewed(app_pool: asyncpg.Pool) -> None:
+    s = await _sent(app_pool)
+    p = await page.read(app_pool, s["keys"], s["token"])
+    assert p["kind"] == "builder" and p["status"] == "sent" and p["version"] == 1
+    # The defaults: 4 lodges 1000 + the AA day tour 500 + the dinner 60; the park fee is paid on arrival.
+    assert p["totals"]["total"] == "1560.00" and p["totals"]["pay_on_arrival_total"] == "45.00"
+    assert p["totals"]["deposit"] == "468.00" and p["total_amount"] == "1560.00"
+    # D1: only the sell difference to the default per option; never a net, margin or per-line price (§2.9 rule 3).
+    assert _opt(p, "Riverside 1")["delta"] == "40.00" and _opt(p, "Lodge 1")["delta"] == "0.00"
+    assert "net" not in json.dumps(p) and "margin" not in json.dumps(p) and "sell_amount" not in json.dumps(p)
+    # R26: grouped by confirmation class.
+    classes = {g["confirm_class"]: [i["title"] for i in g["items"]] for g in p["groups"]}
+    assert classes["on_payment"] == ["Kathmandu valley day tour"]
+    assert "Cooking class dinner" in classes["agent"] and classes["arrival"] == ["Chitwan park fee"]
+    assert p["hold"]["status"] == "missing" and p["hold"]["rechecks_left"] == 3 and p["notice"] is None
+    # R4: viewed; the first view rings the trip owner's bell once; a re-read within the hour adds no event.
+    await page.read(app_pool, s["keys"], s["token"])
+    rows = await _raw(app_pool, s, "SELECT view_count, first_viewed_at FROM crm.proposal WHERE proposal_id = $1",
+                      _pid(s["v"]))  # fmt: skip
+    assert rows[0]["view_count"] == 2 and rows[0]["first_viewed_at"] is not None
+    viewed = await _raw(app_pool, s, "SELECT count(*) AS n FROM crm.metric_event WHERE name = 'proposal.viewed'")
+    assert viewed[0]["n"] == 1
+    line = _bell_line(await _bell(app_pool, s), "proposal.viewed")
+    assert line is not None and line["count"] == 1 and line["trip_title"] == "Nepal family"
+    # The bell is the trip owner's: another member has nothing.
+    assert (await _bell(app_pool, s, "owner"))["items"] == []
+
+
+async def test_keep_swap_and_choose_later_for_agency_items_only(app_pool: asyncpg.Pool) -> None:
+    s = await _sent(app_pool)
+    p = await _pick(app_pool, s, "Riverside 1")
+    assert p["totals"]["total"] == "1600.00" and _opt(p, "Riverside 1")["chosen"]
+    upgrade = _blk(p, "Kathmandu valley day tour")["options"][1]  # both AA options carry the tour's title
+    p = await page.pick(app_pool, s["keys"], PLAIN, s["token"],
+                        {"block_id": _blk(p, "Kathmandu valley day tour")["option_block_id"],
+                         "option_id": upgrade["option_id"]}, origin=None)  # fmt: skip
+    assert p["totals"]["total"] == "1750.00"
+    # Fix B9: the dinner (an agency item) may wait; the AA tour may not.
+    dinner = _blk(p, "Cooking class dinner")
+    assert dinner["choose_later_allowed"] and not _blk(p, "Kathmandu valley day tour")["choose_later_allowed"]
+    p = await page.pick(app_pool, s["keys"], PLAIN, s["token"], {"block_id": dinner["option_block_id"],
+                        "choose_later": True}, origin=None)  # fmt: skip
+    assert _blk(p, "Cooking class dinner")["choose_later"]
+    with pytest.raises(Invalid) as err:
+        await page.pick(app_pool, s["keys"], PLAIN, s["token"],
+                        {"block_id": _blk(p, "Kathmandu valley day tour")["option_block_id"], "choose_later": True},
+                        origin=None)  # fmt: skip
+    assert err.value.code == "choose_later_not_allowed"
+    # An option of another block is refused.
+    with pytest.raises(Invalid) as err:
+        await page.pick(app_pool, s["keys"], PLAIN, s["token"],
+                        {"block_id": _blk(p, "Chitwan park fee")["option_block_id"],
+                         "option_id": _opt(p, "Lodge 1")["option_id"]}, origin=None)  # fmt: skip
+    assert err.value.code == "option_not_in_block"
+    # The bell bundles the picks: one line with the count.
+    line = _bell_line(await _bell(app_pool, s), "proposal.option_chosen")
+    assert line is not None and line["count"] >= 3
+
+
+async def test_fix_a3_one_hold_set_per_version_and_a_bell_per_rehold(app_pool: asyncpg.Pool) -> None:
+    s = await _sent(app_pool)
+    fake = s["fake"]
+    before = dict(fake.calls)
+    status, out = await _hold(app_pool, s)
+    assert status == 200 and out["outcome"] == "held" and out["page"]["hold"]["status"] == "active"
+    assert fake.calls["POST holds"] == before.get("POST holds", 0) + 1
+    # The same choice again: the hold covers it, Booking is not asked.
+    status, out = await _hold(app_pool, s)
+    assert status == 200 and fake.calls["POST holds"] == before.get("POST holds", 0) + 1
+    # An agency pick changes nothing to hold.
+    await _pick(app_pool, s, "Riverside 1")
+    p = await page.read(app_pool, s["keys"], s["token"])
+    assert p["hold"]["status"] == "active"
+    # An AA pick needs a new hold: the old one is released first (one active set per version), a re-check is used.
+    tour = _blk(p, "Kathmandu valley day tour")
+    p = await page.pick(app_pool, s["keys"], PLAIN, s["token"], {"block_id": tour["option_block_id"],
+                        "option_id": tour["options"][1]["option_id"]}, origin=None)  # fmt: skip
+    assert p["hold"]["status"] == "stale"
+    status, out = await _hold(app_pool, s)
+    assert status == 200 and out["page"]["hold"]["status"] == "active" and out["page"]["hold"]["rechecks_left"] == 2
+    assert fake.calls["DELETE holds"] == 1 and fake.calls["POST holds"] == before.get("POST holds", 0) + 2
+    rows = await _raw(app_pool, s, "SELECT hold_count, hold_set_ref, recheck_count_day FROM crm.proposal "
+                      "WHERE proposal_id = $1", _pid(s["v"]))  # fmt: skip
+    assert rows[0]["hold_count"] == 2 and rows[0]["hold_set_ref"] == f"crm-proposal:{s['v']['proposal_id']}"
+    assert rows[0]["recheck_count_day"] == 1
+    assert _bell_line(await _bell(app_pool, s), "proposal.rehold")["count"] == 1  # type: ignore[index]
+    # No personal data went to Booking: the agency id header only.
+    assert set(fake.tenants) == {str(s["tenant"])}
+
+
+async def test_card_r_a_4th_recheck_in_a_day_is_refused_without_a_hold(app_pool: asyncpg.Pool) -> None:
+    s = await _sent(app_pool)
+    fake = s["fake"]
+    fake.hold_expires_in = dt.timedelta(seconds=-60)  # every hold has run out by the time the client looks again
+    status, out = await _hold(app_pool, s)
+    assert status == 200 and out["page"]["hold"]["status"] == "expired" and out["page"]["hold"]["rechecks_left"] == 3
+    for left in (2, 1, 0):
+        status, out = await _hold(app_pool, s)
+        assert status == 200 and out["page"]["hold"]["rechecks_left"] == left
+    holds_before = fake.calls["POST holds"]
+    status, out = await _hold(app_pool, s)
+    assert status == 429 and out["detail"] == "recheck_limit" and "Ask your agent" in out["message"]
+    assert fake.calls["POST holds"] == holds_before  # no hold, Booking not asked
+    assert _bell_line(await _bell(app_pool, s), "proposal.recheck_refused") is not None
+
+
+async def test_card_r_accept_after_the_hold_expired_offers_a_requote(app_pool: asyncpg.Pool) -> None:
+    s = await _sent(app_pool)
+    p = await page.read(app_pool, s["keys"], s["token"])
+    with pytest.raises(Conflict) as err:
+        await _accept(app_pool, s, p)
+    assert err.value.code == "hold_required"
+    with pytest.raises(Invalid):
+        await _accept(app_pool, s, p, rooms_confirmed=False)  # Fix B10: the client confirms the rooms
+    s["fake"].hold_expires_in = dt.timedelta(seconds=-1)
+    _, out = await _hold(app_pool, s)
+    with pytest.raises(Conflict) as err:
+        await _accept(app_pool, s, out["page"])
+    assert err.value.code == "hold_expired"
+    assert err.value.extra["requote"] == {"available": True, "rechecks_left": 3}
+    rows = await _raw(app_pool, s, "SELECT status FROM crm.proposal WHERE proposal_id = $1", _pid(s["v"]))
+    assert rows[0]["status"] == "sent"  # nothing accepted
+    # C-12 "Check availability again" -> a new hold, then the client accepts; a stale choice hash is refused first.
+    s["fake"].hold_expires_in = None
+    await _pick(app_pool, s, "Riverside 1")
+    _, out = await _hold(app_pool, s)
+    with pytest.raises(Conflict) as err:
+        await _accept(app_pool, s, out["page"], selection_hash="0" * 64)
+    assert err.value.code == "choice_changed" and err.value.extra["selection_hash"] == out["page"]["selection_hash"]
+    done = await _accept(app_pool, s, out["page"])
+    assert done["status"] == "accepted"
+    rows = await _raw(app_pool, s, "SELECT accepted_total_amount, accepted_deposit_amount, accepted_hold_id, "
+                      "hold_id FROM crm.proposal WHERE proposal_id = $1", _pid(s["v"]))  # fmt: skip
+    assert rows[0]["accepted_total_amount"] == Decimal("1600.00") and rows[0]["accepted_deposit_amount"] == Decimal(
+        "480.00")  # fmt: skip
+    assert rows[0]["accepted_hold_id"] == rows[0]["hold_id"]
+    sched = await _raw(app_pool, s, "SELECT kind, amount FROM crm.payment_schedule WHERE proposal_id = $1 "
+                       "ORDER BY kind", _pid(s["v"]))  # fmt: skip
+    assert [(r["kind"], r["amount"]) for r in sched] == [
+        ("balance", Decimal("1120.00")),
+        ("deposit", Decimal("480.00")),
+    ]
+    task = await _raw(app_pool, s, "SELECT due_anchor FROM crm.task WHERE trip_id = $1 AND kind = 'collect_deposit'",
+                      s["trip"])  # fmt: skip
+    assert task[0]["due_anchor"] == "hold_expiry"
+    after = await page.read(app_pool, s["keys"], s["token"])
+    assert after["status"] == "accepted" and after["total_amount"] == "1600.00"
+    again = await _accept(app_pool, s, out["page"])
+    assert again["status"] == "already_accepted"
+
+
+async def test_card_e_an_option_sold_out_mid_session_falls_back_to_the_default(app_pool: asyncpg.Pool) -> None:
+    s = await _sent(app_pool)
+    p = await page.read(app_pool, s["keys"], s["token"])
+    tour = _blk(p, "Kathmandu valley day tour")
+    upgrade = tour["options"][1]
+    p = await page.pick(app_pool, s["keys"], PLAIN, s["token"], {"block_id": tour["option_block_id"],
+                        "option_id": upgrade["option_id"]}, origin=None)  # fmt: skip
+    assert p["totals"]["total"] == "1710.00"
+    s["fake"].line_availability[upgrade["option_id"]] = "sold_out"
+    status, out = await _hold(app_pool, s)
+    assert status == 409 and out["detail"] == "option_sold_out" and out["ask_agent"] is False
+    shown = out["page"]
+    assert shown["totals"]["total"] == "1560.00"  # the default again, total recomputed
+    options = _blk(shown, "Kathmandu valley day tour")["options"]
+    assert options[0]["chosen"] and options[1]["blocked"] == {"reason": "sold_out"} and not options[1]["chosen"]
+    assert _bell_line(await _bell(app_pool, s), "proposal.option_sold_out") is not None
+    with pytest.raises(Conflict) as err:
+        await page.pick(app_pool, s["keys"], PLAIN, s["token"], {"block_id": tour["option_block_id"],
+                        "option_id": upgrade["option_id"]}, origin=None)  # fmt: skip
+    assert err.value.code == "option_sold_out"
+    # The default holds fine.
+    status, out = await _hold(app_pool, s)
+    assert status == 200 and out["page"]["hold"]["status"] == "active"
+
+
+async def test_card_e_the_same_link_opens_on_a_second_device_until_reissued(app_pool: asyncpg.Pool) -> None:
+    s = await _sent(app_pool)
+    first = await page.read(app_pool, s["keys"], s["token"])  # phone
+    second = await page.read(app_pool, s["keys"], s["token"])  # laptop / spouse: nothing binds the link to a device
+    assert first["proposal_id"] == second["proposal_id"] and second["status"] == "sent"
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        fresh = await service.reissue_link(ctx, _pid(s["v"]))
+    with pytest.raises(NotFound):
+        await page.read(app_pool, s["keys"], s["token"])
+    s["token"] = fresh["link_path"].rsplit("/", 1)[1]
+    assert (await page.read(app_pool, s["keys"], s["token"]))["version"] == 1
+    # The assistant may not re-issue (PROPOSAL_PUBLISH is owner / agent; the route checks it).
+
+
+async def test_a_new_version_takes_over_the_link_with_one_bundled_notice(app_pool: asyncpg.Pool) -> None:
+    s = await _sent(app_pool)
+    await _pick(app_pool, s, "Riverside 1")
+    v2 = await _create(app_pool, s, from_proposal_id=_pid(s["v"]))
+    v2 = await _option(app_pool, s, v2, _block(v2, 3), title="Jungle lodge", sell_amount=Decimal("270"))
+    out = await _as(app_pool, s, "agent", builder.publish, _pid(v2), v2["edit_seq"], acknowledge_selection_seq=1)
+    assert out["publish"]["picks_carried"] == 1
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        sent = await service.send(ctx, Vault(s["keys"], ctx), _pid(v2))
+    assert sent["link_reused"] is True and sent["link_path"] is None and sent["superseded"] == s["v"]["proposal_id"]
+    p = await page.read(app_pool, s["keys"], s["token"])  # the client's old link (and cookie) shows v2
+    assert p["version"] == 2 and _opt(p, "Riverside 1")["chosen"]
+    notice = p["notice"]
+    assert notice["from_version"] == 1 and notice["picks_carried"] == 1
+    assert {"kind": "added", "title": "Jungle lodge"} in notice["changes"]
+    assert notice["total_from"] == "1560.00"
+
+
+async def test_ask_for_a_change_bundles_the_choice_diff(app_pool: asyncpg.Pool) -> None:
+    s = await _sent(app_pool)
+    await _pick(app_pool, s, "Riverside 1")
+    with pytest.raises(Invalid):
+        await page.change_request(app_pool, s["keys"], PLAIN, s["token"], {"reason": "please call me"}, origin=None)
+    done = await page.change_request(app_pool, s["keys"], PLAIN, s["token"], {"reason": "rooms"}, origin=None)
+    assert done == {"status": "sent", "reason": "rooms"}
+    line = _bell_line(await _bell(app_pool, s), "proposal.change_requested")
+    assert line is not None and line["detail"]["reason"] == "rooms"
+    assert line["detail"]["choices"][0]["chosen"] == "Riverside 1" and line["detail"]["choices"][0]["sell_delta"] == (
+        "40.00")  # fmt: skip
+    task = await _raw(app_pool, s, "SELECT count(*) AS n FROM crm.task WHERE trip_id = $1 "
+                      "AND kind = 'proposal_change_request'", s["trip"])  # fmt: skip
+    assert task[0]["n"] == 1
+    # The agent's view (A-03): R19 choices, viewed, events; the assistant reads it too (no net there either).
+    for role in ("agent", "assistant"):
+        async with tenant_tx(app_pool, s["who"][role], s["tenant"]) as ctx:
+            act = await service.client_activity(ctx, _pid(s["v"]))
+        assert act["choices"][0]["block"] == "Lodging" and act["view_count"] >= 1
+        assert act["totals"] == {"published": "1560.00", "current": "1600.00", "currency": "USD"}
+        assert "net" not in json.dumps(act)
+    # Marking the bell seen empties it.
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        assert (await events.mark_seen(ctx, None))["seen"] >= 2
+    assert (await _bell(app_pool, s))["items"] == []
+
+
+async def test_r4_the_nudge_after_two_days_viewed_without_a_choice(app_pool: asyncpg.Pool) -> None:
+    s = await _sent(app_pool)
+    await page.read(app_pool, s["keys"], s["token"])
+    await _raw(app_pool, s, "UPDATE crm.proposal SET first_viewed_at = now() - interval '3 days', "
+               "last_viewed_at = now() - interval '3 days' WHERE proposal_id = $1", _pid(s["v"]))  # fmt: skip
+    async with system_tx(app_pool, s["tenant"], actor="job:crm_stage_date_rule") as ctx:
+        assert await events.nudge_due(ctx) == 1
+    async with system_tx(app_pool, s["tenant"], actor="job:crm_stage_date_rule") as ctx:
+        assert await events.nudge_due(ctx) == 0  # once per version
+    task = await _raw(app_pool, s, "SELECT count(*) AS n FROM crm.task WHERE trip_id = $1 "
+                      "AND kind = 'proposal_follow_up'", s["trip"])  # fmt: skip
+    assert task[0]["n"] == 1 and _bell_line(await _bell(app_pool, s), "proposal.nudge_due") is not None
+
+
+async def test_booking_down_disables_the_hold_and_tells_the_agent_once(app_pool: asyncpg.Pool) -> None:
+    s = await _sent(app_pool)
+    down = FakeBooking(down=True)
+    for _ in range(2):
+        status, out = await _hold(app_pool, s, down)
+        assert status == 503 and out["detail"] == "booking_unavailable" and out["page"]["hold"]["status"] == "missing"
+    assert _bell_line(await _bell(app_pool, s), "proposal.booking_unavailable")["count"] == 1  # type: ignore[index]
+
+
+async def test_another_agency_sees_no_activity_and_no_bell(app_pool: asyncpg.Pool) -> None:
+    s = await _sent(app_pool)
+    await page.read(app_pool, s["keys"], s["token"])
+    other = await _setup(app_pool)
+    async with tenant_tx(app_pool, other["who"]["agent"], other["tenant"]) as ctx:
+        with pytest.raises(NotFound):
+            await service.client_activity(ctx, _pid(s["v"]))
+        assert (await events.bell(ctx))["items"] == []
+        with pytest.raises(NotFound):
+            await service.reissue_link(ctx, _pid(s["v"]))

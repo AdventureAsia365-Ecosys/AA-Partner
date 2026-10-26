@@ -52,6 +52,10 @@ class FakeBooking:
     availability: str = "available"
     per_night: bool = False  # b2b_price is a night's price: a quote line costs it times its nights (1 when absent)
     hold_refusal: str | None = None
+    # AA-950: a quote answers every line (the hold set of a proposal version quotes all its AA items at once);
+    # ``line_availability`` overrides ``availability`` per line_ref; ``hold_expires_in`` sets a new hold's expiry.
+    line_availability: dict[str, str] = field(default_factory=dict)
+    hold_expires_in: timedelta | None = None
     confirm_line_status: str = "on_request"
     calls: Counter[str] = field(default_factory=Counter)
     holds: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -89,10 +93,16 @@ class FakeBooking:
     def _route(self, method: str, path: str, query: dict[str, str], data: Any, key: str | None) -> HttpResponse:
         if method == "POST" and path == "/quotes":
             self.quotes += 1
-            line = data["lines"][0]
-            price = self.b2b_price
-            if self.per_night:
-                price = str(Decimal(self.b2b_price) * int(line.get("nights") or 1))
+            answered = []
+            for line in data["lines"]:
+                price = self.b2b_price
+                if self.per_night:
+                    price = str(Decimal(self.b2b_price) * int(line.get("nights") or 1))
+                answered.append({"line_ref": line["line_ref"],
+                                 "b2b_price": {"amount": price, "currency": data["currency"]}, "unit": "per_line",
+                                 "availability": self.line_availability.get(line["line_ref"], self.availability),
+                                 "departure_id": None})  # fmt: skip
+            total = str(sum(Decimal(a["b2b_price"]["amount"]) for a in answered))
             return _resp(201, {
                 "quote_id": f"q{self.quotes}",
                 "currency": data["currency"],
@@ -100,9 +110,8 @@ class FakeBooking:
                        "rate_date": "2026-10-25", "source": "test"},
                 "valid_until": _in_two_days(),
                 "price_hash": HASH[:-1] + str(self.quotes % 10),
-                "lines": [{"line_ref": line["line_ref"], "b2b_price": {"amount": price, "currency": data["currency"]},
-                           "unit": "per_line", "availability": self.availability, "departure_id": None}],
-                "total_b2b_price": {"amount": price, "currency": data["currency"]},
+                "lines": answered,
+                "total_b2b_price": {"amount": total, "currency": data["currency"]},
                 "x_future_field": True,
             })  # fmt: skip
         if method == "GET" and path == "/price-parity":
@@ -120,7 +129,9 @@ class FakeBooking:
             self.hold_keys[key or ""] = hold_id
             self.holds[hold_id] = {
                 "hold_id": hold_id, "quote_id": data["quote_id"], "status": "active",
-                "expires_at": _in_two_days(), "extended_count": 0,
+                "expires_at": _in_two_days() if self.hold_expires_in is None else (
+                    datetime.now(UTC) + self.hold_expires_in).replace(microsecond=0).isoformat(),
+                "extended_count": 0,
                 "lines": [{"line_ref": data["proposal_ref"].removeprefix("crm-line:"), "line_status": "available"}],
             }  # fmt: skip
             return _resp(201, self.holds[hold_id])
