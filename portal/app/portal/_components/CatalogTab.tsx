@@ -30,6 +30,8 @@ import { CatalogDrawer } from "./CatalogDrawer";
 import { TourRewritePanel, watchTourRewrite, type TourRewriteTarget } from "./TourRewritePanel";
 import { WorkStatusBadge, activePollInterval, latestVersionByTour, tourWorkStatus } from "./workStatus";
 import { ServedBadge, plainError } from "./ServedBadge";
+import { MasterNewerBadge } from "./MasterNewerNotice";
+import { showMasterNotice } from "@/lib/masterNotice";
 import { useWriteWatcher } from "./WriterPanel";
 import { forgetLiveSnapshot } from "./LiveWriter";
 import { AiContentNotice } from "./AiContentNotice";
@@ -283,6 +285,8 @@ function CatalogInner() {
               <div style={{ fontWeight: 600, color: T.ink }}>{v.aa_name || "Tour"}</div>
               {/* AA-986 L3: persistent badge when AA no longer serves (or has paused) the tour */}
               {v.served_notice && <div style={{ marginTop: 4 }}><ServedBadge fields={v} /></div>}
+              {/* AA-990: AA updated the tour after this version; the drawer says it in full, nothing is changed */}
+              {showMasterNotice(v) && <div style={{ marginTop: 4 }}><MasterNewerBadge version={v} /></div>}
               {v.aa_subtitle && (
                 <div style={{ fontWeight: 400, fontSize: 11.5, color: T.muted, marginTop: 2 }}>{v.aa_subtitle}</div>
               )}

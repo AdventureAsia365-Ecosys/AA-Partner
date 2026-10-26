@@ -31,6 +31,10 @@ export interface Version extends ServedFields {
   published_tour_id?: string;
   job_status?: string | null;
   tour_id?: string;
+  /** AA-990: when Adventure Asia last changed the tour's text, and whether that is after this version was made.
+   *  Read-only, informational (lib/masterNotice.ts); absent before the CIS change is deployed. */
+  master_updated_at?: string | null;
+  master_newer?: boolean | null;
 }
 
 // AA-760 — every version, not the first page: My Tours groups versions by tour (latest per tour), the
