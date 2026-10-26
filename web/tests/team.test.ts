@@ -187,6 +187,20 @@ describe("POST /join/confirm", () => {
     expect(readSession(cfg, { get: (n: string) => jar.get(n) })?.tid).toBe("tenant-new");
   });
 
+  it("AA-979: a Content studio invitation keeps the session's agency and says whether the studio is ready", async () => {
+    for (const status of ["activated", "accepted"]) {
+      vi.stubGlobal("fetch", vi.fn(async () => Response.json({ kind: "studio", tenant_id: "cis-tenant", status })));
+      const res = await confirmPost(
+        request("/join/confirm", { method: "POST", cookie: `${signedIn("tenant-a")}; ${inviteCookieHeader()}`, headers: SAME_ORIGIN }),
+      );
+      expect(res.status).toBe(303);
+      expect(res.headers.get("location")).toBe(`${ORIGIN}/join/accept?studio=${status}`);
+      const sets = res.headers.getSetCookie();
+      expect(sets.filter((c) => /aa_crm_inv/.test(c)).every((c) => /Max-Age=0/i.test(c))).toBe(true);
+      expect(sets.some((c) => /aa_crm_s=/.test(c))).toBe(false); // the CRM session (and its agency) is untouched
+    }
+  });
+
   it("refuses cross-site, needs a session, needs the invitation, and words API refusals", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ detail: "invitation_identity_mismatch" }, { status: 403 })));
     const cross = await confirmPost(request("/join/confirm", { method: "POST", cookie: signedIn(), headers: { "sec-fetch-site": "cross-site" } }));

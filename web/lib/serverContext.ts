@@ -3,7 +3,7 @@
 // the path the proxy recorded (x-aa-path, set by proxy.ts after it strips any client copy).
 
 import { cookies, headers } from "next/headers";
-import { config, type WebConfig } from "./config";
+import { config, forHost, type WebConfig } from "./config";
 import type { DateLocale } from "./dates";
 import { langOf, LOCALE_COOKIE, resolveLocale, type Lang } from "./i18n";
 import { readSession, type Session } from "./session";
@@ -21,9 +21,10 @@ export interface ServerContext {
  * nor Accept-Language — without the person's cookie or that, the page is English (lib/i18n.ts resolveLocale).
  */
 export async function serverContext(explicit?: string | null): Promise<ServerContext> {
-  const cfg = config();
-  const jar = await cookies();
   const h = await headers();
+  // AA-979 P2b: the configuration of the host the page is served on (its own public origin).
+  const cfg = forHost(config(), h.get("host"));
+  const jar = await cookies();
   const locale = resolveLocale({ cookie: jar.get(LOCALE_COOKIE)?.value, explicit });
   return {
     cfg,

@@ -1,7 +1,7 @@
 // GET /auth/callback?code=…&state=… — finish sign-in: check state against the sealed attempt, exchange the code with
 // the PKCE verifier, keep the tokens in sealed httpOnly cookies, go back to the page the person asked for. AA-935.
 import type { NextRequest } from "next/server";
-import { config } from "@/lib/config";
+import { requestConfig } from "@/lib/config";
 import { accessClaims, exchangeCode, OAuthError } from "@/lib/oauth";
 import { redirectTo, withCookies } from "@/lib/respond";
 import { clearedCookies, cookieNames, readTx, refreshCookie, sessionCookie } from "@/lib/session";
@@ -9,7 +9,7 @@ import { clearedCookies, cookieNames, readTx, refreshCookie, sessionCookie } fro
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const cfg = config();
+  const cfg = requestConfig(request);
   if (!cfg.authConfigured) return redirectTo(cfg, "/signed-out?reason=unavailable", 307, request.nextUrl.origin);
   const params = request.nextUrl.searchParams;
   const tx = readTx(cfg, request.cookies);

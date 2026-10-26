@@ -13,7 +13,7 @@
 //   - POST (a person picking or switching agency in the chooser, behind refuseForeignWrite) always records.
 // Either way the new session cookie drops the flag. The browser has no BFF route to the sign-in endpoint.
 import type { NextRequest } from "next/server";
-import { config } from "@/lib/config";
+import { requestConfig } from "@/lib/config";
 import { fetchMemberships, recordSignIn, selectable } from "@/lib/crmApi";
 import { safeNext } from "@/lib/hosts";
 import { redirectTo, withCookies } from "@/lib/respond";
@@ -28,7 +28,7 @@ function keep(session: Session, tid: string) {
 }
 
 export async function GET(request: NextRequest) {
-  const cfg = config();
+  const cfg = requestConfig(request);
   const next = safeNext(request.nextUrl.searchParams.get("next"));
   const session = readSession(cfg, request.cookies);
   if (!cfg.authConfigured || !accessValid(session)) {
@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const cfg = config();
+  const cfg = requestConfig(request);
   const refused = refuseForeignWrite(cfg, request);
   if (refused) return refused;
   const form = await request.formData();

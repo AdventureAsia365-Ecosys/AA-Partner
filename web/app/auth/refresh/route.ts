@@ -1,7 +1,7 @@
 // GET /auth/refresh?next=/path — renew the access token with the refresh token (sent only to /auth/*), keep the
 // agency picked, then go back. No refresh token, a refused one, or another person's -> sign in again. AA-935.
 import type { NextRequest } from "next/server";
-import { config } from "@/lib/config";
+import { requestConfig } from "@/lib/config";
 import { safeNext } from "@/lib/hosts";
 import { accessClaims, OAuthError, refreshTokens } from "@/lib/oauth";
 import { redirectTo, withCookies } from "@/lib/respond";
@@ -10,7 +10,7 @@ import { clearedCookies, readRefresh, readSession, refreshCookie, sessionCookie 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const cfg = config();
+  const cfg = requestConfig(request);
   if (!cfg.authConfigured) return redirectTo(cfg, "/signed-out?reason=unavailable", 307, request.nextUrl.origin);
   const next = safeNext(request.nextUrl.searchParams.get("next"));
   const signIn = () =>

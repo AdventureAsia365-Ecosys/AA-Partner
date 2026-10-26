@@ -2,7 +2,7 @@
 // only. The cookie holds nothing but the locale tag; it is the only thing that turns the UI to Vietnamese (or another
 // date locale): without it every page is English (lib/i18n.ts resolveLocale, owner rule S249).
 import type { NextRequest } from "next/server";
-import { config } from "@/lib/config";
+import { requestConfig } from "@/lib/config";
 import { isDateLocale } from "@/lib/dates";
 import { safeNext } from "@/lib/hosts";
 import { LOCALE_COOKIE } from "@/lib/i18n";
@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 const ONE_YEAR = 365 * 24 * 3600;
 
 export async function POST(request: NextRequest) {
-  const cfg = config();
+  const cfg = requestConfig(request);
   const refused = refuseForeignWrite(cfg, request);
   if (refused) return refused;
   const form = await request.formData();

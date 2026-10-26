@@ -48,7 +48,7 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
       role={ctx.role}
       agencyName={ctx.me.display_name ?? ctx.me.tenant_id}
       agencyCount={active}
-      contentStudioHref={contentStudioHref(ctx.cfg.contentStudioUrl)}
+      contentStudioHref={contentStudioHref(ctx.cfg.contentStudioUrl, ctx.cfg.publicOrigin)}
       locale={ctx.locale}
       syntheticBadge={ctx.cfg.environment !== "prod"}
     >

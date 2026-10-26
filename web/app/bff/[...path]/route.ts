@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { matchBff, upstreamHeaders } from "@/lib/bff";
 import { proxyPath } from "@/lib/bffPath";
-import { config } from "@/lib/config";
+import { requestConfig } from "@/lib/config";
 import { streamUpstream } from "@/lib/proxyResponse";
 import { json } from "@/lib/respond";
 import { accessValid, readSession } from "@/lib/session";
@@ -21,7 +21,7 @@ const UPSTREAM_TIMEOUT_MS = 15_000; // a 7 MiB document upload (AA-937) fits com
 const MAX_BODY_BYTES = 256 * 1024;
 
 async function handle(request: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
-  const refused = refuseForeignWrite(config(), request);
+  const refused = refuseForeignWrite(requestConfig(request), request);
   if (refused) return refused;
   const { path } = await ctx.params;
   const sub = proxyPath(path ?? []);
@@ -29,7 +29,7 @@ async function handle(request: NextRequest, ctx: { params: Promise<{ path: strin
   const route = matchBff(request.method, sub);
   if (!route) return json({ detail: "not_found" }, 404);
 
-  const cfg = config();
+  const cfg = requestConfig(request);
   const session = cfg.authConfigured ? readSession(cfg, request.cookies) : null;
   if (!accessValid(session)) return json({ detail: "session_expired" }, 401);
   if (route.tenant && !session.tid) return json({ detail: "no_agency_selected" }, 409);
