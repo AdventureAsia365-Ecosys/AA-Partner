@@ -5,7 +5,7 @@
 
 import { apiGet } from "@/app/_kit";
 import type { ServedFields } from "./ServedBadge";
-import { exportFileStem, withDocumentTitle } from "@/lib/myContent";
+import { exportFileStem, withDocumentTitle, type AtomReplacement } from "@/lib/myContent";
 
 export interface ReviewGoal { key: string; label: string }
 export interface ReviewAngle {
@@ -51,6 +51,9 @@ export interface ReviewItem extends ServedFields {
   published_url?: string | null;
   /** The piece whose post is live (differs from piece_id when the post shows an earlier version). */
   published_piece_id?: string | null;
+  /** AA-990 (CIS D2): the request's part of the tour was rewritten since it was planned — "Write again" is off. */
+  atom_replaced?: boolean | null;
+  atom_replacement?: AtomReplacement | null;
 }
 
 export function fetchReviews(): Promise<ReviewItem[]> {

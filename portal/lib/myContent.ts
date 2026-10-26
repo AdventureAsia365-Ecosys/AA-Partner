@@ -24,6 +24,28 @@ export interface ContentRow {
   /** The piece whose post is live; differs from piece_id when the post shows an earlier version of the text. */
   published_piece_id?: string | null;
   served_status?: "served" | "paused" | "retired" | null;
+  /** AA-990 (CIS D2): the request's part of the tour was rewritten since it was planned (its atom is no longer live):
+   *  the request cannot be written again; the tenant starts a new post from Social Posts. Absent = not replaced. */
+  atom_replaced?: boolean | null;
+}
+
+/** AA-990 — the hint CIS gives when the rewritten tour has exactly one matching part (else null). */
+export interface AtomReplacement {
+  atom_id: string;
+  place: string | null;
+  itinerary_day: number | null;
+}
+
+export const ATOM_REPLACED_BLOCK = "Adventure Asia updated this part of the tour: start a new post from Social Posts";
+
+/** AA-990 — the sentence shown on a request whose part of the tour was rewritten (Writer + My Content). */
+export function atomReplacedNote(replacement: AtomReplacement | null | undefined): string {
+  const base = "Adventure Asia has updated the part of the tour this post was planned from, so it can't be written "
+    + "from it any more. Start a new post from Social Posts";
+  const place = replacement?.place?.trim();
+  if (!place) return `${base}.`;
+  const day = replacement?.itinerary_day != null ? ` (day ${replacement.itinerary_day})` : "";
+  return `${base}: the tour now covers ${place}${day}.`;
 }
 
 /** The table's status (the issue's ready / published / not ready, plus the in-flight write). */
@@ -290,6 +312,7 @@ export function regenerateBlock(r: ContentRow): string | null {
   if (contentStatus(r) === "published") return "Unpublish the live post first to write a new version";
   if (r.ready_state === "in_progress") return "Being written now";
   if (r.served_status === "retired" || r.served_status === "paused") return "Closed for this tour";
+  if (r.atom_replaced) return ATOM_REPLACED_BLOCK;
   return null;
 }
 
