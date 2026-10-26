@@ -147,6 +147,29 @@ def test_portal_workflow_deploys_its_own_project_on_portal_paths_only() -> None:
         assert "portal/" not in (WORKFLOWS / name).read_text(), f"{name} must not watch portal/"
 
 
+def test_portal_vercel_production_is_frozen_for_the_p2b_window() -> None:
+    """AA-979 P2b (critic C5): no Vercel production deploy on push to main (production is dispatch-only, for the
+    rollback drill), so merging the P2b portal never ships it to the live Vercel host before the DNS flip."""
+    portal = (WORKFLOWS / "vercel-deploy-portal.yml").read_text()
+    triggers = portal[portal.index("\non:\n") : portal.index("\npermissions:")]
+    assert "\n  push:" not in triggers, "vercel-deploy-portal.yml must not deploy on push (P2b freeze)"
+    assert "pull_request:" in triggers and "workflow_dispatch:" in triggers
+    assert "push) TARGET=production" not in portal
+    assert 'if [ "$TARGET" = "production" ] && [ "$REF" != "refs/heads/main" ]' in portal
+
+
+def test_portal_vercel_old_url_redirects_to_the_portal_host_only_by_host() -> None:
+    """The old Vercel URL answers 301 with its path to portal.; the rule is conditioned on that host so a rollback that
+    points portal. back at Vercel does not loop (design §5)."""
+    vercel = json.loads(_read("portal/vercel.json"))
+    rules = vercel.get("redirects", [])
+    assert len(rules) == 1, rules
+    rule = rules[0]
+    assert rule["source"] == "/:path*" and rule["destination"] == "https://portal.lumiguides.it.com/:path*"
+    assert rule["statusCode"] == 301
+    assert rule["has"] == [{"type": "host", "value": "aa-cis-portal.vercel.app"}]
+
+
 def test_portal_deploy_hands_the_smoke_only_its_two_secrets() -> None:
     """No `secrets: inherit` (it would pass VERCEL_TOKEN to the smoke); the secrets sit on the smoke step only."""
     portal = (WORKFLOWS / "vercel-deploy-portal.yml").read_text()

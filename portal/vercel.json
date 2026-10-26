@@ -2,5 +2,13 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "git": {
     "deploymentEnabled": false
-  }
+  },
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "aa-cis-portal.vercel.app" }],
+      "destination": "https://portal.lumiguides.it.com/:path*",
+      "statusCode": 301
+    }
+  ]
 }
