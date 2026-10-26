@@ -159,21 +159,20 @@ async def test_retention_dry_run_then_real_run(app_pool: asyncpg.Pool, admin: as
     ]
 
 
-def CLOCK() -> datetime:  # noqa: N802 — a fixed minute of the current hour: the hourly audit export is due
-    return datetime.now(UTC).replace(minute=30, second=0, microsecond=0)
-
-
 async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migrate(app_pool: asyncpg.Pool) -> None:
     """Review round (AA-933): with the production RECURRING and maintenance hooks, after the worker has run what is due
     the only queued rows are exempt ones. A queued-ahead daily retention row would keep the deploy gate false and make
     every DB Migrate apply refuse (exit 7) for every owner."""
     assert DEPLOY_GATE_EXEMPT == INFRA_IDLE_EXEMPT_CRM
+    # A fixed minute of the current hour (the hourly audit export is due), read once and shared by both workers: a
+    # clock read per call could cross an hour boundary between them and queue a new hourly row (AA-993 P4, flake).
+    fixed = datetime.now(UTC).replace(minute=30, second=0, microsecond=0)
     # Hour 0: the day's retention run is always due, so the hook queues it now (the worst case for the gate).
     worker = Worker(
         lambda: _pool(app_pool),
         handlers.build_handlers(retention_dry_run=True),
         recurring=handlers.RECURRING,
-        hooks=handlers.build_hooks(retention_utc_hour=0, now=CLOCK),
+        hooks=handlers.build_hooks(retention_utc_hour=0, now=lambda: fixed),
         worker_id="worker-a",
     )
     await worker.maintenance(app_pool)
@@ -217,7 +216,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         lambda: _pool(app_pool),
         handlers.build_handlers(retention_dry_run=True),
         recurring=handlers.RECURRING,
-        hooks=handlers.build_hooks(retention_utc_hour=0, now=CLOCK),
+        hooks=handlers.build_hooks(retention_utc_hour=0, now=lambda: fixed),
         worker_id="worker-b",
     )
     await other.maintenance(app_pool)

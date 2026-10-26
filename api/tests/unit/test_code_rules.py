@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import ast
+import functools
 import sys
 from pathlib import Path
 
@@ -153,12 +154,15 @@ THIRD_PARTY = frozenset(
 FORBIDDEN_TOP_LEVEL = frozenset({"api", "shared", "backend", "core", "cis", "tripplanner", "lambdas"})
 
 
-def _modules() -> list[tuple[str, ast.Module]]:
+@functools.cache
+def _modules() -> tuple[tuple[str, ast.Module], ...]:
+    # AA-993 (P1): parsed once per test process. The trees are shared by every test here and must stay read-only
+    # (walk and inspect them, never edit a node).
     out = []
     for path in sorted(APP.rglob("*.py")):
         rel = str(path.relative_to(APP.parent))
         out.append((rel, ast.parse(path.read_text(encoding="utf-8"))))
-    return out
+    return tuple(out)
 
 
 CONTEXT_FACTORIES = frozenset(
