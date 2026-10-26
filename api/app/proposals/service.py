@@ -51,15 +51,15 @@ TRIP_SQL = """
 SELECT trip_id, stage, owner_member_id FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL FOR UPDATE
 """
 LIST_SQL = """
-SELECT proposal_id, version, status, body_enc, currency, total_amount, deposit_amount, balance_due_on, terms_doc_id,
-       price_hash, sent_at, accepted_at, created_at, updated_at
+SELECT proposal_id, version, status, kind, body_enc, currency, total_amount, deposit_amount, balance_due_on,
+       terms_doc_id, price_hash, sent_at, accepted_at, published_at, created_at, updated_at
   FROM crm.proposal WHERE trip_id = $1 AND deleted_at IS NULL
  ORDER BY version DESC
  LIMIT 50
 """
 ONE_SQL = """
-SELECT p.proposal_id, p.trip_id, p.version, p.status, p.body_enc, p.currency, p.total_amount, p.deposit_amount,
-       p.balance_due_on, p.terms_doc_id, p.price_hash, p.link_id, t.stage, t.owner_member_id
+SELECT p.proposal_id, p.trip_id, p.version, p.status, p.kind, p.body_enc, p.currency, p.total_amount,
+       p.deposit_amount, p.balance_due_on, p.terms_doc_id, p.price_hash, p.link_id, t.stage, t.owner_member_id
   FROM crm.proposal p JOIN crm.trip t ON t.trip_id = p.trip_id AND t.deleted_at IS NULL
  WHERE p.proposal_id = $1 AND p.deleted_at IS NULL
    FOR UPDATE OF p
@@ -207,11 +207,20 @@ async def _terms(ctx: AnyContext, terms_doc_id: uuid.UUID | None, *, published: 
     return row
 
 
+def _text_only(row: Any) -> None:
+    """AA-949: a builder version is edited in the builder and published there; sending a published builder version
+    (the C-03 link) is CRM-21b (AA-950)."""
+    if row.get("kind") == "builder":
+        raise Conflict("proposal_is_builder", "edit and publish this version in the builder")
+
+
 async def _view(vault: Vault, row: Any) -> dict[str, Any]:
     return {
         "proposal_id": str(row["proposal_id"]),
         "version": row["version"],
         "status": row["status"],
+        "kind": row.get("kind", "text"),
+        "published_at": _iso(row.get("published_at")),
         "body": await vault.decrypt("proposal", "body_enc", row["proposal_id"], row["body_enc"]),
         "currency": row["currency"],
         "total_amount": _money(row["total_amount"]),
@@ -319,6 +328,7 @@ async def update_draft(
     row = await ctx.conn.fetchrow(ONE_SQL, proposal_id)
     if row is None:
         raise NotFound("proposal_not_found")
+    _text_only(row)
     if row["status"] != "draft":
         raise Conflict("proposal_not_draft", "only a draft is edited; draft a new version")
     text = (
@@ -351,6 +361,7 @@ async def send(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID) -> dict
     row = await ctx.conn.fetchrow(ONE_SQL, proposal_id)
     if row is None:
         raise NotFound("proposal_not_found")
+    _text_only(row)
     if row["status"] != "draft":
         raise Conflict("proposal_not_draft", "only a draft is sent; draft a new version")
     if row["stage"] != "proposal":
@@ -419,7 +430,7 @@ async def withdraw(ctx: TenantContext, proposal_id: uuid.UUID) -> dict[str, Any]
     row = await ctx.conn.fetchrow(ONE_SQL, proposal_id)
     if row is None:
         raise NotFound("proposal_not_found")
-    if row["status"] not in ("draft", "sent"):
+    if row["status"] not in ("draft", "published", "sent"):
         raise Conflict("proposal_not_open", "an accepted, superseded or withdrawn version stays as it is")
     await ctx.conn.execute(WITHDRAW_SQL, proposal_id)
     if row["link_id"] is not None:

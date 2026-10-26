@@ -3,7 +3,7 @@
 // helpers the trip's Proposal tab, Settings > Agreements and the client pages (/c/p/<token>, /c/t/<token>) share.
 // Amounts are the client's sell amounts (strings with two decimals from the API); no net, cost or margin here.
 
-export type ProposalStatus = "draft" | "sent" | "accepted" | "superseded" | "withdrawn";
+export type ProposalStatus = "draft" | "published" | "sent" | "accepted" | "superseded" | "withdrawn";
 export type ScheduleStatus = "due" | "paid" | "void";
 export type PayMethod = "bank_transfer" | "cash" | "card_offline" | "other";
 export const PAY_METHODS: readonly PayMethod[] = ["bank_transfer", "cash", "card_offline", "other"];
@@ -32,6 +32,9 @@ export interface Proposal {
   price_hash: string | null;
   sent_at: string | null;
   accepted_at: string | null;
+  /** AA-949: "builder" versions are built and published in the day-list builder (A-04), not in this tab's form. */
+  kind?: "text" | "builder";
+  published_at?: string | null;
 }
 
 export interface ScheduleRow {

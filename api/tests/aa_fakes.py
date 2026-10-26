@@ -10,6 +10,7 @@ import uuid
 from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -17,6 +18,12 @@ from app.booking.client import BookingClient, BookingConfig
 from app.catalog.client import CatalogConfig
 from app.cis.http import HttpError, HttpResponse
 from app.cis.m2m import M2mCredentials, TokenProvider
+
+
+def _in_two_days() -> str:
+    """A quote / hold expiry relative to now: a fixed date made every AA item stale once it passed (S252)."""
+    return (datetime.now(UTC) + timedelta(days=2)).replace(microsecond=0).isoformat()
+
 
 TOKEN_URL = "https://m2m.local.test/oauth2/token"
 BOOKING_URL = "https://booking.local.test"
@@ -43,6 +50,7 @@ class FakeBooking:
     currency_rate: str = "1"
     from_price: str | None = "800.00"
     availability: str = "available"
+    per_night: bool = False  # b2b_price is a night's price: a quote line costs it times its nights (1 when absent)
     hold_refusal: str | None = None
     confirm_line_status: str = "on_request"
     calls: Counter[str] = field(default_factory=Counter)
@@ -82,17 +90,19 @@ class FakeBooking:
         if method == "POST" and path == "/quotes":
             self.quotes += 1
             line = data["lines"][0]
+            price = self.b2b_price
+            if self.per_night:
+                price = str(Decimal(self.b2b_price) * int(line.get("nights") or 1))
             return _resp(201, {
                 "quote_id": f"q{self.quotes}",
                 "currency": data["currency"],
                 "fx": {"base_currency": "USD", "quote_currency": data["currency"], "rate_per_usd": self.currency_rate,
                        "rate_date": "2026-10-25", "source": "test"},
-                "valid_until": "2026-10-27T00:00:00+00:00",
+                "valid_until": _in_two_days(),
                 "price_hash": HASH[:-1] + str(self.quotes % 10),
-                "lines": [{"line_ref": line["line_ref"], "b2b_price": {"amount": self.b2b_price,
-                                                                      "currency": data["currency"]},
+                "lines": [{"line_ref": line["line_ref"], "b2b_price": {"amount": price, "currency": data["currency"]},
                            "unit": "per_line", "availability": self.availability, "departure_id": None}],
-                "total_b2b_price": {"amount": self.b2b_price, "currency": data["currency"]},
+                "total_b2b_price": {"amount": price, "currency": data["currency"]},
                 "x_future_field": True,
             })  # fmt: skip
         if method == "GET" and path == "/price-parity":
@@ -110,7 +120,7 @@ class FakeBooking:
             self.hold_keys[key or ""] = hold_id
             self.holds[hold_id] = {
                 "hold_id": hold_id, "quote_id": data["quote_id"], "status": "active",
-                "expires_at": "2026-10-27T00:00:00+00:00", "extended_count": 0,
+                "expires_at": _in_two_days(), "extended_count": 0,
                 "lines": [{"line_ref": data["proposal_ref"].removeprefix("crm-line:"), "line_status": "available"}],
             }  # fmt: skip
             return _resp(201, self.holds[hold_id])
