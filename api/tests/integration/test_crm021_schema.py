@@ -81,6 +81,8 @@ async def test_the_hold_set_of_a_version(app_pool: asyncpg.Pool) -> None:
         "UPDATE crm.proposal SET hold_expires_at = NULL WHERE proposal_id = $1",  # the five hold columns go together
         "UPDATE crm.proposal SET hold_id = 'bad id' WHERE proposal_id = $1",
         "UPDATE crm.proposal SET view_count = 1 WHERE proposal_id = $1",  # viewed counters go together
+        # A hold whose release Booking did not answer never stands beside a hold of the version.
+        "UPDATE crm.proposal SET hold_release_id = 'h0' WHERE proposal_id = $1",
     ):
         with pytest.raises(asyncpg.CheckViolationError):
             await _run(app_pool, ids["tenant"], sql, p)
@@ -107,6 +109,11 @@ async def test_the_hold_set_of_a_version(app_pool: asyncpg.Pool) -> None:
                "hold_pending_quote_id = NULL, hold_pending_price_hash = NULL, hold_pending_selection_sha256 = NULL, "
                "hold_id = NULL, hold_quote_id = NULL, hold_expires_at = NULL, hold_selection_sha256 = NULL, "
                "hold_placed_at = NULL WHERE proposal_id = $1", p)  # fmt: skip
+    # The release Booking did not answer: the hold leaves the hold columns and waits to be released again.
+    await _run(app_pool, ids["tenant"], "UPDATE crm.proposal SET hold_release_id = 'h1' WHERE proposal_id = $1", p)
+    with pytest.raises(asyncpg.CheckViolationError):
+        await _run(app_pool, ids["tenant"], "UPDATE crm.proposal SET hold_release_id = 'bad id' WHERE proposal_id = $1",
+                   p)  # fmt: skip
     # A text version holds nothing.
     text = uuid.uuid4()
     await _run(app_pool, ids["tenant"], "INSERT INTO crm.proposal (proposal_id, trip_id, version, body_enc, currency, "
@@ -114,6 +121,9 @@ async def test_the_hold_set_of_a_version(app_pool: asyncpg.Pool) -> None:
                os.urandom(40))  # fmt: skip
     with pytest.raises(asyncpg.CheckViolationError):
         await _run(app_pool, ids["tenant"], HOLD_SQL, text, os.urandom(32))
+    with pytest.raises(asyncpg.CheckViolationError):
+        await _run(app_pool, ids["tenant"], "UPDATE crm.proposal SET hold_release_id = 'h1' WHERE proposal_id = $1",
+                   text)  # fmt: skip
 
 
 async def test_the_builder_acceptance_is_sealed(app_pool: asyncpg.Pool) -> None:
