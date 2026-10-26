@@ -49,6 +49,17 @@ async function shot(page: Page, name: string) {
   await page.screenshot({ path: `${SHOTS}/builder-${name}.png`, fullPage: true });
 }
 
+/** On a failure, one screenshot of the CRM page into results/ (the config takes none: the sign-in code page could be
+ *  captured, so only a page on the CRM web's own origin is shot, never the managed login). */
+async function shotOnFailure(page: Page, title: string) {
+  try {
+    if (page.isClosed() || !PARTNER || new URL(page.url()).origin !== new URL(PARTNER).origin) return;
+    await shot(page, `failed-${title.replace(/[^a-z0-9]+/gi, "-").slice(0, 40)}`);
+  } catch {
+    // best effort: never mask the failure itself
+  }
+}
+
 async function hydrated(page: Page, testId: string) {
   await expect(page.getByTestId(testId)).toHaveAttribute("data-hydrated", "true", { timeout: 15_000 });
 }
@@ -107,6 +118,9 @@ test.describe("CRM-21a proposal builder on Dev", () => {
       if (!v) throw new Error(`missing ${k}`);
     }
     if (!CLIENT.startsWith("https://") || !PARTNER.startsWith("https://")) throw new Error("origins must be https");
+  });
+  test.afterEach(async ({ page }, testInfo) => {
+    if (testInfo.status !== testInfo.expectedStatus) await shotOnFailure(page, testInfo.title);
   });
 
   test("skeleton from Stage 1/2, Nepal +05:45, options, card R, version conflict, publish v1 and v2", async ({ page, context }) => {
@@ -242,8 +256,15 @@ test.describe("CRM-21a proposal builder on Dev", () => {
           // Refresh AA prices from the page: it says how many prices it checked.
           await page.reload();
           await hydrated(page, "builder");
-          await page.getByTestId("builder-aa-refresh").click();
-          await expect(page.getByText(/AA prices checked/)).toBeVisible({ timeout: 30_000 });
+          await expect(page.getByTestId("builder"), "the reload must land on the working copy").toHaveAttribute("data-status", "draft");
+          // The kit Button forwards no data-* props: the test id is on a wrapper span, the button is inside it. Run
+          // 40262333536 clicked a test id that never reached the DOM and waited 545 s; fail fast with a reason instead.
+          const refresh = page.getByTestId("builder-aa-refresh").getByRole("button", { name: /^refresh aa prices$/i });
+          await expect(refresh, "Refresh AA prices is shown on a draft with an AA option").toBeVisible({ timeout: 30_000 });
+          await expect(refresh, "Refresh AA prices is enabled once hydrated and idle").toBeEnabled({ timeout: 15_000 });
+          await refresh.click({ timeout: 15_000 });
+          await expect(page.getByTestId("builder-message")).toContainText(/AA prices checked/, { timeout: 60_000 });
+          await shot(page, "2b-aa-refresh");
         } else {
           test.info().annotations.push({ type: "note", description: `AA item not added: ${added.body.detail}` });
         }

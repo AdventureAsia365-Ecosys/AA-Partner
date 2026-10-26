@@ -297,9 +297,13 @@ export function BuilderPage({
           {view.published_at && <span style={{ fontSize: 12.5, color: K.muted }}>{fmt(tr("builder.publishedOn"), { date: formatDate(view.published_at.slice(0, 10), locale) })}</span>}
           <span style={{ flex: 1 }} />
           {draft && hasAa && (
-            <Button size="sm" disabled={!hydrated || busy} onClick={refreshAa} data-testid="builder-aa-refresh">
-              {tr("builder.aa.refresh")}
-            </Button>
+            // The kit Button (a byte copy of CIS app/_kit) forwards no data-* props: the test id sits on a wrapper, as
+            // show-email in TripPanel. E2E run 40262333536 waited 545 s for a data-testid the Button had dropped.
+            <span data-testid="builder-aa-refresh">
+              <Button size="sm" disabled={!hydrated || busy} onClick={refreshAa}>
+                {tr("builder.aa.refresh")}
+              </Button>
+            </span>
           )}
           {draft && canPublish && (
             <Button variant="primary" size="sm" disabled={!hydrated || busy || !view.checks.publishable} onClick={() => publish()}>
