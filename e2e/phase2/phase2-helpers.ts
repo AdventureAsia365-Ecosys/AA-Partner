@@ -260,6 +260,17 @@ async function click(page: Page, name: RegExp): Promise<void> {
   await page.getByRole("button", { name }).first().click();
 }
 
+// S253: the managed login page renders the field before its script takes over, and a value typed in that window is
+// dropped (Next then answers "Missing email address" and the old code waited 15 minutes for a password field).
+// Fill once the page is idle, and fill again until the field holds the value.
+async function fillSettled(page: Page, field: ReturnType<Page["getByLabel"]>, value: string): Promise<void> {
+  await page.waitForLoadState("networkidle").catch(() => {});
+  await expect(async () => {
+    if ((await field.inputValue()) !== value) await field.fill(value);
+    await expect(field).toHaveValue(value, { timeout: 1_000 });
+  }).toPass({ timeout: 15_000 });
+}
+
 async function skipPasskeyOffer(page: Page): Promise<void> {
   const skip = page.getByRole("button", { name: /skip|not now|later/i }).first();
   if (await skip.isVisible({ timeout: 5_000 }).catch(() => false)) await skip.click();
@@ -300,9 +311,10 @@ export async function claimEnrolAccept(
 
   const email = page.getByLabel(/email/i).first();
   await expect(email).toBeVisible({ timeout: 30_000 });
-  await email.fill(cfg.invitee);
+  await fillSettled(page, email, cfg.invitee);
   const password = page.getByLabel(/^password$/i).first();
   if (!(await password.isVisible().catch(() => false))) await click(page, /^(next|sign in|continue)$/i);
+  await expect(password, "managed login did not show the password field after the e-mail").toBeVisible({ timeout: 30_000 });
   await password.fill(temporary);
   await click(page, /^(next|sign in|continue)$/i);
   const mine = newPassword();
