@@ -13,6 +13,8 @@
 //                           sign-in (Vercel)
 //   CRM_WEB_SIGN_IN_PATH    the web route that renews the partner session or signs in (default /auth/refresh)
 //   CRM_WEB_SIGN_OUT_PATH   the web's sign-out (default /auth/sign-out): one sign-out for both apps
+//   CRM_SIGN_OUT_FORM_ORIGIN  https://<managed-login host> the web's sign-out redirects to; added to the CSP
+//                           form-action (lib/csp.ts). Empty = forms to this origin only (Vercel)
 //
 // The type is named WebConfig on purpose: lib/session.ts is a byte copy of web/lib/session.ts and imports
 // `type WebConfig` from "./config"; it reads only `secureCookies` and `sessionSecret`.
@@ -27,6 +29,8 @@ export interface WebConfig {
   sessionSecret: string;
   signInPath: string;
   signOutPath: string;
+  /** The managed-login origin the sign-out redirect lands on (CSP form-action); empty on Vercel. */
+  signOutFormOrigin: string;
   /** The partner (CRM web) session can be read: the session key is configured. */
   partnerSignIn: boolean;
   /** Cookies of the CRM web carry Secure and the __Host- / __Secure- prefixes (false only on http://localhost). */
@@ -55,6 +59,15 @@ function origin(raw: string, allowHttp: boolean): string {
   }
 }
 
+// A host-source that goes into a CSP directive: https, DNS labels only, optional port. The URL parser alone accepts
+// `https://*`, `;` (also decoded from %3B), quotes and commas in a host, which would widen or inject a directive.
+const CSP_ORIGIN = /^https:\/\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+(?::\d{1,5})?$/;
+
+function cspOrigin(raw: string): string {
+  const value = origin(raw, false);
+  return CSP_ORIGIN.test(value) ? value : "";
+}
+
 function path(raw: string, fallback: string): string {
   return /^\/[A-Za-z0-9/_-]{0,64}$/.test(raw) ? raw : fallback;
 }
@@ -76,6 +89,7 @@ export function loadConfig(env: Env = process.env): WebConfig {
     sessionSecret,
     signInPath: path(text(env, "CRM_WEB_SIGN_IN_PATH"), "/auth/refresh"),
     signOutPath: path(text(env, "CRM_WEB_SIGN_OUT_PATH"), "/auth/sign-out"),
+    signOutFormOrigin: cspOrigin(text(env, "CRM_SIGN_OUT_FORM_ORIGIN")),
     partnerSignIn: sessionSecret.length >= MIN_SECRET,
     secureCookies: !(local && publicOrigin.startsWith("http://")),
   };

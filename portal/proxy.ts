@@ -21,6 +21,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { API_URL, TENANT_COOKIES, TENANT_TOKEN_COOKIE, verifyTenantToken } from "./lib/auth-server";
 import { config as portalConfig, hostAllowed } from "./lib/config";
+import { contentSecurityPolicy } from "./lib/csp";
 import {
   cookieOptions,
   exchange,
@@ -81,7 +82,14 @@ function notFound(): NextResponse {
   return new NextResponse("Not Found", { status: 404, headers: { "Content-Type": "text/plain", "Cache-Control": "no-store" } });
 }
 
+/** S253 — every answer of the gate carries the studio CSP (lib/csp.ts): the form-action origin is runtime config. */
 export async function proxy(request: NextRequest) {
+  const res = await gate(request);
+  res.headers.set("Content-Security-Policy", contentSecurityPolicy(portalConfig().signOutFormOrigin));
+  return res;
+}
+
+async function gate(request: NextRequest): Promise<NextResponse> {
   const cfg = portalConfig();
   if (!hostAllowed(cfg, request.headers.get("host"))) return notFound();
   const { pathname } = request.nextUrl;

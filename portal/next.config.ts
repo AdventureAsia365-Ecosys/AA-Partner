@@ -8,18 +8,14 @@ import path from "path";
 // review" banner. The /privacy redirect to adventure.asia/privacy-policy (AA-885) is gone; that policy
 // does not describe portal data, so the portal notice links it as the company-wide policy instead.
 
-// AA-885 — security headers on every portal response. The CSP is deliberately minimal (no
-// script-src / style-src yet: the pages use inline styles and Next inline scripts); it only stops
-// framing, <base> hijacking, foreign form posts and plugins.
+// AA-885 — security headers on every portal response. The CSP moved to proxy.ts (lib/csp.ts, S253): its
+// form-action names the managed-login origin, which is runtime config, and headers here are fixed at build
+// time (a second CSP header would also be enforced on top of the runtime one).
 const SECURITY_HEADERS = [
   { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "X-Frame-Options", value: "DENY" },
-  {
-    key: "Content-Security-Policy",
-    value: "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'",
-  },
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
 ];
 
