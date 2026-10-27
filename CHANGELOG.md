@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.7.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.6.0...v0.7.0) (2026-10-27)
+
+
+### Features
+
+* deploy gate blocks only while crm_dispatch runs (AA-993 G5) ([#99](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/99)) ([826df53](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/826df53612184fe36368620d7b8a1fa95982c4c5))
+* public trip page on the client host (/trip/[tourId]) ([#100](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/100)) ([2fb453f](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/2fb453f765fab09e30700daa43a02d5a88f42d6e))
+* remove the Dev EXTERNAL cis-portal bridge on /crm/v1 ([#101](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/101)) ([c35ad2d](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/c35ad2d5901c4014667060262f4a6918f150e002))
+* vendor the UI kit core into the portal and the CRM web ([#102](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/102)) ([8af302e](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/8af302ee1d2ae8b3c9b511359459c52aed5f4bc8))
+
+
+### Bug Fixes
+
+* trip page imports brand constants from the kit core ([#104](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/104)) ([3d33850](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/3d338504ad0a1feb753d92d03c512f6036b881b3))
+
 ## [0.6.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.5.0...v0.6.0) (2026-10-27)
 
 
