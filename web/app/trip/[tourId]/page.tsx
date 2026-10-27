@@ -11,7 +11,7 @@ import type { Metadata } from "next";
 import { notFound, permanentRedirect } from "next/navigation";
 import { cache } from "react";
 import { K, sans, serif } from "@/app/_kit";
-import { SUPPORT_EMAIL } from "@/app/_brand/tokens";
+import { SUPPORT_EMAIL } from "@/app/_kit/core/brand";
 import { config } from "@/lib/config";
 import { itineraryParagraphs, loadTrip, TOUR_ID, type TripLookup } from "@/lib/tripPage";
 import { TripHeader, tripLabel as label } from "./TripHeader";

@@ -5,7 +5,7 @@ import path from "path";
 import { NextRequest } from "next/server";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SITE_URL, SUPPORT_EMAIL } from "@/app/_brand/tokens";
+import { SITE_URL, SUPPORT_EMAIL } from "@/app/_kit/core/brand";
 import { loadConfig } from "@/lib/config";
 import { clientPathAllowed } from "@/lib/hosts";
 import { itineraryParagraphs, loadTrip, parseTrip, REVALIDATE_SECONDS } from "@/lib/tripPage";

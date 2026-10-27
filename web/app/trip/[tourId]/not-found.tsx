@@ -2,7 +2,7 @@
 // trip on the client host. Not the root not-found page: that one is the agency app's ("Adventure Asia Partner", a
 // link to /), and / is 404 on the client host. This one keeps the trip page's header and links to adventure.asia.
 import { K, sans, serif } from "@/app/_kit";
-import { SITE_URL } from "@/app/_brand/tokens";
+import { SITE_URL } from "@/app/_kit/core/brand";
 import { TripHeader } from "./TripHeader";
 
 export default function TripNotFound() {
