@@ -17,7 +17,12 @@ from app.auth.ci import DEPLOY_GATE_AUDIENCE, GITHUB_JWKS_URL, GITHUB_OIDC_ISSUE
 from app.auth.tokens import AuthUnavailable, InvalidToken, JwksCache
 from app.db import Database
 from app.jobs import queue
-from app.jobs.kinds import DEPLOY_BLOCKING_KINDS, DEPLOY_GATE_EXEMPT, EXPECTED_SECONDS
+from app.jobs.kinds import (
+    DEPLOY_BLOCKING_HORIZON_SECONDS,
+    DEPLOY_BLOCKING_KINDS,
+    DEPLOY_GATE_EXEMPT,
+    EXPECTED_SECONDS,
+)
 from app.main import create_app
 from app.settings import Settings
 from tests.tokens import LocalPools
@@ -247,13 +252,20 @@ def test_crm_dispatch_stays_deploy_blocking() -> None:
     assert not DEPLOY_BLOCKING_KINDS & DEPLOY_GATE_EXEMPT
 
 
+BLOCKING_SQL = "OR (status = 'queued' AND run_after <= now() + make_interval(secs => $2))"
+
+
 @pytest.mark.asyncio
-async def test_running_count_counts_running_rows_of_the_given_kinds() -> None:
-    conn = ScriptedConn().on("status = 'running' AND kind = ANY", [{"kind": "crm_dispatch", "n": 2}])
-    assert await queue.running_count(conn, DEPLOY_BLOCKING_KINDS) == {"crm_dispatch": 2}
+async def test_blocking_count_counts_running_and_due_queued_rows_of_the_given_kinds() -> None:
+    conn = ScriptedConn().on(
+        BLOCKING_SQL,
+        [{"what": "running", "kind": "crm_dispatch", "n": 2}, {"what": "due", "kind": "crm_dispatch", "n": 1}],
+    )
+    out = await queue.blocking_count(conn, DEPLOY_BLOCKING_KINDS, DEPLOY_BLOCKING_HORIZON_SECONDS)
+    assert out == {"running": {"crm_dispatch": 2}, "due": {"crm_dispatch": 1}}
     (sql, args), *_ = conn.calls
-    assert "FROM crm.job" in sql and "queued" not in sql and "GROUP BY kind" in sql
-    assert args == (["crm_dispatch"],)
+    assert "FROM crm.job" in sql and "status = 'running'" in sql and "GROUP BY 1, 2" in sql
+    assert args == (["crm_dispatch"], 900)
 
 
 # ── GET /crm/ci/deploy-gate ─────────────────────────────────────────────
@@ -296,17 +308,18 @@ def test_gate_safe_when_only_exempt_kinds_are_active() -> None:
         "exempt_kinds": ["crm_booking_sync", "crm_heartbeat", "crm_membership_pull"],
         "blocking_kinds": ["crm_dispatch"],
         "blocking_running": {},
+        "blocking_due": {},
         "blocked_by": [],
     }
     assert conn.sql("status IN ('queued', 'running')") == [
         (["crm_booking_sync", "crm_heartbeat", "crm_membership_pull"],)
     ]
-    assert conn.sql("status = 'running' AND kind = ANY") == [(["crm_dispatch"],)]
+    assert conn.sql(BLOCKING_SQL) == [(["crm_dispatch"], 900)]
 
 
 def _active(*rows: dict[str, Any]) -> ScriptedConn:
     """A pool answering the active count with ``rows`` and the blocking count with nothing."""
-    return ScriptedConn().on("status IN ('queued', 'running')", list(rows)).on("status = 'running' AND kind = ANY", [])
+    return ScriptedConn().on("status IN ('queued', 'running')", list(rows)).on(BLOCKING_SQL, [])
 
 
 def test_gate_safe_with_queued_and_running_ordinary_jobs() -> None:
@@ -331,7 +344,7 @@ def test_gate_not_safe_while_crm_dispatch_runs() -> None:
     conn = (
         ScriptedConn()
         .on("status IN ('queued', 'running')", [{"status": "running", "kind": "crm_dispatch", "n": 1}])
-        .on("status = 'running' AND kind = ANY", [{"kind": "crm_dispatch", "n": 1}])
+        .on(BLOCKING_SQL, [{"what": "running", "kind": "crm_dispatch", "n": 1}])
     )
     with client(conn, gh) as c:
         r = c.get("/crm/ci/deploy-gate", headers=auth(gh.token()))
@@ -340,10 +353,28 @@ def test_gate_not_safe_while_crm_dispatch_runs() -> None:
     assert body["safe_to_deploy"] is False
     assert body["blocking_running"] == {"crm_dispatch": 1}
     assert body["blocked_by"] == ["1 crm_dispatch job(s) running (deploy-blocking kind)"]
+    assert body["blocking_due"] == {}
 
 
-def test_gate_safe_with_a_queued_dispatch() -> None:
-    """A queued dispatch (its 10-second undo delay) has not sent anything: the live task claims it."""
+def test_gate_not_safe_while_a_dispatch_is_queued_and_due() -> None:
+    """AA-993 G5 review: the preflight runs before the image build; the old task would claim a due queued dispatch
+    (its 10-second undo delay) before its SIGTERM and be stopped mid-send, so it blocks too."""
+    gh = LocalGithub()
+    conn = (
+        ScriptedConn()
+        .on("status IN ('queued', 'running')", [{"status": "queued", "kind": "crm_dispatch", "n": 1}])
+        .on(BLOCKING_SQL, [{"what": "due", "kind": "crm_dispatch", "n": 1}])
+    )
+    with client(conn, gh) as c:
+        r = c.get("/crm/ci/deploy-gate", headers=auth(gh.token()))
+    body = r.json()
+    assert body["safe_to_deploy"] is False
+    assert body["blocking_running"] == {} and body["blocking_due"] == {"crm_dispatch": 1}
+    assert body["blocked_by"] == ["1 crm_dispatch job(s) due (deploy-blocking kind, queued to start within 15 min)"]
+
+
+def test_gate_safe_with_a_queued_dispatch_due_later() -> None:
+    """A dispatch queued past the horizon (a retry backoff; the blocker query leaves it out) waits for the live task."""
     gh = LocalGithub()
     conn = _active({"status": "queued", "kind": "crm_dispatch", "n": 1})
     with client(conn, gh) as c:

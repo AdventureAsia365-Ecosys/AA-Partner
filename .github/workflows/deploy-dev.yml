@@ -16,12 +16,15 @@ name: Deploy Dev
 #                         used by the deploy gate and the post-deploy verify
 # Give the `dev` environment a deployment-branch policy of `main` only (the OIDC role trusts environment:dev).
 #
-# Job guard (the `preflight` job, same logic as AA-Booking AA-751 B3/B4): a deploy stops the running task, so a
-# crm.job row that is queued or running would be interrupted. Preflight reads the service's task counts with the
+# Job guard (the `preflight` job, same logic as AA-Booking AA-751 B3/B4; meaning changed by AA-993 G5, design D1.4):
+# since G5 the guard blocks only while a `crm_dispatch` row (DEPLOY_BLOCKING_KINDS in api/app/jobs/kinds.py, until the
+# G4b send marker ships) is running, or queued and due within 15 min (this job runs before the build, so the old task
+# would claim it before its SIGTERM). Any other running job is released on shutdown and re-claimed by the new task,
+# and other queued jobs wait for whichever task is live (AA-993 G4/G5). Preflight reads the service's task counts with the
 # deploy role (all 0 -> pass; a task starting -> blocked), otherwise mints this run's GitHub OIDC token (audience
 # aa-crm-deploy-gate) and calls GET <BASE_URL>/crm/ci/deploy-gate, which accepts only a token from this workflow file
-# on main, environment dev, event push or workflow_dispatch (api/app/auth/ci.py). crm_heartbeat (always queued) never
-# counts. Not safe, or the gate unreachable -> blocked, unless a workflow_dispatch gives `override_running_jobs`
+# on main, environment dev, event push or workflow_dispatch (api/app/auth/ci.py). The other queued/running counts are
+# information only (crm_heartbeat and the other DEPLOY_GATE_EXEMPT kinds left out). Not safe, or the gate unreachable -> blocked, unless a workflow_dispatch gives `override_running_jobs`
 # (Nghiệp only, with the reason). Logic: .github/scripts/partner-deploy-preflight.sh, tested with stub aws/curl by
 # api/tests/unit/test_deploy_preflight_script.py.
 # Pushes that only change api/tests/** or api/pyproject.toml do not deploy (the image copies only requirements.txt and
@@ -49,7 +52,7 @@ on:
   workflow_dispatch:
     inputs:
       override_running_jobs:
-        description: "Nghiệp only — reason to deploy anyway while crm.job has queued/running jobs. Leave empty to respect the guard."
+        description: "Nghiệp only — reason to deploy anyway while a crm_dispatch job runs or is due (deploy-blocking, AA-993 G5). Leave empty to respect the guard."
         required: false
         type: string
 
@@ -98,7 +101,7 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Check for queued/running crm.job rows
+      - name: Check for a running or due crm_dispatch job (deploy-blocking)
         env:
           OVERRIDE: ${{ inputs.override_running_jobs }}
           GATE_AUDIENCE: aa-crm-deploy-gate

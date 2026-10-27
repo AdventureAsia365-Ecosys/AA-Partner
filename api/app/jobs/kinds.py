@@ -5,8 +5,9 @@ A running job counts as **overdue** in the backlog metrics (:mod:`app.jobs.metri
 longer than ``OVERDUE_FACTOR`` x its expected seconds. Every kind the worker handles must be listed here (a unit test
 compares this map with the handlers the lifespan registers).
 
-``DEPLOY_BLOCKING_KINDS`` (AA-993 G5): the deploy gate is unsafe only while a row of one of these kinds is RUNNING
-(today ``crm_dispatch``, see below). Queued and running rows of every other kind are reported but no longer block.
+``DEPLOY_BLOCKING_KINDS`` (AA-993 G5): the deploy gate is unsafe only while a row of one of these kinds is RUNNING,
+or QUEUED and due within ``DEPLOY_BLOCKING_HORIZON_SECONDS`` (today ``crm_dispatch``, see below). Queued and running
+rows of every other kind are reported but no longer block.
 
 ``DEPLOY_GATE_EXEMPT``: kinds the deploy gate (``GET /crm/ci/deploy-gate``) leaves out of its ``active`` /
 ``by_status`` / ``by_kind`` counts (information only since AA-993 G5; the reasons below date from when those counts
@@ -78,6 +79,12 @@ DEPLOY_GATE_EXEMPT: frozenset[str] = frozenset({HEARTBEAT, MEMBERSHIP_PULL, BOOK
 # decision commits would send the message again on the re-claim. It stays blocking until the committed send marker
 # (crm.dispatch_attempt, AA-993 G4b) ships. Every other kind is released on shutdown and re-claimed by the new task.
 DEPLOY_BLOCKING_KINDS: frozenset[str] = frozenset({DISPATCH})
+
+# AA-993 G5 review: a QUEUED row of a deploy-blocking kind due within this window blocks too. The preflight runs before
+# the image build + push and the old task keeps claiming until its SIGTERM minutes later, so it would claim the row and
+# be stopped mid-send. 15 min covers build + push + roll; crm_dispatch is queued due at once or after the 10 s undo
+# delay, so a dispatch row due later (a retry backoff) is rare.
+DEPLOY_BLOCKING_HORIZON_SECONDS = 900
 
 EXPECTED_SECONDS: dict[str, int] = {
     HEARTBEAT: 30,

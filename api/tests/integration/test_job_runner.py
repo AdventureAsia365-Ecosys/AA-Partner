@@ -19,7 +19,10 @@ from app.jobs.kinds import (
     AUDIT_RETENTION,
     BOOKING_SYNC,
     CATALOG_SYNC,
+    DEPLOY_BLOCKING_HORIZON_SECONDS,
+    DEPLOY_BLOCKING_KINDS,
     DEPLOY_GATE_EXEMPT,
+    DISPATCH,
     FX_FETCH,
     HEARTBEAT,
     JOB_RETENTION,
@@ -105,6 +108,36 @@ async def test_deploy_gate_count_skips_the_heartbeat(app_pool: asyncpg.Pool) -> 
     await queue.enqueue(app_pool, "crm_probe", {"tenant_id": TENANT})
     counts = await queue.active_count(app_pool, DEPLOY_GATE_EXEMPT)
     assert counts == {"active": 1, "by_status": {"queued": 1}, "by_kind": {"crm_probe": 1}}
+
+
+async def test_deploy_gate_blockers_are_running_or_due_dispatch_rows(app_pool: asyncpg.Pool) -> None:
+    """AA-993 G5: the gate's blocker query on the real crm.job: a running crm_dispatch and a queued one due within the
+    horizon block; a queued one due later, a finished one and other kinds (running included) do not."""
+    payload = {"tenant_id": TENANT, "dispatch_id": "00000000-0000-4000-8000-0000000000d1"}
+    later = await queue.enqueue(app_pool, DISPATCH, payload, delay_seconds=DEPLOY_BLOCKING_HORIZON_SECONDS + 600)
+    done = await queue.enqueue(app_pool, DISPATCH, payload)
+    other = await queue.enqueue(app_pool, JOB_RETENTION, {})
+    await app_pool.execute("UPDATE crm.job SET status = 'succeeded', finished_at = now() WHERE id = $1::uuid", done)
+    await app_pool.execute(
+        "UPDATE crm.job SET status = 'running', attempt = 1, started_at = now(), locked_by = 'w-g5',"
+        " locked_until = now() + interval '5 minutes' WHERE id = $1::uuid",
+        other,
+    )
+    empty: dict[str, dict[str, int]] = {"running": {}, "due": {}}
+    assert await queue.blocking_count(app_pool, DEPLOY_BLOCKING_KINDS, DEPLOY_BLOCKING_HORIZON_SECONDS) == empty
+    assert later is not None
+
+    running = await queue.enqueue(app_pool, DISPATCH, payload)
+    await queue.enqueue(app_pool, DISPATCH, payload, delay_seconds=10)  # the undo delay: due well inside the horizon
+    await app_pool.execute(
+        "UPDATE crm.job SET status = 'running', attempt = 1, started_at = now(), locked_by = 'w-g5',"
+        " locked_until = now() + interval '5 minutes' WHERE id = $1::uuid",
+        running,
+    )
+    assert await queue.blocking_count(app_pool, DEPLOY_BLOCKING_KINDS, DEPLOY_BLOCKING_HORIZON_SECONDS) == {
+        "running": {"crm_dispatch": 1},
+        "due": {"crm_dispatch": 1},
+    }
 
 
 async def test_personal_data_never_reaches_the_table(app_pool: asyncpg.Pool) -> None:
