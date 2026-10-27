@@ -3,7 +3,9 @@
 //
 //   partner host (Dev partner-dev.)  the agency app: shell, sign-in, BFF, health
 //   client host  (Dev go-dev., later) travellers and prospects: /c/* pages only (forms, proposals arrive with
-//                                     AA-936 and later cards); no agency route, no BFF, no sign-in
+//                                     AA-936 and later cards) and, since AA-979 P2b, the public trip page
+//                                     /trip/<tourId> (moved from the CIS admin host); no agency route, no BFF, no
+//                                     sign-in
 //   any other Host                   404 (the ALB already sends only the partner host here; this is the second line)
 //
 // Cookies are host-only (lib/session.ts), so the two hosts never share a session. Edge-safe: no Node API.
@@ -11,7 +13,22 @@
 export type HostKind = "partner" | "client" | "unknown";
 
 /** Paths the client host serves. Everything else on it is 404. */
-export const CLIENT_PATH_PREFIXES = ["/c/", "/_next/", "/healthz", "/favicon.ico", "/icon.svg", "/robots.txt"] as const;
+export const CLIENT_PATH_PREFIXES = [
+  "/c/",
+  "/trip/",
+  "/_next/",
+  "/healthz",
+  "/favicon.ico",
+  "/icon.svg",
+  "/robots.txt",
+] as const;
+
+/** Pages that exist on the client host only: 404 on the partner host (local development serves both). */
+export const CLIENT_ONLY_PREFIXES = ["/c/", "/trip/"] as const;
+
+export function clientOnlyPath(pathname: string): boolean {
+  return CLIENT_ONLY_PREFIXES.some((p) => pathname.startsWith(p));
+}
 
 /** Paths of the partner host reachable without a session. */
 export const PUBLIC_PARTNER_PATHS = [

@@ -3,7 +3,7 @@
 //
 //   /healthz                 any Host (the ALB target-group health check sends the task IP as Host)
 //   unknown Host             404 (the ALB host rule already sends only the partner host here)
-//   client host              /c/* only (+ static assets); everything else 404 (lib/hosts.ts). The inquiry form page
+//   client host              /c/* and /trip/* only (+ static assets); everything else 404 (lib/hosts.ts). The inquiry form page
 //                            /c/f/<key> (AA-936) may be framed by the form's own allowed origins: its CSP
 //                            frame-ancestors comes from the form definition (lib/intakeForms.ts, 60 s memo)
 //   partner host, public     /auth/*, /prefs/*, /health, /signed-out, static: through
@@ -16,7 +16,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { config as webConfig, forHost } from "./lib/config";
-import { classifyHost, clientPathAllowed, isPublicPartnerPath, type HostKind } from "./lib/hosts";
+import { classifyHost, clientOnlyPath, clientPathAllowed, isPublicPartnerPath, type HostKind } from "./lib/hosts";
 import { formKey, frameAncestors, loadForm, viewerKey } from "./lib/intakeForms";
 import { accessValid, readSession } from "./lib/session";
 
@@ -65,9 +65,10 @@ export function gate(request: NextRequest): NextResponse {
   const ancestors = formKey(pathname) ? "'self'" : undefined;
   if (kind === "client") return clientPathAllowed(pathname) ? pass(request, kind, cfg.cognitoDomain, ancestors) : notFound();
 
-  // Partner host. Client pages live only on the client host (local development serves both on localhost).
+  // Partner host. Client pages (/c/*, the trip page /trip/*) live only on the client host (local development serves
+  // both on localhost).
   const localDev = cfg.environment === "local" || cfg.environment === "test";
-  if (pathname.startsWith("/c/") && !localDev) return notFound();
+  if (clientOnlyPath(pathname) && !localDev) return notFound();
   if (ancestors) return pass(request, kind, cfg.cognitoDomain, ancestors);
   if (isPublicPartnerPath(pathname) || pathname.startsWith("/prefs/") || pathname.startsWith("/bff/")) {
     return pass(request, kind, cfg.cognitoDomain);
