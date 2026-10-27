@@ -26,7 +26,7 @@ import {
 } from "@/app/_kit";
 import { T, sans, Card, CardHead } from "./ui";
 import { ServedBadge, afterUnpublishSentence, type ServedFields } from "./ServedBadge";
-import { formatDate } from "@/app/_kit/tokens";
+import { formatDate } from "@/app/_kit/core/tokens";
 
 export interface PublishedRow extends ServedFields {
   publish_id: string;

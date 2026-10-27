@@ -28,7 +28,7 @@ import { apiGet } from "@/app/_kit";
 import { T, sans, Card, Badge, CtaLink, EmptyState, fmtDuration, fmtUsd } from "./ui";
 import { ListSkeleton } from "./Skeleton";
 import { WorkStatusBadge, tourWorkStatus, type WorkStatus } from "./workStatus";
-import { useCatalog } from "../_shell/useShellData";
+import { useCatalog } from "@/app/_kit/local/useShellData";
 
 interface MarketplaceTour {
   version_id: string;

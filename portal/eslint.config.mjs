@@ -4,8 +4,9 @@ import nextTs from "eslint-config-next/typescript";
 
 // AA-885 — the portal app's ESLint config. The UI-kit rules are the same as the admin's
 // (frontend/eslint.config.mjs, AA-732): no raw <table>, no hand-rolled role="dialog", no className
-// on JSX. Legacy portal files warn; files already on the kit are held to `error`. The vendored kit
-// (app/_kit/**) is exempt, exactly as in the admin app.
+// on JSX. Legacy portal files warn; files already on the kit are held to `error`. The vendored kit core
+// (app/_kit/core/**, AA-994 S2a) is exempt, exactly as in the admin app; the portal's own kit parts in
+// app/_kit/local/** (the shell, moved there from app/portal/_shell) stay at `error`.
 const KIT_RESTRICTED_SYNTAX = [
   {
     selector: "JSXOpeningElement[name.name='table']",
@@ -20,17 +21,17 @@ const KIT_RESTRICTED_SYNTAX = [
   {
     selector: "JSXAttribute[name.name='className']",
     message:
-      "No className on JSX in UI-v2 pages — use inline style + brand tokens (app/_kit/tokens). (AA-732 kit rule)",
+      "No className on JSX in UI-v2 pages — use inline style + brand tokens (app/_kit/core/tokens). (AA-732 kit rule)",
   },
 ];
 
 // Already on the kit and clean of all three patterns (moved from the admin list, AA-885).
-// AA-759 — the kit rule now holds the whole portal shell (app/portal/_shell) and every route page
+// AA-759 — the kit rule now holds the whole portal shell (app/_kit/local since AA-994 S2a) and every route page
 // to `error`; the remaining legacy _components stay `warn` until AA-760 migrates them. The shell's
 // responsive CSS hooks are `data-pshell` attributes (globals.css), not classNames.
 // AA-760 — every portal file is now held to `error` except the three legacy files that still carry
 // one of the patterns (listed in KIT_LEGACY_FILES; remove a file from that list once it is migrated).
-const KIT_CLEAN_FILES = ["app/portal/**/*.tsx"];
+const KIT_CLEAN_FILES = ["app/portal/**/*.tsx", "app/_kit/local/**/*.tsx"];
 const KIT_LEGACY_FILES = [
   "app/portal/_components/PlaceholderTabs.tsx", // plan-contact modal (hand-rolled role="dialog")
   "app/portal/_components/Skeleton.tsx", // shimmer keyframes via a className
@@ -48,8 +49,8 @@ const eslintConfig = defineConfig([
   ]),
 
   {
-    files: ["app/portal/**/*.tsx"],
-    ignores: ["app/_kit/**"],
+    files: ["app/portal/**/*.tsx", "app/_kit/local/**/*.tsx"],
+    ignores: ["app/_kit/core/**"],
     rules: {
       "no-restricted-syntax": ["warn", ...KIT_RESTRICTED_SYNTAX],
     },

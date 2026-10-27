@@ -95,7 +95,7 @@ def test_portal_redirects_old_slugs_with_308() -> None:
 
 
 def test_portal_nav_has_no_t_number_slug() -> None:
-    nav = _read("portal/app/portal/_shell/portalNav.tsx")
+    nav = _read("portal/app/_kit/local/portalNav.tsx")
     assert not re.search(r'"/portal/t\d+-', nav), "portalNav.tsx still links a T-number slug"
     for dest in set(OLD_PORTAL_SLUGS.values()) - {"/portal/create/write"}:
         assert f'"{dest}"' in nav, f"portalNav.tsx ROUTES misses {dest}"
@@ -253,7 +253,7 @@ def test_legal_pages_are_not_redirected_and_stay_outside_the_gate() -> None:
         assert path not in matcher.group(1), f"proxy.ts must not gate {path}"
 
 
-@pytest.mark.parametrize("rel", ["portal/app/tenant-login/page.tsx", "portal/app/portal/_shell/PortalTopbar.tsx"])
+@pytest.mark.parametrize("rel", ["portal/app/tenant-login/page.tsx", "portal/app/_kit/local/PortalTopbar.tsx"])
 def test_sign_in_form_and_top_bar_link_both_legal_pages(rel: str) -> None:
     src = _read(rel)
     assert "href={PRIVACY_PATH}" in src and "href={TERMS_PATH}" in src, f"{rel}: legal links missing"
@@ -293,7 +293,8 @@ def test_terms_ai_section_links_the_policies_and_lists_the_prohibited_uses() -> 
 
 
 def _block(theme: str) -> str:
-    src = _read("portal/app/globals.css")
+    # AA-994 S2a: the --aa-* palette is the vendored kit core's tokens.css (byte copy of AA-CIS-App, root ADR 0016).
+    src = _read("portal/app/_kit/core/tokens.css")
     start = src.index(f'[data-theme="{theme}"] {{')
     return src[start : src.index("\n}", start)]
 
@@ -366,7 +367,7 @@ def test_portal_text_never_uses_the_bare_accent_colour() -> None:
     pattern = re.compile(r"color:\s*(?:[^,}]*\?\s*)?(?:T\.gold|K\.accent)\b(?!Deep|Tint|Soft|Border)")
     offenders = []
     for path in sorted((PORTAL / "app").rglob("*.tsx")):
-        if "_kit" in path.parts or "_brand" in path.parts:
+        if "core" in path.parts and "_kit" in path.parts:  # the vendored kit core (AA-994 S2a); the shell is checked
             continue
         for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if pattern.search(line) and not any(ok in line for ok in _GOLD_OK):
@@ -382,7 +383,7 @@ def test_placeholders_use_muted2_in_both_themes() -> None:
 
 
 def test_brand_ts_matches_the_light_tokens() -> None:
-    src = _read("portal/app/_brand/tokens.ts")
+    src = _read("portal/app/_kit/core/brand.ts")
     light = _block("light")
     for name in ("muted", "muted2"):
         m = re.search(rf'^\s*{name}:\s*"(#[0-9A-Fa-f]{{6}})"', src, re.M)

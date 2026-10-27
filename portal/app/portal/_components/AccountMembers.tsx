@@ -9,7 +9,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Mail } from "lucide-react";
 import { useMemo } from "react";
-import { SUPPORT_EMAIL } from "@/app/_brand/tokens";
+import { SUPPORT_EMAIL } from "@/app/_kit/core/brand";
 import { apiGet, Badge, type ColumnDef, DataTable, formatDate, PageHeader } from "@/app/_kit";
 import {
   memberLabel,

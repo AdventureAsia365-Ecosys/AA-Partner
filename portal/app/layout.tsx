@@ -7,7 +7,7 @@
 // <html> attributes those scripts set before React hydrates.
 import type { Metadata } from "next";
 import "./globals.css";
-import { Providers } from "./_kit/Providers";
+import { Providers } from "./_kit/core/Providers";
 
 export const metadata: Metadata = {
   title: "Adventure Asia — Partner Portal",

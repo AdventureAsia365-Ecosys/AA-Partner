@@ -3,7 +3,7 @@
 // /portal/* and /tenant-login), light theme like /tenant-login, and a draft banner that is ALWAYS shown
 // while counsel has not approved the text. Portal-owned (not a vendored kit file).
 import type { CSSProperties, ReactNode } from "react";
-import { BRAND, FONT_DISPLAY, FONT_SANS, LOGO_SRC, SUPPORT_EMAIL } from "../_brand/tokens";
+import { BRAND, FONT_DISPLAY, FONT_SANS, LOGO_SRC, SUPPORT_EMAIL } from "../_kit/core/brand";
 import { PRIVACY_PATH, TERMS_PATH } from "@/lib/hosts";
 
 /** The banner title on every legal page while the text is not approved. */

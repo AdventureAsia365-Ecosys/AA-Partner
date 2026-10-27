@@ -4,7 +4,7 @@
 // CRM home: for a person without a CRM agency the CRM sends them here again; signing out is the way on.
 import { AccessCard, linkStyle } from "../AccessCard";
 import { SignOutButton } from "../SignOutButton";
-import { BRAND, SUPPORT_EMAIL } from "../../_brand/tokens";
+import { BRAND, SUPPORT_EMAIL } from "../../_kit/core/brand";
 
 export const dynamic = "force-dynamic";
 

@@ -75,10 +75,9 @@ def test_github_fetch_retries_then_reports(monkeypatch: pytest.MonkeyPatch) -> N
     assert len(calls) == 2 and calls[0].endswith("/contents/shared/jobs/job_table_shape.py?ref=main")
 
 
-def test_web_kit_copies_exist_and_main_checks_every_set() -> None:
+def test_web_lib_copies_exist_and_main_checks_every_set() -> None:
     assert all((check.WEB_DIR / name).is_file() for name in check.WEB_COPIES)
-    assert check.WEB_COPIES["app/_kit/primitives.tsx"] == "frontend/app/_kit/primitives.tsx"
-    assert "app/_kit/index.ts" not in check.WEB_COPIES  # the CRM's own barrel
+    assert check.WEB_COPIES["lib/bffPath.ts"] == "frontend/lib/bffPath.ts"
     by_source = {src: (check.API_DIR / name).read_bytes() for name, src in check.COPIES.items()}
     by_source |= {src: (check.PORTAL_DIR / name).read_bytes() for name, src in check.PORTAL_COPIES.items()}
     by_source |= {src: (check.WEB_DIR / name).read_bytes() for name, src in check.WEB_COPIES.items()}
@@ -92,20 +91,14 @@ def test_web_kit_copies_exist_and_main_checks_every_set() -> None:
     assert "FAIL  web/lib/bffPath.ts" in out.getvalue()
 
 
-def test_portal_copies_cover_every_kit_file_and_main_checks_them() -> None:
-    """AA-979: every file of portal/app/_kit is a guarded copy except the portal's own barrel."""
-    kit = {p.name for p in (check.PORTAL_DIR / "app" / "_kit").iterdir() if p.is_file()}
-    listed = {name.removeprefix("app/_kit/") for name in check.PORTAL_COPIES if name.startswith("app/_kit/")}
-    assert kit - listed == {"index.ts"}
-    assert listed <= kit
-    assert all((check.PORTAL_DIR / name).is_file() for name in check.PORTAL_COPIES)
-    by_source = {src: (check.API_DIR / name).read_bytes() for name, src in check.COPIES.items()}
-    by_source |= {src: (check.WEB_DIR / name).read_bytes() for name, src in check.WEB_COPIES.items()}
-    by_source |= {src: (check.PORTAL_DIR / name).read_bytes() for name, src in check.PORTAL_COPIES.items()}
-    out = io.StringIO()
-    assert check.main(by_source.get, out) == 0
-    assert "ok    portal/app/_kit/DataTable.tsx" in out.getvalue()
-    by_source["frontend/app/_kit/DataTable.tsx"] = b"drifted"
-    out = io.StringIO()
-    assert check.main(by_source.get, out) == 1
-    assert "FAIL  portal/app/_kit/DataTable.tsx" in out.getvalue()
+def test_the_ui_kit_is_left_to_the_kit_lock_checks() -> None:
+    """AA-994 S2a (root ADR 0016 decision 5): no kit or brand file is live-compared with CIS main any more; the kit
+    core copies are pinned by kit.lock.json and checked by check-kit-copy.mjs + check_kit_provenance.py instead."""
+    for copies in (check.WEB_COPIES, check.PORTAL_COPIES):
+        assert all(name.startswith("lib/") for name in copies), copies
+        assert not any("_kit" in src or "_brand" in src for src in copies.values())
+    assert set(check.PORTAL_COPIES) == set(check.WEB_COPIES)
+    for app in (check.PORTAL_DIR, check.WEB_DIR):
+        assert (app / "kit.lock.json").is_file()
+        assert (app / "app" / "_kit" / "core" / "MANIFEST.json").is_file()
+        assert not (app / "app" / "_brand").exists()

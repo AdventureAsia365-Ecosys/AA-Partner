@@ -17,7 +17,7 @@ import { EmptyState as KitEmptyState, Modal, SkeletonBar, SkeletonStyle, apiGet 
 import { T, sans, Card, CardSkeleton, PageHeader, Btn, ProgressBar, fmtBillingMonth } from "./ui";
 import { usePortalShell, type ShellBilling } from "./PortalShellContext";
 import { fmtDay, fmtUsd, usageMeter, type Quota } from "@/lib/account";
-import { SUPPORT_EMAIL, SITE_URL } from "@/app/_brand/tokens";
+import { SUPPORT_EMAIL, SITE_URL } from "@/app/_kit/core/brand";
 
 
 const titleCase = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);

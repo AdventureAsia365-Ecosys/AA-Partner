@@ -3,6 +3,9 @@
 // JetBrains Mono for ids) and the same theme restore script as the portal (localStorage `cis_theme` on this origin:
 // light | dark | absent = system), so there is no flash of the wrong theme. <html lang> follows the resolved locale.
 import type { Metadata, Viewport } from "next";
+// AA-994 S2a: the `--aa-*` palette is the vendored kit core's tokens.css (no PostCSS in this app, so it is imported
+// here, before globals.css, rather than by a CSS @import).
+import "./_kit/core/tokens.css";
 import "./globals.css";
 import { serverContext } from "@/lib/serverContext";
 

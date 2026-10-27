@@ -21,7 +21,7 @@ import { AiContentNotice } from "./AiContentNotice";
 import { stripMarkdown } from "./markdownText";
 import { PUBLISH_LOG_QUERY_KEY, channelName } from "./PublishedList";
 import { channelName as channelLabel } from "./channelLabels";
-import { formatDate } from "@/app/_kit/tokens";
+import { formatDate } from "@/app/_kit/core/tokens";
 import {
   ServedBadge, plainError, publishClosedLabel, servedTitle, workClosed, type ServedFields,
 } from "./ServedBadge";

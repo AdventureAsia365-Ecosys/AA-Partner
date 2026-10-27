@@ -1,12 +1,12 @@
 // portal/app/portal/layout.tsx
 // AA-430 made every portal "tab" its own route under /portal/*, with the shell state in this layout
 // (it stays mounted across sibling routes, so nothing refetches on navigation).
-// AA-759 — the shell is now one kit-based component, `_shell/PortalShell.tsx` (grouped nav, ⌘K,
+// AA-759 — the shell is now one kit-based component, `app/_kit/local/PortalShell.tsx` (grouped nav, ⌘K,
 // phone bottom bar, theme switch, kit toast, shell data through react-query). This file only mounts
 // it; pages still read the shell state through usePortalShell() (PortalShellContext).
 // AA-979 P2b: SessionWatch reloads the page once when the BFF says the partner session expired (critic S1).
-import { PortalShell } from "./_shell/PortalShell";
-import { SessionWatch } from "./_shell/SessionWatch";
+import { PortalShell } from "@/app/_kit/local/PortalShell";
+import { SessionWatch } from "@/app/_kit/local/SessionWatch";
 
 export default function PortalLayout({ children }: { children: React.ReactNode }) {
   return (

@@ -28,8 +28,8 @@ import {
   parseHighlights, fmtDate, fmtDuration,
 } from "./ui";
 import { PoolFilters, type PoolFiltersState } from "./PoolFilters";
-import { ROUTES } from "../_shell/portalNav";
-import { MY_VERSIONS_KEY } from "../_shell/useShellData";
+import { ROUTES } from "@/app/_kit/local/portalNav";
+import { MY_VERSIONS_KEY } from "@/app/_kit/local/useShellData";
 import { fetchMyVersions } from "./catalogApi";
 import {
   WorkStatusBadge, activePollInterval, latestVersionByTour, tourWorkStatus, type WorkStatus,

@@ -1,24 +1,32 @@
 // portal/app/_kit/index.ts
-// AA-885 — the portal's barrel for its VENDORED copy of the admin UI kit. Every other file in this
-// folder is a byte copy of frontend/app/_kit/<same name> (guarded by
-// tests/unit/test_aa885_portal_split.py); this barrel is portal-owned and exports only the files the
-// portal has, so no admin shell code (AdminShell, Sidebar, adminNav, SessionKeepAlive …) can be
-// imported here. To change a kit component, edit frontend/app/_kit and copy it here in the same PR.
-// AA-759 — the theme + sidebar-collapse stores (and useHydrated) are vendored too: generic, no admin
-// identity in them; the portal shell (app/portal/_shell) uses them.
+// The tenant portal's barrel for the AA UI kit. Pages import "@/app/_kit", never ./core or ./local directly.
+//
+// AA-994 S2a (root ADR 0016): ./core is a byte copy of AA-CIS-App frontend/app/_kit/core (full profile), written by
+// the root tools/kit/kit-sync.sh and pinned by ../../kit.lock.json; Portal Build checks it (integrity: core/check-kit-
+// copy.mjs; provenance: api/scripts/check_kit_provenance.py). Never edit a file in ./core: change the kit in
+// AA-CIS-App, then sync. ./local holds the portal's own parts: the API helpers (api.ts, from the CIS-local file of the
+// same name), the theme binding (key `cis_theme`) and the portal shell (AA-759; imported by path from layout.tsx,
+// not re-exported here, because the shell itself imports this barrel).
 
-export * from "./tokens";
-export * from "./primitives";
-export * from "./Modal";
-export * from "./Drawer";
-export * from "./Toast";
-export * from "./DataTable";
-export * from "./csv";
-export * from "./savedViews";
-export * from "./api";
-export { Providers } from "./Providers";
-export { useMediaQuery, useIsPhone, PHONE_QUERY } from "./useMediaQuery";
-export { useSidebarCollapsed } from "./useSidebar";
-export { useThemeChoice, useResolvedTheme } from "./useTheme";
-export type { ThemeChoice, ResolvedTheme } from "./theme";
-export { useHydrated } from "./useHydrated";
+// ── kit core (byte copy of AA-CIS-App frontend/app/_kit/core) ───────────────────────────────────────────────
+export * from "./core/tokens";
+export { BRAND, FONT_DISPLAY, FONT_SANS, FONT_MONO, LOGO_SRC, SUPPORT_EMAIL, SITE_URL } from "./core/brand";
+export * from "./core/primitives";
+export * from "./core/Modal";
+export * from "./core/Drawer";
+export * from "./core/Toast";
+export * from "./core/DataTable";
+export * from "./core/csv";
+export * from "./core/savedViews";
+export { Providers } from "./core/Providers";
+export {
+  PageFrame, PageFrameHeader, PageFrameBody, AdminMain, AdminPaneHeader, AdminPaneBody,
+} from "./core/PageFrame";
+export { useMediaQuery, useIsPhone, PHONE_QUERY } from "./core/useMediaQuery";
+export { useSidebarCollapsed } from "./core/useSidebar";
+export { useHydrated } from "./core/useHydrated";
+export type { ThemeChoice, ResolvedTheme } from "./core/theme";
+
+// ── portal-local ─────────────────────────────────────────────────────────────────────────────────────────────
+export * from "./local/api";
+export { useThemeChoice, useResolvedTheme, useChartColors } from "./local/useTheme";
