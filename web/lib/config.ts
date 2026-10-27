@@ -17,6 +17,9 @@
 //   COGNITO_CLIENT_SECRET  that client's secret (Secrets Manager, never in the image)
 //   WEB_SESSION_SECRET     >= 32 random characters: seals the session cookies (Secrets Manager)
 //   CONTENT_STUDIO_URL     the tenant portal (Content studio) the sidebar links to (cross-link, Fix C10)
+//   CIS_API_URL            https://<CIS API host>             AA-979 P2b: the public CIS API the client-host trip page
+//                                                              /trip/<id> reads (GET /v1/trip/{id}); optional, empty =
+//                                                              trip pages answer 500 (lib/tripPage.ts)
 //   ENVIRONMENT            dev | stg | prod | test | local
 //   APP_VERSION, GIT_SHA   baked into the image, echoed by /healthz
 
@@ -33,6 +36,8 @@ export interface WebConfig {
   cognitoClientSecret: string;
   sessionSecret: string;
   contentStudioUrl: string;
+  /** AA-979 P2b: the CIS API origin of the client-host trip page; "" = not configured. */
+  cisApiUrl: string;
   version: string;
   gitSha: string;
   /** Every identity value is present and valid: sign-in can run. */
@@ -97,6 +102,7 @@ export function loadConfig(env: Env = process.env): WebConfig {
   if (partnerHosts.length === 0 && publicOrigin) partnerHosts.push(new URL(publicOrigin).host);
   const clientHosts = hosts(text(env, "WEB_CLIENT_HOSTS")).filter((h) => !partnerHosts.includes(h));
   const contentStudioUrl = origin(text(env, "CONTENT_STUDIO_URL"), local) ?? "";
+  const cisApiUrl = origin(text(env, "CIS_API_URL"), local) ?? "";
 
   const secureCookies = !(local && publicOrigin.startsWith("http://"));
   return {
@@ -110,6 +116,7 @@ export function loadConfig(env: Env = process.env): WebConfig {
     cognitoClientSecret,
     sessionSecret,
     contentStudioUrl,
+    cisApiUrl,
     version: text(env, "APP_VERSION") || "unknown",
     gitSha: text(env, "GIT_SHA") || "unknown",
     authConfigured: problems.length === 0,

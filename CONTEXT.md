@@ -355,8 +355,14 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 ## Web (`web/`, AA-935)
 
 - **Hosts** (`web/lib/hosts.ts`, `web/proxy.ts`): the partner host serves the agency app; the client host
-  (`WEB_CLIENT_HOSTS`, later `go-dev.`) serves `/c/*` only; any other Host is 404; `/healthz` answers any Host (the ALB
-  health check sends the task IP). Cookies are host-only, so the two hosts never share a session.
+  (`WEB_CLIENT_HOSTS`, later `go-dev.`) serves `/c/*` and `/trip/*` only (both 404 on the partner host); any other
+  Host is 404; `/healthz` answers any Host (the ALB health check sends the task IP). Cookies are host-only, so the two
+  hosts never share a session.
+- **Trip page** (AA-979 P2b §4.3, `web/app/trip/[tourId]`, `web/lib/tripPage.ts`): the public AA tour page moved from
+  the CIS admin host (which answers 307 to it). Server side it reads CIS's public `GET <CIS_API_URL>/v1/trip/{id}`
+  (no token; CIS stamps `url_alive` for its T10 gate): CIS 301 (superseded version) -> 308 to `/trip/<current id>`,
+  410 / 404 -> not-found page, a CIS fault or an unset `CIS_API_URL` -> 500. Indexable (page metadata overrides the
+  root `noindex`; `public/robots.txt` allows `/trip/` only). Next data cache 1 h.
   **AA-979 P2b window**: the agency host `portal.` is a partner host too (`WEB_PARTNER_HOSTS` lists both
   `partner-dev.` and `portal.`), and each partner host answers with its OWN public origin (`lib/config.ts`
   `forHost` / `requestConfig`): redirects, the OAuth redirect / logout URIs and the same-origin write guard stay on
@@ -392,7 +398,8 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   are byte copies of AA-CIS-App `frontend/` (CI "Vendored CIS copies"); `web/app/_kit/index.ts` is the CRM's barrel.
 - **Configuration** (task environment, AA-CIS-Infra `crm_web.tf`; meanings in `web/lib/config.ts`): `ENVIRONMENT`,
   `WEB_PUBLIC_ORIGIN`, `WEB_PARTNER_HOSTS`, `WEB_CLIENT_HOSTS`, `CRM_API_ORIGIN`, `COGNITO_DOMAIN`, `COGNITO_CLIENT_ID`,
-  `CONTENT_STUDIO_URL`, and from Secrets Manager `COGNITO_CLIENT_SECRET`, `WEB_SESSION_SECRET`. Missing identity values
+  `CONTENT_STUDIO_URL`, `CIS_API_URL` (AA-979, the trip page; optional), and from Secrets Manager
+  `COGNITO_CLIENT_SECRET`, `WEB_SESSION_SECRET`. Missing identity values
   turn sign-in off (the pages say so) while `/healthz` stays up.
 - **Deploy**: `.github/workflows/deploy-web-dev.yml` (same model as the API deploy, no job guard: the web runs no
   worker), gated by the `dev` environment variable `CRM_WEB_ENABLED` (unset = red), then the post-deploy verify
