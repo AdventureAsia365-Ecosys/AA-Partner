@@ -13,6 +13,7 @@ import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
 import { DateInput } from "@/components/DateInput";
 import { Panel } from "@/components/PageTitle";
+import { BeforeYouGoPanel } from "@/components/proposals/BeforeYouGoPanel";
 import { BuilderAaDrawer, type Supplier } from "@/components/proposals/BuilderAaDrawer";
 import { bffSend } from "@/lib/bffClient";
 import {
@@ -310,6 +311,12 @@ export function BuilderPage({
               {fmt(tr("builder.publish"), { n: view.version })}
             </Button>
           )}
+          {!draft && ["published", "sent", "accepted"].includes(view.status) && (
+            // AA-951 (CRM-22, A-05): this version as e-mail or WhatsApp text, with its price hash.
+            <Link href={`/pipeline/${view.trip_id}/proposal/${view.proposal_id}/text`} style={{ fontSize: 12.5, color: K.accent }} data-testid="builder-send-text">
+              {tr("text.open")}
+            </Link>
+          )}
           {!draft && view.status !== "accepted" && (
             <Button size="sm" disabled={!hydrated || busy} onClick={newVersion}>
               {tr("builder.newVersion")}
@@ -433,6 +440,17 @@ export function BuilderPage({
               </span>
             </div>
             {day.before_you_go && <p style={{ margin: "6px 0 0", fontSize: 12.5, color: K.muted }}>{tr("builder.beforeYouGoHint")}</p>}
+            {day.before_you_go && view.before_you_go && (
+              // AA-951 (CRM-22, R38): the packs of this version; keyed on the counter so a write resets the ticks.
+              <BeforeYouGoPanel
+                key={view.edit_seq}
+                data={view.before_you_go}
+                draft={draft}
+                busy={busy}
+                lang={lang}
+                onSave={(groupKeys) => write("PUT", `proposals/${view.proposal_id}/before-you-go`, { group_keys: groupKeys })}
+              />
+            )}
             {draft ? (
               <form key={`${day.proposal_day_id}-${view.edit_seq}`} onSubmit={(e) => { e.preventDefault(); void saveDay(e.currentTarget); }} style={{ display: "grid", gap: 8, marginTop: 10 }} data-testid="builder-day-form">
                 <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))" }}>

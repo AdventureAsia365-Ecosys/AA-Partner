@@ -5,6 +5,7 @@
 // except the margin share shown next to the totals.
 
 import { fmt, type MessageKey } from "@/lib/i18n";
+import type { BeforeYouGo } from "@/lib/textProposal";
 
 export type BuilderStatus = "draft" | "published" | "sent" | "accepted" | "superseded" | "withdrawn";
 export type BlockType = "lodging" | "activity" | "transport" | "meal" | "guide" | "other";
@@ -112,6 +113,8 @@ export interface BuilderView {
   stage2: { accommodation_tier: string | null; group_pref: string | null; pace: string | null; party_adults: number; party_children: number };
   publish?: { published_at: string; price_hash: string; superseded: string[]; picks_carried: number };
   refresh?: { quoted: number; failed: { option_id: string; code: string }[]; skipped: number };
+  /** AA-951 (CRM-22, R38): the day 0 packs, the suggestions from the AA items and the reminders. */
+  before_you_go?: BeforeYouGo;
 }
 
 /** The 409 the API answers when the page is stale (another editor) or the client picked on the base version. */
@@ -220,6 +223,7 @@ export function checkKey(code: string): MessageKey {
     below_from_price: "builder.check.below_from_price",
     aa_no_longer_offered: "builder.check.aa_no_longer_offered",
     net_missing: "builder.check.net_missing",
+    prep_packs_not_chosen: "builder.check.prep_packs_not_chosen",
   };
   return known[code] ?? "builder.err.generic";
 }

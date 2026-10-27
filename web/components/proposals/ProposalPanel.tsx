@@ -29,6 +29,7 @@ import {
   type PayMethod,
   type Proposal,
 } from "@/lib/proposals";
+import { canRenderText } from "@/lib/textProposal";
 
 const field: React.CSSProperties = {
   font: "inherit",
@@ -230,6 +231,12 @@ export function ProposalPanel({
                   {tr("proposal.withdraw")}
                 </Button>
               )}
+              {(current.status === "draft" || current.status === "sent") && (
+                // AA-951 (CRM-22, A-05): the same version as e-mail or WhatsApp text (one price hash).
+                <Link href={`/pipeline/${view.trip_id}/proposal/${current.proposal_id}/text`} style={{ fontSize: 12.5, color: K.accent }} data-testid="proposal-send-text">
+                  {tr("text.open")}
+                </Link>
+              )}
               {current.status === "sent" && (
                 <span style={{ fontSize: 12.5, color: K.muted }}>{tr("proposal.waitingClient")}</span>
               )}
@@ -254,6 +261,11 @@ export function ProposalPanel({
                 <Link href={`/pipeline/${view.trip_id}/proposal/${p.proposal_id}`} style={{ color: K.accent }} data-testid="builder-open">
                   {tr("builder.open")}
                 </Link>
+                {canRenderText("builder", p.status) && (
+                  <Link href={`/pipeline/${view.trip_id}/proposal/${p.proposal_id}/text`} style={{ color: K.accent }} data-testid="builder-send-text">
+                    {tr("text.open")}
+                  </Link>
+                )}
                 <BuilderClientRow
                   p={p}
                   canSend={canSend}

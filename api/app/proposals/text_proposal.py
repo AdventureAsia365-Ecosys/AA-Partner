@@ -232,6 +232,7 @@ async def preview(
     ctx.audit("view", "allowed", "proposal", str(proposal_id), fields=("text_proposal", *fields))
     return {
         "proposal_id": str(proposal_id),
+        "trip_id": str(row["trip_id"]),
         "version": row["version"],
         "kind": row["kind"],
         "status": row["status"],
