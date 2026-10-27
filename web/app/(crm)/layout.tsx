@@ -12,7 +12,7 @@ import { contentStudioHref } from "@/lib/nav";
 import { serverContext } from "@/lib/serverContext";
 import { disconnected, type MailboxView } from "@/lib/mail";
 import type { Recovery } from "@/lib/team";
-import { CrmShell } from "./_shell/CrmShell";
+import { CrmShell } from "@/app/_kit/local/CrmShell";
 
 export const dynamic = "force-dynamic";
 

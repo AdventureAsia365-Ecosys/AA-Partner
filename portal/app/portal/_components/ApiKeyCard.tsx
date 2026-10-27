@@ -7,9 +7,7 @@
 // Adventure Asia team for now (self-serve rotate comes with the identity work): "Request a new key" opens a mail.
 import { useQuery } from "@tanstack/react-query";
 import { KeyRound, Mail } from "lucide-react";
-import { apiGet } from "@/app/_kit";
-import { formatDateTime } from "@/app/_kit/tokens";
-import { SUPPORT_EMAIL } from "@/app/_brand/tokens";
+import { apiGet, formatDateTime, SUPPORT_EMAIL } from "@/app/_kit";
 import { keyUseText, type ApiKeyFacts } from "@/lib/account";
 import { T, mono, Card, CardHead, CardSkeleton, Btn } from "./ui";
 import { usePortalShell } from "./PortalShellContext";

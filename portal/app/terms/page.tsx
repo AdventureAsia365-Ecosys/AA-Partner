@@ -6,7 +6,7 @@
 // partner agreement. Still a draft pending legal review. Not indexed while it is a draft.
 import type { Metadata } from "next";
 import LegalPage, { A, LegalSection } from "../_legal/LegalPage";
-import { SUPPORT_EMAIL } from "../_brand/tokens";
+import { SUPPORT_EMAIL } from "../_kit/core/brand";
 import { PRIVACY_PATH } from "@/lib/hosts";
 
 export const metadata: Metadata = {

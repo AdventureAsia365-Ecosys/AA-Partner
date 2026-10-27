@@ -1,7 +1,7 @@
 // portal/app/portal-access/AccessCard.tsx
 // AA-979 P2b — the frame of the two studio access pages (chooser, no access): light card like /tenant-login, outside the
 // /portal shell (which needs a studio session these pages do not have yet).
-import { BRAND, FONT_DISPLAY, FONT_SANS, LOGO_SRC } from "../_brand/tokens";
+import { BRAND, FONT_DISPLAY, FONT_SANS, LOGO_SRC } from "../_kit/core/brand";
 
 export function AccessCard({ title, testId, children }: { title: string; testId: string; children: React.ReactNode }) {
   return (

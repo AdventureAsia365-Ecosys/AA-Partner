@@ -1,7 +1,7 @@
 "use client";
 // portal/app/portal/_components/PortalShellContext.tsx
 // AA-430 — the shell state route pages read (a layout cannot pass props into `children`).
-// AA-759 — the values now come from react-query in the PortalShell (`_shell/useShellData.ts`), not
+// AA-759 — the values now come from react-query in the PortalShell (`app/_kit/local/useShellData.ts`), not
 // from raw fetches on mount; the shape pages read is unchanged.
 import { createContext, useContext } from "react";
 import type { ActivityState } from "./workStatus";

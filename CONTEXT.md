@@ -7,7 +7,7 @@ status: active
 owner: nghiep
 audience: [engineer, agent]
 applies_to: [aa-crm-api, aa-crm-web, aa-cis-portal]
-last_reviewed: 2026-10-27
+last_reviewed: 2026-10-28
 review_every_days: 90
 related: [ARCH-01, ARCH-06-booking, docs/adr/README.md]
 ---
@@ -92,7 +92,7 @@ Design sources, in order:
 | Runtime | ECS Fargate **ARM64** service `aa-crm-dev-api` on `aa-cis-dev-cluster` (acc2, us-west-1); desired 1, running 1 on 25/10/2026 |
 | Edge | CloudFront `partner-dev.` -> VPC origin -> internal NLB -> ALB host + `X-AA-Origin` + `/crm/*` rule -> the service (AA-931 spike, ADR 0010 decision 2) |
 | Image | ECR `aa-crm-dev-api`, IMMUTABLE, tag = git SHA, built natively on an arm64 runner |
-| Web | `web/`: Next.js 16 standalone (React 19, TypeScript, vitest), the AA UI kit vendored from AA-CIS-App (inline styles from the kit tokens); ECS Fargate **ARM64** service `aa-crm-dev-web` (port 3000, `/healthz`), ECR `aa-crm-dev-web` (AA-CIS-Infra `crm_web.tf`); desired 1, running 1 on 25/10/2026 |
+| Web | `web/`: Next.js 16 standalone (React 19, TypeScript, vitest), the AA UI kit core vendored from AA-CIS-App (`web/app/_kit/core/`, root ADR 0016; inline styles from the kit tokens); ECS Fargate **ARM64** service `aa-crm-dev-web` (port 3000, `/healthz`), ECR `aa-crm-dev-web` (AA-CIS-Infra `crm_web.tf`); desired 1, running 1 on 25/10/2026 |
 | Portal | `portal/`: the tenant Content studio (Next.js 16, React 19, TypeScript), moved from AA-CIS-App with its history by CRM-P2a (AA-979). Still on Vercel (project `aa-cis-portal`, host `portal.lumiguides.it.com`) and still the CIS tenant API-key sign-in until P2b; section "Tenant portal" below |
 | Edge for the web | the same CloudFront distribution: the ALB rule `crm_api` (`/crm`, `/crm/*`) stays above `crm_partner_default`, which forwards every other path of the partner host to the web target group |
 
@@ -308,10 +308,10 @@ queued / running rows as information, exempt kinds left out). Daily or slower ki
 
 ## CI and release
 
-- Web checks (AA-935): **Web Build** (vitest, `next build` with the type check, standalone smoke) and **Web Docker Build
-  Check** (native arm64 image, container smoke, Trivy); Security Audit also runs `npm audit` for `web/` and `portal/`.
-- Portal checks (AA-979): **Portal Build** (`npm ci`, `tsc --noEmit`, `next build`) and **Portal Lint** (ESLint,
-  non-required). The portal deploys from `vercel-deploy-portal.yml`, never from `ci.yml`.
+- Web checks (AA-935): **Web Build** (kit core integrity + provenance, vitest, `next build` with the type check,
+  standalone smoke) and **Web Docker Build Check** (native arm64 image, container smoke, Trivy); Security Audit also runs `npm audit` for `web/` and `portal/`.
+- Portal checks (AA-979): **Portal Build** (kit core integrity + provenance, `npm ci`, `tsc --noEmit`, `next build`) and
+  **Portal Lint** (ESLint, non-required). The portal deploys from `vercel-deploy-portal.yml`, never from `ci.yml`.
 - Required checks: **Lint**, **Security Audit** (DM-6.10 resource-ID scan, pip-audit), **Unit Tests** (coverage >= 90 %),
   **Integration Tests** (PostgreSQL 15, no skips), **Docker Build Check** (native arm64 build, container smoke, Trivy,
   SBOM); plus **Docs lint**, **PR title**, **gitleaks**. Non-required: **Vendored CIS copies**.
@@ -396,8 +396,14 @@ queued / running rows as information, exempt kinds left out). Daily or slower ki
 - **Shell**: the whole agency IA of design v3 §2.2 in the sidebar (each section an empty state that names its card in
   `data-card`), the Content studio cross-link (`CONTENT_STUDIO_URL`), Settings with language and dates. The portal
   sidebar (`portal/`, AA-979) links back ("Open CRM").
-- **UI kit**: `web/app/_kit/*`, `web/app/_brand/tokens.ts` and `web/lib/{sameOrigin,crossSiteGuard,bffPath,proxyResponse}.ts`
-  are byte copies of AA-CIS-App `frontend/` (CI "Vendored CIS copies"); `web/app/_kit/index.ts` is the CRM's barrel.
+- **UI kit** (AA-994 S2a, root ADR 0016): `web/app/_kit/core/` is a byte copy of AA-CIS-App `frontend/app/_kit/core/`
+  (full profile), written only by the root `tools/kit/kit-sync.sh crm-web` and pinned by `web/kit.lock.json`; never
+  edit it here. `web/app/_kit/local/` holds the CRM's own parts (the theme binding, key `cis_theme`, and `CrmShell`);
+  `web/app/_kit/index.ts` is the CRM's barrel, which pages import. The `--aa-*` palette is `core/tokens.css`, imported
+  by `app/layout.tsx` before `globals.css`; no other CSS file may define an `--aa-*` variable. Web Build checks
+  integrity (`core/check-kit-copy.mjs`, also `--css`) and provenance (`api/scripts/check_kit_provenance.py`: the copied
+  manifest is CIS's at the lock's `ref`, and that `ref` is on CIS `main`). `web/lib/{sameOrigin,crossSiteGuard,bffPath,
+  proxyResponse}.ts` stay byte copies of AA-CIS-App `frontend/lib/` (CI "Vendored CIS copies").
 - **Configuration** (task environment, AA-CIS-Infra `crm_web.tf`; meanings in `web/lib/config.ts`): `ENVIRONMENT`,
   `WEB_PUBLIC_ORIGIN`, `WEB_PARTNER_HOSTS`, `WEB_CLIENT_HOSTS`, `CRM_API_ORIGIN`, `COGNITO_DOMAIN`, `COGNITO_CLIENT_ID`,
   `CONTENT_STUDIO_URL`, `CIS_API_URL` (AA-979, the trip page; optional), and from Secrets Manager
@@ -427,15 +433,16 @@ original CIS commit). P2a moves the code only:
 - **Business logic stays in the CIS API** (ADR 0010 §7): the portal is a client of CIS `/v1/*` and `/auth/*` through
   its BFF (`portal/app/api/tenant/[...path]`, cross-site writes refused first, AA-911). It never reads the `crm`
   schema or calls `/crm/*`; the sidebar only links the CRM (`NEXT_PUBLIC_CRM_URL`).
-- **UI kit** (byte copies of AA-CIS-App `frontend/`, CI "Vendored CIS copies", `PORTAL_COPIES`):
-  `portal/app/_kit/tokens.ts`, `portal/app/_kit/primitives.tsx`, `portal/app/_kit/Modal.tsx`,
-  `portal/app/_kit/Drawer.tsx`, `portal/app/_kit/Toast.tsx`, `portal/app/_kit/api.ts`,
-  `portal/app/_kit/useMediaQuery.ts`, `portal/app/_kit/Providers.tsx`, `portal/app/_kit/DataTable.tsx`,
-  `portal/app/_kit/csv.ts`, `portal/app/_kit/savedViews.ts`, `portal/app/_kit/theme.ts`, `portal/app/_kit/useTheme.ts`,
-  `portal/app/_kit/sidebarStore.ts`, `portal/app/_kit/useSidebar.ts`, `portal/app/_kit/useHydrated.ts`,
-  `portal/app/_brand/tokens.ts`, `portal/lib/sameOrigin.ts`, `portal/lib/crossSiteGuard.ts`, `portal/lib/bffPath.ts`,
-  `portal/lib/proxyResponse.ts`. `portal/app/_kit/index.ts` is the portal's own barrel. Edit the CIS file first, then
-  copy it here byte for byte.
+- **UI kit** (AA-994 S2a, root ADR 0016): `portal/app/_kit/core/` is a byte copy of AA-CIS-App
+  `frontend/app/_kit/core/` (full profile), written only by the root `tools/kit/kit-sync.sh portal` and pinned by
+  `portal/kit.lock.json`; never edit it here (edit the CIS core, merge, then sync). `portal/app/_kit/local/` holds the
+  portal's own parts: `api.ts` (the fetch helpers, portal-owned since the CIS file of that name is CIS-local), the theme
+  binding (key `cis_theme`) and the portal shell (`PortalShell`, `PortalSidebar`, `PortalTopbar`, `PortalBottomNav`,
+  `PortalCommandPalette`, `SessionWatch`, `portalNav`, `useShellData`; moved from `app/portal/_shell`).
+  `portal/app/_kit/index.ts` is the portal's barrel. The `--aa-*` palette is `core/tokens.css`, imported by
+  `globals.css`; no other CSS file may define an `--aa-*` variable. Portal Build checks integrity and provenance (as
+  in the CRM web). `portal/lib/{sameOrigin,crossSiteGuard,bffPath,proxyResponse}.ts` stay byte copies of AA-CIS-App
+  `frontend/lib/` (CI "Vendored CIS copies", `PORTAL_COPIES`).
 - **Guards**: `api/tests/unit/test_portal_guards.py` (no admin secret or staff session in `portal/`, tenant-only gate,
   security headers, the 308 map of the old slugs, draft legal pages outside the gate, muted-text contrast, the
   unmetered portal session, cross-site write refusal, lockfile tracked, deploy on `portal/**` only).

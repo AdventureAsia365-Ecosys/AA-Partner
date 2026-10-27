@@ -21,7 +21,7 @@ const SECURITY_HEADERS = [
 
 // AA-759 — portal routes carry no T-number slug any more. Every old path answers 308 (permanent) to
 // its new one; Next passes the query string through, so ?piece= / ?tour_id= / ?resume_request_id=
-// deep links keep working. The map mirrors ROUTES in app/portal/_shell/portalNav.tsx (guarded by
+// deep links keep working. The map mirrors ROUTES in app/_kit/local/portalNav.tsx (guarded by
 // tests/unit/test_aa885_portal_split.py and the portal smoke). Exact paths only: none of the old
 // pages had sub-routes except t11-publish/connection, listed on its own.
 const OLD_SLUG_REDIRECTS: { source: string; destination: string }[] = [

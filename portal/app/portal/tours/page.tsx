@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { PageHeader } from "@/app/_kit";
 import PoolTab from "../_components/PoolTab";
 import { usePortalShell } from "../_components/PortalShellContext";
-import { ROUTES } from "../_shell/portalNav";
+import { ROUTES } from "@/app/_kit/local/portalNav";
 
 export default function BrowseToursPage() {
   const router = useRouter();

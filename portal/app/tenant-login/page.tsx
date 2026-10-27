@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { BRAND, BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_SANS, LOGO_SRC } from "../_brand/tokens";
+import { BRAND, BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_SANS, LOGO_SRC } from "@/app/_kit";
 import { PRIVACY_PATH, TERMS_PATH } from "@/lib/hosts";
 import { useRouter } from "next/navigation";
 import { Key, Loader2 } from "lucide-react";

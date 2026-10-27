@@ -9,7 +9,7 @@ import { Send } from "lucide-react";
 import { K, PageHeader, sans } from "@/app/_kit";
 import { ReviewList } from "../_components/ReviewList";
 import { AiContentNotice } from "../_components/AiContentNotice";
-import { ROUTES } from "../_shell/portalNav";
+import { ROUTES } from "@/app/_kit/local/portalNav";
 
 export default function MyContentPage() {
   return (

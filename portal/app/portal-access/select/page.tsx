@@ -7,7 +7,7 @@ import { redirect } from "next/navigation";
 import { API_URL } from "@/lib/auth-server";
 import { config } from "@/lib/config";
 import { memberships, partnerSession, safeStudioNext } from "@/lib/tenantSession";
-import { BRAND } from "../../_brand/tokens";
+import { BRAND } from "../../_kit/core/brand";
 import { AccessCard, buttonStyle, linkStyle } from "../AccessCard";
 import { SignOutButton } from "../SignOutButton";
 

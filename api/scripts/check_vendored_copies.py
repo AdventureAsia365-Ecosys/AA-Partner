@@ -4,13 +4,16 @@
   ADR 0003a decision 2: one DDL template, owned by CIS; every owner's CI compares its job table with it);
 - ``app/auth/identity_verifier.py`` = AA-CIS-App ``api/core/identity_verifier.py`` (AA-680 Phase 2; root ADR 0006 §8
   rule 9: the multi-issuer verifier is copied byte-identical into each app repo);
-- the CRM web's UI kit and BFF helpers (``web/``, AA-935): ``web/app/_kit/*`` and ``web/app/_brand/tokens.ts`` =
-  AA-CIS-App ``frontend/app/_kit/*`` / ``frontend/app/_brand/tokens.ts`` (one kit for portal and CRM until the shared
-  package AA-655, design-final §4.2), ``web/lib/{sameOrigin,crossSiteGuard,bffPath,proxyResponse}.ts`` = AA-CIS-App
-  ``frontend/lib/*`` (the AA-911 cross-site rule and the AA-577 path rule of every BFF);
+- the CRM web's BFF helpers (``web/``, AA-935): ``web/lib/{sameOrigin,crossSiteGuard,bffPath,proxyResponse}.ts`` =
+  AA-CIS-App ``frontend/lib/*`` (the AA-911 cross-site rule and the AA-577 path rule of every BFF);
 - the tenant portal's (``portal/``, AA-979 CRM-P2a, moved from AA-CIS-App with AA-885's vendored list):
-  ``portal/app/_kit/*`` except its own barrel ``index.ts``, ``portal/app/_brand/tokens.ts`` and
-  ``portal/lib/{sameOrigin,crossSiteGuard,bffPath,proxyResponse}.ts`` = the same AA-CIS-App ``frontend/`` files.
+  ``portal/lib/{sameOrigin,crossSiteGuard,bffPath,proxyResponse}.ts`` = the same AA-CIS-App ``frontend/lib`` files.
+
+The UI kit is not checked here any more (AA-994 S2a, root ADR 0016 decision 5): ``portal/app/_kit/core/`` and
+``web/app/_kit/core/`` are synced by the root ``tools/kit/kit-sync.sh`` and pinned to a CIS commit by
+``kit.lock.json``; Portal Build and Web Build check them offline (``core/check-kit-copy.mjs``, integrity) and against
+that commit (``scripts/check_kit_provenance.py``, provenance). A live compare with CIS main turned every Partner PR red
+whenever CIS merged a kit change, which is why this job could never be required.
 
 This check fails when a copy differs from the file on AA-CIS-App ``main`` by even one byte, or is not on main yet.
 Modelled on AA-CIS-Infra ``db/check_migration_copies.py``. CI job "Vendored CIS copies" (non-required).
@@ -48,38 +51,11 @@ COPIES: dict[str, str] = {
     "tests/job_template/job_table_shape.py": "shared/jobs/job_table_shape.py",
     "app/auth/identity_verifier.py": "api/core/identity_verifier.py",
 }
-_WEB_KIT = ("tokens.ts", "primitives.tsx", "Toast.tsx", "theme.ts", "useTheme.ts", "useHydrated.ts")
 _WEB_LIB = ("sameOrigin.ts", "crossSiteGuard.ts", "bffPath.ts", "proxyResponse.ts")
-# path under web/ -> path in AA-CIS-App (AA-935). web/app/_kit/index.ts is the CRM's own barrel, not a copy.
-WEB_COPIES: dict[str, str] = {
-    **{f"app/_kit/{name}": f"frontend/app/_kit/{name}" for name in _WEB_KIT},
-    "app/_brand/tokens.ts": "frontend/app/_brand/tokens.ts",
-    **{f"lib/{name}": f"frontend/lib/{name}" for name in _WEB_LIB},
-}
-_PORTAL_KIT = (
-    "tokens.ts",
-    "primitives.tsx",
-    "Modal.tsx",
-    "Drawer.tsx",
-    "Toast.tsx",
-    "api.ts",
-    "useMediaQuery.ts",
-    "Providers.tsx",
-    "DataTable.tsx",
-    "csv.ts",
-    "savedViews.ts",
-    "theme.ts",
-    "useTheme.ts",
-    "sidebarStore.ts",
-    "useSidebar.ts",
-    "useHydrated.ts",
-)
-# path under portal/ -> path in AA-CIS-App (AA-979). portal/app/_kit/index.ts is the portal's own barrel, not a copy.
-PORTAL_COPIES: dict[str, str] = {
-    **{f"app/_kit/{name}": f"frontend/app/_kit/{name}" for name in _PORTAL_KIT},
-    "app/_brand/tokens.ts": "frontend/app/_brand/tokens.ts",
-    **{f"lib/{name}": f"frontend/lib/{name}" for name in _WEB_LIB},
-}
+# path under web/ -> path in AA-CIS-App (AA-935). The UI kit is checked by kit.lock.json since AA-994 S2a.
+WEB_COPIES: dict[str, str] = {f"lib/{name}": f"frontend/lib/{name}" for name in _WEB_LIB}
+# path under portal/ -> path in AA-CIS-App (AA-979). The UI kit is checked by kit.lock.json since AA-994 S2a.
+PORTAL_COPIES: dict[str, str] = {f"lib/{name}": f"frontend/lib/{name}" for name in _WEB_LIB}
 
 
 class FetchError(RuntimeError):
