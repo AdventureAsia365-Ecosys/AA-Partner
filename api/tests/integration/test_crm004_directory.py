@@ -24,12 +24,12 @@ from tests.tokens import LocalPools
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
-ISS = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_TESTEXTRN"
+ISS = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_TESTPARTN"
 SEN_VANG = "Lữ hành Sen Vàng"
 
 
 def caller(sub: str) -> Caller:
-    return Caller("agency", "external", "cis-portal", ISS, sub, ())
+    return Caller("agency", "partner", "partner-web", ISS, sub, ())
 
 
 async def _agency(pool: asyncpg.Pool, name: str, *members: tuple[str, str], locale: str = "en-AU") -> uuid.UUID:
@@ -177,9 +177,7 @@ async def test_vietnamese_label_round_trips_and_provisioning_converges(app_pool:
 
 
 async def test_seeder_end_to_end_is_idempotent(migrated_app_dsn: str) -> None:
-    settings = LocalPools().settings(
-        database_url=migrated_app_dsn, cognito_external_issuer=ISS, cognito_partner_issuer=""
-    )
+    settings = LocalPools().settings(database_url=migrated_app_dsn, cognito_partner_issuer=ISS)
     owner = f"seed-owner-{uuid.uuid4()}"
     argv = ["--apply", "--member", f"sen-vang:owner:{owner}"]
     out = io.StringIO()

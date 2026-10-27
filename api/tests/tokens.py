@@ -69,7 +69,10 @@ class LocalPool:
 
 
 class LocalPools:
-    """WORKFORCE, PARTNER and EXTERNAL pool stand-ins plus the settings and verifier that trust them."""
+    """WORKFORCE, PARTNER and EXTERNAL pool stand-ins plus the settings and verifier that trust them.
+
+    The EXTERNAL pool is NOT in the settings (AA-979 P2b removed the Dev ``cis-portal`` bridge onto ``/crm/v1``): it
+    stays here only to mint the tokens every class must now refuse (:meth:`cis_portal`)."""
 
     def __init__(self) -> None:
         self.workforce = LocalPool(WORKFORCE_ISSUER, "w1")
@@ -86,8 +89,6 @@ class LocalPools:
             "cognito_crm_staff_client_id": CRM_STAFF_CLIENT,
             "cognito_partner_issuer": PARTNER_ISSUER,
             "cognito_partner_web_client_id": PARTNER_WEB_CLIENT,
-            "cognito_external_issuer": EXTERNAL_ISSUER,
-            "cognito_cis_portal_client_id": CIS_PORTAL_CLIENT,
             **overrides,
         }
         return Settings(**values)
@@ -115,4 +116,5 @@ class LocalPools:
         return self.partner.token(PARTNER_WEB_CLIENT, **kw)
 
     def cis_portal(self, **kw: Any) -> str:
+        """A token of the retired EXTERNAL ``cis-portal`` client (validly signed by its pool, which no class trusts)."""
         return self.external.token(CIS_PORTAL_CLIENT, **kw)

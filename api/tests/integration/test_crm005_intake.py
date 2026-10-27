@@ -602,8 +602,7 @@ async def test_seeder_stores_synthetic_inquiries_through_the_intake_path(
 
     settings = LocalPools().settings(
         database_url=migrated_app_dsn,
-        cognito_external_issuer=ISS,
-        cognito_partner_issuer="",
+        cognito_partner_issuer=ISS,
         key_provider="local",
         local_kek_b64=base64.b64encode(os.urandom(32)).decode(),
     )

@@ -5,12 +5,16 @@ Three route classes, each accepting only its own ``(issuer, client)`` pairs:
 =================  =========================================================  ===============================
 Route class        Accepts                                                    Authorisation after the guard
 =================  =========================================================  ===============================
-``/crm/v1``        PARTNER x {AA-Partner web}; on Dev before AA-939 also      CRM membership + role from
-                   EXTERNAL x {cis-portal}                                     ``crm.member`` (``tenant_tx()``)
+``/crm/v1``        PARTNER x {AA-Partner web}                                 CRM membership + role from
+                                                                              ``crm.member`` (``tenant_tx()``)
 ``/crm/ops/v1``    WORKFORCE x {cis-admin} (the CIS admin BFF forwards it)    group ``cis-admin`` reads,
                                                                               ``crm-platform-admin`` writes
 ``/crm/staff/v1``  WORKFORCE x {crm-staff}                                    group ``crm-ops`` or ``crm-support``
 =================  =========================================================  ===============================
+
+The Dev-only EXTERNAL ``cis-portal`` bridge onto ``/crm/v1`` (before AA-939 the CRM web signed in with that client)
+was removed at AA-979 P2b: the EXTERNAL pool is not configured here at all, so its tokens are unknown to the verifier
+and get 401 on every class.
 
 ``breakglass`` (WORKFORCE) is accepted by no class. It is still known to the verifier, so a breakglass token is
 **verified** and then refused with 403 like a ``cis-admin`` token on ``/crm/v1`` (card R test), never mistaken for a
@@ -39,14 +43,12 @@ log = logging.getLogger(__name__)
 # Issuer kinds (IssuerConfig.name).
 WORKFORCE = "workforce"
 PARTNER = "partner"
-EXTERNAL = "external"
 
 # Client kinds.
 CIS_ADMIN = "cis-admin"
 BREAKGLASS = "breakglass"
 CRM_STAFF = "crm-staff"
 PARTNER_WEB = "partner-web"
-CIS_PORTAL = "cis-portal"
 
 # WORKFORCE groups (ADR 0006b decision 6).
 GROUP_CIS_ADMIN = "cis-admin"
@@ -69,7 +71,7 @@ class RouteClass:
 AGENCY = RouteClass(
     name="agency",
     prefix="/crm/v1",
-    accepts=frozenset({(PARTNER, PARTNER_WEB), (EXTERNAL, CIS_PORTAL)}),
+    accepts=frozenset({(PARTNER, PARTNER_WEB)}),
 )
 OPS = RouteClass(
     name="ops",
@@ -118,7 +120,6 @@ def identity_from_settings(settings: Settings) -> Identity:
         (WORKFORCE, settings.cognito_workforce_issuer, BREAKGLASS, settings.cognito_breakglass_client_id),
         (WORKFORCE, settings.cognito_workforce_issuer, CRM_STAFF, settings.cognito_crm_staff_client_id),
         (PARTNER, settings.cognito_partner_issuer, PARTNER_WEB, settings.cognito_partner_web_client_id),
-        (EXTERNAL, settings.cognito_external_issuer, CIS_PORTAL, settings.cognito_cis_portal_client_id),
     ]
     issuers: dict[str, str] = {}
     clients: dict[tuple[str, str], str] = {}

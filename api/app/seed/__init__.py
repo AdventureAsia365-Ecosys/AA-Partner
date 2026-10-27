@@ -12,8 +12,8 @@ Exec on ``aa-crm-dev-api``::
 - Idempotent: fixed ids (``app.seed.catalogue``), converging writes (``app.agencies.provision_agency``); a second
   ``--apply`` reports ``unchanged``.
 - Members come only from ``--member KEY:ROLE:SUB`` (the subjects the e2e user script printed). The issuer is the
-  partner pool when ``COGNITO_PARTNER_ISSUER`` is set (after AA-939), else the EXTERNAL pool (the ``cis-portal`` bridge
-  on Dev); ``--issuer`` overrides.
+  partner pool (``COGNITO_PARTNER_ISSUER``; the EXTERNAL ``cis-portal`` bridge is gone since AA-979 P2b);
+  ``--issuer`` overrides.
 - AA-936: ``--apply`` also makes sure each agency has one inquiry form (``Website (synthetic)``; its public key is
   printed, it is in the hosted URL anyway). ``--apply --travellers`` stores the agency's Faker EN/VI travellers
   (``app.seed.travellers``) as Stage 1 inquiries through the same path as the public form
@@ -76,7 +76,7 @@ def parse_member(raw: str, issuer: str) -> tuple[str, MemberSpec]:
     if key not in BY_KEY:
         raise SeedRefused(f"--member names an unknown agency {key!r} (known: {', '.join(BY_KEY)})")
     if not issuer:
-        raise SeedRefused("--member needs an issuer: set COGNITO_PARTNER_ISSUER / COGNITO_EXTERNAL_ISSUER or --issuer")
+        raise SeedRefused("--member needs an issuer: set COGNITO_PARTNER_ISSUER or --issuer")
     try:
         return key, validate_member(MemberSpec(cognito_iss=issuer, cognito_sub=sub, role=role))
     except ServiceError as exc:
@@ -97,7 +97,7 @@ def build_plan(argv: Sequence[str], settings: Settings) -> Plan:
     if unknown:
         raise SeedRefused(f"unknown agency key(s) {unknown} (known: {', '.join(BY_KEY)})")
     agencies = tuple(a for a in AGENCIES if not args.agency or a.key in args.agency)
-    issuer = args.issuer or settings.cognito_partner_issuer or settings.cognito_external_issuer
+    issuer = args.issuer or settings.cognito_partner_issuer
     members: dict[str, list[MemberSpec]] = {}
     for raw in args.member:
         key, member = parse_member(raw, issuer)

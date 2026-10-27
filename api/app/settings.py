@@ -35,9 +35,9 @@ class whose values are empty accepts no token at all (fail closed).
 - ``COGNITO_CRM_STAFF_CLIENT_ID``: the ``crm-staff`` client (``/crm/staff/v1``, created by AA-939).
 - ``COGNITO_PARTNER_ISSUER`` / ``COGNITO_PARTNER_WEB_CLIENT_ID``: the partner pool and the AA-Partner web client
   (``/crm/v1``, created by AA-939).
-- ``COGNITO_EXTERNAL_ISSUER`` / ``COGNITO_CIS_PORTAL_CLIENT_ID``: the EXTERNAL pool and its ``cis-portal`` client,
-  accepted on ``/crm/v1`` on Dev only, until AA-939 (ADR 0006b decision 6). Refused when ``ENVIRONMENT`` is not
-  ``dev``/``test``/``local``.
+- ``COGNITO_EXTERNAL_ISSUER`` / ``COGNITO_CIS_PORTAL_CLIENT_ID``: **retired** (AA-979 P2b). They configured the Dev-only
+  EXTERNAL ``cis-portal`` bridge onto ``/crm/v1``; the API no longer reads them (a task that still has them starts and
+  ignores them, so the code can ship before the Terraform env change).
 
 Field encryption (AA-934, design v3 §4.1; ``app.vault``):
 
@@ -155,8 +155,8 @@ SERVICE_NAME = "aa-crm-api"
 
 SSL_MODES = frozenset({"require", "disable"})
 INSECURE_ENVIRONMENTS = frozenset({"test", "local"})
-# Environments where the EXTERNAL cis-portal bridge onto /crm/v1 is allowed (Dev only before AA-939).
-PORTAL_BRIDGE_ENVIRONMENTS = frozenset({"dev", "test", "local"})
+# Environments where Dev-only aids are allowed (PORTAL_OTP_DEV_ECHO).
+DEV_ONLY_ENVIRONMENTS = frozenset({"dev", "test", "local"})
 TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 
@@ -202,8 +202,6 @@ class Settings:
     cognito_crm_staff_client_id: str = ""
     cognito_partner_issuer: str = ""
     cognito_partner_web_client_id: str = ""
-    cognito_external_issuer: str = ""
-    cognito_cis_portal_client_id: str = ""
     rate_limit_public_per_minute: int = DEFAULT_RATE_LIMIT_PER_MINUTE
     rate_limit_xff_hops: int = DEFAULT_XFF_HOPS
     sentry_dsn: str = field(default="", repr=False)
@@ -257,7 +255,6 @@ class Settings:
         for name, issuer in (
             ("COGNITO_WORKFORCE_ISSUER", self.cognito_workforce_issuer),
             ("COGNITO_PARTNER_ISSUER", self.cognito_partner_issuer),
-            ("COGNITO_EXTERNAL_ISSUER", self.cognito_external_issuer),
         ):
             if issuer and (not issuer.startswith("https://") or issuer.endswith("/")):
                 raise SettingsError(f"{name} must be an https:// URL without a trailing slash, got {issuer!r}")
@@ -266,7 +263,6 @@ class Settings:
             "COGNITO_BREAKGLASS_CLIENT_ID": self.cognito_breakglass_client_id,
             "COGNITO_CRM_STAFF_CLIENT_ID": self.cognito_crm_staff_client_id,
             "COGNITO_PARTNER_WEB_CLIENT_ID": self.cognito_partner_web_client_id,
-            "COGNITO_CIS_PORTAL_CLIENT_ID": self.cognito_cis_portal_client_id,
         }
         for name, client_id in clients.items():
             if client_id and not client_id.isalnum():
@@ -275,9 +271,7 @@ class Settings:
         if len(workforce) != len(set(workforce)):
             # One id in two classes would let a token of one class pass the other's audience check.
             raise SettingsError("the WORKFORCE client ids (cis-admin, breakglass, crm-staff) must differ")
-        if self.cognito_cis_portal_client_id and self.environment not in PORTAL_BRIDGE_ENVIRONMENTS:
-            raise SettingsError("COGNITO_CIS_PORTAL_CLIENT_ID is a Dev-only bridge (ADR 0006b decision 6)")
-        if self.portal_otp_dev_echo and self.environment not in PORTAL_BRIDGE_ENVIRONMENTS:
+        if self.portal_otp_dev_echo and self.environment not in DEV_ONLY_ENVIRONMENTS:
             raise SettingsError("PORTAL_OTP_DEV_ECHO is a Dev-only aid (AA-946): never on stg or prod")
         if self.rate_limit_public_per_minute < 0:
             raise SettingsError("RATE_LIMIT_PUBLIC_PER_MINUTE must be >= 0")
@@ -481,8 +475,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         cognito_crm_staff_client_id=_text(env, "COGNITO_CRM_STAFF_CLIENT_ID"),
         cognito_partner_issuer=_text(env, "COGNITO_PARTNER_ISSUER"),
         cognito_partner_web_client_id=_text(env, "COGNITO_PARTNER_WEB_CLIENT_ID"),
-        cognito_external_issuer=_text(env, "COGNITO_EXTERNAL_ISSUER"),
-        cognito_cis_portal_client_id=_text(env, "COGNITO_CIS_PORTAL_CLIENT_ID"),
         rate_limit_public_per_minute=_int(
             env.get("RATE_LIMIT_PUBLIC_PER_MINUTE"), DEFAULT_RATE_LIMIT_PER_MINUTE, "RATE_LIMIT_PUBLIC_PER_MINUTE"
         ),

@@ -17,7 +17,7 @@ def test_defaults_without_environment() -> None:
     assert s.worker_enabled is False  # no DSN
     assert s.job_retention_dry_run is True
     # Identity has no default at all (public repo, DM-6.10): every class accepts nothing until Terraform sets it.
-    assert (s.cognito_workforce_issuer, s.cognito_partner_issuer, s.cognito_external_issuer) == ("", "", "")
+    assert (s.cognito_workforce_issuer, s.cognito_partner_issuer) == ("", "")
     assert s.rate_limit_public_per_minute == 120
     assert s.rate_limit_xff_hops == 2
 
@@ -64,7 +64,7 @@ def test_identity_values_are_read() -> None:
         ({"COGNITO_PARTNER_ISSUER": POOL + "/"}, "trailing slash"),
         ({"COGNITO_CIS_ADMIN_CLIENT_ID": "not a client"}, "client id"),
         ({"COGNITO_CIS_ADMIN_CLIENT_ID": "same1", "COGNITO_BREAKGLASS_CLIENT_ID": "same1"}, "must differ"),
-        ({"ENVIRONMENT": "prod", "COGNITO_CIS_PORTAL_CLIENT_ID": "abc"}, "Dev-only"),
+        ({"ENVIRONMENT": "prod", "PORTAL_OTP_DEV_ECHO": "true"}, "Dev-only"),
         ({"WORKER_ENABLED": "maybe"}, "WORKER_ENABLED"),
         ({"RATE_LIMIT_PUBLIC_PER_MINUTE": "many"}, "integer"),
         ({"RATE_LIMIT_PUBLIC_PER_MINUTE": "-1"}, ">= 0"),

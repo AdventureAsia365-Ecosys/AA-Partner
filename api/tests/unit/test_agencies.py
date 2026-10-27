@@ -22,7 +22,7 @@ from app.agencies import (
 )
 from app.errors import Conflict, Invalid, ServiceError, service_error_handler
 from app.tenancy import provisioning_tx
-from tests.tokens import EXTERNAL_ISSUER
+from tests.tokens import PARTNER_ISSUER
 from tests.unit.fakes import ScriptedConn
 
 TENANT = uuid.UUID("00000000-0000-4000-8000-0000000000c1")
@@ -92,13 +92,13 @@ def test_locale_and_tenant_id_are_checked() -> None:
 
 
 def test_member_validation() -> None:
-    ok = validate_member(MemberSpec(EXTERNAL_ISSUER, "  sub-1  ", "agent"))
+    ok = validate_member(MemberSpec(PARTNER_ISSUER, "  sub-1  ", "agent"))
     assert ok.cognito_sub == "sub-1"
     for bad, code in [
-        (MemberSpec(EXTERNAL_ISSUER, "s", "admin"), "invalid_role"),
+        (MemberSpec(PARTNER_ISSUER, "s", "admin"), "invalid_role"),
         (MemberSpec("http://issuer/x", "s", "owner"), "invalid_issuer"),
-        (MemberSpec(EXTERNAL_ISSUER, "", "owner"), "invalid_subject"),
-        (MemberSpec(EXTERNAL_ISSUER, "x" * 129, "owner"), "invalid_subject"),
+        (MemberSpec(PARTNER_ISSUER, "", "owner"), "invalid_subject"),
+        (MemberSpec(PARTNER_ISSUER, "x" * 129, "owner"), "invalid_subject"),
     ]:
         with pytest.raises(Invalid) as info:
             validate_member(bad)
@@ -111,7 +111,7 @@ async def test_create_sets_the_new_tenant_then_inserts() -> None:
     result = await provision_agency(
         conn,
         spec(),
-        (MemberSpec(EXTERNAL_ISSUER, "sub-owner", "owner"),),
+        (MemberSpec(PARTNER_ISSUER, "sub-owner", "owner"),),
         environment="dev",
         actor="seed:test",
     )
@@ -120,7 +120,7 @@ async def test_create_sets_the_new_tenant_then_inserts() -> None:
     assert flats[0].startswith("SELECT set_config('app.tenant_id'") and conn.calls[0][1] == (str(TENANT),)
     assert conn.sql("'app.actor'") == [("seed:test",)]
     assert conn.sql("INSERT INTO crm.tenant")[0] == (TENANT, SEN_VANG, "vi-VN", True)
-    assert conn.sql("INSERT INTO crm.member")[0] == (EXTERNAL_ISSUER, "sub-owner", "owner")
+    assert conn.sql("INSERT INTO crm.member")[0] == (PARTNER_ISSUER, "sub-owner", "owner")
     # AA-940 (design §4.9 "role changes"): the new agency and the member given a role are on the agency audit, as
     # the seeder (actor kind system), after the writes and in the same transaction.
     events = conn.sql("INSERT INTO crm.audit_event")
@@ -148,7 +148,7 @@ async def test_existing_agency_converges_and_roles_follow_the_spec() -> None:
 
     conn.execute = execute  # type: ignore[method-assign]
     result = await provision_agency(
-        conn, spec(), (MemberSpec(EXTERNAL_ISSUER, "sub-a", "assistant"),), environment="dev", actor="seed:test"
+        conn, spec(), (MemberSpec(PARTNER_ISSUER, "sub-a", "assistant"),), environment="dev", actor="seed:test"
     )
     assert (result.created, result.updated, result.members_added, result.members_updated) == (False, True, 0, 1)
     assert conn.sql("UPDATE crm.tenant SET display_name")[0] == (TENANT, SEN_VANG, "vi-VN")
@@ -162,7 +162,7 @@ async def test_existing_agency_converges_and_roles_follow_the_spec() -> None:
         .on("UPDATE crm.member SET role", MEMBER)
     )
     await provision_agency(
-        platform, spec(), (MemberSpec(EXTERNAL_ISSUER, "sub-a", "owner"),), environment="dev", actor="platform:l1"
+        platform, spec(), (MemberSpec(PARTNER_ISSUER, "sub-a", "owner"),), environment="dev", actor="platform:l1"
     )
     events = platform.sql("INSERT INTO crm.audit_event")
     assert events == [
@@ -193,7 +193,7 @@ async def test_create_only_refuses_an_existing_agency_and_writes_nothing() -> No
     conn = ScriptedConn().on("SELECT display_name, default_locale, is_synthetic", other)
     with pytest.raises(Conflict) as info:
         await provision_agency(
-            conn, spec(), (MemberSpec(EXTERNAL_ISSUER, "sub-a", "owner"),), environment="dev", actor="platform:l1",
+            conn, spec(), (MemberSpec(PARTNER_ISSUER, "sub-a", "owner"),), environment="dev", actor="platform:l1",
             create_only=True,
         )  # fmt: skip
     assert info.value.code == "tenant_exists"
@@ -211,7 +211,7 @@ async def test_validation_happens_before_any_sql() -> None:
         await provision_agency(conn, spec(is_synthetic=False), environment="dev", actor="seed:test")
     with pytest.raises(Invalid):
         await provision_agency(
-            conn, spec(), (MemberSpec(EXTERNAL_ISSUER, "s", "boss"),), environment="dev", actor="seed:test"
+            conn, spec(), (MemberSpec(PARTNER_ISSUER, "s", "boss"),), environment="dev", actor="seed:test"
         )
     assert conn.calls == []
 

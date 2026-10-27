@@ -33,7 +33,7 @@ agency feature yet. Start with [CONTEXT.md](CONTEXT.md).
 | `GET /crm/health` | public, rate limited | Liveness, no DB. ALB health check. `{status, service, version, git_sha}` |
 | `GET /crm/health/ready` | public, rate limited | DB reachable + every required `crm-NNN` registered. 200 or 503 |
 | `GET /crm/ci/deploy-gate` | Deploy Dev workflow OIDC token only | Queued/running `crm.job` rows a deploy would interrupt |
-| `GET /crm/v1/me` | agency (partner pool; Dev: EXTERNAL `cis-portal`) + `X-AA-Tenant-Id` | The caller's membership: `{tenant_id, member_id, member_role, display_name, default_locale}` |
+| `GET /crm/v1/me` | agency (partner pool) + `X-AA-Tenant-Id` | The caller's membership: `{tenant_id, member_id, member_role, display_name, default_locale}` |
 | `GET /crm/v1/memberships` | agency token, no tenant header | The caller's agencies: `{memberships: [{tenant_id, member_id, member_role, display_name, default_locale, tenant_status}]}` |
 | `/crm/ops/v1/*` | WORKFORCE `cis-admin` | `crm.ops.v1` contract (CRM-13a) — guard only today |
 | `/crm/staff/v1/*` | WORKFORCE `crm-staff`, groups `crm-ops` / `crm-support` | Ops release, support sessions (CRM-26, CRM-13b) — guard only today |
