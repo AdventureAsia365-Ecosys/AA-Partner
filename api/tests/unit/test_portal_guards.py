@@ -39,7 +39,6 @@ SECURITY_HEADERS = [
     "X-Content-Type-Options",
     "Referrer-Policy",
     "X-Frame-Options",
-    "Content-Security-Policy",
     "Permissions-Policy",
 ]
 
@@ -116,8 +115,15 @@ def test_portal_sets_security_headers() -> None:
     cfg = _read("portal/next.config.ts")
     for header in SECURITY_HEADERS:
         assert f'key: "{header}"' in cfg, f"portal/next.config.ts: missing {header}"
-    assert "frame-ancestors 'none'" in cfg
     assert 'source: "/(.*)"' in cfg
+    # AA-979 (S253): the CSP is set at runtime by the proxy (its form-action names the managed-login origin, runtime
+    # config). A build-time copy here would be a second CSP header, enforced on top of the runtime one.
+    assert 'key: "Content-Security-Policy"' not in cfg, "portal/next.config.ts: the CSP belongs to portal/proxy.ts"
+    gate = _read("portal/proxy.ts")
+    assert 'res.headers.set("Content-Security-Policy", contentSecurityPolicy(' in gate
+    csp = _read("portal/lib/csp.ts")
+    for directive in ("frame-ancestors 'none'", "base-uri 'self'", "form-action ${forms}", "object-src 'none'"):
+        assert directive in csp, f"portal/lib/csp.ts: missing {directive}"
 
 
 def test_portal_lockfile_is_tracked() -> None:

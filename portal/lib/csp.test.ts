@@ -21,7 +21,20 @@ test("Vercel: nothing set = forms to this origin only (the AA-885 policy, unchan
 });
 
 test("a bad form origin is refused, never added to the policy", () => {
-  for (const bad of ["http://auth.example.test", "https://auth.example.test/logout", "javascript:x", "*", "'unsafe-inline'"]) {
+  for (const bad of [
+    "http://auth.example.test",
+    "https://auth.example.test/logout",
+    "javascript:x",
+    "*",
+    "'unsafe-inline'",
+    // The URL parser accepts these in a host; none may reach the policy (wildcard, directive injection, quotes).
+    "https://*",
+    "https://*.example.com",
+    "https://a.com;script-src",
+    "https://a.com%3Bx",
+    "https://a.com'",
+    "https://a.com,b.com",
+  ]) {
     const cfg = loadConfig({ CRM_SIGN_OUT_FORM_ORIGIN: bad });
     assert.equal(cfg.signOutFormOrigin, "", bad);
     assert.match(contentSecurityPolicy(cfg.signOutFormOrigin), /form-action 'self';/);
