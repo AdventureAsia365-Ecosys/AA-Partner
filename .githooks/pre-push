@@ -19,4 +19,4 @@ if [[ -n "$other" ]]; then
 fi
 # Only branch deletions: nothing to check.
 [[ $pushed -eq 0 || -z "$head" ]] && exit 0
-exec bash "$root/scripts/pre-push.sh" </dev/null
+exec bash "$root/scripts/pre-push.sh" --from-hook </dev/null
