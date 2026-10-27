@@ -1,10 +1,16 @@
-"""Per-kind facts for ``crm.job``: expected run time and the deploy-gate exemptions (ported from AA-Booking, AA-751).
+"""Per-kind facts for ``crm.job``: expected run time, the deploy-gate exemptions (ported from AA-Booking, AA-751) and
+the deploy-blocking kinds (AA-993 G5).
 
 A running job counts as **overdue** in the backlog metrics (:mod:`app.jobs.metrics`) once its current attempt has run
 longer than ``OVERDUE_FACTOR`` x its expected seconds. Every kind the worker handles must be listed here (a unit test
 compares this map with the handlers the lifespan registers).
 
-``DEPLOY_GATE_EXEMPT``: kinds the deploy gate (``GET /crm/ci/deploy-gate``) does not count. ``crm_heartbeat`` is the
+``DEPLOY_BLOCKING_KINDS`` (AA-993 G5): the deploy gate is unsafe only while a row of one of these kinds is RUNNING
+(today ``crm_dispatch``, see below). Queued and running rows of every other kind are reported but no longer block.
+
+``DEPLOY_GATE_EXEMPT``: kinds the deploy gate (``GET /crm/ci/deploy-gate``) leaves out of its ``active`` /
+``by_status`` / ``by_kind`` counts (information only since AA-993 G5; the reasons below date from when those counts
+decided the deploy). ``crm_heartbeat`` is the
 always-queued liveness kind (one row per minute slot): counting it would block every deploy, and interrupting it is
 harmless. It is also idle-exempt in AA-CIS-Infra DB Migrate (``db/owners.yaml`` ``idle_exempt_kinds``), so a CIS,
 Booking or TripPlanner migration is never blocked by the CRM (card CRM-04 E check). ``crm_job_retention`` is
@@ -66,6 +72,12 @@ DEFAULT_EXPECTED_SECONDS = 300
 OVERDUE_FACTOR = 2
 
 DEPLOY_GATE_EXEMPT: frozenset[str] = frozenset({HEARTBEAT, MEMBERSHIP_PULL, BOOKING_SYNC})
+
+# AA-993 G5 (design D1.3-D1.4): the only kinds whose RUNNING row makes the deploy gate unsafe. crm_dispatch sends
+# through the provider inside the row-lock transaction (app.dispatch.worker): a release after the send and before the
+# decision commits would send the message again on the re-claim. It stays blocking until the committed send marker
+# (crm.dispatch_attempt, AA-993 G4b) ships. Every other kind is released on shutdown and re-claimed by the new task.
+DEPLOY_BLOCKING_KINDS: frozenset[str] = frozenset({DISPATCH})
 
 EXPECTED_SECONDS: dict[str, int] = {
     HEARTBEAT: 30,
