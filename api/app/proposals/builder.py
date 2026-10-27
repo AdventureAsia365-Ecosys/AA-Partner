@@ -43,7 +43,7 @@ from app.catalog import store as catalog
 from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.intake import completeness, stage2
 from app.margin import sees_margin
-from app.proposals import rules
+from app.proposals import prep_packs, rules
 from app.proposals.service import ACCEPTED_EXISTS_SQL, DRAFTABLE_STAGES, MAX_BODY, MAX_VERSIONS, NEXT_VERSION_SQL
 from app.tenancy import AnyContext, TenantContext
 from app.vault import Vault
@@ -504,7 +504,11 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
         "totals": totals,
         "checks": _checks(row, s, now),
         "stage2": await _stage2_basis(ctx, vault, row),
+        # AA-951 (CRM-22, R38): the day 0 packs, the suggestions from the AA items, the reminders.
+        "before_you_go": await prep_packs.view(ctx, proposal_id, row["trip_id"]),
     }
+    if row["status"] == "draft" and out["before_you_go"]["packs_not_chosen"]:
+        out["checks"]["warnings"] = sorted({*out["checks"]["warnings"], "prep_packs_not_chosen"})
     if audit:
         ctx.audit("view", "allowed", "proposal", str(proposal_id), fields=("builder",))
     return out
@@ -715,6 +719,7 @@ async def _copy(
     for r in s["rules"]:
         await ctx.conn.execute(INSERT_RULE_SQL, uuid.uuid4(), proposal_id, trip["trip_id"], r["kind"],
                                option_map[str(r["option_id"])], option_map[str(r["target_option_id"])])  # fmt: skip
+    await prep_packs.copy(ctx, source_id, proposal_id, trip["trip_id"])  # AA-951: the day 0 packs it was sent with
 
 
 # ── Settings ─────────────────────────────────────────────────────────────────────────────────────
@@ -752,6 +757,15 @@ async def update_settings(
     await ctx.conn.execute(SETTINGS_SQL, proposal_id, visibility, json.dumps(rooms) if rooms else None, pct,
                            starts_on, balance, terms, body)  # fmt: skip
     return await _done(ctx, vault, proposal_id, "settings")
+
+
+async def set_before_you_go(
+    ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, seq: int, group_keys: list[str]
+) -> dict[str, Any]:
+    """AA-951 (CRM-22, R38): the day 0 packs of a draft (every role; the version counter like every builder write)."""
+    row = await _lock(ctx, proposal_id, seq)
+    await prep_packs.replace(ctx, proposal_id, row["trip_id"], group_keys)
+    return await _done(ctx, vault, proposal_id, "prep_packs")
 
 
 async def _done(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, reason: str) -> dict[str, Any]:

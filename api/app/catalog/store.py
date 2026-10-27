@@ -161,3 +161,83 @@ async def search(ctx: TenantContext, q: str | None, country: str | None, limit: 
 async def tour(ctx: TenantContext, source_id: str) -> dict[str, Any] | None:
     row = await ctx.conn.fetchrow(TOUR_SQL, source_id)
     return dict(row) if row is not None else None
+
+
+# ── AA-951: crm.aa_content (crm-022), the cache of CIS AA-authored content ────────────────────────────────────────
+CONTENT_KNOWN_SQL = "SELECT content_id, version, content_hash FROM crm.aa_content WHERE kind = $1"
+CONTENT_UPSERT_SQL = """
+INSERT INTO crm.aa_content (content_id, kind, locale, group_key, version, title, body_markdown, applies_to,
+                            content_hash, published_at, listed, fetched_at, checked_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, true, now(), now())
+ON CONFLICT (content_id) DO UPDATE
+   SET kind = EXCLUDED.kind, locale = EXCLUDED.locale, group_key = EXCLUDED.group_key, version = EXCLUDED.version,
+       title = EXCLUDED.title, body_markdown = EXCLUDED.body_markdown, applies_to = EXCLUDED.applies_to,
+       content_hash = EXCLUDED.content_hash, published_at = EXCLUDED.published_at, listed = true,
+       fetched_at = now(), checked_at = now()
+"""
+CONTENT_TOUCH_SQL = "UPDATE crm.aa_content SET listed = true, checked_at = now() WHERE content_id = ANY($1::uuid[])"
+CONTENT_UNLIST_SQL = """
+UPDATE crm.aa_content SET listed = false, checked_at = now()
+ WHERE kind = $1 AND listed AND NOT (content_id = ANY($2::uuid[]))
+RETURNING content_id
+"""
+PACKS_SQL = """
+SELECT content_id, kind, locale, group_key, version, title, body_markdown, applies_to, content_hash, published_at
+  FROM crm.aa_content
+ WHERE kind = 'prep_pack' AND listed AND group_key IS NOT NULL
+ ORDER BY group_key, locale
+ LIMIT 400
+"""
+GROUPS_SQL = """
+SELECT content_id, kind, locale, group_key, version, title, body_markdown, applies_to, content_hash, published_at
+  FROM crm.aa_content
+ WHERE kind = $1 AND listed AND group_key = ANY($2::text[])
+ ORDER BY group_key, locale
+"""
+STARTERS_SQL = """
+SELECT content_id, kind, locale, group_key, version, title, body_markdown, applies_to, content_hash, published_at
+  FROM crm.aa_content
+ WHERE kind = 'starter_template' AND listed AND group_key IS NOT NULL
+ ORDER BY group_key, locale
+ LIMIT 200
+"""
+
+
+async def content_known(pool: asyncpg.Pool, kind: str) -> dict[str, tuple[int, str]]:
+    return {str(r["content_id"]): (r["version"], r["content_hash"]) for r in await pool.fetch(CONTENT_KNOWN_SQL, kind)}
+
+
+async def content_upsert(pool: asyncpg.Pool, c: Any) -> None:
+    published = dt.datetime.fromisoformat(c.published_at.replace("Z", "+00:00"))
+    await pool.execute(CONTENT_UPSERT_SQL, c.content_id, c.kind, c.locale, c.group_key, c.version, c.title,
+                       c.body_markdown, json.dumps(c.applies_to), c.content_hash, published)  # fmt: skip
+
+
+async def content_touch(pool: asyncpg.Pool, content_ids: list[str]) -> None:
+    if content_ids:
+        await pool.execute(CONTENT_TOUCH_SQL, content_ids)
+
+
+async def content_unlist(pool: asyncpg.Pool, kind: str, listed_ids: list[str]) -> int:
+    return len(await pool.fetch(CONTENT_UNLIST_SQL, kind, listed_ids))
+
+
+def _content_row(r: Any) -> dict[str, Any]:
+    out = dict(r)
+    out["content_id"] = str(out["content_id"])
+    applies = out.get("applies_to")
+    out["applies_to"] = json.loads(applies) if isinstance(applies, str) else (applies or {})
+    return out
+
+
+async def prep_packs(ctx: TenantContext) -> list[dict[str, Any]]:
+    """Every listed prep pack (both locales) for an agency's suggestion (no tenant rows: platform cache)."""
+    return [_content_row(r) for r in await ctx.conn.fetch(PACKS_SQL)]
+
+
+async def content_groups(ctx: TenantContext, kind: str, group_keys: list[str]) -> list[dict[str, Any]]:
+    return [_content_row(r) for r in await ctx.conn.fetch(GROUPS_SQL, kind, group_keys)]
+
+
+async def starter_templates(ctx: TenantContext) -> list[dict[str, Any]]:
+    return [_content_row(r) for r in await ctx.conn.fetch(STARTERS_SQL)]

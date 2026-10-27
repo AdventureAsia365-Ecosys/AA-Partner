@@ -10,7 +10,9 @@ fetches, :data:`MAX_RECHECKS` re-checks); an unfinished pass keeps its cursor an
    read "no longer offered"), 404 with a reason -> ``paused``, 404 without one -> ``paused`` / ``not_in_catalog``.
 
 The contract's ``updated_since`` is not a full change cursor (AA-976 notes), so the sync always runs full passes
-comparing ``content_hash``. A CIS failure ends the run successfully with the error class in ``crm.aa_catalog_state``
+comparing ``content_hash``. AA-951: after the tour pass (finished or partial) the AA-authored content (prep packs,
+starter templates) is refreshed too (:mod:`app.catalog.content`); its failure is reported, never fatal. A CIS failure
+ends the run successfully with the error class in ``crm.aa_catalog_state``
 and backs off (the hour after, at most :data:`BACKOFF_MAX_S` later). Payload and result are counts only.
 """
 
@@ -24,8 +26,8 @@ from typing import Any
 
 import asyncpg
 
-from app.catalog import store
-from app.catalog.client import CatalogClient, CatalogConfig, CatalogUnavailable, TourAnswer, summary
+from app.catalog import content, store
+from app.catalog.client import CatalogClient, CatalogConfig, CatalogUnavailable, ContentClient, TourAnswer, summary
 from app.jobs import queue
 from app.jobs.kinds import CATALOG_SYNC
 from app.jobs.queue import Job
@@ -68,7 +70,7 @@ class CatalogSync:
     def __init__(
         self, config: CatalogConfig | None, *, now: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.UTC)
     ) -> None:
-        self._client = CatalogClient(config) if config is not None else None
+        self._client = ContentClient(config) if config is not None else None
         self._now = now
         self._warned = False
 
@@ -91,6 +93,7 @@ class CatalogSync:
             if failures >= STUCK_FAILURES:
                 log.error("crm_catalog_sync_stuck error=%s failures=%d", exc.error_class, failures)
             return {"status": "error", "reason_code": exc.error_class, **_counts(counts)}
+        await content.refresh_safely(pool, self._client, counts)
         return {"status": "pass_done" if done else "partial", **_counts(counts)}
 
     async def _run(self, pool: asyncpg.Pool, state: store.SyncState, counts: Counter[str]) -> bool:
