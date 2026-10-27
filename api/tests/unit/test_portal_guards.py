@@ -551,7 +551,10 @@ def test_portal_fargate_deploy_watches_the_portal_only() -> None:
     deploy = (WORKFLOWS / "deploy-portal-dev.yml").read_text()
     assert '"portal/**"' in deploy and '"web/**"' not in deploy and '"api/**"' not in deploy
     assert "CRM_PORTAL_ENABLED" in deploy and "aa-crm-dev-portal" in deploy
-    assert "--connect-to" in deploy  # the smoke reaches the agency distribution before the DNS cutover
+    # AA-993 V3: the checks moved to post-deploy-verify.yml (app crm-portal) and ui-smoke-portal.yml (target fargate);
+    # both still pin the agency host to CRM_AGENCY_CF_DOMAIN when it is set (before a cutover, during a rollback).
+    assert "app: crm-portal" in deploy and "target: fargate" in deploy
+    assert "resolve_via: ${{ vars.CRM_AGENCY_CF_DOMAIN }}" in deploy
     ci = (WORKFLOWS / "ci.yml").read_text()
     assert "name: Portal Docker Build Check" in ci and "/portal-assets/_next/static/" in ci
 

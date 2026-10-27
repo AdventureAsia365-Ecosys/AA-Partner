@@ -2,8 +2,8 @@ name: Deploy Web Dev
 
 # AA-935 (CRM-07) — the CRM web (web/, Next.js standalone) to ECS Dev. Same model as Deploy Dev (the API): build on a
 # native arm64 runner -> push to ECR with the immutable git-SHA tag -> new task definition revision copied from the
-# family's LATEST revision with only the image swapped -> update the service -> wait stable -> verify the running
-# image -> live smoke. Runtime resources come from AA-CIS-Infra accounts/aa365/crm_web.tf; the OIDC role is the same
+# family's LATEST revision with only the image swapped -> update the service -> wait stable -> post-deploy verify.
+# Runtime resources come from AA-CIS-Infra accounts/aa365/crm_web.tf; the OIDC role is the same
 # deploy role as the API (aa-crm-dev-app-deploy; crm_web.tf extends its policy to the web repository, family and
 # service).
 #
@@ -11,15 +11,23 @@ name: Deploy Web Dev
 #
 # Configuration (GitHub environment `dev`, VARIABLES, none secret):
 #   AWS_ROLE_ARN          the deploy role (shared with Deploy Dev)
-#   CRM_WEB_ENABLED       "true" once crm_web.tf is applied; otherwise the deploy is skipped with a warning
+#   CRM_WEB_ENABLED       "true" once crm_web.tf is applied; otherwise the run is red (config fails, AA-993)
 #   AWS_REGION            default us-west-1
 #   ECR_WEB_REPOSITORY    default aa-crm-dev-web
 #   ECS_CLUSTER           default aa-cis-dev-cluster
 #   ECS_WEB_SERVICE       default aa-crm-dev-web
 #   ECS_WEB_TASK_FAMILY   default aa-crm-dev-web
-#   CRM_WEB_BASE_URL      default https://partner-dev.lumiguides.it.com (CloudFront -> ALB partner default rule -> web)
+#   CRM_WEB_BASE_URL      default https://partner-dev.lumiguides.it.com (CloudFront -> ALB partner default rule -> web;
+#                         read by the post-deploy verify)
 #
 # Pushes that only change web/tests/** do not deploy. This workflow never changes the desired count.
+#
+# Post-deploy verify (AA-993 V3, ADR 0016 D3): the `verify` job calls post-deploy-verify.yml with app crm-web (also
+# dispatchable with expected_sha; rows .github/verify/crm-web.rows, plus .github/scripts/edge_verify.sh): ECS rollout
+# COMPLETED with desired >= 1 on the built image, /healthz on this commit and version with sign-in configured, the
+# signed-out redirect to /auth/refresh, and /crm/health + /crm/health/ready reaching a ready API through the host's
+# API rule. The `result` job ("Deploy Web Dev result") is red when any job did not succeed, skipped included: read
+# that one. Desired count 0 is red (scaling Dev up is a separate step).
 
 on:
   push:
@@ -43,26 +51,21 @@ jobs:
     name: Deploy configuration
     runs-on: ubuntu-latest
     environment: dev
-    outputs:
-      enabled: ${{ steps.check.outputs.enabled }}
     steps:
+      # AA-993: red, not a skip. It used to output enabled=false and skip every job, which GitHub shows green.
       - name: Check AWS_ROLE_ARN and CRM_WEB_ENABLED
-        id: check
         env:
           ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
           WEB_ENABLED: ${{ vars.CRM_WEB_ENABLED }}
         run: |
           if [ -z "${ROLE_ARN}" ] || [ "${WEB_ENABLED}" != "true" ]; then
-            echo "::warning::AWS_ROLE_ARN unset or CRM_WEB_ENABLED != true on environment 'dev' — web deploy skipped (AA-CIS-Infra crm_web.tf not applied yet?)."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "::error::AWS_ROLE_ARN unset or CRM_WEB_ENABLED != true on environment 'dev': nothing can be deployed or verified (AA-CIS-Infra crm_web.tf outputs)."
+            exit 1
           fi
 
   deploy:
     name: Deploy web to ECS Dev
     needs: config
-    if: needs.config.outputs.enabled == 'true'
     runs-on: ubuntu-24.04-arm
     environment: dev
     env:
@@ -71,7 +74,6 @@ jobs:
       ECS_CLUSTER: ${{ vars.ECS_CLUSTER || 'aa-cis-dev-cluster' }}
       ECS_SERVICE: ${{ vars.ECS_WEB_SERVICE || 'aa-crm-dev-web' }}
       ECS_TASK_FAMILY: ${{ vars.ECS_WEB_TASK_FAMILY || 'aa-crm-dev-web' }}
-      BASE_URL: ${{ vars.CRM_WEB_BASE_URL || 'https://partner-dev.lumiguides.it.com' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -111,59 +113,52 @@ jobs:
             --query 'services[0].serviceName' --output text | grep -qx "$ECS_SERVICE" \
             || { echo "::error::service $ECS_SERVICE not found"; exit 1; }
           aws ecs describe-task-definition --task-definition "$ECS_TASK_FAMILY" --query 'taskDefinition' --output json > /tmp/td.json
-          echo "base task definition: $(jq -r '.taskDefinitionArn' /tmp/td.json)"
+          # family:revision only: the full ARN names the AWS account (public logs).
+          echo "base task definition: $(jq -r '.taskDefinitionArn | split("/") | last' /tmp/td.json)"
           [ "$(jq '.containerDefinitions | length' /tmp/td.json)" = "1" ] || { echo "::error::expected exactly one container"; exit 1; }
           jq --arg img "$DEPLOY_IMAGE" \
             'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy,.deregisteredAt) | .containerDefinitions[0].image = $img' \
             /tmp/td.json > /tmp/td_new.json
           NEW_TD=$(aws ecs register-task-definition --cli-input-json file:///tmp/td_new.json \
             --query 'taskDefinition.taskDefinitionArn' --output text)
-          echo "registered: $NEW_TD"
+          echo "registered: ${NEW_TD##*/}"
           aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" \
             --task-definition "$NEW_TD" >/dev/null
 
       - name: Wait for the service to be stable
         run: aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
 
-      - name: Verify the running image
-        run: |
-          set -euo pipefail
-          TD=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
-            --query 'services[0].taskDefinition' --output text)
-          RUNNING=$(aws ecs describe-task-definition --task-definition "$TD" \
-            --query 'taskDefinition.containerDefinitions[0].image' --output text)
-          echo "service image: $RUNNING"
-          [ "$RUNNING" = "$DEPLOY_IMAGE" ] || { echo "::error::service runs $RUNNING, expected $DEPLOY_IMAGE"; exit 1; }
-          DESIRED=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
-            --query 'services[0].desiredCount' --output text)
-          echo "DESIRED_COUNT=$DESIRED" >> "$GITHUB_ENV"
+  # AA-993 V3 (ADR 0016 D3) — the post-deploy checks (running image, desired count, /healthz, the sign-in redirect,
+  # the API rule) moved to post-deploy-verify.yml, which is also dispatchable on its own. It runs only when `deploy`
+  # succeeded; `result` below turns a skipped or failed verify red.
+  verify:
+    name: Post-deploy verify
+    needs: deploy
+    uses: ./.github/workflows/post-deploy-verify.yml
+    with:
+      expected_sha: ${{ github.sha }}
+      from_deploy: true
+      app: crm-web
 
-      - name: Smoke test (/healthz, sign-in redirect, unknown path)
+  # AA-993 — the run's verdict. GitHub shows a skipped job grey, not red, so without this a failed config/deploy
+  # (verify then skips) could look like "nothing to verify". Every job here must succeed; skipped, failed or
+  # cancelled is red on every event (no job in this workflow is conditional).
+  result:
+    name: Deploy Web Dev result
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [config, deploy, verify]
+    steps:
+      - name: Every job succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -uo pipefail
-          if [ "${DESIRED_COUNT}" = "0" ]; then
-            echo "::warning::desired count is 0 — no task is running, smoke skipped (scale to 1 is a separate step)."
-            exit 0
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          BAD=$(echo "$NEEDS" | jq -r '[to_entries[] | select(.value.result != "success") | "\(.key)=\(.value.result)"] | join(", ")')
+          if [ -n "$BAD" ] || [ "$(echo "$NEEDS" | jq 'length')" -lt 3 ]; then
+            echo "::error::Deploy Web Dev ($EVENT) is not verified: ${BAD:-a job result is missing}"
+            exit 1
           fi
-          BASE="${BASE_URL%/}"
-          fail=0
-          code=$(curl -s --max-time 20 -o /tmp/healthz.json -w "%{http_code}" "$BASE/healthz")
-          cat /tmp/healthz.json; echo
-          if [ "$code" != "200" ] || ! jq -e --arg sha "$GITHUB_SHA" --arg ver "$APP_VERSION" \
-            '.status == "ok" and .service == "aa-crm-web" and .git_sha == $sha and .version == $ver and .auth_configured == true' /tmp/healthz.json >/dev/null; then
-            echo "::error::/healthz -> $code (expected 200, git_sha $GITHUB_SHA, version $APP_VERSION, auth configured)"; fail=1
-          fi
-          loc=$(curl -s --max-time 20 -o /dev/null -w "%{redirect_url}" "$BASE/pipeline")
-          case "$loc" in
-            "$BASE/auth/refresh?next=%2Fpipeline") ;;
-            *) echo "::error::/pipeline without a session redirected to '$loc'"; fail=1 ;;
-          esac
-          # /crm/* must still reach the API rule, never the web default (without a session the web would answer 307 to
-          # /auth/refresh). 200 is the API up; 503 is the API at desired 0 (no healthy target), not this deploy's concern.
-          code=$(curl -s --max-time 20 -o /tmp/crm.json -w "%{http_code}" "$BASE/crm/health")
-          if [ "$code" = "200" ]; then
-            jq -e '.service == "aa-crm-api"' /tmp/crm.json >/dev/null || { echo "::error::/crm/health is not the API"; fail=1; }
-          elif [ "$code" != "503" ]; then
-            echo "::error::/crm/health -> $code: the API rule must stay above the web default"; fail=1
-          fi
-          [ "$fail" = "0" ] && echo "Smoke passed" || exit 1
+          echo "Deploy Web Dev ($EVENT): deployed and verified."

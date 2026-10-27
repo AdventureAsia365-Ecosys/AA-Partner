@@ -1,11 +1,13 @@
 name: UI Smoke (portal)
 
-# AA-979 (CRM-P2a) — the Playwright smoke of the tenant portal (portal/, Vercel aa-cis-portal), against a portal
-# deployment. Port of AA-CIS-App's ui-smoke-portal.yml (AA-885). Called by vercel-deploy-portal.yml after a
-# successful preview deploy (workflow_call), or run by hand (workflow_dispatch, e.g. against
-# https://portal.lumiguides.it.com). Specs: e2e/smoke-portal/, config e2e/playwright.portal.config.ts.
-# Secrets: the portal's bypass secret (VERCEL_PORTAL_BYPASS_SECRET, exported under the name the helpers read) and the
-# tenant test key E2E_TENANT_API_KEY (logged-in tests SKIP, not fail, when it is absent). No other credential.
+# AA-979 (CRM-P2a) — the Playwright smoke of the tenant portal (portal/), against a portal deployment. Port of
+# AA-CIS-App's ui-smoke-portal.yml (AA-885). Called by vercel-deploy-portal.yml after a successful preview deploy
+# (target vercel) and by deploy-portal-dev.yml after the Fargate deploy and its verify (target fargate, AA-993 V3),
+# or run by hand (workflow_dispatch, e.g. against https://portal.lumiguides.it.com). Specs: e2e/smoke-portal/, config
+# e2e/playwright.portal.config.ts.
+# Secrets: the portal's bypass secret (VERCEL_PORTAL_BYPASS_SECRET, exported under the name the helpers read; Vercel
+# only) and the tenant test key E2E_TENANT_API_KEY. Without the key the logged-in tests SKIP, unless the caller sets
+# require_tenant_key (deploy-portal-dev.yml does): then a missing key is red before any test runs. No other credential.
 on:
   workflow_call:
     inputs:
@@ -18,6 +20,21 @@ on:
         required: false
         type: string
         default: ""
+      target:
+        description: "AA-979: vercel (the Vercel copy / previews) or fargate (the studio on the agency host)"
+        required: false
+        type: string
+        default: vercel
+      resolve_via:
+        description: "A CloudFront name (*.cloudfront.net) the base URL's host is pinned to on the runner (/etc/hosts); empty = DNS"
+        required: false
+        type: string
+        default: ""
+      require_tenant_key:
+        description: "AA-993 V3: true = a missing E2E_TENANT_API_KEY is red (the logged-in tests must run), not a skip"
+        required: false
+        type: boolean
+        default: false
     secrets:
       VERCEL_PORTAL_BYPASS_SECRET:
         required: false
@@ -45,14 +62,21 @@ on:
         required: false
         type: string
         default: ""
+      require_tenant_key:
+        description: "AA-993 V3: red when E2E_TENANT_API_KEY is missing (otherwise the logged-in tests skip)"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
   pull-requests: write
 
 concurrency:
-  # One run per deployment URL; a re-run on the same URL cancels the in-flight one.
-  group: ui-smoke-portal-${{ inputs.base_url }}
+  # One run per caller and deployment URL; a re-run on the same URL cancels the in-flight one. The caller's name
+  # (github.workflow is the caller's in a workflow_call) keeps a hand-dispatched smoke from cancelling the smoke of a
+  # Deploy Portal Dev run (that would turn the deploy red).
+  group: ui-smoke-portal-${{ github.workflow }}-${{ inputs.base_url }}
   cancel-in-progress: true
 
 jobs:
@@ -69,9 +93,10 @@ jobs:
       BASE_URL: ${{ inputs.base_url }}
       PORTAL_TARGET: ${{ inputs.target || 'vercel' }}
     steps:
-      # AA-979 pre-cutover check: the agency host still resolves to Vercel, so pin it to the new CloudFront
-      # distribution for this run only (Playwright's browser and its request API both read /etc/hosts).
-      - name: Pin the base URL's host to the CloudFront distribution (pre-cutover only)
+      # AA-979: when the agency host does not resolve to its distribution (before the cutover, during a rollback to
+      # Vercel), pin it to that CloudFront distribution for this run only (Playwright's browser and its request API both
+      # read /etc/hosts).
+      - name: Pin the base URL's host to the CloudFront distribution (optional)
         if: inputs.resolve_via != ''
         working-directory: .
         env:
@@ -113,9 +138,17 @@ jobs:
           # VERCEL_AUTOMATION_BYPASS_SECRET and send it only to the BASE_URL origin, and only when present.
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_PORTAL_BYPASS_SECRET }}
           # The tenant test account's API key (Secrets Manager aa-cis/dev/e2e-tenant/<slug>, copied by the
-          # orchestrator; re-copy after a key rotation). Without it the logged-in portal tests skip.
+          # orchestrator; re-copy after a key rotation). Without it the logged-in portal tests skip, or, with
+          # require_tenant_key, this step is red.
           E2E_TENANT_API_KEY: ${{ secrets.E2E_TENANT_API_KEY }}
-        run: npx playwright test -c playwright.portal.config.ts
+          REQUIRE_TENANT_KEY: ${{ inputs.require_tenant_key && 'true' || 'false' }}
+        run: |
+          # AA-993 V3: a caller that needs the logged-in pages proven (the Fargate deploy) gets red, not skipped tests.
+          if [ "$REQUIRE_TENANT_KEY" = "true" ] && [ -z "${E2E_TENANT_API_KEY:-}" ]; then
+            echo "::error::E2E_TENANT_API_KEY is not set (repository secret; Secrets Manager aa-cis/dev/e2e-tenant/<slug>): the logged-in portal smoke cannot run."
+            exit 1
+          fi
+          npx playwright test -c playwright.portal.config.ts
 
       - name: Upload smoke artifacts (screenshots + HTML report only, NO auth state)
         if: always()
@@ -152,12 +185,15 @@ jobs:
           SERVER_URL: ${{ github.server_url }}
           RUN_ID: ${{ github.run_id }}
           BASE_URL: ${{ inputs.base_url }}
+          PORTAL_TARGET: ${{ inputs.target || 'vercel' }}
         run: |
-          MARKER="<!-- ui-smoke-report-portal -->"
+          # One comment per target: the Fargate deploy's smoke never overwrites the preview's result on the PR.
+          MARKER="<!-- ui-smoke-report-portal -->"; WHERE="Preview"
+          if [ "$PORTAL_TARGET" = "fargate" ]; then MARKER="<!-- ui-smoke-report-portal-fargate -->"; WHERE="Deployed (Fargate)"; fi
           RUN_URL="$SERVER_URL/$REPO/actions/runs/$RUN_ID"
           if [ "$OUTCOME" = "success" ]; then STATUS="✅ passed"; else STATUS="❌ failed"; fi
-          BODY=$(printf '%s\n### UI smoke (portal) — %s\n\nPreview: %s\n\n[Run & artifacts (screenshots + HTML report)](%s)\n' \
-                   "$MARKER" "$STATUS" "${BASE_URL:-n/a}" "$RUN_URL")
+          BODY=$(printf '%s\n### UI smoke (portal) — %s\n\n%s: %s\n\n[Run & artifacts (screenshots + HTML report)](%s)\n' \
+                   "$MARKER" "$STATUS" "$WHERE" "${BASE_URL:-n/a}" "$RUN_URL")
           EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" \
                        --jq ".[] | select(.body | contains(\"$MARKER\")) | .id" 2>/dev/null | head -n1 || true)
           if [ -n "$EXISTING" ]; then

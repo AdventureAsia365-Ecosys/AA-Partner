@@ -338,6 +338,17 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   (no automatic scale-up), a running image other than `<registry>/<repo>:<sha>`, `/crm/health` `git_sha`/`version` off,
   `/crm/health/ready` not 200 or below the newest `REQUIRED_SCHEMA_VERSIONS` key of the deployed commit, or
   `AWS_ROLE_ARN` unset (the `config` job fails). The **Deploy Dev result** job is red when any job did not succeed.
+- Post-deploy verify of the CRM web and the Content studio (AA-993 V3): the same workflow with input `app`
+  (`crm` default, `crm-web`, `crm-portal`; optional `resolve_via` pins the host to a CloudFront name), called by
+  `deploy-web-dev.yml` and `deploy-portal-dev.yml` after `deploy`. Rows `.github/verify/crm-web.rows` (`/healthz`
+  `git_sha`/`version`/`auth_configured`; `/crm/health` + `/crm/health/ready` reaching a ready API through the host's
+  API rule, without comparing the API's commit: a web deploy does not deploy the API) and `crm-portal.rows` (the
+  studio's `/api/healthz` `sha`/`version`: on the agency host `/healthz` is the CRM web's; the API rule), plus
+  `.github/scripts/edge_verify.sh` (signed-out redirects to the web's `/auth/refresh`, the studio sign-in page and its
+  `/portal-assets`). Same red rules (desired 0, rollout, image). `CRM_WEB_ENABLED` / `CRM_PORTAL_ENABLED` unset is red
+  (`config` fails). The portal deploy then runs the Playwright smoke (`ui-smoke-portal.yml`, `target: fargate`,
+  `require_tenant_key: true`: a missing `E2E_TENANT_API_KEY` is red). Read **Deploy Web Dev result** / **Deploy
+  Portal Dev result**.
 - release-please (manifest mode) keeps one release PR; the version is baked into the image and returned by
   `/crm/health`.
 
@@ -384,7 +395,8 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
   `CONTENT_STUDIO_URL`, and from Secrets Manager `COGNITO_CLIENT_SECRET`, `WEB_SESSION_SECRET`. Missing identity values
   turn sign-in off (the pages say so) while `/healthz` stays up.
 - **Deploy**: `.github/workflows/deploy-web-dev.yml` (same model as the API deploy, no job guard: the web runs no
-  worker), gated by the `dev` environment variable `CRM_WEB_ENABLED`.
+  worker), gated by the `dev` environment variable `CRM_WEB_ENABLED` (unset = red), then the post-deploy verify
+  (`app: crm-web`, section "CI and release").
 
 ## Tenant portal (`portal/`, AA-979 CRM-P2a)
 
@@ -419,7 +431,9 @@ original CIS commit). P2a moves the code only:
   security headers, the 308 map of the old slugs, draft legal pages outside the gate, muted-text contrast, the
   unmetered portal session, cross-site write refusal, lockfile tracked, deploy on `portal/**` only).
 - **Smoke**: `e2e/smoke-portal/` with `e2e/playwright.portal.config.ts` (host checks always; logged-in pages with
-  `E2E_TENANT_API_KEY`).
+  `E2E_TENANT_API_KEY`). `ui-smoke-portal.yml` takes `target` (`vercel` / `fargate`), `resolve_via` and
+  `require_tenant_key` both on dispatch and on call; the Fargate deploy calls it with `fargate` and the key required
+  (AA-993 V3), the Vercel preview without (logged-in tests skip when the key is absent).
 - **Account pages (AA-761)**: Billing = plan card, rewrite meter (used / quota and reset date from CIS `GET /v1/quota`,
   overage so far from `GET /v1/billing`) and an invoices empty state (CIS stores no invoices yet); Activity = kit
   DataTable with server paging over CIS `GET /v1/account/activity` (type and UTC-date filters) and a CSV export of the
@@ -428,8 +442,9 @@ original CIS commit). P2a moves the code only:
   by email to AA). Pure helpers in `portal/lib/account.ts`, tested by `npm test` (node --test, in Portal Build).
 - **The AA-CIS-App copy** of `portal/` is frozen (a CIS CI guard fails on any change) and no longer deployed; it is
   deleted 7 or more days after P2b. Portal changes are made here only.
-- **P2b (AA-979, prepared S252; the DNS cutover is a separate, later step)**: the studio runs as the Fargate service
-  `aa-crm-dev-portal` (`portal/Dockerfile`: standalone, Next assets under `/portal-assets/`, `/healthz`; deploy
+- **P2b (AA-979, prepared S252; `portal.` cut over to Fargate in S253, 27/10/2026)**: the studio runs as the
+  Fargate service `aa-crm-dev-portal` (`portal/Dockerfile`: standalone, Next assets under `/portal-assets/`, `/healthz`, the same body
+  at `/api/healthz` for the post-deploy verify; deploy
   `.github/workflows/deploy-portal-dev.yml`, CI "Portal Docker Build Check") behind the agency host `portal.` (AA-CIS-Infra
   `crm_agency_edge.tf`: its own CloudFront distribution; the ALB sends `/portal*`, `/api/*`, `/tenant-login*`, `/terms`,
   `/privacy`, `/assets/*` to the studio, `/crm*` to the API, everything else to the CRM web). The cutover switch is the
