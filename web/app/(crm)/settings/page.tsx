@@ -39,6 +39,11 @@ export default async function SettingsPage() {
         <a href="/settings/saved-replies" style={{ fontSize: 13.5 }} data-testid="settings-replies-link">
           {t(lang, "replies.link")}
         </a>
+        <p style={{ margin: "8px 0 0", fontSize: 13.5 }}>
+          <a href="/settings/templates" data-testid="settings-templates-link">
+            {t(lang, "templates.link")}
+          </a>
+        </p>
       </Panel>
       <Panel title={t(lang, "forms.title")} testId="settings-forms">
         <a href="/settings/forms" style={{ fontSize: 13.5 }} data-testid="settings-forms-link">

@@ -162,6 +162,17 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "DELETE", pattern: new RegExp(`^proposals/${UUID}/(days|blocks|options|rules)/${UUID}$`), tenant: true, card: "AA-949" },
   { method: "POST", pattern: new RegExp(`^proposals/${UUID}/days/${UUID}/blocks$`), tenant: true, card: "AA-949" },
   { method: "POST", pattern: new RegExp(`^proposals/${UUID}/blocks/${UUID}/(options|aa-options)$`), tenant: true, card: "AA-949" },
+  // AA-951 (CRM-22): the text proposal (A-05: e-mail / WhatsApp text, EN / VI, preview and send with the version's
+  // price hash; a stale hash is the API's 409), the builder's Before you go day 0 (packs from CIS), and Settings >
+  // Templates (the library, the AA starter import; owner writes, the API checks).
+  { method: "GET", pattern: new RegExp(`^proposals/${UUID}/text$`), tenant: true, card: "AA-951" },
+  { method: "POST", pattern: new RegExp(`^proposals/${UUID}/text/send$`), tenant: true, card: "AA-951" },
+  { method: "GET", pattern: new RegExp(`^proposals/${UUID}/before-you-go$`), tenant: true, card: "AA-951" },
+  { method: "PUT", pattern: new RegExp(`^proposals/${UUID}/before-you-go$`), tenant: true, card: "AA-951" },
+  { method: "GET", pattern: /^message-templates$/, tenant: true, card: "AA-951" },
+  { method: "POST", pattern: /^message-templates(\/import-aa)?$/, tenant: true, card: "AA-951" },
+  { method: "PATCH", pattern: new RegExp(`^message-templates/${UUID}$`), tenant: true, card: "AA-951" },
+  { method: "DELETE", pattern: new RegExp(`^message-templates/${UUID}$`), tenant: true, card: "AA-951" },
   // AA-945 (CRM-17): Settings > Mailbox (own mailbox: every role; the agency's: owner, the API checks), the forward-in
   // address, the sender table, conversations (trip Messages tab, Unmatched inbox, link to a client), drafts (autosave,
   // discard), send / Undo / back to draft, saved replies, the history import (S252: the raw mbox / CSV upload and its

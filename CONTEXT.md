@@ -7,7 +7,7 @@ status: active
 owner: nghiep
 audience: [engineer, agent]
 applies_to: [aa-crm-api, aa-crm-web, aa-cis-portal]
-last_reviewed: 2026-10-25
+last_reviewed: 2026-10-27
 review_every_days: 90
 related: [ARCH-01, ARCH-06-booking, docs/adr/README.md]
 ---
@@ -73,7 +73,8 @@ Design sources, in order:
   `crm_membership_pull` (section "CIS membership feed" below); CIS is a revocation and lifecycle source there, never a
   positive gate and never a source of CRM roles.
   AA-947: `booking.b2b.v1` (quotes, holds, confirms, the `/events` feed) through `app/booking/` and `catalog.http.v1`
-  (the AA tour cache) through `app/catalog/`, with the same M2M client (section "CRM-19" below).
+  (the AA tour cache) through `app/catalog/`, with the same M2M client (section "CRM-19" below). AA-951: `catalog.http.v1`
+  1.2 `/aa-content` (AA prep packs and starter templates, AA-977) into `crm.aa_content` (section "CRM-22" below).
 - **Publishes** `crm.ops.v1` under `/crm/ops/v1` to the CIS admin (L1 platform console), later `crm.insights.v1`.
 - **Never** grants another app's role anything on `crm`, never reads another app's schema (no cross-schema grants in
   either direction: the isolation probe asserts 42501 both ways), never writes content (ADR 0002), never owns prices
@@ -264,6 +265,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-019` | `api/migrations/019_crm_proposal_builder.sql` | CRM-21a proposal model + day-list builder (AA-949; needs crm-017 + crm-018): `proposal.kind` text / builder, `price_visibility` (`total_with_deltas` default / `total_only`, D1), `room_config` (Fix B10), `deposit_pct`, `starts_on`, the version counters `edit_seq` (stale write = 409 `version_conflict`) and `selection_seq` / `based_on_selection_seq` (a client pick made since the working copy was copied is surfaced at publish), status `published` (builder: draft -> published -> sent / superseded / withdrawn; one published per trip), `sent_at` set once (`crm.guard_set_once`, so CRM-21b can send a published version); `proposal_day` (day 0 = Before you go, IANA `tz`, notes under the vault DEK), `option_block` (`client_may_swap` default true, `default_option_id`, `default_pinned`), `option` (agency / AA source, `net_amount` conf:commercial, pay on arrival, choose later agency only, availability, AA quote reference with `aa_nights` (required for a hotel room) and "from"-price warning), `option_rule` (requires / excludes), `selection` (one pick per block of a published / sent version); `crm.guard_proposal_draft` (CRM35: builder rows change only in a draft, an option's availability excepted) and `crm.guard_selection` (CRM36); no ON DELETE actions (a referential action reads every agency's holds), the two circular keys deferred; `crm.erase_subject` = the crm-017 text + the five tables; hold guard on all five |
 | `crm-020` | `api/migrations/020_crm_studio_invitation.sql` | CRM-P2b Content studio invitations (AA-979; needs crm-019): `crm.studio_invitation`, a PLATFORM table (no `tenant_id`: the CIS tenant may have no CRM agency; `cis_tenant_id` without foreign key, `cis_invitation_id` UNIQUE = CIS's invitation, re-issued in place), the e-mail sealed under a key derived from the invitation token (the database alone cannot open it), `token_hash`, locale, status pending -> claimed -> accepted -> activated (expired / revoked; expired -> pending on re-issue), the partner-pool identity the claim bound, activation attempts and the last error code; FORCE RLS: a platform actor or the activation job, or the token holder (SELECT + UPDATE on `app.invite_token_hash`); `crm.guard_studio_invitation_write()` CRM37; no reader grant, no DELETE. erase / hold / purge functions unchanged |
 | `crm-021` | `api/migrations/021_crm_client_proposal.sql` | CRM-21b client proposal (AA-950; needs crm-019; crm-020 is AA-979's and independent, either order): `proposal` viewed counters (`view_count`, `first_viewed_at`, `last_viewed_at`, `nudged_at`, R4), the version's hold set (`hold_set_ref` = the Booking `proposal_ref` `crm-proposal:<id>`, UNIQUE; `hold_id`, `hold_quote_id`, `hold_expires_at`, `hold_selection_sha256`, `hold_placed_at`, `hold_count`; `recheck_day` / `recheck_count_day` <= 3, Fix A3; the request in flight `hold_attempt`, `hold_pending_key` / `_at` / `_quote_id` / `_price_hash` / `_selection_sha256`; `hold_release_id`, a hold whose release Booking did not answer), the builder acceptance (`accepted_selection_sha256`, `accepted_total_amount`, `accepted_deposit_amount`, `accepted_hold_id`) under the crm-016 acceptance seal; `crm.metric_event` (base template; the bell: `bell_member_id`, `seen_at` set once by `crm.guard_metric_event`, crm_app inserts / reads and has a column grant on `seen_at` only); `crm.erase_subject` = the crm-019 text + `metric_event`. No new SQLSTATE (crm-020 has CRM37; next CRM38) |
+| `crm-022` | `api/migrations/022_crm_text_proposal_prep_packs.sql` | CRM-22 text proposal + Before you go (AA-951; needs crm-021): `crm.aa_content` (platform cache of CIS AA-authored content from `catalog.http.v1` 1.2: prep packs and starter templates, one locale per `content_id`, EN / VI paired by `group_key`, `listed`; crm_app SELECT / INSERT / UPDATE, written by `crm_catalog_sync`), `crm.prep_pack_selection` (base template: the packs picked for the Before you go day 0 of one builder version, a copy of the pinned CIS version; draft-only through `crm.guard_proposal_draft` CRM35, trip hold guard), `crm.message_template` (base template: the agency library, body under the mail DEK, `source` agency / aa_starter with one AA copy per group and locale); `crm.erase_subject` = the crm-021 text + the two tenant tables. No new SQLSTATE (next CRM38) |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -298,7 +300,7 @@ non-exempt kind as busy. Daily or slower kinds are queued **due now** by a worke
 | `crm_mail_health` | daily, from `JOB_RETENTION_UTC_HOUR`, due-now hook (`app.mail.health.DailyMailHealthSchedule`) | AA-945: every agency's mailboxes: token refresh / SMTP login + NOOP; passing -> connected (held messages re-queued), revoked -> disconnected + one owner alert, unreachable -> needs attention. Counts only. Not deploy-gate exempt |
 | `crm_mail_history_import` | per mbox / CSV upload (queued in the upload's transaction) | AA-945: parses the upload from `imports/<tenant>/<id>`, stores each mail through the ingest path (`imported`), counts on `crm.mail_import`, deletes the object. Not deploy-gate exempt |
 | `crm_booking_sync` | 60 s, Recurring, plus a one-agency nudge per AA request (payload `tenant_id`, `aa_request_id`) | AA-947: sends the due `crm.aa_request` rows of every active agency to Booking (`<BOOKING_API_URL>/booking/b2b/v1`, one M2M scope per call; holds / confirms with a stable `Idempotency-Key`), applies the answers (line, money at the quote lock, `trip_commitment`, `waiting_on`), keeps a request pending with a backoff while Booking is down, then pulls the agency's `/events` into `crm.inbox_events` (section "CRM-19"). Deploy-gate exempt and DB Migrate idle exempt (Infra `owners.yaml`), like the membership pull; `not_configured` without `BOOKING_API_URL` / `M2M_CLIENT` |
-| `crm_catalog_sync` | hourly, due-now hook (`app.catalog.sync.HourlyCatalogSync`, key per UTC hour) | AA-947: refreshes `crm.aa_catalog_tour` from `<CIS_API_URL>/catalog/v1` (scope `cis.catalog/read`): full passes comparing `content_hash`, a changed tour fetched with `If-None-Match`, tours no longer listed re-checked (410 retired, 404 paused); bounded per run, the pass continues next run; a CIS failure backs off. Not deploy-gate exempt |
+| `crm_catalog_sync` | hourly, due-now hook (`app.catalog.sync.HourlyCatalogSync`, key per UTC hour) | AA-947: refreshes `crm.aa_catalog_tour` from `<CIS_API_URL>/catalog/v1` (scope `cis.catalog/read`): full passes comparing `content_hash`, a changed tour fetched with `If-None-Match`, tours no longer listed re-checked (410 retired, 404 paused); bounded per run, the pass continues next run; a CIS failure backs off. AA-951: after the tour pass, `crm.aa_content` from `/aa-content` (prep packs, starter templates; a body fetched only when version or hash changed, at most 60 a run; items CIS no longer lists unlisted after a complete list); a content failure is counted (`content_error_count`), never fatal. Not deploy-gate exempt |
 | `crm_studio_activation` | per accepted Content studio invitation (queued in the accept transaction, idempotency key per invitation, 12 attempts) | AA-979: CIS `tenant.membership.v1` 1.1 `activateInvitation` with an M2M token of scope `cis.tenant/activate` (`app/members/studio.py`, `app/cis/activation.py`); a CIS outage / 5xx / 401 / 403 retries with backoff, a CIS 404 / 409 fails it permanently with the code on the row. Not deploy-gate exempt |
 | `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
 
@@ -809,6 +811,40 @@ activity), routes in `app/routers/client_pages.py` and `app/routers/proposals.py
   (phone first, 390 px), `components/proposals/BuilderClientRow.tsx` (Send / Re-issue / viewed / choices),
   `components/BellMenu.tsx` (top bar), `lib/clientProposal.ts`, `lib/bell.ts`; BFF lines card AA-950; EN + VI. Dev E2E:
   `e2e/tests/client-proposal.spec.ts`.
+
+## CRM-22 text proposal + Before you go (AA-951)
+
+Design v3 §6.3 CRM-22 (M4, R38, R9; F4 / WF-5 A-05; Q1 2.3); migration crm-022; code in `app/proposals/`
+(`text_render.py` the pure renderers, `text_proposal.py` preview and send, `prep_packs.py` the day 0), `app/mail/templates.py`
+(the library), `app/catalog/content.py` (the CIS content sync), routes in `app/routers/proposal_text.py`; decisions in
+`docs/implementation-notes/AA-951.md`.
+
+- **Text proposal** (`GET /proposals/{id}/text?format=email|whatsapp&locale=en|vi&template_id=`, every role): one version
+  rendered from one snapshot (defaults, sell amounts, D1 deltas, rooms, days with zone offsets, the day 0, the price
+  block; never a net or a margin) with the version's `price_hash` (reference = its first 12 hex digits, in every text).
+  A builder version renders once published, a text version as a draft (its hash computed as Send fixes it).
+- **Send** (`POST /proposals/{id}/text/send`, owner / agent; e-mail also `MESSAGE_SEND`): the body names the hash the
+  preview showed; **another hash is 409 `price_hash_mismatch`** (card R) before any write. A version not yet sent goes
+  out through the link send (AA-946 / AA-950) in the same transaction and the text carries
+  `<first INTAKE_PAGE_ORIGINS entry>/c/p/<token>`; a sent version keeps its link unless the body asks for `new_link`
+  (the link is re-issued into the text: the page does so after the agent undid the e-mail that carried the only copy
+  of the link). E-mail = one message through the AA-945 composer (send-as, Undo; no mailbox = 409 and nothing is
+  sent); WhatsApp = the final text returned for the agent to paste (no WhatsApp channel), audit `proposal_text_send`.
+  `{{traveller_first_name}}` = the first word of the lead's display name (never the F1 `given_name`: reveal only).
+- **Before you go** (day 0, R38): the builder view's `before_you_go` lists CIS prep packs whose `applies_to` names a
+  country / tour of the version's AA options or the trip's live AA lines (**none without an AA item**, card E: no
+  suggestion, a pick is 422 `no_aa_items`, no pack rendered); `PUT /proposals/{id}/before-you-go` (draft, `seq`) copies
+  every locale of each picked group into `crm.prep_pack_selection` (a working copy copies them). Rendering keeps only
+  the official `https://` links of a visa section (Q1 2.3), adds the insurance reminder, and the fitness warning when an
+  AA tour is challenging / strenuous or a trek / high-altitude. Day 0's priced items are listed in the texts too. The
+  client page C-03 carries the same section (`before_you_go` of `GET /crm/public/v1/proposal`,
+  `prep_packs.client_view`; both go through `prep_packs.rendered`, the card E gate).
+- **Templates** (R9, `GET|POST /message-templates`, `PATCH|DELETE /message-templates/{id}`,
+  `POST /message-templates/import-aa`): owner writes (`WORKFLOW_EDIT`), every role reads; the import copies the CIS
+  starter templates once per group and locale. Merge fields: the CIS seed names plus `{{proposal}}`.
+- **Web**: `/pipeline/<trip>/proposal/<id>/text` (`components/proposals/TextProposalPage.tsx`), the builder's day 0
+  (`components/proposals/BeforeYouGoPanel.tsx`), Settings > Message templates (`components/settings/MessageTemplates.tsx`),
+  helpers `lib/textProposal.ts`, BFF lines card AA-951; EN + VI.
 
 ## F1 / F2 complete (AA-937, CRM-09)
 

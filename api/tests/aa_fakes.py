@@ -278,9 +278,11 @@ def tour_body(source_id: str = "T-100", title: str = "Mekong Delta 3 days", dige
 
 @dataclass
 class FakeCis:
-    """CIS catalog.http.v1: ``tours`` = source_id -> body; ``retired`` / ``paused`` keys answer 410 / 404."""
+    """CIS catalog.http.v1: ``tours`` = source_id -> body; ``retired`` / ``paused`` keys answer 410 / 404. AA-951:
+    ``content`` = content_id -> the AaContent body of its latest published version (listed by ``kind``)."""
 
     tours: dict[str, dict[str, Any]] = field(default_factory=dict)
+    content: dict[str, dict[str, Any]] = field(default_factory=dict)
     retired: set[str] = field(default_factory=set)
     paused: set[str] = field(default_factory=set)
     down: bool = False
@@ -296,6 +298,21 @@ class FakeCis:
         parsed = urllib.parse.urlsplit(url)
         path = parsed.path.removeprefix("/catalog/v1")
         query = dict(urllib.parse.parse_qsl(parsed.query))
+        if path == "/aa-content":
+            self.calls["content_list"] += 1
+            keys = sorted(k for k, v in self.content.items() if v["kind"] == query.get("kind"))
+            start = int(query.get("cursor", "0") or 0)
+            page = keys[start : start + int(query.get("limit", "50"))]
+            nxt = str(start + len(page)) if start + len(page) < len(keys) else None
+            keep = ("content_id", "kind", "version", "locale", "group_key", "title", "published_at", "content_hash")
+            return _resp(200, {"items": [{k: self.content[c][k] for k in keep} for c in page], "next_cursor": nxt})
+        if path.startswith("/aa-content/"):
+            self.calls["content_get"] += 1
+            content_id, _, version = path.removeprefix("/aa-content/").partition("/versions/")
+            body = self.content.get(content_id)
+            if body is None or str(body["version"]) != version:
+                return _resp(404, {"error": "not_found", "message": "unknown"})
+            return _resp(200, body, {"ETag": f'"{body["content_hash"]}"'})
         if path == "/tours":
             self.calls["list"] += 1
             keys = sorted(self.tours)
@@ -337,3 +354,21 @@ def new_id() -> uuid.UUID:
 
 def dec(value: str) -> Decimal:
     return Decimal(value)
+
+
+def content_body(content_id: str, kind: str = "prep_pack", locale: str = "en", **over: Any) -> dict[str, Any]:
+    """One AaContent body (catalog.http.v1 1.2), as the root sample prep-pack-valid.json."""
+    body: dict[str, Any] = {
+        "content_id": content_id,
+        "kind": kind,
+        "version": 3,
+        "locale": locale,
+        "group_key": "prep-ha-giang",
+        "title": "Before you go: Ha Giang",
+        "body_markdown": "Visa: apply only on the official e-visa portal (https://evisa.gov.vn).",
+        "applies_to": {"country_codes": ["VN"]},
+        "published_at": "2026-12-01T00:00:00Z",
+        "content_hash": "sha256:9a0364b9e99bb480",
+    }
+    body.update(over)
+    return body
