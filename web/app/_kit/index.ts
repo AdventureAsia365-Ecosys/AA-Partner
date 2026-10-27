@@ -1,5 +1,9 @@
 // web/app/_kit/index.ts
-// The CRM web's barrel for the AA UI kit. Pages import "@/app/_kit", never ./core or ./local directly.
+// The CRM web's barrel for the AA UI kit. Pages and components import "@/app/_kit" (server or client: this barrel
+// leaves out core/useMediaQuery.ts, see below). Deep imports are allowed only in these cases (root ADR 0016
+// decision 3; listed so that moving a file between core and local stays local):
+//   - app/layout.tsx imports core/tokens.css (no PostCSS here) and local/theme (the restore script).
+//   - app/(crm)/layout.tsx imports local/CrmShell by path: the shell imports this barrel, so it is not re-exported.
 //
 // AA-994 S2a (root ADR 0016): ./core is a byte copy of AA-CIS-App frontend/app/_kit/core (full profile), written by
 // the root tools/kit/kit-sync.sh and pinned by ../../kit.lock.json; Web Build checks it (integrity: core/check-kit-

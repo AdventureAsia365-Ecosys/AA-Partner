@@ -8,6 +8,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Providers } from "./_kit/core/Providers";
+import { themeStore } from "./_kit/local/theme";
 
 export const metadata: Metadata = {
   title: "Adventure Asia — Partner Portal",
@@ -18,17 +19,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" data-theme="light" data-sidebar="expanded" suppressHydrationWarning>
       <head>
+        {/* AA-994 S2a: the theme half is the kit core's restore script for this app's key (_kit/local/theme.ts),
+            as in CIS admin; the sidebar half stays here (`cis_sidebar`, matching core/sidebarStore.ts). */}
+        <script dangerouslySetInnerHTML={{ __html: themeStore.restoreScript }} />
         <script dangerouslySetInnerHTML={{ __html: `
           (function() {
-            try {
-              var c = localStorage.getItem('cis_theme');
-              var resolved = (c === 'light' || c === 'dark')
-                ? c
-                : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-              document.documentElement.setAttribute('data-theme', resolved);
-            } catch (e) {
-              document.documentElement.setAttribute('data-theme', 'light');
-            }
             try {
               var s = localStorage.getItem('cis_sidebar');
               document.documentElement.setAttribute('data-sidebar', s === 'collapsed' ? 'collapsed' : 'expanded');

@@ -16,11 +16,12 @@ regenerated manifest fails (3), and a copy of an unmerged CIS branch fails (4).
 
 The check always runs (Portal Build, Web Build; no path filter, so it also reports on ``merge_group``) but only reads
 GitHub when the change touches the kit: with ``--base <sha>`` it diffs ``<sha>..HEAD`` over the lock and the core
-folder and passes at once when neither changed. No base (or a base git cannot read) means a full check.
+folder and passes at once when neither changed. A ref name (``--base origin/main``, for local runs) is resolved to its
+commit first. No base (or a base git cannot read) means a full check.
 
 Usage (any working directory; lock paths are relative to it)::
 
-    python3 api/scripts/check_kit_provenance.py portal/kit.lock.json [web/kit.lock.json] [--base <sha>]
+    python3 api/scripts/check_kit_provenance.py portal/kit.lock.json [web/kit.lock.json] [--base <sha|ref>]
 
 Reads AA-CIS-App through the GitHub REST API (public repo). ``GITHUB_TOKEN`` (or ``GH_TOKEN``) only lifts the rate
 limit; without it, or if GitHub refuses it, calls are anonymous. Network errors, rate limits and 5xx are retried, then
@@ -121,9 +122,16 @@ def run_git(args: Sequence[str]) -> str | None:
 
 
 def kit_changed(paths: Sequence[str], base: str, git: GitRunner = run_git) -> bool:
-    """True when <base>..HEAD touches any of `paths` (repo-relative), or when the diff cannot be computed."""
-    if not SHA_RE.match(base) or base == ZERO_SHA:
+    """True when <base>..HEAD touches any of `paths` (repo-relative), or when the diff cannot be computed.
+
+    CI passes a sha; a local run may pass a ref name (``origin/main``), which is resolved to its commit first."""
+    if not base or base == ZERO_SHA or base.startswith("-"):
         return True
+    if not SHA_RE.match(base):
+        resolved = git(["rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"])
+        if resolved is None or not SHA_RE.match(resolved.strip()):
+            return True
+        base = resolved.strip()
     if git(["cat-file", "-e", f"{base}^{{commit}}"]) is None:
         git(["fetch", "--no-tags", "--quiet", "--depth=1", "origin", base])
     out = git(["diff", "--name-only", base, "HEAD", "--", *paths])
@@ -192,7 +200,7 @@ def main(
 ) -> int:
     parser = argparse.ArgumentParser(description="Provenance of the vendored UI kit core (root ADR 0016).")
     parser.add_argument("locks", nargs="+", type=Path, help="kit.lock.json files")
-    parser.add_argument("--base", default="", help="diff base commit; unchanged kit = pass without GitHub")
+    parser.add_argument("--base", default="", help="diff base commit (sha or ref); unchanged kit = pass without GitHub")
     args = parser.parse_args(argv)
     failed = 0
     for lock_path in args.locks:

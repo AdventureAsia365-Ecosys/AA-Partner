@@ -5,9 +5,9 @@
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
-import { BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_MONO, FONT_SANS } from "@/app/_kit/core/brand";
-import { formatDate, formatDateTime } from "@/app/_kit/core/tokens";
-import { SkeletonBar, SkeletonStyle } from "@/app/_kit/core/primitives";
+import {
+  BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_MONO, FONT_SANS, SkeletonBar, SkeletonStyle, formatDate, formatDateTime,
+} from "@/app/_kit";
 
 // ─── Tokens ───────────────────────────────────────────────────────────────────
 // Key names unchanged (hundreds of call sites). AA-759: the values are the `--aa-*` CSS variables

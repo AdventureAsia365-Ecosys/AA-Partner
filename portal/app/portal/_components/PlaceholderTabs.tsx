@@ -13,11 +13,12 @@ import { useState } from "react";
 import { signOutEverywhere } from "@/lib/signOut";
 import { useQuery } from "@tanstack/react-query";
 import { Check, Mail, ExternalLink, KeyRound, LogOut, AlertTriangle, FileText } from "lucide-react";
-import { EmptyState as KitEmptyState, Modal, SkeletonBar, SkeletonStyle, apiGet } from "@/app/_kit";
+import {
+  EmptyState as KitEmptyState, Modal, SkeletonBar, SkeletonStyle, SITE_URL, SUPPORT_EMAIL, apiGet,
+} from "@/app/_kit";
 import { T, sans, Card, CardSkeleton, PageHeader, Btn, ProgressBar, fmtBillingMonth } from "./ui";
 import { usePortalShell, type ShellBilling } from "./PortalShellContext";
 import { fmtDay, fmtUsd, usageMeter, type Quota } from "@/lib/account";
-import { SUPPORT_EMAIL, SITE_URL } from "@/app/_kit/core/brand";
 
 
 const titleCase = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);

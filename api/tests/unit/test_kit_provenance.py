@@ -127,11 +127,14 @@ def test_github_errors_are_reported_not_raised(tmp_path: Path) -> None:
 
 
 class _Git:
-    def __init__(self, diff: str | None, has_base: bool = True) -> None:
-        self.diff, self.has_base, self.calls = diff, has_base, []
+    def __init__(self, diff: str | None, has_base: bool = True, refs: dict[str, str] | None = None) -> None:
+        self.diff, self.has_base, self.refs, self.calls = diff, has_base, refs or {}, []
 
     def __call__(self, args: Sequence[str]) -> str | None:
         self.calls.append(list(args))
+        if args[0] == "rev-parse":
+            sha = self.refs.get(args[-1].removesuffix("^{commit}"))
+            return f"{sha}\n" if sha else None
         if args[0] == "cat-file":
             return "" if self.has_base else None
         if args[0] == "fetch":
@@ -150,6 +153,17 @@ def test_main_skips_github_when_the_kit_did_not_change(tmp_path: Path) -> None:
     assert git.calls[-1] == ["diff", "--name-only", "b" * 40, "HEAD", "--", *watched]
 
 
+def test_main_resolves_a_ref_name_base_before_the_diff(tmp_path: Path) -> None:
+    lock = _repo(tmp_path)
+    get, calls = _github()
+    git = _Git(diff="", refs={"origin/main": "d" * 40})
+    out = io.StringIO()
+    assert prov.main([str(lock), "--base", "origin/main"], get, git, out, tmp_path) == 0
+    assert calls == [] and "kit core unchanged" in out.getvalue()
+    assert ["rev-parse", "--verify", "--quiet", "origin/main^{commit}"] in git.calls
+    assert git.calls[-1][:4] == ["diff", "--name-only", "d" * 40, "HEAD"]
+
+
 def test_main_checks_when_the_kit_changed_or_the_diff_is_unknown(tmp_path: Path) -> None:
     lock = _repo(tmp_path)
     for git, base in (
@@ -157,10 +171,12 @@ def test_main_checks_when_the_kit_changed_or_the_diff_is_unknown(tmp_path: Path)
         (_Git(diff=None, has_base=False), "b" * 40),  # base not fetchable: full check
         (_Git(diff=""), prov.ZERO_SHA),  # push of a new branch
         (_Git(diff=""), ""),  # no base at all
+        (_Git(diff=""), "no-such-ref"),  # a ref name git cannot resolve
+        (_Git(diff=""), "--output=x"),  # never handed to git as an option
     ):
         get, calls = _github()
         out = io.StringIO()
-        argv = [str(lock)] + (["--base", base] if base else [])
+        argv = [str(lock)] + ([f"--base={base}"] if base else [])
         assert prov.main(argv, get, git, out, tmp_path) == 0, out.getvalue()
         assert len(calls) == 2 and "(on main)" in out.getvalue()
     git = _Git(diff=None, has_base=False)

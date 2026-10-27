@@ -7,8 +7,7 @@
 
 import { useState } from "react";
 import { Copy, CheckCircle, Bell, Mail } from "lucide-react";
-import { alpha } from "@/app/_kit";
-import { SUPPORT_EMAIL } from "@/app/_kit/core/brand";
+import { alpha, SUPPORT_EMAIL } from "@/app/_kit";
 import { T, serif, mono, sans, Card, PageHeader } from "./ui";
 import { ApiPlayground } from "./ApiPlayground";
 

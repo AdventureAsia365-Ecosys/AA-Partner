@@ -20,7 +20,7 @@ import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { T, sans, Card, CardHead, Btn } from "./ui";
 import { DisconnectConnection } from "./DisconnectConnection";
-import { formatDateTime } from "@/app/_kit/core/tokens";
+import { formatDateTime } from "@/app/_kit";
 
 export interface WordPressStatus {
   connected: boolean;
