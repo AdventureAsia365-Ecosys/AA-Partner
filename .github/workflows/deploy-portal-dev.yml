@@ -4,16 +4,24 @@ name: Deploy Portal Dev
 # aa-crm-dev-portal behind the agency host portal.<zone> (AA-CIS-Infra accounts/aa365/crm_portal.tf +
 # crm_agency_edge.tf). Same model as Deploy Web Dev: build on a native arm64 runner -> push to ECR with the immutable
 # git-SHA tag -> new task definition revision copied from the family's LATEST revision with only the image swapped ->
-# update the service -> wait stable -> verify the running image -> live smoke. Same OIDC deploy role
+# update the service -> wait stable -> post-deploy verify -> Playwright UI smoke. Same OIDC deploy role
 # (aa-crm-dev-app-deploy; crm_app.tf extends it to the portal repository, family and service).
 #
-# No job guard: the studio runs no crm.job worker. Nothing here touches DNS: until the cutover (AA-CIS-Infra
-# crm_agency_live) portal.<zone> still points at Vercel, so the smoke reaches the new distribution by its CloudFront
-# name with Host / SNI = portal.<zone> (curl --connect-to), exactly what the pre-cutover runbook check does.
+# No job guard: the studio runs no crm.job worker. Nothing here touches DNS. Since the S253 cutover portal.<zone>
+# points at the agency distribution, so the checks go through DNS; when CRM_AGENCY_CF_DOMAIN is set they pin the host
+# to that distribution instead (runner /etc/hosts), which keeps them on the Fargate studio during a rollback to Vercel.
+#
+# Post-deploy verify (AA-993 V3, ADR 0016 D3): the `verify` job calls post-deploy-verify.yml with app crm-portal
+# (also dispatchable with expected_sha; rows .github/verify/crm-portal.rows, plus .github/scripts/edge_verify.sh):
+# ECS rollout COMPLETED with desired >= 1 on the built image, /api/healthz on this commit and version (on the agency
+# host /healthz is the CRM web's), the sign-in page and its /portal-assets, the signed-out redirect to the CRM web's
+# /auth/refresh, and the API rule. Then `smoke` runs ui-smoke-portal.yml with target fargate; there a missing
+# E2E_TENANT_API_KEY (repository secret) is red, never a skip. The `result` job ("Deploy Portal Dev result") is red
+# when any job did not succeed, skipped included: read that one. Desired count 0 is red.
 #
 # Configuration (GitHub environment `dev`, VARIABLES, none secret):
 #   AWS_ROLE_ARN              the deploy role (shared with Deploy Dev)
-#   CRM_PORTAL_ENABLED        "true" once crm_portal.tf is applied; otherwise the deploy is skipped with a warning
+#   CRM_PORTAL_ENABLED        "true" once crm_portal.tf is applied; otherwise the run is red (config fails, AA-993)
 #   AWS_REGION                default us-west-1
 #   ECR_PORTAL_REPOSITORY     default aa-crm-dev-portal
 #   ECS_CLUSTER               default aa-cis-dev-cluster
@@ -21,7 +29,7 @@ name: Deploy Portal Dev
 #   ECS_PORTAL_TASK_FAMILY    default aa-crm-dev-portal
 #   PORTAL_HOST               default portal.lumiguides.it.com
 #   CRM_AGENCY_CF_DOMAIN      the crm_agency distribution's *.cloudfront.net name (Terraform output crm_agency_edge);
-#                             empty = the smoke goes through DNS (after the cutover)
+#                             the verify and the smoke pin the host to it; empty = DNS
 #   PORTAL_PUBLIC_SENTRY_DSN  the browser Sentry DSN (public by design), baked in at build time; empty = off
 #
 # Pushes that only change the portal's tests or the Vercel-only file do not deploy. Never changes the desired count.
@@ -49,36 +57,33 @@ jobs:
     name: Deploy configuration
     runs-on: ubuntu-latest
     environment: dev
-    outputs:
-      enabled: ${{ steps.check.outputs.enabled }}
     steps:
+      # AA-993: red, not a skip. It used to output enabled=false and skip every job, which GitHub shows green.
       - name: Check AWS_ROLE_ARN and CRM_PORTAL_ENABLED
-        id: check
         env:
           ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
           PORTAL_ENABLED: ${{ vars.CRM_PORTAL_ENABLED }}
         run: |
           if [ -z "${ROLE_ARN}" ] || [ "${PORTAL_ENABLED}" != "true" ]; then
-            echo "::warning::AWS_ROLE_ARN unset or CRM_PORTAL_ENABLED != true on environment 'dev' — portal deploy skipped (AA-CIS-Infra crm_portal.tf not applied yet?)."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "::error::AWS_ROLE_ARN unset or CRM_PORTAL_ENABLED != true on environment 'dev': nothing can be deployed or verified (AA-CIS-Infra crm_portal.tf outputs)."
+            exit 1
           fi
 
   deploy:
     name: Deploy portal to ECS Dev
     needs: config
-    if: needs.config.outputs.enabled == 'true'
     runs-on: ubuntu-24.04-arm
     environment: dev
+    # The `dev` environment variables the smoke call needs (a job that calls a reusable workflow cannot read them).
+    outputs:
+      base_url: ${{ format('https://{0}', vars.PORTAL_HOST || 'portal.lumiguides.it.com') }}
+      resolve_via: ${{ vars.CRM_AGENCY_CF_DOMAIN }}
     env:
       AWS_REGION: ${{ vars.AWS_REGION || 'us-west-1' }}
       ECR_REPOSITORY: ${{ vars.ECR_PORTAL_REPOSITORY || 'aa-crm-dev-portal' }}
       ECS_CLUSTER: ${{ vars.ECS_CLUSTER || 'aa-cis-dev-cluster' }}
       ECS_SERVICE: ${{ vars.ECS_PORTAL_SERVICE || 'aa-crm-dev-portal' }}
       ECS_TASK_FAMILY: ${{ vars.ECS_PORTAL_TASK_FAMILY || 'aa-crm-dev-portal' }}
-      PORTAL_HOST: ${{ vars.PORTAL_HOST || 'portal.lumiguides.it.com' }}
-      CF_DOMAIN: ${{ vars.CRM_AGENCY_CF_DOMAIN }}
       PUBLIC_SENTRY_DSN: ${{ vars.PORTAL_PUBLIC_SENTRY_DSN }}
     steps:
       - uses: actions/checkout@v7
@@ -120,63 +125,72 @@ jobs:
             --query 'services[0].serviceName' --output text | grep -qx "$ECS_SERVICE" \
             || { echo "::error::service $ECS_SERVICE not found"; exit 1; }
           aws ecs describe-task-definition --task-definition "$ECS_TASK_FAMILY" --query 'taskDefinition' --output json > /tmp/td.json
-          echo "base task definition: $(jq -r '.taskDefinitionArn' /tmp/td.json)"
+          # family:revision only: the full ARN names the AWS account (public logs).
+          echo "base task definition: $(jq -r '.taskDefinitionArn | split("/") | last' /tmp/td.json)"
           [ "$(jq '.containerDefinitions | length' /tmp/td.json)" = "1" ] || { echo "::error::expected exactly one container"; exit 1; }
           jq --arg img "$DEPLOY_IMAGE" \
             'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy,.deregisteredAt) | .containerDefinitions[0].image = $img' \
             /tmp/td.json > /tmp/td_new.json
           NEW_TD=$(aws ecs register-task-definition --cli-input-json file:///tmp/td_new.json \
             --query 'taskDefinition.taskDefinitionArn' --output text)
-          echo "registered: $NEW_TD"
+          echo "registered: ${NEW_TD##*/}"
           aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" \
             --task-definition "$NEW_TD" >/dev/null
 
       - name: Wait for the service to be stable
         run: aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
 
-      - name: Verify the running image
-        run: |
-          set -euo pipefail
-          TD=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
-            --query 'services[0].taskDefinition' --output text)
-          RUNNING=$(aws ecs describe-task-definition --task-definition "$TD" \
-            --query 'taskDefinition.containerDefinitions[0].image' --output text)
-          echo "service image: $RUNNING"
-          [ "$RUNNING" = "$DEPLOY_IMAGE" ] || { echo "::error::service runs $RUNNING, expected $DEPLOY_IMAGE"; exit 1; }
-          DESIRED=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
-            --query 'services[0].desiredCount' --output text)
-          echo "DESIRED_COUNT=$DESIRED" >> "$GITHUB_ENV"
+  # AA-993 V3 (ADR 0016 D3) — the post-deploy checks (running image, desired count, the studio's commit and version,
+  # sign-in page, assets, signed-out redirect, the API rule) moved to post-deploy-verify.yml, which is also
+  # dispatchable on its own. It runs only when `deploy` succeeded; `result` below turns a skipped or failed verify red.
+  verify:
+    name: Post-deploy verify
+    needs: deploy
+    uses: ./.github/workflows/post-deploy-verify.yml
+    with:
+      expected_sha: ${{ github.sha }}
+      from_deploy: true
+      app: crm-portal
+      resolve_via: ${{ needs.deploy.outputs.resolve_via }}
 
-      # Through the agency distribution with Host / SNI = the agency host (before the cutover DNS still says Vercel).
-      # /healthz is not checked here: on the agency host the ALB sends it to the CRM web (the task health check and the
-      # target group check the studio's own /healthz).
-      - name: Smoke test (sign-in page, sign-in redirect, assets, the CRM API rule)
+  # The Playwright smoke of the studio on the agency host, logged-in pages included: require_tenant_key turns a
+  # missing E2E_TENANT_API_KEY red here (the preview smoke of vercel-deploy-portal.yml still skips those tests).
+  # Only the tenant key is passed (no Vercel bypass: the agency host is not behind Vercel), never `inherit`.
+  smoke:
+    name: UI smoke (Fargate)
+    needs: [deploy, verify]
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/ui-smoke-portal.yml
+    with:
+      base_url: ${{ needs.deploy.outputs.base_url }}
+      sha: ${{ github.sha }}
+      target: fargate
+      resolve_via: ${{ needs.deploy.outputs.resolve_via }}
+      require_tenant_key: true
+    secrets:
+      E2E_TENANT_API_KEY: ${{ secrets.E2E_TENANT_API_KEY }}
+
+  # AA-993 — the run's verdict. GitHub shows a skipped job grey, not red, so without this a failed config/deploy/verify
+  # (the jobs after it then skip) could look like "nothing to verify". Every job here must succeed; skipped, failed or
+  # cancelled is red on every event (no job in this workflow is conditional).
+  result:
+    name: Deploy Portal Dev result
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [config, deploy, verify, smoke]
+    steps:
+      - name: Every job succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -uo pipefail
-          if [ "${DESIRED_COUNT}" = "0" ]; then
-            echo "::warning::desired count is 0 — no task is running, smoke skipped (scale to 1 is a separate step)."
-            exit 0
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          BAD=$(echo "$NEEDS" | jq -r '[to_entries[] | select(.value.result != "success") | "\(.key)=\(.value.result)"] | join(", ")')
+          if [ -n "$BAD" ] || [ "$(echo "$NEEDS" | jq 'length')" -lt 4 ]; then
+            echo "::error::Deploy Portal Dev ($EVENT) is not verified: ${BAD:-a job result is missing}"
+            exit 1
           fi
-          BASE="https://${PORTAL_HOST}"
-          VIA=()
-          if [ -n "${CF_DOMAIN}" ]; then VIA=(--connect-to "${PORTAL_HOST}:443:${CF_DOMAIN}:443"); fi
-          fail=0
-          code=$(curl -s --max-time 20 "${VIA[@]}" -o /tmp/login.html -w "%{http_code}" "$BASE/tenant-login")
-          [ "$code" = "200" ] || { echo "::error::/tenant-login -> $code"; fail=1; }
-          ASSET=$(grep -o '/portal-assets/_next/static/[^"]*\.js' /tmp/login.html | head -n1)
-          if [ -z "$ASSET" ] || [ "$(curl -s --max-time 20 "${VIA[@]}" -o /dev/null -w '%{http_code}' "$BASE$ASSET")" != "200" ]; then
-            echo "::error::the studio's /portal-assets/_next/static assets are not served"; fail=1
-          fi
-          # Only the Fargate studio sends a signed-out visitor to the CRM web's refresh (the Vercel copy sends /tenant-login).
-          loc=$(curl -s --max-time 20 "${VIA[@]}" -o /dev/null -w "%{redirect_url}" "$BASE/portal/dashboard")
-          case "$loc" in
-            "$BASE/auth/refresh?next=%2Fportal%2Fdashboard") ;;
-            *) echo "::error::/portal/dashboard without a session redirected to '$loc'"; fail=1 ;;
-          esac
-          code=$(curl -s --max-time 20 "${VIA[@]}" -o /tmp/crm.json -w "%{http_code}" "$BASE/crm/health")
-          if [ "$code" = "200" ]; then
-            jq -e '.service == "aa-crm-api"' /tmp/crm.json >/dev/null || { echo "::error::/crm/health is not the API"; fail=1; }
-          elif [ "$code" != "503" ]; then
-            echo "::error::/crm/health -> $code: the agency host's API rule must stay above the web default"; fail=1
-          fi
-          [ "$fail" = "0" ] && echo "Smoke passed" || exit 1
+          echo "Deploy Portal Dev ($EVENT): deployed, verified and smoke-tested."

@@ -1,0 +1,13 @@
+# AA-993 V3 (ADR 0016 D3) — HTTP rows of the CRM web post-deploy verify (service aa-crm-dev-web, host partner-dev.),
+# read by .github/scripts/post_deploy_verify.sh crm-web. Format and variables: see crm.rows.
+#
+# The ECS rows (rollout COMPLETED, desired >= 1, image = <registry>/<repo>:<sha>) are fixed in the script; the
+# sign-in redirect is checked by .github/scripts/edge_verify.sh crm-web (a row cannot read a Location header).
+#
+# The /crm/* rows prove the host's API rule still sits above the web default and that the API is up and ready. They do
+# not compare the API's git_sha or version: a web deploy does not deploy the API (its own verify, crm.rows, does), so
+# the API may run an older commit on a healthy Dev. $required is not used for the same reason.
+
+healthz|public|GET /healthz|200|.status == "ok" and .service == "aa-crm-web" and .git_sha == $sha and .version == $version and .auth_configured == true
+api-health|public|GET /crm/health|200|.status == "ok" and .service == "aa-crm-api"
+api-ready|public|GET /crm/health/ready|200|.status == "ok" and .db == "ok"

@@ -1,0 +1,12 @@
+# AA-993 V3 (ADR 0016 D3) — HTTP rows of the Content studio post-deploy verify (service aa-crm-dev-portal, the agency
+# host portal.), read by .github/scripts/post_deploy_verify.sh crm-portal. Format and variables: see crm.rows.
+#
+# On the agency host the ALB sends /healthz to the CRM web, so the studio's liveness is read at /api/healthz (same
+# body, portal/lib/health.ts). The ECS rows are fixed in the script; the sign-in page, its assets and the signed-out
+# redirect are checked by .github/scripts/edge_verify.sh crm-portal. The Playwright smoke (ui-smoke-portal.yml,
+# target fargate) runs after this verify.
+#
+# api-health proves the agency host's API rule sits above the web default; the API's own commit is crm.rows' job.
+
+studio-healthz|public|GET /api/healthz|200|.ok == true and .service == "aa-partner-portal" and .sha == $sha and .version == $version
+api-health|public|GET /crm/health|200|.status == "ok" and .service == "aa-crm-api"

@@ -479,17 +479,21 @@ def test_verify_workflow_is_callable_and_dispatchable_with_expected_sha() -> Non
     for trigger in (call, dispatch):
         assert re.search(r"expected_sha:\n.*\n\s+required: true", trigger)
     assert "from_deploy:" in call and "from_deploy" not in dispatch
+    # AA-993 V3: one workflow for the three services; deploy-dev.yml passes no app, so the default must stay `crm`.
+    assert re.search(r"app:\n.*\n\s+required: false\n\s+type: string\n\s+default: crm\n", call)
+    assert "options: [crm, crm-web, crm-portal]" in dispatch
+    assert "resolve_via:" in call and "resolve_via:" in dispatch
     assert "merge_group" not in on and "push:" not in on and "pull_request" not in on
     assert not re.search(r"^concurrency:", text, re.M), "workflow-level concurrency would be shared with every caller"
     job = _block(text, "verify:", 2)
     assert "    environment: dev\n" in job
     group = re.search(r"^\s+group: (.+)$", job, re.M)
     assert group
-    assert f"'post-deploy-verify-{APP}'" in group.group(1)
+    assert "format('post-deploy-verify-{0}', inputs.app)" in group.group(1)
     assert "inputs.from_deploy" in group.group(1) and "github.run_id" in group.group(1)
-    assert "'deploy-dev'" not in group.group(1)
+    assert "deploy-dev" not in group.group(1).replace("-deploy-{1}", "")
     assert "cancel-in-progress: false" in job
-    assert f"bash .github/scripts/post_deploy_verify.sh {APP}\n" in text
+    assert 'bash .github/scripts/post_deploy_verify.sh "$VERIFY_APP"\n' in text
     # The expected image is what the build pushes: <registry>/<repo>:<sha>, no prefix on the tag.
     assert 'EXPECTED_IMAGE="${REGISTRY}/${ECR_REPOSITORY}:${EXPECTED_SHA}"' in text
     assert "REGISTRY: ${{ steps.ecr.outputs.registry }}" in text
