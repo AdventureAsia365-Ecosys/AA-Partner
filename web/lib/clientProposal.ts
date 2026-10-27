@@ -73,6 +73,22 @@ export interface VersionNotice {
   picks_carried: number;
 }
 
+/** One section of an AA prep pack (api prep_packs.sections): a visa section carries its official links only. */
+export interface PackSection {
+  heading: string | null;
+  text: string;
+  visa: boolean;
+  links: { label: string; url: string }[];
+}
+
+/** AA-951 (R38, F4): the "Before you go" the e-mail / WhatsApp texts carry too: the picked packs (every locale), the
+ * insurance reminder, the fitness warning. */
+export interface ClientBeforeYouGo {
+  packs: { group_key: string; versions: { locale: string; title: string; sections: PackSection[] }[] }[];
+  insurance_reminder: boolean;
+  fitness_warning: boolean;
+}
+
 /** The page of a builder version: the text page's fields plus the choice. */
 export interface ClientBuilderPage extends PublicProposal {
   kind: "builder";
@@ -84,12 +100,18 @@ export interface ClientBuilderPage extends PublicProposal {
   selection_hash: string;
   hold: HoldBox;
   notice: VersionNotice | null;
+  before_you_go?: ClientBeforeYouGo | null;
 }
 
 export type AnyClientPage = (PublicProposal & { kind?: "text" }) | ClientBuilderPage;
 
 export function isBuilderPage(page: AnyClientPage): page is ClientBuilderPage {
   return page.kind === "builder";
+}
+
+/** The pack copy in the page's language, else English, else the first one (as the texts pick it). */
+export function packVersion<V extends { locale: string }>(versions: V[], lang: string): V | null {
+  return versions.find((v) => v.locale === lang) ?? versions.find((v) => v.locale === "en") ?? versions[0] ?? null;
 }
 
 /** "Included", "+40.00 USD" or "−20.00 USD" (minus sign), or null when only the total is shown. */

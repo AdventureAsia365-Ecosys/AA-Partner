@@ -5,7 +5,8 @@
 // names the hash the agent saw: when the version changed since, the API answers 409 price_hash_mismatch (card R), the
 // page says so and shows the fresh text to review before sending again. E-mail goes out send-as from the agency
 // mailbox (10 s Undo); WhatsApp has no channel in the CRM, so the page hands over the final text (copy, or open
-// WhatsApp with it).
+// WhatsApp with it). Undoing the e-mail that carried the only copy of a just-made link leaves the version sent with a
+// link the client never got: the page says so and the next send asks the API for a new link (new_link).
 import Link from "next/link";
 import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
@@ -15,6 +16,9 @@ import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import {
   TEXT_FORMATS,
   TEXT_LANGS,
+  linkLostOnUndo,
+  linkNoteKey,
+  sendBody,
   textErrorKey,
   whatsappShareUrl,
   type MessageTemplate,
@@ -62,6 +66,7 @@ export function TextProposalPage({
   const [message, setMessage] = useState<{ tone: "danger" | "success"; text: string } | null>(null);
   const [sent, setSent] = useState<TextSent | null>(null);
   const [copied, setCopied] = useState(false);
+  const [relink, setRelink] = useState(false);
   const canSend = role === "owner" || role === "agent";
 
   async function load(next: { format?: TextFormat; locale?: TextLang; templateId?: string }): Promise<TextPreview | null> {
@@ -88,14 +93,14 @@ export function TextProposalPage({
     setBusy(true);
     setMessage(null);
     setCopied(false);
-    const body: Record<string, unknown> = { format, locale, price_hash: preview.price_hash };
-    if (templateId) body.template_id = templateId;
-    if (format === "email") body.message_id = newMessageId();
+    const body = sendBody({ format, locale, priceHash: preview.price_hash, templateId, messageId: newMessageId(), relink });
     const res = await bffSend<TextSent>("POST", `proposals/${preview.proposal_id}/text/send`, body);
     setBusy(false);
     if (res.ok) {
       setSent(res.data);
+      setRelink(false);
       setMessage({ tone: "success", text: tr(format === "email" ? "text.sentEmail" : "text.sentWhatsapp") });
+      await load({}); // the version may be sent now: the link note follows the fresh preview
       return;
     }
     setMessage({ tone: "danger", text: tr(textErrorKey(res.detail)) });
@@ -107,8 +112,16 @@ export function TextProposalPage({
     setBusy(true);
     const res = await bffSend("POST", `messages/${sent.message.message_id}/undo`);
     setBusy(false);
-    setMessage(res.ok ? { tone: "success", text: tr("text.undone") } : { tone: "danger", text: tr("text.undoLate") });
-    if (res.ok) setSent(null);
+    if (!res.ok) {
+      setMessage({ tone: "danger", text: tr("text.undoLate") });
+      return;
+    }
+    // The version stays sent; when this e-mail carried the only copy of its link, the next send re-issues one.
+    const lost = linkLostOnUndo(sent);
+    setRelink(lost);
+    setSent(null);
+    setMessage({ tone: "success", text: tr(lost ? "text.undoneRelink" : "text.undone") });
+    await load({});
   }
 
   async function copy(text: string) {
@@ -196,7 +209,7 @@ export function TextProposalPage({
             {fmt(tr("text.unfilled"), { fields: preview.unfilled.join(", ") })}
           </p>
         )}
-        <p style={{ margin: "8px 0 0", fontSize: 12.5, color: K.muted }}>{tr(preview.link === "added_on_send" ? "text.linkOnSend" : "text.linkClientHas")}</p>
+        <p style={{ margin: "8px 0 0", fontSize: 12.5, color: K.muted }}>{tr(linkNoteKey(preview, relink))}</p>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
           {canSend ? (
             <span data-testid="text-send">

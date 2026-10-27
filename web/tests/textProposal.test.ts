@@ -10,12 +10,16 @@ import { matchBff } from "@/lib/bff";
 import { MESSAGES } from "@/lib/i18n";
 import {
   canRenderText,
+  linkLostOnUndo,
+  linkNoteKey,
+  sendBody,
   textErrorKey,
   togglePack,
   whatsappShareUrl,
   withSuggestions,
   type BeforeYouGo,
   type TextPreview,
+  type TextSent,
 } from "@/lib/textProposal";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -98,6 +102,25 @@ describe("helpers", () => {
     expect(textErrorKey("price_hash_mismatch")).toBe("text.err.price_hash_mismatch");
     expect(textErrorKey("whatever")).toBe("text.err.generic");
     expect(textErrorKey(undefined)).toBe("text.err.generic");
+  });
+
+  it("an undone e-mail that carried the only link asks the next send for a new link", () => {
+    const sent = (over: Partial<TextSent>): TextSent => ({
+      proposal_id: P, status: "sent", format: "email", locale: "en", price_hash: HASH, reference: "ab12cd34ef56",
+      link_path: "/c/p/t", link_in_text: true, version_sent: true, link_reissued: false, superseded: null,
+      subject: "S", body: "B", ...over,
+    });
+    expect(linkLostOnUndo(sent({}))).toBe(true);
+    expect(linkLostOnUndo(sent({ link_in_text: false, link_path: null, version_sent: false }))).toBe(false);
+    expect(linkLostOnUndo(sent({ format: "whatsapp" }))).toBe(false);
+    expect(linkNoteKey(preview(), false)).toBe("text.linkOnSend");
+    expect(linkNoteKey(preview({ link: "client_has_it" }), false)).toBe("text.linkClientHas");
+    expect(linkNoteKey(preview({ link: "client_has_it" }), true)).toBe("text.linkRelink");
+    const base = { format: "email" as const, locale: "en" as const, priceHash: HASH, templateId: "", messageId: X };
+    expect(sendBody({ ...base, relink: false })).toEqual({ format: "email", locale: "en", price_hash: HASH, message_id: X });
+    expect(sendBody({ ...base, format: "whatsapp", templateId: P, relink: true })).toEqual({
+      format: "whatsapp", locale: "en", price_hash: HASH, template_id: P, new_link: true,
+    });
   });
 
   it("every new string exists in both languages", () => {
@@ -221,5 +244,46 @@ describe("Text proposal page (A-05)", () => {
     const posts = calls.filter(([, i]) => i.method === "POST");
     expect(JSON.parse(String(posts[1][1].body)).price_hash).toBe("f".repeat(64));
     expect(container.querySelector("[data-testid=text-final]")!.textContent).toMatch(/Final text/);
+  });
+
+  it("undoing the e-mail that carried the only link: the page says so and the next send re-issues the link", async () => {
+    const sentVersion = preview({ status: "sent", link: "client_has_it" });
+    const calls: [string, RequestInit][] = [];
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      calls.push([url, init]);
+      if (init.method === "GET") return new Response(JSON.stringify(sentVersion), { status: 200 });
+      if (url.endsWith("/undo")) return new Response(JSON.stringify({ status: "draft" }), { status: 200 });
+      const first = calls.filter(([u, i]) => i.method === "POST" && u.endsWith("/text/send")).length === 1;
+      return new Response(
+        JSON.stringify({
+          proposal_id: P, status: "sent", format: "email", locale: "en", price_hash: HASH, reference: "ab12cd34ef56",
+          link_path: first ? "/c/p/t" : "/c/p/new", link_in_text: true, version_sent: first, link_reissued: !first,
+          superseded: null, subject: "S", body: "Text\n", message: { message_id: X, status: "queued" },
+        }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const container = await mount(page());
+    const send = () => container.querySelector<HTMLButtonElement>("[data-testid=text-send] button")!;
+    await act(async () => {
+      send().click();
+    });
+    expect(JSON.parse(String(calls[0][1].body)).new_link).toBeUndefined();
+    // The preview is read again after the send: the version is sent now.
+    expect(container.textContent).toMatch(/client has its link/);
+    const undo = [...container.querySelectorAll<HTMLButtonElement>("[data-testid=text-sent] button")].find((b) => b.textContent === "Undo")!;
+    await act(async () => {
+      undo.click();
+    });
+    expect(container.querySelector("[data-testid=text-message]")!.textContent).toMatch(/link was only in that e-mail/);
+    expect(container.textContent).toMatch(/has not received the link yet/);
+    await act(async () => {
+      send().click();
+    });
+    const sends = calls.filter(([u, i]) => i.method === "POST" && u.endsWith("/text/send"));
+    expect(sends).toHaveLength(2);
+    expect(JSON.parse(String(sends[1][1].body)).new_link).toBe(true);
+    expect(container.textContent).not.toMatch(/has not received the link yet/);
   });
 });

@@ -826,15 +826,19 @@ Design v3 §6.3 CRM-22 (M4, R38, R9; F4 / WF-5 A-05; Q1 2.3); migration crm-022;
 - **Send** (`POST /proposals/{id}/text/send`, owner / agent; e-mail also `MESSAGE_SEND`): the body names the hash the
   preview showed; **another hash is 409 `price_hash_mismatch`** (card R) before any write. A version not yet sent goes
   out through the link send (AA-946 / AA-950) in the same transaction and the text carries
-  `<first INTAKE_PAGE_ORIGINS entry>/c/p/<token>`; a sent version keeps its link. E-mail = one message through the
-  AA-945 composer (send-as, Undo; no mailbox = 409 and nothing is sent); WhatsApp = the final text returned for the
-  agent to paste (no WhatsApp channel), audit `proposal_text_send`.
+  `<first INTAKE_PAGE_ORIGINS entry>/c/p/<token>`; a sent version keeps its link unless the body asks for `new_link`
+  (the link is re-issued into the text: the page does so after the agent undid the e-mail that carried the only copy
+  of the link). E-mail = one message through the AA-945 composer (send-as, Undo; no mailbox = 409 and nothing is
+  sent); WhatsApp = the final text returned for the agent to paste (no WhatsApp channel), audit `proposal_text_send`.
+  `{{traveller_first_name}}` = the first word of the lead's display name (never the F1 `given_name`: reveal only).
 - **Before you go** (day 0, R38): the builder view's `before_you_go` lists CIS prep packs whose `applies_to` names a
   country / tour of the version's AA options or the trip's live AA lines (**none without an AA item**, card E: no
   suggestion, a pick is 422 `no_aa_items`, no pack rendered); `PUT /proposals/{id}/before-you-go` (draft, `seq`) copies
   every locale of each picked group into `crm.prep_pack_selection` (a working copy copies them). Rendering keeps only
   the official `https://` links of a visa section (Q1 2.3), adds the insurance reminder, and the fitness warning when an
-  AA tour is challenging / strenuous or a trek / high-altitude.
+  AA tour is challenging / strenuous or a trek / high-altitude. Day 0's priced items are listed in the texts too. The
+  client page C-03 carries the same section (`before_you_go` of `GET /crm/public/v1/proposal`,
+  `prep_packs.client_view`; both go through `prep_packs.rendered`, the card E gate).
 - **Templates** (R9, `GET|POST /message-templates`, `PATCH|DELETE /message-templates/{id}`,
   `POST /message-templates/import-aa`): owner writes (`WORKFLOW_EDIT`), every role reads; the import copies the CIS
   starter templates once per group and locale. Merge fields: the CIS seed names plus `{{proposal}}`.

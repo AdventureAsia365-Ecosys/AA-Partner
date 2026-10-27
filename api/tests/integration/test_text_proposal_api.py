@@ -11,6 +11,8 @@ and the message templates as crm_app through ``tenant_tx()``, with real field en
 - E-mail and WhatsApp, EN and VI, from one snapshot with one hash; the WhatsApp send sends the version (link made)
   and answers the text with the link; an e-mail without a mailbox is 409 and the version stays unsent.
 - R9: the AA starter templates are copied once per group and locale; a template's merge fields fill the intro.
+- F4 / R38: the client page C-03 opened from the link in the text shows the same Before you go (the packs with the
+  visa section reduced to its links, the reminders) and a priced day 0 item is in every text too.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ import pytest
 from app.errors import Conflict, Invalid
 from app.mail import templates
 from app.proposals import builder, prep_packs, service, text_proposal
+from app.proposals import public as page
 from app.tenancy import tenant_tx
 from app.vault import Vault
 from tests.aa_fakes import FakeBooking
@@ -144,6 +147,36 @@ async def test_packs_from_the_aa_items_visa_link_only_and_one_hash_for_every_tex
     async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
         rows = await prep_packs.selected(ctx, _pid(copy))
     assert {r["content_version"] for r in rows} == {2}
+
+
+async def test_the_client_page_and_the_text_show_one_before_you_go(app_pool: asyncpg.Pool) -> None:
+    await _content(app_pool)
+    async with app_pool.acquire() as conn:  # an earlier test publishes a newer CIS version of the pack: restore it
+        await conn.execute("UPDATE crm.aa_content SET body_markdown = $1 WHERE group_key = 'prep-pack-nepal' "
+                           "AND locale = 'en'", NEPAL_EN)  # fmt: skip
+    s = await _setup(app_pool)
+    v = await _published(app_pool, s, aa=True)
+    v = await _as(app_pool, s, "agent", builder.set_before_you_go, _pid(v), v["edit_seq"], ["prep-pack-nepal"])
+    day0 = next(d for d in v["days"] if d["day_no"] == 0)
+    v = await _as(app_pool, s, "agent", builder.add_block, _pid(v), v["edit_seq"], uuid.UUID(day0["proposal_day_id"]),
+                  {"title": "Arrival", "type": "transport"})  # fmt: skip
+    v = await _option(app_pool, s, v, _block(v, 0), title="Airport pickup", sell_amount=Decimal("40"))
+    pub = await _publish(app_pool, s, v)
+    out = await _as(app_pool, s, "agent", text_proposal.send, _pid(pub), fmt="whatsapp", locale="en",
+                    price_hash=pub["price_hash"], client_origin="https://go.example.test")  # fmt: skip
+    before, _, _days = out["body"].partition("*Day 1")
+    assert "- Arrival: Airport pickup" in before and "Official information: https://www.immigration.gov.np" in before
+    client = await page.read(app_pool, s["keys"], out["link_path"].rsplit("/", 1)[1])
+    byg = client["before_you_go"]
+    assert byg["insurance_reminder"] and byg["fitness_warning"] and [p["group_key"] for p in byg["packs"]] == [
+        "prep-pack-nepal"]  # fmt: skip
+    en = next(x for x in byg["packs"][0]["versions"] if x["locale"] == "en")
+    visa = next(sec for sec in en["sections"] if sec["visa"])
+    assert visa["text"] == "" and [link["url"] for link in visa["links"]] == ["https://www.immigration.gov.np"]
+    assert "Most travellers need a visa" not in json.dumps(byg) and "aa_items" not in byg
+    # The day 0 item the text lists is on the client page and in its total.
+    day0_page = next(d for d in client["days"] if d["day_no"] == 0)
+    assert [o["title"] for o in day0_page["blocks"][0]["options"]] == ["Airport pickup"]
 
 
 async def test_a_differing_price_hash_blocks_the_send(app_pool: asyncpg.Pool) -> None:

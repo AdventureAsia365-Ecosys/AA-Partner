@@ -13,6 +13,9 @@ crm-022).
   its heading and its ``https://`` links and nothing else (no advice text ever reaches the client from a pack).
 - **Insurance reminder**: always (the CRM's own sentence, not advice). **Fitness warning**: when an AA item's tour has
   a challenging / strenuous intensity, or trekking / climbing / high-altitude activity or title words.
+- **One section, three forms** (F4): the e-mail / WhatsApp text (:mod:`app.proposals.text_proposal`) and the client
+  page C-03 (:func:`client_view`, read by :mod:`app.proposals.public`) take the packs through :func:`rendered`, so the
+  AA-items gate (card E), the locales and the visa rule are the same in all three.
 
 Pure helpers first (unit tested without a database), then the context functions (they never open one).
 """
@@ -28,7 +31,7 @@ from typing import Any
 
 from app.catalog import store as catalog
 from app.errors import Conflict, Invalid, NotFound
-from app.tenancy import TenantContext
+from app.tenancy import AnyContext, TenantContext
 
 MAX_PACKS = 12
 LOCALES = ("en", "vi")
@@ -204,11 +207,11 @@ async def agency_locale(ctx: TenantContext) -> str:
     return ui_locale(await ctx.conn.fetchval(AGENCY_LOCALE_SQL))
 
 
-async def selected(ctx: TenantContext, proposal_id: uuid.UUID) -> list[dict[str, Any]]:
+async def selected(ctx: AnyContext, proposal_id: uuid.UUID) -> list[dict[str, Any]]:
     return [dict(r) for r in await ctx.conn.fetch(SELECTED_SQL, proposal_id)]
 
 
-async def basis(ctx: TenantContext, proposal_id: uuid.UUID, trip_id: uuid.UUID) -> dict[str, Any]:
+async def basis(ctx: AnyContext, proposal_id: uuid.UUID, trip_id: uuid.UUID) -> dict[str, Any]:
     """The trip's AA items as seen by the day 0: their count, countries, tours and the fitness flag."""
     tours = [dict(r) for r in await ctx.conn.fetch(TOURS_SQL, proposal_id, trip_id)]
     count = int(await ctx.conn.fetchval(AA_COUNT_SQL, proposal_id, trip_id) or 0)
@@ -218,6 +221,46 @@ async def basis(ctx: TenantContext, proposal_id: uuid.UUID, trip_id: uuid.UUID) 
         "tours": sorted(t["source_id"] for t in tours),
         "fitness_warning": fitness_warning(tours),
     }
+
+
+async def rendered(
+    ctx: AnyContext, proposal_id: uuid.UUID, trip_id: uuid.UUID
+) -> tuple[dict[str, Any], dict[str, list[dict[str, Any]]]]:
+    """What the client is shown of the day 0 packs: the :func:`basis` and the picked groups (every locale each), the
+    groups empty while the trip has no AA item (card E: a pack picked earlier is not shown once the AA item is gone)."""
+    b = await basis(ctx, proposal_id, trip_id)
+    return b, by_group(await selected(ctx, proposal_id)) if b["aa_items"] else {}
+
+
+def _section_view(sec: Section) -> dict[str, Any]:
+    return {
+        "heading": sec.heading,
+        "text": sec.text,
+        "visa": sec.visa,
+        "links": [{"label": label, "url": url} for label, url in sec.official_links],
+    }
+
+
+async def client_view(ctx: AnyContext, proposal_id: uuid.UUID, trip_id: uuid.UUID) -> dict[str, Any]:
+    """The C-03 client page's "Before you go" (R38): every locale of each picked pack cut into :func:`sections` (a visa
+    section = its official links only), the insurance reminder (always) and the fitness warning; the page shows the
+    locale of its language, else English. No agency-only field (no suggestion, no AA item count)."""
+    b, groups = await rendered(ctx, proposal_id, trip_id)
+    packs = [
+        {
+            "group_key": key,
+            "versions": [
+                {
+                    "locale": r["locale"],
+                    "title": r["title"],
+                    "sections": [_section_view(sec) for sec in sections(r["body_markdown"])],
+                }
+                for r in rows
+            ],
+        }
+        for key, rows in groups.items()
+    ]
+    return {"packs": packs, "insurance_reminder": True, "fitness_warning": b["fitness_warning"]}
 
 
 async def view(

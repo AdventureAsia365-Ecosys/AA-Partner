@@ -13,7 +13,10 @@
 
   1. a version not sent yet goes out as the link send does (AA-946 / AA-950 :func:`app.proposals.service.send`: the
      price hash fixed for a text version, the earlier version superseded, the client's ``proposal`` link made or
-     reused); a version already sent keeps its link (the text then carries no link: the client has it);
+     reused); a version already sent keeps its link (the text then carries no link: the client has it), unless the
+     request asks for ``new_link``: the link is re-issued (:func:`app.proposals.service.reissue_link`, the old token
+     revoked) and the new one goes into the text. The page asks for it after the agent undid the e-mail that was the
+     only one carrying the link (the version stayed sent; the link's own dispatch row has no message to deliver);
   2. the text is rendered again from the same snapshot, with the link when one was made
      (``<client origin>/c/p/<token>``, the client origin = the first ``INTAKE_PAGE_ORIGINS`` entry);
   3. e-mail: one message from the agency's mailbox on the trip's conversation (AA-945 send-as: the 10 s Undo, a
@@ -56,7 +59,7 @@ AGENCY_SQL = "SELECT display_name, default_locale FROM crm.tenant LIMIT 1"
 TERMS_SHA_SQL = "SELECT body_sha256 FROM crm.agreement_doc WHERE doc_id = $1"
 OWNER_SQL = "SELECT owner_member_id FROM crm.trip WHERE trip_id = $1"
 LEAD_NAME_SQL = """
-SELECT t.traveler_id, t.given_name_enc, t.display_name_enc
+SELECT t.traveler_id, t.display_name_enc
   FROM crm.trip_traveler tt JOIN crm.traveler t ON t.traveler_id = tt.traveler_id
  WHERE tt.trip_id = $1 AND tt.role = 'lead' AND tt.deleted_at IS NULL AND t.deleted_at IS NULL
  LIMIT 1
@@ -131,13 +134,15 @@ async def snapshot(ctx: TenantContext, vault: Vault, row: Any, price_hash: str, 
         notes = None
         if d["notes_enc"] is not None:
             notes = await vault.decrypt("proposal_day", "notes_enc", d["proposal_day_id"], d["notes_enc"])
+        items = _items(s, d["proposal_day_id"], row["price_visibility"])
         if d["day_no"] == 0:
-            before = await _before_you_go(ctx, row, notes, locale)
+            # A priced block on day 0 is in the total and on the client page, so it is in the text too.
+            before = await _before_you_go(ctx, row, notes, locale, items)
             continue
         date = builder._day_date(row["starts_on"], d["day_no"])
         days.append(tr.Day(
             d["day_no"], date, d["title"], d["place"], rules.utc_offset(d["tz"], date or row["starts_on"]), notes,
-            _items(s, d["proposal_day_id"], row["price_visibility"]),
+            items,
         ))  # fmt: skip
     rooms = builder._jsonb(row["room_config"]) or []
     return tr.Snapshot(kind="builder", pay_on_arrival_total=Decimal(sums["pay_on_arrival_total"]),
@@ -145,19 +150,21 @@ async def snapshot(ctx: TenantContext, vault: Vault, row: Any, price_hash: str, 
                        **common)  # fmt: skip
 
 
-async def _before_you_go(ctx: TenantContext, row: Any, notes: str | None, locale: str) -> tr.BeforeYouGo:
-    """Day 0: the agency's notes, the packs (only while the trip has AA items, card E), the fitness warning."""
-    b = await prep_packs.basis(ctx, row["proposal_id"], row["trip_id"])
+async def _before_you_go(
+    ctx: TenantContext, row: Any, notes: str | None, locale: str, items: tuple[tr.Item, ...]
+) -> tr.BeforeYouGo:
+    """Day 0: its priced items, the agency's notes, the packs (only while the trip has AA items, card E; the same
+    gate as the client page, :func:`app.proposals.prep_packs.rendered`), the fitness warning."""
+    b, groups = await prep_packs.rendered(ctx, row["proposal_id"], row["trip_id"])
     packs: list[tr.Pack] = []
-    if b["aa_items"]:
-        for rows in prep_packs.by_group(await prep_packs.selected(ctx, row["proposal_id"])).values():
-            pick = prep_packs.best(rows, locale)
-            packs.append(tr.Pack(pick["title"], tuple(prep_packs.sections(pick["body_markdown"]))))
-    return tr.BeforeYouGo(notes, tuple(packs), b["fitness_warning"])
+    for rows in groups.values():
+        pick = prep_packs.best(rows, locale)
+        packs.append(tr.Pack(pick["title"], tuple(prep_packs.sections(pick["body_markdown"]))))
+    return tr.BeforeYouGo(notes, tuple(packs), b["fitness_warning"], items)
 
 
 async def _values(ctx: TenantContext, row: Any, locale: str) -> dict[str, str | None]:
-    """The merge field values (R9 names). The lead's first name is opened only when the template asks for it."""
+    """The merge field values (R9 names). The lead's first name is read only when the template asks for it."""
     agency = await ctx.conn.fetchrow(AGENCY_SQL)
     start = row["starts_on"] or row["start_date"]
     return {
@@ -170,12 +177,10 @@ async def _values(ctx: TenantContext, row: Any, locale: str) -> dict[str, str | 
 
 
 async def _first_name(ctx: TenantContext, vault: Vault, trip_id: uuid.UUID, locale: str) -> str:
+    """The first word of the lead's **display name** (what every agency view already shows). Never ``given_name``:
+    that is an F1 click-to-reveal field (``app.travellers.fields.REVEAL_COLUMNS``, design §4.4 / §4.9), opened only
+    through :mod:`app.travellers.reveal` with a reason, and a text preview is no reveal."""
     lead = await ctx.conn.fetchrow(LEAD_NAME_SQL, trip_id)
-    if lead is not None and lead["given_name_enc"] is not None:
-        name = await vault.decrypt("traveler", "given_name_enc", lead["traveler_id"], lead["given_name_enc"],
-                                   tenant_id=ctx.tenant_id)  # fmt: skip
-        if name.strip():
-            return name.strip()
     if lead is not None and lead["display_name_enc"] is not None:
         name = await vault.decrypt("traveler", "display_name_enc", lead["traveler_id"], lead["display_name_enc"],
                                    tenant_id=ctx.tenant_id)  # fmt: skip
@@ -206,7 +211,7 @@ async def _render(
     fields: list[str] = []
     if template and "traveller_first_name" in template:
         values["traveller_first_name"] = await _first_name(ctx, vault, row["trip_id"], locale)
-        fields.append("given_name")
+        fields.append("display_name")
     return tr.render(snap, fmt, locale, template=template, values=values, link_url=link_url), fields
 
 
@@ -264,6 +269,7 @@ async def send(
     intro: str | None = None,
     message_id: uuid.UUID | None = None,
     client_origin: str | None = None,
+    new_link: bool = False,
 ) -> dict[str, Any]:
     _check(fmt, locale)
     if fmt == "email" and message_id is None:
@@ -294,6 +300,9 @@ async def send(
         if sent.get("price_hash") != digest:  # pragma: no cover — the same record hashed twice in one transaction
             raise Conflict("price_hash_mismatch", "the version changed while it was sent")
         row = await ctx.conn.fetchrow(ROW_SQL, proposal_id)
+    elif new_link:
+        # The client never got the link (the e-mail carrying it was undone): a fresh one goes into this text.
+        link_path = (await service.reissue_link(ctx, proposal_id))["link_path"]
     origin = _origin(client_origin)
     link_url = f"{origin}{link_path}" if link_path and origin else None
     rendered, fields = await _render(ctx, vault, row, digest, fmt, lang, template, link_url)
@@ -307,6 +316,7 @@ async def send(
         "link_path": link_path,
         "link_in_text": link_url is not None,
         "version_sent": sent is not None,
+        "link_reissued": sent is None and link_path is not None,
         "superseded": sent.get("superseded") if sent else None,
         "subject": rendered.subject,
         "body": rendered.body,

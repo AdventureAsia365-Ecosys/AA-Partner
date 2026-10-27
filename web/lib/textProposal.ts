@@ -36,6 +36,8 @@ export interface TextSent {
   link_path: string | null;
   link_in_text: boolean;
   version_sent: boolean;
+  /** A sent version's link re-issued into this text (the request asked for new_link). */
+  link_reissued: boolean;
   superseded: string | null;
   subject: string | null;
   body: string;
@@ -85,6 +87,35 @@ export function togglePack(current: string[], groupKey: string, on: boolean): st
 export function withSuggestions(byg: BeforeYouGo): string[] {
   const picked = byg.selected.map((s) => s.group_key);
   return [...picked, ...byg.suggested.map((s) => s.group_key).filter((k) => !picked.includes(k))];
+}
+
+/** After the agent undid an e-mail: when that e-mail was the only one carrying the client's link (the send made the
+ * link, the version stayed sent), the next send must ask for a new link, or the client never gets one. */
+export function linkLostOnUndo(sent: TextSent): boolean {
+  return sent.format === "email" && sent.link_in_text;
+}
+
+/** The note under the preview: the link added on send, a new link to come (after an undone e-mail that carried the
+ * only link), or none (the client has it). */
+export function linkNoteKey(preview: Pick<TextPreview, "link">, relink: boolean): MessageKey {
+  if (relink) return "text.linkRelink";
+  return preview.link === "added_on_send" ? "text.linkOnSend" : "text.linkClientHas";
+}
+
+/** The send request body. ``relink``: re-issue the version's link into this text. */
+export function sendBody(input: {
+  format: TextFormat;
+  locale: TextLang;
+  priceHash: string;
+  templateId: string;
+  messageId: string;
+  relink: boolean;
+}): Record<string, unknown> {
+  const body: Record<string, unknown> = { format: input.format, locale: input.locale, price_hash: input.priceHash };
+  if (input.templateId) body.template_id = input.templateId;
+  if (input.format === "email") body.message_id = input.messageId;
+  if (input.relink) body.new_link = true;
+  return body;
 }
 
 /** A WhatsApp share link with the text only (no phone number: the agent picks the chat). */

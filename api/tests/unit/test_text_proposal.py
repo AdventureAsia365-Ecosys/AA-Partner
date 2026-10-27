@@ -324,7 +324,7 @@ async def test_the_assistant_sends_e_mail_on_assigned_trips_only(monkeypatch: py
 
 
 @pytest.mark.asyncio
-async def test_merge_fields_open_the_first_name_only_when_asked() -> None:
+async def test_merge_fields_read_the_display_name_never_the_given_name() -> None:
     conn = _builder_conn(_row(status="sent"))
     template_id = uuid.uuid4()
     conn.on("FROM crm.message_template WHERE message_template_id", {
@@ -335,17 +335,92 @@ async def test_merge_fields_open_the_first_name_only_when_asked() -> None:
         "FROM crm.trip_traveler tt JOIN crm.traveler t",
         {
             "traveler_id": uuid.uuid4(),
-            "given_name_enc": None,
+            # given_name is an F1 click-to-reveal field (reveal with a reason): a preview never opens it.
+            "given_name_enc": b"enc:traveler.given_name_enc:Secret",
             "display_name_enc": b"enc:traveler.display_name_enc:Lan Ho",
         },
     )
     vault = FakeVault()
-    out = await text_proposal.preview(tenant_ctx(conn), vault, P, fmt="email", locale="en", template_id=template_id)
+    ctx = tenant_ctx(conn)
+    out = await text_proposal.preview(ctx, vault, P, fmt="email", locale="en", template_id=template_id)
     assert out["body"].startswith("Hi Lan, Nepal, Ha Giang 1 Dec 2026") and ("traveler", "display_name_enc") in (
         vault.decrypted)  # fmt: skip
+    assert "Secret" not in out["body"] and ("traveler", "given_name_enc") not in vault.decrypted
+    assert "given_name" not in ctx.audit_events[-1].fields and "display_name" in ctx.audit_events[-1].fields
+    assert "given_name_enc" not in text_proposal.LEAD_NAME_SQL
     conn.on("FROM crm.trip_traveler tt JOIN crm.traveler t", None)
     out = await text_proposal.preview(tenant_ctx(conn), vault, P, fmt="email", locale="vi", template_id=template_id)
     assert out["body"].startswith("Hi bạn,")
+
+
+@pytest.mark.asyncio
+async def test_a_priced_block_on_day_0_is_in_every_text() -> None:
+    """A block on day 0 (a visa service, an airport transfer) is in the total and on the client page, so the e-mail
+    and the WhatsApp text list it under Before you go too (they carry the same price_hash)."""
+    conn = _builder_conn(_row(status="sent"))
+    b0, v1 = uuid.uuid4(), uuid.uuid4()
+    conn.on("FROM crm.option_block WHERE proposal_id", [
+        {"option_block_id": b0, "proposal_day_id": D0, "sort_order": 0, "title": "Arrival", "type": "transport",
+         "client_may_swap": False, "default_option_id": v1, "default_pinned": False, "source_block_id": None},
+        {"option_block_id": B1, "proposal_day_id": D1, "sort_order": 0, "title": "Lodging", "type": "lodging",
+         "client_may_swap": True, "default_option_id": O1, "default_pinned": False, "source_block_id": None},
+    ])  # fmt: skip
+    options = next(answer for fragment, answer in conn.rules if fragment == "FROM crm.option o")
+    conn.on("FROM crm.option o", [*options, {**options[0], "option_block_id": b0, "option_id": v1,
+                                             "title": "Airport pickup", "sell_amount": Decimal("40")}])  # fmt: skip
+    for fmt in ("email", "whatsapp"):
+        body = (await text_proposal.preview(tenant_ctx(conn), FakeVault(), P, fmt=fmt, locale="en"))["body"]
+        before, _, days = body.partition("Day 1")
+        assert "Before you go" in before and "- Arrival: Airport pickup" in before
+        assert "Airport pickup" not in days and "- Lodging: Homestay" in days
+
+
+@pytest.mark.asyncio
+async def test_new_link_reissues_the_link_of_a_sent_version_into_the_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The e-mail that carried the link was undone (the version stayed sent): the next send asks for a new link."""
+    reissued: list[uuid.UUID] = []
+
+    async def reissue(_ctx: Any, pid: uuid.UUID) -> dict[str, Any]:
+        reissued.append(pid)
+        return {"proposal_id": str(pid), "link_path": "/c/p/new"}
+
+    async def send_mail(_ctx: Any, _vault: Any, message_id: Any, **kw: Any) -> dict[str, Any]:
+        return {"message_id": str(message_id), "status": "queued"}
+
+    async def no_send(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("a sent version is not sent again")
+
+    monkeypatch.setattr(text_proposal.service, "reissue_link", reissue)
+    monkeypatch.setattr(text_proposal.service, "send", no_send)
+    monkeypatch.setattr(text_proposal.conversations, "send", send_mail)
+    ctx = tenant_ctx(_builder_conn(_row(status="sent")), role="agent")
+    out = await text_proposal.send(ctx, FakeVault(), P, fmt="email", locale="en", price_hash=HASH.hex(),
+                                   message_id=uuid.uuid4(), client_origin="https://go.example.test",
+                                   new_link=True)  # fmt: skip
+    assert reissued == [P] and out["link_reissued"] and out["link_in_text"] and not out["version_sent"]
+    assert out["link_path"] == "/c/p/new" and "https://go.example.test/c/p/new" in out["body"]
+    # Without the flag a sent version keeps its link and the text carries none.
+    out = await text_proposal.send(ctx, FakeVault(), P, fmt="whatsapp", locale="en", price_hash=HASH.hex())
+    assert reissued == [P] and not out["link_reissued"] and out["link_path"] is None
+
+
+@pytest.mark.asyncio
+async def test_the_client_page_gets_the_same_before_you_go() -> None:
+    """C-03 (R38, F4): every locale of each picked pack, a visa section reduced to its official links, the reminders;
+    nothing without an AA item (card E), the same gate as the texts."""
+    picks = [_selected("prep-pack-nepal", body_markdown="## Visa\n\nGet one at https://evisa.example.gov.\n\n"
+                                                         "## Pack\n\nWarm layers."),
+             _selected("prep-pack-nepal", "vi")]  # fmt: skip
+    out = await prep_packs.client_view(tenant_ctx(_conn(picks=picks)), P, TRIP)
+    assert out["insurance_reminder"] and out["fitness_warning"] and len(out["packs"]) == 1
+    versions = out["packs"][0]["versions"]
+    assert [v["locale"] for v in versions] == ["en", "vi"] and out["packs"][0]["group_key"] == "prep-pack-nepal"
+    visa, pack = versions[0]["sections"]
+    assert visa == {"heading": "Visa", "text": "", "visa": True,
+                    "links": [{"label": "https://evisa.example.gov", "url": "https://evisa.example.gov"}]}  # fmt: skip
+    assert pack["text"] == "Warm layers." and not pack["visa"]
+    none = await prep_packs.client_view(tenant_ctx(_conn(aa=0, tours=[], picks=picks)), P, TRIP)
+    assert none == {"packs": [], "insurance_reminder": True, "fitness_warning": False}
 
 
 # ── templates ────────────────────────────────────────────────────────────────────────────────────

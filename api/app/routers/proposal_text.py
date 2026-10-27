@@ -60,6 +60,8 @@ class TextSendIn(_Body):
     template_id: uuid.UUID | None = None
     intro: str | None = Field(default=None, max_length=templates.MAX_BODY)
     message_id: uuid.UUID | None = None
+    # A sent version whose link never reached the client (the e-mail carrying it was undone): re-issue it into the text.
+    new_link: bool = False
 
 
 class PacksIn(_Body):
@@ -122,6 +124,7 @@ async def post_text_send(
             intro=body.intro,
             message_id=body.message_id,
             client_origin=_client_origin(request),
+            new_link=body.new_link,
         )
 
 

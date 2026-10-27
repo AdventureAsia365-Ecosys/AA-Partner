@@ -8,8 +8,9 @@ to a device. The agent's "Re-issue link" revokes the old token (:func:`app.propo
 
 - :func:`read`: a text version (AA-946: text, total, deposit, balance, terms) or a builder version (AA-950,
   :mod:`app.proposals.client_page`: days, Keep / Swap with the deltas of D1, groups of R26, the hold box, the notice of
-  a new version with what changed). Logs "viewed" (R4): the counters on the version, one ``proposal.viewed`` event an
-  hour, the first one rings the trip owner's bell.
+  a new version with what changed; AA-951: ``before_you_go``, the day 0 packs and reminders of
+  :func:`app.proposals.prep_packs.client_view`, the same as the e-mail / WhatsApp text). Logs "viewed" (R4): the
+  counters on the version, one ``proposal.viewed`` event an hour, the first one rings the trip owner's bell.
 - :func:`pick`: Keep / Swap / Choose later on a builder version (a sold-out option 409, a fixed block 422, choose
   later on an AA item 422 (Fix B9), a rule break 422 ``option_conflict``); a bell item for the agent (bundled per
   version at read time).
@@ -45,7 +46,7 @@ from app.booking.client import BookingClient
 from app.errors import Conflict, Invalid, NotFound
 from app.intake import stage1
 from app.portal.public import check_origin
-from app.proposals import builder, client_page, events, holds
+from app.proposals import builder, client_page, events, holds, prep_packs
 from app.settings import Settings
 from app.tenancy import AnyContext, client_link_tx
 from app.vault import KeyProvider, Vault
@@ -208,6 +209,9 @@ async def _page(ctx: AnyContext, keys: KeyProvider, link: Any, row: Any) -> dict
     if row["kind"] == "builder":
         s, picks = await _builder_state(ctx, row)
         out.update(await client_page.view(ctx, vault, row, s, picks, _now()))
+        # R38 / F4: the same "Before you go" as the e-mail and WhatsApp texts (packs while the trip has AA items, a
+        # visa section = its official links only, the insurance reminder, the fitness warning).
+        out["before_you_go"] = await prep_packs.client_view(ctx, row["proposal_id"], row["trip_id"])
         t = out["totals"]
         out["notice"] = await _notice(ctx, row, s, t["total"]) if row["status"] == "sent" else None
         out["total_amount"], out["deposit_amount"] = t["total"], t["deposit"]

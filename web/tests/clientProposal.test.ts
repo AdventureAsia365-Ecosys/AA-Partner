@@ -17,6 +17,7 @@ import {
   interactiveErrorKey,
   isBuilderPage,
   noticeLine,
+  packVersion,
   PROPOSAL_API,
   proposalCookie,
   type ClientBuilderPage,
@@ -148,6 +149,65 @@ describe("the pure helpers", () => {
       vars: { trip: "Nepal", version: 2, count: 3 },
     });
     expect(isBuilderPage(page())).toBe(true);
+  });
+});
+
+describe("Before you go (AA-951)", () => {
+  const byg = {
+    packs: [
+      {
+        group_key: "prep-pack-nepal",
+        versions: [
+          { locale: "en", title: "Before you go: Nepal", sections: [{ heading: "Visa", text: "", visa: true, links: [{ label: "immigration.gov.np", url: "https://www.immigration.gov.np" }] }] },
+          {
+            locale: "vi",
+            title: "Trước khi đi: Nepal",
+            sections: [
+              { heading: "Thị thực", text: "", visa: true, links: [] },
+              { heading: "Tiền", text: "NPR.", visa: false, links: [] },
+            ],
+          },
+        ],
+      },
+    ],
+    insurance_reminder: true,
+    fitness_warning: true,
+  };
+
+  it("picks the page's language, else English, else the first copy", () => {
+    const v = [{ locale: "vi" }, { locale: "en" }];
+    expect(packVersion(v, "vi")?.locale).toBe("vi");
+    expect(packVersion(v, "fr")?.locale).toBe("en");
+    expect(packVersion([{ locale: "vi" }], "en")?.locale).toBe("vi");
+    expect(packVersion([], "en")).toBeNull();
+  });
+
+  it("shows the same section as the texts: packs (visa = official links only), insurance, fitness", async () => {
+    const { ClientBuilderProposal } = await import("@/components/proposals/ClientBuilderProposal");
+    const en = renderToString(createElement(ClientBuilderProposal, { initial: page({ before_you_go: byg }), dict: clientMessages("en"), locale: "en-AU" }));
+    expect(en).toContain('data-testid="client-before-you-go"');
+    expect(en).toContain("Before you go: Nepal");
+    expect(en).toContain('href="https://www.immigration.gov.np"');
+    expect(en).toContain("Travel insurance:");
+    expect(en).toContain("Fitness:");
+    const vi = renderToString(createElement(ClientBuilderProposal, { initial: page({ before_you_go: byg }), dict: clientMessages("vi"), locale: "vi-VN" }));
+    expect(vi).toContain("Trước khi đi: Nepal");
+    expect(vi).toContain("Hãy kiểm tra trang web chính thức");
+    expect(vi).toContain("NPR.");
+    // Shown once: inside the day 0 when the page has one, else on its own.
+    const day0 = { ...page().days[0], day_no: 0, before_you_go: true, date: null, title: null, blocks: [] };
+    const withDay0 = renderToString(createElement(ClientBuilderProposal, { initial: page({ before_you_go: byg, days: [day0, ...page().days] }), dict: clientMessages("en"), locale: "en-AU" }));
+    expect(withDay0.match(/data-testid="client-before-you-go"/g)).toHaveLength(1);
+    const none = renderToString(createElement(ClientBuilderProposal, { initial: page(), dict: clientMessages("en"), locale: "en-AU" }));
+    expect(none).not.toContain("client-before-you-go");
+  });
+
+  it("its strings exist in EN and VI and ship to the client page", () => {
+    const shipped = clientMessages("vi");
+    for (const k of ["client.byg.visaLinks", "client.byg.visaNone", "client.byg.insurance", "client.byg.fitness"]) {
+      expect(shipped[k as keyof typeof shipped], k).toBeTruthy();
+      expect(clientMessages("en")[k as keyof typeof shipped], k).toBeTruthy();
+    }
   });
 });
 

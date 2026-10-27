@@ -10,13 +10,15 @@
 // - C-04: "Check availability" places the version's hold set (Fix A3); the lines grouped by confirmation class (R26);
 //   the rooms confirmed, not chosen (Fix B10); the terms, the full name; "Your places are held until …" beside Accept.
 // - C-12: the hold expired -> "Check availability again" (3 a day), then "Ask your agent" (card R).
+// - Before you go (AA-951, R38 / F4): the same section as the e-mail / WhatsApp text: the AA prep packs in the page's
+//   language (a visa section = its official links only), the insurance reminder, the fitness warning.
 //
 // Every call goes to /crm/public/v1/proposal on this origin with the host-only link cookie (same-origin credentials);
 // every hold answer carries the fresh page (a sold-out option has already fallen back to the included one, card E).
 import { useState } from "react";
 import { K } from "@/app/_kit";
 import { formatDate, type DateLocale } from "@/lib/dates";
-import { fmt, type MessageKey } from "@/lib/i18n";
+import { fmt, langOf, type MessageKey } from "@/lib/i18n";
 import {
   acceptOpen,
   CHANGE_REASONS,
@@ -25,9 +27,11 @@ import {
   holdKey,
   interactiveErrorKey,
   noticeLine,
+  packVersion,
   PROPOSAL_API,
   zoneLabel,
   type ChangeReason,
+  type ClientBeforeYouGo,
   type ClientBlock,
   type ClientBuilderPage,
   type ClientOption,
@@ -89,6 +93,53 @@ function when(value: string | null, locale: string): string {
   return Number.isNaN(d.getTime()) ? value : d.toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" });
 }
 
+function BeforeYouGoContent({ byg, lang, t }: { byg: ClientBeforeYouGo; lang: string; t: (k: string) => string }) {
+  const text: React.CSSProperties = { margin: 0, fontSize: 13.5, color: K.body, whiteSpace: "pre-wrap", overflowWrap: "anywhere" };
+  return (
+    <div data-testid="client-before-you-go" style={{ display: "grid", gap: 8, minWidth: 0 }}>
+      {byg.packs.map((pack) => {
+        const v = packVersion(pack.versions, lang);
+        if (!v) return null;
+        return (
+          <div key={pack.group_key} data-testid="client-pack" style={{ ...card, gap: 6 }}>
+            <strong style={{ fontSize: 14.5, color: K.ink, overflowWrap: "anywhere" }}>{v.title}</strong>
+            {v.sections.map((sec, i) => (
+              <div key={i} style={{ display: "grid", gap: 2, minWidth: 0 }}>
+                {sec.heading && <span style={{ fontSize: 13, fontWeight: 600, color: K.ink }}>{sec.heading}</span>}
+                {sec.visa ? (
+                  sec.links.length > 0 ? (
+                    <p style={text}>
+                      {t("client.byg.visaLinks")}:{" "}
+                      {sec.links.map((link, j) => (
+                        <span key={link.url}>
+                          {j > 0 ? ", " : ""}
+                          <a href={link.url} target="_blank" rel="noopener noreferrer" style={{ color: K.accent, overflowWrap: "anywhere" }}>
+                            {link.label}
+                          </a>
+                        </span>
+                      ))}
+                    </p>
+                  ) : (
+                    <p style={text}>{t("client.byg.visaNone")}</p>
+                  )
+                ) : (
+                  sec.text && <p style={text}>{sec.text}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        );
+      })}
+      {byg.insurance_reminder && <p style={text}>{t("client.byg.insurance")}</p>}
+      {byg.fitness_warning && (
+        <p role="note" style={{ ...text, color: K.ink }}>
+          {t("client.byg.fitness")}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function ClientBuilderProposal({ initial, dict, locale }: { initial: ClientBuilderPage; dict: Partial<Record<MessageKey, string>>; locale: DateLocale }) {
   const t = (k: string) => dict[k as MessageKey] ?? k;
   const [page, setPage] = useState<ClientBuilderPage>(initial);
@@ -102,6 +153,9 @@ export function ClientBuilderProposal({ initial, dict, locale }: { initial: Clie
   const [reason, setReason] = useState<ChangeReason>("other");
   const cur = page.currency;
   const accepted = page.status === "accepted";
+  const lang = langOf(locale);
+  const byg = page.before_you_go ?? null;
+  const hasDay0 = page.days.some((d) => d.before_you_go);
 
   function refusal(detail: unknown, status: number): string {
     const code = typeof detail === "string" ? detail : status === 429 ? "rate_limited" : "error";
@@ -188,6 +242,13 @@ export function ClientBuilderProposal({ initial, dict, locale }: { initial: Clie
 
       {page.body && <p style={{ margin: 0, fontSize: 14, color: K.body, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{page.body}</p>}
 
+      {byg && !hasDay0 && (
+        <section data-testid="client-day" data-day={0} style={{ display: "grid", gap: 8, minWidth: 0 }}>
+          <h2 style={{ margin: 0, fontSize: 16, color: K.ink }}>{t("client.beforeYouGo")}</h2>
+          <BeforeYouGoContent byg={byg} lang={lang} t={t} />
+        </section>
+      )}
+
       {page.days.map((day) => (
         <section key={day.day_no} data-testid="client-day" data-day={day.day_no} style={{ display: "grid", gap: 8, minWidth: 0 }}>
           <div style={{ display: "grid", gap: 2 }}>
@@ -201,6 +262,7 @@ export function ClientBuilderProposal({ initial, dict, locale }: { initial: Clie
               </span>
             )}
             {day.notes && <p style={{ margin: 0, fontSize: 13.5, color: K.body, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{day.notes}</p>}
+            {day.before_you_go && byg && <BeforeYouGoContent byg={byg} lang={lang} t={t} />}
           </div>
           {day.blocks.map((block) => (
             <div key={block.option_block_id} data-testid="client-block" data-block={block.title} style={{ display: "grid", gap: 6, minWidth: 0 }}>

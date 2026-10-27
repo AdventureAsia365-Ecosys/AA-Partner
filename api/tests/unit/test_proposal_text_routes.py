@@ -95,7 +95,7 @@ def test_every_route_reaches_its_helper(pools: LocalPools, monkeypatch: pytest.M
     assert preview[2] == {"fmt": "whatsapp", "locale": "vi", "template_id": uuid.UUID(X)}
     send = next(c for c in calls if c[0] == "send")[2]
     assert send["fmt"] == "email" and send["price_hash"] == HASH and send["intro"] == "Hi" and send["locale"] is None
-    assert send["client_origin"] == "https://go.example.test"
+    assert send["client_origin"] == "https://go.example.test" and send["new_link"] is False
     packs = next(c for c in calls if c[0] == "set_before_you_go")[1]
     assert packs[3:] == (4, ["prep-pack-nepal"])
     assert next(c for c in calls if c[0] == "update")[2] == {"locale": None, "title": "T2", "body": None}

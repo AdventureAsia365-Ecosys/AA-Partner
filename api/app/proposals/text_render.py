@@ -143,6 +143,7 @@ class BeforeYouGo:
     notes: str | None
     packs: tuple[Pack, ...] = ()
     fitness_warning: bool = False
+    items: tuple[Item, ...] = ()  # priced blocks on day 0 (a visa service, an airport transfer): in the total too
 
 
 @dataclass(frozen=True)
@@ -261,9 +262,9 @@ def _day_heading(d: Day, fmt: str, locale: str, s: dict[str, Any]) -> str:
     return _bold(" · ".join(bits), fmt)
 
 
-def _items(d: Day, snap: Snapshot, fmt: str, locale: str, s: dict[str, Any]) -> list[str]:
+def _items(items: tuple[Item, ...], snap: Snapshot, locale: str, s: dict[str, Any]) -> list[str]:
     out = []
-    for it in d.items:
+    for it in items:
         flags = [s["pay_on_arrival"]] if it.pay_on_arrival else []
         if it.on_request:
             flags.append(s["on_request"])
@@ -279,8 +280,9 @@ def _items(d: Day, snap: Snapshot, fmt: str, locale: str, s: dict[str, Any]) -> 
     return out
 
 
-def _before_you_go(b: BeforeYouGo, fmt: str, s: dict[str, Any]) -> list[str]:
+def _before_you_go(b: BeforeYouGo, snap: Snapshot, fmt: str, locale: str, s: dict[str, Any]) -> list[str]:
     out = [_bold(s["before_you_go"], fmt)]
+    out += _items(b.items, snap, locale, s)
     if b.notes:
         out.append(b.notes.strip())
     for pack in b.packs:
@@ -332,12 +334,12 @@ def proposal_block(snap: Snapshot, fmt: str, locale: str, link_url: str | None =
         if snap.body.strip():
             out += ["", snap.body.strip()]
         if snap.before_you_go is not None:
-            out += ["", *_before_you_go(snap.before_you_go, fmt, s)]
+            out += ["", *_before_you_go(snap.before_you_go, snap, fmt, locale, s)]
         for d in snap.days:
             out += ["", _day_heading(d, fmt, locale, s)]
             if d.title:
                 out.append(d.title)
-            out += _items(d, snap, fmt, locale, s)
+            out += _items(d.items, snap, locale, s)
             if d.notes:
                 out.append(d.notes.strip())
     elif snap.body.strip():
