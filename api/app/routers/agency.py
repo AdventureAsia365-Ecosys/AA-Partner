@@ -1,8 +1,9 @@
 """``/crm/v1``: the agency API (route class AGENCY, root ADR 0006b decision 6).
 
-Every route here is behind the AGENCY guard (partner-pool web client; on Dev before AA-939 also the EXTERNAL
-``cis-portal`` client). ``cis-admin`` and ``breakglass`` tokens get 403. The agency is chosen per request with the
-``X-AA-Tenant-Id`` header and every read goes through :func:`app.tenancy.tenant_tx` (membership check, RLS context).
+Every route here is behind the AGENCY guard (partner-pool web client only; the Dev EXTERNAL ``cis-portal`` bridge
+was removed at AA-979 P2b, its tokens get 401). ``cis-admin`` and ``breakglass`` tokens get 403. The agency is chosen
+per request with the ``X-AA-Tenant-Id`` header and every read goes through :func:`app.tenancy.tenant_tx` (membership
+check, RLS context).
 
 Responses are ids, roles and the agency's own label/locale only (never an e-mail or a name from the token).
 Margin-bearing fields arrive with later cards behind the per-role serializer allow-list (design v3 §4.6).

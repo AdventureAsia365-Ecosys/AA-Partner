@@ -245,7 +245,7 @@ def test_memberships_route_needs_no_tenant_header() -> None:
     conn = ScriptedConn().on("FROM crm.member m", [MEMBERSHIP_ROW])
     app = create_app(settings, FakeDatabase(conn, settings), pools.verifier(settings))
     with TestClient(app) as c:
-        r = c.get("/crm/v1/memberships", headers={"Authorization": f"Bearer {pools.cis_portal()}"})
+        r = c.get("/crm/v1/memberships", headers={"Authorization": f"Bearer {pools.partner_web()}"})
         foreign = c.get("/crm/v1/memberships", headers={"Authorization": f"Bearer {pools.cis_admin()}"})
         anonymous = c.get("/crm/v1/memberships")
     assert r.status_code == 200

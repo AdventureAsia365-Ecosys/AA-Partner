@@ -18,8 +18,8 @@ from fastapi.testclient import TestClient
 from app.auth.identity_config import AGENCY, OPS, ROUTE_CLASSES, STAFF, identity_from_settings
 from app.auth.route_guard import Caller, class_router, current_caller, require_group
 from app.main import create_app
-from app.settings import Settings, SettingsError
-from tests.tokens import LocalPools
+from app.settings import Settings, SettingsError, load_settings
+from tests.tokens import CIS_PORTAL_CLIENT, EXTERNAL_ISSUER, PARTNER_ISSUER, PARTNER_WEB_CLIENT, LocalPools
 
 PUBLIC_PREFIXES = ("/crm/health", "/crm/ci/", "/crm/public/v1/")
 
@@ -84,7 +84,7 @@ def test_every_served_path_is_public_or_in_a_route_class(client: TestClient) -> 
 def test_every_class_path_refuses_no_token_and_foreign_tokens(client: TestClient, pools: LocalPools, rc: Any) -> None:
     foreign = {
         AGENCY.name: [pools.cis_admin(), pools.breakglass(), pools.crm_staff()],
-        OPS.name: [pools.partner_web(), pools.cis_portal(), pools.breakglass(), pools.crm_staff()],
+        OPS.name: [pools.partner_web(), pools.breakglass(), pools.crm_staff()],
         STAFF.name: [pools.partner_web(), pools.cis_admin(), pools.breakglass()],
     }[rc.name]
     paths = [(m, p) for m, p in _served_paths(client) if p.startswith(rc.prefix + "/")]
@@ -96,14 +96,49 @@ def test_every_class_path_refuses_no_token_and_foreign_tokens(client: TestClient
             assert (r.status_code, r.json()["detail"]) == (403, "wrong_audience"), (method, path)
 
 
-def test_agency_accepts_partner_web_and_dev_portal_bridge(client: TestClient, pools: LocalPools) -> None:
-    for token, issuer, kind in (
-        (pools.partner_web(), "partner", "partner-web"),
-        (pools.cis_portal(), "external", "cis-portal"),
-    ):
-        r = client.get("/crm/v1/_probe", headers=_bearer(token))
-        assert r.status_code == 200
-        assert r.json() == {"class": "agency", "client": kind, "issuer": issuer}
+def test_agency_accepts_partner_web(client: TestClient, pools: LocalPools) -> None:
+    r = client.get("/crm/v1/_probe", headers=_bearer(pools.partner_web()))
+    assert r.status_code == 200
+    assert r.json() == {"class": "agency", "client": "partner-web", "issuer": "partner"}
+
+
+@pytest.mark.parametrize("rc", ROUTE_CLASSES, ids=lambda rc: rc.name)
+def test_retired_cis_portal_bridge_is_refused_on_every_path(client: TestClient, pools: LocalPools, rc: Any) -> None:
+    """AA-979 P2b: the Dev EXTERNAL ``cis-portal`` bridge onto /crm/v1 is gone. A validly signed cis-portal token is
+    401 on every served path of every class (its issuer is unknown to the verifier), never accepted."""
+    token = pools.cis_portal()
+    paths = [(m, p) for m, p in _served_paths(client) if p.startswith(rc.prefix + "/")]
+    for method, path in paths:
+        r = client.request(method, path, headers=_bearer(token))
+        assert (r.status_code, r.json()["detail"]) == (401, "invalid_token"), (method, path)
+
+
+def test_retired_bridge_env_is_ignored(pools: LocalPools) -> None:
+    """The code ships before the Terraform env change: a task that still has COGNITO_EXTERNAL_ISSUER /
+    COGNITO_CIS_PORTAL_CLIENT_ID starts (on any environment), ignores them and refuses cis-portal tokens; partner-pool
+    tokens keep working."""
+    env = {
+        "ENVIRONMENT": "dev",
+        "COGNITO_PARTNER_ISSUER": PARTNER_ISSUER,
+        "COGNITO_PARTNER_WEB_CLIENT_ID": PARTNER_WEB_CLIENT,
+        "COGNITO_EXTERNAL_ISSUER": EXTERNAL_ISSUER,
+        "COGNITO_CIS_PORTAL_CLIENT_ID": CIS_PORTAL_CLIENT,
+    }
+    settings = load_settings(env)
+    assert not hasattr(settings, "cognito_external_issuer")
+    assert not hasattr(settings, "cognito_cis_portal_client_id")
+    assert load_settings({**env, "ENVIRONMENT": "prod"}).environment == "prod"  # no "Dev-only bridge" refusal left
+    identity = identity_from_settings(settings)
+    assert EXTERNAL_ISSUER not in identity.issuers.values()
+    assert all(kind != "external" for kind in identity.issuers)
+    settings = pools.settings(environment="test")
+    app = create_app(settings, verifier=pools.verifier(settings))
+    for router in _probe_routers():
+        app.include_router(router)
+    with TestClient(app) as c:
+        r = c.get("/crm/v1/_probe", headers=_bearer(pools.cis_portal()))
+        assert (r.status_code, r.json()["detail"]) == (401, "invalid_token")
+        assert c.get("/crm/v1/_probe", headers=_bearer(pools.partner_web())).status_code == 200
 
 
 def test_ops_needs_a_group_and_writes_need_platform_admin(client: TestClient, pools: LocalPools) -> None:
@@ -137,11 +172,8 @@ def test_bad_tokens_are_401_not_403(client: TestClient, pools: LocalPools) -> No
 
 
 def test_unconfigured_class_accepts_nothing(pools: LocalPools) -> None:
-    """No partner pool and no portal bridge (a non-dev environment before AA-939): /crm/v1 refuses every token."""
-    settings = pools.settings(
-        cognito_partner_issuer="", cognito_partner_web_client_id="", cognito_external_issuer="",
-        cognito_cis_portal_client_id="",
-    )  # fmt: skip
+    """No partner pool: /crm/v1 refuses every token."""
+    settings = pools.settings(cognito_partner_issuer="", cognito_partner_web_client_id="")
     app = create_app(settings, verifier=pools.verifier(settings))
     for router in _probe_routers():
         app.include_router(router)
@@ -155,11 +187,6 @@ def test_nothing_configured_means_401(pools: LocalPools) -> None:
     assert app.state.verifier is None
     with TestClient(app) as c:
         assert c.get("/crm/v1/me", headers=_bearer(pools.partner_web())).status_code == 401
-
-
-def test_portal_bridge_is_dev_only() -> None:
-    with pytest.raises(SettingsError, match="Dev-only"):
-        Settings(environment="prod", cognito_cis_portal_client_id="cisportalclient00000000001")
 
 
 def test_workforce_client_ids_must_differ(pools: LocalPools) -> None:
@@ -198,7 +225,7 @@ async def test_jwks_prefetch_never_raises(pools: LocalPools) -> None:
     async def empty(url: str) -> dict:
         return {"keys": []}
 
-    no_keys = identity_config.build_verifier(identity_config.identity_from_settings(settings), empty)
+    no_keys = identity_config.build_verifier(identity_from_settings(settings), empty)
     assert set((await identity_config.prefetch_jwks(no_keys)).values()) == {0}
     await asyncio.sleep(0)
 

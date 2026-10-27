@@ -14,7 +14,7 @@ import pytest
 from app import seed
 from app.seed.catalogue import AGENCIES, BY_KEY, agency_id, e2e_username
 from app.seed.travellers import EMAIL_DOMAIN, make_traveller, travellers_for
-from tests.tokens import EXTERNAL_ISSUER, PARTNER_ISSUER, LocalPools
+from tests.tokens import PARTNER_ISSUER, LocalPools
 from tests.unit.fakes import ScriptedConn
 
 
@@ -89,7 +89,7 @@ async def test_dry_run_without_a_database_prints_the_plan_only() -> None:
     ],
 )
 async def test_refusals_exit_2(argv: list[str], env: dict, reason: str) -> None:
-    kw = {"cognito_cis_portal_client_id": "", "db_ssl": "require"} if env.get("environment") == "prod" else {}
+    kw = {"db_ssl": "require"} if env.get("environment") == "prod" else {}
     out = io.StringIO()
     assert await seed.main(argv, out, settings(**env, **kw)) == 2
     assert reason in lines(out)[-1]["reason"]
@@ -100,11 +100,12 @@ def test_member_needs_an_issuer() -> None:
         seed.parse_member("sen-vang:owner:sub", "")
 
 
-def test_issuer_defaults_to_partner_then_external() -> None:
+def test_issuer_is_the_partner_pool_never_the_retired_external_pool() -> None:
     plan = seed.build_plan(["--member", "sen-vang:owner:s1"], settings())
     assert plan.issuer == PARTNER_ISSUER
-    plan = seed.build_plan(["--member", "sen-vang:owner:s1"], settings(cognito_partner_issuer=""))
-    assert plan.issuer == EXTERNAL_ISSUER
+    # AA-979 P2b: no EXTERNAL fallback any more; without the partner issuer a member needs --issuer.
+    with pytest.raises(seed.SeedRefused, match="issuer"):
+        seed.build_plan(["--member", "sen-vang:owner:s1"], settings(cognito_partner_issuer=""))
     assert plan.members["sen-vang"][0].cognito_sub == "s1"
     assert plan.apply is False
 
