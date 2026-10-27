@@ -60,6 +60,8 @@ PLATFORM_TABLES = {
     "aa_catalog_state": "the catalog sync's one platform row, no tenant column (crm-017, AA-947)",
     "studio_invitation": "Content studio invitations of CIS tenants (maybe no CRM agency), RLS on actor / token "
     "(crm-020, AA-979)",
+    "aa_content": "AA-authored content (prep packs, starter templates) cached from CIS catalog.http.v1, no tenant "
+    "column, no PII (crm-022, AA-951)",
 }
 # Append-only tenant tables (crm-003): tenant column, RLS and policy as the template, but no updated_at, no trash
 # columns; instead the append-only trigger, and crm_app may only INSERT and SELECT.
