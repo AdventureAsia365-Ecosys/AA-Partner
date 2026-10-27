@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.6.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.5.0...v0.6.0) (2026-10-27)
+
+
+### Features
+
+* client proposal, accept and hold (CRM-21b) ([#78](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/78)) ([8c255be](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/8c255bee114f665eab117ea13d835814b621fd28))
+* Content studio on Fargate with the partner-pool sign-in ([#73](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/73)) ([6e235cd](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/6e235cd0f25f2a90660d9cf9a054be61f022190b))
+* CRM web and Content studio post-deploy verify, Fargate UI smoke ([#97](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/97)) ([76b53da](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/76b53da3869c276b0e0fc603d1b3cb86d287429f))
+* CRM web answers both agency hosts with a per-host public origin ([#72](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/72)) ([3b2b7f2](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/3b2b7f2ab01bc87edafa96188de0ef7cf2d4411a))
+* crm-019 proposal builder model (migration only) ([#65](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/65)) ([832e784](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/832e784b44425a5a678dd797bd8bac25e4fe2e42))
+* crm-020 studio invitation table for Content studio re-enrolment ([#70](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/70)) ([9e1a5bb](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/9e1a5bba1eae15a211d532c86d144f3c224d9810))
+* crm-021 client proposal model (migration only) ([#77](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/77)) ([13e42b9](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/13e42b92a0dab0a9759097a0d194afd61109cda8))
+* crm-022 AA content cache, day 0 prep packs and message templates ([#95](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/95)) ([4e7e76a](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/4e7e76ae4f340b12216fc9030e9b4fa64bf9a685))
+* crm.ops.v1 1.4 data coverage counts for the CIS admin page ([#75](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/75)) ([7e3a38d](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/7e3a38d5d8dbe44f9903b3c29ebe38cb0c141d52))
+* day-list proposal builder (CRM-21a) ([#66](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/66)) ([66ffef7](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/66ffef7dfb41a290135dbdcb3d4c34b91b01b7ed))
+* deliver CIS Content studio invitations and activate them at CIS ([#74](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/74)) ([61e0d26](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/61e0d26b2b536308af854df8b7b07c4c27b44127))
+* mail history import in Settings &gt; Mailbox ([#88](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/88)) ([86082f4](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/86082f4cb2387da408cdfeed170cbcf920b0f467))
+* notice when Adventure Asia updated a tour after the tenant's version ([#89](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/89)) ([65b41dc](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/65b41dc0f77775ba00898b5b43214db893866e40))
+* portal shows angle requests whose tour part was rewritten and turns Write off ([#63](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/63)) ([7672645](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/767264533b1d844a57c8877c70c06c8f97690fe8))
+* text proposals by e-mail and WhatsApp, Before you go packs and the template library ([#96](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/96)) ([ae8104f](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/ae8104f523e41900493721214be61b8147077d9d))
+* the A10b studio-invitation check requires CIS is_synthetic (tenant.membership.v1 1.2) ([#84](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/84)) ([5f66e03](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/5f66e03c61960394d615a3d94662a7335fe1272f))
+
+
+### Bug Fixes
+
+* a refused tenant token on the agency host goes to the partner sign-in ([#76](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/76)) ([42c17a0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/42c17a0bc8d23695df22d72061f2f97f58e2618e))
+* end References with the CRM's own Message-ID so replies thread when Gmail replaces it ([#86](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/86)) ([d39f6da](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/d39f6dad6037484b977d6e4d7c881a718be4d054))
+* mail import type select stays inside its column on phones ([#90](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/90)) ([7bd2bb0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/7bd2bb089d959059915b82ede0313e992f472641))
+* put the Refresh AA prices test id on a wrapper (the kit Button drops data-testid) ([#68](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/68)) ([4b289dc](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/4b289dcd5da94a2ddb0f0b5b9137805dd671149e))
+* refuse the Dev-only E2E CIS admin on crm.ops.v1 writes outside synthetic studio invitations ([#83](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/83)) ([0a9beb3](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/0a9beb303d742d47510b381059cc3fa4ae7861c7))
+* studio sign-out reaches the managed-login logout page ([#94](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/94)) ([bed7404](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/bed74040c545807d719ae6ee3f06379cb29f33aa))
+
 ## [0.5.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.4.0...v0.5.0) (2026-10-25)
 
 

@@ -1,6 +1,6 @@
 [project]
 name = "aa-partner-api"
-version = "0.5.0"
+version = "0.6.0"
 description = "AA-Partner API (partner CRM) — FastAPI + asyncpg on the shared acc2 RDS, schema crm"
 requires-python = ">=3.12,<3.13"
 
