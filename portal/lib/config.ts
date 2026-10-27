@@ -13,6 +13,8 @@
 //                           sign-in (Vercel)
 //   CRM_WEB_SIGN_IN_PATH    the web route that renews the partner session or signs in (default /auth/refresh)
 //   CRM_WEB_SIGN_OUT_PATH   the web's sign-out (default /auth/sign-out): one sign-out for both apps
+//   CRM_SIGN_OUT_FORM_ORIGIN  https://<managed-login host> the web's sign-out redirects to; added to the CSP
+//                           form-action (lib/csp.ts). Empty = forms to this origin only (Vercel)
 //
 // The type is named WebConfig on purpose: lib/session.ts is a byte copy of web/lib/session.ts and imports
 // `type WebConfig` from "./config"; it reads only `secureCookies` and `sessionSecret`.
@@ -27,6 +29,8 @@ export interface WebConfig {
   sessionSecret: string;
   signInPath: string;
   signOutPath: string;
+  /** The managed-login origin the sign-out redirect lands on (CSP form-action); empty on Vercel. */
+  signOutFormOrigin: string;
   /** The partner (CRM web) session can be read: the session key is configured. */
   partnerSignIn: boolean;
   /** Cookies of the CRM web carry Secure and the __Host- / __Secure- prefixes (false only on http://localhost). */
@@ -76,6 +80,7 @@ export function loadConfig(env: Env = process.env): WebConfig {
     sessionSecret,
     signInPath: path(text(env, "CRM_WEB_SIGN_IN_PATH"), "/auth/refresh"),
     signOutPath: path(text(env, "CRM_WEB_SIGN_OUT_PATH"), "/auth/sign-out"),
+    signOutFormOrigin: origin(text(env, "CRM_SIGN_OUT_FORM_ORIGIN"), false),
     partnerSignIn: sessionSecret.length >= MIN_SECRET,
     secureCookies: !(local && publicOrigin.startsWith("http://")),
   };
