@@ -55,6 +55,13 @@ export CRM_TEST_ADMIN_DSN="postgresql://aa_cis_admin:<pw>@localhost:5432/crm_tes
 .venv/bin/pytest tests/integration -q
 ```
 
+Pre-push hook (AA-993): `scripts/install-hooks.sh` once per clone (sets `core.hooksPath .githooks`). Each push then
+runs `scripts/pre-push.sh`: the CI checks the diff against `origin/main` needs (resource IDs, ruff with the pinned
+version, unit tests of the changed modules, docs lint; `tsc` + unit tests for `web/` / `portal/` when they changed,
+never `next build`). `AA_PREPUSH=full` runs the CI unit command with coverage; `scripts/pre-push.sh --plan` lists the
+checks; skip once with `git push --no-verify`. From the hook, tracked files that differ from `HEAD` stop
+the push before any check (the checks read the working tree, the push sends `HEAD`): commit or `git stash` first.
+
 Web (Node 22; never run `npm install` in the main checkout of the workspace, use a worktree):
 
 ```bash
