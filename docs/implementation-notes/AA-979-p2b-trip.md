@@ -24,16 +24,31 @@ is live on `go-dev.`.
   wins (RFC 9309), so every other path of every host stays disallowed.
 - **Kit tokens, not the CIS page's fixed colours**, so the page follows the light / dark theme like the other client
   pages; the brand header and typography are the CIS page's.
+- **Contact address `SUPPORT_EMAIL` (`info@adventure.asia`, `web/app/_brand/tokens.ts`)** for the "Design This
+  Journey" mail link, not the CIS page's `admin@adventureasia.com`: AA-636 found `adventureasia.com` is not AA's
+  domain. Pointing the call to action at the tenant intake form (S245 D18) stays out of scope.
+- **One URL per trip**: a tour id with upper-case hex answers 308 to its lower-case form (page and metadata, before any
+  CIS read), so the indexable page has no duplicate address. The CIS page had the same gap; it is fixed here because
+  this page is the one explicitly indexed.
+- **Own not-found page for the segment** (`web/app/trip/[tourId]/not-found.tsx`): a retired or unknown trip shows
+  "This journey is no longer available" under the trip header and links to `SITE_URL` (adventure.asia). The root
+  not-found page is the agency app's ("Adventure Asia Partner", a link to `/`, which is 404 on the client host).
+- **Fonts from the kit** (`serif` / `sans` from `@/app/_kit`), not page-local stacks, so the page follows the brand
+  stack (AA-605 convention).
 - **Next data cache 1 h** (`revalidate: 3600`) as on CIS; the CIS read stamps `url_alive` on every uncached call.
 
 ## Changed
 
 - `web/lib/tripPage.ts` (new): the CIS read, answer mapping, body parsing.
 - `web/app/trip/[tourId]/page.tsx` (new): the page and its metadata.
+- `web/app/trip/[tourId]/TripHeader.tsx` (new): the brand header and label style shared by the page and its
+  not-found page.
+- `web/app/trip/[tourId]/not-found.tsx` (new): the trip not-found page.
 - `web/lib/hosts.ts`, `web/proxy.ts`: `/trip/` on the client host; 404 on the partner host.
 - `web/lib/config.ts`: `CIS_API_URL` -> `cfg.cisApiUrl`.
 - `web/public/robots.txt`: `Allow: /trip/`.
-- Tests: `web/tests/tripPage.test.ts` (new), `web/tests/routing.test.ts`.
+- Tests: `web/tests/tripPage.test.ts` (new; includes the /trip host rules, the robots.txt check, the upper-case
+  redirect and the trip not-found page).
 - `CONTEXT.md`: client host serves `/trip/*`; web env `CIS_API_URL`.
 
 ## Tradeoffs

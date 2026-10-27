@@ -10,26 +10,24 @@
 import type { Metadata } from "next";
 import { notFound, permanentRedirect } from "next/navigation";
 import { cache } from "react";
-import { K } from "@/app/_kit";
+import { K, sans, serif } from "@/app/_kit";
+import { SUPPORT_EMAIL } from "@/app/_brand/tokens";
 import { config } from "@/lib/config";
-import { itineraryParagraphs, loadTrip, type TripLookup } from "@/lib/tripPage";
+import { itineraryParagraphs, loadTrip, TOUR_ID, type TripLookup } from "@/lib/tripPage";
+import { TripHeader, tripLabel as label } from "./TripHeader";
 
 // One CIS read per request for the metadata and the page.
 const lookup = cache((tourId: string): Promise<TripLookup> => loadTrip(config().cisApiUrl, tourId));
 
-const serif = "'Fahkwang', Georgia, 'Iowan Old Style', serif";
-const sans = "'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-const label = {
-  fontFamily: sans,
-  fontSize: 11,
-  textTransform: "uppercase",
-  letterSpacing: "0.12em",
-  color: K.accent,
-  fontWeight: 700,
-} as const;
+// One URL per trip: a tour id with upper-case hex answers 308 to its lower-case form before any CIS read, so the
+// indexable page never has two addresses.
+function redirectToLowerCase(tourId: string): void {
+  if (TOUR_ID.test(tourId) && tourId !== tourId.toLowerCase()) permanentRedirect(`/trip/${tourId.toLowerCase()}`);
+}
 
 export async function generateMetadata({ params }: { params: Promise<{ tourId: string }> }): Promise<Metadata> {
   const { tourId } = await params;
+  redirectToLowerCase(tourId);
   const found = await lookup(tourId);
   if (found.kind !== "ok") return { title: "Trip Not Found — Adventure Asia" };
   const { trip } = found;
@@ -42,6 +40,7 @@ export async function generateMetadata({ params }: { params: Promise<{ tourId: s
 
 export default async function TripPage({ params }: { params: Promise<{ tourId: string }> }) {
   const { tourId } = await params;
+  redirectToLowerCase(tourId);
   const found = await lookup(tourId);
   if (found.kind === "moved") permanentRedirect(`/trip/${found.tourId}`);
   if (found.kind === "not_found") notFound();
@@ -50,20 +49,7 @@ export default async function TripPage({ params }: { params: Promise<{ tourId: s
 
   return (
     <main lang="en" data-testid="trip-page" style={{ background: K.bg, minHeight: "100vh", color: K.ink }}>
-      <header
-        style={{
-          borderBottom: `1px solid ${K.line}`,
-          padding: "20px 16px",
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 8,
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <span style={{ fontFamily: serif, fontWeight: 700, fontSize: 18, letterSpacing: "0.02em" }}>Adventure Asia</span>
-        <span style={{ ...label, letterSpacing: "0.14em" }}>Discreet Executive Adventure</span>
-      </header>
+      <TripHeader />
 
       <section style={{ maxWidth: 760, margin: "0 auto", padding: "56px 16px 80px" }}>
         {trip.country && (
@@ -132,7 +118,7 @@ export default async function TripPage({ params }: { params: Promise<{ tourId: s
         {/* No price shown — ADR-2026-030 §8.4: never display a price without a real source. */}
         <div style={{ textAlign: "center", padding: "36px 0 0", borderTop: `1px solid ${K.line}` }}>
           <a
-            href={`mailto:admin@adventureasia.com?subject=${encodeURIComponent(
+            href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(
               `Design This Journey — ${trip.name ?? trip.tour_id}`,
             )}`}
             style={{

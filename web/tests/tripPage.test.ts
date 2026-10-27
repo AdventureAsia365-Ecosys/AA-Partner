@@ -5,6 +5,7 @@ import path from "path";
 import { NextRequest } from "next/server";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SITE_URL, SUPPORT_EMAIL } from "@/app/_brand/tokens";
 import { loadConfig } from "@/lib/config";
 import { clientPathAllowed } from "@/lib/hosts";
 import { itineraryParagraphs, loadTrip, parseTrip, REVALIDATE_SECONDS } from "@/lib/tripPage";
@@ -158,7 +159,9 @@ describe("the page", () => {
     expect(html).toContain("Bac Ha market");
     expect(html).toContain("Day 2. Sapa.");
     expect(html).toContain('lang="en"');
-    expect(html).toContain("mailto:admin@adventureasia.com");
+    // AA-636: AA's published address, never the adventureasia.com one (not AA's domain).
+    expect(html).toContain(`mailto:${SUPPORT_EMAIL}?subject=`);
+    expect(html).not.toContain("adventureasia.com");
     const meta = await generateMetadata(props(ID));
     expect(meta.title).toBe("Northern Highlands | Adventure Asia");
     expect(meta.description).toBe("Eight days in the north of Vietnam.");
@@ -172,6 +175,28 @@ describe("the page", () => {
     expect(digest(err)).toContain("NEXT_REDIRECT");
     expect(digest(err)).toContain(`/trip/${NEW_ID}`);
     expect(digest(err)).toContain("308");
+  });
+
+  it("answers 308 to the lower-case id for an upper-case one, before any CIS read", async () => {
+    const fetchImpl = vi.fn(async () => json(TRIP));
+    vi.stubGlobal("fetch", fetchImpl);
+    const { default: TripPage, generateMetadata } = await page();
+    for (const run of [() => TripPage(props(ID.toUpperCase())), () => generateMetadata(props(ID.toUpperCase()))]) {
+      const err = await run().catch((e: unknown) => e);
+      expect(digest(err)).toContain("NEXT_REDIRECT");
+      expect(digest(err)).toContain(`/trip/${ID};308`);
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("the trip not-found page keeps the trip header and links to adventure.asia, never to /", async () => {
+    const { default: TripNotFound } = await import("@/app/trip/[tourId]/not-found");
+    const html = renderToStaticMarkup(TripNotFound());
+    expect(html).toContain("This journey is no longer available");
+    expect(html).toContain("Adventure Asia");
+    expect(html).not.toContain("Adventure Asia Partner");
+    expect(html).toContain(`href="${SITE_URL}"`);
+    expect(html).not.toContain('href="/"');
   });
 
   it("renders not-found for a retired tour (410) and an unknown one (404); noindex metadata", async () => {
