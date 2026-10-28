@@ -1,7 +1,7 @@
 // portal/app/portal/_components/marketplace/marketplaceApi.ts
 // AA-671 — the Marketplace's data layer (react-query wires these in). Tenant calls go through the BFF proxy
 // /api/tenant/* (the session cookie names the tenant; no tenant id is ever sent). Shapes follow CIS
-// GET /v1/tours/pool, POST /v1/tours/pool/{id}/rewrite (api/routers/v1_tours.py) and GET /v1/marketplace
+// GET /v1/tours/pool (with the activity / intensity / cover fields and filters), POST /v1/tours/pool/{id}/rewrite (api/routers/v1_tours.py) and GET /v1/marketplace
 // (api/routers/v1_marketplace.py).
 
 import { apiGet, apiSend } from "@/app/_kit";
@@ -24,12 +24,22 @@ export interface PoolTour extends ServedFields {
   duration: string | null;
   price_raw: string | null;
   already_rewritten: boolean;
+  /** CIS graph activity codes of the tour's places (trekking, culinary, …); [] when the tour has none yet. Optional:
+   *  an older CIS answer has no facet fields. */
+  activities?: string[];
+  /** The hardest part of the tour: easy | moderate | challenging | strenuous, or null. */
+  intensity?: string | null;
+  /** The tour's first photo on the public CIS photo route: ~600 px (card) and ~1600 px (drawer), or null. */
+  cover_image_url?: string | null;
+  cover_image_large_url?: string | null;
 }
 
 export interface PoolResponse {
   data?: PoolTour[];
   pagination?: { page?: number; page_size?: number; total?: number; pages?: number };
   countries?: string[];
+  /** The values `activity=` and `intensity=` accept (intensities easiest first). */
+  facets?: { activities?: string[]; intensities?: string[] };
 }
 
 /** One tour the tenant picked (GET /v1/marketplace row: its latest version). */

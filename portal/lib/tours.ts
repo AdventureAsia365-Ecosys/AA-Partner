@@ -93,22 +93,85 @@ export const DURATION_OPTIONS: { value: DurationFilter; label: string }[] = [
   { value: "8+", label: "8+ days" },
 ];
 
+// ── Activity / intensity facets (CIS GET /v1/tours/pool `activities`, `intensity`, `facets`) ──────────────────────
+
+/** English names of the CIS graph activity codes (geo.tour_place activity vocabulary). An unknown code (CIS added
+ *  one) still reads: underscores become spaces, first letter upper case. */
+export const ACTIVITY_LABELS: Record<string, string> = {
+  adventure_sport: "Adventure sports",
+  cultural_heritage: "Culture & heritage",
+  culinary: "Food & cooking",
+  local_immersion: "Local life",
+  trekking: "Trekking & hiking",
+  water_activities: "On the water",
+  wellness_relaxation: "Wellness & relaxation",
+  wildlife_nature: "Wildlife & nature",
+};
+
+/** The tenant intensity names CIS answers (the hardest part of the tour), easiest first. */
+export const INTENSITY_LABELS: Record<string, string> = {
+  easy: "Easy",
+  moderate: "Moderate",
+  challenging: "Challenging",
+  strenuous: "Strenuous",
+};
+
+function humanize(code: string): string {
+  const s = code.replace(/_/g, " ").trim();
+  return s ? s[0].toUpperCase() + s.slice(1) : s;
+}
+
+export function activityLabel(code: string): string {
+  return ACTIVITY_LABELS[code] ?? humanize(code);
+}
+
+export function intensityLabel(code: string): string {
+  return INTENSITY_LABELS[code] ?? humanize(code);
+}
+
+/** The select options for a facet: the values the API lists (`facets`), else the known ones; labels sorted by the
+ *  API order (intensities go easiest first, so their order matters). */
+export function facetOptions(fromApi: string[] | undefined, known: Record<string, string>,
+  label: (code: string) => string): { value: string; label: string }[] {
+  const codes = fromApi && fromApi.length > 0 ? fromApi : Object.keys(known);
+  return codes.map((value) => ({ value, label: label(value) }));
+}
+
+/** "Recently added" filter: published in the last N days (`added_within_days`), or any time. */
+export type AddedFilter = "all" | "14" | "30" | "90";
+
+export const ADDED_OPTIONS: { value: AddedFilter; label: string }[] = [
+  { value: "all", label: "Added any time" },
+  { value: "14", label: "Added in the last 14 days" },
+  { value: "30", label: "Added in the last 30 days" },
+  { value: "90", label: "Added in the last 90 days" },
+];
+
 export interface CatalogFilters {
   search: string;
   country: string;
   duration: DurationFilter;
+  /** A CIS activity code, "" = any. */
+  activity: string;
+  /** A tenant intensity name (easy … strenuous), "" = any. */
+  intensity: string;
+  added: AddedFilter;
 }
 
-export const NO_CATALOG_FILTERS: CatalogFilters = { search: "", country: "", duration: "all" };
+export const NO_CATALOG_FILTERS: CatalogFilters = {
+  search: "", country: "", duration: "all", activity: "", intensity: "", added: "all",
+};
 
 /** 24 = a full last row on 2, 3 and 4 columns. */
 export const CATALOG_PAGE_SIZE = 24;
 
 export function hasCatalogFilters(f: CatalogFilters): boolean {
-  return f.search.trim() !== "" || f.country !== "" || f.duration !== "all";
+  return f.search.trim() !== "" || f.country !== "" || f.duration !== "all"
+    || f.activity !== "" || f.intensity !== "" || f.added !== "all";
 }
 
-/** The query string (no "?") for GET /v1/tours/pool: paging, name search, country, duration range. */
+/** The query string (no "?") for GET /v1/tours/pool: paging, name search, country, duration range, activity,
+ *  intensity and "added in the last N days". */
 export function poolQuery(f: CatalogFilters, page: number, pageSize = CATALOG_PAGE_SIZE): string {
   const p = new URLSearchParams({ page: String(Math.max(1, Math.floor(page))), page_size: String(pageSize) });
   const search = f.search.trim();
@@ -121,7 +184,16 @@ export function poolQuery(f: CatalogFilters, page: number, pageSize = CATALOG_PA
     p.set("duration_min", min);
     p.set("duration_max", max);
   }
+  if (f.activity) p.set("activity", f.activity);
+  if (f.intensity) p.set("intensity", f.intensity);
+  if (f.added !== "all") p.set("added_within_days", f.added);
   return p.toString();
+}
+
+/** The card tags: the tour's activities (CIS graph) when it has any, else its theme tags (SEO keywords). */
+export function cardTags(activities: string[] | null | undefined, themes: string[], max = 3): string[] {
+  const acts = (activities ?? []).filter((a) => typeof a === "string" && a.trim() !== "").map(activityLabel);
+  return (acts.length > 0 ? acts : themes).slice(0, max);
 }
 
 export function pageCount(total: number, pageSize = CATALOG_PAGE_SIZE): number {
