@@ -11,7 +11,7 @@
 import { useMemo, useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Globe2, Search, X } from "lucide-react";
-import { Button, EmptyState, ErrorState, K, sans, useToast } from "@/app/_kit";
+import { Button, EmptyState, ErrorState, K, alpha, sans, useToast } from "@/app/_kit";
 import { MY_VERSIONS_KEY } from "@/app/_kit/local/useShellData";
 import {
   CATALOG_PAGE_SIZE, DURATION_OPTIONS, NO_CATALOG_FILTERS, fmtDuration, hasCatalogFilters, isRecentlyAdded, pageCount,
@@ -154,11 +154,14 @@ export function CatalogBrowse({ externalSearch = "", meter }: { externalSearch?:
         </div>
       )}
 
-      {/* Bulk bar — shown once a card is selected. */}
+      {/* Bulk bar — shown once a card is selected; sticky at the top of the scrolling <main>, so the Rewrite button stays
+          in reach after scrolling down the grid (a phone shows one card per row). Opaque card background: cards pass
+          under it. */}
       {checked.size > 0 && (
         <div data-testid="marketplace-bulk-bar" style={{
           display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "10px 14px",
-          background: K.accentTint, border: `1px solid ${K.accentSoft}`, borderRadius: 10,
+          background: K.card, border: `1px solid ${K.accentSoft}`, borderRadius: 10,
+          position: "sticky", top: 8, zIndex: 5, boxShadow: `0 4px 14px ${alpha(K.ink, 12)}`,
         }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: K.accentDeep }}>
             {checked.size} selected{bulkIds.length < checked.size ? ` · ${checked.size - bulkIds.length} already being written` : ""}
