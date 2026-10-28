@@ -1,0 +1,309 @@
+{
+  "app/(crm)/bookings/page.tsx": {
+    "@next/next/no-html-link-for-pages": {
+      "count": 1
+    },
+    "aa-kit/no-raw-table": {
+      "count": 1
+    }
+  },
+  "app/(crm)/clients/page.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    }
+  },
+  "app/(crm)/layout.tsx": {
+    "aa-kit/no-raw-main": {
+      "count": 1
+    }
+  },
+  "app/(crm)/page.tsx": {
+    "aa-kit/no-raw-aa-var": {
+      "count": 2
+    }
+  },
+  "app/(crm)/pipeline/page.tsx": {
+    "@next/next/no-html-link-for-pages": {
+      "count": 1
+    }
+  },
+  "app/(crm)/settings/access-log/page.tsx": {
+    "@next/next/no-html-link-for-pages": {
+      "count": 1
+    }
+  },
+  "app/(crm)/settings/agreements/page.tsx": {
+    "@next/next/no-html-link-for-pages": {
+      "count": 1
+    }
+  },
+  "app/(crm)/settings/data/page.tsx": {
+    "@next/next/no-html-link-for-pages": {
+      "count": 1
+    }
+  },
+  "app/(crm)/settings/forms/page.tsx": {
+    "@next/next/no-html-link-for-pages": {
+      "count": 1
+    }
+  },
+  "app/(crm)/settings/mailbox/page.tsx": {
+    "@next/next/no-html-link-for-pages": {
+      "count": 1
+    }
+  },
+  "app/(crm)/settings/page.tsx": {
+    "@next/next/no-html-link-for-pages": {
+      "count": 9
+    }
+  },
+  "app/(crm)/settings/payments/page.tsx": {
+    "@next/next/no-html-link-for-pages": {
+      "count": 1
+    }
+  },
+  "app/(crm)/settings/saved-replies/page.tsx": {
+    "@next/next/no-html-link-for-pages": {
+      "count": 1
+    }
+  },
+  "app/(crm)/settings/team/page.tsx": {
+    "@next/next/no-html-link-for-pages": {
+      "count": 1
+    }
+  },
+  "app/(crm)/settings/templates/page.tsx": {
+    "@next/next/no-html-link-for-pages": {
+      "count": 1
+    }
+  },
+  "app/_kit/local/CrmShell.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 4
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 6
+    },
+    "aa-kit/no-raw-main": {
+      "count": 1
+    }
+  },
+  "app/health/page.tsx": {
+    "aa-kit/no-raw-table": {
+      "count": 1
+    }
+  },
+  "app/join/accept/page.tsx": {
+    "@next/next/no-html-link-for-pages": {
+      "count": 2
+    },
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    }
+  },
+  "app/join/invite/page.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    }
+  },
+  "app/not-found.tsx": {
+    "@next/next/no-html-link-for-pages": {
+      "count": 2
+    }
+  },
+  "app/select-agency/page.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    }
+  },
+  "app/signed-out/page.tsx": {
+    "@next/next/no-html-link-for-pages": {
+      "count": 1
+    }
+  },
+  "app/trip/[tourId]/not-found.tsx": {
+    "aa-kit/no-raw-main": {
+      "count": 1
+    }
+  },
+  "app/trip/[tourId]/page.tsx": {
+    "aa-kit/no-hex-colour": {
+      "count": 1
+    },
+    "aa-kit/no-raw-main": {
+      "count": 1
+    }
+  },
+  "components/BellMenu.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 2
+    },
+    "aa-kit/no-raw-dialog": {
+      "count": 1
+    },
+    "react-hooks/set-state-in-effect": {
+      "count": 1
+    }
+  },
+  "components/CenteredCard.tsx": {
+    "aa-kit/no-hex-colour": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 1
+    },
+    "aa-kit/no-raw-main": {
+      "count": 1
+    }
+  },
+  "components/clients/ClientProfileView.tsx": {
+    "@next/next/no-html-link-for-pages": {
+      "count": 2
+    }
+  },
+  "components/intake/InquiryForm.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    }
+  },
+  "components/intake/PlanningForm.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "react-hooks/set-state-in-effect": {
+      "count": 1
+    }
+  },
+  "components/ledger/LinesPanel.tsx": {
+    "@next/next/no-html-link-for-pages": {
+      "count": 1
+    },
+    "aa-kit/no-raw-table": {
+      "count": 1
+    }
+  },
+  "components/ledger/SuppliersView.tsx": {
+    "aa-kit/no-raw-table": {
+      "count": 1
+    }
+  },
+  "components/mail/MailImport.tsx": {
+    "react-hooks/set-state-in-effect": {
+      "count": 1
+    }
+  },
+  "components/mail/MailboxBanner.tsx": {
+    "@next/next/no-html-link-for-pages": {
+      "count": 1
+    }
+  },
+  "components/mail/MailboxSettings.tsx": {
+    "aa-kit/no-raw-table": {
+      "count": 1
+    },
+    "react-hooks/set-state-in-effect": {
+      "count": 1
+    }
+  },
+  "components/mail/MessagesPanel.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 1
+    },
+    "react-hooks/refs": {
+      "count": 2
+    },
+    "react-hooks/set-state-in-effect": {
+      "count": 1
+    }
+  },
+  "components/pipeline/BoardView.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 1
+    },
+    "react-hooks/set-state-in-effect": {
+      "count": 1
+    }
+  },
+  "components/pipeline/StageDialogs.tsx": {
+    "aa-kit/no-hex-colour": {
+      "count": 1
+    },
+    "aa-kit/no-raw-dialog": {
+      "count": 1
+    },
+    "react-hooks/set-state-in-effect": {
+      "count": 1
+    }
+  },
+  "components/pipeline/TripPanel.tsx": {
+    "@next/next/no-html-link-for-pages": {
+      "count": 3
+    }
+  },
+  "components/pipeline/UndoToast.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "react-hooks/set-state-in-effect": {
+      "count": 1
+    }
+  },
+  "components/portal/PortalPage.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 6
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 1
+    }
+  },
+  "components/proposals/BuilderAaDrawer.tsx": {
+    "aa-kit/no-raw-dialog": {
+      "count": 1
+    }
+  },
+  "components/proposals/BuilderPage.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    }
+  },
+  "components/proposals/ClientBuilderProposal.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 7
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 1
+    }
+  },
+  "components/proposals/ProposalPage.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 1
+    }
+  },
+  "components/settings/AccessLogView.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    }
+  },
+  "components/settings/DataLifecycleView.tsx": {
+    "aa-kit/no-raw-table": {
+      "count": 1
+    }
+  },
+  "components/team/TeamAdmin.tsx": {
+    "aa-kit/no-raw-table": {
+      "count": 2
+    }
+  }
+}

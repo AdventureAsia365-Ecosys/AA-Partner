@@ -311,12 +311,24 @@ queued / running rows as information, exempt kinds left out). Daily or slower ki
 ## CI and release
 
 - Web checks (AA-935): **Web Build** (kit core integrity + provenance, vitest, `next build` with the type check,
-  standalone smoke) and **Web Docker Build Check** (native arm64 image, container smoke, Trivy); Security Audit also runs `npm audit` for `web/` and `portal/`.
-- Portal checks (AA-979): **Portal Build** (kit core integrity + provenance, `npm ci`, `tsc --noEmit`, `next build`) and
-  **Portal Lint** (ESLint, non-required). The portal deploys from `vercel-deploy-portal.yml`, never from `ci.yml`.
+  standalone smoke, kit lint) and **Web Docker Build Check** (native arm64 image, container smoke, Trivy); Security Audit also runs `npm audit` for `web/` and `portal/`.
+- Portal checks (AA-979): **Portal Build** (kit core integrity + provenance, `npm ci`, `tsc --noEmit`, `next build`, kit
+  lint). The portal deploys from `deploy-portal-dev.yml` (Fargate) and, for the rollback window, `vercel-deploy-portal.yml`,
+  never from `ci.yml`.
+- **Kit lint** (AA-994 S2b, root ADR 0016 decision 7): `portal/` and `web/` each run ESLint 9 with the Next rules plus
+  the kit preset `inline` from the vendored `app/_kit/core/eslint-kit.mjs` at `error` (`eslint.config.mjs`; portal:
+  `app/**`, web: `app/**` + `components/**`, the vendored core exempt). Violations that existed before S2b are frozen
+  in each app's `eslint-suppressions.json` (ESLint bulk suppressions), which only shrinks: the job runs
+  `eslint --prune-suppressions`, fails when the committed file differs from the pruned one, fails when an entry grows
+  against the base branch (`check-kit-copy.mjs --suppressions … --base-files …`) and fails on an inline disable of a
+  kit rule or a bare `eslint-disable` in page code (`--no-kit-disable`). After fixing violations run
+  `npx eslint --prune-suppressions` in the app folder and commit the file; never `--suppress-all` to hide a new one.
+  The steps are inside **Portal Build** / **Web Build** (required checks), so they gate the merge; the pre-push hook
+  runs the dependency-free kit checks and ESLint on the changed files (`scripts/pre-push.sh`).
 - Required checks: **Lint**, **Security Audit** (DM-6.10 resource-ID scan, pip-audit), **Unit Tests** (coverage >= 90 %),
   **Integration Tests** (PostgreSQL 15, no skips), **Docker Build Check** (native arm64 build, container smoke, Trivy,
-  SBOM); plus **Docs lint**, **PR title**, **gitleaks**. Non-required: **Vendored CIS copies**.
+  SBOM); plus **Docs lint**, **PR title**, **gitleaks**, and **Portal Build** + **Web Build** (AA-994 hand step H1, on
+  branch protection by 28/10/2026). Non-required: **Vendored CIS copies**.
 - Secret scan (`.github/workflows/secret-scan.yml`, AA-981 follow-up): **gitleaks** on every PR (lines the PR adds, rules
   and baseline read from the base branch) and **gitleaks full history** (`secret-scan-history.yml`) nightly, on push to `main` and on demand (every
   branch, tag and pull request head). Rules in `.gitleaks.toml` (same as the root repo), reviewed findings pinned in

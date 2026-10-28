@@ -1,0 +1,395 @@
+{
+  "app/_kit/local/PortalBottomNav.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    }
+  },
+  "app/_kit/local/PortalCommandPalette.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    }
+  },
+  "app/_kit/local/PortalShell.tsx": {
+    "aa-kit/no-raw-main": {
+      "count": 1
+    }
+  },
+  "app/_kit/local/PortalSidebar.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 14
+    }
+  },
+  "app/_kit/local/PortalTopbar.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 6
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 1
+    }
+  },
+  "app/_kit/local/useShellData.ts": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/_legal/LegalPage.tsx": {
+    "aa-kit/no-class-name": {
+      "count": 1
+    },
+    "aa-kit/no-raw-main": {
+      "count": 1
+    }
+  },
+  "app/portal-access/AccessCard.tsx": {
+    "aa-kit/no-raw-main": {
+      "count": 1
+    }
+  },
+  "app/portal-access/SignOutButton.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    }
+  },
+  "app/portal-access/select/page.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/AccountActivity.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/AccountMembers.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/AngleGateWizard.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/ApiKeyCard.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/ApiPlayground.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/ApiTab.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 5
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 2
+    }
+  },
+  "app/portal/_components/BrandTab.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 4
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 4
+    }
+  },
+  "app/portal/_components/CatalogDrawer.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 5
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/CatalogTab.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/ConnectionSummary.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/DashboardTab.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 4
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 5
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 2
+    }
+  },
+  "app/portal/_components/DisconnectConnection.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/FacebookConnect.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/GettingStarted.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/LiveWriter.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/MarketplaceTab.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/MasterNewerNotice.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/NotificationsBell.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/PlaceholderTabs.tsx": {
+    "aa-kit/no-hex-colour": {
+      "count": 4
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/PlanningTab.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/PoolFilters.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/PoolTab.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 3
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/PublishPendingList.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/PublishedList.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/ReviewDrawer.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/ReviewList.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 13
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/SeeOriginalToggle.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/SeoHealthBar.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/ServedBadge.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/Skeleton.tsx": {
+    "aa-kit/no-class-name": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/SlateTab.tsx": {
+    "aa-kit/no-class-name": {
+      "count": 1
+    },
+    "aa-kit/no-hand-styled-button": {
+      "count": 3
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 2
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/UsageSparkline.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/WordPressConnect.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/WriterPanel.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/api-playground/ApiKeyDisplay.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/api-playground/EndpointPanel.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 3
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/api-playground/ResponseViewer.tsx": {
+    "aa-kit/no-hex-colour": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/markdownText.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/_components/ui.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 28
+    }
+  },
+  "app/portal/account/integrations/page.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/content/page.tsx": {
+    "aa-kit/no-raw-aa-var": {
+      "count": 1
+    }
+  },
+  "app/portal/content/publish/page.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/portal/help/facebook/page.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/tenant-login/page.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    }
+  }
+}

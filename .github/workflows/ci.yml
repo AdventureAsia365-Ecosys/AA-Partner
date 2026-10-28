@@ -1,15 +1,17 @@
 name: CI
 
 # Required checks (branch protection on main; names like AA-Booking's and AA-CIS-App's so the rules read the same):
-#   Lint, Security Audit, Unit Tests, Integration Tests, Docker Build Check.
+#   Lint, Security Audit, Unit Tests, Integration Tests, Docker Build Check, Portal Build, Web Build (the last two since
+#   AA-994 hand step H1), plus Docs lint, PR title and gitleaks from their own workflows.
 # Non-required: "Vendored CIS copies" (byte copies of AA-CIS-App files: the job table template + comparator, ADR 0003a,
 # the multi-issuer verifier, ADR 0006 §8 rule 9, and the web's and portal's BFF helpers, AA-935 / AA-979).
 # UI kit core (AA-994 S2a, root ADR 0016): portal/app/_kit/core and web/app/_kit/core are checked inside Portal Build and
 # Web Build (integrity + provenance against kit.lock.json), not by "Vendored CIS copies".
-# CRM web (web/, AA-935): "Web Build" (unit tests, next build with the type check, standalone smoke) and "Web Docker
-# Build Check" (native arm64 image, container smoke, Trivy). Both are meant to join the required checks.
+# CRM web (web/, AA-935): "Web Build" (unit tests, next build with the type check, standalone smoke, kit lint) and "Web
+# Docker Build Check" (native arm64 image, container smoke, Trivy). Web Build is required; the image check is meant to join.
 # Tenant portal (portal/, AA-979 CRM-P2a, moved from AA-CIS-App with its history): "Portal Build" (npm ci, tsc, next
-# build; meant to join the required checks) and "Portal Lint" (ESLint, non-required, like in AA-CIS-App). AA-979 P2b:
+# build, kit lint; required). AA-994 S2b: the old non-required "Portal Lint" job is gone; ESLint
+# with the kit preset at error and a suppressions file that only shrinks runs inside Portal Build and Web Build. AA-979 P2b:
 # "Portal Docker Build Check" (the Fargate image, container smoke, Trivy, SBOM; to join the required checks). The
 # portal deploys from deploy-portal-dev.yml (Fargate) and, for the rollback window only, vercel-deploy-portal.yml.
 #
@@ -282,6 +284,7 @@ jobs:
         run: python3 ../api/scripts/check_kit_provenance.py kit.lock.json --base "$BASE_SHA"
 
       - name: Install (lockfile only)
+        id: install
         run: npm ci --no-audit --no-fund
 
       - name: Unit tests
@@ -320,6 +323,68 @@ jobs:
           [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3005/bff/me)" = "401" ]
           [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3005/signed-out)" = "200" ]
           curl -sI http://localhost:3005/signed-out | grep -qi "^content-security-policy: frame-ancestors 'none'"
+
+      # AA-994 S2b (root ADR 0016 decision 7, plan guards G1-G9, G11) — kit lint inside this job, so it gates with it.
+      # Page code is linted with the kit preset (app/_kit/core/eslint-kit.mjs, `inline`) at `error`; violations that
+      # existed before S2b are frozen in web/eslint-suppressions.json (ESLint bulk suppressions), which only shrinks:
+      #   1. `eslint --prune-suppressions` fails on any violation the file does not cover and rewrites the file;
+      #   2. the committed file must equal the pruned one (a fix that did not prune its entries fails);
+      #   3. no entry and no rule total may grow against the base branch's file (a `--suppress-all` that hides new
+      #      violations fails), a new entry may only carry a deleted/renamed file's violations into a file the base did
+      #      not have, and no entry may name a deleted file;
+      #   4. no inline `eslint-disable` of a kit rule (or bare `eslint-disable`) in page code.
+      # They run even when an earlier step failed (once npm ci succeeded), so one run shows every reason.
+      - name: ESLint (kit preset at error, suppressions pruned)
+        id: eslint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: |
+          set +e
+          npx eslint --prune-suppressions 2>&1 | tee "$RUNNER_TEMP/lint-output.txt"
+          STATUS=${PIPESTATUS[0]}
+          SUMMARY_LINE=$(grep -E "problems? \(" "$RUNNER_TEMP/lint-output.txt" | tail -n1)
+          {
+            echo "### Web ESLint"
+            echo ""
+            echo "${SUMMARY_LINE:-No unsuppressed problems.}"
+            echo ""
+            echo "_Kit rules at error (root ADR 0016 decision 7); pre-existing violations are frozen in web/eslint-suppressions.json, which only shrinks._"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $STATUS
+
+      - name: Suppressions file is pruned
+        if: ${{ !cancelled() && steps.eslint.conclusion != 'skipped' }}
+        run: |
+          if ! git diff --exit-code -- eslint-suppressions.json; then
+            echo "::error file=web/eslint-suppressions.json::Violations were fixed but their suppressions were not removed. Run 'npx eslint --prune-suppressions' in web/ and commit eslint-suppressions.json (the diff above)."
+            exit 1
+          fi
+          git checkout -- eslint-suppressions.json
+
+      - name: Suppressions do not grow
+        if: ${{ !cancelled() && steps.eslint.conclusion != 'skipped' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+        run: |
+          case "$BASE_SHA" in
+            ""|0000000000000000000000000000000000000000)
+              echo "::notice::No base commit for this event: suppressions growth check skipped."
+              exit 0 ;;
+          esac
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          BASE_FILE="$RUNNER_TEMP/base-eslint-suppressions.json"
+          if ! git show "$BASE_SHA:web/eslint-suppressions.json" > "$BASE_FILE" 2>/dev/null; then
+            echo "::notice::The base commit has no web/eslint-suppressions.json (this change creates the baseline): growth check skipped."
+            exit 0
+          fi
+          BASE_LIST="$RUNNER_TEMP/base-web-files.txt"
+          git ls-tree -r --name-only "$BASE_SHA" -- . > "$BASE_LIST"  # paths relative to web/ (the cwd)
+          node app/_kit/core/check-kit-copy.mjs --suppressions "$BASE_FILE" eslint-suppressions.json --base-files "$BASE_LIST"
+
+      - name: No inline disable of a kit rule
+        if: ${{ !cancelled() }}
+        run: |
+          node app/_kit/core/check-kit-copy.mjs --no-kit-disable app --ignore _kit/core
+          node app/_kit/core/check-kit-copy.mjs --no-kit-disable components
 
   # AA-935 — the CRM web image: native arm64 (Fargate ARM64, ADR 0010 decision 2), container answers /healthz with its
   # commit, Trivy fails on fixable CRITICAL/HIGH like the API image.
@@ -464,6 +529,7 @@ jobs:
         run: python3 ../api/scripts/check_kit_provenance.py kit.lock.json --base "$BASE_SHA"
 
       - name: Install (lockfile only)
+        id: install
         run: npm ci --no-audit --no-fund
 
       - name: Type-check (tsc --noEmit)
@@ -479,39 +545,62 @@ jobs:
           NEXT_TELEMETRY_DISABLED: "1"
         run: npm run build
 
-  # AA-979 — ESLint for the portal. NON-required, as in AA-CIS-App (AA-885): the pre-existing errors came over with the
-  # portal files. The summary line goes to the job summary.
-  portal-lint:
-    name: Portal Lint
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: portal
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up Node 22
-        uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: portal/package-lock.json
-
-      - name: Install (lockfile only)
-        run: npm ci --no-audit --no-fund
-
-      - name: Run ESLint (write summary to the job summary)
-        continue-on-error: true
+      # AA-994 S2b (root ADR 0016 decision 7, plan guards G1-G9, G11) — kit lint inside this job, so it gates with it.
+      # Page code is linted with the kit preset (app/_kit/core/eslint-kit.mjs, `inline`) at `error`; violations that
+      # existed before S2b are frozen in portal/eslint-suppressions.json (ESLint bulk suppressions), which only shrinks:
+      #   1. `eslint --prune-suppressions` fails on any violation the file does not cover and rewrites the file;
+      #   2. the committed file must equal the pruned one (a fix that did not prune its entries fails);
+      #   3. no entry and no rule total may grow against the base branch's file (a `--suppress-all` that hides new
+      #      violations fails), a new entry may only carry a deleted/renamed file's violations into a file the base did
+      #      not have, and no entry may name a deleted file;
+      #   4. no inline `eslint-disable` of a kit rule (or bare `eslint-disable`) in page code.
+      # They run even when an earlier step failed (once npm ci succeeded), so one run shows every reason.
+      - name: ESLint (kit preset at error, suppressions pruned)
+        id: eslint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
           set +e
-          npm run lint 2>&1 | tee "$RUNNER_TEMP/lint-output.txt"
+          npx eslint --prune-suppressions 2>&1 | tee "$RUNNER_TEMP/lint-output.txt"
           STATUS=${PIPESTATUS[0]}
-          SUMMARY_LINE=$(grep -E "problems \(" "$RUNNER_TEMP/lint-output.txt" | tail -n1)
+          SUMMARY_LINE=$(grep -E "problems? \(" "$RUNNER_TEMP/lint-output.txt" | tail -n1)
           {
             echo "### Portal ESLint"
             echo ""
-            echo "${SUMMARY_LINE:-No summary line (lint produced no problems)}"
+            echo "${SUMMARY_LINE:-No unsuppressed problems.}"
             echo ""
-            echo "_Non-required job; the pre-existing errors came with the portal files (AA-885, AA-979)._"
+            echo "_Kit rules at error (root ADR 0016 decision 7); pre-existing violations are frozen in portal/eslint-suppressions.json, which only shrinks._"
           } >> "$GITHUB_STEP_SUMMARY"
           exit $STATUS
+
+      - name: Suppressions file is pruned
+        if: ${{ !cancelled() && steps.eslint.conclusion != 'skipped' }}
+        run: |
+          if ! git diff --exit-code -- eslint-suppressions.json; then
+            echo "::error file=portal/eslint-suppressions.json::Violations were fixed but their suppressions were not removed. Run 'npx eslint --prune-suppressions' in portal/ and commit eslint-suppressions.json (the diff above)."
+            exit 1
+          fi
+          git checkout -- eslint-suppressions.json
+
+      - name: Suppressions do not grow
+        if: ${{ !cancelled() && steps.eslint.conclusion != 'skipped' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+        run: |
+          case "$BASE_SHA" in
+            ""|0000000000000000000000000000000000000000)
+              echo "::notice::No base commit for this event: suppressions growth check skipped."
+              exit 0 ;;
+          esac
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          BASE_FILE="$RUNNER_TEMP/base-eslint-suppressions.json"
+          if ! git show "$BASE_SHA:portal/eslint-suppressions.json" > "$BASE_FILE" 2>/dev/null; then
+            echo "::notice::The base commit has no portal/eslint-suppressions.json (this change creates the baseline): growth check skipped."
+            exit 0
+          fi
+          BASE_LIST="$RUNNER_TEMP/base-portal-files.txt"
+          git ls-tree -r --name-only "$BASE_SHA" -- . > "$BASE_LIST"  # paths relative to portal/ (the cwd)
+          node app/_kit/core/check-kit-copy.mjs --suppressions "$BASE_FILE" eslint-suppressions.json --base-files "$BASE_LIST"
+
+      - name: No inline disable of a kit rule
+        if: ${{ !cancelled() }}
+        run: node app/_kit/core/check-kit-copy.mjs --no-kit-disable app --ignore _kit/core
