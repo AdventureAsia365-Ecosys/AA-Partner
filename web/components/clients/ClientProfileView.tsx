@@ -100,7 +100,7 @@ export function ClientProfileView({ view, members, role, lang, locale }: { view:
 
   const owner = members.find((m) => m.member_id === traveler.owner_member_id);
   return (
-    <div data-testid="crm-client" data-card="AA-937" style={{ display: "grid", gap: 14, maxWidth: 1080, minWidth: 0 }}>
+    <div data-testid="crm-client" style={{ display: "grid", gap: 14, maxWidth: 1080, minWidth: 0 }}>
       <a href="/clients" style={{ fontSize: 13, color: K.accentDeep }}>
         ← {t(lang, "clients.back")}
       </a>

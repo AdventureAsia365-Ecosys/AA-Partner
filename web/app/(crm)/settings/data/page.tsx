@@ -24,7 +24,7 @@ export default async function DataSettingsPage() {
       ])
     : [null, null];
   return (
-    <div data-testid="crm-data-settings" data-card="AA-942" style={{ display: "grid", gap: 14, maxWidth: 980 }}>
+    <div data-testid="crm-data-settings" style={{ display: "grid", gap: 14, maxWidth: 980 }}>
       <a href="/settings" style={{ fontSize: 13 }}>
         ← {t(ctx.lang, "settings.title")}
       </a>

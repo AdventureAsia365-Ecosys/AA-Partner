@@ -17,7 +17,7 @@ export default async function SavedRepliesPage() {
   if (!session) return null;
   const list = await crmCall<{ saved_replies: SavedReply[] }>(ctx.cfg, session, "GET", "saved-replies");
   return (
-    <div data-testid="crm-saved-replies" data-card="AA-945" style={{ display: "grid", gap: 14, maxWidth: 820 }}>
+    <div data-testid="crm-saved-replies" style={{ display: "grid", gap: 14, maxWidth: 820 }}>
       <a href="/settings" style={{ fontSize: 13 }}>
         ← {t(ctx.lang, "settings.title")}
       </a>

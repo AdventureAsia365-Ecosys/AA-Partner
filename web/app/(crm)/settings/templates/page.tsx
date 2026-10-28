@@ -18,7 +18,7 @@ export default async function TemplatesPage() {
   if (!session) return null;
   const library = await crmCall<TemplateLibrary>(ctx.cfg, session, "GET", "message-templates");
   return (
-    <div data-testid="crm-templates" data-card="AA-951" style={{ display: "grid", gap: 14, maxWidth: 820 }}>
+    <div data-testid="crm-templates" style={{ display: "grid", gap: 14, maxWidth: 820 }}>
       <a href="/settings" style={{ fontSize: 13 }}>
         ← {t(ctx.lang, "settings.title")}
       </a>

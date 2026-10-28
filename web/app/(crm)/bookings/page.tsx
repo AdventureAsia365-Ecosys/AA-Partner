@@ -31,7 +31,7 @@ export default async function BookingsPage({ searchParams }: { searchParams: Pro
   const { lines, totals, base_currency: base } = view.data;
   const money = (v: string | undefined) => formatMoney(v, base, ctx.locale);
   return (
-    <div data-testid="crm-bookings" data-card="AA-944" style={{ display: "grid", gap: 14, maxWidth: 1200 }}>
+    <div data-testid="crm-bookings" style={{ display: "grid", gap: 14, maxWidth: 1200 }}>
       <PageTitle title={tr("ledger.page.title")} subtitle={tr("ledger.page.subtitle")} />
       {totals && (
         <Panel title={tr("ledger.totals")} testId="bookings-totals">

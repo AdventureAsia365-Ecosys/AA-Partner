@@ -23,7 +23,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
   const res = session ? await crmCall<Board>(ctx.cfg, session, "GET", "pipeline", { query }) : null;
   const { lang } = ctx;
   return (
-    <div data-testid="crm-pipeline" data-card="AA-936" style={{ display: "grid", gap: 14, minWidth: 0 }}>
+    <div data-testid="crm-pipeline" style={{ display: "grid", gap: 14, minWidth: 0 }}>
       <PageTitle title={t(lang, "pipeline.title")} subtitle={t(lang, "pipeline.subtitle")} />
       {!res || !res.ok ? (
         <ErrorState message={t(lang, "pipeline.error")} />

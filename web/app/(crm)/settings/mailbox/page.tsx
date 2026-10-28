@@ -35,7 +35,7 @@ export default async function MailboxPage({
     crmCall<{ senders: SenderRow[] }>(ctx.cfg, session, "GET", "mail/senders"),
   ]);
   return (
-    <div data-testid="crm-mailbox-settings" data-card="AA-945" style={{ display: "grid", gap: 14, maxWidth: 820 }}>
+    <div data-testid="crm-mailbox-settings" style={{ display: "grid", gap: 14, maxWidth: 820 }}>
       <a href="/settings" style={{ fontSize: 13 }}>
         ← {t(ctx.lang, "settings.title")}
       </a>

@@ -24,7 +24,7 @@ export default async function SectionPage({ params }: { params: Promise<{ sectio
     );
   }
   return (
-    <div data-testid={`crm-section-${section.key}`} data-card={section.card}>
+    <div data-testid={`crm-section-${section.key}`}>
       <PageTitle title={t(lang, section.label)} />
       <EmptyState title={t(lang, section.empty.title)} description={t(lang, section.empty.body)} />
     </div>

@@ -131,7 +131,7 @@ describe("navigation", () => {
     expect(assistant).not.toContain("commissions");
     expect(assistant).not.toContain("marketing");
     expect(visibleSections("owner").map((s) => s.key)).toContain("commissions");
-    expect(sectionByKey("pipeline")?.card).toBe("AA-936");
+    expect(sectionByKey("pipeline")?.path).toBe("/pipeline");
     expect(sectionByKey("home")).toBeNull();
     expect(sectionByKey("nope")).toBeNull();
     expect(activeSection("/")?.key).toBe("home");

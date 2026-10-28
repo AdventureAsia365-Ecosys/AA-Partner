@@ -18,7 +18,7 @@ export default async function SuppliersPage() {
   if (!session) return null;
   const view = await crmCall<View>(ctx.cfg, session, "GET", "suppliers");
   return (
-    <div data-testid="crm-suppliers" data-card="AA-944" style={{ display: "grid", gap: 14, maxWidth: 980 }}>
+    <div data-testid="crm-suppliers" style={{ display: "grid", gap: 14, maxWidth: 980 }}>
       <PageTitle title={t(ctx.lang, "suppliers.title")} subtitle={t(ctx.lang, "suppliers.subtitle")} />
       {!view.ok ? (
         <ErrorState message={t(ctx.lang, "error.api")} />

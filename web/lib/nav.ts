@@ -1,7 +1,7 @@
 // web/lib/nav.ts
 // AA-935 — the agency information architecture (design v3 §2.2): HOME, CRM, MONEY, GROW, CONTENT STUDIO, Settings,
-// Help. Every section exists now as a page with its empty state; the card that fills it is recorded here (data only,
-// shown to reviewers as a data attribute, never as text an agency reads).
+// Help. Every section exists now as a page with its empty state; the card that fills it is noted in a comment on
+// its line (never rendered: no issue ID reaches a page).
 //
 // Role visibility follows design v3 §2.2 / §4.6: Commissions is hidden for the assistant, Marketing is owner / agent
 // only. Hiding is a convenience; the API enforces the matrix (AA-939). Edge-safe.
@@ -35,8 +35,6 @@ export interface Section {
   label: MessageKey;
   icon: IconName;
   roles: readonly Role[];
-  /** Linear issue of the card that builds the page (data-card attribute). */
-  card: string;
   empty?: { title: MessageKey; body: MessageKey };
 }
 
@@ -44,21 +42,21 @@ const ALL: readonly Role[] = ["owner", "agent", "assistant"];
 const NO_ASSISTANT: readonly Role[] = ["owner", "agent"];
 
 export const SECTIONS: readonly Section[] = [
-  { key: "home", path: "/", group: "home", label: "nav.home", icon: "home", roles: ALL, card: "AA-935" },
-  { key: "pipeline", path: "/pipeline", group: "crm", label: "nav.pipeline", icon: "kanban", roles: ALL, card: "AA-936", empty: { title: "section.pipeline.title", body: "section.pipeline.body" } },
-  { key: "clients", path: "/clients", group: "crm", label: "nav.clients", icon: "users", roles: ALL, card: "AA-937", empty: { title: "section.clients.title", body: "section.clients.body" } },
-  { key: "inbox", path: "/inbox", group: "crm", label: "nav.inbox", icon: "inbox", roles: ALL, card: "AA-945", empty: { title: "section.inbox.title", body: "section.inbox.body" } },
-  { key: "tasks", path: "/tasks", group: "crm", label: "nav.tasks", icon: "check", roles: ALL, card: "AA-959", empty: { title: "section.tasks.title", body: "section.tasks.body" } },
-  { key: "payments", path: "/payments", group: "money", label: "nav.payments", icon: "wallet", roles: ALL, card: "AA-952", empty: { title: "section.payments.title", body: "section.payments.body" } },
-  { key: "bookings", path: "/bookings", group: "money", label: "nav.bookings", icon: "ticket", roles: ALL, card: "AA-944", empty: { title: "section.bookings.title", body: "section.bookings.body" } },
-  { key: "commissions", path: "/commissions", group: "money", label: "nav.commissions", icon: "percent", roles: NO_ASSISTANT, card: "AA-957", empty: { title: "section.commissions.title", body: "section.commissions.body" } },
-  { key: "reports", path: "/reports", group: "grow", label: "nav.reports", icon: "chart", roles: ALL, card: "AA-966", empty: { title: "section.reports.title", body: "section.reports.body" } },
-  { key: "marketing", path: "/marketing", group: "grow", label: "nav.marketing", icon: "megaphone", roles: NO_ASSISTANT, card: "AA-968", empty: { title: "section.marketing.title", body: "section.marketing.body" } },
-  { key: "suppliers", path: "/suppliers", group: "grow", label: "nav.suppliers", icon: "truck", roles: ALL, card: "AA-944", empty: { title: "section.suppliers.title", body: "section.suppliers.body" } },
-  { key: "library", path: "/library", group: "grow", label: "nav.library", icon: "book", roles: ALL, card: "AA-963", empty: { title: "section.library.title", body: "section.library.body" } },
-  { key: "automations", path: "/automations", group: "grow", label: "nav.automations", icon: "zap", roles: ALL, card: "AA-959", empty: { title: "section.automations.title", body: "section.automations.body" } },
-  { key: "settings", path: "/settings", group: "settings", label: "nav.settings", icon: "settings", roles: ALL, card: "AA-935" },
-  { key: "help", path: "/help", group: "settings", label: "nav.help", icon: "help", roles: ALL, card: "AA-970", empty: { title: "section.help.title", body: "section.help.body" } },
+  { key: "home", path: "/", group: "home", label: "nav.home", icon: "home", roles: ALL }, // AA-935
+  { key: "pipeline", path: "/pipeline", group: "crm", label: "nav.pipeline", icon: "kanban", roles: ALL, empty: { title: "section.pipeline.title", body: "section.pipeline.body" } }, // AA-936
+  { key: "clients", path: "/clients", group: "crm", label: "nav.clients", icon: "users", roles: ALL, empty: { title: "section.clients.title", body: "section.clients.body" } }, // AA-937
+  { key: "inbox", path: "/inbox", group: "crm", label: "nav.inbox", icon: "inbox", roles: ALL, empty: { title: "section.inbox.title", body: "section.inbox.body" } }, // AA-945
+  { key: "tasks", path: "/tasks", group: "crm", label: "nav.tasks", icon: "check", roles: ALL, empty: { title: "section.tasks.title", body: "section.tasks.body" } }, // AA-959
+  { key: "payments", path: "/payments", group: "money", label: "nav.payments", icon: "wallet", roles: ALL, empty: { title: "section.payments.title", body: "section.payments.body" } }, // AA-952
+  { key: "bookings", path: "/bookings", group: "money", label: "nav.bookings", icon: "ticket", roles: ALL, empty: { title: "section.bookings.title", body: "section.bookings.body" } }, // AA-944
+  { key: "commissions", path: "/commissions", group: "money", label: "nav.commissions", icon: "percent", roles: NO_ASSISTANT, empty: { title: "section.commissions.title", body: "section.commissions.body" } }, // AA-957
+  { key: "reports", path: "/reports", group: "grow", label: "nav.reports", icon: "chart", roles: ALL, empty: { title: "section.reports.title", body: "section.reports.body" } }, // AA-966
+  { key: "marketing", path: "/marketing", group: "grow", label: "nav.marketing", icon: "megaphone", roles: NO_ASSISTANT, empty: { title: "section.marketing.title", body: "section.marketing.body" } }, // AA-968
+  { key: "suppliers", path: "/suppliers", group: "grow", label: "nav.suppliers", icon: "truck", roles: ALL, empty: { title: "section.suppliers.title", body: "section.suppliers.body" } }, // AA-944
+  { key: "library", path: "/library", group: "grow", label: "nav.library", icon: "book", roles: ALL, empty: { title: "section.library.title", body: "section.library.body" } }, // AA-963
+  { key: "automations", path: "/automations", group: "grow", label: "nav.automations", icon: "zap", roles: ALL, empty: { title: "section.automations.title", body: "section.automations.body" } }, // AA-959
+  { key: "settings", path: "/settings", group: "settings", label: "nav.settings", icon: "settings", roles: ALL }, // AA-935
+  { key: "help", path: "/help", group: "settings", label: "nav.help", icon: "help", roles: ALL, empty: { title: "section.help.title", body: "section.help.body" } }, // AA-970
 ];
 
 export const GROUP_LABEL: Partial<Record<Group, MessageKey>> = {

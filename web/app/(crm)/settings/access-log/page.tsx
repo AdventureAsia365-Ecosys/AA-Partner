@@ -25,7 +25,7 @@ export default async function AccessLogPage({ searchParams }: { searchParams: Pr
   );
   if (ctx.role !== "owner") {
     return (
-      <div data-testid="crm-access-log" data-card="AA-940" style={{ display: "grid", gap: 14, maxWidth: 980 }}>
+      <div data-testid="crm-access-log" style={{ display: "grid", gap: 14, maxWidth: 980 }}>
         {back}
         <PageTitle title={t(ctx.lang, "log.title")} />
         <EmptyState title={t(ctx.lang, "log.ownerOnly")} />
@@ -37,7 +37,7 @@ export default async function AccessLogPage({ searchParams }: { searchParams: Pr
     ? await crmCall<AuditPage>(ctx.cfg, session, "GET", "audit/events", { query: filterQuery(filter, { limit: "50" }) })
     : null;
   return (
-    <div data-testid="crm-access-log" data-card="AA-940" style={{ display: "grid", gap: 14, maxWidth: 980 }}>
+    <div data-testid="crm-access-log" style={{ display: "grid", gap: 14, maxWidth: 980 }}>
       {back}
       <PageTitle title={t(ctx.lang, "log.title")} subtitle={t(ctx.lang, "log.subtitle")} />
       {!res || !res.ok ? (

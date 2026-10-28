@@ -21,7 +21,7 @@ export default async function InboxPage() {
     query: new URLSearchParams({ unmatched: "true" }),
   });
   return (
-    <div data-testid="crm-inbox" data-card="AA-945" style={{ display: "grid", gap: 14, maxWidth: 860 }}>
+    <div data-testid="crm-inbox" style={{ display: "grid", gap: 14, maxWidth: 860 }}>
       <PageTitle title={t(ctx.lang, "inbox.title")} subtitle={t(ctx.lang, "inbox.subtitle")} />
       {!list.ok ? (
         <ErrorState message={t(ctx.lang, "error.api")} />

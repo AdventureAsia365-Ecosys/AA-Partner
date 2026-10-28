@@ -22,7 +22,7 @@ export default async function TeamSettingsPage() {
   );
   if (ctx.role !== "owner") {
     return (
-      <div data-testid="crm-settings-team" data-card="AA-939" style={{ display: "grid", gap: 14, maxWidth: 900 }}>
+      <div data-testid="crm-settings-team" style={{ display: "grid", gap: 14, maxWidth: 900 }}>
         {back}
         <PageTitle title={t(ctx.lang, "team.title")} />
         <Panel>
@@ -41,7 +41,7 @@ export default async function TeamSettingsPage() {
       ])
     : [null, null];
   return (
-    <div data-testid="crm-settings-team" data-card="AA-939" style={{ display: "grid", gap: 14, maxWidth: 980 }}>
+    <div data-testid="crm-settings-team" style={{ display: "grid", gap: 14, maxWidth: 980 }}>
       {back}
       <PageTitle title={t(ctx.lang, "team.title")} subtitle={t(ctx.lang, "team.subtitle")} />
       {!page || !page.ok ? (
