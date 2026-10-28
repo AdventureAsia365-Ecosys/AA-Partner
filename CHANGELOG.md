@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.8.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.7.0...v0.8.0) (2026-10-28)
+
+
+### Features
+
+* crm_dispatch commits a send marker before the provider call, so it no longer blocks deploys ([#107](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/107)) ([cc633a4](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/cc633a40a001f2a906f47375e716030c02c36936))
+* crm-023 dispatch attempt send marker table ([#105](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/105)) ([419dd8e](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/419dd8e424055247cf15edb2c6821c7452355408))
+* kit lint preset at error in the portal and the CRM web with shrinking baselines ([#108](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/108)) ([6221660](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/6221660d024e6912406626cd0ba753e614dfd098))
+* one Marketplace page in the portal (catalog grid, filters, detail drawer) ([#109](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/109)) ([a33ccf4](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/a33ccf4a8fcb69dac77ce64c5dde6dac53e02876))
+
+
+### Bug Fixes
+
+* remove internal issue IDs from user-visible text ([#110](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/110)) ([2556d31](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/2556d31a4d3ad216a8527e675dc647ebecba2704))
+
 ## [0.7.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.6.0...v0.7.0) (2026-10-27)
 
 
