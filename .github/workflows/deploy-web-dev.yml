@@ -17,8 +17,8 @@ name: Deploy Web Dev
 #   ECS_CLUSTER           default aa-cis-dev-cluster
 #   ECS_WEB_SERVICE       default aa-crm-dev-web
 #   ECS_WEB_TASK_FAMILY   default aa-crm-dev-web
-#   CRM_WEB_BASE_URL      default https://partner-dev.lumiguides.it.com (CloudFront -> ALB partner default rule -> web;
-#                         read by the post-deploy verify)
+#   CRM_WEB_BASE_URL      default https://portal.lumiguides.it.com (the agency host: CloudFront -> ALB agency default
+#                         rule -> web; AA-979 §4.5: partner-dev. answers 301 there except /crm/*; read by the verify)
 #
 # Pushes that only change web/tests/** do not deploy. This workflow never changes the desired count.
 #

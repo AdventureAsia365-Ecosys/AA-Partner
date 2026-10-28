@@ -14,7 +14,7 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { baseline, waitForCode } from "../helpers/mailbox";
-import { signIn } from "../helpers/signin";
+import { signIn, skipPasskeyOffer } from "../helpers/signin";
 import { freshTotp, parseSetupSecret } from "../helpers/totp";
 
 export type StaffMode = "none" | "browser" | "a10b";
@@ -269,11 +269,6 @@ async function fillSettled(page: Page, field: ReturnType<Page["getByLabel"]>, va
     if ((await field.inputValue()) !== value) await field.fill(value);
     await expect(field).toHaveValue(value, { timeout: 1_000 });
   }).toPass({ timeout: 15_000 });
-}
-
-async function skipPasskeyOffer(page: Page): Promise<void> {
-  const skip = page.getByRole("button", { name: /skip|not now|later/i }).first();
-  if (await skip.isVisible({ timeout: 5_000 }).catch(() => false)) await skip.click();
 }
 
 function newPassword(): string {

@@ -3,8 +3,8 @@
 Ported from the portal side of the AA-CIS-App unit tests (the admin side stays there):
 
 - test_aa885_portal_split: no admin secret or staff session code in the portal; the gate (``proxy.ts``) and the BFF
-  are tenant-only; security headers; the 308 map of the old T-number slugs; the lockfile is tracked; the deploy
-  workflow deploys the portal project on ``portal/**`` only and nothing else redeploys for a portal change.
+  are tenant-only; security headers; the 308 map of the old T-number slugs; the lockfile is tracked; nothing but the
+  Fargate deploy redeploys for a portal change (the Vercel copy went at the P2b clean-up, AA-979 §4.5).
 - test_aa886_portal_legal_pages: ``/privacy`` and ``/terms`` are draft, noindex pages outside the gate.
 - test_aa820_portal_terms_ai: ``/terms`` section 3 keeps the AI acceptable-use summary (draft v0.2).
 - test_aa760_muted_contrast (portal tokens) and test_aa760_portal_calls_not_metered (the sign-in asks for a portal
@@ -137,57 +137,31 @@ def test_portal_lockfile_is_tracked() -> None:
         text=True,
         check=False,
     )
-    assert out.returncode == 0, "portal/package-lock.json must be tracked (Vercel and CI run npm ci in portal/)"
+    assert out.returncode == 0, "portal/package-lock.json must be tracked (CI and the image build run npm ci in portal/)"
 
 
-def test_portal_vercel_git_deployments_stay_off() -> None:
-    """Deployments come only from vercel-deploy-portal.yml (one deployer; the Hobby cap counts every deployment)."""
-    assert re.search(r'"deploymentEnabled":\s*false', _read("portal/vercel.json"))
-
-
-def test_portal_workflow_deploys_its_own_project_on_portal_paths_only() -> None:
-    portal = (WORKFLOWS / "vercel-deploy-portal.yml").read_text()
-    portal_id = re.search(r"VERCEL_PROJECT_ID:\s*(.+?)\s*(#|$)", portal, re.M)
-    assert portal_id and portal_id.group(1) == "${{ vars.VERCEL_PORTAL_PROJECT_ID }}"
-    assert '"portal/**"' in portal and '"web/**"' not in portal and '"api/**"' not in portal
-    assert "./.github/workflows/ui-smoke-portal.yml" in portal
-    # A portal change never redeploys ECS (the API or the CRM web).
+def test_the_vercel_copy_is_gone() -> None:
+    """AA-979 §4.5 (P2b clean-up): the portal deploys to Fargate only. The Vercel workflow, its project settings and the
+    upload ignore file are gone, and no workflow names the Vercel project values or the tenant API key any more."""
+    assert not (WORKFLOWS / "vercel-deploy-portal.yml").exists()
+    assert not (PORTAL / "vercel.json").exists() and not (REPO / ".vercelignore").exists()
+    for wf in WORKFLOWS.glob("*.y*ml"):
+        text = wf.read_text()
+        for name in ("VERCEL_PORTAL_PROJECT_ID", "VERCEL_PORTAL_BYPASS_SECRET", "E2E_TENANT_API_KEY", "VERCEL_TOKEN"):
+            assert name not in text, f"{wf.name} still uses {name}"
+    # A portal change never redeploys the API or the CRM web.
     for name in ("deploy-dev.yml", "deploy-web-dev.yml"):
         assert "portal/" not in (WORKFLOWS / name).read_text(), f"{name} must not watch portal/"
 
 
-def test_portal_vercel_production_is_frozen_for_the_p2b_window() -> None:
-    """AA-979 P2b (critic C5): no Vercel production deploy on push to main (production is dispatch-only, for the
-    rollback drill), so merging the P2b portal never ships it to the live Vercel host before the DNS flip."""
-    portal = (WORKFLOWS / "vercel-deploy-portal.yml").read_text()
-    triggers = portal[portal.index("\non:\n") : portal.index("\npermissions:")]
-    assert "\n  push:" not in triggers, "vercel-deploy-portal.yml must not deploy on push (P2b freeze)"
-    assert "pull_request:" in triggers and "workflow_dispatch:" in triggers
-    assert "push) TARGET=production" not in portal
-    assert 'if [ "$TARGET" = "production" ] && [ "$REF" != "refs/heads/main" ]' in portal
-
-
-def test_portal_vercel_old_url_redirects_to_the_portal_host_only_by_host() -> None:
-    """The old Vercel URL answers 301 with its path to portal.; the rule is conditioned on that host so a rollback that
-    points portal. back at Vercel does not loop (design §5)."""
-    vercel = json.loads(_read("portal/vercel.json"))
-    rules = vercel.get("redirects", [])
-    assert len(rules) == 1, rules
-    rule = rules[0]
-    assert rule["source"] == "/:path*" and rule["destination"] == "https://portal.lumiguides.it.com/:path*"
-    assert rule["statusCode"] == 301
-    assert rule["has"] == [{"type": "host", "value": "aa-cis-portal.vercel.app"}]
-
-
-def test_portal_deploy_hands_the_smoke_only_its_two_secrets() -> None:
-    """No `secrets: inherit` (it would pass VERCEL_TOKEN to the smoke); the secrets sit on the smoke step only."""
-    portal = (WORKFLOWS / "vercel-deploy-portal.yml").read_text()
-    assert "secrets: inherit" not in portal
-    passed = re.search(r"^    secrets:\n((?:      \S.*\n)+)", portal, re.M)
-    assert passed, "vercel-deploy-portal.yml: the smoke call must pass an explicit secrets block"
+def test_portal_deploy_hands_the_smoke_only_the_studio_sign_in() -> None:
+    """No `secrets: inherit`; the deploy passes the e2e studio user's three values, and they sit on the smoke step only."""
+    deploy = (WORKFLOWS / "deploy-portal-dev.yml").read_text()
+    assert "secrets: inherit" not in deploy
+    passed = re.search(r"^    secrets:\n((?:      \S.*\n)+)", deploy, re.M)
+    assert passed, "deploy-portal-dev.yml: the smoke call must pass an explicit secrets block"
     names = set(re.findall(r"^\s+(\w+):", passed.group(1), re.M))
-    assert names == {"VERCEL_PORTAL_BYPASS_SECRET", "E2E_TENANT_API_KEY"}, names
-    assert '--token "$VERCEL_TOKEN"' not in portal, "the CLI reads VERCEL_TOKEN from env; keep it off the command line"
+    assert names == {"E2EPORTALEMAIL", "E2EPORTALPASSWORD", "E2EPORTALTOTP"}, names
     smoke = (WORKFLOWS / "ui-smoke-portal.yml").read_text()
     job_env = smoke[smoke.index("    env:\n") : smoke.index("    steps:\n")]
     assert "secrets." not in job_env, "ui-smoke-portal.yml: secrets belong on the smoke step, not the job env"
@@ -207,19 +181,14 @@ def test_portal_version_is_not_bumped_by_release_please() -> None:
 
 
 def test_portal_build_reads_nothing_outside_portal() -> None:
-    """The root .vercelignore drops the other apps from the upload; that is safe only while no portal import leaves
-    portal/. Every ignore line is anchored, so `/api` never matches portal/app/api/ (the BFF routes)."""
+    """The image is built with portal/ as the Docker context, so a portal import that leaves portal/ breaks the build."""
     escapes = []
     for p in _portal_source_files():
         for m in re.finditer(r"""(?:from|import|require\(|url\()\s*['"]?(\.{1,2}/[^'")\s]+)""", p.read_text()):
             target = (p.parent / m.group(1)).resolve()
             if PORTAL.resolve() not in target.parents:
                 escapes.append(f"{p.relative_to(REPO)}: {m.group(1)}")
-    assert escapes == [], "portal imports a file outside portal/ (fix .vercelignore first):\n" + "\n".join(escapes)
-    lines = [ln.strip() for ln in _read(".vercelignore").splitlines() if ln.strip() and not ln.startswith("#")]
-    assert lines, ".vercelignore is empty"
-    for ln in lines:
-        assert ln.startswith("/") and not ln.startswith("/portal") and "*" not in ln, f".vercelignore: {ln!r}"
+    assert escapes == [], "portal imports a file outside portal/ (the Docker context is portal/):\n" + "\n".join(escapes)
 
 
 def test_portal_smoke_uploads_no_auth_state() -> None:
@@ -533,12 +502,21 @@ def test_healthz_is_public_and_outside_the_gate() -> None:
 
 
 def test_api_key_sign_in_only_behind_its_flag() -> None:
+    """AA-979 §4.5: the people-facing API-key sign-in is OFF unless PORTAL_API_KEY_SIGNIN is exactly "true" (API keys
+    are for machines); its BFF answers 404 and the page answers 308 to the partner sign-in, landing on the studio home
+    (never next=/tenant-login, which would loop back to the page)."""
     route = _read("portal/app/api/auth/tenant-login/route.ts")
     assert "if (!config().apiKeySignIn)" in route and "status: 404" in route
     assert 'viewerKey(req.headers.get("cloudfront-viewer-address"))' in route  # critic S2
     gate = _read("portal/proxy.ts")
     assert "cfg.apiKeySignIn" in gate
-    assert 'apiKeySignIn: text(env, "PORTAL_API_KEY_SIGNIN").toLowerCase() !== "false"' in _read("portal/lib/config.ts")
+    assert 'apiKeySignIn: text(env, "PORTAL_API_KEY_SIGNIN").toLowerCase() === "true"' in _read("portal/lib/config.ts")
+    code = _strip_comments(gate)
+    assert "return cfg.partnerSignIn ? apiKeySignInGone(request) : notFound();" in code
+    gone = code[code.index("function apiKeySignInGone") :]
+    gone = gone[: gone.index("\n}\n")]
+    assert 'target.searchParams.set("next", "/portal/dashboard");' in gone and "NextResponse.redirect(target, 308)" in gone
+    assert "portalConfig().signInPath" in gone and "publicUrl(" in gone
 
 
 def test_the_gate_keeps_api_key_sessions_before_the_partner_path() -> None:
@@ -555,9 +533,10 @@ def test_portal_fargate_deploy_watches_the_portal_only() -> None:
     deploy = (WORKFLOWS / "deploy-portal-dev.yml").read_text()
     assert '"portal/**"' in deploy and '"web/**"' not in deploy and '"api/**"' not in deploy
     assert "CRM_PORTAL_ENABLED" in deploy and "aa-crm-dev-portal" in deploy
-    # AA-993 V3: the checks moved to post-deploy-verify.yml (app crm-portal) and ui-smoke-portal.yml (target fargate);
-    # both still pin the agency host to CRM_AGENCY_CF_DOMAIN when it is set (before a cutover, during a rollback).
-    assert "app: crm-portal" in deploy and "target: fargate" in deploy
+    # AA-993 V3: the checks moved to post-deploy-verify.yml (app crm-portal) and ui-smoke-portal.yml (always the
+    # Fargate studio since §4.5); both still pin the agency host to CRM_AGENCY_CF_DOMAIN when it is set.
+    assert "app: crm-portal" in deploy and "uses: ./.github/workflows/ui-smoke-portal.yml" in deploy
+    assert "PORTAL_TARGET: fargate" in (WORKFLOWS / "ui-smoke-portal.yml").read_text()
     assert "resolve_via: ${{ vars.CRM_AGENCY_CF_DOMAIN }}" in deploy
     ci = (WORKFLOWS / "ci.yml").read_text()
     assert "name: Portal Docker Build Check" in ci and "/portal-assets/_next/static/" in ci

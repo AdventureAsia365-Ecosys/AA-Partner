@@ -1,13 +1,14 @@
 // portal/lib/config.ts
 // AA-979 P2b — the Content studio's runtime configuration, read once from the environment (AA-CIS-Infra
-// accounts/aa365/crm_portal.tf on Fargate; the Vercel project aa-cis-portal sets none of the P2b names, so a Vercel
-// build behaves exactly like the P2a portal: API-key sign-in only). Server-only.
+// accounts/aa365/crm_portal.tf on Fargate). Nothing set = a local studio without partner sign-in. Server-only.
 //
 //   ENVIRONMENT             dev | stg | prod | test | local
-//   PORTAL_HOSTS            comma list of the hosts the studio answers (Dev portal.); empty = any (Vercel)
+//   PORTAL_HOSTS            comma list of the hosts the studio answers (Dev portal.); empty = any (local)
 //   PORTAL_PUBLIC_ORIGIN    https://<agency host>: redirects and the same-origin write guard use it, never the
 //                           standalone server's bind address (critic C2). Empty = the request's origin (Vercel)
-//   PORTAL_API_KEY_SIGNIN   "false" turns the tenant API-key sign-in off (P2b clean-up); anything else = on
+//   PORTAL_API_KEY_SIGNIN   "true" turns the people-facing tenant API-key sign-in (/tenant-login) on; anything else
+//                           = off (the default since the P2b clean-up, runbook §4.5: API keys are for machines).
+//                           Only a local studio without partner sign-in still needs it on
 //   WEB_SESSION_SECRET      the CRM web's session key (AA-CIS-Infra crm/dev/web session_secret): the studio READS the
 //                           web's sealed session cookie on the same host (never writes it). Empty = no partner
 //                           sign-in (Vercel)
@@ -85,7 +86,7 @@ export function loadConfig(env: Env = process.env): WebConfig {
       .map((h) => h.trim().toLowerCase())
       .filter(Boolean),
     publicOrigin,
-    apiKeySignIn: text(env, "PORTAL_API_KEY_SIGNIN").toLowerCase() !== "false",
+    apiKeySignIn: text(env, "PORTAL_API_KEY_SIGNIN").toLowerCase() === "true",
     sessionSecret,
     signInPath: path(text(env, "CRM_WEB_SIGN_IN_PATH"), "/auth/refresh"),
     signOutPath: path(text(env, "CRM_WEB_SIGN_OUT_PATH"), "/auth/sign-out"),

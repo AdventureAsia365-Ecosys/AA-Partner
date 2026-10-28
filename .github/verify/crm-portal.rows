@@ -2,8 +2,8 @@
 # host portal.), read by .github/scripts/post_deploy_verify.sh crm-portal. Format and variables: see crm.rows.
 #
 # On the agency host the ALB sends /healthz to the CRM web, so the studio's liveness is read at /api/healthz (same
-# body, portal/lib/health.ts). The ECS rows are fixed in the script; the sign-in page, its assets and the signed-out
-# redirect are checked by .github/scripts/edge_verify.sh crm-portal. The Playwright smoke (ui-smoke-portal.yml,
+# body, portal/lib/health.ts). The ECS rows are fixed in the script; a public studio page, its assets, the retired
+# API-key sign-in URL and the signed-out redirect are checked by .github/scripts/edge_verify.sh crm-portal. The Playwright smoke (ui-smoke-portal.yml,
 # target fargate) runs after this verify.
 #
 # api-health proves the agency host's API rule sits above the web default; the API's own commit is crm.rows' job.

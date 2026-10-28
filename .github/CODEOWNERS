@@ -36,9 +36,8 @@
 /portal/proxy.ts                              @pqnghiep1354
 /portal/app/api/auth/                         @pqnghiep1354
 /portal/lib/auth-server.ts                    @pqnghiep1354
-# Its headers/redirects, Vercel settings, the tenant and playground BFF routes and the request guards they use
+# Its headers/redirects, the tenant and playground BFF routes and the request guards they use
 /portal/next.config.ts                        @pqnghiep1354
-/portal/vercel.json                           @pqnghiep1354
 /portal/app/api/tenant/                       @pqnghiep1354
 /portal/app/api/playground/                   @pqnghiep1354
 /portal/lib/crossSiteGuard.ts                 @pqnghiep1354
@@ -47,9 +46,6 @@
 /portal/lib/proxyResponse.ts                  @pqnghiep1354
 /portal/lib/upstreamHeaders.ts               @pqnghiep1354
 /portal/lib/hosts.ts                          @pqnghiep1354
-# What the portal deployment uploads (a wrong line can drop portal files from the build)
-/.vercelignore                                @pqnghiep1354
-
 # Agency provisioning (the Dev synthetic-only rule) and the seeder
 /api/app/agencies.py                          @pqnghiep1354
 /api/app/seed/                                @pqnghiep1354

@@ -1,6 +1,6 @@
 // e2e/smoke-portal/portal-helpers.ts
 // AA-885 — helpers for the tenant portal smoke (project `smoke-portal`, BASE_URL = a portal host:
-// a portal preview, https://portal.lumiguides.it.com, or http://localhost:3004). The generic page
+// https://portal.lumiguides.it.com, or http://localhost:3004). The generic page
 // check, bypass route and watcher come from ./smoke-helpers.ts.
 import { expect, type Page } from '@playwright/test';
 import fs from 'fs';
@@ -11,9 +11,10 @@ export const PORTAL_RESULTS_DIR = 'results/smoke-portal';
 
 /**
  * AA-979 P2b — which studio the smoke checks: `fargate` (the agency host portal.: the studio behind CloudFront -> ALB,
- * sharing the host with the CRM web; PORTAL_TARGET=fargate) or the Vercel copy (default, the rollback target and the
- * PR previews). On the agency host a signed-out page goes to the CRM web's /auth/refresh (partner sign-in), "/" is the
- * CRM home, and the paths the studio does not own belong to the CRM web.
+ * sharing the host with the CRM web; PORTAL_TARGET=fargate, what CI always sets since the P2b clean-up) or a local
+ * studio without the partner sign-in (default; started with PORTAL_API_KEY_SIGNIN=true). On the agency host a
+ * signed-out page goes to the CRM web's /auth/refresh (partner sign-in), "/" is the CRM home, and the paths the studio
+ * does not own belong to the CRM web.
  */
 export const FARGATE = process.env.PORTAL_TARGET === 'fargate';
 /** Where a signed-out /portal/* page is sent. */
@@ -21,18 +22,30 @@ export const SIGNED_OUT_PATH = FARGATE ? '/auth/refresh' : '/tenant-login';
 
 export { TENANT_STATE };
 
-/** True when the tenant test key is in the environment (CI secret E2E_TENANT_API_KEY). */
-export function hasTenantKey(): boolean {
-  return Boolean(process.env.E2E_TENANT_API_KEY);
+/** The e2e studio user's partner-pool sign-in (CI secrets E2EPORTALEMAIL / E2EPORTALPASSWORD / E2EPORTALTOTP). */
+export function partnerCredentials(): { email: string; password: string; totpSecret: string } | null {
+  const email = (process.env.E2EPORTALEMAIL ?? '').trim();
+  const password = process.env.E2EPORTALPASSWORD ?? '';
+  const totpSecret = (process.env.E2EPORTALTOTP ?? '').trim();
+  return email && password && totpSecret ? { email, password, totpSecret } : null;
+}
+
+/**
+ * True when the setup can sign a tenant in: on the agency host with the studio user's partner sign-in (AA-979 §4.5:
+ * the API-key sign-in is off there); on a local studio with the tenant test key (E2E_TENANT_API_KEY).
+ */
+export function hasTenantLogin(): boolean {
+  return FARGATE ? partnerCredentials() !== null : Boolean(process.env.E2E_TENANT_API_KEY);
 }
 
 /** True when the setup project wrote a tenant storage state in this run. */
 export function hasTenantState(): boolean {
-  return hasTenantKey() && fs.existsSync(TENANT_STATE);
+  return hasTenantLogin() && fs.existsSync(TENANT_STATE);
 }
 
-export const NO_KEY_REASON =
-  'No tenant test key: set E2E_TENANT_API_KEY (Secrets Manager aa-cis/dev/e2e-tenant/<slug>) to run the logged-in portal smoke.';
+export const NO_LOGIN_REASON = FARGATE
+  ? 'No studio sign-in: set E2EPORTALEMAIL, E2EPORTALPASSWORD and E2EPORTALTOTP (the e2e studio user) to run the logged-in portal smoke.'
+  : 'No tenant test key: set E2E_TENANT_API_KEY (a local studio with PORTAL_API_KEY_SIGNIN=true) to run the logged-in portal smoke.';
 
 export function ensurePortalResultsDir(): void {
   fs.mkdirSync(PORTAL_RESULTS_DIR, { recursive: true });

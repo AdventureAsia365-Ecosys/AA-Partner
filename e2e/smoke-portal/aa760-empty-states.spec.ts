@@ -13,7 +13,7 @@
 import { test, expect, type BrowserContext, type Page, type Route } from '@playwright/test';
 import { baseUrl, installBypassRoute, watchPage, describeApiFailures } from './smoke-helpers';
 import {
-  NO_KEY_REASON,
+  NO_LOGIN_REASON,
   PORTAL_RESULTS_DIR,
   TENANT_STATE,
   ensurePortalResultsDir,
@@ -165,7 +165,7 @@ async function assertEmptyState(page: Page, spec: EmptyPage, scheme: string): Pr
 }
 
 test.describe('UI smoke — portal empty states (AA-760)', () => {
-  test.skip(() => !hasTenantState(), NO_KEY_REASON);
+  test.skip(() => !hasTenantState(), NO_LOGIN_REASON);
 
   for (const spec of EMPTY_PAGES) {
     test(`portal empty state: ${spec.label} (${spec.path})`, async ({ browser }) => {

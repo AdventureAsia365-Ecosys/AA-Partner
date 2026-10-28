@@ -21,7 +21,7 @@ agency feature yet. Start with [CONTEXT.md](CONTEXT.md).
 | `api/db/templates/` | The base table template every tenant table copies |
 | `web/` | CRM UI and the client host (Next.js 16 standalone, ARM64 image; AA-935) |
 | `api/app/seed/` | Dev seeder of the synthetic agencies (`python -m app.seed`, DRY RUN by default; AA-935) |
-| `portal/` | Tenant Content studio (Next.js, Vercel `aa-cis-portal`), moved from AA-CIS-App with its history by CRM-P2a (AA-979); CONTEXT.md "Tenant portal" |
+| `portal/` | Tenant Content studio (Next.js, Fargate `aa-crm-dev-portal` on the agency host `portal.`), moved from AA-CIS-App with its history by CRM-P2a (AA-979); CONTEXT.md "Tenant portal" |
 | `e2e/` | Playwright: the CRM Dev E2E (`playwright.config.ts`) and the portal UI smoke (`playwright.portal.config.ts`) |
 | `docs/` | Repo ADRs, implementation notes |
 | `tools/docs/` | Docs lint tools (byte copies of the root repo's) |
