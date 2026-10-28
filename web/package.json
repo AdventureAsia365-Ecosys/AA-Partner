@@ -1,6 +1,6 @@
 {
   "name": "aa-crm-web",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "description": "AA-Partner CRM web (Next.js standalone on Fargate ARM64 behind CloudFront partner-dev.)",
   "engines": {
