@@ -210,6 +210,7 @@ export function CatalogBrowse({ externalSearch = "", meter }: { externalSearch?:
               isNew={isRecentlyAdded(t.published_at, now)}
               tags={cardTags(t.activities, themeTags(t.seo_keywords_used, 3, [t.country]))}
               cover={t.cover_image_url ?? null}
+              coverLarge={t.cover_image_large_url ?? null}
               price={t.price_raw}
               status={statusOf(t)}
               // AA-986 L3: a tour AA paused or retired is refused (409): no select box, its badge says why.

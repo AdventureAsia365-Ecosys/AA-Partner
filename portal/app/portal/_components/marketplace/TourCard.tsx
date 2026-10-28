@@ -7,6 +7,7 @@
 import { useState } from "react";
 import { Clock, Gauge, ImageOff, MapPin } from "lucide-react";
 import { Badge, K, SkeletonBar, SkeletonStyle, alpha, sans, serif } from "@/app/_kit";
+import { coverSrcSet } from "@/lib/tours";
 import { WorkStatusBadge, type WorkStatus } from "../workStatus";
 
 /** The tour's place in the tenant's work: null = never rewritten. */
@@ -43,21 +44,25 @@ export function Chip({ icon, children, tone = "neutral" }: {
 }
 
 /** The cover photo, 16:9, or a quiet placeholder when the tour has no photo yet or the image fails to load (a card
- *  never shows a broken image). `src` undefined = no cover area at all (the In my catalog view). */
-export function CoverImage({ src, alt, radius = "12px 12px 0 0", testId = "marketplace-card-cover" }: {
-  src: string | null; alt: string; radius?: string; testId?: string;
+ *  never shows a broken image). Both CIS renditions go in `srcset` (600 / 1600 px, `coverSrcSet`) with the slot width in
+ *  `sizes`, so the browser picks the file for the slot and the screen density. `src` null = placeholder. */
+export function CoverImage({ src, large = null, sizes, alt, eager = false, radius = "12px 12px 0 0", testId = "marketplace-card-cover" }: {
+  src: string | null; large?: string | null; sizes: string; alt: string; eager?: boolean; radius?: string; testId?: string;
 }) {
   const [failed, setFailed] = useState<string | null>(null);
-  const show = !!src && failed !== src;
+  const url = src ?? large;
+  const show = !!url && failed !== url;
   return (
     <div data-testid={testId} data-cover={show ? "photo" : "none"} style={{
       position: "relative", width: "100%", aspectRatio: "16 / 9", overflow: "hidden", borderRadius: radius,
       background: K.line2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
     }}>
       {show ? (
-        // A plain <img>: the photo comes from the CIS public photo route (already resized), not from this app.
+        // A plain <img>: the photo comes from the CIS public photo route (a 302 to the photos CDN, already resized to
+        // WebP renditions), not from this app, so next/image would only add a second resize hop.
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={src} alt={alt} loading="lazy" decoding="async" onError={() => setFailed(src)}
+        <img src={url} srcSet={coverSrcSet(src, large)} sizes={sizes} alt={alt}
+          loading={eager ? "eager" : "lazy"} decoding="async" onError={() => setFailed(url)}
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
       ) : (
         <ImageOff size={22} strokeWidth={1.5} aria-hidden style={{ color: K.muted2 }} />
@@ -66,19 +71,24 @@ export function CoverImage({ src, alt, radius = "12px 12px 0 0", testId = "marke
   );
 }
 
+/** `sizes` of a grid card cover: the full content width on a phone (one column), else about one grid column. */
+export const CARD_COVER_SIZES = "(max-width: 640px) calc(100vw - 32px), 340px";
+
 const clamp = (lines: number): React.CSSProperties => ({
   display: "-webkit-box", WebkitLineClamp: lines, WebkitBoxOrient: "vertical", overflow: "hidden",
 });
 
 export function TourCard({
-  name, subtitle, country, duration, intensity, isNew = false, tags = [], cover, price, priceSub, status, extraBadge,
+  name, subtitle, country, duration, intensity, isNew = false, tags = [], cover, coverLarge = null, price, priceSub, status, extraBadge,
   selected = false, onSelectToggle, active = false, onOpen, testId = "marketplace-card", footer,
 }: {
   name: string;
   /** Intensity label ("Challenging"); no chip when absent. */
   intensity?: string | null;
-  /** Cover photo URL; null = placeholder; undefined = the card has no cover area. */
+  /** Cover photo URL (the small rendition); null = placeholder; undefined = the card has no cover area. */
   cover?: string | null;
+  /** The large rendition of the same photo, for `srcset` (high-density phones). */
+  coverLarge?: string | null;
   subtitle?: string | null;
   country?: string | null;
   duration?: string;
@@ -117,7 +127,7 @@ export function TourCard({
         onClick={onOpen}
         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}
         style={{ flex: 1, display: "flex", flexDirection: "column", cursor: "pointer", minWidth: 0, borderRadius: 12, outlineOffset: 2 }}>
-        {cover !== undefined && <CoverImage src={cover} alt={name} />}
+        {cover !== undefined && <CoverImage src={cover} large={coverLarge} sizes={CARD_COVER_SIZES} alt={name} />}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, padding: "14px 16px", minWidth: 0 }}>
           {/* The select box sits over the cover when there is one, so only a coverless card keeps room for it here. */}
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", paddingRight: onSelectToggle && cover === undefined ? 26 : 0, minWidth: 0 }}>

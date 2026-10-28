@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   activityLabel,
   cardTags,
+  coverSrcSet,
   facetOptions,
   fmtDuration,
   INTENSITY_LABELS,
@@ -90,6 +91,15 @@ test("card tags: activities first, theme tags when the tour has none, at most 3"
   assert.deepEqual(cardTags(["trekking", "culinary"], ["Hanoi"]), ["Trekking & hiking", "Food & cooking"]);
   assert.deepEqual(cardTags([], ["Hanoi", "Food"]), ["Hanoi", "Food"]);
   assert.deepEqual(cardTags(undefined, ["a", "b", "c", "d"]), ["a", "b", "c"]);
+});
+
+test("cover srcset: both renditions with their widths, nothing when one is missing or both are the same", () => {
+  assert.equal(coverSrcSet("https://x/p/1?size=small", "https://x/p/1?size=large"),
+    "https://x/p/1?size=small 600w, https://x/p/1?size=large 1600w");
+  assert.equal(coverSrcSet("https://x/p/1?size=small", null), undefined);
+  assert.equal(coverSrcSet(undefined, "https://x/p/1?size=large"), undefined);
+  assert.equal(coverSrcSet(" ", "https://x/p/1?size=large"), undefined);
+  assert.equal(coverSrcSet("https://x/a", "https://x/a"), undefined);
 });
 
 test("view: only 'mine' selects the tenant's catalog", () => {

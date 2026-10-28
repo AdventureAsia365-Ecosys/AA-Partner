@@ -115,6 +115,12 @@ test.describe('UI smoke — portal pages', () => {
       const card = page.getByTestId('marketplace-card').first();
       await expect(card, 'no tour card on the Marketplace').toBeVisible({ timeout: 15000 });
       await expect(card.getByTestId('marketplace-card-cover')).toHaveAttribute('data-cover', /^(photo|none)$/);
+      // A photo cover is responsive and lazy: both CIS renditions in srcset (600 / 1600 px), loading="lazy".
+      const photoImg = page.locator('[data-testid="marketplace-card-cover"][data-cover="photo"] img').first();
+      if (await photoImg.count()) {
+        await expect(photoImg).toHaveAttribute('srcset', /600w, .+ 1600w$/);
+        await expect(photoImg).toHaveAttribute('loading', 'lazy');
+      }
       const filters = page.getByTestId('marketplace-filters');
       for (const label of ['Activity', 'Intensity', 'Recently added']) {
         await expect(filters.getByLabel(label, { exact: true }), `no ${label} filter`).toBeVisible({ timeout: 10000 });

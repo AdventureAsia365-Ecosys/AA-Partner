@@ -137,6 +137,20 @@ export function facetOptions(fromApi: string[] | undefined, known: Record<string
   return codes.map((value) => ({ value, label: label(value) }));
 }
 
+// ── Cover photo (CIS public photo route, WebP renditions 600 px `size=small` and 1600 px `size=large`) ─────────
+
+/** Widths of the CIS photo renditions (AA-CIS-App services/photos/sync.py SIZES). */
+export const COVER_WIDTHS = { small: 600, large: 1600 } as const;
+
+/** The `srcset` for a cover from the two rendition URLs, so the browser picks the size for the slot and the screen
+ *  density (a 2x phone gets the 1600 px one, a desktop card the 600 px one). Undefined when there is fewer than two
+ *  usable URLs (a plain `src` is enough then). */
+export function coverSrcSet(small: string | null | undefined, large: string | null | undefined): string | undefined {
+  const ok = (u: string | null | undefined): u is string => typeof u === "string" && u.trim() !== "";
+  if (!ok(small) || !ok(large) || small === large) return undefined;
+  return `${small} ${COVER_WIDTHS.small}w, ${large} ${COVER_WIDTHS.large}w`;
+}
+
 /** "Recently added" filter: published in the last N days (`added_within_days`), or any time. */
 export type AddedFilter = "all" | "14" | "30" | "90";
 

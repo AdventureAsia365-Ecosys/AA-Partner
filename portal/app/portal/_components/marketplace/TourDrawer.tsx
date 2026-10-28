@@ -129,11 +129,16 @@ function TourDetail({ tour, status }: { tour: PoolTour; status: CardStatus }) {
   const highlights = parseStringList(tour.aa_highlights);
   const duration = fmtDuration(tour.duration);
   const activities = (tour.activities ?? []).filter((a) => typeof a === "string" && a.trim() !== "");
-  // The large size for the drawer; the card size when the answer has only that one.
-  const cover = tour.cover_image_large_url ?? tour.cover_image_url ?? null;
+  const coverSmall = tour.cover_image_url ?? null;
+  const coverLarge = tour.cover_image_large_url ?? null;
   return (
     <div data-testid="marketplace-drawer" style={{ display: "flex", flexDirection: "column", gap: 20, fontFamily: sans }}>
-      {cover && <CoverImage src={cover} alt={tour.aa_name} radius="10px" testId="marketplace-drawer-cover" />}
+      {(coverSmall || coverLarge) && (
+        // The drawer is 560 px wide on a desktop (minus its padding), the full width on a phone; opened on demand, so
+        // the photo loads at once instead of lazily.
+        <CoverImage src={coverSmall} large={coverLarge} sizes="(max-width: 600px) 100vw, 520px" eager
+          alt={tour.aa_name} radius="10px" testId="marketplace-drawer-cover" />
+      )}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {tour.country && <Chip icon={<MapPin size={11} aria-hidden />}>{tour.country}</Chip>}
