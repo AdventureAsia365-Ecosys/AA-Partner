@@ -17,9 +17,9 @@ name: Deploy Dev
 # Give the `dev` environment a deployment-branch policy of `main` only (the OIDC role trusts environment:dev).
 #
 # Job guard (the `preflight` job, same logic as AA-Booking AA-751 B3/B4; meaning changed by AA-993 G5, design D1.4):
-# since G5 the guard blocks only while a `crm_dispatch` row (DEPLOY_BLOCKING_KINDS in api/app/jobs/kinds.py, until the
-# G4b send marker ships) is running, or queued and due within 15 min (this job runs before the build, so the old task
-# would claim it before its SIGTERM). Any other running job is released on shutdown and re-claimed by the new task,
+# since G5 the guard blocks only while a row of DEPLOY_BLOCKING_KINDS (api/app/jobs/kinds.py; empty since AA-993 G4b:
+# crm_dispatch commits a send marker before the provider call) is running, or queued and due within 15 min (this job
+# runs before the build, so the old task would claim it before its SIGTERM). Any other running job is released on shutdown and re-claimed by the new task,
 # and other queued jobs wait for whichever task is live (AA-993 G4/G5). Preflight reads the service's task counts with the
 # deploy role (all 0 -> pass; a task starting -> blocked), otherwise mints this run's GitHub OIDC token (audience
 # aa-crm-deploy-gate) and calls GET <BASE_URL>/crm/ci/deploy-gate, which accepts only a token from this workflow file
@@ -52,7 +52,7 @@ on:
   workflow_dispatch:
     inputs:
       override_running_jobs:
-        description: "Nghiệp only — reason to deploy anyway while a crm_dispatch job runs or is due (deploy-blocking, AA-993 G5). Leave empty to respect the guard."
+        description: "Nghiệp only — reason to deploy anyway while a deploy-blocking job runs or is due, or the gate is unreachable (AA-993 G5). Leave empty to respect the guard."
         required: false
         type: string
 
@@ -101,7 +101,7 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Check for a running or due crm_dispatch job (deploy-blocking)
+      - name: Check for a running or due deploy-blocking job
         env:
           OVERRIDE: ${{ inputs.override_running_jobs }}
           GATE_AUDIENCE: aa-crm-deploy-gate

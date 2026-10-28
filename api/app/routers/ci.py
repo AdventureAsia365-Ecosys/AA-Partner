@@ -3,8 +3,9 @@
 - ``GET /crm/ci/deploy-gate``: may a deploy roll the API task now? Read by the ``preflight`` job of
   ``.github/workflows/deploy-dev.yml``. Authenticated **only** by that workflow's GitHub OIDC token (``app.auth.ci``):
   401 for any other token, 503 when GitHub's JWKS cannot be loaded. Since AA-993 G5 (design D1.4)
-  ``safe_to_deploy`` is false only while a row of :data:`app.jobs.kinds.DEPLOY_BLOCKING_KINDS` (``crm_dispatch``)
-  is ``running`` (``blocking_running`` per kind) or ``queued`` and due within
+  ``safe_to_deploy`` is false only while a row of :data:`app.jobs.kinds.DEPLOY_BLOCKING_KINDS` (empty since
+  AA-993 G4b: ``crm_dispatch`` commits a send marker before the provider call) is ``running`` (``blocking_running``
+  per kind) or ``queued`` and due within
   :data:`app.jobs.kinds.DEPLOY_BLOCKING_HORIZON_SECONDS` (``blocking_due``: the old task would claim it before its
   SIGTERM); reasons in ``blocked_by``. Queued / running rows of every other kind no longer block (the worker
   releases a running job on shutdown, the new task re-claims it); they stay in ``active`` / ``by_status`` /

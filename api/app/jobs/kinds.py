@@ -6,8 +6,9 @@ longer than ``OVERDUE_FACTOR`` x its expected seconds. Every kind the worker han
 compares this map with the handlers the lifespan registers).
 
 ``DEPLOY_BLOCKING_KINDS`` (AA-993 G5): the deploy gate is unsafe only while a row of one of these kinds is RUNNING,
-or QUEUED and due within ``DEPLOY_BLOCKING_HORIZON_SECONDS`` (today ``crm_dispatch``, see below). Queued and running
-rows of every other kind are reported but no longer block.
+or QUEUED and due within ``DEPLOY_BLOCKING_HORIZON_SECONDS``. Empty since AA-993 G4b (``crm_dispatch`` left it, see
+below); the mechanism stays for a future kind that cannot be released mid-run. Queued and running rows of every other
+kind are reported but do not block.
 
 ``DEPLOY_GATE_EXEMPT``: kinds the deploy gate (``GET /crm/ci/deploy-gate``) leaves out of its ``active`` /
 ``by_status`` / ``by_kind`` counts (information only since AA-993 G5; the reasons below date from when those counts
@@ -74,16 +75,16 @@ OVERDUE_FACTOR = 2
 
 DEPLOY_GATE_EXEMPT: frozenset[str] = frozenset({HEARTBEAT, MEMBERSHIP_PULL, BOOKING_SYNC})
 
-# AA-993 G5 (design D1.3-D1.4): the only kinds whose RUNNING row makes the deploy gate unsafe. crm_dispatch sends
-# through the provider inside the row-lock transaction (app.dispatch.worker): a release after the send and before the
-# decision commits would send the message again on the re-claim. It stays blocking until the committed send marker
-# (crm.dispatch_attempt, AA-993 G4b) ships. Every other kind is released on shutdown and re-claimed by the new task.
-DEPLOY_BLOCKING_KINDS: frozenset[str] = frozenset({DISPATCH})
+# AA-993 G5 (design D1.3-D1.4): the kinds whose RUNNING (or due QUEUED) row makes the deploy gate unsafe. None since
+# AA-993 G4b: crm_dispatch commits a crm.dispatch_attempt row before the provider call (crm-023, app.dispatch.worker),
+# so a run released after the send and before its decision is held send_uncertain by the re-claimed job instead of
+# sending again. Every kind is released on shutdown and re-claimed by the new task. A kind that cannot be released
+# mid-run (no checkpoint, an external side effect without a marker) goes here.
+DEPLOY_BLOCKING_KINDS: frozenset[str] = frozenset()
 
 # AA-993 G5 review: a QUEUED row of a deploy-blocking kind due within this window blocks too. The preflight runs before
 # the image build + push and the old task keeps claiming until its SIGTERM minutes later, so it would claim the row and
-# be stopped mid-send. 15 min covers build + push + roll; crm_dispatch is queued due at once or after the 10 s undo
-# delay, so a dispatch row due later (a retry backoff) is rare.
+# be stopped mid-run. 15 min covers build + push + roll.
 DEPLOY_BLOCKING_HORIZON_SECONDS = 900
 
 EXPECTED_SECONDS: dict[str, int] = {

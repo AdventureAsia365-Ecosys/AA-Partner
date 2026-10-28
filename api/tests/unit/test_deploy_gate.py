@@ -245,9 +245,10 @@ def test_exempt_kinds_are_real_kinds() -> None:
     assert DEPLOY_GATE_EXEMPT <= EXPECTED_SECONDS.keys()
 
 
-def test_crm_dispatch_stays_deploy_blocking() -> None:
-    """AA-993 G5: crm_dispatch sends inside the row-lock transaction; it blocks until the G4b send marker ships."""
-    assert DEPLOY_BLOCKING_KINDS == frozenset({"crm_dispatch"})
+def test_no_kind_is_deploy_blocking_since_the_send_marker() -> None:
+    """AA-993 G4b: crm_dispatch commits crm.dispatch_attempt before the provider call, so a release mid-send is held
+    send_uncertain on the re-claim instead of sent twice; it left the set (G5 put it there). Only real kinds there."""
+    assert DEPLOY_BLOCKING_KINDS == frozenset()
     assert DEPLOY_BLOCKING_KINDS <= EXPECTED_SECONDS.keys()
     assert not DEPLOY_BLOCKING_KINDS & DEPLOY_GATE_EXEMPT
 
@@ -261,7 +262,7 @@ async def test_blocking_count_counts_running_and_due_queued_rows_of_the_given_ki
         BLOCKING_SQL,
         [{"what": "running", "kind": "crm_dispatch", "n": 2}, {"what": "due", "kind": "crm_dispatch", "n": 1}],
     )
-    out = await queue.blocking_count(conn, DEPLOY_BLOCKING_KINDS, DEPLOY_BLOCKING_HORIZON_SECONDS)
+    out = await queue.blocking_count(conn, frozenset({"crm_dispatch"}), DEPLOY_BLOCKING_HORIZON_SECONDS)
     assert out == {"running": {"crm_dispatch": 2}, "due": {"crm_dispatch": 1}}
     (sql, args), *_ = conn.calls
     assert "FROM crm.job" in sql and "status = 'running'" in sql and "GROUP BY 1, 2" in sql
@@ -306,7 +307,7 @@ def test_gate_safe_when_only_exempt_kinds_are_active() -> None:
         "by_kind": {},
         "safe_to_deploy": True,
         "exempt_kinds": ["crm_booking_sync", "crm_heartbeat", "crm_membership_pull"],
-        "blocking_kinds": ["crm_dispatch"],
+        "blocking_kinds": [],
         "blocking_running": {},
         "blocking_due": {},
         "blocked_by": [],
@@ -314,7 +315,7 @@ def test_gate_safe_when_only_exempt_kinds_are_active() -> None:
     assert conn.sql("status IN ('queued', 'running')") == [
         (["crm_booking_sync", "crm_heartbeat", "crm_membership_pull"],)
     ]
-    assert conn.sql(BLOCKING_SQL) == [(["crm_dispatch"], 900)]
+    assert conn.sql(BLOCKING_SQL) == [([], 900)]
 
 
 def _active(*rows: dict[str, Any]) -> ScriptedConn:
@@ -339,7 +340,8 @@ def test_gate_safe_with_queued_and_running_ordinary_jobs() -> None:
     assert body["by_kind"] == {"crm_job_retention": 1, "crm_x6_probe": 1}
 
 
-def test_gate_not_safe_while_crm_dispatch_runs() -> None:
+def test_gate_not_safe_while_a_blocking_kind_runs() -> None:
+    """The gate's reaction to a running row of a blocking kind (the scripted query answers crm_dispatch, the G5 set)."""
     gh = LocalGithub()
     conn = (
         ScriptedConn()

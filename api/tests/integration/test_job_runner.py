@@ -110,9 +110,11 @@ async def test_deploy_gate_count_skips_the_heartbeat(app_pool: asyncpg.Pool) -> 
     assert counts == {"active": 1, "by_status": {"queued": 1}, "by_kind": {"crm_probe": 1}}
 
 
-async def test_deploy_gate_blockers_are_running_or_due_dispatch_rows(app_pool: asyncpg.Pool) -> None:
-    """AA-993 G5: the gate's blocker query on the real crm.job: a running crm_dispatch and a queued one due within the
-    horizon block; a queued one due later, a finished one and other kinds (running included) do not."""
+async def test_deploy_gate_blockers_are_running_or_due_rows_of_the_given_kinds(app_pool: asyncpg.Pool) -> None:
+    """AA-993 G5: the gate's blocker query on the real crm.job, for a blocking set naming crm_dispatch (the G5 set;
+    empty since G4b, the mechanism stays): a running row and a queued one due within the horizon block; a queued one due
+    later, a finished one and other kinds (running included) do not. The live set blocks on none of them."""
+    blocking = frozenset({DISPATCH})
     payload = {"tenant_id": TENANT, "dispatch_id": "00000000-0000-4000-8000-0000000000d1"}
     later = await queue.enqueue(app_pool, DISPATCH, payload, delay_seconds=DEPLOY_BLOCKING_HORIZON_SECONDS + 600)
     done = await queue.enqueue(app_pool, DISPATCH, payload)
@@ -124,7 +126,7 @@ async def test_deploy_gate_blockers_are_running_or_due_dispatch_rows(app_pool: a
         other,
     )
     empty: dict[str, dict[str, int]] = {"running": {}, "due": {}}
-    assert await queue.blocking_count(app_pool, DEPLOY_BLOCKING_KINDS, DEPLOY_BLOCKING_HORIZON_SECONDS) == empty
+    assert await queue.blocking_count(app_pool, blocking, DEPLOY_BLOCKING_HORIZON_SECONDS) == empty
     assert later is not None
 
     running = await queue.enqueue(app_pool, DISPATCH, payload)
@@ -134,10 +136,11 @@ async def test_deploy_gate_blockers_are_running_or_due_dispatch_rows(app_pool: a
         " locked_until = now() + interval '5 minutes' WHERE id = $1::uuid",
         running,
     )
-    assert await queue.blocking_count(app_pool, DEPLOY_BLOCKING_KINDS, DEPLOY_BLOCKING_HORIZON_SECONDS) == {
+    assert await queue.blocking_count(app_pool, blocking, DEPLOY_BLOCKING_HORIZON_SECONDS) == {
         "running": {"crm_dispatch": 1},
         "due": {"crm_dispatch": 1},
     }
+    assert await queue.blocking_count(app_pool, DEPLOY_BLOCKING_KINDS, DEPLOY_BLOCKING_HORIZON_SECONDS) == empty
 
 
 async def test_personal_data_never_reaches_the_table(app_pool: asyncpg.Pool) -> None:
