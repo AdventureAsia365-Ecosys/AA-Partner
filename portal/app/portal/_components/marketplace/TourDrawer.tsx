@@ -6,6 +6,7 @@
 //   ready           → Open in My Tours (primary), Rewrite again
 //   queued/writing  → Follow it in My Tours
 //   failed          → Retry in My Tours (the retry lives there, with the error)
+//   paused/retired  → the reason; Open in My Tours if the tenant has a version (no rewrite, no retry: both 409)
 
 import { useState } from "react";
 import Link from "next/link";
@@ -75,8 +76,9 @@ function DrawerActions({ tour, status, quota, busy, onRewrite }: {
   // AA-986 L3: AA paused or retired the tour, so a new rewrite is refused (409): say why instead of offering it.
   const closed = workClosed(tour);
   let actions: React.ReactNode;
-  if (closed && (status === null || status === "done")) {
-    actions = status === "done" ? <Button variant="primary" onClick={go}>Open in My Tours</Button> : null;
+  // A failed rewrite of a closed tour cannot be retried either (POST /retry answers the same 409): no "Retry" offer.
+  if (closed && (status === null || !isActiveWork(status))) {
+    actions = status !== null ? <Button variant="primary" onClick={go}>Open in My Tours</Button> : null;
   } else if (status === null) {
     actions = (
       <Button variant="primary" disabled={busy} onClick={() => onRewrite(tour)}>
