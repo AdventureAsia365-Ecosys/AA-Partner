@@ -18,6 +18,7 @@ import {
   poolQuery, rewriteQuotaNote, themeTags, type CatalogFilters, type DurationFilter, type QuotaNote,
 } from "@/lib/tours";
 import { fetchMyVersions } from "../catalogApi";
+import { ServedBadge, workClosed } from "../ServedBadge";
 import { activePollInterval, isActiveWork, latestVersionByTour, tourWorkStatus } from "../workStatus";
 import { POOL_KEY, PICKED_KEY, fetchPool, startRewrites, type PoolTour } from "./marketplaceApi";
 import { CardGridSkeleton, GRID_STYLE, TourCard, type CardStatus } from "./TourCard";
@@ -191,8 +192,10 @@ export function CatalogBrowse({ externalSearch = "", meter }: { externalSearch?:
               tags={themeTags(t.seo_keywords_used, 3, [t.country])}
               price={t.price_raw}
               status={statusOf(t)}
+              // AA-986 L3: a tour AA paused or retired is refused (409): no select box, its badge says why.
+              extraBadge={t.served_notice ? <ServedBadge fields={t} /> : undefined}
               selected={checked.has(t.id)}
-              onSelectToggle={() => toggle(t.id)}
+              onSelectToggle={workClosed(t) ? undefined : () => toggle(t.id)}
               active={open?.id === t.id}
               onOpen={() => { setOpenId(t.id); setOpenTour(t); }}
             />

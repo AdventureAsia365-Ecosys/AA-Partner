@@ -14,6 +14,7 @@ import { Clock, MapPin, Wallet } from "lucide-react";
 import { Button, Drawer, K, formatDate, sans } from "@/app/_kit";
 import { ROUTES } from "@/app/_kit/local/portalNav";
 import { fmtDuration, parseStringList, type QuotaNote } from "@/lib/tours";
+import { servedTitle, workClosed } from "../ServedBadge";
 import { isActiveWork } from "../workStatus";
 import { CardStatusBadge, Chip, type CardStatus } from "./TourCard";
 import type { PoolTour } from "./marketplaceApi";
@@ -71,8 +72,12 @@ function DrawerActions({ tour, status, quota, busy, onRewrite }: {
   const router = useRouter();
   const href = myToursHref(tour.tour_id);
   const go = () => router.push(href);
+  // AA-986 L3: AA paused or retired the tour, so a new rewrite is refused (409): say why instead of offering it.
+  const closed = workClosed(tour);
   let actions: React.ReactNode;
-  if (status === null) {
+  if (closed && (status === null || status === "done")) {
+    actions = status === "done" ? <Button variant="primary" onClick={go}>Open in My Tours</Button> : null;
+  } else if (status === null) {
     actions = (
       <Button variant="primary" disabled={busy} onClick={() => onRewrite(tour)}>
         {busy ? "Starting rewrite…" : "Rewrite this tour"}
@@ -93,13 +98,25 @@ function DrawerActions({ tour, status, quota, busy, onRewrite }: {
     actions = <Button variant="primary" onClick={go}>Retry in My Tours</Button>;
   }
   // Quota note only where a rewrite can start from here.
-  const showQuota = status === null || status === "done";
+  const showQuota = !closed && (status === null || status === "done");
   return (
     <div data-testid="marketplace-drawer-actions" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", width: "100%" }}>
-      <div style={{ flex: "1 1 200px", minWidth: 0 }}>{showQuota && <QuotaLine note={quota} />}</div>
+      <div style={{ flex: "1 1 200px", minWidth: 0 }}>
+        {showQuota && <QuotaLine note={quota} />}
+        {closed && <div data-testid="marketplace-served-note" style={{ fontSize: 12, color: K.amber, lineHeight: 1.45, fontFamily: sans }}>{closedSentence(tour)}</div>}
+      </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>{actions}</div>
     </div>
   );
+}
+
+/** Why a new rewrite is closed: the served notice's sentence; a supersede waiting for its new version has no notice
+ *  (invisible to the tenant, ADR 0015 Q2), so it reads neutral. */
+function closedSentence(tour: PoolTour): string {
+  return servedTitle(tour)
+    ?? (tour.served_reason === "superseded_pending"
+      ? "A new version of this tour is on the way: you can rewrite it once it is out."
+      : "New rewrites of this tour are closed for now.");
 }
 
 const ITINERARY_PREVIEW_PX = 168;

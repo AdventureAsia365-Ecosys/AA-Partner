@@ -5,7 +5,7 @@
 // (api/routers/v1_marketplace.py).
 
 import { apiGet, apiSend } from "@/app/_kit";
-import type { ServedFields } from "../ServedBadge";
+import { plainError, type ServedFields } from "../ServedBadge";
 
 /** One Adventure Asia tour of the catalog (GET /v1/tours/pool row). */
 export interface PoolTour extends ServedFields {
@@ -73,7 +73,8 @@ export interface RewriteOutcome {
 }
 
 /** Start a rewrite of each tour, one after the other (the API charges the quota per call); a refused one (409 already
- *  in progress, 409 tour no longer served, 404) is reported, not hidden. */
+ *  in progress, 409 tour no longer served, 404) is reported, not hidden, in its tenant sentence (the AA-986
+ *  "tour_discontinued: " / "tour_paused: " code dropped, plainError). */
 export async function startRewrites(ids: string[]): Promise<RewriteOutcome> {
   const out: RewriteOutcome = { started: [], failed: [] };
   for (const id of ids) {
@@ -81,7 +82,7 @@ export async function startRewrites(ids: string[]): Promise<RewriteOutcome> {
       await apiSend(`/api/tenant/v1/tours/pool/${encodeURIComponent(id)}/rewrite`, { body: REWRITE_BODY });
       out.started.push(id);
     } catch (e) {
-      out.failed.push({ id, message: e instanceof Error ? e.message : "Request failed" });
+      out.failed.push({ id, message: plainError(e, "Request failed") });
     }
   }
   return out;
