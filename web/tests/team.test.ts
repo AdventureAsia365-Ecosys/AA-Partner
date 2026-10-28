@@ -70,7 +70,11 @@ describe("invitation token and cookies", () => {
     expect(c.value).not.toContain(TOKEN);
     expect(openInvite(cfg, c.value, 1001)).toBe(TOKEN);
     expect(openInvite(cfg, c.value, 1000 + INVITE_TTL_S + 1)).toBeNull();
-    expect(openInvite(cfg, `${c.value.slice(0, -2)}xx`, 1001)).toBeNull();
+    // Flip one bit of the auth tag in the decoded bytes: replacing the last base64url characters can leave the bytes
+    // unchanged (the final character carries padding bits), so that version of this check failed at random.
+    const raw = Buffer.from(c.value, "base64url");
+    raw[raw.length - 1] ^= 1;
+    expect(openInvite(cfg, raw.toString("base64url"), 1001)).toBeNull();
     expect(openInvite(testConfig({ WEB_SESSION_SECRET: "x".repeat(40) }), c.value, 1001)).toBeNull();
   });
 
