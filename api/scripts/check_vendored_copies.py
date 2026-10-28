@@ -4,10 +4,12 @@
   ADR 0003a decision 2: one DDL template, owned by CIS; every owner's CI compares its job table with it);
 - ``app/auth/identity_verifier.py`` = AA-CIS-App ``api/core/identity_verifier.py`` (AA-680 Phase 2; root ADR 0006 §8
   rule 9: the multi-issuer verifier is copied byte-identical into each app repo);
-- the CRM web's BFF helpers (``web/``, AA-935): ``web/lib/{sameOrigin,crossSiteGuard,bffPath,proxyResponse,upstreamHeaders}.ts`` =
+- the CRM web's BFF helpers (``web/``, AA-935): ``web/lib/{sameOrigin,crossSiteGuard,bffPath,
+  proxyResponse,upstreamHeaders}.ts`` =
   AA-CIS-App ``frontend/lib/*`` (the AA-911 cross-site rule and the AA-577 path rule of every BFF);
 - the tenant portal's (``portal/``, AA-979 CRM-P2a, moved from AA-CIS-App with AA-885's vendored list):
-  ``portal/lib/{sameOrigin,crossSiteGuard,bffPath,proxyResponse,upstreamHeaders}.ts`` = the same AA-CIS-App ``frontend/lib`` files.
+  ``portal/lib/{sameOrigin,crossSiteGuard,bffPath,proxyResponse,upstreamHeaders}.ts`` = the same AA-CIS-App
+  ``frontend/lib`` files.
 
 The UI kit is not checked here any more (AA-994 S2a, root ADR 0016 decision 5): ``portal/app/_kit/core/`` and
 ``web/app/_kit/core/`` are synced by the root ``tools/kit/kit-sync.sh`` and pinned to a CIS commit by
