@@ -9,7 +9,7 @@ import ts from "typescript";
 import { expect, test } from "vitest";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const SCAN = ["app", "components", "lib", "proxy.ts"];
+const SCAN = ["app", "components", "lib", "proxy.ts", "next.config.ts"]; // next.config: headers and redirects reach the browser
 const SKIP_DIRS = new Set(["node_modules", ".next"]);
 const KIT_CORE = path.join("app", "_kit", "core"); // vendored kit copy: edited and guarded in AA-CIS-App only
 const ISSUE_ID = /\bAA-\d+\b/;

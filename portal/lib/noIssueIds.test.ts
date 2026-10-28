@@ -9,7 +9,7 @@ import path from "node:path";
 import ts from "typescript";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const SCAN = ["app", "lib", "proxy.ts", "instrumentation.ts", "instrumentation-client.ts"];
+const SCAN = ["app", "lib", "proxy.ts", "next.config.ts", "instrumentation.ts", "instrumentation-client.ts"]; // next.config: headers and redirects reach the browser
 const SKIP_DIRS = new Set(["node_modules", ".next"]);
 const KIT_CORE = path.join("app", "_kit", "core"); // vendored kit copy: edited and guarded in AA-CIS-App only
 const ISSUE_ID = /\bAA-\d+\b/;
