@@ -109,7 +109,11 @@ class Database:
             self._pool = None
 
     async def readiness(self) -> Readiness:
-        """DB answers ``SELECT 1`` and every required ``crm-NNN`` is registered."""
+        """DB answers ``SELECT 1`` and every required ``crm-NNN`` is registered.
+
+        Once the schema read succeeds the body also lists ``registered_keys``: every ``crm-NNN`` registered on this
+        database, sorted (AA-993 M4a, root ADR 0017 d7), for the Deploy Dev ``schema-gate`` (M4b) to see every key up
+        to the one new code requires (``missing_schema_versions`` stays the fallback for an older task)."""
         if not self.configured:
             return Readiness(False, {"status": "not_ready", "db": "not_configured", "schema_version": None})
         try:
@@ -134,7 +138,7 @@ class Database:
                 False,
                 {"status": "not_ready", "db": "ok", "error": type(exc).__name__, "schema_version": None},
             )
-        registered = list(registered or [])
+        registered = sorted(registered or [])
         version = max(registered) if registered else None
         missing = [v for v in REQUIRED_SCHEMA_VERSIONS if v not in registered]
         if missing:
@@ -146,13 +150,23 @@ class Database:
                     "schema_version": version,
                     "required_schema_version": REQUIRED_SCHEMA_VERSION,
                     "missing_schema_versions": missing,
+                    "registered_keys": registered,
                 },
             )
         # AA-978: the CIS membership feed in one word (ok / pending / stale / failing / not_configured / unknown). It
         # never fails readiness (a CIS outage must not roll a deploy back); the alarm keys on crm_membership_feed_stuck.
         feed_configured = bool(self._settings.cis_api_url and self._settings.m2m_client)
         feed = await feed_state.health(pool, configured=feed_configured)
-        return Readiness(True, {"status": "ok", "db": "ok", "schema_version": version, "membership_feed": feed})
+        return Readiness(
+            True,
+            {
+                "status": "ok",
+                "db": "ok",
+                "schema_version": version,
+                "registered_keys": registered,
+                "membership_feed": feed,
+            },
+        )
 
 
 async def request_pool(request: Request) -> asyncpg.Pool:

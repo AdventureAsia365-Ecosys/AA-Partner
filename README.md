@@ -31,7 +31,7 @@ agency feature yet. Start with [CONTEXT.md](CONTEXT.md).
 | Path | Who | Purpose |
 |---|---|---|
 | `GET /crm/health` | public, rate limited | Liveness, no DB. ALB health check. `{status, service, version, git_sha}` |
-| `GET /crm/health/ready` | public, rate limited | DB reachable + every required `crm-NNN` registered. 200 or 503 |
+| `GET /crm/health/ready` | public, rate limited | DB reachable + every required `crm-NNN` registered. 200 or 503; lists `registered_keys` |
 | `GET /crm/ci/deploy-gate` | Deploy Dev workflow OIDC token only | Queued/running `crm.job` rows a deploy would interrupt |
 | `GET /crm/v1/me` | agency (partner pool) + `X-AA-Tenant-Id` | The caller's membership: `{tenant_id, member_id, member_role, display_name, default_locale}` |
 | `GET /crm/v1/memberships` | agency token, no tenant header | The caller's agencies: `{memberships: [{tenant_id, member_id, member_role, display_name, default_locale, tenant_status}]}` |

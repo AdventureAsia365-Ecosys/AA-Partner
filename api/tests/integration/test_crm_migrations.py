@@ -116,6 +116,7 @@ async def test_readiness_as_crm_app(migrated_app_dsn: str) -> None:
         "status": "ok",
         "db": "ok",
         "schema_version": newest,
+        "registered_keys": sorted(f"crm-{m.name[:3]}" for m in MIGRATIONS),  # AA-993 M4a
         "membership_feed": "not_configured",  # AA-978: no CIS_API_URL / M2M_CLIENT here
     }
 

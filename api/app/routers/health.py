@@ -3,8 +3,10 @@
 - ``GET /crm/health``: process liveness, no DB call. The ALB target group checks this one, so a DB outage cannot trip
   the ECS circuit breaker into a rollback loop.
 - ``GET /crm/health/ready``: DB reachable and every required ``crm-NNN`` migration registered. Used by the deploy smoke
-  test and alarms. The body also says which key provider field encryption uses (``keys``: ``kms`` / ``local`` /
-  ``not_configured``, AA-934); it never fails readiness, so a missing ``KMS_DATA_KEY_ID`` shows without a 503.
+  test and alarms. Once the schema read succeeds it lists ``registered_keys`` (every registered ``crm-NNN``, sorted;
+  AA-993 M4a, read by the Deploy Dev schema gate). The body also says which key provider field encryption uses
+  (``keys``: ``kms`` / ``local`` / ``not_configured``, AA-934); it never fails readiness, so a missing
+  ``KMS_DATA_KEY_ID`` shows without a 503.
 
 Both are public (no token), so both carry the app-level rate limit (``app.ratelimit``, ADR 0010 decision 2).
 """
