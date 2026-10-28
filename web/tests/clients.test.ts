@@ -184,8 +184,11 @@ describe("strings", () => {
     }
   });
 
-  it("names the card that builds the Clients page", () => {
-    expect(SECTIONS.find((s) => s.key === "clients")?.card).toBe("AA-937");
+  it("lists the Clients page in the CRM group (no issue ID on the page)", () => {
+    const clients = SECTIONS.find((s) => s.key === "clients");
+    expect(clients?.path).toBe("/clients");
+    expect(clients?.group).toBe("crm");
+    expect(Object.values(clients ?? {}).join(" ")).not.toMatch(/AA-\d+/);
   });
 });
 

@@ -23,7 +23,7 @@ export default async function FormsPage() {
     session && isOwner ? crmCall<PipelineSettings>(ctx.cfg, session, "GET", "settings/pipeline") : null,
   ]);
   return (
-    <div data-testid="crm-settings-forms" data-card="AA-936 AA-943" style={{ display: "grid", gap: 14, maxWidth: 900 }}>
+    <div data-testid="crm-settings-forms" style={{ display: "grid", gap: 14, maxWidth: 900 }}>
       <a href="/settings" style={{ fontSize: 13 }}>
         ← {t(ctx.lang, "settings.title")}
       </a>

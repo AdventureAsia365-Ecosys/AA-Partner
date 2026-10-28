@@ -147,7 +147,7 @@ export function TripPanel({
   const owner = members.find((m) => m.member_id === trip.owner_member_id);
   const canTake = !trip.owner_member_id && role !== "owner" && me;
   return (
-    <div data-testid="crm-trip" data-card="AA-936 AA-937" data-hydrated={hydrated ? "true" : undefined} style={{ display: "grid", gap: 14, maxWidth: 1080, minWidth: 0 }}>
+    <div data-testid="crm-trip" data-hydrated={hydrated ? "true" : undefined} style={{ display: "grid", gap: 14, maxWidth: 1080, minWidth: 0 }}>
       <a href="/pipeline" style={{ fontSize: 13, color: K.accentDeep }}>
         ← {t(lang, "trip.back")}
       </a>

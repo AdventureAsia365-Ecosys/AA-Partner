@@ -233,7 +233,7 @@ export function MessagesPanel({
   const visible = (thread?.messages ?? []).filter((m) => m.status !== "draft_autosaved");
   return (
     <Panel title={tr("messages.title")} testId="trip-messages">
-      <div style={{ display: "grid", gap: 12 }} data-card="AA-945">
+      <div style={{ display: "grid", gap: 12 }}>
         {conversations.length > 1 && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {conversations.map((c) => (

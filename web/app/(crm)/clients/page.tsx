@@ -49,7 +49,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
   const matched = res?.ok ? res.data.filter.search : "none";
   const kindLabel = matched !== "none" ? t(lang, KIND[matched]) : null;
   return (
-    <div data-testid="crm-clients" data-card="AA-937" style={{ display: "grid", gap: 14, minWidth: 0, maxWidth: 1080 }}>
+    <div data-testid="crm-clients" style={{ display: "grid", gap: 14, minWidth: 0, maxWidth: 1080 }}>
       <PageTitle title={t(lang, "clients.title")} subtitle={t(lang, "clients.subtitle")} />
       <form method="post" action="/clients/search" style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
         <input

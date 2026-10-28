@@ -57,7 +57,7 @@ RULES: tuple[Rule, ...] = (
     Rule("membership_events", "days", MEMBERSHIP_INBOX_DAYS, "purge", "crm_lifecycle"),
     Rule("audit_in_app", "months", 12, "partition_drop_after_verified_export", "crm_audit_retention"),
     Rule("audit_archive", "months", 84, "object_lock_archive", "crm_audit_export"),
-    Rule("placeholder_map", "days", 1, "purge", "AA-938"),
+    Rule("placeholder_map", "days", 1, "purge", "crm_placeholder_purge"),  # AA-938
     Rule("job_rows", "days", 30, "purge", "crm_job_retention"),
     Rule("export_files", "days", EXPORT_FILE_DAYS, "bucket_lifecycle", "AA-CIS-Infra"),
     Rule("erased_in_backups", "days", BACKUP_PURGE_DAYS, "backup_expiry_with_alarm", "AA-CIS-Infra"),

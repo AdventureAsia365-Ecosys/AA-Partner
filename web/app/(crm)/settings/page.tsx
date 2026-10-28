@@ -13,7 +13,7 @@ export default async function SettingsPage() {
   if (ctx.apiDown) return null;
   const { lang, locale } = ctx;
   return (
-    <div style={{ display: "grid", gap: 16, maxWidth: 820 }} data-testid="crm-settings" data-card="AA-935">
+    <div style={{ display: "grid", gap: 16, maxWidth: 820 }} data-testid="crm-settings">
       <PageTitle title={t(lang, "settings.title")} subtitle={t(lang, "settings.more")} />
       <Panel title={t(lang, "settings.agency")}>
         <dl style={{ display: "grid", gridTemplateColumns: "max-content 1fr", gap: "6px 16px", margin: 0, fontSize: 13.5 }}>

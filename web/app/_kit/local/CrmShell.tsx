@@ -84,7 +84,6 @@ function NavLink({ section, dict, pathname, onNavigate }: { section: Section; di
     <Link
       href={section.path}
       data-crm="nav-item"
-      data-card={section.card}
       aria-current={isActive(section, pathname) ? "page" : undefined}
       onClick={onNavigate}
     >

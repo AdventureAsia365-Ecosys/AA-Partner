@@ -272,7 +272,7 @@ class Settings:
             # One id in two classes would let a token of one class pass the other's audience check.
             raise SettingsError("the WORKFORCE client ids (cis-admin, breakglass, crm-staff) must differ")
         if self.portal_otp_dev_echo and self.environment not in DEV_ONLY_ENVIRONMENTS:
-            raise SettingsError("PORTAL_OTP_DEV_ECHO is a Dev-only aid (AA-946): never on stg or prod")
+            raise SettingsError("PORTAL_OTP_DEV_ECHO is a Dev-only aid: never on stg or prod")  # AA-946
         if self.rate_limit_public_per_minute < 0:
             raise SettingsError("RATE_LIMIT_PUBLIC_PER_MINUTE must be >= 0")
         if not 1 <= self.rate_limit_xff_hops <= 5:

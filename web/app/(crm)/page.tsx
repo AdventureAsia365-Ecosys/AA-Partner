@@ -20,7 +20,7 @@ export default async function HomePage() {
     { key: "home.check.studio", done: false, href: studio },
   ];
   return (
-    <div style={{ display: "grid", gap: 16 }} data-card="AA-935" data-testid="crm-home">
+    <div style={{ display: "grid", gap: 16 }} data-testid="crm-home">
       <PageTitle
         title={`${t(lang, "home.title")} · ${ctx.me.display_name ?? ""}`}
         subtitle={`${formatDate(new Date(), locale)} · ${t(lang, "home.subtitle")}`}

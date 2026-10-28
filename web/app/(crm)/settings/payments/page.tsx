@@ -22,7 +22,7 @@ export default async function PaymentsSettingsPage() {
   );
   if (ctx.role !== "owner") {
     return (
-      <div data-testid="crm-payments-settings" data-card="AA-944" style={{ display: "grid", gap: 14, maxWidth: 820 }}>
+      <div data-testid="crm-payments-settings" style={{ display: "grid", gap: 14, maxWidth: 820 }}>
         {back}
         <PageTitle title={t(ctx.lang, "payments.title")} subtitle={t(ctx.lang, "payments.subtitle")} />
         <p style={{ margin: 0, fontSize: 13, color: K.muted }} data-testid="payments-owner-only">
@@ -38,7 +38,7 @@ export default async function PaymentsSettingsPage() {
     crmCall<{ overrides: FxOverride[] }>(ctx.cfg, session, "GET", "fx/overrides"),
   ]);
   return (
-    <div data-testid="crm-payments-settings" data-card="AA-944" style={{ display: "grid", gap: 14, maxWidth: 820 }}>
+    <div data-testid="crm-payments-settings" style={{ display: "grid", gap: 14, maxWidth: 820 }}>
       {back}
       <PageTitle title={t(ctx.lang, "payments.title")} subtitle={t(ctx.lang, "payments.subtitle")} />
       {!settings.ok ? (

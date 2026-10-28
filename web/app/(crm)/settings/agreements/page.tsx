@@ -19,7 +19,7 @@ export default async function AgreementsSettingsPage() {
   if (!session) return null;
   const docs = await crmCall<{ agreements: Agreement[] }>(ctx.cfg, session, "GET", "agreements");
   return (
-    <div data-testid="crm-agreements-settings" data-card="AA-946" style={{ display: "grid", gap: 14, maxWidth: 820 }}>
+    <div data-testid="crm-agreements-settings" style={{ display: "grid", gap: 14, maxWidth: 820 }}>
       <a href="/settings" style={{ fontSize: 13 }}>
         ← {t(ctx.lang, "settings.title")}
       </a>
