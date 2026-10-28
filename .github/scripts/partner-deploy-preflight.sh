@@ -3,9 +3,9 @@
 # Tested by api/tests/unit/test_deploy_preflight_script.py with stub `aws` and `curl` on PATH.
 #
 # Exit 0 = the deploy may go on; exit 1 = blocked. Since AA-993 G5 (design D1.4) the gate's safe_to_deploy is
-# false only while a deploy-blocking kind (crm_dispatch) is RUNNING, or QUEUED and due within 15 min (this runs before
-# the build: the old task would claim it before its SIGTERM); other queued/running jobs are released on shutdown and
-# re-claimed by the new task. Every path that cannot read the gate blocks (fail closed), unless OVERRIDE carries a
+# false only while a deploy-blocking kind (DEPLOY_BLOCKING_KINDS; none since AA-993 G4b, crm_dispatch left it) is
+# RUNNING, or QUEUED and due within 15 min (this runs before the build: the old task would claim it before its
+# SIGTERM); other queued/running jobs are released on shutdown and re-claimed by the new task. Every path that cannot read the gate blocks (fail closed), unless OVERRIDE carries a
 # non-blank reason (workflow_dispatch input, Nghiệp only): then a ::warning:: names the reason and the deploy goes on.
 #
 # Environment:
