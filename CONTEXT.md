@@ -272,7 +272,8 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
 runs it as `crm_owner`, then the `bot/db-schema-reference` PR is merged, then code that reads the new objects deploys.
-`/crm/health/ready` stays 503 until every key in `app/db.py` `REQUIRED_SCHEMA_VERSIONS` is registered.
+`/crm/health/ready` stays 503 until every key in `app/db.py` `REQUIRED_SCHEMA_VERSIONS` is registered. Its body lists `registered_keys` (every registered `crm-NNN`, sorted) whenever the schema read succeeds (AA-993 M4a,
+root ADR 0017 d7: the coming Deploy Dev `schema-gate` reads it).
 
 ## Job runner (`crm.job`, ADR 0003a)
 

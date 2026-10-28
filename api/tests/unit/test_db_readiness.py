@@ -83,6 +83,7 @@ async def test_ready_when_db_answers_and_required_version_registered(created: li
         "status": "ok",
         "db": "ok",
         "schema_version": REQUIRED_SCHEMA_VERSION,
+        "registered_keys": sorted(REQUIRED_SCHEMA_VERSIONS),
         "membership_feed": "not_configured",
     }
 
@@ -148,6 +149,7 @@ async def test_not_ready_when_an_older_required_version_is_missing(
     assert not result.ok
     assert result.body["schema_version"] == REQUIRED_SCHEMA_VERSION
     assert result.body["missing_schema_versions"] == ["crm-001"]
+    assert "crm-001" not in result.body["registered_keys"]  # AA-993 M4a: the gap is visible to the schema gate
 
 
 @pytest.mark.asyncio
@@ -172,6 +174,7 @@ async def test_newer_schema_is_ready(created: list[dict[str, Any]], answers: dic
     answers.update(_answers(versions=[*REQUIRED_SCHEMA_VERSIONS, "crm-999"]))
     result = await Database(SETTINGS).readiness()
     assert result.ok and result.body["schema_version"] == "crm-999"
+    assert result.body["registered_keys"][-1] == "crm-999"
 
 
 @pytest.mark.asyncio
@@ -185,6 +188,7 @@ async def test_not_ready_when_no_crm_version(created: list[dict[str, Any]], answ
         "schema_version": None,
         "required_schema_version": REQUIRED_SCHEMA_VERSION,
         "missing_schema_versions": list(REQUIRED_SCHEMA_VERSIONS),
+        "registered_keys": [],
     }
 
 
