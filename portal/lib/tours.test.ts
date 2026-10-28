@@ -2,7 +2,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  activityLabel,
+  cardTags,
+  coverSrcSet,
+  facetOptions,
   fmtDuration,
+  INTENSITY_LABELS,
+  intensityLabel,
   hasCatalogFilters,
   isRecentlyAdded,
   marketplaceView,
@@ -53,7 +59,7 @@ test("recently added: inside the window only, never in the future", () => {
 
 test("pool query: paging, trimmed search, country, duration ranges", () => {
   assert.equal(poolQuery(NO_CATALOG_FILTERS, 1), "page=1&page_size=24");
-  assert.equal(poolQuery({ search: "  bike ", country: "Vietnam", duration: "4-7" }, 2),
+  assert.equal(poolQuery({ ...NO_CATALOG_FILTERS, search: "  bike ", country: "Vietnam", duration: "4-7" }, 2),
     "page=2&page_size=24&search=bike&country=Vietnam&duration_min=4&duration_max=7");
   assert.equal(poolQuery({ ...NO_CATALOG_FILTERS, duration: "8+" }, 0), "page=1&page_size=24&duration_min=8");
   assert.equal(hasCatalogFilters(NO_CATALOG_FILTERS), false);
@@ -61,6 +67,39 @@ test("pool query: paging, trimmed search, country, duration ranges", () => {
   assert.equal(hasCatalogFilters({ ...NO_CATALOG_FILTERS, country: "Laos" }), true);
   assert.equal(pageCount(0), 1);
   assert.equal(pageCount(25), 2);
+});
+
+test("pool query: activity, intensity, added in the last N days", () => {
+  assert.equal(poolQuery({ ...NO_CATALOG_FILTERS, activity: "trekking", intensity: "challenging", added: "30" }, 1),
+    "page=1&page_size=24&activity=trekking&intensity=challenging&added_within_days=30");
+  assert.equal(hasCatalogFilters({ ...NO_CATALOG_FILTERS, activity: "culinary" }), true);
+  assert.equal(hasCatalogFilters({ ...NO_CATALOG_FILTERS, intensity: "easy" }), true);
+  assert.equal(hasCatalogFilters({ ...NO_CATALOG_FILTERS, added: "14" }), true);
+});
+
+test("facet labels and options: known codes in English, unknown ones readable, API order kept", () => {
+  assert.equal(activityLabel("wildlife_nature"), "Wildlife & nature");
+  assert.equal(activityLabel("bird_watching"), "Bird watching");
+  assert.equal(intensityLabel("challenging"), "Challenging");
+  assert.deepEqual(facetOptions(undefined, INTENSITY_LABELS, intensityLabel).map((o) => o.value),
+    ["easy", "moderate", "challenging", "strenuous"]);
+  assert.deepEqual(facetOptions(["culinary", "new_code"], {}, activityLabel),
+    [{ value: "culinary", label: "Food & cooking" }, { value: "new_code", label: "New code" }]);
+});
+
+test("card tags: activities first, theme tags when the tour has none, at most 3", () => {
+  assert.deepEqual(cardTags(["trekking", "culinary"], ["Hanoi"]), ["Trekking & hiking", "Food & cooking"]);
+  assert.deepEqual(cardTags([], ["Hanoi", "Food"]), ["Hanoi", "Food"]);
+  assert.deepEqual(cardTags(undefined, ["a", "b", "c", "d"]), ["a", "b", "c"]);
+});
+
+test("cover srcset: both renditions with their widths, nothing when one is missing or both are the same", () => {
+  assert.equal(coverSrcSet("https://x/p/1?size=small", "https://x/p/1?size=large"),
+    "https://x/p/1?size=small 600w, https://x/p/1?size=large 1600w");
+  assert.equal(coverSrcSet("https://x/p/1?size=small", null), undefined);
+  assert.equal(coverSrcSet(undefined, "https://x/p/1?size=large"), undefined);
+  assert.equal(coverSrcSet(" ", "https://x/p/1?size=large"), undefined);
+  assert.equal(coverSrcSet("https://x/a", "https://x/a"), undefined);
 });
 
 test("view: only 'mine' selects the tenant's catalog", () => {

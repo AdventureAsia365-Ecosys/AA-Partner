@@ -1,6 +1,7 @@
 "use client";
 // portal/app/portal/_components/marketplace/TourDrawer.tsx
-// AA-671 — the Marketplace detail drawer (kit Drawer): what the tour is (summary, highlights, itinerary, SEO), and the
+// AA-671 — the Marketplace detail drawer (kit Drawer): what the tour is (cover photo, activities and intensity, summary,
+// highlights, itinerary, SEO), and the
 // one next step for its state, with the quota note. States follow the shared work-status model (workStatus.tsx):
 //   never rewritten → Rewrite this tour
 //   ready           → Open in My Tours (primary), Rewrite again
@@ -11,13 +12,13 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Clock, MapPin, Wallet } from "lucide-react";
+import { Clock, Gauge, MapPin, Wallet } from "lucide-react";
 import { Button, Drawer, K, formatDate, sans } from "@/app/_kit";
 import { ROUTES } from "@/app/_kit/local/portalNav";
-import { fmtDuration, parseStringList, type QuotaNote } from "@/lib/tours";
+import { activityLabel, fmtDuration, intensityLabel, parseStringList, type QuotaNote } from "@/lib/tours";
 import { servedTitle, workClosed } from "../ServedBadge";
 import { isActiveWork } from "../workStatus";
-import { CardStatusBadge, Chip, type CardStatus } from "./TourCard";
+import { CardStatusBadge, Chip, CoverImage, type CardStatus } from "./TourCard";
 import type { PoolTour } from "./marketplaceApi";
 
 export function myToursHref(tourId: string | null | undefined): string {
@@ -127,14 +128,29 @@ function TourDetail({ tour, status }: { tour: PoolTour; status: CardStatus }) {
   const [fullItinerary, setFullItinerary] = useState(false);
   const highlights = parseStringList(tour.aa_highlights);
   const duration = fmtDuration(tour.duration);
+  const activities = (tour.activities ?? []).filter((a) => typeof a === "string" && a.trim() !== "");
+  const coverSmall = tour.cover_image_url ?? null;
+  const coverLarge = tour.cover_image_large_url ?? null;
   return (
     <div data-testid="marketplace-drawer" style={{ display: "flex", flexDirection: "column", gap: 20, fontFamily: sans }}>
+      {(coverSmall || coverLarge) && (
+        // The drawer is 560 px wide on a desktop (minus its padding), the full width on a phone; opened on demand, so
+        // the photo loads at once instead of lazily.
+        <CoverImage src={coverSmall} large={coverLarge} sizes="(max-width: 600px) 100vw, 520px" eager
+          alt={tour.aa_name} radius="10px" testId="marketplace-drawer-cover" />
+      )}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {tour.country && <Chip icon={<MapPin size={11} aria-hidden />}>{tour.country}</Chip>}
           {duration && <Chip icon={<Clock size={11} aria-hidden />}>{duration}</Chip>}
+          {tour.intensity && <Chip icon={<Gauge size={11} aria-hidden />}>Intensity: {intensityLabel(tour.intensity)}</Chip>}
           {tour.price_raw && <Chip icon={<Wallet size={11} aria-hidden />}>{tour.price_raw}</Chip>}
         </div>
+        {activities.length > 0 && (
+          <div data-testid="marketplace-drawer-activities" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {activities.map((a) => <Chip key={a} tone="accent">{activityLabel(a)}</Chip>)}
+          </div>
+        )}
         {tour.aa_subtitle && <div style={{ fontSize: 13.5, color: K.ink3, lineHeight: 1.5 }}>{tour.aa_subtitle}</div>}
         {status && <div><CardStatusBadge status={status} /></div>}
       </div>

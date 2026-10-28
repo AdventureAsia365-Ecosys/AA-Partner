@@ -3,8 +3,9 @@
 // AA-671 — Marketplace, view "All tours": the Adventure Asia catalog as a card grid with filters, the detail drawer and
 // the (bulk) rewrite. Was PoolTab.tsx (Browse Tours: a list with a side panel).
 //
-// API: GET /api/tenant/v1/tours/pool?page&page_size&search&country&duration_min&duration_max (server paging; the
-// country options come from the same answer, AA-739 lesson), POST /api/tenant/v1/tours/pool/{id}/rewrite.
+// API: GET /api/tenant/v1/tours/pool?page&page_size&search&country&duration_min&duration_max&activity&intensity&
+// added_within_days (server paging and filtering; the country, activity and intensity options come from the same
+// answer, AA-739 lesson; each row carries its activities, intensity and cover photo), POST /api/tenant/v1/tours/pool/{id}/rewrite.
 // Each card's status is the shared work-status model on the tour's latest version (the ["my-versions"] query, polled
 // while a rewrite runs; AA-760); a tour the server marks `already_rewritten` with no loaded version reads "In My Tours".
 
@@ -14,8 +15,9 @@ import { Globe2, Search, X } from "lucide-react";
 import { Button, EmptyState, ErrorState, K, alpha, sans, useToast } from "@/app/_kit";
 import { MY_VERSIONS_KEY } from "@/app/_kit/local/useShellData";
 import {
-  CATALOG_PAGE_SIZE, DURATION_OPTIONS, NO_CATALOG_FILTERS, fmtDuration, hasCatalogFilters, isRecentlyAdded, pageCount,
-  poolQuery, rewriteQuotaNote, themeTags, type CatalogFilters, type DurationFilter, type QuotaNote,
+  ACTIVITY_LABELS, ADDED_OPTIONS, CATALOG_PAGE_SIZE, DURATION_OPTIONS, INTENSITY_LABELS, NO_CATALOG_FILTERS,
+  activityLabel, cardTags, facetOptions, fmtDuration, hasCatalogFilters, intensityLabel, isRecentlyAdded, pageCount,
+  poolQuery, rewriteQuotaNote, themeTags, type AddedFilter, type CatalogFilters, type DurationFilter, type QuotaNote,
 } from "@/lib/tours";
 import { fetchMyVersions } from "../catalogApi";
 import { ServedBadge, workClosed } from "../ServedBadge";
@@ -53,6 +55,8 @@ export function CatalogBrowse({ externalSearch = "", meter }: { externalSearch?:
   const tours = useMemo(() => poolQ.data?.data ?? [], [poolQ.data]);
   const total = poolQ.data?.pagination?.total ?? 0;
   const countries = poolQ.data?.countries ?? [];
+  const activityOptions = facetOptions(poolQ.data?.facets?.activities, ACTIVITY_LABELS, activityLabel);
+  const intensityOptions = facetOptions(poolQ.data?.facets?.intensities, INTENSITY_LABELS, intensityLabel);
 
   const versionsQ = useQuery({
     queryKey: MY_VERSIONS_KEY,
@@ -140,6 +144,17 @@ export function CatalogBrowse({ externalSearch = "", meter }: { externalSearch?:
         <select value={filters.duration} onChange={(e) => update({ duration: e.target.value as DurationFilter })} aria-label="Length" style={controlStyle}>
           {DURATION_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
+        <select value={filters.activity} onChange={(e) => update({ activity: e.target.value })} aria-label="Activity" style={controlStyle}>
+          <option value="">All activities</option>
+          {activityOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+        <select value={filters.intensity} onChange={(e) => update({ intensity: e.target.value })} aria-label="Intensity" style={controlStyle}>
+          <option value="">Any intensity</option>
+          {intensityOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+        <select value={filters.added} onChange={(e) => update({ added: e.target.value as AddedFilter })} aria-label="Recently added" style={controlStyle}>
+          {ADDED_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
         {filtered && (
           <Button variant="ghost" size="sm" onClick={() => update(NO_CATALOG_FILTERS)}>
             <X size={13} aria-hidden /> Clear filters
@@ -176,7 +191,7 @@ export function CatalogBrowse({ externalSearch = "", meter }: { externalSearch?:
 
       {/* Grid */}
       {poolQ.isPending ? (
-        <CardGridSkeleton label="Loading tours" />
+        <CardGridSkeleton label="Loading tours" withCover />
       ) : poolQ.isError && tours.length === 0 ? (
         <ErrorState message="Couldn't load the tours. Something went wrong on our side." onRetry={() => poolQ.refetch()} />
       ) : tours.length === 0 ? (
@@ -191,8 +206,11 @@ export function CatalogBrowse({ externalSearch = "", meter }: { externalSearch?:
               subtitle={t.aa_subtitle}
               country={t.country}
               duration={fmtDuration(t.duration)}
+              intensity={t.intensity ? intensityLabel(t.intensity) : null}
               isNew={isRecentlyAdded(t.published_at, now)}
-              tags={themeTags(t.seo_keywords_used, 3, [t.country])}
+              tags={cardTags(t.activities, themeTags(t.seo_keywords_used, 3, [t.country]))}
+              cover={t.cover_image_url ?? null}
+              coverLarge={t.cover_image_large_url ?? null}
               price={t.price_raw}
               status={statusOf(t)}
               // AA-986 L3: a tour AA paused or retired is refused (409): no select box, its badge says why.

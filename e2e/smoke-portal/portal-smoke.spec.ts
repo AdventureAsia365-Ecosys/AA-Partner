@@ -103,6 +103,39 @@ test.describe('UI smoke — portal pages', () => {
     }
   });
 
+  // AA-671 — the Marketplace filters by activity, intensity and "recently added", and each catalog card has a cover
+  // area (the tour's photo, or the placeholder when it has none). Read only; every wait is bounded.
+  test('portal: Marketplace activity / intensity / recently added filters and card covers', async ({ browser }) => {
+    const context = await browser.newContext({ baseURL: baseUrl(), storageState: TENANT_STATE, viewport: { width: 1440, height: 900 } });
+    await installBypassRoute(context);
+    const page = await context.newPage();
+    try {
+      await page.goto('/portal/tours', { waitUntil: 'domcontentloaded' });
+      await waitForPortalData(page);
+      const card = page.getByTestId('marketplace-card').first();
+      await expect(card, 'no tour card on the Marketplace').toBeVisible({ timeout: 15000 });
+      await expect(card.getByTestId('marketplace-card-cover')).toHaveAttribute('data-cover', /^(photo|none)$/);
+      // A photo cover is responsive and lazy: both CIS renditions in srcset (600 / 1600 px), loading="lazy".
+      const photoImg = page.locator('[data-testid="marketplace-card-cover"][data-cover="photo"] img').first();
+      if (await photoImg.count()) {
+        await expect(photoImg).toHaveAttribute('srcset', /600w, .+ 1600w$/);
+        await expect(photoImg).toHaveAttribute('loading', 'lazy');
+      }
+      const filters = page.getByTestId('marketplace-filters');
+      for (const label of ['Activity', 'Intensity', 'Recently added']) {
+        await expect(filters.getByLabel(label, { exact: true }), `no ${label} filter`).toBeVisible({ timeout: 10000 });
+      }
+      // A filter goes to the API and the page answers with a count or the empty state, never the error state.
+      const pool = page.waitForResponse((r) => r.url().includes('/v1/tours/pool') && r.url().includes('added_within_days=90'),
+        { timeout: 15000 });
+      await filters.getByLabel('Recently added', { exact: true }).selectOption('90');
+      expect((await pool).status()).toBe(200);
+      await expect(page.getByTestId('marketplace-count').or(page.getByText('No tours found'))).toBeVisible({ timeout: 15000 });
+    } finally {
+      await context.close();
+    }
+  });
+
   // AA-760 — the Marketplace (was Browse Tours) "no results" state (a search that matches no tour), captured in light
   // and dark at 1440 and 390 like the page screenshots. Every wait is bounded.
   test('portal: Marketplace shows its empty state for a search with no match', async ({ browser }) => {
