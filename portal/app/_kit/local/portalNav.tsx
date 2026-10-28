@@ -6,7 +6,7 @@
 // Groups follow the tenant's workflow: Tours → Brand → Create → Content → Account.
 
 import {
-  LayoutDashboard, Globe2, BookOpen, Store, Sparkles, Share2, FileText, Eye, CreditCard,
+  LayoutDashboard, BookOpen, Store, Sparkles, Share2, FileText, Eye, CreditCard,
   Activity, Settings, Code2, Plug, Users,
 } from "lucide-react";
 
@@ -15,7 +15,8 @@ export const ROUTES = {
   dashboard: "/portal/dashboard",
   tours: "/portal/tours",
   myTours: "/portal/tours/mine",
-  marketplace: "/portal/tours/marketplace",
+  // AA-671 — the Marketplace's "In my catalog" view (was the Tour overview page at /portal/tours/marketplace).
+  myCatalog: "/portal/tours?view=mine",
   brand: "/portal/brand",
   createSocial: "/portal/create/social",
   createArticle: "/portal/create/article",
@@ -55,11 +56,10 @@ export const NAV_GROUPS: NavGroup[] = [
     { href: ROUTES.dashboard, label: "Dashboard", icon: <LayoutDashboard size={16} />, keywords: "home overview usage quota" },
   ] },
   { label: "Tours", items: [
-    { href: ROUTES.tours, label: "Browse Tours", icon: <Globe2 size={16} />, keywords: "pool rewrite published search", count: "pool" },
+    // AA-671 — one Marketplace page: the catalog (Browse Tours until AA-671) and, as a view, the tenant's picked tours
+    // with price and status (the "Tour overview" page until AA-671). My Tours stays the work page.
+    { href: ROUTES.tours, label: "Marketplace", icon: <Store size={16} />, keywords: "browse tours pool rewrite published search catalog overview portfolio price", count: "pool" },
     { href: ROUTES.myTours, label: "My Tours", icon: <BookOpen size={16} />, keywords: "catalog versions rewritten export", count: "catalog" },
-    // AA-760 — "Marketplace" read as a place to find or buy tours; the page is an overview of the
-    // tenant's own written tours (price, status). Route unchanged (bookmarks keep working).
-    { href: ROUTES.marketplace, label: "Tour overview", icon: <Store size={16} />, keywords: "marketplace overview portfolio price summary" },
   ] },
   { label: "Brand", items: [
     { href: ROUTES.brand, label: "Brand Identity", icon: <Sparkles size={16} />, keywords: "brand voice tone cta rules" },
@@ -118,7 +118,7 @@ export function pageGroup(pathname: string): string {
 /** Phone bottom bar: the 4 daily destinations; "More" opens the drawer with everything. */
 export const BOTTOM_ITEMS: NavEntry[] = [
   NAV_GROUPS[0].items[0],
-  { ...NAV_GROUPS[1].items[0], label: "Tours", also: [ROUTES.myTours, ROUTES.marketplace] },
+  { ...NAV_GROUPS[1].items[0], label: "Tours", also: [ROUTES.myTours] },
   { ...NAV_GROUPS[3].items[0], label: "Create", also: [ROUTES.createArticle, ROUTES.createWrite] },
   { ...NAV_GROUPS[4].items[0], label: "Content" },
 ];

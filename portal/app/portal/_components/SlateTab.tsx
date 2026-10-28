@@ -421,7 +421,7 @@ function ChannelPanel({ channel, postsPerWeek, onPicked, writer }: {
         // Never had any Subject at all. AA-760 — tenant words: no "atomize / rank / bar" (steps the
         // tenant cannot run), and a way forward they can take (Update topics sits in the bar above).
         <EmptyState icon={<ClipboardList size={32} strokeWidth={1.5} color={T.gold} />} title="Nothing here yet"
-          sub="We add topics here as your tours are written and updated. Rewrite a tour from Browse Tours, or press Update topics."
+          sub="We add topics here as your tours are written and updated. Rewrite a tour from the Marketplace, or press Update topics."
           action={<CtaLink href="/portal/tours">Browse tours</CtaLink>} />
       ) : proposed.length === 0 ? (
         // FE audit #3 — DIFFERENT message: this Channel has decided history, just nothing NEW

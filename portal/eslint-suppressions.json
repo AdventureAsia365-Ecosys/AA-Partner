@@ -181,14 +181,6 @@
       "count": 1
     }
   },
-  "app/portal/_components/MarketplaceTab.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
   "app/portal/_components/MasterNewerNotice.tsx": {
     "aa-kit/no-legacy-kit": {
       "count": 1
@@ -215,25 +207,6 @@
   },
   "app/portal/_components/PlanningTab.tsx": {
     "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/portal/_components/PoolFilters.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/portal/_components/PoolTab.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 2
-    },
-    "aa-kit/no-hex-colour": {
-      "count": 3
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    },
-    "aa-kit/no-raw-aa-var": {
       "count": 1
     }
   },

@@ -46,7 +46,9 @@ SECURITY_HEADERS = [
 OLD_PORTAL_SLUGS = {
     "/portal/t1-rewrite": "/portal/tours",
     "/portal/t4-pool": "/portal/tours/mine",
-    "/portal/marketplace": "/portal/tours/marketplace",
+    # AA-671 — the Tour overview page is the Marketplace view ?view=mine (one page with the catalog).
+    "/portal/marketplace": "/portal/tours?view=mine",
+    "/portal/tours/marketplace": "/portal/tours?view=mine",
     "/portal/t0-brand": "/portal/brand",
     "/portal/t7-planning": "/portal/create/social",
     "/portal/t8-angle-gate": "/portal/create/write",
@@ -90,7 +92,8 @@ def test_portal_redirects_old_slugs_with_308() -> None:
     for source, dest in OLD_PORTAL_SLUGS.items():
         pattern = r'\{\s*source:\s*"' + re.escape(source) + r'",\s*destination:\s*"' + re.escape(dest) + r'"\s*\}'
         assert re.search(pattern, cfg), f"portal/next.config.ts: missing 308 {source} -> {dest}"
-        assert (PORTAL / "app" / dest.lstrip("/") / "page.tsx").is_file(), f"no page for {dest}"
+        dest_path = dest.split("?", 1)[0]  # AA-671: a destination may name a view (?view=mine)
+        assert (PORTAL / "app" / dest_path.lstrip("/") / "page.tsx").is_file(), f"no page for {dest}"
         assert not (PORTAL / "app" / source.lstrip("/") / "page.tsx").exists(), f"old page {source} still exists"
 
 

@@ -3,7 +3,7 @@
 // AA-759 — the shell's data, all through react-query (was four raw fetches in a mount effect).
 //
 //   - tenant identity: GET /api/tenant/me (the tenant cookies are httpOnly, AA-427);
-//   - Browse Tours total: GET /v1/tours/pool?page_size=1 → pagination.total;
+//   - Marketplace (catalog) total: GET /v1/tours/pool?page_size=1 → pagination.total;
 //   - My Tours count: the SAME query as the My Tours page (key ["my-versions"], fetchMyVersions),
 //     counted as unique tours (AA-566 Phần A) — one reading of one endpoint, so the sidebar badge
 //     and the page heading can never disagree, and a page refetch refreshes the badge;
@@ -39,7 +39,7 @@ export function useTenantMe(): { tenantName: string; planTier: string; status: L
   };
 }
 
-/** The Browse Tours total; null until the pool answers (the sidebar shows no count, not 0). */
+/** The Marketplace catalog total; null until the pool answers (the sidebar shows no count, not 0). */
 export function usePoolTotal(): number | null {
   const { data } = useQuery({
     queryKey: ["pool-total"],

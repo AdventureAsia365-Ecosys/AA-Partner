@@ -1,28 +1,15 @@
 "use client";
-// portal/app/portal/tours/page.tsx — Browse Tours (T1 — tour selection; a rewrite runs T2–T5).
-// AA-759: was /portal/t1-rewrite (308 from the old slug, next.config.ts).
-import { useRouter } from "next/navigation";
-import { PageHeader } from "@/app/_kit";
-import PoolTab from "../_components/PoolTab";
-import { usePortalShell } from "../_components/PortalShellContext";
-import { ROUTES } from "@/app/_kit/local/portalNav";
+// portal/app/portal/tours/page.tsx — Marketplace (AA-671): the Adventure Asia catalog (T1, tour selection; a rewrite
+// runs T2–T5) and, as the view ?view=mine, the tours the tenant picked (was the separate "Tour overview" page at
+// /portal/tours/marketplace, which now answers 308 here). AA-759: was /portal/t1-rewrite (308, next.config.ts).
+// The page reads useSearchParams() (the view), so it needs a Suspense boundary or `next build` fails prerendering it.
+import { Suspense } from "react";
+import { MarketplacePage } from "../_components/marketplace/MarketplacePage";
 
-export default function BrowseToursPage() {
-  const router = useRouter();
-  const { globalSearch, showToast, refreshCatalogCount } = usePortalShell();
-
-  function handleRewriteDone() {
-    showToast("Rewrite started — follow it in My Tours.");
-    refreshCatalogCount();
-    router.push(ROUTES.myTours);
-  }
-
+export default function ToursMarketplacePage() {
   return (
-    <>
-      <PageHeader title="Browse Tours"
-        description="Published Adventure Asia tours. Pick one and rewrite it in your brand voice — it lands in My Tours." />
-      {/* AA-760 — remount on a new topbar / ⌘K search instead of syncing it in an effect. */}
-      <PoolTab key={globalSearch} onRewriteDone={handleRewriteDone} externalSearch={globalSearch} />
-    </>
+    <Suspense>
+      <MarketplacePage />
+    </Suspense>
   );
 }

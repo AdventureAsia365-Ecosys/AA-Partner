@@ -256,7 +256,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
           {[
-            { icon: <Globe2 size={18} />, title: "Browse Tours",      sub: pool != null ? `${pool.toLocaleString()} published tours available` : "Published Adventure Asia tours", href: "/portal/tours" }, // AA-576 Phần 3 (was "Browse Pool")
+            { icon: <Globe2 size={18} />, title: "Marketplace",       sub: pool != null ? `${pool.toLocaleString()} published tours available` : "Published Adventure Asia tours", href: "/portal/tours" }, // AA-576 Phần 3 (was "Browse Pool"); AA-671: "Browse Tours" → "Marketplace"
             { icon: <BookOpen size={18} />, title: "My Tours",  sub: `${toursUsed} rewrites · approve, edit, export`,     href: "/portal/tours/mine" }, // AA-576 Phần 3 (was "My Catalog")
             { icon: <Sparkles size={18} />, title: "Brand Identity", sub: "Configure your content voice & style",               href: "/portal/brand" },
           ].map(a => (

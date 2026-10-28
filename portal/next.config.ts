@@ -27,7 +27,9 @@ const SECURITY_HEADERS = [
 const OLD_SLUG_REDIRECTS: { source: string; destination: string }[] = [
   { source: "/portal/t1-rewrite", destination: "/portal/tours" },
   { source: "/portal/t4-pool", destination: "/portal/tours/mine" },
-  { source: "/portal/marketplace", destination: "/portal/tours/marketplace" },
+  // AA-671 — the Tour overview page became the Marketplace view ?view=mine (Next appends the request's query).
+  { source: "/portal/marketplace", destination: "/portal/tours?view=mine" },
+  { source: "/portal/tours/marketplace", destination: "/portal/tours?view=mine" },
   { source: "/portal/t0-brand", destination: "/portal/brand" },
   { source: "/portal/t7-planning", destination: "/portal/create/social" },
   { source: "/portal/t8-angle-gate", destination: "/portal/create/write" },
