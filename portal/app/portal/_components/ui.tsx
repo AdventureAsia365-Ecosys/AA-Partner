@@ -86,16 +86,8 @@ export function fmtBillingMonth(month: string | null | undefined): string {
     .toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
 }
 
-/** AA-760 — a tour duration for people, one casing everywhere ("14 DAYS" / "7 days" → "14 days" /
- *  "7 days"; "15 DAYS 14 NIGHTS" → "15 days"). A string with no leading number is only lower-cased. */
-export function fmtDuration(raw: string | null | undefined): string {
-  if (!raw) return "";
-  const m = /(\d+)\s*(day|night)/i.exec(raw);
-  if (!m) return raw.trim().toLowerCase();
-  const n = Number(m[1]);
-  const unit = m[2].toLowerCase();
-  return `${n} ${unit}${n === 1 ? "" : "s"}`;
-}
+// AA-760 — one duration format everywhere; AA-671 moved the rule to lib/tours.ts (the Marketplace uses it there).
+export { fmtDuration } from "@/lib/tours";
 
 /** AA-760 — whole US dollars with a thousands separator ("$1,225"). */
 export function fmtUsd(n: number): string {

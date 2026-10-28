@@ -8,7 +8,7 @@
 // sidebar is an off-canvas drawer opened from the topbar ☰ or the bottom bar "More"; below 768 px
 // the bottom bar shows and the search pill becomes an icon. No JS media query, so the server HTML is
 // already right on a phone. The shell owns three bits of interaction state: palette, drawer, and
-// the topbar search text Browse Tours reads (`globalSearch`).
+// the topbar search text the Marketplace catalog reads (`globalSearch`).
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
@@ -68,7 +68,9 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
 
   const searchTours = useCallback((q: string) => {
     setGlobalSearch(q);
-    if (pathname !== ROUTES.tours) router.push(ROUTES.tours);
+    // AA-671 — the search runs in the Marketplace's catalog view: also leave its "In my catalog" view (?view=mine).
+    const onCatalog = pathname === ROUTES.tours && !window.location.search.includes("view=mine");
+    if (!onCatalog) router.push(ROUTES.tours);
   }, [pathname, router]);
 
   const showToast = useCallback((msg: string) => toast.success(msg), [toast]);

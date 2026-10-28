@@ -30,7 +30,9 @@ function pathOf(location: string): string {
 const OLD_SLUGS: [string, string][] = [
   ['/portal/t1-rewrite', '/portal/tours'],
   ['/portal/t4-pool', '/portal/tours/mine'],
-  ['/portal/marketplace', '/portal/tours/marketplace'],
+  // AA-671 — the Tour overview page is the Marketplace view ?view=mine (Next appends the request's query).
+  ['/portal/marketplace', '/portal/tours?view=mine'],
+  ['/portal/tours/marketplace', '/portal/tours?view=mine'],
   ['/portal/t0-brand', '/portal/brand'],
   ['/portal/t7-planning', '/portal/create/social'],
   ['/portal/t8-angle-gate', '/portal/create/write'],
@@ -86,8 +88,11 @@ test.describe('AA-885 — portal host', () => {
         const res = await ctx.get(`${from}?x=1`, { maxRedirects: 0, timeout: 15000 });
         expect(res.status(), `GET ${from}`).toBe(308);
         const loc = new URL(res.headers()['location'] ?? '/', baseUrl());
-        expect(loc.pathname).toBe(to);
-        expect(loc.search).toBe('?x=1');
+        const want = new URL(to, baseUrl());
+        expect(loc.pathname).toBe(want.pathname);
+        // The destination's own query (a view) and the request's query both arrive.
+        for (const [k, v] of want.searchParams) expect(loc.searchParams.get(k), `${from}: ${k}`).toBe(v);
+        expect(loc.searchParams.get('x'), `${from}: query kept`).toBe('1');
       } finally {
         await ctx.dispose();
       }

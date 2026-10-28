@@ -470,6 +470,13 @@ original CIS commit). P2a moves the code only:
   whole filtered set (`GET /v1/account/activity/export`); Integrations = each channel's health and test (Publish only
   shows a summary that links here) and the API key (`GET /v1/account/api-key`: masked, issued, last used; a new key
   by email to AA). Pure helpers in `portal/lib/account.ts`, tested by `npm test` (node --test, in Portal Build).
+- **Marketplace (AA-671)**: one page at `/portal/tours` for the tours a tenant can pick and the tours it picked (was
+  two pages, Browse Tours and Tour overview). View "All tours" (default): CIS `GET /v1/tours/pool` as a card grid with
+  server paging and filters (name, country, length; newest first, "New" for the last 14 days), the kit Drawer for one
+  tour and the (bulk) rewrite with the Billing quota note (`lib/tours.ts` `rewriteQuotaNote` over `usageMeter`). View
+  "In my catalog" (`?view=mine`): CIS `GET /v1/marketplace` (price, status, version); a card opens the tour in My Tours.
+  `/portal/tours/marketplace` and `/portal/marketplace` answer 308 to `?view=mine`. Activity / intensity filters wait
+  for the CIS pool API to expose them (implementation notes AA-671).
 - **The AA-CIS-App copy** of `portal/` is frozen (a CIS CI guard fails on any change) and no longer deployed; it is
   deleted 7 or more days after P2b. Portal changes are made here only.
 - **P2b (AA-979, prepared S252; `portal.` cut over to Fargate in S253, 27/10/2026)**: the studio runs as the

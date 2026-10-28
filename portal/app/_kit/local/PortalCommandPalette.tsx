@@ -3,7 +3,7 @@
 // AA-759 — the real ⌘K / Ctrl K palette (was: page jump + "search Browse Tours for …"). Built on the
 // kit Modal. Groups:
 //   - Pages      — client match over the nav model (label + keywords), shown before any typing;
-//   - Tours      — GET /v1/tours/pool?search=<q>&page_size=5 (debounced ~200 ms) → Browse Tours
+//   - Tours      — GET /v1/tours/pool?search=<q>&page_size=5 (debounced ~200 ms) → the Marketplace
 //                  filtered to that tour; plus a "Search all tours for …" row;
 //   - My tours   — client match over the cached ["my-versions"] query (same key as My Tours) →
 //                  /portal/tours/mine?tour_id=<tour_id>;
@@ -81,11 +81,11 @@ function Palette({ onClose, onSearchTours }: { onClose: () => void; onSearchTour
 
     const tours: Row[] = (pool?.data ?? []).map((t) => ({
       kind: "search", key: `pool:${t.id}`, label: t.aa_name,
-      sub: [t.country, t.duration].filter(Boolean).join(" · ") || "Browse Tours",
+      sub: [t.country, t.duration].filter(Boolean).join(" · ") || "Marketplace",
       icon: <Globe2 size={16} />, q: t.aa_name,
     }));
     tours.push({
-      kind: "search", key: "pool:all", label: `Search all tours for “${debounced}”`, sub: "Browse Tours",
+      kind: "search", key: "pool:all", label: `Search all tours for “${debounced}”`, sub: "Marketplace",
       icon: <Search size={16} />, q: debounced,
     });
 

@@ -30,9 +30,10 @@ const RENDERED = 'main :is(h1, h2)';
 // T-number slugs (the old ones answer 308 — aa885-portal-host.spec.ts checks each).
 const PORTAL_PAGES: PageSpec[] = [
   { id: 'dashboard', label: 'Dashboard', path: '/portal/dashboard', readySelector: RENDERED },
-  { id: 'tours', label: 'Browse Tours', path: '/portal/tours', readySelector: RENDERED },
+  // AA-671 — one Marketplace page: the catalog, and the tenant's picked tours as the view ?view=mine.
+  { id: 'tours', label: 'Marketplace', path: '/portal/tours', readySelector: RENDERED },
   { id: 'tours-mine', label: 'My Tours', path: '/portal/tours/mine', readySelector: RENDERED },
-  { id: 'tours-marketplace', label: 'Tour overview', path: '/portal/tours/marketplace', readySelector: RENDERED },
+  { id: 'tours-mine-view', label: 'Marketplace, In my catalog', path: '/portal/tours?view=mine', readySelector: RENDERED },
   { id: 'brand', label: 'Brand Identity', path: '/portal/brand', readySelector: RENDERED },
   { id: 'create-social', label: 'Social Posts', path: '/portal/create/social', readySelector: RENDERED },
   { id: 'create-article', label: 'Articles', path: '/portal/create/article', readySelector: RENDERED },
@@ -78,9 +79,33 @@ test.describe('UI smoke — portal pages', () => {
     }
   });
 
-  // AA-760 — the Browse Tours "no results" state (a search that matches no tour), captured in light
+  // AA-671 — a Marketplace card opens the detail drawer with the tour's next step, and Escape closes it. Read only: the
+  // test never presses a rewrite button. Every wait is bounded.
+  test('portal: Marketplace card opens the detail drawer', async ({ browser }) => {
+    const context = await browser.newContext({ baseURL: baseUrl(), storageState: TENANT_STATE, viewport: { width: 1440, height: 900 } });
+    await installBypassRoute(context);
+    const page = await context.newPage();
+    try {
+      await page.goto('/portal/tours', { waitUntil: 'domcontentloaded' });
+      await waitForPortalData(page);
+      const card = page.getByTestId('marketplace-card').first();
+      await expect(card, 'no tour card on the Marketplace').toBeVisible({ timeout: 15000 });
+      const name = (await card.getByRole('button').first().getAttribute('aria-label'))?.replace(/^Open /, '') ?? '';
+      await card.getByRole('button').first().click();
+      const drawer = page.getByRole('dialog');
+      await expect(drawer).toBeVisible({ timeout: 10000 });
+      if (name) await expect(drawer).toContainText(name);
+      await expect(page.getByTestId('marketplace-drawer-actions').getByRole('button').first()).toBeVisible({ timeout: 10000 });
+      await page.keyboard.press('Escape');
+      await expect(drawer).toHaveCount(0, { timeout: 10000 });
+    } finally {
+      await context.close();
+    }
+  });
+
+  // AA-760 — the Marketplace (was Browse Tours) "no results" state (a search that matches no tour), captured in light
   // and dark at 1440 and 390 like the page screenshots. Every wait is bounded.
-  test('portal: Browse Tours shows its empty state for a search with no match', async ({ browser }) => {
+  test('portal: Marketplace shows its empty state for a search with no match', async ({ browser }) => {
     const context = await browser.newContext({ baseURL: baseUrl(), storageState: TENANT_STATE, viewport: { width: 1440, height: 900 } });
     await installBypassRoute(context);
     const page = await context.newPage();

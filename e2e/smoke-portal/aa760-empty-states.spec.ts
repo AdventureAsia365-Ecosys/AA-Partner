@@ -106,7 +106,8 @@ type EmptyPage = {
   extra?: (page: Page) => Promise<void>;
 };
 
-// The kit DataTable's empty state (My Tours) and the portal's own EmptyState (ui.tsx: Tour overview, the Slate).
+// The kit empty state (My Tours' DataTable, the Marketplace's "In my catalog" view) and the portal's own EmptyState
+// (ui.tsx: the Slate).
 const KIT_EMPTY = '[data-testid="kit-empty-state"]';
 const PORTAL_EMPTY = '[data-testid="portal-empty-state"]';
 
@@ -125,8 +126,8 @@ const EMPTY_PAGES: EmptyPage[] = [
     copy: 'No rewrites yet', scope: KIT_EMPTY,
   },
   {
-    id: 'tours-marketplace', label: 'Tour overview', path: '/portal/tours/marketplace',
-    copy: 'Once you rewrite your first tour from Browse Tours, it shows up here.', scope: PORTAL_EMPTY,
+    id: 'tours-mine-view', label: 'Marketplace, In my catalog', path: '/portal/tours?view=mine',
+    copy: 'Once you rewrite your first tour, it shows up here with its price and status.', scope: KIT_EMPTY,
   },
   {
     id: 'create-social', label: 'Social Posts (Slate)', path: '/portal/create/social',
