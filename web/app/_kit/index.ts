@@ -1,6 +1,6 @@
 // web/app/_kit/index.ts
-// The CRM web's barrel for the AA UI kit. Pages and components import "@/app/_kit" (server or client: this barrel
-// leaves out core/useMediaQuery.ts, see below). Deep imports are allowed only in these cases (root ADR 0016
+// The CRM web's barrel for the AA UI kit. Pages and components import "@/app/_kit" (server or client: every core
+// module with a hook carries "use client"). Deep imports are allowed only in these cases (root ADR 0016
 // decision 3; listed so that moving a file between core and local stays local):
 //   - app/layout.tsx imports core/tokens.css (no PostCSS here) and local/theme (the restore script).
 //   - app/(crm)/layout.tsx imports local/CrmShell by path: the shell imports this barrel, so it is not re-exported.
@@ -25,9 +25,9 @@ export { Providers } from "./core/Providers";
 export {
   PageFrame, PageFrameHeader, PageFrameBody, AdminMain, AdminPaneHeader, AdminPaneBody,
 } from "./core/PageFrame";
-// Not re-exported: core/useMediaQuery.ts (useMediaQuery, useIsPhone, PHONE_QUERY). It calls useSyncExternalStore
-// without a "use client" line, and many CRM server components import this barrel, so Turbopack refuses the build.
-// The CRM does not use it; once the CIS core file carries "use client", it can join the barrel (AA-994 follow-up).
+// core/useMediaQuery.ts joined the barrel in AA-994 S2b: the CIS core file is a client module since AA-CIS-App #1083
+// (it was left out in S2a because many CRM server components import this barrel and Turbopack refused the build).
+export { useMediaQuery, useIsPhone, PHONE_QUERY } from "./core/useMediaQuery";
 export { useSidebarCollapsed } from "./core/useSidebar";
 export { useHydrated } from "./core/useHydrated";
 export type { ThemeChoice, ResolvedTheme } from "./core/theme";
