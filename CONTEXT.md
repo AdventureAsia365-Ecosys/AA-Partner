@@ -60,6 +60,10 @@ Design sources, in order:
 
 ## Role in the ecosystem
 
+Architecture diagram (AWS icons): `AA-Ecosys/docs/architecture/diagrams/partner.svg`, drawn from `partner.py` in the
+same folder; the catalog page `AA-Ecosys/docs/architecture/diagrams/README.md` holds every view and is shown in the CIS
+admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
+
 - **Owns** schema `crm.*` on the shared acc2 RDS (`aa-cis-dev-db`, PostgreSQL 15), migration key `crm-NNN`, owner role
   `crm_owner`, runtime role `crm_app` (NOINHERIT, connection limit 6, pool 3), and the NOLOGIN readers
   `crm_ai_reader`, `crm_insights`, `crm_support_reader`, `crm_eraser` that `crm_app` reaches only by `SET LOCAL ROLE`
