@@ -35,8 +35,7 @@ function sourceFiles(rel: string): string[] {
   return out;
 }
 
-function visibleStrings(rel: string): { line: number; text: string }[] {
-  const code = fs.readFileSync(path.join(ROOT, rel), "utf8");
+function visibleStrings(rel: string, code = fs.readFileSync(path.join(ROOT, rel), "utf8")): { line: number; text: string }[] {
   const kind = rel.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
   const sf = ts.createSourceFile(rel, code, ts.ScriptTarget.Latest, true, kind);
   const found: { line: number; text: string }[] = [];
@@ -73,19 +72,11 @@ test("the scanner sees JSX text, attributes and template parts but not comments"
   const sample = [
     "// AA-1 comment",
     "/* AA-2 block */",
+    "import x from \"./AA-6\";",
     "const a = <p title=\"AA-3\">see AA-4</p>;",
     "const b = `x ${a} AA-5`;",
     "const c = 'fine';",
   ].join("\n");
-  const sf = ts.createSourceFile("s.tsx", sample, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const texts: string[] = [];
-  const visit = (n: ts.Node) => {
-    if (ts.isStringLiteral(n) || ts.isTemplateTail(n) || ts.isJsxText(n)) {
-      const t = ts.isJsxText(n) ? n.getText(sf) : n.text;
-      if (ISSUE_ID.test(t)) texts.push(t.trim());
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(sf);
+  const texts = visibleStrings("sample.tsx", sample).map(s => s.text.trim());
   assert.deepEqual(texts, ["AA-3", "see AA-4", "AA-5"]);
 });
