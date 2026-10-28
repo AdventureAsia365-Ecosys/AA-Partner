@@ -2,9 +2,9 @@
 // The tenant portal's barrel for the AA UI kit. Pages and components import "@/app/_kit". Deep imports are allowed
 // only in these cases (root ADR 0016 decision 3; listed so that moving a file between core and local stays local):
 //   - Server modules (app/layout.tsx, _legal/LegalPage.tsx, privacy, terms, portal-access/*) import the server-safe
-//     core files by path (core/brand, core/Providers) and local/theme (restore script). This barrel re-exports
-//     core/useMediaQuery.ts, which has no "use client" line, so a server module must not load it (until the CIS core
-//     file gains the line; AA-994 follow-up).
+//     core files by path (core/brand, core/Providers) and local/theme (restore script). That rule came from
+//     core/useMediaQuery.ts lacking "use client"; the CIS core file has the line since AA-CIS-App #1083 (synced in
+//     AA-994 S2b), so moving these imports to the barrel is now possible but not required.
 //   - The portal shell's own parts come from ./local by path: layouts import PortalShell / SessionWatch, and pages
 //     import the shell-owned values ROUTES (local/portalNav), useCatalog and MY_VERSIONS_KEY (local/useShellData).
 //     They are not re-exported here: the shell imports this barrel, and useShellData imports

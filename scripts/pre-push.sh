@@ -16,8 +16,9 @@
 # Bypass once: git push --no-verify. Uninstall: git config --unset core.hooksPath.
 #
 # Not run locally (CI only): Integration Tests (needs PostgreSQL), the three Docker Build Checks / Trivy / SBOM and
-# the standalone smoke (heavy), Vendored CIS copies (network), gitleaks, PR title. Never `next build`: the web's type
-# check runs as `tsc --noEmit`. Portal Lint is non-required in CI, so here it only warns.
+# the standalone smoke (heavy), Vendored CIS copies (network), the kit provenance check (network), gitleaks, PR title.
+# Never `next build`: the web's type check runs as `tsc --noEmit`. The kit lint (AA-994 S2b: ESLint with the kit
+# preset at error + bulk suppressions, inside Portal Build / Web Build in CI) blocks the push like the other checks.
 set -uo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "pre-push: not inside a git repo" >&2; exit 2; }
@@ -95,9 +96,9 @@ plan_checks() {
   elif [[ "$all" == *" links "* ]]; then
     echo "docs-links"
   fi
-  if [[ "$all" == *" web "* ]]; then echo "web-typecheck"; echo "web-test"; fi
+  if [[ "$all" == *" web "* ]]; then echo "web-kit"; echo "web-typecheck"; echo "web-test"; echo "web-lint"; fi
   [[ "$all" == *" web_deps "* ]] && echo "web-audit"
-  if [[ "$all" == *" portal "* ]]; then echo "portal-typecheck"; echo "portal-test"; echo "portal-lint"; fi
+  if [[ "$all" == *" portal "* ]]; then echo "portal-kit"; echo "portal-typecheck"; echo "portal-test"; echo "portal-lint"; fi
   [[ "$all" == *" portal_deps "* ]] && echo "portal-audit"
   [[ "$all" == *" e2e "* ]] && echo "e2e-typecheck"
   return 0
@@ -169,15 +170,31 @@ select_unit_tests() {
   } | sort -u
 }
 
-# eslint_targets [files...] -> the changed portal files ESLint lints, relative to portal/, one per line.
+# eslint_targets <app> [files...] -> what fast mode lints in <app>/ (portal | web), relative to <app>/, one per line:
+# the changed files ESLint reads, or "." (the whole app) when a change can move results in files that did not change
+# (the lint config, the kit rules, the suppressions file, the package set, tsconfig). The caller drops deleted files.
 eslint_targets() {
-  local f
+  local app="$1" f all=0 out=()
+  shift
   for f in "$@"; do
     case "$f" in
-      portal/*.ts | portal/*.tsx | portal/*.js | portal/*.jsx | portal/*.mjs) echo "${f#portal/}" ;;
+      "$app/eslint.config.mjs" | "$app/eslint-suppressions.json" | "$app/app/_kit/core/eslint-kit.mjs" | \
+        "$app/package.json" | "$app/package-lock.json" | "$app/tsconfig.json") all=1 ;;
+      "$app"/*.ts | "$app"/*.tsx | "$app"/*.js | "$app"/*.jsx | "$app"/*.mjs) out+=("${f#"$app"/}") ;;
     esac
   done
+  if [[ $all -eq 1 ]]; then echo "."; return 0; fi
+  [[ ${#out[@]} -gt 0 ]] && printf '%s\n' "${out[@]}"
   return 0
+}
+
+# kit_disable_dirs <app> -> the --no-kit-disable arguments for <app>: the page code the kit preset lints, minus the
+# vendored core (same as ci.yml "No inline disable of a kit rule"), one invocation per line.
+kit_disable_dirs() {
+  case "$1" in
+    portal) echo "app --ignore _kit/core" ;;
+    web) echo "app --ignore _kit/core"; echo "components" ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -194,7 +211,7 @@ self_test() {
     if [[ "$got" == "$want" ]]; then echo "ok   $name"; else echo "FAIL $name"; echo "     want: $want"; echo "     got:  $got"; fails=$((fails + 1)); fi
   }
   local DOCS="docs-frontmatter docs-adr docs-aws-multiline docs-links"
-  local WEB="web-typecheck web-test" PORTAL="portal-typecheck portal-test portal-lint"
+  local WEB="web-kit web-typecheck web-test web-lint" PORTAL="portal-kit portal-typecheck portal-test portal-lint"
   local ALL="resource-ids hook-self-test trivyignore ruff-check ruff-format pip-audit unit-full docs-tools-tests $DOCS $WEB web-audit $PORTAL portal-audit"
   expect "empty diff: resource IDs only" "resource-ids" fast
   expect "app module" "resource-ids ruff-check ruff-format unit-changed" fast api/app/routers/pipeline.py
@@ -207,9 +224,9 @@ self_test() {
     fast api/requirements-dev.txt
   expect "migration -> the unit tests that read it" "resource-ids unit-changed" fast api/migrations/031_example.sql
   expect "api README -> docs only" "resource-ids $DOCS" fast api/README.md
-  expect "web -> tsc + vitest, never build" "resource-ids unit-changed $WEB" fast web/app/pipeline/page.tsx
+  expect "web -> kit checks + tsc + vitest + lint, never build" "resource-ids unit-changed $WEB" fast web/app/pipeline/page.tsx
   expect "web lockfile -> npm audit too" "resource-ids unit-changed $WEB web-audit" fast web/package-lock.json
-  expect "portal -> tsc + node tests + lint (warn), never build" "resource-ids unit-changed $PORTAL" fast portal/proxy.ts
+  expect "portal -> kit checks + tsc + node tests + lint, never build" "resource-ids unit-changed $PORTAL" fast portal/proxy.ts
   expect "portal manifest -> npm audit too" "resource-ids unit-changed $PORTAL portal-audit" fast portal/package.json
   expect "e2e -> its tsc only" "resource-ids e2e-typecheck" fast e2e/tests/slice1.spec.ts
   expect "markdown -> docs lint" "resource-ids $DOCS" fast CONTEXT.md
@@ -236,10 +253,26 @@ self_test() {
   if [[ "$got" == "api/tests/conftest.py api/requirements.txt" ]]; then echo "ok   unit_all warning files"
   else echo "FAIL unit_all warning files"; echo "     got:  $got"; fails=$((fails + 1)); fi
 
-  got="$(eslint_targets portal/proxy.ts portal/app/x/page.tsx portal/README.md portal/eslint.config.mjs web/a.ts | tr '\n' ' ' | sed 's/ $//')"
+  check_targets() { # check_targets <name> <want> <app> [files...]
+    local name="$1" want="$2"; shift 2
+    got="$(eslint_targets "$@" | tr '\n' ' ' | sed 's/ $//')"
+    n=$((n + 1))
+    if [[ "$got" == "$want" ]]; then echo "ok   $name"
+    else echo "FAIL $name"; echo "     want: $want"; echo "     got:  $got"; fails=$((fails + 1)); fi
+  }
+  check_targets "eslint targets: changed portal code files only" "proxy.ts app/x/page.tsx" \
+    portal portal/proxy.ts portal/app/x/page.tsx portal/README.md portal/app/globals.css web/a.ts
+  check_targets "eslint targets: web code files (app and components)" "app/(crm)/page.tsx components/A.tsx" \
+    web "web/app/(crm)/page.tsx" web/components/A.tsx portal/b.ts web/README.md
+  check_targets "eslint targets: lint config -> the whole app" "." portal portal/app/x.tsx portal/eslint.config.mjs
+  check_targets "eslint targets: suppressions file -> the whole app" "." web web/eslint-suppressions.json
+  check_targets "eslint targets: kit rules -> the whole app" "." web web/app/_kit/core/eslint-kit.mjs
+  check_targets "eslint targets: lockfile -> the whole app" "." portal portal/package-lock.json
+  check_targets "eslint targets: another app's config is not this app's" "" portal web/eslint.config.mjs
+  got="$(kit_disable_dirs web | tr '\n' ';')"
   n=$((n + 1))
-  if [[ "$got" == "proxy.ts app/x/page.tsx eslint.config.mjs" ]]; then echo "ok   eslint targets"
-  else echo "FAIL eslint targets"; echo "     got:  $got"; fails=$((fails + 1)); fi
+  if [[ "$got" == "app --ignore _kit/core;components;" ]]; then echo "ok   kit disable dirs"
+  else echo "FAIL kit disable dirs"; echo "     got:  $got"; fails=$((fails + 1)); fi
 
   # Unit test selection on a fixture tree (no pytest run).
   local tmp; tmp="$(mktemp -d)"
@@ -441,6 +474,54 @@ need_node_modules() {
   return 1
 }
 
+# kit_check <check id> <app> <CI job> — the dependency-free kit checks of <app>/ (AA-994, root ADR 0016; no node_modules
+# needed): the vendored core matches its MANIFEST.json, no CSS file outside core/tokens.css defines an --aa-* variable,
+# no inline disable of a kit rule in page code, and the ESLint suppressions file does not grow against the diff base
+# (new entries only in files the base did not have). CI: <CI job> "Kit core integrity", "No inline disable of a kit
+# rule", "Suppressions do not grow". Provenance (the lock's ref on AA-CIS-App main) needs GitHub: CI only.
+kit_check() {
+  local id="$1" app="$2" job="$3" base_file base_list supp=() line
+  if ! command -v node >/dev/null 2>&1; then
+    fail_setup "$id" "ci.yml / $job" "node is not installed" "install Node 22 (CI: setup-node 22)"
+    return
+  fi
+  local cmds=("node app/_kit/core/check-kit-copy.mjs" "node app/_kit/core/check-kit-copy.mjs --css .")
+  while IFS= read -r line; do cmds+=("node app/_kit/core/check-kit-copy.mjs --no-kit-disable $line"); done \
+    < <(kit_disable_dirs "$app")
+  base_file="$(mktemp)"; base_list="$(mktemp)"
+  if git -C "$REPO_ROOT" show "$BASE:$app/eslint-suppressions.json" >"$base_file" 2>/dev/null \
+    && git -C "$REPO_ROOT" ls-tree -r --name-only "$BASE" -- "$app/" | sed "s#^$app/##" >"$base_list"; then
+    cmds+=("node app/_kit/core/check-kit-copy.mjs --suppressions $base_file eslint-suppressions.json --base-files $base_list")
+  fi
+  local joined; joined="$(printf '%s && ' "${cmds[@]}")"; joined="${joined% && }"
+  run_step "$id" "$app" "ci.yml / $job / Kit core integrity + Suppressions do not grow + No inline disable" \
+    "kit core integrity, --css, no kit disable, suppressions growth vs $BASE" -- bash -c "$joined"
+  rm -f "$base_file" "$base_list"
+}
+
+# kit_lint <check id> <app> <CI job> — ESLint with the kit preset at error + bulk suppressions (AA-994 S2b). Fast mode:
+# the changed files ESLint reads, or the whole app when the config, the rules, the suppressions or the packages
+# changed (eslint_targets). --full / --ci: the CI command (prune, then the committed file must equal the pruned one).
+kit_lint() {
+  local id="$1" app="$2" job="$3"
+  need_node_modules "$id" "$app" "ci.yml / $job" "npm ci --no-audit --no-fund" || return
+  if [[ "$MODE" != "fast" ]]; then
+    run_step "$id" "$app" "ci.yml / $job / ESLint + Suppressions file is pruned" \
+      "npx eslint --prune-suppressions && git diff --exit-code -- eslint-suppressions.json" -- \
+      bash -c 'npx eslint --prune-suppressions && git diff --exit-code -- eslint-suppressions.json'
+    return
+  fi
+  local targets=() existing=() t
+  mapfile -t targets < <(eslint_targets "$app" "${CHANGED[@]}")
+  for t in "${targets[@]}"; do [[ -e "$REPO_ROOT/$app/$t" ]] && existing+=("$t"); done
+  if [[ ${#existing[@]} -eq 0 ]]; then
+    echo; echo "==> [$id] no changed $app file for ESLint"
+    return
+  fi
+  run_step "$id" "$app" "ci.yml / $job / ESLint (changed files only)" "npx eslint --no-warn-ignored ${existing[*]}" -- \
+    npx eslint --no-warn-ignored -- "${existing[@]}"
+}
+
 run_check() {
   local id="$1"
   case "$id" in
@@ -564,6 +645,9 @@ run_check() {
     web-test)
       need_node_modules "$id" web "ci.yml / Web Build" "npm ci --no-audit --no-fund" || return
       run_step "$id" web "ci.yml / Web Build / Unit tests" "npm test" -- npm test --silent ;;
+    web-kit) kit_check "$id" web "Web Build" ;;
+    web-lint) kit_lint "$id" web "Web Build" ;;
+    portal-kit) kit_check "$id" portal "Portal Build" ;;
     web-audit)
       run_step "$id" web "ci.yml / Security Audit / npm audit (web, failing on high)" \
         "npm audit --audit-level=high" -- npm audit --audit-level=high ;;
@@ -573,27 +657,7 @@ run_check() {
     portal-test)
       need_node_modules "$id" portal "ci.yml / Portal Build" "npm ci --no-audit --no-fund" || return
       run_step "$id" portal "ci.yml / Portal Build / Unit tests (node --test)" "npm test" -- npm test --silent ;;
-    portal-lint)
-      # Non-required in CI (continue-on-error, pre-existing errors came with the portal): a warning, never a block.
-      # Fast mode lints only the changed portal files; --full / --ci run the CI command on the whole portal.
-      if [[ ! -d "$REPO_ROOT/portal/node_modules" ]]; then
-        echo; echo "==> [$id] skipped: portal/node_modules missing (Portal Lint is non-required in CI)"
-        WARNED+=("$id: portal/node_modules missing; (cd portal && npm ci --no-audit --no-fund)")
-        return
-      fi
-      if [[ "$MODE" != "fast" ]]; then
-        SOFT_STEP=1 run_step "$id" portal "ci.yml / Portal Lint" "npm run lint" -- npm run lint --silent
-        return
-      fi
-      local targets=() existing=() t
-      mapfile -t targets < <(eslint_targets "${CHANGED[@]}")
-      for t in "${targets[@]}"; do [[ -f "$REPO_ROOT/portal/$t" ]] && existing+=("$t"); done
-      if [[ ${#existing[@]} -eq 0 ]]; then
-        echo; echo "==> [$id] no changed portal file for ESLint"
-        return
-      fi
-      SOFT_STEP=1 run_step "$id" portal "ci.yml / Portal Lint (changed files only)" "npx eslint ${existing[*]}" -- \
-        npx eslint -- "${existing[@]}" ;;
+    portal-lint) kit_lint "$id" portal "Portal Build" ;;
     portal-audit)
       run_step "$id" portal "ci.yml / Security Audit / npm audit (portal, failing on high)" \
         "npm audit --audit-level=high" -- npm audit --audit-level=high ;;

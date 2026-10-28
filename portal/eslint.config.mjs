@@ -2,42 +2,24 @@ import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 
-// AA-885 — the portal app's ESLint config. The UI-kit rules are the same as the admin's
-// (frontend/eslint.config.mjs, AA-732): no raw <table>, no hand-rolled role="dialog", no className
-// on JSX. Legacy portal files warn; files already on the kit are held to `error`. The vendored kit core
-// (app/_kit/core/**, AA-994 S2a) is exempt, exactly as in the admin app; the portal's own kit parts in
-// app/_kit/local/** (the shell, moved there from app/portal/_shell) stay at `error`.
-const KIT_RESTRICTED_SYNTAX = [
-  {
-    selector: "JSXOpeningElement[name.name='table']",
-    message:
-      "No raw <table> in page code — use the kit DataTable (app/_kit). (AA-732 kit rule)",
-  },
-  {
-    selector: "JSXAttribute[name.name='role'][value.value='dialog']",
-    message:
-      "No hand-rolled modal/dialog in page code — use the kit Modal or Drawer (app/_kit). (AA-732 kit rule)",
-  },
-  {
-    selector: "JSXAttribute[name.name='className']",
-    message:
-      "No className on JSX in UI-v2 pages — use inline style + brand tokens (app/_kit/core/tokens). (AA-732 kit rule)",
-  },
-];
+import { kitConfig } from "./app/_kit/core/eslint-kit.mjs";
 
-// Already on the kit and clean of all three patterns (moved from the admin list, AA-885).
-// AA-759 — the kit rule now holds the whole portal shell (app/_kit/local since AA-994 S2a) and every route page
-// to `error`; the remaining legacy _components stay `warn` until AA-760 migrates them. The shell's
-// responsive CSS hooks are `data-pshell` attributes (globals.css), not classNames.
-// AA-760 — every portal file is now held to `error` except the three legacy files that still carry
-// one of the patterns (listed in KIT_LEGACY_FILES; remove a file from that list once it is migrated).
-const KIT_CLEAN_FILES = ["app/portal/**/*.tsx", "app/_kit/local/**/*.tsx"];
-const KIT_LEGACY_FILES = [
-  "app/portal/_components/PlaceholderTabs.tsx", // plan-contact modal (hand-rolled role="dialog")
-  "app/portal/_components/Skeleton.tsx", // shimmer keyframes via a className
-  "app/portal/_components/SlateTab.tsx", // hidden-scrollbar tab strip via a className
-];
-
+// AA-994 S2b (root ADR 0016 decision 7) — UI kit conformance rules, shipped with the vendored kit core
+// (app/_kit/core/eslint-kit.mjs, byte-identical to AA-CIS-App frontend/app/_kit/core; never edit it here). The
+// `inline` preset (inline style + K tokens) runs at `error` on all page code under app/: no raw <main> / <table> /
+// dialog, no hard-coded colour, no hand-styled <button>, no var(--aa-*) string, no --aa-* definition from JS, no
+// import of the legacy portal ui.tsx layer (app/portal/_components/ui), no className. The vendored core is exempt
+// (it is where the raw elements belong). The portal's own kit parts in app/_kit/local/** (the shell, moved there in
+// S2a) are page code for this rule set and stay linted, as they were under the AA-732 rules.
+//
+// Existing violations (of these and of the Next rules) are frozen in eslint-suppressions.json (ESLint bulk
+// suppressions; the three AA-760 legacy files that used to be `warn` are in it too). The file may only shrink: CI
+// ("Portal Build") runs `eslint --prune-suppressions`, fails when the committed file differs from the pruned one, and
+// fails when an entry grows against the base branch (app/_kit/core/check-kit-copy.mjs --suppressions; a new entry
+// only for a deleted/renamed file's violations). After fixing violations: npx eslint --prune-suppressions. Never run
+// --suppress-all to hide a new violation, and never switch a kit rule off inline (`eslint-disable… aa-kit/…` or a
+// bare `eslint-disable`): CI fails on it (check-kit-copy.mjs --no-kit-disable). Disables that name other rules
+// (react-hooks/…) stay allowed.
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -48,21 +30,11 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
   ]),
 
-  {
-    files: ["app/portal/**/*.tsx", "app/_kit/local/**/*.tsx"],
+  kitConfig({
+    preset: "inline",
+    files: ["app/**/*.{ts,tsx,js,jsx,mjs}"],
     ignores: ["app/_kit/core/**"],
-    rules: {
-      "no-restricted-syntax": ["warn", ...KIT_RESTRICTED_SYNTAX],
-    },
-  },
-
-  {
-    files: KIT_CLEAN_FILES,
-    ignores: KIT_LEGACY_FILES,
-    rules: {
-      "no-restricted-syntax": ["error", ...KIT_RESTRICTED_SYNTAX],
-    },
-  },
+  }),
 ]);
 
 export default eslintConfig;

@@ -11,6 +11,7 @@
     "build": "next build",
     "start": "node .next/standalone/server.js",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint",
     "test": "vitest run"
   },
   "dependencies": {
@@ -25,6 +26,8 @@
     "@types/node": "22.20.5",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.2.4",
     "jsdom": "30.1.2",
     "typescript": "5.9.3",
     "vitest": "4.1.12"
