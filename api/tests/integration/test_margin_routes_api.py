@@ -14,8 +14,15 @@ HTTP (real verifier, real ``tenant_tx()``, real serializers, real route class) a
 Card R: the assistant's bodies carry no margin-family key (``app.margin.MARGIN_KEY``) and none of the planted
 cost-side values (value-based, so a ``{"kind": "cost", "amount": ...}`` row the key filter cannot see still fails).
 The owner's bodies must carry every planted value somewhere (the positive control: otherwise the assistant check
-proves nothing). A new ``GET /crm/v1`` route with a path parameter this seed cannot fill fails until it is classified
-in :data:`UNSEEDED`.
+proves nothing), and the assistant must read the money routes that control relies on (:data:`ASSISTANT_READS`, 200),
+so a wrong token, a wrong tenant header or a blanket 403 cannot make the check pass empty. Values match on number
+boundaries (``73.25`` not inside ``173.25``), and none can occur inside a timestamp (no ``X.YY`` value with a 1-digit
+or a 00-59 integer part, so ``...:47.251903`` never reads as a cost). A new ``GET /crm/v1`` route with a path
+parameter this seed cannot fill fails until it is classified in :data:`UNSEEDED`.
+
+Scope: GET routes only. Write routes answer with the same serializers; their wiring is covered by
+``tests/unit/test_margin_filter.py``, not here. Non-JSON bodies (the CSV audit export) get the value check only, not
+the key check: a CSV header named ``cost`` would not be seen by this test.
 """
 
 from __future__ import annotations
@@ -53,8 +60,17 @@ LINE_COST = "2468.13"  # agency line: cost
 LINE_COMMISSION = "135.79"  # agency line: commission_expected
 LINE_MARGIN = "1111.11"  # agency line: sell 3579.24 - cost 2468.13 (derived by the ledger)
 AA_LINE_COST = "876.43"  # AA line: cost from Booking's quote
-SUPPLIER_COMMISSION_PCT = "7.25"  # agency supplier: default_commission_pct
+SUPPLIER_COMMISSION_PCT = "73.25"  # agency supplier: default_commission_pct (60-99: no seconds field reads "73.")
 COST_SIDE = (AGENCY_NET, AA_OPTION_NET, LINE_COST, LINE_COMMISSION, LINE_MARGIN, AA_LINE_COST, SUPPLIER_COMMISSION_PCT)
+
+# Money routes the owner's positive control relies on: the assistant must read them (200), or its check is empty.
+ASSISTANT_READS = (
+    "/crm/v1/proposals/{proposal_id}/builder",
+    "/crm/v1/bookings",
+    "/crm/v1/trips/{trip_id}/lines",
+    "/crm/v1/suppliers",
+    "/crm/v1/suppliers/{supplier_id}",
+)
 
 # GET /crm/v1 routes whose path parameter names an object this seed does not create, with why none of them can carry
 # margin-bearing money (a new money route must be seeded here instead).
@@ -63,6 +79,11 @@ UNSEEDED = {
     "/crm/v1/mail/imports/{import_id}": "mailbox history import status: counts only",
     "/crm/v1/lifecycle/offboarding/{request_id}/export": "owner-only agency export: never the assistant",
 }
+
+
+def _has(value: str, text: str) -> bool:
+    """``value`` appears in ``text`` as a whole number, not inside a longer one."""
+    return re.search(rf"(?<![\d.]){re.escape(value)}(?!\d)", text) is not None
 
 
 def _keys(value: Any) -> set[str]:
@@ -189,7 +210,9 @@ async def test_card_r_the_assistant_never_receives_margin_on_any_route_with_real
     called = [p for p in routes if p not in unfilled]
     assert len(called) >= 40
 
+    assert set(ASSISTANT_READS) <= set(called)
     owner_text: dict[str, str] = {}
+    assistant_status: dict[str, int] = {}
     failures: list[str] = []
     try:
         transport = httpx.ASGITransport(app=app)
@@ -205,9 +228,10 @@ async def test_card_r_the_assistant_never_receives_margin_on_any_route_with_real
                     if role == "owner":
                         owner_text[path] = res.text
                         continue
+                    assistant_status[path] = res.status_code
                     body = res.json() if "json" in res.headers.get("content-type", "") else res.text
                     leaked_keys = sorted(k for k in _keys(body) if MARGIN_KEY.search(k.lower()))
-                    leaked_values = [v for v in COST_SIDE if v in res.text]
+                    leaked_values = [v for v in COST_SIDE if _has(v, res.text)]
                     if leaked_keys or leaked_values:
                         failures.append(
                             f"assistant GET {path}: {res.status_code} keys={leaked_keys} values={leaked_values}"
@@ -216,8 +240,10 @@ async def test_card_r_the_assistant_never_receives_margin_on_any_route_with_real
         await app.state.db.close()
     assert failures == []
 
-    # Positive control: the owner reads every planted value through these routes, so the check above is not empty.
-    seen_by_owner = {v: sorted(p for p, text in owner_text.items() if v in text) for v in COST_SIDE}
+    # Positive controls: the owner reads every planted value through these routes, and the assistant really reads the
+    # money routes that carry them, so the check above is not empty.
+    assert {p: assistant_status.get(p) for p in ASSISTANT_READS} == dict.fromkeys(ASSISTANT_READS, 200)
+    seen_by_owner = {v: sorted(p for p, text in owner_text.items() if _has(v, text)) for v in COST_SIDE}
     assert {v: bool(where) for v, where in seen_by_owner.items()} == {v: True for v in COST_SIDE}, json.dumps(
         seen_by_owner
     )
