@@ -361,7 +361,9 @@ def _edge_break(app: str, path: str, **route: Any) -> dict:
         ),
         (
             "crm-portal",
-            _edge_break("crm-portal", "/tenant-login", status=308, location=f"{BASE}/auth/refresh?next=%2Ftenant-login"),
+            _edge_break(
+                "crm-portal", "/tenant-login", status=308, location=f"{BASE}/auth/refresh?next=%2Ftenant-login"
+            ),
             {"api-key-signin-off"},
         ),
     ],

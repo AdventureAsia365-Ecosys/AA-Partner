@@ -137,7 +137,9 @@ def test_portal_lockfile_is_tracked() -> None:
         text=True,
         check=False,
     )
-    assert out.returncode == 0, "portal/package-lock.json must be tracked (CI and the image build run npm ci in portal/)"
+    assert out.returncode == 0, (
+        "portal/package-lock.json must be tracked (CI and the image build run npm ci in portal/)"
+    )
 
 
 def test_the_vercel_copy_is_gone() -> None:
@@ -155,7 +157,7 @@ def test_the_vercel_copy_is_gone() -> None:
 
 
 def test_portal_deploy_hands_the_smoke_only_the_studio_sign_in() -> None:
-    """No `secrets: inherit`; the deploy passes the e2e studio user's three values, and they sit on the smoke step only."""
+    """No `secrets: inherit`; the deploy passes the e2e studio user's three values, on the smoke step only."""
     deploy = (WORKFLOWS / "deploy-portal-dev.yml").read_text()
     assert "secrets: inherit" not in deploy
     passed = re.search(r"^    secrets:\n((?:      \S.*\n)+)", deploy, re.M)
@@ -181,14 +183,16 @@ def test_portal_version_is_not_bumped_by_release_please() -> None:
 
 
 def test_portal_build_reads_nothing_outside_portal() -> None:
-    """The image is built with portal/ as the Docker context, so a portal import that leaves portal/ breaks the build."""
+    """The image is built with portal/ as the Docker context: a portal import that leaves portal/ breaks it."""
     escapes = []
     for p in _portal_source_files():
         for m in re.finditer(r"""(?:from|import|require\(|url\()\s*['"]?(\.{1,2}/[^'")\s]+)""", p.read_text()):
             target = (p.parent / m.group(1)).resolve()
             if PORTAL.resolve() not in target.parents:
                 escapes.append(f"{p.relative_to(REPO)}: {m.group(1)}")
-    assert escapes == [], "portal imports a file outside portal/ (the Docker context is portal/):\n" + "\n".join(escapes)
+    assert escapes == [], "portal imports a file outside portal/ (the Docker context is portal/):\n" + "\n".join(
+        escapes
+    )
 
 
 def test_portal_smoke_uploads_no_auth_state() -> None:
@@ -515,7 +519,9 @@ def test_api_key_sign_in_only_behind_its_flag() -> None:
     assert "return cfg.partnerSignIn ? apiKeySignInGone(request) : notFound();" in code
     gone = code[code.index("function apiKeySignInGone") :]
     gone = gone[: gone.index("\n}\n")]
-    assert 'target.searchParams.set("next", "/portal/dashboard");' in gone and "NextResponse.redirect(target, 308)" in gone
+    assert (
+        'target.searchParams.set("next", "/portal/dashboard");' in gone and "NextResponse.redirect(target, 308)" in gone
+    )
     assert "portalConfig().signInPath" in gone and "publicUrl(" in gone
 
 
