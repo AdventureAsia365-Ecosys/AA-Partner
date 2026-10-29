@@ -4,11 +4,12 @@
   (``curl`` and ``aws`` are PATH stubs from ``test_post_deploy_verify``): all good exits 0; a stale ``git_sha``/``sha``,
   a wrong version, the API rule lost or the API not ready each exit 1.
 - ``edge_verify.sh`` runs for real against a stub ``curl`` that also answers ``%{redirect_url}``: the signed-out
-  redirect, the studio sign-in page and its ``/portal-assets`` asset are each red when wrong.
+  redirect, a public studio page and its ``/portal-assets`` asset, and the retired API-key sign-in URL (308, AA-979
+  §4.5) are each red when wrong.
 - The workflows are checked as text, like V2: ``deploy-web-dev.yml`` and ``deploy-portal-dev.yml`` call the verify after
   ``deploy`` (no inline smoke left), ``config`` fails instead of skipping, ``result`` needs every job and is red on any
-  non-success; the portal deploy calls ``ui-smoke-portal.yml`` with ``target: fargate`` and ``require_tenant_key``,
-  whose smoke step is red when the key is missing.
+  non-success; the portal deploy calls ``ui-smoke-portal.yml`` with ``require_tenant_login`` and the e2e studio
+  user's three sign-in secrets, and the smoke step is red when one is missing.
 """
 
 from __future__ import annotations
@@ -265,8 +266,9 @@ def _edge_good(app: str) -> dict:
     if app == "crm-web":
         return {"/pipeline": {"status": 307, "location": f"{BASE}/auth/refresh?next=%2Fpipeline"}}
     return {
-        "/tenant-login": {"status": 200, "body": f'<html><script src="{ASSET}" async></script></html>'},
+        "/terms": {"status": 200, "body": f'<html><script src="{ASSET}" async></script></html>'},
         ASSET: {"status": 200, "body": "js"},
+        "/tenant-login": {"status": 308, "location": f"{BASE}/auth/refresh?next=%2Fportal%2Fdashboard"},
         "/portal/dashboard": {"status": 307, "location": f"{BASE}/auth/refresh?next=%2Fportal%2Fdashboard"},
     }
 
@@ -303,7 +305,11 @@ def test_edge_all_good_is_green(run_edge, app: str) -> None:
     r, summary = run_edge(app, _edge_good(app))
     assert r.returncode == 0, r.stdout + r.stderr
     assert f"### {app} edge checks: PASS" in summary and "**FAIL**" not in summary
-    expected = {"signin-redirect"} if app == "crm-web" else {"signin-page", "studio-assets", "signin-redirect"}
+    expected = (
+        {"signin-redirect"}
+        if app == "crm-web"
+        else {"studio-page", "studio-assets", "api-key-signin-off", "signin-redirect"}
+    )
     assert {ln.split("|")[1].strip() for ln in summary.splitlines() if "| PASS |" in ln} == expected
 
 
@@ -326,7 +332,7 @@ def _edge_break(app: str, path: str, **route: Any) -> dict:
         # The web default answers the page itself (no session gate) or sends elsewhere.
         ("crm-web", _edge_break("crm-web", "/pipeline", status=200, body="<html>"), {"signin-redirect"}),
         ("crm-web", _edge_break("crm-web", "/pipeline", status=307, location=f"{BASE}/login"), {"signin-redirect"}),
-        # The Vercel copy's redirect (/tenant-login) means portal. does not reach the Fargate studio.
+        # A signed-out studio page sent anywhere but the CRM web's refresh.
         (
             "crm-portal",
             _edge_break("crm-portal", "/portal/dashboard", status=307, location=f"{BASE}/tenant-login"),
@@ -335,13 +341,30 @@ def _edge_break(app: str, path: str, **route: Any) -> dict:
         ("crm-portal", _edge_break("crm-portal", ASSET, status=404, body=""), {"studio-assets"}),
         (
             "crm-portal",
-            _edge_break("crm-portal", "/tenant-login", status=200, body="<html>no assets</html>"),
+            _edge_break("crm-portal", "/terms", status=200, body="<html>no assets</html>"),
             {"studio-assets"},
         ),
         (
             "crm-portal",
-            _edge_break("crm-portal", "/tenant-login", status=502, body="bad gateway"),
-            {"signin-page", "studio-assets"},
+            _edge_break("crm-portal", "/terms", status=502, body="bad gateway"),
+            {"studio-page", "studio-assets"},
+        ),
+        # AA-979 §4.5: the API-key sign-in page still served (PORTAL_API_KEY_SIGNIN on), or a temporary redirect, or
+        # one back to itself (a loop).
+        ("crm-portal", _edge_break("crm-portal", "/tenant-login", status=200, body="<html>"), {"api-key-signin-off"}),
+        (
+            "crm-portal",
+            _edge_break(
+                "crm-portal", "/tenant-login", status=307, location=f"{BASE}/auth/refresh?next=%2Fportal%2Fdashboard"
+            ),
+            {"api-key-signin-off"},
+        ),
+        (
+            "crm-portal",
+            _edge_break(
+                "crm-portal", "/tenant-login", status=308, location=f"{BASE}/auth/refresh?next=%2Ftenant-login"
+            ),
+            {"api-key-signin-off"},
         ),
     ],
 )
@@ -514,7 +537,7 @@ def test_result_is_green_only_when_every_job_succeeded(wf: Path) -> None:
     assert _result(wf, missing).returncode == 1
 
 
-def test_portal_deploy_smokes_fargate_with_the_tenant_key_required() -> None:
+def test_portal_deploy_smokes_fargate_with_the_studio_sign_in_required() -> None:
     jobs = _block(PORTAL_WF.read_text(), "jobs:", 0)
     smoke = _block(jobs, "smoke:", 2)
     assert "    needs: [deploy, verify]" in smoke
@@ -522,28 +545,33 @@ def test_portal_deploy_smokes_fargate_with_the_tenant_key_required() -> None:
     for line in (
         "base_url: ${{ needs.deploy.outputs.base_url }}",
         "sha: ${{ github.sha }}",
-        "target: fargate",
         "resolve_via: ${{ needs.deploy.outputs.resolve_via }}",
-        "require_tenant_key: true",
+        "require_tenant_login: true",
         "pull-requests: write",
     ):
         assert line in smoke, line
     assert "secrets: inherit" not in smoke
     passed = re.search(r"^    secrets:\n((?:      \S.*\n?)+)", smoke, re.M)
-    assert passed and set(re.findall(r"^\s+(\w+):", passed.group(1), re.M)) == {"E2E_TENANT_API_KEY"}
+    assert passed and set(re.findall(r"^\s+(\w+):", passed.group(1), re.M)) == {
+        "E2EPORTALEMAIL",
+        "E2EPORTALPASSWORD",
+        "E2EPORTALTOTP",
+    }
     deploy = _block(jobs, "deploy:", 2)
     assert "resolve_via: ${{ vars.CRM_AGENCY_CF_DOMAIN }}" in deploy and "base_url: ${{ format('https://{0}'" in deploy
     verify = _block(jobs, "verify:", 2)
     assert "resolve_via: ${{ needs.deploy.outputs.resolve_via }}" in verify
 
 
-def test_ui_smoke_takes_target_and_resolve_via_when_called() -> None:
+def test_ui_smoke_takes_resolve_via_and_the_login_requirement_when_called() -> None:
     on = _block(SMOKE_WF.read_text(), "on:", 0)
     call, dispatch = _block(on, "workflow_call:", 2), _block(on, "workflow_dispatch:", 2)
-    for name in ("target:", "resolve_via:", "require_tenant_key:"):
+    for name in ("resolve_via:", "require_tenant_login:"):
         assert name in call and name in dispatch, name
-    assert re.search(r"target:\n.*\n\s+required: false\n\s+type: string\n\s+default: vercel", call)
-    assert re.search(r"require_tenant_key:\n.*\n\s+required: false\n\s+type: boolean\n\s+default: false", call)
+    # AA-979 §4.5: no Vercel target any more; the smoke always checks the Fargate studio.
+    assert "target:" not in call and "target:" not in dispatch
+    assert "PORTAL_TARGET: fargate" in SMOKE_WF.read_text()
+    assert re.search(r"require_tenant_login:\n.*\n\s+required: false\n\s+type: boolean\n\s+default: false", call)
     text = SMOKE_WF.read_text()
     # A hand-dispatched smoke never cancels a deploy's smoke (github.workflow is the caller's in a call).
     assert "group: ui-smoke-portal-${{ github.workflow }}-${{ inputs.base_url }}" in text
@@ -557,13 +585,23 @@ def _smoke_step() -> str:
     return _run_script(step)
 
 
+_ALL = {"E2EPORTALEMAIL": "e2e@example.test", "E2EPORTALPASSWORD": "pw", "E2EPORTALTOTP": "JBSWY3DP"}
+
+
 @needs_tools
 @pytest.mark.parametrize(
-    ("required", "key", "code", "ran"),
-    [("true", "", 1, False), ("true", "k", 0, True), ("false", "", 0, True), ("false", "k", 0, True)],
+    ("required", "missing", "code", "ran"),
+    [
+        ("true", "E2EPORTALEMAIL", 1, False),
+        ("true", "E2EPORTALPASSWORD", 1, False),
+        ("true", "E2EPORTALTOTP", 1, False),
+        ("true", "", 0, True),
+        ("false", "E2EPORTALTOTP", 0, True),
+        ("false", "", 0, True),
+    ],
 )
-def test_smoke_step_is_red_without_the_key_only_when_required(
-    tmp_path: Path, required: str, key: str, code: int, ran: bool
+def test_smoke_step_is_red_without_the_studio_sign_in_only_when_required(
+    tmp_path: Path, required: str, missing: str, code: int, ran: bool
 ) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -571,13 +609,10 @@ def test_smoke_step_is_red_without_the_key_only_when_required(
     npx = bin_dir / "npx"
     npx.write_text(f"#!/bin/sh\ntouch '{marker}'\n")
     npx.chmod(0o755)
-    env = {
-        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
-        "REQUIRE_TENANT_KEY": required,
-        "E2E_TENANT_API_KEY": key,
-    }
+    env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "REQUIRETENANTLOGIN": required}
+    env.update({k: ("" if k == missing else v) for k, v in _ALL.items()})
     proc = subprocess.run([str(BASH), "-c", _smoke_step()], env=env, capture_output=True, text=True, timeout=30)  # noqa: S603
     assert proc.returncode == code, proc.stdout + proc.stderr
     assert marker.exists() is ran
     if code:
-        assert "::error::E2E_TENANT_API_KEY is not set" in proc.stdout
+        assert f"::error::{missing} is not set" in proc.stdout

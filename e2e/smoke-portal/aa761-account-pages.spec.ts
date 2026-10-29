@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs';
 import { test, expect, type Page } from '@playwright/test';
 import { baseUrl, installBypassRoute, watchPage, describeApiFailures } from './smoke-helpers';
 import {
-  NO_KEY_REASON,
+  NO_LOGIN_REASON,
   PORTAL_RESULTS_DIR,
   TENANT_STATE,
   ensurePortalResultsDir,
@@ -31,7 +31,7 @@ async function open(page: Page, path: string): Promise<void> {
 }
 
 test.describe('UI smoke — portal Account pages (AA-761)', () => {
-  test.skip(() => !hasTenantState(), NO_KEY_REASON);
+  test.skip(() => !hasTenantState(), NO_LOGIN_REASON);
 
   test('Billing: rewrite meter with reset date, invoices empty state', async ({ browser }) => {
     const context = await browser.newContext({ baseURL: baseUrl(), storageState: TENANT_STATE,

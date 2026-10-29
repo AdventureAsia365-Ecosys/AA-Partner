@@ -11,7 +11,7 @@
 import { test, expect } from '@playwright/test';
 import { baseUrl, installBypassRoute, runPageCheck, type PageSpec } from './smoke-helpers';
 import {
-  NO_KEY_REASON,
+  NO_LOGIN_REASON,
   PORTAL_RESULTS_DIR,
   TENANT_STATE,
   assertPortalNoOverflowAt390,
@@ -49,7 +49,7 @@ const PORTAL_PAGES: PageSpec[] = [
 ];
 
 test.describe('UI smoke — portal pages', () => {
-  test.skip(() => !hasTenantState(), NO_KEY_REASON);
+  test.skip(() => !hasTenantState(), NO_LOGIN_REASON);
 
   for (const spec of PORTAL_PAGES) {
     test(`portal: ${spec.label} (${spec.path})`, async ({ browser }) => {
@@ -71,9 +71,8 @@ test.describe('UI smoke — portal pages', () => {
       await page.goto('/portal/dashboard', { waitUntil: 'domcontentloaded' });
       const link = page.getByTestId('portal-crm-link');
       await expect(link).toBeVisible({ timeout: 15000 });
-      const href = await link.getAttribute('href');
-      expect(href).toMatch(/^https:\/\/[a-z0-9.-]+\/$/);
-      expect(new URL(href!).host).not.toBe(new URL(page.url()).host);
+      // AA-979 §4.5: one agency host for both apps, so the link is the same-origin CRM home.
+      expect(await link.getAttribute('href')).toBe('/');
     } finally {
       await context.close();
     }

@@ -8,11 +8,13 @@
 #
 # Checks (each gets VERIFY_TRIES tries, VERIFY_RETRY_DELAY seconds apart):
 #   crm-web     signin-redirect   GET /pipeline without a session -> 307 to <BASE>/auth/refresh?next=%2Fpipeline
-#   crm-portal  signin-page       GET /tenant-login -> 200 (the API-key sign-in page, on while PORTAL_API_KEY_SIGNIN is)
+#   crm-portal  studio-page       GET /terms -> 200 (a public studio page: the draft terms)
 #               studio-assets     the first /portal-assets/_next/static/*.js of that page -> 200
+#               api-key-signin-off  GET /tenant-login -> 308 to <BASE>/auth/refresh?next=%2Fportal%2Fdashboard
+#                                 (AA-979 §4.5: PORTAL_API_KEY_SIGNIN off, API keys are for machines only)
 #               signin-redirect   GET /portal/dashboard without a session -> 307 to
-#                                 <BASE>/auth/refresh?next=%2Fportal%2Fdashboard (only the Fargate studio sends a
-#                                 signed-out visitor to the CRM web's refresh; the Vercel copy sends /tenant-login)
+#                                 <BASE>/auth/refresh?next=%2Fportal%2Fdashboard (the studio sends a signed-out visitor
+#                                 to the CRM web's refresh)
 #
 # Env: BASE (https://<host>, no path); optional VERIFY_TRIES (3), VERIFY_RETRY_DELAY (10), GITHUB_STEP_SUMMARY.
 # Needs bash, curl.
@@ -58,15 +60,15 @@ retry() {  # name, function, args... — the function sets DETAIL and returns 0 
   return 1
 }
 
-check_redirect() {  # path, expected Location
-  local path="$1" want="$2" out code loc
+check_redirect() {  # path, expected Location, optional expected status (default 307)
+  local path="$1" want="$2" status="${3:-307}" out code loc
   out=$(curl -s --max-time 20 -o /dev/null -w '%{http_code} %{redirect_url}' "${BASE}${path}" 2>/dev/null || true)
   code="${out%% *}"
   loc="${out#* }"
   [ "$loc" = "$out" ] && loc=""
   DETAIL="GET $path -> HTTP ${code:-none}, Location '${loc}'"
-  if [ "$code" != "307" ] || [ "$loc" != "$want" ]; then
-    DETAIL="$DETAIL, expected 307 to '$want'"
+  if [ "$code" != "$status" ] || [ "$loc" != "$want" ]; then
+    DETAIL="$DETAIL, expected $status to '$want'"
     return 1
   fi
 }
@@ -82,7 +84,7 @@ check_page() {  # path -> $WORK/page.html
 check_asset() {  # the first studio Next asset linked from $WORK/page.html
   local asset code
   asset=$(grep -o '/portal-assets/_next/static/[^"]*\.js' "$WORK/page.html" 2>/dev/null | head -n 1)
-  if [ -z "$asset" ]; then DETAIL="no /portal-assets/_next/static/*.js link in the sign-in page"; return 1; fi
+  if [ -z "$asset" ]; then DETAIL="no /portal-assets/_next/static/*.js link in the studio page"; return 1; fi
   code=$(curl -s --max-time 20 -o /dev/null -w '%{http_code}' "${BASE}${asset}" 2>/dev/null || true)
   DETAIL="GET $asset -> HTTP ${code:-none}"
   [ "$code" = "200" ] || { DETAIL="$DETAIL, expected 200"; return 1; }
@@ -117,11 +119,12 @@ else
       retry signin-redirect check_redirect /pipeline "${BASE}/auth/refresh?next=%2Fpipeline"
       ;;
     crm-portal)
-      if retry signin-page check_page /tenant-login; then
+      if retry studio-page check_page /terms; then
         retry studio-assets check_asset
       else
-        record studio-assets FAIL "not run: the sign-in page did not load"
+        record studio-assets FAIL "not run: the studio page did not load"
       fi
+      retry api-key-signin-off check_redirect /tenant-login "${BASE}/auth/refresh?next=%2Fportal%2Fdashboard" 308
       retry signin-redirect check_redirect /portal/dashboard "${BASE}/auth/refresh?next=%2Fportal%2Fdashboard"
       ;;
   esac

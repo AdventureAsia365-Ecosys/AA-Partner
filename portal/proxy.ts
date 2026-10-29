@@ -5,7 +5,8 @@
 // exactly as before: API-key sessions only.
 //
 //   Host guard        a Host outside PORTAL_HOSTS -> 404 (when PORTAL_HOSTS is set; the ALB sends only portal.)
-//   /tenant-login     public while PORTAL_API_KEY_SIGNIN is on; off -> the CRM web's sign-in (clean-up)
+//   /tenant-login     public while PORTAL_API_KEY_SIGNIN is on; off (the P2b clean-up, runbook §4.5) -> 308 to the CRM
+//                     web's sign-in with next=/portal/dashboard (never next=/tenant-login: that would loop back here)
 //   /api/*, legal     through: the route handlers answer for themselves (BFF 401 JSON, never a redirect)
 //   /portal/*         order (critic C3: an API-key session that existed at the DNS flip must survive it):
 //                     1. a cis_tenant_token WITHOUT amr=partner (an API-key session) that CIS verifies -> through,
@@ -58,6 +59,15 @@ function toPartnerSignIn(request: NextRequest): NextResponse {
   return noStore(NextResponse.redirect(target, 307));
 }
 
+/** AA-979 §4.5 — the API-key sign-in page is gone: old links and bookmarks go to the partner sign-in for good (308),
+ *  landing on the studio home. `next` is fixed: the old page has no destination of its own, and next=/tenant-login
+ *  would send a signed-in person straight back here. */
+function apiKeySignInGone(request: NextRequest): NextResponse {
+  const target = publicUrl(portalConfig().signInPath, request.url);
+  target.searchParams.set("next", "/portal/dashboard");
+  return noStore(NextResponse.redirect(target, 308));
+}
+
 function toStudioPage(request: NextRequest, path: string, extra: Record<string, string> = {}): NextResponse {
   const { pathname, search } = request.nextUrl;
   const target = publicUrl(path, request.url);
@@ -96,7 +106,7 @@ async function gate(request: NextRequest): Promise<NextResponse> {
 
   if (pathname === LOGIN_PATH || pathname.startsWith(LOGIN_PATH + "/")) {
     if (cfg.apiKeySignIn) return NextResponse.next();
-    return cfg.partnerSignIn ? toPartnerSignIn(request) : notFound();
+    return cfg.partnerSignIn ? apiKeySignInGone(request) : notFound();
   }
   if (!pathname.startsWith("/portal")) return NextResponse.next(); // BFF routes and legal pages answer themselves
 

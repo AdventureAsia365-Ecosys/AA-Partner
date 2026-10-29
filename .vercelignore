@@ -1,9 +1,0 @@
-# AA-979: what `vercel deploy` (vercel-deploy-portal.yml, run from the repo root) leaves out of the upload for the
-# tenant portal project (Root Directory `portal`). The portal build reads nothing outside portal/ (guarded by
-# api/tests/unit/test_portal_guards.py). Every line is anchored with a leading `/`: an unanchored `api/` would also
-# drop portal/app/api/ (the BFF routes).
-/api
-/web
-/docs
-/e2e
-/tools

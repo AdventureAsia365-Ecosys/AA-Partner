@@ -1,6 +1,6 @@
 // portal/next.config.ts
-// AA-885 — the tenant portal is its own Next.js app (Vercel project aa-cis-portal, Root Directory
-// `portal`, host portal.lumiguides.it.com). It holds no admin code and no admin secret.
+// AA-885 — the tenant portal is its own Next.js app (AA-979: AA-Partner `portal/`, Fargate service aa-crm-dev-portal
+// on the agency host portal.lumiguides.it.com). It holds no admin code and no admin secret.
 import type { NextConfig } from "next";
 import path from "path";
 

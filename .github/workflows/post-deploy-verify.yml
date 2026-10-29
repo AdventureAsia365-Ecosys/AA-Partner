@@ -6,8 +6,8 @@ name: Post-deploy verify
 #   crm-web     the CRM web (aa-crm-dev-web): rows crm-web.rows — /healthz on that commit and version, the host's /crm/*
 #               rule reaching a ready API; plus the signed-out redirect (edge_verify.sh). Called by deploy-web-dev.yml.
 #   crm-portal  the Content studio (aa-crm-dev-portal) on the agency host: rows crm-portal.rows — /api/healthz on that
-#               commit and version, the API rule; plus the sign-in page, its assets and the signed-out redirect
-#               (edge_verify.sh). Called by deploy-portal-dev.yml (the Playwright smoke runs after it).
+#               commit and version, the API rule; plus a public studio page, its assets, the retired API-key
+#               sign-in URL (308) and the signed-out redirect (edge_verify.sh). Called by deploy-portal-dev.yml (the Playwright smoke runs after it).
 # Every app: ECS rollout COMPLETED with desired >= 1 on the built image (<registry>/<repo>:<sha>). Red/green only; the
 # tables go to the job summary. Script: .github/scripts/post_deploy_verify.sh (same file as AA-Booking).
 #
@@ -93,7 +93,7 @@ jobs:
           API_BASE: ${{ vars.CRM_API_BASE_URL || 'https://partner-dev.lumiguides.it.com' }}
           WEB_REPO: ${{ vars.ECR_WEB_REPOSITORY || 'aa-crm-dev-web' }}
           WEB_SERVICE: ${{ vars.ECS_WEB_SERVICE || 'aa-crm-dev-web' }}
-          WEB_BASE: ${{ vars.CRM_WEB_BASE_URL || 'https://partner-dev.lumiguides.it.com' }}
+          WEB_BASE: ${{ vars.CRM_WEB_BASE_URL || 'https://portal.lumiguides.it.com' }}
           PORTAL_REPO: ${{ vars.ECR_PORTAL_REPOSITORY || 'aa-crm-dev-portal' }}
           PORTAL_SERVICE: ${{ vars.ECS_PORTAL_SERVICE || 'aa-crm-dev-portal' }}
           PORTAL_HOST: ${{ vars.PORTAL_HOST || 'portal.lumiguides.it.com' }}

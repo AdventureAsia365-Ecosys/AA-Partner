@@ -6,7 +6,7 @@ type: explanation
 status: active
 owner: nghiep
 audience: [engineer, agent]
-applies_to: [aa-crm-api, aa-crm-web, aa-cis-portal]
+applies_to: [aa-crm-api, aa-crm-web, aa-crm-portal]
 last_reviewed: 2026-10-28
 review_every_days: 90
 related: [ARCH-01, ARCH-06-booking, docs/adr/README.md]
@@ -97,7 +97,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 | Edge | CloudFront `partner-dev.` -> VPC origin -> internal NLB -> ALB host + `X-AA-Origin` + `/crm/*` rule -> the service (AA-931 spike, ADR 0010 decision 2) |
 | Image | ECR `aa-crm-dev-api`, IMMUTABLE, tag = git SHA, built natively on an arm64 runner |
 | Web | `web/`: Next.js 16 standalone (React 19, TypeScript, vitest), the AA UI kit core vendored from AA-CIS-App (`web/app/_kit/core/`, root ADR 0016; inline styles from the kit tokens); ECS Fargate **ARM64** service `aa-crm-dev-web` (port 3000, `/healthz`), ECR `aa-crm-dev-web` (AA-CIS-Infra `crm_web.tf`); desired 1, running 1 on 25/10/2026 |
-| Portal | `portal/`: the tenant Content studio (Next.js 16, React 19, TypeScript), moved from AA-CIS-App with its history by CRM-P2a (AA-979). Still on Vercel (project `aa-cis-portal`, host `portal.lumiguides.it.com`) and still the CIS tenant API-key sign-in until P2b; section "Tenant portal" below |
+| Portal | `portal/`: the tenant Content studio (Next.js 16, React 19, TypeScript), moved from AA-CIS-App with its history by CRM-P2a (AA-979). Fargate service `aa-crm-dev-portal` on the agency host `portal.lumiguides.it.com` (shared with the CRM web) since the P2b cutover; partner-pool sign-in only since the P2b clean-up; section "Tenant portal" below |
 | Edge for the web | the same CloudFront distribution: the ALB rule `crm_api` (`/crm`, `/crm/*`) stays above `crm_partner_default`, which forwards every other path of the partner host to the web target group |
 
 AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everything `aa-crm-<env>-*`, tag `App = crm`
@@ -318,8 +318,8 @@ queued / running rows as information, exempt kinds left out). Daily or slower ki
 - Web checks (AA-935): **Web Build** (kit core integrity + provenance, vitest, `next build` with the type check,
   standalone smoke, kit lint) and **Web Docker Build Check** (native arm64 image, container smoke, Trivy); Security Audit also runs `npm audit` for `web/` and `portal/`.
 - Portal checks (AA-979): **Portal Build** (kit core integrity + provenance, `npm ci`, `tsc --noEmit`, `next build`, kit
-  lint). The portal deploys from `deploy-portal-dev.yml` (Fargate) and, for the rollback window, `vercel-deploy-portal.yml`,
-  never from `ci.yml`.
+  lint). The portal deploys from `deploy-portal-dev.yml` (Fargate) only, never from `ci.yml` (its Vercel project and
+  workflow went at the P2b clean-up, AA-979 §4.5).
 - **Kit lint** (AA-994 S2b, root ADR 0016 decision 7): `portal/` and `web/` each run ESLint 9 with the Next rules plus
   the kit preset `inline` from the vendored `app/_kit/core/eslint-kit.mjs` at `error` (`eslint.config.mjs`; portal:
   `app/**`, web: `app/**` + `components/**`, the vendored core exempt). Violations that existed before S2b are frozen
@@ -365,10 +365,11 @@ queued / running rows as information, exempt kinds left out). Daily or slower ki
   `git_sha`/`version`/`auth_configured`; `/crm/health` + `/crm/health/ready` reaching a ready API through the host's
   API rule, without comparing the API's commit: a web deploy does not deploy the API) and `crm-portal.rows` (the
   studio's `/api/healthz` `sha`/`version`: on the agency host `/healthz` is the CRM web's; the API rule), plus
-  `.github/scripts/edge_verify.sh` (signed-out redirects to the web's `/auth/refresh`, the studio sign-in page and its
-  `/portal-assets`). Same red rules (desired 0, rollout, image). `CRM_WEB_ENABLED` / `CRM_PORTAL_ENABLED` unset is red
-  (`config` fails). The portal deploy then runs the Playwright smoke (`ui-smoke-portal.yml`, `target: fargate`,
-  `require_tenant_key: true`: a missing `E2E_TENANT_API_KEY` is red). Read **Deploy Web Dev result** / **Deploy
+  `.github/scripts/edge_verify.sh` (signed-out redirects to the web's `/auth/refresh`; for the studio a public page
+  (`/terms`) and its `/portal-assets`, and `/tenant-login` 308 to the partner sign-in). Same red rules (desired 0, rollout, image). `CRM_WEB_ENABLED` / `CRM_PORTAL_ENABLED` unset is red
+  (`config` fails). The portal deploy then runs the Playwright smoke (`ui-smoke-portal.yml`, always the Fargate studio,
+  `require_tenant_login: true`: a missing e2e studio sign-in secret `E2EPORTALEMAIL` / `E2EPORTALPASSWORD` /
+  `E2EPORTALTOTP` is red). Read **Deploy Web Dev result** / **Deploy
   Portal Dev result**.
 - release-please (manifest mode) keeps one release PR; the version is baked into the image and returned by
   `/crm/health`.
@@ -438,20 +439,21 @@ The Content studio of the tenant agencies, moved here from AA-CIS-App (`portal/`
 0010 §6, stage P2a: `git log --follow` reaches the pre-split CIS commits; the trailer `Imported-from:` names each
 original CIS commit). P2a moves the code only:
 
-- **Same Vercel project and host**: `aa-cis-portal` (Root Directory `portal`, Git integration off by
-  `portal/vercel.json`), `portal.lumiguides.it.com`, same env vars (`API_URL`, `NEXT_PUBLIC_CRM_URL`). Deployments come
-  only from `.github/workflows/vercel-deploy-portal.yml` (preview on a PR touching `portal/**`, then the UI smoke
-  `ui-smoke-portal.yml` on the preview; production by dispatch from main only since the P2b freeze, AA-979: the
-  Vercel project is the rollback target of the DNS cutover, and `portal/vercel.json` answers 301 from
-  `aa-cis-portal.vercel.app/<path>` to `portal.lumiguides.it.com/<path>`, conditioned on that host so a rollback does
-  not loop). Repo values: variable `VERCEL_PORTAL_PROJECT_ID`, secrets
-  `VERCEL_TOKEN`, `VERCEL_PORTAL_BYPASS_SECRET`, `E2E_TENANT_API_KEY`.
-- **Same sign-in**: the tenant API key through the portal BFF (`portal/app/api/auth/tenant-login`), which calls CIS
-  `POST /auth/tenant-login` with `client: "portal"` (portal page loads are not metered as API calls, AA-760) and keeps
-  the CIS tenant token in the host-only cookie `cis_tenant_token`. The gate is `portal/proxy.ts` (tenant only).
+- **Host and deploy**: the Fargate service `aa-crm-dev-portal` on the agency host `portal.lumiguides.it.com`, shared
+  with the CRM web (P2b, below). The Vercel project of P2a (`aa-cis-portal`) was the rollback target of the cutover and
+  was deleted at the P2b clean-up (AA-979 §4.5) with its workflow, `portal/vercel.json`, the root `.vercelignore` and the
+  repo values `VERCEL_PORTAL_PROJECT_ID`, `VERCEL_PORTAL_BYPASS_SECRET`, `VERCEL_TOKEN`, `E2E_TENANT_API_KEY`. There are
+  no portal PR previews: Portal Build and Portal Docker Build Check are the pre-merge checks, the Fargate smoke the
+  post-deploy one.
+- **Sign-in**: the partner pool (MFA) through the CRM web on the same host, exchanged at CIS for a short studio token
+  (P2b, below). The people-facing API-key sign-in (`/tenant-login`, BFF `portal/app/api/auth/tenant-login`, CIS
+  `POST /auth/tenant-login` with `client: "portal"`, unmetered, AA-760) is OFF unless `PORTAL_API_KEY_SIGNIN=true`
+  (a local studio only): `/tenant-login` answers 308 to the web's sign-in with `next=/portal/dashboard`, the BFF 404.
+  Tenant API keys are for machines. The studio token lives in the host-only cookie `cis_tenant_token`; the gate is
+  `portal/proxy.ts` (tenant only).
 - **Business logic stays in the CIS API** (ADR 0010 §7): the portal is a client of CIS `/v1/*` and `/auth/*` through
   its BFF (`portal/app/api/tenant/[...path]`, cross-site writes refused first, AA-911). It never reads the `crm`
-  schema or calls `/crm/*`; the sidebar only links the CRM (`NEXT_PUBLIC_CRM_URL`).
+  schema or calls `/crm/*`; the sidebar only links the CRM home, same origin `/` (`NEXT_PUBLIC_CRM_URL` overrides).
 - **UI kit** (AA-994 S2a, root ADR 0016): `portal/app/_kit/core/` is a byte copy of AA-CIS-App
   `frontend/app/_kit/core/` (full profile), written only by the root `tools/kit/kit-sync.sh portal` and pinned by
   `portal/kit.lock.json`; never edit it here (edit the CIS core, merge, then sync). `portal/app/_kit/local/` holds the
@@ -465,10 +467,12 @@ original CIS commit). P2a moves the code only:
 - **Guards**: `api/tests/unit/test_portal_guards.py` (no admin secret or staff session in `portal/`, tenant-only gate,
   security headers, the 308 map of the old slugs, draft legal pages outside the gate, muted-text contrast, the
   unmetered portal session, cross-site write refusal, lockfile tracked, deploy on `portal/**` only).
-- **Smoke**: `e2e/smoke-portal/` with `e2e/playwright.portal.config.ts` (host checks always; logged-in pages with
-  `E2E_TENANT_API_KEY`). `ui-smoke-portal.yml` takes `target` (`vercel` / `fargate`), `resolve_via` and
-  `require_tenant_key` both on dispatch and on call; the Fargate deploy calls it with `fargate` and the key required
-  (AA-993 V3), the Vercel preview without (logged-in tests skip when the key is absent).
+- **Smoke**: `e2e/smoke-portal/` with `e2e/playwright.portal.config.ts` (host checks always; logged-in pages after
+  `auth.setup.ts` signs the e2e studio user in through the partner pool with its authenticator code, secrets
+  `E2EPORTALEMAIL` / `E2EPORTALPASSWORD` / `E2EPORTALTOTP`: a synthetic partner identity with a Content studio
+  membership on the E2E tenant). `ui-smoke-portal.yml` always checks the Fargate studio and takes `resolve_via` and
+  `require_tenant_login` on dispatch and on call; the Fargate deploy calls it with the sign-in required (AA-993 V3).
+  A local run against a studio without partner sign-in sets `PORTAL_TARGET` empty and uses `E2E_TENANT_API_KEY`.
 - **Account pages (AA-761)**: Billing = plan card, rewrite meter (used / quota and reset date from CIS `GET /v1/quota`,
   overage so far from `GET /v1/billing`) and an invoices empty state (CIS stores no invoices yet); Activity = kit
   DataTable with server paging over CIS `GET /v1/account/activity` (type and UTC-date filters) and a CSV export of the
@@ -482,8 +486,8 @@ original CIS commit). P2a moves the code only:
   "In my catalog" (`?view=mine`): CIS `GET /v1/marketplace` (price, status, version); a card opens the tour in My Tours.
   `/portal/tours/marketplace` and `/portal/marketplace` answer 308 to `?view=mine`. Activity / intensity filters wait
   for the CIS pool API to expose them (implementation notes AA-671).
-- **The AA-CIS-App copy** of `portal/` is frozen (a CIS CI guard fails on any change) and no longer deployed; it is
-  deleted 7 or more days after P2b. Portal changes are made here only.
+- **The AA-CIS-App copy** of `portal/` was deleted at the P2b clean-up (a CIS guard keeps it gone). Portal changes are
+  made here only.
 - **P2b (AA-979, prepared S252; `portal.` cut over to Fargate in S253, 27/10/2026)**: the studio runs as the
   Fargate service `aa-crm-dev-portal` (`portal/Dockerfile`: standalone, Next assets under `/portal-assets/`, `/healthz`, the same body
   at `/api/healthz` for the post-deploy verify; deploy
@@ -492,15 +496,16 @@ original CIS commit). P2a moves the code only:
   `/privacy`, `/assets/*` to the studio, `/crm*` to the API, everything else to the CRM web). The cutover switch is the
   `portal.` CNAME only (`crm_agency_live`). Configuration (`portal/lib/config.ts`): `PORTAL_HOSTS` (Host guard),
   `PORTAL_PUBLIC_ORIGIN` (redirects and the write guard `portal/lib/writeGuard.ts`, never the bind address),
-  `PORTAL_API_KEY_SIGNIN` (on during the window), `WEB_SESSION_SECRET` (the CRM web's session key), `API_URL`,
-  `SENTRY_DSN`. **Sign-in** (`portal/proxy.ts`, `portal/lib/tenantSession.ts`): an API-key session keeps working while
-  the flag is on; else the CRM web's partner session (its sealed cookie, read only: `portal/lib/session.ts` and
+  `PORTAL_API_KEY_SIGNIN` (off; on only for a local studio), `WEB_SESSION_SECRET` (the CRM web's session key), `API_URL`,
+  `SENTRY_DSN`. **Sign-in** (`portal/proxy.ts`, `portal/lib/tenantSession.ts`): the CRM web's partner session (its sealed cookie, read only: `portal/lib/session.ts` and
   `seal.ts` are byte copies of `web/lib/`, guarded by `test_portal_guards.py`) is exchanged at CIS `POST
   /auth/tenant-session` for a tenant JWT of at most 15 minutes in the same five `cis_*` cookies; several studios ->
   `/portal-access/select`, none -> `/portal-access/none`; no session -> the web's `/auth/refresh`. The BFF renews an
   expiring exchanged token itself and answers 401 + `x-aa-session: expired` when it cannot (the shell reloads once).
   One sign-out: the studio clears its cookies, then posts the web's `/auth/sign-out`. Sentry (`instrumentation*.ts`):
-  only with a DSN, no PII. On Vercel (no P2b env) the same code behaves like P2a: API-key sign-in only.
+  only with a DSN, no PII. **Clean-up (AA-979 §4.5, S256)**: API-key sign-in off, Vercel deleted, the CIS copy deleted,
+  `partner-dev.` answers 301 to `portal.` except `/crm/*` (AA-CIS-Infra CloudFront Function), the CRM API's join-link
+  and mail OAuth origins on `portal.`.
 
 ## Slice 1: intake, pipeline, LLM gateway (AA-936)
 

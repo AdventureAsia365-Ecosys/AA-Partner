@@ -19,8 +19,9 @@ import { NAV_GROUPS, ROUTES, navActive, type NavEntry } from "./portalNav";
 // AA-935 (CRM-07, design v3 Fix C10): the cross-link to the agency CRM (AA-Partner web on its own host) until the
 // Content studio moves into the CRM shell (AA-979). Outside NAV_GROUPS on purpose: it is another app, so neither
 // the ⌘K palette nor the phone bottom bar routes to it. The CRM has its own sign-in until then (design-final §4.4).
-// NEXT_PUBLIC_CRM_URL (Vercel aa-cis-portal) overrides the Dev host.
-const CRM_URL = process.env.NEXT_PUBLIC_CRM_URL || "https://partner-dev.lumiguides.it.com";
+// AA-979 §4.5: the studio and the CRM web share the agency host (portal.), so the link is the same-origin CRM home "/"
+// (partner-dev. only answers 301 to portal. now). NEXT_PUBLIC_CRM_URL (an origin, build time) still overrides it.
+const CRM_URL = process.env.NEXT_PUBLIC_CRM_URL || "";
 
 export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate }: {
   drawerOpen: boolean;

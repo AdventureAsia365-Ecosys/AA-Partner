@@ -1,10 +1,10 @@
 // e2e/smoke-portal/aa885-portal-host.spec.ts
-// AA-885 — what the PORTAL host (portal app, Vercel aa-cis-portal) must and must not serve.
+// AA-885 — what the PORTAL host (portal app; the Fargate studio on the agency host since AA-979) must and must not serve.
 // Unauthenticated checks run always (no tenant key needed); the cookie-scope check needs the
 // tenant storage state from auth.setup.ts.
-//   • /portal/* without a session → /tenant-login; / → the dashboard (then the gate);
+//   • /portal/* without a session → the sign-in (agency host: the CRM web's /auth/refresh); /tenant-login → 308 there;
 //   • AA-759: every old slug → 308 to its new path (query kept);
-//   • a forged tenant/staff cookie is refused by pages (→ /tenant-login) and by the BFF (401);
+//   • a forged tenant/staff cookie is refused by pages (→ the sign-in) and by the BFF (401);
 //   • no admin page, admin BFF or staff login exists here (404);
 //   • every response carries the security headers;
 //   • /privacy and /terms are draft pages (AA-886: 200, draft banner, noindex);
@@ -12,7 +12,7 @@
 import { test, expect, request as pwRequest, type APIRequestContext } from '@playwright/test';
 import fs from 'fs';
 import { baseUrl } from './smoke-helpers';
-import { FARGATE, NO_KEY_REASON, SIGNED_OUT_PATH, TENANT_STATE, hasTenantState } from './portal-helpers';
+import { FARGATE, NO_LOGIN_REASON, SIGNED_OUT_PATH, TENANT_STATE, hasTenantState } from './portal-helpers';
 
 async function apiContext(cookie?: string): Promise<APIRequestContext> {
   const headers: Record<string, string> = {};
@@ -140,7 +140,7 @@ test.describe('AA-885 — portal host', () => {
   test('security headers on the portal pages', async () => {
     const ctx = await apiContext();
     try {
-      for (const p of ['/tenant-login', '/terms']) {
+      for (const p of ['/terms', '/privacy']) {
         const res = await ctx.get(p, { maxRedirects: 0, timeout: 15000 });
         expect(res.status(), `GET ${p}`).toBe(200);
         const h = res.headers();
@@ -151,6 +151,23 @@ test.describe('AA-885 — portal host', () => {
         expect(h['content-security-policy'], `${p}: CSP`).toContain("frame-ancestors 'none'");
         expect(h['permissions-policy'], `${p}: Permissions-Policy`).toContain('camera=()');
       }
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  // AA-979 §4.5: the API-key sign-in page is gone on the agency host; old links land on the partner sign-in for good,
+  // with the studio home as the destination (never next=/tenant-login, which would loop).
+  test('/tenant-login answers 308 to the partner sign-in', async () => {
+    test.skip(!FARGATE, 'a local studio may still run the API-key sign-in (PORTAL_API_KEY_SIGNIN=true)');
+    const ctx = await apiContext();
+    try {
+      const res = await ctx.get('/tenant-login?x=1', { maxRedirects: 0, timeout: 15000 });
+      expect(res.status(), 'GET /tenant-login').toBe(308);
+      const loc = new URL(res.headers()['location'] ?? '', baseUrl());
+      expect(loc.origin).toBe(new URL(baseUrl()).origin);
+      expect(loc.pathname).toBe(SIGNED_OUT_PATH);
+      expect(loc.searchParams.get('next')).toBe('/portal/dashboard');
     } finally {
       await ctx.dispose();
     }
@@ -173,7 +190,7 @@ test.describe('AA-885 — portal host', () => {
   });
 
   test('tenant cookie is host-only, httpOnly and Secure', async () => {
-    test.skip(!hasTenantState(), NO_KEY_REASON);
+    test.skip(!hasTenantState(), NO_LOGIN_REASON);
     const state = JSON.parse(fs.readFileSync(TENANT_STATE, 'utf8')) as {
       cookies: { name: string; domain: string; httpOnly: boolean; secure: boolean; sameSite: string }[];
     };

@@ -16,7 +16,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { baseUrl, installBypassRoute, watchPage, describeApiFailures } from './smoke-helpers';
 import {
-  NO_KEY_REASON,
+  NO_LOGIN_REASON,
   PORTAL_RESULTS_DIR,
   TENANT_STATE,
   ensurePortalResultsDir,
@@ -65,7 +65,7 @@ async function assertNoBrief(page: Page, rows: ReviewRow[], where: string): Prom
 }
 
 test.describe('UI smoke — portal My Content table (S251)', () => {
-  test.skip(() => !hasTenantState(), NO_KEY_REASON);
+  test.skip(() => !hasTenantState(), NO_LOGIN_REASON);
 
   test('1440: the table fits without a sideways scroll, titles keep their width, no angle brief', async ({ browser }) => {
     const context = await browser.newContext({ baseURL: baseUrl(), storageState: TENANT_STATE,

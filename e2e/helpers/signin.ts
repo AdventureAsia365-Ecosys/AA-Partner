@@ -43,6 +43,12 @@ export async function signIn(page: Page, who: Credentials): Promise<void> {
   await next(page);
 }
 
+/** Managed login may offer to add a passkey after the sign-in: decline it (the e2e users sign in with an authenticator). */
+export async function skipPasskeyOffer(page: Page): Promise<void> {
+  const skip = page.getByRole("button", { name: /skip|not now|later/i }).first();
+  if (await skip.isVisible({ timeout: 5_000 }).catch(() => false)) await skip.click();
+}
+
 /** After managed login: back on the partner host, the agency picked when the chooser shows. */
 export async function landOnPartner(page: Page, partner: string): Promise<void> {
   await page.waitForURL((u) => u.origin === partner, { timeout: 30_000 });
