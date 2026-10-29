@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.9.0...v0.9.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* marketplace price chip icon no longer shrinks to a stray dot; tiers on one line ([#117](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/117)) ([fac5ea8](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/fac5ea8e6db7e484186eed8dee20540931428c04))
+
 ## [0.9.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.8.0...v0.9.0) (2026-10-29)
 
 
