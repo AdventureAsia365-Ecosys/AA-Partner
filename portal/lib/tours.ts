@@ -64,6 +64,19 @@ export function themeTags(seoKeywords: unknown, max = 3, exclude: (string | null
   return out;
 }
 
+/** The source price text (raw_tours.price_raw) on one line. A multi-tier price is one line per tier in the source
+ *  ("2-5 Traveller : $178\n6-9 Traveller : $100"); HTML collapses the newlines into spaces, so the tiers ran together
+ *  ("$178 6-9 Traveller"). Each non-empty line, without a leading bullet and with its spaces collapsed, is joined with
+ *  " · " — a separator only between two present parts, never leading, trailing or doubled. Null when nothing is left. */
+export function fmtPriceRaw(raw: string | null | undefined): string | null {
+  if (typeof raw !== "string") return null;
+  const parts = raw
+    .split(/\r?\n|\r/)
+    .map((line) => line.replace(/^[\s·•\-*]+/, "").replace(/\s+/g, " ").trim())
+    .filter((line) => line !== "");
+  return parts.length ? parts.join(" · ") : null;
+}
+
 /** Whole US dollars with a thousands separator ("$1,225"). */
 export function fmtUsdWhole(n: number): string {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });

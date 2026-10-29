@@ -16,7 +16,7 @@ import { Button, EmptyState, ErrorState, K, alpha, sans, useToast } from "@/app/
 import { MY_VERSIONS_KEY } from "@/app/_kit/local/useShellData";
 import {
   ACTIVITY_LABELS, ADDED_OPTIONS, CATALOG_PAGE_SIZE, DURATION_OPTIONS, INTENSITY_LABELS, NO_CATALOG_FILTERS,
-  activityLabel, cardTags, facetOptions, fmtDuration, hasCatalogFilters, intensityLabel, isRecentlyAdded, pageCount,
+  activityLabel, cardTags, facetOptions, fmtDuration, fmtPriceRaw, hasCatalogFilters, intensityLabel, isRecentlyAdded, pageCount,
   poolQuery, rewriteQuotaNote, themeTags, type AddedFilter, type CatalogFilters, type DurationFilter, type QuotaNote,
 } from "@/lib/tours";
 import { fetchMyVersions } from "../catalogApi";
@@ -211,7 +211,7 @@ export function CatalogBrowse({ externalSearch = "", meter }: { externalSearch?:
               tags={cardTags(t.activities, themeTags(t.seo_keywords_used, 3, [t.country]))}
               cover={t.cover_image_url ?? null}
               coverLarge={t.cover_image_large_url ?? null}
-              price={t.price_raw}
+              price={fmtPriceRaw(t.price_raw)}
               status={statusOf(t)}
               // AA-986 L3: a tour AA paused or retired is refused (409): no select box, its badge says why.
               extraBadge={t.served_notice ? <ServedBadge fields={t} /> : undefined}

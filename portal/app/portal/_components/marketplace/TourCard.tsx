@@ -27,18 +27,25 @@ export function CardStatusBadge({ status }: { status: CardStatus }) {
   return <WorkStatusBadge status={status} />;
 }
 
-export function Chip({ icon, children, tone = "neutral" }: {
-  icon?: React.ReactNode; children: React.ReactNode; tone?: "neutral" | "accent";
+/** A small label pill. The icon never shrinks: on a narrow screen a long text (a multi-tier price) used to squeeze the
+ *  icon down to a dot, which read as a stray "·" before the text (S256). The text truncates with an ellipsis, or wraps
+ *  over several lines with `wrap` (the drawer's price, which must stay readable on a phone). */
+export function Chip({ icon, children, tone = "neutral", wrap = false, testId }: {
+  icon?: React.ReactNode; children: React.ReactNode; tone?: "neutral" | "accent"; wrap?: boolean; testId?: string;
 }) {
   return (
-    <span style={{
-      display: "inline-flex", alignItems: "center", gap: 4, maxWidth: "100%",
-      fontSize: 11.5, lineHeight: "18px", padding: "1px 8px", borderRadius: 999, fontFamily: sans,
+    <span data-testid={testId} style={{
+      display: "inline-flex", alignItems: wrap ? "flex-start" : "center", gap: 4, maxWidth: "100%", minWidth: 0,
+      fontSize: 11.5, lineHeight: "18px", padding: "1px 8px", borderRadius: wrap ? 10 : 999, fontFamily: sans,
       background: tone === "accent" ? K.accentTint : K.line2,
       color: tone === "accent" ? K.accentDeep : K.ink3,
-      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
     }}>
-      {icon}{children}
+      {icon && <span aria-hidden style={{ display: "inline-flex", flexShrink: 0, height: 18, alignItems: "center" }}>{icon}</span>}
+      <span style={wrap
+        ? { minWidth: 0, overflowWrap: "anywhere" }
+        : { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {children}
+      </span>
     </span>
   );
 }
