@@ -7,7 +7,7 @@
 
 import {
   LayoutDashboard, BookOpen, Store, Sparkles, Share2, FileText, Eye, CreditCard,
-  Activity, Settings, Code2, Plug, Users,
+  Activity, Settings, Code2, Plug, Users, Quote,
 } from "lucide-react";
 
 /** Every portal page path, in one place (links in components use these, not string literals). */
@@ -18,6 +18,8 @@ export const ROUTES = {
   // AA-671 — the Marketplace's "In my catalog" view (was the Tour overview page at /portal/tours/marketplace).
   myCatalog: "/portal/tours?view=mine",
   brand: "/portal/brand",
+  // AA-814 — the agency's own sourced facts (prices, seasons, terms) the writer may cite.
+  facts: "/portal/facts",
   createSocial: "/portal/create/social",
   createArticle: "/portal/create/article",
   createWrite: "/portal/create/write",
@@ -63,6 +65,7 @@ export const NAV_GROUPS: NavGroup[] = [
   ] },
   { label: "Brand", items: [
     { href: ROUTES.brand, label: "Brand Identity", icon: <Sparkles size={16} />, keywords: "brand voice tone cta rules" },
+    { href: ROUTES.facts, label: "Facts", icon: <Quote size={16} />, keywords: "facts price season visa transfer booking terms source writer cite" },
   ] },
   { label: "Create", items: [
     { href: ROUTES.createSocial, label: "Social Posts", icon: <Share2 size={16} />, keywords: "social slate linkedin facebook instagram tiktok email ads write", also: [ROUTES.createWrite] },

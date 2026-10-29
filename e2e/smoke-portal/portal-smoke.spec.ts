@@ -35,6 +35,8 @@ const PORTAL_PAGES: PageSpec[] = [
   { id: 'tours-mine', label: 'My Tours', path: '/portal/tours/mine', readySelector: RENDERED },
   { id: 'tours-mine-view', label: 'Marketplace, In my catalog', path: '/portal/tours?view=mine', readySelector: RENDERED },
   { id: 'brand', label: 'Brand Identity', path: '/portal/brand', readySelector: RENDERED },
+  // AA-814 — Brand › Facts (CIS /v1/facts: the agency's own facts and the Adventure Asia facts it can replace).
+  { id: 'facts', label: 'Facts', path: '/portal/facts', readySelector: RENDERED },
   { id: 'create-social', label: 'Social Posts', path: '/portal/create/social', readySelector: RENDERED },
   { id: 'create-article', label: 'Articles', path: '/portal/create/article', readySelector: RENDERED },
   { id: 'content', label: 'My Content', path: '/portal/content', readySelector: RENDERED },
