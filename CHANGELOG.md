@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.8.0...v0.9.0) (2026-10-29)
+
+
+### Features
+
+* Marketplace activity, intensity and recently-added filters, and responsive tour cover photos ([#111](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/111)) ([09c562b](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/09c562b95e530a14684b82895d06110f9b3e8890))
+* registered_keys on /crm/health/ready ([#112](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/112)) ([c5c37cf](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/c5c37cfc532db0b6fa0bdca466f4bdbebcd17feb))
+
 ## [0.8.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.7.0...v0.8.0) (2026-10-28)
 
 
