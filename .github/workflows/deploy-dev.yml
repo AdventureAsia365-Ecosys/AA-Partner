@@ -36,6 +36,17 @@ name: Deploy Dev
 # commit + version, /crm/health/ready on a schema >= the newest crm-NNN this commit needs. The `result` job
 # ("Deploy Dev result") is red when any job did not succeed, skipped included: read that one.
 #
+# Schema gate (AA-993 M4b, root ADR 0017 d7; the `schema-gate` job, before the job guard and the build): the commit's
+# required crm-NNN keys (REQUIRED_SCHEMA_VERSIONS of api/app/db.py, plus every api/migrations/ file at or below the
+# newest one) must be in /crm/health/ready `registered_keys` on Dev, and the AA-CIS-Infra Migration Apply run that
+# applied files last must have apply and its blocking Isolation Probe green. It polls up to SCHEMA_GATE_TIMEOUT_S
+# (repo variable, default 2400 s: an expand file merged in the same PR is copied by the migration-sync bot and applied
+# by Migration Apply meanwhile), then fails BEFORE the rollout. No AWS and no secret: the readiness URL and the Infra
+# Actions API are public. With DB_AUTO_APPLY off it only checks that the keys are registered, which the manual DB
+# Migrate flow already guarantees (apply within the window, or re-run this workflow after the apply). Logic:
+# .github/scripts/schema_gate.py (api/tests/unit/test_schema_gate_script.py). A push that changes only api/migrations/
+# does not deploy (nothing in the image changes; root ADR 0017 d7).
+#
 # The base task definition is the family's latest ACTIVE revision, so a redeploy of an older commit keeps the latest
 # Terraform env/secrets: revert config in Terraform. This workflow never changes the service's desired count; scaling
 # 0 -> 1 is a separate step (until then the verify, and so the run, is red).
@@ -47,8 +58,10 @@ on:
       - "api/**"
       - "!api/tests/**"
       - "!api/pyproject.toml"
+      - "!api/migrations/**"
       - ".github/workflows/deploy-dev.yml"
       - ".github/scripts/partner-deploy-preflight.sh"
+      - ".github/scripts/schema_gate.py"
   workflow_dispatch:
     inputs:
       override_running_jobs:
@@ -80,9 +93,39 @@ jobs:
             exit 1
           fi
 
+  # AA-993 M4b: wait (bounded) for the schema this commit needs, before the job guard reads the live jobs (so its
+  # answer is fresh when the rollout starts). Runs on the deployed commit's own tree.
+  schema-gate:
+    name: Schema gate
+    needs: config
+    runs-on: ubuntu-latest
+    environment: dev
+    # The script stops at SCHEMA_GATE_TIMEOUT_S (default 2400 s, at most 2580 s); the job limit is the backstop.
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            .github/scripts
+            api/app/db.py
+            api/migrations
+          sparse-checkout-cone-mode: false
+
+      - name: Wait until Dev has every key this commit needs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SCHEMA_GATE_TIMEOUT_S: ${{ vars.SCHEMA_GATE_TIMEOUT_S }}
+          BASE_URL: ${{ vars.CRM_API_BASE_URL || 'https://partner-dev.lumiguides.it.com' }}
+        run: |
+          python3 .github/scripts/schema_gate.py --app crm --readiness-file api/app/db.py \
+            --migrations-dir api/migrations --ready-url "${BASE_URL%/}/crm/health/ready"
+
   preflight:
     name: Pre-deploy job guard
-    needs: config
+    needs: [config, schema-gate]
     runs-on: ubuntu-latest
     environment: dev
     env:
@@ -109,7 +152,7 @@ jobs:
 
   deploy:
     name: Deploy to ECS Dev
-    needs: [config, preflight]
+    needs: [config, schema-gate, preflight]
     # Native arm64 build for the Fargate ARM64 task (free arm runner on a public repo).
     runs-on: ubuntu-24.04-arm
     environment: dev
@@ -199,7 +242,7 @@ jobs:
     name: Deploy Dev result
     runs-on: ubuntu-latest
     if: always()
-    needs: [config, preflight, deploy, verify]
+    needs: [config, schema-gate, preflight, deploy, verify]
     steps:
       - name: Every job succeeded
         env:
@@ -209,7 +252,7 @@ jobs:
           set -uo pipefail
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
           BAD=$(echo "$NEEDS" | jq -r '[to_entries[] | select(.value.result != "success") | "\(.key)=\(.value.result)"] | join(", ")')
-          if [ -n "$BAD" ] || [ "$(echo "$NEEDS" | jq 'length')" -lt 4 ]; then
+          if [ -n "$BAD" ] || [ "$(echo "$NEEDS" | jq 'length')" -lt 5 ]; then
             echo "::error::Deploy Dev ($EVENT) is not verified: ${BAD:-a job result is missing}"
             exit 1
           fi
