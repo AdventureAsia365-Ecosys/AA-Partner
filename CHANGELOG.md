@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.9.1...v0.10.0) (2026-10-29)
+
+
+### Features
+
+* Content studio Facts page for an agency's own sourced facts ([#120](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/120)) ([767b686](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/767b686b061b989a07bed28de5fe5e92679b49bd))
+* Deploy Dev schema-gate and CI Migration preflight ([#121](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/121)) ([03918c0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/03918c0bc4754c73a8f771641b804424491f97c1))
+
 ## [0.9.1](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.9.0...v0.9.1) (2026-10-29)
 
 
