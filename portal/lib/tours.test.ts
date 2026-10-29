@@ -7,6 +7,7 @@ import {
   coverSrcSet,
   facetOptions,
   fmtDuration,
+  fmtPriceRaw,
   INTENSITY_LABELS,
   intensityLabel,
   hasCatalogFilters,
@@ -122,4 +123,16 @@ test("quota note: left, near, crossing the quota, over, no plan, unlimited", () 
     { tone: "danger", text: "Your plan's rewrites are used up: these 2 rewrites are billed as overage." });
   assert.equal(rewriteQuotaNote(usageMeter(Q(1, 10), { plan_attached: false }))?.text, "No plan attached yet: rewrites are not billed.");
   assert.equal(rewriteQuotaNote(usageMeter(Q(1, 999_999), billing))?.text, "Your plan has no rewrite limit.");
+});
+
+test("price text: tiers on one line, a separator only between present parts", () => {
+  assert.equal(fmtPriceRaw("2-5 Traveller : $178\n6-9 Traveller : $100\n10 + Traveller : $80"),
+    "2-5 Traveller : $178 · 6-9 Traveller : $100 · 10 + Traveller : $80");
+  // blank lines, CRLF, leading bullets and runs of spaces never leave a leading, trailing or doubled separator
+  assert.equal(fmtPriceRaw("\n· 2-5 Traveller :  $178\r\n\r\n• 6-9 Traveller : $100\n  \n"),
+    "2-5 Traveller : $178 · 6-9 Traveller : $100");
+  assert.equal(fmtPriceRaw("- $3,550"), "$3,550");
+  assert.equal(fmtPriceRaw("$3,550"), "$3,550");
+  assert.equal(fmtPriceRaw("USD 1,200 - 1,500"), "USD 1,200 - 1,500");   // a dash inside the text stays
+  for (const empty of [null, undefined, "", "  ", "\n·\n", " • "]) assert.equal(fmtPriceRaw(empty), null);
 });
