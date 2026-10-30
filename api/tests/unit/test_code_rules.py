@@ -119,7 +119,9 @@ CLIENT_LINK_MODULES = frozenset({"app/intake/stage2_public.py", "app/proposals/p
 # AA-945: the forward-in mail ingest context (the recipient's local part picks the agency): the ingest job only.
 INGEST_MODULES = frozenset({"app/mail/ingest.py"})
 # AA-942: the lifecycle jobs' context (the daily run, the offboarding steps).
-LIFECYCLE_MODULES = frozenset({"app/lifecycle/job.py", "app/lifecycle/offboarding.py"})
+LIFECYCLE_MODULES = frozenset(
+    {"app/lifecycle/job.py", "app/lifecycle/offboarding.py", "app/portability/exports.py"}  # + AA-967 export job
+)
 # AA-978: one CIS membership event in one agency (actor platform:feed-tenant-membership, any agency status).
 MEMBERSHIP_FEED_MODULES = frozenset({"app/cis/membership_feed.py"})
 # AA-979 P2b: Content studio invitations (crm-020 platform table): the platform / job context and the token context.

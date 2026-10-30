@@ -69,6 +69,9 @@ CATALOG_SYNC = "crm_catalog_sync"
 # AA-979 P2b: tell CIS which partner-pool identity accepted a Content studio invitation (app.members.studio), one row
 # per accepted invitation, queued in the accept transaction. Not deploy-gate exempt (exists only while due / retried).
 STUDIO_ACTIVATION = "crm_studio_activation"
+# AA-967: one portability export (the agency's or one client's ZIP, app.portability.exports), queued by the owner's
+# request. Not deploy-gate exempt (exists only while queued / building).
+DATA_EXPORT = "crm_data_export"
 
 DEFAULT_EXPECTED_SECONDS = 300
 OVERDUE_FACTOR = 2
@@ -106,6 +109,7 @@ EXPECTED_SECONDS: dict[str, int] = {
     BOOKING_SYNC: 60,
     CATALOG_SYNC: 300,
     STUDIO_ACTIVATION: 30,
+    DATA_EXPORT: 600,
 }
 
 

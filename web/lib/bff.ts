@@ -107,6 +107,15 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   // AA-941 (CRM-13a): the owner confirms an export / deletion request AA raised (decline = cancel).
   { method: "POST", pattern: new RegExp(`^lifecycle/offboarding/${UUID}/accept$`), tenant: true, card: "AA-941" },
   { method: "GET", pattern: new RegExp(`^lifecycle/offboarding/${UUID}/export$`), tenant: true, card: "AA-942" },
+  // AA-967 (CRM-35): portability exports (list, queue, single-use link, the ZIP download) and the data-request log.
+  // Owner-only checks are the API's.
+  { method: "GET", pattern: /^data\/exports$/, tenant: true, card: "AA-967" },
+  { method: "POST", pattern: /^data\/exports$/, tenant: true, card: "AA-967" },
+  { method: "POST", pattern: new RegExp(`^data/exports/${UUID}/link$`), tenant: true, card: "AA-967" },
+  { method: "GET", pattern: new RegExp(`^data/exports/${UUID}/download$`), tenant: true, card: "AA-967", timeoutMs: 50_000 },
+  { method: "GET", pattern: /^data\/requests$/, tenant: true, card: "AA-967" },
+  { method: "POST", pattern: /^data\/requests$/, tenant: true, card: "AA-967" },
+  { method: "POST", pattern: new RegExp(`^data/requests/${UUID}/(extend|close)$`), tenant: true, card: "AA-967" },
   // AA-943 (CRM-15): Undo of a move, cancel (dry run first: ?dry_run=true|false), bulk moves and their Undo, the
   // Traveller info panel (Stage 2: read, send the planning form, fill in from a call), Settings > Forms (timezone,
   // auto-send, call slots; owner only, the API checks).

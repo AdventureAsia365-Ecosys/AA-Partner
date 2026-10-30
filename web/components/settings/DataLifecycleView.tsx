@@ -14,6 +14,7 @@ import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import {
   aaRequestKey,
   confirmsErase,
+  deletionReport,
   offboardingStep,
   ruleWindow,
   totalCount,
@@ -278,7 +279,21 @@ export function DataLifecycleView({
         <Panel title={t(lang, "data.off")} testId="data-offboarding">
           <p style={{ margin: "0 0 10px", fontSize: 13, color: K.muted }}>{fmt(t(lang, "data.off.help"), { n: view.backup_purge_days })}</p>
           {off && !["request", "done", "aa_request", "export_ready"].includes(step) && off.purpose !== "export_only" && (
-            <p style={{ margin: "0 0 10px", fontSize: 13 }}>{fmt(t(lang, "data.off.counts"), { n: totalCount(off.dry_run_counts) })}</p>
+            <div style={{ margin: "0 0 10px", display: "grid", gap: 4 }}>
+              <p style={{ margin: 0, fontSize: 13 }}>{fmt(t(lang, "data.off.counts"), { n: totalCount(off.dry_run_counts) })}</p>
+              {deletionReport(off.dry_run_counts).length > 0 && (
+                <details data-testid="data-offboarding-report" style={{ fontSize: 13 }}>
+                  <summary style={{ cursor: "pointer", color: K.muted }}>{t(lang, "data.off.report")}</summary>
+                  <ul style={{ margin: "6px 0 0", paddingLeft: 18, color: K.muted }}>
+                    {deletionReport(off.dry_run_counts).map((r) => (
+                      <li key={r.table}>
+                        <code style={{ fontSize: 12 }}>{r.table}</code> · {r.n}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </div>
           )}
           {step === "aa_request" && off && (
             <div data-testid="data-aa-request" style={{ display: "grid", gap: 8 }}>
@@ -344,6 +359,9 @@ export function DataLifecycleView({
                   )}
                 </div>
               )}
+              {(view.offboarding_cool_off_hours ?? 0) > 0 && (
+                <p style={{ margin: 0, fontSize: 13, color: K.muted }}>{fmt(t(lang, "data.off.coolOff"), { n: view.offboarding_cool_off_hours ?? 0 })}</p>
+              )}
               <label style={{ display: "grid", gap: 4, fontSize: 13, maxWidth: 520 }}>
                 {fmt(t(lang, "data.off.confirmLabel"), { id: tenantId })}
                 <input value={typed} onChange={(e) => setTyped(e.target.value)} style={field} data-testid="data-erase-confirm" autoComplete="off" />
@@ -360,6 +378,16 @@ export function DataLifecycleView({
                   {t(lang, "data.off.cancel")}
                 </Button>
               </div>
+            </div>
+          )}
+          {step === "scheduled" && off && (
+            <div data-testid="data-offboarding-scheduled" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <span style={{ fontSize: 13, color: K.amber }}>
+                {fmt(t(lang, "data.off.scheduled"), { date: formatDate(off.erase_not_before ?? null, locale, { year: true }) })}
+              </span>
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => send("POST", `lifecycle/offboarding/${off.request_id}/cancel`)}>
+                {t(lang, "data.off.cancel")}
+              </Button>
             </div>
           )}
           {step === "running" && off && <p style={{ margin: 0, fontSize: 13 }}>{t(lang, "data.off.running")}</p>}
@@ -379,6 +407,7 @@ export function DataLifecycleView({
                 date: formatDate(off.executed_at, locale, { year: true }),
                 purge: formatDate(off.backup_purge_by, locale, { year: true }),
               })}
+              {off.verified_at && ` ${t(lang, "data.off.verified")}`}
             </p>
           )}
         </Panel>

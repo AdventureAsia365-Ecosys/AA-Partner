@@ -15,7 +15,8 @@ Route                                           What                            
 ``DELETE /travelers/{id}``                      to the trash; 409 traveler_on_trip                         owner
 ``DELETE /tasks/{id}``, ``DELETE /notes/{id}``  to the trash                                               see trash
 ``POST /travelers/{id}/archive`` / ``unarchive``  archive with a reason / bring back                       owner, agent
-``POST /travelers/{id}/erasure``                erase now, bypassing the trash (dry run by default)        owner
+``POST /travelers/{id}/erasure``                erase now, bypassing the trash (dry run by default;        owner
+                                                AA-967: kept evidence, exceptions, verify, receipt)
 ``GET  /lifecycle/offboarding``                 the latest offboarding request                             owner
 ``POST /lifecycle/offboarding``                 request (dry-run counts, export queued unless waived)      owner
 ``POST /lifecycle/offboarding/{id}/cancel``     cancel before the erase                                    owner
@@ -34,7 +35,6 @@ object checks (own trip, own note, owner-only paths).
 
 from __future__ import annotations
 
-import datetime as dt
 import json
 import uuid
 from typing import Annotated, Any, Literal
@@ -46,11 +46,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
 from app.db import request_pool
-from app.errors import Conflict, Forbidden
-from app.lifecycle import erase, offboarding, policy, rules, trash
+from app.errors import Forbidden
+from app.lifecycle import offboarding, policy, rules, trash
 from app.lifecycle.rules import BACKUP_PURGE_DAYS
 from app.permissions import Action
 from app.pipeline import LOST_REASONS
+from app.portability import subject
 from app.routers.agency import tenant_header
 from app.tenancy import TenantContext, tenant_tx
 from app.vault import Vault
@@ -79,12 +80,6 @@ ARCHIVED_INACTIVE_SQL = """
 SELECT traveler_id, display_name_enc, archived_at FROM crm.traveler
  WHERE deleted_at IS NULL AND archive_reason = 'auto_inactive' ORDER BY archived_at DESC, traveler_id LIMIT 50
 """
-ERASED_TRAVELER_SQL = """
-INSERT INTO crm.erasure_request (scope, subject_id, status, confirmed_by, dry_run_counts, executed_at, backup_purge_by,
-                                 receipt)
-VALUES ('traveler', $1, 'erased', $2, $3::jsonb, now(), $4, $3::jsonb)
-RETURNING request_id
-"""
 
 
 class _Body(BaseModel):
@@ -110,6 +105,7 @@ class ArchiveIn(_Body):
 
 class ErasureIn(_Body):
     dry_run: bool = True
+    data_request_id: uuid.UUID | None = None  # AA-967: the logged request this erasure answers (closed with it)
 
 
 class OffboardingIn(_Body):
@@ -181,6 +177,7 @@ async def get_lifecycle(request: Request, caller: CallerDep, tenant_id: TenantDe
             "hold_reasons": list(rules.HOLD_REASONS),
             "deletion_dry_run": _dry_run(request),
             "backup_purge_days": BACKUP_PURGE_DAYS,
+            "offboarding_cool_off_hours": int(getattr(request.app.state.settings, "offboarding_cool_off_hours", 0)),
             "role": ctx.member_role,
         }
         if ctx.member_role == "owner":
@@ -279,36 +276,22 @@ async def post_unarchive(request: Request, caller: CallerDep, tenant_id: TenantD
 async def post_erasure(
     request: Request, caller: CallerDep, tenant_id: TenantDep, traveler_id: uuid.UUID, body: ErasureIn
 ) -> dict[str, Any]:
-    """Erase one client now (design §4.10, "erasure bypasses trash"): a dry run returns the counts; a real run needs
-    deletion switched on (``LIFECYCLE_DRY_RUN`` off) and leaves an ``erasure_request`` receipt."""
+    """Erase one client now (design §4.10, "erasure bypasses trash"): a dry run returns the counts, what would be kept
+    and the exceptions; a real run needs deletion switched on (``LIFECYCLE_DRY_RUN`` off), verifies the client is gone
+    and leaves an ``erasure_request`` receipt (AA-967, :mod:`app.portability.subject`)."""
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     store = request.app.state.documents
     async with tenant_tx(pool, caller, tenant_id, action=Action.CLIENT_DELETE) as ctx:
-        if ctx.member_role != "owner":
-            ctx.audit("erasure", "denied", "traveler", str(traveler_id), reason="owner_only")
-            raise Forbidden("owner_only", "only the agency owner erases a client")
-        vault = Vault(keys, ctx)
-        counts = await erase.erase(ctx, "traveler", traveler_id, dry_run=True, vault=vault)
-        if body.dry_run:
-            return {"traveler_id": str(traveler_id), "dry_run": True, "counts": counts}
-        if _dry_run(request):
-            raise Conflict(
-                "deletion_dry_run", "deletion is switched off on this environment (LIFECYCLE_DRY_RUN)", counts=counts
-            )
-        counts = await erase.erase(ctx, "traveler", traveler_id, dry_run=False, vault=vault, store=store)
-        purge_by = (dt.datetime.now(dt.UTC) + dt.timedelta(days=BACKUP_PURGE_DAYS)).date()
-        request_id = await ctx.conn.fetchval(
-            ERASED_TRAVELER_SQL, traveler_id, f"member:{ctx.member_id}", json.dumps({"counts": counts}), purge_by
+        return await subject.erase_client(
+            ctx,
+            Vault(keys, ctx),
+            store,
+            traveler_id,
+            dry_run=body.dry_run,
+            deletion_dry_run=_dry_run(request),
+            data_request_id=body.data_request_id,
         )
-        ctx.audit("erasure", "allowed", "traveler", str(traveler_id), reason="bypass_trash")
-        return {
-            "traveler_id": str(traveler_id),
-            "dry_run": False,
-            "counts": counts,
-            "request_id": str(request_id),
-            "backup_purge_by": purge_by.isoformat(),
-        }
 
 
 @router.get("/lifecycle/offboarding")
@@ -363,7 +346,11 @@ async def post_offboarding_erase(
     require_keys(request.app.state.keys)  # the erase ends with the crypto-shred: no provider, no start
     async with tenant_tx(pool, caller, tenant_id, action=Action.AGENCY_EXPORT) as ctx:
         return await offboarding.confirm_erase(
-            ctx, request_id, confirm_tenant_id=body.confirm_tenant_id, dry_run=_dry_run(request)
+            ctx,
+            request_id,
+            confirm_tenant_id=body.confirm_tenant_id,
+            dry_run=_dry_run(request),
+            cool_off_hours=int(getattr(request.app.state.settings, "offboarding_cool_off_hours", 0)),
         )
 
 

@@ -27,6 +27,7 @@ from app.lifecycle import booking, erase, offboarding, policy, rules, trash
 from app.lifecycle import job as lifecycle_job
 from app.pipeline import LOST_REASONS
 from app.tenancy import LifecycleContext
+from app.vault.errors import KeyDestroyed
 from tests.unit.fakes import ScriptedConn
 from tests.unit.slice_fakes import MEMBER, OTHER_MEMBER, TENANT, FakeVault, enc, fake_tx, system_ctx, tenant_ctx
 
@@ -895,20 +896,28 @@ async def test_build_export_decrypts_and_drops_indexes() -> None:
             "raw": b"\x01",
         }
     ]
-    conn = ScriptedConn().on("to_regclass", "crm.x").on("FROM crm.traveler ORDER BY", rows)
+    # AA-967: the tables come from the catalog (every tenant table the role reads), minus the never-exported ones.
+    columns = ["traveler_id", "display_name_enc", "email_bidx", "profile_token_enc", "phone_enc", "created_at", "tags"]
+    catalog = [
+        {"name": "traveler", "pk": ["traveler_id"], "columns": [*columns, "raw"], "json_columns": []},
+        {"name": "tenant_key", "pk": ["tenant_key_id"], "columns": ["tenant_key_id"], "json_columns": []},
+    ]
+    conn = ScriptedConn().on("pg_catalog.pg_class c", catalog).on("FROM crm.traveler ORDER BY", rows)
     content = await offboarding.build_export(lifecycle_ctx(conn), FakeVault())  # type: ignore[arg-type]
     header, line = [json.loads(x) for x in content.decode().splitlines()]
-    assert header["format"] == 1
+    assert header["format"] == 2
     assert line == {
         "table": "traveler",
         "row": {
             "traveler_id": str(ID),
             "display_name": "Hoa",
+            "phone": None,
             "created_at": NOW.isoformat(),
             "tags": [str(ID)],
             "raw": "AQ==",
         },
     }
+    assert not conn.sql("FROM crm.tenant_key")
 
 
 class Keys:
@@ -948,6 +957,9 @@ async def test_offboard_handler(monkeypatch: pytest.MonkeyPatch) -> None:
         async def encrypt(self, *_: Any, **__: Any) -> bytes:
             return b"sealed-export"
 
+        async def decrypt_bytes(self, *_: Any, **__: Any) -> bytes:
+            raise KeyDestroyed()  # AA-967 verify: the canary no longer opens after the crypto-shred
+
     async def content(ctx: Any, vault: Any) -> bytes:
         return b"{}\n"
 
@@ -961,6 +973,11 @@ async def test_offboard_handler(monkeypatch: pytest.MonkeyPatch) -> None:
         return {"traveler": 2}
 
     monkeypatch.setattr(offboarding.erase, "erase", erased)
+
+    async def withdrawn(*_: Any, **__: Any) -> int:
+        return 0  # AA-967: the agency's portability exports (tests/unit/test_portability.py)
+
+    monkeypatch.setattr(offboarding.portability_exports, "withdraw", withdrawn)
     conn = ScriptedConn().on("FOR UPDATE", _request(status="requested"))
     monkeypatch.setattr(offboarding, "lifecycle_tx", fake_tx(lifecycle_ctx(conn, status="offboarding")))
     assert (await handler(object(), job("erase")))["status"] == "skipped"  # type: ignore[arg-type]
@@ -974,6 +991,9 @@ async def test_offboard_handler(monkeypatch: pytest.MonkeyPatch) -> None:
     assert keys.destroyed == 1 and store.objects == {}
     receipt = json.loads(conn.sql("SET status = 'erased'")[0][2])
     assert receipt["counts"] == {"traveler": 2} and receipt["keys_destroyed"] == 7
+    assert receipt["verify"]["canary_unreadable"] is True and receipt["verify"]["keys_destroyed"] == 7
+    assert receipt["exports_withdrawn"] == 0 and "export_job" in receipt["kept"]
+    assert "verified_at = now()" in " ".join(c[0] for c in conn.calls if "SET status = 'erased'" in c[0])
     assert conn.sql("SET status = 'offboarded'") and conn.sql("SET status = 'erasing', failure_class = NULL")
 
     async def held(*_: Any, **__: Any) -> dict[str, int]:
@@ -997,7 +1017,18 @@ async def test_offboard_handler(monkeypatch: pytest.MonkeyPatch) -> None:
     assert conn.sql("SET status = 'failed'")[0][1] == "deletion_dry_run"
     assert conn.sql("SET status = 'active'")
     assert (ctx.audit_events[-1].outcome, ctx.audit_events[-1].reason) == ("denied", "deletion_dry_run")
-    # A request no longer erasing (cancelled) keeps its status; the agency is still given back.
+    # AA-967: a cool-off confirmation the owner cancelled (agency active) erases nothing and refuses nothing.
+    conn = ScriptedConn().on("FOR UPDATE", _request(status="cancelled"))
+    monkeypatch.setattr(offboarding, "lifecycle_tx", fake_tx(lifecycle_ctx(conn)))
+    assert (await dry(object(), job("erase")))["status"] == "skipped"  # type: ignore[arg-type]
+    assert not conn.sql("SET status")
+
+    # A request no longer erasing (cancelled) of an agency still offboarding (the real _start meets tenant_status and
+    # leaves the decision to the erase): the request keeps its status; the agency is still given back.
+    async def offboarding_agency(*_: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(offboarding, "_start", offboarding_agency)
     conn = ScriptedConn().on("FOR UPDATE", _request(status="cancelled"))
     monkeypatch.setattr(offboarding, "lifecycle_tx", fake_tx(lifecycle_ctx(conn, status="offboarding")))
     with pytest.raises(PermanentError, match="deletion_dry_run"):

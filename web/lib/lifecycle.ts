@@ -55,6 +55,11 @@ export interface Offboarding {
   backup_purge_by: string | null;
   failure_class: string | null;
   created_at: string;
+  // AA-967 (crm-026): a confirmed deletion waits for its cool-off (erase_not_before; the owner may still cancel);
+  // verified_at = the post-erase verification passed. Optional: an API before AA-967 omits them.
+  confirmed?: boolean;
+  erase_not_before?: string | null;
+  verified_at?: string | null;
 }
 
 export interface LifecycleView {
@@ -65,6 +70,7 @@ export interface LifecycleView {
   hold_reasons: string[];
   deletion_dry_run: boolean;
   backup_purge_days: number;
+  offboarding_cool_off_hours?: number; // AA-967
   role: "owner" | "agent" | "assistant";
   holds?: Hold[];
   runs?: LifecycleRun[];
@@ -114,7 +120,7 @@ export function confirmsErase(typed: string, tenantId: string): boolean {
  */
 export function offboardingStep(
   o: Offboarding | null | undefined,
-): "request" | "aa_request" | "wait_export" | "confirm" | "export_ready" | "running" | "failed" | "done" {
+): "request" | "aa_request" | "wait_export" | "confirm" | "scheduled" | "export_ready" | "running" | "failed" | "done" {
   if (!o || o.status === "cancelled") return "request";
   if (o.awaiting_owner) return "aa_request";
   if (o.purpose === "export_only") {
@@ -124,10 +130,21 @@ export function offboardingStep(
     return "export_ready";
   }
   if (o.status === "erased") return "done";
+  // AA-967: confirmed, waiting for the cool-off to end (the agency works as usual; Cancel stays open).
+  if ((o.status === "requested" || o.status === "export_ready") && o.erase_not_before) return "scheduled";
   if (o.status === "erasing") return "running";
   if (o.status === "failed") return "failed";
   if (o.status === "requested" && !o.export_waived) return "wait_export";
   return "confirm";
+}
+
+/** AA-967: the dry-run report of an agency deletion: the tables with rows, largest first (document objects last). */
+export function deletionReport(counts: Record<string, number>, limit = 12): { table: string; n: number }[] {
+  return Object.entries(counts)
+    .filter(([k, n]) => n > 0 && !k.endsWith("_unlinked") && !k.endsWith("_kept"))
+    .map(([table, n]) => ({ table, n }))
+    .sort((a, b) => b.n - a.n || a.table.localeCompare(b.table))
+    .slice(0, limit);
 }
 
 /** AA-941: the heading of an AA-raised request the owner must answer. */
