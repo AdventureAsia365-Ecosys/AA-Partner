@@ -20,6 +20,13 @@ crm-014 line guard lets a job write AA lines; crm-017 ``crm.booking_line_aa_mone
    the line lock, not as claimed: a hold that lands after its line was released keeps only its hold id and queues the
    release that gives the seats back.
 
+**Accepted proposals** (AA-952, :mod:`app.booking.proposal_lines`, before the requests): the AA lines of an accepted
+builder version are written from its hold set (``GET /holds/{id}``, contract 1.2: net = each line's ``b2b_price``),
+and once its deposit is paid one ``confirm`` request is queued for the set. A confirm, a refusal of it and a release
+act on the whole Booking hold, so :func:`apply` writes them on **every** line of the set (the lines sharing the hold
+id in the trip), not only on the line the request names; a refused confirm reads ``failed`` (or ``expired`` /
+``sold_out`` / ``not_served``) with Booking's code and opens an urgent task; the trip's stage never moves back.
+
 A quote / requote / hold / refresh whose trip is Lost or cancelled is dropped (``trip_closed``) without calling Booking
 (the Lost move held it back by the Undo window first, so an Undo leaves it to run). When Booking gives no answer at all
 (:data:`OUTAGE_CLASSES`) the rest of the agency's batch goes back to the queue unsent and the feed waits: one timeout
@@ -49,7 +56,7 @@ import asyncpg
 
 from app import stages
 from app.audit_export import registry
-from app.booking import contract
+from app.booking import contract, proposal_lines
 from app.booking.client import BookingClient, BookingRefusal, BookingUnavailable
 from app.errors import Forbidden, NotFound
 from app.jobs.queue import Job
@@ -152,6 +159,14 @@ INSERT INTO crm.aa_request (trip_id, booking_line_id, kind) VALUES ($1, $2, $3)
 ON CONFLICT (tenant_id, booking_line_id, kind) WHERE status = 'pending' AND deleted_at IS NULL DO NOTHING
 RETURNING aa_request_id
 """
+# AA-952: the other lines of the same Booking hold set in the trip (an accepted proposal's lines share one hold).
+SET_LINES_SQL = """
+SELECT booking_line_id FROM crm.booking_line
+ WHERE trip_id = $1 AND bk_hold_id = $2 AND booking_line_id <> $3 AND supplier_kind = 'aa' AND status = 'planning'
+   AND deleted_at IS NULL
+ ORDER BY booking_line_id
+   FOR UPDATE
+"""
 CANCEL_OTHERS_SQL = """
 UPDATE crm.aa_request SET status = 'cancelled', finished_at = now(), result_code = 'released', lease_until = NULL
  WHERE booking_line_id = $1 AND status = 'pending' AND aa_request_id <> $2
@@ -196,6 +211,8 @@ RETURNING failures
 # apply() keeps its id and queues the release).
 RELEASABLE = frozenset({"held", "pending", "quoted", "failed", "sold_out", "not_served", "released"})
 HOLD_STATUS = {"active": "held", "confirmed": "confirmed", "expired": "expired", "released": "released"}
+# A line Booking booked: (status, aa_sub_status, confirm_class) for BOOKED_SQL.
+BOOKED_ARGS = {"confirmed": ("confirmed", None, "confirmed"), "on_request": ("planning", "on_request", "aa_on_request")}
 
 
 def backoff_seconds(attempts: int) -> int:
@@ -225,6 +242,7 @@ class Outcome:
     from_price: Decimal | None = None
     hold: contract.Hold | None = None
     booking: contract.Booking | None = None
+    booking_lines: dict[str, str] = field(default_factory=dict)  # AA-952: every line_ref of the confirm answer
     released: bool = False
     code: str | None = None
     failed: bool = False
@@ -320,7 +338,8 @@ async def _confirm(client: BookingClient, tenant_id: uuid.UUID, w: Work) -> Outc
     except BookingRefusal as exc:
         return Outcome(code=exc.code, failed=True)
     booked = contract.booking(data, str(w.line_id))
-    return Outcome(booking=booked, code="confirmed" if booked.line_status == "confirmed" else booked.line_status)
+    code = "confirmed" if booked.line_status == "confirmed" else booked.line_status
+    return Outcome(booking=booked, booking_lines=contract.booking_lines(data), code=code)
 
 
 async def _release(client: BookingClient, tenant_id: uuid.UUID, w: Work) -> Outcome:
@@ -444,10 +463,15 @@ async def apply(ctx: SystemContext, w: Work, out: Outcome) -> str:
     if out.again:
         await ctx.conn.execute(AGAIN_SQL, request_id, "requoted")
         return "again"
+    # AA-952: a confirm or a release acts on the whole Booking hold: the other lines of its set follow.
+    siblings: list[uuid.UUID] = []
+    if kind in ("confirm", "release") and cur["bk_hold_id"] and not line_closed:
+        siblings = [r["booking_line_id"] for r in await ctx.conn.fetch(SET_LINES_SQL, trip_id, cur["bk_hold_id"],
+                                                                          line_id)]  # fmt: skip
     if out.failed:
         sub = REFUSED_SUB.get(out.code or "")
-        if sub is None and cur["aa_sub_status"] == "pending":
-            sub = "failed"  # a first quote Booking refused: "Ask AA"
+        if sub is None and (cur["aa_sub_status"] == "pending" or kind == "confirm"):
+            sub = "failed"  # a first quote Booking refused ("Ask AA"), or a confirm it refused (AA-952)
         if sub is not None:
             await ctx.conn.execute(SUB_SQL, line_id, sub, out.code)
         else:
@@ -456,6 +480,11 @@ async def apply(ctx: SystemContext, w: Work, out: Outcome) -> str:
             )
         if sub == "expired" and cur["bk_hold_id"]:
             await ctx.conn.execute(COMMIT_SQL, trip_id, "expired", cur["bk_hold_id"])
+        if kind == "confirm":
+            for other in siblings:
+                await ctx.conn.execute(SUB_SQL, other, sub, out.code)
+                ctx.audit("aa_sync", "allowed", "booking_line", str(other), reason=f"confirm_{out.code}"[:40])
+            await ctx.conn.execute(TASK_SQL, trip_id, proposal_lines.CONFIRM_FAILED_TASK)
     if out.hold is not None:
         line_sub = HOLD_STATUS[out.hold.status]
         orphan = kind == "hold" and (line_closed or status == "cancelled")
@@ -474,15 +503,25 @@ async def apply(ctx: SystemContext, w: Work, out: Outcome) -> str:
             await ctx.conn.fetchval(REFRESH_SQL, trip_id, line_id, "release")
     if out.booking is not None:
         b = out.booking
-        if b.line_status == "confirmed":
-            args = ("confirmed", None, "confirmed", "confirmed")
-        else:
-            args = ("planning", "on_request", "aa_on_request", "requested")
+        args = (*BOOKED_ARGS["confirmed" if b.line_status == "confirmed" else "on_request"],
+                "confirmed" if b.line_status == "confirmed" else "requested")  # fmt: skip
         await ctx.conn.execute(BOOKED_SQL, line_id, b.booking_id, b.trip_case_code, *args[:3])
         await ctx.conn.execute(COMMIT_SQL, trip_id, args[3], b.hold_id)
+        for other in siblings:
+            # Not `status`: that name holds this request's own status, read for the FINISH below.
+            line_status = out.booking_lines.get(str(other))
+            if line_status not in ("confirmed", "on_request"):
+                continue  # not in the answer (or declined at once: the feed's line.declined closes it)
+            booked = BOOKED_ARGS[line_status]
+            await ctx.conn.execute(BOOKED_SQL, other, b.booking_id, b.trip_case_code, *booked)
+            ctx.audit("aa_sync", "allowed", "booking_line", str(other), reason=f"confirm_{line_status}")
     if out.released:
         await ctx.conn.execute(CLOSE_LINE_SQL, line_id, "released", None, None)
         await ctx.conn.execute(CANCEL_OTHERS_SQL, line_id, request_id)
+        for other in siblings:  # Booking let the whole set go (AA-952): every line of it is released
+            await ctx.conn.execute(CLOSE_LINE_SQL, other, "released", None, None)
+            await ctx.conn.execute(CANCEL_OTHERS_SQL, other, request_id)
+            ctx.audit("aa_sync", "allowed", "booking_line", str(other), reason="release_released")
         if cur["bk_hold_id"]:
             await ctx.conn.execute(COMMIT_SQL, trip_id, "released", cur["bk_hold_id"])
     final = "failed" if out.failed else "done"
@@ -606,9 +645,55 @@ class BookingSync:
                 log.error("crm_booking_sync_failed tenant_id=%s error_class=%s", tenant_id, type(exc).__name__)
         return {"status": "ok", **{f"{k}_count": int(v) for k, v in sorted(counts.items())}}
 
+    async def proposal_sets(self, pool: asyncpg.Pool, tenant_id: uuid.UUID, counts: Counter[str]) -> str | None:
+        """AA-952: the AA lines of accepted proposals (Booking's hold read outside any transaction), then the confirms
+        their paid deposits are due. Returns an outage class when Booking gave no answer (the run stops asking)."""
+        async with system_tx(pool, tenant_id, actor=ACTOR) as ctx:
+            due = await proposal_lines.due_sets(ctx)
+        for row in due:
+            held: contract.HeldSet | None
+            try:
+                answer = await self.client.get_hold(tenant_id, row["accepted_hold_id"])  # type: ignore[union-attr]
+                held = contract.held_set(answer)
+            except BookingRefusal as exc:
+                if exc.code != "not_found":
+                    counts["proposal_lines_refused"] += 1  # unknown_partner, forbidden: tried again next run
+                    continue
+                held = None  # Booking has no such hold: the lines read failed, the agent is told
+            except BookingUnavailable as exc:
+                counts["proposal_lines_retry"] += 1
+                if exc.error_class in OUTAGE_CLASSES:
+                    return exc.error_class
+                continue
+            except contract.ContractError:
+                # Booking not on booking.b2b.v1 1.2 yet (no price_hash / fx / line prices): nothing is written.
+                counts["proposal_lines_retry"] += 1
+                log.warning("crm_proposal_lines_contract tenant_id=%s", tenant_id)
+                continue
+            try:
+                async with system_tx(pool, tenant_id, actor=ACTOR) as ctx:
+                    made = await proposal_lines.write_lines(ctx, row["proposal_id"], held)
+            except (Forbidden, NotFound):
+                raise  # the agency is locked or gone: the whole run skips it
+            except Exception as exc:  # noqa: BLE001 — one proposal (e.g. no FX rate yet) must not block the agency
+                counts["proposal_lines_error"] += 1
+                log.error("crm_proposal_lines_failed tenant_id=%s error_class=%s", tenant_id, type(exc).__name__)
+                continue
+            if made is not None:
+                counts[f"proposal_lines_{made['outcome']}"] += 1
+        try:
+            async with system_tx(pool, tenant_id, actor=ACTOR) as ctx:
+                counts["confirms_queued"] += len(await proposal_lines.queue_confirms(ctx))
+        except (Forbidden, NotFound):
+            raise
+        except Exception as exc:  # noqa: BLE001 — the hand-asked requests and the feed still run
+            counts["confirms_error"] += 1
+            log.error("crm_proposal_confirms_failed tenant_id=%s error_class=%s", tenant_id, type(exc).__name__)
+        return None
+
     async def run_agency(self, pool: asyncpg.Pool, tenant_id: uuid.UUID, counts: Counter[str], *, feed: bool) -> None:
         sent = 0
-        outage: str | None = None
+        outage: str | None = await self.proposal_sets(pool, tenant_id, counts)
         while sent < MAX_REQUESTS:
             async with system_tx(pool, tenant_id, actor=ACTOR) as ctx:
                 claimed = [dict(r) for r in await ctx.conn.fetch(CLAIM_SQL, MAX_REQUESTS - sent, LEASE_S)]

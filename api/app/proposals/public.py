@@ -42,6 +42,7 @@ from typing import Any
 import asyncpg
 
 from app import stages
+from app.booking import proposal_lines
 from app.booking.client import BookingClient
 from app.errors import Conflict, Invalid, NotFound
 from app.intake import stage1
@@ -579,6 +580,10 @@ async def accept(
         if row["kind"] == "builder":
             await events.record(ctx, row["trip_id"], events.ACCEPTED, proposal_id=row["proposal_id"], bell=True,
                                 detail={"version": row["version"], "total": _money(total)})  # fmt: skip
+            if builder_args and builder_args[3] is not None:
+                # AA-952: the Booking sync writes the AA lines of the accepted hold set (a job: the client link never
+                # writes an AA line, crm-014); asked now so they show in seconds.
+                await proposal_lines.nudge(ctx, f"accepted:{row['proposal_id']}")
         ctx.audit("proposal_accept", "allowed", "proposal", str(row["proposal_id"]))
         return {"status": "accepted", "accepted_at": _iso(accepted_at)}
 

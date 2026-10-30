@@ -1,4 +1,5 @@
-"""Reading ``booking.b2b.v1`` answers (root contract, minor 1.1) into small typed values (AA-947).
+"""Reading ``booking.b2b.v1`` answers (root contract, minor 1.1; 1.2 for :func:`held_set`) into small typed values
+(AA-947, AA-952).
 
 A **tolerant reader**: the fields the CRM uses are checked (type, pattern, enum); fields it does not use are ignored,
 so an additive minor (contracts README rule 2) never breaks the CRM. A missing or malformed field the CRM needs raises
@@ -193,6 +194,78 @@ def booking(data: Any, line_ref: str) -> Booking:
         hold_id=_str(body, "hold_id", _ID),
         trip_case_code=code,
         line_status=mine[0]["status"],
+    )
+
+
+def booking_lines(data: Any) -> dict[str, str]:
+    """Every line of a ``Booking`` answer: ``line_ref`` -> status (AA-952: one confirm answers a whole hold set, so the
+    sync writes each line of the set from it). A line with an unknown status is left out."""
+    body = _obj(data, "booking")
+    out: dict[str, str] = {}
+    for line in body.get("lines") or []:
+        if (
+            isinstance(line, dict)
+            and isinstance(line.get("line_ref"), str)
+            and line.get("status") in BOOKING_LINE_STATUSES
+        ):
+            out[line["line_ref"]] = line["status"]
+    return out
+
+
+@dataclass(frozen=True)
+class HeldLine:
+    b2b_price: Decimal
+    line_status: str | None
+
+
+@dataclass(frozen=True)
+class HeldSet:
+    """A ``Hold`` answer with the quote it holds (contract 1.2, AA-952): what the CRM needs to write the AA lines of an
+    accepted proposal (the net = each line's ``b2b_price`` with the quote's FX lock) and to confirm it later."""
+
+    hold_id: str
+    quote_id: str
+    status: str
+    expires_at: dt.datetime
+    price_hash: str
+    currency: str
+    rate_per_usd: Decimal
+    rate_date: dt.date
+    lines: dict[str, HeldLine]
+
+
+def held_set(data: Any) -> HeldSet:
+    """A 1.1 answer (no ``price_hash`` / ``fx`` / line prices) is a :class:`ContractError`: Booking is not on 1.2 yet,
+    the caller retries later and writes nothing."""
+    body = _obj(data, "hold")
+    status = _str(body, "status")
+    if status not in HOLD_STATUSES:
+        raise ContractError("hold status is unknown")
+    currency = _str(body, "currency", _CURRENCY)
+    fx = _obj(body.get("fx"), "fx")
+    rate = _decimal(fx.get("rate_per_usd"), _RATE, "fx.rate_per_usd")
+    if rate <= 0:
+        raise ContractError("fx.rate_per_usd is not positive")
+    lines: dict[str, HeldLine] = {}
+    for line in body.get("lines") or []:
+        if not isinstance(line, dict):
+            raise ContractError("a hold line is not an object")
+        ref = _str(line, "line_ref", _ID)
+        amount, line_currency = money(line.get("b2b_price"), "b2b_price")
+        if line_currency != currency or amount < 0:
+            raise ContractError("b2b_price is not in the hold currency")
+        status_of_line = line.get("line_status") if line.get("line_status") in AVAILABILITY else None
+        lines[ref] = HeldLine(b2b_price=amount, line_status=status_of_line)
+    return HeldSet(
+        hold_id=_str(body, "hold_id", _ID),
+        quote_id=_str(body, "quote_id", _ID),
+        status=status,
+        expires_at=_datetime(body.get("expires_at"), "expires_at"),
+        price_hash=_str(body, "price_hash", _HASH),
+        currency=currency,
+        rate_per_usd=rate,
+        rate_date=_date(fx.get("rate_date"), "fx.rate_date"),
+        lines=lines,
     )
 
 

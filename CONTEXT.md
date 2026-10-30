@@ -864,7 +864,7 @@ activity), routes in `app/routers/client_pages.py` and `app/routers/proposals.py
   (409 `option_conflict`), no hold request of the version in flight (409 `hold_in_progress`: another screen may be
   releasing the hold this page shows; `hold_required` when that request lost its answer), a live hold over
   the AA choice (409 `hold_required` / `hold_expired` + `requote`, card R); the schedule follows the accepted picks; the
-  `collect_deposit` task is due at the hold expiry (C31). AA lines from the accepted hold set are CRM-23.
+  `collect_deposit` task is due at the hold expiry (C31). AA lines from the accepted hold set: CRM-23 (AA-952) below.
 - **Agent side**: the lifecycle list carries viewed / hold / accepted total; `GET /proposals/{id}/client-activity`
   (R19 choices, events); `GET /bell`, `POST /bell/seen` (the caller's unseen `crm.metric_event` items, bundled per
   proposal and event). R4 nudge: the hourly `crm_stage_date_rule` gives the owner one `proposal_follow_up` task and a
@@ -873,6 +873,27 @@ activity), routes in `app/routers/client_pages.py` and `app/routers/proposals.py
   (phone first, 390 px), `components/proposals/BuilderClientRow.tsx` (Send / Re-issue / viewed / choices),
   `components/BellMenu.tsx` (top bar), `lib/clientProposal.ts`, `lib/bell.ts`; BFF lines card AA-950; EN + VI. Dev E2E:
   `e2e/tests/client-proposal.spec.ts`.
+
+## CRM-23 AA lines from the accepted hold set + confirm after the deposit (AA-952, C-M3 "confirmed")
+
+`app/booking/proposal_lines.py`, run by `crm_booking_sync` (`app/booking/sync.py`, `BookingSync.proposal_sets`, before
+the request queue; accept and a paid deposit nudge it). No migration.
+
+- **Lines**: an accepted builder version with `accepted_hold_id` and no AA line of its options gets one AA line per held
+  option, written by the job (the client link never writes an AA line: crm-014 CRM24). **The line id is the option
+  id** = Booking's `line_ref`, so the confirm answer and the feed events name the line without a mapping. Booking's
+  `GET /holds/{id}` (`booking.b2b.v1` **1.2**: the held quote's `price_hash`, `currency`, `fx`, each line's
+  `b2b_price`) gives the net (cost, the quote's FX lock, `crm.booking_line_aa_money`); the sell is the option's (the
+  agency's price). `bk_hold_id` = the accepted hold, `aa_price_hash` = its quote's hash, `aa_quote_version` = the
+  version. Booking says expired / released -> lines `expired` + urgent task `aa_hold_expired` (re-quote); unknown hold
+  -> lines `failed` (`hold_not_found`) + task `aa_lines_failed`; a 1.1 answer -> nothing written, retried next run.
+- **Confirm**: once the accepted proposal's deposit row is `paid` and the trip is booked / pre-departure / travelling,
+  one `confirm` request (`crm.aa_request`) on the set's first line, only while the hold is live and no confirm of the
+  set was ever queued; sent with `Idempotency-Key crm-confirm:<request id>` (stable on retries; Booking also answers a
+  confirmed hold with its booking). A confirm, its refusal and a release act on the whole hold, so `apply` writes them
+  on every line sharing the hold in the trip (`SET_LINES_SQL`). A refused confirm -> lines `failed` (or `expired` /
+  `sold_out` / `not_served`) with Booking's code + urgent task `aa_confirm_failed`; not re-sent by itself; the trip
+  stage never moves back. Money stays behind the margin serializer: the assistant sees the lines, never cost or sell.
 
 ## CRM-22 text proposal + Before you go (AA-951)
 
