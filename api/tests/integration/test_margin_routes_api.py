@@ -9,7 +9,8 @@ HTTP (real verifier, real ``tenant_tx()``, real serializers, real route class) a
 - an agency supplier with a default commission (``agency_supplier.default_commission_pct``);
 - a confirmed agency line with cost, sell and expected commission (``booking_line_money``; margin derived);
 - an AA line quoted by Booking (cost = the quote's b2b price at the quote lock, written by the sync job);
-- a day-by-day proposal with an agency option (typed net) and an AA option (net = the live quote's b2b price).
+- a day-by-day proposal with an agency option (typed net) and an AA option (net = the live quote's b2b price);
+- an issued invoice of the trip (AA-952: sell amounts only), so the invoice routes are called too.
 
 Card R: the assistant's bodies carry no margin-family key (``app.margin.MARGIN_KEY``) and none of the planted
 cost-side values (value-based, so a ``{"kind": "cost", "amount": ...}`` row the key filter cannot see still fails).
@@ -40,6 +41,7 @@ from fastapi import FastAPI
 from fastapi.routing import APIRoute
 
 from app.booking import aa_lines
+from app.invoices import service as invoices
 from app.ledger import lines, suppliers
 from app.main import create_app
 from app.margin import MARGIN_KEY
@@ -160,11 +162,19 @@ async def _seed(pool: asyncpg.Pool) -> dict[str, Any]:
         )  # fmt: skip
     line_fake = FakeBooking(b2b_price=AA_LINE_COST)
     await _sync(pool, line_fake, s["tenant"])
+    # AA-952: an issued invoice (an adjustment: the trip has no accepted proposal), its lines listing the trip's lines.
+    async with tenant_tx(pool, agent, s["tenant"]) as ctx:
+        draft = await invoices.create_typed(ctx, s["trip"], kind="adjustment", currency="USD",
+                                            lines=[{"description": "Visa letter", "quantity": "1",
+                                                    "unit_amount": "86.41"}],
+                                            include_trip_lines=True)  # fmt: skip
+        invoice = await invoices.issue(ctx, uuid.UUID(draft["invoice_id"]))
     s.update(
         proposal=_pid(v),
         supplier=uuid.UUID(own["agency_supplier_id"]),
         line=line_id,
         aa_line=uuid.UUID(aa_line["booking_line_id"]),
+        invoice=uuid.UUID(invoice["invoice_id"]),
         fake=fake,
     )
     return s
@@ -178,6 +188,7 @@ def _params(s: dict[str, Any], lead: str) -> dict[str, str]:
         "line_id": str(s["line"]),
         "traveler_id": lead,
         "source_id": "T-949",
+        "invoice_id": str(s["invoice"]),
     }
 
 
