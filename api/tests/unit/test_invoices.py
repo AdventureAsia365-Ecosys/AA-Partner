@@ -165,6 +165,16 @@ def test_actions_per_status() -> None:
     assert inv.actions({"status": "open"}, Decimal("10")) == ["record_payment"]
     assert inv.actions({"status": "expired"}) == ["void"] and inv.actions({"status": "expired"}, Decimal(1)) == []
     assert inv.actions({"status": "paid"}) == [] and inv.actions({"status": "void"}) == []
+    assert inv.actions({"status": "open"}, Decimal("0")) == ["record_payment", "void"]  # all refunded
+
+
+def test_a_fully_refunded_invoice_offers_void() -> None:
+    first = _pay_row("300")
+    refund = _pay_row("300", "refund", refund_of=first["payment_id"])
+    view = inv.invoice_view(_invoice(status="open"), None, [first, refund], [])
+    assert view["actions"] == ["record_payment", "void"] and view["refunded_amount"] == "300.00"
+    part = dict(refund, amount=Decimal("100"))
+    assert inv.invoice_view(_invoice(status="open"), None, [first, part], [])["actions"] == ["record_payment"]
 
 
 def test_translate() -> None:
@@ -383,8 +393,19 @@ async def test_void() -> None:
         await inv.void(tenant_ctx(), INVOICE, " ")
     with _raises(Conflict, "invoice_not_voidable"):
         await inv.void(tenant_ctx(_conn(_invoice(status="paid"))), INVOICE, "x")
+
+    def held(money: str, refund_open: bool = False) -> ScriptedConn:
+        block = {"held": Decimal(money), "refund_open": refund_open}
+        return _conn(_invoice(status="open", issued_at=NOW, number="INV-000001")).on("AS held", block)
+
     with _raises(Conflict, "invoice_has_payments"):
-        await inv.void(tenant_ctx(_conn(_invoice(status="open")).on("FROM crm.payment WHERE", True)), INVOICE, "x")
+        await inv.void(tenant_ctx(held("300")), INVOICE, "x")
+    with _raises(Conflict, "refund_pending"):  # every payment refunded but a request still open (defensive)
+        await inv.void(tenant_ctx(held("0", True)), INVOICE, "x")
+    # Paid in part, then refunded in full (the trip was cancelled): the invoice can be voided, the row billed again.
+    refunded = held("0")
+    out_void = await inv.void(tenant_ctx(refunded), INVOICE, "Trip cancelled")
+    assert refunded.sql("SET status = 'void'")[0][2] == "Trip cancelled" and out_void["invoice_id"] == str(INVOICE)
     draft = _conn(_invoice())
     await inv.void(tenant_ctx(draft), INVOICE, "Not needed")
     assert draft.sql("SET status = 'void'")[0][2] == "Not needed" and not draft.sql("crm.trip_commitment")

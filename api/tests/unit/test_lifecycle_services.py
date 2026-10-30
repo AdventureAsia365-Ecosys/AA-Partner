@@ -312,6 +312,27 @@ async def test_void_only_a_due_row() -> None:
 
 
 @pytest.mark.asyncio
+async def test_void_a_row_its_invoice_bills() -> None:
+    """AA-952 slice 3: one row, one path. An issued invoice keeps the row (void the invoice first); a draft one is
+    voided with the row. The invoice rows are locked before the schedule row (the order of issue / record payment)."""
+    draft_id, issued_id = uuid.uuid4(), uuid.uuid4()
+    for status in ("open", "payment_claimed", "expired"):
+        conn = ScriptedConn().on("FROM crm.payment_schedule s", _schedule_row(kind="balance"))
+        conn.on("FROM crm.invoice WHERE schedule_id", [{"invoice_id": issued_id, "status": status}])
+        with _raises(Conflict, "invoice_issued_for_row"):
+            await service.void(tenant_ctx(conn), SCHEDULE)
+        assert not conn.sql("UPDATE crm.payment_schedule SET status = 'void'")
+    conn = ScriptedConn().on("FROM crm.payment_schedule s", _schedule_row(kind="balance"))
+    conn.on("FROM crm.invoice WHERE schedule_id", [{"invoice_id": draft_id, "status": "draft"}])
+    out = await service.void(tenant_ctx(conn), SCHEDULE)
+    assert out == {"schedule_id": str(SCHEDULE), "status": "void", "invoices_voided": [str(draft_id)]}
+    voided = conn.sql("UPDATE crm.invoice SET status = 'void'")
+    assert voided == [(draft_id, f"member:{tenant_ctx().member_id}", service.DRAFT_VOID_REASON)]
+    locks = [sql for sql, _ in conn.calls if "FOR UPDATE" in sql]
+    assert "crm.invoice" in locks[0] and "crm.payment_schedule" in locks[1] and "crm.invoice" in locks[2]
+
+
+@pytest.mark.asyncio
 async def test_trip_overview() -> None:
     with _raises(NotFound, "trip_not_found"):
         await service.trip_overview(tenant_ctx(), FakeVault(), TRIP)

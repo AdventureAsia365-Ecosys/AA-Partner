@@ -9,10 +9,12 @@ F, M7, §4.6, §6.3, A-10). Routes in :mod:`app.routers.payments`.
   confirm). The trip's ``trip_commitment`` rows follow (payment succeeded; invoice paid).
 - **Refund requests** (design §4.6, C12, C31): proposed by owner / agent for (part of) one payment (never more than
   is left to ask back: 422 ``amount_above_refundable``) -> approved / rejected (``REFUND_APPROVE``: the owner any
-  amount, an agent up to ``tenant_settings.refund_owner_threshold_base``, judged on the amount in the base currency;
-  no rate for the day = only the owner) -> executed (``PAYMENT_MARK_RECEIVED``): the payment's provider refunds (manual:
-  the member records the money returned) and a refund entry joins ``crm.payment``. A fully refunded payment's
-  commitment reads ``refunded`` (still ``has_money``: the trip delete stays blocked).
+  amount, an agent up to ``tenant_settings.refund_owner_threshold_base``, judged in the base currency on everything
+  approved on the invoice so far plus this request (a rejection: this request alone); no rate for the day = only the
+  owner; an agent never approves a request they made: 403 ``refund_self_approval``) -> executed
+  (``PAYMENT_MARK_RECEIVED``): the payment's provider refunds (manual: the member records the money returned) and a
+  refund entry joins ``crm.payment``. A fully refunded payment's commitment reads ``refunded`` (still ``has_money``:
+  the trip delete stays blocked); once every payment of an invoice is refunded, the invoice can be voided.
 - **Payment methods** (``PAYMENT_SETTINGS``, owner): the manual method's name and pay-by instructions (printed on the
   agency's invoices); disconnect; another provider is 409 ``provider_not_available`` until it has code.
 
@@ -26,11 +28,11 @@ import uuid
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
-from app.errors import Conflict, Invalid, NotFound
+from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.invoices import service as invoices
 from app.ledger import fx
 from app.payments import providers
-from app.permissions import Action, require
+from app.permissions import Action, Rule, require, rule_for
 from app.proposals import service as proposals
 from app.tenancy import AnyContext, TenantContext
 from app.vault import Vault
@@ -107,6 +109,15 @@ SELECT r.refund_id, r.invoice_id, r.payment_id, r.amount, r.currency, r.reason, 
  LIMIT $2
 """
 THRESHOLD_SQL = "SELECT refund_owner_threshold_base FROM crm.tenant_settings"
+# The refunds already approved on the invoice, in the base currency (NULL when one has no base amount in today's base
+# currency: the agent's check then fails closed). An agent's approval is judged on these plus the one decided, so a
+# refund split into small requests still reaches the owner.
+APPROVED_BASE_SQL = """
+SELECT CASE WHEN bool_or(base_amount IS NULL OR base_currency IS DISTINCT FROM $3) THEN NULL
+            ELSE coalesce(sum(base_amount), 0) END
+  FROM crm.refund_request
+ WHERE invoice_id = $1 AND refund_id <> $2 AND status IN ('approved', 'executed') AND deleted_at IS NULL
+"""
 DEFAULT_THRESHOLD = Decimal("1000")
 ACCOUNTS_SQL = """
 SELECT account_id, provider, status, display_name, instructions, external_account_id, default_currency,
@@ -199,6 +210,13 @@ async def record_payment(
         raise NotFound("invoice_not_found")
     if row["status"] not in PAYABLE:
         raise Conflict("invoice_not_payable", "only an issued, unpaid invoice takes a payment")
+    schedule = None
+    if row["schedule_id"] is not None:
+        # Locked after the invoice (the order of invoices.issue and proposals.void). The row is settled through this
+        # invoice only: "Mark paid" and the row's void refuse while it is issued, so a row not due is a broken pair.
+        schedule = await ctx.conn.fetchrow(proposals.SCHEDULE_ONE_SQL, row["schedule_id"])
+        if schedule is None or schedule["status"] != "due":
+            raise Conflict("schedule_not_due", "the schedule row this invoice bills is paid or void: void the invoice")
     paid = Decimal(await ctx.conn.fetchval(PAID_SUM_SQL, invoice_id))
     balance = _money(row["total_amount"]) - paid
     if value > balance:
@@ -214,10 +232,8 @@ async def record_payment(
     if value == balance:
         await ctx.conn.execute(INVOICE_PAID_SQL, invoice_id)
         await ctx.conn.execute(COMMITMENT_SQL, row["trip_id"], "invoice", "paid", invoices.source_ref(invoice_id))
-        if row["schedule_id"] is not None:
-            schedule = await ctx.conn.fetchrow(proposals.SCHEDULE_ONE_SQL, row["schedule_id"])
-            if schedule is not None and schedule["status"] == "due":
-                out.update(await proposals.settle_schedule(ctx, vault, schedule))
+        if schedule is not None:
+            out.update(await proposals.settle_schedule(ctx, vault, schedule))
     out["invoice"] = await invoices.full(ctx, invoice_id)
     return out
 
@@ -271,16 +287,28 @@ async def decide_refund(ctx: TenantContext, refund_id: uuid.UUID, *, approve: bo
         raise NotFound("refund_not_found")
     if row["status"] != "proposed":
         raise Conflict("refund_not_proposed", "this refund request is decided already")
+    # The invoice row lock serialises the decisions on its requests (the running total below).
+    if await ctx.conn.fetchrow(INVOICE_LOCK_SQL, row["invoice_id"]) is None:
+        raise NotFound("invoice_not_found")
+    limited = rule_for(ctx.member_role or "", Action.REFUND_APPROVE) is Rule.THRESHOLD
+    if approve and limited and row["requested_by"] == f"member:{ctx.member_id}":
+        ctx.audit(Action.REFUND_APPROVE.value, "denied", "refund_request", str(refund_id),
+                  reason="refund_self_approval")  # fmt: skip
+        raise Forbidden("refund_self_approval", "another member approves a refund you asked for")
     base, in_base = await base_amount(ctx, _money(row["amount"]), row["currency"])
+    judged = in_base
+    if approve and in_base is not None:
+        before = await ctx.conn.fetchval(APPROVED_BASE_SQL, row["invoice_id"], refund_id, base)
+        judged = None if before is None else in_base + Decimal(before)
     threshold = await ctx.conn.fetchval(THRESHOLD_SQL)
-    # §4.6: the owner any amount, an agent up to the threshold (no rate for the day: the owner decides). A rejection is
-    # the same decision as an approval.
+    # §4.6: the owner any amount, an agent up to the threshold on the invoice's approved refunds plus this one (no rate
+    # for the day: the owner decides). A rejection moves no money: it is judged on this request alone.
     require(
         ctx,
         Action.REFUND_APPROVE,
         object_kind="refund_request",
         object_id=str(refund_id),
-        amount=in_base,
+        amount=judged,
         threshold=DEFAULT_THRESHOLD if threshold is None else threshold,
     )
     status = "approved" if approve else "rejected"

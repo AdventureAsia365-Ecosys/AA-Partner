@@ -180,6 +180,8 @@ const ERRORS = new Set([
   "refund_not_proposed",
   "refund_not_approved",
   "above_threshold",
+  "refund_self_approval",
+  "refund_pending",
   "provider_not_available",
 ]);
 

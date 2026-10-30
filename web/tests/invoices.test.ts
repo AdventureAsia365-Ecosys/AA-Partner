@@ -128,7 +128,7 @@ describe("payments and refunds (slice 3)", () => {
   });
 
   it("words the money refusals in both languages", () => {
-    for (const code of ["amount_above_balance", "amount_above_refundable", "above_threshold", "refund_not_approved", "provider_not_available"]) {
+    for (const code of ["amount_above_balance", "amount_above_refundable", "above_threshold", "refund_not_approved", "refund_self_approval", "refund_pending", "provider_not_available"]) {
       const key = invoiceErrorKey(code) as keyof typeof MESSAGES.en;
       expect(key).not.toBe("invoice.error.other");
       expect(MESSAGES.vi[key]).toBeTruthy();

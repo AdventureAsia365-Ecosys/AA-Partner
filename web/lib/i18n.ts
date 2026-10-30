@@ -2100,6 +2100,8 @@ const en = {
   "invoice.error.refund_not_proposed": "This refund request is already decided.",
   "invoice.error.refund_not_approved": "Approve the refund before marking it refunded.",
   "invoice.error.above_threshold": "This refund is above your approval limit. Ask the owner to approve it.",
+  "invoice.error.refund_self_approval": "You asked for this refund. Another member approves it.",
+  "invoice.error.refund_pending": "A refund request on this invoice is still open. Execute or reject it first.",
   "invoice.error.provider_not_available": "This payment provider is not available yet.",
   "methods.title": "How clients pay you",
   "methods.help": "Clients pay your own account. These instructions are printed on your invoices; you record each payment when it arrives.",
@@ -2116,7 +2118,7 @@ const en = {
   "methods.available": "Available",
   "methods.notYet": "Coming later",
   "methods.error.required": "Enter a name and the instructions.",
-  "proposal.error.invoice_issued_for_row": "This payment has an issued invoice. Record the payment on the invoice.",
+  "proposal.error.invoice_issued_for_row": "This payment has an issued invoice. Record the payment on the invoice, or void the invoice first.",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -4186,6 +4188,8 @@ const vi: Record<MessageKey, string> = {
   "invoice.error.refund_not_proposed": "Yêu cầu hoàn tiền này đã được quyết định.",
   "invoice.error.refund_not_approved": "Hãy duyệt hoàn tiền trước khi đánh dấu đã hoàn.",
   "invoice.error.above_threshold": "Khoản hoàn này vượt hạn mức duyệt của bạn. Hãy nhờ chủ doanh nghiệp duyệt.",
+  "invoice.error.refund_self_approval": "Bạn là người yêu cầu khoản hoàn này. Một thành viên khác sẽ duyệt.",
+  "invoice.error.refund_pending": "Hoá đơn này còn yêu cầu hoàn tiền đang mở. Hãy thực hiện hoặc từ chối trước.",
   "invoice.error.provider_not_available": "Nhà cung cấp thanh toán này chưa có.",
   "methods.title": "Khách thanh toán cho bạn thế nào",
   "methods.help": "Khách trả vào tài khoản của bạn. Hướng dẫn này được in trên hoá đơn; bạn ghi nhận từng khoản khi tiền về.",
@@ -4202,7 +4206,7 @@ const vi: Record<MessageKey, string> = {
   "methods.available": "Có sẵn",
   "methods.notYet": "Sẽ có sau",
   "methods.error.required": "Nhập tên và hướng dẫn.",
-  "proposal.error.invoice_issued_for_row": "Khoản này đã có hoá đơn phát hành. Hãy ghi nhận thanh toán trên hoá đơn.",
+  "proposal.error.invoice_issued_for_row": "Khoản này đã có hoá đơn phát hành. Hãy ghi nhận thanh toán trên hoá đơn, hoặc huỷ hoá đơn trước.",
 };
 
 export const MESSAGES: Record<Lang, Record<MessageKey, string>> = { en, vi };

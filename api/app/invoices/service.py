@@ -10,7 +10,8 @@ trip's Proposal tab). Routes in :mod:`app.routers.invoices`; the document in :mo
 - **Draft** edits (memo, due date, tax, the lines of a typed invoice) -> **issue**: the next number
   (``crm.invoice_sequence``, gapless under the row lock), today's date in the agency timezone, a due date no earlier
   than today; the database checks the lines against the totals (CRM39) and seals the invoice (CRM31) -> **void** a
-  draft or an issued invoice with a reason (never one with a payment: 409 ``invoice_has_payments``).
+  draft or an issued invoice with a reason (never one that still holds money: 409 ``invoice_has_payments``, payments
+  net of their refunds; nor one with a refund request still open: 409 ``refund_pending``).
 - The trip's ``crm.trip_commitment`` row (kind ``invoice``) follows the status: a paid invoice blocks the trip delete.
 - Slice 3 (:mod:`app.payments.service`): every view carries the invoice's payments, refunds and refund requests with
   ``paid_amount`` / ``refunded_amount`` / ``balance_amount`` (total - payments; a refund never reopens an invoice), and
@@ -154,7 +155,14 @@ VOID_SQL = """
 UPDATE crm.invoice SET status = 'void', voided_at = now(), voided_by = $2, void_reason = $3 WHERE invoice_id = $1
 RETURNING voided_at
 """
-PAYMENTS_EXIST_SQL = "SELECT EXISTS (SELECT 1 FROM crm.payment WHERE invoice_id = $1)"
+# What still holds a void back (slice 3): the money the invoice kept (payments - refund entries) and a refund request
+# not yet executed or rejected. A partly paid invoice whose payments were all refunded can be voided.
+VOID_BLOCK_SQL = """
+SELECT (SELECT coalesce(sum(CASE WHEN entry_kind = 'payment' THEN amount ELSE -amount END), 0) FROM crm.payment
+         WHERE invoice_id = $1) AS held,
+       EXISTS (SELECT 1 FROM crm.refund_request
+                WHERE invoice_id = $1 AND status IN ('proposed', 'approved') AND deleted_at IS NULL) AS refund_open
+"""
 PAYMENTS_SQL = """
 SELECT payment_id, invoice_id, entry_kind, amount, currency, method, received_on, provider, provider_ref, refund_of,
        created_at
@@ -345,15 +353,16 @@ def _line_view(r: Any) -> dict[str, Any]:
     }
 
 
-def actions(row: Any, paid: Decimal | None = None) -> list[str]:
-    """What a member may do next. ``paid`` = the payments so far (None when unknown: a list without money)."""
+def actions(row: Any, held: Decimal | None = None) -> list[str]:
+    """What a member may do next. ``held`` = the money the invoice keeps: payments - refund entries (None when
+    unknown: a list without money). A fully refunded invoice can be voided."""
     status = row["status"]
     if status == "draft":
         return ["edit", "issue", "void"]
     if status in ("open", "payment_claimed"):
-        return ["record_payment"] + (["void"] if not paid else [])
+        return ["record_payment"] + (["void"] if not held else [])
     if status == "expired":
-        return [] if paid else ["void"]
+        return [] if held else ["void"]
     return []
 
 
@@ -409,7 +418,7 @@ def money_summary(total: Any, payments: list[Any], refunds: list[Any]) -> dict[s
         "balance_amount": _money_text(max(money(total) - paid, Decimal(0))),
         "payments": views,
         "refund_requests": [refund_view(r) for r in refunds],
-        "_paid": paid,
+        "_held": paid - refunded,
     }
 
 
@@ -448,7 +457,7 @@ def invoice_view(
         out["lines"] = [_line_view(r) for r in lines]
     if payments is not None:
         summary = money_summary(row["total_amount"], payments, refunds or [])
-        out["actions"] = actions(row, summary.pop("_paid"))
+        out["actions"] = actions(row, summary.pop("_held"))
         out.update(summary)
     return out
 
@@ -741,8 +750,11 @@ async def void(ctx: TenantContext, invoice_id: uuid.UUID, reason: Any) -> dict[s
     row = await _row(ctx, invoice_id, lock=True)
     if row["status"] not in ("draft", *RECEIVABLE):
         raise Conflict("invoice_not_voidable", "a paid or void invoice stays: refunds go through a refund request")
-    if await ctx.conn.fetchval(PAYMENTS_EXIST_SQL, invoice_id):
+    block = await ctx.conn.fetchrow(VOID_BLOCK_SQL, invoice_id)
+    if block is not None and block["held"] > 0:
         raise Conflict("invoice_has_payments", "refund the payments first, then void the invoice")
+    if block is not None and block["refund_open"]:
+        raise Conflict("refund_pending", "execute or reject the open refund requests first")
     await ctx.conn.fetchval(VOID_SQL, invoice_id, f"member:{ctx.member_id}", text)
     if row["issued_at"] is not None:
         await ctx.conn.execute(COMMITMENT_SQL, row["trip_id"], "void", source_ref(invoice_id))

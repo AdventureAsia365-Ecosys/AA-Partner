@@ -66,6 +66,7 @@ def _refund(**over: Any) -> dict[str, Any]:
 def _conn() -> ScriptedConn:
     conn = ScriptedConn().on("AT TIME ZONE", TODAY)
     conn.on("FROM crm.invoice WHERE invoice_id = $1 AND deleted_at IS NULL FOR UPDATE", _invoice())
+    conn.on("FROM crm.payment_schedule s", {"schedule_id": SCHEDULE, "status": "due"})
     return conn
 
 
@@ -161,19 +162,31 @@ async def test_the_last_payment_pays_the_invoice_and_settles_the_row(
 
     monkeypatch.setattr(proposals, "settle_schedule", settle)
     conn = _conn().on("entry_kind = 'payment'", Decimal("100"))
-    conn.on("FROM crm.payment_schedule s", {"schedule_id": SCHEDULE, "status": "due"})
     out = await pay.record_payment(tenant_ctx(conn), FakeVault(), INVOICE, amount="200", method="cash",
                                    received_on=None)  # fmt: skip
     assert conn.sql("SET status = 'paid', paid_at = now() WHERE invoice_id")
     assert [a[1:3] for a in conn.sql("INSERT INTO crm.trip_commitment")] == [("payment", "succeeded"),
                                                                             ("invoice", "paid")]  # fmt: skip
     assert settled == [SCHEDULE] and out["trip_moved"] == {"stage": "booked"}
-    # A typed invoice has no schedule row; a row paid meanwhile is not settled twice.
+    # A typed invoice has no schedule row.
     typed = _conn().on("FOR UPDATE", _invoice(schedule_id=None, kind="service_fee")).on("entry_kind = 'payment'", 0)
     await pay.record_payment(tenant_ctx(typed), FakeVault(), INVOICE, amount="300", method="cash", received_on=None)
-    paid_row = _conn().on("entry_kind = 'payment'", 0).on("FROM crm.payment_schedule s", {"status": "paid"})
-    await pay.record_payment(tenant_ctx(paid_row), FakeVault(), INVOICE, amount="300", method="cash", received_on=None)
-    assert settled == [SCHEDULE]
+    assert settled == [SCHEDULE] and not typed.sql("FROM crm.payment_schedule s")
+
+
+@pytest.mark.asyncio
+async def test_a_schedule_invoice_takes_no_payment_once_its_row_is_not_due(full: list) -> None:
+    """One row, one path: a row paid or void elsewhere (or gone) refuses the invoice's payments, nothing recorded."""
+    for schedule in ({"schedule_id": SCHEDULE, "status": "void"}, {"schedule_id": SCHEDULE, "status": "paid"}, None):
+        conn = _conn().on("entry_kind = 'payment'", 0).on("FROM crm.payment_schedule s", schedule)
+        with _raises(Conflict, "schedule_not_due"):
+            await pay.record_payment(tenant_ctx(conn), FakeVault(), INVOICE, amount="10", method="cash",
+                                     received_on=None)  # fmt: skip
+        assert not conn.sql("INSERT INTO crm.payment")
+    # The invoice row is locked before the schedule row.
+    order = [i for i, (sql, _) in enumerate(conn.calls) if "FOR UPDATE" in sql]
+    assert "crm.invoice" in conn.calls[order[0]][0] and "crm.payment_schedule" in conn.calls[order[1]][0]
+    assert full == []
 
 
 # ── refunds ───────────────────────────────────────────────────────────────────────────────────────
@@ -256,6 +269,51 @@ async def test_decide_refund_follows_the_matrix() -> None:
     owner = conn(Decimal("100"))
     out = await pay.decide_refund(tenant_ctx(owner), REFUND, approve=True, note=None)
     assert out["status"] == "approved"
+    gone = ScriptedConn().on("r.deleted_at IS NULL FOR UPDATE", _refund())
+    with _raises(NotFound, "invoice_not_found"):
+        await pay.decide_refund(tenant_ctx(gone), REFUND, approve=True, note=None)
+
+
+@pytest.mark.asyncio
+async def test_an_agent_never_approves_their_own_refund() -> None:
+    def conn(requested_by: str) -> ScriptedConn:
+        c = _conn().on("r.deleted_at IS NULL FOR UPDATE", _refund(requested_by=requested_by))
+        c.on("refund_owner_threshold_base", Decimal("1000")).on("status IN ('approved', 'executed')", Decimal(0))
+        return c.on("FROM crm.refund_request WHERE refund_id", _refund(status="approved"))
+
+    me = f"member:{tenant_ctx().member_id}"
+    mine = conn(me)
+    with _raises(Forbidden, "refund_self_approval"):
+        await pay.decide_refund(tenant_ctx(mine, role="agent"), REFUND, approve=True, note=None)
+    assert not mine.sql("UPDATE crm.refund_request SET status = $2")
+    # Their own request: an agent may still reject it (no money moves); the owner may approve it; another agent too.
+    await pay.decide_refund(tenant_ctx(conn(me), role="agent"), REFUND, approve=False, note="Asked by mistake")
+    assert (await pay.decide_refund(tenant_ctx(conn(me)), REFUND, approve=True, note=None))["status"] == "approved"
+    other = conn("member:someone-else")
+    await pay.decide_refund(tenant_ctx(other, role="agent"), REFUND, approve=True, note=None)
+    assert other.sql("UPDATE crm.refund_request SET status = $2")[0][1] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_a_split_refund_still_reaches_the_owner() -> None:
+    """§4.6: an agent's approval counts what is approved on the invoice already (900 + 900 > 1,000)."""
+
+    def conn(before: Any) -> ScriptedConn:
+        c = _conn().on("r.deleted_at IS NULL FOR UPDATE", _refund(amount=Decimal("900"), requested_by="member:b"))
+        c.on("refund_owner_threshold_base", Decimal("1000")).on("status IN ('approved', 'executed')", before)
+        return c.on("FROM crm.refund_request WHERE refund_id", _refund(status="approved"))
+
+    first = conn(Decimal(0))
+    await pay.decide_refund(tenant_ctx(first, role="agent"), REFUND, approve=True, note=None)
+    assert first.sql("status IN ('approved', 'executed')")[0] == (INVOICE, REFUND, "USD")
+    assert first.sql("UPDATE crm.refund_request SET status = $2")[0][5] == Decimal("900.00")  # its own base amount
+    with _raises(Forbidden, "above_threshold"):
+        await pay.decide_refund(tenant_ctx(conn(Decimal("900")), role="agent"), REFUND, approve=True, note=None)
+    with _raises(Forbidden, "above_threshold"):  # an earlier approval without a base amount: the owner decides
+        await pay.decide_refund(tenant_ctx(conn(None), role="agent"), REFUND, approve=True, note=None)
+    # A rejection is judged on the request alone; the owner approves any total.
+    await pay.decide_refund(tenant_ctx(conn(Decimal("900")), role="agent"), REFUND, approve=False, note=None)
+    await pay.decide_refund(tenant_ctx(conn(Decimal("900"))), REFUND, approve=True, note=None)
 
 
 @pytest.mark.asyncio
