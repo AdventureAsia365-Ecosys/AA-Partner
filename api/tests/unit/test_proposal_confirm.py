@@ -118,3 +118,59 @@ async def test_the_sync_step_handles_booking_s_failures(monkeypatch: pytest.Monk
     counts = Counter()
     await BookingSync(booking_client(Forbidding())).proposal_sets(object(), TENANT, counts)  # type: ignore[arg-type]
     assert counts["proposal_lines_refused"] == 3 and written == []
+
+
+@pytest.mark.asyncio
+async def test_one_broken_proposal_does_not_stop_the_agency(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A proposal whose lines cannot be written (no FX rate yet, a CHECK) is counted and skipped: the other proposals,
+    the confirms, the request queue and the feed of the agency still run. A locked agency still stops the run."""
+    ctx = system_ctx()
+    monkeypatch.setattr(sync, "system_tx", fake_tx(ctx))
+    due = [{"proposal_id": uuid.uuid4(), "accepted_hold_id": "h1"} for _ in range(3)]
+    broken = due[1]["proposal_id"]
+    written: list[Any] = []
+
+    async def due_sets(_ctx: Any) -> list[dict[str, Any]]:
+        return due
+
+    async def write_lines(_ctx: Any, proposal_id: Any, held: Any) -> dict[str, Any]:
+        if proposal_id == broken:
+            raise KeyError("fx")
+        written.append(proposal_id)
+        return {"outcome": "held"}
+
+    async def queue_confirms(_ctx: Any) -> list[Any]:
+        raise RuntimeError("check_violation")
+
+    monkeypatch.setattr(proposal_lines, "due_sets", due_sets)
+    monkeypatch.setattr(proposal_lines, "write_lines", write_lines)
+    monkeypatch.setattr(proposal_lines, "queue_confirms", queue_confirms)
+    fake = FakeBooking()
+    fake.holds["h1"] = dict(HOLD)
+    client = booking_client(fake)
+    counts: Counter[str] = Counter()
+    assert await BookingSync(client).proposal_sets(object(), TENANT, counts) is None  # type: ignore[arg-type]
+    assert written == [due[0]["proposal_id"], due[2]["proposal_id"]]
+    assert counts["proposal_lines_held"] == 2 and counts["proposal_lines_error"] == 1 and counts["confirms_error"] == 1
+
+    # run_agency goes on to the request queue (and the feed) after the broken proposal.
+    reached: list[str] = []
+
+    async def no_requests(*_a: Any, **_k: Any) -> list[Any]:
+        reached.append("requests")
+        return []
+
+    async def feed(*_a: Any, **_k: Any) -> None:
+        reached.append("feed")
+
+    monkeypatch.setattr(ctx.conn, "fetch", no_requests, raising=False)
+    monkeypatch.setattr(BookingSync, "pull_feed", feed)
+    await BookingSync(client).run_agency(object(), TENANT, Counter(), feed=True)  # type: ignore[arg-type]
+    assert reached == ["requests", "feed"]
+
+    async def locked(_ctx: Any, proposal_id: Any, held: Any) -> dict[str, Any]:
+        raise sync.Forbidden("agency_locked")
+
+    monkeypatch.setattr(proposal_lines, "write_lines", locked)
+    with pytest.raises(sync.Forbidden):
+        await BookingSync(client).proposal_sets(object(), TENANT, Counter())  # type: ignore[arg-type]

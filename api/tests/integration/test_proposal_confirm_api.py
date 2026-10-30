@@ -4,7 +4,8 @@ the Booking sync (``job:crm_booking_sync``) against the in-memory Booking of ``t
 
 - accept -> one AA line per held option (line id = option id = Booking's line_ref), net from Booking's hold answer
   (contract 1.2), sell = the option's sell; the assistant sees the lines but never their money or margin;
-- deposit paid -> one confirm for the whole set, every line confirmed, the trip stays booked; later runs send nothing;
+- deposit paid -> one confirm for the whole set, every line confirmed, the confirm request done, the trip stays
+  booked; later runs send nothing (also when Booking answers on_request);
 - a confirm whose answer was lost is sent again with the same Idempotency-Key: one booking at Booking;
 - a hold that expired before the deposit -> lines ``expired`` with a task, no confirm;
 - Booking refuses the confirm -> every line ``failed`` with the code and a task; the trip is not moved back;
@@ -81,6 +82,17 @@ async def _commitment(pool: asyncpg.Pool, s: dict[str, Any]) -> list[str]:
     return [r["line_status"] for r in rows]
 
 
+async def _confirm_requests(pool: asyncpg.Pool, s: dict[str, Any]) -> list[tuple[Any, ...]]:
+    rows = await _raw(pool, s, "SELECT status, result_code, lease_until FROM crm.aa_request WHERE kind = 'confirm'")
+    return [(r["status"], r["result_code"], r["lease_until"]) for r in rows]
+
+
+async def _expire_leases(pool: asyncpg.Pool, s: dict[str, Any]) -> None:
+    """What LEASE_S later looks like: any lease ran out and every pending request is due."""
+    await _raw(pool, s, "UPDATE crm.aa_request SET lease_until = now() - interval '1 second', next_attempt_at = now() "
+               "WHERE lease_until IS NOT NULL OR status = 'pending'")  # fmt: skip
+
+
 async def _due_now(pool: asyncpg.Pool, s: dict[str, Any]) -> None:
     await _raw(pool, s, "UPDATE crm.aa_request SET next_attempt_at = now() WHERE status = 'pending'")
 
@@ -135,9 +147,34 @@ async def test_accept_writes_the_aa_lines_and_the_deposit_confirms_the_set_once(
     reasons = [a["reason"] for a in audit]
     assert "held" in reasons and "confirm_deposit" in reasons and reasons.count("confirm_confirmed") == 2
     assert await _stage(app_pool, s) == "booked"
+    # The confirm request itself is finished (the fan-out over the other lines must not leave it pending).
+    assert await _confirm_requests(app_pool, s) == [("done", "confirmed", None)]
     # Later runs send nothing more: one confirm for the set, ever.
+    await _expire_leases(app_pool, s)
     await _sync(app_pool, s)
     assert len(fake.confirm_keys) == 1 and len(fake.bookings) == 1
+
+
+async def test_a_confirm_booking_answers_on_request_is_finished_and_sent_once(app_pool: asyncpg.Pool) -> None:
+    """Booking books the set but some lines wait for the supplier: every line reads on_request, the confirm request
+    is done (not left pending, re-sent each lease), and no later run calls Booking's confirm again."""
+    s = await _accepted(app_pool)
+    fake = s["fake"]
+    fake.confirm_line_status = "on_request"
+    await _sync(app_pool, s)
+    await _pay_deposit(app_pool, s)
+    counts = await _sync(app_pool, s)
+    assert counts["confirms_queued"] == 1 and len(fake.confirm_keys) == 1
+    waiting = await _aa_lines(app_pool, s)
+    assert {(w["status"], w["aa_sub_status"], w["bk_booking_id"]) for w in waiting} == {
+        ("planning", "on_request", f"b-{s['hold_id']}")
+    }
+    assert await _confirm_requests(app_pool, s) == [("done", "on_request", None)]
+    for _ in range(3):  # three lease expiries: nothing is claimed, Booking is not asked again
+        await _expire_leases(app_pool, s)
+        await _sync(app_pool, s)
+    assert len(fake.confirm_keys) == 1 and len(fake.bookings) == 1
+    assert await _raw(app_pool, s, "SELECT 1 FROM crm.aa_request WHERE status = 'pending'") == []
 
 
 async def test_a_lost_confirm_answer_is_retried_with_the_same_key(app_pool: asyncpg.Pool) -> None:

@@ -508,12 +508,13 @@ async def apply(ctx: SystemContext, w: Work, out: Outcome) -> str:
         await ctx.conn.execute(BOOKED_SQL, line_id, b.booking_id, b.trip_case_code, *args[:3])
         await ctx.conn.execute(COMMIT_SQL, trip_id, args[3], b.hold_id)
         for other in siblings:
-            status = out.booking_lines.get(str(other))
-            if status not in ("confirmed", "on_request"):
+            # Not `status`: that name holds this request's own status, read for the FINISH below.
+            line_status = out.booking_lines.get(str(other))
+            if line_status not in ("confirmed", "on_request"):
                 continue  # not in the answer (or declined at once: the feed's line.declined closes it)
-            booked = BOOKED_ARGS[status]
+            booked = BOOKED_ARGS[line_status]
             await ctx.conn.execute(BOOKED_SQL, other, b.booking_id, b.trip_case_code, *booked)
-            ctx.audit("aa_sync", "allowed", "booking_line", str(other), reason=f"confirm_{status}")
+            ctx.audit("aa_sync", "allowed", "booking_line", str(other), reason=f"confirm_{line_status}")
     if out.released:
         await ctx.conn.execute(CLOSE_LINE_SQL, line_id, "released", None, None)
         await ctx.conn.execute(CANCEL_OTHERS_SQL, line_id, request_id)
@@ -669,12 +670,25 @@ class BookingSync:
                 counts["proposal_lines_retry"] += 1
                 log.warning("crm_proposal_lines_contract tenant_id=%s", tenant_id)
                 continue
-            async with system_tx(pool, tenant_id, actor=ACTOR) as ctx:
-                made = await proposal_lines.write_lines(ctx, row["proposal_id"], held)
+            try:
+                async with system_tx(pool, tenant_id, actor=ACTOR) as ctx:
+                    made = await proposal_lines.write_lines(ctx, row["proposal_id"], held)
+            except (Forbidden, NotFound):
+                raise  # the agency is locked or gone: the whole run skips it
+            except Exception as exc:  # noqa: BLE001 — one proposal (e.g. no FX rate yet) must not block the agency
+                counts["proposal_lines_error"] += 1
+                log.error("crm_proposal_lines_failed tenant_id=%s error_class=%s", tenant_id, type(exc).__name__)
+                continue
             if made is not None:
                 counts[f"proposal_lines_{made['outcome']}"] += 1
-        async with system_tx(pool, tenant_id, actor=ACTOR) as ctx:
-            counts["confirms_queued"] += len(await proposal_lines.queue_confirms(ctx))
+        try:
+            async with system_tx(pool, tenant_id, actor=ACTOR) as ctx:
+                counts["confirms_queued"] += len(await proposal_lines.queue_confirms(ctx))
+        except (Forbidden, NotFound):
+            raise
+        except Exception as exc:  # noqa: BLE001 — the hand-asked requests and the feed still run
+            counts["confirms_error"] += 1
+            log.error("crm_proposal_confirms_failed tenant_id=%s error_class=%s", tenant_id, type(exc).__name__)
         return None
 
     async def run_agency(self, pool: asyncpg.Pool, tenant_id: uuid.UUID, counts: Counter[str], *, feed: bool) -> None:
