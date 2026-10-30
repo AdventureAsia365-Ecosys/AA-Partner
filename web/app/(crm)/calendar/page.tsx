@@ -29,16 +29,20 @@ import { serverContext } from "@/lib/serverContext";
 
 export const dynamic = "force-dynamic";
 
-function detail(e: CalendarEvent, lang: Lang, locale: DateLocale): string {
+function detail(e: CalendarEvent, lang: Lang, locale: DateLocale, timeZone: string): string {
   const tr = (key: string) => t(lang, key as MessageKey);
   const parts: string[] = [];
   if (e.starts_at) {
-    parts.push(new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(new Date(e.starts_at)));
+    // the agency timezone, not the server's (UTC): the page renders on the server
+    parts.push(new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", timeZone }).format(new Date(e.starts_at)));
   }
   if (e.kind === "payment_due" && e.payment_kind) parts.push(tr(`calendar.payment.${e.payment_kind}`));
   if (e.invoice_number) parts.push(e.invoice_number);
   if (e.amount) parts.push(formatMoney(e.amount.amount, e.amount.currency, locale));
-  if (e.pending_signatures) parts.push(fmt(tr("calendar.signing.pending"), { n: e.pending_signatures }));
+  if (e.pending_signatures) {
+    const key = e.pending_signatures === 1 ? "calendar.signing.pendingOne" : "calendar.signing.pending";
+    parts.push(fmt(tr(key), { n: e.pending_signatures }));
+  }
   if (e.task_kind) parts.push(e.task_kind.replace(/_/g, " "));
   if (e.priority === "urgent") parts.push(tr("calendar.task.urgent"));
   if (e.call_status) parts.push(tr(`calendar.call.${e.call_status}`));
@@ -145,7 +149,7 @@ export default async function CalendarPage({
                       ) : (
                         <span style={{ color: K.muted }}>{tr("calendar.noTrip")}</span>
                       )}
-                      <span style={{ color: K.muted }}>{detail(e, ctx.lang, ctx.locale)}</span>
+                      <span style={{ color: K.muted }}>{detail(e, ctx.lang, ctx.locale, view.data.timezone)}</span>
                     </li>
                   ))}
                 </ul>
