@@ -2,7 +2,8 @@
 // AA-952 (card CRM-23 slice 2) — the shapes of the invoice API (GET /crm/v1/trips/{id}/invoices, /invoices,
 // /invoices/{id}, /settings/invoices) and the pure helpers the trip's Invoices card, A-10 Payments and Settings >
 // Payments use: refusal wording, status tones, the typed-lines body, who may bill. Amounts are the client's sell
-// amounts (no margin key ever comes back).
+// amounts (no margin key ever comes back). Slice 3: payments against an invoice, refund requests (approve per the
+// role matrix), the agency's own payment methods (GET /crm/v1/settings/payment-methods).
 
 import { amountOf } from "./proposals";
 
@@ -20,6 +21,61 @@ export interface InvoiceLine {
   unit_amount: string | null;
   amount: string | null;
 }
+
+export interface Payment {
+  payment_id: string;
+  entry_kind: "payment" | "refund";
+  amount: string;
+  currency: string;
+  method: "bank_transfer" | "cash" | "card_offline" | "other";
+  received_on: string;
+  provider: string;
+  reference: string | null;
+  refund_of: string | null;
+  /** A payment: what can still be asked back. */
+  refundable_amount?: string;
+}
+
+export type RefundStatus = "proposed" | "approved" | "rejected" | "executed";
+
+export interface RefundRequest {
+  refund_id: string;
+  invoice_id: string;
+  payment_id: string;
+  amount: string;
+  currency: string;
+  reason: string;
+  status: RefundStatus;
+  requested_by: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_note: string | null;
+  executed_at: string | null;
+  /** The A-10 list adds where it belongs. */
+  trip_id?: string;
+  trip_title?: string;
+  invoice_number?: string | null;
+}
+
+export interface PaymentAccount {
+  account_id: string;
+  provider: "manual" | "stripe" | "vn_gateway";
+  status: "active" | "disconnected";
+  display_name: string;
+  instructions: string | null;
+}
+
+export interface PaymentMethodsView {
+  accounts: PaymentAccount[];
+  providers: { provider: string; available: boolean }[];
+}
+
+export const REFUND_TONE: Record<RefundStatus, "neutral" | "info" | "success" | "warning" | "danger"> = {
+  proposed: "warning",
+  approved: "info",
+  rejected: "neutral",
+  executed: "success",
+};
 
 export interface Invoice {
   invoice_id: string;
@@ -46,10 +102,12 @@ export interface Invoice {
   created_at: string;
   actions: InvoiceAction[];
   lines?: InvoiceLine[];
-  /** Slice 3 (payments): what is still owed, and what was paid / refunded. */
+  /** Slice 3 (payments): what is still owed, what was paid / refunded, the payments and the refund requests. */
   balance_amount?: string;
   paid_amount?: string;
   refunded_amount?: string;
+  payments?: Payment[];
+  refund_requests?: RefundRequest[];
 }
 
 export interface Receivable {
@@ -112,6 +170,19 @@ const ERRORS = new Set([
   "invalid_invoice_prefix",
   "invalid_tax_rate",
   "role_forbidden",
+  "invoice_not_payable",
+  "amount_above_balance",
+  "amount_above_refundable",
+  "received_in_future",
+  "invalid_method",
+  "payment_not_found",
+  "payment_without_invoice",
+  "refund_not_proposed",
+  "refund_not_approved",
+  "above_threshold",
+  "refund_self_approval",
+  "refund_pending",
+  "provider_not_available",
 ]);
 
 /** The i18n key of an invoice refusal (invoice.error.<code>, else a generic one). */
@@ -161,4 +232,17 @@ export function openDocument(html: string): void {
   const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
   window.open(url, "_blank", "noopener");
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+/** Owner and agent may approve a refund (an agent only up to the agency threshold: the API says above_threshold). */
+export function canDecideRefund(role: string): boolean {
+  return role === "owner" || role === "agent";
+}
+
+/** A refund request's next step for this member: decide (proposed), execute (approved), or nothing. */
+export function refundStep(r: RefundRequest, role: string): "decide" | "execute" | null {
+  if (!canDecideRefund(role)) return null;
+  if (r.status === "proposed") return "decide";
+  if (r.status === "approved") return "execute";
+  return null;
 }

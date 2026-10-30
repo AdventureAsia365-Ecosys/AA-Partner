@@ -213,6 +213,15 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "POST", pattern: new RegExp(`^invoices/${UUID}/(issue|void)$`), tenant: true, card: "AA-952" },
   { method: "GET", pattern: /^settings\/invoices$/, tenant: true, card: "AA-952" },
   { method: "PUT", pattern: /^settings\/invoices$/, tenant: true, card: "AA-952" },
+  // AA-952 (CRM-23 slice 3): payments on an invoice, refund requests (ask, list, approve / reject, mark refunded) and
+  // Settings > Payments "How clients pay you" (owner; the API checks the roles and the refund threshold).
+  { method: "POST", pattern: new RegExp(`^invoices/${UUID}/payments$`), tenant: true, card: "AA-952" },
+  { method: "POST", pattern: new RegExp(`^payments/${UUID}/refund-requests$`), tenant: true, card: "AA-952" },
+  { method: "GET", pattern: /^refund-requests$/, tenant: true, card: "AA-952" },
+  { method: "POST", pattern: new RegExp(`^refund-requests/${UUID}/(approve|reject|execute)$`), tenant: true, card: "AA-952" },
+  { method: "GET", pattern: /^settings\/payment-methods$/, tenant: true, card: "AA-952" },
+  { method: "PUT", pattern: /^settings\/payment-methods\/manual$/, tenant: true, card: "AA-952" },
+  { method: "POST", pattern: new RegExp(`^settings/payment-methods/${UUID}/disconnect$`), tenant: true, card: "AA-952" },
   { method: "POST", pattern: new RegExp(`^trips/${UUID}/portal-access$`), tenant: true, card: "AA-946" },
   { method: "POST", pattern: new RegExp(`^portal-access/${UUID}/revoke$`), tenant: true, card: "AA-946" },
   { method: "GET", pattern: /^agreements$/, tenant: true, card: "AA-946" },

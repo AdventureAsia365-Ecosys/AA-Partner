@@ -161,8 +161,20 @@ def test_charge_lines_amounts() -> None:
 
 def test_actions_per_status() -> None:
     assert inv.actions({"status": "draft"}) == ["edit", "issue", "void"]
-    assert inv.actions({"status": "open"}) == ["void"]
+    assert inv.actions({"status": "open"}) == ["record_payment", "void"]
+    assert inv.actions({"status": "open"}, Decimal("10")) == ["record_payment"]
+    assert inv.actions({"status": "expired"}) == ["void"] and inv.actions({"status": "expired"}, Decimal(1)) == []
     assert inv.actions({"status": "paid"}) == [] and inv.actions({"status": "void"}) == []
+    assert inv.actions({"status": "open"}, Decimal("0")) == ["record_payment", "void"]  # all refunded
+
+
+def test_a_fully_refunded_invoice_offers_void() -> None:
+    first = _pay_row("300")
+    refund = _pay_row("300", "refund", refund_of=first["payment_id"])
+    view = inv.invoice_view(_invoice(status="open"), None, [first, refund], [])
+    assert view["actions"] == ["record_payment", "void"] and view["refunded_amount"] == "300.00"
+    part = dict(refund, amount=Decimal("100"))
+    assert inv.invoice_view(_invoice(status="open"), None, [first, part], [])["actions"] == ["record_payment"]
 
 
 def test_translate() -> None:
@@ -231,14 +243,15 @@ async def test_receivables() -> None:
     rows = [
         {"invoice_id": INVOICE, "trip_id": TRIP, "trip_title": "Laos", "kind": "deposit", "status": "open",
          "number": "INV-000001", "currency": "USD", "total_amount": Decimal("300"), "due_on": TODAY - dt.timedelta(1),
-         "issue_date": TODAY - dt.timedelta(5), "paid_at": None},
+         "issue_date": TODAY - dt.timedelta(5), "paid_at": None, "paid_amount": Decimal("100")},
         {"invoice_id": uuid.uuid4(), "trip_id": TRIP, "trip_title": "Laos", "kind": "balance", "status": "open",
          "number": "INV-000002", "currency": "USD", "total_amount": Decimal("700"), "due_on": None,
-         "issue_date": TODAY, "paid_at": None},
+         "issue_date": TODAY, "paid_at": None, "paid_amount": Decimal(0)},
     ]  # fmt: skip
     conn = _conn().on("FROM crm.invoice i JOIN crm.trip", rows)
     out = await inv.receivables(tenant_ctx(conn), None)
     assert [r["overdue"] for r in out["invoices"]] == [True, False] and out["today"] == "2026-10-30"
+    assert [r["balance_amount"] for r in out["invoices"]] == ["200.00", "700.00"]
     assert conn.sql("FROM crm.invoice i JOIN crm.trip")[0][0] == list(inv.RECEIVABLE)
     await inv.receivables(tenant_ctx(conn), "paid")
     assert conn.sql("FROM crm.invoice i JOIN crm.trip")[1][0] == ["paid"]
@@ -380,8 +393,19 @@ async def test_void() -> None:
         await inv.void(tenant_ctx(), INVOICE, " ")
     with _raises(Conflict, "invoice_not_voidable"):
         await inv.void(tenant_ctx(_conn(_invoice(status="paid"))), INVOICE, "x")
+
+    def held(money: str, refund_open: bool = False) -> ScriptedConn:
+        block = {"held": Decimal(money), "refund_open": refund_open}
+        return _conn(_invoice(status="open", issued_at=NOW, number="INV-000001")).on("AS held", block)
+
     with _raises(Conflict, "invoice_has_payments"):
-        await inv.void(tenant_ctx(_conn(_invoice(status="open")).on("FROM crm.payment WHERE", True)), INVOICE, "x")
+        await inv.void(tenant_ctx(held("300")), INVOICE, "x")
+    with _raises(Conflict, "refund_pending"):  # every payment refunded but a request still open (defensive)
+        await inv.void(tenant_ctx(held("0", True)), INVOICE, "x")
+    # Paid in part, then refunded in full (the trip was cancelled): the invoice can be voided, the row billed again.
+    refunded = held("0")
+    out_void = await inv.void(tenant_ctx(refunded), INVOICE, "Trip cancelled")
+    assert refunded.sql("SET status = 'void'")[0][2] == "Trip cancelled" and out_void["invoice_id"] == str(INVOICE)
     draft = _conn(_invoice())
     await inv.void(tenant_ctx(draft), INVOICE, "Not needed")
     assert draft.sql("SET status = 'void'")[0][2] == "Not needed" and not draft.sql("crm.trip_commitment")
@@ -444,3 +468,47 @@ def test_render_payments_and_instructions() -> None:
     assert "Paid 29 Oct 2026" in html and "Refunded 30 Oct 2026" in html and "USD 220.00" in html
     assert "Account &lt;123&gt;" in html
     assert render._amount(None, "USD") == "" and render._date(None) == ""
+
+
+def _pay_row(amount: str, kind: str = "payment", **over: Any) -> dict[str, Any]:
+    row: dict[str, Any] = {"payment_id": uuid.uuid4(), "invoice_id": INVOICE, "entry_kind": kind,
+                           "amount": Decimal(amount), "currency": "USD", "method": "cash", "received_on": TODAY,
+                           "provider": "manual", "provider_ref": None, "refund_of": None,
+                           "created_at": NOW}  # fmt: skip
+    row.update(over)
+    return row
+
+
+def test_money_summary() -> None:
+    first, second = _pay_row("100"), _pay_row("250")
+    refund = _pay_row("40", "refund", refund_of=first["payment_id"])
+    asks = [
+        {"refund_id": uuid.uuid4(), "invoice_id": INVOICE, "payment_id": first["payment_id"], "amount": Decimal("40"),
+         "currency": "USD", "reason": "x", "status": "executed", "requested_by": "member:a", "decided_by": "member:o",
+         "decided_at": NOW, "decision_note": None, "executed_at": NOW},
+        {"refund_id": uuid.uuid4(), "invoice_id": INVOICE, "payment_id": first["payment_id"], "amount": Decimal("30"),
+         "currency": "USD", "reason": "y", "status": "rejected", "requested_by": "member:a", "decided_by": "member:o",
+         "decided_at": NOW, "decision_note": "no", "executed_at": None},
+    ]  # fmt: skip
+    out = inv.money_summary(Decimal("300"), [first, second, refund], asks)
+    assert (out["paid_amount"], out["refunded_amount"], out["balance_amount"]) == ("350.00", "40.00", "0.00")
+    assert [p.get("refundable_amount") for p in out["payments"]] == ["60.00", "250.00", None]
+    assert out["payments"][2]["refund_of"] == str(first["payment_id"]) and len(out["refund_requests"]) == 2
+    view = inv.invoice_view(_invoice(status="open"), None, [first], [])
+    assert view["actions"] == ["record_payment"] and view["balance_amount"] == "200.00"
+
+
+@pytest.mark.asyncio
+async def test_trip_list_and_document_carry_the_money() -> None:
+    payment = _pay_row("100")
+    conn = _conn(_invoice(status="open", number="INV-000001", issued_at=NOW, issue_date=TODAY, due_on=TODAY))
+    conn.on("FROM crm.invoice WHERE trip_id", [_invoice(status="open"), _invoice(invoice_id=uuid.uuid4())])
+    conn.on("FROM crm.payment WHERE trip_id", [payment]).on("FROM crm.payment WHERE invoice_id", [payment])
+    listed = await inv.list_for_trip(tenant_ctx(conn), TRIP)
+    assert [i["paid_amount"] for i in listed["invoices"]] == ["100.00", "0.00"]
+    conn.on("FROM crm.payment_provider_account", [{"display_name": "Bank", "instructions": "Acct 9"}])
+    doc = await inv.document(tenant_ctx(conn), FakeVault(), INVOICE)  # type: ignore[arg-type]
+    assert "Acct 9" in doc["html"] and "Paid 30 Oct 2026" in doc["html"] and "USD 200.00" in doc["html"]
+    paid = _conn(_invoice(status="paid", paid_at=NOW))
+    paid.on("FROM crm.payment_provider_account", [{"display_name": "B", "instructions": "Z9"}])
+    assert "Z9" not in (await inv.document(tenant_ctx(paid), FakeVault(), INVOICE))["html"]  # type: ignore[arg-type]

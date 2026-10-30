@@ -122,9 +122,10 @@ SELECT schedule_id, proposal_id, kind, amount, currency, due_on, status, paid_at
  WHERE trip_id = $1 AND deleted_at IS NULL
  ORDER BY due_on, kind
 """
+# AA-952 slice 3: money in only (refund entries live on their invoice); an invoice payment may have no schedule row.
 PAYMENTS_SQL = """
-SELECT payment_id, schedule_id, amount, currency, method, received_on, created_at FROM crm.payment
- WHERE trip_id = $1 ORDER BY received_on, created_at
+SELECT payment_id, schedule_id, invoice_id, amount, currency, method, received_on, created_at FROM crm.payment
+ WHERE trip_id = $1 AND entry_kind = 'payment' ORDER BY received_on, created_at
 """
 SCHEDULE_ONE_SQL = """
 SELECT s.schedule_id, s.trip_id, s.proposal_id, s.kind, s.amount, s.currency, s.status, p.status AS proposal_status,
@@ -136,7 +137,24 @@ SELECT s.schedule_id, s.trip_id, s.proposal_id, s.kind, s.amount, s.currency, s.
    FOR UPDATE OF s
 """
 PAY_SQL = "UPDATE crm.payment_schedule SET status = 'paid', paid_at = now() WHERE schedule_id = $1"
+ISSUED_INVOICE_SQL = """
+SELECT invoice_id FROM crm.invoice
+ WHERE schedule_id = $1 AND status IN ('open', 'payment_claimed', 'expired') AND deleted_at IS NULL
+"""
 VOID_SQL = "UPDATE crm.payment_schedule SET status = 'void' WHERE schedule_id = $1"
+# AA-952 slice 3: the invoices that bill a schedule row (locked: the invoice rows before the schedule row, the order
+# app.invoices.service.issue and app.payments.service.record_payment take them in).
+LIVE_INVOICES_SQL = """
+SELECT invoice_id, status FROM crm.invoice
+ WHERE schedule_id = $1 AND status <> 'void' AND deleted_at IS NULL
+ ORDER BY invoice_id
+   FOR UPDATE
+"""
+VOID_DRAFT_INVOICE_SQL = """
+UPDATE crm.invoice SET status = 'void', voided_at = now(), voided_by = $2, void_reason = $3
+ WHERE invoice_id = $1 AND status = 'draft'
+"""
+DRAFT_VOID_REASON = "The schedule row it billed was voided"
 INSERT_PAYMENT_SQL = """
 INSERT INTO crm.payment (payment_id, trip_id, schedule_id, amount, currency, method, received_on)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -280,7 +298,8 @@ async def trip_overview(ctx: TenantContext, vault: Vault, trip_id: uuid.UUID) ->
     payments = [
         {
             "payment_id": str(r["payment_id"]),
-            "schedule_id": str(r["schedule_id"]),
+            "schedule_id": str(r["schedule_id"]) if r["schedule_id"] else None,
+            "invoice_id": str(r["invoice_id"]) if r["invoice_id"] else None,
             "amount": _money(r["amount"]),
             "currency": r["currency"],
             "method": r["method"],
@@ -620,25 +639,32 @@ async def mark_paid(
         raise Conflict("schedule_not_due", "this row is paid or void already")
     if row["proposal_status"] != "accepted":
         raise Conflict("proposal_not_accepted")
+    # AA-952 slice 3: an issued invoice bills this row; its payments are recorded on the invoice (partial payments,
+    # refunds), which settles the row when it is paid in full.
+    if await ctx.conn.fetchval(ISSUED_INVOICE_SQL, schedule_id) is not None:
+        raise Conflict("invoice_issued_for_row", "record the payment on the row's invoice")
     today = await ctx.conn.fetchval(TODAY_SQL)
     day = received_on or today
     if day > today:
         raise Invalid("received_in_future", "the day the money arrived, today or earlier")
     payment_id = uuid.uuid4()
-    await ctx.conn.execute(PAY_SQL, schedule_id)
     await ctx.conn.execute(
         INSERT_PAYMENT_SQL, payment_id, row["trip_id"], schedule_id, row["amount"], row["currency"], method, day
     )
     await ctx.conn.execute(COMMITMENT_SQL, row["trip_id"], f"payment:{payment_id}")
-    actor = f"member:{ctx.member_id}"
     ctx.audit("payment_mark_received", "allowed", "payment_schedule", str(schedule_id), reason=row["kind"])
-    out: dict[str, Any] = {
-        "schedule_id": str(schedule_id),
-        "payment_id": str(payment_id),
-        "status": "paid",
-        "trip_moved": None,
-        "portal": None,
-    }
+    out = await settle_schedule(ctx, vault, row)
+    return {"schedule_id": str(schedule_id), "payment_id": str(payment_id), "status": "paid", **out}
+
+
+async def settle_schedule(ctx: TenantContext, vault: Vault, row: Any) -> dict[str, Any]:
+    """A schedule row is paid in full (a "Mark paid", or the payments of its invoice): the row paid and, for the
+    deposit, the CRM-18 effects (the collect_deposit task closed, Proposal -> Booked, the travellers invited to the
+    portal, the Booking confirm nudged). ``row`` is a :data:`SCHEDULE_ONE_SQL` row (locked)."""
+    schedule_id = row["schedule_id"]
+    await ctx.conn.execute(PAY_SQL, schedule_id)
+    actor = f"member:{ctx.member_id}"
+    out: dict[str, Any] = {"trip_moved": None, "portal": None}
     if row["kind"] == "deposit":
         await ctx.conn.execute(CLOSE_TASK_SQL, row["trip_id"], "collect_deposit", actor)
         if row["stage"] == "proposal":
@@ -657,6 +683,10 @@ async def mark_paid(
 
 
 async def void(ctx: TenantContext, schedule_id: uuid.UUID) -> dict[str, Any]:
+    """Void a due balance row. One row is settled through one path (AA-952 slice 3): an issued invoice that bills it
+    refuses (409 ``invoice_issued_for_row``: void the invoice first, after refunding what it received); a draft one is
+    voided with the row."""
+    await ctx.conn.fetch(LIVE_INVOICES_SQL, schedule_id)
     row = await ctx.conn.fetchrow(SCHEDULE_ONE_SQL, schedule_id)
     if row is None:
         raise NotFound("schedule_not_found")
@@ -668,11 +698,19 @@ async def void(ctx: TenantContext, schedule_id: uuid.UUID) -> dict[str, Any]:
             "a deposit stays: mark it paid with the method used (cash, other) when it was taken outside the CRM, "
             "or mark the trip lost (or cancel it once booked)",
         )
+    # Again under the row lock: an invoice raised for the row since the first read is locked and seen too.
+    live = await ctx.conn.fetch(LIVE_INVOICES_SQL, schedule_id)
+    if any(r["status"] != "draft" for r in live):
+        raise Conflict("invoice_issued_for_row", "void the row's invoice first (refund what it received before that)")
     try:
         await ctx.conn.execute(VOID_SQL, schedule_id)
     except asyncpg.PostgresError as exc:  # pragma: no cover — the status check above runs first
         if getattr(exc, "sqlstate", None) == SEALED_SQLSTATE:
             raise Conflict("schedule_not_due") from None
         raise
+    voided = [r["invoice_id"] for r in live]
+    for invoice_id in voided:
+        await ctx.conn.execute(VOID_DRAFT_INVOICE_SQL, invoice_id, f"member:{ctx.member_id}", DRAFT_VOID_REASON)
+        ctx.audit("invoice_void", "allowed", "invoice", str(invoice_id), reason="schedule_void")
     ctx.audit("payment_schedule_void", "allowed", "payment_schedule", str(schedule_id))
-    return {"schedule_id": str(schedule_id), "status": "void"}
+    return {"schedule_id": str(schedule_id), "status": "void", "invoices_voided": [str(i) for i in voided]}

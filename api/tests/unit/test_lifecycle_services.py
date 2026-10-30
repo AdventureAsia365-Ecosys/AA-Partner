@@ -312,22 +312,46 @@ async def test_void_only_a_due_row() -> None:
 
 
 @pytest.mark.asyncio
+async def test_void_a_row_its_invoice_bills() -> None:
+    """AA-952 slice 3: one row, one path. An issued invoice keeps the row (void the invoice first); a draft one is
+    voided with the row. The invoice rows are locked before the schedule row (the order of issue / record payment)."""
+    draft_id, issued_id = uuid.uuid4(), uuid.uuid4()
+    for status in ("open", "payment_claimed", "expired"):
+        conn = ScriptedConn().on("FROM crm.payment_schedule s", _schedule_row(kind="balance"))
+        conn.on("FROM crm.invoice WHERE schedule_id", [{"invoice_id": issued_id, "status": status}])
+        with _raises(Conflict, "invoice_issued_for_row"):
+            await service.void(tenant_ctx(conn), SCHEDULE)
+        assert not conn.sql("UPDATE crm.payment_schedule SET status = 'void'")
+    conn = ScriptedConn().on("FROM crm.payment_schedule s", _schedule_row(kind="balance"))
+    conn.on("FROM crm.invoice WHERE schedule_id", [{"invoice_id": draft_id, "status": "draft"}])
+    out = await service.void(tenant_ctx(conn), SCHEDULE)
+    assert out == {"schedule_id": str(SCHEDULE), "status": "void", "invoices_voided": [str(draft_id)]}
+    voided = conn.sql("UPDATE crm.invoice SET status = 'void'")
+    assert voided == [(draft_id, f"member:{tenant_ctx().member_id}", service.DRAFT_VOID_REASON)]
+    locks = [sql for sql, _ in conn.calls if "FOR UPDATE" in sql]
+    assert "crm.invoice" in locks[0] and "crm.payment_schedule" in locks[1] and "crm.invoice" in locks[2]
+
+
+@pytest.mark.asyncio
 async def test_trip_overview() -> None:
     with _raises(NotFound, "trip_not_found"):
         await service.trip_overview(tenant_ctx(), FakeVault(), TRIP)
     sent = _proposal_row(status="sent", price_hash=b"\x01" * 32, sent_at=NOW, terms_doc_id=DOC)
     schedule = {**_schedule_row(), "due_on": TODAY, "paid_at": None}
-    payment = {"payment_id": uuid.uuid4(), "schedule_id": SCHEDULE, "amount": Decimal(1), "currency": "USD",
-               "method": "cash", "received_on": TODAY}  # fmt: skip
+    payment = {"payment_id": uuid.uuid4(), "schedule_id": SCHEDULE, "invoice_id": None, "amount": Decimal(1),
+               "currency": "USD", "method": "cash", "received_on": TODAY}  # fmt: skip
+    # AA-952 slice 3: a service-fee invoice's payment has no schedule row.
+    fee = {**payment, "payment_id": uuid.uuid4(), "schedule_id": None, "invoice_id": uuid.uuid4()}
     conn = (
         ScriptedConn()
         .on("SELECT trip_id, stage FROM crm.trip", {"trip_id": TRIP, "stage": "proposal"})
         .on("FROM crm.proposal WHERE trip_id", [sent])
         .on("FROM crm.payment_schedule WHERE trip_id", [schedule])
-        .on("FROM crm.payment WHERE trip_id", [payment])
+        .on("FROM crm.payment WHERE trip_id", [payment, fee])
     )
     ctx = tenant_ctx(conn)
     out = await service.trip_overview(ctx, FakeVault(), TRIP)
+    assert out["payments"][1]["schedule_id"] is None and out["payments"][1]["invoice_id"] == str(fee["invoice_id"])
     assert out["proposals"][0]["body"] == "Day 1" and out["proposals"][0]["price_hash"] == "01" * 32
     assert out["schedule"][0]["amount"] == "300.00" and out["payments"][0]["method"] == "cash"
     assert out["portal"] == {"s3": 0, "waiver_required": False, "travellers": []} and not out["deposit_paid"]

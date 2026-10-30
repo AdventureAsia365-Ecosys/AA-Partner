@@ -70,7 +70,7 @@ async def test_deposit_and_service_fee_invoices(app_pool: asyncpg.Pool) -> None:
 
     issued = await _as(app_pool, s, "agent", lambda ctx: invoices.issue(ctx, deposit))
     assert issued["status"] == "open" and issued["number"] == "SV-000001" and issued["issue_date"] is not None
-    assert issued["due_on"] >= issued["issue_date"] and issued["actions"] == ["void"]
+    assert issued["due_on"] >= issued["issue_date"] and issued["actions"] == ["record_payment", "void"]
     with pytest.raises(Conflict) as err:
         await _as(app_pool, s, "agent", lambda ctx: invoices.update_draft(ctx, deposit, {"memo": "later"}))
     assert err.value.code == "invoice_not_draft"

@@ -926,6 +926,44 @@ Design v3 group F (M7, R27), A-10 Receivables, the trip's Invoices card; migrati
   helpers and refusal wording in `lib/invoices.ts`; BFF lines card AA-952 in `lib/bff.ts`. New forms use the kit form
   controls (`Field`, `Input`, `Select`, `Textarea`, `Checkbox`, now in the `app/_kit` barrel).
 
+## CRM-23 payments, refunds and payment methods (AA-952 slice 3)
+
+Design v3 group F (M7), §4.6 (refund approval), §6.3 (BYO providers), A-10; migration crm-024; code in `app/payments/`
+(`service.py`, `providers.py`), routes in `app/routers/payments.py` (`/crm/v1`); decisions in
+`docs/implementation-notes/AA-952.md`.
+
+- **The agency is always the merchant.** Money moves between the client and the agency's own account (its bank, cash
+  desk, own card terminal, later its own provider account). No Adventure Asia account holds, receives or refunds
+  client money; the CRM records what moved.
+- **Record a payment** (`POST /invoices/{id}/payments`, owner / agent `PAYMENT_MARK_RECEIVED`) on an issued invoice:
+  amount (partial payments; 422 `amount_above_balance`), method, the day (today or earlier), the agency's own
+  reference (never card or bank numbers). One append-only `crm.payment` row (provider `manual`, `invoice_id`, the
+  invoice's schedule row), its `trip_commitment` (payment succeeded). The payments reaching the total make the
+  invoice paid (commitment invoice paid) and a deposit / balance invoice settles its schedule row through
+  `app.proposals.service.settle_schedule` (the CRM-18 effects: Proposal -> Booked, portal invites, the Booking
+  confirm). One row is settled through one path: the schedule's own "Mark paid" and the row's void are refused while
+  an issued invoice bills the row (409 `invoice_issued_for_row`; a draft invoice is voided with the row), and a
+  schedule invoice takes no payment once its row is not due (409 `schedule_not_due`). An invoice whose payments were
+  all refunded can be voided (409 `invoice_has_payments` while it holds money net of refunds, `refund_pending` while
+  a request is open), which frees the row for a new invoice. Every invoice view carries `payments`, `refund_requests`, `paid_amount`,
+  `refunded_amount`, `balance_amount` (total - payments; a refund never reopens an invoice).
+- **Refunds** only from an approved `crm.refund_request`: proposed (owner / agent, never more than is left to ask back
+  on the payment: 422 `amount_above_refundable`) -> approved / rejected (`REFUND_APPROVE`: the owner any amount, an
+  agent up to `tenant_settings.refund_owner_threshold_base` on the invoice's approved refunds plus this one, converted
+  to the base currency with the ledger's FX resolution (a split refund still reaches the owner; a rejection is judged
+  on the request alone); no rate = only the owner; 403 `above_threshold`; an agent never approves a request they
+  made, 403 `refund_self_approval`) -> executed (`PAYMENT_MARK_RECEIVED`): the
+  payment's provider refunds (manual: the member records the money returned) and a refund entry (`entry_kind`
+  refund, `refund_of`) joins `crm.payment`; a fully refunded payment's commitment reads `refunded` (still
+  `has_money`). Every money step of an invoice runs under its row lock.
+- **Payment methods** (`/settings/payment-methods`, owner `PAYMENT_SETTINGS`): the manual method's name and pay-by
+  instructions (printed on the agency's unpaid invoices), disconnect. `app/payments/providers.py` is the BYO
+  abstraction (`PaymentProvider`: `refund`, `takes_cards`, `needs_external_account`); only `manual` has code, `stripe`
+  (Connect Standard on the agency's own account) and `vn_gateway` answer 409 `provider_not_available`.
+- **Web**: `components/invoices/InvoiceMoney.tsx` (record payment, payments, request refund) and `RefundActions.tsx`
+  (approve / reject / mark refunded) on the trip's Invoices card; `RefundsPanel.tsx` on A-10 `/payments`;
+  `PaymentMethodsForm.tsx` on Settings > Payments; BFF lines card AA-952 in `lib/bff.ts`.
+
 ## CRM-22 text proposal + Before you go (AA-951)
 
 Design v3 §6.3 CRM-22 (M4, R38, R9; F4 / WF-5 A-05; Q1 2.3); migration crm-022; code in `app/proposals/`

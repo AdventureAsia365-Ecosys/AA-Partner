@@ -10,8 +10,12 @@ trip's Proposal tab). Routes in :mod:`app.routers.invoices`; the document in :mo
 - **Draft** edits (memo, due date, tax, the lines of a typed invoice) -> **issue**: the next number
   (``crm.invoice_sequence``, gapless under the row lock), today's date in the agency timezone, a due date no earlier
   than today; the database checks the lines against the totals (CRM39) and seals the invoice (CRM31) -> **void** a
-  draft or an issued invoice with a reason (never one with a payment: 409 ``invoice_has_payments``).
+  draft or an issued invoice with a reason (never one that still holds money: 409 ``invoice_has_payments``, payments
+  net of their refunds; nor one with a refund request still open: 409 ``refund_pending``).
 - The trip's ``crm.trip_commitment`` row (kind ``invoice``) follows the status: a paid invoice blocks the trip delete.
+- Slice 3 (:mod:`app.payments.service`): every view carries the invoice's payments, refunds and refund requests with
+  ``paid_amount`` / ``refunded_amount`` / ``balance_amount`` (total - payments; a refund never reopens an invoice), and
+  the document prints them with the agency's own pay-by instructions (its manual payment method).
 
 Every function takes the open context and never opens one. Amounts are the client's sell amounts (no net, cost or
 margin key: nothing for the margin serializer to strip). Totals are computed here, rounded half up to the cent.
@@ -122,7 +126,9 @@ SELECT invoice_id, trip_id, kind, status, schedule_id, proposal_id, number, curr
 """
 AGENCY_LIST_SQL = """
 SELECT i.invoice_id, i.trip_id, i.kind, i.status, i.number, i.currency, i.total_amount, i.due_on, i.issue_date,
-       i.paid_at, t.title AS trip_title
+       i.paid_at, t.title AS trip_title,
+       (SELECT coalesce(sum(p.amount), 0) FROM crm.payment p
+         WHERE p.invoice_id = i.invoice_id AND p.entry_kind = 'payment') AS paid_amount
   FROM crm.invoice i JOIN crm.trip t ON t.trip_id = i.trip_id AND t.deleted_at IS NULL
  WHERE i.deleted_at IS NULL AND i.status = ANY($1::text[])
  ORDER BY i.due_on NULLS LAST, i.created_at
@@ -149,7 +155,39 @@ VOID_SQL = """
 UPDATE crm.invoice SET status = 'void', voided_at = now(), voided_by = $2, void_reason = $3 WHERE invoice_id = $1
 RETURNING voided_at
 """
-PAYMENTS_EXIST_SQL = "SELECT EXISTS (SELECT 1 FROM crm.payment WHERE invoice_id = $1)"
+# What still holds a void back (slice 3): the money the invoice kept (payments - refund entries) and a refund request
+# not yet executed or rejected. A partly paid invoice whose payments were all refunded can be voided.
+VOID_BLOCK_SQL = """
+SELECT (SELECT coalesce(sum(CASE WHEN entry_kind = 'payment' THEN amount ELSE -amount END), 0) FROM crm.payment
+         WHERE invoice_id = $1) AS held,
+       EXISTS (SELECT 1 FROM crm.refund_request
+                WHERE invoice_id = $1 AND status IN ('proposed', 'approved') AND deleted_at IS NULL) AS refund_open
+"""
+PAYMENTS_SQL = """
+SELECT payment_id, invoice_id, entry_kind, amount, currency, method, received_on, provider, provider_ref, refund_of,
+       created_at
+  FROM crm.payment WHERE invoice_id = $1 ORDER BY received_on, created_at
+"""
+TRIP_PAYMENTS_SQL = """
+SELECT payment_id, invoice_id, entry_kind, amount, currency, method, received_on, provider, provider_ref, refund_of,
+       created_at
+  FROM crm.payment WHERE trip_id = $1 AND invoice_id IS NOT NULL ORDER BY received_on, created_at
+"""
+REFUNDS_SQL = """
+SELECT refund_id, invoice_id, payment_id, amount, currency, reason, status, requested_by, decided_by, decided_at,
+       decision_note, executed_at, refund_payment_id, created_at
+  FROM crm.refund_request WHERE invoice_id = $1 AND deleted_at IS NULL ORDER BY created_at
+"""
+TRIP_REFUNDS_SQL = """
+SELECT refund_id, invoice_id, payment_id, amount, currency, reason, status, requested_by, decided_by, decided_at,
+       decision_note, executed_at, refund_payment_id, created_at
+  FROM crm.refund_request WHERE trip_id = $1 AND deleted_at IS NULL ORDER BY created_at
+"""
+PAY_BY_SQL = """
+SELECT display_name, instructions FROM crm.payment_provider_account
+ WHERE status = 'active' AND deleted_at IS NULL AND instructions IS NOT NULL
+ ORDER BY provider, created_at
+"""
 COMMITMENT_SQL = """
 INSERT INTO crm.trip_commitment (trip_id, kind, line_status, source_ref) VALUES ($1, 'invoice', $2, $3)
 ON CONFLICT (tenant_id, kind, source_ref) DO UPDATE SET line_status = EXCLUDED.line_status
@@ -315,16 +353,81 @@ def _line_view(r: Any) -> dict[str, Any]:
     }
 
 
-def actions(row: Any) -> list[str]:
+def actions(row: Any, held: Decimal | None = None) -> list[str]:
+    """What a member may do next. ``held`` = the money the invoice keeps: payments - refund entries (None when
+    unknown: a list without money). A fully refunded invoice can be voided."""
     status = row["status"]
     if status == "draft":
         return ["edit", "issue", "void"]
-    if status in RECEIVABLE:
-        return ["void"]
+    if status in ("open", "payment_claimed"):
+        return ["record_payment"] + (["void"] if not held else [])
+    if status == "expired":
+        return [] if held else ["void"]
     return []
 
 
-def invoice_view(row: Any, lines: list[Any] | None = None) -> dict[str, Any]:
+def payment_view(r: Any) -> dict[str, Any]:
+    return {
+        "payment_id": str(r["payment_id"]),
+        "entry_kind": r["entry_kind"],
+        "amount": _money_text(r["amount"]),
+        "currency": r["currency"],
+        "method": r["method"],
+        "received_on": _iso(r["received_on"]),
+        "provider": r["provider"],
+        "reference": r["provider_ref"],
+        "refund_of": str(r["refund_of"]) if r["refund_of"] else None,
+    }
+
+
+def refund_view(r: Any) -> dict[str, Any]:
+    return {
+        "refund_id": str(r["refund_id"]),
+        "invoice_id": str(r["invoice_id"]),
+        "payment_id": str(r["payment_id"]),
+        "amount": _money_text(r["amount"]),
+        "currency": r["currency"],
+        "reason": r["reason"],
+        "status": r["status"],
+        "requested_by": r["requested_by"],
+        "decided_by": r["decided_by"],
+        "decided_at": _iso(r["decided_at"]),
+        "decision_note": r["decision_note"],
+        "executed_at": _iso(r["executed_at"]),
+    }
+
+
+def money_summary(total: Any, payments: list[Any], refunds: list[Any]) -> dict[str, Any]:
+    """paid = money in, refunded = money returned, balance = total - paid (never below 0: a refund never reopens an
+    invoice); per payment, what can still be asked back (its amount - its refunds asked, rejected ones aside)."""
+    paid = sum((Decimal(p["amount"]) for p in payments if p["entry_kind"] == "payment"), Decimal(0))
+    refunded = sum((Decimal(p["amount"]) for p in payments if p["entry_kind"] == "refund"), Decimal(0))
+    asked: dict[Any, Decimal] = {}
+    for r in refunds:
+        if r["status"] != "rejected":
+            asked[r["payment_id"]] = asked.get(r["payment_id"], Decimal(0)) + Decimal(r["amount"])
+    views = []
+    for p in payments:
+        view = payment_view(p)
+        if p["entry_kind"] == "payment":
+            view["refundable_amount"] = _money_text(max(Decimal(p["amount"]) - asked.get(p["payment_id"], 0), 0))
+        views.append(view)
+    return {
+        "paid_amount": _money_text(paid),
+        "refunded_amount": _money_text(refunded),
+        "balance_amount": _money_text(max(money(total) - paid, Decimal(0))),
+        "payments": views,
+        "refund_requests": [refund_view(r) for r in refunds],
+        "_held": paid - refunded,
+    }
+
+
+def invoice_view(
+    row: Any,
+    lines: list[Any] | None = None,
+    payments: list[Any] | None = None,
+    refunds: list[Any] | None = None,
+) -> dict[str, Any]:
     out: dict[str, Any] = {
         "invoice_id": str(row["invoice_id"]),
         "trip_id": str(row["trip_id"]),
@@ -352,6 +455,10 @@ def invoice_view(row: Any, lines: list[Any] | None = None) -> dict[str, Any]:
     }
     if lines is not None:
         out["lines"] = [_line_view(r) for r in lines]
+    if payments is not None:
+        summary = money_summary(row["total_amount"], payments, refunds or [])
+        out["actions"] = actions(row, summary.pop("_held"))
+        out.update(summary)
     return out
 
 
@@ -362,13 +469,18 @@ async def _row(ctx: AnyContext, invoice_id: uuid.UUID, *, lock: bool = False) ->
     return row
 
 
-async def _full(ctx: AnyContext, invoice_id: uuid.UUID) -> dict[str, Any]:
+async def full(ctx: AnyContext, invoice_id: uuid.UUID) -> dict[str, Any]:
     row = await _row(ctx, invoice_id)
-    return invoice_view(row, await ctx.conn.fetch(LINES_SQL, invoice_id))
+    return invoice_view(
+        row,
+        await ctx.conn.fetch(LINES_SQL, invoice_id),
+        await ctx.conn.fetch(PAYMENTS_SQL, invoice_id),
+        await ctx.conn.fetch(REFUNDS_SQL, invoice_id),
+    )
 
 
 async def get(ctx: TenantContext, invoice_id: uuid.UUID) -> dict[str, Any]:
-    out = await _full(ctx, invoice_id)
+    out = await full(ctx, invoice_id)
     ctx.audit("view", "allowed", "invoice", str(invoice_id))
     return out
 
@@ -378,8 +490,21 @@ async def list_for_trip(ctx: TenantContext, trip_id: uuid.UUID) -> dict[str, Any
     if trip is None:
         raise NotFound("trip_not_found")
     rows = await ctx.conn.fetch(TRIP_LIST_SQL, trip_id, MAX_LIST)
+    payments = await ctx.conn.fetch(TRIP_PAYMENTS_SQL, trip_id)
+    refunds = await ctx.conn.fetch(TRIP_REFUNDS_SQL, trip_id)
     ctx.audit("list_view", "allowed", "invoice", str(trip_id), object_ids=tuple(str(r["invoice_id"]) for r in rows))
-    return {"trip_id": str(trip_id), "invoices": [invoice_view(r) for r in rows]}
+    return {
+        "trip_id": str(trip_id),
+        "invoices": [
+            invoice_view(
+                r,
+                None,
+                [p for p in payments if p["invoice_id"] == r["invoice_id"]],
+                [x for x in refunds if x["invoice_id"] == r["invoice_id"]],
+            )
+            for r in rows
+        ],
+    }
 
 
 async def receivables(ctx: TenantContext, status: str | None) -> dict[str, Any]:
@@ -409,6 +534,7 @@ async def receivables(ctx: TenantContext, status: str | None) -> dict[str, Any]:
                 "due_on": _iso(r["due_on"]),
                 "issue_date": _iso(r["issue_date"]),
                 "paid_at": _iso(r["paid_at"]),
+                "balance_amount": _money_text(max(money(r["total_amount"]) - money(r["paid_amount"]), Decimal(0))),
                 "overdue": r["status"] in RECEIVABLE and r["due_on"] is not None and r["due_on"] < today,
             }
             for r in rows
@@ -520,7 +646,7 @@ async def create_from_schedule(ctx: TenantContext, trip_id: uuid.UUID, schedule_
     await _write_totals(ctx, invoice_id, rate, True)
     ctx.audit("invoice_create", "allowed", "invoice", str(invoice_id), reason=row["kind"])
     await stages.touch(ctx, trip_id)
-    return await _full(ctx, invoice_id)
+    return await full(ctx, invoice_id)
 
 
 async def create_typed(
@@ -556,7 +682,7 @@ async def create_typed(
     await _write_totals(ctx, invoice_id, rate, inclusive)
     ctx.audit("invoice_create", "allowed", "invoice", str(invoice_id), reason=kind)
     await stages.touch(ctx, trip_id)
-    return await _full(ctx, invoice_id)
+    return await full(ctx, invoice_id)
 
 
 async def update_draft(ctx: TenantContext, invoice_id: uuid.UUID, changes: dict[str, Any]) -> dict[str, Any]:
@@ -587,7 +713,7 @@ async def update_draft(ctx: TenantContext, invoice_id: uuid.UUID, changes: dict[
     except asyncpg.PostgresError as exc:
         raise _translate(exc) from None
     ctx.audit("invoice_update", "allowed", "invoice", str(invoice_id), fields=tuple(sorted(changes)))
-    return await _full(ctx, invoice_id)
+    return await full(ctx, invoice_id)
 
 
 # ── issue and void ────────────────────────────────────────────────────────────────────────────────
@@ -616,7 +742,7 @@ async def issue(ctx: TenantContext, invoice_id: uuid.UUID) -> dict[str, Any]:
     await ctx.conn.execute(COMMITMENT_SQL, row["trip_id"], "open", source_ref(invoice_id))
     ctx.audit("invoice_issue", "allowed", "invoice", str(invoice_id), reason=row["kind"])
     await stages.touch(ctx, row["trip_id"])
-    return await _full(ctx, invoice_id)
+    return await full(ctx, invoice_id)
 
 
 async def void(ctx: TenantContext, invoice_id: uuid.UUID, reason: Any) -> dict[str, Any]:
@@ -624,14 +750,17 @@ async def void(ctx: TenantContext, invoice_id: uuid.UUID, reason: Any) -> dict[s
     row = await _row(ctx, invoice_id, lock=True)
     if row["status"] not in ("draft", *RECEIVABLE):
         raise Conflict("invoice_not_voidable", "a paid or void invoice stays: refunds go through a refund request")
-    if await ctx.conn.fetchval(PAYMENTS_EXIST_SQL, invoice_id):
+    block = await ctx.conn.fetchrow(VOID_BLOCK_SQL, invoice_id)
+    if block is not None and block["held"] > 0:
         raise Conflict("invoice_has_payments", "refund the payments first, then void the invoice")
+    if block is not None and block["refund_open"]:
+        raise Conflict("refund_pending", "execute or reject the open refund requests first")
     await ctx.conn.fetchval(VOID_SQL, invoice_id, f"member:{ctx.member_id}", text)
     if row["issued_at"] is not None:
         await ctx.conn.execute(COMMITMENT_SQL, row["trip_id"], "void", source_ref(invoice_id))
     ctx.audit("invoice_void", "allowed", "invoice", str(invoice_id), reason=row["status"])
     await stages.touch(ctx, row["trip_id"])
-    return await _full(ctx, invoice_id)
+    return await full(ctx, invoice_id)
 
 
 # ── the document ──────────────────────────────────────────────────────────────────────────────────
@@ -657,8 +786,23 @@ async def bill_to(ctx: TenantContext, vault: Vault, trip_id: uuid.UUID) -> str |
 
 async def document(ctx: TenantContext, vault: Vault, invoice_id: uuid.UUID) -> dict[str, Any]:
     """The printable HTML (a JSON envelope: the web opens it in its own tab, the browser prints or saves a PDF)."""
-    invoice = await _full(ctx, invoice_id)
+    invoice = await full(ctx, invoice_id)
     agency = await ctx.conn.fetchval(AGENCY_NAME_SQL)
-    html = render.render(invoice, agency_name=agency, bill_to=await bill_to(ctx, vault, uuid.UUID(invoice["trip_id"])))
+    pay_by = (
+        [
+            {"display_name": r["display_name"], "instructions": r["instructions"]}
+            for r in await ctx.conn.fetch(PAY_BY_SQL)
+        ]
+        if invoice["status"] in RECEIVABLE or invoice["status"] == "draft"
+        else []
+    )
+    html = render.render(
+        invoice,
+        agency_name=agency,
+        bill_to=await bill_to(ctx, vault, uuid.UUID(invoice["trip_id"])),
+        pay_instructions=pay_by,
+        payments=invoice["payments"],
+        balance=invoice["balance_amount"] if invoice["payments"] else None,
+    )
     ctx.audit("view", "allowed", "invoice", str(invoice_id), fields=("document",))
     return {"invoice_id": str(invoice_id), "filename": f"{invoice['number'] or 'draft-invoice'}.html", "html": html}
