@@ -75,6 +75,11 @@ class Action(StrEnum):
     OWN_MAILBOX_CONNECT = "own_mailbox_connect"
     RECOVERY_VIEW = "recovery_view"  # the owner-recovery banner (Q1 6.3: every member)
     RECOVERY_CANCEL = "recovery_cancel"
+    # AA-961 (CRM-30, design R37 / R15): Travelling now (names hidden until a logged reveal), the agency calendar and
+    # the member's own ICS feed. Every role: the assistant works the same trips.
+    DUTY_OF_CARE_VIEW = "duty_of_care_view"
+    CALENDAR_VIEW = "calendar_view"
+    CALENDAR_FEED_MANAGE = "calendar_feed_manage"  # own feed only (crm-027 guard); an owner may also revoke others'
     # Money and selling.
     VIEW_MARGIN = "view_margin"  # B2B price ("net"), cost, margin, commission
     MONEY_FIELDS_EDIT = "money_fields_edit"
@@ -131,6 +136,9 @@ _TABLE: dict[Action, tuple[Rule, Rule, Rule]] = {
     Action.OWN_MAILBOX_CONNECT: (A, A, A),
     Action.RECOVERY_VIEW: (A, A, A),
     Action.RECOVERY_CANCEL: (A, A, A),
+    Action.DUTY_OF_CARE_VIEW: (A, A, A),
+    Action.CALENDAR_VIEW: (A, A, A),
+    Action.CALENDAR_FEED_MANAGE: (A, A, A),
     Action.VIEW_MARGIN: (A, A, D),
     Action.MONEY_FIELDS_EDIT: (A, A, D),
     Action.AA_CONFIRM: (A, A, D),

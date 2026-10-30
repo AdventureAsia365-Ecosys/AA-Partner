@@ -41,6 +41,8 @@ EVENT_TYPES = frozenset(
     }
 )
 DECLINE_CODES = frozenset({"sold_out", "supplier_unavailable", "minimum_not_met", "other"})
+# 1.1 Event.incident_code (departure.incident / departure.incident_cleared): a fixed list, never free text (AA-961).
+INCIDENT_CODES = frozenset({"weather", "road", "health", "political", "supplier", "other"})
 COMPONENT_KINDS = frozenset({"trip_plan", "hotel_room", "transfer", "guide", "activity", "entrance", "meal"})
 
 
@@ -279,6 +281,17 @@ class Event:
     line_ref: str | None = None
     departure_id: str | None = None
     decline_code: str | None = None
+    incident_code: str | None = None
+    occurred_at: dt.datetime | None = None
+
+
+def _occurred_at(value: Any) -> dt.datetime | None:
+    """The event's ``occurred_at``; None when absent or unreadable (tolerant: only the incident flag uses it, and
+    falls back to the time the CRM read the event)."""
+    try:
+        return _datetime(value, "occurred_at")
+    except ContractError:
+        return None
 
 
 def event(item: Any) -> Event:
@@ -287,6 +300,7 @@ def event(item: Any) -> Event:
     body = _obj(item, "event")
     kind = _str(body, "type", _TYPE)
     decline = body.get("decline_code")
+    incident = body.get("incident_code")
     return Event(
         event_id=_str(body, "event_id", _ID),
         type=kind,
@@ -296,6 +310,8 @@ def event(item: Any) -> Event:
         line_ref=_str(body, "line_ref", _ID, optional=True),
         departure_id=_str(body, "departure_id", _ID, optional=True),
         decline_code=decline if decline in DECLINE_CODES else None,
+        incident_code=incident if incident in INCIDENT_CODES else None,
+        occurred_at=_occurred_at(body.get("occurred_at")),
     )
 
 

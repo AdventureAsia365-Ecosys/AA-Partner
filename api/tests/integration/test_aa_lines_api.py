@@ -162,7 +162,7 @@ async def test_an_aa_line_from_quote_hold_confirm_and_feed(app_pool: asyncpg.Poo
     outcomes = await _scalar(
         app_pool, s["tenant"], "SELECT array_agg(reason_code ORDER BY idempotency_key) FROM crm.inbox_events"
     )
-    assert outcomes == ["line_confirmed", "informational", "unknown_type"]
+    assert outcomes == ["line_confirmed", "departure_incident", "unknown_type"]  # AA-961: the incident is a flag now
     async with app_pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(s["tenant"]))
         await conn.execute("SELECT set_config('app.actor', 'job:test', true)")

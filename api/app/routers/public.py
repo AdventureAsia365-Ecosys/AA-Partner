@@ -21,6 +21,11 @@ is decided by the form key inside :func:`app.tenancy.intake_tx`.
   ``health_consent_required`` / ``invalid_submission``; 403 ``origin_not_allowed``; the same per-address limit and
   32 KiB cap as the inquiry form.
 
+- ``GET  /crm/public/v1/calendar/{token}.ics`` (AA-961): a member's ICS calendar feed
+  (:func:`app.calendar.public.feed`), fetched by their calendar app; ``text/calendar``, no names, titles or money;
+  404 ``feed_not_found`` for an unknown, revoked or expired token, an inactive member or a locked agency (subscribed
+  calendars stop updating). Public rate limit.
+
 Responses never carry an id, a name, or whether an e-mail is already known.
 """
 
@@ -30,8 +35,9 @@ import json
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Header, HTTPException, Path, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
+from app.calendar import public as calendar_public
 from app.db import request_pool
 from app.intake import public as intake
 from app.intake import stage2_public
@@ -145,3 +151,19 @@ async def post_stage2(
     keys = require_keys(request.app.state.keys)
     result = await stage2_public.submit(pool, keys, settings, token, raw, origin=origin)
     return JSONResponse(result, status_code=202, headers=NO_STORE)
+
+
+@router.get("/calendar/{token}.ics")
+async def get_calendar_feed(request: Request, token: LinkToken, _: PublicRateLimit) -> Response:
+    pool = await request_pool(request)
+    body = await calendar_public.feed(pool, token, web_origin=request.app.state.settings.invitation_origin)
+    return Response(
+        body,
+        media_type="text/calendar; charset=utf-8",
+        headers={
+            "Cache-Control": "private, max-age=300",
+            "Referrer-Policy": "no-referrer",
+            "Content-Disposition": 'inline; filename="crm-calendar.ics"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )

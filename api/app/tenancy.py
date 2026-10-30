@@ -69,10 +69,16 @@ One more (AA-945): :func:`ingest_tx` is the mail ingest's context: the forward-i
 unauthenticated sender chose it) finds the agency through the crm-015 SELECT-only policy ``ingest_address_lookup``
 (``app.ingest_local_part``), then ``app.tenant_id`` and ``app.actor`` = ``job:crm_mail_ingest``. Only
 ``app/mail/ingest.py`` may open it.
+
+And (AA-961): :func:`calendar_feed_tx` is a member's ICS feed fetched by a calendar app: the token's hash finds the
+feed through the crm-027 SELECT-only policy ``calendar_feed_token_lookup`` (``app.calendar_feed_hash``), then
+``app.tenant_id``, the member (still active) and ``app.actor`` = ``calendar_feed:<id>``. Only
+``app/calendar/public.py`` may open it.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 import uuid
 from collections.abc import AsyncIterator
@@ -264,6 +270,8 @@ def _system_actor_kind(actor: str) -> str:
         return "user"  # the invited person accepting (AA-939)
     if actor.startswith("client_link:"):
         return "traveler"  # a client filling a form from a signed link (AA-943)
+    if actor.startswith("calendar_feed:"):
+        return "user"  # a member's own calendar subscription (AA-961)
     return "system"
 
 
@@ -886,6 +894,84 @@ async def ingest_tx(pool: asyncpg.Pool, local_part: str) -> AsyncIterator[tuple[
         try:
             async with conn.transaction():  # savepoint: the mail's work
                 yield ctx, address
+        except Exception as exc:
+            denied = [e for e in ctx.audit_events if e.outcome == "denied"]
+            if not denied:
+                raise
+            await _write_audit(ctx, denied)
+            pending = exc
+        else:
+            await _write_audit(ctx, ctx.audit_events)
+    if pending is not None:
+        raise pending
+
+
+CALENDAR_FEED_SQL = """
+SELECT calendar_feed_id, tenant_id FROM crm.calendar_feed
+ WHERE token_hash = decode($1, 'hex') AND status = 'active' AND expires_at > now() AND deleted_at IS NULL
+"""
+# Inside the agency: the feed again (still live) and its member (still active).
+CALENDAR_FEED_MEMBER_SQL = """
+SELECT f.calendar_feed_id, f.member_id, f.scope, f.last_fetched_at, m.role
+  FROM crm.calendar_feed f
+  JOIN crm.member m ON m.tenant_id = f.tenant_id AND m.member_id = f.member_id
+ WHERE f.calendar_feed_id = $1 AND f.status = 'active' AND f.expires_at > now() AND f.deleted_at IS NULL
+   AND m.status = 'active' AND m.deleted_at IS NULL
+"""
+
+
+@dataclass(frozen=True)
+class CalendarFeed:
+    """The live ICS feed :func:`calendar_feed_tx` found by its token (ids and codes only)."""
+
+    calendar_feed_id: uuid.UUID
+    tenant_id: uuid.UUID
+    member_id: uuid.UUID
+    member_role: str
+    scope: str
+    last_fetched_at: dt.datetime | None
+
+
+@asynccontextmanager
+async def calendar_feed_tx(
+    pool: asyncpg.Pool, token_hash_hex: str
+) -> AsyncIterator[tuple[SystemContext, CalendarFeed]]:
+    """A member's ICS calendar feed fetched by a calendar app (AA-961, crm-027): the token's SHA-256 (hex) finds one
+    live ``crm.calendar_feed`` row through the SELECT-only policy ``calendar_feed_token_lookup`` before any agency is
+    known; then ``app.tenant_id`` = its agency (which must be active), the feed's member must still be active, and
+    ``app.actor`` = ``calendar_feed:<id>`` (audit kind ``user``; the crm-027 guard lets this actor touch only the
+    feed's fetch counters). Unknown, revoked, expired or trashed token, an inactive member or a locked agency: 404
+    ``feed_not_found`` (the same answer, so tokens cannot be probed). Only ``app/calendar/public.py`` may open it."""
+    if not isinstance(token_hash_hex, str) or len(token_hash_hex) != 64:
+        raise NotFound("feed_not_found")
+    pending: Exception | None = None
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.calendar_feed_hash', $1, true)", token_hash_hex)
+        row = await conn.fetchrow(CALENDAR_FEED_SQL, token_hash_hex)
+        await conn.execute("SELECT set_config('app.calendar_feed_hash', '', true)")
+        if row is None:
+            raise NotFound("feed_not_found")
+        tenant_id = row["tenant_id"]
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        if await conn.fetchval(TENANT_SQL, tenant_id) != "active":
+            raise NotFound("feed_not_found")
+        live = await conn.fetchrow(CALENDAR_FEED_MEMBER_SQL, row["calendar_feed_id"])
+        if live is None:
+            raise NotFound("feed_not_found")
+        actor = f"calendar_feed:{live['calendar_feed_id']}"
+        await conn.execute("SELECT set_config('app.actor', $1, true)", actor)
+        feed = CalendarFeed(
+            calendar_feed_id=live["calendar_feed_id"],
+            tenant_id=tenant_id,
+            member_id=live["member_id"],
+            member_role=live["role"],
+            scope=live["scope"],
+            last_fetched_at=live["last_fetched_at"],
+        )
+        ctx = SystemContext(conn=conn, tenant_id=tenant_id, actor=actor, status="active")
+        try:
+            async with conn.transaction():  # savepoint: the feed's work
+                yield ctx, feed
         except Exception as exc:
             denied = [e for e in ctx.audit_events if e.outcome == "denied"]
             if not denied:

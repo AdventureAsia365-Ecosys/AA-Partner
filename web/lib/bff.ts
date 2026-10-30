@@ -240,6 +240,14 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   // AA-955 (CRM-25): the trip's signed documents and the sealed envelope of one signature (a reveal with a reason).
   { method: "GET", pattern: new RegExp(`^trips/${UUID}/agreements$`), tenant: true, card: "AA-955" },
   { method: "POST", pattern: new RegExp(`^signatures/${UUID}/envelope$`), tenant: true, card: "AA-955" },
+  // AA-961 (CRM-30): Travelling now (no names), the reach list, the logged bulk reveal (a reason above 5, an hourly
+  // limit: the API's), the trip's AA incident flags; the calendar, my ICS feed (make / revoke; the owner's team list).
+  { method: "GET", pattern: /^duty\/(travelling|reach)$/, tenant: true, card: "AA-961" },
+  { method: "POST", pattern: /^duty\/reveal$/, tenant: true, card: "AA-961" },
+  { method: "GET", pattern: new RegExp(`^trips/${UUID}/incidents$`), tenant: true, card: "AA-961" },
+  { method: "GET", pattern: /^calendar(\/feed|\/feeds)?$/, tenant: true, card: "AA-961" },
+  { method: "POST", pattern: /^calendar\/feed$/, tenant: true, card: "AA-961" },
+  { method: "POST", pattern: new RegExp(`^calendar/feeds/${UUID}/revoke$`), tenant: true, card: "AA-961" },
 ];
 
 /** Calls only the web server makes (lib/crmApi.ts crmCall), never reachable through /bff from the browser. */
