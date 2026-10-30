@@ -80,6 +80,7 @@ UNSEEDED = {
     "/crm/v1/conversations/{conversation_id}/messages": "mail messages: no money table behind them",
     "/crm/v1/mail/imports/{import_id}": "mailbox history import status: counts only",
     "/crm/v1/lifecycle/offboarding/{request_id}/export": "owner-only agency export: never the assistant",
+    "/crm/v1/data/exports/{export_id}/download": "owner-only portability ZIP (AA-967): never the assistant",
 }
 
 

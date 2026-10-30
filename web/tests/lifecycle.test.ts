@@ -6,6 +6,7 @@ import { MESSAGES, type MessageKey } from "@/lib/i18n";
 import {
   confirmsErase,
   deleteRefusal,
+  deletionReport,
   type Offboarding,
   offboardingStep,
   type Rule,
@@ -53,7 +54,7 @@ describe("rule windows", () => {
     const codes = [
       "traveler_pii", "traveler_inactive", "trips", "trip_stage_history", "documents", "consent", "trash",
       "form_submissions", "llm_calls", "audit_in_app", "audit_archive", "placeholder_map", "job_rows", "export_files",
-      "erased_in_backups",
+      "erased_in_backups", "signed_agreements", "accounting_records",
     ];
     for (const lang of ["en", "vi"] as const) {
       for (const c of codes) expect(MESSAGES[lang][`data.rule.${c}` as MessageKey], c).toBeTruthy();
@@ -88,6 +89,17 @@ describe("offboarding", () => {
     expect(offboardingStep(off({ status: "erasing" }))).toBe("running");
     expect(offboardingStep(off({ status: "failed", failure_class: "legal_hold" }))).toBe("failed");
     expect(offboardingStep(off({ status: "erased" }))).toBe("done");
+    // AA-967: confirmed with a cool-off: scheduled (the agency works on; Cancel stays open).
+    const until = "2026-11-02T09:00:00+00:00";
+    expect(offboardingStep(off({ status: "export_ready", export_ready: true, confirmed: true, erase_not_before: until }))).toBe("scheduled");
+    expect(offboardingStep(off({ export_waived: true, confirmed: true, erase_not_before: until }))).toBe("scheduled");
+  });
+
+  it("reports the tables a deletion empties, largest first, without unlinks or kept evidence", () => {
+    expect(deletionReport({ traveler: 2, trip: 5, consent: 0, signature_event_kept: 3, x_unlinked: 1 })).toEqual([
+      { table: "trip", n: 5 },
+      { table: "traveler", n: 2 },
+    ]);
   });
 });
 

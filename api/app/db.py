@@ -54,6 +54,7 @@ REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = (
     "crm-023",
     "crm-024",
     "crm-025",  # AA-955 e-sign v1 (crm-025 needs crm-024: DB Migrate applies them in order)
+    "crm-026",  # AA-967 portability (crm-026 needs crm-025)
 )
 REQUIRED_SCHEMA_VERSION = max(REQUIRED_SCHEMA_VERSIONS)
 

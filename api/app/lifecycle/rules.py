@@ -19,6 +19,8 @@ LLM_CALL_DAYS = 180  # crm-010 crm.lifecycle_purge_expired
 MEMBERSHIP_INBOX_DAYS = 90  # crm-018 crm.lifecycle_purge_expired (DM-7, AA-978)
 BACKUP_PURGE_DAYS = 30  # V1: erased data leaves backups and DEK copies within 30 days
 EXPORT_FILE_DAYS = 7  # AA-CIS-Infra crm_storage.tf rule exports-7d
+# DM-7 signed-agreement (claim-period) exception: trip end + 3 years (crm-025 keep_until, AA-955; counsel confirms).
+SIGNED_AGREEMENT_MONTHS = 36
 
 ARCHIVE_REASONS = ("agent", "client_request", "auto_inactive", "duplicate", "other")
 HOLD_SCOPES = ("tenant", "trip", "traveler")
@@ -60,6 +62,9 @@ RULES: tuple[Rule, ...] = (
     Rule("placeholder_map", "days", 1, "purge", "crm_placeholder_purge"),  # AA-938
     Rule("job_rows", "days", 30, "purge", "crm_job_retention"),
     Rule("export_files", "days", EXPORT_FILE_DAYS, "bucket_lifecycle", "AA-CIS-Infra"),
+    # AA-967 (CRM-35, DM-7): the two exceptions an erasure receipt names.
+    Rule("signed_agreements", "months", SIGNED_AGREEMENT_MONTHS, "kept_through_erasure_claim_period", "crm_lifecycle"),
+    Rule("accounting_records", "with_parent", None, "kept_with_trip_accounting_exception", "crm_lifecycle"),
     Rule("erased_in_backups", "days", BACKUP_PURGE_DAYS, "backup_expiry_with_alarm", "AA-CIS-Infra"),
 )
 

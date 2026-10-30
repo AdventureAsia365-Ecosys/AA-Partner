@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from app.errors import NotFound
 from app.lifecycle import erase, offboarding, policy, trash
 from app.main import create_app
 from app.routers import lifecycle as router
@@ -135,8 +136,11 @@ def test_erasure_dry_run_then_real(pools: LocalPools, monkeypatch: pytest.Monkey
     calls: list[tuple[str, Any]] = []
 
     async def fake_erase(ctx: Any, scope: str, subject: uuid.UUID, *, dry_run: bool, **_: Any) -> dict[str, int]:
+        if dry_run and calls and calls[-1] == (scope, False):
+            calls.append((scope, dry_run))
+            raise NotFound("subject_not_found")  # AA-967 verify: the client is gone after the real erase
         calls.append((scope, dry_run))
-        return {"traveler": 1}
+        return {"traveler": 1, "signature_event_kept": 1, "terms_acceptance_kept": 0}
 
     monkeypatch.setattr(erase, "erase", fake_erase)
     app, headers, conn, ctx = _client(pools, monkeypatch, dry_run=True)
@@ -144,7 +148,11 @@ def test_erasure_dry_run_then_real(pools: LocalPools, monkeypatch: pytest.Monkey
         assert client.post(f"/crm/v1/travelers/{ID}/erasure", json={}, headers=headers).json() == {
             "traveler_id": ID,
             "dry_run": True,
-            "counts": {"traveler": 1},
+            "counts": {"traveler": 1, "signature_event_kept": 1, "terms_acceptance_kept": 0},
+            # AA-967: what is kept (crm-025 claim-period evidence) and why, and the exports the erase would withdraw.
+            "kept": {"signature_event": 1, "terms_acceptance": 0},
+            "exceptions": ["signed_agreements_claim_period"],
+            "exports_withdrawn": 0,
         }
         refused = client.post(f"/crm/v1/travelers/{ID}/erasure", json={"dry_run": False}, headers=headers)
         assert refused.status_code == 409 and refused.json()["detail"] == "deletion_dry_run"
@@ -153,7 +161,13 @@ def test_erasure_dry_run_then_real(pools: LocalPools, monkeypatch: pytest.Monkey
     with TestClient(app) as client:
         done = client.post(f"/crm/v1/travelers/{ID}/erasure", json={"dry_run": False}, headers=headers).json()
     assert done["dry_run"] is False and done["request_id"] == ID and done["backup_purge_by"]
-    assert calls[-2:] == [("traveler", True), ("traveler", False)]
+    assert calls[-3:] == [("traveler", True), ("traveler", False), ("traveler", True)]
+    receipt = done["receipt"]
+    assert receipt["verify"] == {"subject_gone": True} and receipt["kept"] == {
+        "signature_event": 1,
+        "terms_acceptance": 0,
+    }
+    assert receipt["exceptions"] == ["signed_agreements_claim_period"] and receipt["counts"] == {"traveler": 1}
     assert ctx.audit_events[-1].reason == "bypass_trash"
 
 

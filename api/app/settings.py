@@ -178,6 +178,9 @@ KEY_PROVIDERS = frozenset({"kms", "local"})
 _BUCKET = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
 DEFAULT_DEK_CACHE_TTL_S = 300
 MAX_DEK_CACHE_TTL_S = 900
+# AA-967: hours between the owner's typed confirmation of an agency deletion and the erase (the owner may cancel).
+DEFAULT_OFFBOARDING_COOL_OFF_HOURS = 72
+MAX_OFFBOARDING_COOL_OFF_HOURS = 720
 _KMS_KEY_PREFIXES = ("alias/", "arn:aws:kms:")
 DEFAULT_SCRUB_TIMEOUT_MS = 3000
 _GUARDRAIL_ID = re.compile(r"^[a-z0-9]{1,64}$")
@@ -234,6 +237,7 @@ class Settings:
     scrub_guardrail_region: str = "us-west-1"
     scrub_detector_timeout_ms: int = DEFAULT_SCRUB_TIMEOUT_MS
     lifecycle_dry_run: bool = True
+    offboarding_cool_off_hours: int = DEFAULT_OFFBOARDING_COOL_OFF_HOURS
     fx_provider: str = "synthetic"
     cis_api_url: str = ""
     booking_api_url: str = ""
@@ -326,6 +330,8 @@ class Settings:
             self.kms_data_key_id.startswith(_KMS_KEY_PREFIXES) or _looks_like_key_id(self.kms_data_key_id)
         ):
             raise SettingsError("KMS_DATA_KEY_ID must be an alias/..., a KMS key ARN or a key id")
+        if not 0 <= self.offboarding_cool_off_hours <= MAX_OFFBOARDING_COOL_OFF_HOURS:
+            raise SettingsError(f"OFFBOARDING_COOL_OFF_HOURS must be between 0 and {MAX_OFFBOARDING_COOL_OFF_HOURS}")
         if not 0 <= self.dek_cache_ttl_seconds <= MAX_DEK_CACHE_TTL_S:
             raise SettingsError(f"DEK_CACHE_TTL_SECONDS must be between 0 and {MAX_DEK_CACHE_TTL_S}")
         if self.rate_limit_intake_per_minute < 0 or self.rate_limit_intake_form_per_hour < 0:
@@ -526,6 +532,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             env.get("SCRUB_DETECTOR_TIMEOUT_MS"), DEFAULT_SCRUB_TIMEOUT_MS, "SCRUB_DETECTOR_TIMEOUT_MS"
         ),
         lifecycle_dry_run=_flag(env.get("LIFECYCLE_DRY_RUN"), True, "LIFECYCLE_DRY_RUN"),
+        offboarding_cool_off_hours=_int(
+            env.get("OFFBOARDING_COOL_OFF_HOURS"), DEFAULT_OFFBOARDING_COOL_OFF_HOURS, "OFFBOARDING_COOL_OFF_HOURS"
+        ),
         fx_provider=(env.get("FX_PROVIDER") or ("live" if environment in {"stg", "prod"} else "synthetic"))
         .strip()
         .lower(),

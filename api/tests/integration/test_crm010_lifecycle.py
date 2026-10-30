@@ -494,7 +494,7 @@ async def test_offboarding_exports_then_erases_and_shreds_the_keys(
     async with tenant_tx(app_pool, a["owner"], a["tenant"]) as ctx:
         content = await offboarding.download(ctx, Vault(keys, ctx), store, request_id)
     lines = [json.loads(x) for x in content.decode("utf-8").splitlines()]
-    assert lines[0]["format"] == 1 and lines[0]["tenant_id"] == str(a["tenant"])
+    assert lines[0]["format"] == 2 and lines[0]["tenant_id"] == str(a["tenant"])
     names = {line["row"].get("display_name") for line in lines[1:] if line["table"] == "traveler"}
     assert "Nguyễn Thị Hoa" in names
     assert not any(k.endswith("_bidx") or k.endswith("_enc") for line in lines[1:] for k in line["row"])

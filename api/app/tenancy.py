@@ -900,7 +900,7 @@ async def ingest_tx(pool: asyncpg.Pool, local_part: str) -> AsyncIterator[tuple[
 
 # crm-010: SQLSTATE of the hold rule (erase_subject, the hold guard triggers).
 LEGAL_HOLD_SQLSTATE = "CRM10"
-LIFECYCLE_ACTORS = frozenset({"job:crm_lifecycle", "job:crm_offboard"})
+LIFECYCLE_ACTORS = frozenset({"job:crm_lifecycle", "job:crm_offboard", "job:crm_data_export"})  # + AA-967
 TENANT_STATUS_SQL = "SELECT status FROM crm.tenant WHERE tenant_id = $1"
 ERASER_ROLE = "crm_eraser"
 

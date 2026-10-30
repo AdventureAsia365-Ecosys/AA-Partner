@@ -60,6 +60,7 @@ from app.routers import (
     builder,
     ci,
     client_pages,
+    data,
     esign,
     health,
     invitations,
@@ -236,6 +237,7 @@ def create_app(
     app.include_router(invitations.public_router)
     app.include_router(invitations.agency_router)
     app.include_router(lifecycle.router)
+    app.include_router(data.router)
     app.include_router(ledger.router)
     app.include_router(aa.router)
     app.include_router(proposals.router)

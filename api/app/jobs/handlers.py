@@ -43,6 +43,7 @@ from app.jobs.kinds import (
     AUDIT_RETENTION,
     BOOKING_SYNC,
     CATALOG_SYNC,
+    DATA_EXPORT,
     DISPATCH,
     FX_FETCH,
     HEARTBEAT,
@@ -184,6 +185,7 @@ def build_handlers(
     from app.mail import ingest as mail_ingest
     from app.mail.state import MailRuntime as _MailRuntime
     from app.members import studio
+    from app.portability import exports as portability_exports
     from app.privacy.purge import purge_expired_maps
     from app.stages_job import date_rule
 
@@ -208,6 +210,7 @@ def build_handlers(
         BOOKING_SYNC: BookingSync(booking_client),
         CATALOG_SYNC: CatalogSync(catalog),
         STUDIO_ACTIVATION: studio.build_handler(studio_activation),
+        DATA_EXPORT: portability_exports.build_handler(keys=keys, store=documents),
     }
 
 
@@ -303,4 +306,6 @@ SCHEDULED_KINDS: frozenset[str] = frozenset(
 )
 # Kinds queued by request code, one row per event (AA-936: each stored inquiry), never scheduled.
 # AA-979: one crm_studio_activation row per accepted Content studio invitation.
-EVENT_KINDS: frozenset[str] = frozenset({INTAKE_PROCESS, OFFBOARD, DISPATCH, MAIL_IMPORT, STUDIO_ACTIVATION})
+EVENT_KINDS: frozenset[str] = frozenset(
+    {INTAKE_PROCESS, OFFBOARD, DISPATCH, MAIL_IMPORT, STUDIO_ACTIVATION, DATA_EXPORT}  # AA-967: one per export
+)

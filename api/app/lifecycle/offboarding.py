@@ -14,19 +14,20 @@ Owner steps (``/crm/v1/lifecycle/offboarding``, :mod:`app.routers.lifecycle`):
    counts), without an export unless waived, under any active legal hold. The agency moves to ``offboarding`` (no
    member context opens any more) and a ``crm_offboard`` job erases: ``crm.erase_subject('tenant')`` as
    ``crm_eraser`` (every tenant table except the keep list: the agency row, the destroyed key rows, the audit and its
-   export registry / chain, the receipts, lifecycle counts and holds), the documents' objects and the export object,
-   then :meth:`KeyProvider.destroy` (**crypto-shred**: wrapped DEKs nulled, ``destroyed_at`` set, this process's cache
-   evicted), all in one transaction. The receipt (counts, ``backup_purge_by`` = today + 30 days, the time by which
-   every other task's DEK cache has expired = destroy + ``DEK_CACHE_TTL_SECONDS``, the copies outside AA's control)
-   goes on the request; the agency becomes ``offboarded``.
+   export registry / chain, the receipts, lifecycle counts and holds), then :meth:`KeyProvider.destroy`
+   (**crypto-shred**: wrapped DEKs nulled, ``destroyed_at`` set, this process's cache evicted) and the canary verify,
+   the receipt, and last the bucket objects (the documents, the offboarding export, the portability exports; AA-967
+   review: after every step that can refuse), all in one transaction. The receipt (counts, ``backup_purge_by`` =
+   today + 30 days, the time by which every other task's DEK cache has expired = destroy + ``DEK_CACHE_TTL_SECONDS``,
+   the copies outside AA's control) goes on the request; the agency becomes ``offboarded``.
 
-If the database refuses the erase (a hold placed after the confirmation, CRM16 a table the erase does not know),
-nothing was deleted (one transaction): the request becomes ``failed`` with the code and the agency goes back to
-``active``, so the owner can read why, cancel the request and start again later. An erase job that meets DRY RUN
-(``LIFECYCLE_DRY_RUN`` switched on after the confirmation) is the same refusal: ``failed`` with
-``deletion_dry_run``, the agency ``active`` again, the job failed at once (review S249). A job that fails for another
-reason (retries exhausted) leaves the agency ``offboarding``; the platform recovery is in
-``docs/implementation-notes/AA-942.md``.
+If the database refuses the erase (a hold placed after the confirmation, CRM16 a table the erase does not know) or the
+verify fails, nothing was deleted (one transaction, and no object is deleted before the last step): the request
+becomes ``failed`` with the code and the agency goes back to ``active``, so the owner can read why, cancel the request
+and start again later. An erase job that meets DRY RUN (``LIFECYCLE_DRY_RUN`` switched on after the confirmation) is
+the same refusal: ``failed`` with ``deletion_dry_run``, the agency ``active`` again, the job failed at once (review
+S249). A job that fails for another reason (a bucket error on the final object deletes is retried; retries exhausted)
+leaves the agency ``offboarding``; the platform recovery is in ``docs/implementation-notes/AA-942.md``.
 
 **AA-raised requests** (AA-941, crm-011): the L1 console raises an agency export (``purpose = export_only``) or deletion
 (``offboard``) request with :func:`raise_request` (no counts, no job). It waits for the owner: the owner confirms it
@@ -42,9 +43,7 @@ partitions drop (crm-007 offboarding path), and the Object Lock archive keeps it
 
 from __future__ import annotations
 
-import base64
 import datetime as dt
-import decimal
 import hashlib
 import json
 import logging
@@ -61,8 +60,11 @@ from app.jobs.queue import Job
 from app.jobs.worker import Handler, PermanentError
 from app.lifecycle import erase
 from app.lifecycle.rules import BACKUP_PURGE_DAYS, EXPORT_FILE_DAYS
+from app.portability import builder as portability
+from app.portability import exports as portability_exports
 from app.tenancy import AnyContext, LifecycleContext, TenantContext, lifecycle_tx
 from app.vault import Vault
+from app.vault.errors import DecryptionDenied, KeyDestroyed, UnwrapDenied
 
 if TYPE_CHECKING:  # pragma: no cover
     from app.vault import KeyProvider
@@ -71,39 +73,13 @@ log = logging.getLogger(__name__)
 
 ACTOR = "job:crm_offboard"
 MAX_ATTEMPTS = 3
-EXPORT_FORMAT = 1
+EXPORT_FORMAT = 2  # AA-967: every exported table of the catalog (app.portability.tables), not a fixed list
 # What stays outside AA's reach after the erase (lane §5.8 receipt): named as codes, worded by the web.
 COPIES_OUTSIDE = ("agency_mailboxes_and_messaging_accounts", "supplier_manifests_already_sent", "agency_downloads")
 
-# Exported tables and their primary key (the AAD row id of their *_enc columns). Integration credentials are never
-# exported (secrets); the audit has its own download (Settings > Access log).
-EXPORT_TABLES: dict[str, str] = {
-    "tenant_settings": "tenant_id",
-    "member": "member_id",
-    "traveler": "traveler_id",
-    "traveler_profile": "traveler_token",
-    "profile_history": "history_id",
-    "traveler_relation": "relation_id",
-    "traveler_health": "health_id",
-    "consent": "consent_id",
-    "trip": "trip_id",
-    "trip_traveler": "trip_traveler_id",
-    "trip_party": "trip_party_id",
-    "trip_stage_history": "history_id",
-    "trip_commitment": "commitment_id",
-    "task": "task_id",
-    "note": "note_id",
-    "document": "document_id",
-    "form_definition": "form_definition_id",
-    "intake_form": "intake_form_id",
-    "form_submission": "submission_id",
-    "dispatch_queue": "dispatch_id",
-    "client_link": "link_id",  # AA-943 (crm-012): without its token hash (NEVER_EXPORT_COLUMNS)
-    "meeting_slot": "slot_id",
-    "legal_hold": "hold_id",
-    "llm_call": "llm_call_id",
-}
-NEVER_EXPORT_COLUMNS = frozenset({"profile_token_enc", "token_hash"})
+# The export holds every tenant table the login role reads, minus the never-exported ones (keys, vendor secrets, short-
+# lived codes, the audit with its own download): app.portability.tables (AA-967; AA-942 listed 24 tables by hand).
+CANARY = b"crm-offboarding-canary"
 
 OPEN_SQL = """
 SELECT request_id, status, requested_by, owner_accepted_at FROM crm.erasure_request
@@ -128,13 +104,19 @@ UPDATE crm.erasure_request
 FAILURE_SQL = "UPDATE crm.erasure_request SET failure_class = $2 WHERE request_id = $1"
 DOWNLOADED_SQL = "UPDATE crm.erasure_request SET export_downloaded_at = now() WHERE request_id = $1"
 CONFIRM_SQL = "UPDATE crm.erasure_request SET status = 'erasing', confirmed_by = $2 WHERE request_id = $1"
+# AA-967 (crm-026): the confirmation with a cool-off: the erase job waits until erase_not_before; the agency works on.
+SCHEDULE_SQL = """
+UPDATE crm.erasure_request SET confirmed_by = $2, erase_not_before = now() + make_interval(hours => $3)
+ WHERE request_id = $1
+"""
+START_SQL = "UPDATE crm.erasure_request SET status = 'erasing' WHERE request_id = $1"
 TENANT_OFFBOARDING_SQL = "UPDATE crm.tenant SET status = 'offboarding' WHERE tenant_id = $1"
 TENANT_OFFBOARDED_SQL = "UPDATE crm.tenant SET status = 'offboarded' WHERE tenant_id = $1"
 TENANT_BACK_SQL = "UPDATE crm.tenant SET status = 'active' WHERE tenant_id = $1 AND status = 'offboarding'"
 ERASED_SQL = """
 UPDATE crm.erasure_request
    SET status = 'erased', executed_at = now(), keys_destroyed_at = now(), backup_purge_by = $2, receipt = $3::jsonb,
-       failure_class = NULL
+       failure_class = NULL, verified_at = now()
  WHERE request_id = $1
 """
 FAILED_SQL = "UPDATE crm.erasure_request SET status = 'failed', failure_class = $2 WHERE request_id = $1"
@@ -197,6 +179,11 @@ def view(row: Any) -> dict[str, Any] | None:
         "receipt": json.loads(receipt) if isinstance(receipt, str) else dict(receipt),
         "failure_class": row["failure_class"],
         "created_at": ts(row["created_at"]),
+        # AA-967 (crm-026): the confirmed deletion waits until erase_not_before (cool-off; the owner may cancel);
+        # verified_at = the post-erase verification passed.
+        "confirmed": _get(row, "confirmed_by") is not None,
+        "erase_not_before": ts(_get(row, "erase_not_before")),
+        "verified_at": ts(_get(row, "verified_at")),
     }
 
 
@@ -277,8 +264,10 @@ async def download(ctx: TenantContext, vault: Vault, store: DocumentStore | None
 
 
 async def confirm_erase(
-    ctx: TenantContext, request_id: uuid.UUID, *, confirm_tenant_id: uuid.UUID, dry_run: bool
+    ctx: TenantContext, request_id: uuid.UUID, *, confirm_tenant_id: uuid.UUID, dry_run: bool, cool_off_hours: int = 0
 ) -> dict[str, Any]:
+    """The owner's typed confirmation. With ``cool_off_hours`` (AA-967, ``OFFBOARDING_COOL_OFF_HOURS``) the erase job is
+    queued for the end of the cool-off and the agency keeps working (Cancel stays open); without, it starts now."""
     _owner(ctx, "offboarding_erase")
     if confirm_tenant_id != ctx.tenant_id:
         raise Invalid("confirmation_mismatch", "type the agency id to confirm")
@@ -289,6 +278,8 @@ async def confirm_erase(
         raise Conflict("data_request_awaiting", "confirm the request AA raised first")
     if row["status"] not in ("requested", "export_ready"):
         raise Conflict("not_confirmable", f"the request is {row['status']}")
+    if _get(row, "erase_not_before") is not None:
+        raise Conflict("erase_scheduled", "the deletion is already confirmed and waits for its cool-off")
     if row["status"] == "requested" and not row["export_waived"]:
         raise Conflict("export_not_ready", "wait for the export, or waive it")
     if await ctx.conn.fetchval(HOLD_SQL):
@@ -299,6 +290,19 @@ async def confirm_erase(
         raise Conflict(
             "deletion_dry_run", "deletion is switched off on this environment (LIFECYCLE_DRY_RUN)", counts=counts
         )
+    if cool_off_hours > 0:
+        await ctx.conn.execute(SCHEDULE_SQL, request_id, f"member:{ctx.member_id}", cool_off_hours)
+        await jobs.enqueue(
+            ctx.conn,
+            OFFBOARD,
+            {"tenant_id": str(ctx.tenant_id), "request_id": str(request_id), "mode": "erase"},
+            idempotency_key=f"{OFFBOARD}:erase:{request_id}",
+            delay_seconds=cool_off_hours * 3600,
+            max_attempts=MAX_ATTEMPTS,
+            created_by="offboarding",
+        )
+        ctx.audit("offboarding_erase", "allowed", "erasure_request", str(request_id), reason="scheduled")
+        return view(await ctx.conn.fetchrow(REQUEST_SQL, request_id)) or {}
     await ctx.conn.execute(CONFIRM_SQL, request_id, f"member:{ctx.member_id}")
     await ctx.conn.execute(TENANT_OFFBOARDING_SQL, ctx.tenant_id)
     await jobs.enqueue(
@@ -425,22 +429,10 @@ async def accept(ctx: TenantContext, request_id: uuid.UUID, *, export_waived: bo
 
 
 # ── The job ───────────────────────────────────────────────────────────────────────────────────────
-def _json_value(value: Any) -> Any:
-    if isinstance(value, uuid.UUID):
-        return str(value)
-    if isinstance(value, dt.datetime | dt.date):
-        return value.isoformat()
-    if isinstance(value, decimal.Decimal):
-        return str(value)
-    if isinstance(value, bytes | bytearray | memoryview):
-        return base64.b64encode(bytes(value)).decode("ascii")
-    if isinstance(value, list):
-        return [_json_value(v) for v in value]
-    return value
-
-
 async def build_export(ctx: LifecycleContext, vault: Vault) -> bytes:
-    """Every exported table of the agency as JSON lines: a header line, then one line per row."""
+    """Every exported table of the agency as JSON lines: a header line, then one line per row (AA-967: every table
+    of the catalog, :mod:`app.portability.tables`; documents are listed as rows, their files come with the
+    portability ZIP of Settings > Data and privacy)."""
     lines = [
         json.dumps(
             {
@@ -450,21 +442,9 @@ async def build_export(ctx: LifecycleContext, vault: Vault) -> bytes:
             }
         )
     ]
-    for table, key in EXPORT_TABLES.items():
-        if await ctx.conn.fetchval("SELECT to_regclass($1)", f"crm.{table}") is None:
-            continue
-        rows = await ctx.conn.fetch(f"SELECT * FROM crm.{table} ORDER BY {key}")  # noqa: S608 — fixed names
-        for r in rows:
-            out: dict[str, Any] = {}
-            for column, value in r.items():
-                if column.endswith("_bidx") or column in NEVER_EXPORT_COLUMNS:
-                    continue
-                if column.endswith("_enc"):
-                    if value is not None:
-                        out[column[: -len("_enc")]] = await vault.decrypt(table, column, r[key], value)
-                    continue
-                out[column] = _json_value(value)
-            lines.append(json.dumps({"table": table, "row": out}, ensure_ascii=False, sort_keys=True))
+    for table in portability.T.exported(await portability.catalog(ctx)):
+        for row in await portability.table_rows(ctx, vault, table):
+            lines.append(json.dumps({"table": table.name, "row": row}, ensure_ascii=False, sort_keys=True))
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
@@ -505,10 +485,21 @@ async def _erase(
                 return {"request_id": str(request_id), "status": "skipped"}
             if row["status"] == "failed":
                 await ctx.conn.execute(RETRY_SQL, request_id)
-            counts = await erase.erase(ctx, "tenant", tenant_id, dry_run=False, store=store)
+            # AA-967: the agency's portability exports are cancelled with the rows (their objects hold the data; the
+            # rows stay). Every bucket object (exports, documents, the offboarding export) is only collected here and
+            # deleted last, after the erase, the verify and the receipt: a refusal on the way deletes no file.
+            objects: list[str] = []
+            withdrawn = await portability_exports.withdraw(ctx, store, None, dry_run=False, pending=objects)
+            counts = await erase.erase(ctx, "tenant", tenant_id, dry_run=False, store=store, pending=objects)
             if row["export_object_key"] and store is not None:
-                await store.delete(row["export_object_key"])
+                objects.append(row["export_object_key"])
+            # AA-967 verify: a canary sealed under the vault DEK before the crypto-shred must not open after it.
+            vault = Vault(keys, ctx)  # type: ignore[arg-type]
+            canary = await vault.encrypt("erasure_request", "verify_canary", request_id, CANARY)
             destroyed = await keys.destroy(ctx)  # crypto-shred: after the rows, before the commit
+            unreadable = await _canary_unreadable(vault, request_id, canary)
+            if not unreadable:
+                raise Unavailable("verify_failed", "a value sealed before the key destroy still opens")
             now = dt.datetime.now(dt.UTC)
             backup_purge_by = (now + dt.timedelta(days=BACKUP_PURGE_DAYS)).date()
             receipt = {
@@ -517,19 +508,74 @@ async def _erase(
                 "keys_destroyed": destroyed,
                 "dek_cache_expired_by": (now + dt.timedelta(seconds=dek_cache_ttl_s)).isoformat(),
                 "backup_purge_by": backup_purge_by.isoformat(),
-                "kept": ["audit_event", "erasure_request", "lifecycle_run", "legal_hold"],
+                "kept": ["audit_event", "erasure_request", "lifecycle_run", "legal_hold", "export_job", "data_request"],
                 "copies_outside_aa": list(COPIES_OUTSIDE),
+                # AA-967: what the erase job checked before it reported done.
+                "exports_withdrawn": withdrawn,
+                "verify": {
+                    "rows_left": 0,  # crm.erase_subject refuses (CRM16) while a table outside the keep list has a row
+                    "keys_destroyed": destroyed,
+                    "canary_unreadable": unreadable,
+                    "other_tasks_caches_expire_by": (now + dt.timedelta(seconds=dek_cache_ttl_s)).isoformat(),
+                },
             }
             await ctx.conn.execute(ERASED_SQL, request_id, backup_purge_by, json.dumps(receipt))
             await ctx.conn.execute(TENANT_OFFBOARDED_SQL, tenant_id)
             ctx.audit("offboarding_erase", "allowed", "tenant", str(tenant_id), reason="erased")
+            # Last, still before the commit: the bucket objects. A bucket error here is not a refusal (not a
+            # ServiceError): the rows roll back, the agency stays offboarding and the worker retries (a missing
+            # object counts as deleted).
+            try:
+                await erase.delete_objects(store, objects)
+            except ServiceError as exc:
+                raise ObjectsNotDeleted(exc.code) from exc
     except ServiceError as exc:
-        # A refusal of the database (a hold placed after the confirmation, a table the erase does not know): nothing
-        # was deleted (one transaction); the request shows why, the agency is given back (active: the owner reads the
-        # code and cancels) and the job is not retried.
+        # A refusal (a hold placed after the confirmation, a table the erase does not know, a failed verify): it comes
+        # before any object delete, so nothing was deleted (one transaction, the objects are deleted last); the
+        # request shows why, the agency is given back (active: the owner reads the code and cancels) and the job is
+        # not retried.
         await _refused(pool, tenant_id, request_id, exc.code)
     log.info("offboarding_erased tenant_id=%s request_id=%s keys=%d", tenant_id, request_id, destroyed)
     return {"request_id": str(request_id), "status": "erased", "keys_destroyed_count": destroyed}
+
+
+class ObjectsNotDeleted(RuntimeError):
+    """The bucket refused an object delete at the end of an agency erase: retried by the worker, not a refusal."""
+
+
+async def _canary_unreadable(vault: Vault, request_id: uuid.UUID, canary: bytes) -> bool:
+    try:
+        await vault.decrypt_bytes("erasure_request", "verify_canary", request_id, canary)
+    except (KeyDestroyed, DecryptionDenied, UnwrapDenied):
+        return True
+    return False
+
+
+async def _start(pool: asyncpg.Pool, tenant_id: uuid.UUID, request_id: uuid.UUID) -> bool:
+    """AA-967: the end of the cool-off. A request confirmed with ``erase_not_before`` is still ``requested`` /
+    ``export_ready`` and its agency active: move both on (erasing, offboarding). False = nothing to erase (the owner
+    cancelled during the cool-off, or the request was never confirmed). True = erase (just started here, or confirmed
+    without a cool-off: already erasing / failed and the agency offboarding)."""
+    try:
+        async with lifecycle_tx(pool, tenant_id, actor=ACTOR) as ctx:
+            row = await ctx.conn.fetchrow(REQUEST_SQL, request_id)
+            if row is None:
+                return False
+            if row["status"] in ("erasing", "failed"):
+                return True
+            if row["status"] not in ("requested", "export_ready") or _get(row, "confirmed_by") is None:
+                return False
+            not_before = _get(row, "erase_not_before")
+            if not_before is not None and not_before > dt.datetime.now(dt.UTC):
+                raise Unavailable("cool_off_running")  # queued early (clock skew): retried later
+            await ctx.conn.execute(START_SQL, request_id)
+            await ctx.conn.execute(TENANT_OFFBOARDING_SQL, tenant_id)
+            ctx.audit("offboarding_erase", "allowed", "erasure_request", str(request_id), reason="cool_off_ended")
+    except Forbidden:
+        return True  # the agency is already offboarding (a confirmation without a cool-off): the erase decides
+    except NotFound:
+        return False
+    return True
 
 
 async def _refused(pool: asyncpg.Pool, tenant_id: uuid.UUID, request_id: uuid.UUID, code: str) -> NoReturn:
@@ -564,6 +610,9 @@ def build_handler(
         if mode == "export":
             return await _export(pool, tenant_id, request_id, keys, store)
         if mode == "erase":
+            # AA-967: a scheduled (cool-off) confirmation starts here; one cancelled meanwhile erases nothing.
+            if not await _start(pool, tenant_id, request_id):
+                return {"request_id": str(request_id), "status": "skipped"}
             if dry_run:
                 await _refused(pool, tenant_id, request_id, "deletion_dry_run")
             return await _erase(pool, tenant_id, request_id, keys, store, dek_cache_ttl_s)

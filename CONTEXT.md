@@ -7,7 +7,7 @@ status: active
 owner: nghiep
 audience: [engineer, agent]
 applies_to: [aa-crm-api, aa-crm-web, aa-crm-portal]
-last_reviewed: 2026-10-28
+last_reviewed: 2026-10-30
 review_every_days: 90
 related: [ARCH-01, ARCH-06-booking, docs/adr/README.md]
 ---
@@ -40,7 +40,9 @@ dispatcher, legal holds, client erasure and agency offboarding through one delet
 the daily `crm_lifecycle` run in DRY RUN by default, and Settings > Data and privacy; and the **L1 console**
 (AA-941, CRM-13a, `crm-011`): `/crm/ops/v1` for the CIS admin "Agencies (CRM)" page (agency list, usage meters,
 create agency, lock / unlock, first-owner invite, allowed features, insights opt-out, AA-raised export / deletion
-requests the owner confirms, failed-job retry, owner recovery) behind a response key allow-list.
+requests the owner confirms, failed-job retry, owner recovery) behind a response key allow-list; and **Module 18 portability and deletion** (AA-967, CRM-35, `crm-026`): the
+portability ZIP export (agency or one client) as a `crm.job` with progress and a single-use owner download link, the
+data-request log, the verified client erasure receipt, and the agency deletion's cool-off and post-erase verification.
 
 > Read this file before designing or changing anything here (AA-Ecosys steering, "CONTEXT.md first"). Change it in the
 > same PR when a boundary, owner, route class or the stack changes.
@@ -274,6 +276,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-023` | `api/migrations/023_crm_dispatch_attempt.sql` | AA-993 G4b, the `crm_dispatch` send marker (needs crm-022; contract class under ADR 0017: it widens `dispatch_queue_gate_chk` and replaces `erase_subject`): `crm.dispatch_attempt` (base template; one row per dispatcher run that passed the gate, committed before the provider call; `decided_at` + `outcome` sent / held_reconnect / no_message / send_failed / retry / not_sent / send_uncertain; at most one open per dispatch row, `dispatch_attempt_open_uq`; closed once, `crm.guard_dispatch_attempt()` CRM38; `crm_app` SELECT, INSERT, UPDATE (decided_at, outcome)); gate code `send_uncertain`; `crm.erase_subject` = the crm-022 text + `dispatch_attempt` before `dispatch_queue` (a later key starts from the crm-023 text; next CRM39) |
 | `crm-024` | `api/migrations/024_crm_invoices_payments.sql` | AA-952 CRM-23 slices 2-3, invoices and payments (needs crm-023; contract class: new constraints on `crm.payment` / `crm.tenant_settings`, `crm.status_transition` rows, replaced `erase_subject`): `tenant_settings` invoice settings (`invoice_prefix` INV, `invoice_tax_label` / `invoice_tax_rate` / `invoice_tax_inclusive`, `invoice_due_days` 7, `service_fee_enabled` false); `crm.invoice_sequence` (gapless +1 under the row lock, CRM40); `crm.invoice` (kind deposit / balance from a schedule row, always tax-inclusive / service_fee / adjustment; draft -> open (number `<prefix>-<6+ digits>`, issue + due date) -> paid, draft / open -> void with a reason; one live invoice per schedule row; sealed once issued CRM31; the issue checks the charge lines against the totals CRM39; the Fix A8 states payment_claimed / paid_unfulfillable / expired exist, unused); `crm.invoice_line` (charge = quantity x unit amount, included = a title snapshot of the trip's agency / AA lines without price; draft only, CRM39); `crm.payment` + `invoice_id`, `provider` manual / stripe / vn_gateway, `provider_ref`, `entry_kind` payment / refund, `refund_of`; `schedule_id` nullable, `payment_schedule_once_uq` partial (payments without an invoice); `crm.refund_request` (proposed -> approved / rejected -> executed, sealed CRM31); `crm.payment_provider_account` (the agency's own methods, one active per provider, manual = pay-by instructions; no secret); `crm.erase_subject` = the crm-023 text + refund_request, invoice_line, invoice (trip and agency scopes), payment_provider_account, invoice_sequence (agency scope) (a later key starts from the crm-024 text; next CRM41) |
 | `crm-025` | `api/migrations/025_crm_contracts_waivers.sql` | CRM-25 Module 12 e-sign v1 (AA-955; needs crm-024; contract class under ADR 0017: a widened CHECK, a replaced key and sealed trigger, replaced `crm.erase_subject` (the crm-024 text) and `crm.lifecycle_purge_expired` (the crm-018 text)): `agreement_doc.kind` + `insurance_declination` (R13); `signature_request` + the envelope (`signer_traveler_id` / `signer_role` self or guardian, generated `access_traveler_id` naming the signing access, terms and declination versions with their SHA-256, `insurance_choice`, `envelope_sha256`, `seal_alg`; sealed once signed); `terms_acceptance` and `signature_event` (append-only, `crm.ledger_append_only`; no foreign key on trip / proposal / traveller / request: the DM-7 claim-period exception keeps them through a trip or traveller erasure until `keep_until` = trip end + 3 years, then `crm.lifecycle_purge_expired` deletes them, never a held row; the agency erase takes them; the receipt counts `*_kept`) |
+| `crm-026` | `api/migrations/026_crm_portability_requests.sql` | CRM-35 Module 18 (AA-967; needs crm-025, contract class): `crm.export_job` (base template; one portability export of the agency or of one client: queued -> building (progress) -> ready -> expired / cancelled, or failed; object `exports/tenants/<tenant>/portability/<export>.zip.enc`, its and the ZIP's SHA-256, size, row counts, the single-use download link's SHA-256 + expiry; one open export per subject) and `crm.data_request` (base template; the agency's data-request log: kind, channel, client id without foreign key, received / due (<= +92 days), open -> extended -> done / refused / withdrawn + outcome, the erasure receipt); both crm_app SELECT / INSERT / UPDATE, no reader grant, and both on the agency erase keep list (receipts without personal data); `crm.erasure_request.erase_not_before` (the deletion cool-off) and `verified_at`, `UNIQUE (tenant_id, request_id)`; `crm.erase_subject` = the crm-025 text + the two keep-list names. No new SQLSTATE |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -313,6 +316,7 @@ queued / running rows as information, exempt kinds left out). Daily or slower ki
 | `crm_booking_sync` | 60 s, Recurring, plus a one-agency nudge per AA request (payload `tenant_id`, `aa_request_id`) | AA-947: sends the due `crm.aa_request` rows of every active agency to Booking (`<BOOKING_API_URL>/booking/b2b/v1`, one M2M scope per call; holds / confirms with a stable `Idempotency-Key`), applies the answers (line, money at the quote lock, `trip_commitment`, `waiting_on`), keeps a request pending with a backoff while Booking is down, then pulls the agency's `/events` into `crm.inbox_events` (section "CRM-19"). Deploy-gate exempt and DB Migrate idle exempt (Infra `owners.yaml`), like the membership pull; `not_configured` without `BOOKING_API_URL` / `M2M_CLIENT` |
 | `crm_catalog_sync` | hourly, due-now hook (`app.catalog.sync.HourlyCatalogSync`, key per UTC hour) | AA-947: refreshes `crm.aa_catalog_tour` from `<CIS_API_URL>/catalog/v1` (scope `cis.catalog/read`): full passes comparing `content_hash`, a changed tour fetched with `If-None-Match`, tours no longer listed re-checked (410 retired, 404 paused); bounded per run, the pass continues next run; a CIS failure backs off. AA-951: after the tour pass, `crm.aa_content` from `/aa-content` (prep packs, starter templates; a body fetched only when version or hash changed, at most 60 a run; items CIS no longer lists unlisted after a complete list); a content failure is counted (`content_error_count`), never fatal. Not deploy-gate exempt |
 | `crm_studio_activation` | per accepted Content studio invitation (queued in the accept transaction, idempotency key per invitation, 12 attempts) | AA-979: CIS `tenant.membership.v1` 1.1 `activateInvitation` with an M2M token of scope `cis.tenant/activate` (`app/members/studio.py`, `app/cis/activation.py`); a CIS outage / 5xx / 401 / 403 retries with backoff, a CIS 404 / 409 fails it permanently with the code on the row. Not deploy-gate exempt |
+| `crm_data_export` | per owner request (queued in the request's transaction, idempotency key per export, 3 attempts) | AA-967: builds one portability ZIP (`app/portability/builder.py`: every tenant table of the catalog minus the never-exported ones as JSON + CSV, the documents and `documents/manifest.csv`, `manifest.json` with the schema version, `SHA256SUMS`), progress per step in its own short transaction, sealed under the agency `export` DEK into the documents bucket, then `ready` (`app/portability/exports.py`). A coded refusal fails the row at once, an outage retries, the last attempt fails it `export_error`. Not deploy-gate exempt |
 | `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
 
 ## CI and release
@@ -1244,19 +1248,49 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   A hold placed by `platform:*` is released only by `platform:*`; a hold is never deleted nor trashed (its trash
   columns stay NULL), it only moves to released.
 - **Erasure** (`POST /travelers/{id}/erasure`, owner): dry run by default; a real run bypasses the trash and leaves an
-  `erasure_request` receipt (backup_purge_by = +30 days). CRM-35 (AA-967) adds partial erasure with the signed-agreement
-  and accounting exceptions and the data-request log.
-- **Offboarding** (`/lifecycle/offboarding`, owner; `app/lifecycle/offboarding.py`): request (dry-run counts) -> export
-  job (JSON lines, personal fields decrypted, indexes / F2 pointer / secrets left out, sealed with the agency `export`
-  DEK, documents bucket `exports/tenants/<tenant>/<request>.jsonl.enc`, 7-day bucket rule) -> download (audited) ->
-  typed confirmation (the agency id) -> agency `offboarding` -> erase job: `erase_subject('tenant')`, objects deleted,
-  `KeyProvider.destroy` (crypto-shred; other tasks' DEK caches expire within `DEK_CACHE_TTL_SECONDS`, stated on the
-  receipt), agency `offboarded`. The audit and its export registry / chain stay (AA-940 offboarding path). An erase
+  `erasure_request` receipt (backup_purge_by = +30 days). AA-967 (`app/portability/subject.py`): the dry run also
+  answers what is kept (crm-025 signed evidence, `*_kept`), the exceptions (`signed_agreements_claim_period`,
+  `accounting_records`) and the exports it would withdraw. A logged data request (`data_request_id`) is locked and
+  checked first: open, kind `erasure`, about this client or none yet (409 `data_request_closed` /
+  `data_request_not_erasure` / `data_request_other_client`). A real run withdraws the agency's and the client's
+  exports, erases, **verifies** (the same erase as a dry run must answer `subject_not_found`, else 503
+  `verify_failed` and nothing is kept), writes the receipt (format 2: counts, kept, exceptions, exports withdrawn,
+  backup_purge_by, copies outside AA, verify) with `verified_at`, closes the logged request, and only then deletes the
+  bucket objects (the export ZIPs, the client's documents): a refusal on the way deletes no file (`pending=` on
+  `exports.withdraw` / `erase.erase`, then `erase.delete_objects`).
+- **Offboarding** (`/lifecycle/offboarding`, owner; `app/lifecycle/offboarding.py`): request (dry-run counts, shown as
+  the deletion report) -> export job (JSON lines format 2: every table of the catalog as the portability ZIP has them,
+  `app/portability/tables.py`, personal fields decrypted, indexes / F2 pointer / secrets left out, sealed with the
+  agency `export` DEK, documents bucket `exports/tenants/<tenant>/<request>.jsonl.enc`, 7-day bucket rule) -> download
+  (audited) -> typed confirmation (the agency id) -> **cool-off** (AA-967: `OFFBOARDING_COOL_OFF_HOURS`, default 72;
+  `erase_not_before` + `confirmed_by`, the erase job queued for that time; the agency works as usual and the owner may
+  cancel; 0 = the AA-942 immediate start) -> agency `offboarding` -> erase job: the portability exports withdrawn,
+  `erase_subject('tenant')`, a canary sealed under the vault DEK, `KeyProvider.destroy` (crypto-shred;
+  other tasks' DEK caches expire within `DEK_CACHE_TTL_SECONDS`, stated on the receipt), the canary must no longer open
+  (else 503 `verify_failed`: rolled back, the request `failed`), the receipt's `verify` block + `verified_at`, agency
+  `offboarded`, and last the bucket objects (documents, offboarding export, portability exports; a bucket error there
+  is retried by the worker, not a refusal). The audit and its export registry / chain stay (AA-940 offboarding path). An erase
   the database refuses (a hold placed after the confirmation, CRM16) deleted nothing: the request is `failed`, the
   agency is `active` again and the owner cancels the request. An erase job that meets DRY RUN (switched on after the
   confirmation) is handled the same way (`failed` / `deletion_dry_run`).
 - **DRY RUN**: `LIFECYCLE_DRY_RUN` (default true) makes the daily run count only and every owner erasure / offboarding
   erase answer 409 `deletion_dry_run` with the counts.
+- **Portability exports** (AA-967, `/crm/v1/data/exports`, `app/portability/`, web Settings > Data and privacy "Export
+  your data"): owner only (matrix `agency_export` / `client_export` / `data_settings`, plus the service's owner check
+  with a committed `denied` event). Request (whole agency or one client) -> `crm_data_export` -> `ready` with the ZIP's
+  SHA-256 shown on the page -> `POST .../link` (a random token, only its SHA-256 stored, 5 minutes, single use) ->
+  `GET .../download?token=` (both digests checked, `application/zip`, `X-Content-SHA256`; audited `export_download`;
+  a used / late / wrong token 403 `link_invalid`) -> expired after 7 days (410 `export_expired`). AA staff never
+  download: the route class AGENCY answers every AA token 403 and the L1 console only raises requests (AA-941). A client
+  export takes at least what the traveller erase reaches (`tables.CLIENT_WHERE` = its WHERE clauses; a unit test
+  compares them with the latest `erase_subject`): the rows that name the client (`traveler_id`), the F2 profile rows
+  (by token), both relation ends, guardian signatures, the proposal acceptance (those columns only), call slots of
+  their submissions, dispatch attempts, their conversations' messages, plus the kept signed evidence and their trips.
+  Documents up to 25 MiB per export (the ZIP is built in memory in the 512 MB API task; the rest is listed
+  `skipped_size_cap`).
+- **Data-request log** (AA-967, `/crm/v1/data/requests`, `app/portability/requests.py`): the agency logs what its
+  clients ask (kind, channel, client, received, due = +30 days by default, up to +92), answers with a client export or
+  erasure from the same row, extends, closes with an outcome. Codes and dates only; kept like the receipts.
 - **Backups (V1)**: AA-CIS-Infra's snapshot expiry function publishes the oldest backup copy per instance; an alarm
   fires above 30 days (`rds_snapshot_expiry.tf`, AA-942).
 
@@ -1352,7 +1386,7 @@ audit export (AA-940) `AUDIT_BUCKET_COMPLIANCE` / `AUDIT_BUCKET_GOVERNANCE` (bot
 `SES_FROM_ADDRESS`, `SES_CONFIGURATION_SET`, `INVITATION_TTL_HOURS` (default 168), `RATE_LIMIT_CLAIM_PER_MINUTE`
 (default 10), and the F3 guardrail (AA-938) `SCRUB_GUARDRAIL_ID`, `SCRUB_GUARDRAIL_VERSION`,
 `SCRUB_GUARDRAIL_REGION`, `SCRUB_DETECTOR_TIMEOUT_MS`, and the data lifecycle (AA-942) `LIFECYCLE_DRY_RUN` (default
-true), and the FX source (AA-944) `FX_PROVIDER` (`synthetic` by default on dev / test / local, `live` on stg / prod;
+true) and (AA-967) `OFFBOARDING_COOL_OFF_HOURS` (default 72, 0..720; not set on Dev: the default applies), and the FX source (AA-944) `FX_PROVIDER` (`synthetic` by default on dev / test / local, `live` on stg / prod;
 not set on Dev today), the CIS membership feed (AA-978) `CIS_API_URL` (the CIS API origin) and `M2M_CLIENT` (secret
 `aa-crm/<env>/m2m-booking-client`, the JSON `{client_id, client_secret, token_url, scopes}`; either empty = the pull
 logs `not_configured`; AA-947: the same client asks `cis.catalog/read` for the catalog cache and `booking.b2b/*` for
