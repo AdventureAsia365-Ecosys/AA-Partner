@@ -65,7 +65,8 @@ async def test_perform_quote_hold_confirm_release_refresh() -> None:
     assert body["lines"][0]["nights"] == 2 and body["lines"][0]["departure_id"] == "d1"
     held = await sync.perform(client, TENANT, _work("hold"))
     assert held.hold.hold_id == "h1" and held.code == "held"
-    booked = await sync.perform(client, TENANT, _work("confirm", bk_hold_id="h1"))
+    held_hash = fake.holds["h1"]["price_hash"]  # contract 1.2: the confirm presents the held quote's hash
+    booked = await sync.perform(client, TENANT, _work("confirm", bk_hold_id="h1", aa_price_hash=held_hash))
     assert booked.booking.trip_case_code == "TC-0001" and booked.code == "on_request"
     refreshed = await sync.perform(client, TENANT, _work("refresh", bk_hold_id="h1"))
     assert refreshed.hold.status == "confirmed"

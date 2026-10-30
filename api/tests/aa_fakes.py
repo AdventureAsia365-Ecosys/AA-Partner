@@ -84,6 +84,14 @@ class FakeBooking:
     # the answer (e.g. the process dies between the release and ``POST /holds``).
     on_release: Callable[[], Awaitable[None]] | None = None
     confirm_line_status: str = "on_request"
+    # AA-952 (contract 1.2): a hold answer carries the quote it holds (``price_hash``, ``currency``, ``fx``, each line's
+    # ``b2b_price``) unless ``hold_quote_fields`` is False (a Booking still on 1.1). ``confirm_refusal``: the next
+    # confirms answer this contract error. A confirm checks the hold (expired / released: 410 ``hold_expired``) and
+    # the presented hash, and answers every line of the hold.
+    hold_quote_fields: bool = True
+    confirm_refusal: str | None = None
+    quote_answers: dict[str, dict[str, Any]] = field(default_factory=dict)
+    confirm_keys: list[str] = field(default_factory=list)  # the Idempotency-Key of every confirm call
     calls: Counter[str] = field(default_factory=Counter)
     holds: dict[str, dict[str, Any]] = field(default_factory=dict)
     hold_keys: dict[str, str] = field(default_factory=dict)
@@ -168,7 +176,7 @@ class FakeBooking:
                                  "departure_id": None})  # fmt: skip
             self.quote_seats[f"q{self.quotes}"] = {line["line_ref"]: _seats(line) for line in data["lines"]}
             total = str(sum(Decimal(a["b2b_price"]["amount"]) for a in answered))
-            return _resp(201, {
+            self.quote_answers[f"q{self.quotes}"] = answer = {
                 "quote_id": f"q{self.quotes}",
                 "currency": data["currency"],
                 "fx": {"base_currency": "USD", "quote_currency": data["currency"], "rate_per_usd": self.currency_rate,
@@ -178,7 +186,8 @@ class FakeBooking:
                 "lines": answered,
                 "total_b2b_price": {"amount": total, "currency": data["currency"]},
                 "x_future_field": True,
-            })  # fmt: skip
+            }  # fmt: skip
+            return _resp(201, answer)
         if method == "GET" and path == "/price-parity":
             amount = {"amount": self.from_price, "currency": query["currency"]} if self.from_price else None
             return _resp(200, {"tour": {"source_system": "cis", "source_id": query["source_id"]},
@@ -218,6 +227,19 @@ class FakeBooking:
                 "extended_count": 0,
                 "lines": [{"line_ref": data["proposal_ref"].removeprefix("crm-line:"), "line_status": "available"}],
             }  # fmt: skip
+            quoted = self.quote_answers.get(data["quote_id"])
+            if quoted is not None:
+                # The hold holds every line of its quote (one line for an AA line's own quote, crm-line:<id>).
+                self.holds[hold_id]["lines"] = [
+                    {"line_ref": q["line_ref"], "line_status": "on_request" if q["availability"] == "on_request"
+                     else "available", "b2b_price": q["b2b_price"]} for q in quoted["lines"]
+                ]  # fmt: skip
+                if self.hold_quote_fields:
+                    self.holds[hold_id].update(price_hash=quoted["price_hash"], currency=quoted["currency"],
+                                               fx=quoted["fx"])  # fmt: skip
+            if not self.hold_quote_fields:
+                for line in self.holds[hold_id]["lines"]:
+                    line.pop("b2b_price", None)
             return _resp(201, self.holds[hold_id])
         if path.startswith("/holds/"):
             parts = path.split("/")
@@ -225,6 +247,8 @@ class FakeBooking:
             if hold is None:
                 return _resp(404, {"error": "not_found", "message": "unknown hold"})
             if method == "GET":
+                if hold.get("status") == "active" and datetime.fromisoformat(hold["expires_at"]) <= datetime.now(UTC):
+                    return _resp(200, {**hold, "status": "expired"})  # as Booking reads it
                 return _resp(200, hold)
             if method == "DELETE":
                 if hold["status"] == "confirmed":
@@ -232,13 +256,25 @@ class FakeBooking:
                 hold["status"] = "released"
                 return _resp(204)
             if method == "POST" and parts[-1] == "confirm":
+                self.confirm_keys.append(key or "")
                 booking = self.bookings.get(hold["hold_id"])
                 if booking is None:
+                    if self.confirm_refusal:
+                        status = {"hold_expired": 410, "price_changed": 409}.get(self.confirm_refusal, 422)
+                        return _resp(status, {"error": self.confirm_refusal, "message": "refused"})
+                    gone = hold["status"] in ("expired", "released") or (
+                        hold["status"] == "active" and datetime.fromisoformat(hold["expires_at"]) <= datetime.now(UTC)
+                    )
+                    if gone:
+                        return _resp(410, {"error": "hold_expired", "message": "place a new hold"})
+                    if "price_hash" in hold and data.get("price_hash") != hold["price_hash"]:
+                        return _resp(409, {"error": "price_changed", "message": "not the quote's hash"})
                     hold["status"] = "confirmed"
                     booking = {
                         "booking_id": f"b-{hold['hold_id']}", "hold_id": hold["hold_id"],
                         "trip_case_code": f"TC-{len(self.bookings) + 1:04d}",
-                        "lines": [{"line_ref": hold["lines"][0]["line_ref"], "status": self.confirm_line_status}],
+                        "lines": [{"line_ref": x["line_ref"], "status": self.confirm_line_status}
+                                  for x in hold["lines"]],
                     }  # fmt: skip
                     self.bookings[hold["hold_id"]] = booking
                 return _resp(201, booking)

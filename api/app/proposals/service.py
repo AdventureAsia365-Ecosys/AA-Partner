@@ -647,6 +647,11 @@ async def mark_paid(
                                  "waiting_on": moved["waiting_on"]}  # fmt: skip
         out["portal"] = await access.invite_all(ctx, row["trip_id"])
         await stages.refresh_waiting_on(ctx, row["trip_id"])
+        # AA-952: the deposit is in: the Booking sync confirms the accepted AA hold set (when there is one). Imported
+        # here: app.booking.proposal_lines reads the builder, which imports this module.
+        from app.booking import proposal_lines
+
+        await proposal_lines.nudge(ctx, f"deposit:{schedule_id}")
     await stages.touch(ctx, row["trip_id"])
     return out
 
