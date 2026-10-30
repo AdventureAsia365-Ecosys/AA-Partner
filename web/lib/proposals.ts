@@ -86,9 +86,18 @@ export interface LifecycleView {
   portal: { s3: number; waiver_required: boolean; travellers: TravellerProgress[] };
 }
 
+export type AgreementKind = "booking_terms" | "waiver" | "insurance_declination";
+export const AGREEMENT_KINDS: readonly AgreementKind[] = ["booking_terms", "waiver", "insurance_declination"];
+
+/** A merge field an agreement text may hold (``{{name}}``), filled in at signing (AA-955). */
+export interface MergeField {
+  name: string;
+  description: string;
+}
+
 export interface Agreement {
   doc_id: string;
-  kind: "booking_terms" | "waiver";
+  kind: AgreementKind;
   version_label: string;
   status: "draft" | "published" | "retired";
   body_text: string;
@@ -118,6 +127,8 @@ export interface PublicProposal {
   balance_amount: string;
   balance_due_on: string | null;
   terms: { doc_id: string; version_label: string; body_text: string } | null;
+  /** AA-955: newer booking terms the client must accept before the deposit (accepted proposals only). */
+  terms_reaccept?: { doc_id: string; version_label: string; body_text: string; body_sha256: string } | null;
   price_hash: string;
   accepted_at: string | null;
   schedule: { kind: "deposit" | "balance"; amount: string; currency: string; due_on: string; status: ScheduleStatus }[];
@@ -133,6 +144,93 @@ export interface PortalHome {
   waiver?: { doc_id: string; version_label: string; body_text: string; body_sha256: string; signed: boolean; signed_at: string | null } | null;
   party?: { role: string; details_done: boolean; waiver_signed: boolean | null; me: boolean }[];
   payments?: { kind: "deposit" | "balance"; amount: string; currency: string; due_on: string; status: ScheduleStatus }[];
+  /** AA-955 (e-sign v1): the envelope documents and the envelopes this traveller signs (theirs, and a minor's as guardian). */
+  agreements?: PortalAgreements | null;
+}
+
+export interface EnvelopeDoc {
+  kind: AgreementKind;
+  doc_id: string;
+  version_label: string;
+  body_text: string;
+  body_sha256: string;
+}
+
+export interface PortalEnvelope {
+  traveler_id: string;
+  for: "self" | "minor";
+  minor_number: number | null;
+  signed: boolean;
+  signed_at: string | null;
+  signer_role: "self" | "guardian" | null;
+  insurance_choice: "insured" | "declined" | null;
+}
+
+export interface PortalAgreements {
+  documents: EnvelopeDoc[];
+  insurance_declination: EnvelopeDoc | null;
+  envelopes: PortalEnvelope[];
+  guardian_signs_for_me: boolean;
+}
+
+export type InsuranceChoice = "insured" | "declined";
+
+/** The body of POST /portal/<token>/sign: every document of the envelope exactly as shown (the declination only when
+ * the traveller declines insurance), the insurance choice when the agency asks it, and the minor signed for. */
+export function signBody(
+  box: PortalAgreements,
+  envelope: PortalEnvelope,
+  input: { code: string; fullName: string; agree: boolean; insurance: InsuranceChoice | null },
+): Record<string, unknown> {
+  const docs = [...box.documents];
+  if (input.insurance === "declined" && box.insurance_declination) docs.push(box.insurance_declination);
+  const body: Record<string, unknown> = {
+    code: input.code.trim(),
+    full_name: input.fullName,
+    agree: input.agree,
+    documents: docs.map((d) => ({ doc_id: d.doc_id, doc_sha256: d.body_sha256 })),
+  };
+  if (box.insurance_declination) body.insurance = input.insurance;
+  if (envelope.for === "minor") body.traveler_id = envelope.traveler_id;
+  return body;
+}
+
+/** The trip's signed documents (GET /crm/v1/trips/<id>/agreements). */
+export interface TripAgreements {
+  trip_id: string;
+  waiver_required: boolean;
+  all_signed: boolean;
+  travellers: {
+    traveler_id: string;
+    role: string;
+    waiver_signed: boolean | null;
+    signature: {
+      request_id: string;
+      signed_at: string;
+      signer_role: "self" | "guardian";
+      signer_traveler_id: string | null;
+      insurance_choice: InsuranceChoice | null;
+      envelope_sha256: string | null;
+      seal_alg: string | null;
+      with_terms: boolean;
+      with_declination: boolean;
+    } | null;
+  }[];
+  terms: {
+    published: { doc_id: string; version_label: string } | null;
+    reaccept_required: boolean;
+    acceptances: { acceptance_id: string; source: "proposal" | "reaccept" | "envelope"; version_label: string; accepted_at: string }[];
+  };
+  events: { traveler_id: string; kind: "code_sent" | "code_refused" | "signed"; reason: string | null; occurred_at: string }[];
+}
+
+/** POST /crm/v1/signatures/<id>/envelope */
+export interface SealedEnvelope {
+  request_id: string;
+  envelope_text: string;
+  envelope_sha256: string;
+  signed_at: string;
+  seal: { alg: string; key_ref: string; value_b64: string; verified: boolean | null };
 }
 
 /** The signed link token of a client page (43 characters, URL-safe base64). */
@@ -168,6 +266,8 @@ const ERROR_CODES = new Set([
   "assigned_only",
   "proposal_not_published",
   "proposal_not_sent",
+  "terms_reaccept_required",
+  "unknown_merge_field",
 ]);
 
 /** The i18n key of an API refusal code on the agency side (proposal.error.<code>, else a generic one). */
@@ -188,6 +288,11 @@ const PUBLIC_CODES = new Set([
   "stage3_locked",
   "document_changed",
   "nothing_to_sign",
+  "guardian_signs",
+  "not_guardian",
+  "esign_not_configured",
+  "seal_unavailable",
+  "nothing_to_accept",
   "invalid_submission",
   "origin_not_allowed",
   "rate_limited",

@@ -6,7 +6,8 @@
 // price_changed: the page reloads the new version). After acceptance the deposit / balance schedule shows.
 // AA-950 (card CRM-21b): the page reads /crm/public/v1/proposal with the host-only link cookie the /c/p/<token> landing
 // set (Fix B11; same-origin credentials, the token never reaches page script); a day-by-day version renders
-// ClientBuilderProposal (C-03 Keep / Swap, C-04 hold + accept, C-12).
+// ClientBuilderProposal (C-03 Keep / Swap, C-04 hold + accept, C-12). AA-955: an accepted page with newer booking
+// terms shows TermsReaccept (re-accept before the deposit).
 import { useEffect, useState } from "react";
 import { K } from "@/app/_kit";
 import { formatDate, type DateLocale } from "@/lib/dates";
@@ -14,6 +15,7 @@ import { fmt, type MessageKey } from "@/lib/i18n";
 import { isBuilderPage, PROPOSAL_API, type AnyClientPage } from "@/lib/clientProposal";
 import { clientErrorKey, formatAmount, type PublicProposal } from "@/lib/proposals";
 import { ClientBuilderProposal } from "./ClientBuilderProposal";
+import { TermsReaccept } from "./TermsReaccept";
 
 type Load = { state: "loading" } | { state: "ready"; page: AnyClientPage } | { state: "failed"; status: number };
 
@@ -126,6 +128,7 @@ export function ProposalPage({ dict, locale }: { dict: Partial<Record<MessageKey
               })}
             </p>
           ))}
+          {page.terms_reaccept && <TermsReaccept terms={page.terms_reaccept} agency={page.agency_name} t={t} onDone={() => setRound((r) => r + 1)} />}
         </div>
       ) : (
         <form

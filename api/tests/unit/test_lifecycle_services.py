@@ -740,59 +740,7 @@ async def test_stage3_writes_the_f1_fields(monkeypatch: pytest.MonkeyPatch) -> N
     assert conn.sql("SET stage3_submitted_at = now()") == [(ACCESS,)]
 
 
-def _sign_conn(**over: Any) -> ScriptedConn:
-    conn = _signed_in(ScriptedConn()).on("crm.portal_unlocked", True)
-    conn.on("SELECT doc_id, version_label, body_text, body_sha256 FROM crm.agreement_doc",
-            over.get("waiver", {"doc_id": DOC, "body_sha256": b"\x01" * 32}))  # fmt: skip
-    conn.on("FROM crm.signature_request WHERE trip_id", over.get("signature"))
-    conn.on("ORDER BY created_at DESC LIMIT 1", over.get("code"))
-    conn.on("SELECT now()", NOW)
-    return conn
-
-
-SIGN = {"code": "654321", "full_name": "Grace Lee", "agree": True, "doc_id": str(DOC), "doc_sha256": "01" * 32}
-
-
-@pytest.mark.asyncio
-async def test_sign_refusals(monkeypatch: pytest.MonkeyPatch) -> None:
-    with _raises(Invalid, "invalid_submission"):
-        await portal.sign(object(), object(), ECHO, TOKEN, "s", ["x"], origin=None)  # type: ignore[arg-type]
-    with _raises(Invalid, "invalid_submission") as err:
-        await portal.sign(object(), object(), ECHO, TOKEN, "s", {**SIGN, "agree": False, "full_name": 7}, origin=None)  # type: ignore[arg-type]
-    assert err.value.extra["fields"] == ["full_name", "agree"]
-    _portal(monkeypatch, _sign_conn(waiver=None))
-    with _raises(Conflict, "nothing_to_sign"):
-        await portal.sign(object(), object(), ECHO, TOKEN, "s", SIGN, origin=None)  # type: ignore[arg-type]
-    _portal(monkeypatch, _sign_conn())
-    with _raises(Conflict, "document_changed"):
-        await portal.sign(object(), object(), ECHO, TOKEN, "s", {**SIGN, "doc_sha256": "02" * 32}, origin=None)  # type: ignore[arg-type]
-    _portal(monkeypatch, _sign_conn(signature={"request_id": uuid.uuid4(), "status": "signed", "signed_at": NOW}))
-    assert (await portal.sign(object(), object(), ECHO, TOKEN, "s", SIGN, origin=None))[1]["status"] == "already_signed"  # type: ignore[arg-type]
-    _portal(monkeypatch, _sign_conn())
-    signed, refusal = await portal.sign(object(), object(), ECHO, TOKEN, "s", SIGN, origin=None)  # type: ignore[arg-type]
-    assert not signed and refusal["detail"] == "code_invalid"
-
-
-@pytest.mark.asyncio
-async def test_sign_records_the_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
-    code = {"otp_id": OTP, "code_hash": portal.code_hash(OTP, "654321"), "attempts": 0, "expired": False,
-            "delivery": "mailbox"}  # fmt: skip
-    conn = _sign_conn(code=code)
-    _portal(monkeypatch, conn)
-    evidence: list[dict[str, Any]] = []
-    real = portal.evidence_record
-    monkeypatch.setattr(portal, "evidence_record", lambda **parts: evidence.append(parts) or real(**parts))
-    signed, answer = await portal.sign(object(), object(), ECHO, TOKEN, "s", SIGN, origin=None)  # type: ignore[arg-type]
-    assert signed and answer == {"status": "signed", "signed_at": NOW.isoformat()}
-    assert evidence[0]["code_delivery"] == "mailbox" and evidence[0]["otp_id"] == str(OTP)
-    request_id = conn.sql("INSERT INTO crm.signature_request")[0][0]
-    sign = conn.sql("SET status = 'signed', signed_at")[0]
-    assert sign[0] == request_id and sign[3] == b"\x01" * 32 and len(sign[4]) == 32 and sign[5] == OTP
-    # The delivery and the exact hashed record are stored too (re-review S251): re-verifiable after the code purge.
-    assert sign[6] == "mailbox" and hashlib.sha256(sign[7]).digest() == sign[4]
-    assert json.loads(sign[7])["code_delivery"] == "mailbox" and "Grace" not in sign[7].decode()
-    assert conn.sql("consumed_at = now()") == [(OTP,)]
-    assert conn.sql("'signature', 'signed'")[0][1] == f"signature:{request_id}"
+# The e-sign v1 signing tests (AA-955) are in tests/unit/test_esign.py.
 
 
 @pytest.mark.asyncio
@@ -870,9 +818,29 @@ async def test_accept_outcomes(monkeypatch: pytest.MonkeyPatch) -> None:
         await proposal_page.accept(object(), object(), PLAIN, TOKEN, {**ACCEPT, "terms_doc_id": None}, origin=None)  # type: ignore[arg-type]
     conn = ScriptedConn().on("WHERE p.link_id = $1", _page_row()).on("RETURNING accepted_at", NOW)
     conn.on("AT TIME ZONE", TODAY)
+    conn.on("FROM crm.agreement_doc WHERE doc_id = $1", {"doc_id": DOC, "version_label": "v1", "body_text": "T",
+                                                         "body_sha256": b"\x01" * 32})  # fmt: skip
+    conn.on("INSERT INTO crm.terms_acceptance", uuid.uuid4())
     _portal(monkeypatch, conn, proposal_page, "proposal")
-    out = await proposal_page.accept(object(), object(), PLAIN, TOKEN, ACCEPT, origin=None)  # type: ignore[arg-type]
-    assert out == {"status": "accepted", "accepted_at": NOW.isoformat()}
+    out = await proposal_page.accept(
+        object(),
+        object(),
+        PLAIN,
+        TOKEN,
+        ACCEPT,
+        origin=None,
+        client_ip="192.0.2.7",
+        user_agent="Test/1",  # type: ignore[arg-type]
+    )
+    assert out == {"status": "accepted", "accepted_at": NOW.isoformat(), "terms_reaccept_required": False}
+    # AA-955 (R34): the acceptance pinned to the terms version, its hash and the price hash, with the evidence.
+    (acc,) = conn.sql("INSERT INTO crm.terms_acceptance")
+    assert acc[6] == "proposal" and acc[7] == DOC and acc[8] == b"\x01" * 32 and acc[9] == b"\x01" * 32
+    assert acc[2] == PROPOSAL and acc[4] == LINK and acc[11].startswith(b"enc:terms_acceptance.client_ip_enc")
+    record = json.loads(acc[13])
+    assert record["source"] == "proposal" and record["price_hash"] == "01" * 32 and "Grace" not in acc[13].decode()
+    assert record["client_ip_sha256"] == hashlib.sha256(b"192.0.2.7").hexdigest()
+    assert hashlib.sha256(acc[13]).digest() == acc[14]
     rows = conn.sql("INSERT INTO crm.payment_schedule")
     assert [(r[2], r[3]) for r in rows] == [("deposit", Decimal(300)), ("balance", Decimal(700))]
     assert conn.sql("'collect_deposit'") and conn.sql("SET status = 'submitted'") == [(LINK,)]

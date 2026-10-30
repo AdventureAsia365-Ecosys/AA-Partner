@@ -21,7 +21,14 @@ origin (no CORS) and the per-address limits key on the real visitor.
 - ``POST /crm/public/v1/portal/{token}/sign-out``: ends the session and clears the cookie.
 - ``PUT  /crm/public/v1/portal/{token}/stage3``: the traveller's Stage 3 details (write-only); **403
   ``stage3_locked`` before the deposit** (card R), 403 ``portal_sign_in_required`` without a session.
-- ``POST /crm/public/v1/portal/{token}/sign``: sign the waiver (e-sign v0) with a fresh signing code.
+- ``POST /crm/public/v1/portal/{token}/sign``: sign the envelope (e-sign v1, AA-955: booking terms + waiver +
+  insurance declination; for oneself or, as the adult lead, for a minor) with a fresh signing code; a refused code is
+  422 and logged.
+- AA-955 (design §2.11 E): ``POST /crm/public/v1/p/{token}/terms`` and ``POST /crm/public/v1/proposal/terms``: accept
+  the agency's newer booking terms version on an accepted proposal (409 ``terms_changed`` / ``nothing_to_accept``).
+
+The accept, the terms re-accept and the signing record the client address (the same one the per-address limit uses)
+and the browser's User-Agent as evidence (under the vault DEK; only their SHA-256 in the evidence records).
 
 Every write: the Origin check of the client host, the per-address limit (``RATE_LIMIT_INTAKE_PER_MINUTE``) before
 anything is read, a 32 KiB body cap. 404 ``link_not_found`` for any unusable link. Answers carry ``no-store`` and
@@ -58,6 +65,15 @@ def _write_limit(request: Request) -> None:
     _limit(request, "intake_limiter", client_address(request, settings.rate_limit_xff_hops))
 
 
+def _evidence(request: Request) -> dict[str, str | None]:
+    """The client address and user agent the e-sign evidence keeps (AA-955)."""
+    settings = request.app.state.settings
+    return {
+        "client_ip": client_address(request, settings.rate_limit_xff_hops),
+        "user_agent": request.headers.get("user-agent"),
+    }
+
+
 def _json(body: dict[str, Any], status_code: int = 200) -> JSONResponse:
     return JSONResponse(body, status_code=status_code, headers=HEADERS)
 
@@ -87,7 +103,26 @@ async def post_proposal_accept(
     raw = await _json_body(request, content_length)
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
-    result = await proposal_page.accept(pool, keys, request.app.state.settings, token, raw, origin=origin)
+    result = await proposal_page.accept(
+        pool, keys, request.app.state.settings, token, raw, origin=origin, **_evidence(request)
+    )
+    return _json(result)
+
+
+@router.post("/p/{token}/terms")
+async def post_proposal_terms(
+    request: Request,
+    token: LinkToken,
+    origin: Annotated[str | None, Header()] = None,
+    content_length: Annotated[int | None, Header()] = None,
+) -> JSONResponse:
+    _write_limit(request)
+    raw = await _json_body(request, content_length)
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    result = await proposal_page.reaccept_terms(
+        pool, keys, request.app.state.settings, token, raw, origin=origin, **_evidence(request)
+    )
     return _json(result)
 
 
@@ -148,7 +183,28 @@ async def post_proposal_accept_by_cookie(
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     settings = request.app.state.settings
-    return _json(await proposal_page.accept(pool, keys, settings, _cookie_token(token), raw, origin=origin))
+    return _json(
+        await proposal_page.accept(pool, keys, settings, _cookie_token(token), raw, origin=origin, **_evidence(request))
+    )
+
+
+@router.post("/proposal/terms")
+async def post_proposal_terms_by_cookie(
+    request: Request,
+    token: ProposalCookie = None,
+    origin: Annotated[str | None, Header()] = None,
+    content_length: Annotated[int | None, Header()] = None,
+) -> JSONResponse:
+    _write_limit(request)
+    raw = await _json_body(request, content_length)
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    settings = request.app.state.settings
+    return _json(
+        await proposal_page.reaccept_terms(
+            pool, keys, settings, _cookie_token(token), raw, origin=origin, **_evidence(request)
+        )
+    )
 
 
 @router.post("/proposal/change-request")
@@ -174,7 +230,7 @@ async def get_portal(
     request: Request, token: LinkToken, _: PublicRateLimit, session: SessionCookie = None
 ) -> JSONResponse:
     pool = await request_pool(request)
-    return _json(await portal.home(pool, token, session))
+    return _json(await portal.home(pool, token, session, getattr(request.app.state, "keys", None)))
 
 
 @router.post("/portal/{token}/code", status_code=202)
@@ -270,5 +326,15 @@ async def post_portal_sign(
     raw = await _json_body(request, content_length)
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
-    signed, result = await portal.sign(pool, keys, request.app.state.settings, token, session, raw, origin=origin)
+    signed, result = await portal.sign(
+        pool,
+        keys,
+        request.app.state.settings,
+        token,
+        session,
+        raw,
+        origin=origin,
+        sealer=getattr(request.app.state, "sealer", None),
+        **_evidence(request),
+    )
     return _json(result, 200 if signed else 422)

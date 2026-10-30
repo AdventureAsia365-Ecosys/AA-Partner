@@ -228,6 +228,9 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "POST", pattern: /^agreements$/, tenant: true, card: "AA-946" },
   { method: "PATCH", pattern: new RegExp(`^agreements/${UUID}$`), tenant: true, card: "AA-946" },
   { method: "POST", pattern: new RegExp(`^agreements/${UUID}/publish$`), tenant: true, card: "AA-946" },
+  // AA-955 (CRM-25): the trip's signed documents and the sealed envelope of one signature (a reveal with a reason).
+  { method: "GET", pattern: new RegExp(`^trips/${UUID}/agreements$`), tenant: true, card: "AA-955" },
+  { method: "POST", pattern: new RegExp(`^signatures/${UUID}/envelope$`), tenant: true, card: "AA-955" },
 ];
 
 /** Calls only the web server makes (lib/crmApi.ts crmCall), never reachable through /bff from the browser. */

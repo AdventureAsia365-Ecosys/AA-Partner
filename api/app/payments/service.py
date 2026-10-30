@@ -217,6 +217,7 @@ async def record_payment(
         schedule = await ctx.conn.fetchrow(proposals.SCHEDULE_ONE_SQL, row["schedule_id"])
         if schedule is None or schedule["status"] != "due":
             raise Conflict("schedule_not_due", "the schedule row this invoice bills is paid or void: void the invoice")
+        await proposals.require_terms_current(ctx, schedule)  # AA-955: newer terms are accepted before the deposit
     paid = Decimal(await ctx.conn.fetchval(PAID_SUM_SQL, invoice_id))
     balance = _money(row["total_amount"]) - paid
     if value > balance:

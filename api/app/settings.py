@@ -139,6 +139,10 @@ Traveller portal (AA-946, card CRM-18; ``app.portal``):
 - ``PORTAL_OTP_DEV_ECHO``: ``true`` returns the portal sign-in / signing code in the API answer (``dev_code``) instead
   of only mailing it through the agency's mailbox, so the synthetic Dev agencies (no mailbox) can sign in. Default
   ``false``; refused at start-up unless ``ENVIRONMENT`` is ``dev``, ``test`` or ``local``.
+- ``KMS_SEAL_KEY_ID`` (AA-955, card CRM-25; ``app.esign``): the platform seal key (``alias/crm-<env>/seal``, an
+  asymmetric RSA key, set by Terraform) that seals every signed envelope (RSASSA-PSS SHA-256 over its SHA-256).
+  Empty on ``dev`` / ``test`` / ``local`` = the HMAC dev stub (``dev-stub-hmac-sha256``, not a legal seal); empty on
+  ``stg`` / ``prod`` = signing answers 503 ``esign_not_configured``.
 """
 
 from __future__ import annotations
@@ -240,6 +244,7 @@ class Settings:
     # (key, value) pairs of MAIL_OAUTH (a tuple keeps Settings hashable); read through mail_oauth_client().
     mail_oauth: tuple[tuple[str, str], ...] = field(default=(), repr=False)
     portal_otp_dev_echo: bool = False
+    kms_seal_key_id: str = ""
 
     def __post_init__(self) -> None:
         if self.environment not in {"dev", "stg", "prod"} | INSECURE_ENVIRONMENTS:
@@ -273,6 +278,10 @@ class Settings:
             raise SettingsError("the WORKFORCE client ids (cis-admin, breakglass, crm-staff) must differ")
         if self.portal_otp_dev_echo and self.environment not in DEV_ONLY_ENVIRONMENTS:
             raise SettingsError("PORTAL_OTP_DEV_ECHO is a Dev-only aid: never on stg or prod")  # AA-946
+        if self.kms_seal_key_id and not (
+            self.kms_seal_key_id.startswith(_KMS_KEY_PREFIXES) or _looks_like_key_id(self.kms_seal_key_id)
+        ):
+            raise SettingsError("KMS_SEAL_KEY_ID must be an alias/..., a KMS key ARN or a key id")  # AA-955
         if self.rate_limit_public_per_minute < 0:
             raise SettingsError("RATE_LIMIT_PUBLIC_PER_MINUTE must be >= 0")
         if not 1 <= self.rate_limit_xff_hops <= 5:
@@ -528,4 +537,5 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         mail_oauth_redirect_base=_text(env, "MAIL_OAUTH_REDIRECT_BASE").lower().rstrip("/"),
         mail_oauth=_mail_oauth(env.get("MAIL_OAUTH")),
         portal_otp_dev_echo=_flag(env.get("PORTAL_OTP_DEV_ECHO"), False, "PORTAL_OTP_DEV_ECHO"),
+        kms_seal_key_id=_text(env, "KMS_SEAL_KEY_ID"),
     )

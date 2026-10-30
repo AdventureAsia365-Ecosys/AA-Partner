@@ -1,6 +1,7 @@
 "use client";
 // web/components/portal/PortalPage.tsx — the traveller portal base (AA-946, card CRM-18; design v3 C-05 code sign-in,
-// C-06 home, C-07 Stage 3, C-08 sign v0, C-10 payments view; §2.9 rules 2-4). Everything goes to the API's public
+// C-06 home, C-07 Stage 3, C-08 sign, C-10 payments view; §2.9 rules 2-4). AA-955 (CRM-25): C-08 is the v1 envelope
+// (SignEnvelope); the v0 waiver form stays for an API without the envelope. Everything goes to the API's public
 // routes on this origin; the session is an httpOnly cookie the API sets on this portal's own path (the page never
 // sees it). Stage 3 is write-only: the page shows which fields are on file, never their values. Before the deposit is
 // paid, Stage 3 and signing say "opens after your deposit" (the API answers 403 stage3_locked anyway).
@@ -9,6 +10,7 @@ import { K } from "@/app/_kit";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, type MessageKey } from "@/lib/i18n";
 import { clientErrorKey, formatAmount, stage3Body, STAGE3_FIELDS, type PortalHome, type Stage3Field } from "@/lib/proposals";
+import { SignEnvelope } from "./SignEnvelope";
 
 type Load = { state: "loading" } | { state: "ready"; home: PortalHome } | { state: "failed"; status: number };
 
@@ -216,76 +218,93 @@ export function PortalPage({ token, dict, locale }: { token: string; dict: Parti
         )}
       </section>
 
-      {waiver && (
-        <section data-testid="portal-waiver" data-signed={waiver.signed ? "true" : "false"} style={section}>
-          <h2 style={{ margin: 0, fontSize: 16, color: K.ink }}>{fmt(t("client.waiverTitle"), { version: waiver.version_label })}</h2>
-          <p style={{ margin: 0, fontSize: 13.5, color: K.body, whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 260, overflowY: "auto" }}>{waiver.body_text}</p>
-          {waiver.signed ? (
-            <p style={{ margin: 0, fontSize: 14, color: K.success }} data-testid="portal-signed">
-              {fmt(t("client.signedOn"), { date: waiver.signed_at ? formatDate(waiver.signed_at.slice(0, 10), locale) : "" })}
-            </p>
-          ) : stage3.locked ? (
-            <p style={{ margin: 0, fontSize: 14, color: K.body }}>{t("client.stage3Locked")}</p>
-          ) : (
-            <div style={{ display: "grid", gap: 8 }}>
-              <button
-                type="button"
-                disabled={busy}
-                data-testid="portal-sign-code"
-                style={{ ...primary, background: "transparent", color: K.accentDeep, border: `1px solid ${K.accentBorder}`, opacity: busy ? 0.5 : 1 }}
-                onClick={() =>
-                  step("POST", "/code", { purpose: "sign" }, (d) => {
-                    setSignAsked(true);
-                    setHint(devHint(d));
-                  })
-                }
-              >
-                {t("client.sendSignCode")}
-              </button>
-              {signAsked && hint && (
-                <p data-testid="portal-sign-hint" style={{ margin: 0, fontSize: 13.5, color: K.body }}>
-                  {hint}
-                </p>
-              )}
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void step(
-                    "POST",
-                    "/sign",
-                    { code: signCode.trim(), full_name: signName, agree: signAgree, doc_id: waiver.doc_id, doc_sha256: waiver.body_sha256 },
-                    () => {
-                      setNote({ tone: "success", text: t("client.signedThanks") });
-                      setRound((r) => r + 1);
-                    },
-                  );
-                }}
-                style={{ display: "grid", gap: 8 }}
-              >
-                <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 14 }}>
-                  <input type="checkbox" checked={signAgree} onChange={(e) => setSignAgree(e.target.checked)} data-testid="portal-sign-agree" />
-                  <span>{t("client.signAgree")}</span>
-                </label>
-                <label style={{ display: "grid", gap: 4, fontSize: 14 }}>
-                  {t("client.fullName")}
-                  <input autoComplete="name" value={signName} onChange={(e) => setSignName(e.target.value)} style={box} data-testid="portal-sign-name" />
-                </label>
-                <label style={{ display: "grid", gap: 4, fontSize: 14 }}>
-                  {t("client.code")}
-                  <input inputMode="numeric" maxLength={6} value={signCode} onChange={(e) => setSignCode(e.target.value)} style={box} data-testid="portal-sign-code-input" />
-                </label>
+      {home.agreements ? (
+        <SignEnvelope
+          box={home.agreements}
+          locked={stage3.locked}
+          busy={busy}
+          step={step}
+          hint={hint}
+          onCode={(d) => setHint(devHint(d))}
+          onSigned={() => {
+            setNote({ tone: "success", text: t("client.signedThanks") });
+            setRound((r) => r + 1);
+          }}
+          t={t}
+          locale={locale}
+        />
+      ) : (
+        waiver && (
+          <section data-testid="portal-waiver" data-signed={waiver.signed ? "true" : "false"} style={section}>
+            <h2 style={{ margin: 0, fontSize: 16, color: K.ink }}>{fmt(t("client.waiverTitle"), { version: waiver.version_label })}</h2>
+            <p style={{ margin: 0, fontSize: 13.5, color: K.body, whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 260, overflowY: "auto" }}>{waiver.body_text}</p>
+            {waiver.signed ? (
+              <p style={{ margin: 0, fontSize: 14, color: K.success }} data-testid="portal-signed">
+                {fmt(t("client.signedOn"), { date: waiver.signed_at ? formatDate(waiver.signed_at.slice(0, 10), locale) : "" })}
+              </p>
+            ) : stage3.locked ? (
+              <p style={{ margin: 0, fontSize: 14, color: K.body }}>{t("client.stage3Locked")}</p>
+            ) : (
+              <div style={{ display: "grid", gap: 8 }}>
                 <button
-                  type="submit"
-                  disabled={busy || !signAgree || !signName.trim() || signCode.trim().length !== 6}
-                  data-testid="portal-sign"
-                  style={{ ...primary, opacity: busy || !signAgree || !signName.trim() || signCode.trim().length !== 6 ? 0.5 : 1 }}
+                  type="button"
+                  disabled={busy}
+                  data-testid="portal-sign-code"
+                  style={{ ...primary, background: "transparent", color: K.accentDeep, border: `1px solid ${K.accentBorder}`, opacity: busy ? 0.5 : 1 }}
+                  onClick={() =>
+                    step("POST", "/code", { purpose: "sign" }, (d) => {
+                      setSignAsked(true);
+                      setHint(devHint(d));
+                    })
+                  }
                 >
-                  {t("client.sign")}
+                  {t("client.sendSignCode")}
                 </button>
-              </form>
-            </div>
-          )}
-        </section>
+                {signAsked && hint && (
+                  <p data-testid="portal-sign-hint" style={{ margin: 0, fontSize: 13.5, color: K.body }}>
+                    {hint}
+                  </p>
+                )}
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void step(
+                      "POST",
+                      "/sign",
+                      { code: signCode.trim(), full_name: signName, agree: signAgree, doc_id: waiver.doc_id, doc_sha256: waiver.body_sha256 },
+                      () => {
+                        setNote({ tone: "success", text: t("client.signedThanks") });
+                        setRound((r) => r + 1);
+                      },
+                    );
+                  }}
+                  style={{ display: "grid", gap: 8 }}
+                >
+                  <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 14 }}>
+                    <input type="checkbox" checked={signAgree} onChange={(e) => setSignAgree(e.target.checked)} data-testid="portal-sign-agree" />
+                    <span>{t("client.signAgree")}</span>
+                  </label>
+                  <label style={{ display: "grid", gap: 4, fontSize: 14 }}>
+                    {t("client.fullName")}
+                    <input autoComplete="name" value={signName} onChange={(e) => setSignName(e.target.value)} style={box} data-testid="portal-sign-name" />
+                  </label>
+                  <label style={{ display: "grid", gap: 4, fontSize: 14 }}>
+                    {t("client.code")}
+                    <input inputMode="numeric" maxLength={6} value={signCode} onChange={(e) => setSignCode(e.target.value)} style={box} data-testid="portal-sign-code-input" />
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={busy || !signAgree || !signName.trim() || signCode.trim().length !== 6}
+                    data-testid="portal-sign"
+                    style={{ ...primary, opacity: busy || !signAgree || !signName.trim() || signCode.trim().length !== 6 ? 0.5 : 1 }}
+                  >
+                    {t("client.sign")}
+                  </button>
+                </form>
+              </div>
+            )}
+          </section>
+        )
       )}
 
       {home.party && (

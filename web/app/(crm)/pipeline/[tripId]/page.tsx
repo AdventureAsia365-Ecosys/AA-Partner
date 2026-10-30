@@ -10,12 +10,15 @@
 // published booking terms from GET /agreements); its client links open on the first client host. AA-947 (CRM-19): AA
 // lines in the Bookings tab; the Lost picker pre-selects the reason the AA lines suggest (lost_reason_hint). CRM-23
 // slice 2: the Invoices card under the Proposal tab (GET /trips/{id}/invoices; due schedule rows from the lifecycle).
+// AA-955 (CRM-25): the Signed documents panel (GET /trips/{id}/agreements: who signed, guardian, insurance choice,
+// seal, the terms acceptances and the re-accept state, the signing log).
 import { notFound } from "next/navigation";
 import { ErrorState } from "@/app/_kit";
 import { InvoicesPanel } from "@/components/invoices/InvoicesPanel";
 import { LinesPanel } from "@/components/ledger/LinesPanel";
 import { MessagesPanel } from "@/components/mail/MessagesPanel";
 import { ProposalPanel } from "@/components/proposals/ProposalPanel";
+import { TripAgreementsPanel } from "@/components/proposals/TripAgreementsPanel";
 import { TripPanel } from "@/components/pipeline/TripPanel";
 import type { DocumentRow } from "@/lib/clients";
 import { crmCall } from "@/lib/crmApi";
@@ -25,7 +28,7 @@ import type { Invoice } from "@/lib/invoices";
 import type { SuppliersView, TripLines } from "@/lib/ledger";
 import type { Conversation, SavedReply } from "@/lib/mail";
 import type { Member, Stage2View, TripView } from "@/lib/pipeline";
-import type { Agreement, LifecycleView } from "@/lib/proposals";
+import type { Agreement, LifecycleView, TripAgreements } from "@/lib/proposals";
 import { serverContext } from "@/lib/serverContext";
 
 export const dynamic = "force-dynamic";
@@ -40,7 +43,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
   const { session } = await serverContext();
   if (!session) return null;
   const tripQuery = new URLSearchParams({ trip_id: tripId });
-  const [trip, members, docs, stage2, lines, suppliers, convs, replies, lifecycle, agreements, invoices] = await Promise.all([
+  const [trip, members, docs, stage2, lines, suppliers, convs, replies, lifecycle, agreements, invoices, signed] = await Promise.all([
     crmCall<TripView>(ctx.cfg, session, "GET", `trips/${tripId}`),
     crmCall<{ members: Member[] }>(ctx.cfg, session, "GET", "members"),
     crmCall<{ documents: DocumentRow[] }>(ctx.cfg, session, "GET", `trips/${tripId}/documents`),
@@ -52,6 +55,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
     crmCall<LifecycleView>(ctx.cfg, session, "GET", `trips/${tripId}/lifecycle`),
     crmCall<{ agreements: Agreement[] }>(ctx.cfg, session, "GET", "agreements"),
     crmCall<{ invoices: Invoice[] }>(ctx.cfg, session, "GET", `trips/${tripId}/invoices`),
+    crmCall<TripAgreements>(ctx.cfg, session, "GET", `trips/${tripId}/agreements`),
   ]);
   const clientHost = ctx.cfg.clientHosts[0];
   if (!trip.ok) {
@@ -94,6 +98,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
         locale={ctx.locale}
       />
     )}
+    {signed.ok && <TripAgreementsPanel view={signed.data} party={trip.data.party} lang={ctx.lang} locale={ctx.locale} />}
     {lines.ok && (
       <LinesPanel
         tripId={tripId}
