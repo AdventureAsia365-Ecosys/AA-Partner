@@ -1,9 +1,19 @@
-// AA-952 (CRM-23 slice 2): the invoice helpers (refusal wording, who bills, the schedule rows still to invoice, the
+// AA-952 (CRM-23 slices 2-3): the invoice and refund helpers (refusal wording, who bills, the schedule rows still to invoice, the
 // typed-lines body) and the BFF allow-list lines of the invoice routes.
 import { describe, expect, it } from "vitest";
 import { matchBff } from "@/lib/bff";
 import { MESSAGES } from "@/lib/i18n";
-import { canBill, invoiceErrorKey, linesBody, STATUSES, uninvoicedRows, type Invoice } from "@/lib/invoices";
+import {
+  canBill,
+  canDecideRefund,
+  invoiceErrorKey,
+  linesBody,
+  refundStep,
+  STATUSES,
+  uninvoicedRows,
+  type Invoice,
+  type RefundRequest,
+} from "@/lib/invoices";
 
 const ID = "00000000-0000-4000-8000-0000000000e1";
 const ID2 = "00000000-0000-4000-8000-0000000000e2";
@@ -90,5 +100,53 @@ describe("BFF allow-list: invoices", () => {
     expect(matchBff("PUT", "settings/invoices")).not.toBeNull();
     expect(matchBff("DELETE", `invoices/${ID}`)).toBeNull();
     expect(matchBff("POST", `invoices/${ID}/delete`)).toBeNull();
+  });
+});
+
+describe("payments and refunds (slice 3)", () => {
+  const refund = (status: RefundRequest["status"]): RefundRequest => ({
+    refund_id: ID,
+    invoice_id: ID,
+    payment_id: ID2,
+    amount: "20.00",
+    currency: "USD",
+    reason: "Shortened",
+    status,
+    requested_by: "member:a",
+    decided_by: null,
+    decided_at: null,
+    decision_note: null,
+    executed_at: null,
+  });
+
+  it("offers the next refund step to owner and agent only", () => {
+    expect(refundStep(refund("proposed"), "agent")).toBe("decide");
+    expect(refundStep(refund("approved"), "owner")).toBe("execute");
+    expect(refundStep(refund("executed"), "owner")).toBeNull();
+    expect(refundStep(refund("proposed"), "assistant")).toBeNull();
+    expect(["owner", "agent", "assistant"].map(canDecideRefund)).toEqual([true, true, false]);
+  });
+
+  it("words the money refusals in both languages", () => {
+    for (const code of ["amount_above_balance", "amount_above_refundable", "above_threshold", "refund_not_approved", "provider_not_available"]) {
+      const key = invoiceErrorKey(code) as keyof typeof MESSAGES.en;
+      expect(key).not.toBe("invoice.error.other");
+      expect(MESSAGES.vi[key]).toBeTruthy();
+    }
+    for (const s of ["proposed", "approved", "rejected", "executed"]) {
+      expect(MESSAGES.vi[`refund.status.${s}` as keyof typeof MESSAGES.en]).toBeTruthy();
+    }
+  });
+
+  it("forwards the payment, refund and payment-method routes", () => {
+    expect(matchBff("POST", `invoices/${ID}/payments`)).not.toBeNull();
+    expect(matchBff("POST", `payments/${ID}/refund-requests`)).not.toBeNull();
+    expect(matchBff("GET", "refund-requests")).not.toBeNull();
+    for (const step of ["approve", "reject", "execute"]) expect(matchBff("POST", `refund-requests/${ID}/${step}`)).not.toBeNull();
+    expect(matchBff("GET", "settings/payment-methods")).not.toBeNull();
+    expect(matchBff("PUT", "settings/payment-methods/manual")).not.toBeNull();
+    expect(matchBff("POST", `settings/payment-methods/${ID}/disconnect`)).not.toBeNull();
+    expect(matchBff("POST", "settings/payment-methods")).toBeNull();
+    expect(matchBff("DELETE", `refund-requests/${ID}`)).toBeNull();
   });
 });

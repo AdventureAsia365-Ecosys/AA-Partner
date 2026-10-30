@@ -66,6 +66,7 @@ from app.routers import (
     lifecycle,
     mail,
     ops,
+    payments,
     pipeline,
     proposal_text,
     proposals,
@@ -234,6 +235,7 @@ def create_app(
     app.include_router(aa.router)
     app.include_router(proposals.router)
     app.include_router(invoices.router)
+    app.include_router(payments.router)
     app.include_router(builder.router)
     app.include_router(proposal_text.router)
     app.include_router(mail.router)

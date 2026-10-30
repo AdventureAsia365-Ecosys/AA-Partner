@@ -3,11 +3,13 @@
 // A-03 Payments): the trip's invoices with their status, total and due date; "Create invoice" for a due schedule row
 // of the accepted proposal (it bills that row, tax included); a typed invoice (adjustment, or a service fee when the
 // agency turned them on) with its own lines; Issue (the agency's next number), Void (with a reason) and the
-// printable document (a new tab: print or save as PDF). Owner and agent bill; the assistant reads. Every refusal is
+// printable document (a new tab: print or save as PDF); slice 3: each issued invoice's money (InvoiceMoney: payments,
+// refunds, refund requests). Owner and agent bill; the assistant reads. Every refusal is
 // worded from its code (lib/invoices.ts). Buttons wait for hydration (the page is a full server render).
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, Checkbox, Field, Input, K, Select, Textarea, useHydrated } from "@/app/_kit";
+import { InvoiceMoney } from "@/components/invoices/InvoiceMoney";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
@@ -152,6 +154,7 @@ export function InvoicesPanel({
                 </Button>
               )}
             </div>
+            <InvoiceMoney invoice={inv} role={role} lang={lang} locale={locale} onMessage={(tone, text) => setMessage({ tone, text })} />
             {voiding === inv.invoice_id && (
               <div style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap" }} data-testid="invoice-void-form">
                 <Field label={tr("invoice.voidReasonLabel")} style={{ minWidth: 220, flex: "1 1 220px" }}>

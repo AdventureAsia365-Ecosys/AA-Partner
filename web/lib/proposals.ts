@@ -56,7 +56,9 @@ export interface ScheduleRow {
 
 export interface PaymentRow {
   payment_id: string;
-  schedule_id: string;
+  /** AA-952: null for a payment of an invoice without a schedule row (a service fee); invoice_id names its invoice. */
+  schedule_id: string | null;
+  invoice_id?: string | null;
   amount: string;
   currency: string;
   method: PayMethod;
@@ -137,6 +139,7 @@ export interface PortalHome {
 export const CLIENT_TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
 const ERROR_CODES = new Set([
+  "invoice_issued_for_row",
   "trip_not_open_for_proposal",
   "proposal_already_accepted",
   "proposal_not_draft",

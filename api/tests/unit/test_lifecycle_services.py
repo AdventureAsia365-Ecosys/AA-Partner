@@ -317,17 +317,20 @@ async def test_trip_overview() -> None:
         await service.trip_overview(tenant_ctx(), FakeVault(), TRIP)
     sent = _proposal_row(status="sent", price_hash=b"\x01" * 32, sent_at=NOW, terms_doc_id=DOC)
     schedule = {**_schedule_row(), "due_on": TODAY, "paid_at": None}
-    payment = {"payment_id": uuid.uuid4(), "schedule_id": SCHEDULE, "amount": Decimal(1), "currency": "USD",
-               "method": "cash", "received_on": TODAY}  # fmt: skip
+    payment = {"payment_id": uuid.uuid4(), "schedule_id": SCHEDULE, "invoice_id": None, "amount": Decimal(1),
+               "currency": "USD", "method": "cash", "received_on": TODAY}  # fmt: skip
+    # AA-952 slice 3: a service-fee invoice's payment has no schedule row.
+    fee = {**payment, "payment_id": uuid.uuid4(), "schedule_id": None, "invoice_id": uuid.uuid4()}
     conn = (
         ScriptedConn()
         .on("SELECT trip_id, stage FROM crm.trip", {"trip_id": TRIP, "stage": "proposal"})
         .on("FROM crm.proposal WHERE trip_id", [sent])
         .on("FROM crm.payment_schedule WHERE trip_id", [schedule])
-        .on("FROM crm.payment WHERE trip_id", [payment])
+        .on("FROM crm.payment WHERE trip_id", [payment, fee])
     )
     ctx = tenant_ctx(conn)
     out = await service.trip_overview(ctx, FakeVault(), TRIP)
+    assert out["payments"][1]["schedule_id"] is None and out["payments"][1]["invoice_id"] == str(fee["invoice_id"])
     assert out["proposals"][0]["body"] == "Day 1" and out["proposals"][0]["price_hash"] == "01" * 32
     assert out["schedule"][0]["amount"] == "300.00" and out["payments"][0]["method"] == "cash"
     assert out["portal"] == {"s3": 0, "waiver_required": False, "travellers": []} and not out["deposit_paid"]
