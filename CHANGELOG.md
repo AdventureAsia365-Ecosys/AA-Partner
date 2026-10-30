@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.11.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.10.0...v0.11.0) (2026-10-30)
+
+
+### Features
+
+* AA lines from the accepted hold set and Booking confirm after the deposit ([#128](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/128)) ([c572c6e](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/c572c6e140253d59e22b2d826027c507506381d6))
+
+
+### Bug Fixes
+
+* schema gate accepts a newer green standalone isolation probe after a probe-only red run ([#126](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/126)) ([09efb37](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/09efb370beb39d99522e883387998290b128ea65))
+
 ## [0.10.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.9.1...v0.10.0) (2026-10-29)
 
 
