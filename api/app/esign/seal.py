@@ -138,9 +138,12 @@ def require_sealer(sealer: Sealer | None) -> Sealer:
 
 async def verify_any(sealer: Sealer | None, digest: bytes, seal: Seal) -> bool | None:
     """True / False when the seal's algorithm can be checked here; None when it cannot (a KMS seal on an environment
-    without the seal key)."""
+    without the seal key, or KMS not answering: the reveal still opens, the digest was checked before decrypting)."""
     if seal.alg == STUB_ALG:
         return await DevStubSealer().verify(digest, seal)
     if isinstance(sealer, KmsSealer):
-        return await sealer.verify(digest, seal)
+        try:
+            return await sealer.verify(digest, seal)
+        except Unavailable:
+            return None
     return None

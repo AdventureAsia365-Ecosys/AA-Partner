@@ -141,6 +141,8 @@ class FakeKms:
 
     def verify(self, **kw: Any) -> dict[str, Any]:
         self.calls.append(("verify", kw))
+        if self.fail:
+            raise RuntimeError("KMSInvalidStateException secret detail")
         return {"SignatureValid": kw["Signature"] == b"s" * 384}
 
 
@@ -158,6 +160,10 @@ async def test_the_kms_seal() -> None:
     with _raises(Unavailable, "seal_unavailable") as err:
         await broken.seal(digest)
     assert "secret" not in err.value.message
+    # KMS not answering at reveal time: the seal is "not checked" (None), not a failed reveal.
+    assert await verify_any(broken, digest, seal) is None
+    with _raises(Unavailable, "seal_unavailable"):
+        await broken.verify(digest, seal)
 
 
 def test_which_sealer() -> None:
