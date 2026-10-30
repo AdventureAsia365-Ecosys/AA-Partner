@@ -28,10 +28,17 @@ masked e-mail hint of the traveller's own address.
   CRM32; a ``manual_booking`` override into Booked opens it as well: ``crm.portal_unlocked``), then the F1 identity
   fields written under the vault DEK (write-only: never read back here), Stage 3 time on the access, the trip's
   ``s3`` and ``waiting_on`` refreshed.
-- :func:`sign`: e-sign v0: the published waiver version and its SHA-256 as shown, the typed full name, the consent tick
-  and a fresh ``sign`` code; locked before the deposit like Stage 3. The signature row keeps the code's delivery
-  (``code_delivery``) and the canonical evidence record (no PII: the typed name only as its SHA-256) beside its
-  SHA-256, all sealed, so the hash can be re-verified after the 24-hour code purge.
+- :func:`sign`: e-sign v1 (AA-955, card CRM-25; :mod:`app.esign`): one envelope per traveller with the published
+  booking terms, the waiver and, when the traveller declines travel insurance, the insurance declination (R13), each
+  pinned by the id and SHA-256 the page showed; the typed full name, the consent tick and a fresh ``sign`` code;
+  locked before the deposit like Stage 3. An adult signs their own envelope; the adult lead signs as guardian for each
+  minor (under 18 on the start date, O-6); a minor's own access is 403 ``guardian_signs``. The merge fields are filled
+  in, the envelope + audit page is sealed with the platform seal (:mod:`app.esign.seal`), and stored on a
+  ``crm.signature_event`` row (docs DEK) with the client address and user agent (vault DEK); the booking terms
+  acceptance is written too (``crm.terms_acceptance`` source ``envelope``). The signature row keeps the code's
+  delivery, the canonical evidence record (no PII) and its SHA-256, the envelope SHA-256 and the seal algorithm, all
+  sealed. **Every refused signing code is logged** (``signature_event`` kind ``code_refused``: expired, wrong,
+  missing, attempts used up; card R).
 
 Unknown, expired, revoked or foreign link, a link of another purpose or a revoked access: 404 ``link_not_found``.
 """
@@ -51,6 +58,11 @@ import asyncpg
 from app import stages
 from app.dispatch import queue as dispatch
 from app.errors import Conflict, Forbidden, Invalid, NotFound, RateLimited, Unavailable
+from app.esign import envelope as env
+from app.esign import events as sign_events
+from app.esign import signing
+from app.esign import terms as esign_terms
+from app.esign.seal import Sealer, require_sealer
 from app.intake import stage1
 from app.intake.public import origin_allowed, record_drop
 from app.mail import threads
@@ -160,16 +172,22 @@ SELECT doc_id, version_label, body_text, body_sha256 FROM crm.agreement_doc
  WHERE kind = 'waiver' AND status = 'published' AND deleted_at IS NULL
 """
 SIGNATURE_SQL = """
-SELECT request_id, status, signed_at FROM crm.signature_request
+SELECT request_id, status, signed_at, signer_role FROM crm.signature_request
  WHERE trip_id = $1 AND traveler_id = $2 AND doc_id = $3 AND status <> 'void' AND deleted_at IS NULL
    FOR UPDATE
 """
 INSERT_SIGNATURE_SQL = """
-INSERT INTO crm.signature_request (request_id, trip_id, traveler_id, access_id, doc_id) VALUES ($1, $2, $3, $4, $5)
+INSERT INTO crm.signature_request (request_id, trip_id, traveler_id, access_id, doc_id, signer_traveler_id, signer_role)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+"""
+SIGNER_SQL = """
+UPDATE crm.signature_request SET access_id = $2, signer_traveler_id = $3, signer_role = $4 WHERE request_id = $1
 """
 SIGN_SQL = """
 UPDATE crm.signature_request SET status = 'signed', signed_at = $2, signed_name_enc = $3, doc_sha256 = $4,
-       evidence_sha256 = $5, otp_id = $6, code_delivery = $7, evidence_record = $8
+       evidence_sha256 = $5, otp_id = $6, code_delivery = $7, evidence_record = $8, terms_doc_id = $9,
+       terms_sha256 = $10, declination_doc_id = $11, declination_sha256 = $12, insurance_choice = $13,
+       envelope_sha256 = $14, seal_alg = $15
  WHERE request_id = $1
 """
 COMMITMENT_SQL = """
@@ -324,6 +342,8 @@ async def request_code(
         hint = await _deliver(ctx, Vault(keys, ctx), access, purpose, otp_id, code)  # type: ignore[arg-type]
         if hint is None and not settings.portal_otp_dev_echo:
             raise Conflict("code_delivery_unavailable", "your agent cannot e-mail a code right now; ask them")
+        if purpose == "sign":
+            await sign_events.log(ctx, "code_sent", access, traveler_id=access["traveler_id"])
         ctx.audit("portal_code", "allowed", "traveler_access", str(access["access_id"]), reason=purpose)
         out: dict[str, Any] = {"sent": hint is not None, "to_hint": hint, "expires_in_s": CODE_MINUTES * 60}
         if settings.portal_otp_dev_echo:
@@ -331,21 +351,24 @@ async def request_code(
         return out
 
 
-async def _check_code(ctx: AnyContext, access: Any, purpose: str, code: Any) -> tuple[Any, dict]:
-    """(the verified code's row (otp_id, delivery), {}) or (None, the refusal answer). Never raises on a wrong code,
-    so the attempt counter is kept."""
+async def _check_code(ctx: AnyContext, access: Any, purpose: str, code: Any) -> tuple[Any, dict, str | None]:
+    """(the verified code's row (otp_id, delivery), {}, None) or (None, the refusal answer, the refusal reason:
+    code_missing | code_expired | code_invalid | attempts_exhausted). Never raises on a wrong code, so the attempt
+    counter is kept."""
     row = await ctx.conn.fetchrow(PENDING_CODE_SQL, access["access_id"], purpose)
     if row is None:
-        return None, {"detail": "code_invalid", "attempts_left": 0}
+        return None, {"detail": "code_invalid", "attempts_left": 0}, "code_missing"
     if row["expired"]:
         await ctx.conn.execute(EXPIRE_CODE_SQL, row["otp_id"])
-        return None, {"detail": "code_expired", "attempts_left": 0}
+        ctx.audit("portal_code_check", "denied", "traveler_access", str(access["access_id"]), reason="code_expired")
+        return None, {"detail": "code_expired", "attempts_left": 0}, "code_expired"
     good = isinstance(code, str) and len(code) == 6 and code.isdigit()
     if good and hmac.compare_digest(code_hash(row["otp_id"], code), bytes(row["code_hash"])):
-        return row, {}
+        return row, {}, None
     after = await ctx.conn.fetchrow(ATTEMPT_SQL, row["otp_id"], MAX_ATTEMPTS)
     ctx.audit("portal_code_check", "denied", "traveler_access", str(access["access_id"]), reason="code_invalid")
-    return None, {"detail": "code_invalid", "attempts_left": max(MAX_ATTEMPTS - int(after["attempts"]), 0)}
+    left = max(MAX_ATTEMPTS - int(after["attempts"]), 0)
+    return None, {"detail": "code_invalid", "attempts_left": left}, "code_invalid" if left else "attempts_exhausted"
 
 
 async def verify_code(
@@ -355,7 +378,7 @@ async def verify_code(
     check_origin(settings, origin)
     async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
         access = await _access(ctx, link)
-        verified, refusal = await _check_code(ctx, access, "sign_in", code)
+        verified, refusal, _ = await _check_code(ctx, access, "sign_in", code)
         if verified is None:
             return None, refusal
         session = secrets.token_urlsafe(32)
@@ -377,7 +400,38 @@ def _iso(value: Any) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-async def home(pool: asyncpg.Pool, token: str, session: str | None) -> dict[str, Any]:
+async def _agreements_view(ctx: AnyContext, vault: Vault, access: Any, agency: str | None) -> dict[str, Any]:
+    found = await signing.published(ctx)
+    members = await signing.party(ctx, vault, access["trip_id"], access["start_date"])
+    me = next((m for m in members if m.traveler_id == access["traveler_id"]), None)
+    values = signing.preview_values(agency, access, access["role"])
+    sigs = await signing.signatures(ctx, access["trip_id"], found.waiver.doc_id) if found.waiver else {}
+    minor_no = 0
+    rows = []
+    for m in signing.envelopes(members, access["traveler_id"]):
+        sig = sigs.get(m.traveler_id)
+        if m.traveler_id != access["traveler_id"]:
+            minor_no += 1
+        rows.append(
+            {
+                "traveler_id": str(m.traveler_id),
+                "for": "self" if m.traveler_id == access["traveler_id"] else "minor",
+                "minor_number": None if m.traveler_id == access["traveler_id"] else minor_no,
+                "signed": sig is not None and sig["status"] == "signed",
+                "signed_at": _iso(sig["signed_at"]) if sig is not None else None,
+                "signer_role": sig["signer_role"] if sig is not None else None,
+                "insurance_choice": sig["insurance_choice"] if sig is not None else None,
+            }
+        )
+    return {
+        "documents": [signing.document_view(d, values) for d in signing.documents(found, None)],
+        "insurance_declination": signing.document_view(found.declination, values) if found.declination else None,
+        "envelopes": rows,
+        "guardian_signs_for_me": bool(me and me.minor),
+    }
+
+
+async def home(pool: asyncpg.Pool, token: str, session: str | None, keys: KeyProvider | None = None) -> dict[str, Any]:
     async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
         access = await _access(ctx, link)
         await ctx.conn.execute(OPENED_SQL, link.link_id)
@@ -389,6 +443,11 @@ async def home(pool: asyncpg.Pool, token: str, session: str | None) -> dict[str,
         done = await progress.compute(ctx, access["trip_id"])
         mine = next((t for t in done.travellers if t.traveler_id == access["traveler_id"]), None)
         waiver = await ctx.conn.fetchrow(WAIVER_SQL)
+        agreements = (
+            await _agreements_view(ctx, Vault(keys, ctx), access, agency)  # type: ignore[arg-type]
+            if keys is not None and waiver is not None
+            else None
+        )
         signature = (
             await ctx.conn.fetchrow(SIGNATURE_SQL, access["trip_id"], access["traveler_id"], waiver["doc_id"])
             if waiver is not None
@@ -421,6 +480,8 @@ async def home(pool: asyncpg.Pool, token: str, session: str | None) -> dict[str,
                 "signed": signature is not None and signature["status"] == "signed",
                 "signed_at": _iso(signature["signed_at"]) if signature is not None else None,
             },
+            # AA-955 (e-sign v1): the envelope documents (merge fields shown with placeholders) and who signs what.
+            "agreements": agreements,
         }
         if access["role"] == "lead":
             out["party"] = [
@@ -499,8 +560,27 @@ async def submit_stage3(
 
 
 def evidence_record(**parts: Any) -> bytes:
-    """The canonical evidence record of a signature (sorted keys, no spaces), hashed into ``evidence_sha256``."""
+    """The canonical evidence record of a v0 signature (sorted keys, no spaces); v1: :mod:`app.esign.envelope`."""
     return json.dumps(parts, sort_keys=True, separators=(",", ":"), default=str).encode()
+
+
+def _sign_input(raw: Any) -> tuple[str, uuid.UUID | None, str | None]:
+    if not isinstance(raw, dict):
+        raise Invalid("invalid_submission", "an object", fields=["body"])
+    name = stage1.clean_text(raw.get("full_name"), MAX_NAME) if isinstance(raw.get("full_name"), str) else None
+    bad = [f for f, ok in (("full_name", bool(name)), ("agree", raw.get("agree") is True)) if not ok]
+    target: uuid.UUID | None = None
+    if raw.get("traveler_id") is not None:
+        try:
+            target = uuid.UUID(str(raw.get("traveler_id")))
+        except ValueError:
+            bad.append("traveler_id")
+    insurance = raw.get("insurance")
+    if insurance is not None and insurance not in signing.INSURANCE_CHOICES:
+        bad.append("insurance")
+    if bad:
+        raise Invalid("invalid_submission", "type your full name and tick the box", fields=bad)
+    return name, target, insurance  # type: ignore[return-value]
 
 
 async def sign(
@@ -512,70 +592,162 @@ async def sign(
     raw: Any,
     *,
     origin: str | None,
+    sealer: Sealer | None = None,
+    client_ip: str | None = None,
+    user_agent: str | None = None,
 ) -> tuple[bool, dict[str, Any]]:
-    """(signed, answer). A wrong or expired signing code is an answer (False, refusal), so its attempt counts."""
+    """(signed, answer). A wrong or expired signing code is an answer (False, refusal), so its attempt counts; the
+    refusal is logged (``signature_event`` kind ``code_refused``)."""
     check_origin(settings, origin)
-    if not isinstance(raw, dict):
-        raise Invalid("invalid_submission", "an object", fields=["body"])
-    name = stage1.clean_text(raw.get("full_name"), MAX_NAME) if isinstance(raw.get("full_name"), str) else None
-    bad = [f for f, ok in (("full_name", bool(name)), ("agree", raw.get("agree") is True)) if not ok]
-    if bad:
-        raise Invalid("invalid_submission", "type your full name and tick the box", fields=bad)
+    name, target, insurance = _sign_input(raw)
     async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
         access = await _access(ctx, link)
         await _session(ctx, access, session)
         await _require_unlocked(ctx, access, "portal_sign")
-        waiver = await ctx.conn.fetchrow(WAIVER_SQL)
-        if waiver is None:
+        seal_with = require_sealer(sealer)
+        found = await signing.published(ctx)
+        if found.waiver is None:
             raise Conflict("nothing_to_sign", "your agent has no waiver to sign")
-        sha = bytes(waiver["body_sha256"])
-        if str(raw.get("doc_id")) != str(waiver["doc_id"]) or raw.get("doc_sha256") != sha.hex():
-            raise Conflict("document_changed", "the document changed; read it again", doc_id=str(waiver["doc_id"]))
-        signature = await ctx.conn.fetchrow(SIGNATURE_SQL, access["trip_id"], access["traveler_id"], waiver["doc_id"])
+        vault = Vault(keys, ctx)  # type: ignore[arg-type]
+        members = await signing.party(ctx, vault, access["trip_id"], access["start_date"])
+        me = next((m for m in members if m.traveler_id == access["traveler_id"]), None)
+        if me is not None and me.minor:
+            ctx.audit("portal_sign", "denied", "traveler_access", str(access["access_id"]), reason="guardian_signs")
+            raise Forbidden("guardian_signs", "the lead traveller signs for you as your guardian")
+        traveler_id = target or access["traveler_id"]
+        allowed = {m.traveler_id: m for m in signing.envelopes(members, access["traveler_id"])}
+        subject = allowed.get(traveler_id)
+        if subject is None:
+            ctx.audit("portal_sign", "denied", "traveler_access", str(access["access_id"]), reason="not_guardian")
+            raise Forbidden("not_guardian", "you can sign for yourself and, as the lead traveller, for a minor")
+        guardian = traveler_id != access["traveler_id"]
+        if found.declination is not None and insurance is None:
+            raise Invalid("invalid_submission", "tell us whether you have travel insurance", fields=["insurance"])
+        choice = insurance if found.declination is not None else None
+        docs = signing.documents(found, choice)
+        shown = signing.shown_hashes(raw)
+        if any(shown.get(d.doc_id) != d.body_sha256.hex() for d in docs):
+            values = signing.preview_values(await ctx.conn.fetchval(AGENCY_SQL, link.tenant_id), access, subject.role)
+            raise Conflict("document_changed", "the documents changed; read them again",
+                           documents=[signing.document_view(d, values) for d in docs])  # fmt: skip
+        waiver_id = uuid.UUID(found.waiver.doc_id)
+        signature = await ctx.conn.fetchrow(SIGNATURE_SQL, access["trip_id"], traveler_id, waiver_id)
         if signature is not None and signature["status"] == "signed":
             return True, {"status": "already_signed", "signed_at": _iso(signature["signed_at"])}
-        verified, refusal = await _check_code(ctx, access, "sign", raw.get("code"))
+        verified, refusal, reason = await _check_code(ctx, access, "sign", raw.get("code"))
         if verified is None:
+            await sign_events.log(ctx, "code_refused", access, traveler_id=traveler_id, reason=reason)
             return False, refusal
         otp_id = verified["otp_id"]
         await ctx.conn.execute(CONSUME_SQL, otp_id)
+        signer = (access["traveler_id"], "guardian") if guardian else (None, "self")
         request_id = signature["request_id"] if signature is not None else uuid.uuid4()
         if signature is None:
             await ctx.conn.execute(
-                INSERT_SIGNATURE_SQL, request_id, access["trip_id"], access["traveler_id"], access["access_id"],
-                waiver["doc_id"],
+                INSERT_SIGNATURE_SQL, request_id, access["trip_id"], traveler_id, access["access_id"], waiver_id,
+                *signer,
             )  # fmt: skip
+        else:
+            await ctx.conn.execute(SIGNER_SQL, request_id, access["access_id"], *signer)
         signed_at = await ctx.conn.fetchval("SELECT now()")
-        vault = Vault(keys, ctx)  # type: ignore[arg-type]
-        evidence = evidence_record(
-            request_id=str(request_id),
-            trip_id=str(access["trip_id"]),
-            traveler_id=str(access["traveler_id"]),
-            access_id=str(access["access_id"]),
-            doc_id=str(waiver["doc_id"]),
-            doc_sha256=sha.hex(),
-            otp_id=str(otp_id),
-            # mailbox: sent from the agency's mailbox to the traveller's address (the stored mail is masked, but the
-            # provider keeps a Sent copy its owner can read: e-sign v0 limit); dev_echo: the Dev API answer carried
-            # it too (PORTAL_OTP_DEV_ECHO). Also stored on the row (sealed) so it outlives the code purge.
-            code_delivery=verified["delivery"],
-            signed_at=signed_at.isoformat(),
-            typed_name_sha256=hashlib.sha256(name.encode()).hexdigest(),  # type: ignore[union-attr]
-            consent={"agree": True},
+        agency = await ctx.conn.fetchval(AGENCY_SQL, link.tenant_id)
+        agent = esign_terms.clean_user_agent(user_agent)
+        values = {
+            **signing.preview_values(agency, access, subject.role),
+            "signer.name": name,
+            "signer.role": "guardian of a minor" if guardian else "traveller",
+            "signed.date": signed_at.date().isoformat(),
+        }
+        envelope, evidence, evidence_sha = env.build(
+            agency_name=agency or "",
+            trip={
+                "title": access["title"],
+                "start_date": _iso(access["start_date"]),
+                "end_date": _iso(access["end_date"]),
+            },
+            documents=docs,
+            values=values,
+            audit={
+                "request_id": str(request_id),
+                "trip_id": str(access["trip_id"]),
+                "traveler_id": str(traveler_id),
+                "traveller_role": subject.role,
+                "access_id": str(access["access_id"]),
+                "signer_traveler_id": str(access["traveler_id"]),
+                "signer_role": signer[1],
+                "insurance_choice": choice,
+                "otp_id": str(otp_id),
+                # mailbox: sent from the agency's mailbox to the signer's address (the provider keeps a Sent copy its
+                # owner can read: the e-sign v0 limit stays); dev_echo: the Dev API answer carried it too.
+                "code_delivery": verified["delivery"],
+                "signed_at": signed_at.isoformat(),
+                "typed_name_sha256": env.sha256(name).hex(),
+                "client_ip_sha256": env.optional_sha256(client_ip),
+                "user_agent_sha256": env.optional_sha256(agent),
+                "consent": {"agree": True},
+            },
         )
+        envelope_sha = env.sha256(envelope)
+        seal = await seal_with.seal(envelope_sha)
+        by_kind = {d.kind: d for d in docs}
+        terms_doc, declination = by_kind.get("booking_terms"), by_kind.get("insurance_declination")
         await ctx.conn.execute(
             SIGN_SQL,
             request_id,
             signed_at,
-            await vault.encrypt("signature_request", "signed_name_enc", request_id, name),  # type: ignore[arg-type]
-            sha,
-            hashlib.sha256(evidence).digest(),
+            await vault.encrypt("signature_request", "signed_name_enc", request_id, name),
+            found.waiver.body_sha256,
+            evidence_sha,
             otp_id,
             verified["delivery"],
             evidence,
+            uuid.UUID(terms_doc.doc_id) if terms_doc else None,
+            terms_doc.body_sha256 if terms_doc else None,
+            uuid.UUID(declination.doc_id) if declination else None,
+            declination.body_sha256 if declination else None,
+            choice,
+            envelope_sha,
+            seal.alg,
         )
+        await sign_events.signed(
+            ctx,
+            vault,
+            request_id=request_id,
+            access=access,
+            traveler_id=traveler_id,
+            evidence=evidence,
+            evidence_sha256=evidence_sha,
+            envelope=envelope,
+            envelope_sha256=envelope_sha,
+            seal=seal,
+            client_ip=client_ip,
+            user_agent=agent,
+            at=signed_at,
+        )
+        if terms_doc is not None:
+            await esign_terms.record(
+                ctx,
+                vault,
+                trip_id=access["trip_id"],
+                source="envelope",
+                doc={"doc_id": uuid.UUID(terms_doc.doc_id), "body_sha256": terms_doc.body_sha256},
+                typed_name=name,
+                at=signed_at,
+                traveler_id=traveler_id,
+                link_id=link.link_id,
+                request_id=request_id,
+                client_ip=client_ip,
+                user_agent=agent,
+            )
         await ctx.conn.execute(COMMITMENT_SQL, access["trip_id"], f"signature:{request_id}")
         await progress.refresh(ctx, access["trip_id"])
         await stages.refresh_waiting_on(ctx, access["trip_id"])
-        ctx.audit("portal_sign", "allowed", "signature_request", str(request_id))
-        return True, {"status": "signed", "signed_at": signed_at.isoformat()}
+        ctx.audit("portal_sign", "allowed", "signature_request", str(request_id), reason=signer[1])
+        return True, {
+            "status": "signed",
+            "signed_at": signed_at.isoformat(),
+            "traveler_id": str(traveler_id),
+            "signer_role": signer[1],
+            "envelope_sha256": envelope_sha.hex(),
+            "seal_alg": seal.alg,
+        }

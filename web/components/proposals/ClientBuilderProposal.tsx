@@ -37,6 +37,7 @@ import {
   type ClientOption,
 } from "@/lib/clientProposal";
 import { clientErrorKey, formatAmount } from "@/lib/proposals";
+import { TermsReaccept } from "./TermsReaccept";
 
 const input: React.CSSProperties = {
   font: "inherit",
@@ -344,6 +345,7 @@ export function ClientBuilderProposal({ initial, dict, locale }: { initial: Clie
               {fmt(t(`client.scheduleRow.${s.status}`), { what: t(`client.kind.${s.kind}`), amount: formatAmount(s.amount, s.currency, locale), date: formatDate(s.due_on, locale) })}
             </p>
           ))}
+          {page.terms_reaccept && <TermsReaccept terms={page.terms_reaccept} agency={page.agency_name} t={t} onDone={() => void refresh()} />}
         </div>
       ) : (
         <>

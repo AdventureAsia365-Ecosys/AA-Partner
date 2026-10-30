@@ -37,6 +37,7 @@ import pytest
 from app import stages, stages_job
 from app.dispatch.worker import build_handler as build_dispatch
 from app.errors import Conflict, Forbidden, Invalid
+from app.esign.seal import DevStubSealer
 from app.jobs.queue import Job
 from app.mail import mailbox as mailboxes
 from app.mail.sender import MailSender
@@ -171,21 +172,18 @@ async def _sign_in(pool: asyncpg.Pool, s: dict[str, Any], token: str) -> str:
 
 async def _sign(pool: asyncpg.Pool, s: dict[str, Any], token: str, session: str, name: str) -> tuple[bool, dict]:
     code = await portal.request_code(pool, s["keys"], ECHO, token, purpose="sign", session=session, origin=None)
-    home = await portal.home(pool, token, session)
+    home = await portal.home(pool, token, session, s["keys"])
+    # AA-955 (e-sign v1): the envelope = the published booking terms + the waiver, each as the page showed it.
+    shown = [{"doc_id": d["doc_id"], "doc_sha256": d["body_sha256"]} for d in home["agreements"]["documents"]]
     return await portal.sign(
         pool,
         s["keys"],
         ECHO,
         token,
         session,
-        {
-            "code": code["dev_code"],
-            "full_name": name,
-            "agree": True,
-            "doc_id": home["waiver"]["doc_id"],
-            "doc_sha256": home["waiver"]["body_sha256"],
-        },
+        {"code": code["dev_code"], "full_name": name, "agree": True, "documents": shown},
         origin=None,
+        sealer=DevStubSealer(),
     )
 
 
@@ -330,7 +328,8 @@ async def test_the_thin_lifecycle_end_to_end(app_pool: asyncpg.Pool) -> None:
     with pytest.raises(Conflict) as err:
         await portal.sign(app_pool, s["keys"], ECHO, companion_token, companion_session,
                           {"code": code["dev_code"], "full_name": "Tom Lee", "agree": True,
-                           "doc_id": str(s["waiver"]), "doc_sha256": "0" * 64}, origin=None)  # fmt: skip
+                           "doc_id": str(s["waiver"]), "doc_sha256": "0" * 64}, origin=None,
+                          sealer=DevStubSealer())  # fmt: skip
     assert err.value.code == "document_changed"
     signed, _ = await _sign(app_pool, s, companion_token, companion_session, "Tom Lee")
     assert signed

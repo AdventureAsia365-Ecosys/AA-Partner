@@ -66,7 +66,7 @@ def _refund(**over: Any) -> dict[str, Any]:
 def _conn() -> ScriptedConn:
     conn = ScriptedConn().on("AT TIME ZONE", TODAY)
     conn.on("FROM crm.invoice WHERE invoice_id = $1 AND deleted_at IS NULL FOR UPDATE", _invoice())
-    conn.on("FROM crm.payment_schedule s", {"schedule_id": SCHEDULE, "status": "due"})
+    conn.on("FROM crm.payment_schedule s", {"schedule_id": SCHEDULE, "status": "due", "kind": "balance"})
     return conn
 
 

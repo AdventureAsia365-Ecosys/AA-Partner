@@ -25,6 +25,12 @@ to a device. The agent's "Re-issue link" revokes the old token (:func:`app.propo
   one), the rooms confirmed (Fix B10), no hold request of the version running (409 ``hold_in_progress``: another
   screen may be releasing the very hold this page shows), and, when AA items are chosen, a live hold covering them:
   409 ``hold_required`` / ``hold_expired`` with the re-quote offer (card R). The schedule follows the accepted picks.
+- AA-955 (CRM-25, R34): the accept writes a ``crm.terms_acceptance`` row (source ``proposal``) pinned to the terms
+  version, its SHA-256 and the ``price_hash``, with the client address and user agent. **Terms updated after the
+  client saw them** (design §2.11 E): when the agency published a newer booking terms version and the deposit is not
+  paid yet, the accepted page shows it under ``terms_reaccept`` and :func:`reaccept_terms` records the client's
+  acceptance of it (source ``reaccept``); until then "Mark paid" of the deposit answers 409
+  ``terms_reaccept_required`` (:mod:`app.esign.terms`).
 - :func:`change_request`: "Ask for a change" (F5.4, R19): one bundled diff of the client's choice for the agent (an
   event with the bell and a task); a reason code, never free text.
 
@@ -45,6 +51,8 @@ from app import stages
 from app.booking import proposal_lines
 from app.booking.client import BookingClient
 from app.errors import Conflict, Invalid, NotFound
+from app.esign import merge, signing
+from app.esign import terms as esign_terms
 from app.intake import stage1
 from app.portal.public import check_origin
 from app.proposals import builder, client_page, events, holds, prep_packs
@@ -182,8 +190,11 @@ async def _notice(ctx: AnyContext, row: Any, s: dict[str, Any], total_now: str) 
 async def _page(ctx: AnyContext, keys: KeyProvider, link: Any, row: Any) -> dict[str, Any]:
     vault = Vault(keys, ctx)  # type: ignore[arg-type]
     terms = await ctx.conn.fetchrow(TERMS_SQL, row["terms_doc_id"]) if row["terms_doc_id"] else None
+    agency = await ctx.conn.fetchval(AGENCY_SQL, link.tenant_id)
+    # AA-955: merge fields of the terms text filled in for the page (the signing facts as placeholders).
+    values = signing.preview_values(agency, row, "lead")
     out: dict[str, Any] = {
-        "agency_name": await ctx.conn.fetchval(AGENCY_SQL, link.tenant_id),
+        "agency_name": agency,
         "proposal_id": str(row["proposal_id"]),
         "version": row["version"],
         "status": row["status"],
@@ -193,7 +204,11 @@ async def _page(ctx: AnyContext, keys: KeyProvider, link: Any, row: Any) -> dict
         "currency": row["currency"],
         "terms": None
         if terms is None
-        else {"doc_id": str(terms["doc_id"]), "version_label": terms["version_label"], "body_text": terms["body_text"]},
+        else {
+            "doc_id": str(terms["doc_id"]),
+            "version_label": terms["version_label"],
+            "body_text": merge.render(terms["body_text"], values),
+        },
         "price_hash": bytes(row["price_hash"]).hex(),
         "accepted_at": _iso(row["accepted_at"]),
         "schedule": [
@@ -207,6 +222,17 @@ async def _page(ctx: AnyContext, keys: KeyProvider, link: Any, row: Any) -> dict
             for s in await ctx.conn.fetch(SCHEDULE_SQL, row["proposal_id"])
         ],
     }
+    reaccept = await esign_terms.reaccept_needed(ctx, row["trip_id"]) if row["status"] == "accepted" else None
+    out["terms_reaccept"] = (
+        None
+        if reaccept is None
+        else {
+            "doc_id": str(reaccept["doc_id"]),
+            "version_label": reaccept["version_label"],
+            "body_text": merge.render(reaccept["body_text"], values),
+            "body_sha256": bytes(reaccept["body_sha256"]).hex(),
+        }
+    )
     if row["kind"] == "builder":
         s, picks = await _builder_state(ctx, row)
         out.update(await client_page.view(ctx, vault, row, s, picks, _now()))
@@ -496,7 +522,15 @@ def _checked(raw: Any) -> tuple[str, str, str | None]:
 
 
 async def accept(
-    pool: asyncpg.Pool, keys: KeyProvider, settings: Settings, token: str, raw: Any, *, origin: str | None
+    pool: asyncpg.Pool,
+    keys: KeyProvider,
+    settings: Settings,
+    token: str,
+    raw: Any,
+    *,
+    origin: str | None,
+    client_ip: str | None = None,
+    user_agent: str | None = None,
 ) -> dict[str, Any]:
     check_origin(settings, origin)
     name, price, terms_doc_id = _checked(raw)
@@ -560,6 +594,23 @@ async def accept(
             accepted_at = await ctx.conn.fetchval(ACCEPT_BUILDER_SQL, row["proposal_id"], sealed, *builder_args)
         else:
             accepted_at = await ctx.conn.fetchval(ACCEPT_SQL, row["proposal_id"], sealed)
+        if row["terms_doc_id"] is not None:
+            # R34: the acceptance pinned to the terms version, its SHA-256 and the price hash (AA-955).
+            await esign_terms.record(
+                ctx,
+                vault,
+                trip_id=row["trip_id"],
+                source="proposal",
+                doc=await ctx.conn.fetchrow(TERMS_SQL, row["terms_doc_id"]),
+                typed_name=name,
+                at=accepted_at,
+                proposal_id=row["proposal_id"],
+                price_hash=bytes(row["price_hash"]),
+                traveler_id=link.traveler_id,
+                link_id=link.link_id,
+                client_ip=client_ip,
+                user_agent=user_agent,
+            )
         today = await ctx.conn.fetchval(TODAY_SQL)
         await ctx.conn.execute(
             SCHEDULE_INSERT_SQL, row["trip_id"], row["proposal_id"], "deposit", deposit, row["currency"], today
@@ -585,7 +636,60 @@ async def accept(
                 # writes an AA line, crm-014); asked now so they show in seconds.
                 await proposal_lines.nudge(ctx, f"accepted:{row['proposal_id']}")
         ctx.audit("proposal_accept", "allowed", "proposal", str(row["proposal_id"]))
-        return {"status": "accepted", "accepted_at": _iso(accepted_at)}
+        reaccept = await esign_terms.reaccept_needed(ctx, row["trip_id"])
+        return {"status": "accepted", "accepted_at": _iso(accepted_at), "terms_reaccept_required": reaccept is not None}
+
+
+async def reaccept_terms(
+    pool: asyncpg.Pool,
+    keys: KeyProvider,
+    settings: Settings,
+    token: str,
+    raw: Any,
+    *,
+    origin: str | None,
+    client_ip: str | None = None,
+    user_agent: str | None = None,
+) -> dict[str, Any]:
+    """AA-955 (design §2.11 E): accept the agency's newer booking terms version on an accepted proposal before the
+    deposit. Body: ``doc_id`` and ``doc_sha256`` as shown (409 ``terms_changed`` otherwise), ``full_name``,
+    ``accept_terms: true``. Nothing to re-accept: 409 ``nothing_to_accept``."""
+    check_origin(settings, origin)
+    if not isinstance(raw, dict):
+        raise Invalid("invalid_submission", "an object", fields=["body"])
+    name = stage1.clean_text(raw.get("full_name"), MAX_NAME) if isinstance(raw.get("full_name"), str) else None
+    bad = [f for f, ok in (("full_name", bool(name)), ("accept_terms", raw.get("accept_terms") is True)) if not ok]
+    if bad:
+        raise Invalid("invalid_submission", "type your full name and tick the box", fields=bad)
+    async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
+        row = await _row(ctx, link)
+        if row["status"] != "accepted":
+            raise Conflict("proposal_not_accepted", "accept the proposal first")
+        doc = await esign_terms.reaccept_needed(ctx, row["trip_id"])
+        if doc is None:
+            raise Conflict("nothing_to_accept", "you have accepted the current terms")
+        if raw.get("doc_id") != str(doc["doc_id"]) or raw.get("doc_sha256") != bytes(doc["body_sha256"]).hex():
+            raise Conflict("terms_changed", "the terms changed; read them again", doc_id=str(doc["doc_id"]))
+        at = await ctx.conn.fetchval("SELECT now()")
+        acceptance_id = await esign_terms.record(
+            ctx,
+            Vault(keys, ctx),  # type: ignore[arg-type]
+            trip_id=row["trip_id"],
+            source="reaccept",
+            doc=doc,
+            typed_name=name,  # type: ignore[arg-type]
+            at=at,
+            proposal_id=row["proposal_id"],
+            price_hash=bytes(row["price_hash"]),
+            traveler_id=link.traveler_id,
+            link_id=link.link_id,
+            client_ip=client_ip,
+            user_agent=user_agent,
+        )
+        await events.record(ctx, row["trip_id"], events.TERMS_REACCEPTED, proposal_id=row["proposal_id"], bell=True,
+                            detail={"version_label": doc["version_label"]})  # fmt: skip
+        await stages.touch(ctx, row["trip_id"])
+        return {"status": "accepted", "acceptance_id": str(acceptance_id), "accepted_at": _iso(at)}
 
 
 async def change_request(

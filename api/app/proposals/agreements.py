@@ -1,10 +1,14 @@
-"""The agency's own booking terms and traveller waiver, one row per version (card CRM-18, AA-946; design v3 M12 v0,
-A-16 Terms thin). Every member reads them; the owner writes and publishes (``TERMS_PUBLISH``).
+"""The agency's own booking terms, traveller waiver and insurance declination, one row per version (card CRM-18,
+AA-946; design v3 M12 v0, A-16 Terms thin; AA-955 CRM-25: the insurance declination kind, R13, and merge fields).
+Every member reads them; the owner writes and publishes (``TERMS_PUBLISH``).
 
 - A version starts as a draft (kind ``booking_terms`` or ``waiver``, a label, the text); only a draft changes.
 - Publishing retires the published version of the same kind in the same transaction (one published per kind,
   crm-016); the database hashes the text (``body_sha256``) and never lets a published or retired version change.
-- A proposal pins its booking terms version; a signature pins the waiver version and its hash.
+- A proposal pins its booking terms version; a signature pins the waiver version and its hash (v1: the booking terms
+  and the insurance declination in the same envelope too, :mod:`app.esign`).
+- AA-955: a text may hold the merge fields of :data:`app.esign.merge.MERGE_FIELDS` (``{{trip.title}}`` ...); any other
+  ``{{name}}`` is 422 ``unknown_merge_field``. The list answer carries the field list for the editor.
 """
 
 from __future__ import annotations
@@ -15,9 +19,10 @@ from typing import Any
 import asyncpg
 
 from app.errors import Conflict, Invalid, NotFound
+from app.esign import merge
 from app.tenancy import TenantContext
 
-KINDS = ("booking_terms", "waiver")
+KINDS = ("booking_terms", "waiver", "insurance_declination")
 MAX_TEXT = 100_000
 MAX_LABEL = 40
 
@@ -51,6 +56,9 @@ def _text(value: Any) -> str:
     clean = value.replace("\r\n", "\n").strip()
     if len(clean) > MAX_TEXT:
         raise Invalid("body_too_long", f"at most {MAX_TEXT} characters")
+    unknown = merge.unknown_fields(clean)
+    if unknown:
+        raise Invalid("unknown_merge_field", "use only the listed merge fields", fields=unknown[:20])
     return clean
 
 
@@ -67,7 +75,10 @@ def _view(r: Any) -> dict[str, Any]:
 
 
 async def list_docs(ctx: TenantContext) -> dict[str, Any]:
-    return {"agreements": [_view(r) for r in await ctx.conn.fetch(LIST_SQL)]}
+    return {
+        "agreements": [_view(r) for r in await ctx.conn.fetch(LIST_SQL)],
+        "merge_fields": [{"name": k, "description": v} for k, v in merge.MERGE_FIELDS.items()],
+    }
 
 
 async def create(ctx: TenantContext, *, kind: str, version_label: Any, body_text: Any) -> dict[str, Any]:

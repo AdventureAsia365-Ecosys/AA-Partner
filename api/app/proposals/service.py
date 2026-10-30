@@ -35,6 +35,7 @@ import asyncpg
 from app import stages
 from app.dispatch import queue as dispatch
 from app.errors import Conflict, Invalid, NotFound
+from app.esign import terms as esign_terms
 from app.portal import access, progress
 from app.tenancy import AnyContext, TenantContext
 from app.vault import Vault
@@ -643,6 +644,7 @@ async def mark_paid(
     # refunds), which settles the row when it is paid in full.
     if await ctx.conn.fetchval(ISSUED_INVOICE_SQL, schedule_id) is not None:
         raise Conflict("invoice_issued_for_row", "record the payment on the row's invoice")
+    await require_terms_current(ctx, row)
     today = await ctx.conn.fetchval(TODAY_SQL)
     day = received_on or today
     if day > today:
@@ -655,6 +657,21 @@ async def mark_paid(
     ctx.audit("payment_mark_received", "allowed", "payment_schedule", str(schedule_id), reason=row["kind"])
     out = await settle_schedule(ctx, vault, row)
     return {"schedule_id": str(schedule_id), "payment_id": str(payment_id), "status": "paid", **out}
+
+
+async def require_terms_current(ctx: AnyContext, row: Any) -> None:
+    """AA-955 (design §2.11 E, re-accept before payment): a deposit row takes no payment while the agency's published
+    booking terms version has no acceptance on the trip (409 ``terms_reaccept_required``). Both payment paths call it:
+    "Mark paid" and a payment on the row's invoice (:func:`app.payments.service.record_payment`)."""
+    if row["kind"] != "deposit":
+        return
+    newer = await esign_terms.reaccept_needed(ctx, row["trip_id"])
+    if newer is not None:
+        raise Conflict(
+            "terms_reaccept_required",
+            "the client must accept the new terms version on their proposal page before the deposit",
+            version_label=newer["version_label"],
+        )
 
 
 async def settle_schedule(ctx: TenantContext, vault: Vault, row: Any) -> dict[str, Any]:

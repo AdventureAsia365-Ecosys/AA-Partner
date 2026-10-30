@@ -19,7 +19,7 @@ Route                                           What                            
                                                                                                  assistant: own trip
 ``POST /portal-access/{id}/revoke``             end one traveller's portal access                owner, agent;
                                                                                                  assistant: own trip
-``GET  /agreements``                            booking terms and waiver versions                every role
+``GET  /agreements``                            terms, waiver, declination; merge fields         every role
 ``POST /agreements``                            draft a version                                  owner
 ``PATCH /agreements/{id}``                      edit a draft                                     owner
 ``POST /agreements/{id}/publish``               publish (retires the published one of the kind)  owner
@@ -90,7 +90,7 @@ class InviteIn(_Body):
 
 
 class AgreementIn(_Body):
-    kind: Literal["booking_terms", "waiver"]
+    kind: Literal["booking_terms", "waiver", "insurance_declination"]
     version_label: str = Field(min_length=1, max_length=agreements.MAX_LABEL)
     body_text: str = Field(min_length=1, max_length=agreements.MAX_TEXT)
 

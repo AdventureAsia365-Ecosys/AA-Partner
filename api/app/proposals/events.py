@@ -34,9 +34,10 @@ HOLD_FAILED = "proposal.hold_failed"
 BOOKING_UNAVAILABLE = "proposal.booking_unavailable"
 ACCEPTED = "proposal.accepted"
 NUDGE_DUE = "proposal.nudge_due"
+TERMS_REACCEPTED = "proposal.terms_reaccepted"  # AA-955: the client accepted the agency's newer terms version
 NAMES = (
     VIEWED, OPTION_CHOSEN, CHANGE_REQUESTED, HOLD_PLACED, REHOLD, RECHECK_REFUSED, OPTION_SOLD_OUT, HOLD_FAILED,
-    BOOKING_UNAVAILABLE, ACCEPTED, NUDGE_DUE,
+    BOOKING_UNAVAILABLE, ACCEPTED, NUDGE_DUE, TERMS_REACCEPTED,
 )  # fmt: skip
 NUDGE_AFTER_DAYS = 2
 MAX_BELL = 50

@@ -1,15 +1,16 @@
 "use client";
 // web/components/settings/AgreementsView.tsx — Settings > Agreements (AA-946, card CRM-18; design v3 M12 v0, A-16
-// Terms thin): the agency's booking terms (shown with a proposal, accepted with it) and the traveller waiver (signed in
-// the portal), one version per row. Owner only: draft a version, edit a draft, publish it (the published version of
+// Terms thin; AA-955 CRM-25: the insurance declination kind, R13, and the merge fields the API lists): the agency's
+// booking terms (shown with a proposal, accepted with it, and again in each signing envelope), the traveller waiver
+// and the insurance declination (signed in the portal), one version per row. Owner only: draft a version, edit a draft, publish it (the published version of
 // the same kind retires; a published text never changes, the API and the database refuse it).
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
-import { t, type Lang, type MessageKey } from "@/lib/i18n";
-import { proposalErrorKey, type Agreement } from "@/lib/proposals";
+import { MESSAGES, t, type Lang, type MessageKey } from "@/lib/i18n";
+import { AGREEMENT_KINDS, proposalErrorKey, type Agreement, type MergeField } from "@/lib/proposals";
 
 const field: React.CSSProperties = {
   font: "inherit",
@@ -23,8 +24,19 @@ const field: React.CSSProperties = {
   maxWidth: "100%",
 };
 const TONE = { draft: "neutral", published: "success", retired: "neutral" } as const;
+const MESSAGE_KEYS = new Set(Object.keys(MESSAGES.en));
 
-export function AgreementsView({ docs, lang, locale }: { docs: Agreement[]; lang: Lang; locale: DateLocale }) {
+export function AgreementsView({
+  docs,
+  mergeFields = [],
+  lang,
+  locale,
+}: {
+  docs: Agreement[];
+  mergeFields?: MergeField[];
+  lang: Lang;
+  locale: DateLocale;
+}) {
   const router = useRouter();
   const hydrated = useHydrated();
   const tr = (key: string) => t(lang, key as MessageKey);
@@ -88,8 +100,11 @@ export function AgreementsView({ docs, lang, locale }: { docs: Agreement[]; lang
           <label style={{ display: "grid", gap: 2, fontSize: 12.5 }}>
             {tr("agreements.kind")}
             <select name="kind" defaultValue="booking_terms" style={field}>
-              <option value="booking_terms">{tr("agreements.kind.booking_terms")}</option>
-              <option value="waiver">{tr("agreements.kind.waiver")}</option>
+              {AGREEMENT_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {tr(`agreements.kind.${k}`)}
+                </option>
+              ))}
             </select>
           </label>
           <label style={{ display: "grid", gap: 2, fontSize: 12.5 }}>
@@ -101,6 +116,17 @@ export function AgreementsView({ docs, lang, locale }: { docs: Agreement[]; lang
           {tr("agreements.text")}
           <textarea name="body_text" required rows={6} style={{ ...field, width: "100%", resize: "vertical" }} />
         </label>
+        {mergeFields.length > 0 && (
+          <div data-testid="agreement-merge-fields" style={{ display: "grid", gap: 2, fontSize: 12.5, color: K.muted }}>
+            <span>{tr("agreements.mergeFields")}</span>
+            {mergeFields.map((f) => (
+              <span key={f.name}>
+                <code style={{ color: K.ink }}>{`{{${f.name}}}`}</code>{" "}
+                {MESSAGE_KEYS.has(`agreements.merge.${f.name}`) ? tr(`agreements.merge.${f.name}`) : f.description}
+              </span>
+            ))}
+          </div>
+        )}
         <div>
           <Button type="submit" size="sm" disabled={!hydrated || busy}>
             {tr("agreements.saveDraft")}

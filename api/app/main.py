@@ -40,6 +40,7 @@ from app.cis.membership_feed import FeedConfig
 from app.db import Database
 from app.documents.store import DocumentStore, MemoryDocumentStore, S3DocumentStore
 from app.errors import ServiceError, service_error_handler
+from app.esign.seal import build_sealer
 from app.jobs import handlers as job_handlers
 from app.jobs.metrics import JobMetricsSampler
 from app.jobs.worker import Worker
@@ -59,6 +60,7 @@ from app.routers import (
     builder,
     ci,
     client_pages,
+    esign,
     health,
     invitations,
     invoices,
@@ -212,6 +214,9 @@ def create_app(
     app.state.studio_activation = build_studio_activation(settings, tokens)
     app.state.dispatch_sender = MailSender(mail_runtime) if isinstance(mail_runtime, MailRuntime) else None
     app.state.ingest_store = ingest_store
+    # AA-955 (CRM-25): the platform seal of signed envelopes (KMS alias/crm-<env>/seal; the HMAC stub on dev / test /
+    # local without KMS_SEAL_KEY_ID; None on stg / prod without it: signing answers 503 esign_not_configured).
+    app.state.sealer = build_sealer(settings)
     app.state.public_limiter = FixedWindowLimiter(settings.rate_limit_public_per_minute)
     # AA-936: inquiry-form submissions, per client address per minute and per form per hour.
     app.state.intake_limiter = FixedWindowLimiter(settings.rate_limit_intake_per_minute)
@@ -236,6 +241,7 @@ def create_app(
     app.include_router(proposals.router)
     app.include_router(invoices.router)
     app.include_router(payments.router)
+    app.include_router(esign.router)
     app.include_router(builder.router)
     app.include_router(proposal_text.router)
     app.include_router(mail.router)
