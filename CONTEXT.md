@@ -896,6 +896,36 @@ the request queue; accept and a paid deposit nudge it). No migration.
   `sold_out` / `not_served`) with Booking's code + urgent task `aa_confirm_failed`; not re-sent by itself; the trip
   stage never moves back. Money stays behind the margin serializer: the assistant sees the lines, never cost or sell.
 
+## CRM-23 agency invoices (AA-952 slice 2)
+
+Design v3 group F (M7, R27), A-10 Receivables, the trip's Invoices card; migration crm-024; code in `app/invoices/`
+(`service.py`, `render.py`), routes in `app/routers/invoices.py` (`/crm/v1`); decisions in
+`docs/implementation-notes/AA-952.md` (slices 2 and 3).
+
+- **From a schedule row** (owner / agent `PAYMENT_MARK_RECEIVED`): a due deposit / balance row of the accepted proposal
+  -> a draft with one charge line of the row's amount and currency (always tax-inclusive: it bills what the client
+  accepted) and "included" lines = the titles of the trip's live agency and AA booking lines, no price (design §2.9
+  rule 3). One live invoice per row (409 `invoice_exists`; a void one frees it).
+- **Typed** (`adjustment`, or `service_fee` when Settings > Payments turned service fees on, 409
+  `service_fee_disabled`): charge lines quantity x unit amount, the agency's tax setting (inclusive or on top).
+- **Draft -> issue -> void**: a draft is edited (memo, due date, tax; a typed one's lines); issue takes the agency's next
+  number (`<prefix>-<6+ digits>`, `crm.invoice_sequence` +1 under the row lock: gapless), today in the agency timezone,
+  a due date never before it (default + `invoice_due_days`); the database checks the lines against the totals (CRM39)
+  and seals the invoice (CRM31; 409 `invoice_not_draft`). Void a draft or an unpaid invoice with a reason (409
+  `invoice_has_payments` / `invoice_not_voidable`). The trip's `crm.trip_commitment` row (kind invoice) follows the
+  status (a paid one blocks the trip delete).
+- **Document** (`GET /invoices/{id}/document`, every role): JSON `{html, filename}`; the HTML escapes every value and
+  carries a CSP `<meta>` (inline styles only: no script, no remote load). The agency's display name heads it; the
+  bill-to is the trip lead's display name, read through the vault at render time (no name is copied into an invoice).
+  The web opens it in a new tab (print / save as PDF).
+- **Receivables** (`GET /invoices`, every role): issued and unpaid by default, by due date, overdue flagged; status
+  filter. Settings: `GET / PUT /settings/invoices` (owner `PAYMENT_SETTINGS`): prefix, tax label / rate / inclusive,
+  due days, service fees.
+- **Web**: the trip's Invoices card (`components/invoices/InvoicesPanel.tsx`), A-10 `/payments`
+  (`app/(crm)/payments/page.tsx`), Settings > Payments "Invoices" (`components/invoices/InvoiceSettingsForm.tsx`);
+  helpers and refusal wording in `lib/invoices.ts`; BFF lines card AA-952 in `lib/bff.ts`. New forms use the kit form
+  controls (`Field`, `Input`, `Select`, `Textarea`, `Checkbox`, now in the `app/_kit` barrel).
+
 ## CRM-22 text proposal + Before you go (AA-951)
 
 Design v3 §6.3 CRM-22 (M4, R38, R9; F4 / WF-5 A-05; Q1 2.3); migration crm-022; code in `app/proposals/`
