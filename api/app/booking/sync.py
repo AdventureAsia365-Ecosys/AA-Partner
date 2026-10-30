@@ -36,8 +36,9 @@ per agency and run, so an outage never holds the worker for minutes.
 event in its own transaction, recorded once in ``crm.inbox_events`` (a replayed page applies nothing twice); the
 cursor moves only from the value this run read (compare and set). ``hold.expired`` -> expired; ``hold.extended`` -> a
 refresh request; ``line.confirmed`` -> confirmed; ``line.declined`` -> cancelled / declined (the Lost hint) and an
-urgent task for the trip owner; ``booking.cancelled`` -> cancelled; ``departure.*`` -> recorded ``informational``
-(the incident banner is a later card); an unknown type -> ``unknown_type``. A feed failure backs off like a request.
+urgent task for the trip owner; ``booking.cancelled`` -> cancelled; ``departure.incident`` /
+``departure.incident_cleared`` -> ``crm.incident_flag`` (AA-961, :func:`apply_incident`); the other ``departure.*`` ->
+recorded ``informational``; an unknown type -> ``unknown_type``. A feed failure backs off like a request.
 """
 
 from __future__ import annotations
@@ -55,6 +56,7 @@ from typing import Any
 import asyncpg
 
 from app import stages
+from app.audit import MAX_OBJECT_IDS
 from app.audit_export import registry
 from app.booking import contract, proposal_lines
 from app.booking.client import BookingClient, BookingRefusal, BookingUnavailable
@@ -186,6 +188,29 @@ SELECT l.booking_line_id, l.trip_id, l.status, l.aa_sub_status, l.bk_hold_id
  ORDER BY l.booking_line_id
    FOR UPDATE
 """
+# AA-961 (crm-027): an AA incident on a departure. One open flag per departure (a second incident while one is open
+# keeps the first); a replayed event never opens a second (raised_event_id is unique).
+INCIDENT_OPEN_SQL = """
+INSERT INTO crm.incident_flag (departure_id, incident_code, raised_at, raised_event_id)
+VALUES ($1, $2, COALESCE($3, now()), $4)
+ON CONFLICT DO NOTHING
+RETURNING incident_flag_id
+"""
+INCIDENT_CLEAR_SQL = """
+UPDATE crm.incident_flag
+   SET status = 'cleared', cleared_at = GREATEST(COALESCE($2, now()), raised_at), cleared_event_id = $3
+ WHERE departure_id = $1 AND status = 'open' AND deleted_at IS NULL
+RETURNING incident_flag_id
+"""
+# The agency's live trips with a line on the departure (an agency without one has nothing to show or do).
+INCIDENT_TRIPS_SQL = """
+SELECT DISTINCT t.trip_id
+  FROM crm.booking_line l JOIN crm.trip t ON t.trip_id = l.trip_id
+ WHERE l.departure_id = $1 AND l.status <> 'cancelled' AND l.deleted_at IS NULL
+   AND t.deleted_at IS NULL AND t.stage IN ('booked', 'pre_departure', 'travelling')
+ ORDER BY t.trip_id
+"""
+INCIDENT_TASK = "aa_incident"
 SEEN_SQL = """
 SELECT 1 FROM crm.inbox_events WHERE source = 'booking' AND contract = 'booking.b2b.v1' AND idempotency_key = $1
 """
@@ -540,6 +565,8 @@ async def apply_event(ctx: SystemContext, ev: contract.Event) -> tuple[str, str]
     """``(outcome, reason)`` of one known event, its changes made in ``ctx``'s transaction."""
     if not ev.known:
         return "ignored", "unknown_type"
+    if ev.type in ("departure.incident", "departure.incident_cleared"):
+        return await apply_incident(ctx, ev)
     if ev.type.startswith("departure."):
         return "ignored", "informational"
     try:
@@ -577,6 +604,36 @@ async def apply_event(ctx: SystemContext, ev: contract.Event) -> tuple[str, str]
     for trip_id in trips:
         await stages.refresh_waiting_on(ctx, trip_id)
     return "applied", ev.type.replace(".", "_")
+
+
+async def apply_incident(ctx: SystemContext, ev: contract.Event) -> tuple[str, str]:
+    """``departure.incident`` opens a ``crm.incident_flag`` for the departure and one urgent ``aa_incident`` task per
+    affected booked / pre-departure / travelling trip (the agent decides whom to reach: AA never messages travellers,
+    design F9.3); ``departure.incident_cleared`` clears the open flag (the tasks stay for the agent to close). An
+    event without a departure id or a known code is recorded as ``incident_incomplete``."""
+    if ev.departure_id is None or (ev.type == "departure.incident" and ev.incident_code is None):
+        return "ignored", "incident_incomplete"
+    if ev.type == "departure.incident_cleared":
+        cleared = await ctx.conn.fetchval(INCIDENT_CLEAR_SQL, ev.departure_id, ev.occurred_at, ev.event_id)
+        if cleared is None:
+            return "ignored", "incident_not_open"
+        ctx.audit("aa_sync", "allowed", "incident_flag", str(cleared), reason="departure_incident_cleared")
+        return "applied", "departure_incident_cleared"
+    flag = await ctx.conn.fetchval(INCIDENT_OPEN_SQL, ev.departure_id, ev.incident_code, ev.occurred_at, ev.event_id)
+    if flag is None:
+        return "ignored", "incident_already_open"
+    trips = [r["trip_id"] for r in await ctx.conn.fetch(INCIDENT_TRIPS_SQL, ev.departure_id)]
+    for trip_id in trips:
+        await ctx.conn.execute(TASK_SQL, trip_id, INCIDENT_TASK)
+    ctx.audit(
+        "aa_sync",
+        "allowed",
+        "incident_flag",
+        str(flag),
+        reason="departure_incident",
+        object_ids=tuple(str(t) for t in trips[:MAX_OBJECT_IDS]),
+    )
+    return "applied", "departure_incident"
 
 
 class _Replayed(Exception):

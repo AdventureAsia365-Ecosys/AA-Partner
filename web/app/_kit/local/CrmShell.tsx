@@ -7,6 +7,7 @@
 
 import {
   BookOpen,
+  CalendarDays,
   ChartColumn,
   CircleCheck,
   CircleHelp,
@@ -20,6 +21,7 @@ import {
   Moon,
   Palette,
   Percent,
+  Plane,
   Search,
   Settings,
   Sun,
@@ -49,6 +51,8 @@ const ICONS: Record<IconName, React.ComponentType<{ size?: number; "aria-hidden"
   users: Users,
   inbox: Inbox,
   check: CircleCheck,
+  plane: Plane,
+  calendar: CalendarDays,
   wallet: Wallet,
   ticket: Ticket,
   percent: Percent,

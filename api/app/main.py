@@ -58,9 +58,11 @@ from app.routers import (
     agency,
     audit,
     builder,
+    calendar,
     ci,
     client_pages,
     data,
+    duty,
     esign,
     health,
     invitations,
@@ -244,6 +246,8 @@ def create_app(
     app.include_router(invoices.router)
     app.include_router(payments.router)
     app.include_router(esign.router)
+    app.include_router(duty.router)
+    app.include_router(calendar.router)
     app.include_router(builder.router)
     app.include_router(proposal_text.router)
     app.include_router(mail.router)

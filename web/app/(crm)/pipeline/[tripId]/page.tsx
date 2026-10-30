@@ -11,9 +11,11 @@
 // lines in the Bookings tab; the Lost picker pre-selects the reason the AA lines suggest (lost_reason_hint). CRM-23
 // slice 2: the Invoices card under the Proposal tab (GET /trips/{id}/invoices; due schedule rows from the lifecycle).
 // AA-955 (CRM-25): the Signed documents panel (GET /trips/{id}/agreements: who signed, guardian, insurance choice,
-// seal, the terms acceptances and the re-accept state, the signing log).
+// seal, the terms acceptances and the re-accept state, the signing log). AA-961 (CRM-30): the AA incident banner
+// (GET /trips/{id}/incidents: open flags on the trip's departures, and those cleared in the last 14 days).
 import { notFound } from "next/navigation";
 import { ErrorState } from "@/app/_kit";
+import { TripIncidentBanner } from "@/components/duty/IncidentPanel";
 import { InvoicesPanel } from "@/components/invoices/InvoicesPanel";
 import { LinesPanel } from "@/components/ledger/LinesPanel";
 import { MessagesPanel } from "@/components/mail/MessagesPanel";
@@ -21,6 +23,7 @@ import { ProposalPanel } from "@/components/proposals/ProposalPanel";
 import { TripAgreementsPanel } from "@/components/proposals/TripAgreementsPanel";
 import { TripPanel } from "@/components/pipeline/TripPanel";
 import type { DocumentRow } from "@/lib/clients";
+import type { TripIncident } from "@/lib/duty";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { t } from "@/lib/i18n";
@@ -43,7 +46,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
   const { session } = await serverContext();
   if (!session) return null;
   const tripQuery = new URLSearchParams({ trip_id: tripId });
-  const [trip, members, docs, stage2, lines, suppliers, convs, replies, lifecycle, agreements, invoices, signed] = await Promise.all([
+  const [trip, members, docs, stage2, lines, suppliers, convs, replies, lifecycle, agreements, invoices, signed, incidents] = await Promise.all([
     crmCall<TripView>(ctx.cfg, session, "GET", `trips/${tripId}`),
     crmCall<{ members: Member[] }>(ctx.cfg, session, "GET", "members"),
     crmCall<{ documents: DocumentRow[] }>(ctx.cfg, session, "GET", `trips/${tripId}/documents`),
@@ -56,6 +59,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
     crmCall<{ agreements: Agreement[] }>(ctx.cfg, session, "GET", "agreements"),
     crmCall<{ invoices: Invoice[] }>(ctx.cfg, session, "GET", `trips/${tripId}/invoices`),
     crmCall<TripAgreements>(ctx.cfg, session, "GET", `trips/${tripId}/agreements`),
+    crmCall<{ incidents: TripIncident[] }>(ctx.cfg, session, "GET", `trips/${tripId}/incidents`),
   ]);
   const clientHost = ctx.cfg.clientHosts[0];
   if (!trip.ok) {
@@ -66,6 +70,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
   }
   return (
     <div style={{ display: "grid", gap: 16 }}>
+    {incidents.ok && <TripIncidentBanner incidents={incidents.data.incidents} lang={ctx.lang} locale={ctx.locale} />}
     <TripPanel
       view={trip.data}
       members={members.ok ? members.data.members : []}

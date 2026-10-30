@@ -39,6 +39,9 @@ DESIGN: dict[str, tuple[str, str, str]] = {
     "own_mailbox_connect": (Y, Y, Y),  # "own mailbox only"
     "recovery_view": (Y, Y, Y),  # Q1 6.3 banner for every member
     "recovery_cancel": (Y, Y, Y),
+    "duty_of_care_view": (Y, Y, Y),  # AA-961 R37 "Travelling now" (A-02): every role; names only through a reveal
+    "calendar_view": (Y, Y, Y),  # AA-961 R15: the agency calendar, every role
+    "calendar_feed_manage": (Y, Y, Y),  # AA-961: each member's own ICS feed (an owner may revoke any)
     "view_margin": (Y, Y, N),
     "money_fields_edit": (Y, Y, N),
     "aa_confirm": (Y, Y, N),  # AA-947 (S251 decision): confirming an AA hold books with AA; not the assistant

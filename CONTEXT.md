@@ -116,6 +116,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `/crm/public/v1/s/{token}` | no token (AA-943): the signed client link in the path only (43-character token, SHA-256 stored); served on the client host | `client_link_tx()`; GET the Stage 2 planning form (pages, branches, F2 prefill), POST the answers (Origin check, per-address limit, 32 KiB cap); 404 `link_not_found` for any unusable token |
 | `/crm/public/v1/p/{token}`, `/crm/public/v1/portal/{token}` | no token (AA-946): the signed link in the path (purpose `proposal` / `portal`), plus in the portal the session cookie `aa_portal_s` a verified e-mail code set (httpOnly, Secure, SameSite=Strict, Path = that portal's own path, 12 h; SHA-256 stored); served on the client host | `client_link_tx()` of the purpose; the proposal page and accept (409 `price_changed` / `terms_changed`), the portal home, codes, session, Stage 3 (403 `stage3_locked` before the deposit), e-sign v1 (AA-955: the envelope, guardian signing, the terms re-accept); writes: Origin check, per-address limit, 32 KiB cap; 404 `link_not_found` for any unusable link |
 | `/crm/public/v1/proposal[/pick\|/hold\|/accept\|/change-request]` | no token in the URL (AA-950, Fix B11): the host-only cookie `aa_proposal_link` the web set when the client opened `/c/p/<token>` (httpOnly, Secure, SameSite=Strict, Path `/crm/public/v1/proposal`); served on the client host | `client_link_tx()` of purpose `proposal` (`app/proposals/public.py`); C-03 / C-04 / C-12 of a builder version (Keep / Swap, Choose later, the hold set, accept 409 `hold_expired`, Ask for a change); writes: Origin check, per-address limit, 32 KiB cap; no cookie or an unusable link: 404 `link_not_found` |
+| `/crm/public/v1/calendar/{token}.ics` | no token header (AA-961): the 43-character feed token in the path only (SHA-256 stored), fetched by the member's calendar app; served on the partner host | `calendar_feed_tx()` (`app/calendar/public.py`); `text/calendar`, no names, titles or money; 404 `feed_not_found` for an unknown, revoked or expired token, an inactive member or a locked agency (subscribed calendars stop updating); public rate limit |
 | `/crm/v1` | PARTNER x {AA-Partner web} only (the Dev EXTERNAL x {`cis-portal`} bridge was removed at AA-979 P2b: its tokens are 401) | `X-AA-Tenant-Id` + `tenant_tx(action=...)` (membership in `crm.member`, then the permission matrix); `GET /crm/v1/memberships` and `POST /crm/v1/invitations/accept` need no header |
 | `/crm/ops/v1` | WORKFORCE x {`cis-admin`} | group `cis-admin` or `crm-platform-admin` reads, `crm-platform-admin` writes (AA-939: member deactivation, owner recovery; AA-941: the L1 console, section "L1 console" below). Every response passes the L1 key allow-list (`app/ops/serializer.py`). AA-979: `POST /tenants/{id}/studio-invitations` (the CIS staff relay of a Content studio invitation) takes any OPS caller, `cis-admin` included (section "Content studio invitations"). The Dev-only E2E CIS admin (root ADR 0006a A10b; a `cis-admin` token whose `email` claim is its address, `Caller.e2e_read_only`, `app/auth/e2e_staff.py`) is read-only: every `crm-platform-admin` write answers it 403 `e2e_read_only` |
 | `/crm/staff/v1` | WORKFORCE x {`crm-staff`} | group `crm-ops` or `crm-support` (+ an owner grant for support, CRM-13b) |
@@ -169,6 +170,11 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
   `FOR UPDATE`. Any unusable token is 404 `link_not_found`. Only `app/intake/stage2_public.py` may open it; AA-946
   adds the purposes `proposal` (`app/proposals/public.py`) and `portal` (`app/portal/public.py`), each module opening
   only its own purpose.
+- **`calendar_feed_tx(pool, token_hash_hex)`** (AA-961) is a member's ICS feed fetched by a calendar app: the token's
+  SHA-256 sets `app.calendar_feed_hash`, read by the crm-027 SELECT-only policy `calendar_feed_token_lookup` (TO
+  `crm_app`, active and unexpired feeds only); the feed decides the agency (must be active) and the member (must be
+  active), `app.actor` = `calendar_feed:<id>` (audit actor kind `user`; the crm-027 guard lets it touch only that
+  feed's fetch counters). Any unusable token is 404 `feed_not_found`. Only `app/calendar/public.py` may open it.
 - **`ingest_tx(pool, local_part)`** (AA-945) is the forward-in mail's context: the recipient's local part (an
   unauthenticated sender chose it) sets `app.ingest_local_part`, read by the crm-015 SELECT-only policy
   `ingest_address_lookup` (TO `crm_app`, active and live addresses only); the address decides the agency (must be
@@ -277,6 +283,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-024` | `api/migrations/024_crm_invoices_payments.sql` | AA-952 CRM-23 slices 2-3, invoices and payments (needs crm-023; contract class: new constraints on `crm.payment` / `crm.tenant_settings`, `crm.status_transition` rows, replaced `erase_subject`): `tenant_settings` invoice settings (`invoice_prefix` INV, `invoice_tax_label` / `invoice_tax_rate` / `invoice_tax_inclusive`, `invoice_due_days` 7, `service_fee_enabled` false); `crm.invoice_sequence` (gapless +1 under the row lock, CRM40); `crm.invoice` (kind deposit / balance from a schedule row, always tax-inclusive / service_fee / adjustment; draft -> open (number `<prefix>-<6+ digits>`, issue + due date) -> paid, draft / open -> void with a reason; one live invoice per schedule row; sealed once issued CRM31; the issue checks the charge lines against the totals CRM39; the Fix A8 states payment_claimed / paid_unfulfillable / expired exist, unused); `crm.invoice_line` (charge = quantity x unit amount, included = a title snapshot of the trip's agency / AA lines without price; draft only, CRM39); `crm.payment` + `invoice_id`, `provider` manual / stripe / vn_gateway, `provider_ref`, `entry_kind` payment / refund, `refund_of`; `schedule_id` nullable, `payment_schedule_once_uq` partial (payments without an invoice); `crm.refund_request` (proposed -> approved / rejected -> executed, sealed CRM31); `crm.payment_provider_account` (the agency's own methods, one active per provider, manual = pay-by instructions; no secret); `crm.erase_subject` = the crm-023 text + refund_request, invoice_line, invoice (trip and agency scopes), payment_provider_account, invoice_sequence (agency scope) (a later key starts from the crm-024 text; next CRM41) |
 | `crm-025` | `api/migrations/025_crm_contracts_waivers.sql` | CRM-25 Module 12 e-sign v1 (AA-955; needs crm-024; contract class under ADR 0017: a widened CHECK, a replaced key and sealed trigger, replaced `crm.erase_subject` (the crm-024 text) and `crm.lifecycle_purge_expired` (the crm-018 text)): `agreement_doc.kind` + `insurance_declination` (R13); `signature_request` + the envelope (`signer_traveler_id` / `signer_role` self or guardian, generated `access_traveler_id` naming the signing access, terms and declination versions with their SHA-256, `insurance_choice`, `envelope_sha256`, `seal_alg`; sealed once signed); `terms_acceptance` and `signature_event` (append-only, `crm.ledger_append_only`; no foreign key on trip / proposal / traveller / request: the DM-7 claim-period exception keeps them through a trip or traveller erasure until `keep_until` = trip end + 3 years, then `crm.lifecycle_purge_expired` deletes them, never a held row; the agency erase takes them; the receipt counts `*_kept`) |
 | `crm-026` | `api/migrations/026_crm_portability_requests.sql` | CRM-35 Module 18 (AA-967; needs crm-025, contract class): `crm.export_job` (base template; one portability export of the agency or of one client: queued -> building (progress) -> ready -> expired / cancelled, or failed; object `exports/tenants/<tenant>/portability/<export>.zip.enc`, its and the ZIP's SHA-256, size, row counts, the single-use download link's SHA-256 + expiry; one open export per subject) and `crm.data_request` (base template; the agency's data-request log: kind, channel, client id without foreign key, received / due (<= +92 days), open -> extended -> done / refused / withdrawn + outcome, the erasure receipt); both crm_app SELECT / INSERT / UPDATE, no reader grant, and both on the agency erase keep list (receipts without personal data); `crm.erasure_request.erase_not_before` (the deletion cool-off) and `verified_at`, `UNIQUE (tenant_id, request_id)`; `crm.erase_subject` = the crm-025 text + the two keep-list names. No new SQLSTATE |
+| `crm-027` | `api/migrations/027_crm_duty_of_care_calendar.sql` | CRM-30 duty of care + calendar (AA-961; needs crm-026; contract class under ADR 0017: a replaced `crm.erase_subject`, the crm-026 text with two agency-scope tables): `crm.incident_flag` (base template: an AA incident on a departure as the Booking feed reported it, departure id, the contract's incident code, open -> cleared, raised / cleared times and Booking event ids; one open flag per departure; ids and codes only; written by job / platform actors only, `crm.guard_incident_flag` CRM41), `crm.calendar_feed` (base template: one ICS subscription per member, the token's SHA-256 only, scope `mine` / `agency`, active -> revoked, expiry <= 400 days, fetch counters; one active per member; SELECT-only `calendar_feed_token_lookup` on `app.calendar_feed_hash`; `crm.guard_calendar_feed` CRM42: own feed only, token / member / scope / expiry fixed, only the member or an owner revokes, the fetch actor touches only its counters); crm_app SELECT / INSERT / UPDATE, no reader grant |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -742,6 +749,43 @@ Design v3 §6.3 CRM-18 (M4 base, M7 manual, M11 base, M12 v0); migration crm-016
   `/c/p/[token]` (`components/proposals/ProposalPage.tsx`) and `/c/t/[token]` (`components/portal/PortalPage.tsx`; the
   session cookie never reaches page script; only the `client.*` strings ship, `lib/clientMessages.ts`), BFF lines card
   AA-946 in `lib/bff.ts`. Dev E2E: `e2e/tests/lifecycle-thin.spec.ts` (portal steps need `PORTAL_OTP_DEV_ECHO`).
+
+## CRM-30 duty of care + calendar (AA-961)
+
+Design v3 R37 (A-02 Travelling now, F9 "an AA incident shows a banner") and R15 (calendar; the ICS link is the
+design's fallback, §5.10). Implementation notes: `docs/implementation-notes/AA-961.md`.
+
+- **Incident flags.** `crm_booking_sync` applies the booking.b2b.v1 1.1 events `departure.incident` /
+  `departure.incident_cleared` (`app/booking/sync.py` `apply_incident`): one `crm.incident_flag` per departure while
+  open (a replay or a second incident while open: `incident_already_open`), one urgent `aa_incident` task per affected
+  booked / pre-departure / travelling trip (the agent decides whom to reach; AA never messages travellers), the clear
+  closes the flag (`incident_not_open` when none is open; an event without a departure or a known code:
+  `incident_incomplete`). The affected trips are read at view time (live trips with a booking line on the departure):
+  an agency without one sees nothing, a line added later is covered.
+- **Travelling now** (`app/duty/service.py`, `/crm/v1/duty/*`, action `duty_of_care_view`, every role): booked,
+  pre-departure and travelling trips overlapping a 1-31 day window from today in the agency's timezone, grouped by
+  region (the running AA line's tour country from the catalog cache, else the trip's first destination), the day
+  number and the accepted proposal's day place, the running lines; travellers **once each** with all their trips
+  (card E) and only which contact fields exist, **no names**. `GET /duty/reach?region=` is one region on one day.
+  `GET /trips/{id}/incidents` feeds the trip banner (open, and cleared in the last 14 days).
+- **Bulk reveal** (`POST /duty/reveal`, action `reveal_contact`, or `reveal_sensitive` with the emergency contact):
+  name, phone, e-mail, emergency contact of at most 50 travellers; up to 5 the reason is `duty_of_care`, above 5 one of
+  `BULK_REASONS` is required (422 `reason_required`, card R); the member's reveals of the last hour (the reveal meter,
+  per process) plus this request may not pass 60 (429 `reveal_rate_limited` with `Retry-After`, one denied event); one
+  `reveal` audit event per traveller. Health codes stay one by one on the client page (consent checked there).
+- **Calendar** (`app/calendar/events.py`, `/crm/v1/calendar`, action `calendar_view`): departures, returns, `due`
+  payment schedule rows, `open` / `payment_claimed` invoices, signing deadlines (start - 21 days while a signature is
+  pending), open tasks, requested / confirmed calls; scope `mine` (own trips, own or unassigned tasks on own trips,
+  calls on own trips or clients) or `agency`; at most 400 days and 2,000 events.
+- **ICS feed** (`app/calendar/feeds.py`, `/crm/v1/calendar/feed[s]`, action `calendar_feed_manage`): a new link revokes
+  the member's active one; the URL `<PARTNER_WEB_ORIGIN>/crm/public/v1/calendar/<token>.ics` is returned once; stop =
+  revoked (404 from then on; the page shows the revoked banner, saying whether an owner did it); the owner lists the
+  team's active links. The feed (`app/calendar/ics.py`) carries a fixed English label, the trip's short reference and a
+  link to the trip, never a title, name or amount; 30 days back to 365 ahead; counters written at most every 10
+  minutes. No Google / Microsoft calendar write (bring-your-own sync is a later card).
+- Web: `/travelling` (regions, incidents, "Reach travellers here" with the kit DataTable selection and the reveal
+  controls), `/calendar` (month agenda, kind filter, my link, the team's links for an owner), the trip workspace
+  banner; BFF lines card AA-961.
 
 ## CRM-25 contracts and waivers (AA-955)
 

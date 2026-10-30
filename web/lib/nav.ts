@@ -16,6 +16,8 @@ export type IconName =
   | "users"
   | "inbox"
   | "check"
+  | "plane"
+  | "calendar"
   | "wallet"
   | "ticket"
   | "percent"
@@ -47,6 +49,8 @@ export const SECTIONS: readonly Section[] = [
   { key: "clients", path: "/clients", group: "crm", label: "nav.clients", icon: "users", roles: ALL, empty: { title: "section.clients.title", body: "section.clients.body" } }, // AA-937
   { key: "inbox", path: "/inbox", group: "crm", label: "nav.inbox", icon: "inbox", roles: ALL, empty: { title: "section.inbox.title", body: "section.inbox.body" } }, // AA-945
   { key: "tasks", path: "/tasks", group: "crm", label: "nav.tasks", icon: "check", roles: ALL, empty: { title: "section.tasks.title", body: "section.tasks.body" } }, // AA-959
+  { key: "travelling", path: "/travelling", group: "crm", label: "nav.travelling", icon: "plane", roles: ALL }, // AA-961
+  { key: "calendar", path: "/calendar", group: "crm", label: "nav.calendar", icon: "calendar", roles: ALL }, // AA-961
   { key: "payments", path: "/payments", group: "money", label: "nav.payments", icon: "wallet", roles: ALL, empty: { title: "section.payments.title", body: "section.payments.body" } }, // AA-952
   { key: "bookings", path: "/bookings", group: "money", label: "nav.bookings", icon: "ticket", roles: ALL, empty: { title: "section.bookings.title", body: "section.bookings.body" } }, // AA-944
   { key: "commissions", path: "/commissions", group: "money", label: "nav.commissions", icon: "percent", roles: NO_ASSISTANT, empty: { title: "section.commissions.title", body: "section.commissions.body" } }, // AA-957
