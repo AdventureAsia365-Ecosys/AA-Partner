@@ -10,7 +10,9 @@ import json
 import uuid
 from typing import Any
 
+import boto3
 import pytest
+from botocore.exceptions import ClientError
 
 from app.errors import Conflict, Forbidden, Invalid, NotFound, Unavailable
 from app.esign import envelope as env
@@ -129,9 +131,13 @@ async def test_the_dev_stub_seal() -> None:
 
 
 class FakeKms:
-    def __init__(self, fail: bool = False) -> None:
+    """KMS as it behaves: Verify of a signature that does not match raises KMSInvalidSignatureException (a botocore
+    ClientError); it never answers SignatureValid=false."""
+
+    def __init__(self, fail: bool = False, invalid: type[Exception] | None = None) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.fail = fail
+        self.invalid = invalid
 
     def sign(self, **kw: Any) -> dict[str, Any]:
         self.calls.append(("sign", kw))
@@ -143,7 +149,10 @@ class FakeKms:
         self.calls.append(("verify", kw))
         if self.fail:
             raise RuntimeError("KMSInvalidStateException secret detail")
-        return {"SignatureValid": kw["Signature"] == b"s" * 384}
+        if kw["Signature"] != b"s" * 384:
+            error = {"Error": {"Code": "KMSInvalidSignatureException", "Message": "fake"}}
+            raise (self.invalid or ClientError)(error, "Verify")
+        return {"KeyId": kw["KeyId"], "SignatureValid": True, "SigningAlgorithm": kw["SigningAlgorithm"]}
 
 
 @pytest.mark.asyncio
@@ -164,6 +173,31 @@ async def test_the_kms_seal() -> None:
     assert await verify_any(broken, digest, seal) is None
     with _raises(Unavailable, "seal_unavailable"):
         await broken.verify(digest, seal)
+
+
+@pytest.mark.asyncio
+async def test_a_tampered_kms_seal_is_false_and_only_an_outage_is_not_checked() -> None:
+    digest = hashlib.sha256(b"x").digest()
+    tampered = Seal(KMS_ALG, "test-key-arn", b"t" * 384)
+    sealer = KmsSealer("alias/crm-test/seal", client_factory=lambda: FakeKms())
+    assert await sealer.verify(digest, tampered) is False
+    assert await verify_any(sealer, digest, tampered) is False
+    # The modeled exception the real client raises (a ClientError subclass) reads the same.
+    modeled = boto3.client("kms", region_name="us-west-1").exceptions.KMSInvalidSignatureException
+    sealer = KmsSealer("alias/crm-test/seal", client_factory=lambda: FakeKms(invalid=modeled))
+    assert await verify_any(sealer, digest, tampered) is False
+    # Any other KMS error (key state, throttling, access) is an outage: not checked, never "forged".
+    for code in ("KMSInvalidStateException", "ThrottlingException", "AccessDeniedException", "NotFoundException"):
+        kms = FakeKms()
+
+        def verify(**kw: Any) -> dict[str, Any]:
+            raise ClientError({"Error": {"Code": code, "Message": "fake"}}, "Verify")  # noqa: B023
+
+        kms.verify = verify  # type: ignore[method-assign]
+        down = KmsSealer("alias/crm-test/seal", client_factory=lambda: kms)  # noqa: B023
+        assert await verify_any(down, digest, tampered) is None
+        with _raises(Unavailable, "seal_unavailable"):
+            await down.verify(digest, tampered)
 
 
 def test_which_sealer() -> None:

@@ -30,6 +30,8 @@ from app.vault.wrapping import default_kms_client
 KMS_ALG = "kms-rsassa-pss-sha256"
 STUB_ALG = "dev-stub-hmac-sha256"
 STUB_KEY_REF = "dev-stub"
+# KMS Verify never answers SignatureValid=false: a signature that does not match fails the call with this error code.
+KMS_INVALID_SIGNATURE = "KMSInvalidSignatureException"
 # Not a secret: the stub is a placeholder for the seal on environments without the seal key.
 _STUB_KEY = b"aa-crm-dev-stub-seal-not-a-legal-seal"
 
@@ -102,17 +104,34 @@ class KmsSealer:
         return Seal(KMS_ALG, str(out.get("KeyId") or self.key_id), bytes(out["Signature"]))
 
     async def verify(self, digest: bytes, seal: Seal) -> bool:
+        """True when KMS accepts the seal, False when KMS rejects it; Unavailable only when KMS cannot answer
+        (transport, throttling, key state or access), so an outage is never reported as a forged seal."""
         if seal.alg != KMS_ALG:
             return False
-        out = await self._call(
-            "verify",
-            KeyId=seal.key_ref,
-            Message=_digest(digest),
-            MessageType="DIGEST",
-            Signature=seal.value,
-            SigningAlgorithm=self.signing_algorithm,
-        )
+        try:
+            out = await self._call(
+                "verify",
+                KeyId=seal.key_ref,
+                Message=_digest(digest),
+                MessageType="DIGEST",
+                Signature=seal.value,
+                SigningAlgorithm=self.signing_algorithm,
+            )
+        except Unavailable as exc:
+            if _kms_error_code(exc.__cause__) == KMS_INVALID_SIGNATURE:
+                return False
+            raise
         return bool(out.get("SignatureValid"))
+
+
+def _kms_error_code(exc: BaseException | None) -> str | None:
+    """The error code of a botocore ``ClientError`` (``client.exceptions.KMSInvalidSignatureException`` is one),
+    duck-typed because botocore is imported lazily; else None."""
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return None
+    code = (response.get("Error") or {}).get("Code")
+    return str(code) if code is not None else None
 
 
 def _digest(digest: bytes) -> bytes:
@@ -137,8 +156,9 @@ def require_sealer(sealer: Sealer | None) -> Sealer:
 
 
 async def verify_any(sealer: Sealer | None, digest: bytes, seal: Seal) -> bool | None:
-    """True / False when the seal's algorithm can be checked here; None when it cannot (a KMS seal on an environment
-    without the seal key, or KMS not answering: the reveal still opens, the digest was checked before decrypting)."""
+    """True / False when the seal's algorithm can be checked here (False: KMS rejected the signature, a tampered or
+    forged seal); None when it cannot (a KMS seal on an environment without the seal key, or KMS not answering: the
+    reveal still opens, the digest was checked before decrypting)."""
     if seal.alg == STUB_ALG:
         return await DevStubSealer().verify(digest, seal)
     if isinstance(sealer, KmsSealer):
