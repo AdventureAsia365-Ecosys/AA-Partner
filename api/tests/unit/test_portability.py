@@ -724,3 +724,23 @@ async def test_an_agency_erase_refused_late_keeps_every_file(monkeypatch: pytest
     live = offboarding.build_handler(keys=Keys(), store=store, dry_run=False)  # type: ignore[arg-type]
     assert (await live(object(), job))["status"] == "erased"  # type: ignore[arg-type]
     assert store.objects == {}
+
+
+# Writers that seal an object, not a column (a bucket object, a canary, a browser state): not table columns.
+SEALED_OBJECTS = {("document", "content"), ("export_job", "object"), ("erasure_request", "export"),
+                  ("erasure_request", "verify_canary"), ("oauth_state", "state")}  # fmt: skip
+
+
+def test_every_sealed_column_opens_under_the_name_its_writer_used() -> None:
+    """S260 (after AA-955): the e-sign writer seals ``signature_event.envelope_enc`` as ``envelope``; the export must
+    open it under that AAD name, or every agency export with a signed envelope fails. Every literal writer in app/
+    either seals a ``*_enc`` column under its own name or is mapped in ``T.COLUMN_AAD`` (or seals an object)."""
+    app = Path(__file__).resolve().parents[2] / "app"
+    writer = re.compile(r"\.encrypt(?:_bytes)?\(\s*\"(\w+)\",\s*\"(\w+)\"")
+    found = {m.groups() for f in app.rglob("*.py") for m in writer.finditer(f.read_text(encoding="utf-8"))}
+    assert ("signature_event", "envelope") in found and ("traveler", "display_name_enc") in found
+    mapped = {(t, aad) for (t, _), aad in T.COLUMN_AAD.items()}
+    odd = {(t, c) for t, c in found if not c.endswith("_enc")} - mapped - SEALED_OBJECTS
+    assert odd == set(), f"sealed under a name that is not its column: map it in tables.COLUMN_AAD: {odd}"
+    assert T.Table("signature_event", ("event_id",), ()).aad_column("envelope_enc") == "envelope"
+    assert T.Table("traveler", ("traveler_id",), ()).aad_column("email_enc") == "email_enc"

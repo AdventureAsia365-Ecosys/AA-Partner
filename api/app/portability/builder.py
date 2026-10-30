@@ -152,7 +152,7 @@ async def table_rows(
             if column.endswith("_enc"):
                 if value is not None and table.row_key:
                     value = await vault.decrypt(
-                        table.name, column, r[table.row_key], value, purpose=table.purpose(column)
+                        table.name, table.aad_column(column), r[table.row_key], value, purpose=table.purpose(column)
                     )
                 elif value is not None:
                     value = None  # no single-column key = no AAD row id: never guessed

@@ -44,6 +44,10 @@ NEVER_EXPORT_COLUMNS = frozenset(
 # sealed signing envelope: crm-025, the docs DEK).
 MAIL_TABLES = frozenset({"message", "channel_account", "saved_reply", "message_template", "ingest_address"})
 COLUMN_PURPOSES: dict[tuple[str, str], str] = {("signature_event", "envelope_enc"): "docs"}
+# The AAD column name a writer seals a value under when it is not the database column (app.esign.events seals the
+# envelope as ``signature_event.envelope``); every other ``*_enc`` value is sealed under its own column name.
+# tests/unit/test_portability.py scans the writers so a new one cannot drift.
+COLUMN_AAD: dict[tuple[str, str], str] = {("signature_event", "envelope_enc"): "envelope"}
 
 TABLES_SQL = """
 SELECT c.relname::text AS name,
@@ -81,6 +85,9 @@ class Table:
 
     def out_name(self, column: str) -> str:
         return column[: -len("_enc")] if column.endswith("_enc") else column
+
+    def aad_column(self, column: str) -> str:
+        return COLUMN_AAD.get((self.name, column), column)
 
     def purpose(self, column: str) -> str:
         if (self.name, column) in COLUMN_PURPOSES:

@@ -14,8 +14,10 @@ signed-link contexts and ``tenant_tx()``, with real field encryption and the dev
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import uuid
+import zipfile
 from typing import Any
 
 import asyncpg
@@ -194,3 +196,22 @@ async def test_esign_v1_end_to_end(app_pool: asyncpg.Pool) -> None:
     assert b"Grace" not in bytes(stored["envelope_enc"]) and b"Grace" not in bytes(stored["evidence_record"])
     record = json.loads(bytes(stored["evidence_record"]))
     assert record["user_agent_sha256"] == hashlib.sha256(b"Mozilla/5.0 (test)").hexdigest()
+
+    # S260 review (AA-967 after AA-955): the portability export opens the sealed envelope under the AAD name its writer
+    # used, and the lead's client export holds the minor's signature they gave as guardian (signer_traveler_id).
+    from app.lifecycle.erase import profile_token
+    from app.portability import builder
+
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        vault = Vault(s["keys"], ctx)
+        agency = await builder.build(ctx, vault, None, scope="tenant", subject_id=s["tenant"],  # type: ignore[arg-type]
+                                     export_id=uuid.uuid4())  # fmt: skip
+        token = await profile_token(ctx, vault, s["lead"])
+        client = await builder.build(ctx, vault, None, scope="traveler", subject_id=s["lead"],  # type: ignore[arg-type]
+                                     export_id=uuid.uuid4(), profile_token=token)  # fmt: skip
+    for built in (agency, client):
+        events = json.loads(zipfile.ZipFile(io.BytesIO(built.content)).read("json/signature_event.json"))
+        envelopes = [e["envelope"] for e in events if e.get("envelope")]
+        assert envelopes and all(e.startswith("aa-partner-envelope/1") or "Grace Lee" in e for e in envelopes)
+    signed_for = {e["traveler_id"] for e in events if e["kind"] == "signed"}
+    assert signed_for == {str(s["lead"]), str(s["companion"])}, "the guardian signature is in the lead's export"
