@@ -20,7 +20,7 @@ from app.lifecycle import job as lifecycle_job
 from app.ops import console
 from app.tenancy import lifecycle_tx
 from tests.integration.conftest import OWNER
-from tests.integration.test_crm010_schema import _agency, _count, _ctx
+from tests.integration.test_crm010_schema import EVIDENCE_PURGED, _agency, _count, _ctx
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -50,9 +50,16 @@ async def _purge(pool: asyncpg.Pool, tenant: uuid.UUID, *, dry_run: bool) -> dic
 
 async def test_crm018_is_registered_and_runs_again_as_a_no_op(admin: asyncpg.Connection) -> None:
     assert await admin.fetchval("SELECT 1 FROM shared.schema_versions WHERE version = 'crm-018'") == 1
+    later = await admin.fetchval("SELECT 1 FROM shared.schema_versions WHERE version = 'crm-025'")
     await admin.execute(f"SET ROLE {OWNER}")
     try:
-        await admin.execute(MIGRATION.read_text(encoding="utf-8"))
+        if later:
+            # crm-025 (AA-955) replaced the function with more steps: this file refuses to put its older text back.
+            with pytest.raises(asyncpg.RaiseError, match="a later key replaced it"):
+                await admin.execute(MIGRATION.read_text(encoding="utf-8"))
+            await admin.execute("ROLLBACK")  # the file's own BEGIN is still open
+        else:
+            await admin.execute(MIGRATION.read_text(encoding="utf-8"))
     finally:
         await admin.execute("RESET ROLE")
     src = await admin.fetchval(
@@ -66,7 +73,7 @@ async def test_the_purge_keeps_90_days_of_inbox_rows(app_pool: asyncpg.Pool) -> 
     other = await _agency(app_pool)
     await _inbox_at(app_pool, ids["tenant"], 120, 91, 89, 0)
     await _inbox_at(app_pool, other["tenant"], 200)
-    expected = {"held": 0, "llm_call": 0, "placeholder_map": 0, "membership_inbox": 2}
+    expected = {"held": 0, "llm_call": 0, "placeholder_map": 0, "membership_inbox": 2, **EVIDENCE_PURGED}
     assert await _purge(app_pool, ids["tenant"], dry_run=True) == expected
     assert await _count(app_pool, ids["tenant"], "membership_inbox") == 4  # a dry run deletes nothing
     assert await _purge(app_pool, ids["tenant"], dry_run=False) == expected
@@ -86,6 +93,7 @@ async def test_an_agency_hold_keeps_the_inbox(app_pool: asyncpg.Pool) -> None:
         "llm_call": 0,
         "placeholder_map": 0,
         "membership_inbox": 0,
+        **EVIDENCE_PURGED,
     }
     assert await _count(app_pool, ids["tenant"], "membership_inbox") == 1
 
