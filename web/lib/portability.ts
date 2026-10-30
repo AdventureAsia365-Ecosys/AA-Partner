@@ -140,9 +140,11 @@ export function erasureLines(a: ErasureAnswer, lang: Lang): string[] {
   return lines;
 }
 
+const ERASURE_REFUSALS = new Set(["traveler_on_trip", "legal_hold", "data_request_closed"]);
+
 /** The 409 detail of a refused erasure -> its message key (anything else: the page's generic error). */
 export function erasureRefusal(detail: string): MessageKey | null {
-  return detail === "traveler_on_trip" || detail === "legal_hold" ? (`data.era.refused.${detail}` as MessageKey) : null;
+  return ERASURE_REFUSALS.has(detail) ? (`data.era.refused.${detail}` as MessageKey) : null;
 }
 
 /** The outcomes that fit a closing status (the API's lists, never typed by hand). */

@@ -73,6 +73,7 @@ describe("client erasure", () => {
     expect(lines.some((l) => l.includes("Invoices and payments"))).toBe(true);
     expect(lines.some((l) => l.includes("1 exports"))).toBe(true);
     expect(erasureRefusal("traveler_on_trip")).toBe("data.era.refused.traveler_on_trip");
+    expect(erasureRefusal("data_request_closed")).toBe("data.era.refused.data_request_closed");
     expect(erasureRefusal("other")).toBeNull();
     expect(addDays("2026-10-01", 30)).toBe("2026-10-31");
     expect(addDays("2026-10-01", 92)).toBe("2027-01-01");

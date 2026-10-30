@@ -1250,11 +1250,14 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
 - **Erasure** (`POST /travelers/{id}/erasure`, owner): dry run by default; a real run bypasses the trash and leaves an
   `erasure_request` receipt (backup_purge_by = +30 days). AA-967 (`app/portability/subject.py`): the dry run also
   answers what is kept (crm-025 signed evidence, `*_kept`), the exceptions (`signed_agreements_claim_period`,
-  `accounting_records`) and the exports it would withdraw; a real run withdraws the agency's and the client's exports
-  (objects deleted), erases, **verifies** (the same erase as a dry run must answer `subject_not_found`, else 503
+  `accounting_records`) and the exports it would withdraw. A logged data request (`data_request_id`) is locked and
+  checked first: open, kind `erasure`, about this client or none yet (409 `data_request_closed` /
+  `data_request_not_erasure` / `data_request_other_client`). A real run withdraws the agency's and the client's
+  exports, erases, **verifies** (the same erase as a dry run must answer `subject_not_found`, else 503
   `verify_failed` and nothing is kept), writes the receipt (format 2: counts, kept, exceptions, exports withdrawn,
-  backup_purge_by, copies outside AA, verify) with `verified_at`, and closes the logged data request it answers
-  (`data_request_id`).
+  backup_purge_by, copies outside AA, verify) with `verified_at`, closes the logged request, and only then deletes the
+  bucket objects (the export ZIPs, the client's documents): a refusal on the way deletes no file (`pending=` on
+  `exports.withdraw` / `erase.erase`, then `erase.delete_objects`).
 - **Offboarding** (`/lifecycle/offboarding`, owner; `app/lifecycle/offboarding.py`): request (dry-run counts, shown as
   the deletion report) -> export job (JSON lines format 2: every table of the catalog as the portability ZIP has them,
   `app/portability/tables.py`, personal fields decrypted, indexes / F2 pointer / secrets left out, sealed with the
@@ -1262,10 +1265,11 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   (audited) -> typed confirmation (the agency id) -> **cool-off** (AA-967: `OFFBOARDING_COOL_OFF_HOURS`, default 72;
   `erase_not_before` + `confirmed_by`, the erase job queued for that time; the agency works as usual and the owner may
   cancel; 0 = the AA-942 immediate start) -> agency `offboarding` -> erase job: the portability exports withdrawn,
-  `erase_subject('tenant')`, objects deleted, a canary sealed under the vault DEK, `KeyProvider.destroy` (crypto-shred;
+  `erase_subject('tenant')`, a canary sealed under the vault DEK, `KeyProvider.destroy` (crypto-shred;
   other tasks' DEK caches expire within `DEK_CACHE_TTL_SECONDS`, stated on the receipt), the canary must no longer open
   (else 503 `verify_failed`: rolled back, the request `failed`), the receipt's `verify` block + `verified_at`, agency
-  `offboarded`. The audit and its export registry / chain stay (AA-940 offboarding path). An erase
+  `offboarded`, and last the bucket objects (documents, offboarding export, portability exports; a bucket error there
+  is retried by the worker, not a refusal). The audit and its export registry / chain stay (AA-940 offboarding path). An erase
   the database refuses (a hold placed after the confirmation, CRM16) deleted nothing: the request is `failed`, the
   agency is `active` again and the owner cancels the request. An erase job that meets DRY RUN (switched on after the
   confirmation) is handled the same way (`failed` / `deletion_dry_run`).
@@ -1278,8 +1282,12 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   `GET .../download?token=` (both digests checked, `application/zip`, `X-Content-SHA256`; audited `export_download`;
   a used / late / wrong token 403 `link_invalid`) -> expired after 7 days (410 `export_expired`). AA staff never
   download: the route class AGENCY answers every AA token 403 and the L1 console only raises requests (AA-941). A client
-  export takes the rows that name the client (`traveler_id`), the F2 profile rows (by token), both relation ends, their
-  trips and their conversations' messages.
+  export takes at least what the traveller erase reaches (`tables.CLIENT_WHERE` = its WHERE clauses; a unit test
+  compares them with the latest `erase_subject`): the rows that name the client (`traveler_id`), the F2 profile rows
+  (by token), both relation ends, guardian signatures, the proposal acceptance (those columns only), call slots of
+  their submissions, dispatch attempts, their conversations' messages, plus the kept signed evidence and their trips.
+  Documents up to 25 MiB per export (the ZIP is built in memory in the 512 MB API task; the rest is listed
+  `skipped_size_cap`).
 - **Data-request log** (AA-967, `/crm/v1/data/requests`, `app/portability/requests.py`): the agency logs what its
   clients ask (kind, channel, client, received, due = +30 days by default, up to +92), answers with a client export or
   erasure from the same row, extends, closes with an outcome. Codes and dates only; kept like the receipts.
