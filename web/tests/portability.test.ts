@@ -73,6 +73,17 @@ describe("client erasure", () => {
     expect(lines.some((l) => l.includes("Invoices and payments"))).toBe(true);
     expect(lines.some((l) => l.includes("1 exports"))).toBe(true);
     expect(erasureRefusal("traveler_on_trip")).toBe("data.era.refused.traveler_on_trip");
+    // CRM12 refuses while any of the client's trips is outside the trash: a cancelled trip still blocks, so the
+    // words name the actions that unblock it (Delete trip, Remove from trip), never "cancel" (S260 F2).
+    const onTrip = MESSAGES.en["data.era.refused.traveler_on_trip"];
+    expect(onTrip).toContain(MESSAGES.en["trip.delete"]);
+    expect(onTrip).toContain(MESSAGES.en["trip.removeTraveller"]);
+    expect(onTrip).toContain("trash");
+    expect(onTrip).not.toMatch(/cancel or delete/i);
+    const onTripVi = MESSAGES.vi["data.era.refused.traveler_on_trip"];
+    expect(onTripVi).toContain(MESSAGES.vi["trip.delete"]);
+    expect(onTripVi).toContain(MESSAGES.vi["trip.removeTraveller"]);
+    expect(onTripVi).toContain("thùng rác");
     expect(erasureRefusal("data_request_closed")).toBe("data.era.refused.data_request_closed");
     expect(erasureRefusal("other")).toBeNull();
     expect(addDays("2026-10-01", 30)).toBe("2026-10-31");
