@@ -6,6 +6,10 @@ the document objects the scope reaches, run ``crm.erase_subject`` as ``crm_erase
 then delete those objects from the documents bucket; a failed object delete raises, so the rows roll back and the next
 run retries (a missing object counts as deleted). The DB function raises a coded SQLSTATE for every refusal; they map
 to the service errors below.
+
+A caller with more steps that can still refuse after the erase (a verify, a receipt, a key destroy: AA-967) passes
+``pending``: the keys are added to that list instead of deleted here, and the caller deletes them (with
+:func:`delete_objects`) after its last statement that can raise, so a refusal never leaves rows whose files are gone.
 """
 
 from __future__ import annotations
@@ -73,8 +77,10 @@ async def erase(
     dry_run: bool,
     vault: Vault | None = None,
     store: DocumentStore | None = None,
+    pending: list[str] | None = None,
 ) -> dict[str, int]:
-    """Delete (or count, ``dry_run``) one subject and everything that hangs off it. Returns the per-table counts."""
+    """Delete (or count, ``dry_run``) one subject and everything that hangs off it. Returns the per-table counts.
+    ``pending``: collect the document object keys there instead of deleting them (the caller deletes them last)."""
     if scope not in SCOPES:
         raise ValueError(f"unknown erase scope {scope!r}")
     token = None
@@ -99,11 +105,21 @@ async def erase(
         raise mapped from None
     result = json.loads(raw) if isinstance(raw, str) else dict(raw)
     counts = {str(k): int(v) for k, v in result["counts"].items()}
-    if not dry_run and store is not None:
-        for key in keys:
-            await store.delete(key)
+    if not dry_run and pending is not None:
+        pending.extend(keys)
+    elif not dry_run and store is not None:
+        await delete_objects(store, keys)
     counts["document_object"] = len(keys)
     return counts
+
+
+async def delete_objects(store: DocumentStore | None, keys: list[str]) -> None:
+    """Delete bucket objects an erase made stale. Run it after the last statement of the transaction that can refuse:
+    a failed delete raises (the rows roll back, the next run retries; a missing object counts as deleted)."""
+    if keys and store is None:
+        raise Unavailable("documents_not_configured", "the documents bucket is needed to delete their files")
+    for key in keys:
+        await store.delete(key)  # type: ignore[union-attr]
 
 
 async def purge_expired(ctx: TenantContext | LifecycleContext, *, dry_run: bool) -> dict[str, int]:

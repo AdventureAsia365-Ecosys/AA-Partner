@@ -156,6 +156,11 @@ async def test_a_logged_request_a_client_export_and_the_verified_erasure(
     assert [t["traveler_id"] for t in json.loads(zf.read("json/traveler.json"))] == [str(a["lead"])]
     assert all(c["traveler_id"] == str(a["lead"]) for c in json.loads(zf.read("json/consent.json")))
     assert [t["trip_id"] for t in json.loads(zf.read("json/trip.json"))] == [str(a["trip"])]
+    # Review S260: the client export reaches every table the traveller erase reaches (guardian signatures, the proposal
+    # acceptance, call slots booked by their submissions, dispatch attempts), against the real schema.
+    assert {"proposal", "signature_request", "signature_event", "meeting_slot", "dispatch_attempt"} <= names
+    proposal_header = zf.read("csv/proposal.csv").decode("utf-8-sig").splitlines()[0].split(",")
+    assert "accepted_name" in proposal_header and "body" not in proposal_header, "the acceptance only, not the offer"
     object_key = exports.object_key(a["tenant"], uuid.UUID(row["export_id"]))
     assert object_key in store.objects
 
@@ -171,6 +176,16 @@ async def test_a_logged_request_a_client_export_and_the_verified_erasure(
         assert preview["dry_run"] is True and preview["exports_withdrawn"] == 1 and preview["counts"]["traveler"] == 1
         with _raises(Conflict, "deletion_dry_run"):
             await subject.erase_client(ctx, Vault(keys, ctx), store, a["lead"], dry_run=False, deletion_dry_run=True)
+    # Review S260: a logged request that is not an open erasure of this client refuses before any file is deleted.
+    async with tenant_tx(app_pool, a["owner"], a["tenant"]) as ctx:
+        access = await requests.create(ctx, kind="access", channel="email", received_on=dt.date.today(),
+                                       traveler_id=a["lead"])  # fmt: skip
+    objects_before = dict(store.objects)
+    async with tenant_tx(app_pool, a["owner"], a["tenant"]) as ctx:
+        with _raises(Conflict, "data_request_not_erasure"):
+            await subject.erase_client(ctx, Vault(keys, ctx), store, a["lead"], dry_run=False, deletion_dry_run=False,
+                                       data_request_id=uuid.UUID(access["data_request_id"]))  # fmt: skip
+    assert store.objects == objects_before and object_key in store.objects
     async with tenant_tx(app_pool, a["owner"], a["tenant"]) as ctx:
         done = await subject.erase_client(ctx, Vault(keys, ctx), store, a["lead"], dry_run=False,
                                           deletion_dry_run=False, data_request_id=log_id)  # fmt: skip
@@ -184,7 +199,7 @@ async def test_a_logged_request_a_client_export_and_the_verified_erasure(
     )  # fmt: skip
     assert req_row["status"] == "erased" and req_row["verified_at"] is not None
     async with tenant_tx(app_pool, a["owner"], a["tenant"]) as ctx:
-        [entry] = (await requests.list_requests(ctx))["requests"]
+        [entry] = [r for r in (await requests.list_requests(ctx))["requests"] if r["kind"] == "erasure"]
         [kept_export] = (await exports.list_exports(ctx))["exports"]
     assert (entry["status"], entry["outcome"], entry["erasure_request_id"]) == ("done", "fulfilled", done["request_id"])
     assert entry["traveler_id"] == str(a["lead"]) and kept_export["status"] == "cancelled"

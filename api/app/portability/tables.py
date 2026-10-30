@@ -7,9 +7,13 @@ Never exported: the key rows and the agency's vendor secrets (``tenant_key``, ``
 placeholder maps and the portal codes (short-lived secrets: ``placeholder_map``, ``otp_challenge``), and the audit with
 its export chain (the agency downloads it at Settings > Access log, AA-940).
 
-A client export (scope ``traveler``) takes the rows about that client: the traveller row, the F2 profile and its
-history and party rows (by the profile token), every row that names the traveller (``traveler_id``), both ends of a
-relation, the trips they are on, and the messages of their conversations.
+A client export (scope ``traveler``) takes the rows about that client: at least every row the traveller erase of
+``crm.erase_subject`` deletes or changes (the same WHERE clauses, :data:`CLIENT_WHERE`; a unit test compares the two
+lists, so a table added to the erase cannot be missed here), plus what the erase keeps (the signed evidence, crm-025)
+and the trips they are on: the traveller row, the F2 profile and its history and party rows (by the profile token),
+every row that names the traveller (``traveler_id``), both ends of a relation, the signatures they gave as a guardian,
+the name they typed to accept a proposal (only the acceptance columns of that proposal, :data:`CLIENT_COLUMNS`), the
+call slots their form submissions booked, the attempts of their dispatch rows and the messages of their conversations.
 """
 
 from __future__ import annotations
@@ -88,21 +92,74 @@ def exported(tables: list[Table]) -> list[Table]:
     return [t for t in tables if t.name not in NEVER_EXPORT_TABLES]
 
 
+# The client-export rows of the tables a plain ``traveler_id = $1`` misses: the WHERE clause of the traveller step of
+# crm.erase_subject (crm-026 text; the profile token bound as $1 here), the kept signed evidence, and the trips.
+CLIENT_WHERE: dict[str, tuple[str, str]] = {
+    "traveler_profile": ("traveler_token = $1", "token"),
+    "profile_history": ("traveler_token = $1", "token"),
+    "trip_party": ("traveler_token = $1", "token"),
+    "traveler_relation": ("from_traveler_id = $1 OR to_traveler_id = $1", "traveler"),
+    "proposal": (
+        "accepted_name_enc IS NOT NULL AND link_id IN (SELECT l.link_id FROM crm.client_link l"
+        " WHERE l.traveler_id = $1)",
+        "traveler",
+    ),
+    "signature_request": ("traveler_id = $1 OR signer_traveler_id = $1", "traveler"),
+    "signature_event": ("traveler_id = $1 OR signer_traveler_id = $1", "traveler"),
+    "meeting_slot": (
+        "traveler_id = $1 OR form_submission_id IN (SELECT s.submission_id FROM crm.form_submission s"
+        " WHERE s.traveler_id = $1)",
+        "traveler",
+    ),
+    "dispatch_attempt": (
+        "dispatch_id IN (SELECT q.dispatch_id FROM crm.dispatch_queue q WHERE q.traveler_id = $1)",
+        "traveler",
+    ),
+    "message": (
+        "conversation_id IN (SELECT c.conversation_id FROM crm.conversation c WHERE c.traveler_id = $1)",
+        "traveler",
+    ),
+    # Not in the erase (it refuses while the client is on a live trip, CRM12): the trips the client is on.
+    "trip": ("trip_id IN (SELECT trip_id FROM crm.trip_traveler WHERE traveler_id = $1)", "traveler"),
+}
+# A proposal names the client only through the acceptance (the name they typed; the erase clears just that): a client
+# export holds those columns, not the agency's offer body.
+CLIENT_COLUMNS: dict[str, frozenset[str]] = {
+    "proposal": frozenset(
+        {
+            "proposal_id",
+            "tenant_id",
+            "trip_id",
+            "version",
+            "link_id",
+            "sent_at",
+            "accepted_at",
+            "accepted_name_enc",
+            "accepted_name_erased_at",
+            "currency",
+            "accepted_total_amount",
+            "accepted_deposit_amount",
+            "accepted_terms_doc_id",
+        }
+    )
+}
+
+
 def traveler_query(table: Table) -> tuple[str, str] | None:
     """(WHERE clause, parameter kind) of a client export for ``table``; None = the table holds nothing about one client.
     Parameter kind ``traveler`` binds the traveller id, ``token`` the decrypted F2 profile token."""
-    cols = set(table.columns)
-    if table.name in ("traveler_profile", "profile_history", "trip_party"):
-        return "traveler_token = $1", "token"
-    if table.name == "traveler_relation":
-        return "from_traveler_id = $1 OR to_traveler_id = $1", "traveler"
-    if table.name == "trip":
-        return "trip_id IN (SELECT trip_id FROM crm.trip_traveler WHERE traveler_id = $1)", "traveler"
-    if table.name == "message":
-        return "conversation_id IN (SELECT conversation_id FROM crm.conversation WHERE traveler_id = $1)", "traveler"
-    if "traveler_id" in cols:
+    if table.name in CLIENT_WHERE:
+        return CLIENT_WHERE[table.name]
+    if "traveler_id" in set(table.columns):
         return "traveler_id = $1", "traveler"
     return None
+
+
+def client_columns(table: Table) -> list[str]:
+    """The exported columns of ``table`` in a client export (all, except for the tables of :data:`CLIENT_COLUMNS`)."""
+    only = CLIENT_COLUMNS.get(table.name)
+    columns = table.exported_columns()
+    return columns if only is None else [c for c in columns if c in only]
 
 
 def json_value(value: Any) -> Any:

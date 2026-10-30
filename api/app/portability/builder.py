@@ -14,8 +14,14 @@ Layout (``schema_version`` 1)::
 
 Entries carry a fixed timestamp, so the same rows give the same bytes. The ZIP's own SHA-256 is stored on
 ``crm.export_job.content_sha256`` and shown on the Settings page. Documents are included up to
-:data:`DOCUMENTS_MAX_BYTES` in total (the rest is listed with ``skipped_size_cap``); a file whose stored copy does not
-match its digest is listed ``skipped_integrity``, never included.
+:data:`DOCUMENTS_MAX_BYTES` in total (the rest is listed with ``skipped_size_cap``; the manifest names the cap); a file
+whose stored copy does not match its digest is listed ``skipped_integrity``, never included.
+
+Memory (AA-967 review): the ZIP is built in memory inside the CRM API task (512 MB, also the in-process crm.job
+worker). At the peak the ZIP, its sealed copy and one document (sealed and open, at most 7 MiB each) are alive at once,
+and the download holds the sealed and the open ZIP: about three times the documents cap plus the tables. The cap is
+25 MiB so that stays near 100 MB; raising it needs a streamed build (spooled file, chunked seal, multipart upload) or
+more task memory, not just a bigger number (``tests/unit/test_portability.py`` guards both).
 """
 
 from __future__ import annotations
@@ -40,7 +46,7 @@ from app.vault import Vault
 
 SCHEMA_VERSION = 1
 FORMAT = "aa-partner-crm-export"
-DOCUMENTS_MAX_BYTES = 100 * 1024 * 1024
+DOCUMENTS_MAX_BYTES = 25 * 1024 * 1024
 ZIP_DATE = (2026, 1, 1, 0, 0, 0)
 VERSIONS_SQL = "SELECT coalesce(array_agg(version ORDER BY version), '{}') FROM crm.v_schema_versions"
 
@@ -109,7 +115,9 @@ class _Zip:
         info.external_attr = 0o644 << 16
         self.zf.writestr(info, lines.encode("ascii"))
         self.zf.close()
-        return self.buf.getvalue()
+        content = self.buf.getvalue()
+        self.buf.close()  # free the buffer now: only one copy of the ZIP stays alive
+        return content
 
 
 async def catalog(ctx: LifecycleContext) -> list[T.Table]:
@@ -120,16 +128,22 @@ async def catalog(ctx: LifecycleContext) -> list[T.Table]:
 
 
 async def table_rows(
-    ctx: LifecycleContext, vault: Vault, table: T.Table, where: str | None = None, arg: Any = None
+    ctx: LifecycleContext,
+    vault: Vault,
+    table: T.Table,
+    where: str | None = None,
+    arg: Any = None,
+    columns: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """The table's rows in this agency (FORCE RLS), decrypted, as JSON-ready dicts ordered by the primary key."""
+    """The table's rows in this agency (FORCE RLS), decrypted, as JSON-ready dicts ordered by the primary key
+    (``columns``: only those, default every exported column)."""
     order = ", ".join(table.pk) if table.pk else "1"
     sql = f"SELECT * FROM crm.{table.name}"  # noqa: S608 — names come from the catalog, not from a caller
     if where is not None:
         rows = await ctx.conn.fetch(f"{sql} WHERE {where} ORDER BY {order}", arg)
     else:
         rows = await ctx.conn.fetch(f"{sql} ORDER BY {order}")
-    columns = table.exported_columns()
+    columns = table.exported_columns() if columns is None else columns
     out: list[dict[str, Any]] = []
     for r in rows:
         item: dict[str, Any] = {}
@@ -164,10 +178,10 @@ async def build(
     """Every exported table of the agency (scope ``tenant``) or every row about one client (scope ``traveler``), and
     the documents those rows name, as the ZIP above."""
     found = T.exported(await catalog(ctx))
-    plan: list[tuple[T.Table, str | None, Any]] = []
+    plan: list[tuple[T.Table, str | None, Any, list[str]]] = []
     for table in found:
         if scope == "tenant":
-            plan.append((table, None, None))
+            plan.append((table, None, None, table.exported_columns()))
             continue
         q = T.traveler_query(table)
         if q is None:
@@ -176,9 +190,9 @@ async def build(
         if kind == "token":
             if profile_token is None:
                 continue
-            plan.append((table, where, profile_token))
+            plan.append((table, where, profile_token, T.client_columns(table)))
         else:
-            plan.append((table, where, subject_id))
+            plan.append((table, where, subject_id, T.client_columns(table)))
 
     zipped = _Zip()
     counts: dict[str, int] = {}
@@ -186,10 +200,10 @@ async def build(
     documents: list[dict[str, Any]] = []
     total = len(plan)
     done = 0
-    for table, where, arg in plan:
-        rows = await table_rows(ctx, vault, table, where, arg)
+    for table, where, arg, columns in plan:
+        rows = await table_rows(ctx, vault, table, where, arg, columns)
         counts[table.name] = len(rows)
-        header = [table.out_name(c) for c in table.exported_columns()]
+        header = [table.out_name(c) for c in columns]
         j = zipped.add(f"json/{table.name}.json", json.dumps(rows, ensure_ascii=False, indent=1).encode("utf-8"))
         c = zipped.add(f"csv/{table.name}.csv", to_csv(rows, header))
         files.append(
@@ -278,13 +292,19 @@ async def build(
         "created_at": dt.datetime.now(dt.UTC).isoformat(),
         "crm_schema_versions": list(await ctx.conn.fetchval(VERSIONS_SQL)),
         "tables": files,
-        "documents": {"manifest": "documents/manifest.csv", "included": included, "skipped": skipped},
+        "documents": {
+            "manifest": "documents/manifest.csv",
+            "included": included,
+            "skipped": skipped,
+            "max_bytes": documents_max_bytes,
+        },
         "checksums": "SHA256SUMS",
         "notes": [
             "personal_fields_decrypted",
             "index_and_token_columns_left_out",
             "audit_log_downloaded_separately",
             "vendor_secrets_never_exported",
+            f"documents_capped_at_{documents_max_bytes // (1024 * 1024)}_mib_rest_listed_skipped_size_cap",
         ],
     }
     zipped.add("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=1, sort_keys=True).encode("utf-8"))

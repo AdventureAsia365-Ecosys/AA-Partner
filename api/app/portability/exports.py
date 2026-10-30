@@ -22,7 +22,7 @@ Owner steps (``/crm/v1/data/exports``, :mod:`app.routers.data`):
 
 **Withdrawal** (:func:`withdraw`): a client erasure cancels every open or ready export of the agency and of that
 client and deletes their objects (they may hold the erased data); an agency erase does the same for all exports. The
-rows stay (receipts, crm-026 keep list).
+rows stay (receipts, crm-026 keep list). The erasures delete the objects last, after every step that can refuse.
 """
 
 from __future__ import annotations
@@ -260,6 +260,7 @@ async def download(
         ctx.audit("export_download", "denied", "export_job", str(export_id), reason="digest_mismatch")
         raise Unavailable("export_integrity", "the stored export does not match its digest")
     content = await vault.decrypt_bytes("export_job", "object", export_id, sealed, purpose="export")
+    del sealed  # memory: the response holds the open ZIP only (builder module docstring)
     if hashlib.sha256(content).hexdigest() != row["content_sha256"]:
         ctx.audit("export_download", "denied", "export_job", str(export_id), reason="digest_mismatch")
         raise Unavailable("export_integrity", "the export does not match its checksum")
@@ -271,18 +272,29 @@ async def download(
 
 
 async def withdraw(
-    ctx: AnyContext, store: DocumentStore | None, traveler_id: uuid.UUID | None, *, dry_run: bool
+    ctx: AnyContext,
+    store: DocumentStore | None,
+    traveler_id: uuid.UUID | None,
+    *,
+    dry_run: bool,
+    pending: list[str] | None = None,
 ) -> int:
     """Cancel the exports an erasure makes stale and delete their objects: for a client (``traveler_id``) the agency
-    exports and that client's; for the agency (None) all of them. Returns how many were withdrawn."""
+    exports and that client's; for the agency (None) all of them. Returns how many were withdrawn.
+
+    ``pending`` (the erasures, AA-967 review): the object keys are added there instead of deleted, and the caller
+    deletes them (:func:`app.lifecycle.erase.delete_objects`) after its last statement that can refuse, so a refused
+    erase that rolls the rows back to ``ready`` never leaves them naming deleted files."""
     if dry_run:
         return len(await ctx.conn.fetch(WITHDRAW_PEEK_SQL, traveler_id))
     rows = await ctx.conn.fetch(WITHDRAW_SQL, traveler_id)
     keys = [r["object_key"] for r in rows if r["object_key"]]
     if keys and store is None:
         raise Unavailable("documents_not_configured", "the documents bucket is needed to delete the export files")
-    for key in keys:
-        await store.delete(key)  # type: ignore[union-attr]
+    if pending is not None:
+        pending.extend(keys)
+    else:
+        await erase.delete_objects(store, keys)
     return len(rows)
 
 
@@ -318,15 +330,19 @@ async def _run(
             progress=progress,
         )  # fmt: skip
         sealed = await vault.encrypt("export_job", "object", export_id, built.content, purpose="export")
+        size = len(built.content)
+        built.content = b""  # memory: only the sealed copy is needed from here on (builder module docstring)
         key = object_key(tenant_id, export_id)
         await store.put(key, sealed)
+        sealed_sha256 = hashlib.sha256(sealed).hexdigest()
+        del sealed
         status = await ctx.conn.execute(
             READY_SQL,
             export_id,
             key,
-            hashlib.sha256(sealed).hexdigest(),
+            sealed_sha256,
             built.sha256,
-            len(built.content),
+            size,
             json.dumps(built.row_counts),
             built.documents_included,
             built.documents_skipped,
@@ -336,7 +352,7 @@ async def _run(
             await store.delete(key)
             return {"export_id": str(export_id), "status": "withdrawn"}
         ctx.audit("export_create", "allowed", "export_job", str(export_id), reason=scope)
-    log.info("portability_export tenant_id=%s export_id=%s bytes=%d", tenant_id, export_id, len(built.content))
+    log.info("portability_export tenant_id=%s export_id=%s bytes=%d", tenant_id, export_id, size)
     return {"export_id": str(export_id), "status": "ready"}
 
 

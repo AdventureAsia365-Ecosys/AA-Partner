@@ -13,8 +13,10 @@ import datetime as dt
 import hashlib
 import io
 import json
+import re
 import uuid
 import zipfile
+from pathlib import Path
 from typing import Any
 
 import asyncpg
@@ -22,7 +24,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.documents.store import MemoryDocumentStore
-from app.errors import Conflict, Forbidden, Gone, Invalid, NotFound
+from app.errors import Conflict, Forbidden, Gone, Invalid, NotFound, Unavailable
 from app.jobs.payload_guard import check_payload
 from app.jobs.queue import Job
 from app.main import create_app
@@ -148,7 +150,8 @@ def test_the_zip_holds_json_csv_documents_manifest_and_checksums() -> None:
     manifest = json.loads(zf.read("manifest.json"))
     assert manifest["schema_version"] == 1 and manifest["format"] == "aa-partner-crm-export"
     assert manifest["crm_schema_versions"] == ["crm-001", "crm-026"]
-    assert manifest["documents"] == {"manifest": "documents/manifest.csv", "included": 1, "skipped": 0}
+    assert manifest["documents"] == {"manifest": "documents/manifest.csv", "included": 1, "skipped": 0,
+                                     "max_bytes": builder.DOCUMENTS_MAX_BYTES}  # fmt: skip
     [traveler] = json.loads(zf.read("json/traveler.json"))
     assert traveler == {"traveler_id": str(CLIENT), "tenant_id": str(TENANT), "display_name": "Hoa",
                         "notes": "=SUM(A1)"}  # fmt: skip
@@ -195,7 +198,7 @@ def test_traveler_query_covers_tokens_relations_trips_and_messages() -> None:
     assert T.traveler_query(table("trip_party", "traveler_token"))[1] == "token"  # type: ignore[index]
     assert "to_traveler_id" in T.traveler_query(table("traveler_relation"))[0]  # type: ignore[index]
     assert "trip_traveler" in T.traveler_query(table("trip", "trip_id"))[0]  # type: ignore[index]
-    assert "crm.conversation" in T.traveler_query(table("message"))[0]  # type: ignore[index]
+    assert "crm.conversation c" in T.traveler_query(table("message"))[0]  # type: ignore[index]
     assert T.traveler_query(table("consent", "traveler_id")) == ("traveler_id = $1", "traveler")
     assert T.traveler_query(table("saved_reply", "body_enc")) is None
     assert {"tenant_key", "integration_credential", "placeholder_map", "otp_challenge", "audit_event"} <= set(
@@ -301,6 +304,11 @@ def test_withdraw_cancels_and_deletes_the_objects() -> None:
     peek = ScriptedConn().on("SELECT export_job_id, object_key", [{"export_job_id": EXPORT, "object_key": "k"}])
     assert run(exports.withdraw(tenant_ctx(peek), None, None, dry_run=True)) == 1
     assert not peek.sql("SET status")
+    # The erasures (review): the keys are only collected, the caller deletes them after its last refusing step.
+    run(store.put("exports/a", b"x"))
+    pending: list[str] = []
+    assert run(exports.withdraw(tenant_ctx(conn), store, None, dry_run=False, pending=pending)) == 2
+    assert pending == ["exports/a"] and store.objects == {"exports/a": b"x"}
 
 
 def test_the_job_builds_seals_stores_and_marks_ready(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -474,3 +482,245 @@ def test_r_agents_and_aa_staff_never_download_an_export(pools: LocalPools, monke
     # The L1 console has no export download route at all.
     assert not [r for r in app.routes if getattr(r, "path", "").startswith("/crm/ops/") and "export" in r.path
                 and "download" in r.path]  # fmt: skip
+
+
+# ── Review fixes (S260): coverage = the erase, memory, object deletes last ───────────────────────
+MIGRATIONS = Path(__file__).resolve().parents[2] / "migrations"
+STEP = re.compile(r"\[\s*'(\w+)',\s*((?:'[^']*'\s*)+),\s*'([^']*)'\s*\]")
+KEPT = re.compile(r"'(\w+)_kept',\s*\(SELECT count\(\*\) FROM crm\.(\w+)\s+WHERE (.*?)\)\)?[,;]", re.S)
+
+
+def _erase_traveler_block() -> str:
+    text = [f for f in sorted(MIGRATIONS.glob("*.sql")) if "FUNCTION crm.erase_subject" in f.read_text()][
+        -1
+    ].read_text()
+    start = text.index("ELSIF p_scope = 'traveler' THEN", text.index("IF NOT p_dry_run THEN"))
+    return text[start : text.index("] LOOP", start)]
+
+
+def _norm(where: str) -> str:
+    return " ".join(where.replace("p_subject", "$1").split())
+
+
+def test_the_client_export_covers_every_row_the_traveller_erase_deletes() -> None:
+    """Every traveller step of the latest crm.erase_subject (and the evidence it keeps) is a client-export query with
+    the same WHERE clause: a table added to the erase cannot be missed by the access / portability answer."""
+    block = _erase_traveler_block()
+    steps = [(m[1], "".join(re.findall(r"'([^']*)'", m[2])), m[3]) for m in STEP.finditer(block)]
+    assert len(steps) >= 20 and ("proposal", steps[0][1], steps[0][2]) == steps[0]
+    for name, where, _update in steps:
+        if (name, where) == ("traveler", "referrer_traveler_id = $1"):
+            continue  # another client's row: only its link to this one is cut
+        kind = "token" if "$2" in where else "traveler"
+        got = T.traveler_query(T.Table(name, (f"{name}_id",), ("traveler_id",)))
+        assert got is not None, name
+        assert (_norm(got[0]), got[1]) == (_norm(where.replace("$2", "$1")), kind), name
+    kept = {m[2]: m[3] for m in KEPT.finditer(block)}
+    assert set(kept) == {"terms_acceptance", "signature_event"}
+    for name, where in kept.items():
+        got = T.traveler_query(T.Table(name, (f"{name}_id",), ("traveler_id",)))
+        assert got is not None and _norm(got[0]) == _norm(where), name
+
+
+def test_a_client_export_takes_only_the_acceptance_of_a_proposal() -> None:
+    proposal = T.Table("proposal", ("proposal_id",), ("proposal_id", "trip_id", "body_enc", "accepted_name_enc",
+                                                      "accepted_at", "total_amount", "link_id"))  # fmt: skip
+    assert T.client_columns(proposal) == ["proposal_id", "trip_id", "accepted_name_enc", "accepted_at", "link_id"]
+    other = T.Table("consent", ("consent_id",), ("consent_id", "traveler_id", "email_bidx"))
+    assert T.client_columns(other) == ["consent_id", "traveler_id"]
+
+
+def test_memory_the_documents_cap_fits_the_512_mb_task() -> None:
+    """Review S260: the ZIP is built in memory in the 512 MB API task (with the in-process worker). Peak is about three
+    times the cap (ZIP + sealed copy, or sealed + open on download); keep it near 100 MB until the build streams."""
+    assert builder.DOCUMENTS_MAX_BYTES <= 25 * 1024 * 1024
+
+
+def test_memory_the_build_holds_about_two_copies_of_the_documents() -> None:
+    import os
+    import tracemalloc
+
+    size = 3 * 1024 * 1024
+    payload = os.urandom(size)  # incompressible, like a scanned passport
+    sealed = b"enc:document.content:" + payload
+    store = MemoryDocumentStore()
+    run(store.put("documents/k", sealed))
+    conn = _conn(sealed)
+    conn.on("FROM crm.document ORDER BY", [{
+        "document_id": DOC, "traveler_id": CLIENT, "kind": "passport", "s3_key": "documents/k", "sha256": None,
+        "size_bytes": size, "content_type": "image/jpeg", "filename_enc": enc("document", "filename_enc", "p.jpg"),
+    }])  # fmt: skip
+    tracemalloc.start()
+    try:
+        built = run(builder.build(_lifecycle_ctx(conn), DocVault(), store, scope="tenant", subject_id=TENANT,  # type: ignore[arg-type]
+                                  export_id=EXPORT, documents_max_bytes=size))  # fmt: skip
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert built.documents_included == 1
+    manifest = json.loads(zipfile.ZipFile(io.BytesIO(built.content)).read("manifest.json"))
+    assert manifest["documents"]["max_bytes"] == size
+    assert any(n.startswith("documents_capped_at_") for n in manifest["notes"])
+    assert peak < 4.5 * size, f"build peak {peak} bytes for a {size}-byte document"
+
+
+def _erasure_conn(request: dict[str, Any] | None = None) -> ScriptedConn:
+    conn = ScriptedConn().on(
+        "RETURNING stale.export_job_id, stale.object_key", [{"export_job_id": EXPORT, "object_key": "exports/x"}]
+    )
+    conn.on("SELECT export_job_id, object_key", [{"export_job_id": EXPORT, "object_key": "exports/x"}])
+    conn.on("INSERT INTO crm.erasure_request", REQ_ID)
+    if request is not None:
+        conn.on("FROM crm.data_request WHERE", request)
+    return conn
+
+
+REQ_ID = uuid.UUID("00000000-0000-4000-8000-0000000000a9")
+
+
+def _fake_erase(calls: list[bool]) -> Any:
+    async def fake(ctx: Any, scope: str, subject_id: uuid.UUID, *, dry_run: bool, pending: Any = None,
+                   **_: Any) -> dict[str, int]:  # fmt: skip
+        if dry_run and calls and calls[-1] is False:
+            calls.append(dry_run)
+            raise NotFound("subject_not_found")
+        calls.append(dry_run)
+        if not dry_run:
+            assert pending is not None, "the client erase defers its document deletes"
+            pending.append("documents/d")
+        return {"traveler": 1, "document_object": 1}
+
+    return fake
+
+
+def _erase_client(conn: ScriptedConn, store: Any, request_id: uuid.UUID | None = None) -> Any:
+    return subject.erase_client(tenant_ctx(conn), DocVault(), store, CLIENT, dry_run=False,  # type: ignore[arg-type]
+                                deletion_dry_run=False, data_request_id=request_id)  # fmt: skip
+
+
+def _objects() -> MemoryDocumentStore:
+    store = MemoryDocumentStore()
+    run(store.put("exports/x", b"zip"))
+    run(store.put("documents/d", b"doc"))
+    return store
+
+
+@pytest.mark.parametrize(
+    ("over", "code"),
+    [
+        ({"status": "done"}, "data_request_closed"),
+        ({"status": "withdrawn"}, "data_request_closed"),
+        ({"kind": "access"}, "data_request_not_erasure"),
+        ({"traveler_id": uuid.uuid4()}, "data_request_other_client"),
+    ],
+)
+def test_a_client_erasure_checks_the_logged_request_before_deleting_anything(
+    monkeypatch: pytest.MonkeyPatch, over: dict[str, Any], code: str
+) -> None:
+    calls: list[bool] = []
+    monkeypatch.setattr(subject.erase, "erase", _fake_erase(calls))
+    store = _objects()
+    conn = _erasure_conn(_request_row(**over))
+    with codes(Conflict, code):
+        run(_erase_client(conn, store, EXPORT))
+    assert calls == [] and not conn.sql("SET status = 'cancelled'")
+    assert set(store.objects) == {"exports/x", "documents/d"}
+    with codes(NotFound, "data_request_not_found"):
+        run(_erase_client(_erasure_conn(), store, EXPORT))
+
+
+def test_a_client_erasure_deletes_the_files_only_after_its_last_refusing_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[bool] = []
+    monkeypatch.setattr(subject.erase, "erase", _fake_erase(calls))
+    # The receipt insert fails after the erase: the rows roll back, and no file is gone.
+    store = _objects()
+    conn = _erasure_conn().on("INSERT INTO crm.erasure_request", asyncpg.PostgresError("insert failed"))
+    with pytest.raises(asyncpg.PostgresError):
+        run(_erase_client(conn, store))
+    assert set(store.objects) == {"exports/x", "documents/d"}
+    # The verify fails (the client is still found): no file is gone either.
+    calls.clear()
+
+    async def still_there(ctx: Any, scope: str, subject_id: uuid.UUID, *, dry_run: bool, pending: Any = None,
+                          **_: Any) -> dict[str, int]:  # fmt: skip
+        if pending is not None:
+            pending.append("documents/d")
+        return {"traveler": 1}
+
+    monkeypatch.setattr(subject.erase, "erase", still_there)
+    with codes(Unavailable, "verify_failed"):
+        run(_erase_client(_erasure_conn(), store))
+    assert set(store.objects) == {"exports/x", "documents/d"}
+    # A full run with an open erasure request about this client (or no client yet): closed, then the files go.
+    monkeypatch.setattr(subject.erase, "erase", _fake_erase(calls))
+    for traveler in (CLIENT, None):
+        calls.clear()
+        store = _objects()
+        conn = _erasure_conn(_request_row(traveler_id=traveler))
+        done = run(_erase_client(conn, store, EXPORT))
+        assert done["request_id"] == str(REQ_ID) and done["exports_withdrawn"] == 1 and calls == [True, False, True]
+        assert conn.sql("SET status = $2")[0][1:3] == ("done", "fulfilled") and store.objects == {}
+
+
+@pytest.mark.asyncio
+async def test_an_agency_erase_refused_late_keeps_every_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review S260: the agency erase deletes the bucket objects only after the erase, the verify and the receipt; a
+    refusal on the way (a hold placed in the cool-off, a failed canary) leaves the exports and documents in place."""
+    from app.jobs.worker import PermanentError
+    from app.lifecycle import offboarding
+    from app.vault.errors import KeyDestroyed
+    from tests.unit.test_lifecycle import REQ, Keys, _request, lifecycle_ctx
+
+    async def started(*_: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(offboarding, "_start", started)
+    job = Job("j", "crm_offboard", {"tenant_id": str(TENANT), "request_id": str(REQ), "mode": "erase"}, 1, 3)
+
+    def setup(erase_fn: Any, canary_opens: bool) -> tuple[MemoryDocumentStore, ScriptedConn]:
+        store = MemoryDocumentStore()
+        for key in ("exports/x", "documents/d", offboarding.export_key(TENANT, REQ)):
+            store.objects[key] = b"x"
+        request = _request(status="erasing", export_object_key=offboarding.export_key(TENANT, REQ))
+        conn = ScriptedConn().on("FOR UPDATE", request)
+        conn.on(
+            "RETURNING stale.export_job_id, stale.object_key", [{"export_job_id": EXPORT, "object_key": "exports/x"}]
+        )
+        monkeypatch.setattr(offboarding, "lifecycle_tx", fake_tx(lifecycle_ctx(conn, status="offboarding")))
+        monkeypatch.setattr(offboarding.erase, "erase", erase_fn)
+
+        class CanaryVault:
+            def __init__(self, *_: Any) -> None:
+                pass
+
+            async def encrypt(self, *_: Any, **__: Any) -> bytes:
+                return b"canary"
+
+            async def decrypt_bytes(self, *_: Any, **__: Any) -> bytes:
+                if canary_opens:
+                    return b"still readable"
+                raise KeyDestroyed()
+
+        monkeypatch.setattr(offboarding, "Vault", CanaryVault)
+        return store, conn
+
+    async def held(*_: Any, **__: Any) -> dict[str, int]:
+        raise Conflict("legal_hold")
+
+    async def erased(ctx: Any, scope: str, subject_id: Any, *, dry_run: bool, pending: Any = None,
+                     **_: Any) -> dict[str, int]:  # fmt: skip
+        assert pending is not None, "the agency erase defers its document deletes"
+        pending.append("documents/d")
+        return {"traveler": 2}
+
+    for erase_fn, canary_opens, code in ((held, False, "legal_hold"), (erased, True, "verify_failed")):
+        store, conn = setup(erase_fn, canary_opens)
+        live = offboarding.build_handler(keys=Keys(), store=store, dry_run=False)  # type: ignore[arg-type]
+        with pytest.raises(PermanentError, match=code):
+            await live(object(), job)  # type: ignore[arg-type]
+        assert len(store.objects) == 3, code
+        assert conn.sql("SET status = 'active'"), "refused: the agency is given back with its files"
+    store, conn = setup(erased, False)
+    live = offboarding.build_handler(keys=Keys(), store=store, dry_run=False)  # type: ignore[arg-type]
+    assert (await live(object(), job))["status"] == "erased"  # type: ignore[arg-type]
+    assert store.objects == {}

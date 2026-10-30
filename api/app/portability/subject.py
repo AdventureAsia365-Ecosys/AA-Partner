@@ -7,13 +7,16 @@ verify"; Fix B16; DM-7 exceptions).
   the claim period, crm-025: ``terms_acceptance_kept`` / ``signature_event_kept``), the exceptions the receipt will
   name, and the exports it would withdraw. The holds (CRM10), the delete block, a client on a live trip (CRM12) refuse
   here already.
+- **Logged request** (``data_request_id``): locked and checked before anything else (open, kind ``erasure``, about this
+  client or no client yet; 409 ``data_request_closed`` / ``data_request_not_erasure`` / ``data_request_other_client``).
 - **Run** (``dry_run`` false, deletion switched on): the exports that may hold the client's data are withdrawn
   (:func:`app.portability.exports.withdraw`), the erase runs (trash skipped), then the **verification**: the same erase
   as a dry run must find no such client any more (``subject_not_found``). The receipt (``crm.erasure_request``, status
   ``erased``, ``verified_at``) lists the counts, the kept rows and the exceptions (``signed_agreements_claim_period``
   when evidence was kept, ``accounting_records`` when invoices or payments of the client's trips stay with their trip),
   ``backup_purge_by`` (30 days) and the copies outside AA. A logged data request (``data_request_id``) is closed
-  ``done`` / ``fulfilled`` with the receipt.
+  ``done`` / ``fulfilled`` with the receipt. The bucket objects (the withdrawn exports, the client's documents) are
+  deleted last, after every step that can refuse (AA-967 review), so a refused run deletes no file.
 """
 
 from __future__ import annotations
@@ -82,8 +85,9 @@ async def erase_client(
     if ctx.member_role != "owner":
         ctx.audit("erasure", "denied", "traveler", str(traveler_id), reason="owner_only")
         raise Forbidden("owner_only", "only the agency owner erases a client")
-    if data_request_id is not None and not await ctx.conn.fetchval(requests.ROW_SQL, data_request_id):
-        raise NotFound("data_request_not_found")
+    if data_request_id is not None:
+        # Locked and checked first (open, an erasure, this client): close_erased at the end cannot refuse any more.
+        await requests.for_erasure(ctx, data_request_id, traveler_id)
     counts = await erase.erase(ctx, "traveler", traveler_id, dry_run=True, vault=vault)
     accounting = await _accounting(ctx, traveler_id)
     deleted, kept = split(counts)
@@ -100,8 +104,11 @@ async def erase_client(
         raise Conflict(
             "deletion_dry_run", "deletion is switched off on this environment (LIFECYCLE_DRY_RUN)", counts=counts
         )
-    withdrawn = await exports.withdraw(ctx, store, traveler_id, dry_run=False)
-    counts = await erase.erase(ctx, "traveler", traveler_id, dry_run=False, vault=vault, store=store)
+    # Bucket objects (the withdrawn exports, the client's documents) are only collected here and deleted last, after
+    # the verify, the receipt and the request close: a refusal on the way rolls the rows back with every file intact.
+    objects: list[str] = []
+    withdrawn = await exports.withdraw(ctx, store, traveler_id, dry_run=False, pending=objects)
+    counts = await erase.erase(ctx, "traveler", traveler_id, dry_run=False, vault=vault, store=store, pending=objects)
     deleted, kept = split(counts)
     # Verify: the same erase finds no such client any more (rows, F2 pointer and profile gone in this transaction).
     try:
@@ -134,6 +141,9 @@ async def erase_client(
     ctx.audit("erasure", "allowed", "traveler", str(traveler_id), reason="bypass_trash")
     if data_request_id is not None:
         await requests.close_erased(ctx, data_request_id, request_id)
+    # Last, before the commit: a bucket error raises, the rows roll back and the owner runs it again (a missing object
+    # counts as deleted).
+    await erase.delete_objects(store, objects)
     return {
         **preview,
         "dry_run": False,

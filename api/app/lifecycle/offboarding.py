@@ -14,19 +14,20 @@ Owner steps (``/crm/v1/lifecycle/offboarding``, :mod:`app.routers.lifecycle`):
    counts), without an export unless waived, under any active legal hold. The agency moves to ``offboarding`` (no
    member context opens any more) and a ``crm_offboard`` job erases: ``crm.erase_subject('tenant')`` as
    ``crm_eraser`` (every tenant table except the keep list: the agency row, the destroyed key rows, the audit and its
-   export registry / chain, the receipts, lifecycle counts and holds), the documents' objects and the export object,
-   then :meth:`KeyProvider.destroy` (**crypto-shred**: wrapped DEKs nulled, ``destroyed_at`` set, this process's cache
-   evicted), all in one transaction. The receipt (counts, ``backup_purge_by`` = today + 30 days, the time by which
-   every other task's DEK cache has expired = destroy + ``DEK_CACHE_TTL_SECONDS``, the copies outside AA's control)
-   goes on the request; the agency becomes ``offboarded``.
+   export registry / chain, the receipts, lifecycle counts and holds), then :meth:`KeyProvider.destroy`
+   (**crypto-shred**: wrapped DEKs nulled, ``destroyed_at`` set, this process's cache evicted) and the canary verify,
+   the receipt, and last the bucket objects (the documents, the offboarding export, the portability exports; AA-967
+   review: after every step that can refuse), all in one transaction. The receipt (counts, ``backup_purge_by`` =
+   today + 30 days, the time by which every other task's DEK cache has expired = destroy + ``DEK_CACHE_TTL_SECONDS``,
+   the copies outside AA's control) goes on the request; the agency becomes ``offboarded``.
 
-If the database refuses the erase (a hold placed after the confirmation, CRM16 a table the erase does not know),
-nothing was deleted (one transaction): the request becomes ``failed`` with the code and the agency goes back to
-``active``, so the owner can read why, cancel the request and start again later. An erase job that meets DRY RUN
-(``LIFECYCLE_DRY_RUN`` switched on after the confirmation) is the same refusal: ``failed`` with
-``deletion_dry_run``, the agency ``active`` again, the job failed at once (review S249). A job that fails for another
-reason (retries exhausted) leaves the agency ``offboarding``; the platform recovery is in
-``docs/implementation-notes/AA-942.md``.
+If the database refuses the erase (a hold placed after the confirmation, CRM16 a table the erase does not know) or the
+verify fails, nothing was deleted (one transaction, and no object is deleted before the last step): the request
+becomes ``failed`` with the code and the agency goes back to ``active``, so the owner can read why, cancel the request
+and start again later. An erase job that meets DRY RUN (``LIFECYCLE_DRY_RUN`` switched on after the confirmation) is
+the same refusal: ``failed`` with ``deletion_dry_run``, the agency ``active`` again, the job failed at once (review
+S249). A job that fails for another reason (a bucket error on the final object deletes is retried; retries exhausted)
+leaves the agency ``offboarding``; the platform recovery is in ``docs/implementation-notes/AA-942.md``.
 
 **AA-raised requests** (AA-941, crm-011): the L1 console raises an agency export (``purpose = export_only``) or deletion
 (``offboard``) request with :func:`raise_request` (no counts, no job). It waits for the owner: the owner confirms it
@@ -484,11 +485,14 @@ async def _erase(
                 return {"request_id": str(request_id), "status": "skipped"}
             if row["status"] == "failed":
                 await ctx.conn.execute(RETRY_SQL, request_id)
-            # AA-967: the agency's portability exports go first (their objects hold the data; the rows stay).
-            withdrawn = await portability_exports.withdraw(ctx, store, None, dry_run=False)
-            counts = await erase.erase(ctx, "tenant", tenant_id, dry_run=False, store=store)
+            # AA-967: the agency's portability exports are cancelled with the rows (their objects hold the data; the
+            # rows stay). Every bucket object (exports, documents, the offboarding export) is only collected here and
+            # deleted last, after the erase, the verify and the receipt: a refusal on the way deletes no file.
+            objects: list[str] = []
+            withdrawn = await portability_exports.withdraw(ctx, store, None, dry_run=False, pending=objects)
+            counts = await erase.erase(ctx, "tenant", tenant_id, dry_run=False, store=store, pending=objects)
             if row["export_object_key"] and store is not None:
-                await store.delete(row["export_object_key"])
+                objects.append(row["export_object_key"])
             # AA-967 verify: a canary sealed under the vault DEK before the crypto-shred must not open after it.
             vault = Vault(keys, ctx)  # type: ignore[arg-type]
             canary = await vault.encrypt("erasure_request", "verify_canary", request_id, CANARY)
@@ -518,13 +522,25 @@ async def _erase(
             await ctx.conn.execute(ERASED_SQL, request_id, backup_purge_by, json.dumps(receipt))
             await ctx.conn.execute(TENANT_OFFBOARDED_SQL, tenant_id)
             ctx.audit("offboarding_erase", "allowed", "tenant", str(tenant_id), reason="erased")
+            # Last, still before the commit: the bucket objects. A bucket error here is not a refusal (not a
+            # ServiceError): the rows roll back, the agency stays offboarding and the worker retries (a missing
+            # object counts as deleted).
+            try:
+                await erase.delete_objects(store, objects)
+            except ServiceError as exc:
+                raise ObjectsNotDeleted(exc.code) from exc
     except ServiceError as exc:
-        # A refusal of the database (a hold placed after the confirmation, a table the erase does not know): nothing
-        # was deleted (one transaction); the request shows why, the agency is given back (active: the owner reads the
-        # code and cancels) and the job is not retried.
+        # A refusal (a hold placed after the confirmation, a table the erase does not know, a failed verify): it comes
+        # before any object delete, so nothing was deleted (one transaction, the objects are deleted last); the
+        # request shows why, the agency is given back (active: the owner reads the code and cancels) and the job is
+        # not retried.
         await _refused(pool, tenant_id, request_id, exc.code)
     log.info("offboarding_erased tenant_id=%s request_id=%s keys=%d", tenant_id, request_id, destroyed)
     return {"request_id": str(request_id), "status": "erased", "keys_destroyed_count": destroyed}
+
+
+class ObjectsNotDeleted(RuntimeError):
+    """The bucket refused an object delete at the end of an agency erase: retried by the worker, not a refusal."""
 
 
 async def _canary_unreadable(vault: Vault, request_id: uuid.UUID, canary: bytes) -> bool:

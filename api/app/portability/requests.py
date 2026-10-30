@@ -172,6 +172,18 @@ async def close(
     return await _view(ctx, request_id)
 
 
+async def for_erasure(ctx: TenantContext, request_id: uuid.UUID, traveler_id: uuid.UUID) -> Any:
+    """The logged request a client erasure will close, locked, checked before anything is deleted (AA-967 review):
+    open (``open`` / ``extended``, else 409 ``data_request_closed``), an erasure request (409
+    ``data_request_not_erasure``) about this client or no client yet (409 ``data_request_other_client``)."""
+    row = await _open(ctx, request_id)
+    if row["kind"] != "erasure":
+        raise Conflict("data_request_not_erasure", f"the request is a {row['kind']} request, not an erasure")
+    if row["traveler_id"] is not None and row["traveler_id"] != traveler_id:
+        raise Conflict("data_request_other_client", "the request is about another client")
+    return row
+
+
 async def close_erased(ctx: TenantContext, request_id: uuid.UUID, erasure_request_id: uuid.UUID) -> None:
     """An erasure run from a logged request closes it (done / fulfilled) with the receipt."""
     await close(ctx, request_id, "done", "fulfilled", erasure_request_id=erasure_request_id)
