@@ -41,6 +41,8 @@ EXTRA_POLICIES = {
     ("booking_line_money", "booking_line_money_margin_roles"): ("r", {APP_ROLE}),
     #   crm-015: the forward-in address lookup of app.tenancy.ingest_tx() (keyed on app.ingest_local_part).
     ("ingest_address", "ingest_address_lookup"): ("r", {APP_ROLE}),
+    #   crm-027: the ICS calendar feed lookup of app.tenancy.calendar_feed_tx() (keyed on app.calendar_feed_hash).
+    ("calendar_feed", "calendar_feed_token_lookup"): ("r", {APP_ROLE}),
 }
 # Extra policies that must be RESTRICTIVE (ANDed with tenant_isolation); every other extra policy is permissive.
 RESTRICTIVE_POLICIES = {("booking_line_money", "booking_line_money_margin_roles")}
