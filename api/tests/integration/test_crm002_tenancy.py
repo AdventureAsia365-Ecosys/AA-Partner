@@ -77,6 +77,8 @@ APPEND_ONLY_TABLES = {
     "fx_rate_override": "the owner's FX rate of a day, the latest row wins (crm-014, AA-944)",
     "payment": "a payment the agency marked received against a schedule row (crm-016, AA-946)",
     "inbox_events": "one row per consumed Booking feed event, ids and codes only (crm-017, AA-947)",
+    "terms_acceptance": "one acceptance of a booking terms version, kept through erasure (crm-025, AA-955)",
+    "signature_event": "the signing log and the sealed envelope, kept through erasure (crm-025, AA-955)",
 }
 # AA-942 (crm-010): append-only tables that erasure must reach. Their trigger is crm.erasable_append_only(): UPDATE and
 # TRUNCATE always refused, DELETE only as crm_owner inside crm.erase_subject / crm.lifecycle_purge_expired. Every other
@@ -93,6 +95,9 @@ OWN_APPEND_ONLY_TRIGGER = {
     "payment": "ledger_append_only",
     # AA-947 (crm-017): the Booking feed inbox, erased with its agency.
     "inbox_events": "ledger_append_only",
+    # AA-955 (crm-025): the signed evidence, erased with its agency or by the claim-period purge.
+    "terms_acceptance": "ledger_append_only",
+    "signature_event": "ledger_append_only",
 }
 APPEND_ONLY_COLUMNS = {
     "tenant_id": ("uuid", True),

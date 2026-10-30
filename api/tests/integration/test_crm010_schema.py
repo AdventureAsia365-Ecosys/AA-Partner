@@ -26,6 +26,8 @@ import pytest
 from tests.integration.conftest import OWNER
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+# crm-025 (AA-955): crm.lifecycle_purge_expired also purges the signed evidence past its claim period.
+EVIDENCE_PURGED = {"terms_acceptance": 0, "signature_event": 0}
 
 ISS = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_test"
 KEEP = {
@@ -327,9 +329,9 @@ async def test_legal_holds_suspend_deletion(app_pool: asyncpg.Pool) -> None:
     async with app_pool.acquire() as conn, conn.transaction():
         await _ctx(conn, ids["tenant"])
         await conn.execute("SET LOCAL ROLE crm_eraser")
-        # crm-018 adds the membership inbox step (its own tests: test_crm018_schema.py).
-        held = '{"held": 1, "llm_call": 0, "placeholder_map": 0, "membership_inbox": 0}'
-        assert await conn.fetchval("SELECT crm.lifecycle_purge_expired(false)") == held
+        # crm-018 adds the membership inbox step (its own tests: test_crm018_schema.py), crm-025 the signed evidence.
+        held = {"held": 1, "llm_call": 0, "placeholder_map": 0, "membership_inbox": 0, **EVIDENCE_PURGED}
+        assert json.loads(await conn.fetchval("SELECT crm.lifecycle_purge_expired(false)")) == held
 
 
 async def _hold(
@@ -1078,9 +1080,9 @@ async def test_the_llm_call_purge_keeps_180_days(app_pool: asyncpg.Pool) -> None
             "(now() - interval '179 days', 'crm_test', 'writer', 'stub', 'stub-1', 'ok')"
         )
         await conn.execute("SET LOCAL ROLE crm_eraser")
-        result = '{"held": 0, "llm_call": 1, "placeholder_map": 0, "membership_inbox": 0}'
-        assert await conn.fetchval("SELECT crm.lifecycle_purge_expired(true)") == result
-        assert await conn.fetchval("SELECT crm.lifecycle_purge_expired(false)") == result
+        result = {"held": 0, "llm_call": 1, "placeholder_map": 0, "membership_inbox": 0, **EVIDENCE_PURGED}
+        assert json.loads(await conn.fetchval("SELECT crm.lifecycle_purge_expired(true)")) == result
+        assert json.loads(await conn.fetchval("SELECT crm.lifecycle_purge_expired(false)")) == result
     assert await _count(app_pool, ids["tenant"], "llm_call") == 2
 
 
@@ -1118,12 +1120,14 @@ async def test_the_llm_call_purge_takes_the_placeholder_maps_of_its_calls(app_po
             "llm_call": 1,
             "placeholder_map": maps,
             "membership_inbox": 0,
+            **EVIDENCE_PURGED,
         }
         assert json.loads(await conn.fetchval("SELECT crm.lifecycle_purge_expired(false)")) == {
             "held": 0,
             "llm_call": 1,
             "placeholder_map": maps,
             "membership_inbox": 0,
+            **EVIDENCE_PURGED,
         }
     assert await _count(app_pool, ids["tenant"], "llm_call") == 2  # the seed call and the recent one
     if has_maps:
