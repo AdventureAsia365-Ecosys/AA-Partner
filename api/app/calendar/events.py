@@ -3,8 +3,9 @@
 =====================  ==================================================================================
 kind                   source
 =====================  ==================================================================================
-``departure``          ``crm.trip.start_date`` of a booked, pre-departure or travelling trip
-``return``             ``crm.trip.end_date`` of the same trips
+``departure``          ``crm.trip.start_date`` of a booked, pre-departure, travelling or completed trip
+``return``             ``crm.trip.end_date`` of the same trips (a trip turns completed on its return day: its
+                       events stay, so a subscribed calendar keeps them)
 ``payment_due``        ``crm.payment_schedule.due_on`` of a ``due`` deposit / balance row (crm-016)
 ``invoice_due``        ``crm.invoice.due_on`` of an ``open`` / ``payment_claimed`` invoice (crm-024)
 ``signing_deadline``   start date - 21 days of a trip with a ``pending`` signature (crm-025; R29 "waiver missing
@@ -35,6 +36,10 @@ SIGNING_LEAD_DAYS = 21
 MAX_SPAN_DAYS = 400
 MAX_EVENTS = 2000
 LIVE_STAGES = ("booked", "pre_departure", "travelling")
+# Departure / return events: the live trips and the completed ones. The stage job completes a trip on its end date;
+# dropping it would remove the return of the day and every past departure (the feed covers 30 past days, and a UID
+# that vanishes deletes the event in a subscribed calendar). Lost and cancelled trips stay out.
+TRIP_STAGES = (*LIVE_STAGES, "completed")
 DEFAULT_TZ = "Asia/Ho_Chi_Minh"
 TZ_SQL = "SELECT coalesce((SELECT timezone FROM crm.tenant_settings LIMIT 1), $1)"
 
@@ -123,7 +128,7 @@ async def events(
     since = dt.datetime.combine(first, dt.time.min, tz)
     until = dt.datetime.combine(last + dt.timedelta(days=1), dt.time.min, tz)
     out: list[dict[str, Any]] = []
-    for t in await ctx.conn.fetch(TRIP_DATES_SQL, list(LIVE_STAGES), first, last, member_id, MAX_EVENTS):
+    for t in await ctx.conn.fetch(TRIP_DATES_SQL, list(TRIP_STAGES), first, last, member_id, MAX_EVENTS):
         base = {"trip_id": str(t["trip_id"]), "title": t["title"], "stage": t["stage"], "all_day": True}
         if t["start_date"] is not None and first <= t["start_date"] <= last:
             out.append({**base, "kind": "departure", "id": f"departure-{t['trip_id']}", "date": t["start_date"]})

@@ -763,9 +763,10 @@ design's fallback, §5.10). Implementation notes: `docs/implementation-notes/AA-
   `incident_incomplete`). The affected trips are read at view time (live trips with a booking line on the departure):
   an agency without one sees nothing, a line added later is covered.
 - **Travelling now** (`app/duty/service.py`, `/crm/v1/duty/*`, action `duty_of_care_view`, every role): booked,
-  pre-departure and travelling trips overlapping a 1-31 day window from today in the agency's timezone, grouped by
-  region (the running AA line's tour country from the catalog cache, else the trip's first destination), the day
-  number and the accepted proposal's day place, the running lines; travellers **once each** with all their trips
+  pre-departure and travelling trips overlapping a 1-31 day window from today in the agency's timezone (no end date =
+  open-ended, the trip stays travelling until its return is set; a trip the stage job completed counts through its
+  return day, up to today), grouped by region (the running AA line's tour country from the catalog cache, else the
+  trip's first destination), the day number and the accepted proposal's day place, the running lines; travellers **once each** with all their trips
   (card E) and only which contact fields exist, **no names**. `GET /duty/reach?region=` is one region on one day.
   `GET /trips/{id}/incidents` feeds the trip banner (open, and cleared in the last 14 days).
 - **Bulk reveal** (`POST /duty/reveal`, action `reveal_contact`, or `reveal_sensitive` with the emergency contact):
@@ -773,8 +774,9 @@ design's fallback, §5.10). Implementation notes: `docs/implementation-notes/AA-
   `BULK_REASONS` is required (422 `reason_required`, card R); the member's reveals of the last hour (the reveal meter,
   per process) plus this request may not pass 60 (429 `reveal_rate_limited` with `Retry-After`, one denied event); one
   `reveal` audit event per traveller. Health codes stay one by one on the client page (consent checked there).
-- **Calendar** (`app/calendar/events.py`, `/crm/v1/calendar`, action `calendar_view`): departures, returns, `due`
-  payment schedule rows, `open` / `payment_claimed` invoices, signing deadlines (start - 21 days while a signature is
+- **Calendar** (`app/calendar/events.py`, `/crm/v1/calendar`, action `calendar_view`): departures and returns of
+  booked / pre-departure / travelling / completed trips (a completed trip keeps its events: a subscribed calendar keeps
+  their UIDs), `due` payment schedule rows, `open` / `payment_claimed` invoices, signing deadlines (start - 21 days while a signature is
   pending), open tasks, requested / confirmed calls; scope `mine` (own trips, own or unassigned tasks on own trips,
   calls on own trips or clients) or `agency`; at most 400 days and 2,000 events.
 - **ICS feed** (`app/calendar/feeds.py`, `/crm/v1/calendar/feed[s]`, action `calendar_feed_manage`): a new link revokes

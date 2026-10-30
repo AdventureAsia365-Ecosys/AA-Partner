@@ -1,11 +1,14 @@
 """Duty of care (AA-961, card CRM-30; design v3 R37 "Where are my clients + incident flag", A-02 Travelling now, F9).
 
 - :func:`travelling`: the agency's booked, pre-departure and travelling trips that overlap a window (today in the
-  agency's timezone, ``days`` long), grouped by region. Where a trip is on a day comes from, in order: the AA line
-  running that day (its tour's country in the AA catalog cache), the accepted proposal's day plan (``place`` of the
-  day), then the trip's first destination. Travellers are listed **once** with every trip of theirs in the window (card
-  E: two overlapping trips) and carry no name: only ids and which contact fields exist. Names, phone, e-mail and the
-  emergency contact open through a logged reveal (:func:`bulk_reveal`, or the one-field reveal of the client page).
+  agency's timezone, ``days`` long), grouped by region. A trip without an end date is open-ended (a ``travelling``
+  trip stays travelling until someone sets its return, design F10.1), and a ``completed`` trip counts through its
+  return day (the stage job completes a trip on its end date, while the travellers may still be in the country).
+  Where a trip is on a day comes from, in order: the AA line running that day (its tour's country in the AA catalog
+  cache), the accepted proposal's day plan (``place`` of the day), then the trip's first destination. Travellers are
+  listed **once** with every trip of theirs in the window (card E: two overlapping trips) and carry no name: only ids
+  and which contact fields exist. Names, phone, e-mail and the emergency contact open through a logged reveal
+  (:func:`bulk_reveal`, or the one-field reveal of the client page).
 - AA incident flags (``crm.incident_flag``, written by the Booking feed): every open flag with the agency's affected
   trips (live trips with a booking line on the departure, read now: an agency without one sees nothing).
 - :func:`reach`: the travellers in one region on one day, the list an agent works through by hand (no messages are
@@ -34,6 +37,8 @@ from app.vault import Vault
 DEFAULT_TZ = "Asia/Ho_Chi_Minh"
 MAX_DAYS = 31
 LIVE_STAGES = ("booked", "pre_departure", "travelling")
+# The stage job moves a travelling trip to completed on its end date: it still counts that day (see TRIPS_SQL).
+SHOWN_STAGES = (*LIVE_STAGES, "completed")
 MAX_TRIPS = 500
 # Bulk reveal (card R): up to this many travellers a reason code is taken as "duty_of_care"; above it the member picks.
 REASON_THRESHOLD = 5
@@ -71,7 +76,9 @@ TRIPS_SQL = """
 SELECT t.trip_id, t.title, t.stage, t.start_date, t.end_date, t.destinations, t.owner_member_id
   FROM crm.trip t
  WHERE t.deleted_at IS NULL AND t.stage = ANY($1::text[]) AND t.start_date IS NOT NULL
-   AND t.start_date <= $3 AND coalesce(t.end_date, t.start_date) >= $2
+   AND t.start_date <= $3
+   AND CASE WHEN t.stage = 'completed' THEN t.end_date BETWEEN $2 AND $5
+            ELSE t.end_date IS NULL OR t.end_date >= $2 END
  ORDER BY t.start_date, t.trip_id
  LIMIT $4
 """
@@ -109,7 +116,8 @@ FLAG_TRIPS_SQL = """
 SELECT DISTINCT l.departure_id, t.trip_id, t.title, t.stage, t.start_date, t.end_date
   FROM crm.booking_line l JOIN crm.trip t ON t.trip_id = l.trip_id
  WHERE l.departure_id = ANY($1::text[]) AND l.status <> 'cancelled' AND l.deleted_at IS NULL
-   AND t.deleted_at IS NULL AND t.stage NOT IN ('lost', 'cancelled', 'completed')
+   AND t.deleted_at IS NULL AND t.stage NOT IN ('lost', 'cancelled')
+   AND (t.stage <> 'completed' OR t.end_date >= $2)
  ORDER BY l.departure_id, t.start_date, t.trip_id
 """
 TRIP_FLAGS_SQL = """
@@ -155,9 +163,8 @@ def where_on(
     """``(region, place, day_no, lines running that day)`` of one trip on one day (see the module docstring)."""
     running = [ln for ln in lines if _covers(ln, day)]
     day_no = (day - trip["start_date"]).days + 1 if trip["start_date"] <= day else None
-    end = trip["end_date"] or trip["start_date"]
-    if day > end:
-        day_no = None
+    if trip["end_date"] is not None and day > trip["end_date"]:
+        day_no = None  # without an end date the trip is open-ended: still away, its day count goes on
     planned = plan.get(day_no) if day_no is not None else None
     place = planned["place"] if planned is not None else None
     region = next((ln["country_code"] for ln in running if ln["country_code"]), None)
@@ -179,12 +186,12 @@ def _line(ln: Any) -> dict[str, Any]:
     }
 
 
-async def _open_flags(ctx: TenantContext) -> list[dict[str, Any]]:
+async def _open_flags(ctx: TenantContext, local_today: dt.date) -> list[dict[str, Any]]:
     flags = await ctx.conn.fetch(OPEN_FLAGS_SQL)
     if not flags:
         return []
     affected: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for r in await ctx.conn.fetch(FLAG_TRIPS_SQL, [f["departure_id"] for f in flags]):
+    for r in await ctx.conn.fetch(FLAG_TRIPS_SQL, [f["departure_id"] for f in flags], local_today):
         affected[r["departure_id"]].append(
             {
                 "trip_id": str(r["trip_id"]),
@@ -215,7 +222,7 @@ async def travelling(ctx: TenantContext, *, start: dt.date | None = None, days: 
     """Travelling now / this week (A-02), grouped by region; travellers once each, without names."""
     local_today, tz = await today(ctx)
     first, last = _window(start or local_today, days)
-    trips = await ctx.conn.fetch(TRIPS_SQL, list(LIVE_STAGES), first, last, MAX_TRIPS)
+    trips = await ctx.conn.fetch(TRIPS_SQL, list(SHOWN_STAGES), first, last, MAX_TRIPS, local_today)
     ids = [t["trip_id"] for t in trips]
     lines: dict[uuid.UUID, list[Any]] = defaultdict(list)
     plans: dict[uuid.UUID, dict[int, Any]] = defaultdict(dict)
@@ -227,7 +234,7 @@ async def travelling(ctx: TenantContext, *, start: dt.date | None = None, days: 
             plans[d["trip_id"]][d["day_no"]] = d
         for p in await ctx.conn.fetch(TRAVELLERS_SQL, ids):
             people[p["trip_id"]].append(p)
-    flags = await _open_flags(ctx)
+    flags = await _open_flags(ctx, local_today)
     flagged = {t["trip_id"]: f["incident_flag_id"] for f in flags for t in f["trips"]}
 
     regions: dict[str, list[dict[str, Any]]] = defaultdict(list)

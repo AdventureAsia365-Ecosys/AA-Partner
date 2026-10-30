@@ -202,12 +202,16 @@ UPDATE crm.incident_flag
  WHERE departure_id = $1 AND status = 'open' AND deleted_at IS NULL
 RETURNING incident_flag_id
 """
-# The agency's live trips with a line on the departure (an agency without one has nothing to show or do).
+# The agency's live trips with a line on the departure (an agency without one has nothing to show or do), and a
+# trip the stage job completed today (its return day, the agency's timezone): the travellers may still be there.
 INCIDENT_TRIPS_SQL = """
 SELECT DISTINCT t.trip_id
   FROM crm.booking_line l JOIN crm.trip t ON t.trip_id = l.trip_id
  WHERE l.departure_id = $1 AND l.status <> 'cancelled' AND l.deleted_at IS NULL
-   AND t.deleted_at IS NULL AND t.stage IN ('booked', 'pre_departure', 'travelling')
+   AND t.deleted_at IS NULL
+   AND (t.stage IN ('booked', 'pre_departure', 'travelling')
+        OR (t.stage = 'completed' AND t.end_date >= (now() AT TIME ZONE coalesce(
+                (SELECT timezone FROM crm.tenant_settings LIMIT 1), 'Asia/Ho_Chi_Minh'))::date))
  ORDER BY t.trip_id
 """
 INCIDENT_TASK = "aa_incident"
@@ -608,9 +612,10 @@ async def apply_event(ctx: SystemContext, ev: contract.Event) -> tuple[str, str]
 
 async def apply_incident(ctx: SystemContext, ev: contract.Event) -> tuple[str, str]:
     """``departure.incident`` opens a ``crm.incident_flag`` for the departure and one urgent ``aa_incident`` task per
-    affected booked / pre-departure / travelling trip (the agent decides whom to reach: AA never messages travellers,
-    design F9.3); ``departure.incident_cleared`` clears the open flag (the tasks stay for the agent to close). An
-    event without a departure id or a known code is recorded as ``incident_incomplete``."""
+    affected booked / pre-departure / travelling trip, or one completed today (its return day): the agent decides whom
+    to reach, AA never messages travellers (design F9.3). ``departure.incident_cleared`` clears the open flag (the
+    tasks stay for the agent to close). An event without a departure id or a known code is recorded as
+    ``incident_incomplete``."""
     if ev.departure_id is None or (ev.type == "departure.incident" and ev.incident_code is None):
         return "ignored", "incident_incomplete"
     if ev.type == "departure.incident_cleared":

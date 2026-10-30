@@ -73,6 +73,26 @@ def test_where_on_prefers_the_running_aa_line_then_the_plan_then_the_destination
     # Before the start or after the end there is no day number.
     assert service.where_on(_trip(), dt.date(2026, 11, 9), [], {})[2] is None
     assert service.where_on(_trip(), dt.date(2026, 11, 21), [], {})[2] is None
+    # The return day still has its number.
+    assert service.where_on(_trip(), dt.date(2026, 11, 20), [], {})[2] == 11
+
+
+def test_where_on_a_trip_without_an_end_date_is_open_ended() -> None:
+    # A travelling trip without a return date stays travelling (design F10.1): its day count goes on.
+    trip = _trip(end_date=None)
+    assert service.where_on(trip, dt.date(2026, 11, 10), [], {})[2] == 1
+    assert service.where_on(trip, dt.date(2026, 11, 25), [], {}) == ("LA", None, 16, [])
+    assert service.where_on(trip, dt.date(2026, 11, 9), [], {})[2] is None
+
+
+def test_trip_queries_keep_open_ended_trips_and_the_return_day() -> None:
+    # Duty of care: a NULL end date is open-ended; a completed trip counts only up to its return day (<= today).
+    assert "completed" in service.SHOWN_STAGES and "lost" not in service.SHOWN_STAGES
+    assert "t.end_date IS NULL OR t.end_date >= $2" in service.TRIPS_SQL
+    assert "THEN t.end_date BETWEEN $2 AND $5" in service.TRIPS_SQL
+    assert "coalesce(t.end_date, t.start_date)" not in service.TRIPS_SQL
+    # The calendar keeps departures and returns of completed trips (subscribed calendars keep their UIDs).
+    assert events.TRIP_STAGES == ("booked", "pre_departure", "travelling", "completed")
 
 
 def _bulk_ctx(n: int) -> tuple[Any, list[uuid.UUID]]:

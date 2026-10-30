@@ -8,6 +8,8 @@
   threshold and the hourly limit).
 - **E**: a revoked calendar feed answers 404 (subscribed calendars stop updating); the member sees it revoked.
 - The ICS feed of scope ``mine`` has the member's own trips only, and no title or name.
+- A travelling trip without an end date stays in Travelling now (open-ended, design F10.1); a trip the stage job
+  completed on its return day is still there that day, and its departure / return stay in the calendar and the feed.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from typing import Any
 import asyncpg
 import pytest
 
+from app import stages_job
 from app.booking import contract
 from app.booking.sync import apply_event
 from app.calendar import events, feeds
@@ -64,7 +67,13 @@ async def _traveller(pool: asyncpg.Pool, keys: KeyProvider, tenant: uuid.UUID, w
 
 
 async def _trip(
-    pool: asyncpg.Pool, tenant: uuid.UUID, owner: uuid.UUID, stage: str, start: dt.date, end: dt.date, party: list
+    pool: asyncpg.Pool,
+    tenant: uuid.UUID,
+    owner: uuid.UUID,
+    stage: str,
+    start: dt.date,
+    end: dt.date | None,
+    party: list,
 ) -> uuid.UUID:
     trip = uuid.uuid4()
     await _seed(
@@ -281,3 +290,56 @@ async def test_calendar_events_and_the_feed(app_pool: asyncpg.Pool) -> None:
     assert f"trip {str(s['next'])[:8]}" in text  # scope agency
     with pytest.raises(NotFound):
         await calendar_public.feed(app_pool, "x" * 43, web_origin="https://partner.example")
+
+
+async def test_open_ended_and_return_day_trips_stay_in_duty_of_care_and_the_calendar(app_pool: asyncpg.Pool) -> None:
+    s = await _setup(app_pool)
+    today, day = s["today"], dt.timedelta(days=1)
+    owner = s["who"]["owner"]
+    t4 = await _traveller(app_pool, s["keys"], s["tenant"], owner[0], "Lotus Dao")
+    t5 = await _traveller(app_pool, s["keys"], s["tenant"], owner[0], "Lotus Em")
+    # Travelling for 10 days, no return date set (the stage job only raises return_date_missing).
+    no_end = await _trip(app_pool, s["tenant"], owner[1], "travelling", today - 10 * day, None, [t4])
+    # Back today: the stage job completed it this morning.
+    back = await _trip(app_pool, s["tenant"], owner[1], "travelling", today - 4 * day, today, [t5])
+    await _aa_line(app_pool, s["tenant"], back, today - 3 * day, today)
+    # Came back yesterday: gone from duty of care.
+    gone = await _trip(app_pool, s["tenant"], owner[1], "travelling", today - 6 * day, today - day, [])
+    async with system_tx(app_pool, s["tenant"], actor=stages_job.ACTOR) as ctx:
+        counts = await stages_job.run_agency(ctx)
+    assert counts["travelling_to_completed"] == 2 and counts["return_date_missing"] == 1
+    assert await _event(app_pool, s["tenant"], "departure.incident", "ev_inc_back") == ("applied", "departure_incident")
+
+    async with tenant_tx(app_pool, owner[0], s["tenant"]) as ctx:
+        week = await service.travelling(ctx, days=7)
+        reach = await service.reach(ctx, region="VN")
+        tomorrow = await service.reach(ctx, region="VN", on=today + day)
+        cal = await events.agency_calendar(ctx, start=today - 30 * day, end=today + 30 * day, mine=True)
+        made = await feeds.create(ctx, scope="mine", origin="https://partner.example")
+    trips = {t["trip_id"]: t for g in week["regions"] for t in g["trips"]}
+    assert str(no_end) in trips and trips[str(no_end)]["day_no"] == 11 and trips[str(no_end)]["end_date"] is None
+    assert trips[str(back)]["stage"] == "completed" and trips[str(back)]["day_no"] == 5
+    assert str(gone) not in trips
+    assert {str(no_end), str(back)} <= {t["trip_id"] for t in reach["trips"]}
+    assert {str(t4), str(t5)} <= {p["traveler_id"] for p in reach["travellers"]}
+    # The incident on the departure still names the trip coming back today, with its badge.
+    assert {t["trip_id"] for t in week["incidents"][0]["trips"]} == {str(s["away"]), str(back)}
+    assert trips[str(back)]["incident_flag_id"] == week["incidents"][0]["incident_flag_id"]
+    assert (
+        await _seed(
+            app_pool, s["tenant"], "SELECT count(*) FROM crm.task WHERE trip_id = $1 AND kind = 'aa_incident'", back
+        )
+        == 1
+    )
+    # Tomorrow the returned trip is out (a future window shows no completed trip); the open-ended one is still away.
+    later = {t["trip_id"] for t in tomorrow["trips"]}
+    assert str(no_end) in later and str(back) not in later
+
+    # Calendar and feed: the completed trips keep their departure and return (the UIDs a subscribed calendar holds).
+    kinds = {(e["kind"], e["trip_id"]) for e in cal["events"]}
+    assert {("departure", str(back)), ("return", str(back)), ("departure", str(gone)), ("return", str(gone))} <= kinds
+    assert ("departure", str(no_end)) in kinds
+    text = await calendar_public.feed(
+        app_pool, made["url"].rsplit("/", 1)[1].removesuffix(".ics"), web_origin="https://partner.example"
+    )
+    assert f"UID:return-{back}@crm" in text and f"UID:departure-{gone}@crm" in text

@@ -21,7 +21,7 @@ export interface DutyLine {
 export interface DutyTrip {
   trip_id: string;
   title: string;
-  stage: "booked" | "pre_departure" | "travelling";
+  stage: "booked" | "pre_departure" | "travelling" | "completed";
   start_date: string | null;
   end_date: string | null;
   owner_member_id: string | null;
