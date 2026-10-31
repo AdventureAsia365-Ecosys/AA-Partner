@@ -695,6 +695,7 @@ secret `crm/<env>/mail-oauth`.
   row), mailbox + credential `disconnected`, one AA system mail alert to the owners; **never** sent another way (card
   R). Reconnecting (OAuth or SMTP) or a passing health check re-queues the held rows. The sender table
   (`app/mail/senders.py`, `GET /crm/v1/mail/senders`) lists every send path; a unit test fails when one is missing.
+- **Reserved `.invalid` recipients** (AA-1014, every environment): an address whose domain is or ends in `.invalid` (RFC 6761; case, whitespace, root dot and IDNA folded, `app/mail/recipients.py`) is never handed to a provider or to AA's SES: a client message ends `failed` / `invalid_tld` (dispatch row `dropped` / `send_failed`), the Test button sends no test mail, `SesMailer` logs the skip; the action that queued the mail (proposal sent, portal invite, code issued, dev echo) is unchanged. A unit test fails when a module of `app/mail` calls a provider without `deliverable()`.
 - **Mailboxes**: own (every role, `OWN_MAILBOX_CONNECT`) or the agency's (owner, `INTEGRATIONS_MANAGE`); OAuth with
   PKCE, the state sealed under the agency's mail DEK and bound to the member (`app/mail/oauth.py`, 10 minutes, no
   server-side store); SMTP is logged in once before it is stored, and only after the caller's membership and
