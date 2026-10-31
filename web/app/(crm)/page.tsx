@@ -11,10 +11,7 @@ import { Panel, PageTitle } from "@/components/PageTitle";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { formatDate } from "@/lib/dates";
-import { t, type MessageKey } from "@/lib/i18n";
-import { contentStudioHref } from "@/lib/nav";
 import { HomeTiles } from "@/components/reports/HomeTiles";
-import { serverContext } from "@/lib/serverContext";
 import { fmt, t, type MessageKey } from "@/lib/i18n";
 import { homeSteps, type OnboardingView } from "@/lib/onboarding";
 import { serverContext } from "@/lib/serverContext";
@@ -25,14 +22,6 @@ export default async function HomePage() {
   const ctx = await crmContext();
   if (ctx.apiDown) return null;
   const { lang, locale } = ctx;
-  const studio = contentStudioHref(ctx.cfg.contentStudioUrl, ctx.cfg.publicOrigin);
-  const { session } = await serverContext();
-  const steps: { key: MessageKey; done: boolean; href?: string | null }[] = [
-    { key: "home.check.signin", done: true },
-    { key: "home.check.agency", done: true },
-    { key: "home.check.inquiry", done: false, href: "/pipeline" },
-    { key: "home.check.studio", done: false, href: studio },
-  ];
   const { session } = await serverContext();
   const onboarding = session ? await crmCall<OnboardingView>(ctx.cfg, session, "GET", "onboarding") : null;
   const view = onboarding && onboarding.ok ? onboarding.data : null;
