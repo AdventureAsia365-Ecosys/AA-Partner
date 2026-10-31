@@ -606,7 +606,7 @@ original CIS commit). P2a moves the code only:
   `POST /pipeline/bulk-stage/undo`.
 - **Cancel** (C12): `POST /trips/{id}/cancel?dry_run=true|false` `{cancel_reason_code}` (owner / agent), from
   booked / pre_departure / travelling: the dry run lists the effects (dispatch rows cancelled, open tasks skipped,
-  future call slots cancelled, links revoked); later cards add theirs.
+  future call slots cancelled, links revoked); AA-957 completes it (section "CRM-27" below).
 - **waiting_on** is derived on every move (`derive_waiting_on`); cards register hooks for booked / pre-departure trips
   (`register_waiting_on_hook`, contract in `docs/implementation-notes/AA-943.md`). `last_activity_at` is bumped by
   moves, notes, task changes and submissions; the board flags a trip quiet after 3 days and shows a Closed group.
@@ -677,6 +677,52 @@ Design v3 §6.3 CRM-16 (M6 non-AA, M15, R17, R18), lane §2.7 / §3.1 / §3.2; m
   (A-11, status filter, totals for owner / agent), `/suppliers` (A-13, AA pinned, contact behind a reveal with a
   reason), `/settings/payments` (owner; others see why). Refusal codes are worded in `lib/ledger.ts` / `lib/i18n.ts`
   (EN default, VI); the BFF lines are in `lib/bff.ts` (card AA-944). Dev E2E: `e2e/tests/ledger.spec.ts`.
+
+## CRM-27 commission + one-action cancel (AA-957)
+
+Design v3 M13, C12 (§2.7, §3.5 "Cancellation"), R17, R21, A-12; lane §2.7 `commission`, §3.1, §3.4; migration crm-035
+(contract). Code: `app/commissions/` (service), `app/routers/commissions.py`, `app/cancellation.py` (called by
+`app.stages.cancel` and the Booking sync), `app/booking/sync.py` (`cancel` requests); decisions in
+`docs/implementation-notes/AA-957.md`.
+
+- **Commission rows** (`crm.commission`): one live row per confirmed agency line with a positive expected commission,
+  written only by `crm.commission_sync(trip)` (SECURITY DEFINER: the assistant may confirm a line, R18, but reads no
+  money), run after every confirm, money change and line cancel, by the trip cancel and by the hourly date rule
+  (`commissions.sweep`). The expected amount is the head of the line's `commission_expected` chain (frozen at the
+  confirmation day); never copied until the receipt. Status expected -> claimed -> received, or written_off /
+  cancelled (line cancelled, commission set to 0, trip cancelled); claimed / received block the trip delete
+  (`crm.trip_commitment` kind commission). Due date = last service day + the supplier's `commission_due_days`
+  (default 30, Suppliers form). Overdue is derived; the date rule opens one owner task `commission_overdue` per row.
+- **Receipt** (R17 E): `crm.commission_receive` freezes it at the rate of the day it arrived (`fx_basis
+  receipt_date`; 409 `fx_rate_missing` without a rate); `short_amount` only in the original currency;
+  `fx_difference_base` only when the original amounts match.
+- **Routes** (`/crm/v1`, owner / agent: `VIEW_MARGIN` reads, `PAYMENT_MARK_RECEIVED` writes; the assistant 403):
+  `GET /commissions?status=open|overdue|received|written_off|cancelled|all&trip_id=` (base-currency totals), `GET /
+  PATCH /commissions/{id}` (due date), `POST /commissions/{id}/claim|unclaim|receive|write-off`. The RESTRICTIVE
+  policy `commission_margin_roles` hides every row from the assistant and AA staff. The trip's lines carry
+  `commission` (owner / agent). Success metric `commission_unclaimed` (Module 13) is live.
+- **Cancel run** (`app/cancellation.py`): the dry run lists every effect and the detail blocks (AA bookings with
+  Booking's dry-run fee read outside the transaction by the route, supplier lines, payments with the refund the
+  dialog proposes, expected commissions, the accepted booking terms). The run: queued sends and workflow sends
+  cancelled (`register_cancel_hook` for Module 10), open tasks skipped (except `verify_transfer`), slots and links
+  cancelled, unpaid invoices voided, one `proposed` refund request per payment for the amount the member set (lower
+  keeps the rest; a payment without an invoice gets the owner task `cancel_refund_review`), the owner task
+  `cancel_with_suppliers` (closed by the date rule once no confirmed agency line is left), expected commissions
+  cancelled unless `keep_commission`, AA holds released, ops release withdrawn, one `cancel` request per AA booking.
+- **Never cancelled early** (card R): with AA bookings the trip keeps its stage and a pending `crm.trip_cancellation`
+  ("Cancellation pending" on the trip and the board; moves 409 `cancellation_pending`; the date rule and the invoice
+  reminders skip it). `crm_booking_sync` sends `POST /bookings/{id}/cancel` (`Idempotency-Key crm-cancel:<request
+  id>`, the outage queue's backoff while Booking is down), cancels the booking's lines, writes the fee as a
+  `cancellation_cost` money row of the line (the quote's FX lock; ledger total `cancellation_cost_base`), and once no
+  AA booking is left moves the trip to `cancelled` (also after a `booking.cancelled` event). Booking `not_found` /
+  `invalid` = nothing left to cancel; another refusal opens the owner task `aa_cancel_failed`, and Cancel again on the
+  pending trip asks Booking again.
+- **Web**: A-12 `/commissions` (`app/(crm)/commissions/page.tsx`, `components/commissions/CommissionActions.tsx`;
+  assistant: "not available for your role"), the commission and the AA fee on the Bookings tab, the cancel dialog
+  (`components/pipeline/StageDialogs.tsx`: fees, supplier bookings, refunds, commissions to keep, "Ask AA again"),
+  the pending badge on the trip and the board, the supplier form field "Commission paid after (days)". Strings in
+  `lib/i18nCommission.ts` (EN / VI), BFF lines card AA-957.
+- **Not built (paid vendor)**: Stripe Checkout session expiry and Stripe refunds wait for the BYO Stripe provider.
 
 ## CRM-17 Module 5 e-mail (AA-945)
 
