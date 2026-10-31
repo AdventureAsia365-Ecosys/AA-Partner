@@ -15,15 +15,94 @@ the task role ``bedrock:ApplyGuardrail`` on that guardrail only. Its id and vers
 - botocore retries are off (one attempt) and the read timeout follows the scrubber's timeout; the scrubber's own
   ``asyncio.wait_for`` bounds the whole call. An error is raised by class only.
 - Without a configured guardrail, :class:`UnavailableDetector` refuses every scrub: no silent "two passes only" mode.
+- **Every call is a ledger row** (AA-964, root ADR 0009 §8-9 seam ``guard``): inside :func:`collect_guard_calls` (the
+  gateway opens it around the scrub) each ``ApplyGuardrail`` attempt appends one :class:`GuardCall` with its billed
+  text units (the response ``usage``), latency, outcome and the AWS request id; the gateway writes it into
+  ``crm.llm_call`` as stage ``crm_scrub``, role ``guard`` with its cost (:data:`USD_PER_TEXT_UNIT`). An attempt that
+  times out or fails keeps an **estimated** unit count (1 unit per started 1000 characters, ``pricing_mode
+  estimate``): AWS may still bill it. Outside a collector (the corpus workflow) nothing is recorded.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+import contextlib
+import math
+import re
+import time
+from collections.abc import Iterator, Sequence
+from contextvars import ContextVar
+from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 from app.privacy.scrubber import Detection, PiiScrubber, ScrubError
+
+# Bedrock Guardrails sensitive-information (PII) filter: USD 0.10 per 1000 text units (AWS Bedrock pricing page;
+# re-check it before Guardrails is switched on, a paid feature); one text unit = up to 1000 characters. A code table,
+# so rows say pricing_mode code_table.
+USD_PER_TEXT_UNIT = Decimal("0.0001")
+TEXT_UNIT_CHARS = 1000
+GUARD_STAGE = "crm_scrub"
+GUARD_OPERATION = "apply_guardrail"
+
+
+@dataclass
+class GuardCall:
+    """One ``ApplyGuardrail`` attempt (ids and numbers only, never the text or a match)."""
+
+    units: int
+    estimated: bool = True
+    latency_ms: int = 0
+    outcome: str = "error"  # ok | error
+    error_class: str | None = "GuardrailNoAnswer"
+    request_id: str | None = None
+
+    @property
+    def cost_usd(self) -> Decimal:
+        return USD_PER_TEXT_UNIT * self.units
+
+
+_GUARD_CALLS: ContextVar[list[GuardCall] | None] = ContextVar("crm_guard_calls", default=None)
+
+
+@contextlib.contextmanager
+def collect_guard_calls() -> Iterator[list[GuardCall]]:
+    """Collect the guardrail attempts made inside the block (the gateway writes them to the ledger)."""
+    calls: list[GuardCall] = []
+    token = _GUARD_CALLS.set(calls)
+    try:
+        yield calls
+    finally:
+        _GUARD_CALLS.reset(token)
+
+
+def estimated_units(text: str) -> int:
+    return max(1, math.ceil(len(text) / TEXT_UNIT_CHARS))
+
+
+def billed_units(response: Any) -> int | None:
+    """The text units AWS billed (``usage``: every ``*Units`` count but the free ones), or None when absent."""
+    usage = response.get("usage") if isinstance(response, dict) else None
+    if not isinstance(usage, dict):
+        return None
+    counts = [v for k, v in usage.items() if k.endswith("Units") and "Free" not in k and isinstance(v, int) and v >= 0]
+    return sum(counts) if counts else None
+
+
+def _aws_code(exc: BaseException) -> str:
+    """The AWS error code (``ThrottlingException`` ...) for the ledger, else the class name; never the message."""
+    response = getattr(exc, "response", None)
+    code = (response.get("Error") or {}).get("Code") if isinstance(response, dict) else None
+    if isinstance(code, str) and re.match(r"^[A-Za-z][A-Za-z0-9_]{0,63}$", code):
+        return code
+    return type(exc).__name__
+
+
+def _request_id(response: Any) -> str | None:
+    meta = response.get("ResponseMetadata") if isinstance(response, dict) else None
+    value = meta.get("RequestId") if isinstance(meta, dict) else None
+    return value if isinstance(value, str) and 0 < len(value) <= 128 else None
 
 
 class UnavailableDetector:
@@ -69,6 +148,11 @@ class BedrockGuardrailsDetector:
     async def detect(self, text: str) -> Sequence[Detection]:
         if not text.strip():
             return []
+        calls = _GUARD_CALLS.get()
+        record = GuardCall(units=estimated_units(text))
+        if calls is not None:
+            calls.append(record)  # kept (estimated) when the attempt times out or fails
+        started = time.monotonic()
         try:
             response = await asyncio.to_thread(
                 self._client.apply_guardrail,
@@ -79,7 +163,15 @@ class BedrockGuardrailsDetector:
                 outputScope="FULL",
             )
         except Exception as exc:  # noqa: BLE001 — class only; botocore messages can echo request fields
+            record.latency_ms = int((time.monotonic() - started) * 1000)
+            record.error_class = _aws_code(exc)
             raise ScrubError(type(exc).__name__) from None
+        record.latency_ms = int((time.monotonic() - started) * 1000)
+        record.request_id = _request_id(response)
+        units = billed_units(response)
+        if units is not None:
+            record.units, record.estimated = units, False
+        record.outcome, record.error_class = "ok", None
         return parse_assessments(response)
 
 

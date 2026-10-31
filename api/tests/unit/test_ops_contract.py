@@ -192,6 +192,42 @@ def _request_row() -> dict[str, Any]:
     }
 
 
+def _llm_call_row() -> dict[str, Any]:
+    """One crm.llm_call row as the crm.ops.v1 1.6 read selects it (AA-964): a guardrail row."""
+    return {
+        "llm_call_id": JOB,
+        "at": NOW,
+        "app": "crm",
+        "stage": "crm_scrub",
+        "role": "guard",
+        "provider": "bedrock_guardrails",
+        "model": "apply_guardrail",
+        "family": "guardrails",
+        "connection_key": "bedrock_guardrails",
+        "deployment_wire_id": "apply_guardrail",
+        "attempt_no": 1,
+        "request_id": "req-1",
+        "job_id": None,
+        "outcome": "ok",
+        "refusal_code": None,
+        "error_class": None,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": None,
+        "cache_write_tokens": None,
+        "units": 2,
+        "unit_kind": "text_unit",
+        "cost_usd_est": Decimal("0.0002"),
+        "pricing_mode": "code_table",
+        "latency_ms": 120,
+        "prompt_hash": None,
+        "prompt_version": None,
+        "is_shadow": False,
+        "is_experiment": False,
+        "scrub_entities": None,
+    }
+
+
 def _ops_routes(app: FastAPI) -> list[APIRoute]:
     def walk(routes: list[Any]) -> Iterator[Any]:
         for r in routes:
@@ -236,6 +272,16 @@ SCENARIOS: list[tuple[str, str, str, Any, Any, str, int, str | None]] = [
     ("GET", "/llm/usage", f"{PREFIX}/llm/usage?from=2026-10-24&to=2026-10-01", None, None, "reader", 422,
      "invalid_range"),
     ("GET", "/data-coverage", f"{PREFIX}/data-coverage", None, None, "reader", 200, None),
+    # crm.ops.v1 1.6 (AA-964): the CRM ledger rows, newest first, scrubbed fields only.
+    ("GET", "/llm/calls", f"{PREFIX}/llm/calls?from=2026-10-01&to=2026-10-24&limit=1", None,
+     lambda c: c.on("FROM crm.llm_call", [_llm_call_row(), {**_llm_call_row(), "llm_call_id": REQ}]),
+     "reader", 200, None),
+    ("GET", "/llm/calls", f"{PREFIX}/llm/calls?from=2026-10-01&to=2026-12-24", None, None, "reader", 422,
+     "invalid_range"),
+    ("GET", "/llm/calls", f"{PREFIX}/llm/calls?from=2026-10-01&to=2026-10-24&cursor=yesterday", None, None,
+     "reader", 422, "invalid_cursor"),
+    ("GET", "/llm/calls", f"{PREFIX}/llm/calls?from=2026-10-01&to=2026-10-24&stage=cis_x", None, None,
+     "reader", 422, "invalid_request"),
     # crm.ops.v1 1.5 (AA-966): AA insights over one quarter; one agency's facts are always suppressed (< 3 agencies).
     ("GET", "/insights", f"{PREFIX}/insights?dimension=destination&quarter=2026-Q1", None,
      lambda c: c.on("FROM crm.v_insight_fact", [

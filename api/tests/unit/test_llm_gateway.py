@@ -95,7 +95,7 @@ async def test_ok_call_scrubs_logs_tokens_and_cost_never_text() -> None:
     assert provider.prompts == ["Hi [name]"]
     [args] = c.sql("INSERT INTO crm.llm_call")
     assert args[:9] == ("crm_reply", "writer", "bedrock", "us.model-v1", 10, 5, Decimal("0.0012"), args[7], "ok")
-    assert "Hoa" not in repr(args) and '"PERSON": 1' in args[-1]
+    assert "Hoa" not in repr(args) and '"PERSON": 1' in args[11]
     assert result.placeholder_map_id is None and result.fallback is None
     [rollup] = c.sql("INSERT INTO crm.llm_usage_daily")
     assert rollup == ("crm_reply", "us.model-v1", 0, 10, 5, Decimal("0.0012"))

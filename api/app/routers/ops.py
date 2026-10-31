@@ -8,6 +8,9 @@ agency's own audit (actor ``platform:<staff sub>``, kind ``aa_ops``; reads as ``
 reference as ``ticket:<REF>``).
 
 AA-936 (card CRM-08, what CIS #975 reads): ``GET /jobs/summary`` (``crm.job`` per kind), ``GET /llm/usage``.
+AA-964 (crm.ops.v1 1.6, root ADR 0009 §8): ``GET /llm/calls?from&to&tenant_id&stage&status&limit&cursor``, the CRM
+ledger rows (``crm.llm_call``, scrubbed fields only) newest first, for the CIS admin Calls tab
+(:func:`console.platform_llm_calls`; one ``ops_read`` event in each agency whose rows were returned).
 AA-992 (crm.ops.v1 1.4, the CIS admin page /admin/data-coverage): ``GET /data-coverage``, platform-wide counts only
 (agencies and members per status, the AA catalog cache); no per-agency audit event (:func:`console.platform_coverage`).
 AA-939 (card CRM-11, Q1 6.3): members, member deactivation, owner recovery open / complete.
@@ -261,6 +264,49 @@ class LlmUsage(_Out):
     rows: list[LlmUsageRow]
 
 
+# crm.ops.v1 1.6 (AA-964): the CRM ledger rows for the CIS admin Calls tab (scrubbed fields only).
+class LlmCallRow(_Out):
+    call_id: str
+    tenant_id: str
+    at: str
+    app: str
+    stage: str
+    role: str
+    provider: str
+    model: str
+    family: str | None
+    connection_key: str | None
+    deployment_wire_id: str | None
+    attempt_no: int | None
+    provider_request_id: str | None
+    job_id: str | None
+    status: Literal["ok", "refused", "error"]
+    refusal_code: str | None
+    error_class: str | None
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int | None
+    cache_write_tokens: int | None
+    units: int | None
+    unit_kind: str | None
+    cost_usd: str
+    pricing_mode: str | None
+    latency_ms: int
+    prompt_hash: str | None
+    prompt_version: str | None
+    is_shadow: bool
+    is_experiment: bool
+    scrub_entities: int | None
+
+
+class LlmCalls(_Out):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    from_: str = Field(alias="from")
+    to: str
+    rows: list[LlmCallRow]
+    next_cursor: str | None
+
+
 # crm.ops.v1 1.4 (AA-992): platform-wide counts for the CIS admin page /admin/data-coverage. Counts only.
 class AgencyCounts(_Out):
     active: int
@@ -382,6 +428,33 @@ async def get_llm_usage(
         raise HTTPException(status_code=422, detail="invalid_range")
     pool = await request_pool(request)
     return {"from": from_.isoformat(), "to": to.isoformat(), "rows": await llm_usage(pool, from_, to)}
+
+
+# ── AA-964: the CRM ledger rows (crm.ops.v1 1.6, the CIS admin Calls tab) ──────────────────────────────────────
+@router.get("/llm/calls", response_model=LlmCalls, response_model_by_alias=True)
+async def get_llm_calls(
+    request: Request,
+    caller: Reader,
+    from_: Annotated[date, Query(alias="from")],
+    to: Annotated[date, Query()],
+    tenant_id: Annotated[uuid.UUID | None, Query()] = None,
+    stage: Annotated[str | None, Query(pattern=r"^crm_[a-z0-9_]{1,40}$")] = None,
+    status: Annotated[Literal["ok", "refused", "error"] | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=console.LLM_CALLS_MAX_LIMIT)] = 100,
+    cursor: Annotated[str | None, Query(max_length=120)] = None,
+) -> dict:
+    pool = await request_pool(request)
+    return await console.platform_llm_calls(
+        pool,
+        staff_sub=caller.sub,
+        start=from_,
+        end=to,
+        tenant_id=tenant_id,
+        stage=stage,
+        status=status,
+        limit=limit,
+        cursor=cursor,
+    )
 
 
 # ── AA-992: what the CIS admin page /admin/data-coverage reads (crm.ops.v1 1.4) ───────────────────────────────

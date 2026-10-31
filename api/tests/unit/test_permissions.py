@@ -42,6 +42,7 @@ DESIGN: dict[str, tuple[str, str, str]] = {
     "duty_of_care_view": (Y, Y, Y),  # AA-961 R37 "Travelling now" (A-02): every role; names only through a reveal
     "calendar_view": (Y, Y, Y),  # AA-961 R15: the agency calendar, every role
     "calendar_feed_manage": (Y, Y, Y),  # AA-961: each member's own ICS feed (an owner may revoke any)
+    "ai_use": (Y, Y, Y),  # AA-964 (M14): the AI meter and a draft (a suggestion; sending is message_send)
     "view_margin": (Y, Y, N),
     "money_fields_edit": (Y, Y, N),
     "aa_confirm": (Y, Y, N),  # AA-947 (S251 decision): confirming an AA hold books with AA; not the assistant
@@ -74,6 +75,7 @@ DESIGN: dict[str, tuple[str, str, str]] = {
     "client_import": (Y, N, N),  # AA-962 (R43): the agency's own bulk import, like the agency export — owner
     "client_merge": (Y, N, N),  # AA-962 (R6): one client of the pair goes to the trash, like a client delete — owner
     "onboarding_manage": (Y, N, N),  # AA-962 (Fix E2): "Later" / done marks on the agency's checklist — owner
+    "ai_settings": (Y, N, N),  # AA-964 (A-18 AI): AI on / off and the monthly AI budget — owner
 }
 WORD = {Rule.ALLOW: Y, Rule.DENY: N, Rule.OWN: OWN, Rule.ASSIGNED: ASG, Rule.THRESHOLD: THR}
 

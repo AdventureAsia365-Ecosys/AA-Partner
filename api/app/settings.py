@@ -112,6 +112,22 @@ F3 PII scrubber (AA-938, card CRM-10; ``app.privacy``):
 - ``SCRUB_DETECTOR_TIMEOUT_MS``: how long pass 3 may take (default 3000, 200..10000); a timeout refuses the call
   (``scrub_timeout``, the draft says "reply by hand").
 
+CRM AI gateway (AA-964, card CRM-33a; ``app.llm``):
+
+- ``CRM_LLM_PROVIDER``: ``stub`` (default: a deterministic local model, no network, cost 0) or ``bedrock`` (Amazon
+  Bedrock Converse, :class:`app.llm.providers.bedrock.BedrockConverseProvider`). ``bedrock`` needs the three values
+  below, else the service refuses to start.
+- ``CRM_LLM_MODEL_ID``: the inference profile id sent on the wire (``us.`` profiles only, root ADR 0008a §5).
+- ``CRM_LLM_USD_PER_MTOK_IN`` / ``CRM_LLM_USD_PER_MTOK_OUT``: the model's price per million input / output tokens
+  (USD, > 0), so every row's ``cost_usd_est`` counts against the agency budget.
+- ``CRM_LLM_REGION``: the Bedrock region (default ``us-west-1``).
+- ``CRM_LLM_ROLE_ARN``: optional; the CRM-only invoker role to assume for the call (the acc3 path of root ADR 0008a
+  §5). Empty = the task role.
+- ``CRM_LLM_MAX_TOKENS``: output cap of a draft (default 800, 50..4000).
+- ``RATE_LIMIT_AI_PER_MINUTE``: gateway calls per agency per minute (default 6; 0 = off). Over it: refusal
+  ``rate_limited`` (logged, no scrub, no cost).
+- ``AI_BUDGET_MAX_USD``: the highest monthly AI budget an owner may set (default 2, the plan's cap; 0..10000).
+
 CIS membership feed (AA-978, ``app.cis``):
 
 - ``CIS_API_URL``: the origin of the CIS public API (``https://api-cis.…``, no path, no trailing slash; Terraform
@@ -159,6 +175,7 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 
 from app.cis.m2m import CredentialsError, M2mCredentials, parse_credentials
 
@@ -191,6 +208,12 @@ DEFAULT_OFFBOARDING_COOL_OFF_HOURS = 72
 MAX_OFFBOARDING_COOL_OFF_HOURS = 720
 _KMS_KEY_PREFIXES = ("alias/", "arn:aws:kms:")
 DEFAULT_SCRUB_TIMEOUT_MS = 3000
+LLM_PROVIDERS = frozenset({"stub", "bedrock"})
+DEFAULT_LLM_MAX_TOKENS = 800
+DEFAULT_AI_PER_MINUTE = 6
+DEFAULT_AI_BUDGET_MAX_USD = Decimal("2")
+_MODEL_ID = re.compile(r"^[A-Za-z0-9._:/-]{1,120}$")
+_ROLE_ARN = re.compile(r"^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]{1,128}$")
 _GUARDRAIL_ID = re.compile(r"^[a-z0-9]{1,64}$")
 _GUARDRAIL_VERSION = re.compile(r"^(DRAFT|[1-9][0-9]{0,7})$")
 _REGION = re.compile(r"^[a-z]{2}(-[a-z]+)+-[0-9]$")
@@ -245,6 +268,15 @@ class Settings:
     scrub_guardrail_version: str = ""
     scrub_guardrail_region: str = "us-west-1"
     scrub_detector_timeout_ms: int = DEFAULT_SCRUB_TIMEOUT_MS
+    crm_llm_provider: str = "stub"
+    crm_llm_model_id: str = ""
+    crm_llm_usd_per_mtok_in: Decimal = Decimal(0)
+    crm_llm_usd_per_mtok_out: Decimal = Decimal(0)
+    crm_llm_region: str = "us-west-1"
+    crm_llm_role_arn: str = field(default="", repr=False)
+    crm_llm_max_tokens: int = DEFAULT_LLM_MAX_TOKENS
+    rate_limit_ai_per_minute: int = DEFAULT_AI_PER_MINUTE
+    ai_budget_max_usd: Decimal = DEFAULT_AI_BUDGET_MAX_USD
     lifecycle_dry_run: bool = True
     offboarding_cool_off_hours: int = DEFAULT_OFFBOARDING_COOL_OFF_HOURS
     fx_provider: str = "synthetic"
@@ -258,6 +290,32 @@ class Settings:
     mail_oauth: tuple[tuple[str, str], ...] = field(default=(), repr=False)
     portal_otp_dev_echo: bool = False
     kms_seal_key_id: str = ""
+
+    def _check_llm(self) -> None:
+        """AA-964: the CRM AI gateway's provider values."""
+        if self.crm_llm_provider not in LLM_PROVIDERS:
+            raise SettingsError(
+                f"CRM_LLM_PROVIDER must be one of {sorted(LLM_PROVIDERS)}, got {self.crm_llm_provider!r}"
+            )
+        if self.crm_llm_model_id and not _MODEL_ID.match(self.crm_llm_model_id):
+            raise SettingsError("CRM_LLM_MODEL_ID must be a model or inference profile id")
+        if not _REGION.match(self.crm_llm_region):
+            raise SettingsError(f"CRM_LLM_REGION must be an AWS region, got {self.crm_llm_region!r}")
+        if self.crm_llm_role_arn and not _ROLE_ARN.match(self.crm_llm_role_arn):
+            raise SettingsError("CRM_LLM_ROLE_ARN must be an IAM role ARN")
+        if self.crm_llm_usd_per_mtok_in < 0 or self.crm_llm_usd_per_mtok_out < 0:
+            raise SettingsError("CRM_LLM_USD_PER_MTOK_IN / _OUT must be >= 0")
+        if self.crm_llm_provider == "bedrock" and not (
+            self.crm_llm_model_id and self.crm_llm_usd_per_mtok_in > 0 and self.crm_llm_usd_per_mtok_out > 0
+        ):
+            # A real model without a price would cost money the agency budget never sees (R5).
+            raise SettingsError("CRM_LLM_PROVIDER=bedrock needs CRM_LLM_MODEL_ID and both CRM_LLM_USD_PER_MTOK prices")
+        if not 50 <= self.crm_llm_max_tokens <= 4000:
+            raise SettingsError("CRM_LLM_MAX_TOKENS must be between 50 and 4000")
+        if self.rate_limit_ai_per_minute < 0:
+            raise SettingsError("RATE_LIMIT_AI_PER_MINUTE must be >= 0")
+        if not 0 <= self.ai_budget_max_usd <= 10_000:
+            raise SettingsError("AI_BUDGET_MAX_USD must be between 0 and 10000 (crm.tenant_settings budget CHECK)")
 
     def __post_init__(self) -> None:
         if self.environment not in {"dev", "stg", "prod"} | INSECURE_ENVIRONMENTS:
@@ -327,6 +385,7 @@ class Settings:
             raise SettingsError(f"SCRUB_GUARDRAIL_REGION must be an AWS region, got {self.scrub_guardrail_region!r}")
         if not 200 <= self.scrub_detector_timeout_ms <= 10_000:
             raise SettingsError("SCRUB_DETECTOR_TIMEOUT_MS must be between 200 and 10000")
+        self._check_llm()
         if self.key_provider not in KEY_PROVIDERS:
             raise SettingsError(f"KEY_PROVIDER must be one of {sorted(KEY_PROVIDERS)}, got {self.key_provider!r}")
         if self.key_provider == "local" and self.environment not in INSECURE_ENVIRONMENTS:
@@ -477,6 +536,18 @@ def _int(raw: str | None, default: int, name: str) -> int:
         raise SettingsError(f"{name} must be an integer, got {raw!r}") from None
 
 
+def _decimal(raw: str | None, default: Decimal, name: str) -> Decimal:
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = Decimal(raw.strip())
+    except InvalidOperation:
+        raise SettingsError(f"{name} must be a number, got {raw!r}") from None
+    if not value.is_finite():
+        raise SettingsError(f"{name} must be a finite number")
+    return value
+
+
 def _text(env: Mapping[str, str], name: str) -> str:
     return (env.get(name) or "").strip()
 
@@ -547,6 +618,17 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         scrub_detector_timeout_ms=_int(
             env.get("SCRUB_DETECTOR_TIMEOUT_MS"), DEFAULT_SCRUB_TIMEOUT_MS, "SCRUB_DETECTOR_TIMEOUT_MS"
         ),
+        crm_llm_provider=(_text(env, "CRM_LLM_PROVIDER") or "stub").lower(),
+        crm_llm_model_id=_text(env, "CRM_LLM_MODEL_ID"),
+        crm_llm_usd_per_mtok_in=_decimal(env.get("CRM_LLM_USD_PER_MTOK_IN"), Decimal(0), "CRM_LLM_USD_PER_MTOK_IN"),
+        crm_llm_usd_per_mtok_out=_decimal(env.get("CRM_LLM_USD_PER_MTOK_OUT"), Decimal(0), "CRM_LLM_USD_PER_MTOK_OUT"),
+        crm_llm_region=_text(env, "CRM_LLM_REGION") or "us-west-1",
+        crm_llm_role_arn=_text(env, "CRM_LLM_ROLE_ARN"),
+        crm_llm_max_tokens=_int(env.get("CRM_LLM_MAX_TOKENS"), DEFAULT_LLM_MAX_TOKENS, "CRM_LLM_MAX_TOKENS"),
+        rate_limit_ai_per_minute=_int(
+            env.get("RATE_LIMIT_AI_PER_MINUTE"), DEFAULT_AI_PER_MINUTE, "RATE_LIMIT_AI_PER_MINUTE"
+        ),
+        ai_budget_max_usd=_decimal(env.get("AI_BUDGET_MAX_USD"), DEFAULT_AI_BUDGET_MAX_USD, "AI_BUDGET_MAX_USD"),
         lifecycle_dry_run=_flag(env.get("LIFECYCLE_DRY_RUN"), True, "LIFECYCLE_DRY_RUN"),
         offboarding_cool_off_hours=_int(
             env.get("OFFBOARDING_COOL_OFF_HOURS"), DEFAULT_OFFBOARDING_COOL_OFF_HOURS, "OFFBOARDING_COOL_OFF_HOURS"

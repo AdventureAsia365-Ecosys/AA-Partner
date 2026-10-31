@@ -60,6 +60,7 @@ REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = (
     "crm-029",  # AA-953 portal per person (crm.traveler_flight, otp_challenge.sent_to_bidx; expand, needs crm-028)
     "crm-030",  # AA-962 onboarding + import (expand: import refs, onboarding / controller settings columns)
     "crm-031",  # AA-966 trip-level insight fact (expand: auto-applied after crm-028..030 in number order)
+    "crm-032",  # AA-964 CRM AI gateway: llm_call ledger v2, guard role, AI budget alert state (contract)
 )
 REQUIRED_SCHEMA_VERSION = max(REQUIRED_SCHEMA_VERSIONS)
 
