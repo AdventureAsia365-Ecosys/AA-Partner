@@ -62,7 +62,7 @@ DUE_SQL = """
 SELECT i.invoice_id FROM crm.invoice i
  WHERE i.rehold_requested_at IS NOT NULL AND i.status IN ('open', 'payment_claimed') AND i.deleted_at IS NULL
    AND (i.rehold_code IS DISTINCT FROM 'rehold_limit'
-        OR (i.updated_at AT TIME ZONE 'UTC')::date < (now() AT TIME ZONE 'UTC')::date)
+        OR (i.updated_at AT TIME ZONE 'UTC')::date < $2::date)
  ORDER BY i.rehold_requested_at
  LIMIT $1
 """
@@ -157,8 +157,9 @@ class Asked:
     lines: dict[str, Decimal] = field(default_factory=dict)
 
 
-async def due(ctx: AnyContext, limit: int = MAX_INVOICES) -> list[uuid.UUID]:
-    return [r["invoice_id"] for r in await ctx.conn.fetch(DUE_SQL, limit)]
+async def due(ctx: AnyContext, now: dt.datetime, limit: int = MAX_INVOICES) -> list[uuid.UUID]:
+    """The invoices waiting for a re-hold (after Booking's ``rehold_limit``: from the next UTC day of ``now``)."""
+    return [r["invoice_id"] for r in await ctx.conn.fetch(DUE_SQL, limit, now.astimezone(dt.UTC).date())]
 
 
 async def plan(ctx: AnyContext, invoice_id: uuid.UUID) -> Plan | None:

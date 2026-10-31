@@ -767,7 +767,7 @@ class BookingSync:
         assert client is not None  # noqa: S101 — __call__ returns early without a client
         async with system_tx(pool, tenant_id, actor=ACTOR) as ctx:
             extends = await claims.extend_due(ctx)
-            invoices = await rehold.due(ctx)
+            invoices = await rehold.due(ctx, self.now())
         for invoice_id, hold_id in extends:
             ext = await claims.extend(client, tenant_id, invoice_id, hold_id)
             if ext.code == claims.UNAVAILABLE:
