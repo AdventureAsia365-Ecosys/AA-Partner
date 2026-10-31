@@ -295,6 +295,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-029` | `api/migrations/029_crm_traveler_flight.sql` | CRM-24a portal per person (AA-953; an **expand** file, ADR 0017: one new table only, so it ships in the code PR): `crm.traveler_flight` (base template; one arrival / departure flight per trip, traveller and direction: `flight_no_enc` under the vault DEK, `airport_iata`, `sched_local` (local time at that airport, no zone) + `tz` (IANA), `entered_by_kind`; all `pii:travel`; RLS, hold guard, no reader grant). Every key cascades (trip, traveler, trip_traveler), so the erase deletes flights through the rows it already deletes and `crm.erase_subject` is not replaced (`test_crm010_schema.py` `CASCADE_ERASED` checks the keys). crm-028 is another lane's key |
 | `crm-029` | `api/migrations/029_crm_traveler_flight.sql` | CRM-24a portal per person (AA-953; an **expand** file, ADR 0017: one new table and one new nullable column, so it ships in the code PR): `crm.otp_challenge.sent_to_bidx` (the blind index of the address a portal code went to: a session's proof) and `crm.traveler_flight` (base template; one arrival / departure flight per trip, traveller and direction: `flight_no_enc` under the vault DEK, `airport_iata`, `sched_local` (local time at that airport, no zone) + `tz` (IANA), `entered_by_kind`; all `pii:travel`; RLS, hold guard, no reader grant). Every key cascades (trip, traveler, trip_traveler), so the erase deletes flights through the rows it already deletes and `crm.erase_subject` is not replaced (`test_crm010_schema.py` `CASCADE_ERASED` checks the keys). needs crm-028 (AA-952) |
 | `crm-030` | `api/migrations/030_crm_onboarding_import.sql` | CRM-31 onboarding + import (AA-962; expand class under ADR 0017: nullable columns, columns with a constant default, non-unique partial indexes, column comments; no `crm.erase_subject` change: the new columns go with their rows): `import_ref_bidx` on `crm.traveler` / `crm.trip` / `crm.note` (blind index of the agency's own ref of an imported row; a partial non-unique index each, like every blind index here), `crm.tenant_settings` `onboarding_later` / `onboarding_done` (step codes), `privacy_notice_url`, `data_request_contact`, `consent_text` (controller settings), `responsibility_ack_version` / `_at` / `_member_id` (the owner acknowledgement). Values are checked by `app/onboarding.py` (an expand file adds no CHECK to an existing table) |
+| `crm-030` | `api/migrations/030_crm_onboarding_import.sql` | CRM-31 onboarding + import (AA-962; expand class under ADR 0017: nullable columns, columns with a constant default, non-unique partial indexes, column comments; no `crm.erase_subject` change: the new columns go with their rows): `import_ref_bidx` on `crm.traveler` / `crm.trip` / `crm.note` (blind index of the agency's own ref of an imported row; a partial non-unique index each, like every blind index here), `crm.traveler.import_ref_alias_bidx` (`bytea[]`, default empty: the other refs a client answers to after a merge or a match; a non-unique GIN index), `crm.tenant_settings` `onboarding_later` / `onboarding_done` (step codes), `privacy_notice_url`, `data_request_contact`, `consent_text` (controller settings), `responsibility_ack_version` / `_at` / `_member_id` (the owner acknowledgement). Values are checked by `app/onboarding.py` (an expand file adds no CHECK to an existing table) |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -850,20 +851,26 @@ the owner acknowledgement). Implementation notes: `docs/implementation-notes/AA-
   `DATA_SETTINGS`, owner): the privacy-notice link (https), the data-request contact (one line), the agency's consent
   wording; the version of the shared-responsibility text (`ACK_VERSION`, the text is in the web EN / VI; a proposal
   until the business owner's legal wording replaces it, then a new version asks again), who and when, one
-  `acknowledge` audit event. 409 `version_changed` for another version.
+  `acknowledge` audit event. 409 `version_changed` for another version. The public inquiry form reads them
+  (`app/intake/public.py` `read_form`): the agency's privacy link when the form has none of its own, its consent
+  wording on the contact box (none = the page's default text) and its data-request contact under the form.
 - **Import** (`app/imports/`, `CLIENT_IMPORT`, owner; web Settings > Import clients): four files in the design's order,
   clients (`client_ref`, `name`, optional contact fields, DOB, nationality, channel, marketing consent),
   relationships (two client refs and a relation kind), trips (`trip_ref`, the lead's `client_ref`, `title`, dates,
   status `completed` / `cancelled` / `lost` / `inquiry`, companions), notes (`text` and a client or trip ref). CSV
-  (comma, semicolon or tab; UTF-8) or the first sheet of an `.xlsx` (`formats.py`, a standard-library reader with
-  size caps), at most 5 MB and 5,000 rows. `POST /client-imports/preview?entity=` (raw body) is the dry run: **a missing
+  (comma, semicolon or tab; UTF-8) or the first sheet of an `.xlsx` (`formats.py`, a standard-library streaming
+  reader: `iterparse`, an 8 MB inflated-byte budget per zip member, capped shared strings; run in a thread), at most
+  5 MB and 5,000 rows. `POST /client-imports/preview?entity=` (raw body) is the dry run: **a missing
   column is 422 `missing_columns` before anything is read or written (card R)**; otherwise the counts per outcome
   (`create`, `match`, `already_imported`, `duplicate_in_file`, `invalid`), the `possible_duplicate` warnings and up to
   200 row issues (row numbers and codes, never a value) and the file's SHA-256. `POST /client-imports?entity=&sha256=`
   starts the job with the same file (409 `file_changed` otherwise); `GET /client-imports[/{id}]` reads the progress
   from the job rows (no import table: a run leaves no personal data behind). Dedupe: the row's ref
-  (`import_ref_bidx`, **re-running an import creates nothing, card E**), then the e-mail / phone blind index (a known
-  client is matched and gets the ref, nothing else changes), then the earlier rows of the file. Imported clients get
+  (`import_ref_bidx` or one of the client's `import_ref_alias_bidx`, **re-running an import creates nothing, card E**),
+  then the e-mail / phone blind index (a known client is matched and gets the ref, as its own or as an alias; nothing
+  else changes), then the earlier rows of the file (a row sharing an earlier row's e-mail / phone is a `match` with
+  code `duplicate_contact`: its ref points to that client). Every ref the clients phase accepted resolves in the
+  relationships, trips and notes phases. Imported clients get
   `lead_source = 'import'` and belong to the importing owner; a marketing consent column writes one `consent` row
   (`source = 'import'`) for a new client only. Trips: one `trip_stage_history` row (reason `import`), both party twins,
   age bands at departure. `phone_region` (ISO alpha-2) reads local numbers without `+`.
@@ -872,7 +879,8 @@ the owner acknowledgement). Implementation notes: `docs/implementation-notes/AA-
   `POST /travelers/{keep_id}/merge {other_traveler_id}` (`CLIENT_MERGE`, owner) moves trips (both twins; the lead role
   when both were on a trip), notes, documents, conversations, dispatch rows, call slots and public-form submissions,
   re-makes relationships from the kept client, copies consents (time and source kept), moves health codes when the kept
-  client has none, fills the F1 fields the kept client lacks (re-sealed under its row id) and the import ref, then puts
+  client has none, fills the F1 fields the kept client lacks (re-sealed under its row id), carries every import ref
+  of the other client (own ref when the kept one has none, else aliases: a re-run finds the kept client), then puts
   the other client in the trash (`app/lifecycle/trash.py`: its purge erases the rest, one F1 record stays). 409
   `merge_blocked` (with `blockers` and `swap_possible`) when the client that would go has client links, portal access,
   signatures or accepted terms (that evidence names it); 409 `legal_hold` for a held client.
