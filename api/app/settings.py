@@ -61,6 +61,13 @@ Rate limits (ADR 0010 decision 2: CloudFront → VPC origin bypasses API Gateway
   right (default 2: the viewer address CloudFront appended, then the address the ALB appended). See ``app.ratelimit``.
 - ``RATE_LIMIT_INTAKE_PER_MINUTE``: inquiry-form submissions per client address per minute (default 5; 0 = off).
 - ``RATE_LIMIT_INTAKE_FORM_PER_HOUR``: submissions per form per hour, whatever the address (default 200; 0 = off).
+  The intake limit also guards every anonymous client-page write (proposal pages, sign-in code, code check).
+- ``RATE_LIMIT_PORTAL_WRITE_PER_MINUTE``: traveller portal writes made with a session cookie (Stage 3, flights,
+  passport scan, signing code, signing, companion invite, switch, sign-out) per client address per minute (default
+  30; 0 = off). A separate bucket from the intake limit, so a family on one home address can fill the portal
+  (AA-953 follow-up). Until the session check passes, each such write also holds a slot of a bucket sized by
+  ``RATE_LIMIT_INTAKE_PER_MINUTE``, so a forged cookie is held to the anonymous ceiling; see
+  ``app.routers.client_pages``.
 
 Public intake (AA-936, card CRM-08; ``app.intake.public``):
 
@@ -172,6 +179,7 @@ DEFAULT_INTAKE_FORM_PER_HOUR = 200
 DEFAULT_INVITATION_TTL_HOURS = 168
 MAX_INVITATION_TTL_HOURS = 720
 DEFAULT_CLAIM_PER_MINUTE = 10
+DEFAULT_PORTAL_WRITE_PER_MINUTE = 30
 _POOL_ID = re.compile(r"^[a-z]{2}(-[a-z]+)+-[0-9]_[A-Za-z0-9]{1,55}$")
 _EMAIL = re.compile(r"^[^@\s]{1,64}@[a-z0-9.-]{1,189}\.[a-z]{2,}$")
 KEY_PROVIDERS = frozenset({"kms", "local"})
@@ -221,6 +229,7 @@ class Settings:
     dek_cache_ttl_seconds: int = DEFAULT_DEK_CACHE_TTL_S
     rate_limit_intake_per_minute: int = DEFAULT_INTAKE_PER_MINUTE
     rate_limit_intake_form_per_hour: int = DEFAULT_INTAKE_FORM_PER_HOUR
+    rate_limit_portal_write_per_minute: int = DEFAULT_PORTAL_WRITE_PER_MINUTE
     intake_page_origins: tuple[str, ...] = ()
     documents_bucket: str = ""
     audit_bucket_compliance: str = ""
@@ -336,6 +345,8 @@ class Settings:
             raise SettingsError(f"DEK_CACHE_TTL_SECONDS must be between 0 and {MAX_DEK_CACHE_TTL_S}")
         if self.rate_limit_intake_per_minute < 0 or self.rate_limit_intake_form_per_hour < 0:
             raise SettingsError("RATE_LIMIT_INTAKE_PER_MINUTE / RATE_LIMIT_INTAKE_FORM_PER_HOUR must be >= 0")
+        if self.rate_limit_portal_write_per_minute < 0:
+            raise SettingsError("RATE_LIMIT_PORTAL_WRITE_PER_MINUTE must be >= 0")
         if self.cognito_partner_pool_id:
             if not _POOL_ID.match(self.cognito_partner_pool_id):
                 raise SettingsError("COGNITO_PARTNER_POOL_ID must be a Cognito user pool id (<region>_<id>)")
@@ -509,6 +520,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ),
         rate_limit_intake_form_per_hour=_int(
             env.get("RATE_LIMIT_INTAKE_FORM_PER_HOUR"), DEFAULT_INTAKE_FORM_PER_HOUR, "RATE_LIMIT_INTAKE_FORM_PER_HOUR"
+        ),
+        rate_limit_portal_write_per_minute=_int(
+            env.get("RATE_LIMIT_PORTAL_WRITE_PER_MINUTE"),
+            DEFAULT_PORTAL_WRITE_PER_MINUTE,
+            "RATE_LIMIT_PORTAL_WRITE_PER_MINUTE",
         ),
         intake_page_origins=_origins(env.get("INTAKE_PAGE_ORIGINS")),
         documents_bucket=_text(env, "DOCUMENTS_BUCKET"),
