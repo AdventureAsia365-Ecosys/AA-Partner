@@ -10,12 +10,19 @@ the CRM never writes to the client by itself). Schedule: the first reminder the 
 waiting for its AA hold to be placed again, a paid / void one. A deposit whose AA hold ran out says so
 (``pay_window_closed``): the agent re-quotes rather than chases.
 
+The task closes (``done``) once the trip has no invoice left to chase (:data:`STILL_DUE`: issued, ``open`` or
+``payment_claimed``, not waiting for its AA hold again, past its due date, money due): at once when an invoice leaves
+the receivable state (:func:`settled`: paid in full, a late deposit sent to the re-hold, the re-hold's answer, a void),
+and in each date rule pass for any other way (:func:`close_settled`). A claimed invoice keeps it open: "Not received"
+puts the invoice back to ``open`` and the chase goes on.
+
 Details carry the invoice number, kind and counts only (no name, no amount of another trip).
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import uuid
 from typing import Any
 
 from app.payments import claims
@@ -52,6 +59,33 @@ INSERT INTO crm.task (trip_id, kind, priority, assignee_member_id, due_anchor, d
 SELECT $1, $2, 'normal', t.owner_member_id, 'created', now() + interval '1 day' FROM crm.trip t WHERE t.trip_id = $1
 ON CONFLICT (trip_id, kind) WHERE status = 'open' AND deleted_at IS NULL AND trip_id IS NOT NULL DO NOTHING
 """
+# An invoice the trip owner still chases, besides $2. "Today" is the agency's (app.ledger.fx.TODAY_SQL): the paths
+# that settle an invoice (a member's payment, the Booking sync, a void) have no date of their own.
+STILL_DUE_SQL = """
+SELECT EXISTS (
+  SELECT 1 FROM crm.invoice i
+   WHERE i.trip_id = $1 AND i.invoice_id <> $2 AND i.status IN ('open', 'payment_claimed') AND i.deleted_at IS NULL
+     AND i.rehold_requested_at IS NULL
+     AND i.due_on < (now() AT TIME ZONE COALESCE((SELECT timezone FROM crm.tenant_settings), 'Asia/Ho_Chi_Minh'))::date
+     AND i.total_amount > (SELECT coalesce(sum(x.amount), 0) FROM crm.payment x
+                            WHERE x.invoice_id = i.invoice_id AND x.entry_kind = 'payment'))
+"""
+CLOSE_SQL = """
+UPDATE crm.task SET status = 'done', done_at = now(), done_by = $3
+ WHERE trip_id = $1 AND kind = $2 AND status = 'open' AND deleted_at IS NULL
+"""
+# The date rule's sweep: the open reminder tasks of trips with nothing left to chase on ``today`` ($3).
+CLOSE_SETTLED_SQL = """
+UPDATE crm.task k SET status = 'done', done_at = now(), done_by = $2
+ WHERE k.kind = $1 AND k.status = 'open' AND k.deleted_at IS NULL AND k.trip_id IS NOT NULL
+   AND NOT EXISTS (
+       SELECT 1 FROM crm.invoice i
+        WHERE i.trip_id = k.trip_id AND i.status IN ('open', 'payment_claimed') AND i.deleted_at IS NULL
+          AND i.rehold_requested_at IS NULL AND i.due_on < $3
+          AND i.total_amount > (SELECT coalesce(sum(x.amount), 0) FROM crm.payment x
+                                 WHERE x.invoice_id = i.invoice_id AND x.entry_kind = 'payment'))
+RETURNING k.task_id
+"""
 
 
 async def overdue(ctx: AnyContext, today: dt.date, now: dt.datetime | None = None) -> int:
@@ -73,3 +107,16 @@ async def overdue(ctx: AnyContext, today: dt.date, now: dt.datetime | None = Non
         ctx.audit("invoice_reminder", "allowed", "invoice", str(row["invoice_id"]), reason="overdue")
         sent += 1
     return sent
+
+
+async def settled(ctx: AnyContext, trip_id: uuid.UUID, invoice_id: uuid.UUID, actor: str) -> None:
+    """``invoice_id`` left the receivable state (paid, sent to the re-hold, void): the trip's reminder task is done
+    unless another invoice of the trip is still to chase."""
+    if not await ctx.conn.fetchval(STILL_DUE_SQL, trip_id, invoice_id):
+        await ctx.conn.execute(CLOSE_SQL, trip_id, TASK, actor)
+
+
+async def close_settled(ctx: AnyContext, today: dt.date) -> int:
+    """The date rule's sweep (before :func:`overdue`): closes the reminder tasks of trips with nothing left to chase,
+    whatever settled them. Returns how many."""
+    return len(await ctx.conn.fetch(CLOSE_SETTLED_SQL, TASK, str(getattr(ctx, "actor", "system")), today))

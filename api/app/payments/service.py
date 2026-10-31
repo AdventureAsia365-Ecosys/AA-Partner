@@ -34,7 +34,7 @@ from typing import Any
 from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.invoices import service as invoices
 from app.ledger import fx
-from app.payments import claims, providers
+from app.payments import claims, providers, reminders
 from app.permissions import Action, Rule, require, rule_for
 from app.proposals import service as proposals
 from app.tenancy import AnyContext, TenantContext
@@ -240,6 +240,8 @@ async def record_payment(
     out: dict[str, Any] = {"payment_id": str(payment_id), "trip_moved": None, "portal": None, "rehold_pending": False}
     if value == balance:
         await claims.close_verify(ctx, row["trip_id"], invoice_id, f"member:{ctx.member_id}")
+        # Paid in full, or sent to the re-hold below: either way nothing is left to chase on this invoice.
+        await reminders.settled(ctx, row["trip_id"], invoice_id, f"member:{ctx.member_id}")
         facts = await claims.window_facts(ctx, invoice_id)
         if facts is not None and claims.holds_aa(facts) and not _hold_live(facts):
             # AA-952 slice 4 (card E): the money settles a deposit whose AA hold ran out (also after the one

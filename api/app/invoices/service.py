@@ -35,7 +35,7 @@ from app import stages
 from app.errors import Conflict, Invalid, NotFound
 from app.invoices import render
 from app.ledger import fx
-from app.payments import claims
+from app.payments import claims, reminders
 from app.tenancy import AnyContext, TenantContext
 from app.vault import Vault
 
@@ -779,6 +779,7 @@ async def void(ctx: TenantContext, invoice_id: uuid.UUID, reason: Any) -> dict[s
     await ctx.conn.fetchval(VOID_SQL, invoice_id, f"member:{ctx.member_id}", text)
     if row["issued_at"] is not None:
         await ctx.conn.execute(COMMITMENT_SQL, row["trip_id"], "void", source_ref(invoice_id))
+        await reminders.settled(ctx, row["trip_id"], invoice_id, f"member:{ctx.member_id}")
     ctx.audit("invoice_void", "allowed", "invoice", str(invoice_id), reason=row["status"])
     await stages.touch(ctx, row["trip_id"])
     return await full(ctx, invoice_id)

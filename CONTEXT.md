@@ -1093,7 +1093,10 @@ Design v3 §3.5 "Deposit link (C31, Fix A3, Fix A8)", F6 step 5, WF-9, U8; card 
 - **Overdue reminders** (agent first, U8): the hourly `crm_stage_date_rule` gives the trip owner a bell
   `invoice.overdue` and one open task `invoice_overdue` for an issued, open invoice with money due past its due date:
   the day after, then every 3 days, at most 5 (`last_reminded_at`, `reminder_count`). Claimed and re-holding invoices
-  are not reminded; the CRM never writes to the client by itself.
+  are not reminded; the CRM never writes to the client by itself. The task is closed (`done`) once the trip has no
+  invoice left to chase: at once when an invoice is paid in full (also sent to the re-hold, and the re-hold's
+  answer) or voided (`reminders.settled`), and by the date rule's sweep for any other way (`reminders.close_settled`).
+  A claimed invoice keeps it open ("Not received" resumes the chase).
 - **Web**: `components/proposals/ClientPayBox.tsx` (accepted text and day-by-day pages), the claim note and "Not
   received" on the trip's Invoices card, the note on A-10 `/payments`; BFF line `invoices/{id}/reject-claim`.
 

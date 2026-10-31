@@ -331,6 +331,8 @@ async def test_apply_outcomes() -> None:
     assert await rehold.apply(system_ctx(conn), INVOICE, rehold.Asked("held", "hold_live", held)) == "paid"
     assert conn.sql("UPDATE crm.proposal SET hold_expires_at = $3")[0][1] == "h1"
     assert conn.sql("SET status = $2, paid_at = now()")[0] == (INVOICE, "paid", "hold_live")
+    assert conn.sql("SELECT EXISTS ( SELECT 1 FROM crm.invoice i")[0][:2] == (TRIP, INVOICE)
+    assert conn.sql("UPDATE crm.task SET status = 'done'")[0][:2] == (TRIP, reminders.TASK)  # nothing left to chase
 
     conn = _apply_conn(row).on("RETURNING booking_line_id", [{"booking_line_id": uuid.UUID(OPTION)}])
     assert await rehold.apply(system_ctx(conn), INVOICE, rehold.Asked("held", "reheld", held)) == "paid"
@@ -349,6 +351,7 @@ async def test_apply_outcomes() -> None:
     assert len(asks) == 1 and asks[0][4] == Decimal("100") and "(sold_out)" in asks[0][6]
     assert conn.sql("SET status = $2, paid_at = now()")[0] == (INVOICE, "paid_unfulfillable", "sold_out")
     assert conn.sql("INSERT INTO crm.task")[0][1] == rehold.UNFULFILLABLE_TASK
+    assert conn.sql("UPDATE crm.task SET status = 'done'")[0][:2] == (TRIP, reminders.TASK)
 
 
 # ── reminders ─────────────────────────────────────────────────────────────────────────────────────
@@ -367,3 +370,20 @@ async def test_overdue_reminders() -> None:
     assert '"days":4' in event[3] and '"reminder":2' in event[3] and '"pay_window_closed":true' in event[3]
     assert conn.sql("INSERT INTO crm.task")[0][1] == reminders.TASK
     assert await reminders.overdue(system_ctx(ScriptedConn()), today) == 0
+
+
+@pytest.mark.asyncio
+async def test_the_reminder_task_closes_when_nothing_is_left_to_chase() -> None:
+    conn = ScriptedConn()
+    await reminders.settled(system_ctx(conn), TRIP, INVOICE, "member:m1")
+    assert conn.sql("UPDATE crm.task SET status = 'done'") == [(TRIP, reminders.TASK, "member:m1")]
+    conn = ScriptedConn().on("SELECT EXISTS ( SELECT 1 FROM crm.invoice i", True)  # another invoice still overdue
+    await reminders.settled(system_ctx(conn), TRIP, INVOICE, "member:m1")
+    assert conn.sql("UPDATE crm.task") == []
+
+    today = dt.date(2026, 11, 6)
+    conn = ScriptedConn().on("UPDATE crm.task k", [{"task_id": uuid.uuid4()}, {"task_id": uuid.uuid4()}])
+    ctx = system_ctx(conn)
+    assert await reminders.close_settled(ctx, today) == 2
+    assert conn.sql("UPDATE crm.task k")[0] == (reminders.TASK, ctx.actor, today)
+    assert await reminders.close_settled(system_ctx(ScriptedConn()), today) == 0

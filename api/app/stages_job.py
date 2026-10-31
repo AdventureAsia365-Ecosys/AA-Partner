@@ -21,7 +21,8 @@ Migrate idle check count a queued row as busy; not deploy-gate exempt). For ever
    owner one ``proposal_follow_up`` task and a bell item, once per version (:func:`app.proposals.events.nudge_due`);
 8. AA-952 slice 4 (U8, agent first): an issued invoice past its due date with money due gives the trip owner a bell
    item and an ``invoice_overdue`` task, the day after and then every 3 days, at most 5 times
-   (:func:`app.payments.reminders.overdue`).
+   (:func:`app.payments.reminders.overdue`); first, the open ``invoice_overdue`` tasks of trips with nothing left to
+   chase are closed (:func:`app.payments.reminders.close_settled`).
 
 Payload and result are ids and counts only. An agency that is locked or offboarding is skipped.
 """
@@ -135,6 +136,9 @@ async def run_agency(ctx: SystemContext) -> Counter[str]:
     nudged = await events.nudge_due(ctx)
     if nudged:
         counts["proposal_nudges"] += nudged
+    closed = await reminders.close_settled(ctx, today)
+    if closed:
+        counts["invoice_reminder_tasks_closed"] += closed
     reminded = await reminders.overdue(ctx, today)
     if reminded:
         counts["invoice_reminders"] += reminded

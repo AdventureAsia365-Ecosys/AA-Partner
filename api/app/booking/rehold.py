@@ -41,7 +41,7 @@ from typing import Any
 
 from app.booking import contract
 from app.booking.client import BookingClient, BookingRefusal, BookingUnavailable
-from app.payments import claims
+from app.payments import claims, reminders
 from app.proposals import builder, client_page, events, holds
 from app.proposals import service as proposals
 from app.proposals.aa_options import proposal_ref
@@ -276,6 +276,7 @@ async def apply(ctx: AnyContext, invoice_id: uuid.UUID, asked: Asked) -> str | N
         await ctx.conn.execute(PAID_INVOICE_SQL, invoice_id, "paid", asked.code)
         await ctx.conn.execute(INVOICE_COMMIT_SQL, row["trip_id"], "paid", f"invoice:{invoice_id}")
         await claims.close_verify(ctx, row["trip_id"], invoice_id, actor)
+        await reminders.settled(ctx, row["trip_id"], invoice_id, actor)
         schedule = await ctx.conn.fetchrow(proposals.SCHEDULE_ONE_SQL, row["schedule_id"])
         if schedule is not None and schedule["status"] == "due":
             await proposals.settle_schedule(ctx, None, schedule)
@@ -287,6 +288,7 @@ async def apply(ctx: AnyContext, invoice_id: uuid.UUID, asked: Asked) -> str | N
     await ctx.conn.execute(PAID_INVOICE_SQL, invoice_id, "paid_unfulfillable", code)
     await ctx.conn.execute(INVOICE_COMMIT_SQL, row["trip_id"], "paid_unfulfillable", f"invoice:{invoice_id}")
     await claims.close_verify(ctx, row["trip_id"], invoice_id, actor)
+    await reminders.settled(ctx, row["trip_id"], invoice_id, actor)
     for pay in await ctx.conn.fetch(PAYMENTS_SQL, invoice_id):
         if Decimal(pay["left_amount"]) > 0:
             await ctx.conn.execute(REFUND_SQL, uuid.uuid4(), pay["trip_id"], invoice_id, pay["payment_id"],

@@ -17,7 +17,8 @@ deposit through the Booking sync (``job:crm_booking_sync``), the overdue reminde
 - The expired link: no bank details, no claim (410 pay_link_expired), no card session (410); a live link without a card
   account is 409 card_not_offered.
 - Another agency's link or member sees nothing of the invoice (404).
-- Overdue reminders: the day after the due date, then every 3 days, at most 5; a claimed invoice is not reminded.
+- Overdue reminders: the day after the due date, then every 3 days, at most 5; a claimed invoice is not reminded; the
+  reminder task closes once nothing is left to chase (paid in full, void, the date rule's sweep).
 """
 
 from __future__ import annotations
@@ -446,3 +447,46 @@ async def test_overdue_reminders_agent_first(app_pool: asyncpg.Pool) -> None:
     claimed = await _deposit_invoice(app_pool, other)
     await _claim(app_pool, other, claimed)
     assert await _remind(app_pool, other, due + dt.timedelta(days=5)) == 0
+
+
+async def _reminder_tasks(pool: asyncpg.Pool, s: dict[str, Any]) -> list[tuple[str, str | None]]:
+    rows = await _raw(pool, s, "SELECT status, done_by FROM crm.task WHERE trip_id = $1 AND kind = $2 "
+                      "ORDER BY created_at", s["trip"], reminders.TASK)  # fmt: skip
+    return [(r["status"], r["done_by"]) for r in rows]
+
+
+async def test_the_reminder_task_closes_once_nothing_is_left_to_chase(app_pool: asyncpg.Pool) -> None:
+    s = await _text_accepted(app_pool)
+    invoice_id = await _deposit_invoice(app_pool, s)
+    due = dt.date.fromisoformat((await _invoice(app_pool, s, invoice_id))["due_on"])
+    assert await _remind(app_pool, s, due + dt.timedelta(days=1)) == 1
+    assert await _reminder_tasks(app_pool, s) == [("open", None)]
+    await _pay(app_pool, s, invoice_id, "100")  # part of it: still to chase
+    assert await _reminder_tasks(app_pool, s) == [("open", None)]
+    paid = await _pay(app_pool, s, invoice_id, "200")
+    assert paid["invoice"]["status"] == "paid"
+    member = f"member:{s['members']['agent']}"
+    assert await _reminder_tasks(app_pool, s) == [("done", member)]  # the owner no longer chases a paid client
+    assert await _remind(app_pool, s, due + dt.timedelta(days=10)) == 0
+    assert await _reminder_tasks(app_pool, s) == [("done", member)]
+
+    # A void closes it too.
+    other = await _text_accepted(app_pool)
+    voided = await _deposit_invoice(app_pool, other)
+    other_due = dt.date.fromisoformat((await _invoice(app_pool, other, voided))["due_on"])
+    assert await _remind(app_pool, other, other_due + dt.timedelta(days=1)) == 1
+    await _as(app_pool, other, "agent", lambda ctx: invoices.void(ctx, voided, "Wrong amount"))
+    assert [t[0] for t in await _reminder_tasks(app_pool, other)] == ["done"]
+
+    # The date rule's sweep: a reminder task whose trip has nothing overdue left is closed, whatever settled it; one
+    # with an invoice still overdue stays open.
+    third = await _text_accepted(app_pool)
+    pending = await _deposit_invoice(app_pool, third)
+    third_due = dt.date.fromisoformat((await _invoice(app_pool, third, pending))["due_on"])
+    await _raw(app_pool, third, "INSERT INTO crm.task (trip_id, kind, priority, due_anchor, due_at) "
+               "VALUES ($1, $2, 'normal', 'created', now())", third["trip"], reminders.TASK)  # fmt: skip
+    async with system_tx(app_pool, third["tenant"], actor="job:crm_stage_date_rule") as ctx:
+        assert await reminders.close_settled(ctx, third_due + dt.timedelta(days=1)) == 0  # overdue then: kept
+    async with system_tx(app_pool, third["tenant"], actor="job:crm_stage_date_rule") as ctx:
+        assert await reminders.close_settled(ctx, third_due) == 1  # not overdue yet: nothing to chase
+    assert await _reminder_tasks(app_pool, third) == [("done", "job:crm_stage_date_rule")]
