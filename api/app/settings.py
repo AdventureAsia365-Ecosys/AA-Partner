@@ -144,6 +144,9 @@ AA supply (AA-947, card CRM-19; ``app.booking``, ``app.catalog``):
   (one scope per call: ``booking.b2b/read``, ``/quote``, ``/hold``, ``/book``). Empty = ``crm_booking_sync`` logs
   ``not_configured``, AA requests stay "AA pending" and the product look-up answers 503 ``booking_not_configured``.
 - The catalog cache (``crm_catalog_sync``) reads ``<CIS_API_URL>/catalog/v1`` with scope ``cis.catalog/read``.
+- ``BOOKING_ADMIN_URL`` (AA-956, card CRM-26 Fix B3): the origin of the AA-Booking staff admin (no path). The S-02 ops
+  release names it as the place to flag an incident on a departure (``<BOOKING_ADMIN_URL>/b2b-desk``); the CRM never
+  flags one itself. Empty = the release shows the departure ids without a link.
 
 Mail (AA-945, card CRM-17; ``app.mail``; AA-CIS-Infra ``crm_mail.tf``):
 
@@ -282,6 +285,7 @@ class Settings:
     fx_provider: str = "synthetic"
     cis_api_url: str = ""
     booking_api_url: str = ""
+    booking_admin_url: str = ""
     m2m_client: str = field(default="", repr=False)
     crm_ingest_bucket: str = ""
     crm_ingest_domain: str = ""
@@ -433,6 +437,12 @@ class Settings:
             _ORIGIN.match(self.booking_api_url) or (insecure and _HTTP_ORIGIN.match(self.booking_api_url))
         ):
             raise SettingsError(f"BOOKING_API_URL must be an https origin without a path, got {self.booking_api_url!r}")
+        if self.booking_admin_url and not (
+            _ORIGIN.match(self.booking_admin_url) or (insecure and _HTTP_ORIGIN.match(self.booking_admin_url))
+        ):
+            raise SettingsError(
+                f"BOOKING_ADMIN_URL must be an https origin without a path, got {self.booking_admin_url!r}"
+            )
         if self.m2m_client:
             try:
                 parse_credentials(self.m2m_client, allow_http=insecure)
@@ -638,6 +648,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         .lower(),
         cis_api_url=_text(env, "CIS_API_URL").lower().rstrip("/"),
         booking_api_url=_text(env, "BOOKING_API_URL").lower().rstrip("/"),
+        booking_admin_url=_text(env, "BOOKING_ADMIN_URL").lower().rstrip("/"),
         m2m_client=_text(env, "M2M_CLIENT"),
         crm_ingest_bucket=_text(env, "CRM_INGEST_BUCKET"),
         crm_ingest_domain=_text(env, "CRM_INGEST_DOMAIN").lower(),

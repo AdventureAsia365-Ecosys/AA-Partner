@@ -305,6 +305,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-028` | `api/migrations/028_crm_invoice_claims.sql` | AA-952 CRM-23 slice 4 (needs crm-027; **expand** class under ADR 0017: ADD COLUMN only, shipped in the code PR and auto-applied before the deploy): `crm.invoice` + `claimed_at` (the client's "I have paid"), `hold_extended_at` / `hold_extend_code` (Booking's one hold extension), `rehold_requested_at` / `rehold_quote_id` / `rehold_price_hash` / `rehold_code` (the re-hold of a late deposit), `last_reminded_at` / `reminder_count` (overdue reminders); the value lists are the API's (no CHECK in an expand file) |
 | `crm-031` | `api/migrations/031_crm_insight_trip_fact.sql` | CRM-34 AA insights (AA-966; expand class under ADR 0017, applied after crm-028..030 in number order): the view `crm.v_insight_trip_fact` (security_barrier; trips per agency, month, budget band, lead age band, party size, stage and Lost reason in `trip_count`, no destination, no trip id; GROUP BY, so not updatable), SELECT to `crm_insights`, so module 17 counts a trip's party once outside the destination dimension. No existing object changes |
 | `crm-032` | `api/migrations/032_crm_llm_call_v2.sql` | CRM-33a AI gateway (AA-964; contract class under ADR 0017: new CHECKs and a replaced role CHECK on the ledger, so MIG-4 order, manual DB Migrate apply before the code PR): `crm.llm_call` follows the root ADR 0009 ledger v2 contract (`app` NOT NULL DEFAULT `crm`, CHECK = `crm`; `attempt_no`, `request_id`, `job_id`, `connection_key`, `deployment_wire_id`, `family`, `cache_read_tokens` / `cache_write_tokens`, `units` / `unit_kind`, `pricing_mode`, `prompt_hash`, `prompt_version`, `is_shadow` / `is_experiment` NOT NULL DEFAULT false), role CHECK + `guard` (the Bedrock Guardrails row, stage `crm_scrub`); append-only trigger, FORCE RLS and grants unchanged. `crm.tenant_settings.ai_alert_month` / `ai_alert_pct` (75 / 90 / 100, both or neither): the month's highest AI budget alert (R5) |
+| `crm-034` | `api/migrations/034_crm_ops_release.sql` | CRM-26 Module 8 ops release (AA-956; **expand** class under ADR 0017, applied after crm-033): `crm.ops_release` (base template; one live release per trip, partial unique on `purged_at IS NULL`; `payload_enc` under the agency's `ops_release` DEK, `payload_version`, `fields_released`, `completeness` counts, `complete`, Booking `departure_ids` / `bk_booking_ids`, dates, `purge_at` = end + 90 days, `t21_alerted_at`, withdraw + purge with a `deletion_receipt`, view counters; cascades from its trip) and `crm.supplier_manifest_export` (one minimal manifest AA ops exported: version, field codes, csv, row count, watermark; no personal data; cascades from its release); guards `crm.guard_ops_release` / `crm.guard_supplier_manifest_export` (CRM45: a job creates and purges, `ops:<sub>` only counts a view or inserts a manifest record, a member only withdraws, nobody deletes, a held trip's purge CRM10); no reader grant |
 | `crm-029` | `api/migrations/029_crm_traveler_flight.sql` | CRM-24a portal per person (AA-953; an **expand** file, ADR 0017: one new table only, so it ships in the code PR): `crm.traveler_flight` (base template; one arrival / departure flight per trip, traveller and direction: `flight_no_enc` under the vault DEK, `airport_iata`, `sched_local` (local time at that airport, no zone) + `tz` (IANA), `entered_by_kind`; all `pii:travel`; RLS, hold guard, no reader grant). Every key cascades (trip, traveler, trip_traveler), so the erase deletes flights through the rows it already deletes and `crm.erase_subject` is not replaced (`test_crm010_schema.py` `CASCADE_ERASED` checks the keys). crm-028 is another lane's key |
 | `crm-029` | `api/migrations/029_crm_traveler_flight.sql` | CRM-24a portal per person (AA-953; an **expand** file, ADR 0017: one new table and one new nullable column, so it ships in the code PR): `crm.otp_challenge.sent_to_bidx` (the blind index of the address a portal code went to: a session's proof) and `crm.traveler_flight` (base template; one arrival / departure flight per trip, traveller and direction: `flight_no_enc` under the vault DEK, `airport_iata`, `sched_local` (local time at that airport, no zone) + `tz` (IANA), `entered_by_kind`; all `pii:travel`; RLS, hold guard, no reader grant). Every key cascades (trip, traveler, trip_traveler), so the erase deletes flights through the rows it already deletes and `crm.erase_subject` is not replaced (`test_crm010_schema.py` `CASCADE_ERASED` checks the keys). needs crm-028 (AA-952) |
 | `crm-030` | `api/migrations/030_crm_onboarding_import.sql` | CRM-31 onboarding + import (AA-962; expand class under ADR 0017: nullable columns, columns with a constant default, non-unique partial indexes, column comments; no `crm.erase_subject` change: the new columns go with their rows): `import_ref_bidx` on `crm.traveler` / `crm.trip` / `crm.note` (blind index of the agency's own ref of an imported row; a partial non-unique index each, like every blind index here), `crm.tenant_settings` `onboarding_later` / `onboarding_done` (step codes), `privacy_notice_url`, `data_request_contact`, `consent_text` (controller settings), `responsibility_ack_version` / `_at` / `_member_id` (the owner acknowledgement). Values are checked by `app/onboarding.py` (an expand file adds no CHECK to an existing table) |
@@ -350,6 +351,7 @@ queued / running rows as information, exempt kinds left out). Daily or slower ki
 | `crm_studio_activation` | per accepted Content studio invitation (queued in the accept transaction, idempotency key per invitation, 12 attempts) | AA-979: CIS `tenant.membership.v1` 1.1 `activateInvitation` with an M2M token of scope `cis.tenant/activate` (`app/members/studio.py`, `app/cis/activation.py`); a CIS outage / 5xx / 401 / 403 retries with backoff, a CIS 404 / 409 fails it permanently with the code on the row. Not deploy-gate exempt |
 | `crm_data_export` | per owner request (queued in the request's transaction, idempotency key per export, 3 attempts) | AA-967: builds one portability ZIP (`app/portability/builder.py`: every tenant table of the catalog minus the never-exported ones as JSON + CSV, the documents and `documents/manifest.csv`, `manifest.json` with the schema version, `SHA256SUMS`), progress per step in its own short transaction, sealed under the agency `export` DEK into the documents bucket, then `ready` (`app/portability/exports.py`). A coded refusal fails the row at once, an outage retries, the last attempt fails it `export_error`. Not deploy-gate exempt |
 | `crm_client_import` | per slice of 500 rows of an owner's client import (the first queued in the start request's transaction, each slice queues the next, 3 attempts) | AA-962: reads the file from `imports/<tenant>/client-<import id>` in the ingest bucket, runs `app/imports/engine.py` with `apply=True` in chunks of 100 rows (one `system_tx()` each, the per-agency import lock, the intake's e-mail / phone dedupe locks), counts per outcome in the result (ids, codes and counts only), deletes the object after the last slice. A rerun or retry skips what is already in (`already_imported`). Not deploy-gate exempt |
+| `crm_ops_release_sync` | hourly, due-now hook (`app.ops_release.job.HourlyOpsReleaseSync`, key per UTC hour), plus a one-trip nudge (payload `tenant_id`, `trip_id`) when Booking confirms / declines / cancels an AA line, a member withdraws or the trip is cancelled | AA-956: per active agency, "today" in `tenant_settings.timezone`: create / refresh / T-21 alert / withdraw the trip's ops release, then purge the due ones with a receipt (section "CRM-26 Module 8 ops release") |
 | `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
 
 ## CI and release
@@ -939,6 +941,64 @@ design's fallback, §5.10). Implementation notes: `docs/implementation-notes/AA-
 - Web: `/travelling` (regions, incidents, "Reach travellers here" with the kit DataTable selection and the reveal
   controls), `/calendar` (month agenda, kind filter, my link, the team's links for an owner), the trip workspace
   banner; BFF lines card AA-961.
+
+## CRM-26 Module 8 ops release (AA-956)
+
+Design v3 M8, F8.3 "Ops release" (Fix B2), F10.3, C12 step 6, S-02 (Fix B3), R33, R44 data; data standards DM-6.8 and
+the §7 rows `ops_release` / `supplier_manifest_export` (trip end + 90 days, purge with a receipt). Migration crm-034;
+code in `app/ops_release/` (`build.py`, `service.py`, `job.py`, `staff.py`). Implementation notes:
+`docs/implementation-notes/AA-956.md`.
+
+- **Release when an AA line is confirmed.** `crm_ops_release_sync` (the only creator, guard CRM45) gives a trip that is
+  not Lost / cancelled / trashed and has at least one confirmed AA line one live `crm.ops_release`. The Booking sync
+  queues a one-trip nudge on a confirm / release answer and on `line.confirmed` / `line.declined` / `booking.cancelled`,
+  so a confirm reaches AA ops within about a minute; the hourly pass catches the rest (Stage 3 filled in, a flight
+  added, dates moved).
+- **The document** (`build.py`, sealed under the `ops_release` DEK, canonical JSON): per traveller the name, the age
+  band on the departure date, dietary / mobility codes (only while the latest `health_data` consent is yes), arrival /
+  departure flight (number, airport, local time, IANA zone: R33), the waiver's insurance choice; per trip the dates,
+  party size, the agency's name and time zone, the confirmed AA lines (title, tour, Booking departure / booking ids,
+  service dates). Never phone, e-mail, emergency contact (X6 default), passport, nationality, date of birth, notes,
+  messages, documents, money or the trip title. A changed text is sealed again and `payload_version` moves up.
+- **Completeness** (counts only): Stage 3 details on file, waiver signed (when the agency has one), both flights.
+  **T-21**: still incomplete within 21 days of departure -> one urgent `ops_release_incomplete` task for the trip owner
+  (anchor `ops_handoff`), `t21_alerted_at`, and the log line `crm_ops_release_incomplete_t21` (ids and counts) that the
+  Infra alarm `aa-crm-<env>-ops-release-incomplete-t21` mails AA ops from; once per release.
+- **Purge date** = `end_date` + 90 days, recomputed every pass (dates moved -> purge moved); at `purge_at` the job
+  deletes the document and the manifest records and keeps `deletion_receipt` (counts) and `ops_release_purge` in the
+  agency's audit. A held trip is skipped (CRM10). A trip past its window is never released again.
+- **Withdraw** (C12 step 6): the trip cancel (`app.stages.cancel`, dry-run effect `ops_release_withdrawn`) and
+  `POST /crm/v1/trips/{id}/ops-release/withdraw` (owner / agent, action `trip_cancel`) mark the live release withdrawn
+  (AA ops lose it at once) and nudge the job, which purges it now if the trip has not started. No confirmed AA line
+  left -> the job withdraws it (`aa_lines_cancelled`; a new confirm releases again). A cancel or the agency's own
+  withdrawal is never lifted. Each withdrawal (the cancel, the agency's own, the job's) logs `crm_ops_release_withdrawn`
+  (Infra alarm `...-ops-release-withdrawn`: the notice to AA ops) and stays on the S-02 board for 14 days.
+- **Alarm lines after the commit**: the withdrawn and T-21 lines are `service.Notice`s the code queues and the route
+  (cancel, withdraw) or the job writes only once its transaction committed (the break-glass pattern), so a rollback
+  never alarms and a T-21 alert whose `t21_alerted_at` was not saved is not repeated. Renaming either event silences
+  its alarm (AA-CIS-Infra `crm_ops_release_alarms.tf`).
+- **One trip at a time**: the job syncs each trip and purges each release in its own savepoint
+  (`service.item_tx`, which also drops that item's queued audit events, except denials, and the DEKs it generated): a
+  failing trip is counted `failed` and logged `ops_release_trip_failed` by id, the agency's other work commits, the
+  next hourly pass tries it again (a failed one-trip nudge is not retried).
+- **Agency side**: `GET /crm/v1/trips/{id}/ops-release` (every role; the Activity lines for owner / agent) feeds the
+  trip page panel "AA ground operations" (`web/components/pipeline/OpsReleasePanel.tsx`): status, completeness, views,
+  the purge countdown or the receipt, "Withdraw from AA". Never the document. The access log names the `aa_ops` lines.
+- **AA ops (S-02)**: `/crm/staff/v1`, `app/routers/staff_ops.py`, group `crm-ops` only (`crm-support` 403), every route a
+  GET, each opens `ops_tx()` (`app.actor` = `ops:<staff sub>`, audit actor kind `aa_ops`; agency active or locked, else
+  404): `GET /ops-releases?days=` (the board over every agency, no personal data, one `ops_release_list` event per
+  agency), `GET /agencies/{tenant}/trips/{trip}/ops-release` (the document; 404 `release_not_found` unless live and the
+  trip still has a confirmed AA line now; `view_count` + 1 and one `ops_release_view` event: "AA ops viewed trip X"),
+  `GET .../ops-release/manifest?fields=` (CSV text of `name, age_band, dietary, mobility, arrival_flight,
+  departure_flight`, default the first four, the watermark on every row, formula-safe cells; one
+  `crm.supplier_manifest_export` record and one `ops_manifest_export` event; the file is never stored). **Fix B3**: no
+  incident flag here; the board and the release carry `incident_admin_url` = `<BOOKING_ADMIN_URL>/b2b-desk`.
+- **Not built yet**: the staff web screen for S-02 (board with completeness, purge countdown and the Booking incident
+  admin link; one release; manifest download). It needs the staff sign-in on the web with the WORKFORCE `crm-staff`
+  client, shared with the S-04 follow-up of AA-971, and is part of the AA-956 card: the card stays open until it
+  ships. Also not built: paid paging (SMS / WhatsApp) to AA ops.
+- Reports: the Module 8 success metric `ops_release_errors` (AA departures in the window that left with an incomplete
+  or missing release, a withdrawn one excluded) is live.
 
 ## CRM-25 contracts and waivers (AA-955)
 
@@ -1716,7 +1776,7 @@ not set on Dev today), the CIS membership feed (AA-978) `CIS_API_URL` (the CIS A
 `aa-crm/<env>/m2m-booking-client`, the JSON `{client_id, client_secret, token_url, scopes}`; either empty = the pull
 logs `not_configured`; AA-947: the same client asks `cis.catalog/read` for the catalog cache and `booking.b2b/*` for
 Booking), the Booking API (AA-947) `BOOKING_API_URL` (the Booking API origin; empty = AA requests stay "AA pending" and
-the product look-up is 503 `booking_not_configured`), and mail (AA-945) `CRM_INGEST_BUCKET`, `CRM_INGEST_DOMAIN`, `MAIL_OAUTH_REDIRECT_BASE` and the
+the product look-up is 503 `booking_not_configured`), `BOOKING_ADMIN_URL` (AA-956: the Booking staff admin origin; S-02 links to `<this>/b2b-desk` to flag an incident; empty = no link), and mail (AA-945) `CRM_INGEST_BUCKET`, `CRM_INGEST_DOMAIN`, `MAIL_OAUTH_REDIRECT_BASE` and the
 secret `MAIL_OAUTH` (`crm/<env>/mail-oauth`, mapped only once it has a value), and the portal (AA-946)
 `PORTAL_OTP_DEV_ECHO` (default false; refused outside dev / test / local; on, the portal code answer carries the code
 for the synthetic Dev agencies that have no mailbox), and the AI gateway (AA-964) `CRM_LLM_PROVIDER` (default `stub`),

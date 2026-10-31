@@ -684,10 +684,13 @@ async def bulk_undo(ctx: TenantContext, batch_id: uuid.UUID) -> dict[str, Any]:
 # ── cancel (C12) ──────────────────────────────────────────────────────────────────────────────────
 
 
-async def cancel(ctx: TenantContext, trip_id: uuid.UUID, *, reason: str | None, dry_run: bool) -> dict[str, Any]:
+async def cancel(
+    ctx: TenantContext, trip_id: uuid.UUID, *, reason: str | None, dry_run: bool, notices: list[Any] | None = None
+) -> dict[str, Any]:
     """Cancel a booked, pre-departure or travelling trip. The dry run lists today's effects and changes nothing; the
     run applies them in this transaction. Later cards (Booking release, invoices, refunds, commission, workflows) add
-    their effect rows here."""
+    their effect rows here. ``notices``: the AA ops alarm lines (:class:`app.ops_release.service.Notice`) the route
+    writes after the commit."""
     if reason not in CANCEL_REASONS:
         raise Invalid("cancel_reason_required", "pick one of the fixed reasons", reasons=list(CANCEL_REASONS))
     trip = await ctx.conn.fetchrow(LOCK_SQL, trip_id)
@@ -697,9 +700,11 @@ async def cancel(ctx: TenantContext, trip_id: uuid.UUID, *, reason: str | None, 
         raise Conflict("transition_not_allowed", "only a booked, pre-departure or travelling trip is cancelled",
                        allowed=allowed_moves(trip["stage"]))  # fmt: skip
     from app.booking import aa_lines
+    from app.ops_release import service as ops_release
 
     counts = await ctx.conn.fetchrow(CANCEL_EFFECTS_SQL, trip_id)
     aa = await aa_lines.close_effects(ctx, trip_id)
+    released = await ops_release.live_count(ctx, trip_id)
     effects = [
         {"kind": "dispatch_cancelled", "count": counts["dispatch"]},
         {"kind": "tasks_skipped", "count": counts["tasks"]},
@@ -708,6 +713,8 @@ async def cancel(ctx: TenantContext, trip_id: uuid.UUID, *, reason: str | None, 
         # AA-947: AA holds are released; lines AA already booked wait for the cancellation card (CRM-27, the fee).
         {"kind": "aa_holds_released", "count": aa["held"]},
         {"kind": "aa_bookings_kept", "count": aa["booked"]},
+        # AA-956 (C12 step 6): the ops release is withdrawn (AA ops lose the details at once; purged before departure).
+        {"kind": "ops_release_withdrawn", "count": released},
     ]
     out: dict[str, Any] = {
         "trip_id": str(trip_id),
@@ -732,5 +739,6 @@ async def cancel(ctx: TenantContext, trip_id: uuid.UUID, *, reason: str | None, 
         HISTORY_SQL, trip_id, trip["stage"], "cancelled", f"cancel_{reason}", False, None, None, None
     )
     await aa_lines.close_trip(ctx, trip_id)
+    await ops_release.withdraw_on_cancel(ctx, trip_id, notices=notices)
     ctx.audit("trip_cancel", "allowed", "trip", str(trip_id), reason=reason)
     return {**out, "stage": "cancelled"}

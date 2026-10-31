@@ -62,6 +62,7 @@ REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = (
     "crm-031",  # AA-966 trip-level insight fact (expand: auto-applied after crm-028..030 in number order)
     "crm-032",  # AA-964 CRM AI gateway: llm_call ledger v2, guard role, AI budget alert state (contract)
     "crm-033",  # AA-971 AA support access L2 + break-glass L3: grants, sessions, reader columns (contract)
+    "crm-034",  # AA-956 Module 8 ops release (expand: crm.ops_release, crm.supplier_manifest_export; after crm-033)
 )
 REQUIRED_SCHEMA_VERSION = max(REQUIRED_SCHEMA_VERSIONS)
 

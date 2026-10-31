@@ -13,6 +13,8 @@
 - ``crm_booking_sync`` (AA-947, every 60 s, Recurring, plus one-agency nudges): the AA outage queue and the Booking
   event feed, :mod:`app.booking.sync`. Exempt like the membership pull. ``crm_catalog_sync`` (AA-947, hourly,
   :class:`app.catalog.sync.HourlyCatalogSync`): the AA tour cache.
+- ``crm_ops_release_sync`` (AA-956, hourly, :class:`app.ops_release.job.HourlyOpsReleaseSync`, plus one-trip nudges):
+  the Module 8 ops release (create, refresh, T-21 alert, withdraw, purge with a receipt).
 - ``crm_job_retention`` (daily, :class:`DailyRetentionSchedule`): data standards §7 row ``crm.job`` — succeeded rows
   30 days, cancelled 90 days after ``finished_at``; queued / running never. **Failed rows are kept**: §7 says "archive
   before delete: failed rows only", and the CRM has no archive bucket yet (CRM-04 rest), so nothing that must be
@@ -56,6 +58,7 @@ from app.jobs.kinds import (
     MAIL_INGEST,
     MEMBERSHIP_PULL,
     OFFBOARD,
+    OPS_RELEASE_SYNC,
     PLACEHOLDER_PURGE,
     STAGE_DATE_RULE,
     STUDIO_ACTIVATION,
@@ -187,6 +190,7 @@ def build_handlers(
     from app.mail import ingest as mail_ingest
     from app.mail.state import MailRuntime as _MailRuntime
     from app.members import studio
+    from app.ops_release import job as ops_release_job
     from app.portability import exports as portability_exports
     from app.privacy.purge import purge_expired_maps
     from app.stages_job import date_rule
@@ -214,6 +218,7 @@ def build_handlers(
         STUDIO_ACTIVATION: studio.build_handler(studio_activation),
         DATA_EXPORT: portability_exports.build_handler(keys=keys, store=documents),
         CLIENT_IMPORT: client_imports.build_handler(ingest_store, keys),
+        OPS_RELEASE_SYNC: ops_release_job.build_handler(keys),
     }
 
 
@@ -266,6 +271,7 @@ def build_hooks(
     from app.lifecycle.job import DailyLifecycleSchedule
     from app.mail.health import DailyMailHealthSchedule
     from app.mail.ingest import MailIngestScan
+    from app.ops_release.job import HourlyOpsReleaseSync
     from app.privacy.purge import HourlyPlaceholderPurge
     from app.stages_job import HourlyStageDateRule
 
@@ -281,6 +287,7 @@ def build_hooks(
         DailyMailHealthSchedule(retention_utc_hour, clock),
         MailIngestScan(ingest_store, clock),
         HourlyCatalogSync(clock),
+        HourlyOpsReleaseSync(clock),
     )
 
 
@@ -305,6 +312,7 @@ SCHEDULED_KINDS: frozenset[str] = frozenset(
         MAIL_INGEST,
         MAIL_HEALTH,
         CATALOG_SYNC,
+        OPS_RELEASE_SYNC,
     }
 )
 # Kinds queued by request code, one row per event (AA-936: each stored inquiry), never scheduled.

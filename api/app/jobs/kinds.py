@@ -75,6 +75,10 @@ DATA_EXPORT = "crm_data_export"
 # AA-962: one slice (500 rows) of an agency's client import (app.imports.service), queued by the owner's start or by
 # the slice before it. Not deploy-gate exempt (exists only while queued / running).
 CLIENT_IMPORT = "crm_client_import"
+# AA-956: the Module 8 ops release (app.ops_release.job): hourly for every agency (due-now hook) plus one-trip nudges
+# queued when Booking confirms / cancels an AA line, a member withdraws or a trip is cancelled. Not deploy-gate exempt
+# (exists only while due / queued by an event).
+OPS_RELEASE_SYNC = "crm_ops_release_sync"
 
 DEFAULT_EXPECTED_SECONDS = 300
 OVERDUE_FACTOR = 2
@@ -114,6 +118,7 @@ EXPECTED_SECONDS: dict[str, int] = {
     STUDIO_ACTIVATION: 30,
     DATA_EXPORT: 600,
     CLIENT_IMPORT: 120,  # one slice (imports.service.SLICE rows)
+    OPS_RELEASE_SYNC: 300,
 }
 
 

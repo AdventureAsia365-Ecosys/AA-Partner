@@ -39,6 +39,10 @@ refresh request; ``line.confirmed`` -> confirmed; ``line.declined`` -> cancelled
 urgent task for the trip owner; ``booking.cancelled`` -> cancelled; ``departure.incident`` /
 ``departure.incident_cleared`` -> ``crm.incident_flag`` (AA-961, :func:`apply_incident`); the other ``departure.*`` ->
 recorded ``informational``; an unknown type -> ``unknown_type``. A feed failure backs off like a request.
+
+AA-956: a confirm / release answer and the line events ``line.confirmed`` / ``line.declined`` / ``booking.cancelled``
+queue one ``crm_ops_release_sync`` nudge for the trip (:func:`app.ops_release.service.nudge`, ids only), so the
+Module 8 ops release is created or withdrawn within about a minute.
 """
 
 from __future__ import annotations
@@ -62,6 +66,7 @@ from app.booking import contract, proposal_lines, rehold
 from app.booking.client import BookingClient, BookingRefusal, BookingUnavailable
 from app.errors import Forbidden, NotFound
 from app.jobs.queue import Job
+from app.ops_release import service as ops_release
 from app.payments import claims
 from app.tenancy import SystemContext, system_tx
 
@@ -78,6 +83,8 @@ FEED_MAX_PAGES = 5
 STUCK_FAILURES = 10
 DECLINE_TASK = "aa_line_declined"
 CLOSED_STAGES = ("lost", "cancelled")
+# AA-956: the feed events that change which AA lines of a trip are confirmed (the ops release follows within a minute).
+OPS_RELEASE_EVENTS = frozenset({"line.confirmed", "line.declined", "booking.cancelled"})
 # Requests that make no sense once the trip is closed: dropped (``trip_closed``) without calling Booking. A Lost or a
 # cancel holds them back by the Undo window first (app.booking.aa_lines.close_trip), so an Undo leaves them to run.
 DROP_ON_CLOSE = ("quote", "requote", "hold", "refresh")
@@ -560,6 +567,8 @@ async def apply(ctx: SystemContext, w: Work, out: Outcome) -> str:
     ctx.audit("aa_sync", "allowed", "booking_line", str(line_id), reason=f"{kind}_{out.code or final}"[:40])
     if cur["trip_deleted_at"] is None:
         await stages.refresh_waiting_on(ctx, trip_id)
+    if out.booking is not None or out.released:
+        await ops_release.nudge(ctx, trip_id, f"aa_{kind}")  # AA-956: a confirmed line releases the trip to AA ops
     return final
 
 
@@ -613,6 +622,8 @@ async def apply_event(ctx: SystemContext, ev: contract.Event) -> tuple[str, str]
         ctx.audit("aa_sync", "allowed", "booking_line", str(line_id), reason=ev.type.replace(".", "_"))
     for trip_id in trips:
         await stages.refresh_waiting_on(ctx, trip_id)
+        if ev.type in OPS_RELEASE_EVENTS:
+            await ops_release.nudge(ctx, trip_id, ev.type.replace(".", "_"))
     return "applied", ev.type.replace(".", "_")
 
 

@@ -13,6 +13,7 @@
 import { isDateLocale, type DateLocale } from "./dates";
 import { aiEn, aiVi } from "./i18nAi";
 import { onboardingEn, onboardingVi } from "./i18nOnboarding";
+import { opsReleaseEn, opsReleaseVi } from "./i18nOpsRelease";
 import { supportEn, supportVi } from "./i18nSupport";
 
 export type Lang = "en" | "vi";
@@ -41,6 +42,7 @@ const en = {
   ...onboardingEn, // AA-962: onboarding, client import, duplicates, Connections, help (lib/i18nOnboarding.ts)
   ...aiEn, // AA-964: Settings > AI (lib/i18nAi.ts)
   ...supportEn, // AA-971: AA support access and the support / emergency banner (lib/i18nSupport.ts)
+  ...opsReleaseEn, // AA-956: the AA ground operations panel and its log lines (lib/i18nOpsRelease.ts)
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Home",
@@ -2665,6 +2667,7 @@ const vi: Record<MessageKey, string> = {
   ...onboardingVi,
   ...aiVi,
   ...supportVi,
+  ...opsReleaseVi,
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Trang chủ",

@@ -988,6 +988,102 @@ async def calendar_feed_tx(
         raise pending
 
 
+# ── AA-956 (CRM-26, Module 8): AA ground operations reading an ops release ───────────────────────────
+OPS_ACTOR_PREFIX = "ops:"
+# AA ops keep running a departure while AA has locked the agency (a billing or a support matter): a locked agency's
+# releases stay readable; an offboarding or offboarded agency's are not (its data is being erased).
+OPS_STATUSES = frozenset({"active", "locked"})
+_OPS_SUB = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+
+
+@dataclass(frozen=True)
+class OpsContext:
+    """AA ops (WORKFORCE group ``crm-ops``) in one agency (:func:`ops_tx`). Same shape as :class:`SystemContext` for
+    :class:`app.vault.Vault` and the key provider; every audit event it queues is actor kind ``aa_ops`` (design §4.9
+    "AA ops reads"), ``actor_ref`` = ``ops:<staff sub>``."""
+
+    conn: asyncpg.Connection
+    tenant_id: uuid.UUID
+    actor: str
+    status: str
+    member_id: None = None
+    member_role: None = None
+    reader_role: None = None
+    audit_events: list[AuditEvent] = field(default_factory=list, repr=False)
+    dek_memo: dict[tuple[str, int], bytes] = field(default_factory=dict, repr=False)
+    dek_current: dict[str, int] = field(default_factory=dict, repr=False)
+
+    def audit(
+        self,
+        action: str,
+        outcome: str,
+        object_kind: str,
+        object_id: str | None = None,
+        *,
+        fields: tuple[str, ...] = (),
+        reason: str | None = None,
+        object_ids: tuple[str, ...] = (),
+    ) -> AuditEvent:
+        event = AuditEvent(
+            actor_kind="aa_ops",
+            actor_ref=self.actor,
+            action=action,
+            outcome=outcome,
+            object_kind=object_kind,
+            object_id=object_id,
+            fields=tuple(fields),
+            reason=reason,
+            request_id=current_request_id(),
+            object_ids=tuple(object_ids),
+        )
+        self.audit_events.append(event)
+        return event
+
+
+def ops_actor(caller: Caller) -> str:
+    """``ops:<sub>`` (crm-034 ``crm.guard_ops_release`` lets this actor record a view and nothing else; the manifest
+    guard lets it insert an export record). A WORKFORCE sub is a UUID; anything else is refused rather than written."""
+    if not _OPS_SUB.match(caller.sub):
+        raise Forbidden("staff_identity_invalid")
+    return f"{OPS_ACTOR_PREFIX}{caller.sub}"
+
+
+@asynccontextmanager
+async def ops_tx(pool: asyncpg.Pool, caller: Caller, tenant_id: uuid.UUID) -> AsyncIterator[OpsContext]:
+    """AA ops reading one agency's ops releases (``/crm/staff/v1/ops-releases``, AA-956, design v3 M8 / S-02).
+
+    One transaction: ``app.tenant_id``; the agency must exist (else 404 ``release_not_found``: S-02 lists the
+    releases, so an unknown agency is an unknown release) and be active or locked (else 404 too: an offboarding
+    agency's releases are being erased); ``app.actor`` = ``ops:<sub>`` (audit actor kind ``aa_ops``). No membership,
+    no reader role: the crm-034 guards limit what this actor may write (a view count, a manifest export record), and
+    the route has already checked the WORKFORCE group ``crm-ops``. Audit semantics as :func:`tenant_tx` (``denied``
+    events survive the rollback). Only ``app/ops_release/staff.py`` opens it (``tests/unit/test_code_rules.py``)."""
+    if not isinstance(tenant_id, uuid.UUID):
+        raise TypeError("tenant_id must be a UUID")
+    actor = ops_actor(caller)
+    pending: Exception | None = None
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        status = await conn.fetchval(TENANT_SQL, tenant_id)
+        if status not in OPS_STATUSES:
+            raise NotFound("release_not_found", "no ops release here")
+        await conn.execute("SELECT set_config('app.actor', $1, true)", actor)
+        ctx = OpsContext(conn=conn, tenant_id=tenant_id, actor=actor, status=status)
+        try:
+            async with conn.transaction():  # savepoint: the route's work
+                yield ctx
+        except Exception as exc:
+            denied = [e for e in ctx.audit_events if e.outcome == "denied"]
+            if not denied:
+                raise
+            await _write_audit(ctx, denied)  # type: ignore[arg-type] — same shape (reader_role None, conn)
+            pending = exc
+        else:
+            await _write_audit(ctx, ctx.audit_events)  # type: ignore[arg-type]
+    if pending is not None:
+        raise pending
+
+
 # crm-010: SQLSTATE of the hold rule (erase_subject, the hold guard triggers).
 LEGAL_HOLD_SQLSTATE = "CRM10"
 LIFECYCLE_ACTORS = frozenset({"job:crm_lifecycle", "job:crm_offboard", "job:crm_data_export"})  # + AA-967

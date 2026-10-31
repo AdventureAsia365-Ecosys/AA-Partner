@@ -53,6 +53,7 @@ from app.errors import NotFound
 from app.intake import completeness, stage2
 from app.intake import forms as intake_forms
 from app.intake import settings as pipeline_settings
+from app.ops_release import service as ops_release
 from app.permissions import Action, require
 from app.pipeline import (
     BoardFilter,
@@ -232,8 +233,11 @@ async def post_cancel(
     dry_run: Annotated[bool, Query()] = True,
 ) -> dict[str, Any]:
     pool = await request_pool(request)
+    notices: ops_release.Notices = []
     async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_CANCEL) as ctx:
-        return await stages.cancel(ctx, trip_id, reason=body.cancel_reason_code, dry_run=dry_run)
+        out = await stages.cancel(ctx, trip_id, reason=body.cancel_reason_code, dry_run=dry_run, notices=notices)
+    ops_release.emit(notices)  # committed: AA ops are told the release was withdrawn (C12 step 6)
+    return out
 
 
 @router.post("/pipeline/bulk-stage")
