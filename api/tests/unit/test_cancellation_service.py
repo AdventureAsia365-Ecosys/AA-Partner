@@ -408,6 +408,38 @@ async def test_a_cancelled_or_cancelling_trip_bills_no_more(row: dict[str, Any] 
     assert conn.sql(flat(cancellation.CLOSED_SQL)) == [(TRIP,)] * 2
 
 
+@pytest.mark.asyncio
+async def test_the_date_rule_voids_the_due_balance_a_cancelled_trip_kept() -> None:
+    """S262 fix pass (M1): a trip cancelled before the run voided its schedule keeps a due balance row; the hourly
+    date rule voids it (with the draft that bills it) by the same void and audit as the run. A row picked but paid or
+    voided meanwhile (RETURNING nothing) is neither counted nor audited."""
+    gone = uuid.UUID("00000000-0000-4000-8000-00000000e009")
+    conn = ScriptedConn().on(
+        flat(cancellation.SCHEDULE_SWEEP_SQL),
+        [
+            {"schedule_id": SCHED_FREE, "trip_id": TRIP, "drafts": []},
+            {"schedule_id": SCHED_DRAFT, "trip_id": TRIP, "drafts": [INV_DRAFT]},
+            {"schedule_id": gone, "trip_id": TRIP, "drafts": None},
+        ],
+    )
+    conn.on(flat(cancellation.SCHEDULE_VOID_SQL), lambda schedule_id: None if schedule_id == gone else schedule_id)
+    ctx = system_ctx(conn)
+    assert await cancellation.void_cancelled_schedule(ctx, "job:crm_stage_date_rule") == 2
+    assert conn.sql(flat(cancellation.SCHEDULE_SWEEP_SQL)) == [(cancellation.SWEEP_BATCH,)]
+    assert conn.sql(flat(cancellation.DRAFT_VOID_SQL)) == [(INV_DRAFT, "job:crm_stage_date_rule")]
+    assert conn.sql(flat(cancellation.SCHEDULE_VOID_SQL)) == [(SCHED_FREE,), (SCHED_DRAFT,), (gone,)]
+    audits = [(e.action, e.object_id, e.reason) for e in ctx.audit_events]
+    assert audits == [
+        ("payment_schedule_void", str(SCHED_FREE), "trip_cancelled"),
+        ("invoice_void", str(INV_DRAFT), "trip_cancelled"),
+        ("payment_schedule_void", str(SCHED_DRAFT), "trip_cancelled"),
+    ]
+    # Nothing left: nothing written.
+    idle = ScriptedConn()
+    assert await cancellation.void_cancelled_schedule(system_ctx(idle), "job:crm_stage_date_rule") == 0
+    assert idle.sql("UPDATE") == []
+
+
 def _finishing(row: dict[str, Any] | None, left: int, stage: str | None) -> ScriptedConn:
     conn = ScriptedConn()
     conn.on(flat(cancellation.PENDING_SQL), row)

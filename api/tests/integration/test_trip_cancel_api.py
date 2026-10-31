@@ -32,7 +32,7 @@ from typing import Any
 import asyncpg
 import pytest
 
-from app import pipeline, stages
+from app import cancellation, pipeline, stages
 from app.booking import aa_lines, sync
 from app.cancellation import booking_fees
 from app.commissions import service as commissions
@@ -43,6 +43,7 @@ from app.payments import service as payments
 from app.permissions import Action
 from app.portal import access
 from app.proposals import service as proposals
+from app.reports import queries as report_queries
 from app.stages_job import run_agency as date_rule
 from app.tenancy import system_tx, tenant_tx
 from app.vault import KeyProvider, Vault
@@ -635,3 +636,63 @@ async def test_a_trip_whose_cancellation_waits_for_aa_takes_no_new_invoice(app_p
         with pytest.raises(Conflict) as err:
             await invoices.create_typed(ctx, s["trip"], kind="adjustment", currency="USD", lines=LATE_FEE)
         assert err.value.code == "trip_cancelled"
+
+
+async def _cancelled_before_the_fix(pool: asyncpg.Pool, *, issue: bool) -> tuple[dict[str, Any], uuid.UUID, uuid.UUID]:
+    """A booked trip with a due balance row billed by a draft (or issued) invoice, moved to cancelled without the run's
+    schedule step: the shape of the Dev trips cancelled before S262."""
+    s = await _lc_setup(pool)
+    await _lc_accept(pool, s, await _lc_proposal(pool, s))
+    rows = (await _lc_schedule(pool, s))["schedule"]
+    deposit = uuid.UUID(next(r["schedule_id"] for r in rows if r["kind"] == "deposit"))
+    balance = uuid.UUID(next(r["schedule_id"] for r in rows if r["kind"] == "balance"))
+    async with tenant_tx(pool, s["who"]["agent"], s["tenant"]) as ctx:
+        await proposals.mark_paid(ctx, Vault(s["keys"], ctx), deposit, received_on=None, method="cash")
+        bill = uuid.UUID((await invoices.create_from_schedule(ctx, s["trip"], balance))["invoice_id"])
+        if issue:
+            await invoices.issue(ctx, bill)
+        await cancellation.move_to_cancelled(ctx, s["trip"], "booked", "client_request")
+    return s, balance, bill
+
+
+async def _schedule_and_invoice(pool: asyncpg.Pool, s: dict[str, Any], balance: uuid.UUID, bill: uuid.UUID) -> tuple:
+    async with tenant_tx(pool, s["who"]["owner"], s["tenant"]) as ctx:
+        row = await ctx.conn.fetchval("SELECT status FROM crm.payment_schedule WHERE schedule_id = $1", balance)
+        invoice = await ctx.conn.fetchval("SELECT status FROM crm.invoice WHERE invoice_id = $1", bill)
+        audited = await ctx.conn.fetchval(
+            "SELECT count(*) FROM crm.audit_event WHERE action = 'payment_schedule_void' AND object_id = $1",
+            str(balance),
+        )
+    return row, invoice, audited
+
+
+async def _reported_balance_due(pool: asyncpg.Pool, s: dict[str, Any]) -> int:
+    """The balance rows the Reports receivables count as not invoiced yet (app.reports.queries.SCHEDULE_DUE_SQL)."""
+    async with tenant_tx(pool, s["who"]["owner"], s["tenant"]) as ctx:
+        rows = await ctx.conn.fetch(report_queries.SCHEDULE_DUE_SQL, dt.date(2100, 1, 1), None)
+    return sum(r["n"] for r in rows if r["kind"] == "balance")
+
+
+async def test_the_date_rule_voids_the_due_balance_of_a_trip_cancelled_before_the_fix(app_pool: asyncpg.Pool) -> None:
+    """S262 fix pass (M1): the hourly date rule voids the due balance row of a cancelled trip and the draft that bills
+    it (same audit as the cancel run), once: a second run finds nothing."""
+    s, balance, bill = await _cancelled_before_the_fix(app_pool, issue=False)
+    assert await _stage(app_pool, s) == "cancelled"
+    assert await _schedule_and_invoice(app_pool, s, balance, bill) == ("due", "draft", 0)
+    assert await _reported_balance_due(app_pool, s) == 1  # the Reports receivables counted it
+    async with system_tx(app_pool, s["tenant"], actor="job:crm_stage_date_rule") as ctx:
+        assert (await date_rule(ctx))["cancelled_schedule_rows_voided"] == 1
+    assert await _schedule_and_invoice(app_pool, s, balance, bill) == ("void", "void", 1)
+    assert await _reported_balance_due(app_pool, s) == 0  # a void row is no receivable
+    async with system_tx(app_pool, s["tenant"], actor="job:crm_stage_date_rule") as ctx:
+        assert "cancelled_schedule_rows_voided" not in await date_rule(ctx)
+    assert await _schedule_and_invoice(app_pool, s, balance, bill) == ("void", "void", 1)
+
+
+async def test_the_date_rule_keeps_a_balance_row_a_kept_invoice_bills(app_pool: asyncpg.Pool) -> None:
+    """S262 fix pass (M1): an issued invoice bills the row (the cancel would have kept it had it held money or been
+    claimed): the row settles through that invoice, the date rule leaves both."""
+    s, balance, bill = await _cancelled_before_the_fix(app_pool, issue=True)
+    async with system_tx(app_pool, s["tenant"], actor="job:crm_stage_date_rule") as ctx:
+        assert "cancelled_schedule_rows_voided" not in await date_rule(ctx)
+    assert await _schedule_and_invoice(app_pool, s, balance, bill) == ("due", "open", 0)

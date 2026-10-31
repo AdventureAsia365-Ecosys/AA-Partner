@@ -183,7 +183,31 @@ SELECT s.schedule_id,
  GROUP BY s.schedule_id
  ORDER BY s.schedule_id
 """
-SCHEDULE_VOID_SQL = "UPDATE crm.payment_schedule SET status = 'void' WHERE schedule_id = $1 AND status = 'due'"
+SCHEDULE_VOID_SQL = """
+UPDATE crm.payment_schedule SET status = 'void' WHERE schedule_id = $1 AND status = 'due' RETURNING schedule_id
+"""
+# S262 fix pass (M1): the hourly date rule's catch-up for trips cancelled before the run voided the schedule (Dev, 31
+# Oct 2026): the due balance rows of a cancelled (or cancelling) trip that no kept invoice bills, i.e. no live invoice
+# but a draft (the cancel voids drafts; issuing one is 409 trip_cancelled). ``drafts`` = the drafts that go with it.
+SCHEDULE_SWEEP_SQL = """
+SELECT s.schedule_id, s.trip_id,
+       coalesce(array_agg(i.invoice_id) FILTER (WHERE i.invoice_id IS NOT NULL), '{}'::uuid[]) AS drafts
+  FROM crm.payment_schedule s
+  JOIN crm.trip t ON t.trip_id = s.trip_id AND t.deleted_at IS NULL
+  LEFT JOIN crm.invoice i ON i.schedule_id = s.schedule_id AND i.status = 'draft' AND i.deleted_at IS NULL
+ WHERE s.status = 'due' AND s.kind = 'balance' AND s.deleted_at IS NULL
+   AND (t.stage = 'cancelled' OR EXISTS (SELECT 1 FROM crm.trip_cancellation x WHERE x.trip_id = t.trip_id))
+   AND NOT EXISTS (SELECT 1 FROM crm.invoice k
+                    WHERE k.schedule_id = s.schedule_id AND k.deleted_at IS NULL AND k.status NOT IN ('draft', 'void'))
+ GROUP BY s.schedule_id, s.trip_id
+ ORDER BY s.schedule_id
+ LIMIT $1
+"""
+DRAFT_VOID_SQL = """
+UPDATE crm.invoice SET status = 'void', voided_at = now(), voided_by = $2, void_reason = 'Trip cancelled'
+ WHERE invoice_id = $1 AND status = 'draft'
+"""
+SWEEP_BATCH = 500
 CLOSED_SQL = """
 SELECT t.stage, EXISTS (SELECT 1 FROM crm.trip_cancellation x WHERE x.trip_id = t.trip_id) AS cancelling
   FROM crm.trip t WHERE t.trip_id = $1 AND t.deleted_at IS NULL
@@ -304,6 +328,24 @@ async def _schedule_to_void(ctx: AnyContext, trip_id: uuid.UUID, voided: set[uui
         for r in await ctx.conn.fetch(SCHEDULE_DUE_SQL, trip_id)
         if set(r["live_invoices"] or []) <= voided
     ]
+
+
+async def void_cancelled_schedule(ctx: AnyContext, actor: str) -> int:
+    """The hourly date rule (S262 fix pass): the due balance rows of cancelled or cancelling trips that the cancel run
+    did not void (a trip cancelled before it did) are voided now, with their draft invoices, by the same void and audit
+    as the run (``payment_schedule_void`` / ``invoice_void``, reason ``trip_cancelled``). A row a kept invoice bills
+    (payment claimed, money held, paid) stays: it settles through that invoice. Idempotent: a void row is never picked
+    again. Returns the number of rows voided."""
+    voided = 0
+    for r in await ctx.conn.fetch(SCHEDULE_SWEEP_SQL, SWEEP_BATCH):
+        for invoice_id in r["drafts"] or []:
+            await ctx.conn.execute(DRAFT_VOID_SQL, invoice_id, actor)
+            ctx.audit("invoice_void", "allowed", "invoice", str(invoice_id), reason="trip_cancelled")
+        if await ctx.conn.fetchval(SCHEDULE_VOID_SQL, r["schedule_id"]) is not None:
+            ctx.audit("payment_schedule_void", "allowed", "payment_schedule", str(r["schedule_id"]),
+                      reason="trip_cancelled")  # fmt: skip
+            voided += 1
+    return voided
 
 
 async def _aa_bookings(ctx: AnyContext, trip_id: uuid.UUID) -> list[dict[str, Any]]:
@@ -665,5 +707,6 @@ __all__ = [
     "register_cancel_hook",
     "retry",
     "run",
+    "void_cancelled_schedule",
     "void_if_refunded",
 ]

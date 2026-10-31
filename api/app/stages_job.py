@@ -27,6 +27,9 @@ Migrate idle check count a queued row as busy; not deploy-gate exempt). For ever
    (:func:`app.commissions.service.sweep`), one owner task ``commission_overdue`` per trip with a commission past its
    due date (once per row), and the cancel's ``cancel_with_suppliers`` task closed once no confirmed agency line is
    left. A trip whose cancellation waits for Booking is never moved by the date rule.
+10. S262 (C12 item 3): the due balance rows of cancelled (or cancelling) trips that no kept invoice bills are voided
+    with their draft invoices (:func:`app.cancellation.void_cancelled_schedule`; the cancel run does it at once since
+    S262, this catches the trips cancelled before), audit ``payment_schedule_void`` reason ``trip_cancelled``.
 
 Payload and result are ids and counts only. An agency that is locked or offboarding is skipped.
 """
@@ -41,7 +44,7 @@ from typing import Any
 
 import asyncpg
 
-from app import stages
+from app import cancellation, stages
 from app.audit_export import registry
 from app.commissions import service as commissions
 from app.errors import Forbidden, NotFound, ServiceError
@@ -159,6 +162,10 @@ async def run_agency(ctx: SystemContext) -> Counter[str]:
     closed_supplier = await commissions.close_supplier_tasks(ctx, ACTOR)
     if closed_supplier:
         counts["cancel_supplier_tasks_closed"] += closed_supplier
+    # S262: a cancelled trip bills the client no more, also when it was cancelled before the run voided its schedule.
+    schedule_voided = await cancellation.void_cancelled_schedule(ctx, ACTOR)
+    if schedule_voided:
+        counts["cancelled_schedule_rows_voided"] += schedule_voided
     return counts
 
 

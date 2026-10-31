@@ -950,6 +950,10 @@ async def test_the_date_ticks(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     conn.on("DELETE FROM crm.otp_challenge", None)
     conn.on("UPDATE crm.otp_challenge", None)
+    # S262 fix pass: a cancelled trip's due balance row is voided by the date rule too.
+    stale_balance = uuid.uuid4()
+    conn.on(" ".join(cancellation.SCHEDULE_SWEEP_SQL.split()), [{"schedule_id": stale_balance, "drafts": []}])
+    conn.on(" ".join(cancellation.SCHEDULE_VOID_SQL.split()), lambda schedule_id: schedule_id)
 
     async def execute(sql: str, *args: Any) -> str:
         conn._answer(sql, args)
@@ -961,7 +965,7 @@ async def test_the_date_ticks(monkeypatch: pytest.MonkeyPatch) -> None:
     counts = await stages_job.run_agency(system_ctx(conn))
     assert counts["booked_to_travelling"] == 2 and counts["urgent_tasks"] == 1
     assert counts["return_date_missing"] == 1 and counts["stage3_due_t21"] == 1 and counts["codes_purged"] == 2
-    assert counts["codes_expired"] == 1
+    assert counts["codes_expired"] == 1 and counts["cancelled_schedule_rows_voided"] == 1
     # The stale pending codes expire (and lose code_enc) before the purge.
     expire = next(i for i, (sql, _) in enumerate(conn.calls) if "UPDATE crm.otp_challenge" in sql)
     purge = next(i for i, (sql, _) in enumerate(conn.calls) if "DELETE FROM crm.otp_challenge" in sql)
