@@ -13,6 +13,11 @@ origin (no CORS) and the per-address limits key on the real visitor.
   set: 200, 409 ``option_sold_out`` / ``hold_unavailable``, 429 ``recheck_limit``, 503 ``booking_unavailable``, each
   with the fresh page), ``POST /proposal/accept`` (409 ``hold_expired`` with the re-quote offer, ``choice_changed``),
   ``POST /proposal/change-request``. No cookie, or an unusable link: 404 ``link_not_found``.
+- AA-952 slice 4 (C-04 deposit, C31, Fix A8), by cookie: ``POST /proposal/invoices/{id}/claim`` ("I have paid":
+  the invoice reads ``payment_claimed``, Booking extends the AA hold once, the agent verifies; 410
+  ``pay_link_expired`` once the hold ran out) and ``POST /proposal/invoices/{id}/card`` (the card pay button: 410
+  ``pay_link_expired`` past the hold, never a payment session; 409 ``card_not_offered`` / ``provider_not_available``
+  until the agency's own card provider has code). The accepted page lists the invoices under ``payments``.
 - ``GET  /crm/public/v1/portal/{token}``: the portal home (``signed_in: false`` without a session).
 - ``POST /crm/public/v1/portal/{token}/code``: e-mail a code (``{"purpose": "sign_in" | "sign"}``).
 - ``POST /crm/public/v1/portal/{token}/session``: check a sign-in code; 200 sets the session cookie
@@ -220,6 +225,29 @@ async def post_proposal_change_request(
     keys = require_keys(request.app.state.keys)
     settings = request.app.state.settings
     return _json(await proposal_page.change_request(pool, keys, settings, _cookie_token(token), raw, origin=origin))
+
+
+@router.post("/proposal/invoices/{invoice_id}/claim")
+async def post_invoice_claim(
+    request: Request, invoice_id: str, token: ProposalCookie = None, origin: Annotated[str | None, Header()] = None
+) -> JSONResponse:
+    _write_limit(request)
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    booking = getattr(request.app.state, "booking_client", None)
+    settings = request.app.state.settings
+    link = _cookie_token(token)
+    return _json(await proposal_page.claim_payment(pool, keys, settings, booking, link, invoice_id, origin=origin))
+
+
+@router.post("/proposal/invoices/{invoice_id}/card")
+async def post_invoice_card(
+    request: Request, invoice_id: str, token: ProposalCookie = None, origin: Annotated[str | None, Header()] = None
+) -> None:
+    """Always refuses today (410 past the hold, else 409): the session is the BYO card provider's follow-up card."""
+    _write_limit(request)
+    pool = await request_pool(request)
+    await proposal_page.card_payment(pool, request.app.state.settings, _cookie_token(token), invoice_id, origin=origin)
 
 
 # ── portal (C-05 .. C-08, C-10 view) ─────────────────────────────────────────────────────────────

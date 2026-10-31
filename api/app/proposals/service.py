@@ -674,13 +674,16 @@ async def require_terms_current(ctx: AnyContext, row: Any) -> None:
         )
 
 
-async def settle_schedule(ctx: TenantContext, vault: Vault, row: Any) -> dict[str, Any]:
+async def settle_schedule(ctx: AnyContext, vault: Vault | None, row: Any) -> dict[str, Any]:
     """A schedule row is paid in full (a "Mark paid", or the payments of its invoice): the row paid and, for the
     deposit, the CRM-18 effects (the collect_deposit task closed, Proposal -> Booked, the travellers invited to the
-    portal, the Booking confirm nudged). ``row`` is a :data:`SCHEDULE_ONE_SQL` row (locked)."""
+    portal, the Booking confirm nudged). ``row`` is a :data:`SCHEDULE_ONE_SQL` row (locked). AA-952 slice 4: the
+    Booking sync settles a late deposit after it held the AA items again (a job context, no vault: the Booked gate
+    reads the stored facts)."""
     schedule_id = row["schedule_id"]
     await ctx.conn.execute(PAY_SQL, schedule_id)
-    actor = f"member:{ctx.member_id}"
+    member = getattr(ctx, "member_id", None)
+    actor = f"member:{member}" if member is not None else str(getattr(ctx, "actor", "system"))
     out: dict[str, Any] = {"trip_moved": None, "portal": None}
     if row["kind"] == "deposit":
         await ctx.conn.execute(CLOSE_TASK_SQL, row["trip_id"], "collect_deposit", actor)

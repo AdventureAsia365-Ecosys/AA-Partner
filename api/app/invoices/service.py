@@ -35,6 +35,7 @@ from app import stages
 from app.errors import Conflict, Invalid, NotFound
 from app.invoices import render
 from app.ledger import fx
+from app.payments import claims, reminders
 from app.tenancy import AnyContext, TenantContext
 from app.vault import Vault
 
@@ -109,27 +110,36 @@ LINES_SQL = """
 SELECT line_id, position, kind, source, description, quantity, unit_amount, amount FROM crm.invoice_line
  WHERE invoice_id = $1 ORDER BY position
 """
-ONE_SQL = """
+# AA-952 slice 4 (crm-028): the claim / hold / re-hold facts and the proposal's AA hold (the pay window, derived in
+# app.payments.claims) ride along; scalar sub-selects, so the row lock stays on the invoice alone.
+_COLUMNS = """
 SELECT invoice_id, trip_id, kind, status, schedule_id, proposal_id, number, currency, subtotal_amount, tax_amount,
        total_amount, tax_rate, tax_label, tax_inclusive, memo, due_on, issue_date, issued_at, paid_at, voided_at,
-       void_reason, created_at, updated_at
-  FROM crm.invoice WHERE invoice_id = $1 AND deleted_at IS NULL
+       void_reason, created_at, updated_at, claimed_at, hold_extended_at, hold_extend_code, rehold_requested_at,
+       rehold_code,
+       (SELECT p.kind FROM crm.proposal p WHERE p.proposal_id = invoice.proposal_id) AS proposal_kind,
+       (SELECT p.accepted_hold_id FROM crm.proposal p WHERE p.proposal_id = invoice.proposal_id) AS accepted_hold_id,
+       (SELECT p.hold_id FROM crm.proposal p WHERE p.proposal_id = invoice.proposal_id) AS hold_id,
+       (SELECT p.hold_expires_at FROM crm.proposal p WHERE p.proposal_id = invoice.proposal_id) AS hold_expires_at
 """
+ONE_SQL = _COLUMNS + "  FROM crm.invoice WHERE invoice_id = $1 AND deleted_at IS NULL\n"
 LOCK_SQL = ONE_SQL.rstrip() + "\n   FOR UPDATE"
-TRIP_LIST_SQL = """
-SELECT invoice_id, trip_id, kind, status, schedule_id, proposal_id, number, currency, subtotal_amount, tax_amount,
-       total_amount, tax_rate, tax_label, tax_inclusive, memo, due_on, issue_date, issued_at, paid_at, voided_at,
-       void_reason, created_at, updated_at
-  FROM crm.invoice WHERE trip_id = $1 AND deleted_at IS NULL
+TRIP_LIST_SQL = (
+    _COLUMNS
+    + """  FROM crm.invoice WHERE trip_id = $1 AND deleted_at IS NULL
  ORDER BY created_at DESC
  LIMIT $2
 """
+)
 AGENCY_LIST_SQL = """
 SELECT i.invoice_id, i.trip_id, i.kind, i.status, i.number, i.currency, i.total_amount, i.due_on, i.issue_date,
-       i.paid_at, t.title AS trip_title,
-       (SELECT coalesce(sum(p.amount), 0) FROM crm.payment p
-         WHERE p.invoice_id = i.invoice_id AND p.entry_kind = 'payment') AS paid_amount
+       i.paid_at, t.title AS trip_title, i.schedule_id, i.claimed_at, i.hold_extended_at, i.hold_extend_code,
+       i.rehold_requested_at, i.rehold_code, p.kind AS proposal_kind, p.accepted_hold_id, p.hold_id,
+       p.hold_expires_at,
+       (SELECT coalesce(sum(x.amount), 0) FROM crm.payment x
+         WHERE x.invoice_id = i.invoice_id AND x.entry_kind = 'payment') AS paid_amount
   FROM crm.invoice i JOIN crm.trip t ON t.trip_id = i.trip_id AND t.deleted_at IS NULL
+  LEFT JOIN crm.proposal p ON p.proposal_id = i.proposal_id
  WHERE i.deleted_at IS NULL AND i.status = ANY($1::text[])
  ORDER BY i.due_on NULLS LAST, i.created_at
  LIMIT $2
@@ -359,7 +369,12 @@ def actions(row: Any, held: Decimal | None = None) -> list[str]:
     status = row["status"]
     if status == "draft":
         return ["edit", "issue", "void"]
-    if status in ("open", "payment_claimed"):
+    if row.get("rehold_requested_at") is not None and status in ("open", "payment_claimed"):
+        return []  # AA-952 slice 4: paid in full, the Booking sync is placing the AA hold again
+    if status == "payment_claimed":
+        # The client says they paid: record what arrived, or "not received" (back to open, then it can be voided).
+        return ["record_payment", "reject_claim"]
+    if status == "open":
         return ["record_payment"] + (["void"] if not held else [])
     if status == "expired":
         return [] if held else ["void"]
@@ -452,6 +467,7 @@ def invoice_view(
         "void_reason": row["void_reason"],
         "created_at": _iso(row["created_at"]),
         "actions": actions(row),
+        **claims.agency_view(row, dt.datetime.now(dt.UTC)),
     }
     if lines is not None:
         out["lines"] = [_line_view(r) for r in lines]
@@ -516,6 +532,7 @@ async def receivables(ctx: TenantContext, status: str | None) -> dict[str, Any]:
     else:
         raise Invalid("invalid_status", ", ".join(STATUSES))
     today = await fx.agency_today(ctx)
+    now = dt.datetime.now(dt.UTC)
     rows = await ctx.conn.fetch(AGENCY_LIST_SQL, wanted, MAX_LIST)
     ctx.audit("list_view", "allowed", "invoice", None, object_ids=tuple(str(r["invoice_id"]) for r in rows))
     return {
@@ -536,6 +553,7 @@ async def receivables(ctx: TenantContext, status: str | None) -> dict[str, Any]:
                 "paid_at": _iso(r["paid_at"]),
                 "balance_amount": _money_text(max(money(r["total_amount"]) - money(r["paid_amount"]), Decimal(0))),
                 "overdue": r["status"] in RECEIVABLE and r["due_on"] is not None and r["due_on"] < today,
+                **claims.agency_view(r, now),
             }
             for r in rows
         ],
@@ -750,6 +768,9 @@ async def void(ctx: TenantContext, invoice_id: uuid.UUID, reason: Any) -> dict[s
     row = await _row(ctx, invoice_id, lock=True)
     if row["status"] not in ("draft", *RECEIVABLE):
         raise Conflict("invoice_not_voidable", "a paid or void invoice stays: refunds go through a refund request")
+    if row["status"] == "payment_claimed":
+        # AA-952 slice 4: crm-024 has no payment_claimed -> void; the claim is answered first.
+        raise Conflict("invoice_claimed", "the client says they paid: record the payment or mark it not received first")
     block = await ctx.conn.fetchrow(VOID_BLOCK_SQL, invoice_id)
     if block is not None and block["held"] > 0:
         raise Conflict("invoice_has_payments", "refund the payments first, then void the invoice")
@@ -758,6 +779,7 @@ async def void(ctx: TenantContext, invoice_id: uuid.UUID, reason: Any) -> dict[s
     await ctx.conn.fetchval(VOID_SQL, invoice_id, f"member:{ctx.member_id}", text)
     if row["issued_at"] is not None:
         await ctx.conn.execute(COMMITMENT_SQL, row["trip_id"], "void", source_ref(invoice_id))
+        await reminders.settled(ctx, row["trip_id"], invoice_id, f"member:{ctx.member_id}")
     ctx.audit("invoice_void", "allowed", "invoice", str(invoice_id), reason=row["status"])
     await stages.touch(ctx, row["trip_id"])
     return await full(ctx, invoice_id)

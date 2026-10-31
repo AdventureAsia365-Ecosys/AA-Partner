@@ -11,6 +11,7 @@ Route                                           What                            
 ``PATCH /invoices/{id}``                        edit a draft                                     owner, agent
 ``POST /invoices/{id}/issue``                   number, issue date, sealed                       owner, agent
 ``POST /invoices/{id}/void``                    void a draft or an unpaid invoice (reason)       owner, agent
+``POST /invoices/{id}/reject-claim``            the client's transfer did not arrive (slice 4)   owner, agent
 ``GET  /invoices/{id}/document``                the printable HTML (JSON envelope)               every role
 ``GET  /settings/invoices``                     prefix, tax, due days, service fees              owner
 ``PUT  /settings/invoices``                     change them                                      owner
@@ -34,6 +35,7 @@ from app.auth.route_guard import Caller, class_router, current_caller
 from app.db import request_pool
 from app.errors import Invalid
 from app.invoices import service
+from app.payments import claims
 from app.permissions import Action, require
 from app.routers.agency import tenant_header
 from app.tenancy import tenant_tx
@@ -173,6 +175,18 @@ async def post_invoice_void(
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_MARK_RECEIVED) as ctx:
         return await service.void(ctx, invoice_id, body.reason)
+
+
+@router.post("/invoices/{invoice_id}/reject-claim")
+async def post_invoice_reject_claim(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, invoice_id: uuid.UUID
+) -> dict[str, Any]:
+    """AA-952 slice 4: "Not received": a ``payment_claimed`` invoice goes back to ``open`` (409 ``invoice_not_claimed``
+    otherwise); its verify task is closed."""
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_MARK_RECEIVED) as ctx:
+        await claims.reject_claim(ctx, invoice_id)
+        return await service.full(ctx, invoice_id)
 
 
 @router.get("/invoices/{invoice_id}/document")

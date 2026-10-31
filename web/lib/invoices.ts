@@ -3,13 +3,27 @@
 // /invoices/{id}, /settings/invoices) and the pure helpers the trip's Invoices card, A-10 Payments and Settings >
 // Payments use: refusal wording, status tones, the typed-lines body, who may bill. Amounts are the client's sell
 // amounts (no margin key ever comes back). Slice 3: payments against an invoice, refund requests (approve per the
-// role matrix), the agency's own payment methods (GET /crm/v1/settings/payment-methods).
+// role matrix), the agency's own payment methods (GET /crm/v1/settings/payment-methods). Slice 4: the client's "I have
+// paid" claim (payment_claimed, "Not received" -> POST /invoices/{id}/reject-claim), the pay window of a deposit that
+// holds AA places, Booking's one hold extension, the re-hold of a late deposit (paid or paid_unfulfillable).
 
 import { amountOf } from "./proposals";
 
 export type InvoiceKind = "deposit" | "balance" | "service_fee" | "adjustment";
 export type InvoiceStatus = "draft" | "open" | "payment_claimed" | "paid" | "paid_unfulfillable" | "void" | "expired";
-export type InvoiceAction = "edit" | "issue" | "void" | "record_payment";
+export type InvoiceAction = "edit" | "issue" | "void" | "record_payment" | "reject_claim";
+/** Slice 4: the pay window (derived from the AA hold a deposit pays for). */
+export type PayWindowState = "open" | "claimed" | "settling" | "expired" | "paid" | "closed";
+export interface PayWindow {
+  state: PayWindowState;
+  /** The AA hold's expiry (ISO date-time), when the invoice pays for one. */
+  until: string | null;
+}
+/** Slice 4: the money of a late deposit waits for the AA places to be held again (code: reheld, hold_live, or why not). */
+export interface Rehold {
+  requested_at: string;
+  code: string | null;
+}
 
 export interface InvoiceLine {
   line_id: string;
@@ -108,6 +122,12 @@ export interface Invoice {
   refunded_amount?: string;
   payments?: Payment[];
   refund_requests?: RefundRequest[];
+  /** Slice 4 (claim, extension, re-hold). */
+  pay_window?: PayWindow;
+  claimed_at?: string | null;
+  hold_extended_at?: string | null;
+  hold_extend_code?: string | null;
+  rehold?: Rehold | null;
 }
 
 export interface Receivable {
@@ -124,6 +144,9 @@ export interface Receivable {
   paid_at: string | null;
   overdue: boolean;
   balance_amount?: string;
+  pay_window?: PayWindow;
+  claimed_at?: string | null;
+  rehold?: Rehold | null;
 }
 
 export interface ReceivablesView {
@@ -183,6 +206,9 @@ const ERRORS = new Set([
   "refund_self_approval",
   "refund_pending",
   "provider_not_available",
+  "invoice_claimed",
+  "invoice_not_claimed",
+  "invoice_settling",
 ]);
 
 /** The i18n key of an invoice refusal (invoice.error.<code>, else a generic one). */
@@ -244,5 +270,20 @@ export function refundStep(r: RefundRequest, role: string): "decide" | "execute"
   if (!canDecideRefund(role)) return null;
   if (r.status === "proposed") return "decide";
   if (r.status === "approved") return "execute";
+  return null;
+}
+
+/** Slice 4: the one line an agency invoice row adds about the claim / hold (the i18n key and its values), or null. */
+export function claimNote(i: { status: InvoiceStatus; pay_window?: PayWindow; rehold?: Rehold | null }): {
+  key: string;
+  vars: Record<string, string>;
+} | null {
+  if (i.rehold && (i.status === "open" || i.status === "payment_claimed")) return { key: "invoice.claim.settling", vars: {} };
+  if (i.status === "paid_unfulfillable") return { key: "invoice.claim.unfulfillable", vars: { code: i.rehold?.code ?? "" } };
+  if (i.status === "payment_claimed") {
+    const until = i.pay_window?.until;
+    return until ? { key: "invoice.claim.verifyBefore", vars: { until } } : { key: "invoice.claim.verify", vars: {} };
+  }
+  if (i.status === "open" && i.pay_window?.state === "expired") return { key: "invoice.claim.windowClosed", vars: {} };
   return null;
 }

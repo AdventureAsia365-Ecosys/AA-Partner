@@ -92,6 +92,9 @@ class FakeBooking:
     confirm_refusal: str | None = None
     quote_answers: dict[str, dict[str, Any]] = field(default_factory=dict)
     confirm_keys: list[str] = field(default_factory=list)  # the Idempotency-Key of every confirm call
+    # AA-952 slice 4: ``POST /holds/{id}/extend`` adds ``extend_by`` once per hold; the keys of every extend call.
+    extend_by: timedelta = timedelta(hours=72)
+    extend_keys: list[str] = field(default_factory=list)
     calls: Counter[str] = field(default_factory=Counter)
     holds: dict[str, dict[str, Any]] = field(default_factory=dict)
     hold_keys: dict[str, str] = field(default_factory=dict)
@@ -255,6 +258,20 @@ class FakeBooking:
                     return _resp(422, {"error": "invalid", "message": "confirmed"})
                 hold["status"] = "released"
                 return _resp(204)
+            if method == "POST" and parts[-1] == "extend":
+                # AA-952 slice 4 (contract: once per hold; the same key returns the hold; expired / released 410).
+                self.extend_keys.append(key or "")
+                if hold.get("extend_key") == key and hold.get("extended_count"):
+                    return _resp(200, hold)
+                if hold["status"] == "confirmed":
+                    return _resp(422, {"error": "invalid", "message": "confirmed"})
+                if not self._live(hold["hold_id"]):
+                    return _resp(410, {"error": "hold_expired", "message": "place a new hold"})
+                if hold.get("extended_count"):
+                    return _resp(409, {"error": "extend_limit", "message": "extended once already"})
+                new = datetime.fromisoformat(hold["expires_at"]) + self.extend_by
+                hold.update(expires_at=new.isoformat(), extended_count=1, extend_key=key)
+                return _resp(200, hold)
             if method == "POST" and parts[-1] == "confirm":
                 self.confirm_keys.append(key or "")
                 booking = self.bookings.get(hold["hold_id"])

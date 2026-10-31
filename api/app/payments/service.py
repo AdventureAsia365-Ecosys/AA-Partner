@@ -6,7 +6,10 @@ F, M7, §4.6, §6.3, A-10). Routes in :mod:`app.routers.payments`.
   the agency's own reference. Provider ``manual``: the money reached the agency's own account outside the CRM. When the
   payments reach the total the invoice is paid, and a deposit / balance invoice settles its schedule row with the
   CRM-18 effects (:func:`app.proposals.service.settle_schedule`: Proposal -> Booked, portal invites, the Booking
-  confirm). The trip's ``trip_commitment`` rows follow (payment succeeded; invoice paid).
+  confirm). The trip's ``trip_commitment`` rows follow (payment succeeded; invoice paid). AA-952 slice 4: a claimed
+  invoice's verify task closes with the money; when the money completes a deposit whose AA hold ran out
+  (:func:`app.payments.claims.holds_aa`), nothing settles here: ``rehold_requested_at`` is set and the Booking sync
+  holds the AA items again first (:mod:`app.booking.rehold`: paid, or paid_unfulfillable with refund requests).
 - **Refund requests** (design §4.6, C12, C31): proposed by owner / agent for (part of) one payment (never more than
   is left to ask back: 422 ``amount_above_refundable``) -> approved / rejected (``REFUND_APPROVE``: the owner any
   amount, an agent up to ``tenant_settings.refund_owner_threshold_base``, judged in the base currency on everything
@@ -31,7 +34,7 @@ from typing import Any
 from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.invoices import service as invoices
 from app.ledger import fx
-from app.payments import providers
+from app.payments import claims, providers, reminders
 from app.permissions import Action, Rule, require, rule_for
 from app.proposals import service as proposals
 from app.tenancy import AnyContext, TenantContext
@@ -59,6 +62,11 @@ INSERT INTO crm.payment (payment_id, trip_id, schedule_id, invoice_id, amount, c
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 """
 INVOICE_PAID_SQL = "UPDATE crm.invoice SET status = 'paid', paid_at = now() WHERE invoice_id = $1"
+REHOLD_SQL = """
+UPDATE crm.invoice SET rehold_requested_at = now(), rehold_code = NULL, rehold_quote_id = NULL,
+       rehold_price_hash = NULL
+ WHERE invoice_id = $1
+"""
 COMMITMENT_SQL = """
 INSERT INTO crm.trip_commitment (trip_id, kind, line_status, source_ref) VALUES ($1, $2, $3, $4)
 ON CONFLICT (tenant_id, kind, source_ref) DO UPDATE SET line_status = EXCLUDED.line_status
@@ -229,14 +237,34 @@ async def record_payment(
                            row["currency"], method, day, manual.name, ref, "payment", None)  # fmt: skip
     await ctx.conn.execute(COMMITMENT_SQL, row["trip_id"], "payment", "succeeded", f"payment:{payment_id}")
     ctx.audit("payment_record", "allowed", "invoice", str(invoice_id), reason=method)
-    out: dict[str, Any] = {"payment_id": str(payment_id), "trip_moved": None, "portal": None}
+    out: dict[str, Any] = {"payment_id": str(payment_id), "trip_moved": None, "portal": None, "rehold_pending": False}
     if value == balance:
-        await ctx.conn.execute(INVOICE_PAID_SQL, invoice_id)
-        await ctx.conn.execute(COMMITMENT_SQL, row["trip_id"], "invoice", "paid", invoices.source_ref(invoice_id))
-        if schedule is not None:
-            out.update(await proposals.settle_schedule(ctx, vault, schedule))
+        await claims.close_verify(ctx, row["trip_id"], invoice_id, f"member:{ctx.member_id}")
+        # Paid in full, or sent to the re-hold below: either way nothing is left to chase on this invoice.
+        await reminders.settled(ctx, row["trip_id"], invoice_id, f"member:{ctx.member_id}")
+        facts = await claims.window_facts(ctx, invoice_id)
+        if facts is not None and claims.holds_aa(facts) and not _hold_live(facts):
+            # AA-952 slice 4 (card E): the money settles a deposit whose AA hold ran out (also after the one
+            # extension). The Booking sync holds the accepted AA items again, then pays the invoice and settles the
+            # row, or marks it paid_unfulfillable with a refund request (app.booking.rehold). Nothing settles here.
+            await ctx.conn.execute(REHOLD_SQL, invoice_id)
+            ctx.audit("invoice_rehold", "allowed", "invoice", str(invoice_id), reason="hold_expired")
+            from app.booking import proposal_lines  # local: proposal_lines reads the builder, which imports proposals
+
+            await proposal_lines.nudge(ctx, f"rehold:{invoice_id}")
+            out["rehold_pending"] = True
+        else:
+            await ctx.conn.execute(INVOICE_PAID_SQL, invoice_id)
+            await ctx.conn.execute(COMMITMENT_SQL, row["trip_id"], "invoice", "paid", invoices.source_ref(invoice_id))
+            if schedule is not None:
+                out.update(await proposals.settle_schedule(ctx, vault, schedule))
     out["invoice"] = await invoices.full(ctx, invoice_id)
     return out
+
+
+def _hold_live(facts: Any) -> bool:
+    expires = facts["hold_expires_at"]
+    return facts["hold_id"] is not None and expires is not None and expires > dt.datetime.now(dt.UTC)
 
 
 # ── refunds ───────────────────────────────────────────────────────────────────────────────────────

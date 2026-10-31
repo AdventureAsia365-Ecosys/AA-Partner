@@ -11,7 +11,8 @@ Two kinds of failure, both codes only (never a body, a token or a URL in a messa
   a 429 that is not ``rehold_limit``, a token the pool would not give (``token_unavailable`` / ``token_unauthorized``),
   or an answer that breaks the contract (``booking_contract``).
 - :class:`BookingRefusal` (**final**): Booking answered with a contract ``Problem``: ``price_changed``,
-  ``hold_expired``, ``sold_out``, ``rehold_limit``, ``extend_limit``, ``tour_not_served``, ``invalid``,
+  ``hold_expired``, ``sold_out``, ``rehold_limit``, ``extend_limit`` (AA-952 :meth:`BookingClient.extend`),
+  ``tour_not_served``, ``invalid``,
   ``unknown_partner``, ``forbidden``, ``not_found``; ``code`` is the contract's ``error`` and ``problem`` the parsed
   body (``price_hash``, ``tour_state``, ``retry_after_s``, ...).
 
@@ -179,6 +180,13 @@ class BookingClient:
 
     async def release(self, tenant_id: uuid.UUID, hold_id: str) -> None:
         await self._call("DELETE", f"/holds/{_path_id(hold_id)}", HOLD, tenant_id)
+
+    async def extend(self, tenant_id: uuid.UUID, hold_id: str, reason: str, *, idempotency_key: str) -> dict[str, Any]:
+        """AA-952 (Fix A8): one extension of an active hold (Booking decides the length; a second is 409
+        ``extend_limit``, a retry with the same key returns the hold). ``reason``: ``payment_claimed`` /
+        ``client_recheck``."""
+        path = f"/holds/{_path_id(hold_id)}/extend"
+        return await self._call("POST", path, HOLD, tenant_id, body={"reason": reason}, idempotency_key=idempotency_key)
 
     async def confirm(
         self, tenant_id: uuid.UUID, hold_id: str, body: dict[str, Any], *, idempotency_key: str

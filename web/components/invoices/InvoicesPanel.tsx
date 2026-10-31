@@ -4,8 +4,9 @@
 // of the accepted proposal (it bills that row, tax included); a typed invoice (adjustment, or a service fee when the
 // agency turned them on) with its own lines; Issue (the agency's next number), Void (with a reason) and the
 // printable document (a new tab: print or save as PDF); slice 3: each issued invoice's money (InvoiceMoney: payments,
-// refunds, refund requests). Owner and agent bill; the assistant reads. Every refusal is
-// worded from its code (lib/invoices.ts). Buttons wait for hydration (the page is a full server render).
+// refunds, refund requests); slice 4: the client's "I have paid" (verify before the AA hold's new expiry, "Not
+// received"), a late deposit being re-held, a paid-but-unfulfillable one. Owner and agent bill; the assistant reads.
+// Every refusal is worded from its code (lib/invoices.ts). Buttons wait for hydration (the page is a full server render).
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, Checkbox, Field, Input, K, Select, Textarea, useHydrated } from "@/app/_kit";
@@ -16,6 +17,7 @@ import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import {
   canBill,
+  claimNote,
   invoiceErrorKey,
   linesBody,
   openDocument,
@@ -139,6 +141,7 @@ export function InvoicesPanel({
               <Badge tone={STATUS_TONE[inv.status]}>{tr(`invoice.status.${inv.status}`)}</Badge>
             </div>
             {inv.void_reason && <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{fmt(tr("invoice.voidReason"), { reason: inv.void_reason })}</p>}
+            <ClaimLine invoice={inv} lang={lang} locale={locale} />
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <Button size="sm" variant="secondary" disabled={!hydrated || busy} onClick={() => showDocument(inv.invoice_id)}>
                 {tr("invoice.document")}
@@ -146,6 +149,11 @@ export function InvoicesPanel({
               {bills && inv.actions.includes("issue") && (
                 <Button size="sm" disabled={!hydrated || busy} onClick={() => run("POST", `invoices/${inv.invoice_id}/issue`, undefined, "invoice.issued")}>
                   {tr("invoice.issue")}
+                </Button>
+              )}
+              {bills && inv.actions.includes("reject_claim") && (
+                <Button size="sm" variant="ghost" disabled={!hydrated || busy} onClick={() => run("POST", `invoices/${inv.invoice_id}/reject-claim`, undefined, "invoice.claim.rejected")}>
+                  {tr("invoice.claim.reject")}
                 </Button>
               )}
               {bills && inv.actions.includes("void") && voiding !== inv.invoice_id && (
@@ -245,5 +253,23 @@ export function InvoicesPanel({
         )}
       </div>
     </Panel>
+  );
+}
+
+/** Slice 4: "Client says paid; verify before <time>", "Payment received; holding the AA places again", ... */
+function ClaimLine({ invoice, lang, locale }: { invoice: Invoice; lang: Lang; locale: DateLocale }) {
+  const note = claimNote(invoice);
+  if (!note) return null;
+  const vars: Record<string, string> = { ...note.vars };
+  if (vars.until) {
+    const d = new Date(vars.until);
+    vars.until = Number.isNaN(d.getTime()) ? vars.until : d.toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" });
+  }
+  if ("code" in vars) vars.code = t(lang, `invoice.rehold.${vars.code || "other"}` as MessageKey) ?? vars.code;
+  const danger = invoice.status === "paid_unfulfillable" || invoice.pay_window?.state === "expired";
+  return (
+    <p data-testid="invoice-claim-note" style={{ margin: 0, fontSize: 12.5, color: danger ? K.danger : K.amber }}>
+      {fmt(t(lang, note.key as MessageKey), vars)}
+    </p>
   );
 }

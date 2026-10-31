@@ -66,6 +66,16 @@ def _invoice(**over: Any) -> dict[str, Any]:
         "void_reason": None,
         "created_at": NOW,
         "updated_at": NOW,
+        # AA-952 slice 4 (crm-028) and the proposal's AA hold (the pay window).
+        "claimed_at": None,
+        "hold_extended_at": None,
+        "hold_extend_code": None,
+        "rehold_requested_at": None,
+        "rehold_code": None,
+        "proposal_kind": "text",
+        "accepted_hold_id": None,
+        "hold_id": None,
+        "hold_expires_at": None,
     }
     row.update(over)
     return row
@@ -166,6 +176,11 @@ def test_actions_per_status() -> None:
     assert inv.actions({"status": "expired"}) == ["void"] and inv.actions({"status": "expired"}, Decimal(1)) == []
     assert inv.actions({"status": "paid"}) == [] and inv.actions({"status": "void"}) == []
     assert inv.actions({"status": "open"}, Decimal("0")) == ["record_payment", "void"]  # all refunded
+    # AA-952 slice 4: a claim is answered first (record what arrived, or "not received"); a late deposit waiting for
+    # its AA hold to be placed again offers nothing.
+    assert inv.actions({"status": "payment_claimed"}) == ["record_payment", "reject_claim"]
+    assert inv.actions({"status": "payment_claimed"}, Decimal("10")) == ["record_payment", "reject_claim"]
+    assert inv.actions({"status": "open", "rehold_requested_at": NOW}, Decimal("300")) == []
 
 
 def test_a_fully_refunded_invoice_offers_void() -> None:
@@ -240,18 +255,22 @@ async def test_get_and_lists() -> None:
 async def test_receivables() -> None:
     with _raises(Invalid, "invalid_status"):
         await inv.receivables(tenant_ctx(_conn()), "unknown")
+    facts = {k: _invoice()[k] for k in ("schedule_id", "claimed_at", "hold_extended_at", "hold_extend_code",
+                                        "rehold_requested_at", "rehold_code", "proposal_kind", "accepted_hold_id",
+                                        "hold_id", "hold_expires_at")}  # fmt: skip
     rows = [
-        {"invoice_id": INVOICE, "trip_id": TRIP, "trip_title": "Laos", "kind": "deposit", "status": "open",
+        {**facts, "invoice_id": INVOICE, "trip_id": TRIP, "trip_title": "Laos", "kind": "deposit", "status": "open",
          "number": "INV-000001", "currency": "USD", "total_amount": Decimal("300"), "due_on": TODAY - dt.timedelta(1),
          "issue_date": TODAY - dt.timedelta(5), "paid_at": None, "paid_amount": Decimal("100")},
-        {"invoice_id": uuid.uuid4(), "trip_id": TRIP, "trip_title": "Laos", "kind": "balance", "status": "open",
-         "number": "INV-000002", "currency": "USD", "total_amount": Decimal("700"), "due_on": None,
+        {**facts, "invoice_id": uuid.uuid4(), "trip_id": TRIP, "trip_title": "Laos", "kind": "balance",
+         "status": "open", "number": "INV-000002", "currency": "USD", "total_amount": Decimal("700"), "due_on": None,
          "issue_date": TODAY, "paid_at": None, "paid_amount": Decimal(0)},
     ]  # fmt: skip
     conn = _conn().on("FROM crm.invoice i JOIN crm.trip", rows)
     out = await inv.receivables(tenant_ctx(conn), None)
     assert [r["overdue"] for r in out["invoices"]] == [True, False] and out["today"] == "2026-10-30"
     assert [r["balance_amount"] for r in out["invoices"]] == ["200.00", "700.00"]
+    assert [r["pay_window"] for r in out["invoices"]] == [{"state": "open", "until": None}] * 2
     assert conn.sql("FROM crm.invoice i JOIN crm.trip")[0][0] == list(inv.RECEIVABLE)
     await inv.receivables(tenant_ctx(conn), "paid")
     assert conn.sql("FROM crm.invoice i JOIN crm.trip")[1][0] == ["paid"]

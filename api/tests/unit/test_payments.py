@@ -396,3 +396,32 @@ async def test_payment_methods() -> None:
         await pay.disconnect(tenant_ctx(), ACCOUNT)
     gone = ScriptedConn().on("SET status = 'disconnected'", ACCOUNT)
     assert (await pay.disconnect(tenant_ctx(gone), ACCOUNT))["accounts"] == []
+
+
+@pytest.mark.asyncio
+async def test_the_last_payment_after_the_aa_hold_ran_out_waits_for_a_rehold(
+    full: list, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AA-952 slice 4 (card E): the money settles nothing yet; the Booking sync holds the AA items again first."""
+    settled: list[Any] = []
+
+    async def settle(_ctx: Any, _vault: Any, row: Any) -> dict[str, Any]:
+        settled.append(row)
+        return {}
+
+    monkeypatch.setattr(proposals, "settle_schedule", settle)
+    facts = {"invoice_id": INVOICE, "kind": "deposit", "status": "open", "schedule_id": SCHEDULE,
+             "rehold_requested_at": None, "proposal_kind": "builder", "accepted_hold_id": "h1", "hold_id": "h1",
+             "hold_expires_at": NOW - dt.timedelta(minutes=1)}  # fmt: skip
+    conn = _conn().on("FROM crm.invoice i LEFT JOIN crm.proposal p", facts).on("entry_kind = 'payment'", Decimal(0))
+    out = await pay.record_payment(tenant_ctx(conn), FakeVault(), INVOICE, amount="300", method="bank_transfer",
+                                   received_on=None)  # fmt: skip
+    assert out["rehold_pending"] and settled == [] and out["trip_moved"] is None
+    assert conn.sql("SET rehold_requested_at = now()") and not conn.sql("SET status = 'paid'")
+    assert [a[0] for a in conn.sql("INSERT INTO crm.job")] and conn.sql("UPDATE crm.task SET status = $3")
+    # Still live: paid and settled as before.
+    live = dict(facts, hold_expires_at=NOW.replace(year=2030))
+    conn = _conn().on("FROM crm.invoice i LEFT JOIN crm.proposal p", live).on("entry_kind = 'payment'", Decimal(0))
+    out = await pay.record_payment(tenant_ctx(conn), FakeVault(), INVOICE, amount="300", method="bank_transfer",
+                                   received_on=None)  # fmt: skip
+    assert not out["rehold_pending"] and len(settled) == 1 and conn.sql("SET status = 'paid'")

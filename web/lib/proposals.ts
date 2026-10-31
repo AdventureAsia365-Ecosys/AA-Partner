@@ -132,6 +132,23 @@ export interface PublicProposal {
   price_hash: string;
   accepted_at: string | null;
   schedule: { kind: "deposit" | "balance"; amount: string; currency: string; due_on: string; status: ScheduleStatus }[];
+  /** AA-952 slice 4 (C-04 deposit, C31): the issued invoices of an accepted version, with how and by when to pay. */
+  payments?: ClientInvoice[];
+}
+
+/** One invoice in the client's pay box (api app/payments/claims.py ``client_invoices``): never a net or a margin. */
+export interface ClientInvoice {
+  invoice_id: string;
+  number: string;
+  kind: "deposit" | "balance";
+  currency: string;
+  total_amount: string;
+  balance_amount: string;
+  due_on: string | null;
+  pay_window: { state: "open" | "claimed" | "settling" | "expired" | "paid" | "closed"; until: string | null };
+  /** The agency's own pay-by details, only while the window is open. */
+  pay_by: { name: string; instructions: string } | null;
+  can_claim: boolean;
 }
 
 /** The traveller portal home (GET /crm/public/v1/portal/<token>). */
@@ -296,6 +313,8 @@ const PUBLIC_CODES = new Set([
   "invalid_submission",
   "origin_not_allowed",
   "rate_limited",
+  "pay_link_expired",
+  "invoice_not_payable",
 ]);
 
 /** The i18n key of a refusal on a client page (client.error.<code>, else a generic one). */
