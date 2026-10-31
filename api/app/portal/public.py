@@ -491,7 +491,9 @@ async def switch(
             raise Forbidden("not_your_traveller", "choose one of the travellers this address reaches")
         await ctx.conn.execute(REBIND_SQL, row["otp_id"], target.access_id, target.traveler_id)
         await ctx.conn.execute(ACTIVATE_SQL, target.access_id)
-        ctx.audit("portal_switch", "allowed", "traveler_access", str(target.access_id), reason=str(me["access_id"]))
+        ctx.audit(
+            "portal_switch", "allowed", "traveler_access", str(target.access_id), object_ids=(str(me["access_id"]),)
+        )
         return {"signed_in": True, "traveler_id": str(chosen)}
 
 

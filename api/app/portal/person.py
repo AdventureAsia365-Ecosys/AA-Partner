@@ -225,7 +225,7 @@ async def open_document(
         raise Unavailable("document_integrity", "the stored document does not match its digest")
     content = await vault.decrypt_bytes("document", "content", document_id, sealed, purpose="docs")
     filename = await vault.decrypt("document", "filename_enc", document_id, row["filename_enc"])
-    ctx.audit("portal_document", "allowed", "document", str(document_id), reason=str(access_id))
+    ctx.audit("portal_document", "allowed", "document", str(document_id), object_ids=(str(access_id),))
     return {
         "document_id": str(document_id),
         "filename": filename,

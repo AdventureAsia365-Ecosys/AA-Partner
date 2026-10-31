@@ -45,7 +45,9 @@ async def test_crm029_is_registered(admin: asyncpg.Connection) -> None:
     assert await admin.fetchval("SELECT 1 FROM shared.schema_versions WHERE version = 'crm-029'") == 1
 
 
-async def test_the_table_is_private_to_the_agency_and_the_app(app_pool: asyncpg.Pool, admin: asyncpg.Connection) -> None:
+async def test_the_table_is_private_to_the_agency_and_the_app(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection
+) -> None:
     for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
         assert await admin.fetchval("SELECT has_table_privilege('crm_app', 'crm.traveler_flight', $1)", privilege)
         for reader in READERS:
