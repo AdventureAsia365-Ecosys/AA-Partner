@@ -17,11 +17,6 @@
       "count": 1
     }
   },
-  "app/(crm)/page.tsx": {
-    "aa-kit/no-raw-aa-var": {
-      "count": 2
-    }
-  },
   "app/(crm)/pipeline/page.tsx": {
     "@next/next/no-html-link-for-pages": {
       "count": 1

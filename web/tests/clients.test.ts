@@ -143,11 +143,12 @@ describe("BFF allow-list (AA-937 lines)", () => {
     }
   });
 
-  it("raises the body limit for the two uploads only (documents; AA-945 the mail history file)", () => {
+  it("raises the body limit for the uploads only (documents; AA-945 the mail history file; AA-962 the client import)", () => {
     expect(matchBff("POST", "documents")?.maxBody).toBe(DOCUMENT_BODY_BYTES);
     expect(BFF_ROUTES.filter((r) => r.maxBody !== undefined).map((r) => `${r.method} ${r.pattern.source}`)).toEqual([
       "POST ^documents$",
       "POST ^mail\\/imports$",
+      "POST ^client-imports(\\/preview)?$",
     ]);
   });
 });

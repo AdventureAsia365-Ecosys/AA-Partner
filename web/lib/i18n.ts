@@ -11,6 +11,7 @@
 // Strings are plain objects, no library; every key exists in both languages (a unit test checks it). Edge-safe.
 
 import { isDateLocale, type DateLocale } from "./dates";
+import { onboardingEn, onboardingVi } from "./i18nOnboarding";
 
 export type Lang = "en" | "vi";
 export const LOCALE_COOKIE = "aa_crm_locale";
@@ -35,6 +36,7 @@ export function resolveLocale(input: { cookie?: string | null; explicit?: string
 }
 
 const en = {
+  ...onboardingEn, // AA-962: onboarding, client import, duplicates, Connections, help (lib/i18nOnboarding.ts)
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Home",
@@ -2651,6 +2653,7 @@ const en = {
 export type MessageKey = keyof typeof en;
 
 const vi: Record<MessageKey, string> = {
+  ...onboardingVi,
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Trang chủ",
