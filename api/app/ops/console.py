@@ -43,7 +43,8 @@ from app.members import team
 from app.members.directory import PartnerDirectory
 from app.members.mail import Mailer, data_request_message
 from app.members.recovery import OWNERS_SQL, mail_owners, platform_actor, ticket_ids
-from app.tenancy import TENANT_STATUSES, SystemContext, platform_tx
+from app.reports import insights
+from app.tenancy import TENANT_STATUSES, SystemContext, as_insights_reader, platform_tx
 from app.vault import KeyProvider, Vault
 
 log = logging.getLogger(__name__)
@@ -504,4 +505,83 @@ async def platform_coverage(pool: asyncpg.Pool, *, staff_sub: str) -> dict[str, 
             "failures": int(cache["failures"] or 0),
             "last_error_class": cache["last_error_class"],
         },
+    }
+
+
+# ── AA-966 (card CRM-34, spec module 17, design S-03): AA insights, crm.ops.v1 1.5 ──────────────────────────────
+# Like platform_coverage: platform-wide totals only (no agency's data leaves app.reports.insights), so no per-agency
+# event; one log line per call (the dimension and the agency count). Each agency: active only (a locked agency does
+# not contribute), synthetic agencies only where the environment holds nothing else (Dev, tests), the opt-out read as
+# crm_app BEFORE any fact is read, then the facts as crm_insights (the NOLOGIN role granted only the fact view).
+INSIGHT_OPT_OUT_SQL = """
+SELECT coalesce((SELECT insights_opt_out FROM crm.tenant_entitlement WHERE deleted_at IS NULL), false)
+"""
+# The destination dimension counts per trip and destination (crm-006); every other one counts each trip once
+# (crm-031 v_insight_trip_fact: trips per band combination). app.reports.insights.aggregate checks the grain.
+INSIGHT_FACTS_SQL = """
+SELECT month, destination, budget_band, age_band, party_size, stage_reached, lost_reason_code, 1 AS trip_count
+  FROM crm.v_insight_fact
+ WHERE month >= $1 AND month <= $2
+ LIMIT $3
+"""
+INSIGHT_TRIP_FACTS_SQL = """
+SELECT month, NULL::text AS destination, budget_band, age_band, party_size, stage_reached, lost_reason_code, trip_count
+  FROM crm.v_insight_trip_fact
+ WHERE month >= $1 AND month <= $2
+ LIMIT $3
+"""
+MAX_FACTS_PER_AGENCY = 50_000
+
+
+async def platform_insights(
+    pool: asyncpg.Pool,
+    *,
+    staff_sub: str,
+    dimension: str,
+    month_from: dt.date,
+    month_to: dt.date,
+    include_synthetic: bool,
+) -> dict[str, Any]:
+    facts: list[insights.Fact] = []
+    included = opted_out = 0
+    grain = insights.grain_for(dimension)
+    facts_sql = INSIGHT_FACTS_SQL if grain == insights.TRIP_DESTINATION else INSIGHT_TRIP_FACTS_SQL
+    for agency in await registry.agencies(pool):
+        try:
+            async with platform_tx(pool, agency.tenant_id, actor=platform_actor(staff_sub)) as ctx:
+                if not include_synthetic and await ctx.conn.fetchval(COVERAGE_SYNTHETIC_SQL, ctx.tenant_id):
+                    continue
+                if await ctx.conn.fetchval(INSIGHT_OPT_OUT_SQL):
+                    opted_out += 1
+                    continue
+                async with as_insights_reader(ctx):
+                    rows = await ctx.conn.fetch(facts_sql, month_from, month_to, MAX_FACTS_PER_AGENCY)
+        except (NotFound, Conflict):
+            continue  # trashed, locked or offboarding: not counted
+        included += 1
+        facts.extend(
+            insights.Fact(
+                tenant_id=agency.tenant_id,
+                month=r["month"],
+                destination=r["destination"],
+                budget_band=r["budget_band"],
+                age_band=r["age_band"],
+                party_size=int(r["party_size"] or 0),
+                stage_reached=r["stage_reached"],
+                lost_reason_code=r["lost_reason_code"],
+                trip_count=int(r["trip_count"] or 0),
+                grain=grain,
+            )
+            for r in rows
+        )
+    result = insights.aggregate(facts, dimension)
+    log.info("crm_ops_insights dimension=%s agencies=%d opted_out=%d", dimension, included, opted_out)
+    return {
+        "generated_at": dt.datetime.now(dt.UTC).isoformat(),
+        "dimension": dimension,
+        "from": month_from.isoformat(),
+        "to": month_to.isoformat(),
+        "agencies_included": included,
+        "agencies_opted_out": opted_out,
+        **result,
     }

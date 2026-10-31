@@ -81,7 +81,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   AA-947: `booking.b2b.v1` (quotes, holds, confirms, the `/events` feed) through `app/booking/` and `catalog.http.v1`
   (the AA tour cache) through `app/catalog/`, with the same M2M client (section "CRM-19" below). AA-951: `catalog.http.v1`
   1.2 `/aa-content` (AA prep packs and starter templates, AA-977) into `crm.aa_content` (section "CRM-22" below).
-- **Publishes** `crm.ops.v1` under `/crm/ops/v1` to the CIS admin (L1 platform console), later `crm.insights.v1`.
+- **Publishes** `crm.ops.v1` under `/crm/ops/v1` to the CIS admin (L1 platform console); since 1.5 (AA-966) it also
+  carries the AA insights read `GET /insights` (spec module 17, design S-03), instead of a separate `crm.insights.v1`.
 - **Never** grants another app's role anything on `crm`, never reads another app's schema (no cross-schema grants in
   either direction: the isolation probe asserts 42501 both ways), never writes content (ADR 0002), never owns prices
   (ADR 0005: Booking does).
@@ -285,6 +286,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-026` | `api/migrations/026_crm_portability_requests.sql` | CRM-35 Module 18 (AA-967; needs crm-025, contract class): `crm.export_job` (base template; one portability export of the agency or of one client: queued -> building (progress) -> ready -> expired / cancelled, or failed; object `exports/tenants/<tenant>/portability/<export>.zip.enc`, its and the ZIP's SHA-256, size, row counts, the single-use download link's SHA-256 + expiry; one open export per subject) and `crm.data_request` (base template; the agency's data-request log: kind, channel, client id without foreign key, received / due (<= +92 days), open -> extended -> done / refused / withdrawn + outcome, the erasure receipt); both crm_app SELECT / INSERT / UPDATE, no reader grant, and both on the agency erase keep list (receipts without personal data); `crm.erasure_request.erase_not_before` (the deletion cool-off) and `verified_at`, `UNIQUE (tenant_id, request_id)`; `crm.erase_subject` = the crm-025 text + the two keep-list names. No new SQLSTATE |
 | `crm-027` | `api/migrations/027_crm_duty_of_care_calendar.sql` | CRM-30 duty of care + calendar (AA-961; needs crm-026; contract class under ADR 0017: a replaced `crm.erase_subject`, the crm-026 text with two agency-scope tables): `crm.incident_flag` (base template: an AA incident on a departure as the Booking feed reported it, departure id, the contract's incident code, open -> cleared, raised / cleared times and Booking event ids; one open flag per departure; ids and codes only; written by job / platform actors only, `crm.guard_incident_flag` CRM41), `crm.calendar_feed` (base template: one ICS subscription per member, the token's SHA-256 only, scope `mine` / `agency`, active -> revoked, expiry <= 400 days, fetch counters; one active per member; SELECT-only `calendar_feed_token_lookup` on `app.calendar_feed_hash`; `crm.guard_calendar_feed` CRM42: own feed only, token / member / scope / expiry fixed, only the member or an owner revokes, the fetch actor touches only its counters); crm_app SELECT / INSERT / UPDATE, no reader grant |
 | `crm-028` | `api/migrations/028_crm_invoice_claims.sql` | AA-952 CRM-23 slice 4 (needs crm-027; **expand** class under ADR 0017: ADD COLUMN only, shipped in the code PR and auto-applied before the deploy): `crm.invoice` + `claimed_at` (the client's "I have paid"), `hold_extended_at` / `hold_extend_code` (Booking's one hold extension), `rehold_requested_at` / `rehold_quote_id` / `rehold_price_hash` / `rehold_code` (the re-hold of a late deposit), `last_reminded_at` / `reminder_count` (overdue reminders); the value lists are the API's (no CHECK in an expand file) |
+| `crm-031` | `api/migrations/031_crm_insight_trip_fact.sql` | CRM-34 AA insights (AA-966; expand class under ADR 0017, applied after crm-028..030 in number order): the view `crm.v_insight_trip_fact` (security_barrier; trips per agency, month, budget band, lead age band, party size, stage and Lost reason in `trip_count`, no destination, no trip id; GROUP BY, so not updatable), SELECT to `crm_insights`, so module 17 counts a trip's party once outside the destination dimension. No existing object changes |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -750,6 +752,51 @@ Design v3 §6.3 CRM-18 (M4 base, M7 manual, M11 base, M12 v0); migration crm-016
   `/c/p/[token]` (`components/proposals/ProposalPage.tsx`) and `/c/t/[token]` (`components/portal/PortalPage.tsx`; the
   session cookie never reaches page script; only the `client.*` strings ship, `lib/clientMessages.ts`), BFF lines card
   AA-946 in `lib/bff.ts`. Dev E2E: `e2e/tests/lifecycle-thin.spec.ts` (portal steps need `PORTAL_OTP_DEV_ECHO`).
+
+## CRM-34 reports + AA insights (AA-966)
+
+Spec modules 16 and 17, design v3 A-14 Reports, A-01 Home tiles, S-03, R23 (Lost analytics), R28 (year-on-year
+tiles), report catalog S258 CRM-01 / CRM-02 (CRM-05 monthly mail and CRM-03 / 04 / 06 stay with their cards).
+Implementation notes: `docs/implementation-notes/AA-966.md`. Every agency number is computed on page open from the
+agency's own rows (`app/reports/`), so `crm.metric_daily` (design R28, 25 months) is not created yet. One expand
+migration, `crm-031` (the trip-level insight fact for module 17).
+
+- **Routes** (`app/routers/reports.py`, AGENCY, `Action.REPORTS_VIEW`, every role): `GET /crm/v1/reports/summary?
+  period=30d|90d|12m|ytd&owner=me|<member id>`, `GET /crm/v1/reports/tiles` (Home: last 12 months, everyone),
+  `GET /crm/v1/reports/export?section=…` (CSV). Read-only SQL in `app/reports/queries.py` inside `tenant_tx()`, so FORCE
+  RLS keeps each agency to its rows; trashed rows never count.
+- **Definitions.** Window = local days of `tenant_settings.timezone`. Cohort = trips created in the window; won = the
+  trip reached Booked (its stage, or a stage-history row a later Undo did not reverse; a booked-then-cancelled trip
+  stays won); the funnel counts, per forward stage, the cohort trips that reached it. Lost / cancelled reasons: trips
+  that ended so in the window. Money (owner / agent only, `view_margin`): confirmed booking lines by confirmation date,
+  head money rows in the base currency (frozen at confirmation, R17 / R18), margin = sell - cost over lines with both
+  (as the ledger). The assistant gets no money section and no money query runs (crm-014 would return no rows anyway);
+  its Adventure Asia share is counted in booking lines. Outstanding follows A-10 Receivables: open invoices in the
+  `RECEIVABLE` statuses (open, payment_claimed, expired), paid = payments only (a refund never reopens an invoice),
+  each invoice's balance clamped at 0 before the currency sum; plus schedule rows still due that no live invoice bills
+  yet ("not invoiced yet": a billed row's money is in its invoice, never counted twice); each in its own currency. Team: per member open trips, new, won, overdue tasks, first
+  reply (median minutes from the trip's creation to the first message sent from the CRM; imported mail never counts).
+- **Comparison (R28).** Same window a year earlier when the agency's first trip is on or before that window's start;
+  else the last three calendar months (`trend_3m`); `none` without trips.
+- **Success metrics.** One source query per measurable spec §6 success line (`SUCCESS` in `app/reports/service.py`);
+  modules 8, 13 and 14 answer `not_built` until their cards land.
+- **CSV** (`app/reports/export.py`): UTF-8 BOM, CRLF, the spreadsheet formula guard on text cells (numbers stay
+  numbers), a money section is 403 `role_forbidden` for the assistant (the margin serializer filters JSON only), and
+  every download writes a `report_export` audit event (the module 16 success metric).
+- **AA insights** (crm.ops.v1 1.5, `GET /crm/ops/v1/insights?dimension=&quarter=YYYY-Qn`, any OPS reader): one
+  calendar quarter only (422 `invalid_quarter` otherwise), so two answers never overlap or nest and cannot be
+  subtracted. `console.platform_insights` opens `platform_tx()` per active agency (synthetic agencies only outside
+  prod), reads the opt-out as crm_app first, then the facts as `crm_insights` (`tenancy.as_insights_reader`): the
+  destination dimension from `crm.v_insight_fact` (crm-006, one row per trip and destination), every other dimension
+  from `crm.v_insight_trip_fact` (crm-031, trips per band combination, so a trip's party counts once);
+  `app/reports/insights.py` checks the grain, publishes a cell only with >= 10 travellers from >= 3 agencies and no
+  agency above 70 % of them, returns no agency id and no total, only how many cells were held back. Not guaranteed:
+  the cells are live, so changing one agency's opt-out between two reads of a quarter shows that agency's share
+  (platform write, audited; a frozen per-quarter table is the follow-up). Like `/data-coverage`, no per-agency audit event (totals only). The
+  CIS admin page S-03 reading it is a follow-up in AA-CIS-App.
+- **Web**: `/reports` (`web/app/(crm)/reports/page.tsx`, kit `KpiTile` + `DataTable`, filters in the URL, the CSV
+  through the BFF line `reports/(summary|tiles|export)`), the Home tiles (`components/reports/HomeTiles.tsx`; a failed
+  read shows nothing), the access log names a report download.
 
 ## CRM-30 duty of care + calendar (AA-961)
 

@@ -69,12 +69,22 @@ def app_dsn(admin_dsn: str) -> str:
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
+EXPAND_HEADER = "-- migrate: expand"
+
+
 async def apply_migrations(conn: asyncpg.Connection) -> None:
-    """Every crm-NNN file in order, as crm_owner, then the ownership post-check."""
+    """Every crm-NNN file in order, as crm_owner, then the ownership post-check. An expand file (root ADR 0017: no
+    DROP, no CREATE OR REPLACE, no DO block, so it cannot be written to run twice) that is already registered is
+    skipped, as DB Migrate never applies a registered file again; every other file runs again as a no-op."""
     for path in MIGRATIONS:
+        text = path.read_text(encoding="utf-8")
+        if text.startswith(EXPAND_HEADER) and await conn.fetchval(
+            "SELECT 1 FROM shared.schema_versions WHERE version = $1", f"crm-{path.name[:3]}"
+        ):
+            continue
         await conn.execute(f"SET ROLE {OWNER}")
         try:
-            await conn.execute(path.read_text(encoding="utf-8"))
+            await conn.execute(text)
         finally:
             await conn.execute("RESET ROLE")
         stray = [r["name"] for r in await conn.fetch(STRAY_SQL)]

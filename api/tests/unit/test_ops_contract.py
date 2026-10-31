@@ -236,6 +236,26 @@ SCENARIOS: list[tuple[str, str, str, Any, Any, str, int, str | None]] = [
     ("GET", "/llm/usage", f"{PREFIX}/llm/usage?from=2026-10-24&to=2026-10-01", None, None, "reader", 422,
      "invalid_range"),
     ("GET", "/data-coverage", f"{PREFIX}/data-coverage", None, None, "reader", 200, None),
+    # crm.ops.v1 1.5 (AA-966): AA insights over one quarter; one agency's facts are always suppressed (< 3 agencies).
+    ("GET", "/insights", f"{PREFIX}/insights?dimension=destination&quarter=2026-Q1", None,
+     lambda c: c.on("FROM crm.v_insight_fact", [
+         {"month": dt.date(2026, 3, 1), "destination": "laos", "budget_band": None, "age_band": None,
+          "party_size": 12, "stage_reached": "inquiry", "lost_reason_code": None, "trip_count": 1}]),
+     "reader", 200, None),
+    ("GET", "/insights", f"{PREFIX}/insights?dimension=budget_band&quarter=2026-Q2", None,
+     lambda c: c.on("FROM crm.v_insight_trip_fact", [
+         {"month": dt.date(2026, 5, 1), "destination": None, "budget_band": "over_5000", "age_band": None,
+          "party_size": 2, "stage_reached": "inquiry", "lost_reason_code": None, "trip_count": 3}]),
+     "reader", 200, None),
+    # Only one fixed calendar quarter: a month range (overlapping answers could be subtracted) is refused.
+    ("GET", "/insights", f"{PREFIX}/insights?dimension=budget_band&quarter=2026-Q5", None, None,
+     "reader", 422, "invalid_quarter"),
+    ("GET", "/insights", f"{PREFIX}/insights?dimension=budget_band&quarter=2026-03", None, None,
+     "reader", 422, "invalid_quarter"),
+    ("GET", "/insights", f"{PREFIX}/insights?dimension=budget_band&from=2026-01-01&to=2026-03-31", None, None,
+     "reader", 422, "invalid_request"),
+    ("GET", "/insights", f"{PREFIX}/insights?dimension=tenant_id&quarter=2026-Q1", None, None,
+     "reader", 422, "invalid_request"),
     ("GET", "/console", f"{PREFIX}/console", None, None, "reader", 200, None),
     ("GET", "/console", f"{PREFIX}/console", None, None, "admin", 200, None),
     ("GET", "/tenants", f"{PREFIX}/tenants?limit=10", None, None, "reader", 200, None),

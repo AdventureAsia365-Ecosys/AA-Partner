@@ -989,6 +989,7 @@ LEGAL_HOLD_SQLSTATE = "CRM10"
 LIFECYCLE_ACTORS = frozenset({"job:crm_lifecycle", "job:crm_offboard", "job:crm_data_export"})  # + AA-967
 TENANT_STATUS_SQL = "SELECT status FROM crm.tenant WHERE tenant_id = $1"
 ERASER_ROLE = "crm_eraser"
+INSIGHTS_ROLE = "crm_insights"  # AA-966: the module 17 fact reader (as_insights_reader)
 
 
 @asynccontextmanager
@@ -1036,6 +1037,20 @@ async def as_eraser(ctx: TenantContext | LifecycleContext) -> AsyncIterator[asyn
     # app.erasing flag), so the context goes on as the login role.
     async with ctx.conn.transaction():
         await ctx.conn.execute(f"SET LOCAL ROLE {ERASER_ROLE}")
+        yield ctx.conn
+        await ctx.conn.execute("SET LOCAL ROLE NONE")
+
+
+@asynccontextmanager
+async def as_insights_reader(ctx: SystemContext) -> AsyncIterator[asyncpg.Connection]:
+    """Run the block as ``crm_insights`` (AA-966, module 17: the NOLOGIN reader granted only ``crm.v_insight_fact``),
+    then back to the login role. For the platform insights read only (:func:`app.ops.console.platform_insights`), on
+    a context that has no queued audit event (the readers cannot write ``crm.audit_event``). A savepoint, as
+    :func:`as_eraser`: a failed read rolls the role back too."""
+    if ctx.audit_events:
+        raise ValueError("as_insights_reader needs a context without queued audit events")
+    async with ctx.conn.transaction():
+        await ctx.conn.execute(f"SET LOCAL ROLE {INSIGHTS_ROLE}")
         yield ctx.conn
         await ctx.conn.execute("SET LOCAL ROLE NONE")
 

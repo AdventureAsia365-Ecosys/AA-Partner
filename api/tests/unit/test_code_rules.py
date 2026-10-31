@@ -85,6 +85,8 @@ PLATFORM_FUNCTIONS = (
     "set_insights_opt_out",
     "raise_data_request",
     "retry_agency_job",
+    # AA-966 (app.ops.console): AA insights across agencies, as crm_insights
+    "platform_insights",
 )
 # AA-941: helpers a platform context hands its context to, each called only from its own module and the console.
 PLATFORM_HELPERS = {
