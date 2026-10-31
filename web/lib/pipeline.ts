@@ -109,6 +109,8 @@ export interface Card {
   quiet?: boolean;
   /** Stage 2 % on Inquiry / Qualifying cards, else null. */
   stage2_percent?: number | null;
+  /** AA-957 (C12): cancelled in the CRM, AA has not confirmed the cancellation of its bookings yet. */
+  cancellation_pending?: boolean;
 }
 
 export interface ClosedCard extends Omit<Card, "stage"> {
@@ -153,6 +155,7 @@ export interface Trip {
   last_activity_at?: string | null;
   quiet_days?: number;
   quiet?: boolean;
+  cancellation_pending?: boolean; // AA-957
 }
 
 export interface Stage2Link {
@@ -195,6 +198,17 @@ export interface TripView {
   /** AA-943: owner / agent may cancel (the API checks the role too). */
   can_cancel?: boolean;
   stage2_link?: Stage2Link | null;
+  /** AA-957 (C12): the trip's cancellation, pending while AA cancels its bookings. */
+  cancellation?: Cancellation | null;
+}
+
+export interface Cancellation {
+  status: "pending" | "done";
+  reason_code: CancelReason;
+  from_stage: Stage;
+  aa_bookings: number;
+  requested_at: string;
+  finished_at: string | null;
 }
 
 /** GET /trips/{id}/stage2: the planning form's pages, completeness with the missing codes, and the F2 answers. */
@@ -258,7 +272,37 @@ export interface CancelPreview {
   cancel_reason_code: CancelReason;
   dry_run: boolean;
   effects: { kind: string; count: number }[];
-  stage?: "cancelled";
+  stage?: Stage;
+  // AA-957 (C12): the detail blocks of the dry run.
+  aa_bookings?: CancelBooking[];
+  supplier_lines?: { booking_line_id: string; title: string; supplier_name: string; confirmation_no: string | null }[];
+  payments?: CancelPayment[];
+  commissions?: { commission_id: string; status: "expected" | "claimed"; title: string; supplier_name: string; expected: { amount: string; currency: string } | null }[];
+  terms?: { version_label: string; accepted_at: string } | null;
+  booking_unavailable?: boolean;
+  cancellation?: Cancellation | null;
+  requeued?: number;
+}
+
+export interface CancelBooking {
+  booking_id: string;
+  titles: string[];
+  asked: boolean;
+  failed_code: string | null;
+  fee?: { amount: string; currency: string; fee_pct: string; days_before_departure: number } | null;
+  fee_code?: string;
+}
+
+export interface CancelPayment {
+  payment_id: string;
+  invoice_id: string | null;
+  invoice_number: string | null;
+  amount: string;
+  currency: string;
+  received_on: string;
+  refundable: string;
+  refund_amount: string;
+  needs_invoice: boolean;
 }
 
 /** A 409 of the stage engine that a dialog can answer: the gate and the override reasons the API offers. */
@@ -334,7 +378,7 @@ export function dueIn(dueAt: string | null, now: number = Date.now()): { label: 
 
 /** The board's move refusal message: a known code worded, anything else the generic one. */
 export function moveErrorKey(detail: string): MessageKey {
-  const known = ["transition_not_allowed", "use_cancel_flow", "undo_expired", "already_in_stage", "preview_stale", "too_many_trips", "nothing_to_move", "lost_reason_required"];
+  const known = ["transition_not_allowed", "use_cancel_flow", "undo_expired", "already_in_stage", "preview_stale", "too_many_trips", "nothing_to_move", "lost_reason_required", "cancellation_pending", "invalid_refunds", "invalid_keep_commission"];
   return (known.includes(detail) ? `move.error.${detail}` : "trip.error") as MessageKey;
 }
 

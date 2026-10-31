@@ -161,6 +161,11 @@ export function TripPanel({
           </span>
           {trip.lost_reason_code && <Badge tone="neutral">{codeLabel(lang, "lost", trip.lost_reason_code)}</Badge>}
           {trip.cancel_reason_code && <Badge tone="danger">{codeLabel(lang, "cancel", trip.cancel_reason_code)}</Badge>}
+          {view.cancellation?.status === "pending" && (
+            <span data-testid="trip-cancellation-pending" title={t(lang, "trip.cancellationPendingHint")} style={{ display: "contents" }}>
+              <Badge tone="danger">{t(lang, "trip.cancellationPending")}</Badge>
+            </span>
+          )}
           {trip.quiet && typeof trip.quiet_days === "number" && (
             <span data-testid="trip-quiet" style={{ display: "contents" }}>
               <Badge tone="warning">{fmt(t(lang, "trip.quiet"), { n: trip.quiet_days })}</Badge>
@@ -513,10 +518,14 @@ export function TripPanel({
         <CancelDialog
           tripId={trip.trip_id}
           lang={lang}
+          locale={locale}
           onClose={() => setCancelOpen(false)}
-          onDone={() => {
+          onDone={(result) => {
             setCancelOpen(false);
-            setToast(toast(t(lang, "cancelTrip.done")));
+            // AA-957: with AA bookings the trip waits for AA ("Cancellation pending", never cancelled early).
+            const pending = result.cancellation?.status === "pending";
+            const key = pending ? (result.requeued !== undefined ? "cancelTrip.retried" : "cancelTrip.pendingDone") : "cancelTrip.done";
+            setToast(toast(t(lang, key)));
             router.refresh();
           }}
         />

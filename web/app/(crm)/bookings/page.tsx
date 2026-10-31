@@ -52,6 +52,14 @@ export default async function BookingsPage({ searchParams }: { searchParams: Pro
                 </dd>
               </>
             )}
+            {totals.cancellation_cost_base !== undefined && totals.cancellation_cost_base !== "0" && totals.cancellation_cost_base !== "0.00" && (
+              <>
+                <dt style={{ color: K.muted }}>{tr("ledger.totals.cancellationCost")}</dt>
+                <dd style={{ margin: 0 }} data-testid="bookings-cancellation-cost">
+                  {money(totals.cancellation_cost_base)}
+                </dd>
+              </>
+            )}
             <dt style={{ color: K.muted }}>{tr("ledger.totals.pipeline")}</dt>
             <dd style={{ margin: 0 }}>
               {money(totals.pipeline_sell_base)}

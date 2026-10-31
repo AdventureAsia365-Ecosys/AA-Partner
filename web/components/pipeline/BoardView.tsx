@@ -323,6 +323,11 @@ function TripCard({ card, lang, locale, now, onDrag }: { card: Card; lang: Lang;
           {card.waiting_on === "agency" && due && !due.overdue ? ` · ${fmt(t(lang, "pipeline.replyIn"), { t: due.label })}` : ""}
         </Badge>
         {due?.overdue && <Badge tone="danger">{t(lang, "pipeline.overdue")}</Badge>}
+        {card.cancellation_pending && (
+          <span data-testid="trip-card-cancellation-pending" style={{ display: "contents" }}>
+            <Badge tone="danger">{t(lang, "trip.cancellationPending")}</Badge>
+          </span>
+        )}
         {quiet !== null && (
           <span data-testid="trip-card-quiet" style={{ display: "contents" }}>
             <Badge tone="warning">{fmt(t(lang, "pipeline.quiet"), { n: quiet })}</Badge>

@@ -5,15 +5,19 @@
 //   - GateDialog: a move the API refused with 409 `stage2_incomplete` / `gate_unmet` (Qualifying -> Proposal below
 //     80 %, Proposal -> Booked, Booked -> Pre-departure). It shows the Stage 2 percentage and what is missing, and lets
 //     the member go ahead with one of the fixed override reasons (logged on the trip's history and in the audit);
-//   - CancelDialog: the cancel flow. A reason first, then the dry run lists today's effects (queued messages, open
-//     tasks, upcoming calls, client links); the member types CANCEL to run it. A cancellation has no Undo;
+//   - CancelDialog: the cancel flow (C12, AA-957). A reason first, then the dry run lists every effect, Booking's fee
+//     per AA booking, the agency's own supplier bookings to cancel, the refund per payment (default all that is left;
+//     lower keeps the rest) under the accepted terms, and the expected commissions (tick the ones the supplier still
+//     pays); the member types CANCEL to run it. A cancellation has no Undo. While AA has not confirmed it the dialog
+//     shows the pending AA bookings and "Ask AA again";
 //   - BulkDialog: a column's "move all": reasons when the target needs one, the dry run's eligible / blocked counts,
 //     then the run with the preview's hash (409 `preview_stale` asks to check again).
 //
 // No personal data here: ids, counts and codes only.
 import { useEffect, useRef, useState } from "react";
-import { Button, K } from "@/app/_kit";
+import { Button, Checkbox, Field, Input, K } from "@/app/_kit";
 import { bffSend } from "@/lib/bffClient";
+import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, type Lang, type MessageKey, t } from "@/lib/i18n";
 import {
   CANCEL_REASONS,
@@ -29,6 +33,7 @@ import {
   type GateRefusal,
   type Stage,
 } from "@/lib/pipeline";
+import { formatAmount } from "@/lib/proposals";
 
 export const field: React.CSSProperties = {
   font: "inherit",
@@ -164,12 +169,29 @@ export function GateDialog({
   );
 }
 
-export function CancelDialog({ tripId, lang, onDone, onClose }: { tripId: string; lang: Lang; onDone: () => void; onClose: () => void }) {
+export function CancelDialog({
+  tripId,
+  lang,
+  locale,
+  onDone,
+  onClose,
+}: {
+  tripId: string;
+  lang: Lang;
+  locale: DateLocale;
+  onDone: (result: CancelPreview) => void;
+  onClose: () => void;
+}) {
   const [reason, setReason] = useState("");
   const [preview, setPreview] = useState<CancelPreview | null>(null);
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // AA-957: the refund asked back per payment (default: all that is left) and the commissions the supplier still pays.
+  const [refunds, setRefunds] = useState<Record<string, string>>({});
+  const [keep, setKeep] = useState<Record<string, boolean>>({});
+  const tr = (key: string) => t(lang, key as MessageKey);
+  const pending = preview?.cancellation?.status === "pending";
 
   async function dryRun(code: string) {
     setReason(code);
@@ -179,12 +201,31 @@ export function CancelDialog({ tripId, lang, onDone, onClose }: { tripId: string
     setBusy(true);
     const res = await bffSend<CancelPreview>("POST", `trips/${tripId}/cancel?dry_run=true`, { cancel_reason_code: code });
     setBusy(false);
-    if (res.ok) setPreview(res.data);
+    if (!res.ok) {
+      setError(t(lang, moveErrorKey(res.detail)));
+      return;
+    }
+    setPreview(res.data);
+    setRefunds(Object.fromEntries((res.data.payments ?? []).filter((p) => !p.needs_invoice).map((p) => [p.payment_id, p.refund_amount])));
+    setKeep({});
+  }
+
+  async function run() {
+    setBusy(true);
+    setError(null);
+    const body = {
+      cancel_reason_code: reason,
+      refunds: Object.entries(refunds).map(([payment_id, amount]) => ({ payment_id, amount: amount.trim() || "0" })),
+      keep_commission: Object.entries(keep).filter(([, v]) => v).map(([id]) => id),
+    };
+    const res = await bffSend<CancelPreview>("POST", `trips/${tripId}/cancel?dry_run=false`, body);
+    setBusy(false);
+    if (res.ok) onDone(res.data);
     else setError(t(lang, moveErrorKey(res.detail)));
   }
 
   return (
-    <Dialog title={t(lang, "cancelTrip.title")} onClose={onClose} testId="cancel-dialog">
+    <Dialog title={t(lang, pending ? "cancelTrip.pendingTitle" : "cancelTrip.title")} onClose={onClose} testId="cancel-dialog">
       <label style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted }}>
         {t(lang, "cancelTrip.reason")}
         <select value={reason} onChange={(e) => void dryRun(e.target.value)} style={field} data-testid="cancel-reason">
@@ -198,20 +239,121 @@ export function CancelDialog({ tripId, lang, onDone, onClose }: { tripId: string
       </label>
       {busy && !preview && <p style={{ margin: 0, fontSize: 13, color: K.muted }}>{t(lang, "cancelTrip.checking")}</p>}
       {preview && (
-        <div data-testid="cancel-effects" data-dry-run={String(preview.dry_run)} style={{ display: "grid", gap: 6 }}>
-          <span style={{ fontSize: 13, color: K.body }}>{t(lang, "cancelTrip.effects")}</span>
-          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: K.body, display: "grid", gap: 2 }}>
-            {preview.effects.map((e) => (
-              <li key={e.kind} data-kind={e.kind} data-count={e.count}>
-                {effectLabel(lang, e.kind, e.count)}
-              </li>
-            ))}
-          </ul>
-          <p style={{ margin: 0, fontSize: 12.5, color: K.danger }}>{t(lang, "cancelTrip.noUndo")}</p>
-          <label style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted }}>
-            {t(lang, "cancelTrip.typeToConfirm")}
-            <input value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" style={field} data-testid="cancel-typed" />
-          </label>
+        <div data-testid="cancel-effects" data-dry-run={String(preview.dry_run)} data-pending={pending ? "true" : undefined} style={{ display: "grid", gap: 10, maxHeight: "55vh", overflowY: "auto" }}>
+          {!pending && (
+            <>
+              <span style={{ fontSize: 13, color: K.body }}>{t(lang, "cancelTrip.effects")}</span>
+              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: K.body, display: "grid", gap: 2 }}>
+                {preview.effects
+                  .filter((e) => e.count > 0)
+                  .map((e) => (
+                    <li key={e.kind} data-kind={e.kind} data-count={e.count}>
+                      {effectLabel(lang, e.kind, e.count)}
+                    </li>
+                  ))}
+              </ul>
+            </>
+          )}
+          {(preview.aa_bookings ?? []).length > 0 && (
+            <section data-testid="cancel-aa-bookings" style={{ display: "grid", gap: 4, fontSize: 13 }}>
+              <strong style={{ fontSize: 12.5 }}>{tr("cancelTrip.aaTitle")}</strong>
+              {(preview.aa_bookings ?? []).map((b) => (
+                <div key={b.booking_id} data-booking={b.booking_id} style={{ color: K.body }}>
+                  <span style={{ overflowWrap: "anywhere" }}>{b.titles.join(", ")}</span>
+                  <span style={{ display: "block", fontSize: 12, color: K.muted }} data-testid="cancel-aa-fee">
+                    {b.fee
+                      ? fmt(tr("cancelTrip.aaFee"), { amount: formatAmount(b.fee.amount, b.fee.currency, locale), pct: b.fee.fee_pct, days: b.fee.days_before_departure })
+                      : pending && b.failed_code
+                        ? fmt(tr("cancelTrip.bookingFailed"), { code: b.failed_code })
+                        : pending
+                          ? tr("cancelTrip.bookingAsked")
+                          : tr("cancelTrip.aaFeeUnknown")}
+                  </span>
+                </div>
+              ))}
+              {preview.booking_unavailable && !pending && (
+                <p style={{ margin: 0, fontSize: 12.5, color: K.amber }} data-testid="cancel-booking-down">
+                  {tr("cancelTrip.bookingDown")}
+                </p>
+              )}
+            </section>
+          )}
+          {!pending && (preview.supplier_lines ?? []).length > 0 && (
+            <section data-testid="cancel-supplier-lines" style={{ display: "grid", gap: 2, fontSize: 13 }}>
+              <strong style={{ fontSize: 12.5 }}>{tr("cancelTrip.suppliersTitle")}</strong>
+              {(preview.supplier_lines ?? []).map((l) => (
+                <span key={l.booking_line_id} style={{ overflowWrap: "anywhere" }}>
+                  {l.supplier_name}: {l.title}
+                  {l.confirmation_no ? ` (${l.confirmation_no})` : ""}
+                </span>
+              ))}
+            </section>
+          )}
+          {!pending && (preview.payments ?? []).length > 0 && (
+            <section data-testid="cancel-refunds" style={{ display: "grid", gap: 6, fontSize: 13 }}>
+              <strong style={{ fontSize: 12.5 }}>{tr("cancelTrip.refundsTitle")}</strong>
+              <span style={{ fontSize: 12, color: K.muted }}>
+                {preview.terms
+                  ? fmt(tr("cancelTrip.terms"), { label: preview.terms.version_label, date: formatDate(preview.terms.accepted_at.slice(0, 10), locale) })
+                  : tr("cancelTrip.noTerms")}
+              </span>
+              <span style={{ fontSize: 12, color: K.muted }}>{tr("cancelTrip.refundHelp")}</span>
+              {(preview.payments ?? []).map((p) => (
+                <div key={p.payment_id} data-payment={p.payment_id} style={{ display: "grid", gap: 4 }}>
+                  <span>
+                    {fmt(tr("cancelTrip.refundFor"), {
+                      invoice: p.invoice_number ?? "—",
+                      amount: formatAmount(p.amount, p.currency, locale),
+                      date: formatDate(p.received_on, locale),
+                    })}
+                  </span>
+                  {p.needs_invoice ? (
+                    <span style={{ fontSize: 12, color: K.amber }}>{tr("cancelTrip.needsInvoice")}</span>
+                  ) : (
+                    <Field label={fmt(tr("cancelTrip.refundAmount"), { currency: p.currency })} hint={fmt(tr("cancelTrip.refundMax"), { amount: formatAmount(p.refundable, p.currency, locale) })}>
+                      <Input
+                        size="sm"
+                        inputMode="decimal"
+                        data-testid="cancel-refund-amount"
+                        value={refunds[p.payment_id] ?? ""}
+                        onChange={(e) => setRefunds({ ...refunds, [p.payment_id]: e.target.value })}
+                      />
+                    </Field>
+                  )}
+                </div>
+              ))}
+            </section>
+          )}
+          {!pending && (preview.commissions ?? []).some((c) => c.status === "expected") && (
+            <section data-testid="cancel-commissions" style={{ display: "grid", gap: 4, fontSize: 13 }}>
+              <strong style={{ fontSize: 12.5 }}>{tr("cancelTrip.commissionsTitle")}</strong>
+              {(preview.commissions ?? [])
+                .filter((c) => c.status === "expected")
+                .map((c) => (
+                  <div key={c.commission_id} style={{ display: "grid", gap: 2 }}>
+                    <span style={{ overflowWrap: "anywhere" }}>
+                      {c.supplier_name}: {c.title}
+                      {c.expected ? ` · ${formatAmount(c.expected.amount, c.expected.currency, locale)}` : ""}
+                    </span>
+                    <Checkbox
+                      label={tr("cancelTrip.keepCommission")}
+                      checked={Boolean(keep[c.commission_id])}
+                      onChange={(e) => setKeep({ ...keep, [c.commission_id]: e.target.checked })}
+                    />
+                  </div>
+                ))}
+            </section>
+          )}
+          {!pending && (
+            <>
+              {(preview.aa_bookings ?? []).length > 0 && <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{t(lang, "trip.cancellationPendingHint")}</p>}
+              <p style={{ margin: 0, fontSize: 12.5, color: K.danger }}>{t(lang, "cancelTrip.noUndo")}</p>
+              <label style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted }}>
+                {t(lang, "cancelTrip.typeToConfirm")}
+                <input value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" style={field} data-testid="cancel-typed" />
+              </label>
+            </>
+          )}
         </div>
       )}
       <Problem text={error} />
@@ -219,23 +361,19 @@ export function CancelDialog({ tripId, lang, onDone, onClose }: { tripId: string
         <Button size="sm" variant="ghost" onClick={onClose}>
           {t(lang, "cancelTrip.keep")}
         </Button>
-        <span data-testid="cancel-confirm" style={{ display: "contents" }}>
-          <Button
-            size="sm"
-            variant="danger"
-            disabled={!preview || typed.trim() !== "CANCEL" || busy}
-            onClick={async () => {
-              setBusy(true);
-              setError(null);
-              const res = await bffSend<CancelPreview>("POST", `trips/${tripId}/cancel?dry_run=false`, { cancel_reason_code: reason });
-              setBusy(false);
-              if (res.ok) onDone();
-              else setError(t(lang, moveErrorKey(res.detail)));
-            }}
-          >
-            {t(lang, "cancelTrip.confirm")}
-          </Button>
-        </span>
+        {pending ? (
+          <span data-testid="cancel-retry" style={{ display: "contents" }}>
+            <Button size="sm" disabled={busy} onClick={() => void run()}>
+              {tr("cancelTrip.retry")}
+            </Button>
+          </span>
+        ) : (
+          <span data-testid="cancel-confirm" style={{ display: "contents" }}>
+            <Button size="sm" variant="danger" disabled={!preview || typed.trim() !== "CANCEL" || busy} onClick={() => void run()}>
+              {t(lang, "cancelTrip.confirm")}
+            </Button>
+          </span>
+        )}
       </Actions>
     </Dialog>
   );
