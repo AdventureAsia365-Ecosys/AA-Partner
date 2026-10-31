@@ -150,7 +150,7 @@ export function AaItemForm({
             {tours.map((x) => (
               <option key={x.source_id} value={x.source_id}>
                 {x.title}
-                {x.duration_days ? ` · ${fmt(tr("aa.add.days"), { n: x.duration_days })}` : ""}
+                {x.duration_days ? ` · ${fmt(tr(x.duration_days === 1 ? "aa.add.days.one" : "aa.add.days"), { n: x.duration_days })}` : ""}
                 {x.country_code ? ` · ${x.country_code}` : ""}
               </option>
             ))}
@@ -177,7 +177,7 @@ export function AaItemForm({
                 <option value="">{tr("aa.add.ownDate")}</option>
                 {product.departures.map((d) => (
                   <option key={d.departure_id} value={d.departure_id}>
-                    {formatDate(d.start_date, locale)} · {fmt(tr("aa.add.seats"), { n: d.available })}
+                    {formatDate(d.start_date, locale)} · {fmt(tr(d.available === 1 ? "aa.add.seats.one" : "aa.add.seats"), { n: d.available })}
                   </option>
                 ))}
               </select>

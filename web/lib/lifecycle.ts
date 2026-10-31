@@ -155,6 +155,7 @@ export function aaRequestKey(o: Offboarding): MessageKey {
 /** The 409 detail of a refused trip delete -> the message key the trip page shows (a blocker: "Cancel trip" instead;
  * a legal hold: wait for its release). */
 export function deleteRefusal(detail: string): MessageKey {
+  if (detail === "cancellation_pending") return "move.error.cancellation_pending"; // S262 round 3: AA has not confirmed
   return ["has_money", "has_signature", "has_commission", "has_aa_line", "legal_hold"].includes(detail)
     ? (`trip.blocked.${detail}` as MessageKey)
     : "trip.error";

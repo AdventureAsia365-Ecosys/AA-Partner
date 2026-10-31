@@ -1,0 +1,43 @@
+// web/lib/i18nPlurals.ts
+// AA-957 S262 round 3 — the singular of every counted message on the pages the live acceptance read ("1 commissions",
+// "1 travellers", "1 days"): `<key>.one`, picked by `plural()` (lib/i18n.ts) when the count is 1. Vietnamese has no
+// plural form, so its `.one` text is the same as the counted message (every key exists in both languages:
+// tests/i18n.test.ts; tests/plurals.test.ts checks each `.one` has its counted key and the same slots).
+
+export const pluralsEn = {
+  "commissions.total.count.one": "{n} commission",
+  "commissions.otherBase.one": "{n} commission in an earlier base currency is left out of the totals.",
+  "commission.overdueDays.one": "{n} day overdue",
+  "cancelTrip.aaFee.one": "Fee {amount} ({pct} %, {days} day before departure)",
+  "ops.travellers.one": "{complete} of {n} traveller complete",
+  "ops.purgeDays.one": "Deleted automatically on {date}, in {n} day",
+  "ops.views.one": "Opened by AA once",
+  "trip.nights.one": "{n} night",
+  "trip.adults.one": "{n} adult",
+  "trip.flex.one": "± {n} day",
+  "trip.quiet.one": "Quiet for {n} day",
+  "ledger.stale.one": "rate {n} day old",
+  "builder.viewed.one": "Viewed once, last {date}",
+  "duty.travellers.one": "{n} traveller",
+  "aa.add.days.one": "{n} day",
+  "aa.add.seats.one": "{n} seat left",
+} as const;
+
+export const pluralsVi: Record<keyof typeof pluralsEn, string> = {
+  "commissions.total.count.one": "{n} khoản hoa hồng",
+  "commissions.otherBase.one": "{n} khoản tính theo đơn vị tiền gốc cũ không được cộng vào tổng.",
+  "commission.overdueDays.one": "Quá hạn {n} ngày",
+  "cancelTrip.aaFee.one": "Phí {amount} ({pct} %, {days} ngày trước ngày đi)",
+  "ops.travellers.one": "{complete} trên {n} khách đã đầy đủ",
+  "ops.purgeDays.one": "Tự xoá vào {date}, còn {n} ngày",
+  "ops.views.one": "AA đã mở {n} lần",
+  "trip.nights.one": "{n} đêm",
+  "trip.adults.one": "{n} người lớn",
+  "trip.flex.one": "± {n} ngày",
+  "trip.quiet.one": "Im lặng {n} ngày",
+  "ledger.stale.one": "tỷ giá cũ {n} ngày",
+  "builder.viewed.one": "Đã xem {n} lần, lần cuối {date}",
+  "duty.travellers.one": "{n} khách",
+  "aa.add.days.one": "{n} ngày",
+  "aa.add.seats.one": "còn {n} chỗ",
+};

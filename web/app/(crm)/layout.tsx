@@ -59,7 +59,7 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
       syntheticBadge={ctx.cfg.environment !== "prod"}
     >
       {banner && (
-        <SupportBanner state={banner} canManage={!!supportView?.can_manage} lang={ctx.lang} locale={ctx.locale} />
+        <SupportBanner state={banner} canManage={!!supportView?.can_manage} lang={ctx.lang} locale={ctx.locale} timeZone={supportView?.timezone ?? "UTC"} />
       )}
       {recovery && <RecoveryBanner recovery={recovery} lang={ctx.lang} locale={ctx.locale} />}
       {down.length > 0 && <MailboxBanner lang={ctx.lang} />}

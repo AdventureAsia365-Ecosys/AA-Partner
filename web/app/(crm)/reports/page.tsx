@@ -9,6 +9,7 @@ import { Panel, PageTitle } from "@/components/PageTitle";
 import { ExportMenu } from "@/components/reports/ExportMenu";
 import { BarList, TileRow } from "@/components/reports/ReportParts";
 import { ReportTable } from "@/components/reports/ReportTable";
+import { leadSourceLabel } from "@/lib/clients";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { formatDate } from "@/lib/dates";
@@ -193,7 +194,7 @@ export default async function ReportsPage({
               head={[tr("reports.col.source"), tr("reports.col.trips"), tr("reports.col.won"), tr("reports.col.winRate")]}
               rows={r.lead_sources.map((s) => ({
                 key: s.source ?? "none",
-                cells: [codeText(lang, "reports.source", s.source, "reports.notSet"), n(s.trips), n(s.won), pct(s.win_rate_pct)],
+                cells: [s.source ? leadSourceLabel(lang, s.source) : tr("reports.notSet"), n(s.trips), n(s.won), pct(s.win_rate_pct)],
               }))}
               empty={tr("reports.none")}
             />

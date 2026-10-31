@@ -4,7 +4,8 @@
 // (owner / agent; the client's link shown once to copy, or "the client's link now shows this version" when the new
 // version took over the live link), "Re-issue link" for a sent one (the old link stops working on every device),
 // "viewed" and the AA hold, and the client's choices against the included options (R19). Test ids sit on wrappers: the
-// kit Button forwards no data-* attribute (lesson AA-949).
+// kit Button forwards no data-* attribute (lesson AA-949). AA-957 S262 round 3: on a cancelled trip the row only says
+// what the version was (no send, re-issue, client choices or AA hold "until": the cancel released it).
 import { useState } from "react";
 import { Button, K } from "@/app/_kit";
 import { bffSend } from "@/lib/bffClient";
@@ -18,6 +19,7 @@ type Activity = { choices: Choice[]; totals?: { published: string; current: stri
 export function BuilderClientRow({
   p,
   canSend,
+  closed = false,
   hydrated,
   busy,
   tr,
@@ -29,6 +31,8 @@ export function BuilderClientRow({
 }: {
   p: Proposal;
   canSend: boolean;
+  /** The trip is cancelled or being cancelled. */
+  closed?: boolean;
   hydrated: boolean;
   busy: boolean;
   tr: (key: string) => string;
@@ -94,7 +98,7 @@ export function BuilderClientRow({
             </Button>
           </span>
         )}
-        {(p.status === "sent" || p.status === "accepted") && (
+        {(p.status === "sent" || p.status === "accepted") && !closed && (
           <span data-testid="builder-activity">
             <Button size="sm" variant="secondary" disabled={off} onClick={() => void loadActivity()}>
               {tr("builder.activity")}
@@ -104,8 +108,8 @@ export function BuilderClientRow({
       </div>
       {(p.status === "sent" || p.status === "accepted") && (
         <span data-testid="builder-viewed">
-          {p.view_count ? fmt(tr("builder.viewed"), { n: p.view_count, date: p.last_viewed_at ? formatDate(p.last_viewed_at.slice(0, 10), locale) : "" }) : tr("builder.notViewed")}
-          {p.hold_expires_at ? ` · ${fmt(tr("builder.heldUntil"), { date: formatInstant(p.hold_expires_at, locale, timeZone) })}` : ""}
+          {p.view_count ? fmt(tr(p.view_count === 1 ? "builder.viewed.one" : "builder.viewed"), { n: p.view_count, date: p.last_viewed_at ? formatDate(p.last_viewed_at.slice(0, 10), locale) : "" }) : tr("builder.notViewed")}
+          {p.hold_expires_at && !closed ? ` · ${fmt(tr("builder.heldUntil"), { date: formatInstant(p.hold_expires_at, locale, timeZone) })}` : ""}
         </span>
       )}
       {p.status === "accepted" && p.accepted_total_amount && (

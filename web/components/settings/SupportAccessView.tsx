@@ -36,11 +36,13 @@ export function SupportAccessView({ view, lang, locale }: { view: SupportAccess;
   const [showIdentity, setShowIdentity] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "danger" | "success"; text: string } | null>(null);
-  const when = (value: string | null) => (value ? formatInstant(value, locale, "UTC") : "—");
+  // The agency's zone (S262 round 3), as on the trip pages; UTC (labelled) only when the API did not send it.
+  const zone = view.timezone ?? "UTC";
+  const when = (value: string | null) => (value ? formatInstant(value, locale, zone) : "—");
   const columns = useMemo<ColumnDef<SupportSession, unknown>[]>(
     () => {
       const tx = (key: string) => t(lang, key as MessageKey);
-      const at = (value: string | null) => (value ? formatInstant(value, locale, "UTC") : "—");
+      const at = (value: string | null) => (value ? formatInstant(value, locale, zone) : "—");
       return [
         { id: "when", header: tx("support.col.when"), enableSorting: false, cell: ({ row }) => at(row.original.started_at) },
         {
@@ -81,7 +83,7 @@ export function SupportAccessView({ view, lang, locale }: { view: SupportAccess;
         },
       ];
     },
-    [lang, locale],
+    [lang, locale, zone],
   );
 
   async function send(path: string, body?: unknown, done?: string) {

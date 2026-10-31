@@ -100,7 +100,7 @@ export function OpsReleasePanel({
             {state === "live" && (
               <>
                 <p style={line} data-testid="ops-release-count">
-                  {fmt(tr("ops.travellers"), { complete: r.completeness.complete, n: r.completeness.travellers })}
+                  {fmt(tr(r.completeness.travellers === 1 ? "ops.travellers.one" : "ops.travellers"), { complete: r.completeness.complete, n: r.completeness.travellers })}
                 </p>
                 {missingItems(r.completeness).length > 0 && (
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", fontSize: 13 }}>
@@ -115,12 +115,12 @@ export function OpsReleasePanel({
                 {r.t21_alerted_at && <p style={{ ...line, color: K.amber }}>{tr("ops.alerted")}</p>}
                 <p style={line}>
                   {r.view_count > 0
-                    ? `${fmt(tr("ops.views"), { n: r.view_count })}${r.last_viewed_at ? `, ${fmt(tr("ops.lastView"), { date: day(r.last_viewed_at) })}` : ""}`
+                    ? `${fmt(tr(r.view_count === 1 ? "ops.views.one" : "ops.views"), { n: r.view_count })}${r.last_viewed_at ? `, ${fmt(tr("ops.lastView"), { date: day(r.last_viewed_at) })}` : ""}`
                     : tr("ops.neverViewed")}
                 </p>
                 <p style={line} data-testid="ops-release-purge">
                   {r.purge_at && r.days_to_purge !== null
-                    ? fmt(tr("ops.purgeDays"), { date: day(r.purge_at), n: r.days_to_purge })
+                    ? fmt(tr(r.days_to_purge === 1 ? "ops.purgeDays.one" : "ops.purgeDays"), { date: day(r.purge_at), n: r.days_to_purge })
                     : tr("ops.purgeUnknown")}
                 </p>
               </>

@@ -204,7 +204,7 @@ export function BuilderAaDrawer({
                 {tours.map((x) => (
                   <option key={x.source_id} value={x.source_id}>
                     {x.title}
-                    {x.duration_days ? ` · ${fmt(tr("aa.add.days"), { n: x.duration_days })}` : ""}
+                    {x.duration_days ? ` · ${fmt(tr(x.duration_days === 1 ? "aa.add.days.one" : "aa.add.days"), { n: x.duration_days })}` : ""}
                   </option>
                 ))}
               </select>
@@ -230,7 +230,7 @@ export function BuilderAaDrawer({
                     <option value="">{tr("aa.add.ownDate")}</option>
                     {product.departures.map((d) => (
                       <option key={d.departure_id} value={d.departure_id} disabled={d.available <= 0}>
-                        {d.start_date} · {d.available > 0 ? fmt(tr("aa.add.seats"), { n: d.available }) : tr("builder.avail.sold_out")}
+                        {d.start_date} · {d.available > 0 ? fmt(tr(d.available === 1 ? "aa.add.seats.one" : "aa.add.seats"), { n: d.available }) : tr("builder.avail.sold_out")}
                       </option>
                     ))}
                   </select>

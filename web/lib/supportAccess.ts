@@ -37,6 +37,8 @@ export interface SupportAccess {
   days_min: number;
   days_max: number;
   days_default: number;
+  /** The agency's IANA zone (S262 round 3): the banner and Settings print times in it, never UTC. */
+  timezone?: string;
 }
 
 export type BannerState =

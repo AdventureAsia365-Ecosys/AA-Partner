@@ -17,6 +17,8 @@ import { commissionEn, commissionVi } from "./i18nCommission";
 import { offlineEn, offlineVi } from "./i18nOffline";
 import { opsReleaseEn, opsReleaseVi } from "./i18nOpsRelease";
 import { supportEn, supportVi } from "./i18nSupport";
+import { pluralsEn, pluralsVi } from "./i18nPlurals";
+import { tripClosedEn, tripClosedVi } from "./i18nTripClosed";
 import { tripCodesEn, tripCodesVi } from "./i18nTripCodes";
 
 export type Lang = "en" | "vi";
@@ -49,6 +51,8 @@ const en = {
   ...opsReleaseEn, // AA-956: the AA ground operations panel and its log lines (lib/i18nOpsRelease.ts)
   ...offlineEn, // AA-954: the installable, offline traveller page (lib/i18nOffline.ts)
   ...commissionEn, // AA-957: A-12 Commissions, commission follow-up, the cancel dialog (lib/i18nCommission.ts)
+  ...tripClosedEn, // AA-957 round 3: a cancelled trip on every card, lead sources (lib/i18nTripClosed.ts)
+  ...pluralsEn, // AA-957 round 3: the singular of counted messages, read by plural() (lib/i18nPlurals.ts)
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Home",
@@ -2676,6 +2680,8 @@ const vi: Record<MessageKey, string> = {
   ...opsReleaseVi,
   ...offlineVi,
   ...commissionVi,
+  ...tripClosedVi,
+  ...pluralsVi,
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Trang chủ",
@@ -5301,6 +5307,15 @@ export function t(lang: Lang, key: MessageKey): string {
 /** ``fmt("{n} nights", { n: 3 })``: fill the {name} slots of a message (AA-936). */
 export function fmt(text: string, vars: Record<string, string | number>): string {
   return text.replace(/\{(\w+)\}/g, (all, name: string) => (name in vars ? String(vars[name]) : all));
+}
+
+/** A counted message (AA-957 S262 round 3: "1 commissions", "1 days"): ``plural(lang, "trip.nights", 1)`` reads the
+ * singular ``trip.nights.one`` ("1 night") when the count is 1 and the language has one (lib/i18nPlurals.ts), else the
+ * counted message. The count fills ``{n}`` unless ``vars`` names it (``{ days: 1 }`` for ``cancelTrip.aaFee``). */
+export function plural(lang: Lang, key: MessageKey, n: number, vars: Record<string, string | number> = {}): string {
+  const one = `${key}.one`;
+  const text = n === 1 && one in MESSAGES[lang] ? t(lang, one as MessageKey) : t(lang, key);
+  return fmt(text, { n, ...vars });
 }
 
 export function dictionary(lang: Lang): Record<MessageKey, string> {

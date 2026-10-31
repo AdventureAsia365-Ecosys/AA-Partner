@@ -50,7 +50,7 @@ export default async function TravellingPage({ searchParams }: { searchParams: P
             <Panel
               key={group.region}
               testId={`duty-region-${group.region}`}
-              title={`${regionLabel(group.region, tr)} · ${fmt(tr("duty.travellers"), { n: group.traveller_count })}`}
+              title={`${regionLabel(group.region, tr)} · ${fmt(tr(group.traveller_count === 1 ? "duty.travellers.one" : "duty.travellers"), { n: group.traveller_count })}`}
             >
               <ul style={{ listStyle: "none", margin: "0 0 12px", padding: 0, display: "grid", gap: 10 }}>
                 {group.trips.map((trip) => (
@@ -75,7 +75,7 @@ export default async function TravellingPage({ searchParams }: { searchParams: P
                         : fmt(tr("duty.trip.leaves"), { date: formatDate(trip.start_date, ctx.locale) })}
                       {trip.place && ` · ${trip.place}`}
                       {" · "}
-                      {fmt(tr("duty.travellers"), { n: trip.traveler_ids.length })}
+                      {fmt(tr(trip.traveler_ids.length === 1 ? "duty.travellers.one" : "duty.travellers"), { n: trip.traveler_ids.length })}
                     </div>
                     {trip.lines.length > 0 && (
                       <div style={{ fontSize: 12.5 }}>

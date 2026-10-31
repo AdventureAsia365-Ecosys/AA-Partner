@@ -7,7 +7,8 @@
 //     link's state, [Send planning form] (a signed link through the dispatcher; held until a mail sender exists, so the
 //     link is shown once here to copy), [Fill in from call] (the same paged form, the agent typing), and the answers
 //     the client gave so far (bands and codes only, F2);
-//   - Booking details (Stage 3): locked until the booking cards.
+//   - Booking details (Stage 3): before the trip is booked it opens later; once booked the travellers send it from
+//     their own page (the Proposal card's Stage 3 progress); on a cancelled trip it is not needed (AA-957 round 3).
 //
 // The token is never stored: "Copy link" works from the send answer of this page view only (a new send re-issues it).
 import { useRouter } from "next/navigation";
@@ -18,7 +19,7 @@ import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { dictionary, fmt, type Lang, type MessageKey, t } from "@/lib/i18n";
-import { STAGE2_GATE, type SendResult, type Stage2View, type TripView } from "@/lib/pipeline";
+import { bookingDetailsKey, STAGE2_GATE, type SendResult, type Stage2View, type TripView } from "@/lib/pipeline";
 import { OPTION_PREFIX, type Answers } from "@/lib/planningForm";
 import { Dialog, missingLabel } from "./StageDialogs";
 import { toast, type ToastState } from "./UndoToast";
@@ -46,6 +47,7 @@ export function TravellerInfoPanel({
   fillOpen,
   setFillOpen,
   notify,
+  closed: tripClosed = false,
 }: {
   view: TripView;
   stage2: Stage2View | null;
@@ -56,6 +58,8 @@ export function TravellerInfoPanel({
   fillOpen: boolean;
   setFillOpen: (open: boolean) => void;
   notify: (state: ToastState) => void;
+  /** S262 round 3: the trip is cancelled or being cancelled (the page's closed state). */
+  closed?: boolean;
 }) {
   const router = useRouter();
   const hydrated = useHydrated();
@@ -70,7 +74,7 @@ export function TravellerInfoPanel({
   const s3 = done?.s3 ?? trip.intake_completeness?.s3;
   const link = view.stage2_link ?? null;
   const live = link && (link.status === "sent" || link.status === "opened");
-  const closed = trip.stage === "completed" || trip.stage === "lost" || trip.stage === "cancelled";
+  const closed = tripClosed || trip.stage === "completed" || trip.stage === "lost" || trip.stage === "cancelled";
   // Without a configured client host (local runs) the path alone is shown.
   const linkUrl = sent ? `${clientOrigin ?? ""}${sent.link_path}` : null;
 
@@ -169,8 +173,10 @@ export function TravellerInfoPanel({
             stage2 && <span style={{ fontSize: 12.5, color: K.muted }}>{t(lang, "info.noAnswers")}</span>
           )}
         </Row>
-        <Row label={t(lang, "info.booking")} percent={s3} testId="info-s3">
-          <span style={{ fontSize: 12.5, color: K.muted }}>{t(lang, "info.bookingLocked")}</span>
+        <Row label={t(lang, "info.booking")} percent={tripClosed || trip.stage === "cancelled" ? undefined : s3} testId="info-s3">
+          <span style={{ fontSize: 12.5, color: K.muted }} data-testid="info-s3-note">
+            {t(lang, bookingDetailsKey(trip.stage, tripClosed))}
+          </span>
         </Row>
       </div>
       {fillOpen && stage2 && (

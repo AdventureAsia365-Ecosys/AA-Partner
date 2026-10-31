@@ -6,6 +6,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, K, useHydrated } from "@/app/_kit";
+import { useTripClosed } from "@/components/pipeline/TripClosed";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
@@ -110,14 +111,20 @@ export function MessagesPanel({
   savedReplies,
   lang,
   locale,
+  closed: closedProp = false,
 }: {
   tripId: string;
   conversations: Conversation[];
   savedReplies: SavedReply[];
   lang: Lang;
   locale: DateLocale;
+  /** AA-957 S262 round 3 (C12 §2.7): the trip is cancelled or being cancelled. The composer stays (the agency still
+   * owes the client the refund and the wrap-up; §2.7 stops the automated messages, not the agency's own), with a note
+   * that says so. */
+  closed?: boolean;
 }) {
   const router = useRouter();
+  const closed = useTripClosed(closedProp);
   const hydrated = useHydrated();
   const tr = (key: string) => t(lang, key as MessageKey);
   const [selected, setSelected] = useState<string | null>(conversations[0]?.conversation_id ?? null);
@@ -234,6 +241,11 @@ export function MessagesPanel({
   return (
     <Panel title={tr("messages.title")} testId="trip-messages">
       <div style={{ display: "grid", gap: 12 }}>
+        {closed && (
+          <p data-testid="messages-closed" style={{ margin: 0, padding: "8px 10px", borderRadius: 8, background: K.bg, fontSize: 12.5, color: K.muted }}>
+            {tr("messages.closed")}
+          </p>
+        )}
         {conversations.length > 1 && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {conversations.map((c) => (

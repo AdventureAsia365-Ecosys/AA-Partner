@@ -4,13 +4,15 @@
 // follow-up in view, never columns cut off to the right; the trip shows its dates under the title (two trips of one
 // title are told apart); a receipt in another currency reads as its pair ("1 EUR = 1.0870 USD on 28 Oct 2026") with
 // the amount it counts as in the base currency and the bank reference; a written-off row shows its note.
+// S262 round 3: a cancelled row's amount reads "Was expected"; the claim reference shows on a claimed row only (an
+// Undo claim before the API cleared it left "Your claim" on an expected row).
 import type { ColumnDef } from "@tanstack/react-table";
 import Link from "next/link";
 import { Badge, DataTable, K } from "@/app/_kit";
 import { CommissionActions } from "@/components/commissions/CommissionActions";
 import { type Commission, rateText, STATUS_TONE, tripWhen } from "@/lib/commissions";
 import { formatDate, type DateLocale } from "@/lib/dates";
-import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
+import { fmt, plural, t, type Lang, type MessageKey } from "@/lib/i18n";
 import { formatAmount } from "@/lib/proposals";
 
 /** The width the five columns need (S262 fix pass): at most the content width of the narrowest desktop window (900 px
@@ -48,19 +50,23 @@ export function ReceivedCell({ c, base, lang, locale }: { c: Commission; base: s
   );
 }
 
-/** The Status cell: the badge, then what explains it (the claim on an open row, the reason and note of a closed one). */
+/** The Status cell: the badge, then what explains it (the claim of a claimed row, the reason and note of a closed one). */
 export function StatusCell({ c, lang }: { c: Commission; lang: Lang }) {
   const tr = (key: string) => t(lang, key as MessageKey);
-  const open = c.status === "expected" || c.status === "claimed";
   return (
     <span style={{ display: "grid", gap: 4, justifyItems: "start", minWidth: 0 }}>
       <Badge tone={c.overdue ? "danger" : STATUS_TONE[c.status]}>{tr(`commission.status.${c.status}`)}</Badge>
-      {open && c.claim_ref && <span style={small}>{fmt(tr("commission.claimRefShown"), { ref: c.claim_ref })}</span>}
+      {c.status === "claimed" && c.claim_ref && <span style={small} data-testid="commission-claim-ref">{fmt(tr("commission.claimRefShown"), { ref: c.claim_ref })}</span>}
       {c.close_reason && <span style={small}>{tr(`commission.closeReason.${c.close_reason}`)}</span>}
       {c.note && <span style={small} data-testid="commission-note">{fmt(tr("commission.noteShown"), { note: c.note })}</span>}
       {c.keep_on_cancel && <span style={small}>{tr("commission.kept")}</span>}
     </span>
   );
+}
+
+/** The amount's label: a cancelled commission "Was expected" (S262 round 3), never "Expected" next to CANCELLED. */
+export function expectedLabelKey(status: Commission["status"]): MessageKey {
+  return status === "cancelled" ? "commissions.col.wasExpected" : "commissions.col.expected";
 }
 
 export function CommissionsTable({ commissions, base, lang, locale }: { commissions: Commission[]; base: string; lang: Lang; locale: DateLocale }) {
@@ -103,7 +109,7 @@ export function CommissionsTable({ commissions, base, lang, locale }: { commissi
       cell: ({ row }) => (
         <span style={{ display: "grid", gap: 4, minWidth: 0 }}>
           <span>
-            <span style={small}>{tr("commissions.col.expected")}</span>
+            <span style={small}>{tr(expectedLabelKey(row.original.status))}</span>
             {row.original.commission_expected ? money(row.original.commission_expected.amount, row.original.commission_expected.currency) : "—"}
           </span>
           {row.original.commission_received && (
@@ -125,7 +131,7 @@ export function CommissionsTable({ commissions, base, lang, locale }: { commissi
           <StatusCell c={row.original} lang={lang} />
           <span style={{ display: "block", fontSize: 12, color: row.original.overdue ? K.danger : K.muted }} data-testid="commission-due">
             {fmt(tr("commissions.dueOn"), { date: formatDate(row.original.due_on, locale) })}
-            {row.original.overdue && <span style={{ display: "block" }}>{fmt(tr("commission.overdueDays"), { n: row.original.days_overdue })}</span>}
+            {row.original.overdue && <span style={{ display: "block" }}>{plural(lang, "commission.overdueDays", row.original.days_overdue ?? 0)}</span>}
           </span>
         </span>
       ),

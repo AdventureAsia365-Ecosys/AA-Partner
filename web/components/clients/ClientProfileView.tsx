@@ -21,6 +21,7 @@ import {
   bandLabel,
   consentLabel,
   label,
+  leadSourceLabel,
   relationLabel,
   roleText,
   type ClientProfile,
@@ -115,7 +116,7 @@ export function ClientProfileView({ view, members, role, lang, locale }: { view:
           </span>
           {traveler.lead_source && (
             <span>
-              {t(lang, "clients.source")}: <span style={{ color: K.ink }}>{traveler.lead_source}</span>
+              {t(lang, "clients.source")}: <span style={{ color: K.ink }}>{leadSourceLabel(lang, traveler.lead_source)}</span>
             </span>
           )}
           {role !== "assistant" && (

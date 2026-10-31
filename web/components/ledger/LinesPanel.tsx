@@ -13,11 +13,12 @@ import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
 import { DateInput } from "@/components/DateInput";
 import { AaItemForm } from "@/components/ledger/AaItemForm";
+import { useTripClosed } from "@/components/pipeline/TripClosed";
 import { aaBadgeKey, aaErrorKey, aaResultKey, allowedAaActions, isRetrying, type AaAction } from "@/lib/aa";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
-import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
+import { fmt, plural, t, type Lang, type MessageKey } from "@/lib/i18n";
 import {
   errorKey,
   formatMoney,
@@ -65,6 +66,7 @@ export function LinesPanel({
   role,
   lang,
   locale,
+  closed: closedProp = false,
 }: {
   tripId: string;
   view: TripLines;
@@ -72,8 +74,13 @@ export function LinesPanel({
   role: string;
   lang: Lang;
   locale: DateLocale;
+  /** AA-957 S262 round 3: the trip is cancelled or being cancelled (the page's closed state wins once the run ends). */
+  closed?: boolean;
 }) {
   const router = useRouter();
+  // A closed trip books nothing new (C12 §2.7): no AA item, no line, no confirm, no hold; a release and a line's cancel
+  // stay (they undo), and money stays editable for a supplier's cancellation fee. The API answers 409 trip_cancelled.
+  const closed = useTripClosed(closedProp);
   const hydrated = useHydrated();
   const tr = (key: string) => t(lang, key as MessageKey);
   const margin = seesMargin(role);
@@ -87,6 +94,7 @@ export function LinesPanel({
   const [currency, setCurrency] = useState(view.base_currency);
 
   function refusal(detail: string, body: unknown): string {
+    if (detail === "trip_cancelled") return tr("ledger.closed"); // S262 round 3: the page was out of date
     if (aaErrorKey(detail) !== "ledger.error.other") return tr(aaErrorKey(detail));
     const text = tr(errorKey(detail));
     if (detail !== "line_incomplete") return text;
@@ -189,7 +197,7 @@ export function LinesPanel({
         <span>{reading}</span>
         <span style={{ color: K.muted, fontSize: 11.5 }}>
           @ {formatDate(m.fx.rate_date, locale)}
-          {m.fx.stale_days > 0 ? ` · ${fmt(tr("ledger.stale"), { n: m.fx.stale_days })}` : ""}
+          {m.fx.stale_days > 0 ? ` · ${plural(lang, "ledger.stale", m.fx.stale_days)}` : ""}
         </span>
         {m.fx.attribution && (
           <a href={m.fx.attribution.url} target="_blank" rel="noreferrer" style={{ fontSize: 11 }}>
@@ -266,7 +274,7 @@ export function LinesPanel({
                   <td style={cell}>{fxCell(line)}</td>
                   <td style={cell}>{tr(`ledger.collect.${line.collect}`)}</td>
                   <td style={{ ...cell, whiteSpace: "nowrap" }}>
-                    {allowedAaActions(line.aa?.actions ?? [], role).map((action: AaAction) => (
+                    {allowedAaActions(line.aa?.actions ?? [], role).filter((action) => !closed || action === "release").map((action: AaAction) => (
                       <Button
                         key={action}
                         size="sm"
@@ -277,7 +285,7 @@ export function LinesPanel({
                         {tr(`aa.action.${action}`)}
                       </Button>
                     ))}
-                    {!line.read_only && line.status === "planning" && (
+                    {!line.read_only && line.status === "planning" && !closed && (
                       <Button size="sm" variant="primary" disabled={!hydrated || busy} onClick={() => run("POST", `lines/${line.booking_line_id}/confirm`, undefined, confirmNote)}>
                         {tr("ledger.confirm")}
                       </Button>
@@ -326,6 +334,11 @@ export function LinesPanel({
           </table>
         </div>
       )}
+      {closed ? (
+        <p data-testid="ledger-closed" style={{ margin: "12px 0 0", fontSize: 12.5, color: K.muted }}>
+          {tr("ledger.closed")}
+        </p>
+      ) : (
       <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
         {addingAa ? (
           <AaItemForm tripId={tripId} baseCurrency={view.base_currency} canSell={margin} lang={lang} locale={locale} onClose={() => setAddingAa(false)} />
@@ -389,6 +402,7 @@ export function LinesPanel({
           </p>
         )}
       </div>
+      )}
     </Panel>
   );
 }

@@ -3,6 +3,8 @@
 // Fix A7, WF-2 "Travellers & docs"). Upload reads the file in the browser and sends base64 JSON through the BFF; the
 // API checks the type, seals it with the agency's docs key and stores it. A passport scan is write-only (never shown
 // to travellers). Download asks why (one reveal event) and hands the file to the browser as a Blob, never a link.
+// AA-957 S262 round 3 (C12 §2.7): on a cancelled trip a new file stays internal (no "Visible to the traveller", and a
+// hidden file is not shown again; hiding one still works), the API answers 409 trip_cancelled otherwise.
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, K } from "@/app/_kit";
@@ -31,6 +33,7 @@ export function DocumentsPanel({
   role,
   lang,
   locale,
+  closed = false,
 }: {
   documents: DocumentRow[];
   travelerId?: string;
@@ -38,6 +41,8 @@ export function DocumentsPanel({
   role: Role;
   lang: Lang;
   locale: DateLocale;
+  /** The trip is cancelled or being cancelled: nothing new is shown to its travellers. */
+  closed?: boolean;
 }) {
   const router = useRouter();
   const [kind, setKind] = useState<DocKind>(travelerId ? "passport_scan" : "ticket");
@@ -65,11 +70,11 @@ export function DocumentsPanel({
       filename: file.name,
       content_type: file.type,
       content_b64,
-      visible_to_travelers: kind === "passport_scan" ? false : visible,
+      visible_to_travelers: kind === "passport_scan" || closed ? false : visible,
     });
     setBusy(false);
     if (!res.ok) {
-      setError(t(lang, res.detail === "content_mismatch" || res.detail === "invalid_content_type" ? "docs.badType" : "clients.error.save"));
+      setError(t(lang, res.detail === "content_mismatch" || res.detail === "invalid_content_type" ? "docs.badType" : res.detail === "trip_cancelled" ? "docs.closed" : "clients.error.save"));
       return;
     }
     setFile(null);
@@ -141,7 +146,7 @@ export function DocumentsPanel({
                     {t(lang, "docs.download")}
                   </Button>
                 )}
-                {!d.write_only && (
+                {!d.write_only && !(closed && !d.visible_to_travelers) && (
                   <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act("PATCH", d, { visible_to_travelers: !d.visible_to_travelers })}>
                     {t(lang, d.visible_to_travelers ? "docs.hidden" : "docs.shown")}
                   </Button>
@@ -177,11 +182,16 @@ export function DocumentsPanel({
           {t(lang, "docs.file")}
           <input type="file" accept="application/pdf,image/jpeg,image/png,image/webp,image/heic" onChange={(e) => setFile(e.target.files?.[0] ?? null)} style={field} data-testid="document-file" />
         </label>
-        {kind !== "passport_scan" && (
+        {kind !== "passport_scan" && !closed && (
           <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12.5, color: K.body }}>
             <input type="checkbox" checked={visible} onChange={(e) => setVisible(e.target.checked)} />
             {t(lang, "docs.visible")}
           </label>
+        )}
+        {closed && (
+          <p data-testid="documents-closed" style={{ margin: 0, fontSize: 12, color: K.muted }}>
+            {t(lang, "docs.closed")}
+          </p>
         )}
         <div>
           <Button size="sm" type="submit" variant="secondary" disabled={!file || busy}>

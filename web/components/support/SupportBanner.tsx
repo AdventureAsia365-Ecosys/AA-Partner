@@ -17,18 +17,21 @@ export function SupportBanner({
   canManage,
   lang,
   locale,
+  timeZone = "UTC",
 }: {
   state: NonNullable<BannerState>;
   canManage: boolean;
   lang: Lang;
   locale: DateLocale;
+  /** The agency's IANA zone (GET /support-access `timezone`; S262 round 3: the banner printed UTC). */
+  timeZone?: string;
 }) {
   const router = useRouter();
   const tr = (key: string) => t(lang, key as MessageKey);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const emergency = state.kind === "breakglass";
-  const date = formatInstant(state.until, locale, "UTC");
+  const date = formatInstant(state.until, locale, timeZone);
   const text =
     state.kind === "breakglass"
       ? fmt(tr("support.banner.breakglass"), { date, reason: tr(reasonKey(state.reason)) })
