@@ -59,7 +59,7 @@ from typing import Any
 
 import asyncpg
 
-from app import stages
+from app import cancellation, stages
 from app.audit import MAX_OBJECT_IDS
 from app.audit_export import registry
 from app.booking import contract, proposal_lines, rehold
@@ -109,10 +109,19 @@ SELECT l.booking_line_id, l.trip_id, l.status, l.aa_sub_status, l.aa_tour_source
        l.aa_quote_version, l.bk_hold_id, l.bk_booking_id, l.from_price, t.stage AS trip_stage,
        t.deleted_at AS trip_deleted_at,
        (SELECT m.amount FROM crm.v_booking_line_money_current m
-         WHERE m.booking_line_id = l.booking_line_id AND m.kind = 'sell' AND m.currency = l.aa_currency) AS sell_amount
+         WHERE m.booking_line_id = l.booking_line_id AND m.kind = 'sell' AND m.currency = l.aa_currency) AS sell_amount,
+       (SELECT x.reason_code FROM crm.trip_cancellation x WHERE x.trip_id = l.trip_id) AS cancel_reason
   FROM crm.booking_line l JOIN crm.trip t ON t.trip_id = l.trip_id
  WHERE l.booking_line_id = $1
 """
+# AA-957 (C12): the lines of one Booking booking in the trip (a cancel answer closes them all).
+BOOKING_LINES_SQL = """
+SELECT booking_line_id, bk_hold_id FROM crm.booking_line
+ WHERE trip_id = $1 AND bk_booking_id = $2 AND supplier_kind = 'aa' AND status <> 'cancelled' AND deleted_at IS NULL
+ ORDER BY booking_line_id
+   FOR UPDATE
+"""
+FEE_SQL = "SELECT crm.booking_line_aa_cancel_fee($1, $2, $3, $4)"
 REQUEST_STATUS_SQL = "SELECT status FROM crm.aa_request WHERE aa_request_id = $1 FOR UPDATE"
 LOCK_LINE_SQL = "SELECT 1 FROM crm.booking_line WHERE booking_line_id = $1 FOR UPDATE"
 RETRY_SQL = """
@@ -281,6 +290,7 @@ class Outcome:
     booking: contract.Booking | None = None
     booking_lines: dict[str, str] = field(default_factory=dict)  # AA-952: every line_ref of the confirm answer
     released: bool = False
+    cancellation: contract.Cancellation | None = None  # AA-957: Booking cancelled the booking (the fee)
     code: str | None = None
     failed: bool = False
     retry: str | None = None
@@ -400,6 +410,25 @@ async def _refresh(client: BookingClient, tenant_id: uuid.UUID, w: Work) -> Outc
     return Outcome(hold=contract.hold(data, str(w.line_id)), code="refreshed")
 
 
+async def _cancel(client: BookingClient, tenant_id: uuid.UUID, w: Work) -> Outcome:
+    """AA-957 (C12): ``POST /bookings/{id}/cancel`` (not a dry run) with the trip's reason; ``Idempotency-Key
+    crm-cancel:<request id>`` (Booking also answers a repeat with the stored cancellation)."""
+    booking_id = w.line["bk_booking_id"]
+    if not booking_id:
+        return Outcome(code="not_found", failed=True)
+    reason = cancellation.BOOKING_REASON.get(w.line.get("cancel_reason") or "", "other")
+    try:
+        data = await client.cancel_booking(
+            tenant_id, booking_id, reason, dry_run=False, idempotency_key=f"crm-cancel:{w.request['aa_request_id']}"
+        )
+    except BookingRefusal as exc:
+        return Outcome(code=exc.code, failed=True)
+    result = contract.cancellation(data)
+    if result.cancelled_at is None:
+        raise contract.ContractError("cancelled_at is null on a cancel that is not a dry run")
+    return Outcome(cancellation=result, code="cancelled")
+
+
 async def perform(client: BookingClient, tenant_id: uuid.UUID, w: Work) -> Outcome:
     """Call Booking for one request; never raises for a Booking failure (it becomes ``retry`` or a final ``code``)."""
     kind = w.request["kind"]
@@ -412,6 +441,8 @@ async def perform(client: BookingClient, tenant_id: uuid.UUID, w: Work) -> Outco
             return await _confirm(client, tenant_id, w)
         if kind == "release":
             return await _release(client, tenant_id, w)
+        if kind == "cancel":
+            return await _cancel(client, tenant_id, w)
         return await _refresh(client, tenant_id, w)
     except BookingUnavailable as exc:
         return Outcome(retry=exc.error_class)
@@ -495,6 +526,8 @@ async def apply(ctx: SystemContext, w: Work, out: Outcome) -> str:
             return "failed"
         await ctx.conn.execute(RETRY_SQL, request_id, out.retry, backoff_seconds(w.request["attempts"]))
         return "retry"
+    if kind == "cancel":
+        return await _apply_cancel(ctx, w, out, status, cur)
     if out.quote is not None:
         await _apply_quote(ctx, w, out)
     if out.again:
@@ -572,6 +605,44 @@ async def apply(ctx: SystemContext, w: Work, out: Outcome) -> str:
     return final
 
 
+async def _apply_cancel(ctx: SystemContext, w: Work, out: Outcome, status: str | None, cur: dict[str, Any]) -> str:
+    """AA-957 (C12): Booking cancelled the booking (or says there is nothing left to cancel: ``not_found`` /
+    ``invalid``): every line of the booking is cancelled, the fee becomes a ``cancellation_cost`` on this line, the
+    commitments read cancelled, and a trip whose cancellation waited for it moves to ``cancelled``. Any other refusal
+    fails the request and opens the owner task ``aa_cancel_failed`` (the trip stays "cancellation pending"; pressing
+    Cancel again asks Booking again)."""
+    request_id, line_id, trip_id = w.request["aa_request_id"], w.line_id, cur["trip_id"]
+    booking_id = cur["bk_booking_id"]
+    done = out.cancellation is not None or (out.failed and out.code in cancellation.CANCEL_DONE_CODES)
+    if done:
+        result = "cancelled_by_agency" if out.cancellation is not None else (out.code or "cancelled")
+        for r in await ctx.conn.fetch(BOOKING_LINES_SQL, trip_id, booking_id) if booking_id else []:
+            await ctx.conn.execute(CLOSE_LINE_SQL, r["booking_line_id"], None, None, result)
+            if r["bk_hold_id"]:
+                await ctx.conn.execute(COMMIT_SQL, trip_id, "cancelled", r["bk_hold_id"])
+            ctx.audit("aa_sync", "allowed", "booking_line", str(r["booking_line_id"]), reason=f"cancel_{result}"[:40])
+        c = out.cancellation
+        if c is not None and c.fee > 0:
+            await ctx.conn.fetchval(FEE_SQL, line_id, c.fee, c.currency, (c.cancelled_at or _utc_now()).date())
+        final, code = "done", out.code
+    else:
+        final, code = "failed", out.code
+        await ctx.conn.execute(TASK_SQL, trip_id, cancellation.CANCEL_FAILED_TASK)
+    if status == "pending":
+        await ctx.conn.execute(FINISH_SQL, request_id, final, code)
+    ctx.audit("aa_sync", "allowed", "booking_line", str(line_id), reason=f"cancel_{code or final}"[:40])
+    if done:
+        await ops_release.nudge(ctx, trip_id, "aa_cancel")
+        await cancellation.finish_if_done(ctx, trip_id)
+    if cur["trip_deleted_at"] is None:
+        await stages.refresh_waiting_on(ctx, trip_id)
+    return final
+
+
+def _utc_now() -> dt.datetime:
+    return dt.datetime.now(dt.UTC)
+
+
 # ── 3. the feed ──────────────────────────────────────────────────────────────────────────────────
 
 
@@ -621,6 +692,8 @@ async def apply_event(ctx: SystemContext, ev: contract.Event) -> tuple[str, str]
                 await ctx.conn.execute(COMMIT_SQL, trip_id, "cancelled", hold_id)
         ctx.audit("aa_sync", "allowed", "booking_line", str(line_id), reason=ev.type.replace(".", "_"))
     for trip_id in trips:
+        if ev.type == "booking.cancelled":
+            await cancellation.finish_if_done(ctx, trip_id)  # AA-957: a pending trip cancel may be complete now
         await stages.refresh_waiting_on(ctx, trip_id)
         if ev.type in OPS_RELEASE_EVENTS:
             await ops_release.nudge(ctx, trip_id, ev.type.replace(".", "_"))

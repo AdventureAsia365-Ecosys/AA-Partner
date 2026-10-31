@@ -193,3 +193,15 @@ class BookingClient:
     ) -> dict[str, Any]:
         path = f"/holds/{_path_id(hold_id)}/confirm"
         return await self._call("POST", path, BOOK, tenant_id, body=body, idempotency_key=idempotency_key)
+
+    async def cancel_booking(
+        self, tenant_id: uuid.UUID, booking_id: str, reason_code: str, *, dry_run: bool, idempotency_key: str
+    ) -> dict[str, Any]:
+        """AA-957 (C12): cancel a confirmed AA booking, or with ``dry_run`` only read the fee its cancellation policy
+        charges today (``CancellationResult``). Booking answers a repeat with the stored cancellation."""
+        path = f"/bookings/{_path_id(booking_id)}/cancel"
+        query = {"dry_run": "true"} if dry_run else None
+        return await self._call(
+            "POST", path, BOOK, tenant_id, body={"reason_code": reason_code}, query=query,
+            idempotency_key=idempotency_key,
+        )  # fmt: skip

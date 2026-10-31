@@ -43,6 +43,7 @@ SELECT i.invoice_id, i.trip_id, i.proposal_id, i.kind, i.status, i.number, i.due
   LEFT JOIN crm.proposal p ON p.proposal_id = i.proposal_id
  WHERE i.status = 'open' AND i.deleted_at IS NULL AND i.rehold_requested_at IS NULL AND i.due_on < $1
    AND i.reminder_count < $2
+   AND NOT EXISTS (SELECT 1 FROM crm.trip_cancellation x WHERE x.trip_id = i.trip_id)
    AND (i.last_reminded_at IS NULL OR i.last_reminded_at <= now() - make_interval(days => $3))
    AND i.total_amount > (SELECT coalesce(sum(x.amount), 0) FROM crm.payment x
                           WHERE x.invoice_id = i.invoice_id AND x.entry_kind = 'payment')

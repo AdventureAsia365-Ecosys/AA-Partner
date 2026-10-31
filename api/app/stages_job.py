@@ -23,6 +23,10 @@ Migrate idle check count a queued row as busy; not deploy-gate exempt). For ever
    item and an ``invoice_overdue`` task, the day after and then every 3 days, at most 5 times
    (:func:`app.payments.reminders.overdue`); first, the open ``invoice_overdue`` tasks of trips with nothing left to
    chase are closed (:func:`app.payments.reminders.close_settled`).
+9. AA-957 (M13, C12): the commission rows of trips whose lines changed without a sync
+   (:func:`app.commissions.service.sweep`), one owner task ``commission_overdue`` per trip with a commission past its
+   due date (once per row), and the cancel's ``cancel_with_suppliers`` task closed once no confirmed agency line is
+   left. A trip whose cancellation waits for Booking is never moved by the date rule.
 
 Payload and result are ids and counts only. An agency that is locked or offboarding is skipped.
 """
@@ -39,6 +43,7 @@ import asyncpg
 
 from app import stages
 from app.audit_export import registry
+from app.commissions import service as commissions
 from app.errors import Forbidden, NotFound, ServiceError
 from app.jobs import queue
 from app.jobs.kinds import STAGE_DATE_RULE
@@ -66,6 +71,7 @@ SELECT trip_id, stage FROM crm.trip
  WHERE deleted_at IS NULL
    AND ((stage IN ('booked', 'pre_departure') AND start_date <= $1)
         OR (stage = 'travelling' AND end_date <= $1))
+   AND NOT EXISTS (SELECT 1 FROM crm.trip_cancellation x WHERE x.trip_id = trip.trip_id AND x.status = 'pending')
  ORDER BY start_date, trip_id
  LIMIT $2
    FOR UPDATE SKIP LOCKED
@@ -142,6 +148,17 @@ async def run_agency(ctx: SystemContext) -> Counter[str]:
     reminded = await reminders.overdue(ctx, today)
     if reminded:
         counts["invoice_reminders"] += reminded
+    # AA-957 (M13): commission rows of every trip whose lines changed without a sync, the overdue owner task (once per
+    # row), and the cancel's supplier task closed once no confirmed agency line is left.
+    synced = await commissions.sweep(ctx)
+    if synced:
+        counts["commission_trips_synced"] += synced
+    overdue = await commissions.alert_overdue(ctx, today)
+    if overdue:
+        counts["commissions_overdue"] += overdue
+    closed_supplier = await commissions.close_supplier_tasks(ctx, ACTOR)
+    if closed_supplier:
+        counts["cancel_supplier_tasks_closed"] += closed_supplier
     return counts
 
 

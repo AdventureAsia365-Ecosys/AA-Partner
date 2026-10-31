@@ -63,6 +63,7 @@ from app.routers import (
     calendar,
     ci,
     client_pages,
+    commissions,
     data,
     duty,
     esign,
@@ -274,6 +275,7 @@ def create_app(
     app.include_router(staff.router)
     app.include_router(staff_ops.router)
     app.include_router(ops_release.router)
+    app.include_router(commissions.router)
     return app
 
 

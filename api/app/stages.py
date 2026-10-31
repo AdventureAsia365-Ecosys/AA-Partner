@@ -159,7 +159,9 @@ SELECT t.trip_id, t.stage, t.intake_completeness,
        EXISTS (SELECT 1 FROM crm.payment_schedule s
                  JOIN crm.proposal p ON p.proposal_id = s.proposal_id
                 WHERE s.trip_id = t.trip_id AND s.kind = 'deposit' AND s.status = 'paid' AND s.deleted_at IS NULL
-                  AND p.status = 'accepted' AND p.deleted_at IS NULL) AS deposit_paid
+                  AND p.status = 'accepted' AND p.deleted_at IS NULL) AS deposit_paid,
+       EXISTS (SELECT 1 FROM crm.trip_cancellation x
+                WHERE x.trip_id = t.trip_id AND x.status = 'pending') AS cancellation_pending
   FROM crm.trip t
  WHERE t.deleted_at IS NULL AND (t.trip_id = ANY($1::uuid[]) OR ($1::uuid[] IS NULL AND t.stage = $2))
  ORDER BY t.trip_id
@@ -381,6 +383,7 @@ async def move(
     trip = await ctx.conn.fetchrow(LOCK_SQL, trip_id)
     if trip is None:
         raise NotFound("trip_not_found")
+    await ensure_not_cancelling(ctx, trip_id)  # AA-957: a cancel waiting for Booking holds the stage
     stage = trip["stage"]
     if stage == to:
         raise Conflict("already_in_stage")
@@ -561,6 +564,8 @@ def _blocked_code(row: Any, to: str, override_reason: str | None) -> str | None:
     stage = row["stage"]
     if stage == to:
         return "already_in_stage"
+    if "cancellation_pending" in row.keys() and row["cancellation_pending"]:
+        return "cancellation_pending"
     if to not in ALLOWED_MOVES.get(stage, ()):
         return "transition_not_allowed"
     gate = GATES.get((stage, to))
@@ -685,12 +690,23 @@ async def bulk_undo(ctx: TenantContext, batch_id: uuid.UUID) -> dict[str, Any]:
 
 
 async def cancel(
-    ctx: TenantContext, trip_id: uuid.UUID, *, reason: str | None, dry_run: bool, notices: list[Any] | None = None
+    ctx: TenantContext,
+    trip_id: uuid.UUID,
+    *,
+    reason: str | None,
+    dry_run: bool,
+    notices: list[Any] | None = None,
+    refunds: Any = None,
+    keep_commission: Any = None,
 ) -> dict[str, Any]:
-    """Cancel a booked, pre-departure or travelling trip. The dry run lists today's effects and changes nothing; the
-    run applies them in this transaction. Later cards (Booking release, invoices, refunds, commission, workflows) add
-    their effect rows here. ``notices``: the AA ops alarm lines (:class:`app.ops_release.service.Notice`) the route
-    writes after the commit."""
+    """Cancel a booked, pre-departure or travelling trip (C12, :mod:`app.cancellation`). The dry run lists every effect
+    and changes nothing; the run applies them in this transaction. A trip with AA bookings keeps its stage while
+    Booking cancels them (``cancellation.status`` pending, card R); pressing it again asks Booking again. ``refunds``:
+    ``[{payment_id, amount}]`` (the amount asked back per payment; default all that is left); ``keep_commission``: the
+    expected commissions the supplier still pays. ``notices``: the AA ops alarm lines
+    (:class:`app.ops_release.service.Notice`) the route writes after the commit."""
+    from app import cancellation
+
     if reason not in CANCEL_REASONS:
         raise Invalid("cancel_reason_required", "pick one of the fixed reasons", reasons=list(CANCEL_REASONS))
     trip = await ctx.conn.fetchrow(LOCK_SQL, trip_id)
@@ -699,46 +715,29 @@ async def cancel(
     if trip["stage"] not in CANCELLABLE:
         raise Conflict("transition_not_allowed", "only a booked, pre-departure or travelling trip is cancelled",
                        allowed=allowed_moves(trip["stage"]))  # fmt: skip
-    from app.booking import aa_lines
-    from app.ops_release import service as ops_release
-
-    counts = await ctx.conn.fetchrow(CANCEL_EFFECTS_SQL, trip_id)
-    aa = await aa_lines.close_effects(ctx, trip_id)
-    released = await ops_release.live_count(ctx, trip_id)
-    effects = [
-        {"kind": "dispatch_cancelled", "count": counts["dispatch"]},
-        {"kind": "tasks_skipped", "count": counts["tasks"]},
-        {"kind": "call_slots_cancelled", "count": counts["slots"]},
-        {"kind": "client_links_revoked", "count": counts["links"]},
-        # AA-947: AA holds are released; lines AA already booked wait for the cancellation card (CRM-27, the fee).
-        {"kind": "aa_holds_released", "count": aa["held"]},
-        {"kind": "aa_bookings_kept", "count": aa["booked"]},
-        # AA-956 (C12 step 6): the ops release is withdrawn (AA ops lose the details at once; purged before departure).
-        {"kind": "ops_release_withdrawn", "count": released},
-    ]
+    choices = cancellation.refund_choices(refunds)
+    keep = cancellation._uuid_list(keep_commission, "keep_commission")
     out: dict[str, Any] = {
         "trip_id": str(trip_id),
         "from_stage": trip["stage"],
         "cancel_reason_code": reason,
         "dry_run": dry_run,
-        "effects": effects,
     }
+    current = await cancellation.pending(ctx, trip_id)
+    if current is not None and current["status"] == "pending":
+        if dry_run:
+            return {**out, **await cancellation.plan(ctx, trip_id, refunds=choices), "cancellation": current}
+        return {**out, **await cancellation.retry(ctx, trip_id), "stage": trip["stage"], "effects": []}
     if dry_run:
-        return out
-    actor = f"member:{ctx.member_id}"
-    await ctx.conn.execute(CANCEL_DISPATCH_SQL, trip_id)
-    await ctx.conn.execute(CANCEL_TASKS_SQL, trip_id, actor)
-    await ctx.conn.execute(CANCEL_SLOTS_SQL, trip_id)
-    await ctx.conn.execute(CANCEL_LINKS_SQL, trip_id)
-    try:
-        async with ctx.conn.transaction():
-            await ctx.conn.execute(MOVE_SQL, trip_id, "cancelled", None, reason, "none")
-    except asyncpg.CheckViolationError:
-        raise Conflict("transition_not_allowed", allowed=allowed_moves(trip["stage"])) from None
-    await ctx.conn.execute(
-        HISTORY_SQL, trip_id, trip["stage"], "cancelled", f"cancel_{reason}", False, None, None, None
-    )
-    await aa_lines.close_trip(ctx, trip_id)
-    await ops_release.withdraw_on_cancel(ctx, trip_id, notices=notices)
-    ctx.audit("trip_cancel", "allowed", "trip", str(trip_id), reason=reason)
-    return {**out, "stage": "cancelled"}
+        return {**out, **await cancellation.plan(ctx, trip_id, refunds=choices), "cancellation": None}
+    done = await cancellation.run(ctx, trip_id, trip, reason, refunds=choices, keep_commission=keep, notices=notices)
+    status = done["cancellation"]["status"] if done["cancellation"] else "done"
+    return {**out, **done, "stage": "cancelled" if status == "done" else trip["stage"]}
+
+
+async def ensure_not_cancelling(ctx: AnyContext, trip_id: uuid.UUID) -> None:
+    """A trip whose cancellation waits for Booking moves nowhere else (409 ``cancellation_pending``)."""
+    from app import cancellation
+
+    if await cancellation.is_pending(ctx, trip_id):
+        raise Conflict("cancellation_pending", "this trip is being cancelled; AA has not confirmed it yet")

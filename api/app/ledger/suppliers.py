@@ -42,7 +42,7 @@ CATEGORIES = (
 CONTACT_FIELDS = {"contact_name": "contact_name_enc", "contact_email": "contact_email_enc"}
 ENSURE_AA_SQL = "SELECT crm.ensure_aa_supplier()"
 LIST_SQL = """
-SELECT agency_supplier_id, kind, name, category, default_commission_pct, confirmation_unique,
+SELECT agency_supplier_id, kind, name, category, default_commission_pct, confirmation_unique, commission_due_days,
        contact_name_enc IS NOT NULL AS has_contact_name, contact_email_enc IS NOT NULL AS has_contact_email,
        (SELECT count(*) FROM crm.booking_line l
          WHERE l.agency_supplier_id = s.agency_supplier_id AND l.deleted_at IS NULL)::int AS line_count
@@ -56,11 +56,19 @@ SELECT kind, deleted_at, contact_name_enc, contact_email_enc FROM crm.agency_sup
 """
 INSERT_SQL = """
 INSERT INTO crm.agency_supplier (agency_supplier_id, name, category, contact_name_enc, contact_email_enc,
-                                 default_commission_pct, confirmation_unique)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+                                 default_commission_pct, confirmation_unique, commission_due_days)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 """
 LIVE_LINES_SQL = "SELECT count(*) FROM crm.booking_line WHERE agency_supplier_id = $1 AND deleted_at IS NULL"
-EDITABLE = ("name", "category", "default_commission_pct", "confirmation_unique", "contact_name", "contact_email")
+EDITABLE = (
+    "name",
+    "category",
+    "default_commission_pct",
+    "commission_due_days",
+    "confirmation_unique",
+    "contact_name",
+    "contact_email",
+)
 
 
 def _name(value: Any) -> str:
@@ -87,6 +95,15 @@ def _pct(value: Any) -> Decimal | None:
     return pct.quantize(Decimal("0.01"))
 
 
+def _due_days(value: Any) -> int | None:
+    """AA-957: days after the service the supplier pays its commission (None = the 30-day default)."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 365:
+        raise Invalid("invalid_commission_due_days", "0 to 365 days")
+    return value
+
+
 def _contact(value: Any, field: str) -> str | None:
     if value is None or value == "":
         return None
@@ -106,6 +123,7 @@ def _view(row: Any) -> dict[str, Any]:
         "name": row["name"],
         "category": row["category"],
         "default_commission_pct": str(pct) if pct is not None else None,
+        "commission_due_days": row["commission_due_days"],
         "confirmation_unique": row["confirmation_unique"],
         "has_contact_name": row["has_contact_name"],
         "has_contact_email": row["has_contact_email"],
@@ -153,6 +171,7 @@ async def create_supplier(ctx: TenantContext, vault: Vault, body: dict[str, Any]
         sealed["contact_email_enc"],
         _pct(body.get("default_commission_pct")),
         bool(body.get("confirmation_unique", False)),
+        _due_days(body.get("commission_due_days")),
     )
     ctx.audit("create", "allowed", TABLE, str(supplier_id))
     return await get_supplier(ctx, supplier_id)
@@ -178,6 +197,8 @@ async def update_supplier(
             value, column = _category(value), "category"
         elif field == "default_commission_pct":
             value, column = _pct(value), "default_commission_pct"
+        elif field == "commission_due_days":
+            value, column = _due_days(value), "commission_due_days"
         elif field == "confirmation_unique":
             if not isinstance(value, bool):
                 raise Invalid("invalid_confirmation_unique", "true or false")

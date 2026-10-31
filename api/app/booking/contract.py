@@ -422,3 +422,44 @@ def departures(data: Any) -> list[Departure]:
 def problem_code(problem: dict[str, Any]) -> str | None:
     code = problem.get("error")
     return code if isinstance(code, str) and _CODE.match(code) else None
+
+
+# ── AA-957 (C12): POST /bookings/{id}/cancel ────────────────────────────────────────────────────────────────────
+CANCEL_REASONS = frozenset({"client_cancelled", "agency_cancelled", "departure_cancelled", "other"})
+
+
+@dataclass(frozen=True)
+class Cancellation:
+    """A ``CancellationResult``: the fee Booking charges (in the quote currency), what it refunds the agency, and
+    whether the booking is cancelled now (``cancelled_at``; None on a dry run)."""
+
+    booking_id: str
+    fee: Decimal
+    currency: str
+    refundable: Decimal
+    fee_pct: str
+    days_before_departure: int
+    cancelled_at: dt.datetime | None
+
+
+def cancellation(data: Any) -> Cancellation:
+    body = _obj(data, "cancellation")
+    fee, currency = money(body.get("fee"), "fee")
+    refundable, refund_currency = money(body.get("refundable_b2b_amount"), "refundable_b2b_amount")
+    if fee < 0 or refundable < 0 or refund_currency != currency:
+        raise ContractError("fee / refundable_b2b_amount are not one non-negative currency")
+    basis = _obj(body.get("fee_basis"), "fee_basis")
+    pct = _str(basis, "fee_pct", re.compile(r"^\d+(\.\d{1,2})?$"))
+    days = basis.get("days_before_departure")
+    if not isinstance(days, int) or isinstance(days, bool):
+        raise ContractError("fee_basis.days_before_departure is not an integer")
+    raw_at = body.get("cancelled_at")
+    return Cancellation(
+        booking_id=_str(body, "booking_id", _ID),
+        fee=fee,
+        currency=currency,
+        refundable=refundable,
+        fee_pct=pct,
+        days_before_departure=days,
+        cancelled_at=None if raw_at is None else _datetime(raw_at, "cancelled_at"),
+    )
