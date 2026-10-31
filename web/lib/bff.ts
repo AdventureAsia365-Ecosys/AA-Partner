@@ -34,6 +34,9 @@ export const DOCUMENT_BODY_BYTES = 10 * 1024 * 1024;
  * (the proxy's 10 MiB clone limit would cut a larger file short without an error).
  */
 export const MAIL_IMPORT_BODY_BYTES = 25 * 1024 * 1024;
+/** AA-962: a client import file (CSV / .xlsx) is the raw file of at most 5 MiB (api/app/imports/formats.py MAX_BYTES),
+ * under the proxy's 10 MiB clone limit, so its path stays inside the proxy matcher. */
+export const CLIENT_IMPORT_BODY_BYTES = 5 * 1024 * 1024;
 /** Raw uploads (<= 25 MiB each) one web process reads / forwards at once (the task has 512 MB); more -> 503. */
 export const MAX_RAW_IN_FLIGHT = 2;
 /**
@@ -194,6 +197,17 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "GET", pattern: /^mail\/senders$/, tenant: true, card: "AA-945" },
   { method: "POST", pattern: /^mail\/imports$/, tenant: true, card: "AA-945", maxBody: MAIL_IMPORT_BODY_BYTES, raw: true, timeoutMs: 50_000 },
   { method: "GET", pattern: new RegExp(`^mail/imports/${UUID}$`), tenant: true, card: "AA-945" },
+  // AA-962 (CRM-31): onboarding (checklist marks, controller settings, the shared-responsibility acknowledgement), the
+  // client import (raw CSV / .xlsx preview and start, progress), duplicate clients and the merge. Roles: the API's.
+  { method: "GET", pattern: /^onboarding$/, tenant: true, card: "AA-962" },
+  { method: "PUT", pattern: /^onboarding\/steps\/[a-z_]{3,40}$/, tenant: true, card: "AA-962" },
+  { method: "PUT", pattern: /^onboarding\/controller$/, tenant: true, card: "AA-962" },
+  { method: "POST", pattern: /^onboarding\/acknowledgement$/, tenant: true, card: "AA-962" },
+  { method: "POST", pattern: /^client-imports(\/preview)?$/, tenant: true, card: "AA-962", maxBody: CLIENT_IMPORT_BODY_BYTES, raw: true, timeoutMs: 50_000 },
+  { method: "GET", pattern: /^client-imports$/, tenant: true, card: "AA-962" },
+  { method: "GET", pattern: new RegExp(`^client-imports/${UUID}$`), tenant: true, card: "AA-962" },
+  { method: "GET", pattern: /^client-duplicates$/, tenant: true, card: "AA-962" },
+  { method: "POST", pattern: new RegExp(`^travelers/${UUID}/merge$`), tenant: true, card: "AA-962" },
   { method: "GET", pattern: /^conversations$/, tenant: true, card: "AA-945" },
   { method: "GET", pattern: new RegExp(`^conversations/${UUID}/messages$`), tenant: true, card: "AA-945" },
   { method: "POST", pattern: new RegExp(`^conversations/${UUID}/link$`), tenant: true, card: "AA-945" },

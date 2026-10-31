@@ -111,6 +111,12 @@ class Action(StrEnum):
     SETTINGS_FORMS_MANAGE = "settings_forms_manage"  # the public inquiry forms (Settings > Forms)
     ACCESS_LOG_VIEW = "access_log_view"
     DATA_SETTINGS = "data_settings"  # AA-942: trash window, auto-archive, legal holds (Settings > Data and privacy)
+    # AA-962 (CRM-31): the agency's own import of its clients, relationships, trips and notes (the agency runs it, R43;
+    # a bulk write of client data like the agency export), the merge of two duplicate clients (one goes to the trash,
+    # like a client delete) and the onboarding checklist's "Later" / "done" marks.
+    CLIENT_IMPORT = "client_import"
+    CLIENT_MERGE = "client_merge"
+    ONBOARDING_MANAGE = "onboarding_manage"
 
 
 A, D = Rule.ALLOW, Rule.DENY
@@ -168,6 +174,9 @@ _TABLE: dict[Action, tuple[Rule, Rule, Rule]] = {
     Action.SETTINGS_FORMS_MANAGE: (A, D, D),
     Action.ACCESS_LOG_VIEW: (A, D, D),
     Action.DATA_SETTINGS: (A, D, D),
+    Action.CLIENT_IMPORT: (A, D, D),
+    Action.CLIENT_MERGE: (A, D, D),
+    Action.ONBOARDING_MANAGE: (A, D, D),
 }
 
 MATRIX: dict[str, dict[Action, Rule]] = {

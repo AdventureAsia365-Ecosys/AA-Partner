@@ -11,6 +11,7 @@
 // Strings are plain objects, no library; every key exists in both languages (a unit test checks it). Edge-safe.
 
 import { isDateLocale, type DateLocale } from "./dates";
+import { onboardingEn, onboardingVi } from "./i18nOnboarding";
 
 export type Lang = "en" | "vi";
 export const LOCALE_COOKIE = "aa_crm_locale";
@@ -35,6 +36,7 @@ export function resolveLocale(input: { cookie?: string | null; explicit?: string
 }
 
 const en = {
+  ...onboardingEn, // AA-962: onboarding, client import, duplicates, Connections, help (lib/i18nOnboarding.ts)
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Home",
@@ -464,6 +466,7 @@ const en = {
   "intake.consent": "I agree that {agency} may contact me about this trip.",
   "intake.marketing": "Send me travel ideas and offers (optional).",
   "intake.privacy": "Privacy notice",
+  "intake.dataRequests": "To see, correct or delete your data, contact:",
   "intake.submit": "Send my inquiry",
   "intake.sending": "Sending…",
   "intake.thanks": "Thank you!",
@@ -2651,6 +2654,7 @@ const en = {
 export type MessageKey = keyof typeof en;
 
 const vi: Record<MessageKey, string> = {
+  ...onboardingVi,
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Trang chủ",
@@ -3080,6 +3084,7 @@ const vi: Record<MessageKey, string> = {
   "intake.consent": "Tôi đồng ý để {agency} liên hệ với tôi về chuyến đi này.",
   "intake.marketing": "Gửi cho tôi ý tưởng du lịch và ưu đãi (không bắt buộc).",
   "intake.privacy": "Thông báo quyền riêng tư",
+  "intake.dataRequests": "Để xem, sửa hoặc xoá dữ liệu của bạn, hãy liên hệ:",
   "intake.submit": "Gửi yêu cầu",
   "intake.sending": "Đang gửi…",
   "intake.thanks": "Cảm ơn bạn!",

@@ -119,7 +119,14 @@ async def test_origin_rules(intake: ScriptedConn) -> None:
 async def test_read_form(monkeypatch: pytest.MonkeyPatch) -> None:
     conn = ScriptedConn().on(
         "FROM crm.form_definition d",
-        {"schema": '{"schema_key": "stage1.v1"}', "display_name": "Sen", "default_locale": "vi-VN"},
+        {
+            "schema": '{"schema_key": "stage1.v1"}',
+            "display_name": "Sen",
+            "default_locale": "vi-VN",
+            "agency_privacy_notice_url": None,
+            "consent_text": None,
+            "data_request_contact": None,
+        },
     )
     monkeypatch.setattr(public, "intake_tx", fake_tx(system_ctx(conn), intake_form()))
     shown = await public.read_form(None, "k" * 22)  # type: ignore[arg-type]
@@ -130,10 +137,35 @@ async def test_read_form(monkeypatch: pytest.MonkeyPatch) -> None:
         "default_locale": "vi-VN",
         "allowed_origins": ["https://www.agency.example"],
         "privacy_notice_url": None,
+        "consent_text": None,
+        "data_request_contact": None,
         "call_slots": [],
         "timezone": "Asia/Ho_Chi_Minh",
         "call_minutes": None,
     }
+
+
+async def test_read_form_falls_back_to_the_agency_controller_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AA-962 (errata S247 CRM-31): the agency's privacy link when the form has none, its consent wording and its
+    data-request contact reach the hosted form; a form's own privacy link wins."""
+    row = {
+        "schema": '{"schema_key": "stage1.v1"}',
+        "display_name": "Sen",
+        "default_locale": "en-GB",
+        "agency_privacy_notice_url": "https://agency.example/privacy",
+        "consent_text": "Our own wording.",
+        "data_request_contact": "privacy@agency.example",
+    }
+    conn = ScriptedConn().on("FROM crm.form_definition d", row)
+    monkeypatch.setattr(public, "intake_tx", fake_tx(system_ctx(conn), intake_form()))
+    shown = await public.read_form(None, "k" * 22)  # type: ignore[arg-type]
+    assert shown["privacy_notice_url"] == "https://agency.example/privacy"
+    assert shown["consent_text"] == "Our own wording." and shown["data_request_contact"] == "privacy@agency.example"
+    conn = ScriptedConn().on("FROM crm.form_definition d", row)
+    own = intake_form(privacy_notice_url="https://agency.example/form-privacy")
+    monkeypatch.setattr(public, "intake_tx", fake_tx(system_ctx(conn), own))
+    shown = await public.read_form(None, "k" * 22)  # type: ignore[arg-type]
+    assert shown["privacy_notice_url"] == "https://agency.example/form-privacy"
 
 
 def form_row(**over: Any) -> dict[str, Any]:

@@ -72,6 +72,9 @@ STUDIO_ACTIVATION = "crm_studio_activation"
 # AA-967: one portability export (the agency's or one client's ZIP, app.portability.exports), queued by the owner's
 # request. Not deploy-gate exempt (exists only while queued / building).
 DATA_EXPORT = "crm_data_export"
+# AA-962: one slice (500 rows) of an agency's client import (app.imports.service), queued by the owner's start or by
+# the slice before it. Not deploy-gate exempt (exists only while queued / running).
+CLIENT_IMPORT = "crm_client_import"
 
 DEFAULT_EXPECTED_SECONDS = 300
 OVERDUE_FACTOR = 2
@@ -110,6 +113,7 @@ EXPECTED_SECONDS: dict[str, int] = {
     CATALOG_SYNC: 300,
     STUDIO_ACTIVATION: 30,
     DATA_EXPORT: 600,
+    CLIENT_IMPORT: 120,  # one slice (imports.service.SLICE rows)
 }
 
 

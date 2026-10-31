@@ -58,6 +58,7 @@ REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = (
     "crm-027",  # AA-961 duty of care + calendar (incident flags, ICS feeds; needs crm-026)
     "crm-028",  # AA-952 slice 4 invoice claim / hold extension / re-hold / reminders (expand, same PR)
     "crm-029",  # AA-953 portal per person (crm.traveler_flight, otp_challenge.sent_to_bidx; expand, needs crm-028)
+    "crm-030",  # AA-962 onboarding + import (expand: import refs, onboarding / controller settings columns)
     "crm-031",  # AA-966 trip-level insight fact (expand: auto-applied after crm-028..030 in number order)
 )
 REQUIRED_SCHEMA_VERSION = max(REQUIRED_SCHEMA_VERSIONS)

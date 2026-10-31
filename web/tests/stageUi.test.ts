@@ -6,7 +6,7 @@ import { act, createElement, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MESSAGES } from "@/lib/i18n";
-import type { PublicForm } from "@/lib/intakeForms";
+import { consentLabel, dataRequestHref, type PublicForm } from "@/lib/intakeForms";
 import type { Member, TripView } from "@/lib/pipeline";
 import { PAGES } from "./stage2Fixture";
 
@@ -247,5 +247,37 @@ describe("inquiry form (C-01)", () => {
     expect(body.call_slot).toBe("2026-11-02T02:00:00Z");
     expect(document.activeElement?.getAttribute("name")).toBe("nights");
     expect(c.querySelector("[data-testid=intake-error]")!.textContent).toBe("Please check this answer.");
+  });
+
+  it("uses the default consent wording and shows no data-request line when the agency set none", async () => {
+    const c = await mount(createElement(InquiryForm, { publicKey: "AbCdEfGhIjKlMnOpQrStUv", form: FORM, lang: "en", dict: DICT }));
+    expect(c.querySelector("[data-testid=intake-consent-text]")!.textContent).toBe("I agree that Sen Vàng may contact me about this trip.");
+    expect(c.querySelector("[data-testid=intake-data-requests]")).toBeNull();
+  });
+
+  it("shows the agency's controller settings: its consent wording, privacy link and data-request contact (AA-962)", async () => {
+    const own: PublicForm = {
+      ...FORM,
+      privacy_notice_url: "https://agency.example/privacy",
+      consent_text: "Sen Vàng may contact me about my trip by e-mail or phone.",
+      data_request_contact: "privacy@agency.example",
+    };
+    const c = await mount(createElement(InquiryForm, { publicKey: "AbCdEfGhIjKlMnOpQrStUv", form: own, lang: "en", dict: DICT }));
+    expect(c.querySelector("[data-testid=intake-consent-text]")!.textContent).toBe(own.consent_text);
+    expect(c.querySelector<HTMLAnchorElement>("a[href='https://agency.example/privacy']")).not.toBeNull();
+    const line = c.querySelector("[data-testid=intake-data-requests]")!;
+    expect(line.querySelector("a")!.getAttribute("href")).toBe("mailto:privacy@agency.example");
+  });
+});
+
+describe("controller settings helpers (AA-962)", () => {
+  it("picks the consent wording and builds the data-request link", () => {
+    expect(consentLabel({ consent_text: "  " }, "default")).toBe("default");
+    expect(consentLabel({ consent_text: null }, "default")).toBe("default");
+    expect(consentLabel({ consent_text: "Own text" }, "default")).toBe("Own text");
+    expect(dataRequestHref("privacy@agency.example")).toBe("mailto:privacy@agency.example");
+    expect(dataRequestHref("https://agency.example/requests")).toBe("https://agency.example/requests");
+    expect(dataRequestHref("javascript:alert(1)")).toBeNull();
+    expect(dataRequestHref("Ring the front desk")).toBeNull();
   });
 });

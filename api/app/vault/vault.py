@@ -96,6 +96,10 @@ class Vault:
     async def name_token_indexes(self, table: str, column: str, value: str) -> list[bytes]:
         return blind_index.name_token_indexes(await self._index_key(table, column), value)
 
+    async def ref_index(self, table: str, column: str, value: str) -> bytes:
+        """AA-962: an agency's own reference of an imported row (crm-030 ``import_ref_bidx``)."""
+        return blind_index.ref_index(await self._index_key(table, column), value)
+
     # ── Internals ──────────────────────────────────────────────────────────────────────────────────
     async def _seal(self, table: str, column: str, row_id: uuid.UUID | str, value: str | bytes, purpose: str) -> bytes:
         aad = field_aad(self._ctx.tenant_id, table, column, row_id)

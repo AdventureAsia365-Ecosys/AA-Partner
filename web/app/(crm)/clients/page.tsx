@@ -5,6 +5,7 @@
 // /crm/v1/travelers/search. Filters and pages are links, so the list is a server render; adding a client is the one
 // client-side form.
 import { cookies } from "next/headers";
+import Link from "next/link";
 import { EmptyState, ErrorState, K } from "@/app/_kit";
 import { NewClientForm } from "@/components/clients/NewClientForm";
 import { PageTitle } from "@/components/PageTitle";
@@ -84,6 +85,9 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
         <a href={directoryHref({ search, archived: f.archived, owner: "me" })} style={chip(f.owner === "me")}>
           {t(lang, "clients.mine")}
         </a>
+        <Link href="/clients/duplicates" style={chip(false)} data-testid="clients-duplicates-link">
+          {t(lang, "onb.dup.title")}
+        </Link>
       </nav>
       <NewClientForm lang={lang} />
       {!res || !res.ok ? (

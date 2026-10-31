@@ -34,7 +34,12 @@ export interface PublicForm {
   /** The form's own language when the agency set one ("en" | "vi" | a date locale); absent = English. */
   locale?: string;
   allowed_origins: string[];
+  /** The form's privacy link, else the agency's (AA-962 controller settings); null = none. */
   privacy_notice_url: string | null;
+  /** AA-962: the agency's own consent wording for the contact box; null/absent = the page's default text. */
+  consent_text?: string | null;
+  /** AA-962: where the agency's clients send data requests (an e-mail address or a link); null/absent = not shown. */
+  data_request_contact?: string | null;
   /** AA-943: the page grouping the hosted form shows (trip, party, contact); absent on an older API. */
   pages?: { key: string; fields: string[] }[];
   /** AA-943 (R15): the free call starts (ISO UTC), the agency timezone and the call length; [] = no slots offered. */
@@ -216,4 +221,18 @@ export function callSlotRules(windows: SlotWindow[], durationMin: number, horizo
   if (windows.length === 0) return {};
   const sorted = [...windows].sort((a, b) => a.dow - b.dow || a.start.localeCompare(b.start));
   return { windows: sorted.map((w) => ({ dow: w.dow, start: w.start, end: w.end })), duration_min: durationMin, horizon_days: horizonDays };
+}
+
+/** AA-962 (controller settings): the wording of the contact consent box, the agency's own when it set one. */
+export function consentLabel(form: Pick<PublicForm, "consent_text">, fallback: string): string {
+  const own = form.consent_text?.trim();
+  return own ? own : fallback;
+}
+
+/** AA-962: the data-request contact as a link target: a mailto: for an e-mail address, the https link as is, else none. */
+export function dataRequestHref(contact: string | null | undefined): string | null {
+  const v = contact?.trim() ?? "";
+  if (/^https:\/\/\S+$/i.test(v)) return v;
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return `mailto:${v}`;
+  return null;
 }

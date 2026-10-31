@@ -93,6 +93,7 @@ def test_worker_runs_for_the_app_lifetime_when_enabled() -> None:
         "crm_catalog_sync",
         "crm_studio_activation",  # AA-979
         "crm_data_export",  # AA-967
+        "crm_client_import",  # AA-962
     }
     # Only the deploy-gate exempt kinds queue ahead (the heartbeat and, AA-978, the CIS membership pull); the daily
     # retention run is a due-now maintenance hook (review round: a queued-ahead daily row would block the deploy gate

@@ -26,6 +26,8 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 EMAIL_BYTES = 16
 PHONE_BYTES = 16
 NAME_BYTES = 8
+REF_BYTES = 16
+MAX_REF_CHARS = 200
 TOKEN_BYTES = 4
 MAX_TOKENS = 16
 
@@ -103,3 +105,17 @@ def name_token_indexes(key: bytes, value: str) -> list[bytes]:
         if digest not in out:
             out.append(digest)
     return out[:MAX_TOKENS]
+
+
+def normalise_ref(value: str) -> str:
+    """An agency's own reference of a record in another system (``C-1042``, ``client 77``): NFKC, whitespace runs
+    collapsed, case folded. Empty or over :data:`MAX_REF_CHARS` raises."""
+    text = " ".join(unicodedata.normalize("NFKC", value).split()).casefold()
+    if not text or len(text) > MAX_REF_CHARS:
+        raise NormalisationError("invalid_ref")
+    return text
+
+
+def ref_index(key: bytes, value: str) -> bytes:
+    """AA-962: the import reference of a client, trip or note (``*.import_ref_bidx``, crm-030)."""
+    return mac(key, normalise_ref(value), REF_BYTES)

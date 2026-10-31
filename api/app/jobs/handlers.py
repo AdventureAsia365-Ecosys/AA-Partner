@@ -43,6 +43,7 @@ from app.jobs.kinds import (
     AUDIT_RETENTION,
     BOOKING_SYNC,
     CATALOG_SYNC,
+    CLIENT_IMPORT,
     DATA_EXPORT,
     DISPATCH,
     FX_FETCH,
@@ -177,6 +178,7 @@ def build_handlers(
     from app.cis.membership_feed import MembershipFeed
     from app.dispatch import worker as dispatch_worker
     from app.fx import fetch as fx_fetch
+    from app.imports import service as client_imports
     from app.intake.process import build_handler as build_intake_handler
     from app.lifecycle import job as lifecycle_job
     from app.lifecycle import offboarding
@@ -211,6 +213,7 @@ def build_handlers(
         CATALOG_SYNC: CatalogSync(catalog),
         STUDIO_ACTIVATION: studio.build_handler(studio_activation),
         DATA_EXPORT: portability_exports.build_handler(keys=keys, store=documents),
+        CLIENT_IMPORT: client_imports.build_handler(ingest_store, keys),
     }
 
 
@@ -307,5 +310,6 @@ SCHEDULED_KINDS: frozenset[str] = frozenset(
 # Kinds queued by request code, one row per event (AA-936: each stored inquiry), never scheduled.
 # AA-979: one crm_studio_activation row per accepted Content studio invitation.
 EVENT_KINDS: frozenset[str] = frozenset(
-    {INTAKE_PROCESS, OFFBOARD, DISPATCH, MAIL_IMPORT, STUDIO_ACTIVATION, DATA_EXPORT}  # AA-967: one per export
+    # AA-967: one per export; AA-962: one per import slice.
+    {INTAKE_PROCESS, OFFBOARD, DISPATCH, MAIL_IMPORT, STUDIO_ACTIVATION, DATA_EXPORT, CLIENT_IMPORT}
 )
