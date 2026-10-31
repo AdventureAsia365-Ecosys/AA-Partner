@@ -724,6 +724,12 @@ Design v3 M13, C12 (§2.7, §3.5 "Cancellation"), R17, R21, A-12; lane §2.7 `co
   on a schedule row, a draft proposal edit, a re-issued proposal link and a portal invite answer 409 `trip_cancelled`
   (`app.cancellation.ensure_not_cancelled`); what the cancel kept stays workable (a payment the client says they made
   is recorded on its invoice, refunds go on). The trip page shows its Proposal and Invoices cards read-only.
+- **A cancelled trip is closed for planning too** (S262 round 3): the same 409 `trip_cancelled` for a new AA line, an
+  AA hold / confirm / re-quote (a release stays), a new or confirmed agency line, new trip dates, a document shown to
+  the traveller, any builder edit, a builder send and a proposal text; a trip whose cancellation is pending cannot be
+  deleted (409 `cancellation_pending`). Messages stay open (the refund and the wrap-up; §2.7 stops automated sends
+  only). The trip page's cards read one closed state (`web/components/pipeline/TripClosed.tsx`), which the cancel run
+  sets at once.
 - **Never cancelled early** (card R): with AA bookings the trip keeps its stage and a pending `crm.trip_cancellation`
   ("Cancellation pending" on the trip and the board; moves and Undo 409 `cancellation_pending`; the date rule, the
   commission sweep and the invoice reminders skip it). An invoice the cancel kept because it held money is voided once
