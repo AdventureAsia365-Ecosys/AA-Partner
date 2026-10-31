@@ -45,12 +45,13 @@ export function shellUrls(entries: readonly { name: string }[], origin: string):
   return [...out];
 }
 
-async function post(message: unknown, nav?: Nav): Promise<void> {
+async function post(message: unknown, nav?: Nav, still: () => boolean = () => true): Promise<void> {
   const sw = workerApi(nav);
   if (!sw) return;
   try {
     // The first visit registers the worker and signs in within seconds: wait (a little) until it is active.
     const reg = await Promise.race([sw.ready, new Promise<null>((done) => setTimeout(() => done(null), READY_WAIT_MS))]);
+    if (!still()) return;
     (reg?.active ?? sw.controller)?.postMessage(message);
   } catch {
     // no worker yet: the next signed-in load sends it again
@@ -58,19 +59,23 @@ async function post(message: unknown, nav?: Nav): Promise<void> {
 }
 
 let shellSent = false;
+let clears = 0;
 
 /** After a signed-in load: let the worker keep this page and its static files (replacing what it kept before). Once
- * per page load (every save reloads the home; the shell does not change in between), again after a clear. */
+ * per page load (every save reloads the home; the shell does not change in between), again after a clear. A clear
+ * that comes while this one still waits for the worker cancels it (the clear must be the last word). */
 export async function precacheShell(nav?: Nav): Promise<void> {
   if (typeof window === "undefined" || typeof performance === "undefined" || shellSent) return;
   shellSent = true;
+  const at = clears;
   const entries = performance.getEntriesByType("resource") as PerformanceResourceTiming[];
-  await post({ type: "precache", urls: shellUrls(entries, window.location.origin) }, nav);
+  await post({ type: "precache", urls: shellUrls(entries, window.location.origin) }, nav, () => clears === at);
 }
 
-/** At sign-out (the page deletes the caches itself too; this also reaches a worker that is mid-precache). */
+/** At sign-out (the page deletes the caches itself too; the worker runs this after any precache it is still on). */
 export async function clearWorkerCaches(nav?: Nav): Promise<void> {
   shellSent = false;
+  clears += 1;
   await post({ type: "clear" }, nav);
 }
 

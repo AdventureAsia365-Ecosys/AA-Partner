@@ -10,8 +10,9 @@
 // AA-954 (CRM-24b, R16, §2.9 rule 7; `offline` on /c/t): the page registers the service worker that keeps its shell,
 // keeps an allow-listed copy of the signed-in person's itinerary on the device (lib/offlineItinerary.ts) and shows it
 // with "last updated" when the network cannot be reached; it replaces the copy on every signed-in answer and on
-// reconnect (server wins), and drops it at sign-out, for a gone link and for another link's answer.
-import { useEffect, useState } from "react";
+// reconnect (server wins), and drops it at sign-out, for a gone link and for another link's answer. Sign-out clears
+// the device first, whatever the server then answers, and a load still in flight at that moment never writes back.
+import { useEffect, useRef, useState } from "react";
 import { Button, K, LinkButton } from "@/app/_kit";
 import type { PortalPersonHome, PortalPick } from "@/lib/clientPortal";
 import { formatDate, type DateLocale } from "@/lib/dates";
@@ -60,15 +61,24 @@ async function call(url: string, method: string, body?: unknown): Promise<{ ok: 
 }
 
 /** The offline rule for one answer of GET `base` (lib/offlineItinerary.ts): what to show, after the stored copy was
- * replaced, kept or dropped. Exported for the tests. */
-export async function settle(res: { ok: boolean; status: number; data: Record<string, unknown> }, now: Date): Promise<Load> {
+ * replaced, kept or dropped. `fresh` says no sign-out or "Remove from this device" happened since the request
+ * started: when one did, this answer touches nothing on the device, and a write that raced the clear is cleared
+ * again (the clear wins). Exported for the tests. */
+export async function settle(
+  res: { ok: boolean; status: number; data: Record<string, unknown> },
+  now: Date,
+  fresh: () => boolean = () => true,
+): Promise<Load> {
   if (res.status === 0) {
     const stored = await readOffline();
     if (stored && !usable(stored, now)) await clearOffline(); // the link has expired since it was saved
     return { state: "offline", copy: usable(stored, now) ? stored : null };
   }
-  await syncOffline({ status: res.status, home: res.ok ? (res.data as unknown as OfflineSource) : undefined }, now);
-  if (res.ok && res.data.signed_in === true) void precacheShell();
+  if (fresh()) {
+    await syncOffline({ status: res.status, home: res.ok ? (res.data as unknown as OfflineSource) : undefined }, now);
+    if (!fresh()) await clearOffline();
+    else if (res.ok && res.data.signed_in === true) void precacheShell();
+  }
   return res.ok ? { state: "ready", home: res.data as unknown as Home } : { state: "failed", status: res.status };
 }
 
@@ -98,12 +108,15 @@ export function PortalPage({
   const [signAsked, setSignAsked] = useState(false);
   const [values, setValues] = useState<Partial<Record<Stage3Field, string>>>({});
   const [netDown, setNetDown] = useState(false);
+  // AA-954: bumped by every clear of the device; a load that started before a clear never writes the copy back.
+  const clears = useRef(0);
 
   useEffect(() => {
     let live = true;
+    const at = clears.current;
     call(base, "GET").then(async (res) => {
       const next: Load = offline
-        ? await settle(res, new Date())
+        ? await settle(res, new Date(), () => clears.current === at)
         : res.ok
           ? { state: "ready", home: res.data as unknown as Home }
           : { state: "failed", status: res.status };
@@ -132,6 +145,7 @@ export function PortalPage({
   }, [offline]);
 
   async function forgetDevice(text?: string) {
+    clears.current += 1;
     await clearOffline();
     await clearWorkerCaches();
     if (text) setNote({ tone: "success", text });
@@ -172,6 +186,22 @@ export function PortalPage({
     setNote({ tone: "success", text });
     setRound((r) => r + 1);
   };
+
+  // AA-954 (§2.9 rule 7): nothing of this person stays on the device after sign-out, whatever the server answers
+  // (offline, a rate limit, a fault or a revoked link included). Clear first, then again once the POST is done, so a
+  // load that was in flight during the POST cannot leave a copy either.
+  async function signOut() {
+    if (offline) await forgetDevice();
+    let out = false;
+    await step("POST", "/sign-out", undefined, () => {
+      out = true;
+    });
+    if (offline) await forgetDevice();
+    if (out) {
+      setPicks(null);
+      setRound((r) => r + 1);
+    }
+  }
 
   if (load.state === "loading") return <p style={{ margin: 0, fontSize: 14, color: K.muted }}>{t("client.loading")}</p>;
   if (load.state === "offline") {
@@ -462,13 +492,7 @@ export function PortalPage({
           size="inherit"
           disabled={busy}
           testId="portal-sign-out"
-          onClick={() =>
-            step("POST", "/sign-out", undefined, () => {
-              setPicks(null);
-              // AA-954 (§2.9 rule 7): nothing of this person stays on the device after sign-out.
-              void (offline ? forgetDevice() : Promise.resolve()).then(() => setRound((r) => r + 1));
-            })
-          }
+          onClick={() => void signOut()}
         >
           {t("client.signOut")}
         </LinkButton>

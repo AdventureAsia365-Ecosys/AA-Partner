@@ -14,7 +14,8 @@
 //              GET /_next/static/*: the cached copy when there is one (hashed, immutable files), else the network;
 //   message    {type: "precache", urls}: the page, once a traveller is signed in, sends its own URL and the static
 //              files it loaded; only /c/t and /_next/static/* of this origin are accepted, and the shell is replaced
-//              as a whole (so it never grows across deploys); {type: "clear"}: drop every portal cache;
+//              as a whole (so it never grows across deploys); {type: "clear"}: drop every portal cache. Messages
+//              run one at a time in arrival order, so a clear always lands after a precache already in flight;
 //   activate   claim the open pages and drop caches of older versions (names under the "aa-portal-" prefix).
 //
 // Plain ES2017 in a string (no bundler for a worker in this app), so tests/offlinePwa.test.ts runs it against a fake
@@ -87,10 +88,18 @@ self.addEventListener("activate", (event) => {
   })());
 });
 
+// One message at a time: a "clear" (sign-out) that arrives while a precache is still fetching runs after it, so the
+// precache can never write the shell back once the caches were cleared.
+let queue = Promise.resolve();
+function enqueue(work) {
+  queue = queue.then(work).catch(() => undefined);
+  return queue;
+}
+
 self.addEventListener("message", (event) => {
   const data = event.data || {};
-  if (data.type === "precache") event.waitUntil(precache(data.urls).catch(() => undefined));
-  else if (data.type === "clear") event.waitUntil(clearAll().catch(() => undefined));
+  if (data.type === "precache") event.waitUntil(enqueue(() => precache(data.urls)));
+  else if (data.type === "clear") event.waitUntil(enqueue(clearAll));
 });
 
 self.addEventListener("fetch", (event) => {

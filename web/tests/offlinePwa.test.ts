@@ -318,6 +318,24 @@ describe("the service worker keeps the page shell only", () => {
     expect(await w.cs.keys()).toEqual(["someone-else"]);
   });
 
+  it("a clear that arrives while a precache is still fetching runs after it: no portal cache is left", async () => {
+    let release!: () => void;
+    const slow = new Promise<void>((done) => (release = done));
+    const w = worker(async (url) => {
+      await slow;
+      return url === PORTAL_PAGE ? html("<p>shell</p>") : asset("x");
+    });
+    await w.cs.open(OFFLINE_DATA_CACHE);
+    const precaching = w.dispatch("message", { data: { type: "precache", urls: ["/c/t", "/_next/static/chunks/a.js"] } });
+    const clearing = w.dispatch("message", { data: { type: "clear" } });
+    release();
+    await Promise.all([precaching, clearing]);
+    expect((await w.cs.keys()).filter((n) => n.startsWith("aa-portal-"))).toEqual([]);
+    // The queue keeps working after that.
+    await w.dispatch("message", { data: { type: "precache", urls: ["/c/t"] } });
+    expect(await w.cs.keys()).toEqual([SHELL_CACHE]);
+  });
+
   it("the route serves it as JavaScript that the browser re-checks, from /c/ for the scope /c/t", async () => {
     const res = workerRoute();
     expect(res.headers.get("content-type")).toContain("text/javascript");
@@ -493,6 +511,77 @@ describe("the portal page offline (card E)", () => {
     act(() => root!.unmount());
     root = null;
     await mount();
+    expect(await cs.keys()).toEqual([]);
+  });
+
+  it("sign-out clears the device even when the server does not answer, or answers with a fault or a gone link", async () => {
+    for (const fail of [0, 429, 500, 404]) {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, init: RequestInit) => {
+          if (init.method === "POST" && url.endsWith("/sign-out")) {
+            if (fail === 0) throw new TypeError("Failed to fetch");
+            return reply(fail, { detail: "error" });
+          }
+          return reply(200, SIGNED_IN_HOME);
+        }),
+      );
+      const el = await mount();
+      expect((await readOffline(asStorage(cs)))?.ref, `status ${fail}`).toBe(REF);
+      await act(async () => el.querySelector<HTMLButtonElement>('[data-testid="portal-sign-out"]')!.click());
+      await act(async () => new Promise((r) => setTimeout(r, 0)));
+      expect(await cs.keys(), `status ${fail}`).toEqual([]);
+      expect(el.querySelector('[data-testid="portal-note"]')?.getAttribute("role"), `status ${fail}`).toBe("alert");
+      act(() => root!.unmount());
+      root = null;
+      document.body.innerHTML = "";
+    }
+  });
+
+  it("a load in flight at sign-out never writes the copy back", async () => {
+    let signedIn = true;
+    let held: ((res: Response) => void) | null = null;
+    let hold = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        if (init.method === "POST" && url.endsWith("/sign-out")) {
+          signedIn = false;
+          return reply(200, { signed_in: false });
+        }
+        if (hold) {
+          hold = false;
+          return new Promise<Response>((done) => (held = done)); // answered (signed in) only after the sign-out
+        }
+        return reply(200, signedIn ? SIGNED_IN_HOME : { agency_name: "Lantern Tours", signed_in: false, offline_ref: REF });
+      }),
+    );
+    const el = await mount();
+    hold = true;
+    await act(async () => {
+      window.dispatchEvent(new Event("online")); // reloads the home: this GET stays open
+    });
+    expect(held).not.toBeNull();
+    await act(async () => el.querySelector<HTMLButtonElement>('[data-testid="portal-sign-out"]')!.click());
+    await act(async () => new Promise((r) => setTimeout(r, 0)));
+    expect(el.querySelector('[data-testid="portal-sign-in"]')).not.toBeNull();
+    await act(async () => {
+      held!(reply(200, SIGNED_IN_HOME));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(await cs.keys()).toEqual([]);
+  });
+
+  it("settle: a clear that lands while an answer is being stored wins", async () => {
+    const { settle } = await import("@/components/portal/PortalPage");
+    let calls = 0;
+    // Fresh when the answer is checked, a sign-out by the time it was written.
+    const fresh = () => ++calls === 1;
+    const next = await settle({ ok: true, status: 200, data: SIGNED_IN_HOME as unknown as Record<string, unknown> }, new Date(), fresh);
+    expect(next.state).toBe("ready");
+    expect(await cs.keys()).toEqual([]);
+    // Not fresh at all: nothing is written.
+    await settle({ ok: true, status: 200, data: SIGNED_IN_HOME as unknown as Record<string, unknown> }, new Date(), () => false);
     expect(await cs.keys()).toEqual([]);
   });
 
