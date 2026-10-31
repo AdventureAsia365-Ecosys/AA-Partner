@@ -186,8 +186,9 @@ test.describe("CRM-18 thin full lifecycle on Dev", () => {
     const echo = await portalSignIn(client, earlyLink);
     if (echo) {
       await expect(client.getByTestId("portal-stage3")).toHaveAttribute("data-locked", "true");
-      const token = earlyLink.slice(earlyLink.lastIndexOf("/") + 1);
-      const locked = await client.request.put(`${CLIENT}/crm/public/v1/portal/${token}/stage3`, {
+      // AA-953: the link was exchanged for the portal cookie (the page now lives at /c/t); the browser context sends
+      // that cookie and the session cookie to the API's /crm/public/v1/traveller routes.
+      const locked = await client.request.put(`${CLIENT}/crm/public/v1/traveller/stage3`, {
         headers: { Origin: CLIENT, "Content-Type": "application/json" },
         data: { nationality: "AU" },
       });

@@ -57,6 +57,7 @@ import asyncpg
 
 from app import stages
 from app.dispatch import queue as dispatch
+from app.documents.store import DocumentStore
 from app.errors import Conflict, Forbidden, Invalid, NotFound, RateLimited, Unavailable
 from app.esign import envelope as env
 from app.esign import events as sign_events
@@ -66,7 +67,8 @@ from app.esign.seal import Sealer, require_sealer
 from app.intake import stage1
 from app.intake.public import origin_allowed, record_drop
 from app.mail import threads
-from app.portal import progress
+from app.portal import access as portal_access
+from app.portal import person, progress
 from app.portal.codes import CODE_MASK
 from app.settings import Settings
 from app.tenancy import AnyContext, ClientLink, client_link_tx
@@ -86,13 +88,18 @@ MAIL_PURPOSE = "mail"
 MAX_NAME = 200
 STAGE3_FIELDS = progress.DETAIL_FIELDS
 
-ACCESS_SQL = """
+ACCESS_COLUMNS = """
 SELECT a.access_id, a.trip_id, a.traveler_id, a.role, a.status, a.stage3_submitted_at,
        t.stage, t.title, t.start_date, t.end_date, t.owner_member_id
   FROM crm.traveler_access a JOIN crm.trip t ON t.trip_id = a.trip_id
- WHERE a.link_id = $1 AND a.status <> 'revoked' AND a.deleted_at IS NULL
-   FOR UPDATE OF a
 """
+ACCESS_SQL = ACCESS_COLUMNS + "WHERE a.link_id = $1 AND a.status <> 'revoked' AND a.deleted_at IS NULL FOR UPDATE OF a"
+ACCESS_BY_ID_SQL = (
+    ACCESS_COLUMNS
+    + "WHERE a.access_id = $1 AND a.trip_id = $2 AND a.status <> 'revoked' AND a.deleted_at IS NULL FOR UPDATE OF a"
+)
+# A lost or cancelled trip has no portal (AA-946 re-review note, closed here): its links answer 404.
+CLOSED_STAGES = ("lost", "cancelled")
 AGENCY_SQL = "SELECT display_name FROM crm.tenant WHERE tenant_id = $1"
 OPENED_SQL = """
 UPDATE crm.client_link SET status = 'opened', first_opened_at = now() WHERE link_id = $1 AND status = 'sent'
@@ -139,12 +146,17 @@ UPDATE crm.traveler_access SET last_sign_in_at = now(),
  WHERE access_id = $1
 """
 SESSION_SQL = """
-SELECT otp_id FROM crm.otp_challenge
- WHERE access_id = $1 AND session_hash = $2 AND status = 'verified' AND session_expires_at > now()
+SELECT otp_id, access_id, traveler_id, sent_to_bidx FROM crm.otp_challenge
+ WHERE trip_id = $1 AND session_hash = $2 AND status = 'verified' AND session_expires_at > now()
 """
 END_SESSION_SQL = """
-UPDATE crm.otp_challenge SET status = 'expired' WHERE access_id = $1 AND session_hash = $2 AND status = 'verified'
+UPDATE crm.otp_challenge SET status = 'expired' WHERE trip_id = $1 AND session_hash = $2 AND status = 'verified'
 """
+# Fix E4: the picked (or switched-to) traveller takes the session row; the code was sent to the address that reaches
+# both of them (app.portal.person.group_of), so the row keeps its proof and changes only whom it acts as.
+REBIND_SQL = "UPDATE crm.otp_challenge SET access_id = $2, traveler_id = $3 WHERE otp_id = $1"
+# The session's proof: the blind index of the address the code went to (crm-029; app.portal.person.delivery_bidx).
+SENT_TO_SQL = "UPDATE crm.otp_challenge SET sent_to_bidx = $2 WHERE otp_id = $1"
 EMAIL_SQL = "SELECT email_enc FROM crm.traveler WHERE traveler_id = $1 AND deleted_at IS NULL"
 MAILBOX_SQL = """
 SELECT channel_account_id FROM crm.channel_account
@@ -240,16 +252,39 @@ def check_origin(settings: Settings, origin: str | None) -> None:
 
 async def _access(ctx: AnyContext, link: ClientLink) -> Any:
     row = await ctx.conn.fetchrow(ACCESS_SQL, link.link_id)
-    if row is None:
+    if row is None or row["stage"] in CLOSED_STAGES:
         raise NotFound("link_not_found")
     return row
 
 
-async def _session(ctx: AnyContext, access: Any, session: str | None) -> uuid.UUID:
+async def _session_row(ctx: AnyContext, access: Any, session: str | None) -> Any:
     if session and len(session) <= 100:
-        found = await ctx.conn.fetchval(SESSION_SQL, access["access_id"], session_hash(session))
+        found = await ctx.conn.fetchrow(SESSION_SQL, access["trip_id"], session_hash(session))
         if found is not None:
             return found
+    raise Forbidden("portal_sign_in_required", "sign in with the code we e-mail you")
+
+
+async def _signed_in(ctx: AnyContext, access: Any, session: str | None) -> Any:
+    """The access the session acts as: the link's own, or (Fix E4) another traveller of the trip whose codes go to the
+    same address as the link's traveller, picked after the code or switched to. **The session is bound to the address
+    its code went to** (``sent_to_bidx``): the traveller it acts as (and the link's traveller) must still be reached
+    through that address now, so a companion who has since got an address of their own, or a lead whose address the
+    agency changed, ends every session proven by the old address, even on the companion's new link. Anything else: 403
+    ``portal_sign_in_required`` (a session of another trip, of another address, of an address since changed, or of an
+    access since revoked)."""
+    found = await _session_row(ctx, access, session)
+    members = await person.party(ctx, access["trip_id"])
+    proof = found["sent_to_bidx"]
+    acting_reach = person.delivery_bidx(members, found["traveler_id"])
+    if proof is not None and acting_reach is not None and hmac.compare_digest(bytes(proof), acting_reach):
+        if found["access_id"] == access["access_id"]:
+            return access
+        reach = person.delivery_of(members, access["traveler_id"])
+        if reach is not None and person.delivery_of(members, found["traveler_id"]) == reach:
+            acting = await ctx.conn.fetchrow(ACCESS_BY_ID_SQL, found["access_id"], access["trip_id"])
+            if acting is not None:
+                return acting
     raise Forbidden("portal_sign_in_required", "sign in with the code we e-mail you")
 
 
@@ -269,14 +304,19 @@ async def _deliver(
 ) -> str | None:
     """Queue the code mail from the agency's own mailbox; the masked address, or None when no mailbox can send.
     The stored message carries :data:`CODE_MASK`; the code waits sealed on its ``otp_challenge`` row for the sender."""
-    blob = await ctx.conn.fetchval(EMAIL_SQL, access["traveler_id"])
-    if blob is None:
+    # Fix E4: a companion without an address of their own is reached through the lead's (app.portal.person).
+    members = await person.party(ctx, access["trip_id"])
+    to = person.delivery_of(members, access["traveler_id"])
+    blob = await ctx.conn.fetchval(EMAIL_SQL, to) if to is not None else None
+    if blob is None or to is None:
         raise Conflict("no_email_on_file", "your agent has no e-mail address for you")
-    address = await vault.decrypt("traveler", "email_enc", access["traveler_id"], blob)
+    address = await vault.decrypt("traveler", "email_enc", to, blob)
+    # The session this code opens stays bound to this address (public._signed_in).
+    await ctx.conn.execute(SENT_TO_SQL, otp_id, person.delivery_bidx(members, access["traveler_id"]))
     mailbox = await ctx.conn.fetchval(MAILBOX_SQL, access["owner_member_id"])
     if mailbox is None:
         return None
-    conversation = await threads.conversation_for(ctx, access["trip_id"], access["traveler_id"])
+    conversation = await threads.conversation_for(ctx, access["trip_id"], to)
     message_id = uuid.uuid4()
     subject, body = CODE_TEXT[purpose]
     await ctx.conn.execute(
@@ -295,7 +335,7 @@ async def _deliver(
     await ctx.conn.execute(TOUCH_CONVERSATION_SQL, conversation)
     await dispatch.enqueue_message(
         ctx,
-        traveler_id=access["traveler_id"],
+        traveler_id=to,
         channel="email",
         purpose="transactional",
         origin="system",
@@ -321,7 +361,7 @@ async def request_code(
     async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
         access = await _access(ctx, link)
         if purpose == "sign":
-            await _session(ctx, access, session)
+            access = await _signed_in(ctx, access, session)  # the signing code is the acting traveller's
             await _require_unlocked(ctx, access, "portal_code")
         if int(await ctx.conn.fetchval(RECENT_CODES_SQL, access["access_id"]) or 0) >= CODES_PER_HOUR:
             raise RateLimited("too_many_codes", 3600, "wait before asking for another code")
@@ -371,28 +411,109 @@ async def _check_code(ctx: AnyContext, access: Any, purpose: str, code: Any) -> 
     return None, {"detail": "code_invalid", "attempts_left": left}, "code_invalid" if left else "attempts_exhausted"
 
 
+def _pick_target(raw: Any) -> uuid.UUID | None:
+    if raw is None:
+        return None
+    try:
+        return uuid.UUID(str(raw))
+    except ValueError:
+        raise Invalid("invalid_submission", "who you are", fields=["traveler_id"]) from None
+
+
+async def _choices(ctx: AnyContext, keys: KeyProvider | None, group: list[person.Member], me: uuid.UUID) -> list[dict]:
+    named = await person.names(ctx, Vault(keys, ctx), group, "portal_picker") if keys is not None else {}  # type: ignore[arg-type]
+    return [
+        {
+            "traveler_id": str(m.traveler_id),
+            "name": named.get(m.traveler_id),
+            "role": m.role,
+            "link": m.traveler_id == me,
+        }
+        for m in group
+    ]
+
+
 async def verify_code(
-    pool: asyncpg.Pool, settings: Settings, token: str, code: Any, *, origin: str | None
+    pool: asyncpg.Pool,
+    settings: Settings,
+    token: str,
+    code: Any,
+    *,
+    origin: str | None,
+    traveler_id: Any = None,
+    keys: KeyProvider | None = None,
 ) -> tuple[str | None, dict[str, Any]]:
-    """(the new session token, the answer); (None, the refusal) for a wrong, expired or missing code."""
+    """(the new session token, the answer); (None, the refusal) for a wrong, expired or missing code.
+
+    Fix E4 "Who are you?": when the code's address reaches more than one traveller of the trip with portal access (a
+    companion without an address of their own is reached through the lead's), a good code without ``traveler_id``
+    answers (None, ``{"signed_in": false, "pick": [...]}``) and stays pending (no attempt spent); the same code with
+    the chosen ``traveler_id`` opens a session that acts as that traveller only. Two people on one address get two
+    separate sessions this way. A ``traveler_id`` outside the choices is 403 ``not_your_traveller``."""
     check_origin(settings, origin)
+    chosen = _pick_target(traveler_id)
     async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
         access = await _access(ctx, link)
         verified, refusal, _ = await _check_code(ctx, access, "sign_in", code)
         if verified is None:
             return None, refusal
+        group = person.group_of(await person.party(ctx, access["trip_id"]), access["traveler_id"])
+        acting = access
+        if len(group) > 1 and chosen is None:
+            ctx.audit("portal_pick", "allowed", "traveler_access", str(access["access_id"]), reason="asked")
+            return None, {"signed_in": False, "pick": await _choices(ctx, keys, group, access["traveler_id"])}
+        if chosen is not None and chosen != access["traveler_id"]:
+            target = next((m for m in group if m.traveler_id == chosen), None)
+            if target is None or target.access_id is None:
+                ctx.audit("portal_pick", "denied", "traveler_access", str(access["access_id"]), reason="not_in_group")
+                raise Forbidden("not_your_traveller", "choose one of the travellers this address reaches")
+            acting = await ctx.conn.fetchrow(ACCESS_BY_ID_SQL, target.access_id, access["trip_id"])
+            await ctx.conn.execute(REBIND_SQL, verified["otp_id"], acting["access_id"], acting["traveler_id"])
         session = secrets.token_urlsafe(32)
         expires = await ctx.conn.fetchval(SIGNED_IN_SQL, verified["otp_id"], session_hash(session), SESSION_HOURS)
-        await ctx.conn.execute(ACTIVATE_SQL, access["access_id"])
-        ctx.audit("portal_sign_in", "allowed", "traveler_access", str(access["access_id"]))
+        await ctx.conn.execute(ACTIVATE_SQL, acting["access_id"])
+        ctx.audit(
+            "portal_sign_in",
+            "allowed",
+            "traveler_access",
+            str(acting["access_id"]),
+            reason="picked" if acting is not access else None,
+        )
         return session, {"signed_in": True, "session_expires_at": expires.isoformat()}
+
+
+async def switch(
+    pool: asyncpg.Pool, settings: Settings, token: str, session: str | None, raw: Any, *, origin: str | None
+) -> dict[str, Any]:
+    """Fix E4 / WF-8 "[Fill for Max]": the signed-in person acts as another traveller their address reaches (the lead
+    for a companion without an address of their own, or back), without a new code: the session row moves to that
+    traveller. Anyone else: 403 ``not_your_traveller``."""
+    check_origin(settings, origin)
+    chosen = _pick_target(raw.get("traveler_id") if isinstance(raw, dict) else None)
+    if chosen is None:
+        raise Invalid("invalid_submission", "who you are", fields=["traveler_id"])
+    async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
+        access = await _access(ctx, link)
+        me = await _signed_in(ctx, access, session)
+        row = await _session_row(ctx, access, session)
+        group = person.group_of(await person.party(ctx, access["trip_id"]), me["traveler_id"])
+        target = next((m for m in group if m.traveler_id == chosen), None)
+        if target is None or target.access_id is None:
+            ctx.audit("portal_switch", "denied", "traveler_access", str(me["access_id"]), reason="not_in_group")
+            raise Forbidden("not_your_traveller", "choose one of the travellers this address reaches")
+        await ctx.conn.execute(REBIND_SQL, row["otp_id"], target.access_id, target.traveler_id)
+        await ctx.conn.execute(ACTIVATE_SQL, target.access_id)
+        ctx.audit(
+            "portal_switch", "allowed", "traveler_access", str(target.access_id), object_ids=(str(me["access_id"]),)
+        )
+        return {"signed_in": True, "traveler_id": str(chosen)}
 
 
 async def sign_out(pool: asyncpg.Pool, token: str, session: str | None) -> dict[str, Any]:
     async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
         access = await _access(ctx, link)
-        if session:
-            await ctx.conn.execute(END_SESSION_SQL, access["access_id"], session_hash(session))
+        if session and len(session) <= 100:
+            await ctx.conn.execute(END_SESSION_SQL, access["trip_id"], session_hash(session))
         return {"signed_in": False}
 
 
@@ -437,7 +558,7 @@ async def home(pool: asyncpg.Pool, token: str, session: str | None, keys: KeyPro
         await ctx.conn.execute(OPENED_SQL, link.link_id)
         agency = await ctx.conn.fetchval(AGENCY_SQL, link.tenant_id)
         try:
-            await _session(ctx, access, session)
+            access = await _signed_in(ctx, access, session)  # from here on: the person the session acts as
         except Forbidden:
             return {"agency_name": agency, "signed_in": False}
         done = await progress.compute(ctx, access["trip_id"])
@@ -483,9 +604,28 @@ async def home(pool: asyncpg.Pool, token: str, session: str | None, keys: KeyPro
             # AA-955 (e-sign v1): the envelope documents (merge fields shown with placeholders) and who signs what.
             "agreements": agreements,
         }
+        out.update(await _person_view(ctx, keys, access))
         if access["role"] == "lead":
+            members = {m.traveler_id: m for m in await person.party(ctx, access["trip_id"])}
+            mine_group = {m.traveler_id for m in person.group_of(list(members.values()), access["traveler_id"])}
+            named = (
+                await person.names(ctx, Vault(keys, ctx), list(members.values()), "portal_party")  # type: ignore[arg-type]
+                if keys is not None
+                else {}
+            )
             out["party"] = [
-                {"role": t.role, "details_done": t.details_done, "waiver_signed": t.waiver_signed, "me": t is mine}
+                {
+                    "traveler_id": str(t.traveler_id),
+                    "name": named.get(t.traveler_id),
+                    "role": t.role,
+                    "details_done": t.details_done,
+                    "waiver_signed": t.waiver_signed,
+                    "me": t is mine,
+                    # AA-953: how the person reaches their page: their own address, through the lead's, or not yet.
+                    "has_email": bool(members.get(t.traveler_id) and members[t.traveler_id].has_email),
+                    "via_you": t.traveler_id in mine_group and t is not mine,
+                    "portal": t.access_status,
+                }
                 for t in done.travellers
             ]
             out["payments"] = [
@@ -500,6 +640,31 @@ async def home(pool: asyncpg.Pool, token: str, session: str | None, keys: KeyPro
             ]
         ctx.audit("portal_view", "allowed", "traveler_access", str(access["access_id"]))
         return out
+
+
+async def _person_view(ctx: AnyContext, keys: KeyProvider | None, access: Any) -> dict[str, Any]:
+    """AA-953 (R22): what is this person's own (their name, who else their address reaches, their flights, documents
+    shared with them, whether a passport scan is on file) and the trip as travellers see it (its lines without prices
+    or cancelled ones, the accepted proposal's days)."""
+    trip_id, traveler_id = access["trip_id"], access["traveler_id"]
+    out: dict[str, Any] = {
+        "services": await person.services(ctx, trip_id),
+        "itinerary": await person.itinerary(ctx, trip_id),
+        "passport_scan_on_file": await person.passport_scan_on_file(ctx, traveler_id),
+    }
+    if keys is None:
+        return out
+    vault = Vault(keys, ctx)  # type: ignore[arg-type]
+    members = await person.party(ctx, trip_id)
+    me = next((m for m in members if m.traveler_id == traveler_id), None)
+    others = [m for m in person.group_of(members, traveler_id) if m.traveler_id != traveler_id]
+    named = await person.names(ctx, vault, [*([me] if me else []), *others], "portal_home")
+    out["me"] = {"traveler_id": str(traveler_id), "name": named.get(traveler_id), "role": access["role"]}
+    out["switch_to"] = [{"traveler_id": str(m.traveler_id), "name": named.get(m.traveler_id), "role": m.role}
+                        for m in others]  # fmt: skip
+    out["flights"] = await person.flights(ctx, vault, trip_id, traveler_id, access["start_date"])
+    out["documents"] = await person.documents_view(ctx, vault, trip_id, traveler_id)
+    return out
 
 
 def _stage3_answers(raw: Any) -> dict[str, str | None]:
@@ -532,8 +697,7 @@ async def submit_stage3(
 ) -> dict[str, Any]:
     check_origin(settings, origin)
     async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
-        access = await _access(ctx, link)
-        await _session(ctx, access, session)
+        access = await _signed_in(ctx, await _access(ctx, link), session)
         await _require_unlocked(ctx, access, "portal_stage3")
         answers = _stage3_answers(raw)
         vault = Vault(keys, ctx)  # type: ignore[arg-type]
@@ -601,8 +765,7 @@ async def sign(
     check_origin(settings, origin)
     name, target, insurance = _sign_input(raw)
     async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
-        access = await _access(ctx, link)
-        await _session(ctx, access, session)
+        access = await _signed_in(ctx, await _access(ctx, link), session)
         await _require_unlocked(ctx, access, "portal_sign")
         seal_with = require_sealer(sealer)
         found = await signing.published(ctx)
@@ -750,4 +913,164 @@ async def sign(
             "signer_role": signer[1],
             "envelope_sha256": envelope_sha.hex(),
             "seal_alg": seal.alg,
+        }
+
+
+# ── AA-953 (CRM-24a): per person ──────────────────────────────────────────────────────────────────────────────────
+
+
+async def save_flights(
+    pool: asyncpg.Pool,
+    keys: KeyProvider,
+    settings: Settings,
+    token: str,
+    session: str | None,
+    raw: Any,
+    *,
+    origin: str | None,
+) -> dict[str, Any]:
+    """R33: the acting traveller's arrival / departure flight (Stage 3: locked before the deposit like the rest)."""
+    check_origin(settings, origin)
+    async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
+        access = await _signed_in(ctx, await _access(ctx, link), session)
+        await _require_unlocked(ctx, access, "portal_flights")
+        saved = await person.save_flights(
+            ctx,
+            Vault(keys, ctx),
+            access["trip_id"],
+            access["traveler_id"],
+            raw,
+            access["start_date"],  # type: ignore[arg-type]
+        )
+        await stages.touch(ctx, access["trip_id"])
+        return {"flights": saved}
+
+
+async def upload_passport_scan(
+    pool: asyncpg.Pool,
+    keys: KeyProvider,
+    store: DocumentStore,
+    settings: Settings,
+    token: str,
+    session: str | None,
+    raw: Any,
+    *,
+    origin: str | None,
+) -> dict[str, Any]:
+    """Stage 3 "passport upload-only, never shown back": a write-only scan of the acting traveller's passport."""
+    check_origin(settings, origin)
+    async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
+        access = await _signed_in(ctx, await _access(ctx, link), session)
+        await _require_unlocked(ctx, access, "portal_passport_scan")
+        out = await person.upload_passport_scan(
+            ctx,
+            Vault(keys, ctx),
+            store,
+            access["trip_id"],
+            access["traveler_id"],
+            raw,  # type: ignore[arg-type]
+        )
+        await stages.touch(ctx, access["trip_id"])
+        return out
+
+
+async def open_document(
+    pool: asyncpg.Pool, keys: KeyProvider, store: DocumentStore, token: str, session: str | None, document_id: Any
+) -> dict[str, Any]:
+    """A document the agency shared with this traveller (or the whole trip); 403 for a passport scan (card R), an
+    unshared document or another traveller's."""
+    try:
+        wanted = uuid.UUID(str(document_id))
+    except ValueError:
+        raise NotFound("document_not_found") from None
+    async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
+        access = await _signed_in(ctx, await _access(ctx, link), session)
+        return await person.open_document(
+            ctx,
+            Vault(keys, ctx),
+            store,
+            access["trip_id"],
+            access["traveler_id"],
+            access["access_id"],
+            wanted,  # type: ignore[arg-type]
+        )
+
+
+async def invite_companion(
+    pool: asyncpg.Pool,
+    keys: KeyProvider,
+    settings: Settings,
+    token: str,
+    session: str | None,
+    raw: Any,
+    *,
+    origin: str | None,
+) -> dict[str, Any]:
+    """ "Companion e-mails are asked at the portal invite" (C-07), lead only (403 ``lead_only``):
+
+    - a companion **without an address of their own**: the lead gives one (``person.set_companion_email``: only for
+      a companion on this trip alone, never over an address on file, never another client's; refusals are capped and
+      audited) or none. With none, the companion reaches their page through the lead's address (Fix E4):
+      their link is (re-)issued and returned once so the lead can forward it (the lead holds that address anyway). With
+      an address, the link is (re-)issued to the companion and **not** returned to the lead: their old link (which the
+      lead may hold) is revoked, and every session proven by the lead's address ends (``_signed_in``).
+    - a companion **with an address of their own**: invited only when they have no live portal access yet, and the
+      link goes to their address only (never returned to the lead); with a live access, 409 ``already_invited`` (the
+      lead never rotates, so never revokes, another adult's link)."""
+    check_origin(settings, origin)
+    if not isinstance(raw, dict):
+        raise Invalid("invalid_submission", "an object", fields=["body"])
+    companion = _pick_target(raw.get("traveler_id"))
+    if companion is None:
+        raise Invalid("invalid_submission", "the companion", fields=["traveler_id"])
+    async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
+        access = await _signed_in(ctx, await _access(ctx, link), session)
+        if access["role"] != "lead":
+            ctx.audit("portal_invite", "denied", "traveler_access", str(access["access_id"]), reason="lead_only")
+            raise Forbidden("lead_only", "only the lead traveller invites the party")
+        members = await person.party(ctx, access["trip_id"])
+        before = next((m for m in members if m.traveler_id == companion), None)
+        if before is None or before.role != "companion":
+            raise NotFound("traveler_not_on_trip")
+        if before.has_email and before.access_id is not None:
+            ctx.audit(
+                "portal_companion_invite",
+                "denied",
+                "traveler_access",
+                str(access["access_id"]),
+                reason="already_invited",
+                object_ids=(str(companion),),
+            )
+            raise Conflict("already_invited", "they have their own link; ask your travel agent to send it again")
+        if raw.get("email") not in (None, ""):
+            await person.set_companion_email(
+                ctx,
+                Vault(keys, ctx),  # type: ignore[arg-type]
+                members,
+                access["trip_id"],
+                access["access_id"],
+                companion,
+                raw.get("email"),
+            )
+            members = await person.party(ctx, access["trip_id"])
+        reach = person.delivery_of(members, companion)
+        if reach is None:
+            raise Conflict("no_email_on_file", "give their e-mail address, or add yours first")
+        own = reach == companion
+        invited = await portal_access.invite(ctx, access["trip_id"], companion)
+        await progress.refresh(ctx, access["trip_id"])
+        ctx.audit(  # app.portal.access.invite audits the link itself; this names the lead who asked
+            "portal_companion_invite",
+            "allowed",
+            "traveler_access",
+            invited["access_id"],
+            reason="own_address" if own else "via_lead",
+            object_ids=(str(access["access_id"]),),
+        )
+        return {
+            "traveler_id": str(companion),
+            "reach": "own" if own else "via_you",
+            # Their own address: the link goes there only (the dispatcher), never to the lead.
+            "link_path": None if own else invited["link_path"],
+            "expires_at": invited["expires_at"],
         }

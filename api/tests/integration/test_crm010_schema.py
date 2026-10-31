@@ -1183,8 +1183,30 @@ async def test_the_agency_erase_knows_every_tenant_table(admin: asyncpg.Connecti
             "WHERE c.relnamespace = 'crm'::regnamespace AND c.relkind IN ('r', 'p') AND NOT c.relispartition"
         )
     ]
-    missing = [t for t in tables if f"'{t}'" not in source and t not in KEEP]
+    missing = [t for t in tables if f"'{t}'" not in source and t not in KEEP and t not in CASCADE_ERASED]
     assert missing == []
+
+
+# AA-953 (crm-029, an expand file): tables the erase never names because every foreign key they have cascades from a
+# row the erase deletes (trip, traveler, trip_traveler), so they leave with it. Listed on purpose, never derived.
+CASCADE_ERASED = {"traveler_flight": {"trip", "traveler", "trip_traveler"}}
+
+
+async def test_a_cascade_erased_table_cascades_from_each_subject(admin: asyncpg.Connection) -> None:
+    """A table in CASCADE_ERASED has an ON DELETE CASCADE key to each listed parent and no other key that would keep
+    a row alive (a NO ACTION key to a parent the erase deletes would fail the erase instead)."""
+    for table, parents in CASCADE_ERASED.items():
+        keys = {
+            r["parent"]: r["action"]
+            for r in await admin.fetch(
+                "SELECT p.relname AS parent, c.confdeltype::text AS action FROM pg_constraint c "
+                "JOIN pg_class p ON p.oid = c.confrelid "
+                "WHERE c.conrelid = ('crm.' || $1)::regclass AND c.contype = 'f'",
+                table,
+            )
+        }
+        assert {p: keys.get(p) for p in parents} == dict.fromkeys(parents, "c"), table
+        assert set(keys) - parents <= {"tenant"}, table  # crm.tenant leaves last (KEEP), never before its rows
 
 
 async def test_dispatch_rows_follow_their_gate(app_pool: asyncpg.Pool) -> None:
