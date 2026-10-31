@@ -16,7 +16,8 @@
 //   8. C-04 on the new link: the hold box (AA item: "Check availability and continue" -> held until …; no AA item:
 //      nothing to hold), the groups (R26), rooms confirmed, terms, full name -> accepted; the agent sees the accepted
 //      total;
-//   9. clean-up: the trip goes to the trash.
+//   9. clean-up: no AA item -> the trip goes to the trash; an AA item -> the accept's Booking sync writes the held AA
+//      line, the trash refuses (409 has_aa_line, alternative cancel_trip) and the Proposal-stage trip is marked Lost.
 // Card R (accept after the hold expired -> 409 hold_expired with the re-quote offer; a 4th re-check in a day -> "Ask
 // your agent", no hold) and the sold-out fallback of card E need Booking's clock or stock: they run on PostgreSQL with
 // a fake Booking (api/tests/integration/test_client_proposal_api.py).
@@ -327,8 +328,35 @@ test.describe("CRM-21b client proposal on Dev", () => {
     await hydrated(page, "crm-trip");
     await expect(tab.getByTestId("builder-accepted-total")).toBeVisible({ timeout: 15_000 });
 
-    // 9. Clean-up: the trip goes to the trash (a hold set on Booking runs out on its own: 48 h on Dev).
-    const deleted = await bff(page, "DELETE", `trips/${tripId}`);
-    expect(deleted.status, `trip delete answered ${deleted.status} ${deleted.body?.detail ?? ""}`).toBe(200);
+    // 9. Clean-up. No AA item: the trip goes to the trash. With an AA item the accept nudged the Booking sync, which
+    // writes the held AA line (and the trip commitment) within seconds: the trash then refuses the trip (409
+    // has_aa_line, alternative cancel_trip; the rule aa-lines.spec.ts asserts after its hold). The trip is still at
+    // Proposal (Booked only after the deposit) and cancel is for a booked trip on, so it is marked Lost instead: that
+    // leaves the open board and queues the hold's release (aa-lines.spec.ts checks the release itself).
+    if (withAa) {
+      await expect
+        .poll(
+          async () => {
+            const lines = await bff(page, "GET", `trips/${tripId}/lines`);
+            expect(lines.status, "GET trips/{id}/lines").toBe(200);
+            return (lines.body.lines as any[]).filter((l) => l.aa?.sub_status === "held").length;
+          },
+          { message: "the held AA line written from the accepted proposal", timeout: 60_000, intervals: [2_000, 5_000] },
+        )
+        .toBeGreaterThan(0);
+      const blocked = await bff(page, "DELETE", `trips/${tripId}`);
+      expect(blocked.status, `trip delete with a held AA line: ${JSON.stringify(blocked.body)}`).toBe(409);
+      expect(blocked.body.blockers).toContain("has_aa_line");
+      expect(blocked.body.alternative).toBe("cancel_trip");
+      await page.goto(tripUrl);
+      await hydrated(page, "crm-trip");
+      await page.getByTestId("trip-moves").getByRole("button", { name: /^mark as lost$/i }).click();
+      await page.getByTestId("trip-lost-reason").selectOption("price");
+      await page.getByTestId("trip-moves").getByRole("button", { name: /^mark lost$/i }).click();
+      await stageIs(page, "lost");
+    } else {
+      const deleted = await bff(page, "DELETE", `trips/${tripId}`);
+      expect(deleted.status, `trip delete answered ${deleted.status} ${deleted.body?.detail ?? ""}`).toBe(200);
+    }
   });
 });
