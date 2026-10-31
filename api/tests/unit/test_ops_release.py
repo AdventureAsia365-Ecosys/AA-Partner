@@ -10,6 +10,7 @@ schedule, the Booking incident admin link and the ``BOOKING_ADMIN_URL`` setting.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import uuid
 from collections.abc import Iterator
 from typing import Any
@@ -202,3 +203,168 @@ async def test_without_the_key_provider_the_run_finishes_instead_of_retrying() -
     )  # type: ignore[arg-type]
     assert out == {"agency_count": 0, "reason_code": "key_provider_not_configured"}
     check_payload(out)
+
+
+# ── AA ops notices after the commit, one failing trip (review fixes) ────────────────────────────────
+
+
+class _Tx:
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+
+class _Conn:
+    def transaction(self) -> _Tx:
+        return _Tx()
+
+
+def _ctx() -> Any:
+    from app.tenancy import SystemContext
+
+    return SystemContext(conn=_Conn(), tenant_id=uuid.UUID(TENANT), actor=service.ACTOR)  # type: ignore[arg-type]
+
+
+def _lines(caplog: pytest.LogCaptureFixture, event: str) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.getMessage().startswith(event + " ")]
+
+
+def test_the_notice_line_is_the_one_the_infra_alarm_matches(caplog: pytest.LogCaptureFixture) -> None:
+    """AA-CIS-Infra crm_ops_release_alarms.tf matches the quoted event names; renaming one silences its alarm."""
+    assert (service.WITHDRAWN_EVENT, service.T21_EVENT) == (
+        "crm_ops_release_withdrawn",
+        "crm_ops_release_incomplete_t21",
+    )
+    caplog.set_level(logging.INFO, logger="app.ops_release.service")
+    release = uuid.UUID(TRIP)
+    notices: service.Notices = [service._withdrawn(_ctx(), release, "trip_cancelled")]
+    assert not _lines(caplog, service.WITHDRAWN_EVENT)  # queued: nothing written before the commit
+    service.emit(notices)
+    assert _lines(caplog, service.WITHDRAWN_EVENT) == [
+        f"crm_ops_release_withdrawn tenant_id={TENANT} ops_release_id={TRIP} reason=trip_cancelled"
+    ]
+    assert notices == []  # written once
+
+
+@pytest.mark.asyncio
+async def test_item_tx_puts_the_context_back_but_keeps_denials() -> None:
+    ctx = _ctx()
+    ctx.audit("ops_release_build", "allowed", "trip")
+    ctx.dek_memo[("vault", 1)] = b"k" * 32
+    ctx.dek_current["vault"] = 1
+    with pytest.raises(RuntimeError):
+        async with service.item_tx(ctx):
+            ctx.audit("ops_release_create", "allowed", "trip", TRIP)
+            ctx.audit("decrypt", "denied", "ops_release", TRIP)
+            ctx.dek_memo[("ops_release", 1)] = b"x" * 32  # a DEK whose row the savepoint rolled back
+            ctx.dek_current["ops_release"] = 1
+            raise RuntimeError("bad stored value")
+    assert [(e.action, e.outcome) for e in ctx.audit_events] == [
+        ("ops_release_build", "allowed"),
+        ("decrypt", "denied"),
+    ]
+    assert ctx.dek_memo == {("vault", 1): b"k" * 32} and ctx.dek_current == {"vault": 1}
+    async with service.item_tx(ctx):  # success keeps what the item queued
+        ctx.audit("ops_release_create", "allowed", "trip", TRIP)
+    assert ctx.audit_events[-1].action == "ops_release_create"
+
+
+@pytest.mark.asyncio
+async def test_one_failing_trip_keeps_the_others_and_drops_its_notices(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    bad, good = uuid.uuid4(), uuid.uuid4()
+
+    async def today(_ctx: Any) -> dt.date:
+        return dt.date(2026, 12, 1)
+
+    async def sync_trip(ctx: Any, _vault: Any, trip_id: uuid.UUID, _on: dt.date, notices: Any = None) -> str:
+        service._notify(notices, service._withdrawn(ctx, trip_id, "aa_lines_cancelled"))
+        if trip_id == bad:
+            raise ValueError("Invalid isoformat string")
+        return "withdrawn"
+
+    async def purge_due(_ctx: Any, _on: dt.date) -> int:
+        return 1
+
+    monkeypatch.setattr(service, "today", today)
+    monkeypatch.setattr(service, "sync_trip", sync_trip)
+    monkeypatch.setattr(service, "purge_due", purge_due)
+    caplog.set_level(logging.INFO, logger="app.ops_release")
+    notices: service.Notices = []
+    counts = await job.run_agency(_ctx(), None, [bad, good], notices=notices)  # type: ignore[arg-type]
+    assert dict(counts) == {"failed": 1, "withdrawn": 1, "purged": 1}
+    assert [dict(n.fields)["ops_release_id"] for n in notices] == [good]
+    assert not _lines(caplog, service.WITHDRAWN_EVENT)  # the job writes them after the agency's commit
+    failed = [r.getMessage() for r in caplog.records if "ops_release_trip_failed" in r.getMessage()]
+    assert failed == [f"ops_release_trip_failed tenant_id={TENANT} trip_id={bad} error_class=ValueError"]
+
+
+class _Ctx:
+    def __init__(self, fail_commit: bool) -> None:
+        self.fail_commit = fail_commit
+
+    async def __aenter__(self) -> Any:
+        return _ctx()
+
+    async def __aexit__(self, exc_type: object, *_: object) -> bool:
+        if exc_type is None and self.fail_commit:
+            raise ConnectionError("commit failed")
+        return False
+
+
+@pytest.mark.parametrize("fail_commit", [False, True])
+@pytest.mark.parametrize("route", ["withdraw", "cancel"])
+def test_the_routes_tell_aa_ops_only_after_the_commit(
+    client: TestClient,
+    pools: LocalPools,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    route: str,
+    fail_commit: bool,
+) -> None:
+    """C12 step 6: a trip cancel and the agency's own withdrawal each write ``crm_ops_release_withdrawn`` (the Infra
+    alarm), and only once the transaction committed."""
+    from app import stages
+    from app.routers import ops_release as ops_router
+    from app.routers import pipeline as pipeline_router
+
+    reason = "trip_cancelled" if route == "cancel" else "agency_withdrawn"
+
+    async def withdraw(ctx: Any, trip_id: uuid.UUID, why: str, *, notices: Any = None) -> dict[str, Any]:
+        service._notify(notices, service._withdrawn(ctx, trip_id, why))
+        return {"trip_id": str(trip_id)}
+
+    async def pool(_request: Any) -> object:
+        return object()
+
+    def tx(*_a: Any, **_k: Any) -> _Ctx:
+        return _Ctx(fail_commit)
+
+    for module in (ops_router, pipeline_router):
+        monkeypatch.setattr(module, "request_pool", pool)
+        monkeypatch.setattr(module, "tenant_tx", tx)
+    monkeypatch.setattr(service, "withdraw", withdraw)
+    if route == "cancel":
+
+        async def staged_cancel(ctx: Any, trip_id: uuid.UUID, **kw: Any) -> dict[str, Any]:
+            await withdraw(ctx, trip_id, "trip_cancelled", notices=kw["notices"])
+            return {"stage": "cancelled"}
+
+        monkeypatch.setattr(stages, "cancel", staged_cancel)
+        path, body = f"/crm/v1/trips/{TRIP}/cancel?dry_run=false", {"cancel_reason_code": stages.CANCEL_REASONS[0]}
+    else:
+        path, body = f"/crm/v1/trips/{TRIP}/ops-release/withdraw", None
+    caplog.set_level(logging.INFO, logger="app.ops_release.service")
+    headers = {**_bearer(pools.partner_web()), "X-AA-Tenant-Id": TENANT}
+    if fail_commit:
+        with pytest.raises(ConnectionError):
+            client.post(path, json=body, headers=headers)
+        assert not _lines(caplog, service.WITHDRAWN_EVENT)
+    else:
+        assert client.post(path, json=body, headers=headers).status_code == 200
+        assert _lines(caplog, service.WITHDRAWN_EVENT) == [
+            f"crm_ops_release_withdrawn tenant_id={TENANT} ops_release_id={TRIP} reason={reason}"
+        ]

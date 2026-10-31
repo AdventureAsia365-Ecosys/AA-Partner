@@ -9,7 +9,8 @@
 3. **T-21 alert** (same function): a live release still incomplete within :data:`T21_DAYS` days of departure gets one
    ``ops_release_incomplete`` task for the trip owner, ``t21_alerted_at`` and the structured log line
    ``crm_ops_release_incomplete_t21`` (AA ops are alerted from that line, like the break-glass alarm of AA-971: the API
-   task has no SNS permission), once per release.
+   task has no SNS permission), once per release. Like ``crm_ops_release_withdrawn`` (every withdrawal: the job's,
+   a member's, a cancel's) it is a :class:`Notice` the caller writes after the commit.
 4. **Withdraw** (:func:`withdraw`, C12 step 6 and the agency's own "Withdraw"): a member marks the live release
    withdrawn (AA ops stop seeing the document at once) and nudges the job, which purges it when the trip has not
    started; no confirmed AA line left or the trip cancelled -> the job withdraws it too. A withdrawal for lost AA lines
@@ -29,6 +30,9 @@ import datetime as dt
 import json
 import logging
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Any
 
 from app.errors import Conflict, NotFound
@@ -125,6 +129,69 @@ SELECT at, actor_kind, action, reason FROM crm.audit_event
 """
 BATCH = 200
 
+WITHDRAWN_EVENT = "crm_ops_release_withdrawn"
+T21_EVENT = "crm_ops_release_incomplete_t21"
+
+
+@dataclass(frozen=True)
+class Notice:
+    """One AA ops alarm line (AA-CIS-Infra ``crm_ops_release_alarms.tf``: a metric filter on the event name), ids and
+    counts only. The work queues it and the caller writes it once the transaction that caused it has committed (the
+    break-glass pattern of :mod:`app.support.sessions`): a rolled-back withdrawal or T-21 alert never reaches AA ops,
+    and a T-21 alert whose ``t21_alerted_at`` was not saved is not sent again every hour."""
+
+    event: str
+    level: int
+    fields: tuple[tuple[str, Any], ...]
+
+    def emit(self) -> None:
+        log.log(self.level, "%s %s", self.event, " ".join(f"{k}={v}" for k, v in self.fields))
+
+
+Notices = list[Notice]
+
+
+def emit(notices: Notices) -> None:
+    """Write the queued alarm lines (call after the commit), then forget them."""
+    for notice in notices:
+        notice.emit()
+    notices.clear()
+
+
+def _notify(notices: Notices | None, notice: Notice) -> None:
+    if notices is None:
+        notice.emit()  # the caller holds no list (a test or a one-off script): written at once
+    else:
+        notices.append(notice)
+
+
+def _withdrawn(ctx: AnyContext, release_id: uuid.UUID, reason: str) -> Notice:
+    fields = (("tenant_id", ctx.tenant_id), ("ops_release_id", release_id), ("reason", reason))
+    return Notice(WITHDRAWN_EVENT, logging.INFO, fields)
+
+
+@asynccontextmanager
+async def item_tx(ctx: AnyContext) -> AsyncIterator[None]:
+    """One trip or one purge in a savepoint of the agency's transaction, so one bad item (a refused decrypt, a bad
+    stored value, a guard) loses that item only. On an error the context is put back as it was before the item: the
+    item's queued audit events go (its ``denied`` ones stay, as :func:`app.tenancy.system_tx` keeps them), and so do
+    the DEKs it generated (their ``crm.tenant_key`` rows rolled back with the savepoint: a later item must not seal
+    under them)."""
+    events = len(ctx.audit_events)
+    memo, current = dict(ctx.dek_memo), dict(ctx.dek_current)
+    try:
+        async with ctx.conn.transaction():
+            yield
+    except BaseException:
+        kept = [e for e in ctx.audit_events[events:] if e.outcome == "denied"]
+        del ctx.audit_events[events:]
+        ctx.audit_events.extend(kept)
+        ctx.dek_memo.clear()
+        ctx.dek_memo.update(memo)
+        ctx.dek_current.clear()
+        ctx.dek_current.update(current)
+        raise
+
 
 def _iso(value: dt.date | dt.datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
@@ -156,8 +223,11 @@ async def nudge(ctx: AnyContext, trip_id: uuid.UUID, reason: str) -> str | None:
     )
 
 
-async def sync_trip(ctx: AnyContext, vault: Vault, trip_id: uuid.UUID, on: dt.date) -> str:
-    """Create, refresh, alert or withdraw the release of one trip (the job's context). Returns an outcome code."""
+async def sync_trip(
+    ctx: AnyContext, vault: Vault, trip_id: uuid.UUID, on: dt.date, notices: Notices | None = None
+) -> str:
+    """Create, refresh, alert or withdraw the release of one trip (the job's context). Returns an outcome code. The
+    AA ops alarm lines (withdrawn, T-21) go to ``notices``: the job writes them after the agency's commit."""
     trip = await ctx.conn.fetchrow(TRIP_SQL, trip_id)
     release = await ctx.conn.fetchrow(LIVE_SQL, trip_id)
     closed = trip is None or trip["deleted_at"] is not None or trip["stage"] in CLOSED_STAGES
@@ -167,8 +237,7 @@ async def sync_trip(ctx: AnyContext, vault: Vault, trip_id: uuid.UUID, on: dt.da
             reason = "trip_cancelled" if closed else "aa_lines_cancelled"
             await ctx.conn.fetchval(WITHDRAW_SQL, release["ops_release_id"], reason)
             ctx.audit("ops_release_withdraw", "allowed", "trip", str(trip_id), reason=reason)
-            log.info("crm_ops_release_withdrawn tenant_id=%s ops_release_id=%s reason=%s", ctx.tenant_id,
-                     release["ops_release_id"], reason)  # fmt: skip
+            _notify(notices, _withdrawn(ctx, release["ops_release_id"], reason))
             return "withdrawn"
         return "none"
     if (
@@ -260,14 +329,14 @@ async def sync_trip(ctx: AnyContext, vault: Vault, trip_id: uuid.UUID, on: dt.da
         await ctx.conn.execute(TASK_SQL, trip_id, ALERT_TASK)
         ctx.audit("ops_release_t21_alert", "allowed", "trip", str(trip_id), reason="incomplete_t21")
         # AA ops are alerted from this line (a log metric filter, like crm_breakglass_opened); ids and counts only.
-        log.warning(
-            "crm_ops_release_incomplete_t21 tenant_id=%s ops_release_id=%s days_left=%s travellers=%s complete=%s",
-            ctx.tenant_id,
-            release_id,
-            (start - on).days,
-            built.traveller_count,
-            built.completeness["complete"],
+        fields = (
+            ("tenant_id", ctx.tenant_id),
+            ("ops_release_id", release_id),
+            ("days_left", (start - on).days),
+            ("travellers", built.traveller_count),
+            ("complete", built.completeness["complete"]),
         )
+        _notify(notices, Notice(T21_EVENT, logging.WARNING, fields))
         outcome += "+alerted"
     return outcome
 
@@ -285,10 +354,18 @@ async def due_trips(ctx: AnyContext, on: dt.date) -> list[uuid.UUID]:
 
 
 async def purge_due(ctx: AnyContext, on: dt.date) -> int:
-    """Purge every release due (``purge_at`` passed, or withdrawn before departure) that no legal hold covers."""
+    """Purge every release due (``purge_at`` passed, or withdrawn before departure) that no legal hold covers, each in
+    its own savepoint (:func:`item_tx`): a failed purge is logged by id and tried again on the next pass."""
     purged = 0
     for r in await ctx.conn.fetch(PURGE_DUE_SQL, on, BATCH):
-        await purge(ctx, r["ops_release_id"], r["trip_id"], "retention" if r["withdrawn_at"] is None else "withdrawn")
+        reason = "retention" if r["withdrawn_at"] is None else "withdrawn"
+        try:
+            async with item_tx(ctx):
+                await purge(ctx, r["ops_release_id"], r["trip_id"], reason)
+        except Exception as exc:  # noqa: BLE001 — one release's error must not keep every later one
+            log.error("ops_release_purge_failed tenant_id=%s ops_release_id=%s error_class=%s", ctx.tenant_id,
+                      r["ops_release_id"], type(exc).__name__)  # fmt: skip
+            continue
         purged += 1
     return purged
 
@@ -316,10 +393,13 @@ async def purge(ctx: AnyContext, release_id: uuid.UUID, trip_id: uuid.UUID, reas
 # ── The agency's side (/crm/v1) ──────────────────────────────────────────────────────────────────────
 
 
-async def withdraw(ctx: TenantContext, trip_id: uuid.UUID, reason: str) -> dict[str, Any]:
+async def withdraw(
+    ctx: TenantContext, trip_id: uuid.UUID, reason: str, *, notices: Notices | None = None
+) -> dict[str, Any]:
     """C12 step 6 (cancel trip) and the agency's own "Withdraw from AA ops": the live release is withdrawn now (AA ops
     stop seeing the document), and the job is nudged to purge it when the trip has not started. 404
-    ``release_not_found`` without a live release, 409 ``release_withdrawn`` when it already is."""
+    ``release_not_found`` without a live release, 409 ``release_withdrawn`` when it already is. The AA ops notice
+    (``crm_ops_release_withdrawn``, the Infra alarm) goes to ``notices``: the route writes it after the commit."""
     if reason not in MEMBER_WITHDRAW_REASONS:
         raise ValueError(f"not a member withdraw reason: {reason!r}")
     release = await ctx.conn.fetchrow(LIVE_SQL, trip_id)
@@ -329,6 +409,7 @@ async def withdraw(ctx: TenantContext, trip_id: uuid.UUID, reason: str) -> dict[
         raise Conflict("release_withdrawn", "the ops release is already withdrawn")
     await ctx.conn.fetchval(WITHDRAW_SQL, release["ops_release_id"], reason)
     ctx.audit("ops_release_withdraw", "allowed", "trip", str(trip_id), reason=reason)
+    _notify(notices, _withdrawn(ctx, release["ops_release_id"], reason))
     await nudge(ctx, trip_id, "withdraw")
     return await agency_view(ctx, trip_id)
 
@@ -339,11 +420,11 @@ async def live_count(ctx: AnyContext, trip_id: uuid.UUID) -> int:
     return int(release is not None and release["withdrawn_at"] is None)
 
 
-async def withdraw_on_cancel(ctx: TenantContext, trip_id: uuid.UUID) -> int:
+async def withdraw_on_cancel(ctx: TenantContext, trip_id: uuid.UUID, *, notices: Notices | None = None) -> int:
     """C12 step 6, inside the cancel run (:func:`app.stages.cancel`): withdraw the live release, if any (0 / 1)."""
     if not await live_count(ctx, trip_id):
         return 0
-    await withdraw(ctx, trip_id, "trip_cancelled")
+    await withdraw(ctx, trip_id, "trip_cancelled", notices=notices)
     return 1
 
 

@@ -684,10 +684,13 @@ async def bulk_undo(ctx: TenantContext, batch_id: uuid.UUID) -> dict[str, Any]:
 # ── cancel (C12) ──────────────────────────────────────────────────────────────────────────────────
 
 
-async def cancel(ctx: TenantContext, trip_id: uuid.UUID, *, reason: str | None, dry_run: bool) -> dict[str, Any]:
+async def cancel(
+    ctx: TenantContext, trip_id: uuid.UUID, *, reason: str | None, dry_run: bool, notices: list[Any] | None = None
+) -> dict[str, Any]:
     """Cancel a booked, pre-departure or travelling trip. The dry run lists today's effects and changes nothing; the
     run applies them in this transaction. Later cards (Booking release, invoices, refunds, commission, workflows) add
-    their effect rows here."""
+    their effect rows here. ``notices``: the AA ops alarm lines (:class:`app.ops_release.service.Notice`) the route
+    writes after the commit."""
     if reason not in CANCEL_REASONS:
         raise Invalid("cancel_reason_required", "pick one of the fixed reasons", reasons=list(CANCEL_REASONS))
     trip = await ctx.conn.fetchrow(LOCK_SQL, trip_id)
@@ -736,6 +739,6 @@ async def cancel(ctx: TenantContext, trip_id: uuid.UUID, *, reason: str | None, 
         HISTORY_SQL, trip_id, trip["stage"], "cancelled", f"cancel_{reason}", False, None, None, None
     )
     await aa_lines.close_trip(ctx, trip_id)
-    await ops_release.withdraw_on_cancel(ctx, trip_id)
+    await ops_release.withdraw_on_cancel(ctx, trip_id, notices=notices)
     ctx.audit("trip_cancel", "allowed", "trip", str(trip_id), reason=reason)
     return {**out, "stage": "cancelled"}

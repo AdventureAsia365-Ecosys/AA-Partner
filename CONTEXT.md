@@ -971,8 +971,16 @@ code in `app/ops_release/` (`build.py`, `service.py`, `job.py`, `staff.py`). Imp
   `POST /crm/v1/trips/{id}/ops-release/withdraw` (owner / agent, action `trip_cancel`) mark the live release withdrawn
   (AA ops lose it at once) and nudge the job, which purges it now if the trip has not started. No confirmed AA line
   left -> the job withdraws it (`aa_lines_cancelled`; a new confirm releases again). A cancel or the agency's own
-  withdrawal is never lifted. Each withdrawal logs `crm_ops_release_withdrawn` (Infra alarm `...-ops-release-withdrawn`:
-  the notice to AA ops) and stays on the S-02 board for 14 days.
+  withdrawal is never lifted. Each withdrawal (the cancel, the agency's own, the job's) logs `crm_ops_release_withdrawn`
+  (Infra alarm `...-ops-release-withdrawn`: the notice to AA ops) and stays on the S-02 board for 14 days.
+- **Alarm lines after the commit**: the withdrawn and T-21 lines are `service.Notice`s the code queues and the route
+  (cancel, withdraw) or the job writes only once its transaction committed (the break-glass pattern), so a rollback
+  never alarms and a T-21 alert whose `t21_alerted_at` was not saved is not repeated. Renaming either event silences
+  its alarm (AA-CIS-Infra `crm_ops_release_alarms.tf`).
+- **One trip at a time**: the job syncs each trip and purges each release in its own savepoint
+  (`service.item_tx`, which also drops that item's queued audit events, except denials, and the DEKs it generated): a
+  failing trip is counted `failed` and logged `ops_release_trip_failed` by id, the agency's other work commits, the
+  next hourly pass tries it again (a failed one-trip nudge is not retried).
 - **Agency side**: `GET /crm/v1/trips/{id}/ops-release` (every role; the Activity lines for owner / agent) feeds the
   trip page panel "AA ground operations" (`web/components/pipeline/OpsReleasePanel.tsx`): status, completeness, views,
   the purge countdown or the receipt, "Withdraw from AA". Never the document. The access log names the `aa_ops` lines.
@@ -985,8 +993,10 @@ code in `app/ops_release/` (`build.py`, `service.py`, `job.py`, `staff.py`). Imp
   departure_flight`, default the first four, the watermark on every row, formula-safe cells; one
   `crm.supplier_manifest_export` record and one `ops_manifest_export` event; the file is never stored). **Fix B3**: no
   incident flag here; the board and the release carry `incident_admin_url` = `<BOOKING_ADMIN_URL>/b2b-desk`.
-- **Not built here**: the staff web screen for S-02 (it needs the staff sign-in on the web with the WORKFORCE
-  `crm-staff` client, shared with the S-04 follow-up of AA-971); paid paging (SMS / WhatsApp) to AA ops.
+- **Not built yet**: the staff web screen for S-02 (board with completeness, purge countdown and the Booking incident
+  admin link; one release; manifest download). It needs the staff sign-in on the web with the WORKFORCE `crm-staff`
+  client, shared with the S-04 follow-up of AA-971, and is part of the AA-956 card: the card stays open until it
+  ships. Also not built: paid paging (SMS / WhatsApp) to AA ops.
 - Reports: the Module 8 success metric `ops_release_errors` (AA departures in the window that left with an incomplete
   or missing release, a withdrawn one excluded) is live.
 

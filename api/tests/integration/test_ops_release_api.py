@@ -407,6 +407,86 @@ async def test_ops_access_is_per_agency_status(app_pool: asyncpg.Pool) -> None:
         await staff.read(app_pool, s["keys"], ops, uuid.uuid4(), s["trip"])
 
 
+# ── AA ops notices after the commit; one failing trip (review fixes) ───────────────────────────────
+
+
+async def _sync_n(
+    pool: asyncpg.Pool, keys: KeyProvider, tenant: uuid.UUID, trips: list[uuid.UUID] | None = None
+) -> tuple[dict, list[tuple[str, str]]]:
+    notices: service.Notices = []
+    async with system_tx(pool, tenant, actor=service.ACTOR) as ctx:
+        counts = dict(await job.run_agency(ctx, Vault(keys, ctx), trips, notices=notices))
+    return counts, [(n.event, str(dict(n.fields).get("reason", ""))) for n in notices]
+
+
+async def test_every_withdrawal_and_the_t21_alert_reach_aa_ops_once(app_pool: asyncpg.Pool) -> None:
+    """The Infra alarms read ``crm_ops_release_withdrawn`` / ``crm_ops_release_incomplete_t21``: a trip cancel, the
+    agency's own withdrawal and the job's withdrawal each queue one withdrawn notice; the T-21 alert one, once."""
+    s = await _setup(app_pool, start_in=10)
+    await _feed(app_pool, s["tenant"], "line.confirmed", s["line"])
+    counts, notices = await _sync_n(app_pool, s["keys"], s["tenant"], [s["trip"]])
+    assert counts["created"] == 1 and notices == [(service.T21_EVENT, "")]
+    assert (await _sync_n(app_pool, s["keys"], s["tenant"], [s["trip"]]))[1] == []  # once per release
+    # C12 step 6: the trip cancel.
+    cancelled: service.Notices = []
+    async with tenant_tx(app_pool, s["who"]["agent"][0], s["tenant"]) as ctx:
+        await stages.cancel(ctx, s["trip"], reason=stages.CANCEL_REASONS[0], dry_run=False, notices=cancelled)
+    assert [(n.event, dict(n.fields)["reason"]) for n in cancelled] == [(service.WITHDRAWN_EVENT, "trip_cancelled")]
+    rid = (await _release(app_pool, s["tenant"], s["trip"]))["ops_release_id"]
+    assert dict(cancelled[0].fields)["ops_release_id"] == rid
+    counts, notices = await _sync_n(app_pool, s["keys"], s["tenant"], [s["trip"]])  # the nudge: purge, no 2nd notice
+    assert counts == {"purged": 1} and notices == []
+
+    # The agency's own withdrawal.
+    a = await _setup(app_pool, start_in=30)
+    await _feed(app_pool, a["tenant"], "line.confirmed", a["line"])
+    await _sync_n(app_pool, a["keys"], a["tenant"], [a["trip"]])
+    mine: service.Notices = []
+    async with tenant_tx(app_pool, a["who"]["owner"][0], a["tenant"]) as ctx:
+        await service.withdraw(ctx, a["trip"], "agency_withdrawn", notices=mine)
+    assert [(n.event, dict(n.fields)["reason"]) for n in mine] == [(service.WITHDRAWN_EVENT, "agency_withdrawn")]
+    assert (await _sync_n(app_pool, a["keys"], a["tenant"], [a["trip"]]))[1] == []
+
+    # The job's own withdrawal (Booking cancelled the only AA line).
+    b = await _setup(app_pool, start_in=30)
+    await _feed(app_pool, b["tenant"], "line.confirmed", b["line"])
+    await _sync_n(app_pool, b["keys"], b["tenant"], [b["trip"]])
+    await _feed(app_pool, b["tenant"], "booking.cancelled", b["line"])
+    counts, notices = await _sync_n(app_pool, b["keys"], b["tenant"], [b["trip"]])
+    assert counts == {"withdrawn": 1, "purged": 1} and notices == [(service.WITHDRAWN_EVENT, "aa_lines_cancelled")]
+
+
+async def test_one_failing_trip_keeps_the_agencys_other_work(
+    app_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One trip that raises (after its first ``ops_release`` DEK was made in the savepoint) is rolled back alone: the
+    agency's other trip is released and readable (sealed under a key row that exists), no create event is left for
+    the failed trip, and the next pass releases it."""
+    s = await _setup(app_pool, start_in=30)
+    await _feed(app_pool, s["tenant"], "line.confirmed", s["line"])
+    second = await _trip(app_pool, s["tenant"], s["who"]["agent"][1], s["start"], s["end"], [s["lead"]])
+    line2 = await _aa_line(app_pool, s["tenant"], second, s["start"], s["end"])
+    await _feed(app_pool, s["tenant"], "line.confirmed", line2)
+    original = Vault.encrypt
+    state = {"fail": True}
+
+    async def sealed_then_fails(self: Vault, table: str, *args: Any, **kw: Any) -> Any:
+        out = await original(self, table, *args, **kw)
+        if table == "ops_release" and state["fail"]:
+            state["fail"] = False
+            raise RuntimeError("bad stored value")
+        return out
+
+    monkeypatch.setattr(Vault, "encrypt", sealed_then_fails)
+    counts, _notices = await _sync_n(app_pool, s["keys"], s["tenant"], [s["trip"], second])
+    assert counts == {"failed": 1, "created": 1}
+    assert await _release(app_pool, s["tenant"], s["trip"]) is None
+    assert not [e for e in await _events(app_pool, s["tenant"], s["trip"]) if e[0] == "ops_release_create"]
+    got = await staff.read(app_pool, s["keys"], _ops(), s["tenant"], second)
+    assert got["document"]["travellers"][0]["family_name"] == "Lotus"
+    assert (await _sync_n(app_pool, s["keys"], s["tenant"], [s["trip"]]))[0]["created"] == 1  # the next pass
+
+
 # ── crm-034 guards ─────────────────────────────────────────────────────────────────────────────────
 
 

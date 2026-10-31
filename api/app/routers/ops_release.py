@@ -51,5 +51,8 @@ async def post_withdraw(
     request: Request, caller: CallerDep, tenant_id: TenantDep, trip_id: uuid.UUID
 ) -> dict[str, Any]:
     pool = await request_pool(request)
+    notices: service.Notices = []
     async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_CANCEL) as ctx:
-        return await service.withdraw(ctx, trip_id, "agency_withdrawn")
+        view = await service.withdraw(ctx, trip_id, "agency_withdrawn", notices=notices)
+    service.emit(notices)  # committed: AA ops are told (the Infra alarm on crm_ops_release_withdrawn)
+    return view

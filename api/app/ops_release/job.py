@@ -12,6 +12,11 @@ Two kinds of row, one handler:
   trip was cancelled): that trip only, then the purge of that agency, so a confirm reaches AA ops within about a
   minute and a withdrawal before departure is purged at once.
 
+Each trip and each purge runs in its own savepoint: one failing trip is counted ``failed`` (logged by id) and the
+agency's other work still commits; a failed nudge trip is not retried, the next hourly pass takes it again. The AA ops
+alarm lines (``crm_ops_release_incomplete_t21``, ``crm_ops_release_withdrawn``) are written only after the agency's
+transaction commits.
+
 Payload and result are ids and counts only. A locked, offboarding or gone agency is skipped (a nudge for it finishes
 as ``skipped``); its releases keep their last version until the next pass after an unlock.
 """
@@ -44,14 +49,37 @@ HISTORY_DAYS = 2
 MAX_ATTEMPTS = 3
 
 
-async def run_agency(ctx: SystemContext, vault: Vault, trip_ids: list[uuid.UUID] | None = None) -> Counter[str]:
-    """Sync ``trip_ids`` (default: every due trip of the agency), then purge what is due."""
+async def run_agency(
+    ctx: SystemContext,
+    vault: Vault,
+    trip_ids: list[uuid.UUID] | None = None,
+    *,
+    notices: service.Notices | None = None,
+) -> Counter[str]:
+    """Sync ``trip_ids`` (default: every due trip of the agency), then purge what is due. Each trip runs in its own
+    savepoint (:func:`app.ops_release.service.item_tx`): a trip that fails (a refused decrypt, a bad stored value, a
+    guard) is counted ``failed`` and logged by id, and the agency's other trips and its purges still commit; the next
+    pass tries it again. The alarm lines go to ``notices`` (the caller writes them after the agency's commit); a
+    failed trip's lines are dropped with its savepoint."""
     counts: Counter[str] = Counter()
     on = await service.today(ctx)
     trips = trip_ids if trip_ids is not None else await service.due_trips(ctx, on)
     built: list[str] = []
     for trip_id in trips:
-        outcome = await service.sync_trip(ctx, vault, trip_id, on)
+        mine: service.Notices = []
+        try:
+            async with service.item_tx(ctx):
+                outcome = await service.sync_trip(ctx, vault, trip_id, on, mine)
+        except Exception as exc:  # noqa: BLE001 — one trip's error must not roll back the agency's other trips
+            counts["failed"] += 1
+            log.error("ops_release_trip_failed tenant_id=%s trip_id=%s error_class=%s", ctx.tenant_id, trip_id,
+                      type(exc).__name__)  # fmt: skip
+            continue
+        if notices is None:
+            for notice in mine:
+                notice.emit()
+        else:
+            notices.extend(mine)
         for part in outcome.split("+"):
             counts[part] += 1
         if outcome.split("+")[0] in ("created", "relisted", "refreshed", "unchanged", "updated"):
@@ -83,13 +111,15 @@ def build_handler(keys: KeyProvider | None) -> Handler:
         one = _ids(job.payload)
         if one is not None:
             tenant_id, trip_id = one
+            notices: service.Notices = []
             try:
                 async with system_tx(pool, tenant_id, actor=service.ACTOR) as ctx:
-                    counts = await run_agency(ctx, Vault(keys, ctx), [trip_id])
+                    counts = await run_agency(ctx, Vault(keys, ctx), [trip_id], notices=notices)
             except DecryptionDenied as exc:
                 raise PermanentError(type(exc).__name__) from None
             except (Forbidden, NotFound):
                 return {"agency_count": 0, "skipped_count": 1}
+            service.emit(notices)  # committed
             return {"agency_count": 1, **{f"{k}_count": int(v) for k, v in sorted(counts.items())}}
         return await hourly(pool, keys)
 
@@ -100,9 +130,10 @@ async def hourly(pool: asyncpg.Pool, keys: KeyProvider) -> dict[str, Any]:
     totals: Counter[str] = Counter()
     done = skipped = failed = 0
     for agency in await registry.agencies(pool):
+        notices: service.Notices = []
         try:
             async with system_tx(pool, agency.tenant_id, actor=service.ACTOR) as ctx:
-                counts = await run_agency(ctx, Vault(keys, ctx))
+                counts = await run_agency(ctx, Vault(keys, ctx), notices=notices)
         except DecryptionDenied:
             failed += 1  # audited by system_tx (the denied event survives the rollback)
             log.error("ops_release_sync_failed tenant_id=%s error_class=DecryptionDenied", agency.tenant_id)
@@ -118,6 +149,7 @@ async def hourly(pool: asyncpg.Pool, keys: KeyProvider) -> dict[str, Any]:
             failed += 1
             log.error("ops_release_sync_failed tenant_id=%s error_class=%s", agency.tenant_id, type(exc).__name__)
             continue
+        service.emit(notices)  # committed: the T-21 and withdrawn lines of this agency (dropped on a rollback)
         done += 1
         totals.update(counts)
     if sum(totals.values()):
