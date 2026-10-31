@@ -37,11 +37,32 @@ from app.tenancy import system_tx, tenant_tx
 from app.vault import KeyProvider, Vault
 from app.vault.wrapping import LocalKeyWrapper
 from tests.aa_fakes import FakeBooking, booking_client
-from tests.integration.test_aa_lines_api import _body, _due_now, _scalar, _setup, _sync
+from tests.integration.test_aa_lines_api import _body as _aa_body
+from tests.integration.test_aa_lines_api import _due_now, _scalar, _sync
+from tests.integration.test_aa_lines_api import _setup as _aa_setup
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 REASON = "client_request"
+# Our own catalog row: the AA lines tests retire T-100 and leave the shared catalog sync in backoff (as the builder and
+# margin tests do with T-949).
+TOUR = "T-957"
+
+
+async def _setup(pool: asyncpg.Pool) -> dict[str, Any]:
+    s = await _aa_setup(pool)
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO crm.aa_catalog_tour (source_id, title, country_code, duration_days, served_state) "
+            "VALUES ($1, 'Mekong Delta 3 days', 'VN', 3, 'served') "
+            "ON CONFLICT (source_system, source_id) DO UPDATE SET served_state = 'served'",
+            TOUR,
+        )
+    return s
+
+
+def _body(**over: Any) -> dict[str, Any]:
+    return _aa_body(tour_source_id=TOUR, **over)
 
 
 def _keys() -> KeyProvider:
