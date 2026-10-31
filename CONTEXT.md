@@ -1659,13 +1659,14 @@ Design v3 §4.8 (L2, L3), §2.3 "Support banner", S-04, WF-12; root ADR 0006b de
   support now and starts a session with a ticket (`SUP-1042` pattern; one staff member at a time per agency; the
   session ends with the grant or after 8 hours); `crm-ops` opens **break-glass (L3)** without a grant: a reason code
   (`security_incident`, `data_corruption`, `legal_request`, `owner_unreachable`, `service_outage`), a ticket, 15 to 60
-  minutes, an active or locked agency, identity shown. After the commit: the structlog warning
+  minutes, an active or locked agency, identity **never** shown (crm-033 CHECK: the in-app path has no MFA step-up and
+  skips the owner's consent, so F1 names wait for the AWS-level role below). After the commit: the structlog warning
   `crm_breakglass_opened` (ids and codes; the AA ops alarm is an AA-CIS-Infra metric filter on `$.event`) and the AA
   system mail `breakglass_notice` to every active owner (`owner_notified_at` once sent). The owner cannot end an
   emergency session; it closes by itself.
 - **Reads** (`app/support/reads.py`, `support_tx()`): `GET /crm/staff/v1/agencies/{id}/overview | trips | trips/{trip}`;
-  ids, codes, dates, the agency name, trips without their title; the party's display names only when the session
-  shows identity (one `reveal` event naming the travellers). One `support_read` event per call (a list names the ids
+  ids, codes, dates, the agency name, trips without their title; the party's display names only when a support
+  session shows identity (one `reveal` event naming the travellers). One `support_read` event per call (a list names the ids
   shown). There is no export, send, role, integration or settings route on the staff class (unit test), and the reader
   role has no write privilege (crm-033 guard, integration test).
 - **Audit**: actor kinds `support` / `breakglass` (the owner's access log filters "AA support" / "AA emergency

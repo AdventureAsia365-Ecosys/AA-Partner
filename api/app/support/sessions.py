@@ -10,9 +10,10 @@ agency is :mod:`app.support.reads`.
   :data:`SUPPORT_SESSION_HOURS`, whichever is first, and shows identity only if the owner ticked it. Starting again
   while one's own session is live returns it.
 - :func:`start_breakglass` (group ``crm-ops``): no grant; a reason code from :data:`BREAKGLASS_REASONS` and a ticket;
-  15 to 60 minutes; identity shown; an active or locked agency. Then, after the commit: the ``crm_breakglass_opened``
-  warning (AA ops alarm: AA-CIS-Infra metric filter on ``$.event``) and the AA system mail to every active owner
-  (best effort; ``owner_notified_at`` is recorded when at least one went out).
+  15 to 60 minutes; identity never shown (no MFA step-up here; crm-033 CHECK); an active or locked agency. Then,
+  after the commit: the ``crm_breakglass_opened`` warning (AA ops alarm: AA-CIS-Infra metric filter on ``$.event``)
+  and the AA system mail to every active owner (best effort; ``owner_notified_at`` is recorded when at least one went
+  out).
 - :func:`end_session`: the caller ends their own live session of one kind.
 - :func:`my_sessions` / :func:`granted_agencies`: what the staff UI needs to start (no agency data).
 """
@@ -76,7 +77,7 @@ RETURNING support_session_id, kind, status, staff_iss, staff_sub, ticket_ref, re
 """
 START_BREAKGLASS_SQL = """
 INSERT INTO crm.support_session (kind, staff_iss, staff_sub, ticket_ref, reason_code, show_identity, expires_at)
-VALUES ('breakglass', $1, $2, $3, $4, true, now() + make_interval(mins => $5))
+VALUES ('breakglass', $1, $2, $3, $4, false, now() + make_interval(mins => $5))
 RETURNING support_session_id, kind, status, staff_iss, staff_sub, ticket_ref, reason_code, show_identity, started_at,
           expires_at, ended_at, owner_notified_at, true AS live
 """

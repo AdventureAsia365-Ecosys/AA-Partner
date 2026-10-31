@@ -7,7 +7,8 @@ grant or a passed window refuses the very next call, and writes one ``support_re
 call (the reason names the view; a list names the ids it showed, design §4.4). Queries name their columns: the reader
 has no ``SELECT *`` (a trip title, a mail token or the data-request contact are not granted at all).
 
-The party of a trip (names) is shown only when the session shows identity (the owner ticked it, or break-glass):
+The party of a trip (names) is shown only when the session shows identity (a support session whose owner ticked it;
+never break-glass, which has no MFA step-up in the app and skips the owner's consent: crm-033 CHECK):
 :func:`app.tenancy.as_login_role` steps out of the reader for that one read, the display names are opened with the
 agency's vault key, and one ``reveal`` event names the travellers and the field. Never anything else of a traveller.
 """

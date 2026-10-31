@@ -1206,7 +1206,8 @@ async def support_tx(pool: asyncpg.Pool, caller: Caller, tenant_id: uuid.UUID) -
                 actor=actor,
                 kind=kind,
                 session_id=row["support_session_id"],
-                show_identity=bool(row["show_identity"]),
+                # Break-glass never shows identity (crm-033 CHECK too): no MFA step-up on the in-app path.
+                show_identity=bool(row["show_identity"]) and kind == "support",
                 expires_at=row["expires_at"],
                 status=status,
             )
@@ -1245,9 +1246,10 @@ def _support_refusal(row: asyncpg.Record | None, tenant_status: str) -> str | No
 @asynccontextmanager
 async def as_login_role(ctx: SupportContext) -> AsyncIterator[asyncpg.Connection]:
     """Step out of ``crm_support_reader`` for one block (AA-971): the display names of a trip's party when the session
-    shows identity (the owner ticked "show identity", or break-glass). A savepoint, as :func:`as_eraser`; the role
-    is back to the reader afterwards. Only ``app/support/reads.py`` calls it (``tests/unit/test_code_rules.py``), and
-    only after checking ``ctx.show_identity``; each use is one audited read of named rows and one field."""
+    shows identity (a support session whose owner ticked "show identity"; never break-glass). A savepoint, as
+    :func:`as_eraser`; the role is back to the reader afterwards. Only ``app/support/reads.py`` calls it
+    (``tests/unit/test_code_rules.py``), and only after checking ``ctx.show_identity``; each use is one audited read of
+    named rows and one field."""
     if not ctx.show_identity:
         raise Forbidden("identity_hidden")
     async with ctx.conn.transaction():

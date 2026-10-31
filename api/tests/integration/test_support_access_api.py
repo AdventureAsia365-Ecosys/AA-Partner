@@ -199,7 +199,7 @@ async def test_break_glass_alerts_audits_and_stays_in_one_agency(
             mailer=mailer,
             web_origin=WEB,
         )
-    assert (opened["kind"], opened["show_identity"], opened["owners_notified"]) == ("breakglass", True, 1)
+    assert (opened["kind"], opened["show_identity"], opened["owners_notified"]) == ("breakglass", False, 1)
     [alert] = [e for e in logs if e["event"] == "crm_breakglass_opened"]
     assert alert["tenant_id"] == str(tenant_a) and alert["reason_code"] == "data_corruption"
     [mail] = mailer.sent
@@ -211,13 +211,16 @@ async def test_break_glass_alerts_audits_and_stays_in_one_agency(
     assert "ticket:INC-7" in opened_event["object_ids"]
     assert await _audit(admin, tenant_a, "breakglass_owner_notice")
 
-    # Identity is shown in break-glass, and audited as the AA emergency actor.
+    # Break-glass never shows identity (no MFA step-up in the app): the trip reads without its party, no reveal;
+    # the reads are audited as the AA emergency actor.
     detail = await reads.trip(app_pool, ops, tenant_a, trip_a, keys=keys)
-    assert detail["party"][0]["traveler_id"] == str(lead_a)
+    assert (detail["party"], detail["identity_hidden"]) == (None, True)
+    assert detail["trip_id"] == str(trip_a)
     async with tenant_tx(app_pool, owner_a, tenant_a) as ctx:
         log = await list_events(ctx, AuditFilter(actor="aa_emergency"), cursor=None, limit=50)
         banner = await grants.support_access(ctx)
-    assert {"breakglass_open", "support_read", "reveal"} <= {e["action"] for e in log["events"]}
+    actions = {e["action"] for e in log["events"]}
+    assert {"breakglass_open", "support_read"} <= actions and "reveal" not in actions
     assert [s["kind"] for s in banner["active_sessions"]] == ["breakglass"]
     # The owner cannot end an emergency session (no grant to revoke).
     with pytest.raises(Conflict):

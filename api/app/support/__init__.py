@@ -8,8 +8,8 @@
   (reason code + ticket, at most 1 hour; the owners are mailed, AA ops alerted by the ``crm_breakglass_opened`` log
   event); either ends their own session.
 - :mod:`app.support.reads`: what a live session may read (:func:`app.tenancy.support_tx`, role
-  ``crm_support_reader``): the agency overview, the trip list, one trip with its stage history and, only when the
-  session shows identity, the display names of its party. Every read is an audit event of that agency (actor kinds
-  ``support`` / ``breakglass``: the owner's access log filters "AA support" / "AA emergency"). Nothing writes agency
-  data: the reader role has no write privilege at all (crm-033).
+  ``crm_support_reader``): the agency overview, the trip list, one trip with its stage history and, only when a
+  support session shows identity (never break-glass), the display names of its party. Every read is an audit event
+  of that agency (actor kinds ``support`` / ``breakglass``: the owner's access log filters "AA support" / "AA
+  emergency"). Nothing writes agency data: the reader role has no write privilege at all (crm-033).
 """

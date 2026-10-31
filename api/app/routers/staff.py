@@ -16,7 +16,7 @@ Route                                       What                                
 ``GET  /agencies/{id}/overview``            the agency, its settings codes, trips per stage                live session
 ``GET  /agencies/{id}/trips``               trips (no title), newest activity first, keyset paging         live session
 ``GET  /agencies/{id}/trips/{trip_id}``     one trip, its stage history; the party's names only when the   live session
-                                            session shows identity
+                                            support session shows identity (never break-glass)
 ==========================================  =============================================================  ===========
 
 Read only by construction: the only writes here are the caller's own session rows (start / end); every agency read

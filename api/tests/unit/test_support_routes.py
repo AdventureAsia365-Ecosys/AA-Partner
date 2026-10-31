@@ -9,6 +9,7 @@ agency class (export, send) is refused before any handler. Groups: a support ses
 from __future__ import annotations
 
 import datetime as dt
+import inspect
 import re
 import typing
 from collections.abc import Iterator
@@ -17,9 +18,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from app import tenancy
 from app.main import create_app
 from app.members.mail import BREAKGLASS_REASONS, breakglass_message
 from app.routers.staff import BreakglassReason
+from app.support import sessions
 from tests.tokens import LocalPools
 
 TENANT = "00000000-0000-4000-8000-000000000001"
@@ -136,3 +139,15 @@ def test_the_owner_mail_names_no_staff_member_or_ticket() -> None:
     assert msg.kind == "breakglass_notice" and "Lotus Trails" in msg.subject
     assert "a service outage" in msg.text and "/settings/access-log" in msg.text and "02 Nov 2026 10:00 UTC" in msg.text
     assert "INC-" not in msg.text and "aa-" not in msg.text
+    assert "client names are not shown" in msg.text
+
+
+def test_break_glass_never_shows_identity() -> None:
+    """Review S262: in-app break-glass has no MFA step-up and skips the owner's consent, so it opens without F1
+    names: the session row says so (crm-033 CHECK), the start SQL writes false and the read context ignores the flag
+    for any kind but support. Lifting it needs the AWS-level break-glass role with MFA (a later migration)."""
+    text = MIGRATION.read_text(encoding="utf-8")
+    check = re.search(r"kind = 'breakglass' AND support_grant_id IS NULL AND (NOT )?show_identity", text)
+    assert check is not None and check.group(1) == "NOT "
+    assert "VALUES ('breakglass', $1, $2, $3, $4, false," in sessions.START_BREAKGLASS_SQL
+    assert 'show_identity=bool(row["show_identity"]) and kind == "support"' in inspect.getsource(tenancy.support_tx)
