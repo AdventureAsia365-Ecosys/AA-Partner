@@ -42,18 +42,20 @@ anything is read, a 32 KiB body cap. 404 ``link_not_found`` for any unusable lin
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Cookie, Header, Request
+from fastapi import APIRouter, Cookie, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.db import request_pool
+from app.documents.store import require_store
 from app.errors import NotFound
 from app.portal import public as portal
 from app.proposals import public as proposal_page
 from app.ratelimit import PublicRateLimit, client_address
-from app.routers.public import LinkToken, _json_body, _limit
+from app.routers.public import BodyTooLarge, LinkToken, _json_body, _limit, read_capped
 from app.vault.provider import require_keys
 
 router = APIRouter(prefix="/crm/public/v1", tags=["client-pages"])
@@ -295,17 +297,30 @@ async def post_portal_session(
 ) -> JSONResponse:
     _write_limit(request)
     raw = await _json_body(request, content_length)
+    return await _verify(request, token, raw, origin, _cookie_path(token))
+
+
+async def _verify(request: Request, token: str, raw: Any, origin: str | None, path: str) -> JSONResponse:
+    """The code check: 200 + the session cookie on ``path``; 200 ``pick`` (Fix E4, no cookie yet); 422 refused."""
     pool = await request_pool(request)
-    code = raw.get("code") if isinstance(raw, dict) else None
-    session, result = await portal.verify_code(pool, request.app.state.settings, token, code, origin=origin)
+    body = raw if isinstance(raw, dict) else {}
+    session, result = await portal.verify_code(
+        pool,
+        request.app.state.settings,
+        token,
+        body.get("code"),
+        origin=origin,
+        traveler_id=body.get("traveler_id"),
+        keys=getattr(request.app.state, "keys", None),
+    )
     if session is None:
-        return _json(result, 422)
+        return _json(result, 200 if "pick" in result else 422)
     response = _json(result)
     response.set_cookie(
         portal.SESSION_COOKIE,
         session,
         max_age=portal.SESSION_HOURS * 3600,
-        path=_cookie_path(token),
+        path=path,
         secure=True,
         httponly=True,
         samesite="strict",
@@ -366,3 +381,222 @@ async def post_portal_sign(
         **_evidence(request),
     )
     return _json(result, 200 if signed else 422)
+
+
+# ── the traveller portal by cookie (AA-953, CRM-24a; design v3 §2.9 rule 1 for the portal, Fix B11) ────────────────
+# The web exchanges the portal link's token (/c/t/<token>) for the host-only cookie aa_portal_link (httpOnly, Secure,
+# SameSite=Strict, Path /crm/public/v1/traveller) and strips it from the URL; the token stays valid until the link
+# expires (a second device opening the link gets in too, after its own code). The session cookie of these routes is
+# scoped to the same path.
+
+TRAVELLER_PATH = "/crm/public/v1/traveller"
+PORTAL_LINK_COOKIE = "aa_portal_link"
+PortalLinkCookie = Annotated[str | None, Cookie(alias=PORTAL_LINK_COOKIE)]
+# A passport scan: 7 MiB of bytes is ~9.4 MiB of base64 (app.documents.service.MAX_BYTES) plus the JSON around it.
+SCAN_BODY_BYTES = 10 * 1024 * 1024
+
+
+async def _scan_body(request: Request, content_length: int | None) -> Any:
+    if content_length is not None and content_length > SCAN_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="body_too_large")
+    try:
+        body = await read_capped(request, SCAN_BODY_BYTES)
+    except BodyTooLarge:
+        raise HTTPException(status_code=413, detail="body_too_large") from None
+    try:
+        return json.loads(body or b"null")
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="invalid_json") from None
+
+
+@router.get("/traveller")
+async def get_traveller(
+    request: Request, _: PublicRateLimit, token: PortalLinkCookie = None, session: SessionCookie = None
+) -> JSONResponse:
+    pool = await request_pool(request)
+    return _json(await portal.home(pool, _cookie_token(token), session, getattr(request.app.state, "keys", None)))
+
+
+@router.post("/traveller/code", status_code=202)
+async def post_traveller_code(
+    request: Request,
+    token: PortalLinkCookie = None,
+    session: SessionCookie = None,
+    origin: Annotated[str | None, Header()] = None,
+    content_length: Annotated[int | None, Header()] = None,
+) -> JSONResponse:
+    _write_limit(request)
+    raw = await _json_body(request, content_length)
+    purpose = raw.get("purpose", "sign_in") if isinstance(raw, dict) else None
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    result = await portal.request_code(
+        pool,
+        keys,
+        request.app.state.settings,
+        _cookie_token(token),
+        purpose=purpose if isinstance(purpose, str) else "",
+        session=session,
+        origin=origin,
+    )
+    return _json(result, 202)
+
+
+@router.post("/traveller/session")
+async def post_traveller_session(
+    request: Request,
+    token: PortalLinkCookie = None,
+    origin: Annotated[str | None, Header()] = None,
+    content_length: Annotated[int | None, Header()] = None,
+) -> JSONResponse:
+    _write_limit(request)
+    raw = await _json_body(request, content_length)
+    return await _verify(request, _cookie_token(token), raw, origin, TRAVELLER_PATH)
+
+
+@router.post("/traveller/switch")
+async def post_traveller_switch(
+    request: Request,
+    token: PortalLinkCookie = None,
+    session: SessionCookie = None,
+    origin: Annotated[str | None, Header()] = None,
+    content_length: Annotated[int | None, Header()] = None,
+) -> JSONResponse:
+    _write_limit(request)
+    raw = await _json_body(request, content_length)
+    pool = await request_pool(request)
+    return _json(
+        await portal.switch(pool, request.app.state.settings, _cookie_token(token), session, raw, origin=origin)
+    )
+
+
+@router.post("/traveller/sign-out")
+async def post_traveller_sign_out(
+    request: Request,
+    token: PortalLinkCookie = None,
+    session: SessionCookie = None,
+    origin: Annotated[str | None, Header()] = None,
+) -> JSONResponse:
+    _write_limit(request)
+    portal.check_origin(request.app.state.settings, origin)
+    pool = await request_pool(request)
+    response = _json(await portal.sign_out(pool, _cookie_token(token), session))
+    response.delete_cookie(portal.SESSION_COOKIE, path=TRAVELLER_PATH, secure=True, httponly=True, samesite="strict")
+    return response
+
+
+@router.put("/traveller/stage3")
+async def put_traveller_stage3(
+    request: Request,
+    token: PortalLinkCookie = None,
+    session: SessionCookie = None,
+    origin: Annotated[str | None, Header()] = None,
+    content_length: Annotated[int | None, Header()] = None,
+) -> JSONResponse:
+    _write_limit(request)
+    raw = await _json_body(request, content_length)
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    return _json(
+        await portal.submit_stage3(
+            pool, keys, request.app.state.settings, _cookie_token(token), session, raw, origin=origin
+        )
+    )
+
+
+@router.post("/traveller/sign")
+async def post_traveller_sign(
+    request: Request,
+    token: PortalLinkCookie = None,
+    session: SessionCookie = None,
+    origin: Annotated[str | None, Header()] = None,
+    content_length: Annotated[int | None, Header()] = None,
+) -> JSONResponse:
+    _write_limit(request)
+    raw = await _json_body(request, content_length)
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    signed, result = await portal.sign(
+        pool,
+        keys,
+        request.app.state.settings,
+        _cookie_token(token),
+        session,
+        raw,
+        origin=origin,
+        sealer=getattr(request.app.state, "sealer", None),
+        **_evidence(request),
+    )
+    return _json(result, 200 if signed else 422)
+
+
+@router.put("/traveller/flights")
+async def put_traveller_flights(
+    request: Request,
+    token: PortalLinkCookie = None,
+    session: SessionCookie = None,
+    origin: Annotated[str | None, Header()] = None,
+    content_length: Annotated[int | None, Header()] = None,
+) -> JSONResponse:
+    _write_limit(request)
+    raw = await _json_body(request, content_length)
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    return _json(
+        await portal.save_flights(
+            pool, keys, request.app.state.settings, _cookie_token(token), session, raw, origin=origin
+        )
+    )
+
+
+@router.post("/traveller/passport-scan")
+async def post_traveller_passport_scan(
+    request: Request,
+    token: PortalLinkCookie = None,
+    session: SessionCookie = None,
+    origin: Annotated[str | None, Header()] = None,
+    content_length: Annotated[int | None, Header()] = None,
+) -> JSONResponse:
+    _write_limit(request)
+    raw = await _scan_body(request, content_length)
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    store = require_store(request.app.state.documents)
+    return _json(
+        await portal.upload_passport_scan(
+            pool, keys, store, request.app.state.settings, _cookie_token(token), session, raw, origin=origin
+        )
+    )
+
+
+@router.get("/traveller/documents/{document_id}")
+async def get_traveller_document(
+    request: Request,
+    document_id: str,
+    _: PublicRateLimit,
+    token: PortalLinkCookie = None,
+    session: SessionCookie = None,
+) -> JSONResponse:
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    store = require_store(request.app.state.documents)
+    return _json(await portal.open_document(pool, keys, store, _cookie_token(token), session, document_id))
+
+
+@router.post("/traveller/companions")
+async def post_traveller_companion(
+    request: Request,
+    token: PortalLinkCookie = None,
+    session: SessionCookie = None,
+    origin: Annotated[str | None, Header()] = None,
+    content_length: Annotated[int | None, Header()] = None,
+) -> JSONResponse:
+    _write_limit(request)
+    raw = await _json_body(request, content_length)
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    return _json(
+        await portal.invite_companion(
+            pool, keys, request.app.state.settings, _cookie_token(token), session, raw, origin=origin
+        )
+    )

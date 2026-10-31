@@ -40,13 +40,14 @@ KINDS = (
     "supplier_confirmation",
     "other",
 )
+UPLOADERS = ("member", "traveler")
 CONTENT_TYPES = ("application/pdf", "image/jpeg", "image/png", "image/webp", "image/heic")
 MAX_FILENAME = 200
 
 INSERT_SQL = """
 INSERT INTO crm.document (document_id, trip_id, traveler_id, kind, s3_key, sha256, size_bytes, content_type,
-                          filename_enc, visible_to_travelers, write_only)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                          filename_enc, visible_to_travelers, write_only, uploaded_by_kind)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 RETURNING created_at
 """
 ROW_SQL = """
@@ -124,7 +125,11 @@ async def upload(
     content_type: str,
     content: bytes,
     visible_to_travelers: bool = False,
+    uploaded_by_kind: str = "member",
 ) -> dict[str, Any]:
+    """``uploaded_by_kind`` = ``traveler`` for the client portal's passport scan (AA-953), else the agency member."""
+    if uploaded_by_kind not in UPLOADERS:
+        raise Invalid("invalid_uploader", ", ".join(UPLOADERS))
     if kind not in KINDS:
         raise Invalid("invalid_kind", ", ".join(KINDS))
     if content_type not in CONTENT_TYPES:
@@ -164,6 +169,7 @@ async def upload(
         await vault.encrypt("document", "filename_enc", document_id, name),
         visible_to_travelers,
         write_only,
+        uploaded_by_kind,
     )
     await store.put(key, sealed)
     ctx.audit("create", "allowed", "document", str(document_id), fields=("content", "filename"))

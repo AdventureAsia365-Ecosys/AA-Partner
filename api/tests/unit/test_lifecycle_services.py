@@ -543,7 +543,16 @@ def _access_row(**over: Any) -> dict[str, Any]:
     return row
 
 
+# AA-953: the party as app.portal.person reads it (who reaches whom): the lead alone, with an address and access.
+PARTY_ROWS = [
+    {"traveler_id": LEAD, "role": "lead", "has_email": True, "display_name_enc": None, "access_id": ACCESS,
+     "access_status": "active"},
+]  # fmt: skip
+
+
 def _portal(monkeypatch: pytest.MonkeyPatch, conn: ScriptedConn, module: Any = portal, purpose: str = "portal") -> Any:
+    if purpose == "portal" and not any(f == "AS has_email" for f, _ in conn.rules):
+        conn.on("AS has_email", PARTY_ROWS)
     link = ClientLink(link_id=LINK, tenant_id=TENANT, trip_id=TRIP, traveler_id=LEAD, purpose=purpose, status="opened")
     ctx = system_ctx(conn)
     monkeypatch.setattr(module, "client_link_tx", fake_tx(ctx, link))
@@ -551,8 +560,12 @@ def _portal(monkeypatch: pytest.MonkeyPatch, conn: ScriptedConn, module: Any = p
     return ctx
 
 
+# AA-953: the session row names the access it acts as (the link's own here).
+SESSION_ROW = {"otp_id": OTP, "access_id": ACCESS, "traveler_id": LEAD}
+
+
 def _signed_in(conn: ScriptedConn) -> ScriptedConn:
-    return conn.on("FROM crm.traveler_access a JOIN crm.trip t", _access_row()).on("AND session_hash = $2", OTP)
+    return conn.on("FROM crm.traveler_access a JOIN crm.trip t", _access_row()).on("AND session_hash = $2", SESSION_ROW)
 
 
 def test_small_helpers() -> None:
@@ -686,7 +699,7 @@ async def test_home_without_and_with_a_session(monkeypatch: pytest.MonkeyPatch) 
     assert home["signed_in"] and home["waiver"]["signed"] and home["payments"][0]["amount"] == "300"
     assert home["stage3"]["locked"] and home["party"] == []
     companion = ScriptedConn().on("FROM crm.traveler_access a JOIN crm.trip t", _access_row(role="companion"))
-    companion.on("AND session_hash = $2", OTP)
+    companion.on("AND session_hash = $2", SESSION_ROW)
     _portal(monkeypatch, companion)
     home = await portal.home(object(), TOKEN, "session")  # type: ignore[arg-type]
     assert "payments" not in home and home["waiver"] is None
