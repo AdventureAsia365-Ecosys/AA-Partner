@@ -4,7 +4,8 @@
 // a name or phone opens only through POST /duty/reveal (one audit event per traveller; a reason above
 // REASON_THRESHOLD travellers; an hourly limit, 429 reveal_rate_limited). Edge-safe.
 
-import type { MessageKey } from "./i18n";
+import { formatDate, type DateLocale } from "./dates";
+import { fmt, type MessageKey } from "./i18n";
 
 export type IncidentCode = "weather" | "road" | "health" | "political" | "supplier" | "other";
 export type BulkField = "display_name" | "phone" | "email" | "emergency_contact";
@@ -52,9 +53,16 @@ export interface IncidentTrip {
   end_date: string | null;
 }
 
+/** S262 (AA-957): an AA departure as the agency knows it, its own booking line on it (title, first service day). */
+export interface IncidentDeparture {
+  title: string | null;
+  date: string | null;
+}
+
 export interface OpenIncident {
   incident_flag_id: string;
   departure_id: string;
+  departure?: IncidentDeparture | null;
   incident_code: IncidentCode;
   raised_at: string;
   trips: IncidentTrip[];
@@ -82,6 +90,7 @@ export interface ReachView {
 export interface TripIncident {
   incident_flag_id: string;
   departure_id: string;
+  departure?: IncidentDeparture | null;
   incident_code: IncidentCode;
   status: "open" | "cleared";
   raised_at: string;
@@ -134,4 +143,16 @@ export function revealErrorKey(status: number, detail: string): MessageKey {
   if (detail === "reason_required") return "duty.reveal.reasonRequired";
   if (detail === "too_many_travelers") return "duty.reveal.tooMany";
   return "duty.reveal.failed";
+}
+
+/** The departure of an incident in words ("Ha Long cruise, from 12 Nov 2026"), or null to leave it out: the Booking
+ * departure id is an opaque code and is never shown (S262 AA-957 evidence). */
+export function incidentDeparture(
+  departure: IncidentDeparture | null | undefined,
+  locale: DateLocale,
+  tr: (key: MessageKey) => string,
+): string | null {
+  const title = departure?.title?.trim();
+  if (!title) return null;
+  return departure?.date ? fmt(tr("duty.incident.departureOn"), { title, date: formatDate(departure.date, locale) }) : title;
 }

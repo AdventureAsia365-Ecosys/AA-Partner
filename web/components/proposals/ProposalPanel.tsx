@@ -56,6 +56,7 @@ export function ProposalPanel({
   lang,
   locale,
   clientOrigin,
+  timeZone = "UTC",
 }: {
   view: LifecycleView;
   /** Published booking terms versions (Settings > Agreements). */
@@ -66,6 +67,8 @@ export function ProposalPanel({
   lang: Lang;
   locale: DateLocale;
   clientOrigin: string | null;
+  /** The agency's IANA zone (AA hold end times; S262, AA-957). */
+  timeZone?: string;
 }) {
   const router = useRouter();
   const hydrated = useHydrated();
@@ -273,6 +276,7 @@ export function ProposalPanel({
                   busy={busy}
                   tr={tr}
                   locale={locale}
+                  timeZone={timeZone}
                   onLink={(path) => setCopies([{ label: tr("proposal.clientLink"), url: clientUrl(clientOrigin, path) }])}
                   onDone={(text) => {
                     setMessage({ tone: "success", text });

@@ -55,6 +55,8 @@ export interface OpsReleaseView {
   confirmed_aa_lines: number;
   release: OpsRelease | null;
   activity: OpsActivity[] | null;
+  /** True when the trip has older ops lines than the API sends (they stay in Settings > Access log). */
+  activity_more?: boolean;
 }
 
 /** What the panel says first: nothing confirmed, being prepared, or the release's own status. */
@@ -75,7 +77,19 @@ export function missingItems(c: Completeness | null | undefined): { item: Missin
   return MISSING_ITEMS.map((item) => ({ item, n: c.missing?.[item] ?? 0 })).filter((x) => x.n > 0);
 }
 
+/** How many activity lines the panel shows before "Show all". */
+export const ACTIVITY_SHOWN = 8;
+
 /** The panel's activity lines: the API's ops audit lines, newest first, at most ``limit``. */
-export function activityLines(view: OpsReleaseView, limit = 8): OpsActivity[] {
+export function activityLines(view: OpsReleaseView, limit = ACTIVITY_SHOWN): OpsActivity[] {
   return [...(view.activity ?? [])].sort((a, b) => b.at.localeCompare(a.at)).slice(0, limit);
+}
+
+/** What the panel says under its activity list (S262 AA-956: the list was cut at 8 without saying so, and read as
+ * fewer views than the deletion receipt counts). ``toggle``: the "Show all n" / "Show fewer" button, when lines are
+ * hidden; ``older``: the API holds older lines than it sent (the access log has them). */
+export function activityFooter(view: OpsReleaseView, showAll: boolean): { toggle: "all" | "fewer" | null; total: number; older: boolean } {
+  const total = view.activity?.length ?? 0;
+  const toggle = total > ACTIVITY_SHOWN ? (showAll ? "fewer" : "all") : null;
+  return { toggle, total, older: Boolean(view.activity_more) };
 }

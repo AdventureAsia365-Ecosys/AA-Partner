@@ -160,6 +160,10 @@ async def test_done_when_an_incident_shows_only_for_the_agency_with_the_departur
     away = next(t for g in view["regions"] for t in g["trips"] if t["trip_id"] == str(s["away"]))
     assert away["incident_flag_id"] == view["incidents"][0]["incident_flag_id"]
     assert banner["incidents"][0]["status"] == "open"
+    # S262 AA-957: the departure reads as the agency's own line on it, never as the bare Booking id.
+    line_day = (s["today"] - dt.timedelta(days=1)).isoformat()
+    assert banner["incidents"][0]["departure"] == {"title": "Ha Giang loop 4 days", "date": line_day}
+    assert view["incidents"][0]["departure"] == {"title": "Ha Giang loop 4 days", "date": line_day}
     # The affected trip has one urgent task for its owner.
     task = await _seed(
         app_pool, s["tenant"], "SELECT priority FROM crm.task WHERE trip_id = $1 AND kind = 'aa_incident'", s["away"]

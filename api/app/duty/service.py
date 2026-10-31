@@ -10,7 +10,9 @@
   and which contact fields exist. Names, phone, e-mail and the emergency contact open through a logged reveal
   (:func:`bulk_reveal`, or the one-field reveal of the client page).
 - AA incident flags (``crm.incident_flag``, written by the Booking feed): every open flag with the agency's affected
-  trips (live trips with a booking line on the departure, read now: an agency without one sees nothing).
+  trips (live trips with a booking line on the departure, read now: an agency without one sees nothing). Each flag
+  names its departure by the agency's own line on it (``departure``: title and first service day), never by the
+  Booking id alone.
 - :func:`reach`: the travellers in one region on one day, the list an agent works through by hand (no messages are
   sent from here; WhatsApp / SMS is a later module).
 - :func:`bulk_reveal`: name and contact fields of up to :data:`MAX_BULK` travellers at once. Above
@@ -113,20 +115,24 @@ SELECT incident_flag_id, departure_id, incident_code, raised_at
  LIMIT 100
 """
 FLAG_TRIPS_SQL = """
-SELECT DISTINCT l.departure_id, t.trip_id, t.title, t.stage, t.start_date, t.end_date
+SELECT DISTINCT ON (l.departure_id, t.start_date, t.trip_id)
+       l.departure_id, t.trip_id, t.title, t.stage, t.start_date, t.end_date,
+       l.title AS line_title, l.service_from AS line_from
   FROM crm.booking_line l JOIN crm.trip t ON t.trip_id = l.trip_id
  WHERE l.departure_id = ANY($1::text[]) AND l.status <> 'cancelled' AND l.deleted_at IS NULL
    AND t.deleted_at IS NULL AND t.stage NOT IN ('lost', 'cancelled')
    AND (t.stage <> 'completed' OR t.end_date >= $2)
- ORDER BY l.departure_id, t.start_date, t.trip_id
+ ORDER BY l.departure_id, t.start_date, t.trip_id, l.service_from NULLS LAST, l.booking_line_id
 """
 TRIP_FLAGS_SQL = """
-SELECT f.incident_flag_id, f.departure_id, f.incident_code, f.status, f.raised_at, f.cleared_at
+SELECT f.incident_flag_id, f.departure_id, f.incident_code, f.status, f.raised_at, f.cleared_at,
+       d.title AS line_title, d.service_from AS line_from
   FROM crm.incident_flag f
+  JOIN LATERAL (SELECT l.title, l.service_from FROM crm.booking_line l
+                 WHERE l.trip_id = $1 AND l.departure_id = f.departure_id AND l.status <> 'cancelled'
+                   AND l.deleted_at IS NULL
+                 ORDER BY l.service_from NULLS LAST, l.booking_line_id LIMIT 1) d ON true
  WHERE f.deleted_at IS NULL
-   AND f.departure_id IN (SELECT l.departure_id FROM crm.booking_line l
-                           WHERE l.trip_id = $1 AND l.departure_id IS NOT NULL AND l.status <> 'cancelled'
-                             AND l.deleted_at IS NULL)
    AND (f.status = 'open' OR f.cleared_at > now() - interval '14 days')
  ORDER BY f.status DESC, f.raised_at DESC
  LIMIT 20
@@ -191,7 +197,9 @@ async def _open_flags(ctx: TenantContext, local_today: dt.date) -> list[dict[str
     if not flags:
         return []
     affected: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    departures: dict[str, dict[str, str | None]] = {}
     for r in await ctx.conn.fetch(FLAG_TRIPS_SQL, [f["departure_id"] for f in flags], local_today):
+        departures.setdefault(r["departure_id"], departure_view(r))
         affected[r["departure_id"]].append(
             {
                 "trip_id": str(r["trip_id"]),
@@ -210,6 +218,7 @@ async def _open_flags(ctx: TenantContext, local_today: dt.date) -> list[dict[str
             {
                 "incident_flag_id": str(f["incident_flag_id"]),
                 "departure_id": f["departure_id"],
+                "departure": departures[f["departure_id"]],
                 "incident_code": f["incident_code"],
                 "raised_at": _iso(f["raised_at"]),
                 "trips": trips,
@@ -313,6 +322,12 @@ async def reach(ctx: TenantContext, *, region: str, on: dt.date | None = None) -
     }
 
 
+def departure_view(row: Any) -> dict[str, str | None]:
+    """How the agency recognises an AA departure: the title and first service day of its own booking line on it (the
+    Booking departure id is an opaque code, never shown; S262 AA-957 evidence)."""
+    return {"title": row["line_title"], "date": _iso(row["line_from"])}
+
+
 async def trip_incidents(ctx: TenantContext, trip_id: uuid.UUID) -> dict[str, Any]:
     """The AA incident flags on the trip's departures: open ones, and those cleared in the last 14 days."""
     if await ctx.conn.fetchval(TRIP_SQL, trip_id) is None:
@@ -324,6 +339,7 @@ async def trip_incidents(ctx: TenantContext, trip_id: uuid.UUID) -> dict[str, An
             {
                 "incident_flag_id": str(r["incident_flag_id"]),
                 "departure_id": r["departure_id"],
+                "departure": departure_view(r),
                 "incident_code": r["incident_code"],
                 "status": r["status"],
                 "raised_at": _iso(r["raised_at"]),

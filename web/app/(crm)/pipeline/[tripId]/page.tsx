@@ -65,6 +65,9 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
     crmCall<OpsReleaseView>(ctx.cfg, session, "GET", `trips/${tripId}/ops-release`),
   ]);
   const clientHost = ctx.cfg.clientHosts[0];
+  // The agency's zone for times on the page (S262 AA-957: a time printed in the server's zone on the server and the
+  // browser's in the browser failed hydration, and React's client re-render dropped the dark theme).
+  const agencyZone = invoices.ok ? (invoices.data.timezone ?? "UTC") : "UTC";
   if (!trip.ok) {
     if (trip.status === 404) {
       return <ErrorState message={t(ctx.lang, "trip.notFound")} />;
@@ -84,6 +87,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
       stage2={stage2.ok ? stage2.data : null}
       clientOrigin={clientHost ? `https://${clientHost}` : null}
       lostHint={lines.ok ? (lines.data.lost_reason_hint ?? null) : null}
+      timeZone={agencyZone}
     />
     {lifecycle.ok && (
       <ProposalPanel
@@ -94,6 +98,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
         lang={ctx.lang}
         locale={ctx.locale}
         clientOrigin={clientHost ? `https://${clientHost}` : null}
+        timeZone={agencyZone}
       />
     )}
     {invoices.ok && (
@@ -107,7 +112,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
         timeZone={invoices.data.timezone ?? "UTC"}
       />
     )}
-    {ops.ok && <OpsReleasePanel tripId={tripId} view={ops.data} lang={ctx.lang} locale={ctx.locale} />}
+    {ops.ok && <OpsReleasePanel tripId={tripId} view={ops.data} lang={ctx.lang} locale={ctx.locale} canOpenAccessLog={ctx.role === "owner"} />}
     {signed.ok && <TripAgreementsPanel view={signed.data} party={trip.data.party} lang={ctx.lang} locale={ctx.locale} />}
     {lines.ok && (
       <LinesPanel

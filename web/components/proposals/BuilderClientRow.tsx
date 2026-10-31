@@ -8,7 +8,7 @@
 import { useState } from "react";
 import { Button, K } from "@/app/_kit";
 import { bffSend } from "@/lib/bffClient";
-import { formatDate, type DateLocale } from "@/lib/dates";
+import { formatDate, formatInstant, type DateLocale } from "@/lib/dates";
 import { fmt } from "@/lib/i18n";
 import { formatAmount, type Proposal } from "@/lib/proposals";
 
@@ -22,6 +22,7 @@ export function BuilderClientRow({
   busy,
   tr,
   locale,
+  timeZone = "UTC",
   onLink,
   onDone,
   onError,
@@ -32,6 +33,8 @@ export function BuilderClientRow({
   busy: boolean;
   tr: (key: string) => string;
   locale: DateLocale;
+  /** The agency's IANA zone: the hold's end prints the same on the server and in the browser (S262, AA-957). */
+  timeZone?: string;
   onLink: (path: string) => void;
   onDone: (text: string) => void;
   onError: (code: string) => void;
@@ -102,7 +105,7 @@ export function BuilderClientRow({
       {(p.status === "sent" || p.status === "accepted") && (
         <span data-testid="builder-viewed">
           {p.view_count ? fmt(tr("builder.viewed"), { n: p.view_count, date: p.last_viewed_at ? formatDate(p.last_viewed_at.slice(0, 10), locale) : "" }) : tr("builder.notViewed")}
-          {p.hold_expires_at ? ` · ${fmt(tr("builder.heldUntil"), { date: new Date(p.hold_expires_at).toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" }) })}` : ""}
+          {p.hold_expires_at ? ` · ${fmt(tr("builder.heldUntil"), { date: formatInstant(p.hold_expires_at, locale, timeZone) })}` : ""}
         </span>
       )}
       {p.status === "accepted" && p.accepted_total_amount && (

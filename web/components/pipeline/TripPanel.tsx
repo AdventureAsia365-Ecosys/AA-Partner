@@ -24,7 +24,7 @@ import { Panel } from "@/components/PageTitle";
 import type { DocumentRow } from "@/lib/clients";
 import { bffSend } from "@/lib/bffClient";
 import { deleteRefusal } from "@/lib/lifecycle";
-import { formatDate, type DateLocale } from "@/lib/dates";
+import { formatDate, formatInstant, type DateLocale } from "@/lib/dates";
 import { fmt, type Lang, type MessageKey, t } from "@/lib/i18n";
 import type { Role } from "@/lib/nav";
 import {
@@ -69,6 +69,7 @@ export function TripPanel({
   stage2,
   clientOrigin = null,
   lostHint = null,
+  timeZone = "UTC",
 }: {
   view: TripView;
   members: Member[];
@@ -81,6 +82,8 @@ export function TripPanel({
   clientOrigin?: string | null;
   /** AA-947: the Lost reason the AA lines suggest (GET /trips/{id}/lines lost_reason_hint); pre-selected, changeable. */
   lostHint?: string | null;
+  /** The agency's IANA zone (task due times): the server and the browser print the same time (S262, AA-957). */
+  timeZone?: string;
 }) {
   const router = useRouter();
   const { trip } = view;
@@ -411,7 +414,7 @@ export function TripPanel({
               <li key={task.task_id} data-testid="trip-task" data-kind={task.kind} data-status={task.status} style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
                 <span style={{ fontSize: 13.5, textDecoration: task.status === "open" ? "none" : "line-through", color: task.status === "open" ? K.ink : K.muted }}>
                   {task.priority === "urgent" && task.status === "open" && <Badge tone="danger">{t(lang, "trip.urgent")}</Badge>} {codeLabel(lang, "task", task.kind)}
-                  {task.due_at && task.status === "open" ? ` · ${fmt(t(lang, "trip.due"), { when: new Date(task.due_at).toLocaleString(locale, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) })}` : ""}
+                  {task.due_at && task.status === "open" ? ` · ${fmt(t(lang, "trip.due"), { when: formatInstant(task.due_at, locale, timeZone) })}` : ""}
                 </span>
                 {task.checklist && task.checklist.length > 0 && (
                   <ul data-testid="trip-task-checklist" style={{ width: "100%", margin: 0, paddingLeft: 18, fontSize: 12.5, color: K.ink, display: "grid", gap: 2 }}>
