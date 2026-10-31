@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from app import cancellation, margin, stages
 from app.booking import contract
 from app.booking.client import BookingClient, BookingConfig
-from app.booking.sync import Work, perform
+from app.booking.sync import Work, perform, trip_closing
 from app.commissions import service
 from app.errors import Invalid
 from app.main import create_app
@@ -215,6 +215,15 @@ async def test_the_sync_reads_a_cancel_answer() -> None:
     assert cancellation.BOOKING_REASON["aa_cancelled"] == "departure_cancelled"
     assert set(cancellation.BOOKING_REASON) == set(stages.CANCEL_REASONS)
     assert set(cancellation.BOOKING_REASON.values()) <= contract.CANCEL_REASONS
+
+
+def test_only_not_found_means_nothing_left_to_cancel_and_a_pending_cancel_closes_the_trip_for_requests() -> None:
+    # invalid may come back for a booking still live at AA: it is checked against the feed, never taken as done.
+    assert cancellation.CANCEL_DONE_CODES == frozenset({"not_found"})
+    assert "invalid" in cancellation.CANCEL_CHECK_CODES
+    assert trip_closing({"trip_stage": "lost", "cancel_reason": None})
+    assert trip_closing({"trip_stage": "booked", "cancel_reason": "client_request"})
+    assert not trip_closing({"trip_stage": "booked", "cancel_reason": None})
 
 
 def test_refund_choices_and_the_reason_text() -> None:

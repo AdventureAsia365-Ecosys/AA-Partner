@@ -57,8 +57,12 @@ REFUND_REVIEW_TASK = "cancel_refund_review"
 CANCEL_FAILED_TASK = "aa_cancel_failed"
 # Open tasks a cancel leaves open: the client says they paid (record the money and refund it, or "Not received").
 KEEP_TASKS = ("verify_transfer",)
-# Booking refusals that mean "nothing left to cancel at AA" (no fee): the booking is not confirmed any more.
-CANCEL_DONE_CODES = frozenset({"not_found", "invalid"})
+# Booking refusals that mean "nothing left to cancel at AA" (no fee): Booking has no such booking for the agency.
+# ``invalid`` is not one: Booking also sends it for a booking that is live but not cancellable by the agency (a trip
+# already in progress at AA) and for a request it could not read, so the sync closes the lines on ``invalid`` only when
+# the feed already said ``booking.cancelled`` (no open line of the booking left; :data:`CANCEL_CHECK_CODES`).
+CANCEL_DONE_CODES = frozenset({"not_found"})
+CANCEL_CHECK_CODES = frozenset({"invalid"})
 MAX_PREVIEW_FEES = 10
 MAX_LIST = 50
 CENT = Decimal("0.01")
@@ -191,6 +195,13 @@ SELECT count(*)::int FROM crm.booking_line
    AND deleted_at IS NULL
 """
 TRIP_SQL = "SELECT stage FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL FOR UPDATE"
+# A refused or given-up cancel opened ``aa_cancel_failed``; once every AA booking is cancelled (the feed's
+# ``booking.cancelled`` or Cancel again) the task has nothing left to ask.
+CLOSE_FAILED_TASK_SQL = """
+UPDATE crm.task SET status = 'done', done_at = now(),
+       done_by = coalesce(nullif(current_setting('app.actor', true), ''), 'job:crm_booking_sync')
+ WHERE trip_id = $1 AND kind = $2 AND status = 'open' AND deleted_at IS NULL
+"""
 
 
 def _money_text(value: Decimal | None) -> str | None:
@@ -516,6 +527,7 @@ async def finish_if_done(ctx: AnyContext, trip_id: uuid.UUID) -> bool:
     if stage != "cancelled":
         await move_to_cancelled(ctx, trip_id, stage, row["reason_code"])
     await ctx.conn.execute(DONE_SQL, trip_id)
+    await ctx.conn.execute(CLOSE_FAILED_TASK_SQL, trip_id, CANCEL_FAILED_TASK)
     from app.commissions import service as commissions
 
     await commissions.sync(ctx, trip_id)
@@ -564,6 +576,7 @@ def today_utc() -> dt.date:
 
 __all__ = [
     "BOOKING_REASON",
+    "CANCEL_CHECK_CODES",
     "CANCEL_DONE_CODES",
     "CANCEL_FAILED_TASK",
     "booking_fees",

@@ -8,6 +8,11 @@ Booking sync, against the in-memory Booking (``tests/aa_fakes.py``).
 - **R**: cancel while Booking is down -> "cancellation pending", retried, never ``cancelled`` early; the trip moves
   nowhere else meanwhile (409 ``cancellation_pending``) and the date rule leaves it.
 - A refused cancel (``forbidden``) opens the owner task ``aa_cancel_failed``; pressing Cancel again asks Booking again.
+- ``invalid`` for a booking still live at AA is a refusal too (never "cancelled" with the fee lost); the feed's
+  ``booking.cancelled`` then completes the cancellation and closes the task; a late ``invalid`` after the feed
+  cancelled the booking is done without a task.
+- A cancel that runs out of attempts opens ``aa_cancel_failed`` and the trip stays "cancellation pending".
+- While a cancellation is pending, a queued hold is dropped (``trip_closed``) instead of placing a new AA hold.
 - Module 13: the confirm makes the expected commission row; claim, receive at the receipt day's rate, write off; the
   assistant gets 403 on every commission route; the overdue owner task once; a claimed commission blocks the delete.
 """
@@ -24,7 +29,7 @@ import asyncpg
 import pytest
 
 from app import stages
-from app.booking import aa_lines
+from app.booking import aa_lines, sync
 from app.cancellation import booking_fees
 from app.commissions import service as commissions
 from app.errors import Conflict, Forbidden
@@ -255,6 +260,120 @@ async def test_a_refused_cancel_opens_a_task_and_cancel_again_asks_again(app_poo
     assert again["requeued"] == 1 and again["cancellation"]["status"] == "pending"
     await _sync(app_pool, fake, s["tenant"])
     assert await _stage(app_pool, s) == "cancelled"
+
+
+async def _cancel_request(pool: asyncpg.Pool, s: dict[str, Any]) -> tuple[str, str | None]:
+    sql = (
+        "SELECT row(status, result_code) FROM crm.aa_request WHERE trip_id = $1 AND kind = 'cancel' "
+        "ORDER BY created_at DESC LIMIT 1"
+    )
+    row = await _scalar(pool, s["tenant"], sql, s["trip"])
+    return tuple(row)  # type: ignore[return-value]
+
+
+async def _failed_task(pool: asyncpg.Pool, s: dict[str, Any]) -> str | None:
+    return await _scalar(pool, s["tenant"], "SELECT status FROM crm.task WHERE trip_id = $1 "
+                         "AND kind = 'aa_cancel_failed' ORDER BY created_at DESC LIMIT 1", s["trip"])  # fmt: skip
+
+
+async def test_invalid_for_a_live_booking_keeps_the_trip_pending_until_the_feed_cancels_it(
+    app_pool: asyncpg.Pool,
+) -> None:
+    s = await _setup(app_pool)
+    fake = FakeBooking(confirm_line_status="confirmed")
+    booked = await _aa_booking(app_pool, s, fake)
+    fake.cancel_refusal = "invalid"  # e.g. the trip is already in progress at AA: the booking is still live there
+    await _cancel(app_pool, s, dry_run=False)
+    await _sync(app_pool, fake, s["tenant"])
+    assert await _stage(app_pool, s) == "booked"
+    assert await _cancel_request(app_pool, s) == ("failed", "invalid")
+    assert await _failed_task(app_pool, s) == "open"
+    assert await _scalar(app_pool, s["tenant"], "SELECT status FROM crm.trip_cancellation WHERE trip_id = $1",
+                         s["trip"]) == "pending"  # fmt: skip
+    assert await _scalar(app_pool, s["tenant"], "SELECT status FROM crm.booking_line WHERE booking_line_id = $1",
+                         booked) == "confirmed"  # fmt: skip
+    # AA cancels it on its side: the feed's booking.cancelled completes the cancellation and closes the task.
+    fake.add_event("booking.cancelled", booking_id="b-h1")
+    await _sync(app_pool, fake, s["tenant"])
+    assert await _stage(app_pool, s) == "cancelled"
+    assert await _scalar(app_pool, s["tenant"], "SELECT status FROM crm.trip_cancellation WHERE trip_id = $1",
+                         s["trip"]) == "done"  # fmt: skip
+    assert await _failed_task(app_pool, s) == "done"
+
+
+async def test_a_late_invalid_after_the_feed_cancelled_the_booking_is_done(app_pool: asyncpg.Pool) -> None:
+    s = await _setup(app_pool)
+    fake = FakeBooking(confirm_line_status="confirmed")
+    await _aa_booking(app_pool, s, fake)
+    await _cancel(app_pool, s, dry_run=False)
+    async with app_pool.acquire() as conn, conn.transaction():  # the cancel request is not due yet
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(s["tenant"]))
+        await conn.execute("SELECT set_config('app.actor', 'job:test', true)")
+        await conn.execute("UPDATE crm.aa_request SET next_attempt_at = now() + interval '1 hour' "
+                           "WHERE kind = 'cancel' AND status = 'pending'")  # fmt: skip
+    fake.add_event("booking.cancelled", booking_id="b-h1")
+    await _sync(app_pool, fake, s["tenant"])
+    assert await _stage(app_pool, s) == "cancelled"
+    fake.cancel_refusal = "invalid"  # Booking: the booking is cancelled already
+    await _due_now(app_pool, s["tenant"])
+    await _sync(app_pool, fake, s["tenant"])
+    assert await _cancel_request(app_pool, s) == ("done", "invalid")
+    assert await _failed_task(app_pool, s) is None
+
+
+async def test_a_cancel_that_runs_out_of_attempts_opens_a_task_and_stays_pending(app_pool: asyncpg.Pool) -> None:
+    s = await _setup(app_pool)
+    fake = FakeBooking(confirm_line_status="confirmed")
+    await _aa_booking(app_pool, s, fake)
+    fake.down = True
+    await _cancel(app_pool, s, dry_run=False)
+    async with app_pool.acquire() as conn, conn.transaction():  # about a day of retries already spent
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(s["tenant"]))
+        await conn.execute("SELECT set_config('app.actor', 'job:test', true)")
+        await conn.execute("UPDATE crm.aa_request SET attempts = $1, next_attempt_at = now() "
+                           "WHERE kind = 'cancel' AND status = 'pending'", sync.MAX_ATTEMPTS - 1)  # fmt: skip
+    await _sync(app_pool, fake, s["tenant"])
+    assert await _cancel_request(app_pool, s) == ("failed", "gave_up")
+    assert await _failed_task(app_pool, s) == "open"
+    assert await _stage(app_pool, s) == "booked"
+    assert await _scalar(app_pool, s["tenant"], "SELECT status FROM crm.trip_cancellation WHERE trip_id = $1",
+                         s["trip"]) == "pending"  # fmt: skip
+    fake.down = False
+    again = await _cancel(app_pool, s, dry_run=False)  # Cancel again asks Booking again
+    assert again["requeued"] == 1
+    await _sync(app_pool, fake, s["tenant"])
+    assert await _stage(app_pool, s) == "cancelled" and await _failed_task(app_pool, s) == "done"
+
+
+async def test_a_pending_cancellation_drops_a_queued_hold(app_pool: asyncpg.Pool) -> None:
+    s = await _setup(app_pool)
+    fake = FakeBooking(confirm_line_status="confirmed")
+    await _aa_booking(app_pool, s, fake)
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:  # a second AA line, quoted
+        other = uuid.UUID((await aa_lines.request_line(ctx, s["trip"], _body(component_id="tp:2")))["booking_line_id"])
+    await _sync(app_pool, fake, s["tenant"])
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        await aa_lines.ask(ctx, other, "hold")  # queued, not sent yet
+    holds = fake.calls["POST holds"]
+    fake.cancel_refusal = "forbidden"  # the cancel is refused: the trip keeps its stage, cancellation pending
+    await _cancel(app_pool, s, dry_run=False)
+    await _due_now(app_pool, s["tenant"])  # past the Undo window
+    # The line's release is not due yet (a claim batch runs in no fixed order: a release sent first would cancel the
+    # hold itself), so the hold alone shows the rule.
+    async with app_pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(s["tenant"]))
+        await conn.execute("SELECT set_config('app.actor', 'job:test', true)")
+        await conn.execute(
+            "UPDATE crm.aa_request SET next_attempt_at = now() + interval '1 hour' "
+            "WHERE booking_line_id = $1 AND kind = 'release' AND status = 'pending'",
+            other,
+        )
+    await _sync(app_pool, fake, s["tenant"])
+    assert await _stage(app_pool, s) == "booked"
+    hold = await _scalar(app_pool, s["tenant"], "SELECT row(status, result_code) FROM crm.aa_request "
+                         "WHERE booking_line_id = $1 AND kind = 'hold'", other)  # fmt: skip
+    assert tuple(hold) == ("cancelled", "trip_closed")
+    assert fake.calls["POST holds"] == holds  # no new AA hold for a trip being cancelled
 
 
 async def test_a_trip_without_aa_bookings_is_cancelled_at_once(app_pool: asyncpg.Pool) -> None:

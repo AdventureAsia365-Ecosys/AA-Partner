@@ -27,8 +27,9 @@ act on the whole Booking hold, so :func:`apply` writes them on **every** line of
 id in the trip), not only on the line the request names; a refused confirm reads ``failed`` (or ``expired`` /
 ``sold_out`` / ``not_served``) with Booking's code and opens an urgent task; the trip's stage never moves back.
 
-A quote / requote / hold / refresh whose trip is Lost or cancelled is dropped (``trip_closed``) without calling Booking
-(the Lost move held it back by the Undo window first, so an Undo leaves it to run). When Booking gives no answer at all
+A quote / requote / hold / refresh whose trip is Lost or cancelled, or has a pending cancellation (AA-957), is dropped
+(``trip_closed``) without calling Booking (the Lost move held it back by the Undo window first, so an Undo leaves it
+to run); a hold that lands for such a trip is given back at once. When Booking gives no answer at all
 (:data:`OUTAGE_CLASSES`) the rest of the agency's batch goes back to the queue unsent and the feed waits: one timeout
 per agency and run, so an outage never holds the worker for minutes.
 
@@ -85,8 +86,9 @@ DECLINE_TASK = "aa_line_declined"
 CLOSED_STAGES = ("lost", "cancelled")
 # AA-956: the feed events that change which AA lines of a trip are confirmed (the ops release follows within a minute).
 OPS_RELEASE_EVENTS = frozenset({"line.confirmed", "line.declined", "booking.cancelled"})
-# Requests that make no sense once the trip is closed: dropped (``trip_closed``) without calling Booking. A Lost or a
-# cancel holds them back by the Undo window first (app.booking.aa_lines.close_trip), so an Undo leaves them to run.
+# Requests that make no sense once the trip is closed (Lost, cancelled, or a cancellation pending, :func:`trip_closing`)
+# are dropped (``trip_closed``) without calling Booking. A Lost or a cancel holds them back by the Undo window first
+# (app.booking.aa_lines.close_trip), so an Undo of a Lost leaves them to run (a cancel is never undone).
 DROP_ON_CLOSE = ("quote", "requote", "hold", "refresh")
 # Booking (or the token pool) gave no answer at all: the rest of the batch is not sent this run (card E: one timeout per
 # agency and run, never one per request, so an outage does not hold the one-job-at-a-time worker for minutes).
@@ -259,6 +261,12 @@ RELEASABLE = frozenset({"held", "pending", "quoted", "failed", "sold_out", "not_
 HOLD_STATUS = {"active": "held", "confirmed": "confirmed", "expired": "expired", "released": "released"}
 # A line Booking booked: (status, aa_sub_status, confirm_class) for BOOKED_SQL.
 BOOKED_ARGS = {"confirmed": ("confirmed", None, "confirmed"), "on_request": ("planning", "on_request", "aa_on_request")}
+
+
+def trip_closing(line: dict[str, Any]) -> bool:
+    """The line's trip is Lost or cancelled, or has a cancellation (AA-957: a pending one keeps the trip's stage until
+    Booking answered, card R, but nothing new is quoted or held for it any more)."""
+    return line["trip_stage"] in CLOSED_STAGES or line.get("cancel_reason") is not None
 
 
 def backoff_seconds(attempts: int) -> int:
@@ -521,7 +529,13 @@ async def apply(ctx: SystemContext, w: Work, out: Outcome) -> str:
     if out.retry is not None:
         if w.request["attempts"] >= MAX_ATTEMPTS:
             await ctx.conn.execute(FINISH_SQL, request_id, "failed", "gave_up")
-            if cur["aa_sub_status"] == "pending":
+            if kind == "cancel":
+                # AA-957: the trip stays "cancellation pending" (card R); the owner is told, Cancel again asks again.
+                await ctx.conn.execute(TASK_SQL, trip_id, cancellation.CANCEL_FAILED_TASK)
+                ctx.audit("aa_sync", "allowed", "booking_line", str(line_id), reason="cancel_gave_up")
+                if cur["trip_deleted_at"] is None:
+                    await stages.refresh_waiting_on(ctx, trip_id)
+            elif cur["aa_sub_status"] == "pending":
                 await ctx.conn.execute(SUB_SQL, line_id, "failed", "gave_up")
             return "failed"
         await ctx.conn.execute(RETRY_SQL, request_id, out.retry, backoff_seconds(w.request["attempts"]))
@@ -568,7 +582,7 @@ async def apply(ctx: SystemContext, w: Work, out: Outcome) -> str:
         elif line_sub != "confirmed" and not line_closed:
             await ctx.conn.execute(HOLD_STATE_SQL, line_id, line_sub, out.hold.expires_at)
         await ctx.conn.execute(COMMIT_SQL, trip_id, line_sub, out.hold.hold_id)
-        if kind == "hold" and (orphan or cur["trip_stage"] in CLOSED_STAGES):
+        if kind == "hold" and (orphan or trip_closing(cur)):
             # The line or the trip closed while the hold was on its way: give the seats back.
             await ctx.conn.fetchval(REFRESH_SQL, trip_id, line_id, "release")
     if out.booking is not None:
@@ -606,17 +620,26 @@ async def apply(ctx: SystemContext, w: Work, out: Outcome) -> str:
 
 
 async def _apply_cancel(ctx: SystemContext, w: Work, out: Outcome, status: str | None, cur: dict[str, Any]) -> str:
-    """AA-957 (C12): Booking cancelled the booking (or says there is nothing left to cancel: ``not_found`` /
-    ``invalid``): every line of the booking is cancelled, the fee becomes a ``cancellation_cost`` on this line, the
-    commitments read cancelled, and a trip whose cancellation waited for it moves to ``cancelled``. Any other refusal
-    fails the request and opens the owner task ``aa_cancel_failed`` (the trip stays "cancellation pending"; pressing
-    Cancel again asks Booking again)."""
+    """AA-957 (C12): Booking cancelled the booking (or says there is nothing left to cancel: ``not_found``): every
+    line of the booking is cancelled, the fee becomes a ``cancellation_cost`` on this line, the commitments read
+    cancelled, and a trip whose cancellation waited for it moves to ``cancelled``. ``invalid`` (the booking is not
+    cancellable by the agency, or Booking could not read the request) counts as done only when the feed already
+    cancelled every line of the booking (``booking.cancelled``); otherwise the booking may still be live at AA. That and
+    any other refusal fail the request and open the owner task ``aa_cancel_failed`` (the trip stays "cancellation
+    pending", never ``cancelled`` with the fee lost; pressing Cancel again asks Booking again)."""
     request_id, line_id, trip_id = w.request["aa_request_id"], w.line_id, cur["trip_id"]
     booking_id = cur["bk_booking_id"]
-    done = out.cancellation is not None or (out.failed and out.code in cancellation.CANCEL_DONE_CODES)
+    open_lines = list(await ctx.conn.fetch(BOOKING_LINES_SQL, trip_id, booking_id)) if booking_id else []
+    done = out.cancellation is not None or (
+        out.failed
+        and (
+            out.code in cancellation.CANCEL_DONE_CODES
+            or (out.code in cancellation.CANCEL_CHECK_CODES and not open_lines)
+        )
+    )
     if done:
         result = "cancelled_by_agency" if out.cancellation is not None else (out.code or "cancelled")
-        for r in await ctx.conn.fetch(BOOKING_LINES_SQL, trip_id, booking_id) if booking_id else []:
+        for r in open_lines:
             await ctx.conn.execute(CLOSE_LINE_SQL, r["booking_line_id"], None, None, result)
             if r["bk_hold_id"]:
                 await ctx.conn.execute(COMMIT_SQL, trip_id, "cancelled", r["bk_hold_id"])
@@ -903,7 +926,7 @@ class BookingSync:
             again = False
             for w in work:
                 sent += 1
-                if w.request["kind"] in DROP_ON_CLOSE and w.line["trip_stage"] in CLOSED_STAGES:
+                if w.request["kind"] in DROP_ON_CLOSE and trip_closing(w.line):
                     outcome = Outcome(code="trip_closed", cancelled=True)
                 elif outage is not None:
                     outcome = Outcome(retry=outage)  # not sent: Booking just gave no answer to this run

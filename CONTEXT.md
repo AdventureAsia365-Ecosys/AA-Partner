@@ -714,9 +714,11 @@ Design v3 M13, C12 (§2.7, §3.5 "Cancellation"), R17, R21, A-12; lane §2.7 `co
   reminders skip it). `crm_booking_sync` sends `POST /bookings/{id}/cancel` (`Idempotency-Key crm-cancel:<request
   id>`, the outage queue's backoff while Booking is down), cancels the booking's lines, writes the fee as a
   `cancellation_cost` money row of the line (the quote's FX lock; ledger total `cancellation_cost_base`), and once no
-  AA booking is left moves the trip to `cancelled` (also after a `booking.cancelled` event). Booking `not_found` /
-  `invalid` = nothing left to cancel; another refusal opens the owner task `aa_cancel_failed`, and Cancel again on the
-  pending trip asks Booking again.
+  AA booking is left moves the trip to `cancelled` (also after a `booking.cancelled` event). Booking `not_found` =
+  nothing left to cancel; `invalid` counts so only when the feed already cancelled the booking's lines (it is also sent
+  for a booking still live at AA). Another refusal, or a cancel that ran out of attempts (`gave_up`), opens the owner
+  task `aa_cancel_failed` (closed when the cancellation completes), and Cancel again on the pending trip asks Booking
+  again. A pending cancellation drops queued quote / hold / refresh requests (`trip_closed`) like a closed stage.
 - **Web**: A-12 `/commissions` (`app/(crm)/commissions/page.tsx`, `components/commissions/CommissionActions.tsx`;
   assistant: "not available for your role"), the commission and the AA fee on the Bookings tab, the cancel dialog
   (`components/pipeline/StageDialogs.tsx`: fees, supplier bookings, refunds, commissions to keep, "Ask AA again"),
