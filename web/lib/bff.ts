@@ -269,6 +269,10 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "POST", pattern: new RegExp(`^calendar/feeds/${UUID}/revoke$`), tenant: true, card: "AA-961" },
   // AA-966 (CRM-34): the Reports page, the Home tiles and one section as CSV (money sections: the API's view_margin).
   { method: "GET", pattern: /^reports\/(summary|tiles|export)$/, tenant: true, card: "AA-966" },
+  // AA-971 (CRM-13b): AA support access (every member reads it for the banner; the owner grants and ends it).
+  { method: "GET", pattern: /^support-access$/, tenant: true, card: "AA-971" },
+  { method: "POST", pattern: /^support-access$/, tenant: true, card: "AA-971" },
+  { method: "POST", pattern: /^support-access\/revoke$/, tenant: true, card: "AA-971" },
 ];
 
 /** Calls only the web server makes (lib/crmApi.ts crmCall), never reachable through /bff from the browser. */
