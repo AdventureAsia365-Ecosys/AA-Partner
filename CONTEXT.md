@@ -7,7 +7,7 @@ status: active
 owner: nghiep
 audience: [engineer, agent]
 applies_to: [aa-crm-api, aa-crm-web, aa-crm-portal]
-last_reviewed: 2026-10-30
+last_reviewed: 2026-11-01
 review_every_days: 90
 related: [ARCH-01, ARCH-06-booking, docs/adr/README.md]
 ---
@@ -126,7 +126,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `/crm/public/v1/calendar/{token}.ics` | no token header (AA-961): the 43-character feed token in the path only (SHA-256 stored), fetched by the member's calendar app; served on the partner host | `calendar_feed_tx()` (`app/calendar/public.py`); `text/calendar`, no names, titles or money; 404 `feed_not_found` for an unknown, revoked or expired token, an inactive member or a locked agency (subscribed calendars stop updating); public rate limit |
 | `/crm/v1` | PARTNER x {AA-Partner web} only (the Dev EXTERNAL x {`cis-portal`} bridge was removed at AA-979 P2b: its tokens are 401) | `X-AA-Tenant-Id` + `tenant_tx(action=...)` (membership in `crm.member`, then the permission matrix); `GET /crm/v1/memberships` and `POST /crm/v1/invitations/accept` need no header |
 | `/crm/ops/v1` | WORKFORCE x {`cis-admin`} | group `cis-admin` or `crm-platform-admin` reads, `crm-platform-admin` writes (AA-939: member deactivation, owner recovery; AA-941: the L1 console, section "L1 console" below). Every response passes the L1 key allow-list (`app/ops/serializer.py`). AA-979: `POST /tenants/{id}/studio-invitations` (the CIS staff relay of a Content studio invitation) takes any OPS caller, `cis-admin` included (section "Content studio invitations"). The Dev-only E2E CIS admin (root ADR 0006a A10b; a `cis-admin` token whose `email` claim is its address, `Caller.e2e_read_only`, `app/auth/e2e_staff.py`) is read-only: every `crm-platform-admin` write answers it 403 `e2e_read_only` |
-| `/crm/staff/v1` | WORKFORCE x {`crm-staff`} | group `crm-ops` or `crm-support`; AA-971 (CRM-13b): support needs the owner's live grant, break-glass group `crm-ops`; every agency read through `support_tx()` as `crm_support_reader` (section "AA support access" below) |
+| `/crm/staff/v1` | WORKFORCE x {`crm-staff`} | group `crm-ops` or `crm-support`; AA-971 (CRM-13b): support needs the owner's live grant, break-glass group `crm-ops`; every agency read through `support_tx()` as `crm_support_reader` (section "AA support access" below). AA-1019: the Dev-only CRM staff E2E identity (root ADR 0006a A10c, `email` claim `e2e-crm-staff@`, `Caller.e2e_synthetic_only`) is refused outside dev / test / local (403 `e2e_read_only`) and reaches synthetic agencies only (`ops_tx` / `staff_tx` / `support_tx`: 403 `e2e_synthetic_only`; the lists skip others). The web console is section "AA staff console" below |
 
 - One verifier (`app/auth/identity_verifier.py`, **byte copy** of AA-CIS-App `api/core/identity_verifier.py`, checked
   by CI job "Vendored CIS copies") holds every configured `(issuer, client)` pair; the class guard
@@ -476,7 +476,8 @@ queued / running rows as information, exempt kinds left out). Daily or slower ki
 - **Configuration** (task environment, AA-CIS-Infra `crm_web.tf`; meanings in `web/lib/config.ts`): `ENVIRONMENT`,
   `WEB_PUBLIC_ORIGIN`, `WEB_PARTNER_HOSTS`, `WEB_CLIENT_HOSTS`, `CRM_API_ORIGIN`, `COGNITO_DOMAIN`, `COGNITO_CLIENT_ID`,
   `CONTENT_STUDIO_URL`, `CIS_API_URL` (AA-979, the trip page; optional), and from Secrets Manager
-  `COGNITO_CLIENT_SECRET`, `WEB_SESSION_SECRET`. Missing identity values
+  `COGNITO_CLIENT_SECRET`, `WEB_SESSION_SECRET`. AA-1019 adds the staff console's four `STAFF_*` values (section "AA staff
+  console"). Missing identity values
   turn sign-in off (the pages say so) while `/healthz` stays up.
 - **Deploy**: `.github/workflows/deploy-web-dev.yml` (same model as the API deploy, no job guard: the web runs no
   worker), gated by the `dev` environment variable `CRM_WEB_ENABLED` (unset = red), then the post-deploy verify
@@ -1096,10 +1097,9 @@ code in `app/ops_release/` (`build.py`, `service.py`, `job.py`, `staff.py`). Imp
   departure_flight`, default the first four, the watermark on every row, formula-safe cells; one
   `crm.supplier_manifest_export` record and one `ops_manifest_export` event; the file is never stored). **Fix B3**: no
   incident flag here; the board and the release carry `incident_admin_url` = `<BOOKING_ADMIN_URL>/b2b-desk`.
-- **Not built yet**: the staff web screen for S-02 (board with completeness, purge countdown and the Booking incident
-  admin link; one release; manifest download). It needs the staff sign-in on the web with the WORKFORCE `crm-staff`
-  client, shared with the S-04 follow-up of AA-971, and is part of the AA-956 card: the card stays open until it
-  ships. Also not built: paid paging (SMS / WhatsApp) to AA ops.
+- **Staff web screen (AA-1019)**: `/staff/ops` (board, window 14 / 30 / 60 / 120 days, the Booking incident admin link)
+  and `/staff/ops/<agency>/<trip>` (one release: every render is one counted view; the manifest download with column
+  picks), section "AA staff console". Not built: paid paging (SMS / WhatsApp) to AA ops.
 - Reports: the Module 8 success metric `ops_release_errors` (AA departures in the window that left with an incomplete
   or missing release, a withdrawn one excluded) is live.
 
@@ -1836,10 +1836,41 @@ Design v3 §4.8 (L2, L3), §2.3 "Support banner", S-04, WF-12; root ADR 0006b de
   access"); actions `support_grant`, `support_revoke`, `support_session_start`, `support_session_end`,
   `support_read`, `breakglass_open`, `breakglass_close`, `breakglass_owner_notice`, plus `reveal` and `decrypt`
   denials as usual.
-- **Not built here** (follow-ups): the staff UI for S-04 (the routes are ready; a WORKFORCE `crm-staff` sign-in in a
-  staff console), and the AWS-level break-glass of design §4.8 L3 (IAM role `aa-crm-<env>-breakglass` with MFA and a
+- **Staff UI (AA-1019)**: `/staff/support` (agencies that allow support + start with a ticket; break-glass picker by
+  name from `GET /crm/staff/v1/breakglass/agencies`, reason, ticket, minutes, a confirmation) and
+  `/staff/support/<agency>[/trips/<trip>]` (amber / red banner with End session, overview, trips, the caller's
+  sessions), section "AA staff console".
+- **Not built here** (follow-ups): the AWS-level break-glass of design §4.8 L3 (IAM role `aa-crm-<env>-breakglass` with MFA and a
   `tenant_id` session tag; the KMS statement `CrmBreakGlassOneAgency` already waits for it in AA-CIS-Infra
   `crm_data.tf`; CloudTrail Decrypt copied into the agency audit).
+
+## AA staff console (`web/app/staff`, AA-1019)
+
+S-02 and S-04 for AA staff, on the agency host under `/staff`, signed in with the WORKFORCE `crm-staff` client (root
+ADR 0006b decision 6). Decisions: `docs/implementation-notes/AA-1019.md`.
+
+- **Own session** (`web/lib/staffSession.ts`): cookies `__Secure-aa_crm_staff_s` (Path `/staff`), `_r` and `_tx` (Path
+  `/staff/auth`), sealed with `STAFF_SESSION_SECRET` (never the agency key, which the Content studio also holds) and the
+  seal purposes `staff-*`; the access token must belong to the crm-staff client; the token's staff groups are kept for
+  the pages. The agency session is never read on `/staff`, the staff session never on agency pages, `/bff` or `/auth`.
+  Routes `/staff/auth/{sign-in,callback,refresh,sign-out}` (sign-out POST, same-origin only, ends the WORKFORCE
+  managed-login session and leaves the agency session alone); `/staff/signed-out` (`?reason=failed|unavailable|no_group`).
+  A WORKFORCE user without `crm-ops` / `crm-support` is signed out at the callback.
+- **Gate** (`web/proxy.ts`): `/staff*` is decided before the agency rule and only by the staff session; no valid staff
+  token -> `/staff/auth/refresh?next=`; the client host never serves `/staff`. The CSP `form-action` adds the WORKFORCE
+  login domain on staff pages.
+- **Staff BFF** (`web/lib/staffBff.ts`, `web/app/staff/bff/[...path]`): listed (method, path) pairs onto
+  `/crm/staff/v1` only, each with its groups (403 `missing_group` before any upstream call), query parameters allow-listed
+  per path, 8 KiB bodies, cross-site writes refused first. Server components call the same list (`web/lib/staffApi.ts`).
+- **Configuration** (task environment, AA-CIS-Infra `crm_web.tf`): `STAFF_COGNITO_DOMAIN`, `STAFF_COGNITO_CLIENT_ID`, and
+  from the web secret `STAFF_COGNITO_CLIENT_SECRET` (`staff_cognito_client_secret`), `STAFF_SESSION_SECRET`
+  (`staff_session_secret`). Any missing = the console says it is not set up; `/healthz` reports `staff_auth_configured`
+  and the web post-deploy verify requires it.
+- **Pages** (kit only: `app/_kit/local/StaffShell.tsx` over `PageFrame`, DataTable, Field controls, ConfirmModal; EN with
+  VI in `web/lib/i18nStaff.ts`): `/staff/ops`, `/staff/ops/<agency>/<trip>`, `/staff/support`,
+  `/staff/support/<agency>`, `/staff/support/<agency>/trips/<trip>` (sections above).
+- **Dev E2E staff user**: AA-CIS-Infra `tools/identity/crm_dev_identity.py e2e-staff` (root ADR 0006a A10c), synthetic
+  agencies only (route classes table).
 
 ## Dev seeder (`api/app/seed/`, AA-935)
 
