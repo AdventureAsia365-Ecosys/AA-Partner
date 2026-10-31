@@ -11,11 +11,13 @@
 // sections on one page: the form is embedded in the agency's website as one iframe, so it stays one scroll rather than
 // a wizard; a refused answer scrolls to and focuses the first refused field in page order. The optional call-slot
 // picker (R15) lists the agency's free call starts in the visitor's own timezone; the value sent is the API's UTC time.
+// AA-962 (errata S247 CRM-31 controller settings): the contact box shows the agency's own consent wording when it set
+// one, the privacy link falls back to the agency's (the API resolves it) and the agency's data-request contact shows.
 import { useMemo, useRef, useState } from "react";
 import { Button, K, useHydrated } from "@/app/_kit";
 import type { Lang, MessageKey } from "@/lib/i18n";
 import { fmt } from "@/lib/i18n";
-import { firstBadField, parseAges, slotOptions, type PublicForm } from "@/lib/intakeForms";
+import { consentLabel, dataRequestHref, firstBadField, parseAges, slotOptions, type PublicForm } from "@/lib/intakeForms";
 
 type Dict = Record<MessageKey, string>;
 type Status = "idle" | "sending" | "sent";
@@ -305,7 +307,7 @@ export function InquiryForm({ publicKey, form, lang, dict }: { publicKey: string
 
       <label data-field="consent_contact" style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13.5, color: K.ink2, ...(bad.includes("consent_contact") ? { color: K.danger } : {}) }}>
         <input type="checkbox" name="consent_contact" data-testid="intake-consent" style={{ marginTop: 3 }} />
-        <span>{fmt(t("intake.consent"), { agency: form.agency_name })}</span>
+        <span data-testid="intake-consent-text">{consentLabel(form, fmt(t("intake.consent"), { agency: form.agency_name }))}</span>
       </label>
       <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13.5, color: K.ink2 }}>
         <input type="checkbox" name="consent_marketing" style={{ marginTop: 3 }} />
@@ -315,6 +317,18 @@ export function InquiryForm({ publicKey, form, lang, dict }: { publicKey: string
         <a href={form.privacy_notice_url} target="_blank" rel="noreferrer noopener" style={{ fontSize: 12.5, color: K.accentDeep }}>
           {t("intake.privacy")}
         </a>
+      )}
+      {form.data_request_contact && (
+        <p data-testid="intake-data-requests" style={{ margin: 0, fontSize: 12.5, color: K.muted, overflowWrap: "anywhere" }}>
+          {t("intake.dataRequests")}{" "}
+          {dataRequestHref(form.data_request_contact) ? (
+            <a href={dataRequestHref(form.data_request_contact) ?? undefined} target="_blank" rel="noreferrer noopener" style={{ color: K.accentDeep }}>
+              {form.data_request_contact}
+            </a>
+          ) : (
+            form.data_request_contact
+          )}
+        </p>
       )}
       {error && (
         <p role="alert" data-testid="intake-error" style={{ margin: 0, fontSize: 13, color: K.danger }}>

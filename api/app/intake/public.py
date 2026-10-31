@@ -46,10 +46,16 @@ log = logging.getLogger(__name__)
 # Drops since the process started, by reason (count-only: no payload, no address, no e-mail is ever logged).
 DROPS: Counter[str] = Counter()
 
+# AA-962 (errata S247 §1 CRM-31): the agency's controller settings (crm-030 tenant_settings) show on its forms: its
+# privacy notice when the form has no link of its own, its consent wording (none = the page's default text) and its
+# contact for data requests. An agency without a settings row runs on the defaults.
 FORM_SQL = """
-SELECT d.schema, t.display_name, t.default_locale
-  FROM crm.form_definition d, crm.tenant t
- WHERE d.form_definition_id = $1 AND t.tenant_id = $2
+SELECT d.schema, t.display_name, t.default_locale, s.privacy_notice_url AS agency_privacy_notice_url,
+       s.consent_text, s.data_request_contact
+  FROM crm.form_definition d
+  JOIN crm.tenant t ON t.tenant_id = $2
+  LEFT JOIN crm.tenant_settings s ON s.tenant_id = t.tenant_id
+ WHERE d.form_definition_id = $1
 """
 INSERT_SQL = """
 INSERT INTO crm.form_submission (submission_id, intake_form_id, stage, schema_key, payload_enc, idempotency_key,
@@ -74,7 +80,8 @@ def record_drop(reason: str, form_id: uuid.UUID | None) -> None:
 
 async def read_form(pool: asyncpg.Pool, public_key: str) -> dict[str, Any]:
     """What the hosted page needs to render the form: the field codes, the honeypot name, the agency's label and
-    locale, the allowed framing origins and the privacy link (no personal data)."""
+    locale, the allowed framing origins, the privacy link (the form's own, else the agency's), the agency's consent
+    wording and its contact for data requests (both ``None`` when not set; no client data)."""
     async with intake_tx(pool, public_key) as (ctx, form):
         row = await ctx.conn.fetchrow(FORM_SQL, form.form_definition_id, form.tenant_id)
         schema = json.loads(row["schema"]) if isinstance(row["schema"], str) else dict(row["schema"])
@@ -84,7 +91,9 @@ async def read_form(pool: asyncpg.Pool, public_key: str) -> dict[str, Any]:
             "agency_name": row["display_name"],
             "default_locale": row["default_locale"],
             "allowed_origins": list(form.allowed_origins),
-            "privacy_notice_url": form.privacy_notice_url,
+            "privacy_notice_url": form.privacy_notice_url or row["agency_privacy_notice_url"],
+            "consent_text": row["consent_text"],
+            "data_request_contact": row["data_request_contact"],
             # AA-943 (R15): the free call slots (ISO UTC starts only), the agency timezone and the slot length.
             **await slots.offered(ctx),
         }
