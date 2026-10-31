@@ -20,6 +20,7 @@ def test_defaults_without_environment() -> None:
     assert (s.cognito_workforce_issuer, s.cognito_partner_issuer) == ("", "")
     assert s.rate_limit_public_per_minute == 120
     assert s.rate_limit_xff_hops == 2
+    assert (s.rate_limit_intake_per_minute, s.rate_limit_portal_write_per_minute) == (5, 30)  # AA-953 follow-up
 
 
 def test_worker_defaults_on_in_dev_with_a_dsn() -> None:
@@ -157,6 +158,8 @@ def test_team_values_are_read_and_checked() -> None:
         ({"INVITATION_TTL_HOURS": "0"}, "INVITATION_TTL_HOURS"),
         ({"INVITATION_TTL_HOURS": "721"}, "INVITATION_TTL_HOURS"),
         ({"RATE_LIMIT_CLAIM_PER_MINUTE": "-1"}, "RATE_LIMIT_CLAIM_PER_MINUTE"),
+        ({"RATE_LIMIT_PORTAL_WRITE_PER_MINUTE": "-1"}, "RATE_LIMIT_PORTAL_WRITE_PER_MINUTE"),
+        ({"RATE_LIMIT_PORTAL_WRITE_PER_MINUTE": "many"}, "RATE_LIMIT_PORTAL_WRITE_PER_MINUTE"),
     ],
 )
 def test_unsafe_team_values_are_refused(env: dict[str, str], message: str) -> None:

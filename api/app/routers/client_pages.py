@@ -35,9 +35,17 @@ origin (no CORS) and the per-address limits key on the real visitor.
 The accept, the terms re-accept and the signing record the client address (the same one the per-address limit uses)
 and the browser's User-Agent as evidence (under the vault DEK; only their SHA-256 in the evidence records).
 
-Every write: the Origin check of the client host, the per-address limit (``RATE_LIMIT_INTAKE_PER_MINUTE``) before
-anything is read, a 32 KiB body cap. 404 ``link_not_found`` for any unusable link. Answers carry ``no-store`` and
-``Referrer-Policy: no-referrer`` (the token is in the path).
+Every write: the Origin check of the client host, a per-address limit before the database is read, a 32 KiB body
+cap. 404 ``link_not_found`` for any unusable link. Answers carry ``no-store`` and ``Referrer-Policy: no-referrer``
+(the token is in the path). The per-address limit has two buckets (429 ``rate_limited`` + ``Retry-After`` either way):
+
+- anonymous and pre-sign-in writes (every proposal write, the sign-in code, the code check): the intake limiter,
+  ``RATE_LIMIT_INTAKE_PER_MINUTE`` (default 5), the inquiry form's anti-abuse ceiling;
+- writes only a signed-in traveller can make (Stage 3, flights, passport scan, the signing code, signing, companion
+  invite, switch, sign-out), when the request carries a session cookie: the portal write limiter,
+  ``RATE_LIMIT_PORTAL_WRITE_PER_MINUTE`` (default 30), so a family filling the portal from one address is not stopped
+  by the form ceiling. Without a session cookie they keep the intake limiter. See
+  ``docs/implementation-notes/AA-953-write-limit.md`` for the per-route list.
 """
 
 from __future__ import annotations
@@ -68,8 +76,39 @@ _TOKEN = re.compile(r"^[A-Za-z0-9_-]{43}$")
 
 
 def _write_limit(request: Request) -> None:
+    """An anonymous or pre-sign-in write (proposal pages, sign-in code, code check): the intake limiter
+    (``RATE_LIMIT_INTAKE_PER_MINUTE``, default 5 per address), the anti-abuse ceiling of the inquiry form."""
     settings = request.app.state.settings
     _limit(request, "intake_limiter", client_address(request, settings.rate_limit_xff_hops))
+
+
+def _session_write_limit(request: Request, session: str | None) -> None:
+    """A write only a signed-in traveller can make (Stage 3, flights, passport scan, signing, invite, switch, sign-out).
+
+    With a session cookie of the issued shape: the portal write limiter (``RATE_LIMIT_PORTAL_WRITE_PER_MINUTE``,
+    default 30 per address), so a family filling the portal from one home address is not stopped by the inquiry-form
+    ceiling (AA-953 follow-up). Without one (no cookie, a malformed one) the request cannot pass the handler's session
+    check anyway, so it keeps the anonymous intake limiter. The session itself is checked by the handler, after the
+    limit, as before.
+    """
+    if not (session and _TOKEN.match(session)):
+        _write_limit(request)
+        return
+    settings = request.app.state.settings
+    _limit(request, "portal_write_limiter", client_address(request, settings.rate_limit_xff_hops))
+
+
+async def _code_limit(request: Request, session: str | None, content_length: int | None) -> Any:
+    """``POST .../code``: the body (capped, no database read) decides the limiter. A signing code (``purpose: sign``)
+    is asked by a signed-in traveller and takes the portal write limiter; a sign-in code is anonymous and e-mails
+    someone, so it keeps the intake limiter. Returns the parsed body."""
+    raw = await _json_body(request, content_length)
+    purpose = raw.get("purpose", "sign_in") if isinstance(raw, dict) else None
+    if purpose == "sign":
+        _session_write_limit(request, session)
+    else:
+        _write_limit(request)
+    return raw
 
 
 def _evidence(request: Request) -> dict[str, str | None]:
@@ -271,8 +310,7 @@ async def post_portal_code(
     origin: Annotated[str | None, Header()] = None,
     content_length: Annotated[int | None, Header()] = None,
 ) -> JSONResponse:
-    _write_limit(request)
-    raw = await _json_body(request, content_length)
+    raw = await _code_limit(request, session, content_length)
     purpose = raw.get("purpose", "sign_in") if isinstance(raw, dict) else None
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
@@ -332,7 +370,7 @@ async def _verify(request: Request, token: str, raw: Any, origin: str | None, pa
 async def post_portal_sign_out(
     request: Request, token: LinkToken, session: SessionCookie = None, origin: Annotated[str | None, Header()] = None
 ) -> JSONResponse:
-    _write_limit(request)
+    _session_write_limit(request, session)
     portal.check_origin(request.app.state.settings, origin)
     pool = await request_pool(request)
     response = _json(await portal.sign_out(pool, token, session))
@@ -349,7 +387,7 @@ async def put_portal_stage3(
     origin: Annotated[str | None, Header()] = None,
     content_length: Annotated[int | None, Header()] = None,
 ) -> JSONResponse:
-    _write_limit(request)
+    _session_write_limit(request, session)
     raw = await _json_body(request, content_length)
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
@@ -365,7 +403,7 @@ async def post_portal_sign(
     origin: Annotated[str | None, Header()] = None,
     content_length: Annotated[int | None, Header()] = None,
 ) -> JSONResponse:
-    _write_limit(request)
+    _session_write_limit(request, session)
     raw = await _json_body(request, content_length)
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
@@ -425,8 +463,7 @@ async def post_traveller_code(
     origin: Annotated[str | None, Header()] = None,
     content_length: Annotated[int | None, Header()] = None,
 ) -> JSONResponse:
-    _write_limit(request)
-    raw = await _json_body(request, content_length)
+    raw = await _code_limit(request, session, content_length)
     purpose = raw.get("purpose", "sign_in") if isinstance(raw, dict) else None
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
@@ -462,7 +499,7 @@ async def post_traveller_switch(
     origin: Annotated[str | None, Header()] = None,
     content_length: Annotated[int | None, Header()] = None,
 ) -> JSONResponse:
-    _write_limit(request)
+    _session_write_limit(request, session)
     raw = await _json_body(request, content_length)
     pool = await request_pool(request)
     return _json(
@@ -477,7 +514,7 @@ async def post_traveller_sign_out(
     session: SessionCookie = None,
     origin: Annotated[str | None, Header()] = None,
 ) -> JSONResponse:
-    _write_limit(request)
+    _session_write_limit(request, session)
     portal.check_origin(request.app.state.settings, origin)
     pool = await request_pool(request)
     response = _json(await portal.sign_out(pool, _cookie_token(token), session))
@@ -493,7 +530,7 @@ async def put_traveller_stage3(
     origin: Annotated[str | None, Header()] = None,
     content_length: Annotated[int | None, Header()] = None,
 ) -> JSONResponse:
-    _write_limit(request)
+    _session_write_limit(request, session)
     raw = await _json_body(request, content_length)
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
@@ -512,7 +549,7 @@ async def post_traveller_sign(
     origin: Annotated[str | None, Header()] = None,
     content_length: Annotated[int | None, Header()] = None,
 ) -> JSONResponse:
-    _write_limit(request)
+    _session_write_limit(request, session)
     raw = await _json_body(request, content_length)
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
@@ -538,7 +575,7 @@ async def put_traveller_flights(
     origin: Annotated[str | None, Header()] = None,
     content_length: Annotated[int | None, Header()] = None,
 ) -> JSONResponse:
-    _write_limit(request)
+    _session_write_limit(request, session)
     raw = await _json_body(request, content_length)
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
@@ -557,7 +594,7 @@ async def post_traveller_passport_scan(
     origin: Annotated[str | None, Header()] = None,
     content_length: Annotated[int | None, Header()] = None,
 ) -> JSONResponse:
-    _write_limit(request)
+    _session_write_limit(request, session)
     raw = await _scan_body(request, content_length)
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
@@ -591,7 +628,7 @@ async def post_traveller_companion(
     origin: Annotated[str | None, Header()] = None,
     content_length: Annotated[int | None, Header()] = None,
 ) -> JSONResponse:
-    _write_limit(request)
+    _session_write_limit(request, session)
     raw = await _json_body(request, content_length)
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)

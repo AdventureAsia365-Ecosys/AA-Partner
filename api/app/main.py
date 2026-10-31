@@ -226,6 +226,9 @@ def create_app(
     # AA-936: inquiry-form submissions, per client address per minute and per form per hour.
     app.state.intake_limiter = FixedWindowLimiter(settings.rate_limit_intake_per_minute)
     app.state.intake_form_limiter = FixedWindowLimiter(settings.rate_limit_intake_form_per_hour, window_s=3600.0)
+    # AA-953 follow-up: traveller portal writes made with a session cookie get their own per-address bucket, so a
+    # family on one home address is not stopped by the intake ceiling (app.routers.client_pages).
+    app.state.portal_write_limiter = FixedWindowLimiter(settings.rate_limit_portal_write_per_minute)
     app.add_exception_handler(ServiceError, service_error_handler)
     app.add_exception_handler(Exception, unhandled_error_handler)
     app.add_middleware(RequestIdMiddleware)
