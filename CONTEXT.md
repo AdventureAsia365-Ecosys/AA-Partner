@@ -81,7 +81,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   AA-947: `booking.b2b.v1` (quotes, holds, confirms, the `/events` feed) through `app/booking/` and `catalog.http.v1`
   (the AA tour cache) through `app/catalog/`, with the same M2M client (section "CRM-19" below). AA-951: `catalog.http.v1`
   1.2 `/aa-content` (AA prep packs and starter templates, AA-977) into `crm.aa_content` (section "CRM-22" below).
-- **Publishes** `crm.ops.v1` under `/crm/ops/v1` to the CIS admin (L1 platform console), later `crm.insights.v1`.
+- **Publishes** `crm.ops.v1` under `/crm/ops/v1` to the CIS admin (L1 platform console); since 1.5 (AA-966) it also
+  carries the AA insights read `GET /insights` (spec module 17, design S-03), instead of a separate `crm.insights.v1`.
 - **Never** grants another app's role anything on `crm`, never reads another app's schema (no cross-schema grants in
   either direction: the isolation probe asserts 42501 both ways), never writes content (ADR 0002), never owns prices
   (ADR 0005: Booking does).
@@ -750,6 +751,43 @@ Design v3 §6.3 CRM-18 (M4 base, M7 manual, M11 base, M12 v0); migration crm-016
   `/c/p/[token]` (`components/proposals/ProposalPage.tsx`) and `/c/t/[token]` (`components/portal/PortalPage.tsx`; the
   session cookie never reaches page script; only the `client.*` strings ship, `lib/clientMessages.ts`), BFF lines card
   AA-946 in `lib/bff.ts`. Dev E2E: `e2e/tests/lifecycle-thin.spec.ts` (portal steps need `PORTAL_OTP_DEV_ECHO`).
+
+## CRM-34 reports + AA insights (AA-966)
+
+Spec modules 16 and 17, design v3 A-14 Reports, A-01 Home tiles, S-03, R23 (Lost analytics), R28 (year-on-year
+tiles), report catalog S258 CRM-01 / CRM-02 (CRM-05 monthly mail and CRM-03 / 04 / 06 stay with their cards).
+Implementation notes: `docs/implementation-notes/AA-966.md`. No migration: every number is computed on page open from
+the agency's own rows (`app/reports/`), so `crm.metric_daily` (design R28, 25 months) is not created yet.
+
+- **Routes** (`app/routers/reports.py`, AGENCY, `Action.REPORTS_VIEW`, every role): `GET /crm/v1/reports/summary?
+  period=30d|90d|12m|ytd&owner=me|<member id>`, `GET /crm/v1/reports/tiles` (Home: last 12 months, everyone),
+  `GET /crm/v1/reports/export?section=…` (CSV). Read-only SQL in `app/reports/queries.py` inside `tenant_tx()`, so FORCE
+  RLS keeps each agency to its rows; trashed rows never count.
+- **Definitions.** Window = local days of `tenant_settings.timezone`. Cohort = trips created in the window; won = the
+  trip reached Booked (its stage, or a stage-history row a later Undo did not reverse; a booked-then-cancelled trip
+  stays won); the funnel counts, per forward stage, the cohort trips that reached it. Lost / cancelled reasons: trips
+  that ended so in the window. Money (owner / agent only, `view_margin`): confirmed booking lines by confirmation date,
+  head money rows in the base currency (frozen at confirmation, R17 / R18), margin = sell - cost over lines with both
+  (as the ledger). The assistant gets no money section and no money query runs (crm-014 would return no rows anyway);
+  its Adventure Asia share is counted in booking lines. Outstanding: open invoices (paid = payments - refunds on
+  them), schedule rows still due, each in its own currency. Team: per member open trips, new, won, overdue tasks, first
+  reply (median minutes from the trip's creation to the first message sent from the CRM; imported mail never counts).
+- **Comparison (R28).** Same window a year earlier when the agency's first trip is on or before that window's start;
+  else the last three calendar months (`trend_3m`); `none` without trips.
+- **Success metrics.** One source query per measurable spec §6 success line (`SUCCESS` in `app/reports/service.py`);
+  modules 8, 13 and 14 answer `not_built` until their cards land.
+- **CSV** (`app/reports/export.py`): UTF-8 BOM, CRLF, the spreadsheet formula guard on text cells (numbers stay
+  numbers), a money section is 403 `role_forbidden` for the assistant (the margin serializer filters JSON only), and
+  every download writes a `report_export` audit event (the module 16 success metric).
+- **AA insights** (crm.ops.v1 1.5, `GET /crm/ops/v1/insights?dimension=&from=&to=`, any OPS reader):
+  `console.platform_insights` opens `platform_tx()` per active agency (synthetic agencies only outside prod), reads the
+  opt-out as crm_app first, then the facts of `crm.v_insight_fact` as `crm_insights` (`tenancy.as_insights_reader`);
+  `app/reports/insights.py` publishes a cell only with >= 10 travellers from >= 3 agencies, returns no agency id and
+  no total, only how many cells were held back. Like `/data-coverage`, no per-agency audit event (totals only). The
+  CIS admin page S-03 reading it is a follow-up in AA-CIS-App.
+- **Web**: `/reports` (`web/app/(crm)/reports/page.tsx`, kit `KpiTile` + `DataTable`, filters in the URL, the CSV
+  through the BFF line `reports/(summary|tiles|export)`), the Home tiles (`components/reports/HomeTiles.tsx`; a failed
+  read shows nothing), the access log names a report download.
 
 ## CRM-30 duty of care + calendar (AA-961)
 
