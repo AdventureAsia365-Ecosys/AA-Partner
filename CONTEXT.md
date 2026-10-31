@@ -289,6 +289,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-028` | `api/migrations/028_crm_invoice_claims.sql` | AA-952 CRM-23 slice 4 (needs crm-027; **expand** class under ADR 0017: ADD COLUMN only, shipped in the code PR and auto-applied before the deploy): `crm.invoice` + `claimed_at` (the client's "I have paid"), `hold_extended_at` / `hold_extend_code` (Booking's one hold extension), `rehold_requested_at` / `rehold_quote_id` / `rehold_price_hash` / `rehold_code` (the re-hold of a late deposit), `last_reminded_at` / `reminder_count` (overdue reminders); the value lists are the API's (no CHECK in an expand file) |
 | `crm-031` | `api/migrations/031_crm_insight_trip_fact.sql` | CRM-34 AA insights (AA-966; expand class under ADR 0017, applied after crm-028..030 in number order): the view `crm.v_insight_trip_fact` (security_barrier; trips per agency, month, budget band, lead age band, party size, stage and Lost reason in `trip_count`, no destination, no trip id; GROUP BY, so not updatable), SELECT to `crm_insights`, so module 17 counts a trip's party once outside the destination dimension. No existing object changes |
 | `crm-029` | `api/migrations/029_crm_traveler_flight.sql` | CRM-24a portal per person (AA-953; an **expand** file, ADR 0017: one new table only, so it ships in the code PR): `crm.traveler_flight` (base template; one arrival / departure flight per trip, traveller and direction: `flight_no_enc` under the vault DEK, `airport_iata`, `sched_local` (local time at that airport, no zone) + `tz` (IANA), `entered_by_kind`; all `pii:travel`; RLS, hold guard, no reader grant). Every key cascades (trip, traveler, trip_traveler), so the erase deletes flights through the rows it already deletes and `crm.erase_subject` is not replaced (`test_crm010_schema.py` `CASCADE_ERASED` checks the keys). crm-028 is another lane's key |
+| `crm-029` | `api/migrations/029_crm_traveler_flight.sql` | CRM-24a portal per person (AA-953; an **expand** file, ADR 0017: one new table and one new nullable column, so it ships in the code PR): `crm.otp_challenge.sent_to_bidx` (the blind index of the address a portal code went to: a session's proof) and `crm.traveler_flight` (base template; one arrival / departure flight per trip, traveller and direction: `flight_no_enc` under the vault DEK, `airport_iata`, `sched_local` (local time at that airport, no zone) + `tz` (IANA), `entered_by_kind`; all `pii:travel`; RLS, hold guard, no reader grant). Every key cascades (trip, traveler, trip_traveler), so the erase deletes flights through the rows it already deletes and `crm.erase_subject` is not replaced (`test_crm010_schema.py` `CASCADE_ERASED` checks the keys). needs crm-028 (AA-952) |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -762,15 +763,21 @@ Design v3 §6.3 CRM-18 (M4 base, M7 manual, M11 base, M12 v0); migration crm-016
     address of their own is reached through the lead's (`delivery_of`). A code goes to that address; when it reaches
     more than one traveller with portal access, `POST /session` answers `pick` and the same code with a `traveler_id`
     opens a session acting as that person only (the `otp_challenge` row is re-bound to the chosen access). Two people
-    on one address get two sessions; `POST /switch` moves a session inside its group without a new code. A session
-    is checked on every call against the link's group, so a companion given their own address leaves it at once.
+    on one address get two sessions; `POST /switch` moves a session inside its group without a new code. **A session
+    is bound to the address its code went to** (`otp_challenge.sent_to_bidx`, crm-029) and re-checked on every call:
+    it acts as a traveller only while that address still reaches them, so a companion given their own address, or a
+    lead whose address the agency changed, ends every session the old address proved, on any link.
   - **Per person** (R22, §2.9 rules 2-3): own Stage 3, flights (`crm.traveler_flight`, local time + zone at the
     airport, R33), a write-only passport scan (`document` kind `passport_scan`, `uploaded_by_kind = traveler`, never
     readable here: 403 `document_write_only`, card R), the documents the agency shared with this traveller or the
     whole trip (another traveller's: 403 `document_not_yours`), the trip's lines shown to travellers without prices
     or cancelled ones, the accepted proposal's days. The lead also sees the group with names and each person's way in
-    and gives a companion without an address one at the invite (`POST /companions`: never over an address on file,
-    409 `email_in_use` for another client's address without naming them; returns the companion's new link once).
+    and gives a companion without an address one at the invite (`POST /companions`: only for a companion on this trip
+    alone (409 `ask_your_agent`: the address lands on the agency-wide client record), never over an address on file,
+    409 `email_in_use` for another client's address without naming them; refusals audited as denied and capped at
+    three a day per lead (429 `too_many_attempts`). The lead gets a link back only for a companion reached through
+    the lead's own address; a companion with their own address gets it at that address, and one with a live link is
+    409 `already_invited` (the lead never rotates another adult's link).
   - A **lost or cancelled** trip has no portal (404 `link_not_found`).
 
 ## CRM-34 reports + AA insights (AA-966)
