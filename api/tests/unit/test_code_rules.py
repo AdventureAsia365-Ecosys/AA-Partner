@@ -108,6 +108,8 @@ SYSTEM_MODULES = frozenset(
         "app/imports/service.py",
         # AA-947: the AA outage queue and the Booking feed (one agency per transaction, actor job:crm_booking_sync).
         "app/booking/sync.py",
+        # AA-956: the ops release job (one agency per transaction, actor job:crm_ops_release_sync).
+        "app/ops_release/job.py",
     }
 )
 INTAKE_MODULES = frozenset({"app/intake/public.py"})
@@ -136,6 +138,8 @@ STUDIO_MODULES = frozenset({"app/members/studio.py"})
 # the reads of a live session (support_tx, crm_support_reader; as_login_role steps out of it for the party's names).
 STAFF_SESSION_MODULES = frozenset({"app/support/sessions.py"})
 SUPPORT_READ_MODULES = frozenset({"app/support/reads.py"})
+# AA-956 (CRM-26): AA ground operations reading an agency's ops releases (actor ops:<sub>, S-02).
+OPS_RELEASE_STAFF_MODULES = frozenset({"app/ops_release/staff.py"})
 CONTEXT_TYPES = frozenset(
     {
         "TenantContext",
@@ -146,6 +150,7 @@ CONTEXT_TYPES = frozenset(
         "LifecycleContext",
         "StudioContext",
         "SupportContext",
+        "OpsContext",
     }
 )
 THIRD_PARTY = frozenset(
@@ -196,6 +201,7 @@ CONTEXT_FACTORIES = frozenset(
         "studio_invitation_tx",
         "staff_tx",
         "support_tx",
+        "ops_tx",
     }
 )
 
@@ -362,6 +368,11 @@ def _users_of(name: str, allowed: frozenset[str]) -> list[str]:
 
 def test_system_tx_is_used_only_by_the_job_modules() -> None:
     assert _users_of("system_tx", SYSTEM_MODULES) == []
+
+
+def test_ops_tx_is_used_only_by_the_ops_release_staff_module() -> None:
+    """AA-956: the AA ops context (actor ops:<sub>, no membership) is opened only by the S-02 module."""
+    assert _users_of("ops_tx", OPS_RELEASE_STAFF_MODULES) == []
 
 
 def test_platform_tx_is_used_only_by_the_recovery_and_console_modules() -> None:

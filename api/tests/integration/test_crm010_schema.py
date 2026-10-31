@@ -1189,7 +1189,12 @@ async def test_the_agency_erase_knows_every_tenant_table(admin: asyncpg.Connecti
 
 # AA-953 (crm-029, an expand file): tables the erase never names because every foreign key they have cascades from a
 # row the erase deletes (trip, traveler, trip_traveler), so they leave with it. Listed on purpose, never derived.
-CASCADE_ERASED = {"traveler_flight": {"trip", "traveler", "trip_traveler"}}
+# AA-956 (crm-034, an expand file): the ops release cascades from its trip, its manifest records from the release.
+CASCADE_ERASED = {
+    "traveler_flight": {"trip", "traveler", "trip_traveler"},
+    "ops_release": {"trip"},
+    "supplier_manifest_export": {"ops_release"},
+}
 
 
 async def test_a_cascade_erased_table_cascades_from_each_subject(admin: asyncpg.Connection) -> None:

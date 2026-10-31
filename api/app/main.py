@@ -74,6 +74,7 @@ from app.routers import (
     mail,
     onboarding,
     ops,
+    ops_release,
     payments,
     pipeline,
     proposal_text,
@@ -81,6 +82,7 @@ from app.routers import (
     public,
     reports,
     staff,
+    staff_ops,
     support_access,
     team,
     travellers,
@@ -270,6 +272,8 @@ def create_app(
     app.include_router(ops.router)
     app.include_router(support_access.router)
     app.include_router(staff.router)
+    app.include_router(staff_ops.router)
+    app.include_router(ops_release.router)
     return app
 
 

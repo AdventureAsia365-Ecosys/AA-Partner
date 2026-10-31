@@ -305,6 +305,20 @@ SELECT count(*)::int AS departed,
  WHERE t.deleted_at IS NULL AND t.start_date >= $1 AND t.start_date < $2
    AND t.stage IN ('booked', 'pre_departure', 'travelling', 'completed') AND {OWNER}
 """
+# Module 8 (AA-956): ops release errors = AA departures in the window whose ops release was still incomplete (or
+# missing while an AA line was confirmed) on the departure date. Counted from the release row as last refreshed; a
+# withdrawn release (a cancel) is not an error.
+OPS_RELEASE_ERRORS_SQL = f"""
+SELECT count(*)::int FROM crm.trip t
+ WHERE t.deleted_at IS NULL AND t.start_date >= $1 AND t.start_date < $2
+   AND t.start_date <= (now() AT TIME ZONE $3)::date
+   AND t.stage IN ('pre_departure', 'travelling', 'completed') AND {OWNER}
+   AND EXISTS (SELECT 1 FROM crm.booking_line bl WHERE bl.trip_id = t.trip_id AND bl.supplier_kind = 'aa'
+                  AND bl.status = 'confirmed' AND bl.deleted_at IS NULL)
+   AND NOT EXISTS (SELECT 1 FROM crm.ops_release r WHERE r.trip_id = t.trip_id AND r.complete
+                      AND r.withdrawn_at IS NULL)
+   AND NOT EXISTS (SELECT 1 FROM crm.ops_release r WHERE r.trip_id = t.trip_id AND r.withdrawn_at IS NOT NULL)
+"""
 # Module 15: trips with confirmed lines in the window that mix AA and the agency's own suppliers.
 MIXED_SQL = f"""
 SELECT count(*)::int AS trips,

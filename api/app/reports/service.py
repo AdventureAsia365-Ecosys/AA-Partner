@@ -507,7 +507,7 @@ SUCCESS: dict[str, tuple[str, str, float | None, str | None]] = {
     "report_exports": ("16", "count", None, None),
     "data_exports": ("18", "count", None, None),
 }
-NOT_BUILT = frozenset({"ops_release_errors", "commission_unclaimed", "ai_drafts_light_edit_share"})
+NOT_BUILT = frozenset({"commission_unclaimed", "ai_drafts_light_edit_share"})
 
 
 def _status(key: str, value: float | int | None) -> str:
@@ -557,6 +557,7 @@ async def success_metrics(
     values["portal_opened_share"] = pct(portal["opened"], portal["trips"]) if portal else None
     signed = await ctx.conn.fetchrow(q.SIGNED_SQL, *a)
     values["signed_before_departure_share"] = pct(signed["signed"], signed["departed"]) if signed else None
+    values["ops_release_errors"] = int(await ctx.conn.fetchval(q.OPS_RELEASE_ERRORS_SQL, *a) or 0)
     mixed = await ctx.conn.fetchrow(q.MIXED_SQL, *a)
     values["mixed_trips_share"] = pct(mixed["mixed"], mixed["trips"]) if mixed else None
     values["report_exports"] = int(await ctx.conn.fetchval(q.REPORT_EXPORTS_SQL, *a[:3]) or 0)

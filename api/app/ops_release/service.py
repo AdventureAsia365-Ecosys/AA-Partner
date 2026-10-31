@@ -64,7 +64,7 @@ ops_release_id, trip_id, payload_enc, payload_version, fields_released, complete
 departure_ids, bk_booking_ids, start_date, end_date, released_at, refreshed_at, purge_at, t21_alerted_at,
 withdrawn_at, withdraw_reason, purged_at, purge_reason, deletion_receipt, view_count, last_viewed_at
 """
-LIVE_SQL = f"SELECT {RELEASE_COLUMNS} FROM crm.ops_release WHERE trip_id = $1 AND purged_at IS NULL FOR UPDATE"
+LIVE_SQL = f"SELECT {RELEASE_COLUMNS} FROM crm.ops_release WHERE trip_id = $1 AND purged_at IS NULL FOR UPDATE"  # noqa: S608
 LATEST_SQL = f"""
 SELECT {RELEASE_COLUMNS} FROM crm.ops_release WHERE trip_id = $1
  ORDER BY purged_at IS NULL DESC, released_at DESC, ops_release_id LIMIT 1
@@ -170,10 +170,16 @@ async def sync_trip(ctx: AnyContext, vault: Vault, trip_id: uuid.UUID, on: dt.da
                      release["ops_release_id"], reason)  # fmt: skip
             return "withdrawn"
         return "none"
-    if release is not None and release["withdrawn_at"] is not None and release["withdraw_reason"] != (
-        "aa_lines_cancelled"
+    if (
+        release is not None
+        and release["withdrawn_at"] is not None
+        and release["withdraw_reason"] != ("aa_lines_cancelled")
     ):
         return "withdrawn"  # a cancel or the agency's own withdrawal stays (the purge follows)
+    if release is None:
+        last = await ctx.conn.fetchrow(LATEST_SQL, trip_id)
+        if last is not None and last["withdraw_reason"] in MEMBER_WITHDRAW_REASONS:
+            return "withdrawn"  # the agency withdrew this trip's release: the purge does not invite a new one
     built = await build.document(ctx, vault, trip, lines)
     deps = sorted({ln["departure_id"] for ln in lines if ln["departure_id"]})
     bks = sorted({ln["bk_booking_id"] for ln in lines if ln["bk_booking_id"]})
@@ -321,6 +327,20 @@ async def withdraw(ctx: TenantContext, trip_id: uuid.UUID, reason: str) -> dict[
     ctx.audit("ops_release_withdraw", "allowed", "trip", str(trip_id), reason=reason)
     await nudge(ctx, trip_id, "withdraw")
     return await agency_view(ctx, trip_id)
+
+
+async def live_count(ctx: AnyContext, trip_id: uuid.UUID) -> int:
+    """1 when the trip has a live (not withdrawn) release: the C12 dry run lists it as an effect."""
+    release = await ctx.conn.fetchrow(LIVE_SQL, trip_id)
+    return int(release is not None and release["withdrawn_at"] is None)
+
+
+async def withdraw_on_cancel(ctx: TenantContext, trip_id: uuid.UUID) -> int:
+    """C12 step 6, inside the cancel run (:func:`app.stages.cancel`): withdraw the live release, if any (0 / 1)."""
+    if not await live_count(ctx, trip_id):
+        return 0
+    await withdraw(ctx, trip_id, "trip_cancelled")
+    return 1
 
 
 async def agency_view(ctx: TenantContext, trip_id: uuid.UUID) -> dict[str, Any]:

@@ -93,8 +93,9 @@ def canonical(doc: dict[str, Any]) -> str:
 
 async def _flight(vault: Vault, row: Any) -> dict[str, Any]:
     return {
-        "flight_no": await vault.decrypt("traveler_flight", "flight_no_enc", row["traveler_flight_id"],
-                                         row["flight_no_enc"]),  # fmt: skip
+        "flight_no": await vault.decrypt(
+            "traveler_flight", "flight_no_enc", row["traveler_flight_id"], row["flight_no_enc"]
+        ),  # fmt: skip
         "airport": row["airport_iata"],
         "sched_local": row["sched_local"].isoformat(timespec="minutes"),
         "tz": row["tz"],
