@@ -326,6 +326,7 @@ async def trip_detail(ctx: TenantContext, vault: Vault, trip_id: uuid.UUID) -> d
             }
         )
     tasks = [_task(r) for r in await ctx.conn.fetch(TASKS_SQL, trip_id)]
+    await _supplier_checklist(ctx, trip_id, tasks)
     link = await ctx.conn.fetchrow(STAGE2_LINK_SQL, trip_id)
     history = [
         {
@@ -418,6 +419,28 @@ def _crm012(r: Any) -> dict[str, Any]:
     if "cancellation_pending" in r.keys():  # AA-957: cancelled in the CRM, AA has not confirmed it yet
         out["cancellation_pending"] = bool(r["cancellation_pending"])
     return out
+
+
+async def _supplier_checklist(ctx: TenantContext, trip_id: uuid.UUID, tasks: list[dict[str, Any]]) -> None:
+    """AA-957 (C12 "agency suppliers get one task each"): ``crm.task`` keeps one open task per (trip, kind), so the
+    cancel opens one ``cancel_with_suppliers`` task and the trip page lists each supplier on it as one checklist line
+    (its confirmed lines still to cancel). The date rule closes the task once none is left."""
+    from app.cancellation import SUPPLIER_LINES_SQL, SUPPLIER_TASK
+
+    open_tasks = [k for k in tasks if k["kind"] == SUPPLIER_TASK and k["status"] == "open"]
+    if not open_tasks:
+        return
+    suppliers: dict[str, dict[str, Any]] = {}
+    for r in await ctx.conn.fetch(SUPPLIER_LINES_SQL, trip_id, 200):
+        entry = suppliers.setdefault(
+            str(r["agency_supplier_id"]),
+            {"agency_supplier_id": str(r["agency_supplier_id"]), "supplier_name": r["supplier_name"], "lines": []},
+        )
+        entry["lines"].append(
+            {"booking_line_id": str(r["booking_line_id"]), "title": r["title"], "confirmation_no": r["confirmation_no"]}
+        )
+    for k in open_tasks:
+        k["checklist"] = list(suppliers.values())
 
 
 def _task(r: Any) -> dict[str, Any]:

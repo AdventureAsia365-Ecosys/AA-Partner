@@ -91,6 +91,7 @@ SELECT
   JOIN crm.trip t ON t.trip_id = c.trip_id AND t.deleted_at IS NULL
   LEFT JOIN crm.v_booking_line_money_current m ON m.booking_line_id = c.booking_line_id
        AND m.kind = 'commission_expected'
+ WHERE ($3::uuid IS NULL OR c.trip_id = $3)
 """
 CLAIM_SQL = """
 UPDATE crm.commission SET status = 'claimed', claimed_at = now(), claim_ref = $2, decided_by = $3
@@ -102,20 +103,23 @@ UPDATE crm.commission SET status = 'written_off', close_reason = $2, note = $3, 
 """
 DUE_SQL = "UPDATE crm.commission SET due_on = $2, overdue_alerted_at = NULL WHERE commission_id = $1"
 # The date rule: every trip with a confirmed agency line whose commission row is missing or out of date (a positive
-# expected commission without a live row; an expected row whose line is gone or whose commission is now 0).
+# expected commission without a live row; an expected row whose line is gone or whose commission is now 0). The same
+# conditions as crm.commission_sync: no new row on a lost / cancelled trip or one whose cancellation is pending (such a
+# trip would be picked every run for nothing); an expected row kept at the cancel still goes when its commission is 0.
 SWEEP_SQL = """
 SELECT DISTINCT l.trip_id
   FROM crm.booking_line l
   JOIN crm.trip t ON t.trip_id = l.trip_id AND t.deleted_at IS NULL
  WHERE l.supplier_kind = 'agency'
    AND ((l.status = 'confirmed' AND l.deleted_at IS NULL AND t.stage NOT IN ('lost', 'cancelled')
+         AND NOT EXISTS (SELECT 1 FROM crm.trip_cancellation x WHERE x.trip_id = t.trip_id AND x.status = 'pending')
          AND EXISTS (SELECT 1 FROM crm.v_booking_line_money_current m
                       WHERE m.booking_line_id = l.booking_line_id AND m.kind = 'commission_expected' AND m.amount > 0)
          AND NOT EXISTS (SELECT 1 FROM crm.commission c
                           WHERE c.booking_line_id = l.booking_line_id AND c.status <> 'cancelled'))
         OR EXISTS (SELECT 1 FROM crm.commission c
-                    WHERE c.booking_line_id = l.booking_line_id AND c.status = 'expected' AND NOT c.keep_on_cancel
-                      AND (l.status = 'cancelled' OR l.deleted_at IS NOT NULL
+                    WHERE c.booking_line_id = l.booking_line_id AND c.status = 'expected'
+                      AND ((NOT c.keep_on_cancel AND (l.status = 'cancelled' OR l.deleted_at IS NOT NULL))
                            OR NOT EXISTS (SELECT 1 FROM crm.v_booking_line_money_current m
                                            WHERE m.booking_line_id = l.booking_line_id
                                              AND m.kind = 'commission_expected' AND m.amount > 0))))
@@ -228,7 +232,10 @@ async def _one(ctx: AnyContext, commission_id: uuid.UUID) -> dict[str, Any]:
 
 
 async def get(ctx: TenantContext, commission_id: uuid.UUID) -> dict[str, Any]:
-    return await _one(ctx, commission_id)
+    """One commission (margin fields, §4.6 ``commission.*``): audited as a view, as the list is."""
+    out = await _one(ctx, commission_id)
+    ctx.audit("view", "allowed", "commission", str(commission_id))
+    return out
 
 
 async def listing(ctx: TenantContext, *, status: str | None, trip_id: uuid.UUID | None) -> dict[str, Any]:
@@ -249,7 +256,7 @@ async def listing(ctx: TenantContext, *, status: str | None, trip_id: uuid.UUID 
     rows = await ctx.conn.fetch(LIST_SQL, trip_id, statuses, flt == "overdue", today, MAX_LIST)
     settings = await fx.settings(ctx)
     base = settings["base_currency"]
-    t = await ctx.conn.fetchrow(TOTALS_SQL, base, today)
+    t = await ctx.conn.fetchrow(TOTALS_SQL, base, today, trip_id)  # the trip's own totals on its Bookings tab
     ctx.audit("list_view", "allowed", "commission", None,
               object_ids=tuple(str(r["commission_id"]) for r in rows[:20]))  # fmt: skip
     return {

@@ -179,6 +179,18 @@ export interface HistoryRow {
   batch_id?: string | null;
 }
 
+export interface SupplierChecklistItem {
+  agency_supplier_id: string;
+  supplier_name: string;
+  lines: { booking_line_id: string; title: string; confirmation_no: string | null }[];
+}
+
+/** One checklist line per supplier: "Riverside Lodge: Lodge 2 nights (RL-7), Boat day". */
+export function supplierChecklistLine(item: SupplierChecklistItem): string {
+  const lines = item.lines.map((l) => (l.confirmation_no ? `${l.title} (${l.confirmation_no})` : l.title));
+  return `${item.supplier_name}: ${lines.join(", ")}`;
+}
+
 export interface TripView {
   trip: Trip;
   party: { traveler_id: string; role: "lead" | "companion"; display_name: string; preferred_channel: string | null; has_email: boolean; has_phone: boolean }[];
@@ -190,6 +202,8 @@ export interface TripView {
     status: "open" | "done" | "skipped";
     due_at: string | null;
     done_at: string | null;
+    /** AA-957: on the open cancel_with_suppliers task, one line per supplier with its confirmed lines to cancel. */
+    checklist?: SupplierChecklistItem[];
   }[];
   notes: { note_id: string; kind: string; body: string; created_at: string; created_by: string }[];
   history: HistoryRow[];

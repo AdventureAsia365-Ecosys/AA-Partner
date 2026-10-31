@@ -492,6 +492,9 @@ async def undo(ctx: TenantContext, trip_id: uuid.UUID, history_id: uuid.UUID) ->
 
 async def _undo_one(ctx: TenantContext, trip: Any, history_id: uuid.UUID, *, batch: bool) -> dict[str, Any]:
     trip_id = trip["trip_id"]
+    # AA-957: a trip whose cancellation waits for Booking moves nowhere, an Undo included (409 cancellation_pending; a
+    # bulk Undo with such a trip fails as a whole).
+    await ensure_not_cancelling(ctx, trip_id)
     rows = await ctx.conn.fetch(LAST_MOVE_SQL, trip_id)
     last = rows[0] if rows else None
     now = await ctx.conn.fetchval("SELECT now()")

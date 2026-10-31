@@ -67,6 +67,7 @@ from app.booking import contract, proposal_lines, rehold
 from app.booking.client import BookingClient, BookingRefusal, BookingUnavailable
 from app.errors import Forbidden, NotFound
 from app.jobs.queue import Job
+from app.ledger import fx
 from app.ops_release import service as ops_release
 from app.payments import claims
 from app.tenancy import SystemContext, system_tx
@@ -646,7 +647,9 @@ async def _apply_cancel(ctx: SystemContext, w: Work, out: Outcome, status: str |
             ctx.audit("aa_sync", "allowed", "booking_line", str(r["booking_line_id"]), reason=f"cancel_{result}"[:40])
         c = out.cancellation
         if c is not None and c.fee > 0:
-            await ctx.conn.fetchval(FEE_SQL, line_id, c.fee, c.currency, (c.cancelled_at or _utc_now()).date())
+            # The fee day in the agency timezone, as every other FX basis date (fx.agency_today), not UTC.
+            fee_day = await fx.agency_day(ctx, c.cancelled_at)
+            await ctx.conn.fetchval(FEE_SQL, line_id, c.fee, c.currency, fee_day)
         final, code = "done", out.code
     else:
         final, code = "failed", out.code
@@ -660,10 +663,6 @@ async def _apply_cancel(ctx: SystemContext, w: Work, out: Outcome, status: str |
     if cur["trip_deleted_at"] is None:
         await stages.refresh_waiting_on(ctx, trip_id)
     return final
-
-
-def _utc_now() -> dt.datetime:
-    return dt.datetime.now(dt.UTC)
 
 
 # ── 3. the feed ──────────────────────────────────────────────────────────────────────────────────

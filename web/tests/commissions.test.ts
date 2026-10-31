@@ -10,7 +10,7 @@ import { matchBff } from "@/lib/bff";
 import { commissionActions, commissionErrorKey, FILTERS, isFilter } from "@/lib/commissions";
 import { MESSAGES, t, type MessageKey } from "@/lib/i18n";
 import { commissionEn, commissionVi } from "@/lib/i18nCommission";
-import type { CancelPreview } from "@/lib/pipeline";
+import { supplierChecklistLine, type CancelPreview } from "@/lib/pipeline";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => {}, push: () => {} }) }));
@@ -159,5 +159,20 @@ describe("cancel dialog (C12)", () => {
     await setValue(c.querySelector<HTMLSelectElement>("[data-testid=cancel-reason]")!, "client_request");
     expect(c.querySelector("[data-testid=cancel-booking-down]")!.textContent).toBe(MESSAGES.vi["cancelTrip.bookingDown"]);
     expect(c.querySelector("[data-testid=cancel-aa-fee]")!.textContent).toBe(MESSAGES.vi["cancelTrip.aaFeeUnknown"]);
+  });
+});
+
+describe("cancel with suppliers task", () => {
+  it("lists every supplier as one checklist line with its bookings", () => {
+    expect(
+      supplierChecklistLine({
+        agency_supplier_id: KEEP,
+        supplier_name: "Riverside Lodge",
+        lines: [
+          { booking_line_id: PAY, title: "Lodge 2 nights", confirmation_no: "RL-7" },
+          { booking_line_id: UUID, title: "Boat day", confirmation_no: null },
+        ],
+      }),
+    ).toBe("Riverside Lodge: Lodge 2 nights (RL-7), Boat day");
   });
 });

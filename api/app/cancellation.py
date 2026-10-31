@@ -104,7 +104,7 @@ ON CONFLICT (tenant_id, booking_line_id, kind) WHERE status = 'pending' AND dele
 RETURNING aa_request_id
 """
 SUPPLIER_LINES_SQL = """
-SELECT l.booking_line_id, l.title, s.name AS supplier_name, l.confirmation_no
+SELECT l.booking_line_id, l.title, s.agency_supplier_id, s.name AS supplier_name, l.confirmation_no
   FROM crm.booking_line l JOIN crm.agency_supplier s ON s.agency_supplier_id = l.agency_supplier_id
  WHERE l.trip_id = $1 AND l.supplier_kind = 'agency' AND l.status = 'confirmed' AND l.deleted_at IS NULL
  ORDER BY s.name, l.service_from NULLS LAST, l.title
@@ -182,13 +182,17 @@ UPDATE crm.commission SET status = 'cancelled', close_reason = 'trip_cancelled',
  WHERE trip_id = $1 AND status = 'expected' AND NOT (commission_id = ANY($3::uuid[]))
 """
 KEEP_COMMISSION_SQL = "UPDATE crm.commission SET keep_on_cancel = true WHERE commission_id = ANY($1::uuid[])"
-INSERT_SQL = """
-INSERT INTO crm.trip_cancellation (trip_id, status, reason_code, from_stage, aa_bookings, effects, finished_at)
-VALUES ($1, $2, $3, $4, $5, $6::jsonb, CASE WHEN $2 = 'done' THEN now() END)
+# A7 (review): an invoice the cancel kept because it held money is voided once its refunds left nothing on it.
+REFUNDED_VOID_SQL = """
+SELECT i.issued_at FROM crm.invoice i
+ WHERE i.invoice_id = $1 AND i.deleted_at IS NULL AND i.status IN ('open', 'expired')
+   AND EXISTS (SELECT 1 FROM crm.trip_cancellation x WHERE x.trip_id = i.trip_id)
 """
-DONE_SQL = """
-UPDATE crm.trip_cancellation SET status = 'done', finished_at = now() WHERE trip_id = $1 AND status = 'pending'
-"""
+# crm-035: crm_app only reads crm.trip_cancellation; the database writes it. ``open`` reads the stage left and the live
+# AA bookings itself (pending while any is live, else done); ``finish`` moves pending -> done only once no AA booking
+# is live and the trip is cancelled (card R).
+OPEN_SQL = "SELECT crm.trip_cancellation_open($1, $2, $3::jsonb)"
+FINISH_SQL = "SELECT crm.trip_cancellation_finish($1)"
 LEFT_SQL = """
 SELECT count(*)::int FROM crm.booking_line
  WHERE trip_id = $1 AND supplier_kind = 'aa' AND bk_booking_id IS NOT NULL AND status <> 'cancelled'
@@ -475,9 +479,8 @@ async def run(
     await ops_release.withdraw_on_cancel(ctx, trip_id, notices=notices)
     counts = {e["kind"]: e["count"] for e in before["effects"]}
     counts["refund_requests"] = requested
-    waiting = len(before["aa_bookings"])
-    status = "pending" if waiting else "done"
-    await ctx.conn.execute(INSERT_SQL, trip_id, status, reason, trip["stage"], waiting, json.dumps(counts))
+    raw = await ctx.conn.fetchval(OPEN_SQL, trip_id, reason, json.dumps(counts))
+    status = (json.loads(raw) if isinstance(raw, str) else dict(raw))["status"]
     if status == "done":
         await move_to_cancelled(ctx, trip_id, trip["stage"], reason)
     else:
@@ -513,6 +516,29 @@ async def move_to_cancelled(ctx: AnyContext, trip_id: uuid.UUID, from_stage: str
                            None, None)  # fmt: skip
 
 
+async def void_if_refunded(ctx: AnyContext, trip_id: uuid.UUID, invoice_id: uuid.UUID, actor: str) -> bool:
+    """After a refund executes (:func:`app.payments.service.execute_refund`): an open / expired invoice of a cancelled
+    (or cancelling) trip that the cancel kept because it held money is voided once nothing is held on it and no refund
+    request is open (C12 item 3, "invoices are voided"). An invoice keeping a non-refundable part, or whose refund was
+    rejected, still holds money and stays; a ``paid`` invoice has no ``void`` edge (crm-024) and stays ``paid`` with
+    its refund entries."""
+    from app.invoices.service import VOID_BLOCK_SQL
+    from app.payments import reminders
+
+    row = await ctx.conn.fetchrow(REFUNDED_VOID_SQL, invoice_id)
+    if row is None:
+        return False
+    block = await ctx.conn.fetchrow(VOID_BLOCK_SQL, invoice_id)
+    if block is not None and (block["held"] > 0 or block["refund_open"]):
+        return False
+    await ctx.conn.execute(VOID_SQL, invoice_id, actor)
+    if row["issued_at"] is not None:
+        await ctx.conn.execute(INVOICE_COMMITMENT_SQL, trip_id, f"invoice:{invoice_id}")
+        await reminders.settled(ctx, trip_id, invoice_id, actor)
+    ctx.audit("invoice_void", "allowed", "invoice", str(invoice_id), reason="trip_cancelled_refunded")
+    return True
+
+
 async def finish_if_done(ctx: AnyContext, trip_id: uuid.UUID) -> bool:
     """The Booking sync, after a cancel answer or a ``booking.cancelled`` event: once no AA booking of a trip with a
     pending cancellation is left, the trip moves to ``cancelled`` and the cancellation is done."""
@@ -526,7 +552,7 @@ async def finish_if_done(ctx: AnyContext, trip_id: uuid.UUID) -> bool:
         return False
     if stage != "cancelled":
         await move_to_cancelled(ctx, trip_id, stage, row["reason_code"])
-    await ctx.conn.execute(DONE_SQL, trip_id)
+    await ctx.conn.fetchval(FINISH_SQL, trip_id)
     await ctx.conn.execute(CLOSE_FAILED_TASK_SQL, trip_id, CANCEL_FAILED_TASK)
     from app.commissions import service as commissions
 
@@ -588,4 +614,5 @@ __all__ = [
     "register_cancel_hook",
     "retry",
     "run",
+    "void_if_refunded",
 ]

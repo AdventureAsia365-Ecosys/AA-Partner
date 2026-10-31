@@ -38,6 +38,9 @@ RESOLVE_SQL = "SELECT rate, rate_date, fx_source, stale_days FROM crm.fx_resolve
 TODAY_SQL = """
 SELECT (now() AT TIME ZONE COALESCE((SELECT timezone FROM crm.tenant_settings), 'Asia/Ho_Chi_Minh'))::date
 """
+DAY_OF_SQL = """
+SELECT ($1::timestamptz AT TIME ZONE COALESCE((SELECT timezone FROM crm.tenant_settings), 'Asia/Ho_Chi_Minh'))::date
+"""
 SETTINGS_SQL = "SELECT base_currency, booking_validation_level, fx_mode FROM crm.tenant_settings"
 UPSERT_SETTINGS_SQL = """
 INSERT INTO crm.tenant_settings (base_currency, booking_validation_level, fx_mode) VALUES ($1, $2, $3)
@@ -94,6 +97,16 @@ def positive_rate(value: Any) -> Decimal:
 async def agency_today(ctx: AnyContext) -> dt.date:
     """Today in the agency timezone (crm-012 ``tenant_settings.timezone``), the FX basis date of a confirm."""
     day = await ctx.conn.fetchval(TODAY_SQL)
+    assert isinstance(day, dt.date)  # noqa: S101 — the SQL returns a date
+    return day
+
+
+async def agency_day(ctx: AnyContext, at: dt.datetime | None) -> dt.date:
+    """The agency-timezone day of an instant (``None``: today), the FX basis date of an event Booking timestamps in UTC
+    (AA-957: the day Booking cancelled a booking, for its fee)."""
+    if at is None:
+        return await agency_today(ctx)
+    day = await ctx.conn.fetchval(DAY_OF_SQL, at)
     assert isinstance(day, dt.date)  # noqa: S101 — the SQL returns a date
     return day
 

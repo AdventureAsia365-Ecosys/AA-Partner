@@ -17,7 +17,8 @@ F, M7, §4.6, §6.3, A-10). Routes in :mod:`app.routers.payments`.
   owner; an agent never approves a request they made: 403 ``refund_self_approval``) -> executed
   (``PAYMENT_MARK_RECEIVED``): the payment's provider refunds (manual: the member records the money returned) and a
   refund entry joins ``crm.payment``. A fully refunded payment's commitment reads ``refunded`` (still ``has_money``:
-  the trip delete stays blocked); once every payment of an invoice is refunded, the invoice can be voided.
+  the trip delete stays blocked); once every payment of an invoice is refunded, the invoice can be voided (an
+  open invoice of a cancelled trip is voided at once, :func:`app.cancellation.void_if_refunded`, AA-957).
 - **Payment methods** (``PAYMENT_SETTINGS``, owner): the manual method's name and pay-by instructions (printed on the
   agency's invoices); disconnect; another provider is 409 ``provider_not_available`` until it has code.
 
@@ -381,6 +382,9 @@ async def execute_refund(
     if refunded >= _money(payment["amount"]):
         await ctx.conn.execute(COMMITMENT_SQL, row["trip_id"], "payment", "refunded", f"payment:{row['payment_id']}")
     ctx.audit("refund_execute", "allowed", "refund_request", str(refund_id), reason=method)
+    from app import cancellation  # AA-957 (C12): a cancelled trip's invoice is voided once its refunds are done
+
+    await cancellation.void_if_refunded(ctx, row["trip_id"], row["invoice_id"], f"member:{ctx.member_id}")
     return await _refund(ctx, refund_id)
 
 

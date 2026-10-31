@@ -15,6 +15,10 @@ Booking sync, against the in-memory Booking (``tests/aa_fakes.py``).
 - While a cancellation is pending, a queued hold is dropped (``trip_closed``) instead of placing a new AA hold.
 - Module 13: the confirm makes the expected commission row; claim, receive at the receipt day's rate, write off; the
   assistant gets 403 on every commission route; the overdue owner task once; a claimed commission blocks the delete.
+- Review fix pass: an Undo never moves a trip whose cancellation is pending; the single commission read is audited;
+  the commission sweep skips a trip whose cancellation is pending; the AA fee's FX day is the agency-timezone day of
+  Booking's ``cancelled_at``; a trip's commission totals are the trip's own; an invoice the cancel kept for its money
+  is voided once the refund executed; the supplier task lists each supplier as one checklist line.
 """
 
 from __future__ import annotations
@@ -28,7 +32,7 @@ from typing import Any
 import asyncpg
 import pytest
 
-from app import stages
+from app import pipeline, stages
 from app.booking import aa_lines, sync
 from app.cancellation import booking_fees
 from app.commissions import service as commissions
@@ -86,9 +90,17 @@ async def _aa_booking(pool: asyncpg.Pool, s: dict[str, Any], fake: FakeBooking) 
     return line_id
 
 
-async def _agency_line(pool: asyncpg.Pool, s: dict[str, Any], keys: KeyProvider, commission: str = "40") -> uuid.UUID:
+async def _agency_line(
+    pool: asyncpg.Pool,
+    s: dict[str, Any],
+    keys: KeyProvider,
+    commission: str = "40",
+    *,
+    trip: uuid.UUID | None = None,
+    supplier_name: str = "Riverside Lodge",
+) -> uuid.UUID:
     async with tenant_tx(pool, s["who"]["agent"], s["tenant"]) as ctx:
-        supplier = {"name": "Riverside Lodge", "category": "accommodation", "commission_due_days": 10}
+        supplier = {"name": supplier_name, "category": "accommodation", "commission_due_days": 10}
         own = await suppliers.create_supplier(ctx, Vault(keys, ctx), supplier)
         body = {
             "agency_supplier_id": uuid.UUID(own["agency_supplier_id"]),
@@ -97,7 +109,7 @@ async def _agency_line(pool: asyncpg.Pool, s: dict[str, Any], keys: KeyProvider,
             "service_from": "2026-12-01",
             "service_to": "2026-12-03",
         }
-        line_id = uuid.UUID((await lines.create_line(ctx, s["trip"], body))["booking_line_id"])
+        line_id = uuid.UUID((await lines.create_line(ctx, trip or s["trip"], body))["booking_line_id"])
         money = {
             "cost": {"amount": "300", "currency": "USD"},
             "sell": {"amount": "400", "currency": "USD"},
@@ -430,3 +442,132 @@ async def test_module_13_expected_claim_receive_write_off_and_the_assistant(app_
     async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
         off = await commissions.write_off(ctx, uuid.UUID(two["commission_id"]), "supplier_refused", "Closed season")
     assert off["status"] == "written_off" and off["close_reason"] == "supplier_refused"
+
+
+async def _other_trip(pool: asyncpg.Pool, s: dict[str, Any]) -> uuid.UUID:
+    trip = uuid.uuid4()
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(s["tenant"]))
+        await conn.execute("SELECT set_config('app.actor', 'seed:test', true)")
+        sql = "INSERT INTO crm.trip (trip_id, title, stage, waiting_on) VALUES ($1, 'Hue', 'booked', 'none')"
+        await conn.execute(sql, trip)
+    return trip
+
+
+async def test_undo_never_moves_a_trip_whose_cancellation_is_pending(app_pool: asyncpg.Pool) -> None:
+    s = await _setup(app_pool)
+    fake = FakeBooking(confirm_line_status="confirmed")
+    await _aa_booking(app_pool, s, fake)
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        moved = await stages.move(ctx, s["trip"], "pre_departure", override_reason="manual_stage3")
+    out = await _cancel(app_pool, s, dry_run=False)  # within the Undo window; AA has not answered
+    assert out["cancellation"]["status"] == "pending"
+    with pytest.raises(Conflict) as undone:
+        async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+            await stages.undo(ctx, s["trip"], uuid.UUID(moved["undo"]["history_id"]))
+    assert undone.value.code == "cancellation_pending"
+    assert await _stage(app_pool, s) == "pre_departure"
+
+
+async def test_one_commission_read_is_audited_as_the_list_is(app_pool: asyncpg.Pool) -> None:
+    s = await _setup(app_pool)
+    await _agency_line(app_pool, s, _keys())
+    async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:
+        (c,) = (await commissions.listing(ctx, status=None, trip_id=s["trip"]))["commissions"]
+    async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:
+        await commissions.get(ctx, uuid.UUID(c["commission_id"]))
+    sql = (
+        "SELECT count(*) FROM crm.audit_event WHERE action = 'view' AND object_kind = 'commission' "
+        "AND object_id = $1 AND actor_ref = $2"
+    )
+    owner = await _scalar(app_pool, s["tenant"], "SELECT member_id FROM crm.member WHERE role = 'owner' LIMIT 1")
+    assert await _scalar(app_pool, s["tenant"], sql, c["commission_id"], f"member:{owner}") == 1
+
+
+async def test_the_commission_sweep_skips_a_trip_whose_cancellation_is_pending(app_pool: asyncpg.Pool) -> None:
+    s = await _setup(app_pool)
+    fake = FakeBooking(confirm_line_status="confirmed")
+    await _aa_booking(app_pool, s, fake)
+    await _agency_line(app_pool, s, _keys())
+    await _cancel(app_pool, s, dry_run=False)  # pending; the expected commission is cancelled, the line stays
+    async with system_tx(app_pool, s["tenant"], actor="job:crm_stage_date_rule") as ctx:
+        assert await commissions.sweep(ctx) == 0  # nothing to create while the cancel waits: never picked
+    assert await _scalar(app_pool, s["tenant"], "SELECT count(*) FROM crm.commission WHERE trip_id = $1 "
+                         "AND status <> 'cancelled'", s["trip"]) == 0  # fmt: skip
+
+
+async def test_the_aa_fee_fx_day_is_the_agency_day_of_the_cancellation(app_pool: asyncpg.Pool) -> None:
+    s = await _setup(app_pool)
+    fake = FakeBooking(confirm_line_status="confirmed")
+    booked = await _aa_booking(app_pool, s, fake)
+    at = "2026-11-01T20:00:00+00:00"  # 1 Nov in UTC, 2 Nov in the agency's day (Asia/Ho_Chi_Minh by default)
+    day_sql = (
+        "SELECT ($1::timestamptz AT TIME ZONE coalesce((SELECT timezone FROM crm.tenant_settings), "
+        "'Asia/Ho_Chi_Minh'))::date"
+    )
+    local = await _scalar(app_pool, s["tenant"], day_sql, dt.datetime.fromisoformat(at))
+    assert local != dt.date(2026, 11, 1)
+    async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:  # a EUR rate before both days
+        rate_sql = (
+            "INSERT INTO crm.fx_rate_override (rate_date, base, quote, rate, set_by) "
+            "VALUES (DATE '2026-10-30', 'EUR', 'USD', 1.1, $1)"
+        )
+        await ctx.conn.execute(rate_sql, ctx.member_id)
+    # Booking answers with a stored cancellation in another currency than the quote (no quote FX lock to reuse).
+    fake.cancellations["b-h1"] = {
+        "booking_id": "b-h1", "dry_run": False, "fee": {"amount": "100.00", "currency": "EUR"},
+        "refundable_b2b_amount": {"amount": "0.00", "currency": "EUR"},
+        "fee_basis": {"policy_id": "pol-1", "days_before_departure": 40, "fee_pct": "25"}, "cancelled_at": at,
+    }  # fmt: skip
+    await _cancel(app_pool, s, dry_run=False)
+    await _sync(app_pool, fake, s["tenant"])
+    assert await _stage(app_pool, s) == "cancelled"
+    async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:
+        fee = await ctx.conn.fetchrow("SELECT amount, currency, fx_rate_date FROM crm.v_booking_line_money_current "
+                                      "WHERE booking_line_id = $1 AND kind = 'cancellation_cost'", booked)  # fmt: skip
+    assert (fee["amount"], fee["currency"], fee["fx_rate_date"]) == (Decimal("100.00"), "EUR", local)
+
+
+async def test_a_trips_commission_totals_are_its_own(app_pool: asyncpg.Pool) -> None:
+    s = await _setup(app_pool)
+    keys = _keys()
+    await _agency_line(app_pool, s, keys, commission="40")
+    await _agency_line(app_pool, s, keys, commission="25", trip=await _other_trip(app_pool, s))
+    async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:
+        mine = await commissions.listing(ctx, status=None, trip_id=s["trip"])
+        every = await commissions.listing(ctx, status=None, trip_id=None)
+    assert len(mine["commissions"]) == 1
+    assert (mine["commission_totals"]["open_count"], mine["commission_totals"]["open_base"]) == (1, "40.00")
+    assert (every["commission_totals"]["open_count"], every["commission_totals"]["open_base"]) == (2, "65.00")
+
+
+async def test_a_kept_invoice_is_voided_once_its_refund_executed_and_the_supplier_task_lists_suppliers(
+    app_pool: asyncpg.Pool,
+) -> None:
+    s = await _setup(app_pool)
+    keys = _keys()
+    await _agency_line(app_pool, s, keys)
+    await _agency_line(app_pool, s, keys, commission="0", supplier_name="Delta Boats")
+    paid = await _paid_invoice(app_pool, s, keys, "300")  # 300 of 500: the invoice stays open
+    invoice_id = uuid.UUID(paid["invoice"]["invoice_id"])
+    out = await _cancel(app_pool, s, dry_run=False)  # no AA booking: cancelled at once
+    assert out["stage"] == "cancelled"
+    async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:
+        view = await pipeline.trip_detail(ctx, Vault(keys, ctx), s["trip"])
+        refund = await ctx.conn.fetchval("SELECT refund_id FROM crm.refund_request WHERE trip_id = $1", s["trip"])
+        assert await ctx.conn.fetchval("SELECT status FROM crm.invoice WHERE invoice_id = $1", invoice_id) == "open"
+        await payments.decide_refund(ctx, refund, approve=True, note=None)
+    (task,) = [k for k in view["tasks"] if k["kind"] == "cancel_with_suppliers"]
+    assert [(c["supplier_name"], [x["title"] for x in c["lines"]]) for c in task["checklist"]] == [
+        ("Delta Boats", ["Lodge 2 nights"]),
+        ("Riverside Lodge", ["Lodge 2 nights"]),
+    ]
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        await payments.execute_refund(ctx, refund, method="bank_transfer", refunded_on=None)
+    async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:
+        invoice = await ctx.conn.fetchrow("SELECT status, void_reason FROM crm.invoice WHERE invoice_id = $1",
+                                          invoice_id)  # fmt: skip
+        commitment = await ctx.conn.fetchval("SELECT line_status FROM crm.trip_commitment WHERE kind = 'invoice' "
+                                             "AND source_ref = $1", f"invoice:{invoice_id}")  # fmt: skip
+    assert (invoice["status"], invoice["void_reason"]) == ("void", "Trip cancelled")
+    assert commitment == "void"

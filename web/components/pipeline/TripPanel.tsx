@@ -35,6 +35,7 @@ import {
   moveErrorKey,
   partySummary,
   stageLabel,
+  supplierChecklistLine,
   waitingLabel,
   WAITING_ON,
   whenLabel,
@@ -412,6 +413,13 @@ export function TripPanel({
                   {task.priority === "urgent" && task.status === "open" && <Badge tone="danger">{t(lang, "trip.urgent")}</Badge>} {codeLabel(lang, "task", task.kind)}
                   {task.due_at && task.status === "open" ? ` · ${fmt(t(lang, "trip.due"), { when: new Date(task.due_at).toLocaleString(locale, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) })}` : ""}
                 </span>
+                {task.checklist && task.checklist.length > 0 && (
+                  <ul data-testid="trip-task-checklist" style={{ width: "100%", margin: 0, paddingLeft: 18, fontSize: 12.5, color: K.ink, display: "grid", gap: 2 }}>
+                    {task.checklist.map((item) => (
+                      <li key={item.agency_supplier_id}>{supplierChecklistLine(item)}</li>
+                    ))}
+                  </ul>
+                )}
                 <Button
                   size="sm"
                   variant={task.status === "open" ? "secondary" : "ghost"}
