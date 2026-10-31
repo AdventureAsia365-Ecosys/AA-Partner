@@ -8,6 +8,8 @@
 - **CSV**: a product title that starts with ``=`` is written as text (formula guard); the export is audited.
 - **R28 E**: an agency whose first trip is more than a year old compares with the same period last year; a new
   agency gets the 3-month trend.
+- **Outstanding** follows A-10 Receivables: an invoiced schedule row is not counted again, a partly paid invoice
+  counts its balance once, a refund never reopens it; the open-invoice total equals the Receivables balances.
 - **Module 17**: the platform read as ``crm_insights`` publishes a cell only with >= 10 travellers from >= 3
   agencies; an opted-out agency never contributes.
 """
@@ -25,12 +27,15 @@ import asyncpg
 import pytest
 
 from app.errors import Forbidden
+from app.invoices import service as invoices
 from app.ledger import lines, suppliers
 from app.ops import console
+from app.payments import service as payments
 from app.reports import export, service
 from app.tenancy import tenant_tx
 from app.vault import Vault
 from tests.integration.test_crm005_intake import _agency, _keys
+from tests.integration.test_invoices_api import _accepted, _as
 from tests.integration.test_ledger_api import _fx_today
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -242,6 +247,39 @@ async def test_an_agency_with_a_year_of_history_compares_with_last_year(app_pool
     assert tile["value"] == 2 and tile["previous"] == 1 and tile["delta"] == 100.0 and tile["trend"] == []
 
 
+async def test_outstanding_counts_each_amount_once_and_matches_receivables(app_pool: asyncpg.Pool) -> None:
+    s = await _accepted(app_pool)  # proposal 1000 USD: deposit row 300, balance row 700, both due
+    draft = await _as(app_pool, s, "agent", lambda ctx: invoices.create_from_schedule(ctx, s["trip"], s["deposit"]))
+    deposit = uuid.UUID(draft["invoice_id"])
+    await _as(app_pool, s, "agent", lambda ctx: invoices.issue(ctx, deposit))
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        paid = await payments.record_payment(ctx, Vault(s["keys"], ctx), deposit, amount=Decimal("100"),
+                                             method="bank_transfer", received_on=None, reference="TT 0007")  # fmt: skip
+    payment_id = uuid.UUID(paid["invoice"]["payments"][0]["payment_id"])
+    # A partial refund of that payment: the Receivables balance stays 200 (a refund never reopens an invoice).
+    asked = await _as(app_pool, s, "agent", lambda ctx: payments.request_refund(ctx, payment_id, amount=Decimal("40"),
+                                                                               reason="Goodwill"))  # fmt: skip
+    refund_id = uuid.UUID(asked["refund_id"])
+    await _as(app_pool, s, "owner", lambda ctx: payments.decide_refund(ctx, refund_id, approve=True, note=None))
+    await _as(app_pool, s, "agent", lambda ctx: payments.execute_refund(ctx, refund_id, method="bank_transfer",
+                                                                       refunded_on=None))  # fmt: skip
+
+    report = await _as(app_pool, s, "owner", lambda ctx: service.summary(ctx, "30d", None))
+    listed = await _as(app_pool, s, "owner", lambda ctx: invoices.receivables(ctx, None))
+    owed = report["payments"]
+    assert [(i["currency"], i["count"], i["paid"], i["outstanding"]) for i in owed["open_invoices"]] == [
+        ("USD", 1, "100.00", "200.00")
+    ]
+    receivable = sum(Decimal(r["balance_amount"]) for r in listed["invoices"] if r["currency"] == "USD")
+    assert Decimal(owed["open_invoices"][0]["outstanding"]) == receivable == Decimal("200")
+    # The invoiced deposit row is not listed again: only the balance row, not invoiced yet.
+    assert [(r["kind"], r["total"]) for r in owed["schedule_due"]] == [("balance", "700.00")]
+    async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:
+        body, count = await export.export(ctx, "30d", None, "outstanding")
+    rows = list(csv.reader(io.StringIO(body.decode("utf-8-sig"))))
+    assert count == 2 and sum(Decimal(r[6]) for r in rows[1:]) == Decimal("900")  # 200 owed + 700 not invoiced
+
+
 async def test_insights_publish_only_big_enough_cells_and_skip_opted_out_agencies(app_pool: asyncpg.Pool) -> None:
     month = dt.date.today().replace(day=1) + dt.timedelta(days=400)
     month = month.replace(day=1)
@@ -271,3 +309,36 @@ async def test_insights_publish_only_big_enough_cells_and_skip_opted_out_agencie
         include_synthetic=False,
     )  # fmt: skip
     assert "khmer_coast" not in {c["bucket"] for c in result["cells"]}
+
+
+async def test_insights_count_a_trip_once_outside_the_destination_dimension(app_pool: asyncpg.Pool) -> None:
+    """Review S261: three agencies, each one 1-traveller trip to four places. Per destination that is four rows a trip;
+    counted per row, the budget band cell would read 12 travellers and be published. It holds 3: suppressed."""
+    month = dt.date(2032, 8, 1)
+    places = ("amber_reach", "salt_point", "fern_hollow", "cloud_steps")
+    for _ in range(3):
+        tenant, _people = await _agency(app_pool, "owner")
+        await _trip(app_pool, tenant, "inquiry", budget="over_5000", destinations=places, adults=1, start=month)
+    out = await console.platform_insights(
+        app_pool, staff_sub="staff-test", dimension="budget_band", month_from=month, month_to=month,
+        include_synthetic=True,
+    )  # fmt: skip
+    assert "over_5000" not in {c["bucket"] for c in out["cells"]} and out["suppressed_cells"] >= 1
+    # A fourth and fifth agency with 4 travellers each: 3 + 8 = 11 >= 10 from 5 agencies, published with the real count.
+    for _ in range(2):
+        tenant, _people = await _agency(app_pool, "owner")
+        await _trip(app_pool, tenant, "inquiry", budget="over_5000", destinations=places, adults=4, start=month)
+    out = await console.platform_insights(
+        app_pool, staff_sub="staff-test", dimension="budget_band", month_from=month, month_to=month,
+        include_synthetic=True,
+    )  # fmt: skip
+    cells = {c["bucket"]: c for c in out["cells"]}
+    assert cells["over_5000"] == {"bucket": "over_5000", "traveller_count": 11, "agency_count": 5}
+    # Per destination each trip still counts in each of its places: 11 travellers in every one of the four.
+    out = await console.platform_insights(
+        app_pool, staff_sub="staff-test", dimension="destination", month_from=month, month_to=month,
+        include_synthetic=True,
+    )  # fmt: skip
+    assert {c["bucket"]: c["traveller_count"] for c in out["cells"] if c["bucket"] in places} == dict.fromkeys(
+        places, 11
+    )

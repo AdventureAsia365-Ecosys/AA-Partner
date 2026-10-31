@@ -141,6 +141,7 @@ OPS_ALLOWED_KEYS: frozenset[str] = frozenset(
         "last_error_class",
         # AA insights (crm.ops.v1 1.5, AA-966, spec module 17): published cells only, no agency id, no total
         "dimension",
+        "quarter",
         "agencies_included",
         "agencies_opted_out",
         "k_min",

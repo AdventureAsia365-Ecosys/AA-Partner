@@ -516,9 +516,17 @@ async def platform_coverage(pool: asyncpg.Pool, *, staff_sub: str) -> dict[str, 
 INSIGHT_OPT_OUT_SQL = """
 SELECT coalesce((SELECT insights_opt_out FROM crm.tenant_entitlement WHERE deleted_at IS NULL), false)
 """
+# The destination dimension counts per trip and destination (crm-006); every other one counts each trip once
+# (crm-031 v_insight_trip_fact: trips per band combination). app.reports.insights.aggregate checks the grain.
 INSIGHT_FACTS_SQL = """
-SELECT month, destination, budget_band, age_band, party_size, stage_reached, lost_reason_code
+SELECT month, destination, budget_band, age_band, party_size, stage_reached, lost_reason_code, 1 AS trip_count
   FROM crm.v_insight_fact
+ WHERE month >= $1 AND month <= $2
+ LIMIT $3
+"""
+INSIGHT_TRIP_FACTS_SQL = """
+SELECT month, NULL::text AS destination, budget_band, age_band, party_size, stage_reached, lost_reason_code, trip_count
+  FROM crm.v_insight_trip_fact
  WHERE month >= $1 AND month <= $2
  LIMIT $3
 """
@@ -536,6 +544,8 @@ async def platform_insights(
 ) -> dict[str, Any]:
     facts: list[insights.Fact] = []
     included = opted_out = 0
+    grain = insights.grain_for(dimension)
+    facts_sql = INSIGHT_FACTS_SQL if grain == insights.TRIP_DESTINATION else INSIGHT_TRIP_FACTS_SQL
     for agency in await registry.agencies(pool):
         try:
             async with platform_tx(pool, agency.tenant_id, actor=platform_actor(staff_sub)) as ctx:
@@ -545,7 +555,7 @@ async def platform_insights(
                     opted_out += 1
                     continue
                 async with as_insights_reader(ctx):
-                    rows = await ctx.conn.fetch(INSIGHT_FACTS_SQL, month_from, month_to, MAX_FACTS_PER_AGENCY)
+                    rows = await ctx.conn.fetch(facts_sql, month_from, month_to, MAX_FACTS_PER_AGENCY)
         except (NotFound, Conflict):
             continue  # trashed, locked or offboarding: not counted
         included += 1
@@ -559,6 +569,8 @@ async def platform_insights(
                 party_size=int(r["party_size"] or 0),
                 stage_reached=r["stage_reached"],
                 lost_reason_code=r["lost_reason_code"],
+                trip_count=int(r["trip_count"] or 0),
+                grain=grain,
             )
             for r in rows
         )
