@@ -13,7 +13,8 @@
 4. **Withdraw** (:func:`withdraw`, C12 step 6 and the agency's own "Withdraw"): a member marks the live release
    withdrawn (AA ops stop seeing the document at once) and nudges the job, which purges it when the trip has not
    started; no confirmed AA line left or the trip cancelled -> the job withdraws it too. A withdrawal for lost AA lines
-   is lifted when a new AA line is confirmed (the job re-releases); a member's withdrawal and a cancel stay.
+   is lifted when a new AA line is confirmed (the job re-releases); a member's withdrawal and a cancel stay, also after
+   the purge (no new release for that trip). A trip past its window (return + 90 days) is never released again.
 5. **Purge with a receipt** (:func:`purge_due`): at ``purge_at`` (or at once for a release withdrawn before departure)
    the document is deleted (``payload_enc`` NULL), the supplier manifest records are deleted, and the row keeps
    ``deletion_receipt`` (counts only) and the audit event ``ops_release_purge`` (the agency's Activity). A held trip

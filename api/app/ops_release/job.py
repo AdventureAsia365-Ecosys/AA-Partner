@@ -76,7 +76,10 @@ def _ids(payload: dict[str, Any]) -> tuple[uuid.UUID, uuid.UUID] | None:
 def build_handler(keys: KeyProvider | None) -> Handler:
     async def crm_ops_release_sync(pool: asyncpg.Pool, job: Job) -> dict[str, Any]:
         if keys is None:
-            raise RuntimeError("key_provider_not_configured")  # retried: the provider may be configured by then
+            # Nothing can be sealed or opened without the key provider (the health check reports it). Finish instead
+            # of retrying: a retried row would sit queued ahead and keep DB Migrate busy; the next hour tries again.
+            log.error("ops_release_sync_not_configured reason=key_provider")
+            return {"agency_count": 0, "reason_code": "key_provider_not_configured"}
         one = _ids(job.payload)
         if one is not None:
             tenant_id, trip_id = one

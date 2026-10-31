@@ -190,3 +190,15 @@ def test_nudge_payload_is_ids_only() -> None:
     assert job._ids({"purpose": "hourly_schedule"}) is None
     with pytest.raises(PermanentError):
         job._ids({"tenant_id": "x", "trip_id": TRIP})
+
+
+@pytest.mark.asyncio
+async def test_without_the_key_provider_the_run_finishes_instead_of_retrying() -> None:
+    from app.jobs.queue import Job
+
+    handler = job.build_handler(None)
+    out = await handler(
+        None, Job(id="1", kind=OPS_RELEASE_SYNC, payload={"purpose": "hourly_schedule"}, attempt=1, max_attempts=3)
+    )  # type: ignore[arg-type]
+    assert out == {"agency_count": 0, "reason_code": "key_provider_not_configured"}
+    check_payload(out)
