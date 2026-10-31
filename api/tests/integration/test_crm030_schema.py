@@ -14,7 +14,8 @@ SELECT c.relname AS table_name, a.attname AS column_name, format_type(a.atttypid
        a.attnotnull AS not_null, col_description(c.oid, a.attnum) AS comment
   FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
  WHERE c.relnamespace = 'crm'::regnamespace AND c.relkind = 'r' AND a.attnum > 0 AND NOT a.attisdropped
-   AND (a.attname IN ('import_ref_bidx', 'import_ref_alias_bidx') OR (c.relname = 'tenant_settings' AND (a.attname LIKE 'onboarding_%'
+   AND (a.attname IN ('import_ref_bidx', 'import_ref_alias_bidx')
+        OR (c.relname = 'tenant_settings' AND (a.attname LIKE 'onboarding_%'
         OR a.attname LIKE 'responsibility_ack_%' OR a.attname IN ('privacy_notice_url', 'data_request_contact',
         'consent_text'))))
  ORDER BY 1, 2
