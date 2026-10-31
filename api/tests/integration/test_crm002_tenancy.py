@@ -43,9 +43,14 @@ EXTRA_POLICIES = {
     ("ingest_address", "ingest_address_lookup"): ("r", {APP_ROLE}),
     #   crm-027: the ICS calendar feed lookup of app.tenancy.calendar_feed_tx() (keyed on app.calendar_feed_hash).
     ("calendar_feed", "calendar_feed_token_lookup"): ("r", {APP_ROLE}),
+    #   crm-035: the RESTRICTIVE margin gate on commissions (design §4.6 commission.*; same rule as line money).
+    ("commission", "commission_margin_roles"): ("r", {APP_ROLE}),
 }
 # Extra policies that must be RESTRICTIVE (ANDed with tenant_isolation); every other extra policy is permissive.
-RESTRICTIVE_POLICIES = {("booking_line_money", "booking_line_money_margin_roles")}
+RESTRICTIVE_POLICIES = {
+    ("booking_line_money", "booking_line_money_margin_roles"),
+    ("commission", "commission_margin_roles"),
+}
 
 ISS = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_TESTPARTN"
 

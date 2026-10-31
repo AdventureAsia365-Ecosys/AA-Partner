@@ -1194,6 +1194,9 @@ CASCADE_ERASED = {
     "traveler_flight": {"trip", "traveler", "trip_traveler"},
     "ops_release": {"trip"},
     "supplier_manifest_export": {"ops_release"},
+    # AA-957 (crm-035): a commission leaves with its trip or its line, a cancellation record with its trip.
+    "commission": {"trip", "booking_line"},
+    "trip_cancellation": {"trip"},
 }
 
 
