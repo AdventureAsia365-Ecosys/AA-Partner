@@ -940,8 +940,12 @@ signing in `app/portal/public.py`, the terms re-accept in `app/proposals/public.
   re-accept (`reaccept`) and inside each signing envelope (`envelope`); client address + user agent under the vault
   DEK, their SHA-256 in the evidence record. **Re-accept rule** (card E): a trip whose accepted proposal's deposit is
   unpaid while a published booking terms version has no acceptance on the trip: the proposal page shows
-  `terms_reaccept` (`POST /crm/public/v1/proposal/terms`, `/p/{token}/terms`), the deposit "Mark paid" is 409
-  `terms_reaccept_required`.
+  `terms_reaccept` (`POST /crm/public/v1/proposal/terms`, `/p/{token}/terms`), the deposit "Mark paid" and Record
+  payment are 409 `terms_reaccept_required`, and the client's deposit pay box reads `terms` (no bank details, no "I have
+  paid"; the claim and the card session are 409 `terms_reaccept_required` with nothing written). **Pinned terms**
+  (S261): with published booking terms, a builder skeleton starts with them and a draft without terms is pinned to
+  them at builder publish / text send (`proposals.service.pin_current_terms`, before the price hash), so the client
+  accepts them with the proposal.
 - **One envelope per traveller** (C-08): booking terms + waiver + the insurance declination when the traveller
   declines (the choice is asked whenever a declination version is published); each document's id and SHA-256 as
   shown (409 `document_changed` with the current documents); typed name, consent tick, a fresh signing code.
@@ -1201,14 +1205,18 @@ Design v3 §3.5 "Deposit link (C31, Fix A3, Fix A8)", F6 step 5, WF-9, U8; card 
   deposit / balance invoices of that version under `payments`: number, total, what is left, due date, the **pay window**
   and, only while it is open, the agency's own manual pay-by details. The window is derived, never stored: a deposit
   invoice of an accepted builder version with an AA hold is payable until `crm.proposal.hold_expires_at`; past it the
-  state is `expired` (no details, no claim, no card session). Other invoices have no window. The invoice status
+  state is `expired` (no details, no claim, no card session). While the client still has newer booking terms to
+  re-accept, a deposit's open window reads `terms` instead (same: no details, no claim, no card session; R34). Other
+  invoices have no window. The agency's trip invoice list and receivables carry the agency `timezone`: the claim
+  note's deadline is printed in it with a zone label. The invoice status
   `expired` stays unused (crm-024 has no expired -> paid transition for the money that still arrives).
 - **"I have paid"** (`POST /crm/public/v1/proposal/invoices/{id}/claim`, the link cookie): open -> `payment_claimed`
   (`claimed_at`), the trip owner's urgent task `verify_transfer` (due at the hold's expiry, else in 2 days), bell
   `invoice.payment_claimed`; then, outside any transaction, **one** `POST /holds/{id}/extend` (reason payment_claimed,
   Idempotency-Key `crm-invoice:<id>:extend`; Booking adds its length, 72 h, once per hold) and, in a second
   transaction, `hold_extended_at` + the proposal's hold expiry + the task's due time (or Booking's code in
-  `hold_extend_code`; `booking_unavailable` is retried by the Booking sync). 410 `pay_link_expired` past the window. A
+  `hold_extend_code`; `booking_unavailable` is retried by the Booking sync). 410 `pay_link_expired` past the window; 409
+  `terms_reaccept_required` before any write while newer terms wait (no task, no bell, no extension used). A
   second press answers the same. The agent: record the payment, or "Not received" (`POST /invoices/{id}/reject-claim`:
   back to open, task skipped; a claimed invoice is not voided: 409 `invoice_claimed`).
 - **Card button** (`POST /crm/public/v1/proposal/invoices/{id}/card`): the window is checked before any provider: 410

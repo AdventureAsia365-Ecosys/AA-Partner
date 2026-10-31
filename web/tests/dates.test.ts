@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   dayFirst,
   formatDate,
+  formatInstant,
   formatDayMonth,
   formatOutward,
   inputPattern,
@@ -65,5 +66,35 @@ describe("typed dates follow the locale order", () => {
     expect(inputPattern("en-AU")).toBe("DD/MM/YYYY");
     expect(isDateLocale("vi-VN")).toBe(true);
     expect(isDateLocale("fr-FR")).toBe(false);
+  });
+});
+
+// AA-952 S261 F2: the claim note's deadline in the agency timezone with its label, the same on the server (UTC) and in
+// any browser zone; the calendar fix of #142 for times.
+describe("instants in the agency timezone", () => {
+  const at = "2026-11-02T04:23:07+00:00";
+  it("prints the agency's local time with the zone label", () => {
+    const hcm = formatInstant(at, "en-AU", "Asia/Ho_Chi_Minh");
+    expect(hcm).toMatch(/2 Nov 2026/);
+    expect(hcm).toMatch(/11:23/);
+    expect(hcm).toMatch(/GMT\+7/);
+    const utc = formatInstant(at, "en-AU", "UTC");
+    expect(utc).toMatch(/4:23/);
+    expect(utc).toMatch(/UTC/);
+    expect(formatInstant(at, "vi-VN", "Asia/Ho_Chi_Minh")).toMatch(/11:23/);
+  });
+  it("is the same whatever zone renders it", () => {
+    const before = process.env.TZ;
+    process.env.TZ = "America/New_York";
+    const ny = formatInstant(at, "en-GB", "Asia/Ho_Chi_Minh");
+    process.env.TZ = "UTC";
+    const utc = formatInstant(at, "en-GB", "Asia/Ho_Chi_Minh");
+    process.env.TZ = before;
+    expect(ny).toBe(utc);
+  });
+  it("falls back to labelled UTC for an unknown zone and passes nothing through", () => {
+    expect(formatInstant(at, "en-AU", "Mars/Olympus")).toMatch(/UTC/);
+    expect(formatInstant(null, "en-AU", "UTC")).toBe("");
+    expect(formatInstant("not a time", "en-AU", "UTC")).toBe("not a time");
   });
 });

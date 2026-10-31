@@ -5,8 +5,10 @@
 // when; while its window is open, the agency's own bank details and "I have paid" (POST
 // /crm/public/v1/proposal/invoices/<id>/claim: the agency checks the transfer; Booking holds the places a little
 // longer, once). Past the hold's expiry the box says the link expired and shows no details and no button (the API
-// answers 410 pay_link_expired anyway, and never starts a payment session). The agency is the merchant (BYO): the
-// money goes to its own account.
+// answers 410 pay_link_expired anyway, and never starts a payment session). While the agency's newer booking terms wait
+// for the client's re-accept (the box above it), the deposit reads "accept the updated terms first" with no details and
+// no button (S261 F1; the claim answers 409 terms_reaccept_required). The agency is the merchant (BYO): the money goes
+// to its own account.
 import { useState } from "react";
 import { Button, K } from "@/app/_kit";
 import { formatDate, type DateLocale } from "@/lib/dates";
@@ -24,6 +26,7 @@ function when(value: string | null, locale: string): string {
 export function payStateKey(inv: ClientInvoice): string {
   const { state, until } = inv.pay_window;
   if (state === "open") return until ? "client.pay.openUntil" : "client.pay.open";
+  if (state === "terms") return until ? "client.pay.termsUntil" : "client.pay.terms";
   if (state === "claimed") return until ? "client.pay.claimedUntil" : "client.pay.claimed";
   if (state === "settling") return "client.pay.settling";
   if (state === "expired") return "client.pay.expired";
@@ -79,12 +82,12 @@ export function ClientPayBox({
                 amount: formatAmount(inv.total_amount, inv.currency, locale),
               })}
             </strong>
-            {inv.due_on && state === "open" && (
+            {inv.due_on && (state === "open" || state === "terms") && (
               <span style={{ fontSize: 13, color: K.muted }}>
                 {fmt(t("client.pay.due"), { date: formatDate(inv.due_on, locale), amount: formatAmount(inv.balance_amount, inv.currency, locale) })}
               </span>
             )}
-            <p style={{ margin: 0, fontSize: 13.5, color: state === "expired" ? K.danger : state === "paid" ? K.success : K.body }}>
+            <p data-testid="client-pay-state" style={{ margin: 0, fontSize: 13.5, color: state === "expired" ? K.danger : state === "paid" ? K.success : state === "terms" ? K.amber : K.body }}>
               {fmt(t(payStateKey(inv)), { time: when(inv.pay_window.until, locale), agency })}
             </p>
             {inv.pay_by && (

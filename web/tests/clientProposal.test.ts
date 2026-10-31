@@ -319,10 +319,12 @@ describe("client pay box", () => {
       can_claim: false,
     };
     const until = "2026-11-02T09:00:00+00:00";
-    const key = (state: "open" | "claimed" | "settling" | "expired" | "paid" | "closed", at: string | null) =>
+    const key = (state: "open" | "terms" | "claimed" | "settling" | "expired" | "paid" | "closed", at: string | null) =>
       payStateKey({ ...base, pay_window: { state, until: at } });
     expect(key("open", until)).toBe("client.pay.openUntil");
     expect(key("open", null)).toBe("client.pay.open");
+    expect(key("terms", until)).toBe("client.pay.termsUntil");
+    expect(key("terms", null)).toBe("client.pay.terms");
     expect(key("claimed", until)).toBe("client.pay.claimedUntil");
     expect(key("claimed", null)).toBe("client.pay.claimed");
     expect(key("settling", null)).toBe("client.pay.settling");
@@ -356,5 +358,41 @@ describe("client pay box render", () => {
     expect(gone).not.toContain("Account 0000 6666");
     expect(gone).not.toContain('data-testid="client-pay-claim"');
     expect(renderToString(createElement(ClientPayBox, { invoices: [], agency: "x", locale: "en-AU", t, onDone: () => undefined }))).toBe("");
+  });
+
+  it("asks for the updated terms first: no bank details and no button while a re-accept waits (S261 F1)", async () => {
+    const { ClientPayBox } = await import("@/components/proposals/ClientPayBox");
+    const t = (k: string) => k;
+    const inv = {
+      invoice_id: "00000000-0000-4000-8000-0000000000f3",
+      number: "INV-000003",
+      kind: "deposit" as const,
+      currency: "USD",
+      total_amount: "300.00",
+      balance_amount: "300.00",
+      due_on: "2026-11-02",
+      pay_window: { state: "terms" as const, until: "2026-11-02T09:00:00+00:00" },
+      pay_by: null,
+      can_claim: false,
+    };
+    const html = renderToString(createElement(ClientPayBox, { invoices: [inv], agency: "Lotus Trails", locale: "en-AU", t, onDone: () => undefined }));
+    expect(html).toContain("client.pay.termsUntil");
+    expect(html).toContain("client.pay.due"); // what to pay and by when stays visible
+    expect(html).not.toContain('data-testid="client-pay-details"');
+    expect(html).not.toContain('data-testid="client-pay-claim"');
+  });
+
+  it("words the terms-first state and the refusal in English and Vietnamese", async () => {
+    const { clientErrorKey } = await import("@/lib/proposals");
+    expect(clientErrorKey("terms_reaccept_required")).toBe("client.error.terms_reaccept_required");
+    const en = dictionary("en") as Record<string, string>;
+    const vi = dictionary("vi") as Record<string, string>;
+    for (const key of ["client.pay.terms", "client.pay.termsUntil", "client.error.terms_reaccept_required"]) {
+      expect(en[key]).toBeTruthy();
+      expect(vi[key]).toBeTruthy();
+      expect(vi[key]).not.toBe(en[key]);
+    }
+    expect(en["client.pay.termsUntil"]).toContain("{time}");
+    expect(vi["client.pay.termsUntil"]).toContain("{time}");
   });
 });

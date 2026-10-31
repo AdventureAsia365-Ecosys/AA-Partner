@@ -151,6 +151,8 @@ export interface Receivable {
 
 export interface ReceivablesView {
   today: string;
+  /** The agency timezone (IANA name): the claim note's deadline is printed in it (S261 F2). */
+  timezone?: string;
   status: InvoiceStatus | null;
   invoices: Receivable[];
 }
