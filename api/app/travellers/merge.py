@@ -19,8 +19,9 @@ e-mail or the phone (blind indexes, exact only; no decrypt to find them). The pa
 5. consents are copied to the kept client with their original time and source (the ledger is append-only; the
    latest statement per purpose decides, as everywhere), and health codes move when the kept client has none;
 6. every F1 field the kept client lacks is filled from the other one (decrypted and sealed again under the kept
-   row's id, blind indexes copied), and the other's import reference too, so re-running an import finds the kept
-   client;
+   row's id, blind indexes copied); the kept client takes every import reference the other answered to (its own
+   when the kept one has none, else as aliases, crm-030 ``import_ref_alias_bidx``), so re-running an import finds the
+   kept client for the other client's rows too (card E);
 7. the other client goes to the trash (``app.lifecycle.trash``): the purge after the agency's window erases its
    remaining F1 record, so one F1 record stays.
 
@@ -85,7 +86,7 @@ SELECT count(*) FROM crm.traveler a
 ROW_SQL = """
 SELECT traveler_id, display_name_enc, given_name_enc, family_name_enc, email_enc, phone_enc, dob_enc, nationality_enc,
        passport_no_enc, passport_expiry_enc, passport_country_enc, emergency_contact_enc, email_bidx, phone_bidx,
-       profile_token_enc, import_ref_bidx
+       profile_token_enc, import_ref_bidx, import_ref_alias_bidx
   FROM crm.traveler WHERE traveler_id = $1 AND deleted_at IS NULL FOR UPDATE
 """
 BLOCKERS_SQL = """
@@ -277,8 +278,10 @@ async def merge(ctx: TenantContext, vault: Vault, keep_id: uuid.UUID, other_id: 
         if column in BLIND:
             put(BLIND[column], other[BLIND[column]])
         filled.append(column.removesuffix("_enc"))
-    if keep["import_ref_bidx"] is None and other["import_ref_bidx"] is not None:
-        put("import_ref_bidx", other["import_ref_bidx"])
+    refs = _merged_refs(keep, other)
+    if refs is not None:
+        put("import_ref_bidx", refs[0])
+        put("import_ref_alias_bidx", refs[1])
     if sets:
         # The other client keeps its values until the purge; the blind indexes stay unique among live clients
         # because it leaves the live set below.
@@ -309,6 +312,28 @@ async def merge(ctx: TenantContext, vault: Vault, keep_id: uuid.UUID, other_id: 
         "fields_filled": filled,
         "purge_after": trashed["purge_after"],
     }
+
+
+def _merged_refs(keep: Any, other: Any) -> tuple[bytes | None, list[bytes]] | None:
+    """The kept client's own import ref and aliases after the merge: it answers to every ref either client answered
+    to (crm-030 ``import_ref_alias_bidx``), so re-running an import finds it for the other client's rows too (card E).
+    ``None`` when nothing changes."""
+    own = keep["import_ref_bidx"]
+    aliases = [bytes(a) for a in keep["import_ref_alias_bidx"] or ()]
+    taken = {bytes(own)} if own is not None else set()
+    taken.update(aliases)
+    incoming = [other["import_ref_bidx"], *(other["import_ref_alias_bidx"] or ())]
+    changed = False
+    for ref in (bytes(r) for r in incoming if r is not None):
+        if ref in taken:
+            continue
+        if own is None:
+            own = ref
+        else:
+            aliases.append(ref)
+        taken.add(ref)
+        changed = True
+    return (own, aliases) if changed else None
 
 
 async def _token(ctx: TenantContext, vault: Vault, traveler_id: uuid.UUID, blob: bytes | None) -> uuid.UUID:

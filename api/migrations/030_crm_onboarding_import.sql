@@ -16,6 +16,10 @@
 --      blind index here there is no unique index (crm-003 rule: dedupe runs under per-agency advisory locks,
 --      app.imports.apply); a partial non-unique index per table serves the lookup. A *_bidx column is never exported
 --      (app.portability.tables) and goes with its row on erase (no crm.erase_subject change).
+--      crm.traveler.import_ref_alias_bidx (bytea[], default empty): the other client_refs this client answers to, so
+--      every ref an import accepted keeps resolving: the ref of a client merged into this one (app.travellers.merge),
+--      the ref of a row that matched this client by e-mail / phone while it already had a ref, and the ref of a later
+--      row of the same file sharing its e-mail / phone (app.imports.engine). A non-unique GIN index serves the lookup.
 --   2. crm.tenant_settings onboarding and controller settings (errata S247 §1 CRM-31):
 --      onboarding_later / onboarding_done (text[] of step codes, default empty: the optional steps the owner put on
 --      "Later" and the steps the owner marked done by hand, app.onboarding.STEPS); privacy_notice_url (the agency's
@@ -33,7 +37,8 @@
 -- Order: after crm-027 (AA-961). The lanes of S261 hold crm-028 / crm-029; this file names none of their objects.
 -- Re-runnable (the Integration Tests replay every file): IF NOT EXISTS + ON CONFLICT DO NOTHING.
 -- Undo (a later crm- file): DROP INDEX IF EXISTS crm.traveler_import_ref_idx, crm.trip_import_ref_idx,
--- crm.note_import_ref_idx; ALTER TABLE ... DROP COLUMN IF EXISTS for each column below (code first).
+-- crm.note_import_ref_idx, crm.traveler_import_ref_alias_idx; ALTER TABLE ... DROP COLUMN IF EXISTS for each column
+-- below (code first).
 
 BEGIN;
 
@@ -43,6 +48,7 @@ SET LOCAL lock_timeout = '5s';
 ALTER TABLE crm.traveler ADD COLUMN IF NOT EXISTS import_ref_bidx bytea;
 ALTER TABLE crm.trip ADD COLUMN IF NOT EXISTS import_ref_bidx bytea;
 ALTER TABLE crm.note ADD COLUMN IF NOT EXISTS import_ref_bidx bytea;
+ALTER TABLE crm.traveler ADD COLUMN IF NOT EXISTS import_ref_alias_bidx bytea[] NOT NULL DEFAULT '{}';
 
 CREATE INDEX IF NOT EXISTS traveler_import_ref_idx ON crm.traveler (tenant_id, import_ref_bidx)
     WHERE import_ref_bidx IS NOT NULL AND deleted_at IS NULL;
@@ -50,8 +56,11 @@ CREATE INDEX IF NOT EXISTS trip_import_ref_idx ON crm.trip (tenant_id, import_re
     WHERE import_ref_bidx IS NOT NULL AND deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS note_import_ref_idx ON crm.note (tenant_id, import_ref_bidx)
     WHERE import_ref_bidx IS NOT NULL AND deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS traveler_import_ref_alias_idx ON crm.traveler USING gin (import_ref_alias_bidx)
+    WHERE deleted_at IS NULL;
 
 COMMENT ON COLUMN crm.traveler.import_ref_bidx IS 'pii:online_id; AA-962 (crm-030): blind index of the client_ref the agency gave this client in an import file (16-byte truncated HMAC, per-tenant key); a re-run of the import finds the client by it';
+COMMENT ON COLUMN crm.traveler.import_ref_alias_bidx IS 'pii:online_id; AA-962 (crm-030): blind indexes of the other client_refs this client answers to (a client merged into it, an import row matched to it by e-mail or phone), so a re-run of an import still finds the client';
 COMMENT ON COLUMN crm.trip.import_ref_bidx IS 'pii:travel; AA-962 (crm-030): blind index of the trip_ref of an imported trip (16-byte truncated HMAC, per-tenant key); a re-run of the import finds the trip by it';
 COMMENT ON COLUMN crm.note.import_ref_bidx IS 'pii:free_text; AA-962 (crm-030): blind index of the note_ref of an imported note, or of a hash of its subject and text (16-byte truncated HMAC, per-tenant key); a re-run adds nothing';
 
@@ -75,7 +84,7 @@ COMMENT ON COLUMN crm.tenant_settings.responsibility_ack_at IS 'AA-962 (crm-030)
 COMMENT ON COLUMN crm.tenant_settings.responsibility_ack_member_id IS 'AA-962 (crm-030): the owner (crm.member) who acknowledged the shared responsibility';
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('crm-030', now(), 'AA-962 CRM-31 onboarding + import: import_ref_bidx on traveler / trip / note (idempotent re-runs), tenant_settings onboarding steps, controller settings and the shared-responsibility acknowledgement')
+VALUES ('crm-030', now(), 'AA-962 CRM-31 onboarding + import: import_ref_bidx on traveler / trip / note and traveler import_ref_alias_bidx (idempotent re-runs), tenant_settings onboarding steps, controller settings and the shared-responsibility acknowledgement')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

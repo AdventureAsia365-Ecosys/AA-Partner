@@ -7,11 +7,13 @@ of rows per transaction), so the preview shows exactly what the job will do. Eac
 
 =====================  ==========================================================================================
 ``create``             a new client / relationship / trip / note
-``match``              clients only: the e-mail or phone is already a client (blind index): the row links its
-                       client_ref to that client (if it has none), changes nothing else, creates nothing (R6)
+``match``              clients only: the e-mail or phone is already a client (blind index), or a client an
+                       earlier row of the file creates (code ``duplicate_contact``): the row's client_ref then
+                       points to that client (its own ref when it has none, else an alias, crm-030
+                       ``import_ref_alias_bidx``), nothing else changes, nothing is created (R6)
 ``already_imported``   the row's ref is already in the agency (``import_ref_bidx``, crm-030; a relationship that
                        exists): **re-running an import creates no duplicates** (card E test)
-``duplicate_in_file``  an earlier row of the same file has the same ref, e-mail or phone (or relationship pair)
+``duplicate_in_file``  an earlier row of the same file has the same ref (or relationship pair, trip / note ref)
 ``invalid``            a value does not pass (``invalid_<column>``) or a ref names nothing (``unknown_client_ref``,
                        ``unknown_trip_ref``, ``unknown_companion_ref``): the row is skipped, the report says why
 =====================  ==========================================================================================
@@ -63,9 +65,15 @@ IMPORT_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtextextended('crm_client_imp
 DEDUPE_LOCK_SQL = """
 SELECT pg_advisory_xact_lock(hashtextextended($1::text || ':' || $2::text || ':' || encode($3::bytea, 'hex'), 0))
 """
+# A client answers to its own ref and to its aliases (crm-030 import_ref_alias_bidx: a client merged into it, a row
+# matched to it). Rows are ordered so a client's own ref wins over another client's alias of the same ref (the last
+# row per key is kept by _lookup).
 TRAVELER_BY_REF_SQL = """
-SELECT import_ref_bidx AS k, traveler_id AS id FROM crm.traveler
- WHERE import_ref_bidx = ANY($1::bytea[]) AND deleted_at IS NULL
+SELECT k.k AS k, t.traveler_id AS id
+  FROM unnest($1::bytea[]) AS k(k)
+  JOIN crm.traveler t ON t.import_ref_bidx = k.k OR t.import_ref_alias_bidx @> ARRAY[k.k]
+ WHERE t.deleted_at IS NULL
+ ORDER BY t.import_ref_bidx IS NOT DISTINCT FROM k.k, t.traveler_id
 """
 TRAVELER_BY_EMAIL_SQL = """
 SELECT email_bidx AS k, traveler_id AS id FROM crm.traveler WHERE email_bidx = ANY($1::bytea[]) AND deleted_at IS NULL
@@ -93,7 +101,16 @@ INSERT INTO crm.traveler (traveler_id, display_name_enc, name_bidx, name_token_b
                           owner_member_id, lead_source, dob_enc, nationality_enc, import_ref_bidx)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'import', $14, $15, $16)
 """
-LINK_REF_SQL = "UPDATE crm.traveler SET import_ref_bidx = $2 WHERE traveler_id = $1 AND import_ref_bidx IS NULL"
+# The row's ref becomes the client's own ref when it has none, else one more alias: every ref an import accepted keeps
+# resolving for the relationships, trips and notes that name it.
+LINK_REF_SQL = """
+UPDATE crm.traveler
+   SET import_ref_bidx = coalesce(import_ref_bidx, $2),
+       import_ref_alias_bidx = CASE
+           WHEN import_ref_bidx IS NULL OR import_ref_bidx = $2 OR import_ref_alias_bidx @> ARRAY[$2::bytea]
+           THEN import_ref_alias_bidx ELSE array_append(import_ref_alias_bidx, $2::bytea) END
+ WHERE traveler_id = $1
+"""
 INSERT_CONSENT_SQL = """
 INSERT INTO crm.consent (traveler_id, purpose, value, source) VALUES ($1, 'marketing', $2, 'import')
 """
@@ -138,8 +155,9 @@ class State:
     """What earlier rows of the same run already claimed (in-file duplicates). One per dry run or job slice."""
 
     refs: set[bytes] = field(default_factory=set)
-    emails: set[bytes] = field(default_factory=set)
-    phones: set[bytes] = field(default_factory=set)
+    # e-mail / phone blind index -> the client an earlier row created (None in a dry run)
+    emails: dict[bytes, uuid.UUID | None] = field(default_factory=dict)
+    phones: dict[bytes, uuid.UUID | None] = field(default_factory=dict)
     names: set[bytes] = field(default_factory=set)
     pairs: set[tuple[uuid.UUID, uuid.UUID]] = field(default_factory=set)
     referred: set[uuid.UUID] = field(default_factory=set)  # clients given a referrer by an earlier row
@@ -309,16 +327,25 @@ async def _clients(
             results.append(Result(row.number, "match", object_id=existing))
             continue
         if (v["email_idx"] and v["email_idx"] in state.emails) or (v["phone_idx"] and v["phone_idx"] in state.phones):
-            results.append(Result(row.number, "duplicate_in_file", ("duplicate_contact",)))
+            # An earlier row of this file created the client with this e-mail / phone (one client per contact, R6;
+            # family members often share one): this row's ref points to that client too, so its relationships, trips
+            # and notes resolve. The code tells the agency (a separate person needs their own e-mail or phone).
+            earlier = state.emails.get(v["email_idx"]) if v["email_idx"] in state.emails else None
+            if earlier is None and v["phone_idx"] in state.phones:
+                earlier = state.phones[v["phone_idx"]]
+            state.refs.add(v["ref_idx"])
+            if apply and earlier is not None:
+                await ctx.conn.execute(LINK_REF_SQL, earlier, v["ref_idx"])
+            results.append(Result(row.number, "match", ("duplicate_contact",), earlier))
             continue
         warn = ("possible_duplicate",) if v["name_idx"] in names or v["name_idx"] in state.names else ()
         state.refs.add(v["ref_idx"])
         state.names.add(v["name_idx"])
-        if v["email_idx"]:
-            state.emails.add(v["email_idx"])
-        if v["phone_idx"]:
-            state.phones.add(v["phone_idx"])
         traveler_id = await _insert_client(ctx, vault, v, member_id) if apply else None
+        if v["email_idx"]:
+            state.emails[v["email_idx"]] = traveler_id
+        if v["phone_idx"]:
+            state.phones[v["phone_idx"]] = traveler_id
         results.append(Result(row.number, "create", warn, traveler_id))
     return results
 

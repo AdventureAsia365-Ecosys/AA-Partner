@@ -21,6 +21,8 @@ import pytest
 
 from app.errors import Conflict, Forbidden, Invalid
 from app.imports import service as imports
+from app.intake import forms as intake_forms
+from app.intake import public as intake
 from app.jobs.queue import Job
 from app.mail.store import MemoryIngestStore
 from app.onboarding import ACK_VERSION, acknowledge, overview, set_controller, set_step
@@ -303,6 +305,81 @@ async def test_duplicates_and_merge_keep_both_trip_histories_and_one_f1_record(a
     assert again["counts"]["create"] == 0
 
 
+async def _count(pool: asyncpg.Pool, d: dict[str, Any]) -> int:
+    return int(
+        (await _sql(pool, d["tenant"], "SELECT count(*) AS n FROM crm.traveler WHERE deleted_at IS NULL"))[0]["n"]
+    )
+
+
+async def test_card_e_rerun_after_merging_two_clients_with_their_own_contacts_creates_nothing(
+    app_pool: asyncpg.Pool,
+) -> None:
+    """Both clients have their own e-mail, so the kept one gets no contact field from the other: only the carried
+    import ref (an alias) lets a re-run find the merged client's rows, and its trips still resolve."""
+    d = await _owner(app_pool)
+    clients = b"client_ref,name,email\nM-1,Odile Brant,odile.one@example.test\nM-2,Odile Brant,odile.two@example.test\n"
+    await _import(app_pool, d, "clients", clients)
+    rows = await _sql(app_pool, d["tenant"], "SELECT traveler_id FROM crm.traveler ORDER BY traveler_id")
+    keep, other = rows[0]["traveler_id"], rows[1]["traveler_id"]
+    async with tenant_tx(app_pool, d["owner"], d["tenant"], action=Action.CLIENT_MERGE) as ctx:
+        out = await merge.merge(ctx, Vault(d["keys"], ctx), keep, other)
+    assert out["fields_filled"] == []
+    kept = await _sql(
+        app_pool,
+        d["tenant"],
+        "SELECT cardinality(import_ref_alias_bidx) AS n FROM crm.traveler WHERE traveler_id = $1",
+        keep,
+    )
+    assert kept[0]["n"] == 1
+    assert await _count(app_pool, d) == 1
+
+    again = await _preview(app_pool, d, "clients", clients)
+    assert again["counts"]["create"] == 0 and again["counts"]["already_imported"] == 2
+    rerun = await _import(app_pool, d, "clients", clients)
+    assert rerun["counts"]["create"] == 0 and await _count(app_pool, d) == 1
+    # The merged client's ref still names a client: its trip goes to the kept one.
+    trips = await _import(
+        app_pool, d, "trips", b"trip_ref,client_ref,title,start_date\nMT-1,M-2,Lagoon kayak,2024-03-03\n"
+    )
+    assert trips["counts"]["create"] == 1 and trips["counts"]["invalid"] == 0
+    party = await _sql(app_pool, d["tenant"], "SELECT traveler_id FROM crm.trip_traveler")
+    assert [p["traveler_id"] for p in party] == [keep]
+
+
+async def test_every_accepted_client_ref_resolves_in_the_later_phases(app_pool: asyncpg.Pool) -> None:
+    """A row matched by e-mail to a client that already has a ref, and a row sharing an earlier row's e-mail (a family
+    on one address): both refs point to that client, so their trips and notes import, and a re-run adds nothing."""
+    d = await _owner(app_pool)
+    await _import(app_pool, d, "clients", b"client_ref,name,email\nF-1,Pia Moss,moss.family@example.test\n")
+    second = (
+        b"client_ref,name,email\n"
+        b"OLD-1,Pia Moss,moss.family@example.test\n"  # matches F-1's client, which already has a ref
+        b"G-1,Bo Lind,lind.home@example.test\n"
+        b"G-2,Cleo Lind,lind.home@example.test\n"  # shares the e-mail of the row above
+    )
+    preview = await _preview(app_pool, d, "clients", second)
+    assert preview["counts"] == {"create": 1, "match": 2, "already_imported": 0, "duplicate_in_file": 0, "invalid": 0}
+    assert {i["row"]: i["codes"] for i in preview["issues"]} == {4: ["duplicate_contact"]}
+    done = await _import(app_pool, d, "clients", second)
+    assert done["counts"]["create"] == 1 and done["counts"]["match"] == 2
+    assert await _count(app_pool, d) == 2
+
+    trips = await _import(
+        app_pool,
+        d,
+        "trips",
+        b"trip_ref,client_ref,title,start_date,companion_refs\n"
+        b"FT-1,OLD-1,Delta cycling,2024-02-02,\nFT-2,G-2,Rice terraces,2024-05-05,G-1\n",
+    )
+    assert trips["counts"]["create"] == 2 and trips["counts"]["invalid"] == 0
+    notes = await _import(app_pool, d, "notes", b"client_ref,text\nOLD-1,Allergic to peanuts\nG-2,Window seat\n")
+    assert notes["counts"]["create"] == 2 and notes["counts"]["invalid"] == 0
+
+    again = await _import(app_pool, d, "clients", second)
+    assert again["counts"]["create"] == 0 and again["counts"]["already_imported"] == 3
+    assert await _count(app_pool, d) == 2
+
+
 async def test_merge_is_blocked_by_links_and_offers_the_swap(app_pool: asyncpg.Pool) -> None:
     keys = _keys()
     d = await _inquiry(app_pool, keys, "owner")
@@ -351,7 +428,9 @@ async def test_onboarding_checklist_steps_controller_and_acknowledgement(app_poo
             await set_step(ctx, "import_clients", "done")
         await set_step(ctx, "kickoff_call", "later")
         await set_step(ctx, "embed_form", "done")
-        await set_controller(ctx, "https://agency.example.test/privacy", "privacy@agency.example.test", None)
+        await set_controller(
+            ctx, "https://agency.example.test/privacy", "privacy@agency.example.test", "We may contact you about it."
+        )
         with _raises(Invalid, "invalid_privacy_notice_url"):
             await set_controller(ctx, "http://plain.example.test", None, None)
         with _raises(Conflict, "version_changed"):
@@ -370,3 +449,29 @@ async def test_onboarding_checklist_steps_controller_and_acknowledgement(app_poo
         async with tenant_tx(app_pool, d["agent"], d["tenant"], action=Action.ONBOARDING_MANAGE):
             pass  # pragma: no cover
     assert getattr(err.value, "code", None) == "role_forbidden"
+
+
+async def test_controller_settings_reach_the_public_form(app_pool: asyncpg.Pool) -> None:
+    """Errata S247 CRM-31: the agency's privacy link (when the form has none), consent wording and data-request
+    contact show on its hosted inquiry form; clearing them brings back the defaults."""
+    tenant_id, [(owner, _)] = await _agency(app_pool)
+    async with tenant_tx(app_pool, owner, tenant_id) as ctx:
+        form = await intake_forms.create_form(ctx, label="Site")
+    shown = await intake.read_form(app_pool, form.public_key)
+    assert (shown["privacy_notice_url"], shown["consent_text"], shown["data_request_contact"]) == (None, None, None)
+    async with tenant_tx(app_pool, owner, tenant_id, action=Action.DATA_SETTINGS) as ctx:
+        await set_controller(ctx, "https://agency.example.test/privacy", "privacy@agency.example.test", "Own words.")
+    shown = await intake.read_form(app_pool, form.public_key)
+    assert shown["privacy_notice_url"] == "https://agency.example.test/privacy"
+    assert shown["consent_text"] == "Own words." and shown["data_request_contact"] == "privacy@agency.example.test"
+    async with tenant_tx(app_pool, owner, tenant_id) as ctx:
+        await intake_forms.update_form(
+            ctx, uuid.UUID(form.intake_form_id), {"privacy_notice_url": "https://agency.example.test/form"}
+        )
+    assert (await intake.read_form(app_pool, form.public_key))[
+        "privacy_notice_url"
+    ] == "https://agency.example.test/form"
+    async with tenant_tx(app_pool, owner, tenant_id, action=Action.DATA_SETTINGS) as ctx:
+        await set_controller(ctx, None, None, None)
+    shown = await intake.read_form(app_pool, form.public_key)
+    assert shown["consent_text"] is None and shown["data_request_contact"] is None

@@ -14,7 +14,7 @@ SELECT c.relname AS table_name, a.attname AS column_name, format_type(a.atttypid
        a.attnotnull AS not_null, col_description(c.oid, a.attnum) AS comment
   FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
  WHERE c.relnamespace = 'crm'::regnamespace AND c.relkind = 'r' AND a.attnum > 0 AND NOT a.attisdropped
-   AND (a.attname = 'import_ref_bidx' OR (c.relname = 'tenant_settings' AND (a.attname LIKE 'onboarding_%'
+   AND (a.attname IN ('import_ref_bidx', 'import_ref_alias_bidx') OR (c.relname = 'tenant_settings' AND (a.attname LIKE 'onboarding_%'
         OR a.attname LIKE 'responsibility_ack_%' OR a.attname IN ('privacy_notice_url', 'data_request_contact',
         'consent_text'))))
  ORDER BY 1, 2
@@ -27,10 +27,12 @@ async def test_columns_and_tags(admin: asyncpg.Connection) -> None:
         col = rows[(table, "import_ref_bidx")]
         assert col["type_name"] == "bytea" and not col["not_null"]
         assert col["comment"].startswith("pii:")
+    alias = rows[("traveler", "import_ref_alias_bidx")]
+    assert alias["type_name"] == "bytea[]" and alias["not_null"] and alias["comment"].startswith("pii:")
     assert rows[("tenant_settings", "onboarding_later")]["not_null"]
     assert rows[("tenant_settings", "onboarding_done")]["type_name"] == "text[]"
     assert rows[("tenant_settings", "data_request_contact")]["comment"].startswith("pii:contact")
-    assert len(rows) == 3 + 8
+    assert len(rows) == 3 + 1 + 8
 
 
 async def test_import_ref_indexes_are_partial_and_not_unique(admin: asyncpg.Connection) -> None:
@@ -45,3 +47,12 @@ async def test_import_ref_indexes_are_partial_and_not_unique(admin: asyncpg.Conn
 
 async def test_registered(admin: asyncpg.Connection) -> None:
     assert await admin.fetchval("SELECT 1 FROM shared.schema_versions WHERE version = 'crm-030'") == 1
+
+
+async def test_import_ref_alias_index_is_a_gin_index_and_not_unique(admin: asyncpg.Connection) -> None:
+    row = await admin.fetchrow(
+        "SELECT i.indisunique AS uq, am.amname AS method FROM pg_index i "
+        "JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_am am ON am.oid = c.relam "
+        "WHERE i.indexrelid = 'crm.traveler_import_ref_alias_idx'::regclass"
+    )
+    assert row is not None and not row["uq"] and row["method"] == "gin"
