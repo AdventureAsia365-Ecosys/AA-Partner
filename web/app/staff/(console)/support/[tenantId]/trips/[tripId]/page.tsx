@@ -1,11 +1,13 @@
 // web/app/staff/(console)/support/[tenantId]/trips/[tripId]/page.tsx — S-04, one trip inside the caller's live session
 // (AA-1019 on GET /crm/staff/v1/agencies/{id}/trips/{trip}): stage, dates, party size, destinations, the stage history;
 // the travellers' display names only when the owner allowed "show identity" for a support session (never emergency
-// access), and that reveal is its own line in the agency's access log.
+// access), and that reveal is its own line in the agency's access log. A navigation from another origin gets the
+// OpenStep first (review finding B1).
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ErrorState, K } from "@/app/_kit";
 import { Panel, PageTitle } from "@/components/PageTitle";
+import { OpenStep } from "@/components/staff/OpenStep";
 import { SessionBanner } from "@/components/staff/SessionBanner";
 import { codeLabel } from "@/lib/accessLog";
 import { formatDate, formatInstant } from "@/lib/dates";
@@ -30,13 +32,14 @@ export default async function StaffTripPage({ params }: { params: Promise<{ tena
   const tenantId = uuidParam(raw.tenantId);
   const tripId = uuidParam(raw.tripId);
   if (!tenantId || !tripId) notFound();
-  const { cfg, session, lang, locale } = await staffContext();
+  const { cfg, session, lang, locale, foreignNavigation } = await staffContext();
   if (!session) return <ErrorState message={t(lang, "staff.noAccess")} />;
   const back = (
     <Link href={`/staff/support/${tenantId}`} style={{ fontSize: 13 }}>
       ← {t(lang, "staff.back")}
     </Link>
   );
+  if (foreignNavigation) return <OpenStep href={`/staff/support/${tenantId}/trips/${tripId}`} back={back} lang={lang} />;
   const mine = await staffCall<MySessions>(cfg, session, "GET", `agencies/${tenantId}/session`);
   const live = mine.ok ? liveSession(mine.data.sessions) : null;
   const res = await staffCall<TripDetail>(cfg, session, "GET", `agencies/${tenantId}/trips/${tripId}`);

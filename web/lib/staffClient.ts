@@ -1,7 +1,10 @@
 // web/lib/staffClient.ts
 // AA-1019 — browser calls of the staff console (client components): /staff/bff/<path> on the page's own origin
 // (lib/staffBff.ts allow-list). A 401 means the staff access token expired: the page goes through /staff/auth/refresh
-// (which renews it or signs in again). Never /bff (the agency BFF) and never the agency session.
+// (which renews it or signs in again). Never /bff (the agency BFF) and never the agency session. Every call carries
+// STAFF_CALL_HEADER: the staff BFF refuses a call without it (a navigation or another site's page cannot send it).
+
+import { STAFF_CALL_HEADER } from "./staffBff";
 
 export type StaffResult<T> = { ok: true; data: T } | { ok: false; status: number; detail: string };
 
@@ -11,7 +14,10 @@ export async function staffSend<T>(method: "GET" | "POST", path: string, opts: {
   try {
     res = await fetch(`/staff/bff/${path}${qs}`, {
       method,
-      headers: opts.body === undefined ? { Accept: "application/json" } : { Accept: "application/json", "Content-Type": "application/json" },
+      headers:
+        opts.body === undefined
+          ? { Accept: "application/json", [STAFF_CALL_HEADER]: "1" }
+          : { Accept: "application/json", "Content-Type": "application/json", [STAFF_CALL_HEADER]: "1" },
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
       credentials: "same-origin",
     });

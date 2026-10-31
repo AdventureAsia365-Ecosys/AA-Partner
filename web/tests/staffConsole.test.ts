@@ -1,6 +1,8 @@
 // AA-1019 — the AA staff console: configuration, the staff session kept apart from the agency session (names, paths,
 // key, client), the staff sign-in / refresh / sign-out routes, the staff BFF allow-list onto /crm/staff/v1 with its
 // group check, the proxy gate for /staff, and the page helpers. Fake values only; fetch is stubbed.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as bffGet, POST as bffPost } from "@/app/bff/[...path]/route";
@@ -12,9 +14,12 @@ import { GET as staffSignIn } from "@/app/staff/auth/sign-in/route";
 import { POST as staffSignOut } from "@/app/staff/auth/sign-out/route";
 import { cookieNames, readSession, refreshCookie, sessionCookie } from "@/lib/session";
 import { open } from "@/lib/seal";
-import { allowedQuery, groupAllowed, matchStaffBff, STAFF_BFF_ROUTES } from "@/lib/staffBff";
+import { MESSAGES } from "@/lib/i18n";
+import { allowedQuery, consoleCallRefusal, foreignNavigation, groupAllowed, matchStaffBff, STAFF_BFF_ROUTES, STAFF_CALL_HEADER } from "@/lib/staffBff";
+import { staffSend } from "@/lib/staffClient";
 import {
   boardDays,
+  envBadgeKey,
   flightText,
   homeFor,
   manifestFilename,
@@ -25,6 +30,7 @@ import {
   purgeLabel,
   purgeTone,
   refusalKey,
+  REFUSALS,
   ticketValid,
   uuidParam,
 } from "@/lib/staffConsole";
@@ -60,6 +66,9 @@ function request(path: string, init: { method?: string; cookie?: string; headers
 }
 
 const SAME_ORIGIN = { origin: ORIGIN, "sec-fetch-site": "same-origin" };
+/** What the console's own fetch sends (lib/staffClient.ts): same-origin and the console call header. */
+const CONSOLE = { "sec-fetch-site": "same-origin", [STAFF_CALL_HEADER]: "1" };
+const CONSOLE_POST = { ...SAME_ORIGIN, [STAFF_CALL_HEADER]: "1" };
 
 function staffSignedIn(groups: ("crm-ops" | "crm-support")[] = ["crm-ops"]): string {
   const now = Math.floor(Date.now() / 1000);
@@ -250,7 +259,7 @@ describe("the staff BFF", () => {
   it("forwards with the staff token, never the agency session, and checks the group first", async () => {
     const fetchMock = vi.fn(async () => Response.json({ items: [] }));
     vi.stubGlobal("fetch", fetchMock);
-    const ok = await staffBffGet(request("/staff/bff/ops-releases?days=30&tenant=x", { cookie: staffSignedIn(["crm-ops"]) }), params("ops-releases"));
+    const ok = await staffBffGet(request("/staff/bff/ops-releases?days=30&tenant=x", { headers: CONSOLE, cookie: staffSignedIn(["crm-ops"]) }), params("ops-releases"));
     expect(ok.status).toBe(200);
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe(`${ORIGIN}/crm/staff/v1/ops-releases?days=30`);
@@ -259,13 +268,13 @@ describe("the staff BFF", () => {
     expect(h.get("x-aa-tenant-id")).toBeNull();
 
     fetchMock.mockClear();
-    const noGroup = await staffBffGet(request("/staff/bff/ops-releases", { cookie: staffSignedIn(["crm-support"]) }), params("ops-releases"));
+    const noGroup = await staffBffGet(request("/staff/bff/ops-releases", { headers: CONSOLE, cookie: staffSignedIn(["crm-support"]) }), params("ops-releases"));
     expect([noGroup.status, (await noGroup.json()).detail]).toEqual([403, "missing_group"]);
-    const agencyOnly = await staffBffGet(request("/staff/bff/ops-releases", { cookie: agencySignedIn() }), params("ops-releases"));
+    const agencyOnly = await staffBffGet(request("/staff/bff/ops-releases", { headers: CONSOLE, cookie: agencySignedIn() }), params("ops-releases"));
     expect([agencyOnly.status, (await agencyOnly.json()).detail]).toEqual([401, "session_expired"]);
-    const unlisted = await staffBffGet(request("/staff/bff/pipeline", { cookie: staffSignedIn() }), params("pipeline"));
+    const unlisted = await staffBffGet(request("/staff/bff/pipeline", { headers: CONSOLE, cookie: staffSignedIn() }), params("pipeline"));
     expect(unlisted.status).toBe(404);
-    const escape = await staffBffGet(request("/staff/bff/x", { cookie: staffSignedIn() }), params("..", "v1", "pipeline"));
+    const escape = await staffBffGet(request("/staff/bff/x", { headers: CONSOLE, cookie: staffSignedIn() }), params("..", "v1", "pipeline"));
     expect(escape.status).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -282,10 +291,103 @@ describe("the staff BFF", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ kind: "breakglass" }, { status: 201 })));
     const ok = await staffBffPost(
-      request("/staff/bff/breakglass/sessions", { method: "POST", headers: { ...SAME_ORIGIN, "content-type": "application/json" }, cookie: staffSignedIn(), body }),
+      request("/staff/bff/breakglass/sessions", { method: "POST", headers: { ...CONSOLE_POST, "content-type": "application/json" }, cookie: staffSignedIn(), body }),
       params("breakglass", "sessions"),
     );
     expect(ok.status).toBe(201);
+  });
+
+  // Review finding B1: some staff GETs act (a release view is counted and audited, the manifest export is audited and
+  // shown to the agency, every S-04 read is an access-log line). A navigation, an <img> or another origin's page
+  // carries the Lax staff cookie but cannot send the console header.
+  const SAMPLE_PATHS: Record<string, string> = {
+    "ops-releases": "ops-releases",
+    release: `agencies/${TENANT}/trips/${TRIP}/ops-release`,
+    manifest: `agencies/${TENANT}/trips/${TRIP}/ops-release/manifest`,
+    supportAgencies: "support/agencies",
+    supportStart: "support/sessions",
+    supportEnd: "support/sessions/end",
+    breakglassAgencies: "breakglass/agencies",
+    breakglassStart: "breakglass/sessions",
+    breakglassEnd: "breakglass/sessions/end",
+    agencySession: `agencies/${TENANT}/session`,
+    agencyOverview: `agencies/${TENANT}/overview`,
+    agencyTrips: `agencies/${TENANT}/trips`,
+    agencyTrip: `agencies/${TENANT}/trips/${TRIP}`,
+  };
+
+  it("has a sample path for every allow-listed route (so the next test covers each one)", () => {
+    for (const route of STAFF_BFF_ROUTES) {
+      expect(Object.values(SAMPLE_PATHS).some((p) => route.pattern.test(p)), route.pattern.source).toBe(true);
+    }
+  });
+
+  it("refuses every staff BFF call that is not the console's own same-origin fetch, GET included, before any upstream call", async () => {
+    const fetchMock = vi.fn(async () => Response.json({}));
+    vi.stubGlobal("fetch", fetchMock);
+    const both = staffSignedIn(["crm-ops", "crm-support"]);
+    const foreign: [Record<string, string>, string][] = [
+      [{}, "console_call_required"], // a browser that sends no fetch metadata, or a non-browser client
+      [{ "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" }, "cross_site_refused"], // a link on another site
+      [{ "sec-fetch-site": "same-site", "sec-fetch-dest": "image" }, "cross_site_refused"], // an <img> on a sibling host
+      [{ "sec-fetch-site": "none", "sec-fetch-mode": "navigate" }, "cross_site_refused"], // a typed URL of a BFF path
+      [{ "sec-fetch-site": "same-origin", "sec-fetch-mode": "navigate" }, "console_call_required"], // a same-origin link to the BFF
+      [{ "sec-fetch-site": "cross-site", [STAFF_CALL_HEADER]: "1" }, "cross_site_refused"], // another origin's fetch after a preflight
+      [{ [STAFF_CALL_HEADER]: "yes" }, "console_call_required"],
+    ];
+    for (const sub of Object.values(SAMPLE_PATHS)) {
+      const route = STAFF_BFF_ROUTES.find((r) => r.pattern.test(sub))!;
+      const handler = route.method === "GET" ? staffBffGet : staffBffPost;
+      for (const [headers, detail] of foreign) {
+        const extra: Record<string, string> = route.method === "POST" ? { origin: ORIGIN } : {};
+        const res = await handler(
+          request(`/staff/bff/${sub}`, { method: route.method, headers: { ...extra, ...headers }, cookie: both, body: route.method === "POST" ? "{}" : undefined }),
+          params(...sub.split("/")),
+        );
+        expect([sub, res.status, (await res.json()).detail]).toEqual([sub, 403, detail]);
+      }
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("forwards the release view and the manifest export when the console itself asks", async () => {
+    const fetchMock = vi.fn(async () => Response.json({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    const sub = SAMPLE_PATHS.manifest;
+    const res = await staffBffGet(request(`/staff/bff/${sub}?fields=name`, { headers: CONSOLE, cookie: staffSignedIn() }), params(...sub.split("/")));
+    expect(res.status).toBe(200);
+    const view = await staffBffGet(request(`/staff/bff/${SAMPLE_PATHS.release}`, { headers: { [STAFF_CALL_HEADER]: "1" }, cookie: staffSignedIn() }), params(...SAMPLE_PATHS.release.split("/")));
+    expect(view.status).toBe(200); // no fetch metadata (an older browser) but the console header: allowed
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("the console's fetch always sends the call header", async () => {
+    const fetchMock = vi.fn(async () => Response.json({ items: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    await staffSend("GET", "ops-releases");
+    await staffSend("POST", "support/sessions/end", { body: { tenant_id: TENANT } });
+    for (const call of fetchMock.mock.calls as unknown as [string, RequestInit][]) {
+      expect((call[1].headers as Record<string, string>)[STAFF_CALL_HEADER]).toBe("1");
+    }
+    expect(consoleCallRefusal(new Headers(CONSOLE))).toBeNull();
+  });
+
+  it("tells a console page reached from another origin apart from the console's own navigation", () => {
+    expect(["cross-site", "same-site"].map(foreignNavigation)).toEqual([true, true]);
+    expect(["same-origin", "none", null].map(foreignNavigation)).toEqual([false, false, false]);
+  });
+
+  it("the pages that count or audit on render show the Open step before their first API read", () => {
+    for (const page of [
+      "app/staff/(console)/ops/[tenantId]/[tripId]/page.tsx",
+      "app/staff/(console)/support/[tenantId]/page.tsx",
+      "app/staff/(console)/support/[tenantId]/trips/[tripId]/page.tsx",
+    ]) {
+      const src = readFileSync(join(process.cwd(), page), "utf8");
+      const gate = src.indexOf("if (foreignNavigation) return <OpenStep");
+      expect(gate, page).toBeGreaterThan(0);
+      expect(gate, page).toBeLessThan(src.indexOf("await staffCall"));
+    }
   });
 
   it("the agency BFF never accepts a staff session", async () => {
@@ -367,9 +469,31 @@ describe("page helpers", () => {
     expect(refusalKey("support_session_ended")).toBe("staff.refused.support_session_ended");
     expect(refusalKey("e2e_synthetic_only")).toBe("staff.refused.e2e_synthetic_only");
     expect(refusalKey("boom")).toBe("staff.error");
+    for (const code of ["release_not_found", "tenant_status", "tenant_not_found", "manifest_field_unknown", "invalid_cursor"]) {
+      expect(refusalKey(code)).toBe(`staff.refused.${code}`);
+    }
+    for (const code of REFUSALS) {
+      const key = refusalKey(code) as keyof (typeof MESSAGES)["en"];
+      expect(MESSAGES.en[key], code).toMatch(/\S/);
+      expect(MESSAGES.vi[key], code).toMatch(/\S/);
+      expect(MESSAGES.vi[key], code).not.toBe(MESSAGES.en[key]);
+    }
     expect(homeFor(["crm-support"])).toBe("/staff/support");
     expect(homeFor(["crm-support", "crm-ops"])).toBe("/staff/ops");
     expect(uuidParam(TENANT.toUpperCase())).toBe(TENANT);
     expect(uuidParam("../x")).toBeNull();
+  });
+
+  it("names the environment in the console's top bar, in both languages, and nothing on prod", () => {
+    expect(envBadgeKey("prod")).toBeNull();
+    expect(envBadgeKey("dev")).toBe("staff.env.dev");
+    expect(envBadgeKey("stg")).toBe("staff.env.stg");
+    for (const env of ["dev", "stg", "test", "local"]) {
+      const key = envBadgeKey(env)!;
+      expect(MESSAGES.en[key]).toMatch(/\S/);
+      expect(MESSAGES.vi[key]).toMatch(/\S/);
+    }
+    expect(MESSAGES.en["staff.env.stg"]).toBe("Staging");
+    expect(MESSAGES.vi["staff.env.dev"]).not.toBe(MESSAGES.en["staff.env.dev"]);
   });
 });

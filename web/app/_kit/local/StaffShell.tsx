@@ -1,7 +1,7 @@
 "use client";
 // web/app/_kit/local/StaffShell.tsx
-// AA-1019 — the AA staff console's frame (S-02, S-04): a top bar (title, the sections the staff member's groups
-// open, language, theme, sign-out of the staff console) over the kit PageFrame. Deliberately not the agency CrmShell:
+// AA-1019 — the AA staff console's frame (S-02, S-04): a top bar (title, the environment's name on every non-prod
+// deployment, the sections the staff member's groups open, language, theme, sign-out of the staff console) over the kit PageFrame. Deliberately not the agency CrmShell:
 // no agency, no agency sidebar, no Content studio link, and its sign-out posts to /staff/auth/sign-out (the agency
 // session on the same host is left alone). Every value comes from the server; the shell holds no state but the theme.
 
@@ -10,8 +10,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Badge, IconButton, K, PageFrame, ToastProvider, useThemeChoice, type ThemeChoice } from "@/app/_kit";
 import { LocaleSwitch } from "@/components/LocaleSwitch";
+import type { Environment } from "@/lib/config";
 import type { DateLocale } from "@/lib/dates";
 import type { MessageKey } from "@/lib/i18n";
+import { envBadgeKey } from "@/lib/staffConsole";
 import type { StaffGroup } from "@/lib/staffSession";
 
 type Dict = Record<MessageKey, string>;
@@ -37,17 +39,19 @@ export function StaffShell({
   dict,
   groups,
   locale,
-  syntheticBadge,
+  environment,
   children,
 }: {
   dict: Dict;
   groups: StaffGroup[];
   locale: DateLocale;
-  syntheticBadge: boolean;
+  /** The deployment's environment (WebConfig.environment): every one but prod shows its name as a badge. */
+  environment: Environment;
   children: React.ReactNode;
 }) {
   const pathname = usePathname() ?? "/staff";
   const sections = SECTIONS.filter((s) => s.group === null || groups.includes(s.group));
+  const envKey = envBadgeKey(environment);
   return (
     <ToastProvider>
       <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: K.bg }} data-testid="staff-shell">
@@ -69,7 +73,11 @@ export function StaffShell({
             <span style={{ fontFamily: "'Fahkwang', 'Poppins', Georgia, serif", fontSize: 17, color: K.accent }}>
               {dict["staff.title"]}
             </span>
-            {syntheticBadge && <Badge tone="info">Dev</Badge>}
+            {envKey && (
+              <span data-testid="staff-env-badge">
+                <Badge tone="info">{dict[envKey]}</Badge>
+              </span>
+            )}
           </div>
           <nav aria-label={dict["staff.title"]} style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
             {sections.map((s) => {

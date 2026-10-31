@@ -305,7 +305,8 @@ export function liveSession(sessions: readonly SessionView[]): SessionView | nul
   return sessions.find((s) => s.status === "active") ?? null;
 }
 
-/** The refusal codes the console words itself; anything else is the generic error. */
+/** The refusal codes the console words itself (each has an EN and a VI line in lib/i18nStaff.ts); anything else is the
+ * generic error. */
 export const REFUSALS = [
   "no_support_session",
   "support_session_ended",
@@ -316,12 +317,24 @@ export const REFUSALS = [
   "breakglass_in_use",
   "e2e_synthetic_only",
   "missing_group",
+  "release_not_found",
+  "tenant_status",
+  "tenant_not_found",
+  "manifest_field_unknown",
+  "invalid_cursor",
 ] as const;
 
 export function refusalKey(detail: string | null | undefined): `staff.refused.${(typeof REFUSALS)[number]}` | "staff.error" {
   return (REFUSALS as readonly string[]).includes(detail ?? "")
     ? (`staff.refused.${detail}` as `staff.refused.${(typeof REFUSALS)[number]}`)
     : "staff.error";
+}
+
+/** The environment badge of the console's top bar: the i18n key of a non-prod environment, null on prod. */
+export function envBadgeKey(environment: string): "staff.env.dev" | "staff.env.stg" | "staff.env.test" | "staff.env.local" | null {
+  return environment === "dev" || environment === "stg" || environment === "test" || environment === "local"
+    ? (`staff.env.${environment}` as const)
+    : null;
 }
 
 /** The console's first page for these groups: ops for crm-ops, else support. */

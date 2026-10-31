@@ -1,6 +1,8 @@
 // /staff/bff/<path> — the staff console browser's only way to the CRM API (AA-1019). Order:
 //   0. a Host other than the partner host -> 404;
-//   1. a cross-site write -> 403 (lib/writeGuard.ts, before any cookie or body is read);
+//   1. a cross-site write -> 403 (lib/writeGuard.ts, before any cookie or body is read); then ANY method (GET too: some
+//      staff reads count a view or write the agency's access log) without the console's own call header, or with a
+//      Sec-Fetch-Site other than same-origin -> 403 (lib/staffBff.ts consoleCallRefusal), still before any cookie;
 //   2. a path segment that could escape the prefix -> 400 (lib/bffPath.ts);
 //   3. not on the staff allow-list (lib/staffBff.ts) -> 404;
 //   4. no STAFF session or an expired staff access token -> 401 session_expired (the page goes through
@@ -15,7 +17,7 @@ import { requestConfig } from "@/lib/config";
 import { classifyHost } from "@/lib/hosts";
 import { streamUpstream } from "@/lib/proxyResponse";
 import { json } from "@/lib/respond";
-import { allowedQuery, groupAllowed, matchStaffBff, STAFF_API_PREFIX, staffUpstreamHeaders } from "@/lib/staffBff";
+import { allowedQuery, consoleCallRefusal, groupAllowed, matchStaffBff, STAFF_API_PREFIX, staffUpstreamHeaders } from "@/lib/staffBff";
 import { readStaffSession, staffAccessValid } from "@/lib/staffSession";
 import { refuseForeignWrite } from "@/lib/writeGuard";
 
@@ -29,6 +31,8 @@ async function handle(request: NextRequest, ctx: { params: Promise<{ path: strin
   if (classifyHost(request.headers.get("host"), cfg) !== "partner") return json({ detail: "not_found" }, 404);
   const refused = refuseForeignWrite(cfg, request);
   if (refused) return refused;
+  const notConsole = consoleCallRefusal(request.headers);
+  if (notConsole) return json({ detail: notConsole }, 403);
   const { path } = await ctx.params;
   const sub = proxyPath(path ?? []);
   if (sub === null) return json({ detail: "invalid_path" }, 400);

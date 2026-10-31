@@ -1,12 +1,14 @@
 // web/app/staff/(console)/support/[tenantId]/page.tsx — S-04, one agency inside the caller's live support or emergency
 // session (AA-1019 on the AA-971 API): the banner (amber support / red emergency, End session), the agency overview
 // (settings codes, trips per stage) and its trips, read-only. Every read is checked again by the API (a grant the owner
-// ended answers 403 support_session_ended on the very next page) and written to the agency's access log.
+// ended answers 403 support_session_ended on the very next page) and written to the agency's access log, so a navigation
+// from another origin gets the OpenStep first (review finding B1).
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ErrorState, K } from "@/app/_kit";
 import { Panel, PageTitle } from "@/components/PageTitle";
 import { AgencyTrips } from "@/components/staff/AgencyTrips";
+import { OpenStep } from "@/components/staff/OpenStep";
 import { SessionBanner } from "@/components/staff/SessionBanner";
 import { SessionHistory } from "@/components/staff/SessionHistory";
 import { codeLabel } from "@/lib/accessLog";
@@ -35,13 +37,14 @@ function settingValue(value: unknown): string {
 export default async function StaffAgencyPage({ params }: { params: Promise<{ tenantId: string }> }) {
   const tenantId = uuidParam((await params).tenantId);
   if (!tenantId) notFound();
-  const { cfg, session, lang, locale } = await staffContext();
+  const { cfg, session, lang, locale, foreignNavigation } = await staffContext();
   if (!session) return <ErrorState message={t(lang, "staff.noAccess")} />;
   const back = (
     <Link href="/staff/support" style={{ fontSize: 13 }}>
       ← {t(lang, "staff.back")}
     </Link>
   );
+  if (foreignNavigation) return <OpenStep href={`/staff/support/${tenantId}`} back={back} lang={lang} />;
   const mine = await staffCall<MySessions>(cfg, session, "GET", `agencies/${tenantId}/session`);
   if (!mine.ok) {
     if (mine.status === 404) notFound();

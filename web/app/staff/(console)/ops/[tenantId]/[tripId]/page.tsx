@@ -1,17 +1,19 @@
 // web/app/staff/(console)/ops/[tenantId]/[tripId]/page.tsx — S-02, one release for AA ground operations (AA-1019; API
 // GET /crm/staff/v1/agencies/{tenant}/trips/{trip}/ops-release, group crm-ops). Every render is one view: the API adds
 // 1 to view_count and writes "AA ops viewed trip X" to the agency's access log (the board links here with prefetch off,
-// so only a real open counts). 404 release_not_found = no confirmed AA line now, or withdrawn.
+// so only a real open counts; a navigation from another origin gets the OpenStep first, review finding B1). 404
+// release_not_found = no confirmed AA line now, or withdrawn.
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Badge, ErrorState, K } from "@/app/_kit";
 import { Panel, PageTitle } from "@/components/PageTitle";
 import { ManifestDownload } from "@/components/staff/ManifestDownload";
+import { OpenStep } from "@/components/staff/OpenStep";
 import { ReleaseTravellers } from "@/components/staff/ReleaseTravellers";
 import { formatDate } from "@/lib/dates";
 import { fmt, t } from "@/lib/i18n";
 import { staffCall } from "@/lib/staffApi";
-import { missingItems, refusalKey, uuidParam, type Release } from "@/lib/staffConsole";
+import { missingItems, refusalKey, releaseHref, uuidParam, type Release } from "@/lib/staffConsole";
 import { staffContext } from "@/lib/staffContext";
 
 export const dynamic = "force-dynamic";
@@ -32,13 +34,21 @@ export default async function StaffReleasePage({ params }: { params: Promise<{ t
   const tenantId = uuidParam(raw.tenantId);
   const tripId = uuidParam(raw.tripId);
   if (!tenantId || !tripId) notFound();
-  const { cfg, session, lang, locale } = await staffContext();
+  const { cfg, session, lang, locale, foreignNavigation } = await staffContext();
   const back = (
     <Link href="/staff/ops" style={{ fontSize: 13 }}>
       ← {t(lang, "staff.back")}
     </Link>
   );
-  if (!session || !session.groups.includes("crm-ops")) return <ErrorState message={t(lang, "staff.noAccess")} />;
+  if (!session || !session.groups.includes("crm-ops")) {
+    return (
+      <div style={{ display: "grid", gap: 12 }}>
+        {back}
+        <ErrorState message={t(lang, "staff.noAccess")} />
+      </div>
+    );
+  }
+  if (foreignNavigation) return <OpenStep href={releaseHref(tenantId, tripId)} back={back} lang={lang} />;
   const res = await staffCall<Release>(cfg, session, "GET", `agencies/${tenantId}/trips/${tripId}/ops-release`);
   if (!res.ok) {
     const message =

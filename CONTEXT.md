@@ -1861,7 +1861,13 @@ ADR 0006b decision 6). Decisions: `docs/implementation-notes/AA-1019.md`.
   login domain on staff pages.
 - **Staff BFF** (`web/lib/staffBff.ts`, `web/app/staff/bff/[...path]`): listed (method, path) pairs onto
   `/crm/staff/v1` only, each with its groups (403 `missing_group` before any upstream call), query parameters allow-listed
-  per path, 8 KiB bodies, cross-site writes refused first. Server components call the same list (`web/lib/staffApi.ts`).
+  per path, 8 KiB bodies, cross-site writes refused first. Every call, GET included, must be the console's own fetch:
+  header `x-aa-staff-console: 1` (`web/lib/staffClient.ts`) and a `Sec-Fetch-Site` of `same-origin` when sent, else 403
+  before any cookie is read — some staff GETs act (a release view is counted and audited, the manifest export is
+  audited, S-04 reads are access-log lines) and the Lax staff cookie rides on navigations and same-site subresources.
+  Server components call the same list (`web/lib/staffApi.ts`); the pages that count or audit on render (one release,
+  one agency, one trip) show an "Open" step instead of reading when reached from another origin
+  (`components/staff/OpenStep.tsx`, `Sec-Fetch-Site` cross-site / same-site).
 - **Configuration** (task environment, AA-CIS-Infra `crm_web.tf`): `STAFF_COGNITO_DOMAIN`, `STAFF_COGNITO_CLIENT_ID`, and
   from the web secret `STAFF_COGNITO_CLIENT_SECRET` (`staff_cognito_client_secret`), `STAFF_SESSION_SECRET`
   (`staff_session_secret`). Any missing = the console says it is not set up; `/healthz` reports `staff_auth_configured`

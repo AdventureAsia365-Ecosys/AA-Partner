@@ -77,3 +77,35 @@ export function staffUpstreamHeaders(accessToken: string, requestId: string, jso
   if (json) h.set("Content-Type", "application/json");
   return h;
 }
+
+// ── Console-only calls (review finding B1) ───────────────────────────────────────────────────────────────────────
+// Some staff GETs act: opening one release adds to its view count and writes the agency's access log, the manifest
+// export is audited and shown to the agency, and every S-04 read is an access-log line. The staff cookie is SameSite=Lax
+// (the OAuth callback needs it), so a top-level navigation from another site, or an <img>/<script> on a sibling
+// *.lumiguides.it.com host (`it.com` is a public suffix: those hosts are the SAME site), would carry it. The write guard
+// (lib/writeGuard.ts) only looks at POST. So EVERY staff BFF call, GET included, must come from the console's own
+// fetch: it carries STAFF_CALL_HEADER (lib/staffClient.ts), which a navigation, an <img>, a <form> or a page of another
+// origin cannot send (a custom header makes a cross-origin fetch preflight, and this server answers no CORS), and a
+// browser that sends Sec-Fetch-Site must say same-origin.
+
+/** The header the console's own fetches carry (lib/staffClient.ts). */
+export const STAFF_CALL_HEADER = "x-aa-staff-console";
+
+/** The refusal code for a staff BFF call that is not the console's own same-origin fetch, or null when it may go on. */
+export function consoleCallRefusal(headers: { get(name: string): string | null }): "cross_site_refused" | "console_call_required" | null {
+  const site = headers.get("sec-fetch-site");
+  if (site !== null && site !== "same-origin") return "cross_site_refused";
+  if (headers.get(STAFF_CALL_HEADER) !== "1") return "console_call_required";
+  return null;
+}
+
+/**
+ * True when a console PAGE was reached by a navigation from another origin (Sec-Fetch-Site cross-site or same-site).
+ * Pages whose render counts a view or writes the agency's access log then show an "Open" step (components/staff/
+ * OpenStep.tsx) instead of reading, so a link on another site cannot make a staff member's browser count or audit
+ * anything. A link inside the console (same-origin), a typed URL or bookmark (none) and a browser that sends no
+ * Sec-Fetch-Site read at once.
+ */
+export function foreignNavigation(site: string | null): boolean {
+  return site === "cross-site" || site === "same-site";
+}

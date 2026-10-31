@@ -18,7 +18,7 @@ export default async function StaffConsoleLayout({ children }: { children: React
       dict={dictionary(ctx.lang)}
       groups={ctx.session.groups}
       locale={ctx.locale}
-      syntheticBadge={ctx.cfg.environment !== "prod"}
+      environment={ctx.cfg.environment}
     >
       {children}
     </StaffShell>
