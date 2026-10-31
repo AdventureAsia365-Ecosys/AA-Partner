@@ -16,7 +16,7 @@ import { MESSAGES } from "@/lib/i18n";
 const push = vi.fn();
 const refresh = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh, push }) }));
-const { CommissionsTable } = await import("@/components/commissions/CommissionsTable");
+const { COMMISSIONS_TABLE_MIN_WIDTH, CommissionsTable } = await import("@/components/commissions/CommissionsTable");
 const { CommissionFilters, filterHref } = await import("@/components/commissions/CommissionFilters");
 const { CommissionActions } = await import("@/components/commissions/CommissionActions");
 
@@ -90,6 +90,10 @@ const RECEIVED = commission({
 describe("helpers", () => {
   it("reads a rate as its pair, rounded", () => {
     expect(rateText("1.0869565217", "EUR", "USD")).toBe("1 EUR = 1.0870 USD");
+    // In the page locale, as the amounts beside it (formatAmount).
+    expect(rateText("1.0869565217", "EUR", "USD", "en-AU")).toBe("1 EUR = 1.0870 USD");
+    expect(rateText("1.0869565217", "EUR", "USD", "vi-VN")).toBe("1 EUR = 1,0870 USD");
+    expect(rateText("25400", "USD", "VND", "vi-VN")).toBe(`1 USD = ${(25400).toLocaleString("vi-VN", { minimumFractionDigits: 4 })} VND`);
   });
   it("tells a trip by its dates, else its month", () => {
     expect(tripWhen(commission(), "en-AU")).toBe("12 Nov – 15 Nov 2026");
@@ -127,6 +131,21 @@ describe("the list", () => {
     expect(html).toContain('data-testid="kit-datatable-body"');
     expect((html.match(/data-testid="commission-row"/g) ?? []).length).toBe(2);
     expect(html).toContain(MESSAGES.en["commission.col.actions"]);
+  });
+  it("fits five columns in the content width of every desktop window, so the follow-up stays in view", () => {
+    // globals.css: sidebar 240 px from 900 px up, main padding 24 px each side; a scrollbar takes up to ~17 px.
+    // Below 900 px the sidebar is a drawer (padding 16 px), below 768 px the kit shows cards.
+    const content = (viewport: number) => viewport - (viewport >= 900 ? 240 + 48 : 32) - 17;
+    for (const viewport of [768, 899, 900, 1024, 1280]) {
+      expect(COMMISSIONS_TABLE_MIN_WIDTH, `${viewport} px`).toBeLessThanOrEqual(content(viewport));
+    }
+    const headers = [...html.matchAll(/<th\b/g)].length;
+    expect(headers).toBe(5);
+    for (const key of ["commissions.col.supplier", "commissions.col.trip", "commissions.col.amount", "commissions.col.status", "commission.col.actions"] as const) {
+      expect(html).toContain(MESSAGES.en[key]);
+    }
+    expect(html).toContain('data-testid="commission-due"');
+    expect(html).toContain(`min-width:${COMMISSIONS_TABLE_MIN_WIDTH}px`);
   });
   it("keeps the claim on a claimed row", () => {
     const claimed = renderToString(

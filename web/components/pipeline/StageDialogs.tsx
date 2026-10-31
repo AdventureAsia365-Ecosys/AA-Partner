@@ -19,7 +19,7 @@ import { Button, Checkbox, Field, Input, K } from "@/app/_kit";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, type Lang, type MessageKey, t } from "@/lib/i18n";
-import { aaResultKey } from "@/lib/aa";
+import { aaCancelFailedKey } from "@/lib/aa";
 import {
   CANCEL_REASONS,
   codeLabel,
@@ -61,7 +61,8 @@ export function effectLabel(lang: Lang, kind: string, n: number): string {
 
 /** The dialog box of the stage engine. S262 (AA-957 live, 390 px and 1440 px): the title and the `footer` (the
  * confirm step and the buttons) stay in view; only the body between them scrolls, with a "more below" cue while it
- * overflows (one scroll area, never one nested in another). */
+ * overflows (one scroll area, never one nested in another). On a window under 480 px tall (a phone held sideways) the
+ * whole box scrolls instead and the footer is compact, so the body is never squeezed to a sliver (app/globals.css). */
 export function Dialog({
   title,
   onClose,
@@ -94,17 +95,23 @@ export function Dialog({
   }, []);
   useEffect(() => {
     // The cue follows the body: measured when it scrolls or when it or its content changes size (the observer also
-    // reports once on observe, so nothing is set during the effect itself).
+    // reports once on observe, so nothing is set during the effect itself). On a short window the whole box scrolls
+    // instead (app/globals.css), so the box counts too: the cue says the confirm step is further down.
     const el = body.current;
+    const frame = box.current;
     if (!el || typeof ResizeObserver === "undefined") return;
-    const measure = () => setMore(el.scrollHeight - el.scrollTop - el.clientHeight > 4);
+    const below = (node: HTMLElement | null) => !!node && node.scrollHeight - node.scrollTop - node.clientHeight > 4;
+    const measure = () => setMore(below(el) || below(frame));
     const observer = new ResizeObserver(measure);
     observer.observe(el);
+    if (frame) observer.observe(frame);
     if (content.current) observer.observe(content.current);
     el.addEventListener("scroll", measure, { passive: true });
+    frame?.addEventListener("scroll", measure, { passive: true });
     return () => {
       observer.disconnect();
       el.removeEventListener("scroll", measure);
+      frame?.removeEventListener("scroll", measure);
     };
   }, []);
   return (
@@ -121,20 +128,14 @@ export function Dialog({
         aria-modal="true"
         aria-label={title}
         data-testid={testId}
-        style={{
-          background: K.card,
-          color: K.ink,
-          borderRadius: 12,
-          border: `1px solid ${K.line}`,
-          width: "min(480px, 100%)",
-          maxHeight: "min(90vh, calc(100dvh - 32px))",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-        }}
+        // The frame's layout (max height with its 90vh fallback, the scrolling body, the short-window mode) is CSS in
+        // app/globals.css ("Stage-engine dialog frame"): an inline style cannot carry a fallback declaration or a
+        // media query.
+        data-crm-dialog="box"
+        style={{ background: K.card, color: K.ink, borderRadius: 12, border: `1px solid ${K.line}`, width: "min(480px, 100%)" }}
       >
         <h2 style={{ margin: 0, padding: "18px 18px 0", fontSize: 16, fontWeight: 600, flex: "none" }}>{title}</h2>
-        <div ref={body} data-testid={`${testId}-body`} style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", padding: "12px 18px", position: "relative" }}>
+        <div ref={body} data-testid={`${testId}-body`} data-crm-dialog="body" style={{ padding: "12px 18px", position: "relative" }}>
           <div ref={content} style={{ display: "grid", gap: 12 }}>
             {children}
           </div>
@@ -159,7 +160,7 @@ export function Dialog({
           )}
         </div>
         {footer && (
-          <div style={{ flex: "none", display: "grid", gap: 10, padding: "12px 18px 16px", borderTop: `1px solid ${K.line}` }}>{footer}</div>
+          <div data-crm-dialog="footer" style={{ borderTop: `1px solid ${K.line}` }}>{footer}</div>
         )}
       </div>
     </div>
@@ -380,9 +381,9 @@ export function CancelDialog({
                   <span style={{ overflowWrap: "anywhere" }}>{b.titles.join(", ")}</span>
                   <span style={{ display: "block", fontSize: 12, color: K.muted }} data-testid="cancel-aa-fee">
                     {b.fee
-                      ? fmt(tr("cancelTrip.aaFee"), { amount: formatAmount(b.fee.amount, b.fee.currency, locale), pct: percentText(b.fee.fee_pct), days: b.fee.days_before_departure })
+                      ? fmt(tr("cancelTrip.aaFee"), { amount: formatAmount(b.fee.amount, b.fee.currency, locale), pct: percentText(b.fee.fee_pct, locale), days: b.fee.days_before_departure })
                       : pending && b.failed_code
-                        ? fmt(tr("cancelTrip.bookingFailed"), { code: tr(aaResultKey(b.failed_code)) })
+                        ? fmt(tr("cancelTrip.bookingFailed"), { reason: tr(aaCancelFailedKey(b.failed_code)) })
                         : pending
                           ? tr("cancelTrip.bookingAsked")
                           : tr("cancelTrip.aaFeeUnknown")}

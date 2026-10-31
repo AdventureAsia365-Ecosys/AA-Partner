@@ -102,7 +102,7 @@ export function aaBadgeKey(aa: AaBlock, lineStatus: string): string | null {
 }
 
 /** Every result code the Booking sync can write on a line (api/app/booking/sync.py, proposal_lines.py, the Booking
- * contract's refusal codes): each has an `aa.result.<code>` sentence in EN and VI (tests/aaResults.test.ts). */
+ * contract's refusal codes): each has an `aa.result.<code>` sentence in EN and VI (tests/cancelledTrip.test.ts). */
 export const AA_RESULT_CODES = [
   "sold_out",
   "price_changed",
@@ -128,6 +128,21 @@ export const AA_RESULT_CODES = [
 /** The i18n key of a line's AA result code; a code a later Booking version adds reads as a plain refusal, never raw. */
 export function aaResultKey(code: string): string {
   return (AA_RESULT_CODES as readonly string[]).includes(code) ? `aa.result.${code}` : "aa.result.other";
+}
+
+/** A failed request code that is not AA's answer: no answer for a day (`gave_up`), or the CRM could not reach Booking
+ * (the retry classes the sync writes on `crm.aa_request.result_code`: `booking_*` such as `booking_timeout` /
+ * `booking_unavailable`, and `token_*` from the sign-in to Booking). Never worded as a refusal. */
+export function aaNoAnswer(code: string): boolean {
+  return code === "gave_up" || /^(booking|token)_/.test(code);
+}
+
+/** The sentence key of a failed AA cancel request (the cancel dialog's pending mode): AA's refusal reads its result
+ * sentence; a request AA never answered says so, never "refused". */
+export function aaCancelFailedKey(code: string): string {
+  if (code === "gave_up") return "aa.result.gave_up";
+  if (aaNoAnswer(code)) return "cancelTrip.aaNoAnswer";
+  return aaResultKey(code);
 }
 
 /** Booking failed the last try and the request waits for the next one (card E: shown, never hidden). */

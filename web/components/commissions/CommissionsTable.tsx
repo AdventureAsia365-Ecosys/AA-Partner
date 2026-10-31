@@ -13,6 +13,11 @@ import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import { formatAmount } from "@/lib/proposals";
 
+/** The width the five columns need (S262 fix pass): at most the content width of the narrowest desktop window (900 px
+ * minus the 240 px sidebar and the 2 x 24 px page padding, less a scrollbar), so the Follow-up column is never off to
+ * the right between the phone card mode (< 768 px) and a wide screen. */
+export const COMMISSIONS_TABLE_MIN_WIDTH = 590;
+
 const small: React.CSSProperties = { display: "block", fontSize: 12, color: K.muted, overflowWrap: "anywhere" };
 
 /** The Received cell: the amount and day, the rate as a pair, the base amount it counts as, the bank reference. */
@@ -29,7 +34,7 @@ export function ReceivedCell({ c, base, lang, locale }: { c: Commission; base: s
       {r.currency !== baseCurrency && (
         <>
           <span style={small} data-testid="commission-rate">
-            {fmt(tr("commission.rate"), { pair: rateText(r.fx.rate, r.currency, baseCurrency), date: formatDate(r.fx.rate_date, locale) })}
+            {fmt(tr("commission.rate"), { pair: rateText(r.fx.rate, r.currency, baseCurrency, locale), date: formatDate(r.fx.rate_date, locale) })}
           </span>
           {r.amount_base && <span style={small}>{fmt(tr("commission.inBase"), { amount: money(r.amount_base, baseCurrency) })}</span>}
         </>
@@ -81,42 +86,49 @@ export function CommissionsTable({ commissions, base, lang, locale }: { commissi
         const when = tripWhen(row.original, locale);
         return (
           <span style={{ display: "block", minWidth: 0 }}>
-            <Link href={`/pipeline/${row.original.trip_id}`} style={{ overflowWrap: "anywhere" }} data-testid="commission-trip">
+            <Link href={`/pipeline/${row.original.trip_id}`} style={{ overflowWrap: "break-word" }} data-testid="commission-trip">
               {row.original.trip_title}
             </Link>
-            {when && <span style={small} data-testid="commission-trip-when">{when}</span>}
+            {when && <span style={{ ...small, overflowWrap: "break-word" }} data-testid="commission-trip-when">{when}</span>}
           </span>
         );
       },
     },
     {
-      id: "expected",
-      header: tr("commissions.col.expected"),
+      // Expected and received in one column (S262 fix pass): with five columns the table fits the content width of a
+      // 900 px window beside the sidebar, so the follow-up stays in view on every desktop width.
+      id: "amount",
+      header: tr("commissions.col.amount"),
       enableSorting: false,
-      cell: ({ row }) => (row.original.commission_expected ? money(row.original.commission_expected.amount, row.original.commission_expected.currency) : "—"),
-    },
-    {
-      id: "received",
-      header: tr("commissions.col.received"),
-      enableSorting: false,
-      cell: ({ row }) => <ReceivedCell c={row.original} base={base} lang={lang} locale={locale} />,
-    },
-    {
-      id: "due",
-      header: tr("commissions.col.due"),
-      accessorFn: (c) => c.due_on,
       cell: ({ row }) => (
-        <span style={{ display: "block", color: row.original.overdue ? K.danger : undefined }}>
-          {formatDate(row.original.due_on, locale)}
-          {row.original.overdue && <span style={{ display: "block", fontSize: 12 }}>{fmt(tr("commission.overdueDays"), { n: row.original.days_overdue })}</span>}
+        <span style={{ display: "grid", gap: 4, minWidth: 0 }}>
+          <span>
+            <span style={small}>{tr("commissions.col.expected")}</span>
+            {row.original.commission_expected ? money(row.original.commission_expected.amount, row.original.commission_expected.currency) : "—"}
+          </span>
+          {row.original.commission_received && (
+            <span>
+              <span style={small}>{tr("commissions.col.received")}</span>
+              <ReceivedCell c={row.original} base={base} lang={lang} locale={locale} />
+            </span>
+          )}
         </span>
       ),
     },
     {
-      id: "status",
+      // The status, then the due date (sorted by it).
+      id: "due",
       header: tr("commissions.col.status"),
-      enableSorting: false,
-      cell: ({ row }) => <StatusCell c={row.original} lang={lang} />,
+      accessorFn: (c) => c.due_on,
+      cell: ({ row }) => (
+        <span style={{ display: "grid", gap: 4, minWidth: 0 }}>
+          <StatusCell c={row.original} lang={lang} />
+          <span style={{ display: "block", fontSize: 12, color: row.original.overdue ? K.danger : K.muted }} data-testid="commission-due">
+            {fmt(tr("commissions.dueOn"), { date: formatDate(row.original.due_on, locale) })}
+            {row.original.overdue && <span style={{ display: "block" }}>{fmt(tr("commission.overdueDays"), { n: row.original.days_overdue })}</span>}
+          </span>
+        </span>
+      ),
     },
     {
       id: "actions",
@@ -140,7 +152,7 @@ export function CommissionsTable({ commissions, base, lang, locale }: { commissi
         getRowId={(c) => c.commission_id}
         searchable={false}
         compact
-        tableMinWidth={980}
+        tableMinWidth={COMMISSIONS_TABLE_MIN_WIDTH}
         emptyTitle={tr("commissions.emptyFilter")}
       />
     </div>

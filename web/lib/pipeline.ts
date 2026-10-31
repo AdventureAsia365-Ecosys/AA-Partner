@@ -222,12 +222,13 @@ export function tripClosedForBilling(stage: string, cancellation: { status: stri
   return stage === "cancelled" || Boolean(cancellation);
 }
 
-/** Booking's fee percentage without trailing zeros: "75.00" -> "75", "12.50" -> "12.5". */
-export function percentText(pct: string | number | null | undefined): string {
+/** Booking's fee percentage without trailing zeros, in the page locale (the same as `formatAmount` beside it):
+ * "75.00" -> "75", "12.50" -> "12.5" (vi-VN "12,5"). */
+export function percentText(pct: string | number | null | undefined, locale?: string): string {
   if (pct === null || pct === undefined || pct === "") return "";
   const n = Number(pct);
   if (!Number.isFinite(n)) return String(pct);
-  return String(Number(n.toFixed(2)));
+  return new Intl.NumberFormat(locale, { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(n);
 }
 
 export interface Cancellation {

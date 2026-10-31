@@ -122,10 +122,14 @@ export function commissionErrorKey(code: string): string {
   return ERRORS.has(code) ? `commission.error.${code}` : "commission.error.other";
 }
 
-/** S262: an FX rate as its pair, rounded for reading: "1 EUR = 1.0870 USD" (the stored rate keeps its 10 decimals). */
-export function rateText(rate: string, from: string, to: string): string {
+/** S262: an FX rate as its pair, rounded for reading, in the page locale (the same as `formatAmount` beside it):
+ * "1 EUR = 1.0870 USD" (vi-VN "1 EUR = 1,0870 USD"; the stored rate keeps its 10 decimals). */
+export function rateText(rate: string, from: string, to: string, locale?: string): string {
   const n = Number(rate);
-  return `1 ${from} = ${Number.isFinite(n) ? n.toFixed(4) : rate} ${to}`;
+  const text = Number.isFinite(n)
+    ? new Intl.NumberFormat(locale, { minimumFractionDigits: 4, maximumFractionDigits: 4 }).format(n)
+    : rate;
+  return `1 ${from} = ${text} ${to}`;
 }
 
 /** S262: when the trip runs ("12 Nov – 15 Nov 2026"; its month when it has no dates yet; "" when neither). */

@@ -5,12 +5,14 @@
 // fee percentage, words a payment without an invoice, and keeps the confirm step out of the scrolling body; after the
 // run the trip shows "Cancellation pending" and offers no move at once (before the page reloads); a cancelled AA line
 // shows no "Confirmed by AA" and words every result code the Booking sync can write, in both languages.
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { aaBadgeKey, aaResultKey, AA_RESULT_CODES, type AaBlock } from "@/lib/aa";
-import { MESSAGES, type MessageKey } from "@/lib/i18n";
+import { aaBadgeKey, aaCancelFailedKey, aaNoAnswer, aaResultKey, AA_RESULT_CODES, type AaBlock } from "@/lib/aa";
+import { fmt, MESSAGES, type MessageKey } from "@/lib/i18n";
 import { invoiceErrorKey, type Invoice } from "@/lib/invoices";
 import type { Line, TripLines } from "@/lib/ledger";
 import { percentText, tripClosedForBilling, type CancelPreview, type Member, type TripView } from "@/lib/pipeline";
@@ -22,7 +24,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh, push: () => {} 
 const { ProposalPanel } = await import("@/components/proposals/ProposalPanel");
 const { InvoicesPanel } = await import("@/components/invoices/InvoicesPanel");
 const { LinesPanel } = await import("@/components/ledger/LinesPanel");
-const { CancelDialog } = await import("@/components/pipeline/StageDialogs");
+const { CancelDialog, Dialog } = await import("@/components/pipeline/StageDialogs");
 const { TripPanel } = await import("@/components/pipeline/TripPanel");
 
 const ID = "00000000-0000-4000-8000-0000000000f1";
@@ -71,6 +73,9 @@ describe("helpers", () => {
     expect(percentText("12.50")).toBe("12.5");
     expect(percentText(25)).toBe("25");
     expect(percentText(null)).toBe("");
+    // In the page locale, as the amounts beside it (formatAmount).
+    expect(percentText("12.50", "vi-VN")).toBe("12,5");
+    expect(percentText("12.50", "en-AU")).toBe("12.5");
   });
   it("words the refusal of a cancelled trip on both cards", () => {
     expect(MESSAGES.en[proposalErrorKey("trip_cancelled") as MessageKey]).toMatch(/cancelled/);
@@ -250,6 +255,28 @@ describe("cancelled AA line", () => {
     }
     expect(aaResultKey("http_409")).toBe("aa.result.other");
   });
+  it("words a failed AA cancel once, and never calls a request AA did not answer a refusal (EN + VI)", () => {
+    expect(aaCancelFailedKey("forbidden")).toBe("aa.result.forbidden");
+    expect(aaCancelFailedKey("http_409")).toBe("aa.result.other");
+    expect(aaCancelFailedKey("gave_up")).toBe("aa.result.gave_up");
+    for (const code of ["booking_timeout", "booking_unavailable", "booking_contract", "token_unavailable"]) {
+      expect(aaNoAnswer(code), code).toBe(true);
+      expect(aaCancelFailedKey(code), code).toBe("cancelTrip.aaNoAnswer");
+    }
+    expect(aaNoAnswer("forbidden")).toBe(false);
+    for (const lang of ["en", "vi"] as const) {
+      const line = fmt(MESSAGES[lang]["cancelTrip.bookingFailed" as MessageKey], {
+        reason: MESSAGES[lang][aaCancelFailedKey("http_409") as MessageKey],
+      });
+      // The unknown code reads one sentence of refusal, not "AA refused: AA refused ...".
+      const refused = lang === "en" ? /refused/g : /từ chối/g;
+      expect(line.match(refused)?.length, line).toBe(1);
+      const noAnswer = fmt(MESSAGES[lang]["cancelTrip.bookingFailed" as MessageKey], {
+        reason: MESSAGES[lang][aaCancelFailedKey("booking_timeout") as MessageKey],
+      });
+      expect(noAnswer).not.toMatch(refused);
+    }
+  });
 });
 
 // ── the cancel dialog ────────────────────────────────────────────────────────────────────────────
@@ -291,8 +318,44 @@ describe("cancel dialog", () => {
     expect(typed).not.toBeNull();
     expect(body.contains(typed)).toBe(false);
     expect(body.contains(c.querySelector("[data-testid=cancel-confirm]"))).toBe(false);
-    expect((body as HTMLElement).style.overflowY).toBe("auto");
+    expect(body.getAttribute("data-crm-dialog")).toBe("body");
+    expect(c.querySelector("[data-testid=cancel-dialog]")!.getAttribute("data-crm-dialog")).toBe("box");
     expect(c.querySelector("[data-testid=cancel-effects]")!.getAttribute("style") ?? "").not.toContain("overflow");
+  });
+  it("shows the more-below cue when only the whole box scrolls (a window under 480 px tall)", async () => {
+    // jsdom has no layout: the box reports more content than it shows, the body none (the short-window CSS).
+    const callbacks: (() => void)[] = [];
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(private cb: () => void) {}
+      observe() { callbacks.push(this.cb); }
+      disconnect() {}
+    });
+    const props: Parameters<typeof Dialog>[0] = { title: "Cancel", onClose: () => {}, footer: createElement("button", null, "Confirm"), moreLabel: "More below", testId: "short", children: null };
+    const c = await mount(createElement(Dialog, props, createElement("p", null, "Body")));
+    const box = c.querySelector<HTMLElement>("[data-crm-dialog=box]")!;
+    const body = c.querySelector<HTMLElement>("[data-crm-dialog=body]")!;
+    for (const [el, scroll, client] of [[box, 800, 350], [body, 600, 600]] as const) {
+      Object.defineProperty(el, "scrollHeight", { configurable: true, value: scroll });
+      Object.defineProperty(el, "clientHeight", { configurable: true, value: client });
+    }
+    expect(c.querySelector("[data-testid=dialog-more]")).toBeNull();
+    await act(async () => callbacks[0]());
+    expect(c.querySelector("[data-testid=dialog-more]")!.textContent).toContain("More below");
+    // Scrolled to the end: the cue goes.
+    Object.defineProperty(box, "scrollTop", { configurable: true, value: 450 });
+    await act(async () => box.dispatchEvent(new Event("scroll")));
+    expect(c.querySelector("[data-testid=dialog-more]")).toBeNull();
+  });
+  it("frames the dialog in CSS: a 90vh fallback before dvh, the body scrolls, the whole box under 480 px of height", () => {
+    const css = readFileSync(path.resolve("app/globals.css"), "utf8").replace(/\s+/g, " ");
+    const box = css.match(/\[data-crm-dialog="box"\] \{([^}]*)\}/)![1];
+    // The fallback comes first, so a browser that drops the dvh declaration keeps 90vh.
+    expect(box.indexOf("max-height: 90vh;")).toBeGreaterThan(-1);
+    expect(box.indexOf("max-height: 90vh;")).toBeLessThan(box.indexOf("max-height: min(90vh, calc(100dvh - 32px))"));
+    expect(css).toContain('[data-crm-dialog="body"] { flex: 1 1 auto; min-height: 0; overflow-y: auto; }');
+    const short = css.slice(css.indexOf("@media (max-height: 479px)"));
+    expect(short).toMatch(/\[data-crm-dialog="box"\] \{ overflow-y: auto; \}/);
+    expect(short).toMatch(/\[data-crm-dialog="body"\] \{ flex: none; overflow-y: visible; \}/);
   });
 });
 

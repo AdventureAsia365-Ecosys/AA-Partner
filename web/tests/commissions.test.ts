@@ -147,7 +147,7 @@ describe("cancel dialog (C12)", () => {
     const c = await mount(createElement(CancelDialog, { tripId: UUID, lang: "en", locale: "en-AU", onDone: () => {}, onClose: () => {} }));
     await setValue(c.querySelector<HTMLSelectElement>("[data-testid=cancel-reason]")!, "client_request");
     expect(c.querySelector("[data-testid=cancel-effects]")!.getAttribute("data-pending")).toBe("true");
-    expect(c.querySelector("[data-testid=cancel-aa-fee]")!.textContent).toBe(`AA refused: ${MESSAGES.en["aa.result.forbidden"]}`);
+    expect(c.querySelector("[data-testid=cancel-aa-fee]")!.textContent).toBe(`Not cancelled yet. ${MESSAGES.en["aa.result.forbidden"]}`);
     expect(c.querySelector("[data-testid=cancel-typed]")).toBeNull();
     await act(async () => c.querySelector<HTMLButtonElement>("[data-testid=cancel-retry] button")!.click());
     expect((fetchMock.mock.calls[1] as [string])[0]).toBe(`/bff/trips/${UUID}/cancel?dry_run=false`);
