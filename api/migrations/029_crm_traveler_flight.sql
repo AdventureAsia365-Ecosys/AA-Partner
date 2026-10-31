@@ -5,8 +5,9 @@
 -- ops hand-off (CRM-26) and the T-48 h "confirm arrival flight" task (R44 step 1) can read them without free text.
 --
 -- Owner: AA-Partner (api/migrations/029_crm_traveler_flight.sql). AA-CIS-Infra db/migrations/crm/ holds the byte copy
--- DB Migrate applies (Migration Copy Guard). Key crm-029 (crm-028 is claimed by a parallel lane; renumber at merge
--- if main has moved: file name, this header, the registration below, app/db.py REQUIRED_SCHEMA_VERSIONS).
+-- DB Migrate applies (Migration Copy Guard). Key crm-029, after crm-028 (AA-952 invoice claims, an expand file on
+-- main); renumber if main moves again: file name, this header, the registration below, app/db.py
+-- REQUIRED_SCHEMA_VERSIONS.
 --
 -- What (DM-7: crm.traveler_flight already has its row in root data standards Part B §7, the F1 vault group: kept until
 -- the agency deletes the traveller or offboards):
@@ -39,8 +40,7 @@
 -- and crm.trip_traveler are allowed); one new nullable column without a default on crm.otp_challenge (not a hot
 -- table; no code reads it with SELECT * / RETURNING *); no other change to an existing object, no DO block. Not re-runnable (no DROP / OR
 -- REPLACE in an expand file): DB Migrate never applies a registered file twice, and the test conftest skips it. The code PR that reads it carries this file and raises
--- REQUIRED_SCHEMA_VERSIONS to crm-029 (expand: one PR). The auto-apply stops at the first unregistered file that is not
--- expand, so a contract crm-028 is applied by hand first.
+-- REQUIRED_SCHEMA_VERSIONS to crm-029 (expand: one PR). crm-028 is expand too, so the auto-apply takes both in order.
 --
 -- Rollback (a forward crm- file, after the code that reads it is reverted): DROP TABLE crm.traveler_flight; DROP
 -- FUNCTION crm.guard_held_flight(); ALTER TABLE crm.otp_challenge DROP COLUMN sent_to_bidx.
