@@ -735,8 +735,10 @@ Design v3 M13, C12 (§2.7, §3.5 "Cancellation"), R17, R21, A-12; lane §2.7 `co
   for a booking still live at AA). Another refusal, or a cancel that ran out of attempts (`gave_up`), opens the owner
   task `aa_cancel_failed` (closed when the cancellation completes), and Cancel again on the pending trip asks Booking
   again. A pending cancellation drops queued quote / hold / refresh requests (`trip_closed`) like a closed stage.
-- **Web**: A-12 `/commissions` (`app/(crm)/commissions/page.tsx`, `components/commissions/CommissionActions.tsx`;
-  assistant: "not available for your role"), the commission and the AA fee on the Bookings tab, the cancel dialog
+- **Web**: A-12 `/commissions` (`app/(crm)/commissions/page.tsx`: the kit DataTable in
+  `components/commissions/CommissionsTable.tsx`, a card per commission on a phone; the kit underline tabs for the
+  filter, `CommissionFilters.tsx`; `CommissionActions.tsx`, success in a page toast; assistant: "not available for
+  your role"), the commission and the AA fee on the Bookings tab, the cancel dialog
   (`components/pipeline/StageDialogs.tsx`: fees, supplier bookings, refunds, commissions to keep, "Ask AA again"),
   the pending badge on the trip and the board, the supplier form field "Commission paid after (days)". Strings in
   `lib/i18nCommission.ts` (EN / VI), BFF lines card AA-957.
