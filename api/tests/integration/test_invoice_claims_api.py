@@ -17,6 +17,10 @@ deposit through the Booking sync (``job:crm_booking_sync``), the overdue reminde
 - The expired link: no bank details, no claim (410 pay_link_expired), no card session (410); a live link without a card
   account is 409 card_not_offered.
 - Another agency's link or member sees nothing of the invoice (404).
+- Terms first (S261 live finding F1): newer booking terms the client has not accepted -> the deposit's pay box shows
+  the ``terms`` state (no bank details, no "I have paid"); a claim or a card session is 409 terms_reaccept_required
+  with nothing written (no claim, no verify task, no bell, the hold not extended); after the re-accept the claim and
+  its one extension work as before.
 - Overdue reminders: the day after the due date, then every 3 days, at most 5; a claimed invoice is not reminded; the
   reminder task closes once nothing is left to chase (paid in full, void, the date rule's sweep).
 """
@@ -38,7 +42,7 @@ from app.invoices import service as invoices
 from app.payments import claims, reminders
 from app.payments import service as payments
 from app.permissions import Action
-from app.proposals import events
+from app.proposals import agreements, events
 from app.proposals import public as page
 from app.tenancy import system_tx, tenant_tx
 from app.vault import Vault
@@ -231,6 +235,63 @@ async def test_claim_extends_the_hold_once_and_the_money_confirms_the_set(app_po
     assert {(line["status"], line["bk_hold_id"]) for line in await _aa_lines(app_pool, s)} == {
         ("confirmed", s["hold_id"])
     }
+
+
+async def test_terms_first_the_pay_box_and_the_claim_wait_for_the_reaccept(app_pool: asyncpg.Pool) -> None:
+    s = await _builder_accepted(app_pool)
+    fake = s["fake"]
+    await _sync(app_pool, s)
+    invoice_id = await _deposit_invoice(app_pool, s)
+    before = (await _raw(app_pool, s, "SELECT hold_expires_at FROM crm.proposal WHERE proposal_id = $1",
+                         _pid(s["v"])))[0]["hold_expires_at"]  # fmt: skip
+    # The agency publishes booking terms after the client accepted: the deposit waits for the client's re-accept.
+    async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:
+        doc = await agreements.create(ctx, kind="booking_terms", version_label="v2026-12", body_text="Our terms.")
+        await agreements.publish(ctx, uuid.UUID(doc["doc_id"]))
+    p = await page.read(app_pool, s["keys"], s["token"])
+    assert p["terms_reaccept"]["version_label"] == "v2026-12"
+    box = _box(p, invoice_id)
+    assert box["pay_window"] == {"state": "terms", "until": before.isoformat()}
+    assert box["pay_by"] is None and not box["can_claim"]
+
+    with pytest.raises(Conflict) as err:
+        await _claim(app_pool, s, invoice_id, fake)
+    assert err.value.code == "terms_reaccept_required" and err.value.extra["version_label"] == "v2026-12"
+    with pytest.raises(Conflict) as err:
+        await page.card_payment(app_pool, PLAIN, s["token"], str(invoice_id), origin=None)
+    assert err.value.code == "terms_reaccept_required"
+    # Nothing written: no claim, no extension asked, the hold where it was, no verify task, no bell.
+    assert fake.extend_keys == []
+    sql = (
+        "SELECT i.status, i.claimed_at, i.hold_extended_at, i.hold_extend_code, p.hold_expires_at "
+        "FROM crm.invoice i JOIN crm.proposal p ON p.proposal_id = i.proposal_id WHERE i.invoice_id = $1"
+    )
+    row = (await _raw(app_pool, s, sql, invoice_id))[0]
+    assert (row["status"], row["claimed_at"], row["hold_extended_at"], row["hold_extend_code"]) == (
+        "open",
+        None,
+        None,
+        None,
+    )
+    assert row["hold_expires_at"] == before
+    assert await _task(app_pool, s, claims.VERIFY_TASK) == []
+    assert "invoice.payment_claimed" not in await _bell_names(app_pool, s)
+    # The agent's Record payment says the same.
+    with pytest.raises(Conflict) as err:
+        await _pay(app_pool, s, invoice_id, "1")
+    assert err.value.code == "terms_reaccept_required"
+
+    again = p["terms_reaccept"]
+    await page.reaccept_terms(
+        app_pool, s["keys"], PLAIN, s["token"],
+        {"full_name": "Grace Lee", "accept_terms": True, "doc_id": again["doc_id"], "doc_sha256": again["body_sha256"]},
+        origin=None,
+    )  # fmt: skip
+    box = _box(await page.read(app_pool, s["keys"], s["token"]), invoice_id)
+    assert box["pay_window"]["state"] == "open" and box["can_claim"] and box["pay_by"]["instructions"] == BANK
+    out = await _claim(app_pool, s, invoice_id, fake)
+    assert out["extension"]["code"] == "extended" and len(fake.extend_keys) == 1
+    assert [t["status"] for t in await _task(app_pool, s, claims.VERIFY_TASK)] == ["open"]
 
 
 async def test_a_claim_booking_cannot_answer_is_extended_by_the_sync(app_pool: asyncpg.Pool) -> None:

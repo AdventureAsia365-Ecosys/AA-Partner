@@ -34,6 +34,7 @@ from decimal import Decimal
 from typing import Any
 
 from app.errors import Conflict, Invalid, NotFound
+from app.esign import terms as esign_terms
 from app.mail import conversations, templates
 from app.permissions import Action, require
 from app.proposals import builder, prep_packs, rules, service
@@ -80,11 +81,18 @@ async def current_hash(ctx: TenantContext, vault: Vault, row: Any) -> str:
     if row["price_hash"]:
         return bytes(row["price_hash"]).hex()
     body = await vault.decrypt("proposal", "body_enc", row["proposal_id"], row["body_enc"])
-    terms = await ctx.conn.fetchval(TERMS_SHA_SQL, row["terms_doc_id"]) if row["terms_doc_id"] else None
+    terms_doc_id, terms = row["terms_doc_id"], None
+    if terms_doc_id is not None:
+        terms = await ctx.conn.fetchval(TERMS_SHA_SQL, terms_doc_id)
+    else:
+        # Send pins the agency's published booking terms to a draft without terms (service.pin_current_terms).
+        current = await esign_terms.current(ctx)
+        if current is not None:
+            terms_doc_id, terms = current["doc_id"], current["body_sha256"]
     return service.price_hash(
         proposal_id=row["proposal_id"], version=row["version"], currency=row["currency"], total=row["total_amount"],
         deposit=row["deposit_amount"], balance_due_on=row["balance_due_on"], body=body,
-        terms_doc_id=row["terms_doc_id"], terms_sha256=bytes(terms) if terms else None,
+        terms_doc_id=terms_doc_id, terms_sha256=bytes(terms) if terms else None,
     ).hex()  # fmt: skip
 
 

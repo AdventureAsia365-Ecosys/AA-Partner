@@ -252,6 +252,20 @@ async def test_get_and_lists() -> None:
 
 
 @pytest.mark.asyncio
+async def test_lists_carry_the_agency_timezone() -> None:
+    """S261 live finding F2: the claim note's deadline is printed in the agency timezone (with its label) on the
+    trip's Invoices card and on /payments alike; both lists name it."""
+    conn = _conn().on("FROM crm.invoice WHERE trip_id", []).on("FROM crm.invoice i JOIN crm.trip", [])
+    conn.on("timezone FROM crm.tenant_settings LIMIT 1", "Asia/Bangkok")
+    assert (await inv.list_for_trip(tenant_ctx(conn), TRIP))["timezone"] == "Asia/Bangkok"
+    assert (await inv.receivables(tenant_ctx(conn), None))["timezone"] == "Asia/Bangkok"
+    # No settings row, or a name the zone database does not know: the default.
+    for stored in (None, "", "Mars/Olympus", "../etc"):
+        conn = _conn().on("FROM crm.invoice WHERE trip_id", []).on("timezone FROM crm.tenant_settings LIMIT 1", stored)
+        assert (await inv.list_for_trip(tenant_ctx(conn), TRIP))["timezone"] == inv.DEFAULT_TZ == "Asia/Ho_Chi_Minh"
+
+
+@pytest.mark.asyncio
 async def test_receivables() -> None:
     with _raises(Invalid, "invalid_status"):
         await inv.receivables(tenant_ctx(_conn()), "unknown")

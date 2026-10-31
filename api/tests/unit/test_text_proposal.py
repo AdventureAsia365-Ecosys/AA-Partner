@@ -264,6 +264,39 @@ async def test_a_text_draft_hashes_as_send_would_fix_it() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_text_draft_without_terms_hashes_with_the_published_terms_send_pins() -> None:
+    """S261 live finding (AA-952 x AA-955): Send pins the agency's published booking terms to a version without
+    terms (:func:`service.pin_current_terms`), so the preview's hash is computed with them too."""
+    current = {"doc_id": uuid.uuid4(), "version_label": "v2026-10", "body_text": "Terms", "body_sha256": b"c" * 32,
+               "published_at": dt.datetime(2026, 10, 1, tzinfo=dt.UTC)}  # fmt: skip
+    conn = _builder_conn(_row(kind="text", status="draft", price_hash=None, terms_doc_id=None))
+    conn.on("kind = 'booking_terms' AND status = 'published'", current)
+    want = service.price_hash(proposal_id=P, version=2, currency="USD ", total=Decimal("300"), deposit=Decimal("90"),
+                              balance_due_on=dt.date(2026, 11, 1), body="Intro", terms_doc_id=current["doc_id"],
+                              terms_sha256=b"c" * 32).hex()  # fmt: skip
+    out = await text_proposal.preview(tenant_ctx(conn), FakeVault(), P, fmt="email", locale="en")
+    assert out["price_hash"] == want
+
+
+@pytest.mark.asyncio
+async def test_pin_current_terms() -> None:
+    current = {"doc_id": uuid.uuid4(), "version_label": "v2026-10", "body_text": "Terms", "body_sha256": b"c" * 32,
+               "published_at": dt.datetime(2026, 10, 1, tzinfo=dt.UTC)}  # fmt: skip
+    conn = ScriptedConn().on("kind = 'booking_terms' AND status = 'published'", current)
+    ctx = tenant_ctx(conn)
+    row = await service.pin_current_terms(ctx, {"proposal_id": P, "terms_doc_id": None})
+    assert row["terms_doc_id"] == current["doc_id"]
+    assert conn.sql("SET terms_doc_id = $2 WHERE proposal_id = $1 AND terms_doc_id IS NULL") == [(P, current["doc_id"])]
+    assert ctx.audit_events[-1].action == "proposal_terms_pin" and ctx.audit_events[-1].reason == "current_terms"
+    named = {"proposal_id": P, "terms_doc_id": uuid.uuid4()}
+    conn = ScriptedConn().on("kind = 'booking_terms' AND status = 'published'", current)
+    assert await service.pin_current_terms(tenant_ctx(conn), named) is named and not conn.calls
+    conn = ScriptedConn()  # the agency has no published terms
+    blank = {"proposal_id": P, "terms_doc_id": None}
+    assert await service.pin_current_terms(tenant_ctx(conn), blank) is blank and not conn.sql("SET terms_doc_id")
+
+
+@pytest.mark.asyncio
 async def test_card_r_a_differing_price_hash_blocks_the_send(monkeypatch: pytest.MonkeyPatch) -> None:
     called: list[str] = []
 

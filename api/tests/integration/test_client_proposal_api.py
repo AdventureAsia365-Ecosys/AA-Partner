@@ -25,7 +25,7 @@ import asyncpg
 import pytest
 
 from app.errors import Conflict, Invalid, NotFound
-from app.proposals import aa_options, builder, events, service
+from app.proposals import aa_options, agreements, builder, events, service
 from app.proposals import public as page
 from app.settings import Settings
 from app.tenancy import system_tx, tenant_tx
@@ -801,3 +801,32 @@ async def test_a_rehold_quote_does_not_count_the_seats_of_the_versions_own_hold(
     # Anyone else (another proposal) still finds the departure full: h2 holds those seats now.
     other = {"proposal_ref": "crm-proposal:other", "proposal_version": 1}
     assert fake._quote_availability(other, {"line_ref": tour, "pax": {"adult": 1}}) == "sold_out"
+
+
+async def test_a_builder_version_carries_the_published_terms_and_no_reaccept_waits(app_pool: asyncpg.Pool) -> None:
+    """S261 live finding (AA-952 x AA-955): a builder version saved no terms, so the client accepted none and the
+    deposit then waited for a re-accept. With booking terms published, a new version starts with them, a version
+    whose terms were cleared is pinned to them at publish, the client accepts them with the proposal and the deposit
+    waits for nothing (design v3 F6 step 3, WF-7, R34)."""
+    s = await _setup(app_pool)
+    async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:
+        doc = await agreements.create(ctx, kind="booking_terms", version_label="v2026-12", body_text="Our terms.")
+        await agreements.publish(ctx, uuid.UUID(doc["doc_id"]))
+    terms_id = doc["doc_id"]
+    v = await _publishable(app_pool, s)
+    assert v["terms_doc_id"] == terms_id  # the skeleton starts with the published terms
+    v = await _as(app_pool, s, "agent", builder.update_settings, _pid(v), v["edit_seq"], {"terms_doc_id": None})
+    assert v["terms_doc_id"] is None  # cleared by hand (the API path the live check used) ...
+    v = await _as(app_pool, s, "agent", builder.publish, _pid(v), v["edit_seq"], acknowledge_selection_seq=None)
+    assert v["terms_doc_id"] == terms_id  # ... and pinned again at publish
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        sent = await service.send(ctx, Vault(s["keys"], ctx), _pid(v))
+    s["token"] = sent["link_path"].rsplit("/", 1)[1]
+    p = await page.read(app_pool, s["keys"], s["token"])
+    assert p["terms"]["version_label"] == "v2026-12"
+    with pytest.raises(Conflict) as err:  # the page shows the terms: accepting without them is refused
+        await _accept(app_pool, s, p)
+    assert err.value.code == "terms_changed"
+    accepted = await _accept(app_pool, s, p, terms_doc_id=terms_id)
+    assert accepted["status"] == "accepted" and accepted["terms_reaccept_required"] is False
+    assert (await page.read(app_pool, s["keys"], s["token"]))["terms_reaccept"] is None

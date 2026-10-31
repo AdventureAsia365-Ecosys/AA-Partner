@@ -114,6 +114,10 @@ async def test_deposit_and_service_fee_invoices(app_pool: asyncpg.Pool) -> None:
     assert [r["number"] for r in listed["invoices"]] == ["SV-000001"] and listed["invoices"][0]["overdue"] is False
     trip_list = await _as(app_pool, s, "assistant", lambda ctx: invoices.list_for_trip(ctx, s["trip"]))
     assert len(trip_list["invoices"]) == 2
+    # S261 F2: both lists name the agency timezone the claim note's deadline is printed in.
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        stored = await ctx.conn.fetchval("SELECT timezone FROM crm.tenant_settings")
+    assert trip_list["timezone"] == listed["timezone"] == (stored or invoices.DEFAULT_TZ)
 
     async with tenant_tx(app_pool, s["who"]["assistant"], s["tenant"]) as ctx:
         doc = await invoices.document(ctx, Vault(s["keys"], ctx), deposit)

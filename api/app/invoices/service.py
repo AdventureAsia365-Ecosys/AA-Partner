@@ -17,6 +17,10 @@ trip's Proposal tab). Routes in :mod:`app.routers.invoices`; the document in :mo
   ``paid_amount`` / ``refunded_amount`` / ``balance_amount`` (total - payments; a refund never reopens an invoice), and
   the document prints them with the agency's own pay-by instructions (its manual payment method).
 
+The trip list and the receivables carry the agency ``timezone`` (``crm.tenant_settings.timezone``): the web prints the
+claim note's deadline (the AA hold's expiry) in it with a zone label, the same on the server and in the browser (S261
+live finding F2, the pattern of the calendar's agency timezone).
+
 Every function takes the open context and never opens one. Amounts are the client's sell amounts (no net, cost or
 margin key: nothing for the margin serializer to strip). Totals are computed here, rounded half up to the cent.
 """
@@ -28,6 +32,7 @@ import re
 import uuid
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import asyncpg
 
@@ -79,6 +84,9 @@ ON CONFLICT (tenant_id) DO UPDATE
        invoice_due_days = EXCLUDED.invoice_due_days, service_fee_enabled = EXCLUDED.service_fee_enabled
 """
 TRIP_SQL = "SELECT trip_id, stage FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL"
+TIMEZONE_SQL = "SELECT timezone FROM crm.tenant_settings LIMIT 1"
+# As app.calendar.events / app.duty.service: an agency without settings is a Dev seed in Viet Nam.
+DEFAULT_TZ = "Asia/Ho_Chi_Minh"
 SCHEDULE_SQL = """
 SELECT s.schedule_id, s.trip_id, s.proposal_id, s.kind, s.amount, s.currency, s.due_on, s.status,
        p.status AS proposal_status, p.version
@@ -495,6 +503,17 @@ async def full(ctx: AnyContext, invoice_id: uuid.UUID) -> dict[str, Any]:
     )
 
 
+async def agency_timezone(ctx: AnyContext) -> str:
+    """The agency's IANA timezone name (``tenant_settings.timezone``); the default when unset or unknown."""
+    name = await ctx.conn.fetchval(TIMEZONE_SQL)
+    if not isinstance(name, str) or not name:
+        return DEFAULT_TZ
+    try:
+        return str(ZoneInfo(name))
+    except (ZoneInfoNotFoundError, ValueError):
+        return DEFAULT_TZ
+
+
 async def get(ctx: TenantContext, invoice_id: uuid.UUID) -> dict[str, Any]:
     out = await full(ctx, invoice_id)
     ctx.audit("view", "allowed", "invoice", str(invoice_id))
@@ -511,6 +530,7 @@ async def list_for_trip(ctx: TenantContext, trip_id: uuid.UUID) -> dict[str, Any
     ctx.audit("list_view", "allowed", "invoice", str(trip_id), object_ids=tuple(str(r["invoice_id"]) for r in rows))
     return {
         "trip_id": str(trip_id),
+        "timezone": await agency_timezone(ctx),
         "invoices": [
             invoice_view(
                 r,
@@ -537,6 +557,7 @@ async def receivables(ctx: TenantContext, status: str | None) -> dict[str, Any]:
     ctx.audit("list_view", "allowed", "invoice", None, object_ids=tuple(str(r["invoice_id"]) for r in rows))
     return {
         "today": today.isoformat(),
+        "timezone": await agency_timezone(ctx),
         "status": status,
         "invoices": [
             {
