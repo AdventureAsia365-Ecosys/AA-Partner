@@ -332,9 +332,7 @@ async def tiles(ctx: TenantContext, sc: Scope) -> dict[str, Any]:
     }
 
 
-def period_info(sc: Scope, prev_window: periods.Window | None = None) -> dict[str, Any]:
-    if prev_window is None and sc.compare == "previous_year":
-        prev_window = sc.window.shift_years(-1)
+def period_info(sc: Scope, prev_window: periods.Window | None) -> dict[str, Any]:
     return {
         **sc.window.as_dict(),
         "today": sc.today.isoformat(),
