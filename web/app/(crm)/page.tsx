@@ -62,14 +62,16 @@ export default async function HomePage() {
                     ) : (
                       <Circle size={18} color={K.muted2} aria-hidden style={{ flex: "none" }} />
                     )}
-                    {s.done ? (
-                      <span style={{ color: K.muted, textDecoration: "line-through" }}>{t(lang, `onb.step.${s.key}` as MessageKey)}</span>
-                    ) : (
-                      <a href={s.href} style={{ color: K.accentDeep }}>
-                        {t(lang, `onb.step.${s.key}` as MessageKey)}
-                      </a>
-                    )}
-                    {s.required && !s.done && <span style={{ fontSize: 11.5, color: K.muted }}>· {t(lang, "onb.required")}</span>}
+                    <span style={{ minWidth: 0 }}>
+                      {s.done ? (
+                        <span style={{ color: K.muted, textDecoration: "line-through" }}>{t(lang, `onb.step.${s.key}` as MessageKey)}</span>
+                      ) : (
+                        <Link href={s.href} style={{ color: K.accentDeep }}>
+                          {t(lang, `onb.step.${s.key}` as MessageKey)}
+                        </Link>
+                      )}
+                      {s.required && !s.done && <span style={{ fontSize: 11.5, color: K.muted }}> · {t(lang, "onb.required")}</span>}
+                    </span>
                   </li>
                 ))}
               </ul>

@@ -89,7 +89,7 @@ export function DuplicatesView({ view, owner, lang, locale }: { view: View; owne
                       {c.display_name}
                     </a>
                     <span style={{ fontSize: 12.5, color: K.muted }}>
-                      {fmt(t(lang, "onb.dup.trips"), { n: c.trips })} · {fmt(t(lang, "onb.dup.added"), { date: formatDate(new Date(c.created_at), locale) })}
+                      {c.trips === 1 ? t(lang, "onb.dup.trip1") : fmt(t(lang, "onb.dup.trips"), { n: c.trips })} · {fmt(t(lang, "onb.dup.added"), { date: formatDate(new Date(c.created_at), locale) })}
                     </span>
                     {owner && (
                       <div style={{ marginTop: 6 }}>

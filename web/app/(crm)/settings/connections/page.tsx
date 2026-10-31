@@ -23,7 +23,7 @@ export default async function ConnectionsPage() {
       <Link href="/settings" style={{ fontSize: 13 }}>
         ← {t(ctx.lang, "settings.title")}
       </Link>
-      <PageTitle title={t(ctx.lang, "onb.settings.connections")} subtitle={t(ctx.lang, "onb.conn.subtitle")} />
+      <PageTitle title={t(ctx.lang, "onb.settings.connections")} subtitle={t(ctx.lang, "onb.conn.pageSubtitle")} />
       {!view || !view.ok ? (
         <ErrorState message={t(ctx.lang, "onb.error")} />
       ) : (

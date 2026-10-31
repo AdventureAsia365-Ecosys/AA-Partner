@@ -55,6 +55,7 @@ export const onboardingEn = {
   "onb.ack.version": "Text version {version}",
 
   "onb.conn.title": "Connections",
+  "onb.conn.pageSubtitle": "The services your agency connects, who bills you for each, and your privacy settings.",
   "onb.conn.subtitle": "The accounts your agency brings, with their status. Passwords and keys are never shown.",
   "onb.conn.mailbox": "Mailbox",
   "onb.conn.card_payments": "Card payments (Stripe)",
@@ -213,6 +214,7 @@ export const onboardingEn = {
   "onb.dup.field.email": "e-mail",
   "onb.dup.field.phone": "phone",
   "onb.dup.trips": "{n} trips",
+  "onb.dup.trip1": "1 trip",
   "onb.dup.added": "Added {date}",
   "onb.dup.keep": "Keep this one",
   "onb.dup.confirmTitle": "Merge these clients?",
@@ -329,6 +331,7 @@ export const onboardingVi: Record<OnboardingKey, string> = {
   "onb.ack.version": "Phiên bản nội dung {version}",
 
   "onb.conn.title": "Kết nối",
+  "onb.conn.pageSubtitle": "Các dịch vụ đại lý của bạn kết nối, ai tính phí từng dịch vụ, và cài đặt quyền riêng tư.",
   "onb.conn.subtitle": "Các tài khoản đại lý của bạn mang vào, kèm trạng thái. Mật khẩu và khóa không bao giờ được hiển thị.",
   "onb.conn.mailbox": "Hộp thư",
   "onb.conn.card_payments": "Thanh toán thẻ (Stripe)",
@@ -487,6 +490,7 @@ export const onboardingVi: Record<OnboardingKey, string> = {
   "onb.dup.field.email": "e-mail",
   "onb.dup.field.phone": "số điện thoại",
   "onb.dup.trips": "{n} chuyến đi",
+  "onb.dup.trip1": "1 chuyến đi",
   "onb.dup.added": "Thêm ngày {date}",
   "onb.dup.keep": "Giữ khách này",
   "onb.dup.confirmTitle": "Gộp hai khách này?",

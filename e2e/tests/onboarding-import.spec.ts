@@ -34,6 +34,14 @@ async function shot(page: Page, name: string) {
   await page.screenshot({ path: `${SHOTS}/onboarding-${name}.png`, fullPage: true });
 }
 
+/** Choose the file until it sticks: a file set before React hydrates the page is dropped silently (lesson S247). */
+async function chooseFile(page: Page, name: string, body: string) {
+  await expect(async () => {
+    await page.getByTestId("onb-import-file").setInputFiles({ name, mimeType: "text/csv", buffer: Buffer.from(body) });
+    await expect(page.getByTestId("onb-import-preview").getByRole("button")).toBeEnabled({ timeout: 500 });
+  }).toPass({ timeout: 15_000 });
+}
+
 async function count(page: Page, outcome: string): Promise<number> {
   return Number(await page.getByTestId(`onb-count-${outcome}`).first().innerText());
 }
@@ -70,17 +78,13 @@ test.describe("CRM-31 onboarding and import on Dev", () => {
     // Card R: a file without the name column is refused, the column named, nothing written.
     await page.goto(`${PARTNER}/settings/import`);
     await expect(page.getByTestId("onb-import")).toBeVisible({ timeout: 15_000 });
-    await page.getByTestId("onb-import-file").setInputFiles({
-      name: "no-name.csv",
-      mimeType: "text/csv",
-      buffer: Buffer.from(`client_ref,email\nE2E-${RUN}-9,x.${RUN}@example.test\n`),
-    });
+    await chooseFile(page, "no-name.csv", `client_ref,email\nE2E-${RUN}-9,x.${RUN}@example.test\n`);
     await page.getByTestId("onb-import-preview").getByRole("button").click();
     await expect(page.getByTestId("onb-import-error")).toContainText("name", { timeout: 20_000 });
     await shot(page, "02-missing-column");
 
     // Dry run, then import.
-    await page.getByTestId("onb-import-file").setInputFiles({ name: "clients.csv", mimeType: "text/csv", buffer: Buffer.from(CSV) });
+    await chooseFile(page, "clients.csv", CSV);
     await page.getByTestId("onb-import-preview").getByRole("button").click();
     await expect(page.getByTestId("onb-import-report")).toBeVisible({ timeout: 20_000 });
     expect(await count(page, "create")).toBe(2);
@@ -93,7 +97,7 @@ test.describe("CRM-31 onboarding and import on Dev", () => {
     await shot(page, "04-imported");
 
     // Card E: the same file again creates nothing.
-    await page.getByTestId("onb-import-file").setInputFiles({ name: "clients.csv", mimeType: "text/csv", buffer: Buffer.from(CSV) });
+    await chooseFile(page, "clients.csv", CSV);
     await page.getByTestId("onb-import-preview").getByRole("button").click();
     await expect(page.getByTestId("onb-import-report")).toBeVisible({ timeout: 20_000 });
     expect(await count(page, "create")).toBe(0);
