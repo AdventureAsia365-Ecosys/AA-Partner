@@ -90,6 +90,8 @@ def session_view(row: asyncpg.Record | dict[str, Any]) -> dict[str, Any]:
 
 
 async def support_access(ctx: TenantContext) -> dict[str, Any]:
+    from app.invoices.service import agency_timezone  # the agency's zone, as the invoices list sends it
+
     grant = await ctx.conn.fetchrow(GRANT_SQL)
     rows = await ctx.conn.fetch(SESSIONS_SQL, HISTORY_DAYS, HISTORY_LIMIT)
     sessions = [session_view(r) for r in rows]
@@ -112,6 +114,8 @@ async def support_access(ctx: TenantContext) -> dict[str, Any]:
         "days_min": DAYS_MIN,
         "days_max": DAYS_MAX,
         "days_default": DAYS_DEFAULT,
+        # S262 round 3 (AA-957 live): the banner and Settings print the window's end in the agency's zone, not UTC.
+        "timezone": await agency_timezone(ctx),
     }
 
 

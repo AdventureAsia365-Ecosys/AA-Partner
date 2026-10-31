@@ -207,3 +207,14 @@ async def test_a_trip_whose_cancellation_waits_for_aa_is_not_deleted() -> None:
 def test_undo_claim_forgets_the_claim() -> None:
     sql = flat(commissions.UNCLAIM_SQL)
     assert "claimed_at = NULL" in sql and "claim_ref = NULL" in sql and "status = 'expected'" in sql
+
+
+@pytest.mark.asyncio
+async def test_the_support_access_view_names_the_agency_zone() -> None:
+    """S262 round 3: the support banner and Settings print the window's end in the agency's zone (it printed UTC)."""
+    from app.invoices.service import TIMEZONE_SQL
+    from app.support import grants
+
+    conn = ScriptedConn().on(flat(TIMEZONE_SQL), "Asia/Bangkok")
+    assert (await grants.support_access(tenant_ctx(conn)))["timezone"] == "Asia/Bangkok"
+    assert (await grants.support_access(tenant_ctx(ScriptedConn())))["timezone"] == "Asia/Ho_Chi_Minh"  # unset
