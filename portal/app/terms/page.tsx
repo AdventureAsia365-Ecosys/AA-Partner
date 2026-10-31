@@ -3,7 +3,8 @@
 // only (what the platform does, who publishes, the AI notice, suspension); commercial and legal terms are
 // left [to be confirmed] for counsel. AA-820: §3 is the plain-English summary of the AI Schedule
 // (.2–.6, root docs/legal/tenant-terms-ai-clause-draft.md v0.2); the full Schedule is attached to the
-// partner agreement. Still a draft pending legal review. Not indexed while it is a draft.
+// partner agreement. Still a draft pending legal review. Not indexed while it is a draft. S262 (v0.3): the provider
+// list in §3 follows the AI Use Register (root docs/architecture/ai-use-register.md, ADR 0009).
 import type { Metadata } from "next";
 import LegalPage, { A, LegalSection } from "../_legal/LegalPage";
 import { SUPPORT_EMAIL } from "../_kit/core/brand";
@@ -51,9 +52,15 @@ export default function TermsPage() {
             publish.&rdquo;
           </li>
           <li>
-            The content is written with models from third-party providers, including Anthropic&apos;s Claude through
-            Amazon Web Services. You must follow their usage policies, including the{" "}
-            <A href="https://www.anthropic.com/legal/aup">Anthropic Usage Policy</A> and the{" "}
+            The content is written and checked with models from third-party providers: Anthropic&apos;s Claude, through
+            Amazon Bedrock (Amazon Web Services), writes it, and OpenAI models, also through Amazon Bedrock, review,
+            score and check it. If Amazon Bedrock is unavailable, the Anthropic API or the OpenAI API, used directly
+            and with a spending cap, may be used as a fallback.
+          </li>
+          <li>
+            You must follow these providers&apos; usage policies, including the{" "}
+            <A href="https://www.anthropic.com/legal/aup">Anthropic Usage Policy</A>, the{" "}
+            <A href="https://openai.com/policies/usage-policies/">OpenAI Usage Policies</A> and the{" "}
             <A href="https://aws.amazon.com/aup/">AWS Acceptable Use Policy</A>, as well as these terms.
           </li>
           <li>
