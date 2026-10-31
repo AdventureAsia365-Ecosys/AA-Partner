@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from app.audit_export import registry
 from app.errors import Invalid
 from app.jobs.kinds import OPS_RELEASE_SYNC
 from app.jobs.payload_guard import check_payload
@@ -368,3 +369,35 @@ def test_the_routes_tell_aa_ops_only_after_the_commit(
         assert _lines(caplog, service.WITHDRAWN_EVENT) == [
             f"crm_ops_release_withdrawn tenant_id={TENANT} ops_release_id={TRIP} reason={reason}"
         ]
+
+
+@pytest.mark.asyncio
+async def test_the_board_visits_every_registered_agency(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The registry lists every agency ever registered (offboarded and trashed too) in tenant_id order; the board once
+    stopped at the 500th, so an agency whose id sorted later lost its releases and withdrawal notices on S-02."""
+    ids = sorted(uuid.uuid4() for _ in range(700))
+    visited: list[uuid.UUID] = []
+
+    async def agencies(_pool: Any) -> list[Any]:
+        return [registry.Agency(tenant_id=i, exported_until=dt.datetime.now(dt.UTC), verified_until=None, last_seq=0)
+                for i in ids]  # fmt: skip
+
+    class _Tx:
+        def __init__(self, _pool: Any, _caller: Any, tenant_id: uuid.UUID) -> None:
+            self.tenant_id = tenant_id
+
+        async def __aenter__(self) -> Any:
+            return self.tenant_id
+
+        async def __aexit__(self, *_: object) -> bool:
+            return False
+
+    async def agency_board(tenant_id: uuid.UUID, _horizon: int) -> list[dict[str, Any]]:
+        visited.append(tenant_id)
+        return [{"start_date": None, "agency_name": "A", "trip_id": str(tenant_id)}]
+
+    monkeypatch.setattr(registry, "agencies", agencies)
+    monkeypatch.setattr(staff, "ops_tx", _Tx)
+    monkeypatch.setattr(staff, "_agency_board", agency_board)
+    got = await staff.board(None, None)  # type: ignore[arg-type]
+    assert visited == ids and len(got["items"]) == len(ids)

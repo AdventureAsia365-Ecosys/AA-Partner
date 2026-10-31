@@ -45,7 +45,6 @@ log = logging.getLogger(__name__)
 BOARD_PAST_DAYS = 14
 BOARD_HORIZON_DAYS = 120
 BOARD_MAX_PER_AGENCY = 200
-BOARD_MAX_AGENCIES = 500
 # The manifest columns a supplier may receive (Q1 3.10 minimal set; never insurance, which is the agency's matter).
 MANIFEST_FIELDS = ("name", "age_band", "dietary", "mobility", "arrival_flight", "departure_flight")
 MANIFEST_DEFAULT = ("name", "age_band", "dietary", "mobility")
@@ -108,10 +107,13 @@ def _trip_ref(trip_id: uuid.UUID) -> str:
 async def board(
     pool: asyncpg.Pool, caller: Caller, *, horizon_days: int = BOARD_HORIZON_DAYS, booking_admin_url: str = ""
 ) -> dict[str, Any]:
-    """The S-02 list across agencies (no personal data)."""
+    """The S-02 list across agencies (no personal data).
+
+    Every registered agency is visited (like the job and the other cross-agency staff reads): the registry lists
+    offboarded and trashed agencies too, in tenant_id order, so a cap on that list hid whole agencies (their live
+    releases and their withdrawal notices) by the luck of their id, not by any rule AA ops could see."""
     items: list[dict[str, Any]] = []
-    agencies = await registry.agencies(pool)
-    for agency in agencies[:BOARD_MAX_AGENCIES]:
+    for agency in await registry.agencies(pool):
         try:
             async with ops_tx(pool, caller, agency.tenant_id) as ctx:
                 items.extend(await _agency_board(ctx, horizon_days))
