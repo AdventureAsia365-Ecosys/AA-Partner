@@ -804,6 +804,35 @@ Design v3 §6.3 CRM-18 (M4 base, M7 manual, M11 base, M12 v0); migration crm-016
     409 `already_invited` (the lead never rotates another adult's link).
   - A **lost or cancelled** trip has no portal (404 `link_not_found`).
 
+## CRM-24b offline PWA (AA-954)
+
+Design v3 C-09 "Itinerary (installable, offline)", R16, §2.9 rule 7 (Fix A2), WF-8; decisions in
+`docs/implementation-notes/AA-954.md`. No migration.
+
+- **Installable** (client host only, `/c/*`): `/c/portal.webmanifest` (`lib/portalManifest.ts`; `id`, `start_url` and
+  `scope` `/c/t`, generic name "My trip" / "Chuyến đi của tôi" by `?lang=vi`, the app's own mark as PNG icons under
+  `web/public/c/icons/`, drawn by `tools/pwa/pwa_icons.py`), the iOS meta and apple-touch icon on `/c/t`, and the
+  "Install trip app" button (`beforeinstallprompt`) or the iPhone "Share, then Add to Home Screen" hint.
+- **Service worker** `/c/sw.js` (`lib/portalServiceWorker.ts`, scope `/c/t`): keeps the **page shell only** (the
+  server-rendered `/c/t`, which holds UI strings and the date locale, and the `/_next/static/*` files that page loaded,
+  sent by the page once a traveller is signed in and replaced as a whole); network first for `/c/t`, cache first for
+  static files. It never answers or stores an API call, a document, the link landing `/c/t/<token>` or another origin.
+- **Itinerary-only copy** (`lib/offlineItinerary.ts`): the page keeps one Cache Storage entry
+  (`aa-portal-data-v1`, `/c/t/offline-itinerary.json`) built by **copying named fields** of the signed-in home: the
+  trip title and dates, the days (date, title, place, zone), the services without class or price, the agency name and
+  `agency_contact`, `saved_at`, `link_expires_at`, `offline_ref`. Never Stage 3, the envelope, documents, flights,
+  names, the group or payments (card R: `web/tests/offlinePwa.test.ts` inspects every cache).
+- **Rules** (server wins, nothing is written back): every signed-in answer replaces the copy (also after "Switch");
+  a signed-out answer keeps it only when its `offline_ref` is this link's; 404 (link gone) clears; sign-out and
+  "Remove from this device" clear every `aa-portal-*` cache; a copy past `link_expires_at` is never shown and is
+  dropped. No network: the page shows the copy with "last updated" (card E); the `online` event reloads the home. All
+  writes need a connection ("You are offline"); there is no background sync and no push (v1).
+- **API** (`app/portal/public.py` `home`): both answers carry `offline_ref` (a hash of the token hash under its own
+  prefix: opaque, stable per link); a signed-in answer adds `link_expires_at` (the link's expiry, `ClientLink.expires_at`)
+  and `agency_contact` (`{"email"}` of the agency mailbox the portal mails come from: the trip owner's, else the
+  agency's; `null` without one). `api/tests/integration/test_portal_offline_api.py`.
+- Dev E2E: `e2e/tests/lifecycle-thin.spec.ts` step 6b (offline reload, sign-out clears the caches).
+
 ## CRM-34 reports + AA insights (AA-966)
 
 Spec modules 16 and 17, design v3 A-14 Reports, A-01 Home tiles, S-03, R23 (Lost analytics), R28 (year-on-year

@@ -232,7 +232,11 @@ async def test_the_thin_lifecycle_end_to_end(app_pool: asyncpg.Pool) -> None:
     async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
         early = await access.invite(ctx, s["trip"], s["lead"])
     lead_token = _token(early["link_path"])
-    assert (await portal.home(app_pool, lead_token, None)) == {"agency_name": "Sen Vàng Travel", "signed_in": False}
+    assert (await portal.home(app_pool, lead_token, None)) == {
+        "agency_name": "Sen Vàng Travel",
+        "signed_in": False,
+        "offline_ref": portal.offline_ref(lead_token),
+    }
     code = await portal.request_code(
         app_pool, s["keys"], ECHO, lead_token, purpose="sign_in", session=None, origin=None
     )

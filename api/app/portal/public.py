@@ -23,7 +23,11 @@ masked e-mail hint of the traveller's own address.
   it as an httpOnly cookie; only its SHA-256 is stored) and moves the access invited -> active.
 - :func:`home`: what the signed-in traveller sees: the agency, the trip dates, their own Stage 3 progress (field codes,
   never values), the waiver to sign, and for the lead the party's progress (counts and roles, no names) and the
-  payment schedule. Without a session: the agency name and ``signed_in: false`` only.
+  payment schedule. Without a session: the agency name and ``signed_in: false`` only. AA-954 (card CRM-24b, R16,
+  §2.9 rule 7): both answers carry ``offline_ref``, an opaque value of the link (never its token), so the installed
+  page can tell whether the itinerary it keeps offline belongs to this link; a signed-in answer adds
+  ``link_expires_at`` (the page drops its offline copy then) and ``agency_contact`` (the agency's own mailbox address
+  the portal mails come from, the trip owner's first; ``null`` without one).
 - :func:`submit_stage3`: **403 ``stage3_locked`` before the deposit is paid** (card R; the database refuses too,
   CRM32; a ``manual_booking`` override into Booked opens it as well: ``crm.portal_unlocked``), then the F1 identity
   fields written under the vault DEK (write-only: never read back here), Stage 3 time on the access, the trip's
@@ -177,6 +181,14 @@ INSERT INTO crm.message (message_id, conversation_id, direction, status, sender_
 VALUES ($1, $2, 'out', 'queued', 'agency_mailbox', $3, $4, $5, 'compose', now())
 """
 TOUCH_CONVERSATION_SQL = "UPDATE crm.conversation SET last_message_at = now() WHERE conversation_id = $1"
+# AA-954: the agency contact of the offline itinerary is the mailbox the portal mails come from (MAILBOX_SQL's order).
+CONTACT_SQL = """
+SELECT channel_account_id, address_enc FROM crm.channel_account
+ WHERE deleted_at IS NULL AND status <> 'disconnected' AND (member_id = $1 OR member_id IS NULL)
+ ORDER BY member_id NULLS LAST
+ LIMIT 1
+"""
+OFFLINE_REF_PREFIX = b"aa-crm-portal-offline-ref:"
 STAGE3_SQL = """
 UPDATE crm.traveler_access SET stage3_submitted_at = now() WHERE access_id = $1
 """
@@ -230,6 +242,12 @@ CODE_TEXT = {
 
 def hash_hex(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def offline_ref(token: str) -> str:
+    """AA-954: an opaque, stable value of the link for the page's offline copy (a hash of the token's SHA-256 under its
+    own prefix: it cannot be turned back into the token or the stored hash)."""
+    return hashlib.sha256(OFFLINE_REF_PREFIX + hash_hex(token).encode()).hexdigest()[:32]
 
 
 def code_hash(otp_id: uuid.UUID, code: str) -> bytes:
@@ -602,7 +620,7 @@ async def home(pool: asyncpg.Pool, token: str, session: str | None, keys: KeyPro
         try:
             access = await _signed_in(ctx, access, session)  # from here on: the person the session acts as
         except Forbidden:
-            return {"agency_name": agency, "signed_in": False}
+            return {"agency_name": agency, "signed_in": False, "offline_ref": offline_ref(token)}
         done = await progress.compute(ctx, access["trip_id"])
         mine = next((t for t in done.travellers if t.traveler_id == access["traveler_id"]), None)
         waiver = await ctx.conn.fetchrow(WAIVER_SQL)
@@ -645,6 +663,10 @@ async def home(pool: asyncpg.Pool, token: str, session: str | None, keys: KeyPro
             },
             # AA-955 (e-sign v1): the envelope documents (merge fields shown with placeholders) and who signs what.
             "agreements": agreements,
+            # AA-954 (CRM-24b): what the installed page needs to keep the itinerary offline (§2.9 rule 7).
+            "offline_ref": offline_ref(token),
+            "link_expires_at": _iso(link.expires_at),
+            "agency_contact": await _agency_contact(ctx, keys, access),
         }
         out.update(await _person_view(ctx, keys, access))
         if access["role"] == "lead":
@@ -682,6 +704,20 @@ async def home(pool: asyncpg.Pool, token: str, session: str | None, keys: KeyPro
             ]
         ctx.audit("portal_view", "allowed", "traveler_access", str(access["access_id"]))
         return out
+
+
+async def _agency_contact(ctx: AnyContext, keys: KeyProvider | None, access: Any) -> dict[str, str] | None:
+    """AA-954 (design v3 §2.9 rule 7, WF-8 "[Email Minh]"): the agency's own address for this trip, the mailbox the
+    traveller's portal mails come from (the trip owner's, else the agency's). Never a member's sign-in identity."""
+    if keys is None:
+        return None
+    row = await ctx.conn.fetchrow(CONTACT_SQL, access["owner_member_id"])
+    if row is None:
+        return None
+    address = await Vault(keys, ctx).decrypt(  # type: ignore[arg-type]
+        "channel_account", "address_enc", row["channel_account_id"], bytes(row["address_enc"]), purpose=MAIL_PURPOSE
+    )
+    return {"email": address}
 
 
 async def _person_view(ctx: AnyContext, keys: KeyProvider | None, access: Any) -> dict[str, Any]:

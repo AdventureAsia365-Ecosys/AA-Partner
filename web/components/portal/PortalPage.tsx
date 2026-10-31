@@ -7,17 +7,29 @@
 // session cookie the API sets on the same path); the page never sees either. Stage 3 is write-only: the page shows
 // which fields are on file, never their values. Before the deposit is paid, Stage 3, flights, the scan and signing
 // say "opens after your deposit" (the API answers 403 stage3_locked anyway).
-import { useEffect, useState } from "react";
+// AA-954 (CRM-24b, R16, §2.9 rule 7; `offline` on /c/t): the page registers the service worker that keeps its shell,
+// keeps an allow-listed copy of the signed-in person's itinerary on the device (lib/offlineItinerary.ts) and shows it
+// with "last updated" when the network cannot be reached; it replaces the copy on every signed-in answer and on
+// reconnect (server wins), and drops it at sign-out, for a gone link and for another link's answer. Sign-out clears
+// the device first, whatever the server then answers, and a load still in flight at that moment never writes back.
+import { useEffect, useRef, useState } from "react";
 import { Button, K, LinkButton } from "@/app/_kit";
 import type { PortalPersonHome, PortalPick } from "@/lib/clientPortal";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, type MessageKey } from "@/lib/i18n";
 import { clientErrorKey, formatAmount, stage3Body, STAGE3_FIELDS, type PortalHome, type Stage3Field } from "@/lib/proposals";
+import { clearOffline, readOffline, syncOffline, usable, type OfflineItinerary, type OfflineSource } from "@/lib/offlineItinerary";
+import { clearWorkerCaches, precacheShell, registerPortalWorker } from "@/lib/portalPwa";
+import { InstallPrompt, OfflineView } from "./PortalOffline";
 import { DocumentsSection, FlightsSection, PartySection, PassportScanSection, TripSection } from "./PortalPerson";
 import { SignEnvelope } from "./SignEnvelope";
 
 type Home = PortalHome & PortalPersonHome;
-type Load = { state: "loading" } | { state: "ready"; home: Home } | { state: "failed"; status: number };
+type Load =
+  | { state: "loading" }
+  | { state: "ready"; home: Home }
+  | { state: "failed"; status: number }
+  | { state: "offline"; copy: OfflineItinerary | null };
 
 const box: React.CSSProperties = {
   font: "inherit",
@@ -48,7 +60,40 @@ async function call(url: string, method: string, body?: unknown): Promise<{ ok: 
   }
 }
 
-export function PortalPage({ base, dict, locale }: { base: string; dict: Partial<Record<MessageKey, string>>; locale: DateLocale }) {
+/** The offline rule for one answer of GET `base` (lib/offlineItinerary.ts): what to show, after the stored copy was
+ * replaced, kept or dropped. `fresh` says no sign-out or "Remove from this device" happened since the request
+ * started: when one did, this answer touches nothing on the device, and a write that raced the clear is cleared
+ * again (the clear wins). Exported for the tests. */
+export async function settle(
+  res: { ok: boolean; status: number; data: Record<string, unknown> },
+  now: Date,
+  fresh: () => boolean = () => true,
+): Promise<Load> {
+  if (res.status === 0) {
+    const stored = await readOffline();
+    if (stored && !usable(stored, now)) await clearOffline(); // the link has expired since it was saved
+    return { state: "offline", copy: usable(stored, now) ? stored : null };
+  }
+  if (fresh()) {
+    await syncOffline({ status: res.status, home: res.ok ? (res.data as unknown as OfflineSource) : undefined }, now);
+    if (!fresh()) await clearOffline();
+    else if (res.ok && res.data.signed_in === true) void precacheShell();
+  }
+  return res.ok ? { state: "ready", home: res.data as unknown as Home } : { state: "failed", status: res.status };
+}
+
+export function PortalPage({
+  base,
+  dict,
+  locale,
+  offline = false,
+}: {
+  base: string;
+  dict: Partial<Record<MessageKey, string>>;
+  locale: DateLocale;
+  /** AA-954: the installable page keeps the itinerary offline (the /c/t page; off for any other use). */
+  offline?: boolean;
+}) {
   const t = (k: string) => dict[k as MessageKey] ?? k;
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const [round, setRound] = useState(0);
@@ -62,19 +107,52 @@ export function PortalPage({ base, dict, locale }: { base: string; dict: Partial
   const [signAgree, setSignAgree] = useState(false);
   const [signAsked, setSignAsked] = useState(false);
   const [values, setValues] = useState<Partial<Record<Stage3Field, string>>>({});
+  const [netDown, setNetDown] = useState(false);
+  // AA-954: bumped by every clear of the device; a load that started before a clear never writes the copy back.
+  const clears = useRef(0);
 
   useEffect(() => {
     let live = true;
-    call(base, "GET").then((res) => {
-      if (!live) return;
-      setLoad(res.ok ? { state: "ready", home: res.data as unknown as Home } : { state: "failed", status: res.status });
+    const at = clears.current;
+    call(base, "GET").then(async (res) => {
+      const next: Load = offline
+        ? await settle(res, new Date(), () => clears.current === at)
+        : res.ok
+          ? { state: "ready", home: res.data as unknown as Home }
+          : { state: "failed", status: res.status };
+      if (live) setLoad(next);
     });
     return () => {
       live = false;
     };
-  }, [base, round]);
+  }, [base, round, offline]);
+
+  // AA-954: the worker that keeps the page shell, and the network state (back online = load again: the server wins).
+  useEffect(() => {
+    if (!offline) return;
+    void registerPortalWorker();
+    const up = () => {
+      setNetDown(false);
+      setRound((r) => r + 1);
+    };
+    const down = () => setNetDown(true);
+    window.addEventListener("online", up);
+    window.addEventListener("offline", down);
+    return () => {
+      window.removeEventListener("online", up);
+      window.removeEventListener("offline", down);
+    };
+  }, [offline]);
+
+  async function forgetDevice(text?: string) {
+    clears.current += 1;
+    await clearOffline();
+    await clearWorkerCaches();
+    if (text) setNote({ tone: "success", text });
+  }
 
   function refused(data: Record<string, unknown>, status: number): string {
+    if (status === 0) return t("client.error.offline"); // AA-954: no network (every write needs one)
     const detail = typeof data.detail === "string" ? data.detail : status === 429 ? "rate_limited" : status === 413 ? "body_too_large" : "error";
     const text = t(clientErrorKey(detail));
     return typeof data.attempts_left === "number" ? fmt(text, { left: data.attempts_left }) : text;
@@ -109,7 +187,46 @@ export function PortalPage({ base, dict, locale }: { base: string; dict: Partial
     setRound((r) => r + 1);
   };
 
+  // AA-954 (§2.9 rule 7): nothing of this person stays on the device after sign-out, whatever the server answers
+  // (offline, a rate limit, a fault or a revoked link included). Clear first, then again once the POST is done, so a
+  // load that was in flight during the POST cannot leave a copy either.
+  async function signOut() {
+    if (offline) await forgetDevice();
+    let out = false;
+    await step("POST", "/sign-out", undefined, () => {
+      out = true;
+    });
+    if (offline) await forgetDevice();
+    if (out) {
+      setPicks(null);
+      setRound((r) => r + 1);
+    }
+  }
+
   if (load.state === "loading") return <p style={{ margin: 0, fontSize: 14, color: K.muted }}>{t("client.loading")}</p>;
+  if (load.state === "offline") {
+    return (
+      <>
+        {note && (
+          <p role="status" data-testid="portal-note" style={{ margin: "0 0 12px", fontSize: 13.5, color: K.success }}>
+            {note.text}
+          </p>
+        )}
+        <OfflineView
+          copy={load.copy}
+          t={t}
+          locale={locale}
+          onRetry={() => {
+            setNote(null);
+            setRound((r) => r + 1);
+          }}
+          onForget={() => {
+            void forgetDevice(t("client.offline.forgotten")).then(() => setLoad({ state: "offline", copy: null }));
+          }}
+        />
+      </>
+    );
+  }
   if (load.state === "failed") {
     return (
       <p data-testid="portal-unavailable" data-status={load.status} style={{ margin: 0, fontSize: 14, color: K.body }}>
@@ -212,8 +329,19 @@ export function PortalPage({ base, dict, locale }: { base: string; dict: Partial
         )}
       </div>
       {message}
+      {offline && netDown && (
+        <p role="status" data-testid="portal-offline-banner" style={{ margin: 0, fontSize: 13.5, color: K.body, padding: "8px 10px", border: `1px solid ${K.line}`, borderRadius: 8 }}>
+          {t("client.offline.banner")}
+        </p>
+      )}
+      {offline && <InstallPrompt t={t} />}
 
       <TripSection days={home.itinerary ?? []} services={home.services ?? []} t={t} locale={locale} />
+      {offline && (home.itinerary?.length || home.services?.length) ? (
+        <p style={{ margin: 0, fontSize: 12.5, color: K.muted }} data-testid="portal-offline-kept">
+          {t("client.offline.kept")}
+        </p>
+      ) : null}
 
       <section data-testid="portal-stage3" data-locked={stage3.locked ? "true" : "false"} data-done={stage3.done ? "true" : "false"} style={section}>
         <h2 style={{ margin: 0, fontSize: 16, color: K.ink }}>{t("client.myDetails")}</h2>
@@ -364,12 +492,7 @@ export function PortalPage({ base, dict, locale }: { base: string; dict: Partial
           size="inherit"
           disabled={busy}
           testId="portal-sign-out"
-          onClick={() =>
-            step("POST", "/sign-out", undefined, () => {
-              setPicks(null);
-              setRound((r) => r + 1);
-            })
-          }
+          onClick={() => void signOut()}
         >
           {t("client.signOut")}
         </LinkButton>

@@ -13,6 +13,7 @@
 import { isDateLocale, type DateLocale } from "./dates";
 import { aiEn, aiVi } from "./i18nAi";
 import { onboardingEn, onboardingVi } from "./i18nOnboarding";
+import { offlineEn, offlineVi } from "./i18nOffline";
 import { opsReleaseEn, opsReleaseVi } from "./i18nOpsRelease";
 import { supportEn, supportVi } from "./i18nSupport";
 
@@ -43,6 +44,7 @@ const en = {
   ...aiEn, // AA-964: Settings > AI (lib/i18nAi.ts)
   ...supportEn, // AA-971: AA support access and the support / emergency banner (lib/i18nSupport.ts)
   ...opsReleaseEn, // AA-956: the AA ground operations panel and its log lines (lib/i18nOpsRelease.ts)
+  ...offlineEn, // AA-954: the installable, offline traveller page (lib/i18nOffline.ts)
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Home",
@@ -2668,6 +2670,7 @@ const vi: Record<MessageKey, string> = {
   ...aiVi,
   ...supportVi,
   ...opsReleaseVi,
+  ...offlineVi,
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Trang chủ",
