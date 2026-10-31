@@ -10,9 +10,11 @@
 - **E** (card): a receipt in another currency uses the receipt-date rate (not the confirmation day's), ``short_amount``
   is judged in the original currency only, ``fx_difference_base`` only when the original amounts match.
 - R21: a claimed commission blocks the trip delete (``has_commission``).
-- ``crm.trip_cancellation``: one per trip, pending -> done, a done row is closed; ``crm.aa_request`` takes kind
-  ``cancel``; ``crm.booking_line_aa_cancel_fee`` writes the fee as a ``cancellation_cost`` head at the line's quote FX
-  lock, a job actor only.
+- ``crm.trip_cancellation``: one per trip, written only through ``crm.trip_cancellation_open`` (owner / agent; the
+  database decides pending / done from the live AA bookings) and ``crm.trip_cancellation_finish`` (done only once no
+  AA booking is live and the trip is cancelled); crm_app has SELECT only; a done row is closed; ``crm.aa_request``
+  takes kind ``cancel``; ``crm.booking_line_aa_cancel_fee`` writes the fee as a ``cancellation_cost`` head at the
+  line's quote FX lock, a job actor only.
 - The file runs again as a no-op; RLS isolates every new row.
 """
 
@@ -30,6 +32,7 @@ import pytest
 
 from tests.integration.conftest import OWNER, READERS
 from tests.integration.test_crm010_schema import _blockers, _ctx
+from tests.integration.test_crm012_schema import _put_stage
 from tests.integration.test_crm014_schema import (
     OVERRIDE_SQL,
     _as,
@@ -55,6 +58,8 @@ SELECT (SELECT count(*) FROM pg_constraint WHERE connamespace = 'crm'::regnamesp
 SYNC = "SELECT crm.commission_sync($1)"
 RECEIVE = "SELECT crm.commission_receive($1, $2::numeric, $3, $4::date, $5)"
 TODAY = "(now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date"
+OPEN = "SELECT crm.trip_cancellation_open($1, $2, '{}'::jsonb)"
+FINISH = "SELECT crm.trip_cancellation_finish($1)"
 
 
 async def _sync(pool: asyncpg.Pool, ids: dict[str, Any], role: str = "agent") -> dict[str, int]:
@@ -111,7 +116,22 @@ async def test_the_grants_and_the_readers(admin: asyncpg.Connection) -> None:
             await admin.fetchval("SELECT has_column_privilege('crm_app', 'crm.commission', $1, 'UPDATE')", column)
             is allowed
         ), column
-    assert not await admin.fetchval("SELECT has_table_privilege('crm_app', 'crm.trip_cancellation', 'DELETE')")
+    cancel = {
+        p: await admin.fetchval("SELECT has_table_privilege('crm_app', 'crm.trip_cancellation', $1)", p)
+        for p in ("SELECT", "INSERT", "UPDATE", "DELETE")
+    }
+    assert cancel == {"SELECT": True, "INSERT": False, "UPDATE": False, "DELETE": False}  # writes: the two functions
+    assert not await admin.fetchval(
+        "SELECT bool_or(has_column_privilege('crm_app', 'crm.trip_cancellation', a.attname, 'UPDATE')) "
+        "FROM pg_attribute a WHERE a.attrelid = 'crm.trip_cancellation'::regclass AND a.attnum > 0"
+    )
+    for fn in ("crm.trip_cancellation_open(uuid, text, jsonb)", "crm.trip_cancellation_finish(uuid)"):
+        assert await admin.fetchval("SELECT has_function_privilege('crm_app', $1, 'EXECUTE')", fn), fn
+        assert await admin.fetchval(
+            "SELECT prosecdef AND NOT has_function_privilege('public', p.oid, 'EXECUTE') FROM pg_proc p "
+            "WHERE p.oid = $1::regprocedure",
+            fn,
+        ), fn
     for reader in READERS:
         for table in ("commission", "trip_cancellation"):
             assert not await admin.fetchval("SELECT has_table_privilege($1, $2, 'SELECT')", reader, f"crm.{table}")
@@ -175,14 +195,24 @@ async def test_a_cancelled_line_cancels_it_unless_kept(app_pool: asyncpg.Pool) -
     assert got == {first: ("cancelled", "line_cancelled"), second: ("expected", None)}
 
 
-async def test_nothing_new_while_a_cancellation_is_pending(app_pool: asyncpg.Pool) -> None:
-    ids = await _ledger(app_pool)
-    async with _as(app_pool, ids["tenant"], "owner", ids["members"]["owner"]) as conn:
-        await conn.execute(
-            "INSERT INTO crm.trip_cancellation (trip_id, reason_code, from_stage) "
-            "VALUES ($1, 'client_request', 'booked')",
+async def _aa_booked(admin: asyncpg.Connection, pool: asyncpg.Pool, ids: dict[str, Any]) -> Any:
+    """The trip walked to booked with one AA booking (an AA line Booking confirmed, ``bk_booking_id``)."""
+    await _put_stage(admin, ids, "booked")
+    async with _as(pool, ids["tenant"], actor="job:crm_booking_sync") as conn:
+        return await conn.fetchval(
+            "INSERT INTO crm.booking_line (trip_id, agency_supplier_id, supplier_kind, title, status, bk_booking_id) "
+            "VALUES ($1, $2, 'aa', 'Mekong two days', 'confirmed', $3) RETURNING booking_line_id",
             ids["trip"],
+            ids["aa"],
+            f"BK-{uuid.uuid4().hex[:6]}",
         )
+
+
+async def test_nothing_new_while_a_cancellation_is_pending(admin: asyncpg.Connection, app_pool: asyncpg.Pool) -> None:
+    ids = await _ledger(app_pool)
+    await _aa_booked(admin, app_pool, ids)
+    async with _as(app_pool, ids["tenant"], "owner", ids["members"]["owner"]) as conn:
+        assert json.loads(await conn.fetchval(OPEN, ids["trip"], "client_request"))["status"] == "pending"
     await _commission_line(app_pool, ids)
     assert await _sync(app_pool, ids) == {"created": 0, "cancelled": 0}
 
@@ -281,30 +311,74 @@ async def test_r21_a_claimed_commission_blocks_the_trip_delete(app_pool: asyncpg
     assert "has_commission" in await _blockers(app_pool, ids["tenant"], ids["trip"])
 
 
-async def test_trip_cancellation_one_per_trip_and_closed_once_done(app_pool: asyncpg.Pool) -> None:
+async def test_trip_cancellation_one_per_trip_and_closed_once_done(
+    admin: asyncpg.Connection, app_pool: asyncpg.Pool
+) -> None:
     ids = await _ledger(app_pool)
-    sql = "INSERT INTO crm.trip_cancellation (trip_id, reason_code, from_stage, aa_bookings) VALUES ($1, $2, $3, 1)"
-    async with _as(app_pool, ids["tenant"], "agent", ids["members"]["agent"]) as conn:
-        row = await conn.fetchval(sql + " RETURNING trip_cancellation_id", ids["trip"], "client_request", "booked")
-    with pytest.raises(asyncpg.UniqueViolationError):
-        async with _as(app_pool, ids["tenant"], "agent", ids["members"]["agent"]) as conn:
-            await conn.execute(sql, ids["trip"], "other", "booked")
-    with pytest.raises(asyncpg.CheckViolationError):
-        async with _as(app_pool, ids["tenant"], "agent", ids["members"]["agent"]) as conn:
-            await conn.execute("UPDATE crm.trip_cancellation SET status = 'done' WHERE trip_cancellation_id = $1", row)
-    async with _as(app_pool, ids["tenant"], actor="job:crm_booking_sync") as conn:
-        await conn.execute(
-            "UPDATE crm.trip_cancellation SET status = 'done', finished_at = now() WHERE trip_cancellation_id = $1", row
-        )
-    with pytest.raises(asyncpg.PostgresError) as err:
-        async with _as(app_pool, ids["tenant"], "owner", ids["members"]["owner"]) as conn:
+    line = await _aa_booked(admin, app_pool, ids)
+    owner = (app_pool, ids["tenant"], "owner", ids["members"]["owner"])
+    with pytest.raises(asyncpg.InsufficientPrivilegeError):  # the assistant never cancels a trip (§4.6)
+        async with _as(app_pool, ids["tenant"], "assistant", ids["members"]["assistant"]) as conn:
+            await conn.fetchval(OPEN, ids["trip"], "client_request")
+    with pytest.raises(asyncpg.InsufficientPrivilegeError):  # no direct write: a "done" row while AA holds a booking
+        async with _as(*owner) as conn:
             await conn.execute(
-                "UPDATE crm.trip_cancellation SET effects = '{\"x\": 1}' WHERE trip_cancellation_id = $1", row
+                "INSERT INTO crm.trip_cancellation (trip_id, status, reason_code, from_stage, finished_at) "
+                "VALUES ($1, 'done', 'client_request', 'booked', now())",
+                ids["trip"],
             )
+    async with _as(*owner) as conn:
+        opened = json.loads(await conn.fetchval(OPEN, ids["trip"], "client_request"))
+        row = await conn.fetchrow("SELECT trip_cancellation_id, status, from_stage, aa_bookings, created_by "
+                                  "FROM crm.trip_cancellation")  # fmt: skip
+    assert opened == {"status": "pending", "aa_bookings": 1}
+    assert (row["status"], row["from_stage"], row["aa_bookings"]) == ("pending", "booked", 1)
+    assert row["created_by"] == f"member:{ids['members']['owner']}"
+    with pytest.raises(asyncpg.UniqueViolationError):
+        async with _as(*owner) as conn:
+            await conn.fetchval(OPEN, ids["trip"], "other")
+    for sql in (
+        "UPDATE crm.trip_cancellation SET status = 'done', finished_at = now() WHERE trip_cancellation_id = $1",
+        "UPDATE crm.trip_cancellation SET effects = '{\"x\": 1}' WHERE trip_cancellation_id = $1",
+    ):
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            async with _as(*owner) as conn:
+                await conn.execute(sql, row["trip_cancellation_id"])
+    job = (app_pool, ids["tenant"])
+    async with _as(*job, actor="job:crm_booking_sync") as conn:
+        assert await conn.fetchval(FINISH, ids["trip"]) is False  # card R: the AA booking is still live
+    async with _as(*job, actor="job:crm_booking_sync") as conn:
+        await conn.execute("UPDATE crm.booking_line SET status = 'cancelled' WHERE booking_line_id = $1", line)
+        assert await conn.fetchval(FINISH, ids["trip"]) is False  # the trip has not moved to cancelled yet
+    async with admin.transaction():  # the trip moves to cancelled (the sync's move, before it finishes the row)
+        await admin.execute(f"SET LOCAL ROLE {OWNER}")
+        await _ctx(admin, ids["tenant"], "job:crm_booking_sync")
+        await admin.execute(
+            "UPDATE crm.trip SET stage = 'cancelled', cancel_reason_code = 'client_request' WHERE trip_id = $1",
+            ids["trip"],
+        )
+    with pytest.raises(asyncpg.InsufficientPrivilegeError):
+        async with _as(app_pool, ids["tenant"], "assistant", ids["members"]["assistant"]) as conn:
+            await conn.fetchval(FINISH, ids["trip"])
+    async with _as(*job, actor="job:crm_booking_sync") as conn:
+        assert await conn.fetchval(FINISH, ids["trip"]) is True
+        assert await conn.fetchval(FINISH, ids["trip"]) is False  # done already
+        done = await conn.fetchrow("SELECT status, finished_at FROM crm.trip_cancellation")
+    assert done["status"] == "done" and done["finished_at"] is not None
+    async with admin.transaction():  # a done row is closed, even for the owner role
+        await admin.execute(f"SET LOCAL ROLE {OWNER}")
+        await _ctx(admin, ids["tenant"], "seed:test")
+        with pytest.raises(asyncpg.PostgresError) as err:
+            await admin.execute("UPDATE crm.trip_cancellation SET effects = '{\"x\": 1}'")
     assert err.value.sqlstate == "CRM46"
     other = await _ledger(app_pool)
     async with _as(app_pool, other["tenant"], "owner", other["members"]["owner"]) as conn:
         assert await conn.fetchval("SELECT count(*) AS n FROM crm.trip_cancellation") == 0
+        with pytest.raises(asyncpg.CheckViolationError):  # an inquiry is not cancelled (it is lost)
+            await conn.fetchval(OPEN, other["trip"], "client_request")
+    await _put_stage(admin, other, "booked")
+    async with _as(app_pool, other["tenant"], "agent", other["members"]["agent"]) as conn:  # no AA booking: done
+        assert json.loads(await conn.fetchval(OPEN, other["trip"], "duplicate")) == {"status": "done", "aa_bookings": 0}
 
 
 async def test_cancel_requests_and_the_cancellation_fee(app_pool: asyncpg.Pool) -> None:

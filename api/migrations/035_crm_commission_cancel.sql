@@ -23,7 +23,11 @@
 --   2. crm.trip_cancellation (base template): one per trip, the C12 run: pending while Booking has not cancelled the
 --      trip's AA bookings (the trip keeps its stage: never "cancelled" early, card R), done when the stage moved.
 --      Reason code (the trip's cancel reasons), the stage it left, the AA bookings asked, the effect counts of the run
---      (codes and numbers only). crm_app: SELECT, INSERT, UPDATE (no DELETE: the row leaves with its trip).
+--      (codes and numbers only). crm_app: SELECT only (no DELETE: the row leaves with its trip); rows are written by
+--      two SECURITY DEFINER functions, as crm.commission is: crm.trip_cancellation_open(trip, reason, effects) (owner /
+--      agent member; the database reads the stage left and the live AA bookings itself and decides pending / done, so
+--      no session can write a "done" cancellation while an AA booking is live) and crm.trip_cancellation_finish(trip)
+--      (pending -> done only once no AA booking of the trip is live and the trip is cancelled).
 --   3. crm.aa_request.kind + 'cancel' (POST /bookings/{id}/cancel of booking.b2b.v1, one per Booking booking).
 --   4. crm.booking_line_money.kind + 'cancellation_cost' (the fee Booking charged for a cancelled AA booking, card E:
 --      "the fee becomes a cost line"), written by crm.booking_line_aa_cancel_fee (SECURITY DEFINER, a job actor only,
@@ -48,7 +52,7 @@
 -- Runs as crm_owner (DB Migrate switch), one BEGIN … COMMIT block, no role DDL. Idempotent (IF NOT EXISTS,
 -- DROP … IF EXISTS before each ADD / CREATE, ON CONFLICT DO NOTHING, CREATE OR REPLACE).
 -- Rollback: a forward crm- file after the AA-957 code is reverted: DROP TABLE crm.commission, crm.trip_cancellation;
--- DROP the four functions; DELETE the 'cancel' requests and the 'cancellation_cost' rows (with app.erasing) and put
+-- DROP the six functions; DELETE the 'cancel' requests and the 'cancellation_cost' rows (with app.erasing) and put
 -- both CHECKs back; DROP COLUMN crm.agency_supplier.commission_due_days; DELETE the status_transition rows.
 
 BEGIN;
@@ -295,8 +299,9 @@ CREATE POLICY tenant_isolation ON crm.trip_cancellation
     USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 
+-- Writes only through crm.trip_cancellation_open / crm.trip_cancellation_finish (below), as crm.commission.
 REVOKE ALL ON crm.trip_cancellation FROM crm_app;
-GRANT SELECT, INSERT, UPDATE ON crm.trip_cancellation TO crm_app;
+GRANT SELECT ON crm.trip_cancellation TO crm_app;
 
 CREATE OR REPLACE TRIGGER trip_cancellation_set_updated_at
     BEFORE UPDATE ON crm.trip_cancellation
@@ -331,6 +336,82 @@ COMMENT ON FUNCTION crm.guard_trip_cancellation() IS 'AA-957 (crm-035): BEFORE U
 CREATE OR REPLACE TRIGGER trip_cancellation_guard
     BEFORE UPDATE ON crm.trip_cancellation
     FOR EACH ROW EXECUTE FUNCTION crm.guard_trip_cancellation();
+
+-- The only writers of crm.trip_cancellation (crm_app has SELECT only): open decides pending / done from the live AA
+-- bookings; finish closes a pending one once Booking cancelled them all and the trip moved.
+CREATE OR REPLACE FUNCTION crm.trip_cancellation_open(p_trip uuid, p_reason text, p_effects jsonb) RETURNS jsonb
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+    v_role text := COALESCE(current_setting('app.member_role', true), '');
+    v_tenant uuid := NULLIF(current_setting('app.tenant_id', true), '')::uuid;
+    v_stage text;
+    v_aa integer;
+    v_status text;
+BEGIN
+    IF v_role NOT IN ('owner', 'agent') THEN
+        RAISE EXCEPTION 'crm: role_forbidden (owner or agent cancels a trip)' USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    IF v_tenant IS NULL THEN
+        RAISE EXCEPTION 'crm: trip_cancellation_open needs app.tenant_id' USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT t.stage INTO v_stage FROM crm.trip t WHERE t.trip_id = p_trip AND t.deleted_at IS NULL FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'crm: subject_not_found (trip %)', p_trip USING ERRCODE = 'CRM13';
+    END IF;
+    IF v_stage NOT IN ('booked', 'pre_departure', 'travelling') THEN
+        RAISE EXCEPTION 'crm: transition_not_allowed (only a booked, pre-departure or travelling trip is cancelled)'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT count(DISTINCT l.bk_booking_id)::integer INTO v_aa
+      FROM crm.booking_line l
+     WHERE l.trip_id = p_trip AND l.supplier_kind = 'aa' AND l.bk_booking_id IS NOT NULL AND l.status <> 'cancelled'
+       AND l.deleted_at IS NULL;
+    v_status := CASE WHEN v_aa > 0 THEN 'pending' ELSE 'done' END;
+    INSERT INTO crm.trip_cancellation (tenant_id, trip_id, status, reason_code, from_stage, aa_bookings, effects,
+                                       finished_at)
+    VALUES (v_tenant, p_trip, v_status, p_reason, v_stage, LEAST(v_aa, 200), COALESCE(p_effects, '{}'::jsonb),
+            CASE WHEN v_status = 'done' THEN now() END);
+    RETURN jsonb_build_object('status', v_status, 'aa_bookings', v_aa);
+END;
+$$;
+REVOKE ALL ON FUNCTION crm.trip_cancellation_open(uuid, text, jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION crm.trip_cancellation_open(uuid, text, jsonb) TO crm_app;
+COMMENT ON FUNCTION crm.trip_cancellation_open(uuid, text, jsonb) IS 'AA-957 (crm-035, C12, card R): the one row of a trip cancel for the agency of app.tenant_id. The database reads the stage left (booked, pre_departure or travelling, else 23514 transition_not_allowed) and counts the live AA bookings (bk_booking_id, line not cancelled): any -> pending (the trip keeps its stage until Booking cancelled them), none -> done. Returns {status, aa_bookings}. Owner / agent member only (42501 role_forbidden); unknown trip CRM13; a second cancel of the trip 23505. SECURITY DEFINER (crm_app has SELECT only); EXECUTE crm_app.';
+
+CREATE OR REPLACE FUNCTION crm.trip_cancellation_finish(p_trip uuid) RETURNS boolean
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+    v_role text := COALESCE(current_setting('app.member_role', true), '');
+    v_actor text := COALESCE(current_setting('app.actor', true), '');
+    v_status text;
+BEGIN
+    IF NOT (v_role IN ('owner', 'agent') OR (v_role = '' AND v_actor ~ '^job:')) THEN
+        RAISE EXCEPTION 'crm: role_forbidden (the Booking sync or an owner / agent finishes a trip cancel)'
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    SELECT x.status INTO v_status FROM crm.trip_cancellation x WHERE x.trip_id = p_trip FOR UPDATE;
+    IF NOT FOUND OR v_status <> 'pending' THEN
+        RETURN false;
+    END IF;
+    IF EXISTS (SELECT 1 FROM crm.booking_line l
+                WHERE l.trip_id = p_trip AND l.supplier_kind = 'aa' AND l.bk_booking_id IS NOT NULL
+                  AND l.status <> 'cancelled' AND l.deleted_at IS NULL)
+       OR NOT EXISTS (SELECT 1 FROM crm.trip t WHERE t.trip_id = p_trip AND t.stage = 'cancelled') THEN
+        RETURN false;  -- card R: never done while AA still holds a booking of the trip
+    END IF;
+    UPDATE crm.trip_cancellation SET status = 'done', finished_at = now() WHERE trip_id = p_trip;
+    RETURN true;
+END;
+$$;
+REVOKE ALL ON FUNCTION crm.trip_cancellation_finish(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION crm.trip_cancellation_finish(uuid) TO crm_app;
+COMMENT ON FUNCTION crm.trip_cancellation_finish(uuid) IS 'AA-957 (crm-035, C12, card R): pending -> done for the trip cancel of the agency of app.tenant_id, only once no AA booking of the trip is live and the trip stage is cancelled; returns whether it changed (false: no pending row, or not finished yet). A job: actor without a member role, or an owner / agent member (42501 otherwise). SECURITY DEFINER (crm_app has SELECT only); EXECUTE crm_app.';
 
 COMMENT ON TABLE crm.trip_cancellation IS 'AA-957 (crm-035; design v3 C12, §3.5 "Cancellation"): the one-action cancel of a trip. pending while Booking has not cancelled the trip''s AA bookings (crm.aa_request kind cancel; the trip keeps its stage, never "cancelled" early); done once the stage moved to cancelled. effects: the counts of the run (codes and numbers only). One per trip.';
 
