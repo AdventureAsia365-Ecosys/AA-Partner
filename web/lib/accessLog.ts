@@ -40,6 +40,15 @@ export const ACTIONS = [
   "audit_export",
   "self_view",
   "report_export",
+  // AA-971: AA support (L2) and emergency (L3) access.
+  "support_grant",
+  "support_revoke",
+  "support_session_start",
+  "support_session_end",
+  "support_read",
+  "breakglass_open",
+  "breakglass_close",
+  "breakglass_owner_notice",
 ] as const;
 export const EXPORT_FORMATS = ["csv", "jsonl"] as const;
 export type ExportFormat = (typeof EXPORT_FORMATS)[number];

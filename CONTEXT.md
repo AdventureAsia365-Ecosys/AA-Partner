@@ -126,7 +126,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `/crm/public/v1/calendar/{token}.ics` | no token header (AA-961): the 43-character feed token in the path only (SHA-256 stored), fetched by the member's calendar app; served on the partner host | `calendar_feed_tx()` (`app/calendar/public.py`); `text/calendar`, no names, titles or money; 404 `feed_not_found` for an unknown, revoked or expired token, an inactive member or a locked agency (subscribed calendars stop updating); public rate limit |
 | `/crm/v1` | PARTNER x {AA-Partner web} only (the Dev EXTERNAL x {`cis-portal`} bridge was removed at AA-979 P2b: its tokens are 401) | `X-AA-Tenant-Id` + `tenant_tx(action=...)` (membership in `crm.member`, then the permission matrix); `GET /crm/v1/memberships` and `POST /crm/v1/invitations/accept` need no header |
 | `/crm/ops/v1` | WORKFORCE x {`cis-admin`} | group `cis-admin` or `crm-platform-admin` reads, `crm-platform-admin` writes (AA-939: member deactivation, owner recovery; AA-941: the L1 console, section "L1 console" below). Every response passes the L1 key allow-list (`app/ops/serializer.py`). AA-979: `POST /tenants/{id}/studio-invitations` (the CIS staff relay of a Content studio invitation) takes any OPS caller, `cis-admin` included (section "Content studio invitations"). The Dev-only E2E CIS admin (root ADR 0006a A10b; a `cis-admin` token whose `email` claim is its address, `Caller.e2e_read_only`, `app/auth/e2e_staff.py`) is read-only: every `crm-platform-admin` write answers it 403 `e2e_read_only` |
-| `/crm/staff/v1` | WORKFORCE x {`crm-staff`} | group `crm-ops` or `crm-support` (+ an owner grant for support, CRM-13b) |
+| `/crm/staff/v1` | WORKFORCE x {`crm-staff`} | group `crm-ops` or `crm-support`; AA-971 (CRM-13b): support needs the owner's live grant, break-glass group `crm-ops`; every agency read through `support_tx()` as `crm_support_reader` (section "AA support access" below) |
 
 - One verifier (`app/auth/identity_verifier.py`, **byte copy** of AA-CIS-App `api/core/identity_verifier.py`, checked
   by CI job "Vendored CIS copies") holds every configured `(issuer, client)` pair; the class guard
@@ -187,6 +187,17 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
   `ingest_address_lookup` (TO `crm_app`, active and live addresses only); the address decides the agency (must be
   active), `app.actor` = `job:crm_mail_ingest`. Unknown, inactive or a locked agency = 404 `address_not_found` (the mail
   is discarded, card R). Only `app/mail/ingest.py` may open it.
+- **`staff_tx(pool, tenant_id, actor="support:<sub>" | "breakglass:<sub>", statuses=...)`** (AA-971) is AA staff
+  opening, ending or looking up their **own** support / break-glass session in one agency (audit kinds `support` /
+  `breakglass`, login role `crm_app`, the session rows only; crm-033 `crm.guard_support_access` binds each row to its
+  actor). Only `app/support/sessions.py` may open it.
+- **`support_tx(pool, caller, tenant_id)`** (AA-971) is AA staff **reading** one agency: the caller's newest session
+  there (by WORKFORCE `(iss, sub)`) must be active, unexpired and, for support, inside the owner's live grant, on every
+  request; then `app.actor` = `support:<sub>` / `breakglass:<sub>` and `SET LOCAL ROLE crm_support_reader` (named
+  columns of four non-F1 tables, no write privilege). Refusals are 403 (`no_support_session`,
+  `support_session_ended`, `support_access_expired`, `tenant_locked`) with a committed `denied` event.
+  **`as_login_role(ctx)`** steps out of the reader for one block (the party's display names, only when the session
+  shows identity). Only `app/support/reads.py` opens / calls them (`test_code_rules.py`).
 - **`system_tx(pool, tenant_id, actor="job:<kind>")`** (AA-936) is a job's context in one agency (no member):
   `app.tenant_id` from the job payload, the agency must be active, the same audit queue as `tenant_tx()` with
   `actor_kind = system`. Actors `job:` / `seed:` only. Only the job handler modules (`app/intake/process.py`) and the
@@ -1632,6 +1643,39 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   its own control plane and ledger (`crm.tenant_settings`, `crm.llm_call`, ADR 0008a): no module here may use the
   core's `insert_sql()` (it targets `shared.llm_call_log`) or the CIS contract views (guarded by that test). Coverage
   omits the copy (tested in CIS).
+
+## AA support access L2 + break-glass L3 (AA-971, CRM-13b)
+
+Design v3 §4.8 (L2, L3), §2.3 "Support banner", S-04, WF-12; root ADR 0006b decision 6; crm-033.
+
+- **Owner grant (L2)** (`app/support/grants.py`, `/crm/v1/support-access`): every role reads the state (the banner);
+  the owner allows AA support for 1 to 7 days (default 1), read only, "show identity" off by default, and ends it any
+  time ("End now": the grant is revoked and the live support session with it; the next staff read is 403). One live
+  grant per agency; a grant's window and scope never change (end it, grant again). Web: Settings > Data and privacy >
+  AA support access (`components/settings/SupportAccessView.tsx`) and the shell banner
+  (`components/support/SupportBanner.tsx`: amber for support, red for emergency, not dismissible, [End now] for the
+  owner on support only).
+- **Staff side** (`app/support/sessions.py`, `app/routers/staff.py`): `crm-support` lists the agencies that allow
+  support now and starts a session with a ticket (`SUP-1042` pattern; one staff member at a time per agency; the
+  session ends with the grant or after 8 hours); `crm-ops` opens **break-glass (L3)** without a grant: a reason code
+  (`security_incident`, `data_corruption`, `legal_request`, `owner_unreachable`, `service_outage`), a ticket, 15 to 60
+  minutes, an active or locked agency, identity shown. After the commit: the structlog warning
+  `crm_breakglass_opened` (ids and codes; the AA ops alarm is an AA-CIS-Infra metric filter on `$.event`) and the AA
+  system mail `breakglass_notice` to every active owner (`owner_notified_at` once sent). The owner cannot end an
+  emergency session; it closes by itself.
+- **Reads** (`app/support/reads.py`, `support_tx()`): `GET /crm/staff/v1/agencies/{id}/overview | trips | trips/{trip}`;
+  ids, codes, dates, the agency name, trips without their title; the party's display names only when the session
+  shows identity (one `reveal` event naming the travellers). One `support_read` event per call (a list names the ids
+  shown). There is no export, send, role, integration or settings route on the staff class (unit test), and the reader
+  role has no write privilege (crm-033 guard, integration test).
+- **Audit**: actor kinds `support` / `breakglass` (the owner's access log filters "AA support" / "AA emergency
+  access"); actions `support_grant`, `support_revoke`, `support_session_start`, `support_session_end`,
+  `support_read`, `breakglass_open`, `breakglass_close`, `breakglass_owner_notice`, plus `reveal` and `decrypt`
+  denials as usual.
+- **Not built here** (follow-ups): the staff UI for S-04 (the routes are ready; a WORKFORCE `crm-staff` sign-in in a
+  staff console), and the AWS-level break-glass of design §4.8 L3 (IAM role `aa-crm-<env>-breakglass` with MFA and a
+  `tenant_id` session tag; the KMS statement `CrmBreakGlassOneAgency` already waits for it in AA-CIS-Infra
+  `crm_data.tf`; CloudTrail Decrypt copied into the agency audit).
 
 ## Dev seeder (`api/app/seed/`, AA-935)
 
