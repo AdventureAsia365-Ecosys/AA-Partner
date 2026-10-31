@@ -132,6 +132,10 @@ LIFECYCLE_MODULES = frozenset(
 MEMBERSHIP_FEED_MODULES = frozenset({"app/cis/membership_feed.py"})
 # AA-979 P2b: Content studio invitations (crm-020 platform table): the platform / job context and the token context.
 STUDIO_MODULES = frozenset({"app/members/studio.py"})
+# AA-971 (CRM-13b): AA staff in one agency. The session rows (staff_tx: start / end / look up one's own session) and
+# the reads of a live session (support_tx, crm_support_reader; as_login_role steps out of it for the party's names).
+STAFF_SESSION_MODULES = frozenset({"app/support/sessions.py"})
+SUPPORT_READ_MODULES = frozenset({"app/support/reads.py"})
 CONTEXT_TYPES = frozenset(
     {
         "TenantContext",
@@ -141,6 +145,7 @@ CONTEXT_TYPES = frozenset(
         "ExportContext",
         "LifecycleContext",
         "StudioContext",
+        "SupportContext",
     }
 )
 THIRD_PARTY = frozenset(
@@ -189,6 +194,8 @@ CONTEXT_FACTORIES = frozenset(
         "calendar_feed_tx",
         "studio_platform_tx",
         "studio_invitation_tx",
+        "staff_tx",
+        "support_tx",
     }
 )
 
@@ -413,6 +420,13 @@ def test_the_feed_state_is_reached_only_by_the_feed() -> None:
 def test_studio_contexts_are_used_only_by_the_studio_module() -> None:
     assert _users_of("studio_platform_tx", STUDIO_MODULES) == []
     assert _users_of("studio_invitation_tx", STUDIO_MODULES) == []
+
+
+def test_staff_contexts_are_used_only_by_the_support_modules() -> None:
+    """AA-971: staff_tx only in the session module, support_tx and as_login_role only in the read module."""
+    assert _users_of("staff_tx", STAFF_SESSION_MODULES) == []
+    assert _users_of("support_tx", SUPPORT_READ_MODULES) == []
+    assert _users_of("as_login_role", SUPPORT_READ_MODULES) == []
 
 
 def test_ingest_tx_is_used_only_by_the_mail_ingest_job() -> None:

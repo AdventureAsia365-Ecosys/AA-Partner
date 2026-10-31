@@ -272,6 +272,10 @@ def _system_actor_kind(actor: str) -> str:
         return "traveler"  # a client filling a form from a signed link (AA-943)
     if actor.startswith("calendar_feed:"):
         return "user"  # a member's own calendar subscription (AA-961)
+    if actor.startswith("support:"):
+        return "support"  # AA-971: an AA support person inside the owner's grant (L2)
+    if actor.startswith("breakglass:"):
+        return "breakglass"  # AA-971: AA break-glass (L3)
     return "system"
 
 
@@ -1055,7 +1059,206 @@ async def as_insights_reader(ctx: SystemContext) -> AsyncIterator[asyncpg.Connec
         await ctx.conn.execute("SET LOCAL ROLE NONE")
 
 
-async def _write_audit(ctx: TenantContext | SystemContext | LifecycleContext, events: list[AuditEvent]) -> None:
+# ── AA-971 (CRM-13b): AA support access L2 and break-glass L3 ─────────────────────────────────────
+SUPPORT_ROLE = "crm_support_reader"
+STAFF_KINDS = frozenset({"support", "breakglass"})
+# The agency statuses each kind may meet: support works with the agency, so it must be active; break-glass is for an
+# emergency, which a locked agency can be in too.
+STAFF_STATUSES = {"support": frozenset({"active"}), "breakglass": frozenset({"active", "locked"})}
+_STAFF_SUB = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+# The caller's live sessions in this agency (crm-033): newest first. A support session is live only while its grant is
+# active and unexpired too; the reason it is not decides the refusal code.
+STAFF_SESSION_SQL = """
+SELECT s.support_session_id, s.kind, s.show_identity, s.status, s.expires_at, s.expires_at <= now() AS expired,
+       g.status AS grant_status, g.expires_at <= now() AS grant_expired
+  FROM crm.support_session s
+  LEFT JOIN crm.support_grant g ON g.support_grant_id = s.support_grant_id
+ WHERE s.staff_iss = $1 AND s.staff_sub = $2
+ ORDER BY (s.status = 'active') DESC, s.started_at DESC
+ LIMIT 1
+"""
+
+
+@dataclass(frozen=True)
+class SupportContext:
+    """AA staff reading one agency inside a live support / break-glass session (:func:`support_tx`). Same shape as
+    :class:`SystemContext` for :class:`app.vault.Vault` (``conn``, ``tenant_id``, the DEK memos, ``audit``); the
+    connection runs as ``crm_support_reader`` (read only, named columns of four non-F1 tables, crm-033) except inside
+    :func:`as_login_role`."""
+
+    conn: asyncpg.Connection
+    tenant_id: uuid.UUID
+    actor: str
+    kind: str
+    session_id: uuid.UUID
+    show_identity: bool
+    expires_at: dt.datetime
+    status: str
+    member_id: None = None
+    member_role: None = None
+    reader_role: str | None = SUPPORT_ROLE
+    audit_events: list[AuditEvent] = field(default_factory=list, repr=False)
+    dek_memo: dict[tuple[str, int], bytes] = field(default_factory=dict, repr=False)
+    dek_current: dict[str, int] = field(default_factory=dict, repr=False)
+
+    def audit(
+        self,
+        action: str,
+        outcome: str,
+        object_kind: str,
+        object_id: str | None = None,
+        *,
+        fields: tuple[str, ...] = (),
+        reason: str | None = None,
+        object_ids: tuple[str, ...] = (),
+    ) -> AuditEvent:
+        event = AuditEvent(
+            actor_kind=_system_actor_kind(self.actor),
+            actor_ref=self.actor,
+            action=action,
+            outcome=outcome,
+            object_kind=object_kind,
+            object_id=object_id,
+            fields=tuple(fields),
+            reason=reason,
+            request_id=current_request_id(),
+            object_ids=tuple(object_ids),
+        )
+        self.audit_events.append(event)
+        return event
+
+
+def staff_actor(kind: str, caller: Caller) -> str:
+    """``support:<sub>`` / ``breakglass:<sub>`` (crm-033 ``crm.guard_support_access`` binds a session to this actor).
+    A WORKFORCE sub is a UUID; anything else is refused rather than written."""
+    if kind not in STAFF_KINDS:
+        raise ValueError(f"not a staff session kind: {kind!r}")
+    if not _STAFF_SUB.match(caller.sub):
+        raise Forbidden("staff_identity_invalid")
+    return f"{kind}:{caller.sub}"
+
+
+@asynccontextmanager
+async def staff_tx(
+    pool: asyncpg.Pool, tenant_id: uuid.UUID, *, actor: str, statuses: frozenset[str]
+) -> AsyncIterator[SystemContext]:
+    """AA staff opening, ending or looking up their own support / break-glass session in one agency (AA-971): actor
+    ``support:<sub>`` / ``breakglass:<sub>`` (audit actor kinds ``support`` / ``breakglass``), login role ``crm_app``
+    (the session rows only: crm-033 guards what this actor may write). The agency must exist (404
+    ``tenant_not_found``) and be in ``statuses`` (409 ``tenant_locked`` / ``tenant_status``). Never reads agency data:
+    that is :func:`support_tx`. Only ``app/support/sessions.py`` opens it (``tests/unit/test_code_rules.py``)."""
+    if not actor.startswith(("support:", "breakglass:")) or len(actor) > 80:
+        raise ValueError("staff actor must be support:<sub> or breakglass:<sub>")
+    if not statuses or not statuses <= TENANT_STATUSES:
+        raise ValueError(f"statuses must be a non-empty subset of {sorted(TENANT_STATUSES)}")
+    async with _agency_tx(pool, tenant_id, actor, statuses=statuses) as ctx:
+        yield ctx
+
+
+@asynccontextmanager
+async def support_tx(pool: asyncpg.Pool, caller: Caller, tenant_id: uuid.UUID) -> AsyncIterator[SupportContext]:
+    """AA staff reading one agency (``/crm/staff/v1/agencies/{id}/...``, AA-971, design v3 §4.8 L2 / L3).
+
+    One transaction: ``app.tenant_id``; the caller's newest session in this agency (``crm.support_session`` by the
+    token's WORKFORCE ``(iss, sub)``, never an e-mail); it must be active, unexpired and, for kind ``support``, inside
+    the owner's active, unexpired grant; the agency must be active (break-glass: active or locked). Then
+    ``app.actor`` = ``support:<sub>`` / ``breakglass:<sub>`` and ``SET LOCAL ROLE crm_support_reader``: the route reads
+    named columns of four non-F1 tables and can write nothing (crm-033). Every check runs on every request, so a grant
+    the owner revoked, or a window that passed, refuses the very next read.
+
+    Refusals are 403 and leave a ``denied`` event in the agency's audit (committed): ``no_support_session`` (none, or
+    no such agency: the same answer), ``support_session_ended`` (ended, or revoked by the owner),
+    ``support_access_expired`` (its window or its grant's passed), ``tenant_locked``. Audit semantics as
+    :func:`tenant_tx`. Only ``app/support/reads.py`` opens it (``tests/unit/test_code_rules.py``)."""
+    if not isinstance(tenant_id, uuid.UUID):
+        raise TypeError("tenant_id must be a UUID")
+    if not _STAFF_SUB.match(caller.sub):
+        raise Forbidden("staff_identity_invalid")
+    pending: Exception | None = None
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        status = await conn.fetchval(TENANT_SQL, tenant_id)
+        if status is None:
+            raise Forbidden("no_support_session")  # an unknown agency answers like one without a session
+        row = await conn.fetchrow(STAFF_SESSION_SQL, caller.iss, caller.sub)
+        kind = row["kind"] if row is not None else "support"
+        actor = f"{kind}:{caller.sub}"
+        await conn.execute("SELECT set_config('app.actor', $1, true)", actor)
+        refusal = _support_refusal(row, status)
+        if refusal is not None:
+            event = AuditEvent(
+                actor_kind=_system_actor_kind(actor),
+                actor_ref=actor,
+                action="support_read",
+                outcome="denied",
+                object_kind="tenant",
+                object_id=str(tenant_id),
+                reason=refusal,
+                request_id=current_request_id(),
+            )
+            await conn.executemany(INSERT_SQL, [event.row()])
+            pending = Forbidden(refusal)
+        else:
+            await conn.execute(f"SET LOCAL ROLE {SUPPORT_ROLE}")
+            ctx = SupportContext(
+                conn=conn,
+                tenant_id=tenant_id,
+                actor=actor,
+                kind=kind,
+                session_id=row["support_session_id"],
+                show_identity=bool(row["show_identity"]),
+                expires_at=row["expires_at"],
+                status=status,
+            )
+            try:
+                async with conn.transaction():  # savepoint: the route's reads
+                    yield ctx
+            except Exception as exc:
+                denied = [e for e in ctx.audit_events if e.outcome == "denied"]
+                if not denied:
+                    raise
+                await _write_audit(ctx, denied)
+                pending = exc
+            else:
+                await _write_audit(ctx, ctx.audit_events)
+    if pending is not None:
+        raise pending
+
+
+def _support_refusal(row: asyncpg.Record | None, tenant_status: str) -> str | None:
+    if row is None:
+        return "no_support_session"
+    if row["status"] != "active":
+        return "support_session_ended"
+    if row["expired"]:
+        return "support_access_expired"
+    if row["kind"] == "support":
+        if row["grant_status"] != "active":
+            return "support_session_ended" if row["grant_status"] == "revoked" else "support_access_expired"
+        if row["grant_expired"]:
+            return "support_access_expired"
+    if tenant_status not in STAFF_STATUSES[row["kind"]]:
+        return "tenant_locked"
+    return None
+
+
+@asynccontextmanager
+async def as_login_role(ctx: SupportContext) -> AsyncIterator[asyncpg.Connection]:
+    """Step out of ``crm_support_reader`` for one block (AA-971): the display names of a trip's party when the session
+    shows identity (the owner ticked "show identity", or break-glass). A savepoint, as :func:`as_eraser`; the role
+    is back to the reader afterwards. Only ``app/support/reads.py`` calls it (``tests/unit/test_code_rules.py``), and
+    only after checking ``ctx.show_identity``; each use is one audited read of named rows and one field."""
+    if not ctx.show_identity:
+        raise Forbidden("identity_hidden")
+    async with ctx.conn.transaction():
+        await ctx.conn.execute("SET LOCAL ROLE NONE")
+        yield ctx.conn
+        await ctx.conn.execute(f"SET LOCAL ROLE {SUPPORT_ROLE}")
+
+
+async def _write_audit(
+    ctx: TenantContext | SystemContext | LifecycleContext | SupportContext, events: list[AuditEvent]
+) -> None:
     if not events:
         return
     if ctx.reader_role is not None:

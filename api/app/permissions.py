@@ -75,6 +75,9 @@ class Action(StrEnum):
     OWN_MAILBOX_CONNECT = "own_mailbox_connect"
     RECOVERY_VIEW = "recovery_view"  # the owner-recovery banner (Q1 6.3: every member)
     RECOVERY_CANCEL = "recovery_cancel"
+    # AA-971 (CRM-13b): whether AA support or break-glass is in the agency now (the banner every member sees, design
+    # §2.3 "Support banner"; the grant itself is SUPPORT_ACCESS_SETTINGS, owner only).
+    SUPPORT_ACCESS_VIEW = "support_access_view"
     # AA-961 (CRM-30, design R37 / R15): Travelling now (names hidden until a logged reveal), the agency calendar and
     # the member's own ICS feed. Every role: the assistant works the same trips.
     DUTY_OF_CARE_VIEW = "duty_of_care_view"
@@ -147,6 +150,7 @@ _TABLE: dict[Action, tuple[Rule, Rule, Rule]] = {
     Action.REPORTS_VIEW: (A, A, A),
     Action.OWN_MAILBOX_CONNECT: (A, A, A),
     Action.RECOVERY_VIEW: (A, A, A),
+    Action.SUPPORT_ACCESS_VIEW: (A, A, A),
     Action.RECOVERY_CANCEL: (A, A, A),
     Action.DUTY_OF_CARE_VIEW: (A, A, A),
     Action.CALENDAR_VIEW: (A, A, A),
