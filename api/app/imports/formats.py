@@ -8,8 +8,11 @@ by the entity spec, :mod:`app.imports.spec`) and the data rows as ``{column: tex
 The ``.xlsx`` reader is a small standard-library one (``zipfile`` + ``xml.etree``), so the API needs no spreadsheet
 library: shared strings, inline strings, numbers and booleans of the first worksheet; formulas give their cached
 value; styles are not read, so a date cell arrives as its Excel serial number (the date parser of the spec accepts
-it). Every zip member is size-checked before it is read (a zip bomb is refused with ``unreadable_file``), and
-``xml.etree`` resolves no external entity.
+it). The sheet and the shared strings are **streamed** (``iterparse``; a cell is dropped once read, a row once kept,
+the reading stops after the row cap), every zip member is read through a byte budget (:data:`MAX_MEMBER_BYTES`
+inflated bytes, whatever its header claims) and the shared strings are capped in count and size, so a small,
+highly compressible file is refused with ``unreadable_file`` instead of inflating in memory. ``xml.etree`` resolves
+no external entity. The parse is CPU work: callers run :func:`read_table` in a thread (``asyncio.to_thread``).
 """
 
 from __future__ import annotations
@@ -18,7 +21,9 @@ import csv
 import io
 import re
 import zipfile
+from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import IO
 from xml.etree import ElementTree  # noqa: S405 — standard-library parser, no external entities; sizes capped below
 
 from app.errors import Invalid, PayloadTooLarge
@@ -27,8 +32,12 @@ MAX_BYTES = 5 * 1024 * 1024
 MAX_ROWS = 5000
 MAX_COLUMNS = 40
 MAX_CELL_CHARS = 10_000
-# The largest uncompressed zip member read (sheet XML, shared strings): a 5 MB xlsx rarely inflates beyond 40 MB.
-MAX_MEMBER_BYTES = 40 * 1024 * 1024
+# The largest inflated zip member read (sheet XML, shared strings). 5000 rows x 40 short cells of sheet XML stay far
+# below it; the member is streamed (iterparse) and its bytes counted, so memory stays near the rows kept, not the XML.
+MAX_MEMBER_BYTES = 8 * 1024 * 1024
+# Shared strings kept: one per cell of the largest file at most, and a total size bound.
+MAX_SHARED_STRINGS = MAX_ROWS * MAX_COLUMNS
+MAX_SHARED_CHARS = 4_000_000
 XLSX_MAGIC = b"PK\x03\x04"
 _NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 _CELL_REF = re.compile(r"^([A-Z]{1,3})\d+$")
@@ -113,31 +122,83 @@ def _csv_rows(data: bytes) -> list[tuple[int, list[str]]]:
 
 
 # ── XLSX (first worksheet) ────────────────────────────────────────────────────────────────────────
+class _Capped:
+    """A zip member read through a byte budget: past :data:`MAX_MEMBER_BYTES` inflated bytes it raises (the size in
+    the zip header can lie), so a highly compressible member costs at most the budget, never its claimed size."""
+
+    def __init__(self, handle: IO[bytes]) -> None:
+        self._handle = handle
+        self._left = MAX_MEMBER_BYTES
+
+    def read(self, size: int = -1) -> bytes:
+        want = self._left + 1 if size < 0 else min(size, self._left + 1)
+        chunk = self._handle.read(want)
+        self._left -= len(chunk)
+        if self._left < 0:
+            raise ValueError("member too large")
+        return chunk
+
+
+def _events(zf: zipfile.ZipFile, name: str) -> Iterator[tuple[str, ElementTree.Element]]:
+    """Start / end events of one member, streamed (``iterparse``): no whole tree is built."""
+    if zf.getinfo(name).file_size > MAX_MEMBER_BYTES:
+        raise ValueError("member too large")
+    with zf.open(name) as handle:
+        # no external entities in xml.etree; the bytes are capped by _Capped
+        yield from ElementTree.iterparse(_Capped(handle), events=("start", "end"))  # noqa: S314
+
+
 def _xlsx_rows(data: bytes) -> list[tuple[int, list[str]]]:
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
             names = set(zf.namelist())
             sheet = _first_sheet(zf, names)
             shared = _shared_strings(zf) if "xl/sharedStrings.xml" in names else []
-            root = _parse(zf, sheet)
-    except (zipfile.BadZipFile, KeyError, ElementTree.ParseError, ValueError, EOFError):
+            return _sheet_rows(zf, sheet, shared)
+    except (zipfile.BadZipFile, KeyError, ElementTree.ParseError, ValueError, EOFError, OSError):
         raise Invalid("unreadable_file", "not a CSV or .xlsx file") from None
+
+
+def _sheet_rows(zf: zipfile.ZipFile, sheet: str, shared: list[str]) -> list[tuple[int, list[str]]]:
+    """The rows of the sheet, one ``<row>`` at a time: each cell is read when it closes and then dropped, each row
+    is dropped once read, and the reading stops after :data:`MAX_ROWS` + 50 rows (``read_table`` names the limit)."""
     out: list[tuple[int, list[str]]] = []
-    data_el = root.find(f"{_NS}sheetData")
-    if data_el is None:
-        return out
-    for position, row in enumerate(data_el.iter(f"{_NS}row"), start=1):
-        number = int(row.get("r") or position)
-        cells: dict[int, str] = {}
-        for i, cell in enumerate(row.iter(f"{_NS}c")):
-            col = _column(cell.get("r"), i)
-            if col >= MAX_COLUMNS + 10:
-                continue
-            cells[col] = _cell_text(cell, shared)
-        width = max(cells) + 1 if cells else 0
-        out.append((number, [cells.get(c, "") for c in range(width)]))
-        if len(out) > MAX_ROWS + 50:
+    stack: list[ElementTree.Element] = []
+    cells: dict[int, str] = {}
+    in_cell = 0
+    position = 0
+    row_number = 0
+    cell_index = 0
+    for event, elem in _events(zf, sheet):
+        if event == "start":
+            stack.append(elem)
+            if elem.tag == f"{_NS}row":
+                position += 1
+                row_number = int(elem.get("r") or position)
+                cells, cell_index = {}, 0
+            elif elem.tag == f"{_NS}c":
+                in_cell += 1
+            continue
+        stack.pop()
+        parent = stack[-1] if stack else None
+        if elem.tag == f"{_NS}c":
+            in_cell -= 1
+            col = _column(elem.get("r"), cell_index)
+            cell_index += 1
+            if col < MAX_COLUMNS + 10:
+                cells[col] = _cell_text(elem, shared)
+        elif elem.tag == f"{_NS}row":
+            width = max(cells) + 1 if cells else 0
+            out.append((row_number, [cells.get(c, "") for c in range(width)]))
+            if len(out) > MAX_ROWS + 50:
+                break
+        elif elem.tag == f"{_NS}sheetData":
             break
+        elif in_cell:
+            continue  # a value / inline string of the open cell: read when the cell closes
+        elem.clear()
+        if parent is not None:
+            parent.remove(elem)  # always the parent's only child here, so this is O(1)
     return out
 
 
@@ -150,19 +211,34 @@ def _first_sheet(zf: zipfile.ZipFile, names: set[str]) -> str:
     return sheets[0]
 
 
-def _parse(zf: zipfile.ZipFile, name: str) -> ElementTree.Element:
-    if zf.getinfo(name).file_size > MAX_MEMBER_BYTES:
-        raise ValueError("member too large")
-    with zf.open(name) as handle:
-        raw = handle.read(MAX_MEMBER_BYTES + 1)
-    if len(raw) > MAX_MEMBER_BYTES:
-        raise ValueError("member too large")
-    return ElementTree.fromstring(raw)  # noqa: S314 — no external entities in xml.etree; size capped above
-
-
 def _shared_strings(zf: zipfile.ZipFile) -> list[str]:
-    root = _parse(zf, "xl/sharedStrings.xml")
-    return ["".join(t.text or "" for t in si.iter(f"{_NS}t")) for si in root.iter(f"{_NS}si")]
+    """The shared strings, streamed; at most :data:`MAX_SHARED_STRINGS` strings and :data:`MAX_SHARED_CHARS`
+    characters in all (each string cut at :data:`MAX_CELL_CHARS`), else the file is unreadable."""
+    out: list[str] = []
+    total = 0
+    stack: list[ElementTree.Element] = []
+    in_item = 0
+    for event, elem in _events(zf, "xl/sharedStrings.xml"):
+        if event == "start":
+            stack.append(elem)
+            if elem.tag == f"{_NS}si":
+                in_item += 1
+            continue
+        stack.pop()
+        parent = stack[-1] if stack else None
+        if elem.tag == f"{_NS}si":
+            in_item -= 1
+            text = "".join(t.text or "" for t in elem.iter(f"{_NS}t"))[:MAX_CELL_CHARS]
+            total += len(text)
+            out.append(text)
+            if len(out) > MAX_SHARED_STRINGS or total > MAX_SHARED_CHARS:
+                raise ValueError("too many shared strings")
+        elif in_item:
+            continue
+        elem.clear()
+        if parent is not None:
+            parent.remove(elem)
+    return out
 
 
 def _column(ref: str | None, fallback: int) -> int:

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import datetime as dt
 import io
+import tracemalloc
 import zipfile
 from typing import Any
 
@@ -109,6 +110,71 @@ def test_xlsx_refuses_a_broken_zip_and_an_oversized_member(monkeypatch: pytest.M
     monkeypatch.setattr(formats, "MAX_MEMBER_BYTES", 50)
     with pytest.raises(Invalid) as err:
         formats.read_table(_xlsx([["name"], ["A very long name that inflates the sheet beyond fifty bytes"]]))
+    assert err.value.code == "unreadable_file"
+
+
+def _zip(members: dict[str, str]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for name, text in members.items():
+            zf.writestr(name, text)
+    return buf.getvalue()
+
+
+_NS_ATTR = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+
+
+def test_xlsx_a_highly_compressible_member_is_refused_without_inflating_it() -> None:
+    # ~9 MB of sheet XML that deflates to a few KB: refused as unreadable before it is held in memory.
+    pad = "<row/>" * (9 * 1024 * 1024 // 6)
+    data = _zip({"xl/worksheets/sheet1.xml": f"<worksheet {_NS_ATTR}><sheetData>{pad}</sheetData></worksheet>"})
+    assert len(data) < 200_000
+    tracemalloc.start()
+    try:
+        with pytest.raises(Invalid) as err:
+            formats.read_table(data)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert err.value.code == "unreadable_file"
+    assert peak < 40 * 1024 * 1024
+
+
+def test_xlsx_member_budget_holds_even_when_the_zip_header_lies() -> None:
+    capped = formats._Capped(io.BytesIO(b"x" * (formats.MAX_MEMBER_BYTES + 1)))
+    assert len(capped.read(16)) == 16
+    with pytest.raises(ValueError):
+        while capped.read(1 << 16):
+            pass
+
+
+def test_xlsx_sheet_is_streamed_cell_by_cell() -> None:
+    # One header row, then a row of ~7 MB of cells beyond the column cap: read and dropped one by one.
+    wide = "".join(f'<c r="ZZ{2}"><v>{i}</v></c>' for i in range(250_000))
+    sheet = (
+        f'<worksheet {_NS_ATTR}><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>name</t></is></c></row>'
+        f'<row r="2">{wide}<c r="A2" t="inlineStr"><is><t>Mira Holt</t></is></c></row></sheetData></worksheet>'
+    )
+    assert 6_000_000 < len(sheet) < formats.MAX_MEMBER_BYTES
+    tracemalloc.start()
+    try:
+        table = formats.read_table(_zip({"xl/worksheets/sheet1.xml": sheet}))
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert [r.cells["name"] for r in table.rows] == ["Mira Holt"]
+    assert peak < 40 * 1024 * 1024  # the whole tree of this sheet would be several hundred MB
+
+
+def test_xlsx_shared_strings_are_capped(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(formats, "MAX_SHARED_STRINGS", 3)
+    with pytest.raises(Invalid) as err:
+        formats.read_table(_xlsx([["name"], ["Ana Bel"], ["Cy Dun"], ["Eva Fox"]]))
+    assert err.value.code == "unreadable_file"
+    monkeypatch.setattr(formats, "MAX_SHARED_STRINGS", 100)
+    monkeypatch.setattr(formats, "MAX_SHARED_CHARS", 10)
+    with pytest.raises(Invalid) as err:
+        formats.read_table(_xlsx([["name"], ["Ana Bel"], ["Cy Dun"]]))
     assert err.value.code == "unreadable_file"
 
 

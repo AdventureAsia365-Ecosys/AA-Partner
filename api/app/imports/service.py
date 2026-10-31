@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -91,15 +92,17 @@ def check_region(region: str | None) -> str | None:
     return code
 
 
-def _table(entity: str, data: bytes) -> tuple[Table, dict[str, list[str]]]:
-    table = read_table(data)
+async def _table(entity: str, data: bytes) -> tuple[Table, dict[str, list[str]]]:
+    # The parse is CPU work (up to MAX_BYTES of CSV or a streamed .xlsx): off the event loop, so the API and the
+    # in-process crm.job worker keep serving other agencies meanwhile.
+    table = await asyncio.to_thread(read_table, data)
     columns = spec.check_columns(spec.SPECS[entity], table.headers)
     return table, columns
 
 
 async def preview(ctx: TenantContext, vault: Vault, *, entity: str, data: bytes, region: str | None) -> dict[str, Any]:
     entity, region = check_entity(entity), check_region(region)
-    table, columns = _table(entity, data)
+    table, columns = await _table(entity, data)
     results = await engine.run(ctx, vault, entity, table.rows, apply=False, member_id=ctx.member_id, region=region)
     summary = engine.summarise(results)
     ctx.audit("import_preview", "allowed", "client_import", None, reason=entity)
@@ -119,7 +122,7 @@ async def start(
     entity, region = check_entity(entity), check_region(region)
     if not _SHA256.match(sha256 or ""):
         raise Invalid("invalid_sha256", "the sha256 of the previewed file")
-    table, _ = _table(entity, data)
+    table, _ = await _table(entity, data)
     if hashlib.sha256(data).hexdigest() != sha256:
         raise Conflict("file_changed", "the file differs from the one previewed: preview it again")
     import_id = uuid.uuid4()
@@ -231,7 +234,7 @@ def build_handler(store: IngestStore | None, keys: KeyProvider | None) -> Handle
                 raise PermanentError("file_gone") from None
             raise
         try:
-            table, _ = _table(entity, data)
+            table, _ = await _table(entity, data)
         except Invalid as exc:
             await store.delete(key)
             raise PermanentError(exc.code) from None
