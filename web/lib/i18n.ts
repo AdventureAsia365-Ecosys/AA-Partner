@@ -13,8 +13,8 @@
 import { isDateLocale, type DateLocale } from "./dates";
 import { aiEn, aiVi } from "./i18nAi";
 import { onboardingEn, onboardingVi } from "./i18nOnboarding";
-import { offlineEn, offlineVi } from "./i18nOffline";
 import { commissionEn, commissionVi } from "./i18nCommission";
+import { offlineEn, offlineVi } from "./i18nOffline";
 import { opsReleaseEn, opsReleaseVi } from "./i18nOpsRelease";
 import { supportEn, supportVi } from "./i18nSupport";
 
