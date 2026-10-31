@@ -33,6 +33,7 @@ CONTROL_KEYS = frozenset(
         "mode",
         "purpose",
         "reason_code",
+        "region",  # AA-962: the ISO country code of an import's local phone numbers (VN, AU)
         "scope",
         "since",
         "slot",

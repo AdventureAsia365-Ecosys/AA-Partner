@@ -70,6 +70,7 @@ from app.routers import (
     ledger,
     lifecycle,
     mail,
+    onboarding,
     ops,
     payments,
     pipeline,
@@ -235,6 +236,7 @@ def create_app(
     app.include_router(agency.router)
     app.include_router(pipeline.router)
     app.include_router(travellers.router)
+    app.include_router(onboarding.router)
     app.include_router(audit.router)
     app.include_router(team.router)
     app.include_router(invitations.public_router)

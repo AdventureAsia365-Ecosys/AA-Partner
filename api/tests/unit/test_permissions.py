@@ -71,6 +71,9 @@ DESIGN: dict[str, tuple[str, str, str]] = {
     "settings_forms_manage": (Y, N, N),
     "access_log_view": (Y, N, N),
     "data_settings": (Y, N, N),  # AA-942 (design §3.5 / §3.6): trash window, auto-archive, legal holds — owner
+    "client_import": (Y, N, N),  # AA-962 (R43): the agency's own bulk import, like the agency export — owner
+    "client_merge": (Y, N, N),  # AA-962 (R6): one client of the pair goes to the trash, like a client delete — owner
+    "onboarding_manage": (Y, N, N),  # AA-962 (Fix E2): "Later" / done marks on the agency's checklist — owner
 }
 WORD = {Rule.ALLOW: Y, Rule.DENY: N, Rule.OWN: OWN, Rule.ASSIGNED: ASG, Rule.THRESHOLD: THR}
 

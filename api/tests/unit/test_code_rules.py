@@ -104,6 +104,8 @@ SYSTEM_MODULES = frozenset(
         # AA-945: the mailbox health check and the history import (one agency per transaction, actor job:<kind>).
         "app/mail/health.py",
         "app/mail/history_import.py",
+        # AA-962: the client import job (one chunk per transaction, actor job:crm_client_import).
+        "app/imports/service.py",
         # AA-947: the AA outage queue and the Booking feed (one agency per transaction, actor job:crm_booking_sync).
         "app/booking/sync.py",
     }
