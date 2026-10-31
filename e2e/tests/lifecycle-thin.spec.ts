@@ -14,6 +14,8 @@
 //      is bound to the access and the address its code went to, not to one link). The lead sends Stage 3 and signs
 //      the e-sign v1 envelope (terms + waiver + the insurance declination, declined) with a fresh code -> the trip's s3
 //      is 100 -> Pre-departure moves without the gate dialog;
+//      6b (AA-954, CRM-24b): the page is installable (manifest) and keeps the itinerary only; offline it shows it
+//      with "last updated"; sign-out clears every portal cache;
 //   7. the trip is cancelled (it leaves the open board).
 // Steps 4 and 6 need the code: PORTAL_OTP_DEV_ECHO on the Dev API (the synthetic agency has no mailbox), else they
 // are skipped with a note. Card E (no return date -> stays Travelling + task) runs on PostgreSQL
@@ -250,6 +252,31 @@ test.describe("CRM-18 thin full lifecycle on Dev", () => {
       await expect(envelope).toHaveAttribute("data-signed", "true", { timeout: 15_000 });
       await expect(envelope.getByTestId("portal-signed")).toContainText(/decline travel insurance/i);
       await shot(client, "06-portal-done");
+
+      // 6b. AA-954 (CRM-24b, R16): installable and offline. The worker keeps the page shell and the page keeps the
+      // itinerary (only: card R); offline, the reload shows it with "last updated" (card E); back online the home
+      // returns; sign-out leaves no portal cache on the device.
+      await expect(client.locator('link[rel="manifest"]')).toHaveAttribute("href", /\/c\/portal\.webmanifest/);
+      await client.waitForFunction(
+        async () => {
+          const names = await caches.keys();
+          return names.includes("aa-portal-shell-v1") && names.includes("aa-portal-data-v1");
+        },
+        null,
+        { timeout: 20_000 },
+      );
+      const kept = await client.evaluate(async () => (await (await caches.match("/c/t/offline-itinerary.json"))?.text()) ?? "");
+      for (const never of ["PA1234567", "1984-03-02", "Synthetic contact", "passport", "stage3", "waiver"]) expect(kept).not.toContain(never);
+      await context.setOffline(true);
+      await client.reload();
+      await expect(client.getByTestId("portal-offline")).toHaveAttribute("data-saved", "true", { timeout: 15_000 });
+      await expect(client.getByTestId("portal-offline-updated")).toContainText(/last updated/i);
+      await shot(client, "06b-offline");
+      await context.setOffline(false);
+      await expect(client.getByTestId("portal-home")).toBeVisible({ timeout: 15_000 });
+      await client.getByTestId("portal-sign-out").click();
+      await expect(client.getByTestId("portal-sign-in")).toBeVisible({ timeout: 15_000 });
+      await expect.poll(async () => client.evaluate(async () => (await caches.keys()).filter((n) => n.startsWith("aa-portal-")))).toEqual([]);
 
       await page.goto(tripUrl);
       await hydrated(page, "crm-trip");
