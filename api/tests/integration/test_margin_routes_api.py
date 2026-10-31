@@ -81,6 +81,7 @@ UNSEEDED = {
     "/crm/v1/mail/imports/{import_id}": "mailbox history import status: counts only",
     "/crm/v1/lifecycle/offboarding/{request_id}/export": "owner-only agency export: never the assistant",
     "/crm/v1/data/exports/{export_id}/download": "owner-only portability ZIP (AA-967): never the assistant",
+    "/crm/v1/client-imports/{import_id}": "owner-only client import status (AA-962): counts only",
 }
 
 
