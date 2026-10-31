@@ -1,5 +1,6 @@
 // web/app/(crm)/page.tsx — Home (A-01, design v3 §2.2): KPI tiles, "Needs you", the getting-started checklist.
-// AA-935 builds the frame with empty values; the numbers arrive with the cards that create trips (AA-936 and later).
+// AA-935 builds the frame with empty values; the numbers arrive with the cards that create trips (AA-936 and later);
+// AA-966: the KPI tiles (components/reports/HomeTiles.tsx).
 import { CheckCircle2, Circle } from "lucide-react";
 import { EmptyState, K } from "@/app/_kit";
 import { Panel, PageTitle } from "@/components/PageTitle";
@@ -7,12 +8,15 @@ import { crmContext } from "@/lib/crmContext";
 import { formatDate } from "@/lib/dates";
 import { t, type MessageKey } from "@/lib/i18n";
 import { contentStudioHref } from "@/lib/nav";
+import { HomeTiles } from "@/components/reports/HomeTiles";
+import { serverContext } from "@/lib/serverContext";
 
 export default async function HomePage() {
   const ctx = await crmContext();
   if (ctx.apiDown) return null;
   const { lang, locale } = ctx;
   const studio = contentStudioHref(ctx.cfg.contentStudioUrl, ctx.cfg.publicOrigin);
+  const { session } = await serverContext();
   const steps: { key: MessageKey; done: boolean; href?: string | null }[] = [
     { key: "home.check.signin", done: true },
     { key: "home.check.agency", done: true },
@@ -25,6 +29,7 @@ export default async function HomePage() {
         title={`${t(lang, "home.title")} · ${ctx.me.display_name ?? ""}`}
         subtitle={`${formatDate(new Date(), locale)} · ${t(lang, "home.subtitle")}`}
       />
+      {session && <HomeTiles cfg={ctx.cfg} session={session} lang={lang} locale={locale} />}
       <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
         <Panel title={t(lang, "home.needs")} testId="crm-home-needs">
           <EmptyState title={t(lang, "home.needs")} description={t(lang, "home.needsEmpty")} />

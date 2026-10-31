@@ -39,6 +39,7 @@ export const ACTIONS = [
   "audit_view",
   "audit_export",
   "self_view",
+  "report_export",
 ] as const;
 export const EXPORT_FORMATS = ["csv", "jsonl"] as const;
 export type ExportFormat = (typeof EXPORT_FORMATS)[number];

@@ -54,7 +54,7 @@ export const SECTIONS: readonly Section[] = [
   { key: "payments", path: "/payments", group: "money", label: "nav.payments", icon: "wallet", roles: ALL, empty: { title: "section.payments.title", body: "section.payments.body" } }, // AA-952
   { key: "bookings", path: "/bookings", group: "money", label: "nav.bookings", icon: "ticket", roles: ALL, empty: { title: "section.bookings.title", body: "section.bookings.body" } }, // AA-944
   { key: "commissions", path: "/commissions", group: "money", label: "nav.commissions", icon: "percent", roles: NO_ASSISTANT, empty: { title: "section.commissions.title", body: "section.commissions.body" } }, // AA-957
-  { key: "reports", path: "/reports", group: "grow", label: "nav.reports", icon: "chart", roles: ALL, empty: { title: "section.reports.title", body: "section.reports.body" } }, // AA-966
+  { key: "reports", path: "/reports", group: "grow", label: "nav.reports", icon: "chart", roles: ALL }, // AA-966
   { key: "marketing", path: "/marketing", group: "grow", label: "nav.marketing", icon: "megaphone", roles: NO_ASSISTANT, empty: { title: "section.marketing.title", body: "section.marketing.body" } }, // AA-968
   { key: "suppliers", path: "/suppliers", group: "grow", label: "nav.suppliers", icon: "truck", roles: ALL, empty: { title: "section.suppliers.title", body: "section.suppliers.body" } }, // AA-944
   { key: "library", path: "/library", group: "grow", label: "nav.library", icon: "book", roles: ALL, empty: { title: "section.library.title", body: "section.library.body" } }, // AA-963

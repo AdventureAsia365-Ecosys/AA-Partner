@@ -19,6 +19,8 @@ export * from "./core/Modal";
 export * from "./core/Drawer";
 export * from "./core/Toast";
 export * from "./core/DataTable";
+// AA-966: the KPI tile (Reports and Home tiles).
+export { KpiTile } from "./core/KpiTile";
 // AA-952: the kit form controls (Field, Input, Select, Textarea, Checkbox, Radio) for new forms (lint no-raw-form-control).
 export * from "./core/FormControls";
 export * from "./core/csv";
