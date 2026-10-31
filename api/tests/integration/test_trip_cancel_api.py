@@ -41,6 +41,8 @@ from app.invoices import service as invoices
 from app.ledger import lines, suppliers
 from app.payments import service as payments
 from app.permissions import Action
+from app.portal import access
+from app.proposals import service as proposals
 from app.stages_job import run_agency as date_rule
 from app.tenancy import system_tx, tenant_tx
 from app.vault import KeyProvider, Vault
@@ -49,6 +51,10 @@ from tests.aa_fakes import FakeBooking, booking_client
 from tests.integration.test_aa_lines_api import _body as _aa_body
 from tests.integration.test_aa_lines_api import _due_now, _scalar, _sync
 from tests.integration.test_aa_lines_api import _setup as _aa_setup
+from tests.integration.test_lifecycle_api import _accept as _lc_accept
+from tests.integration.test_lifecycle_api import _proposal as _lc_proposal
+from tests.integration.test_lifecycle_api import _schedule as _lc_schedule
+from tests.integration.test_lifecycle_api import _setup as _lc_setup
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -571,3 +577,61 @@ async def test_a_kept_invoice_is_voided_once_its_refund_executed_and_the_supplie
                                              "AND source_ref = $1", f"invoice:{invoice_id}")  # fmt: skip
     assert (invoice["status"], invoice["void_reason"]) == ("void", "Trip cancelled")
     assert commitment == "void"
+
+
+LATE_FEE = [{"description": "Late fee", "quantity": "1", "unit_amount": "20"}]
+
+
+async def test_a_cancelled_trip_voids_its_due_balance_and_bills_the_client_no_more(app_pool: asyncpg.Pool) -> None:
+    """S262 live finding (C12 §2.7 items 3-4): after the cancel the balance row is void (not left Due with "Mark paid"
+    and "Create invoice"), its issued invoice holding no money is void, and the trip takes no new invoice (409
+    trip_cancelled) and no new portal link."""
+    s = await _lc_setup(app_pool)
+    await _lc_accept(app_pool, s, await _lc_proposal(app_pool, s))
+    rows = (await _lc_schedule(app_pool, s))["schedule"]
+    deposit = uuid.UUID(next(r["schedule_id"] for r in rows if r["kind"] == "deposit"))
+    balance = uuid.UUID(next(r["schedule_id"] for r in rows if r["kind"] == "balance"))
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        paid = await proposals.mark_paid(ctx, Vault(s["keys"], ctx), deposit, received_on=None, method="cash")
+        assert paid["trip_moved"]["stage"] == "booked"
+        bill = await invoices.create_from_schedule(ctx, s["trip"], balance)
+        await invoices.issue(ctx, uuid.UUID(bill["invoice_id"]))
+    preview = await _cancel(app_pool, s, dry_run=True)
+    assert _effects(preview)["schedule_rows_voided"] == 1 and _effects(preview)["invoices_voided"] == 1
+    out = await _cancel(app_pool, s, dry_run=False)
+    assert out["stage"] == "cancelled"  # no AA booking: cancelled at once
+    async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:
+        statuses = {r["kind"]: r["status"] for r in (await proposals.trip_overview(ctx, Vault(s["keys"], ctx),
+                                                                                   s["trip"]))["schedule"]}  # fmt: skip
+        invoice = await ctx.conn.fetchval("SELECT status FROM crm.invoice WHERE invoice_id = $1",
+                                          uuid.UUID(bill["invoice_id"]))  # fmt: skip
+        audited = await ctx.conn.fetchval(
+            "SELECT count(*) FROM crm.audit_event WHERE action = 'payment_schedule_void' AND object_id = $1",
+            str(balance),
+        )
+    assert statuses == {"deposit": "paid", "balance": "void"} and invoice == "void" and audited == 1
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        with pytest.raises(Conflict) as err:
+            await invoices.create_typed(ctx, s["trip"], kind="adjustment", currency="USD", lines=LATE_FEE)
+        assert err.value.code == "trip_cancelled"
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        with pytest.raises(Conflict) as err:
+            await proposals.mark_paid(ctx, Vault(s["keys"], ctx), balance, received_on=None, method="cash")
+        assert err.value.code == "schedule_not_due"  # the cancel voided it
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        with pytest.raises(Conflict) as err:
+            await access.invite(ctx, s["trip"], s["lead"])
+        assert err.value.code == "trip_closed"
+
+
+async def test_a_trip_whose_cancellation_waits_for_aa_takes_no_new_invoice(app_pool: asyncpg.Pool) -> None:
+    """S262: the pending window too (the trip keeps its stage until AA confirms): 409 trip_cancelled."""
+    s = await _setup(app_pool)
+    fake = FakeBooking(confirm_line_status="confirmed")
+    await _aa_booking(app_pool, s, fake)
+    out = await _cancel(app_pool, s, dry_run=False)
+    assert out["cancellation"]["status"] == "pending" and await _stage(app_pool, s) == "booked"
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        with pytest.raises(Conflict) as err:
+            await invoices.create_typed(ctx, s["trip"], kind="adjustment", currency="USD", lines=LATE_FEE)
+        assert err.value.code == "trip_cancelled"

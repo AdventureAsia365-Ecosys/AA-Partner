@@ -36,7 +36,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import asyncpg
 
-from app import stages
+from app import cancellation, stages
 from app.errors import Conflict, Invalid, NotFound
 from app.invoices import render
 from app.ledger import fx
@@ -644,6 +644,7 @@ def _translate(exc: asyncpg.PostgresError) -> Exception:
 async def create_from_schedule(ctx: TenantContext, trip_id: uuid.UUID, schedule_id: uuid.UUID) -> dict[str, Any]:
     if await ctx.conn.fetchrow(TRIP_SQL, trip_id) is None:
         raise NotFound("trip_not_found")
+    await cancellation.ensure_not_cancelled(ctx, trip_id)  # S262: a cancelled trip bills the client no more
     row = await ctx.conn.fetchrow(SCHEDULE_SQL, schedule_id, trip_id)
     if row is None:
         raise NotFound("schedule_not_found")
@@ -704,6 +705,7 @@ async def create_typed(
     fx.currency(currency)
     if await ctx.conn.fetchrow(TRIP_SQL, trip_id) is None:
         raise NotFound("trip_not_found")
+    await cancellation.ensure_not_cancelled(ctx, trip_id)
     conf = await settings(ctx)
     if kind == "service_fee" and not conf["service_fee_enabled"]:
         raise Conflict("service_fee_disabled", "turn on service fees in Settings > Payments")
@@ -762,6 +764,7 @@ async def issue(ctx: TenantContext, invoice_id: uuid.UUID) -> dict[str, Any]:
     row = await _row(ctx, invoice_id, lock=True)
     if row["status"] != "draft":
         raise Conflict("invoice_not_draft", "this invoice is issued or void already")
+    await cancellation.ensure_not_cancelled(ctx, row["trip_id"])
     if row["schedule_id"] is not None:
         schedule = await ctx.conn.fetchrow(SCHEDULE_SQL, row["schedule_id"], row["trip_id"])
         if schedule is None or schedule["status"] != "due" or schedule["proposal_status"] != "accepted":

@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from app import stages, stages_job
+from app import cancellation, stages, stages_job
 from app.errors import Conflict, Forbidden, Invalid, NotFound, RateLimited, ServiceError, Unavailable
 from app.portal import access, progress
 from app.portal import public as portal
@@ -252,6 +252,33 @@ async def test_mark_paid_refusals() -> None:
         await service.mark_paid(
             tenant_ctx(future), FakeVault(), SCHEDULE, received_on=TODAY + dt.timedelta(days=1), method="cash"
         )
+
+
+CANCELLING = {"stage": "booked", "cancelling": True}  # S262: a cancellation waits for AA
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_trip_takes_no_payment_edit_or_new_client_link() -> None:
+    """S262 (C12 §2.7): once a trip is cancelled (or its cancellation waits for AA) the agency cannot mark a schedule
+    row paid, edit a draft proposal, re-issue the client's proposal link or hand out a portal link: 409
+    trip_cancelled, nothing written."""
+    closed = " ".join(cancellation.CLOSED_SQL.split())
+    conn = ScriptedConn().on("FROM crm.payment_schedule s", _schedule_row(kind="balance")).on("AT TIME ZONE", TODAY)
+    conn.on(closed, CANCELLING)
+    with _raises(Conflict, "trip_cancelled"):
+        await service.mark_paid(tenant_ctx(conn), FakeVault(), SCHEDULE, received_on=None, method="cash")
+    draft = ScriptedConn().on("FROM crm.proposal p JOIN crm.trip", _proposal_row()).on(closed, CANCELLING)
+    with _raises(Conflict, "trip_cancelled"):
+        await service.update_draft(tenant_ctx(draft), FakeVault(), PROPOSAL, {"body": "x"})
+    sent = ScriptedConn().on("FROM crm.proposal p JOIN crm.trip", _proposal_row(status="sent", link_id=LINK))
+    sent.on(closed, {"stage": "cancelled", "cancelling": True})
+    with _raises(Conflict, "trip_cancelled"):
+        await service.reissue_link(tenant_ctx(sent), PROPOSAL)
+    portal_conn = _invite_conn().on(closed, CANCELLING)
+    with _raises(Conflict, "trip_cancelled"):
+        await access.invite(tenant_ctx(portal_conn), TRIP, LEAD)
+    for c in (conn, draft, sent, portal_conn):
+        assert not any(sql.startswith(("INSERT", "UPDATE")) for sql, _ in c.calls)
 
 
 @pytest.mark.asyncio

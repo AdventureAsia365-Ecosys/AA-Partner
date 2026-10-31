@@ -40,6 +40,9 @@ PAY_LOOSE = uuid.UUID("00000000-0000-4000-8000-00000000b003")
 COM_EXPECTED = uuid.UUID("00000000-0000-4000-8000-00000000c001")
 COM_CLAIMED = uuid.UUID("00000000-0000-4000-8000-00000000c002")
 REQUEST = uuid.UUID("00000000-0000-4000-8000-00000000d001")
+SCHED_FREE = uuid.UUID("00000000-0000-4000-8000-00000000e001")
+SCHED_DRAFT = uuid.UUID("00000000-0000-4000-8000-00000000e002")
+SCHED_CLAIMED = uuid.UUID("00000000-0000-4000-8000-00000000e003")
 ACTOR = f"member:{MEMBER}"
 ISSUED = dt.datetime(2026, 10, 1, 9, tzinfo=dt.UTC)
 
@@ -77,6 +80,12 @@ COMMISSIONS = [
     {"commission_id": COM_CLAIMED, "status": "claimed", "title": "Boat", "supplier_name": "Bay Cruises",
      "expected_amount": None, "expected_currency": None},
 ]  # fmt: skip
+# S262: the due balance rows and the live invoices that bill them.
+SCHEDULE = [
+    {"schedule_id": SCHED_FREE, "live_invoices": []},  # no invoice: voided
+    {"schedule_id": SCHED_DRAFT, "live_invoices": [INV_DRAFT]},  # its draft goes with the cancel: voided
+    {"schedule_id": SCHED_CLAIMED, "live_invoices": [INV_CLAIMED]},  # the client says they paid it: kept
+]
 AA_BOOKINGS = [
     {"booking_id": "b-1", "line_id": LINE_B1, "titles": ["Halong 2D"], "asked": False, "failed_code": None},
     {"booking_id": "b-2", "line_id": LINE_B2, "titles": ["Hue walk"], "asked": True, "failed_code": "forbidden"},
@@ -91,6 +100,7 @@ def world(*, open_status: Any = '{"status": "done"}', stage: str = "booked") -> 
         {"booking_line_id": uuid.UUID(int=7), "title": "Lodge", "supplier_name": "Riverside", "confirmation_no": "R-9"}
     ])  # fmt: skip
     conn.on(flat(cancellation.INVOICES_SQL), INVOICES)
+    conn.on(flat(cancellation.SCHEDULE_DUE_SQL), SCHEDULE)
     conn.on(flat(cancellation.PAYMENTS_SQL), PAYMENTS)
     conn.on(flat(cancellation.COMMISSIONS_SQL), COMMISSIONS)
     conn.on(flat(cancellation.WORKFLOW_DISPATCH_SQL), 2)
@@ -163,6 +173,7 @@ async def test_the_dry_run_lists_every_effect_and_writes_nothing(seams: dict[str
         "supplier_lines_to_cancel": 1,
         "invoices_voided": 2,  # the draft and the open one holding nothing; not the one with a refund open
         "invoices_claimed_kept": 1,
+        "schedule_rows_voided": 2,  # the row without an invoice and the one its voided draft billed
         "refund_requests": 1,  # only the payment with something left and an invoice
         "payments_without_invoice": 1,
         "commissions_cancelled": 1,
@@ -241,6 +252,9 @@ async def test_the_run_applies_every_effect_and_cancels_at_once_when_no_aa_booki
     assert conn.sql(flat(cancellation.VOID_SQL)) == [(INV_DRAFT, ACTOR), (INV_OPEN, ACTOR)]
     assert conn.sql(flat(cancellation.INVOICE_COMMITMENT_SQL)) == [(TRIP, f"invoice:{INV_OPEN}")]
     assert seams["settled"] == [(INV_OPEN, ACTOR)]
+    # S262: the due balance rows go too, except the one the claimed invoice bills (it settles through it).
+    assert conn.sql(flat(cancellation.SCHEDULE_VOID_SQL)) == [(SCHED_FREE,), (SCHED_DRAFT,)]
+    assert conn.sql(flat(cancellation.SCHEDULE_DUE_SQL)) == [(TRIP,), (TRIP,)]  # the plan, then the run
     # One refund request for the amount the member set, with the reason naming the accepted terms.
     refund = conn.sql(flat(cancellation.REFUND_SQL))
     assert len(refund) == 1
@@ -277,6 +291,7 @@ async def test_the_run_applies_every_effect_and_cancels_at_once_when_no_aa_booki
         ("invoice_void", "invoice", "trip_cancelled")
     ) == 2
     assert ("refund_request", "refund_request", "trip_cancelled") in audits
+    assert audits.count(("payment_schedule_void", "payment_schedule", "trip_cancelled")) == 2
     assert out["cancellation"]["status"] == "pending" and _effects(out)["invoices_voided"] == 2
 
 
@@ -367,6 +382,30 @@ async def test_pending_reads_the_cancellation_row() -> None:
     assert not await cancellation.is_pending(tenant_ctx(conn), TRIP)
     conn.on(flat(cancellation.PENDING_SQL), {**row, "status": "pending"})
     assert await cancellation.is_pending(tenant_ctx(conn), TRIP)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("row", "closed"),
+    [
+        (None, False),  # no such trip: the caller's own lookup answers 404
+        ({"stage": "booked", "cancelling": False}, False),
+        ({"stage": "booked", "cancelling": True}, True),  # waits for AA: billing is closed already
+        ({"stage": "cancelled", "cancelling": False}, True),  # cancelled before crm-035 (no cancellation row)
+        ({"stage": "cancelled", "cancelling": True}, True),
+    ],
+)
+async def test_a_cancelled_or_cancelling_trip_bills_no_more(row: dict[str, Any] | None, closed: bool) -> None:
+    conn = ScriptedConn().on(flat(cancellation.CLOSED_SQL), row)
+    ctx = tenant_ctx(conn)
+    assert await cancellation.is_closed(ctx, TRIP) is closed
+    if closed:
+        with pytest.raises(Conflict) as err:
+            await cancellation.ensure_not_cancelled(ctx, TRIP)
+        assert err.value.code == "trip_cancelled" and err.value.status_code == 409
+    else:
+        await cancellation.ensure_not_cancelled(ctx, TRIP)
+    assert conn.sql(flat(cancellation.CLOSED_SQL)) == [(TRIP,)] * 2
 
 
 def _finishing(row: dict[str, Any] | None, left: int, stage: str | None) -> ScriptedConn:

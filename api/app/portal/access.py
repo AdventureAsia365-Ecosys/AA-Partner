@@ -19,6 +19,7 @@ import secrets
 import uuid
 from typing import Any
 
+from app import cancellation
 from app.dispatch import queue as dispatch
 from app.errors import Conflict, NotFound
 from app.portal import progress
@@ -89,6 +90,8 @@ async def invite(ctx: AnyContext, trip_id: uuid.UUID, traveler_id: uuid.UUID) ->
         raise NotFound("trip_not_found")
     if stage in CLOSED_STAGES:
         raise Conflict("trip_closed", "a lost, cancelled or completed trip has no portal")
+    # S262: a trip whose cancellation waits for AA keeps its stage; the cancel revoked its links, none is issued again.
+    await cancellation.ensure_not_cancelled(ctx, trip_id)
     role = await ctx.conn.fetchval(ROLE_SQL, trip_id, traveler_id)
     if role is None:
         raise NotFound("traveler_not_on_trip")
