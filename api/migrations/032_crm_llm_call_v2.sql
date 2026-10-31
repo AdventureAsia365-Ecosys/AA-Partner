@@ -108,7 +108,7 @@ COMMENT ON COLUMN crm.llm_call.app IS 'AA-964 (crm-032): the app of the row unde
 COMMENT ON COLUMN crm.llm_call.attempt_no IS 'AA-964 (crm-032): 1-based attempt of one gateway request (the CRM makes one attempt today).';
 COMMENT ON COLUMN crm.llm_call.request_id IS 'AA-964 (crm-032): the provider''s request id (Bedrock RequestId), when it gave one.';
 COMMENT ON COLUMN crm.llm_call.job_id IS 'AA-964 (crm-032): the crm.job the call ran in (no FK: crm_job_retention purges job rows).';
-COMMENT ON COLUMN crm.llm_call.connection_key IS 'AA-964 (crm-032): the CRM provider connection (bedrock_acc2, bedrock_acc3, stub), never an account id.';
+COMMENT ON COLUMN crm.llm_call.connection_key IS 'AA-964 (crm-032): the CRM provider connection (stub, bedrock, bedrock_role, bedrock_guardrails), never an account id.';
 COMMENT ON COLUMN crm.llm_call.deployment_wire_id IS 'AA-964 (crm-032): the model or operation id sent on the wire (inference profile id, apply_guardrail).';
 COMMENT ON COLUMN crm.llm_call.family IS 'AA-964 (crm-032): the model family (claude-haiku, guardrails, stub).';
 COMMENT ON COLUMN crm.llm_call.cache_read_tokens IS 'AA-964 (crm-032): prompt-cache tokens read, as the provider reported them.';

@@ -64,7 +64,7 @@ def _guard_row(**overrides: object) -> tuple[str, tuple[object, ...]]:
         "pricing_mode": "code_table",
         "request_id": "0a1b2c3d-1111-4222-8333-444455556666",
         "prompt_hash": "ab" * 32,
-        "connection_key": "bedrock_acc2",
+        "connection_key": "bedrock_guardrails",
         **overrides,
     }
     names = ", ".join(values)
