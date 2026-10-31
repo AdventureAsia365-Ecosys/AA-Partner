@@ -6,7 +6,8 @@ Ported from the portal side of the AA-CIS-App unit tests (the admin side stays t
   are tenant-only; security headers; the 308 map of the old T-number slugs; the lockfile is tracked; nothing but the
   Fargate deploy redeploys for a portal change (the Vercel copy went at the P2b clean-up, AA-979 §4.5).
 - test_aa886_portal_legal_pages: ``/privacy`` and ``/terms`` are draft, noindex pages outside the gate.
-- test_aa820_portal_terms_ai: ``/terms`` section 3 keeps the AI acceptable-use summary (draft v0.2).
+- test_aa820_portal_terms_ai: ``/terms`` section 3 keeps the AI acceptable-use summary (draft v0.2), and since S262
+  (draft v0.3) ``/terms`` §3 and ``/privacy`` §5 name the AI providers of the root AI Use Register (ADR 0009).
 - test_aa760_muted_contrast (portal tokens) and test_aa760_portal_calls_not_metered (the sign-in asks for a portal
   session, ``client: "portal"``, so portal page loads are not metered as API calls).
 - test_aa911_bff_cross_site: every portal BFF write route refuses a cross-site request before it reads a cookie or a
@@ -263,6 +264,39 @@ def test_terms_ai_section_links_the_policies_and_lists_the_prohibited_uses() -> 
         "you are its publisher",
     ):
         assert phrase in flat, f"/terms §3 must mention: {phrase}"
+
+
+def _privacy_ai_section() -> str:
+    m = re.search(r'<LegalSection id="ai".*?</LegalSection>', _read("portal/app/privacy/page.tsx"), re.S)
+    assert m, 'privacy/page.tsx: section id="ai" not found'
+    return re.sub(r"\s+", " ", m.group(0))
+
+
+# AA-820 / S262: the provider list follows the root AI Use Register (docs/architecture/ai-use-register.md):
+# Claude through Amazon Bedrock writes, OpenAI models through Amazon Bedrock check, the direct Anthropic / OpenAI
+# APIs only as a capped fallback. A route change that adds a provider updates the register and these pages together.
+PROVIDER_PHRASES = (
+    "Claude",
+    "Amazon Bedrock",
+    "OpenAI models",
+    "Anthropic API",
+    "OpenAI API",
+    "may be used as a fallback",
+)
+
+
+def test_terms_ai_section_names_the_register_providers() -> None:
+    ai = re.sub(r"\s+", " ", _ai_section())
+    for phrase in PROVIDER_PHRASES:
+        assert phrase in ai, f"/terms §3 must name: {phrase}"
+    assert 'href="https://openai.com/policies/usage-policies/"' in ai
+
+
+def test_privacy_ai_section_lists_every_provider() -> None:
+    ai = _privacy_ai_section()
+    for phrase in (*PROVIDER_PHRASES, "Jev"):
+        assert phrase in ai, f"/privacy §5 must name: {phrase}"
+    assert "[to be confirmed]" not in ai, "/privacy §5: the provider list is no longer open"
 
 
 # --- AA-760: muted text contrast and the unmetered portal session -----------------------------------------------------

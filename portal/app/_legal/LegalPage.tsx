@@ -8,8 +8,8 @@ import { PRIVACY_PATH, TERMS_PATH } from "@/lib/hosts";
 
 /** The banner title on every legal page while the text is not approved. */
 export const LEGAL_DRAFT_LABEL = "Draft — pending legal review";
-export const LEGAL_VERSION = "Draft v0.2";
-export const LEGAL_UPDATED = "24 October 2026";
+export const LEGAL_VERSION = "Draft v0.3";
+export const LEGAL_UPDATED = "31 October 2026";
 
 // Ink + underline, not gold: BRAND.accentDeep is 4.47:1 on white and 4.05:1 on the gold tint (below WCAG AA).
 const linkStyle: CSSProperties = { color: BRAND.ink, fontWeight: 600, textDecoration: "underline", textUnderlineOffset: 2 };
