@@ -95,7 +95,7 @@ async def test_ok_call_scrubs_logs_tokens_and_cost_never_text() -> None:
     assert provider.prompts == ["Hi [name]"]
     [args] = c.sql("INSERT INTO crm.llm_call")
     assert args[:9] == ("crm_reply", "writer", "bedrock", "us.model-v1", 10, 5, Decimal("0.0012"), args[7], "ok")
-    assert "Hoa" not in repr(args) and '"PERSON": 1' in args[-1]
+    assert "Hoa" not in repr(args) and '"PERSON": 1' in args[11]
     assert result.placeholder_map_id is None and result.fallback is None
     [rollup] = c.sql("INSERT INTO crm.llm_usage_daily")
     assert rollup == ("crm_reply", "us.model-v1", 0, 10, 5, Decimal("0.0012"))
@@ -149,7 +149,10 @@ async def test_r_guardrails_timeout_no_call_manual_reply_needed() -> None:
     assert provider.prompts == []
     [args] = c.sql("INSERT INTO crm.llm_call")
     assert args[8:10] == ("refused", "scrub_timeout") and "Peter" not in repr(args)
-    assert c.sql("pg_advisory_xact_lock") == []  # refused before the budget step
+    flat = [sql for sql, _ in c.calls]  # the budget step (and its lock) runs before the scrub
+    assert next(i for i, q in enumerate(flat) if "pg_advisory_xact_lock" in q) < next(
+        i for i, q in enumerate(flat) if "INSERT INTO crm.llm_call" in q
+    )
 
 
 async def test_e_scrubber_failure_means_no_call() -> None:

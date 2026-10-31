@@ -80,6 +80,9 @@ class Action(StrEnum):
     DUTY_OF_CARE_VIEW = "duty_of_care_view"
     CALENDAR_VIEW = "calendar_view"
     CALENDAR_FEED_MANAGE = "calendar_feed_manage"  # own feed only (crm-027 guard); an owner may also revoke others'
+    # AA-964 (CRM-33a, M14): read the agency's AI switch and meter, ask for an AI draft (a suggestion only: sending it
+    # is MESSAGE_SEND / AI_DRAFT_APPROVE). Every role, like PROPOSAL_DRAFT.
+    AI_USE = "ai_use"
     # Money and selling.
     VIEW_MARGIN = "view_margin"  # B2B price ("net"), cost, margin, commission
     MONEY_FIELDS_EDIT = "money_fields_edit"
@@ -117,6 +120,9 @@ class Action(StrEnum):
     CLIENT_IMPORT = "client_import"
     CLIENT_MERGE = "client_merge"
     ONBOARDING_MANAGE = "onboarding_manage"
+    # AA-964 (CRM-33a, A-18 AI): switch AI on / off and set the agency's monthly AI budget (owner, like the other
+    # Settings sections that bind the agency).
+    AI_SETTINGS = "ai_settings"
 
 
 A, D = Rule.ALLOW, Rule.DENY
@@ -145,6 +151,7 @@ _TABLE: dict[Action, tuple[Rule, Rule, Rule]] = {
     Action.DUTY_OF_CARE_VIEW: (A, A, A),
     Action.CALENDAR_VIEW: (A, A, A),
     Action.CALENDAR_FEED_MANAGE: (A, A, A),
+    Action.AI_USE: (A, A, A),
     Action.VIEW_MARGIN: (A, A, D),
     Action.MONEY_FIELDS_EDIT: (A, A, D),
     Action.AA_CONFIRM: (A, A, D),
@@ -177,6 +184,7 @@ _TABLE: dict[Action, tuple[Rule, Rule, Rule]] = {
     Action.CLIENT_IMPORT: (A, D, D),
     Action.CLIENT_MERGE: (A, D, D),
     Action.ONBOARDING_MANAGE: (A, D, D),
+    Action.AI_SETTINGS: (A, D, D),
 }
 
 MATRIX: dict[str, dict[Action, Rule]] = {

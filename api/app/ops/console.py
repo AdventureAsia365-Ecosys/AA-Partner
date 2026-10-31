@@ -585,3 +585,126 @@ async def platform_insights(
         "agencies_opted_out": opted_out,
         **result,
     }
+
+
+# ── AA-964 (card CRM-33a; root ADR 0009 §8, root ADR 0008a §6): the CRM ledger rows, crm.ops.v1 1.6 ─────────────────
+# Row-level ``crm.llm_call`` for the CIS admin "Calls" tab, the CRM's second ledger under the ledger v2 contract. Only
+# the scrubbed fields: ids, codes, numbers and the hash of the scrubbed prompt; never the scrub receipt's per-kind
+# counts, the placeholder map, the member who asked, a prompt or an output. One ``ops_read`` event (reason
+# ``llm_calls``) in each agency whose rows were returned, so the owner's access log shows that AA read its AI ledger.
+LLM_CALLS_MAX_DAYS = 31
+LLM_CALLS_MAX_LIMIT = 500
+LLM_CALLS_SQL = """
+SELECT llm_call_id, at, app, stage, role, provider, model, family, connection_key, deployment_wire_id, attempt_no,
+       request_id, job_id, outcome, refusal_code, error_class, input_tokens, output_tokens, cache_read_tokens,
+       cache_write_tokens, units, unit_kind, cost_usd_est, pricing_mode, latency_ms, prompt_hash, prompt_version,
+       is_shadow, is_experiment, (scrub_receipt->>'entities')::int AS scrub_entities
+  FROM crm.llm_call
+ WHERE at >= $1 AND at < $2
+   AND ($3::text IS NULL OR stage = $3)
+   AND ($4::text IS NULL OR outcome = $4)
+   AND ($5::timestamptz IS NULL OR (at, llm_call_id) < ($5, $6::uuid))
+ ORDER BY at DESC, llm_call_id DESC
+ LIMIT $7
+"""
+
+
+def llm_calls_cursor(value: str | None) -> tuple[dt.datetime | None, uuid.UUID | None]:
+    """``<at ISO>~<call id>`` (the last row of the previous page) -> the keyset; anything else is 422."""
+    if not value:
+        return None, None
+    at_text, sep, call_text = value.partition("~")
+    try:
+        at = dt.datetime.fromisoformat(at_text)
+        call_id = uuid.UUID(call_text)
+    except ValueError:
+        raise Invalid("invalid_cursor", "the cursor is the next_cursor of a previous page") from None
+    if not sep or at.tzinfo is None:
+        raise Invalid("invalid_cursor", "the cursor is the next_cursor of a previous page")
+    return at, call_id
+
+
+def _llm_call_row(tenant_id: uuid.UUID, r: Any) -> dict[str, Any]:
+    def num(value: Any) -> int | None:
+        return int(value) if value is not None else None
+
+    return {
+        "call_id": str(r["llm_call_id"]),
+        "tenant_id": str(tenant_id),
+        "at": r["at"].isoformat(),
+        "app": r["app"],
+        "stage": r["stage"],
+        "role": r["role"],
+        "provider": r["provider"],
+        "model": r["model"],
+        "family": r["family"],
+        "connection_key": r["connection_key"],
+        "deployment_wire_id": r["deployment_wire_id"],
+        "attempt_no": num(r["attempt_no"]),
+        "provider_request_id": r["request_id"],
+        "job_id": str(r["job_id"]) if r["job_id"] else None,
+        "status": r["outcome"],
+        "refusal_code": r["refusal_code"],
+        "error_class": r["error_class"],
+        "input_tokens": int(r["input_tokens"]),
+        "output_tokens": int(r["output_tokens"]),
+        "cache_read_tokens": num(r["cache_read_tokens"]),
+        "cache_write_tokens": num(r["cache_write_tokens"]),
+        "units": num(r["units"]),
+        "unit_kind": r["unit_kind"],
+        "cost_usd": f"{Decimal(r['cost_usd_est']):.6f}",
+        "pricing_mode": r["pricing_mode"],
+        "latency_ms": int(r["latency_ms"]),
+        "prompt_hash": r["prompt_hash"],
+        "prompt_version": r["prompt_version"],
+        "is_shadow": bool(r["is_shadow"]),
+        "is_experiment": bool(r["is_experiment"]),
+        "scrub_entities": num(r["scrub_entities"]),
+    }
+
+
+async def platform_llm_calls(
+    pool: asyncpg.Pool,
+    *,
+    staff_sub: str,
+    start: dt.date,
+    end: dt.date,
+    tenant_id: uuid.UUID | None = None,
+    stage: str | None = None,
+    status: str | None = None,
+    limit: int = 100,
+    cursor: str | None = None,
+) -> dict[str, Any]:
+    """The newest ledger rows first, across every agency (or one), ``start`` .. ``end`` UTC days inclusive."""
+    if end < start or (end - start).days >= LLM_CALLS_MAX_DAYS:
+        raise Invalid("invalid_range", f"from <= to, at most {LLM_CALLS_MAX_DAYS} days")
+    limit = max(1, min(limit, LLM_CALLS_MAX_LIMIT))
+    before_at, before_id = llm_calls_cursor(cursor)
+    lower = dt.datetime.combine(start, dt.time(), tzinfo=dt.UTC)
+    upper = dt.datetime.combine(end + dt.timedelta(days=1), dt.time(), tzinfo=dt.UTC)
+    ids = [tenant_id] if tenant_id is not None else [a.tenant_id for a in await registry.agencies(pool)]
+    rows: list[tuple[dt.datetime, uuid.UUID, dict[str, Any]]] = []
+    for agency_id in ids:
+        try:
+            async with platform_tx(pool, agency_id, actor=platform_actor(staff_sub), statuses=TENANT_STATUSES) as ctx:
+                found = await ctx.conn.fetch(
+                    LLM_CALLS_SQL, lower, upper, stage, status, before_at, before_id, limit + 1
+                )
+                if found:
+                    _read(ctx, "llm_calls")
+                rows.extend((r["at"], r["llm_call_id"], _llm_call_row(agency_id, r)) for r in found)
+        except NotFound:
+            if tenant_id is not None:
+                raise
+            continue  # registered but trashed
+    rows.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    page = rows[:limit]
+    more = len(rows) > limit
+    next_cursor = f"{page[-1][0].isoformat()}~{page[-1][1]}" if more and page else None
+    log.info("crm_ops_llm_calls agencies=%d rows=%d", len(ids), len(page))
+    return {
+        "from": start.isoformat(),
+        "to": end.isoformat(),
+        "rows": [r for _, _, r in page],
+        "next_cursor": next_cursor,
+    }

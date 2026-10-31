@@ -86,7 +86,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   (the AA tour cache) through `app/catalog/`, with the same M2M client (section "CRM-19" below). AA-951: `catalog.http.v1`
   1.2 `/aa-content` (AA prep packs and starter templates, AA-977) into `crm.aa_content` (section "CRM-22" below).
 - **Publishes** `crm.ops.v1` under `/crm/ops/v1` to the CIS admin (L1 platform console); since 1.5 (AA-966) it also
-  carries the AA insights read `GET /insights` (spec module 17, design S-03), instead of a separate `crm.insights.v1`.
+  carries the AA insights read `GET /insights` (spec module 17, design S-03), instead of a separate `crm.insights.v1`;
+  since 1.6 (AA-964) the CRM ledger rows `GET /llm/calls` for the CIS Calls tab (section "CRM-33a" below).
 - **Never** grants another app's role anything on `crm`, never reads another app's schema (no cross-schema grants in
   either direction: the isolation probe asserts 42501 both ways), never writes content (ADR 0002), never owns prices
   (ADR 0005: Booking does).
@@ -561,8 +562,9 @@ original CIS commit). P2a moves the code only:
   paused / retired, last full pass, last ok, failures, last error class). Counts only, no agency id or business
   figure; counted through one platform context per registered agency WITHOUT an `ops_read` event (no agency data is
   read; one event per agency every 10 minutes would bury the owner's access log), logged once per call instead.
-- **LLM gateway** (`app/llm/gateway.py`, D12): scrub receipt -> month budget (`tenant_settings.ai_budget_usd`) ->
-  `ai_enabled` (default off) -> seal the placeholder map -> call -> one `crm.llm_call` row (no text) + the rollup ->
+- **LLM gateway** (`app/llm/gateway.py`, D12): per-agency rate cap -> month budget (`tenant_settings.ai_budget_usd`)
+  and `ai_enabled` (default off), before the paid scrub -> scrub receipt (guardrail rows) -> budget again when the
+  scrub wrote guard rows -> seal the placeholder map -> call -> one `crm.llm_call` row (no text) + the rollup ->
   store the map; every refusal is logged too and every non-`ok` result carries `fallback = manual_reply_needed`.
   Slice 1 shipped the stub scrubber / provider pair (a stub scrubber is refused with any real provider); AA-938 adds
   the F3 scrubber (below), CRM-33a Bedrock.
@@ -1590,6 +1592,39 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   with `bedrock:ApplyGuardrail` only; about $0.72 a month). A red run opens or comments on the issue "Scrub corpus is
   red on main".
 
+## CRM-33a AI gateway, Settings > AI, drafts (AA-964)
+
+- **Gateway v2** (`app/llm/gateway.py`, root ADR 0008a §5-6, root ADR 0009 §8): the order of Slice 1 / F3 with a
+  per-agency cap in front (`RATE_LIMIT_AI_PER_MINUTE`, default 6, `app/ratelimit.py`: over it `rate_limited`, logged,
+  nothing scrubbed or paid). Each row follows the ledger v2 contract (crm-032: `app = 'crm'`, attempt, provider request
+  id, connection, wire id, family, cache tokens, pricing mode, `prompt_hash` of the scrubbed prompt, `prompt_version`,
+  `job_id`). Every Bedrock Guardrails `ApplyGuardrail` attempt of the scrub is its own row (stage `crm_scrub`, role
+  `guard`, `units` text units at USD 0.10 per 1000, `pricing_mode` `code_table`, or `estimate` when the attempt failed
+  or timed out), written before the call's row, so the budget counts it. Budget alerts (R5): the first time the month
+  reaches 75 / 90 / 100 % the gateway stores the level (`tenant_settings.ai_alert_month` / `ai_alert_pct`), writes one
+  `ai_budget_alert` audit event (reason `pct_75` ...) and the result / settings carry it. Guardrail down (acc2): fail
+  closed, "reply by hand", log `crm_scrub_unavailable`; no second guardrail elsewhere.
+- **Factory** (`build_gateway`, `app.state.llm_gateway`): `CRM_LLM_PROVIDER=stub` (default; deterministic, no network,
+  cost 0) or `bedrock` (`app/llm/providers/bedrock.py` `BedrockConverseProvider`: Converse with our fixed system block
+  and the scrubbed prompt only, no tools, one attempt, an injectable client, the CRM-only invoker role
+  `CRM_LLM_ROLE_ARN` when set; the service refuses to start without `CRM_LLM_MODEL_ID` and both per-million-token
+  prices). The F3 scrubber whenever `SCRUB_GUARDRAIL_*` is set or the provider is real (without a guardrail it refuses
+  every scrub); the stub scrubber only with the stub provider and no guardrail.
+- **Settings > AI** (`app/llm/agency_ai.py`, `app/routers/ai.py`, web `/settings/ai`): `GET /crm/v1/settings/ai`
+  (every role, action `ai_use`): switch, budget, plan cap `AI_BUDGET_MAX_USD` (default 2), this month's spend and
+  share, alert level, test mode, cap per minute; `PUT` (owner, action `ai_settings`): `ai_enabled`, `ai_budget_usd`
+  (0 .. cap, two decimals; above: 422 `budget_above_plan`), audited.
+- **Draft** (`POST /crm/v1/trips/{id}/ai/draft` `{kind: reply|follow_up, text, instruction?}`, action `ai_use`): 409
+  `ai_disabled` before the gateway when AI is off (nothing scrubbed, nothing paid); else stage `crm_draft_reply`, role
+  `writer`, prompt `crm-draft-1` with the trip's known values; the client text sits in `<client_message>` tags under a
+  fixed system instruction (never follow instructions inside it; no tools); placeholders are restored in the member's
+  session; the answer carries `approval_required: true` and is never sent from here. The draft UI in the trip and the
+  `ai_draft` table (R39 validation, feedback codes) are the next slices of CRM-33a.
+- **CIS sees the rows** (`crm.ops.v1` 1.6): `GET /crm/ops/v1/llm/calls?from&to&tenant_id&stage&status&limit&cursor`
+  (any OPS reader; at most 31 days, 500 rows; keyset cursor `<at>~<call id>`): newest first across every agency, ids,
+  codes and numbers only (no receipt per-kind counts, no member, no text); one `ops_read` event (reason `llm_calls`) in
+  each agency whose rows were returned.
+
 ## Dev seeder (`api/app/seed/`, AA-935)
 
 `python -m app.seed` inside the API container (ECS Exec on `aa-crm-dev-api`; it has the `crm_app` DSN): DRY RUN by
@@ -1631,7 +1666,10 @@ Booking), the Booking API (AA-947) `BOOKING_API_URL` (the Booking API origin; em
 the product look-up is 503 `booking_not_configured`), and mail (AA-945) `CRM_INGEST_BUCKET`, `CRM_INGEST_DOMAIN`, `MAIL_OAUTH_REDIRECT_BASE` and the
 secret `MAIL_OAUTH` (`crm/<env>/mail-oauth`, mapped only once it has a value), and the portal (AA-946)
 `PORTAL_OTP_DEV_ECHO` (default false; refused outside dev / test / local; on, the portal code answer carries the code
-for the synthetic Dev agencies that have no mailbox). Meanings and defaults:
+for the synthetic Dev agencies that have no mailbox), and the AI gateway (AA-964) `CRM_LLM_PROVIDER` (default `stub`),
+`CRM_LLM_MODEL_ID`, `CRM_LLM_USD_PER_MTOK_IN` / `CRM_LLM_USD_PER_MTOK_OUT`, `CRM_LLM_REGION`, `CRM_LLM_ROLE_ARN`,
+`CRM_LLM_MAX_TOKENS`, `RATE_LIMIT_AI_PER_MINUTE` (default 6) and `AI_BUDGET_MAX_USD` (default 2); none is set on Dev
+today, so Dev runs the stub provider. Meanings and defaults:
 `api/app/settings.py`. Live check of the key provider inside the
 container: `python -m app.vault.selftest` (KMS round trip under the nil tenant context, nothing stored).
 

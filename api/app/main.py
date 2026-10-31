@@ -44,6 +44,7 @@ from app.esign.seal import build_sealer
 from app.jobs import handlers as job_handlers
 from app.jobs.metrics import JobMetricsSampler
 from app.jobs.worker import Worker
+from app.llm.gateway import build_gateway
 from app.mail.providers.registry import build_providers
 from app.mail.sender import MailSender
 from app.mail.state import MailRuntime
@@ -56,6 +57,7 @@ from app.ratelimit import FixedWindowLimiter
 from app.routers import (
     aa,
     agency,
+    ai,
     audit,
     builder,
     calendar,
@@ -223,6 +225,8 @@ def create_app(
     # local without KMS_SEAL_KEY_ID; None on stg / prod without it: signing answers 503 esign_not_configured).
     app.state.sealer = build_sealer(settings)
     app.state.public_limiter = FixedWindowLimiter(settings.rate_limit_public_per_minute)
+    # AA-964 (CRM-33a): the one LLM gateway of the process (stub provider unless CRM_LLM_PROVIDER=bedrock).
+    app.state.llm_gateway = build_gateway(settings, keys)
     # AA-936: inquiry-form submissions, per client address per minute and per form per hour.
     app.state.intake_limiter = FixedWindowLimiter(settings.rate_limit_intake_per_minute)
     app.state.intake_form_limiter = FixedWindowLimiter(settings.rate_limit_intake_form_per_hour, window_s=3600.0)
@@ -261,6 +265,7 @@ def create_app(
     app.include_router(builder.router)
     app.include_router(proposal_text.router)
     app.include_router(mail.router)
+    app.include_router(ai.router)
     app.include_router(ops.router)
     app.include_router(staff.router)
     return app
