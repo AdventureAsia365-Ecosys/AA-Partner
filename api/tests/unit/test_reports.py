@@ -196,8 +196,8 @@ def report_conn(first_day: dt.date | None = dt.date(2029, 1, 5)) -> ScriptedConn
                                                              {"supplier_kind": "agency", "n": 3}]),
             ("count(DISTINCT bl.trip_id)::int AS trips", [
                 {"supplier_kind": "aa", "title": "Mekong 3 days", "lines": 2, "trips": 2}]),
-            ("FROM crm.invoice i", [{"currency": "AUD", "n": 2, "total": Decimal("1000"), "paid": Decimal("250"),
-                                     "overdue_n": 1, "overdue": Decimal("500")}]),
+            ("AS outstanding", [{"currency": "AUD", "n": 2, "total": Decimal("1000"), "paid": Decimal("250"),
+                                 "outstanding": Decimal("750"), "overdue_n": 1, "overdue": Decimal("500")}]),
             ("s.currency, s.kind", [{"currency": "AUD", "kind": "balance", "n": 1, "total": Decimal("800"),
                                      "overdue_n": 0, "overdue": Decimal("0")}]),
             ("AS refunded", [{"currency": "AUD", "received": Decimal("900"), "refunded": Decimal("100"), "n": 3}]),
@@ -356,12 +356,19 @@ AGENCIES = [uuid.UUID(f"00000000-0000-4000-8000-0000000001{i:02d}") for i in ran
 
 
 def _fact(tenant: uuid.UUID, destination: str | None, size: int, **over: Any) -> insights.Fact:
+    """A per-destination fact (crm.v_insight_fact) unless ``grain`` says otherwise."""
     base: dict[str, Any] = {
         "tenant_id": tenant, "month": dt.date(2031, 3, 1), "destination": destination, "budget_band": "2000_3500",
         "age_band": "35_44", "party_size": size, "stage_reached": "inquiry", "lost_reason_code": None,
+        "grain": insights.TRIP_DESTINATION,
     }  # fmt: skip
     base.update(over)
     return insights.Fact(**base)
+
+
+def _trip(tenant: uuid.UUID, size: int, trips: int = 1, **over: Any) -> insights.Fact:
+    """A trip-level fact (crm.v_insight_trip_fact): ``trips`` trips of one band combination, no destination."""
+    return _fact(tenant, None, size, trip_count=trips, grain=insights.TRIP, **over)
 
 
 def test_a_cell_needs_ten_travellers_from_three_agencies() -> None:
@@ -376,39 +383,88 @@ def test_a_cell_needs_ten_travellers_from_three_agencies() -> None:
     assert insights.aggregate(facts, "destination", opted_out=frozenset({AGENCIES[2]}))["cells"] == []
 
 
+def test_one_agency_above_seventy_percent_suppresses_the_cell() -> None:
+    dominated = [_fact(AGENCIES[0], "laos", 8), _fact(AGENCIES[1], "laos", 1), _fact(AGENCIES[2], "laos", 1)]
+    shared = [_fact(AGENCIES[0], "bali", 7), _fact(AGENCIES[1], "bali", 2), _fact(AGENCIES[2], "bali", 1)]
+    out = insights.aggregate(dominated + shared, "destination")
+    assert out["cells"] == [{"bucket": "bali", "traveller_count": 10, "agency_count": 3}]  # 70 % exactly: published
+    assert out["suppressed_cells"] == 1  # Laos: 80 % from one agency
+
+
 def test_party_size_is_banded_and_unknown_dimensions_refused() -> None:
     assert [insights.party_band(n) for n in (0, 1, 2, 3, 4, 5, 9)] == ["1", "1", "2", "3_4", "3_4", "5_plus", "5_plus"]
-    out = insights.aggregate([_fact(a, "laos", 4) for a in AGENCIES[:3]], "party_size")
+    out = insights.aggregate([_trip(a, 4) for a in AGENCIES[:3]], "party_size")
     assert out["cells"] == [{"bucket": "3_4", "traveller_count": 12, "agency_count": 3}]
-    assert insights.aggregate([_fact(a, "laos", 4) for a in AGENCIES[:3]], "lost_reason_code")["cells"] == []
+    assert insights.aggregate([_trip(a, 4) for a in AGENCIES[:3]], "lost_reason_code")["cells"] == []
     with pytest.raises(ValueError):
         insights.aggregate([], "tenant_id")
+
+
+def test_a_trip_counts_once_outside_the_destination_dimension() -> None:
+    """Review S261: 3 agencies x one 1-traveller trip to 4 destinations is 3 travellers, not 12. Per-destination facts
+    are refused for a non-destination dimension; trip facts weigh by trip_count."""
+    per_destination = [_fact(a, d, 1, budget_band="over_5000") for a in AGENCIES[:3] for d in ("w", "x", "y", "z")]
+    for dimension in ("budget_band", "age_band", "party_size", "stage_reached", "lost_reason_code"):
+        with pytest.raises(ValueError, match="trip facts"):
+            insights.aggregate(per_destination, dimension)
+    with pytest.raises(ValueError):
+        insights.aggregate([_trip(AGENCIES[0], 1)], "destination")
+    one_each = [_trip(a, 1, budget_band="over_5000") for a in AGENCIES[:3]]
+    out = insights.aggregate(one_each, "budget_band")
+    assert out["cells"] == [] and out["suppressed_cells"] == 1  # 3 travellers: under k
+    out = insights.aggregate([_trip(a, 2, trips=2, budget_band="over_5000") for a in AGENCIES[:3]], "budget_band")
+    assert out["cells"] == [{"bucket": "over_5000", "traveller_count": 12, "agency_count": 3}]
+
+
+@pytest.mark.parametrize(
+    ("quarter", "months"),
+    [
+        ("2026-Q1", (dt.date(2026, 1, 1), dt.date(2026, 3, 1))),
+        ("2031-Q4", (dt.date(2031, 10, 1), dt.date(2031, 12, 1))),
+    ],
+)
+def test_a_quarter_is_three_whole_months(quarter: str, months: tuple[dt.date, dt.date]) -> None:
+    assert insights.quarter_months(quarter) == months
+
+
+@pytest.mark.parametrize("bad", ["2026-Q0", "2026-Q5", "2026-03", "2026", "26-Q1", "2026-q1", " 2026-Q1", ""])
+def test_anything_but_one_quarter_is_refused(bad: str) -> None:
+    with pytest.raises(ValueError):
+        insights.quarter_months(bad)
 
 
 @pytest.mark.parametrize("seed", range(40))
 def test_property_no_published_cell_breaks_the_rule_and_opt_outs_never_count(seed: int) -> None:
     rng = random.Random(seed)  # noqa: S311 — a reproducible test sample, not a secret
     buckets = ["laos", "cambodia", "vietnam", "thailand", "myanmar"]
-    facts = [
-        _fact(rng.choice(AGENCIES), rng.choice(buckets), rng.randint(0, 6), budget_band=rng.choice(["a", "b", None]))
-        for _ in range(rng.randint(0, 60))
+    n_rows = rng.randint(0, 60)
+    by_destination = [_fact(rng.choice(AGENCIES), rng.choice(buckets), rng.randint(0, 6)) for _ in range(n_rows)]
+    by_trip = [
+        _trip(rng.choice(AGENCIES), rng.randint(0, 6), rng.randint(1, 3), budget_band=rng.choice(["a", "b", None]))
+        for _ in range(n_rows)
     ]
     opted = frozenset(rng.sample(AGENCIES, rng.randint(0, 3)))
-    for dimension in ("destination", "budget_band", "party_size"):
+    for dimension, facts in (("destination", by_destination), ("budget_band", by_trip), ("party_size", by_trip)):
         out = insights.aggregate(facts, dimension, opted_out=opted)
         kept = [f for f in facts if f.tenant_id not in opted]
-        expected: dict[str, tuple[int, set[uuid.UUID]]] = {}
+        expected: dict[str, dict[uuid.UUID, int]] = {}
         for f in kept:
             b = insights.bucket_of(f, dimension)
             if b is None:
                 continue
-            n, a = expected.get(b, (0, set()))
-            expected[b] = (n + f.party_size, a | {f.tenant_id})
-        for cell in out["cells"]:
-            n, a = expected[cell["bucket"]]
-            assert cell["traveller_count"] == n >= 10 and cell["agency_count"] == len(a) >= 3
+            cell = expected.setdefault(b, {})
+            cell[f.tenant_id] = cell.get(f.tenant_id, 0) + f.party_size * f.trip_count
+
+        def ok(cell: dict[uuid.UUID, int]) -> bool:
+            n = sum(cell.values())
+            return n >= 10 and len(cell) >= 3 and max(cell.values()) <= 0.7 * n
+
+        for c in out["cells"]:
+            cell = expected[c["bucket"]]
+            assert c["traveller_count"] == sum(cell.values()) >= 10 and c["agency_count"] == len(cell) >= 3
+            assert max(cell.values()) <= 0.7 * c["traveller_count"]
         published = {c["bucket"] for c in out["cells"]}
-        assert published == {b for b, (n, a) in expected.items() if n >= 10 and len(a) >= 3}
+        assert published == {b for b, cell in expected.items() if ok(cell)}
         assert out["suppressed_cells"] == len(expected) - len(published)
         assert all(set(c) == {"bucket", "traveller_count", "agency_count"} for c in out["cells"])
 
@@ -426,6 +482,10 @@ class AgencyConn(ScriptedConn):
         self.on("SELECT is_synthetic FROM crm.tenant", lambda t: t in synthetic)
         self.on("insights_opt_out", lambda: self.current in opted)
         self.on("FROM crm.v_insight_fact", lambda *a: facts.get(self.current, []))
+        self.on(
+            "FROM crm.v_insight_trip_fact",
+            lambda *a: [{**r, "destination": None} for r in facts.get(self.current, [])],
+        )
 
     async def execute(self, sql: str, *args: Any) -> str:
         if "set_config('app.tenant_id'" in sql:
@@ -440,8 +500,8 @@ async def test_platform_insights_reads_facts_as_the_insights_role_and_skips_who_
     from app.ops import console
 
     a, b, c, opted, real, locked, gone = AGENCIES[:4] + [uuid.uuid4(), uuid.uuid4(), uuid.uuid4()]
-    row = {"month": dt.date(2031, 3, 1), "destination": "laos", "budget_band": None, "age_band": None,
-           "party_size": 4, "stage_reached": "inquiry", "lost_reason_code": None}  # fmt: skip
+    row = {"month": dt.date(2031, 3, 1), "destination": "laos", "budget_band": "over_5000", "age_band": None,
+           "party_size": 4, "stage_reached": "inquiry", "lost_reason_code": None, "trip_count": 1}  # fmt: skip
     conn = AgencyConn(
         statuses={a: "active", b: "active", c: "active", opted: "active", real: "active", locked: "locked",
                   gone: None},
@@ -462,6 +522,14 @@ async def test_platform_insights_reads_facts_as_the_insights_role_and_skips_who_
         include_synthetic=False,
     )  # fmt: skip
     assert out["agencies_included"] == 1 and out["cells"] == [] and out["suppressed_cells"] == 1
+    # A non-destination dimension reads the trip-level view (each trip once), never the per-destination one.
+    before = len(conn.sql("FROM crm.v_insight_fact"))
+    out = await console.platform_insights(
+        conn, staff_sub="s", dimension="budget_band", month_from=dt.date(2031, 1, 1), month_to=dt.date(2031, 3, 1),
+        include_synthetic=True,
+    )  # fmt: skip
+    assert out["cells"] == [{"bucket": "over_5000", "traveller_count": 32, "agency_count": 4}]
+    assert len(conn.sql("FROM crm.v_insight_fact")) == before and len(conn.sql("FROM crm.v_insight_trip_fact")) == 4
 
 
 # ── routes ─────────────────────────────────────────────────────────────────────────────────────────────────

@@ -399,14 +399,14 @@ async def picks(ctx: TenantContext, sc: Scope) -> dict[str, Any]:
 async def payments(ctx: TenantContext, sc: Scope) -> dict[str, Any]:
     invoices = []
     for r in await ctx.conn.fetch(q.OPEN_INVOICES_SQL, sc.today, sc.owner):
-        total, paid = Decimal(r["total"] or 0), Decimal(r["paid"] or 0)
+        # outstanding = the sum of each invoice's balance (clamped at 0 per invoice in SQL), not total - paid.
         invoices.append(
             {
                 "currency": r["currency"],
                 "count": int(r["n"]),
-                "total": _money(total),
-                "paid": _money(paid),
-                "outstanding": _money(total - paid),
+                "total": _money(r["total"]),
+                "paid": _money(r["paid"]),
+                "outstanding": _money(r["outstanding"]),
                 "overdue_count": int(r["overdue_n"]),
                 "overdue": _money(r["overdue"]),
             }

@@ -119,7 +119,7 @@ async def section_rows(ctx: TenantContext, sc: service.Scope, section: str) -> t
             for i in p["open_invoices"]
         ]  # fmt: skip
         out += [
-            ["schedule_due", s["currency"], s["kind"], s["count"], _dec(s["total"]), None, _dec(s["total"]),
+            ["schedule_not_invoiced", s["currency"], s["kind"], s["count"], _dec(s["total"]), None, _dec(s["total"]),
              s["overdue_count"], _dec(s["overdue"])]
             for s in p["schedule_due"]
         ]  # fmt: skip

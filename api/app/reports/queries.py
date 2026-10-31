@@ -8,6 +8,8 @@ time zone and ``$4`` the owner filter (a member id, or NULL for everyone). :func
 
 from __future__ import annotations
 
+from app.invoices.service import RECEIVABLE
+
 # Forward stages in order (crm-005 trip_stage_chk). Lost and cancelled are outcomes, not steps.
 FORWARD_STAGES = ("inquiry", "qualifying", "proposal", "booked", "pre_departure", "travelling", "completed")
 OPEN_STAGES = ("inquiry", "qualifying", "proposal", "booked", "pre_departure", "travelling")
@@ -127,19 +129,27 @@ SELECT bl.supplier_kind, count(*)::int AS n
 """
 
 # Outstanding money, now ($1 = today, local; $2 = owner filter). Amounts in each document's own currency.
-OPEN_INVOICES_SQL = """
+# Open invoices follow A-10 Receivables (app.invoices.service.receivables): the RECEIVABLE statuses, paid = payments
+# only (a refund never reopens an invoice), and each invoice's balance clamped at 0 BEFORE the currency sum, so an
+# overpaid invoice never lowers another one's balance. The Reports and Payments pages show the same amount.
+_RECEIVABLE = ", ".join(f"'{s}'" for s in RECEIVABLE)
+OPEN_INVOICES_SQL = f"""
 SELECT i.currency, count(*)::int AS n, sum(i.total_amount) AS total,
        sum(coalesce(p.paid, 0)) AS paid,
+       sum(greatest(i.total_amount - coalesce(p.paid, 0), 0)) AS outstanding,
        count(*) FILTER (WHERE i.due_on < $1)::int AS overdue_n,
-       coalesce(sum(i.total_amount - coalesce(p.paid, 0)) FILTER (WHERE i.due_on < $1), 0) AS overdue
+       coalesce(sum(greatest(i.total_amount - coalesce(p.paid, 0), 0)) FILTER (WHERE i.due_on < $1), 0) AS overdue
   FROM crm.invoice i
   JOIN crm.trip t ON t.trip_id = i.trip_id AND t.deleted_at IS NULL
-  LEFT JOIN LATERAL (SELECT sum(CASE WHEN p.entry_kind = 'payment' THEN p.amount ELSE -p.amount END) AS paid
-                       FROM crm.payment p WHERE p.invoice_id = i.invoice_id) p ON true
- WHERE i.deleted_at IS NULL AND i.status IN ('open', 'payment_claimed')
+  LEFT JOIN LATERAL (SELECT sum(p.amount) AS paid
+                       FROM crm.payment p WHERE p.invoice_id = i.invoice_id AND p.entry_kind = 'payment') p ON true
+ WHERE i.deleted_at IS NULL AND i.status IN ({_RECEIVABLE})
    AND ($2::uuid IS NULL OR t.owner_member_id = $2)
  GROUP BY 1
 """
+# Deposit / balance schedule rows NOT INVOICED YET: a row billed by a live invoice (anything but a draft or a void one)
+# stays 'due' until that invoice is paid in full, and its money is already in OPEN_INVOICES_SQL, so it is left out here
+# (never counted twice).
 SCHEDULE_DUE_SQL = """
 SELECT s.currency, s.kind, count(*)::int AS n, sum(s.amount) AS total,
        count(*) FILTER (WHERE s.due_on < $1)::int AS overdue_n,
@@ -147,6 +157,9 @@ SELECT s.currency, s.kind, count(*)::int AS n, sum(s.amount) AS total,
   FROM crm.payment_schedule s
   JOIN crm.trip t ON t.trip_id = s.trip_id AND t.deleted_at IS NULL
  WHERE s.deleted_at IS NULL AND s.status = 'due' AND ($2::uuid IS NULL OR t.owner_member_id = $2)
+   AND NOT EXISTS (SELECT 1 FROM crm.invoice i
+                    WHERE i.schedule_id = s.schedule_id AND i.deleted_at IS NULL
+                      AND i.status NOT IN ('draft', 'void'))
  GROUP BY 1, 2
 """
 # Received in the window ($1 start, $2 end + 1 as dates: received_on is a date already).
