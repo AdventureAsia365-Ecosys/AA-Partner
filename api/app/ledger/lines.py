@@ -34,6 +34,7 @@ import asyncpg
 
 from app import stages
 from app.booking import views as aa_views
+from app.commissions import service as commissions
 from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.ledger import fx, refusal
 from app.margin import sees_margin
@@ -146,6 +147,15 @@ SELECT
     count(*) FILTER (WHERE status = 'planning' AND kind = 'sell' AND r.rate IS NULL) AS pipeline_unconverted
   FROM heads h
   LEFT JOIN LATERAL (SELECT x.rate FROM crm.fx_resolve(h.currency, $3, $4) x) r ON h.status = 'planning'
+"""
+
+CANCEL_FEES_SQL = """
+SELECT coalesce(sum(m.amount_base), 0)
+  FROM crm.v_booking_line_money_current m
+  JOIN crm.booking_line l ON l.booking_line_id = m.booking_line_id AND l.deleted_at IS NULL
+  JOIN crm.trip t ON t.trip_id = l.trip_id AND t.deleted_at IS NULL
+ WHERE m.kind = 'cancellation_cost' AND m.base_currency = $3
+   AND ($1::date IS NULL OR l.service_from >= $1) AND ($2::date IS NULL OR l.service_from <= $2)
 """
 
 EDITABLE = (
@@ -300,9 +310,15 @@ async def trip_lines(ctx: TenantContext, trip_id: uuid.UUID) -> dict[str, Any]:
     rows = await ctx.conn.fetch(LINES_SQL, trip_id)
     money = await _money_by_line(ctx, [r["booking_line_id"] for r in rows])
     settings = await fx.settings(ctx)
+    views = [_line_view(r, money.get(r["booking_line_id"]) if money is not None else None, stage) for r in rows]
+    if money is not None and any(r["supplier_kind"] == "agency" for r in rows):
+        # AA-957: each line's commission follow-up (owner / agent; a margin key for anyone else)
+        follow = await commissions.for_lines(ctx, trip_id)
+        for v in views:
+            v["commission"] = follow.get(uuid.UUID(v["booking_line_id"]))
     return {
         "trip_id": str(trip_id),
-        "lines": [_line_view(r, money.get(r["booking_line_id"]) if money is not None else None, stage) for r in rows],
+        "lines": views,
         "base_currency": settings["base_currency"],
         "booking_validation_level": settings["booking_validation_level"],
         # AA-947: the Lost dialog pre-selects this reason (a declined or sold-out AA line); null = no AA signal.
@@ -351,6 +367,10 @@ async def ledger(
             "pipeline_sell_base": str(Decimal(t["pipeline_sell_base"])),
             "pipeline_unconverted": int(t["pipeline_unconverted"]),
             "confirmed_other_base": int(t["confirmed_other_base"]),
+            # AA-957 (C12, card E): the fees AA charged for cancelled AA bookings (cancelled lines, cost only).
+            "cancellation_cost_base": str(
+                Decimal(await ctx.conn.fetchval(CANCEL_FEES_SQL, date_from, date_to, settings["base_currency"]))
+            ),
         }
     ids = tuple(str(r["booking_line_id"]) for r in rows)
     ctx.audit("list_view", "allowed", "booking_line", None, reason="ledger", object_ids=ids)
@@ -480,6 +500,7 @@ async def confirm(ctx: TenantContext, line_id: uuid.UUID) -> dict[str, Any]:
         task_id = await _add_commission_task(ctx, current["trip_id"])
         extra["owner_task"] = {"kind": ADD_COMMISSION_TASK, "task_id": str(task_id) if task_id else None}
     ctx.audit("confirm", "allowed", "booking_line", str(line_id))
+    await commissions.sync(ctx, current["trip_id"])  # AA-957: the expected commission row (any role, R18)
     await stages.refresh_waiting_on(ctx, current["trip_id"])
     return await line(ctx, line_id, extra=extra)
 
@@ -510,6 +531,7 @@ async def cancel(ctx: TenantContext, line_id: uuid.UUID) -> dict[str, Any]:
     if done is None:
         raise Invalid("line_not_editable", "this line is cancelled already")
     ctx.audit("cancel", "allowed", "booking_line", str(line_id))
+    await commissions.sync(ctx, current["trip_id"])  # AA-957: its expected commission is cancelled
     await stages.refresh_waiting_on(ctx, current["trip_id"])
     return await line(ctx, line_id)
 
@@ -520,7 +542,8 @@ async def put_money(ctx: TenantContext, line_id: uuid.UUID, body: dict[str, Any]
     entries = {k: v for k, v in body.items() if k in KINDS and v is not None}
     if not entries:
         raise Invalid("invalid_money", "cost, sell or commission_expected, each {amount, currency}")
-    if await ctx.conn.fetchrow(TRIP_OF_LINE_SQL, line_id) is None:
+    current = await ctx.conn.fetchrow(TRIP_OF_LINE_SQL, line_id)
+    if current is None:
         raise NotFound("line_not_found")
     for kind, entry in entries.items():
         if not isinstance(entry, dict):
@@ -532,6 +555,8 @@ async def put_money(ctx: TenantContext, line_id: uuid.UUID, body: dict[str, Any]
         except asyncpg.PostgresError as exc:
             raise _db(exc) from None
     ctx.audit("update", "allowed", "booking_line", str(line_id), fields=tuple(sorted(entries)))
+    if "commission_expected" in entries:
+        await commissions.sync(ctx, current["trip_id"])  # AA-957: a new, changed or zeroed expected commission
     return await line(ctx, line_id)
 
 

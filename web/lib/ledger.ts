@@ -5,6 +5,7 @@
 // and lines carry no `money` block at all for her, so a missing key always means "not shown", never "zero".
 
 import type { AaBlock } from "@/lib/aa";
+import type { LineCommission } from "@/lib/commissions";
 
 export type LineStatus = "planning" | "confirmed" | "cancelled";
 export type Level = "off" | "basic" | "strict";
@@ -30,6 +31,8 @@ export interface LineMoney {
   sell?: Money | null;
   commission_expected?: Money | null;
   margin_base?: string;
+  /** AA-957 (C12, card E): the fee AA charged for cancelling this AA booking (a cost of a cancelled line). */
+  cancellation_cost?: Money | null;
 }
 
 export interface Line {
@@ -52,6 +55,8 @@ export interface Line {
   /** AA-947: Adventure Asia lines only (status, "AA pending", the "from"-price warning, the asks allowed now). */
   aa?: AaBlock;
   money?: LineMoney;
+  /** AA-957: the commission follow-up of an agency line (owner / agent). */
+  commission?: LineCommission | null;
   trip_title?: string;
   trip_stage?: string;
 }
@@ -74,6 +79,8 @@ export interface LedgerTotals {
   pipeline_unconverted: number;
   /** Confirmed lines frozen in an earlier base currency: not in the sums above (never re-converted). */
   confirmed_other_base?: number;
+  /** AA-957: the fees AA charged for cancelled AA bookings. */
+  cancellation_cost_base?: string;
 }
 
 export interface LedgerView {
@@ -90,6 +97,8 @@ export interface Supplier {
   name: string;
   category: string;
   default_commission_pct?: string | null;
+  /** AA-957: days after the service the supplier pays its commission (null = 30). */
+  commission_due_days?: number | null;
   confirmation_unique: boolean;
   has_contact_name: boolean;
   has_contact_email: boolean;

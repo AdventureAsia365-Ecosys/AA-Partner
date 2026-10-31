@@ -35,6 +35,7 @@ import {
   moveErrorKey,
   partySummary,
   stageLabel,
+  supplierChecklistLine,
   waitingLabel,
   WAITING_ON,
   whenLabel,
@@ -161,6 +162,11 @@ export function TripPanel({
           </span>
           {trip.lost_reason_code && <Badge tone="neutral">{codeLabel(lang, "lost", trip.lost_reason_code)}</Badge>}
           {trip.cancel_reason_code && <Badge tone="danger">{codeLabel(lang, "cancel", trip.cancel_reason_code)}</Badge>}
+          {view.cancellation?.status === "pending" && (
+            <span data-testid="trip-cancellation-pending" title={t(lang, "trip.cancellationPendingHint")} style={{ display: "contents" }}>
+              <Badge tone="danger">{t(lang, "trip.cancellationPending")}</Badge>
+            </span>
+          )}
           {trip.quiet && typeof trip.quiet_days === "number" && (
             <span data-testid="trip-quiet" style={{ display: "contents" }}>
               <Badge tone="warning">{fmt(t(lang, "trip.quiet"), { n: trip.quiet_days })}</Badge>
@@ -407,6 +413,13 @@ export function TripPanel({
                   {task.priority === "urgent" && task.status === "open" && <Badge tone="danger">{t(lang, "trip.urgent")}</Badge>} {codeLabel(lang, "task", task.kind)}
                   {task.due_at && task.status === "open" ? ` · ${fmt(t(lang, "trip.due"), { when: new Date(task.due_at).toLocaleString(locale, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) })}` : ""}
                 </span>
+                {task.checklist && task.checklist.length > 0 && (
+                  <ul data-testid="trip-task-checklist" style={{ width: "100%", margin: 0, paddingLeft: 18, fontSize: 12.5, color: K.ink, display: "grid", gap: 2 }}>
+                    {task.checklist.map((item) => (
+                      <li key={item.agency_supplier_id}>{supplierChecklistLine(item)}</li>
+                    ))}
+                  </ul>
+                )}
                 <Button
                   size="sm"
                   variant={task.status === "open" ? "secondary" : "ghost"}
@@ -513,10 +526,14 @@ export function TripPanel({
         <CancelDialog
           tripId={trip.trip_id}
           lang={lang}
+          locale={locale}
           onClose={() => setCancelOpen(false)}
-          onDone={() => {
+          onDone={(result) => {
             setCancelOpen(false);
-            setToast(toast(t(lang, "cancelTrip.done")));
+            // AA-957: with AA bookings the trip waits for AA ("Cancellation pending", never cancelled early).
+            const pending = result.cancellation?.status === "pending";
+            const key = pending ? (result.requeued !== undefined ? "cancelTrip.retried" : "cancelTrip.pendingDone") : "cancelTrip.done";
+            setToast(toast(t(lang, key)));
             router.refresh();
           }}
         />

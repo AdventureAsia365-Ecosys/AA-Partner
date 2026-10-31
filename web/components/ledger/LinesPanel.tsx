@@ -7,6 +7,7 @@
 // come from a Booking quote / hold / feed event; the row shows the AA status ("AA pending" while Booking has not
 // answered, with the next try when it is down), "no longer offered", the hold expiry and the "from"-price warning, and
 // offers only the asks the API lists (Hold, Confirm with AA, Release, Re-quote). "Add AA item" opens AaItemForm.
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
@@ -234,6 +235,19 @@ export function LinesPanel({
                   <td style={cell}>
                     <Badge tone={TONE[line.status]}>{tr(`ledger.status.${line.status}`)}</Badge>
                     {aaStatus(line)}
+                    {line.commission && (
+                      // AA-957: the commission follow-up of an agency line (owner / agent; A-12 acts on it).
+                      <div style={{ marginTop: 4, fontSize: 11.5 }} data-testid="line-commission" data-status={line.commission.status}>
+                        <Link href="/commissions" style={{ color: line.commission.overdue ? K.danger : K.muted }}>
+                          {tr("commission.onLine")}: {tr(`commission.status.${line.commission.status}`)}
+                        </Link>
+                      </div>
+                    )}
+                    {line.money?.cancellation_cost && (
+                      <div style={{ marginTop: 4, fontSize: 11.5, color: K.muted }} data-testid="line-cancellation-fee">
+                        {fmt(tr("ledger.cancellationFee"), { amount: formatMoney(line.money.cancellation_cost.amount, line.money.cancellation_cost.currency, locale) })}
+                      </div>
+                    )}
                   </td>
                   {margin && <td style={cell}>{amount(line, "cost")}</td>}
                   <td style={cell}>

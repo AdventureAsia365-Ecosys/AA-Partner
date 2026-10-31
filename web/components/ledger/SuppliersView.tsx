@@ -6,7 +6,7 @@
 // arrives only for owner and agent (the API's margin serializer strips it for the assistant).
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Badge, Button, K, useHydrated } from "@/app/_kit";
+import { Badge, Button, Field, Input, K, useHydrated } from "@/app/_kit";
 import { bffSend } from "@/lib/bffClient";
 import { REVEAL_REASONS } from "@/lib/clients";
 import { t, type Lang, type MessageKey } from "@/lib/i18n";
@@ -107,6 +107,9 @@ export function SuppliersView({
     if (margin) {
       const pct = String(form.get("default_commission_pct") ?? "").trim();
       out.default_commission_pct = pct === "" ? null : pct;
+      // AA-957: when the supplier pays its commission (days after the service; empty = 30).
+      const days = String(form.get("commission_due_days") ?? "").trim();
+      out.commission_due_days = days === "" ? null : Number(days);
     }
     return out;
   }
@@ -154,6 +157,11 @@ export function SuppliersView({
             {tr("suppliers.commission")}
             <input name="default_commission_pct" style={field} inputMode="decimal" defaultValue={supplier?.default_commission_pct ?? ""} />
           </label>
+        )}
+        {margin && (
+          <Field label={tr("supplier.commissionDueDays")} hint={tr("supplier.commissionDueDaysHint")}>
+            <Input size="sm" name="commission_due_days" type="number" min={0} max={365} step={1} defaultValue={supplier?.commission_due_days ?? ""} data-testid="supplier-commission-due-days" />
+          </Field>
         )}
         <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12.5 }}>
           <input type="checkbox" name="confirmation_unique" defaultChecked={supplier?.confirmation_unique ?? false} />

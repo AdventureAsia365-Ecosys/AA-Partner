@@ -273,6 +273,12 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "GET", pattern: /^support-access$/, tenant: true, card: "AA-971" },
   { method: "POST", pattern: /^support-access$/, tenant: true, card: "AA-971" },
   { method: "POST", pattern: /^support-access\/revoke$/, tenant: true, card: "AA-971" },
+  // AA-957 (CRM-27): A-12 Commissions and the follow-up of one commission (owner / agent; the API refuses the
+  // assistant). The trip cancel route (AA-943 `trips/{id}/cancel`) carries the refund choices and kept commissions.
+  { method: "GET", pattern: /^commissions$/, tenant: true, card: "AA-957" },
+  { method: "GET", pattern: new RegExp(`^commissions/${UUID}$`), tenant: true, card: "AA-957" },
+  { method: "PATCH", pattern: new RegExp(`^commissions/${UUID}$`), tenant: true, card: "AA-957" },
+  { method: "POST", pattern: new RegExp(`^commissions/${UUID}/(claim|unclaim|receive|write-off)$`), tenant: true, card: "AA-957" },
   // AA-956 (CRM-26): the trip's AA ground operations panel (counts and dates only) and the agency's withdrawal.
   { method: "GET", pattern: new RegExp(`^trips/${UUID}/ops-release$`), tenant: true, card: "AA-956" },
   { method: "POST", pattern: new RegExp(`^trips/${UUID}/ops-release/withdraw$`), tenant: true, card: "AA-956" },

@@ -97,6 +97,9 @@ def _conn(**over: Any) -> ScriptedConn:
         )
         .on("v_booking_line_money_current", [_money_row("cost", "2500000"), _money_row("sell", "3000000")])
         .on("SELECT base_currency, booking_validation_level, fx_mode", None)
+        # AA-957: the commission follow-up of the trip's lines and the cancellation fees of the ledger totals.
+        .on("FROM crm.commission c", [])
+        .on("m.kind = 'cancellation_cost'", Decimal("7.50"))
     )
     for fragment, answer in over.items():
         conn.on(fragment, answer)
@@ -134,9 +137,10 @@ async def test_owner_gets_money_as_keyed_objects_with_the_margin() -> None:
     assert money["margin_base"] == "20.00" and money["commission_expected"] is None
     assert money["sell"]["fx"]["attribution"]["text"] == "Rates By Exchange Rate API"
     assert out["base_currency"] == "USD" and out["booking_validation_level"] == "basic"
+    assert out["lines"][0]["commission"] is None  # AA-957: no commission row yet
     # The serializer's view for the assistant: no cost / commission / margin anywhere.
     stripped = strip_margin(out)
-    assert set(stripped["lines"][0]["money"]) == {"sell"}
+    assert set(stripped["lines"][0]["money"]) == {"sell"} and "commission" not in stripped["lines"][0]
 
 
 @pytest.mark.asyncio
@@ -178,6 +182,7 @@ async def test_the_ledger_has_totals_for_owner_and_agent_only() -> None:
     out = await lines.ledger(ctx, status="confirmed", date_from=None, date_to=None)
     assert out["totals"]["confirmed_margin_base"] == "20.00" and out["totals"]["pipeline_unconverted"] == 1
     assert out["totals"]["confirmed_other_base"] == 2  # lines frozen in an earlier base: counted apart
+    assert out["totals"]["cancellation_cost_base"] == "7.50"  # AA-957: AA's fees of cancelled bookings
     (totals_call,) = [c for c in conn.calls if "WITH heads AS" in c[0]]
     assert "base_currency = $3" in totals_call[0] and totals_call[1][2] == "USD"
     assert out["lines"][0]["trip_title"] == "Vietnam 9 nights"
@@ -401,6 +406,7 @@ def _supplier_row(**over: Any) -> dict[str, Any]:
         "name": "Hanoi Pearl",
         "category": "accommodation",
         "default_commission_pct": Decimal("10.00"),
+        "commission_due_days": 45,
         "confirmation_unique": False,
         "has_contact_name": True,
         "has_contact_email": False,
@@ -426,14 +432,19 @@ async def test_create_supplier_seals_the_contact_fields() -> None:
     ctx = tenant_ctx(conn)
     body = {"name": " Hanoi Pearl ", "category": "accommodation", "contact_name": "Lan", "contact_email": "lan@x.test"}
     await suppliers.create_supplier(ctx, FakeVault(), body)  # type: ignore[arg-type]
-    ((_id, name, category, name_enc, email_enc, pct, unique),) = conn.sql("INSERT INTO crm.agency_supplier")
+    ((_id, name, category, name_enc, email_enc, pct, unique, due_days),) = conn.sql("INSERT INTO crm.agency_supplier")
     assert name == "Hanoi Pearl" and name_enc.startswith(b"enc:agency_supplier.contact_name_enc:")
-    assert email_enc.endswith(b"lan@x.test") and pct is None and unique is False
+    assert email_enc.endswith(b"lan@x.test") and pct is None and unique is False and due_days is None
+    await suppliers.create_supplier(ctx, FakeVault(), {"name": "x", "commission_due_days": 60})  # type: ignore[arg-type]
+    assert conn.sql("INSERT INTO crm.agency_supplier")[-1][-1] == 60  # AA-957: the supplier's commission terms
     for bad in ({"name": ""}, {"name": "x", "category": "bank"}, {"name": "x", "contact_email": "no-at"}):
         with pytest.raises(Invalid):
             await suppliers.create_supplier(ctx, FakeVault(), bad)  # type: ignore[arg-type]
     with pytest.raises(Invalid):
         await suppliers.create_supplier(ctx, FakeVault(), {"name": "x", "default_commission_pct": 101})  # type: ignore[arg-type]
+    for days in (-1, 366, True, "30"):
+        with pytest.raises(Invalid):
+            await suppliers.create_supplier(ctx, FakeVault(), {"name": "x", "commission_due_days": days})  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio

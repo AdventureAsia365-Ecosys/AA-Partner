@@ -40,12 +40,13 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from decimal import Decimal
 from typing import Annotated, Any, Literal
 
 from fastapi import Depends, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from app import stages
+from app import cancellation, stages
 from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
 from app.db import request_pool
@@ -95,8 +96,17 @@ class StageUndo(_Body):
     history_id: uuid.UUID
 
 
+class RefundChoice(_Body):
+    payment_id: uuid.UUID
+    amount: Annotated[Decimal, Field(ge=0, le=Decimal("999999999999.99"), decimal_places=2)]
+
+
 class CancelIn(_Body):
     cancel_reason_code: str | None = Field(default=None, max_length=40)
+    # AA-957 (C12): the amount asked back per payment (default all that is left; 0 = none) and the expected
+    # commissions the supplier still pays.
+    refunds: list[RefundChoice] | None = Field(default=None, max_length=200)
+    keep_commission: list[uuid.UUID] | None = Field(default=None, max_length=200)
 
 
 class BulkStage(_Body):
@@ -234,9 +244,16 @@ async def post_cancel(
 ) -> dict[str, Any]:
     pool = await request_pool(request)
     notices: ops_release.Notices = []
+    refunds = None if body.refunds is None else [r.model_dump(mode="json") for r in body.refunds]
+    keep = None if body.keep_commission is None else [str(x) for x in body.keep_commission]
     async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_CANCEL) as ctx:
-        out = await stages.cancel(ctx, trip_id, reason=body.cancel_reason_code, dry_run=dry_run, notices=notices)
+        out = await stages.cancel(ctx, trip_id, reason=body.cancel_reason_code, dry_run=dry_run, notices=notices,
+                                  refunds=refunds, keep_commission=keep)  # fmt: skip
     ops_release.emit(notices)  # committed: AA ops are told the release was withdrawn (C12 step 6)
+    if dry_run and out.get("aa_bookings"):
+        # AA-957: Booking's fee per AA booking, read outside the transaction (Booking down: fee unknown, "pending").
+        client = getattr(request.app.state, "booking_client", None)
+        out = await cancellation.booking_fees(client, tenant_id, out, out["cancel_reason_code"])
     return out
 
 

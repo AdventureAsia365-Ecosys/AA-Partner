@@ -306,7 +306,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-031` | `api/migrations/031_crm_insight_trip_fact.sql` | CRM-34 AA insights (AA-966; expand class under ADR 0017, applied after crm-028..030 in number order): the view `crm.v_insight_trip_fact` (security_barrier; trips per agency, month, budget band, lead age band, party size, stage and Lost reason in `trip_count`, no destination, no trip id; GROUP BY, so not updatable), SELECT to `crm_insights`, so module 17 counts a trip's party once outside the destination dimension. No existing object changes |
 | `crm-032` | `api/migrations/032_crm_llm_call_v2.sql` | CRM-33a AI gateway (AA-964; contract class under ADR 0017: new CHECKs and a replaced role CHECK on the ledger, so MIG-4 order, manual DB Migrate apply before the code PR): `crm.llm_call` follows the root ADR 0009 ledger v2 contract (`app` NOT NULL DEFAULT `crm`, CHECK = `crm`; `attempt_no`, `request_id`, `job_id`, `connection_key`, `deployment_wire_id`, `family`, `cache_read_tokens` / `cache_write_tokens`, `units` / `unit_kind`, `pricing_mode`, `prompt_hash`, `prompt_version`, `is_shadow` / `is_experiment` NOT NULL DEFAULT false), role CHECK + `guard` (the Bedrock Guardrails row, stage `crm_scrub`); append-only trigger, FORCE RLS and grants unchanged. `crm.tenant_settings.ai_alert_month` / `ai_alert_pct` (75 / 90 / 100, both or neither): the month's highest AI budget alert (R5) |
 | `crm-034` | `api/migrations/034_crm_ops_release.sql` | CRM-26 Module 8 ops release (AA-956; **expand** class under ADR 0017, applied after crm-033): `crm.ops_release` (base template; one live release per trip, partial unique on `purged_at IS NULL`; `payload_enc` under the agency's `ops_release` DEK, `payload_version`, `fields_released`, `completeness` counts, `complete`, Booking `departure_ids` / `bk_booking_ids`, dates, `purge_at` = end + 90 days, `t21_alerted_at`, withdraw + purge with a `deletion_receipt`, view counters; cascades from its trip) and `crm.supplier_manifest_export` (one minimal manifest AA ops exported: version, field codes, csv, row count, watermark; no personal data; cascades from its release); guards `crm.guard_ops_release` / `crm.guard_supplier_manifest_export` (CRM45: a job creates and purges, `ops:<sub>` only counts a view or inserts a manifest record, a member only withdraws, nobody deletes, a held trip's purge CRM10); no reader grant |
-| `crm-035` | `api/migrations/035_crm_commission_cancel.sql` | CRM-27 Module 13 commission + one-action cancel (AA-957; **contract** class under ADR 0017: widened CHECKs on `crm.aa_request.kind` (+ `cancel`) and `crm.booking_line_money.kind` (+ `cancellation_cost`), a new column `crm.agency_supplier.commission_due_days`, `crm.status_transition` rows, so MIG-4 order, manual DB Migrate apply before the code PR): `crm.commission` (base template; one live row per confirmed agency line with an expected commission: expected -> claimed -> received | written_off, or cancelled; due date; the receipt frozen at the receipt day's rate, `short_amount` in the original currency only, `fx_difference_base`; RESTRICTIVE `commission_margin_roles`; crm_app SELECT + UPDATE of the follow-up columns, guard CRM46), `crm.trip_cancellation` (base template; one per trip, pending until Booking cancelled the trip's AA bookings, then done), `crm.commission_sync(trip)`, `crm.commission_receive(...)`, `crm.booking_line_aa_cancel_fee(...)` (SECURITY DEFINER); both tables cascade from their trip (and line), no `crm.erase_subject` change |
+| `crm-035` | `api/migrations/035_crm_commission_cancel.sql` | CRM-27 Module 13 commission + one-action cancel (AA-957; **contract** class under ADR 0017: widened CHECKs on `crm.aa_request.kind` (+ `cancel`) and `crm.booking_line_money.kind` (+ `cancellation_cost`), a new column `crm.agency_supplier.commission_due_days`, `crm.status_transition` rows, so MIG-4 order, manual DB Migrate apply before the code PR): `crm.commission` (base template; one live row per confirmed agency line with an expected commission: expected -> claimed -> received | written_off, or cancelled; due date; the receipt frozen at the receipt day's rate, `short_amount` in the original currency only, `fx_difference_base`; RESTRICTIVE `commission_margin_roles`; crm_app SELECT + UPDATE of the follow-up columns, guard CRM46), `crm.trip_cancellation` (base template; one per trip, pending until Booking cancelled the trip's AA bookings, then done; crm_app SELECT only, written by `crm.trip_cancellation_open` (owner / agent; the database decides pending / done from the live AA bookings) and `crm.trip_cancellation_finish` (done only once no AA booking is live and the trip is cancelled)), `crm.commission_sync(trip)`, `crm.commission_receive(...)`, `crm.booking_line_aa_cancel_fee(...)` (SECURITY DEFINER); both tables cascade from their trip (and line), no `crm.erase_subject` change |
 | `crm-029` | `api/migrations/029_crm_traveler_flight.sql` | CRM-24a portal per person (AA-953; an **expand** file, ADR 0017: one new table only, so it ships in the code PR): `crm.traveler_flight` (base template; one arrival / departure flight per trip, traveller and direction: `flight_no_enc` under the vault DEK, `airport_iata`, `sched_local` (local time at that airport, no zone) + `tz` (IANA), `entered_by_kind`; all `pii:travel`; RLS, hold guard, no reader grant). Every key cascades (trip, traveler, trip_traveler), so the erase deletes flights through the rows it already deletes and `crm.erase_subject` is not replaced (`test_crm010_schema.py` `CASCADE_ERASED` checks the keys). crm-028 is another lane's key |
 | `crm-029` | `api/migrations/029_crm_traveler_flight.sql` | CRM-24a portal per person (AA-953; an **expand** file, ADR 0017: one new table and one new nullable column, so it ships in the code PR): `crm.otp_challenge.sent_to_bidx` (the blind index of the address a portal code went to: a session's proof) and `crm.traveler_flight` (base template; one arrival / departure flight per trip, traveller and direction: `flight_no_enc` under the vault DEK, `airport_iata`, `sched_local` (local time at that airport, no zone) + `tz` (IANA), `entered_by_kind`; all `pii:travel`; RLS, hold guard, no reader grant). Every key cascades (trip, traveler, trip_traveler), so the erase deletes flights through the rows it already deletes and `crm.erase_subject` is not replaced (`test_crm010_schema.py` `CASCADE_ERASED` checks the keys). needs crm-028 (AA-952) |
 | `crm-030` | `api/migrations/030_crm_onboarding_import.sql` | CRM-31 onboarding + import (AA-962; expand class under ADR 0017: nullable columns, columns with a constant default, non-unique partial indexes, column comments; no `crm.erase_subject` change: the new columns go with their rows): `import_ref_bidx` on `crm.traveler` / `crm.trip` / `crm.note` (blind index of the agency's own ref of an imported row; a partial non-unique index each, like every blind index here), `crm.tenant_settings` `onboarding_later` / `onboarding_done` (step codes), `privacy_notice_url`, `data_request_contact`, `consent_text` (controller settings), `responsibility_ack_version` / `_at` / `_member_id` (the owner acknowledgement). Values are checked by `app/onboarding.py` (an expand file adds no CHECK to an existing table) |
@@ -606,7 +606,7 @@ original CIS commit). P2a moves the code only:
   `POST /pipeline/bulk-stage/undo`.
 - **Cancel** (C12): `POST /trips/{id}/cancel?dry_run=true|false` `{cancel_reason_code}` (owner / agent), from
   booked / pre_departure / travelling: the dry run lists the effects (dispatch rows cancelled, open tasks skipped,
-  future call slots cancelled, links revoked); later cards add theirs.
+  future call slots cancelled, links revoked); AA-957 completes it (section "CRM-27" below).
 - **waiting_on** is derived on every move (`derive_waiting_on`); cards register hooks for booked / pre-departure trips
   (`register_waiting_on_hook`, contract in `docs/implementation-notes/AA-943.md`). `last_activity_at` is bumped by
   moves, notes, task changes and submissions; the board flags a trip quiet after 3 days and shows a Closed group.
@@ -677,6 +677,57 @@ Design v3 §6.3 CRM-16 (M6 non-AA, M15, R17, R18), lane §2.7 / §3.1 / §3.2; m
   (A-11, status filter, totals for owner / agent), `/suppliers` (A-13, AA pinned, contact behind a reveal with a
   reason), `/settings/payments` (owner; others see why). Refusal codes are worded in `lib/ledger.ts` / `lib/i18n.ts`
   (EN default, VI); the BFF lines are in `lib/bff.ts` (card AA-944). Dev E2E: `e2e/tests/ledger.spec.ts`.
+
+## CRM-27 commission + one-action cancel (AA-957)
+
+Design v3 M13, C12 (§2.7, §3.5 "Cancellation"), R17, R21, A-12; lane §2.7 `commission`, §3.1, §3.4; migration crm-035
+(contract). Code: `app/commissions/` (service), `app/routers/commissions.py`, `app/cancellation.py` (called by
+`app.stages.cancel` and the Booking sync), `app/booking/sync.py` (`cancel` requests); decisions in
+`docs/implementation-notes/AA-957.md`.
+
+- **Commission rows** (`crm.commission`): one live row per confirmed agency line with a positive expected commission,
+  written only by `crm.commission_sync(trip)` (SECURITY DEFINER: the assistant may confirm a line, R18, but reads no
+  money), run after every confirm, money change and line cancel, by the trip cancel and by the hourly date rule
+  (`commissions.sweep`). The expected amount is the head of the line's `commission_expected` chain (frozen at the
+  confirmation day); never copied until the receipt. Status expected -> claimed -> received, or written_off /
+  cancelled (line cancelled, commission set to 0, trip cancelled); claimed / received block the trip delete
+  (`crm.trip_commitment` kind commission). Due date = last service day + the supplier's `commission_due_days`
+  (default 30, Suppliers form). Overdue is derived; the date rule opens one owner task `commission_overdue` per row.
+- **Receipt** (R17 E): `crm.commission_receive` freezes it at the rate of the day it arrived (`fx_basis
+  receipt_date`; 409 `fx_rate_missing` without a rate); `short_amount` only in the original currency;
+  `fx_difference_base` only when the original amounts match.
+- **Routes** (`/crm/v1`, owner / agent: `VIEW_MARGIN` reads, `PAYMENT_MARK_RECEIVED` writes; the assistant 403):
+  `GET /commissions?status=open|overdue|received|written_off|cancelled|all&trip_id=` (base-currency totals), `GET /
+  PATCH /commissions/{id}` (due date), `POST /commissions/{id}/claim|unclaim|receive|write-off`. The RESTRICTIVE
+  policy `commission_margin_roles` hides every row from the assistant and AA staff. The trip's lines carry
+  `commission` (owner / agent). Success metric `commission_unclaimed` (Module 13) is live.
+- **Cancel run** (`app/cancellation.py`): the dry run lists every effect and the detail blocks (AA bookings with
+  Booking's dry-run fee read outside the transaction by the route, supplier lines, payments with the refund the
+  dialog proposes, expected commissions, the accepted booking terms). The run: queued sends and workflow sends
+  cancelled (`register_cancel_hook` for Module 10), open tasks skipped (except `verify_transfer`), slots and links
+  cancelled, unpaid invoices voided, one `proposed` refund request per payment for the amount the member set (lower
+  keeps the rest; a payment without an invoice gets the owner task `cancel_refund_review`), the owner task
+  `cancel_with_suppliers` (one per trip: the trip page lists each supplier on it as one checklist line; closed by the
+  date rule once no confirmed agency line is left), expected commissions
+  cancelled unless `keep_commission`, AA holds released, ops release withdrawn, one `cancel` request per AA booking.
+- **Never cancelled early** (card R): with AA bookings the trip keeps its stage and a pending `crm.trip_cancellation`
+  ("Cancellation pending" on the trip and the board; moves and Undo 409 `cancellation_pending`; the date rule, the
+  commission sweep and the invoice reminders skip it). An invoice the cancel kept because it held money is voided once
+  its refunds executed and nothing is left on it (`app.cancellation.void_if_refunded`). `crm_booking_sync` sends `POST /bookings/{id}/cancel` (`Idempotency-Key crm-cancel:<request
+  id>`, the outage queue's backoff while Booking is down), cancels the booking's lines, writes the fee as a
+  `cancellation_cost` money row of the line (the quote's FX lock, else the rate of Booking's `cancelled_at` day in the
+  agency timezone; ledger total `cancellation_cost_base`), and once no
+  AA booking is left moves the trip to `cancelled` (also after a `booking.cancelled` event). Booking `not_found` =
+  nothing left to cancel; `invalid` counts so only when the feed already cancelled the booking's lines (it is also sent
+  for a booking still live at AA). Another refusal, or a cancel that ran out of attempts (`gave_up`), opens the owner
+  task `aa_cancel_failed` (closed when the cancellation completes), and Cancel again on the pending trip asks Booking
+  again. A pending cancellation drops queued quote / hold / refresh requests (`trip_closed`) like a closed stage.
+- **Web**: A-12 `/commissions` (`app/(crm)/commissions/page.tsx`, `components/commissions/CommissionActions.tsx`;
+  assistant: "not available for your role"), the commission and the AA fee on the Bookings tab, the cancel dialog
+  (`components/pipeline/StageDialogs.tsx`: fees, supplier bookings, refunds, commissions to keep, "Ask AA again"),
+  the pending badge on the trip and the board, the supplier form field "Commission paid after (days)". Strings in
+  `lib/i18nCommission.ts` (EN / VI), BFF lines card AA-957.
+- **Not built (paid vendor)**: Stripe Checkout session expiry and Stripe refunds wait for the BYO Stripe provider.
 
 ## CRM-17 Module 5 e-mail (AA-945)
 

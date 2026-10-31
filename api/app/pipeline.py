@@ -33,7 +33,7 @@ from typing import Any
 
 import asyncpg
 
-from app import stages
+from app import cancellation, stages
 from app.audit import MAX_OBJECT_IDS
 from app.errors import Conflict, Invalid, NotFound
 from app.intake import stage1
@@ -81,7 +81,9 @@ SELECT v.trip_id, v.title, v.stage, v.waiting_on, v.owner_member_id, v.month, v.
        (SELECT min(k.due_at) FROM crm.task k
          WHERE k.trip_id = v.trip_id AND k.status = 'open' AND k.deleted_at IS NULL) AS next_due_at,
        (SELECT count(*) FROM crm.form_submission s WHERE s.trip_id = v.trip_id AND s.deleted_at IS NULL)::int
-           AS submissions
+           AS submissions,
+       EXISTS (SELECT 1 FROM crm.trip_cancellation x WHERE x.trip_id = v.trip_id AND x.status = 'pending')
+           AS cancellation_pending
   FROM visible v
   LEFT JOIN LATERAL (
       SELECT tt.traveler_id, tr.display_name_enc FROM crm.trip_traveler tt
@@ -107,7 +109,9 @@ TRIP_SQL = """
 SELECT trip_id, title, stage, stage_entered_at, waiting_on, start_date, end_date, month, date_flex_days, nights,
        destinations, party_adults, party_child_ages, party_type, budget_band, trip_style, owner_member_id,
        intake_form_id, lead_source, lost_reason_code, last_inquiry_at, created_at, updated_at, intake_completeness,
-       cancel_reason_code, last_activity_at, greatest(0, extract(day FROM now() - last_activity_at))::int AS quiet_days
+       cancel_reason_code, last_activity_at, greatest(0, extract(day FROM now() - last_activity_at))::int AS quiet_days,
+       EXISTS (SELECT 1 FROM crm.trip_cancellation x WHERE x.trip_id = trip.trip_id AND x.status = 'pending')
+           AS cancellation_pending
   FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL
 """
 STAGE2_LINK_SQL = """
@@ -238,6 +242,7 @@ async def board(ctx: TenantContext, vault: Vault, flt: BoardFilter) -> dict[str,
                 "lead_source": r["lead_source"],
                 "next_due_at": _iso(r["next_due_at"]),
                 "submissions": r["submissions"],
+                "cancellation_pending": "cancellation_pending" in r.keys() and bool(r["cancellation_pending"]),
                 "last_inquiry_at": _iso(r["last_inquiry_at"]),
                 "stage_entered_at": _iso(r["stage_entered_at"]),
                 "last_activity_at": _iso(r["last_activity_at"]),
@@ -321,6 +326,7 @@ async def trip_detail(ctx: TenantContext, vault: Vault, trip_id: uuid.UUID) -> d
             }
         )
     tasks = [_task(r) for r in await ctx.conn.fetch(TASKS_SQL, trip_id)]
+    await _supplier_checklist(ctx, trip_id, tasks)
     link = await ctx.conn.fetchrow(STAGE2_LINK_SQL, trip_id)
     history = [
         {
@@ -354,6 +360,7 @@ async def trip_detail(ctx: TenantContext, vault: Vault, trip_id: uuid.UUID) -> d
         "submissions": submissions,
         "allowed_moves": allowed_moves(trip["stage"]),
         "can_cancel": trip["stage"] in CANCELLABLE,
+        "cancellation": await cancellation.pending(ctx, trip_id),  # AA-957 (C12): pending until AA confirms
         "stage2_link": None
         if link is None
         else {
@@ -409,7 +416,31 @@ def _crm012(r: Any) -> dict[str, Any]:
     if "quiet_days" in r.keys():
         out["quiet_days"] = r["quiet_days"]
         out["quiet"] = r["quiet_days"] > QUIET_DAYS
+    if "cancellation_pending" in r.keys():  # AA-957: cancelled in the CRM, AA has not confirmed it yet
+        out["cancellation_pending"] = bool(r["cancellation_pending"])
     return out
+
+
+async def _supplier_checklist(ctx: TenantContext, trip_id: uuid.UUID, tasks: list[dict[str, Any]]) -> None:
+    """AA-957 (C12 "agency suppliers get one task each"): ``crm.task`` keeps one open task per (trip, kind), so the
+    cancel opens one ``cancel_with_suppliers`` task and the trip page lists each supplier on it as one checklist line
+    (its confirmed lines still to cancel). The date rule closes the task once none is left."""
+    from app.cancellation import SUPPLIER_LINES_SQL, SUPPLIER_TASK
+
+    open_tasks = [k for k in tasks if k["kind"] == SUPPLIER_TASK and k["status"] == "open"]
+    if not open_tasks:
+        return
+    suppliers: dict[str, dict[str, Any]] = {}
+    for r in await ctx.conn.fetch(SUPPLIER_LINES_SQL, trip_id, 200):
+        entry = suppliers.setdefault(
+            str(r["agency_supplier_id"]),
+            {"agency_supplier_id": str(r["agency_supplier_id"]), "supplier_name": r["supplier_name"], "lines": []},
+        )
+        entry["lines"].append(
+            {"booking_line_id": str(r["booking_line_id"]), "title": r["title"], "confirmation_no": r["confirmation_no"]}
+        )
+    for k in open_tasks:
+        k["checklist"] = list(suppliers.values())
 
 
 def _task(r: Any) -> dict[str, Any]:

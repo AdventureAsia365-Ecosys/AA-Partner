@@ -95,6 +95,13 @@ class FakeBooking:
     # AA-952 slice 4: ``POST /holds/{id}/extend`` adds ``extend_by`` once per hold; the keys of every extend call.
     extend_by: timedelta = timedelta(hours=72)
     extend_keys: list[str] = field(default_factory=list)
+    # AA-957 (C12): ``POST /bookings/{id}/cancel``: the fee is ``cancel_fee_pct`` of the held lines' b2b total (the
+    # quote currency); ``cancel_refusal`` answers that contract error instead; a repeat returns the stored cancellation
+    # (Booking's rule, any key); a dry run changes nothing. ``cancel_keys``: the Idempotency-Key of every cancel call.
+    cancel_fee_pct: str = "25"
+    cancel_refusal: str | None = None
+    cancellations: dict[str, dict[str, Any]] = field(default_factory=dict)
+    cancel_keys: list[str] = field(default_factory=list)
     calls: Counter[str] = field(default_factory=Counter)
     holds: dict[str, dict[str, Any]] = field(default_factory=dict)
     hold_keys: dict[str, str] = field(default_factory=dict)
@@ -295,6 +302,8 @@ class FakeBooking:
                     }  # fmt: skip
                     self.bookings[hold["hold_id"]] = booking
                 return _resp(201, booking)
+        if method == "POST" and path.startswith("/bookings/") and path.endswith("/cancel"):
+            return self._cancel(path.split("/")[2], query.get("dry_run") == "true", key)
         if method == "GET" and path == "/events":
             after = int(query.get("after", "0") or 0)
             items = [e for e in self.events if int(e["cursor"]) > after][: int(query.get("limit", "200"))]
@@ -313,6 +322,35 @@ class FakeBooking:
                 "status": "scheduled", "auto_confirm": True,
             }]})  # fmt: skip
         return _resp(404, {"error": "not_found", "message": "no route"})
+
+    def _cancel(self, booking_id: str, dry_run: bool, key: str | None) -> HttpResponse:
+        self.cancel_keys.append(key or "")
+        if booking_id in self.cancellations:
+            return _resp(200, self.cancellations[booking_id])
+        if self.cancel_refusal:
+            status = {"not_found": 404, "invalid": 422}.get(self.cancel_refusal, 403)
+            return _resp(status, {"error": self.cancel_refusal, "message": "refused"})
+        found = [(hid, b) for hid, b in self.bookings.items() if b["booking_id"] == booking_id]
+        if not found:
+            return _resp(404, {"error": "not_found", "message": "unknown booking"})
+        hold_id, _booking = found[0]
+        hold = self.holds.get(hold_id, {})
+        currency = hold.get("currency", "USD")
+        total = sum((Decimal(x["b2b_price"]["amount"]) for x in hold.get("lines", []) if "b2b_price" in x),
+                    Decimal(0)) or Decimal(self.b2b_price)  # fmt: skip
+        fee = (total * Decimal(self.cancel_fee_pct) / 100).quantize(Decimal("0.01"))
+        body = {
+            "booking_id": booking_id, "dry_run": dry_run,
+            "fee": {"amount": str(fee), "currency": currency},
+            "refundable_b2b_amount": {"amount": str(total - fee), "currency": currency},
+            "fee_basis": {"policy_id": "pol-1", "days_before_departure": 40, "fee_pct": self.cancel_fee_pct},
+            "cancelled_at": None if dry_run else datetime.now(UTC).replace(microsecond=0).isoformat(),
+        }  # fmt: skip
+        if not dry_run:
+            self.cancellations[booking_id] = body
+            if hold:
+                hold["status"] = "cancelled"
+        return _resp(200, body)
 
     def add_event(self, type_: str, **fields: Any) -> dict[str, Any]:
         event = {"event_id": f"e{len(self.events) + 1}", "cursor": str(len(self.events) + 1), "type": type_,

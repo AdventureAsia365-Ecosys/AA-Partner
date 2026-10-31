@@ -67,6 +67,7 @@ class SupplierIn(_Body):
     contact_name: str | None = Field(default=None, max_length=200)
     contact_email: str | None = Field(default=None, max_length=200)
     default_commission_pct: Decimal | None = Field(default=None, ge=0, le=100)
+    commission_due_days: int | None = Field(default=None, ge=0, le=365)  # AA-957
     confirmation_unique: bool = False
 
 
@@ -76,6 +77,7 @@ class SupplierChange(_Body):
     contact_name: str | None = Field(default=None, max_length=200)
     contact_email: str | None = Field(default=None, max_length=200)
     default_commission_pct: Decimal | None = Field(default=None, ge=0, le=100)
+    commission_due_days: int | None = Field(default=None, ge=0, le=365)  # AA-957
     confirmation_unique: bool | None = None
 
 
@@ -150,7 +152,7 @@ async def post_supplier(request: Request, caller: CallerDep, tenant_id: TenantDe
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_EDIT) as ctx:
-        if body.default_commission_pct is not None:
+        if body.default_commission_pct is not None or body.commission_due_days is not None:
             require(ctx, Action.MONEY_FIELDS_EDIT, object_kind="agency_supplier")
         return await suppliers.create_supplier(ctx, Vault(keys, ctx), body.model_dump())
 
@@ -172,7 +174,7 @@ async def patch_supplier(
     changes = body.model_dump(exclude_unset=True)
     keys = require_keys(request.app.state.keys)
     async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_EDIT) as ctx:
-        if "default_commission_pct" in changes:
+        if "default_commission_pct" in changes or "commission_due_days" in changes:
             require(ctx, Action.MONEY_FIELDS_EDIT, object_kind="agency_supplier", object_id=str(supplier_id))
         return await suppliers.update_supplier(ctx, Vault(keys, ctx), supplier_id, changes)
 
