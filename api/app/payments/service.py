@@ -6,7 +6,10 @@ F, M7, §4.6, §6.3, A-10). Routes in :mod:`app.routers.payments`.
   the agency's own reference. Provider ``manual``: the money reached the agency's own account outside the CRM. When the
   payments reach the total the invoice is paid, and a deposit / balance invoice settles its schedule row with the
   CRM-18 effects (:func:`app.proposals.service.settle_schedule`: Proposal -> Booked, portal invites, the Booking
-  confirm). The trip's ``trip_commitment`` rows follow (payment succeeded; invoice paid).
+  confirm). The trip's ``trip_commitment`` rows follow (payment succeeded; invoice paid). AA-952 slice 4: a claimed
+  invoice's verify task closes with the money; when the money completes a deposit whose AA hold ran out
+  (:func:`app.payments.claims.holds_aa`), nothing settles here: ``rehold_requested_at`` is set and the Booking sync
+  holds the AA items again first (:mod:`app.booking.rehold`: paid, or paid_unfulfillable with refund requests).
 - **Refund requests** (design §4.6, C12, C31): proposed by owner / agent for (part of) one payment (never more than
   is left to ask back: 422 ``amount_above_refundable``) -> approved / rejected (``REFUND_APPROVE``: the owner any
   amount, an agent up to ``tenant_settings.refund_owner_threshold_base``, judged in the base currency on everything

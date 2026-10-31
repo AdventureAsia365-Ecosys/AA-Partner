@@ -284,6 +284,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-025` | `api/migrations/025_crm_contracts_waivers.sql` | CRM-25 Module 12 e-sign v1 (AA-955; needs crm-024; contract class under ADR 0017: a widened CHECK, a replaced key and sealed trigger, replaced `crm.erase_subject` (the crm-024 text) and `crm.lifecycle_purge_expired` (the crm-018 text)): `agreement_doc.kind` + `insurance_declination` (R13); `signature_request` + the envelope (`signer_traveler_id` / `signer_role` self or guardian, generated `access_traveler_id` naming the signing access, terms and declination versions with their SHA-256, `insurance_choice`, `envelope_sha256`, `seal_alg`; sealed once signed); `terms_acceptance` and `signature_event` (append-only, `crm.ledger_append_only`; no foreign key on trip / proposal / traveller / request: the DM-7 claim-period exception keeps them through a trip or traveller erasure until `keep_until` = trip end + 3 years, then `crm.lifecycle_purge_expired` deletes them, never a held row; the agency erase takes them; the receipt counts `*_kept`) |
 | `crm-026` | `api/migrations/026_crm_portability_requests.sql` | CRM-35 Module 18 (AA-967; needs crm-025, contract class): `crm.export_job` (base template; one portability export of the agency or of one client: queued -> building (progress) -> ready -> expired / cancelled, or failed; object `exports/tenants/<tenant>/portability/<export>.zip.enc`, its and the ZIP's SHA-256, size, row counts, the single-use download link's SHA-256 + expiry; one open export per subject) and `crm.data_request` (base template; the agency's data-request log: kind, channel, client id without foreign key, received / due (<= +92 days), open -> extended -> done / refused / withdrawn + outcome, the erasure receipt); both crm_app SELECT / INSERT / UPDATE, no reader grant, and both on the agency erase keep list (receipts without personal data); `crm.erasure_request.erase_not_before` (the deletion cool-off) and `verified_at`, `UNIQUE (tenant_id, request_id)`; `crm.erase_subject` = the crm-025 text + the two keep-list names. No new SQLSTATE |
 | `crm-027` | `api/migrations/027_crm_duty_of_care_calendar.sql` | CRM-30 duty of care + calendar (AA-961; needs crm-026; contract class under ADR 0017: a replaced `crm.erase_subject`, the crm-026 text with two agency-scope tables): `crm.incident_flag` (base template: an AA incident on a departure as the Booking feed reported it, departure id, the contract's incident code, open -> cleared, raised / cleared times and Booking event ids; one open flag per departure; ids and codes only; written by job / platform actors only, `crm.guard_incident_flag` CRM41), `crm.calendar_feed` (base template: one ICS subscription per member, the token's SHA-256 only, scope `mine` / `agency`, active -> revoked, expiry <= 400 days, fetch counters; one active per member; SELECT-only `calendar_feed_token_lookup` on `app.calendar_feed_hash`; `crm.guard_calendar_feed` CRM42: own feed only, token / member / scope / expiry fixed, only the member or an owner revokes, the fetch actor touches only its counters); crm_app SELECT / INSERT / UPDATE, no reader grant |
+| `crm-028` | `api/migrations/028_crm_invoice_claims.sql` | AA-952 CRM-23 slice 4 (needs crm-027; **expand** class under ADR 0017: ADD COLUMN only, shipped in the code PR and auto-applied before the deploy): `crm.invoice` + `claimed_at` (the client's "I have paid"), `hold_extended_at` / `hold_extend_code` (Booking's one hold extension), `rehold_requested_at` / `rehold_quote_id` / `rehold_price_hash` / `rehold_code` (the re-hold of a late deposit), `last_reminded_at` / `reminder_count` (overdue reminders); the value lists are the API's (no CHECK in an expand file) |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -1054,6 +1055,47 @@ Design v3 group F (M7), §4.6 (refund approval), §6.3 (BYO providers), A-10; mi
 - **Web**: `components/invoices/InvoiceMoney.tsx` (record payment, payments, request refund) and `RefundActions.tsx`
   (approve / reject / mark refunded) on the trip's Invoices card; `RefundsPanel.tsx` on A-10 `/payments`;
   `PaymentMethodsForm.tsx` on Settings > Payments; BFF lines card AA-952 in `lib/bff.ts`.
+
+## CRM-23 claim, hold extension, re-hold and reminders (AA-952 slice 4)
+
+Design v3 §3.5 "Deposit link (C31, Fix A3, Fix A8)", F6 step 5, WF-9, U8; card CRM-23 R / E; migration crm-028; code in
+`app/payments/claims.py` (pay window, claim, extension), `app/booking/rehold.py` (the re-hold, run by the Booking sync),
+`app/payments/reminders.py` (run by the hourly date rule); decisions in `docs/implementation-notes/AA-952.md`.
+
+- **The pay link is the client's proposal link.** An accepted page (`GET /crm/public/v1/proposal`) lists the issued
+  deposit / balance invoices of that version under `payments`: number, total, what is left, due date, the **pay window**
+  and, only while it is open, the agency's own manual pay-by details. The window is derived, never stored: a deposit
+  invoice of an accepted builder version with an AA hold is payable until `crm.proposal.hold_expires_at`; past it the
+  state is `expired` (no details, no claim, no card session). Other invoices have no window. The invoice status
+  `expired` stays unused (crm-024 has no expired -> paid transition for the money that still arrives).
+- **"I have paid"** (`POST /crm/public/v1/proposal/invoices/{id}/claim`, the link cookie): open -> `payment_claimed`
+  (`claimed_at`), the trip owner's urgent task `verify_transfer` (due at the hold's expiry, else in 2 days), bell
+  `invoice.payment_claimed`; then, outside any transaction, **one** `POST /holds/{id}/extend` (reason payment_claimed,
+  Idempotency-Key `crm-invoice:<id>:extend`; Booking adds its length, 72 h, once per hold) and, in a second
+  transaction, `hold_extended_at` + the proposal's hold expiry + the task's due time (or Booking's code in
+  `hold_extend_code`; `booking_unavailable` is retried by the Booking sync). 410 `pay_link_expired` past the window. A
+  second press answers the same. The agent: record the payment, or "Not received" (`POST /invoices/{id}/reject-claim`:
+  back to open, task skipped; a claimed invoice is not voided: 409 `invoice_claimed`).
+- **Card button** (`POST /crm/public/v1/proposal/invoices/{id}/card`): the window is checked before any provider: 410
+  `pay_link_expired` past it (never a payment session), else 409 `card_not_offered` / `provider_not_available` until
+  the BYO card provider (Stripe Connect Standard) has code.
+- **Money after the hold ran out** (also after the extension): `record_payment` that completes such a deposit sets
+  `rehold_requested_at` and settles nothing (`rehold_pending: true`). The Booking sync (`invoice_holds`, after the
+  accepted sets) reads Booking's hold (still active: `hold_live`), else quotes the same AA lines and holds them again
+  (`crm-invoice:<id>:rehold`, the quote written down first so a lost answer replays) only when none is sold out and the
+  new net total is not above the expired hold's. Held: the proposal's hold columns and the AA lines move to the new
+  hold (cost from its prices), the invoice is paid, its row settled (Booked, portal, confirm; the confirm query takes
+  the proposal's current hold too), bell `invoice.reheld`. Not held (`sold_out`, `price_higher`, `price_changed`,
+  `not_found`, ...): `paid_unfulfillable`, one refund request per payment for what is left to ask back (proposed by
+  `job:crm_booking_sync`, decided under the §4.6 matrix), urgent task `payment_unfulfillable`, bell
+  `invoice.unfulfillable`; the row stays due, the trip does not move. Booking's `rehold_limit` waits for the next UTC
+  day (26 h at most). A late `hold.expired` of a hold the lines left no longer marks them expired.
+- **Overdue reminders** (agent first, U8): the hourly `crm_stage_date_rule` gives the trip owner a bell
+  `invoice.overdue` and one open task `invoice_overdue` for an issued, open invoice with money due past its due date:
+  the day after, then every 3 days, at most 5 (`last_reminded_at`, `reminder_count`). Claimed and re-holding invoices
+  are not reminded; the CRM never writes to the client by itself.
+- **Web**: `components/proposals/ClientPayBox.tsx` (accepted text and day-by-day pages), the claim note and "Not
+  received" on the trip's Invoices card, the note on A-10 `/payments`; BFF line `invoices/{id}/reject-claim`.
 
 ## CRM-22 text proposal + Before you go (AA-951)
 
