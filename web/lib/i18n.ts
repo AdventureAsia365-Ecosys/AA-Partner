@@ -17,6 +17,7 @@ import { commissionEn, commissionVi } from "./i18nCommission";
 import { offlineEn, offlineVi } from "./i18nOffline";
 import { opsReleaseEn, opsReleaseVi } from "./i18nOpsRelease";
 import { supportEn, supportVi } from "./i18nSupport";
+import { tripCodesEn, tripCodesVi } from "./i18nTripCodes";
 
 export type Lang = "en" | "vi";
 export const LOCALE_COOKIE = "aa_crm_locale";
@@ -41,6 +42,7 @@ export function resolveLocale(input: { cookie?: string | null; explicit?: string
 }
 
 const en = {
+  ...tripCodesEn, // AA-957: task kinds, stage reasons, incident departure, ops activity (lib/i18nTripCodes.ts)
   ...onboardingEn, // AA-962: onboarding, client import, duplicates, Connections, help (lib/i18nOnboarding.ts)
   ...aiEn, // AA-964: Settings > AI (lib/i18nAi.ts)
   ...supportEn, // AA-971: AA support access and the support / emergency banner (lib/i18nSupport.ts)
@@ -2605,7 +2607,6 @@ const en = {
   "duty.reveal.failed": "The details could not be opened. Try again.",
   "duty.incident.banner": "AA reported an incident on a departure in this trip",
   "duty.incident.bannerMany": "AA reported {n} incidents on departures of your trips",
-  "duty.incident.departure": "Departure {id}",
   "duty.incident.raised": "Reported {date}",
   "duty.incident.cleared": "Cleared {date}",
   "duty.incident.affected": "Affected trips",
@@ -2668,6 +2669,7 @@ const en = {
 export type MessageKey = keyof typeof en;
 
 const vi: Record<MessageKey, string> = {
+  ...tripCodesVi,
   ...onboardingVi,
   ...aiVi,
   ...supportVi,
@@ -5231,7 +5233,6 @@ const vi: Record<MessageKey, string> = {
   "duty.reveal.failed": "Không mở được thông tin. Hãy thử lại.",
   "duty.incident.banner": "AA báo có sự cố ở một lịch khởi hành của chuyến này",
   "duty.incident.bannerMany": "AA báo {n} sự cố ở các lịch khởi hành trong chuyến của bạn",
-  "duty.incident.departure": "Lịch khởi hành {id}",
   "duty.incident.raised": "Báo lúc {date}",
   "duty.incident.cleared": "Đã xử lý {date}",
   "duty.incident.affected": "Chuyến bị ảnh hưởng",

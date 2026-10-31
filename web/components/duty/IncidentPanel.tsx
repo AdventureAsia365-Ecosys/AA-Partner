@@ -4,7 +4,7 @@
 // sends traveller data or free text. Server-safe (no hooks).
 import { Badge, K } from "@/app/_kit";
 import { formatDate, type DateLocale } from "@/lib/dates";
-import type { OpenIncident, TripIncident } from "@/lib/duty";
+import { incidentDeparture, type OpenIncident, type TripIncident } from "@/lib/duty";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 
 const box: React.CSSProperties = {
@@ -21,6 +21,12 @@ function code(lang: Lang, c: string): string {
   return t(lang, `duty.incident.code.${c}` as MessageKey);
 }
 
+/** "<departure> · " when the agency's line on it names it; nothing otherwise (never the Booking departure id). */
+function departurePrefix(f: OpenIncident | TripIncident, lang: Lang, locale: DateLocale): string {
+  const words = incidentDeparture(f.departure, locale, (key) => t(lang, key));
+  return words ? `${words} · ` : "";
+}
+
 export function OpenIncidents({ incidents, lang, locale }: { incidents: OpenIncident[]; lang: Lang; locale: DateLocale }) {
   if (incidents.length === 0) return null;
   return (
@@ -34,7 +40,7 @@ export function OpenIncidents({ incidents, lang, locale }: { incidents: OpenInci
           <li key={f.incident_flag_id} data-testid={`duty-incident-${f.departure_id}`}>
             <Badge tone="danger">{code(lang, f.incident_code)}</Badge>{" "}
             <span style={{ color: K.muted }}>
-              {fmt(t(lang, "duty.incident.departure"), { id: f.departure_id })} ·{" "}
+              {departurePrefix(f, lang, locale)}
               {fmt(t(lang, "duty.incident.raised"), { date: formatDate(f.raised_at, locale) })}
             </span>
             <div style={{ marginTop: 2 }}>
@@ -68,7 +74,7 @@ export function TripIncidentBanner({ incidents, lang, locale }: { incidents: Tri
           <li key={f.incident_flag_id}>
             <Badge tone={f.status === "open" ? "danger" : "neutral"}>{code(lang, f.incident_code)}</Badge>{" "}
             <span style={{ color: K.muted }}>
-              {fmt(t(lang, "duty.incident.departure"), { id: f.departure_id })} ·{" "}
+              {departurePrefix(f, lang, locale)}
               {f.status === "open"
                 ? fmt(t(lang, "duty.incident.raised"), { date: formatDate(f.raised_at, locale) })
                 : fmt(t(lang, "duty.incident.cleared"), { date: formatDate(f.cleared_at, locale) })}

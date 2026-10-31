@@ -466,6 +466,13 @@ queued / running rows as information, exempt kinds left out). Daily or slower ki
   integrity (`core/check-kit-copy.mjs`, also `--css`) and provenance (`api/scripts/check_kit_provenance.py`: the copied
   manifest is CIS's at the lock's `ref`, and that `ref` is on CIS `main`). `web/lib/{sameOrigin,crossSiteGuard,bffPath,
   proxyResponse}.ts` stay byte copies of AA-CIS-App `frontend/lib/` (CI "Vendored CIS copies").
+- **Theme and hydration** (S262): `app/layout.tsx` renders no `data-theme` (the restore script alone sets it before
+  paint) and mounts `_kit/local/ThemeKeeper`, which applies the stored choice again whenever React rebuilds the
+  document (a failed hydration re-renders the root on the client and drops `<html>` attributes). Times on agency pages
+  print in the agency zone (`formatInstant`), never the server's or the browser's, so server and browser agree.
+- **Codes the UI words**: every `crm.task` kind and stage-history reason the API writes is listed in
+  `api/app/task_kinds.py` (API unit test: complete against the code); `web/tests/tripCodes.test.ts` fails when one
+  has no EN or VI label. A new task kind = one line there + `task.<kind>` in both languages.
 - **Configuration** (task environment, AA-CIS-Infra `crm_web.tf`; meanings in `web/lib/config.ts`): `ENVIRONMENT`,
   `WEB_PUBLIC_ORIGIN`, `WEB_PARTNER_HOSTS`, `WEB_CLIENT_HOSTS`, `CRM_API_ORIGIN`, `COGNITO_DOMAIN`, `COGNITO_CLIENT_ID`,
   `CONTENT_STUDIO_URL`, `CIS_API_URL` (AA-979, the trip page; optional), and from Secrets Manager

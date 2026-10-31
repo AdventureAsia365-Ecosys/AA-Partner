@@ -3,6 +3,7 @@
 // v3 M8, F8.3, F10.3, C12 step 6): whether AA's ground team holds this trip's traveller details (only once an AA tour
 // is confirmed), how complete they are, how often AA opened them, when they are deleted (return + 90 days) or the
 // deletion receipt, and "Withdraw from AA" (owner / agent; the trip cancel does it too). Counts, codes and dates only.
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, ConfirmModal, K, useHydrated } from "@/app/_kit";
@@ -11,7 +12,7 @@ import { codeLabel } from "@/lib/accessLog";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
-import { activityLines, missingItems, panelState, type OpsReleaseView } from "@/lib/opsRelease";
+import { activityFooter, activityLines, missingItems, panelState, type OpsReleaseView } from "@/lib/opsRelease";
 
 const PANEL_ACTIONS = new Set([
   "ops_release_create",
@@ -46,6 +47,8 @@ export function OpsReleasePanel({
   const activityPhrase = (action: string) =>
     PANEL_ACTIONS.has(action) ? tr(`ops.line.${action}`) : codeLabel(lang, "log.act", action);
   const [asking, setAsking] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const footer = activityFooter(view, showAll);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const state = panelState(view);
@@ -150,7 +153,7 @@ export function OpsReleasePanel({
           <section style={{ display: "grid", gap: 4 }}>
             <h3 style={{ margin: 0, fontSize: 13, color: K.ink }}>{tr("ops.activity")}</h3>
             <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 2, fontSize: 12.5, color: K.body }}>
-              {activityLines(view).map((a, i) => (
+              {activityLines(view, showAll ? footer.total : undefined).map((a, i) => (
                 <li key={`${a.at}-${i}`}>
                   {day(a.at)} · {codeLabel(lang, "log.actor", a.actor_kind)}{" "}
                   {activityPhrase(a.action)}
@@ -158,6 +161,20 @@ export function OpsReleasePanel({
                 </li>
               ))}
             </ul>
+            {footer.toggle && (
+              <div data-testid="ops-activity-toggle">
+                <Button size="sm" variant="ghost" disabled={!hydrated} onClick={() => setShowAll(!showAll)}>
+                  {footer.toggle === "all" ? fmt(tr("ops.activityAll"), { n: footer.total }) : tr("ops.activityFewer")}
+                </Button>
+              </div>
+            )}
+            {footer.older && (
+              <p style={{ margin: 0, fontSize: 12, color: K.muted }} data-testid="ops-activity-older">
+                {tr("ops.activityOlder")} <Link href="/settings/access-log" style={{ color: K.accent }}>
+                  {tr("ops.activityOlderLink")}
+                </Link>
+              </p>
+            )}
           </section>
         )}
       </div>
