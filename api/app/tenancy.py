@@ -800,6 +800,8 @@ class ClientLink:
     traveler_id: uuid.UUID | None
     purpose: str
     status: str
+    # AA-954 (CRM-24b): the traveller page keeps its offline itinerary no longer than the link lives (§2.9 rule 7).
+    expires_at: dt.datetime | None = None
 
 
 @asynccontextmanager
@@ -838,6 +840,7 @@ async def client_link_tx(
             traveler_id=row["traveler_id"],
             purpose=row["purpose"],
             status=row["status"],
+            expires_at=row["expires_at"],
         )
         ctx = SystemContext(conn=conn, tenant_id=tenant_id, actor=actor)
         try:
