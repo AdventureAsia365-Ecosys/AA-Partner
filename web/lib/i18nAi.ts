@@ -1,0 +1,71 @@
+// web/lib/i18nAi.ts
+// AA-964 (card CRM-33a) — the EN / VI strings of Settings > AI, spread into lib/i18n.ts (every key exists in both
+// languages: tests/i18n.test.ts).
+
+export const aiEn = {
+  "ai.title": "AI assistant",
+  "ai.subtitle":
+    "AI drafts replies for your team to read, edit and send. Nothing goes to a client without a person sending it.",
+  "ai.link": "AI assistant settings",
+  "ai.status": "Status",
+  "ai.on": "On",
+  "ai.off": "Off",
+  "ai.enable": "Let the team ask for AI drafts",
+  "ai.enableHelp":
+    "Off by default. Personal details (names, e-mail addresses, phone numbers, passport numbers) are replaced with placeholders before any text reaches the AI model, and put back only in your own session.",
+  "ai.budget": "Monthly AI budget (USD)",
+  "ai.budgetHelp": "Up to {max} a month on your plan. At 100 % AI drafts stop until next month and nothing more is charged.",
+  "ai.meter": "This month",
+  "ai.meterValue": "{spent} of {budget} used ({pct} %)",
+  "ai.alert.75": "75 % of this month's AI budget is used.",
+  "ai.alert.90": "90 % of this month's AI budget is used. Drafts stop at 100 %.",
+  "ai.alert.100": "This month's AI budget is used up. Write replies by hand until next month, or raise the budget.",
+  "ai.testMode": "Test mode",
+  "ai.testModeHelp": "Drafts come from a test model on this environment: no real AI model is called and nothing is charged.",
+  "ai.limit": "Up to {n} AI requests a minute for your agency.",
+  "ai.ownerOnly": "Only the owner switches AI on or off and sets the budget.",
+  "ai.save": "Save",
+  "ai.saved": "AI settings saved.",
+  "ai.rules": "How AI drafts work",
+  "ai.rule.review": "A draft is a suggestion. Read it and change it before you send it yourself.",
+  "ai.rule.data": "Text from clients is treated as data: instructions inside a client's message are never followed.",
+  "ai.rule.manual": "When AI cannot help (switched off, budget used up, or a check fails), the page says to reply by hand.",
+  "ai.error.budget_format": "Enter an amount such as 1.50.",
+  "ai.error.budget_above_plan": "That is more than your plan allows.",
+  "ai.error.role_forbidden": "Only the owner can change AI settings.",
+  "ai.error.generic": "AI settings could not be saved. Try again.",
+} as const;
+
+export const aiVi: Record<keyof typeof aiEn, string> = {
+  "ai.title": "Trợ lý AI",
+  "ai.subtitle":
+    "AI soạn nháp câu trả lời để đội của bạn đọc, sửa và tự gửi. Không có gì đến khách nếu chưa có người gửi.",
+  "ai.link": "Cài đặt trợ lý AI",
+  "ai.status": "Trạng thái",
+  "ai.on": "Bật",
+  "ai.off": "Tắt",
+  "ai.enable": "Cho phép đội yêu cầu bản nháp AI",
+  "ai.enableHelp":
+    "Mặc định tắt. Thông tin cá nhân (tên, e-mail, số điện thoại, số hộ chiếu) được thay bằng ký hiệu trước khi văn bản đến mô hình AI, và chỉ được điền lại trong phiên của chính bạn.",
+  "ai.budget": "Ngân sách AI mỗi tháng (USD)",
+  "ai.budgetHelp": "Tối đa {max} mỗi tháng theo gói của bạn. Khi dùng hết 100 %, bản nháp AI dừng đến tháng sau và không tính thêm phí.",
+  "ai.meter": "Tháng này",
+  "ai.meterValue": "Đã dùng {spent} trên {budget} ({pct} %)",
+  "ai.alert.75": "Đã dùng 75 % ngân sách AI tháng này.",
+  "ai.alert.90": "Đã dùng 90 % ngân sách AI tháng này. Bản nháp sẽ dừng ở 100 %.",
+  "ai.alert.100": "Đã dùng hết ngân sách AI tháng này. Hãy tự viết câu trả lời đến tháng sau, hoặc tăng ngân sách.",
+  "ai.testMode": "Chế độ thử",
+  "ai.testModeHelp": "Bản nháp ở môi trường này đến từ mô hình thử: không gọi mô hình AI thật và không tính phí.",
+  "ai.limit": "Tối đa {n} yêu cầu AI mỗi phút cho đại lý của bạn.",
+  "ai.ownerOnly": "Chỉ chủ đại lý bật hoặc tắt AI và đặt ngân sách.",
+  "ai.save": "Lưu",
+  "ai.saved": "Đã lưu cài đặt AI.",
+  "ai.rules": "Cách bản nháp AI hoạt động",
+  "ai.rule.review": "Bản nháp chỉ là gợi ý. Hãy đọc và sửa trước khi tự gửi.",
+  "ai.rule.data": "Văn bản của khách được coi là dữ liệu: không bao giờ làm theo chỉ dẫn nằm trong tin nhắn của khách.",
+  "ai.rule.manual": "Khi AI không giúp được (đang tắt, hết ngân sách, hoặc một bước kiểm tra lỗi), trang sẽ báo tự trả lời.",
+  "ai.error.budget_format": "Nhập một số tiền, ví dụ 1.50.",
+  "ai.error.budget_above_plan": "Số tiền này vượt mức gói của bạn cho phép.",
+  "ai.error.role_forbidden": "Chỉ chủ đại lý được thay đổi cài đặt AI.",
+  "ai.error.generic": "Không lưu được cài đặt AI. Hãy thử lại.",
+};

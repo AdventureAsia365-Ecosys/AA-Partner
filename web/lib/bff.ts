@@ -146,6 +146,11 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "POST", pattern: new RegExp(`^lines/${UUID}/(confirm|cancel)$`), tenant: true, card: "AA-944" },
   { method: "PUT", pattern: new RegExp(`^lines/${UUID}/money$`), tenant: true, card: "AA-944" },
   { method: "GET", pattern: /^bookings$/, tenant: true, card: "AA-944" },
+  // AA-964 (CRM-33a): Settings > AI (every role reads, the owner changes) and one AI draft for a trip (a suggestion,
+  // never sent from here).
+  { method: "GET", pattern: /^settings\/ai$/, tenant: true, card: "AA-964" },
+  { method: "PUT", pattern: /^settings\/ai$/, tenant: true, card: "AA-964" },
+  { method: "POST", pattern: new RegExp(`^trips/${UUID}/ai/draft$`), tenant: true, card: "AA-964", timeoutMs: 45_000 },
   { method: "GET", pattern: /^settings\/payments$/, tenant: true, card: "AA-944" },
   { method: "PUT", pattern: /^settings\/payments$/, tenant: true, card: "AA-944" },
   { method: "GET", pattern: /^fx\/overrides$/, tenant: true, card: "AA-944" },

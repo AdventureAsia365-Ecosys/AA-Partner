@@ -1,6 +1,6 @@
 // web/app/(crm)/settings/page.tsx — Settings (A-18). AA-935: agency and role, language and dates (R32) with a
 // live date reading; the other sections (team, channels, payments, forms, AI, data and privacy) arrive with their
-// cards. AA-939: Team & roles (owner). AA-945: Mailbox and Saved replies.
+// cards. AA-939: Team & roles (owner). AA-945: Mailbox and Saved replies. AA-964: AI assistant.
 import Link from "next/link";
 import { DateInput } from "@/components/DateInput";
 import { LocaleSwitch } from "@/components/LocaleSwitch";
@@ -81,6 +81,11 @@ export default async function SettingsPage() {
         <a href="/settings/payments" style={{ fontSize: 13.5 }} data-testid="settings-payments-link">
           {t(lang, ctx.role === "owner" ? "payments.link" : "payments.ownerOnly")}
         </a>
+      </Panel>
+      <Panel title={t(lang, "ai.title")} testId="settings-ai">
+        <Link href="/settings/ai" style={{ fontSize: 13.5 }} data-testid="settings-ai-link">
+          {t(lang, "ai.link")}
+        </Link>
       </Panel>
       <Panel title={t(lang, "settings.privacy")} testId="settings-privacy">
         <p style={{ margin: "0 0 8px", fontSize: 13 }}>
