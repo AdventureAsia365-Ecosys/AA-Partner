@@ -86,6 +86,11 @@ UPDATE crm.support_session SET status = 'ended', ended_at = now(), ended_by = $3
  WHERE status = 'active' AND kind = $4 AND staff_iss = $1 AND staff_sub = $2
 RETURNING support_session_id
 """
+MY_BREAKGLASS_SQL = """
+SELECT expires_at FROM crm.support_session
+ WHERE kind = 'breakglass' AND status = 'active' AND expires_at > now() AND staff_iss = $1 AND staff_sub = $2
+ ORDER BY started_at DESC LIMIT 1
+"""
 NOTIFIED_SQL = "UPDATE crm.support_session SET owner_notified_at = now() WHERE support_session_id = $1"
 AGENCY_SQL = "SELECT display_name FROM crm.tenant WHERE tenant_id = $1"
 GRANT_SUMMARY_SQL = """
@@ -125,7 +130,7 @@ async def _expire_stale(ctx: SystemContext) -> None:
 
 async def start_support(pool: asyncpg.Pool, caller: Caller, tenant_id: uuid.UUID, *, ticket_ref: str) -> dict[str, Any]:
     actor = staff_actor("support", caller)
-    async with staff_tx(pool, tenant_id, actor=actor, statuses=STAFF_STATUSES["support"]) as ctx:
+    async with staff_tx(pool, tenant_id, caller=caller, actor=actor, statuses=STAFF_STATUSES["support"]) as ctx:
         await _expire_stale(ctx)
         grant = await ctx.conn.fetchrow(LIVE_GRANT_SQL)
         if grant is None:
@@ -176,7 +181,7 @@ async def start_breakglass(
     if reason_code not in BREAKGLASS_REASONS or not BREAKGLASS_MINUTES_MIN <= minutes <= BREAKGLASS_MINUTES_MAX:
         raise ValueError("reason or minutes out of range")  # the route model bounds both
     actor = staff_actor("breakglass", caller)
-    async with staff_tx(pool, tenant_id, actor=actor, statuses=STAFF_STATUSES["breakglass"]) as ctx:
+    async with staff_tx(pool, tenant_id, caller=caller, actor=actor, statuses=STAFF_STATUSES["breakglass"]) as ctx:
         await _expire_stale(ctx)
         current = await ctx.conn.fetchrow(ACTIVE_SQL, "breakglass")
         if current is not None:
@@ -225,7 +230,7 @@ async def start_breakglass(
         tag="breakglass_notice",
     )
     if notified:
-        async with staff_tx(pool, tenant_id, actor=actor, statuses=TENANT_STATUSES) as ctx:
+        async with staff_tx(pool, tenant_id, caller=caller, actor=actor, statuses=TENANT_STATUSES) as ctx:
             await ctx.conn.execute(NOTIFIED_SQL, session_id)
             ctx.audit("breakglass_owner_notice", "allowed", "support_session", str(session_id))
     else:
@@ -237,7 +242,7 @@ async def end_session(pool: asyncpg.Pool, caller: Caller, tenant_id: uuid.UUID, 
     """The caller ends their own live session of ``kind`` (any agency status: ending is always allowed). 404
     ``no_support_session`` when there is none."""
     actor = staff_actor(kind, caller)
-    async with staff_tx(pool, tenant_id, actor=actor, statuses=TENANT_STATUSES) as ctx:
+    async with staff_tx(pool, tenant_id, caller=caller, actor=actor, statuses=TENANT_STATUSES) as ctx:
         ended = await ctx.conn.fetch(END_SQL, caller.iss, caller.sub, actor, kind)
         if not ended:
             raise NotFound("no_support_session")
@@ -249,7 +254,8 @@ async def end_session(pool: asyncpg.Pool, caller: Caller, tenant_id: uuid.UUID, 
 
 async def my_sessions(pool: asyncpg.Pool, caller: Caller, tenant_id: uuid.UUID) -> dict[str, Any]:
     """The caller's sessions in this agency that are still marked active (expired ones shown as expired)."""
-    async with staff_tx(pool, tenant_id, actor=staff_actor("support", caller), statuses=TENANT_STATUSES) as ctx:
+    actor = staff_actor("support", caller)
+    async with staff_tx(pool, tenant_id, caller=caller, actor=actor, statuses=TENANT_STATUSES) as ctx:
         rows = await ctx.conn.fetch(MINE_SQL, caller.iss, caller.sub)
         agency = await ctx.conn.fetchval(AGENCY_SQL, tenant_id)
         return {
@@ -267,7 +273,8 @@ async def granted_agencies(pool: asyncpg.Pool, caller: Caller) -> dict[str, Any]
     items: list[dict[str, Any]] = []
     for agency in sorted(await registry.agencies(pool), key=lambda a: str(a.tenant_id)):
         try:
-            async with staff_tx(pool, agency.tenant_id, actor=actor, statuses=STAFF_STATUSES["support"]) as ctx:
+            async with staff_tx(pool, agency.tenant_id, caller=caller, actor=actor,
+                                statuses=STAFF_STATUSES["support"]) as ctx:  # fmt: skip
                 grant = await ctx.conn.fetchrow(GRANT_SUMMARY_SQL)
                 if grant is None:
                     continue
@@ -281,6 +288,32 @@ async def granted_agencies(pool: asyncpg.Pool, caller: Caller) -> dict[str, Any]
                         "mine": grant["session_sub"] == caller.sub,
                     }
                 )
-        except (NotFound, Conflict):
-            continue  # trashed, locked or offboarding: no support work there
+        except (NotFound, Conflict, Forbidden):
+            continue  # trashed, locked or offboarding: no support work there (the E2E identity: not synthetic)
+    return {"items": items}
+
+
+async def breakglass_agencies(pool: asyncpg.Pool, caller: Caller) -> dict[str, Any]:
+    """AA-1019 (S-04): the agencies break-glass may open now (active or locked), for the staff console's picker: id,
+    name, status and whether the caller already holds a live break-glass session there. No agency data, no grant;
+    one staff context per agency (no audit event: nothing of the agency is read but its name, as
+    :func:`granted_agencies`). Sorted by name."""
+    actor = staff_actor("breakglass", caller)
+    items: list[dict[str, Any]] = []
+    for agency in sorted(await registry.agencies(pool), key=lambda a: str(a.tenant_id)):
+        try:
+            async with staff_tx(pool, agency.tenant_id, caller=caller, actor=actor,
+                                statuses=STAFF_STATUSES["breakglass"]) as ctx:  # fmt: skip
+                mine = await ctx.conn.fetchrow(MY_BREAKGLASS_SQL, caller.iss, caller.sub)
+                items.append(
+                    {
+                        "tenant_id": str(agency.tenant_id),
+                        "agency_name": await ctx.conn.fetchval(AGENCY_SQL, agency.tenant_id),
+                        "agency_status": ctx.status,
+                        "my_session_expires_at": _iso(mine["expires_at"]) if mine is not None else None,
+                    }
+                )
+        except (NotFound, Conflict, Forbidden):
+            continue  # trashed or offboarding (the E2E identity: not synthetic)
+    items.sort(key=lambda i: ((i["agency_name"] or "").casefold(), i["tenant_id"]))
     return {"items": items}

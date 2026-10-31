@@ -79,6 +79,7 @@ feed through the crm-027 SELECT-only policy ``calendar_feed_token_lookup`` (``ap
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import re
 import uuid
 from collections.abc import AsyncIterator
@@ -88,11 +89,14 @@ from dataclasses import dataclass, field
 import asyncpg
 
 from app.audit import INSERT_SQL, AuditEvent, current_request_id
+from app.auth import e2e_staff
 from app.auth.route_guard import Caller
 from app.errors import Conflict, Forbidden, NotFound
 from app.margin import current_member_role
 from app.observability import reveal_meter
 from app.permissions import Action, may
+
+log = logging.getLogger(__name__)
 
 READER_ROLES = frozenset({"crm_ai_reader", "crm_insights", "crm_support_reader", "crm_eraser"})
 MEMBER_ROLES = frozenset({"owner", "agent", "assistant"})
@@ -496,6 +500,18 @@ async def synthetic_agency(pool: asyncpg.Pool, tenant_id: uuid.UUID) -> bool:
     async with pool.acquire() as conn, conn.transaction(readonly=True):
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
         return bool(await conn.fetchval(SYNTHETIC_AGENCY_SQL, tenant_id))
+
+
+# AA-1019 (root ADR 0006a A10c): the Dev-only CRM staff E2E identity reaches synthetic agencies only. Read inside the
+# staff context's own transaction (``app.tenant_id`` already set), after the agency was found.
+E2E_SYNTHETIC_SQL = "SELECT is_synthetic IS TRUE FROM crm.tenant WHERE tenant_id = $1"
+
+
+async def _refuse_e2e_real_agency(conn: asyncpg.Connection, caller: Caller | None, tenant_id: uuid.UUID) -> None:
+    """403 ``e2e_synthetic_only`` when ``caller`` is the CRM staff E2E identity and the agency is not synthetic."""
+    if caller is not None and caller.e2e_synthetic_only and not await conn.fetchval(E2E_SYNTHETIC_SQL, tenant_id):
+        log.warning("crm_e2e_staff_refused tenant=%s", tenant_id)
+        raise Forbidden(e2e_staff.E2E_SYNTHETIC_ONLY)
 
 
 @asynccontextmanager
@@ -1070,6 +1086,7 @@ async def ops_tx(pool: asyncpg.Pool, caller: Caller, tenant_id: uuid.UUID) -> As
         status = await conn.fetchval(TENANT_SQL, tenant_id)
         if status not in OPS_STATUSES:
             raise NotFound("release_not_found", "no ops release here")
+        await _refuse_e2e_real_agency(conn, caller, tenant_id)
         await conn.execute("SELECT set_config('app.actor', $1, true)", actor)
         ctx = OpsContext(conn=conn, tenant_id=tenant_id, actor=actor, status=status)
         try:
@@ -1239,7 +1256,7 @@ def staff_actor(kind: str, caller: Caller) -> str:
 
 @asynccontextmanager
 async def staff_tx(
-    pool: asyncpg.Pool, tenant_id: uuid.UUID, *, actor: str, statuses: frozenset[str]
+    pool: asyncpg.Pool, tenant_id: uuid.UUID, *, caller: Caller, actor: str, statuses: frozenset[str]
 ) -> AsyncIterator[SystemContext]:
     """AA staff opening, ending or looking up their own support / break-glass session in one agency (AA-971): actor
     ``support:<sub>`` / ``breakglass:<sub>`` (audit actor kinds ``support`` / ``breakglass``), login role ``crm_app``
@@ -1251,6 +1268,7 @@ async def staff_tx(
     if not statuses or not statuses <= TENANT_STATUSES:
         raise ValueError(f"statuses must be a non-empty subset of {sorted(TENANT_STATUSES)}")
     async with _agency_tx(pool, tenant_id, actor, statuses=statuses) as ctx:
+        await _refuse_e2e_real_agency(ctx.conn, caller, tenant_id)
         yield ctx
 
 
@@ -1279,6 +1297,7 @@ async def support_tx(pool: asyncpg.Pool, caller: Caller, tenant_id: uuid.UUID) -
         status = await conn.fetchval(TENANT_SQL, tenant_id)
         if status is None:
             raise Forbidden("no_support_session")  # an unknown agency answers like one without a session
+        await _refuse_e2e_real_agency(conn, caller, tenant_id)
         row = await conn.fetchrow(STAFF_SESSION_SQL, caller.iss, caller.sub)
         kind = row["kind"] if row is not None else "support"
         actor = f"{kind}:{caller.sub}"
