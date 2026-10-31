@@ -18,20 +18,24 @@
 --   2. Erasure without a replaced crm.erase_subject: every foreign key of the table cascades. A trip erase deletes its
 --      trip_traveler and trip rows, a traveller erase their trip_traveler and traveler rows, an agency erase every
 --      trip and traveller, so the flights leave with them, and the agency erase's "nothing left" check finds none.
---      The hold guard below refuses the cascade on a held trip or traveller (crm.erase_held refuses the erase first).
+--      A held trip or traveller is never erased (crm.erase_held refuses first; the parent rows' hold guards refuse a
+--      direct delete), so the cascade needs no hold check of its own.
 --      tests/integration/test_crm010_schema.py lists the table as cascade-erased and checks the three ON DELETE
 --      CASCADE keys, so a later key that replaces crm.erase_subject may name it but never has to.
 --   3. RLS (ENABLE + FORCE, tenant_isolation TO the CRM roles); crm_app gets the default DML of crm-001; no reader
 --      grant (AI, insights and support never see a flight, design §5.2); the updated_at trigger; the hold guard
---      (crm.guard_held_change on trip_id, traveler_id).
+--      crm.guard_held_flight (hold rule 4h; not crm.guard_held_change, which a cascade would run without the agency's
+--      RLS: see the function's comment).
 --
--- Class: expand (root ADR 0017 d3): one new table with its own constraints, indexes, triggers, policy and comments,
--- and foreign keys from it (the RI triggers they add on crm.trip, crm.traveler and crm.trip_traveler are allowed); no
--- change to any existing object, no DO block. The code PR that reads it carries this file and raises
+-- Class: expand (root ADR 0017 d3): one new table and one new trigger function, with their constraints, indexes,
+-- triggers, policy and comments, and foreign keys from the table (the RI triggers they add on crm.trip, crm.traveler
+-- and crm.trip_traveler are allowed); no change to any existing object, no DO block. Not re-runnable (no DROP / OR
+-- REPLACE in an expand file): DB Migrate never applies a registered file twice, and the test conftest skips it. The code PR that reads it carries this file and raises
 -- REQUIRED_SCHEMA_VERSIONS to crm-029 (expand: one PR). The auto-apply stops at the first unregistered file that is not
 -- expand, so a contract crm-028 is applied by hand first.
 --
--- Rollback (a forward crm- file, after the code that reads it is reverted): DROP TABLE crm.traveler_flight.
+-- Rollback (a forward crm- file, after the code that reads it is reverted): DROP TABLE crm.traveler_flight; DROP
+-- FUNCTION crm.guard_held_flight().
 --
 -- Runs as crm_owner (DB Migrate switch), one BEGIN … COMMIT block, no role DDL.
 
@@ -95,9 +99,37 @@ CREATE POLICY tenant_isolation ON crm.traveler_flight
 CREATE TRIGGER traveler_flight_set_updated_at
     BEFORE UPDATE ON crm.traveler_flight
     FOR EACH ROW EXECUTE FUNCTION crm.set_updated_at();
+-- The hold rule (crm-010 4h) for this table. Not crm.guard_held_change: a cascade (RI action) runs as the table owner
+-- without FORCE RLS, so that function would read every agency's legal holds and refuse an erase in one agency because
+-- another agency holds something. A cascade (trigger depth > 1) comes from deleting the trip / traveller / party row,
+-- whose own hold guard and crm.erase_held already ruled; a direct statement (depth 1, RLS on) is checked here.
+CREATE FUNCTION crm.guard_held_flight() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+    v_change text;
+BEGIN
+    IF pg_catalog.pg_trigger_depth() > 1 THEN
+        RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        v_change := 'delete';
+    ELSIF OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL THEN
+        v_change := 'trash';
+    ELSIF (NEW.trip_id, NEW.traveler_id) IS DISTINCT FROM (OLD.trip_id, OLD.traveler_id) THEN
+        v_change := 'trip_id';
+    END IF;
+    IF v_change IS NOT NULL AND crm.hold_row(OLD.trip_id, OLD.traveler_id) THEN
+        RAISE EXCEPTION 'crm: legal_hold (% of a held traveler_flight row refused)', v_change USING ERRCODE = 'CRM10';
+    END IF;
+    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+END;
+$$;
+COMMENT ON FUNCTION crm.guard_held_flight() IS 'AA-953 (crm-029, hold rule 4h for crm.traveler_flight): CRM10 when a direct statement deletes, trashes or moves a flight of a held trip or traveller (crm.hold_row). A cascade from its trip / traveller / party row (trigger depth > 1) passes: that row''s guard and crm.erase_held ruled, and an RI action would read other agencies'' holds (no FORCE RLS for the owner). Invoker rights.';
 CREATE TRIGGER traveler_flight_hold_guard
     BEFORE DELETE OR UPDATE ON crm.traveler_flight
-    FOR EACH ROW EXECUTE FUNCTION crm.guard_held_change('trip_id', 'traveler_id');
+    FOR EACH ROW EXECUTE FUNCTION crm.guard_held_flight();
 
 COMMENT ON TABLE crm.traveler_flight IS 'AA-953 (crm-029; design v3 R33, R44, data-privacy-integrations §2.3 group B): the arrival and departure flight of one traveller on one trip, written in the client portal (Stage 3) or by the agent. The flight number is under the tenant vault DEK; the airport, the scheduled local time and its IANA zone are plain so the ops hand-off and the T-48 h task can query them. One live row per trip, traveller and direction. Every foreign key cascades: the flights leave with their trip, traveller or party row (erasure included). No reader role is granted it.';
 COMMENT ON COLUMN crm.traveler_flight.flight_no_enc IS 'pii:travel; the flight number (carrier code + number, e.g. VN611), AES-256-GCM under the tenant vault DEK, AAD = tenant, traveler_flight, flight_no_enc, id';

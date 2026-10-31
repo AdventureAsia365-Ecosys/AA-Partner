@@ -3,7 +3,8 @@
 - ``crm.traveler_flight``: base template, FORCE RLS (an isolation probe across two agencies), crm_app DML, nothing for
   the readers; the CHECKs; one live flight per trip, traveller and direction; a flight names a traveller of the trip.
 - Erasure without a replaced ``crm.erase_subject``: every key cascades, so a trip erase, a traveller erase and an
-  agency erase leave no flight; a held trip keeps its flights (the hold guard).
+  agency erase leave no flight; a held trip keeps its flights (``crm.guard_held_flight``), and another agency's hold
+  never stops this agency's erase (a cascade runs without the agency's RLS).
 """
 
 from __future__ import annotations
@@ -113,6 +114,25 @@ async def test_the_flights_leave_with_their_trip_traveller_or_agency(app_pool: a
         await conn.execute("DELETE FROM crm.trip_traveler WHERE traveler_id = $1", ids["companion"])
     assert await _count(app_pool, ids["tenant"], "traveler_flight") == 0  # off the trip: the flight goes too
 
+    ids = await _agency(app_pool)
+    await _flight(app_pool, ids)
+    async with app_pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, ids["tenant"])
+        await conn.execute("UPDATE crm.tenant SET status = 'offboarding'")
+    await _erase(app_pool, ids["tenant"], "tenant", ids["tenant"])
+    assert await _count(app_pool, ids["tenant"], "traveler_flight") == 0
+
+
+async def test_another_agencys_hold_never_stops_this_agencys_erase(app_pool: asyncpg.Pool) -> None:
+    """The cascade runs without the agency's RLS (an RI action runs as the owner): crm.guard_held_flight lets a cascade
+    pass, so an agency-wide hold of another agency never refuses this agency's trip, client or agency erase."""
+    held = await _agency(app_pool)
+    await _hold(app_pool, held["tenant"], "tenant", None, "member:m")
+    await _hold(app_pool, held["tenant"], "trip", held["trip"], "member:m")
+    ids = await _agency(app_pool)
+    await _flight(app_pool, ids)
+    await _erase(app_pool, ids["tenant"], "trip", ids["trip"])
+    assert await _count(app_pool, ids["tenant"], "traveler_flight") == 0
     ids = await _agency(app_pool)
     await _flight(app_pool, ids)
     async with app_pool.acquire() as conn, conn.transaction():
