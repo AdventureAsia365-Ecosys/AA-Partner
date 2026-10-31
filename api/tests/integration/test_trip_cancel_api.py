@@ -19,6 +19,8 @@ Booking sync, against the in-memory Booking (``tests/aa_fakes.py``).
   the commission sweep skips a trip whose cancellation is pending; the AA fee's FX day is the agency-timezone day of
   Booking's ``cancelled_at``; a trip's commission totals are the trip's own; an invoice the cancel kept for its money
   is voided once the refund executed; the supplier task lists each supplier as one checklist line.
+- S262 round 3: a trip whose cancellation waits for AA takes no new AA quote, agency line, dates or traveller-visible
+  document (409 ``trip_cancelled``) and is not deleted (409 ``cancellation_pending``); Undo claim forgets the claim.
 """
 
 from __future__ import annotations
@@ -36,9 +38,12 @@ from app import cancellation, pipeline, stages
 from app.booking import aa_lines, sync
 from app.cancellation import booking_fees
 from app.commissions import service as commissions
+from app.documents import service as documents
+from app.documents.store import MemoryDocumentStore
 from app.errors import Conflict, Forbidden
 from app.invoices import service as invoices
 from app.ledger import lines, suppliers
+from app.lifecycle import trash
 from app.payments import service as payments
 from app.permissions import Action
 from app.portal import access
@@ -63,6 +68,7 @@ REASON = "client_request"
 # Our own catalog row: the AA lines tests retire T-100 and leave the shared catalog sync in backoff (as the builder and
 # margin tests do with T-949).
 TOUR = "T-957"
+PDF = b"%PDF-1.7\nsynthetic\n%%EOF"
 
 
 async def _setup(pool: asyncpg.Pool) -> dict[str, Any]:
@@ -636,6 +642,66 @@ async def test_a_trip_whose_cancellation_waits_for_aa_takes_no_new_invoice(app_p
         with pytest.raises(Conflict) as err:
             await invoices.create_typed(ctx, s["trip"], kind="adjustment", currency="USD", lines=LATE_FEE)
         assert err.value.code == "trip_cancelled"
+
+
+async def test_a_trip_whose_cancellation_waits_for_aa_is_closed_for_planning(app_pool: asyncpg.Pool) -> None:
+    """S262 round 3 (C12 §2.7): no new AA quote, agency line, dates or document for the traveller; no delete until
+    AA confirms; an internal document still goes."""
+    s = await _setup(app_pool)
+    keys = _keys()
+    fake = FakeBooking(confirm_line_status="confirmed")
+    await _aa_booking(app_pool, s, fake)
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        own = await suppliers.create_supplier(
+            ctx, Vault(keys, ctx), {"name": "Hillside Inn", "category": "accommodation"}
+        )
+    out = await _cancel(app_pool, s, dry_run=False)
+    assert out["cancellation"]["status"] == "pending"
+    line = {"agency_supplier_id": uuid.UUID(own["agency_supplier_id"]), "title": "Inn 1 night"}
+    refusals = {
+        "aa_quote": lambda ctx: aa_lines.request_line(ctx, s["trip"], _body()),
+        "agency_line": lambda ctx: lines.create_line(ctx, s["trip"], line),
+        "dates": lambda ctx: pipeline.update_trip(ctx, s["trip"], {"end_date": dt.date(2026, 12, 9)}),
+        "shared_doc": lambda ctx: documents.upload(
+            ctx,
+            Vault(keys, ctx),
+            MemoryDocumentStore(),
+            traveler_id=None,
+            trip_id=s["trip"],
+            kind="other",
+            filename="Voucher.pdf",
+            content_type="application/pdf",
+            content=PDF,
+            visible_to_travelers=True,
+        ),  # fmt: skip
+    }
+    for name, call in refusals.items():
+        with pytest.raises(Conflict) as err:
+            async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+                await call(ctx)
+        assert err.value.code == "trip_cancelled", name
+    with pytest.raises(Conflict) as err:
+        async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:
+            await trash.move_to_trash(ctx, "trip", s["trip"])
+    assert err.value.code == "cancellation_pending"
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        kept = await documents.upload(ctx, Vault(keys, ctx), MemoryDocumentStore(), traveler_id=None,
+                                      trip_id=s["trip"], kind="other", filename="Supplier note.pdf",
+                                      content_type="application/pdf", content=PDF)  # fmt: skip
+        n_lines = await ctx.conn.fetchval("SELECT count(*) FROM crm.booking_line WHERE trip_id = $1", s["trip"])
+    assert kept["visible_to_travelers"] is False and n_lines == 1  # only the AA booking
+
+
+async def test_undo_claim_forgets_the_claim(app_pool: asyncpg.Pool) -> None:
+    """S262 round 3 (AA-957 live D7-02): an expected row never carries the reference of a withdrawn claim."""
+    s = await _setup(app_pool)
+    await _agency_line(app_pool, s, _keys(), commission="30")
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        [row] = (await commissions.listing(ctx, status=None, trip_id=s["trip"]))["commissions"]
+        claimed = await commissions.claim(ctx, uuid.UUID(row["commission_id"]), "SUP-INV-31")
+        assert claimed["claim_ref"] == "SUP-INV-31" and claimed["claimed_at"] is not None
+        undone = await commissions.unclaim(ctx, uuid.UUID(row["commission_id"]))
+    assert undone["status"] == "expected" and undone["claim_ref"] is None and undone["claimed_at"] is None
 
 
 async def _cancelled_before_the_fix(pool: asyncpg.Pool, *, issue: bool) -> tuple[dict[str, Any], uuid.UUID, uuid.UUID]:

@@ -30,6 +30,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from app import cancellation
 from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.lifecycle import booking
 from app.lifecycle.window import trash_days
@@ -173,6 +174,10 @@ async def move_to_trash(ctx: TenantContext, kind: str, object_id: uuid.UUID) -> 
     if await ctx.conn.fetchval(HOLD_SQL, kind, object_id):
         ctx.audit("delete", "denied", kind, str(object_id), reason="legal_hold")
         raise Conflict("legal_hold", "an active legal hold reaches this, so it cannot be deleted until it is released")
+    if kind == "trip" and await cancellation.is_pending(ctx, object_id):
+        # S262 round 3 (C12 §2.7): AA has not confirmed the cancel yet; the trip stays until it does.
+        ctx.audit("delete", "denied", "trip", str(object_id), reason="cancellation_pending")
+        raise Conflict("cancellation_pending", "this trip is being cancelled; wait until AA confirms")
     if kind == "trip":
         codes = await blockers(ctx, object_id)
         if codes:

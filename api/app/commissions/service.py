@@ -98,7 +98,11 @@ CLAIM_SQL = """
 UPDATE crm.commission SET status = 'claimed', claimed_at = now(), claim_ref = $2, decided_by = $3
  WHERE commission_id = $1
 """
-UNCLAIM_SQL = "UPDATE crm.commission SET status = 'expected', decided_by = $2 WHERE commission_id = $1"
+# S262 (AA-957 live): Undo claim forgets the claim (time and reference), so an expected row never shows "Your claim".
+UNCLAIM_SQL = """
+UPDATE crm.commission SET status = 'expected', claimed_at = NULL, claim_ref = NULL, decided_by = $2
+ WHERE commission_id = $1
+"""
 WRITE_OFF_SQL = """
 UPDATE crm.commission SET status = 'written_off', close_reason = $2, note = $3, decided_by = $4 WHERE commission_id = $1
 """

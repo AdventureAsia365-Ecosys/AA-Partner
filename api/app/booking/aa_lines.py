@@ -26,6 +26,7 @@ from typing import Any
 
 import asyncpg
 
+from app import cancellation
 from app.booking import refusal, views
 from app.errors import Conflict, Invalid, NotFound
 from app.jobs import queue
@@ -193,6 +194,8 @@ async def request_line(ctx: TenantContext, trip_id: uuid.UUID, body: dict[str, A
     p = parse_request(body)
     if p["adult"] is None:
         raise Invalid("invalid_pax", "at least one adult")
+    # S262 round 3 (C12 §2.7): a cancelled trip (or one whose cancellation waits for AA) asks AA for nothing new.
+    await cancellation.ensure_not_cancelled(ctx, trip_id, "no new AA quote or hold")
     try:
         async with ctx.conn.transaction():
             line_id = await ctx.conn.fetchval(
@@ -236,6 +239,8 @@ async def ask(ctx: TenantContext, line_id: uuid.UUID, action: str, body: dict[st
         raise Conflict("not_an_aa_line", "this is one of your own supplier lines")
     if row["aa_pending"]:
         raise Conflict("aa_request_pending", "AA has not answered the last request for this line yet")
+    if action != "release":  # S262 round 3: a release frees AA's places, everything else asks AA for more
+        await cancellation.ensure_not_cancelled(ctx, row["trip_id"], "no new AA quote, hold or confirm")
     if action not in views.actions({**dict(row), "aa_pending": None}, row["trip_stage"]):
         if action == "confirm" and row["aa_sub_status"] == "held":
             raise Conflict("deposit_required", "confirm with AA once the trip is booked (deposit received)")
