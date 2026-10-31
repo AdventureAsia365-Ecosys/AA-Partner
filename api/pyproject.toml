@@ -33,4 +33,6 @@ markers = ["integration: needs a real PostgreSQL (CRM_TEST_ADMIN_DSN); skipped o
 
 [tool.coverage.run]
 source = ["app"]
-omit = ["app/auth/identity_verifier.py", "app/seed/__main__.py"]
+# Byte copies of AA-CIS-App code, tested there: the multi-issuer verifier and the AI gateway core (AA-642 S8,
+# app/aa_llm; tests/unit/test_aa_llm_copy.py checks the copy here).
+omit = ["app/auth/identity_verifier.py", "app/aa_llm/*", "app/seed/__main__.py"]

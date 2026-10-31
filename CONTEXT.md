@@ -1624,6 +1624,13 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   (any OPS reader; at most 31 days, 500 rows; keyset cursor `<at>~<call id>`): newest first across every agency, ids,
   codes and numbers only (no receipt per-kind counts, no member, no text); one `ops_read` event (reason `llm_calls`) in
   each agency whose rows were returned.
+- **Shared core, code only** (AA-642 S8, root ADR 0009 decision 13): `api/app/aa_llm/` is a byte copy of AA-CIS-App
+  `shared/aa_llm/` (error classes, quote, ledger v2 row shape, budget decision, ports), pinned by `api/aa_llm.lock.json`
+  and synced by CIS `.github/scripts/llm-core-sync.sh` / the Llm Core Sync bot (PR `bot/llm-core-sync`). Never edit
+  it here; `tests/unit/test_aa_llm_copy.py` checks it offline against its `MANIFEST.json` and the lock. The CRM keeps
+  its own control plane and ledger (`crm.tenant_settings`, `crm.llm_call`, ADR 0008a): no module here may use the
+  core's `insert_sql()` (it targets `shared.llm_call_log`) or the CIS contract views (guarded by that test). Coverage
+  omits the copy (tested in CIS).
 
 ## Dev seeder (`api/app/seed/`, AA-935)
 
