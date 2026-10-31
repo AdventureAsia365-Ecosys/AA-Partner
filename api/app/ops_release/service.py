@@ -177,6 +177,9 @@ async def sync_trip(ctx: AnyContext, vault: Vault, trip_id: uuid.UUID, on: dt.da
     ):
         return "withdrawn"  # a cancel or the agency's own withdrawal stays (the purge follows)
     if release is None:
+        end = trip["end_date"]
+        if end is not None and end + dt.timedelta(days=RETENTION_DAYS) < on:
+            return "none"  # past its retention window: never released again
         last = await ctx.conn.fetchrow(LATEST_SQL, trip_id)
         if last is not None and last["withdraw_reason"] in MEMBER_WITHDRAW_REASONS:
             return "withdrawn"  # the agency withdrew this trip's release: the purge does not invite a new one

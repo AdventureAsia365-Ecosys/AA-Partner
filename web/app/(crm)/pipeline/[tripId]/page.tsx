@@ -21,11 +21,13 @@ import { LinesPanel } from "@/components/ledger/LinesPanel";
 import { MessagesPanel } from "@/components/mail/MessagesPanel";
 import { ProposalPanel } from "@/components/proposals/ProposalPanel";
 import { TripAgreementsPanel } from "@/components/proposals/TripAgreementsPanel";
+import { OpsReleasePanel } from "@/components/pipeline/OpsReleasePanel";
 import { TripPanel } from "@/components/pipeline/TripPanel";
 import type { DocumentRow } from "@/lib/clients";
 import type { TripIncident } from "@/lib/duty";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
+import type { OpsReleaseView } from "@/lib/opsRelease";
 import { t } from "@/lib/i18n";
 import type { Invoice } from "@/lib/invoices";
 import type { SuppliersView, TripLines } from "@/lib/ledger";
@@ -46,7 +48,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
   const { session } = await serverContext();
   if (!session) return null;
   const tripQuery = new URLSearchParams({ trip_id: tripId });
-  const [trip, members, docs, stage2, lines, suppliers, convs, replies, lifecycle, agreements, invoices, signed, incidents] = await Promise.all([
+  const [trip, members, docs, stage2, lines, suppliers, convs, replies, lifecycle, agreements, invoices, signed, incidents, ops] = await Promise.all([
     crmCall<TripView>(ctx.cfg, session, "GET", `trips/${tripId}`),
     crmCall<{ members: Member[] }>(ctx.cfg, session, "GET", "members"),
     crmCall<{ documents: DocumentRow[] }>(ctx.cfg, session, "GET", `trips/${tripId}/documents`),
@@ -60,6 +62,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
     crmCall<{ invoices: Invoice[]; timezone?: string }>(ctx.cfg, session, "GET", `trips/${tripId}/invoices`),
     crmCall<TripAgreements>(ctx.cfg, session, "GET", `trips/${tripId}/agreements`),
     crmCall<{ incidents: TripIncident[] }>(ctx.cfg, session, "GET", `trips/${tripId}/incidents`),
+    crmCall<OpsReleaseView>(ctx.cfg, session, "GET", `trips/${tripId}/ops-release`),
   ]);
   const clientHost = ctx.cfg.clientHosts[0];
   if (!trip.ok) {
@@ -104,6 +107,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
         timeZone={invoices.data.timezone ?? "UTC"}
       />
     )}
+    {ops.ok && <OpsReleasePanel tripId={tripId} view={ops.data} lang={ctx.lang} locale={ctx.locale} />}
     {signed.ok && <TripAgreementsPanel view={signed.data} party={trip.data.party} lang={ctx.lang} locale={ctx.locale} />}
     {lines.ok && (
       <LinesPanel

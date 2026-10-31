@@ -49,6 +49,13 @@ export const ACTIONS = [
   "breakglass_open",
   "breakglass_close",
   "breakglass_owner_notice",
+  // AA-956: AA ground operations (Module 8): AA ops viewed a trip's details / exported a supplier list; the release
+  // created, withdrawn and deleted.
+  "ops_release_view",
+  "ops_manifest_export",
+  "ops_release_create",
+  "ops_release_withdraw",
+  "ops_release_purge",
 ] as const;
 export const EXPORT_FORMATS = ["csv", "jsonl"] as const;
 export type ExportFormat = (typeof EXPORT_FORMATS)[number];

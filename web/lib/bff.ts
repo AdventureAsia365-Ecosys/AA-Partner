@@ -273,6 +273,9 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "GET", pattern: /^support-access$/, tenant: true, card: "AA-971" },
   { method: "POST", pattern: /^support-access$/, tenant: true, card: "AA-971" },
   { method: "POST", pattern: /^support-access\/revoke$/, tenant: true, card: "AA-971" },
+  // AA-956 (CRM-26): the trip's AA ground operations panel (counts and dates only) and the agency's withdrawal.
+  { method: "GET", pattern: new RegExp(`^trips/${UUID}/ops-release$`), tenant: true, card: "AA-956" },
+  { method: "POST", pattern: new RegExp(`^trips/${UUID}/ops-release/withdraw$`), tenant: true, card: "AA-956" },
 ];
 
 /** Calls only the web server makes (lib/crmApi.ts crmCall), never reachable through /bff from the browser. */
