@@ -39,6 +39,7 @@ DESIGN: dict[str, tuple[str, str, str]] = {
     "own_mailbox_connect": (Y, Y, Y),  # "own mailbox only"
     "recovery_view": (Y, Y, Y),  # Q1 6.3 banner for every member
     "recovery_cancel": (Y, Y, Y),
+    "support_access_view": (Y, Y, Y),  # AA-971: the support / break-glass banner every member sees (§2.3)
     "duty_of_care_view": (Y, Y, Y),  # AA-961 R37 "Travelling now" (A-02): every role; names only through a reveal
     "calendar_view": (Y, Y, Y),  # AA-961 R15: the agency calendar, every role
     "calendar_feed_manage": (Y, Y, Y),  # AA-961: each member's own ICS feed (an owner may revoke any)

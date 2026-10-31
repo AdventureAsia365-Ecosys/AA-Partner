@@ -47,7 +47,9 @@ class Message:
     to: str
     subject: str
     text: str
-    kind: str  # invitation | recovery_notice | data_request_notice | mailbox_disconnected (AA-945) | studio_invitation
+    # invitation | recovery_notice | data_request_notice | mailbox_disconnected (AA-945) | studio_invitation |
+    # breakglass_notice (AA-971)
+    kind: str
 
 
 class Mailer(Protocol):
@@ -195,6 +197,50 @@ def mailbox_disconnected_message(to: str, *, agency: str, link: str) -> Message:
     )
     subject = f"Mailbox disconnected for {agency} / Hộp thư của {agency} đã ngắt kết nối"
     return Message(to=to, subject=subject[:200], text=text, kind="mailbox_disconnected")
+
+
+BREAKGLASS_REASONS = {
+    "security_incident": ("a security incident", "một sự cố bảo mật"),
+    "data_corruption": ("damaged or inconsistent data", "dữ liệu bị hỏng hoặc không nhất quán"),
+    "legal_request": ("a legal request", "một yêu cầu pháp lý"),
+    "owner_unreachable": ("an urgent problem while the agency owner could not be reached",
+                          "một sự cố khẩn cấp khi không liên hệ được chủ đại lý"),
+    "service_outage": ("a service outage", "một sự cố gián đoạn dịch vụ"),
+}  # fmt: skip
+
+
+def breakglass_message(
+    to: str, *, agency: str, reason_code: str, opened_at: dt.datetime, expires_at: dt.datetime, link: str
+) -> Message:
+    """AA-971 (design v3 §4.8 L3): Adventure Asia opened emergency (break-glass) read access to the agency's data. The
+    owner sees every read in Settings > Access log (actor "AA emergency") and the session in Settings > Data and
+    privacy. Codes and dates only: no staff name, no ticket text."""
+    en, vi = BREAKGLASS_REASONS[reason_code]
+    text = "\n".join(
+        [
+            f"Adventure Asia opened emergency read access to the data of {agency} on AA Partner, because of {en}.",
+            f"It started at {_date(opened_at)} and ends at {_date(expires_at)} at the latest. It is read only:",
+            "nothing can be changed, sent or exported, client names are not shown, and every read is in your",
+            "access log.",
+            f"See it in Settings > Data and privacy: {link}/settings/data",
+            f"and Settings > Access log: {link}/settings/access-log",
+            "If you have questions, reply to your Adventure Asia contact.",
+            "",
+            "---",
+            "",
+            f"Adventure Asia đã mở quyền đọc khẩn cấp dữ liệu của {agency} trên AA Partner, do {vi}.",
+            f"Bắt đầu lúc {_date(opened_at)} và kết thúc muộn nhất lúc {_date(expires_at)}. Chỉ được đọc:",
+            "không thể sửa, gửi hay xuất dữ liệu, tên khách không được hiển thị, và mọi lần đọc đều có trong",
+            "nhật ký truy cập của bạn.",
+            f"Xem trong Cài đặt > Dữ liệu và quyền riêng tư: {link}/settings/data",
+            f"và Cài đặt > Nhật ký truy cập: {link}/settings/access-log",
+            "Nếu có câu hỏi, hãy trả lời người liên hệ của bạn tại Adventure Asia.",
+            "",
+            "Adventure Asia — AA Partner",
+        ]
+    )
+    subject = f"Emergency access to {agency} / Truy cập khẩn cấp vào {agency}"
+    return Message(to=to, subject=subject[:200], text=text, kind="breakglass_notice")
 
 
 def mailbox_test_message(to: str, *, agency: str) -> Message:

@@ -13,6 +13,7 @@
 import { isDateLocale, type DateLocale } from "./dates";
 import { aiEn, aiVi } from "./i18nAi";
 import { onboardingEn, onboardingVi } from "./i18nOnboarding";
+import { supportEn, supportVi } from "./i18nSupport";
 
 export type Lang = "en" | "vi";
 export const LOCALE_COOKIE = "aa_crm_locale";
@@ -39,6 +40,7 @@ export function resolveLocale(input: { cookie?: string | null; explicit?: string
 const en = {
   ...onboardingEn, // AA-962: onboarding, client import, duplicates, Connections, help (lib/i18nOnboarding.ts)
   ...aiEn, // AA-964: Settings > AI (lib/i18nAi.ts)
+  ...supportEn, // AA-971: AA support access and the support / emergency banner (lib/i18nSupport.ts)
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Home",
@@ -1562,6 +1564,7 @@ const en = {
   "mail.senders.path.recovery_notice": "Owner recovery notice",
   "mail.senders.path.data_request_notice": "Data request notice",
   "mail.senders.path.mailbox_disconnected": "Mailbox disconnected alert",
+  "mail.senders.path.breakglass_notice": "AA emergency access notice",
   "mail.senders.via.agency_mailbox": "Your mailbox",
   "mail.senders.via.aa_ses": "Adventure Asia system mail",
   "mail.senders.to.client": "Client",
@@ -2661,6 +2664,7 @@ export type MessageKey = keyof typeof en;
 const vi: Record<MessageKey, string> = {
   ...onboardingVi,
   ...aiVi,
+  ...supportVi,
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Trang chủ",
@@ -4183,6 +4187,7 @@ const vi: Record<MessageKey, string> = {
   "mail.senders.path.recovery_notice": "Thông báo khôi phục chủ đại lý",
   "mail.senders.path.data_request_notice": "Thông báo yêu cầu dữ liệu",
   "mail.senders.path.mailbox_disconnected": "Cảnh báo hộp thư mất kết nối",
+  "mail.senders.path.breakglass_notice": "Thông báo AA truy cập khẩn cấp",
   "mail.senders.via.agency_mailbox": "Hộp thư của bạn",
   "mail.senders.via.aa_ses": "Thư hệ thống Adventure Asia",
   "mail.senders.to.client": "Khách",

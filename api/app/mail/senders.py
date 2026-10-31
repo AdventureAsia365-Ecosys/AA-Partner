@@ -33,6 +33,8 @@ SENDERS: tuple[SenderRow, ...] = (
     SenderRow("mailbox_disconnected", "system", "agency_member", "aa_ses", "app.members.mail"),
     # AA-979 P2b: a Content studio invitation CIS created (the CRM delivers it; app.members.studio).
     SenderRow("studio_invitation", "system", "agency_member", "aa_ses", "app.members.mail"),
+    # AA-971: the agency owners are told when AA opens break-glass (emergency) read access (app.support.sessions).
+    SenderRow("breakglass_notice", "system", "agency_member", "aa_ses", "app.members.mail"),
 )
 SENDER_KINDS = frozenset({"agency_mailbox", "system"})
 

@@ -4,6 +4,7 @@
 // instead of the shell.
 import { ErrorState } from "@/app/_kit";
 import { MailboxBanner } from "@/components/mail/MailboxBanner";
+import { SupportBanner } from "@/components/support/SupportBanner";
 import { RecoveryBanner } from "@/components/team/RecoveryBanner";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
@@ -11,6 +12,7 @@ import { dictionary, t } from "@/lib/i18n";
 import { contentStudioHref } from "@/lib/nav";
 import { serverContext } from "@/lib/serverContext";
 import { disconnected, type MailboxView } from "@/lib/mail";
+import { bannerState, type SupportAccess } from "@/lib/supportAccess";
 import type { Recovery } from "@/lib/team";
 import { CrmShell } from "@/app/_kit/local/CrmShell";
 
@@ -42,6 +44,10 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
   // AA-945 (R24): a disconnected mailbox holds every client message; the red banner says so on every page.
   const mail = session ? await crmCall<MailboxView>(ctx.cfg, session, "GET", "mailbox") : null;
   const down = disconnected(mail && mail.ok ? mail.data : null);
+  // AA-971 (design §2.3): AA support (amber) or AA emergency access (red) in the agency, on every page, not dismissible.
+  const support = session ? await crmCall<SupportAccess>(ctx.cfg, session, "GET", "support-access") : null;
+  const supportView = support && support.ok ? support.data : null;
+  const banner = bannerState(supportView);
   return (
     <CrmShell
       dict={dictionary(ctx.lang)}
@@ -52,6 +58,9 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
       locale={ctx.locale}
       syntheticBadge={ctx.cfg.environment !== "prod"}
     >
+      {banner && (
+        <SupportBanner state={banner} canManage={!!supportView?.can_manage} lang={ctx.lang} locale={ctx.locale} />
+      )}
       {recovery && <RecoveryBanner recovery={recovery} lang={ctx.lang} locale={ctx.locale} />}
       {down.length > 0 && <MailboxBanner lang={ctx.lang} />}
       {children}

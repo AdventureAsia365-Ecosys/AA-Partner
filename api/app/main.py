@@ -81,6 +81,7 @@ from app.routers import (
     public,
     reports,
     staff,
+    support_access,
     team,
     travellers,
 )
@@ -267,6 +268,7 @@ def create_app(
     app.include_router(mail.router)
     app.include_router(ai.router)
     app.include_router(ops.router)
+    app.include_router(support_access.router)
     app.include_router(staff.router)
     return app
 
