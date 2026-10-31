@@ -1325,7 +1325,8 @@ Design v3 §6.3 CRM-22 (M4, R38, R9; F4 / WF-5 A-05; Q1 2.3); migration crm-022;
   rights under FORCE RLS (one agency, the one of `app.tenant_id`); neither role has any base table. No reader reaches
   an F1 table (`traveler`, `traveler_health`, `traveler_relation`, `document`, `trip_traveler`, `note`, `consent`,
   `form_submission`, `tenant_key`, `integration_credential`, `member`): 42501, checked by the crm-006 guard and the
-  integration tests. `crm_support_reader` stays without grants until CRM-13b (AA-971). `v_insight_fact` shows one
+  integration tests. `crm_support_reader` (AA-971, crm-033) reads named columns of four non-F1 tables only (`tenant`,
+  `tenant_settings`, `trip` without its title, `trip_stage_history`) and writes nothing. `v_insight_fact` shows one
   agency at a time (FORCE RLS on `app.tenant_id`), so CRM-34's cross-agency aggregate (n >= 10, >= 3 agencies) needs
   its own path (for example a `SECURITY DEFINER` aggregate owned by `crm_owner`), not this view. **Threat model**: the split
   protects against the readers, not against `crm_app` or the RDS master (the lead of a trip joins F2 to identity
