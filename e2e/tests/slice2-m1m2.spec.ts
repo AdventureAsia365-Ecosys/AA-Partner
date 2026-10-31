@@ -68,8 +68,31 @@ async function pipelineSettings(page: Page, on: boolean) {
     await panel.getByTestId("pset-duration").fill("30");
     await panel.getByTestId("pset-horizon").fill("14");
   }
+  // AA-954 live check: the save is proven by the PUT answer and by the values after a reload, never only by the
+  // transient "Saved" marker. The marker is lost when a web deploy is rolling: router.refresh() then hard-reloads the
+  // page (deployment skew) and the panel remounts without it.
+  const put = page.waitForResponse(
+    (r) => r.request().method() === "PUT" && new URL(r.url()).pathname === "/bff/settings/pipeline",
+    { timeout: 15_000 },
+  );
   await panel.getByTestId("pset-save").getByRole("button").click();
-  await expect(panel.getByTestId("pset-saved")).toBeVisible({ timeout: 10_000 });
+  const answer = await put;
+  expect(answer.status(), `PUT settings/pipeline answered ${answer.status()}`).toBe(200);
+  const marker = await panel
+    .getByTestId("pset-saved")
+    .waitFor({ state: "visible", timeout: 5_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!marker) test.info().annotations.push({ type: "note", description: "pset-saved marker not seen (page reloaded?); the reload check decides" });
+  await page.goto(`${PARTNER}/settings/forms`);
+  await expect(panel.getByTestId("pset-autosend")).toBeVisible({ timeout: 15_000 });
+  if (on) await expect(panel.getByTestId("pset-autosend")).toBeChecked();
+  else await expect(panel.getByTestId("pset-autosend")).not.toBeChecked();
+  await expect(windows).toHaveCount(on ? 7 : 0);
+  if (on) {
+    await expect(panel.getByTestId("pset-duration")).toHaveValue("30");
+    await expect(panel.getByTestId("pset-horizon")).toHaveValue("14");
+  }
 }
 
 test.describe("CRM-15 modules 1 + 2 on Dev", () => {
