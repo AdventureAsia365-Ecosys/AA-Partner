@@ -460,6 +460,25 @@ async def test_an_agency_address_change_ends_the_sessions_it_proved(app_pool: as
     assert (await _home(app_pool, s, lead_link, await _sign_in(app_pool, s, lead_link, s["lead"])))["signed_in"]
 
 
+async def test_a_reissued_link_ends_the_old_link_and_keeps_the_session(app_pool: asyncpg.Pool) -> None:
+    """The deposit's new links (access.invite_all) re-issue each traveller's link on the same access: the old link
+    answers 404 even with a live session, and the session its code proved opens the new link without a new code (one
+    device, one address; the cookie path is fixed since AA-953). The CRM-18 E2E step 6 relies on both."""
+    s = await _party(app_pool, book=False)
+    old = s["links"][s["lead"]]
+    session = await _sign_in(app_pool, s, old, s["lead"])
+    async with tenant_tx(app_pool, s["agent"], s["tenant"]) as ctx:
+        again = await access.invite_all(ctx, s["trip"])
+    new = {uuid.UUID(i["traveler_id"]): _token(i["link_path"]) for i in again["invited"]}[s["lead"]]
+    assert new != old
+    with pytest.raises(NotFound) as err:
+        await _home(app_pool, s, old, session)
+    assert err.value.code == "link_not_found"
+    home = await _home(app_pool, s, new, session)
+    assert home["signed_in"] is True and home["role"] == "lead"
+    assert (await _home(app_pool, s, new, None))["signed_in"] is False  # another device still needs its own code
+
+
 async def test_a_lead_sets_an_address_only_for_this_trip_and_cannot_probe(app_pool: asyncpg.Pool) -> None:
     s = await _party(app_pool)
     lead_link = s["links"][s["lead"]]

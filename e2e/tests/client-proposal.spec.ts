@@ -7,7 +7,8 @@
 //      optional (E2ECRMAATOUR): an AA day tour from a live quote, so the hold set is placed on Booking; Publish v1;
 //   3. Proposal tab > "Send to client" -> the link shown once;
 //   4. the client on a phone (390 x 844): the link lands on /c/p with the token gone from the URL and the host-only
-//      httpOnly cookie on the API's proposal path (Fix B11); C-03: "Included" / "+120.00 USD"; no sideways scroll;
+//      httpOnly cookie on the API's proposal path (Fix B11); C-03: the "Before you go" day 0 first (AA-951), day 1 in
+//      Nepal time (UTC+05:45), "Included" / "+120.00 USD"; no sideways scroll;
 //      Swap to the suite -> the total moves by 120; Choose later on the dinner;
 //   5. card E: a second device opens the same link and sees the same choice;
 //   6. the agent: "Viewed" on the version, the client's choices (R19), the bell has items;
@@ -253,7 +254,11 @@ test.describe("CRM-21b client proposal on Dev", () => {
     const lodging = client.getByTestId("client-block").filter({ has: client.locator('[data-title="Garden lodge"]') });
     await expect(await option(lodging, "Garden lodge")).toHaveAttribute("data-chosen", "true");
     await expect((await option(lodging, "Riverside suite")).getByTestId("client-delta")).toHaveText("+120.00 USD");
-    await expect(client.getByTestId("client-day").first()).toContainText("UTC+05:45");
+    // AA-951 (R38): the page opens with the "Before you go" day 0 (the insurance reminder is always there), so the
+    // zone is read on day 1 itself, never on the first day section.
+    await expect(client.getByTestId("client-day").first()).toHaveAttribute("data-day", "0");
+    await expect(client.getByTestId("client-before-you-go")).toBeVisible();
+    await expect(client.locator('[data-testid="client-day"][data-day="1"]')).toContainText("UTC+05:45");
     await noSidewaysScroll(client);
     await shot(client, "1-c03-phone");
     await (await option(lodging, "Riverside suite")).getByTestId("client-swap").click();

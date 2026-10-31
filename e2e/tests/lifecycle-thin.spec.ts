@@ -1,5 +1,7 @@
 // e2e/tests/lifecycle-thin.spec.ts — AA-946, card CRM-18 (thin full lifecycle) Done when (Dev), one synthetic trip:
-//   1. the owner publishes run-unique booking terms and a waiver (Settings > Agreements);
+//   1. the owner publishes run-unique booking terms, a waiver and an insurance declination (Settings > Agreements;
+//      AA-955: the three make the traveller's e-sign v1 envelope, so the run never depends on what an earlier check
+//      left published on the synthetic agency);
 //   2. a prospect submits the inquiry form; the owner takes the trip, fills Stage 2 in from a call and moves it to
 //      Proposal;
 //   3. Proposal tab: a text proposal (total 1000, deposit 300, a balance date) is drafted and sent; the client link
@@ -7,8 +9,11 @@
 //   4. the lead's portal link (before the deposit): code sign-in; Stage 3 shows "opens after the deposit" and a crafted
 //      PUT is 403 stage3_locked (card R);
 //   5. Mark paid (deposit): the trip is Booked and every traveller gets a new portal link;
-//   6. the lead signs in again, sends Stage 3 and signs the waiver with a fresh code -> the trip's s3 is 100 ->
-//      Pre-departure moves without the gate dialog;
+//   6. the deposit re-issued the links: the early link now answers "link does not work"; the new link on the same
+//      device opens the lead's home without a new sign-in code (AA-953: the link cookie path is fixed, and the session
+//      is bound to the access and the address its code went to, not to one link). The lead sends Stage 3 and signs
+//      the e-sign v1 envelope (terms + waiver + the insurance declination, declined) with a fresh code -> the trip's s3
+//      is 100 -> Pre-departure moves without the gate dialog;
 //   7. the trip is cancelled (it leaves the open board).
 // Steps 4 and 6 need the code: PORTAL_OTP_DEV_ECHO on the Dev API (the synthetic agency has no mailbox), else they
 // are skipped with a note. Card E (no return date -> stays Travelling + task) runs on PostgreSQL
@@ -49,7 +54,7 @@ async function moveTo(page: Page, stage: string) {
   await page.getByTestId(`trip-move-${stage}`).getByRole("button").click();
 }
 
-async function publish(page: Page, kind: "booking_terms" | "waiver", label: string, text: string) {
+async function publish(page: Page, kind: "booking_terms" | "waiver" | "insurance_declination", label: string, text: string) {
   const form = page.getByTestId("agreement-form");
   await form.locator('select[name="kind"]').selectOption(kind);
   await form.locator('input[name="version_label"]').fill(label);
@@ -100,6 +105,7 @@ test.describe("CRM-18 thin full lifecycle on Dev", () => {
     await hydrated(page, "agreements-view");
     await publish(page, "booking_terms", `e2e-${RUN}`, `E2E ${RUN}: booking terms of the synthetic agency.`);
     await publish(page, "waiver", `e2e-${RUN}`, `E2E ${RUN}: I travel at my own risk.`);
+    await publish(page, "insurance_declination", `e2e-${RUN}`, `E2E ${RUN}: I travel without travel insurance.`);
     await shot(page, "01-agreements");
 
     // 2. The inquiry -> the trip at Proposal.
@@ -210,8 +216,13 @@ test.describe("CRM-18 thin full lifecycle on Dev", () => {
     await stageIs(page, "booked");
     await shot(page, "05-booked");
 
-    // 6. Stage 3 and the waiver, then Pre-departure without the gate.
-    if (echo && (await portalSignIn(client, lateLink))) {
+    // 6. The early link was re-issued by the deposit (404 now); the new link opens the same session (AA-953). Then
+    // Stage 3 and the envelope, then Pre-departure without the gate.
+    if (echo) {
+      await client.goto(earlyLink);
+      await expect(client.getByTestId("portal-unavailable")).toHaveAttribute("data-status", "404", { timeout: 15_000 });
+      await client.goto(lateLink);
+      await expect(client.getByTestId("portal-home")).toHaveAttribute("data-role", "lead", { timeout: 15_000 });
       const stage3 = client.getByTestId("portal-stage3");
       await expect(stage3).toHaveAttribute("data-locked", "false");
       await client.getByTestId("portal-field-given_name").fill("E2E");
@@ -224,6 +235,11 @@ test.describe("CRM-18 thin full lifecycle on Dev", () => {
       await client.getByTestId("portal-field-emergency_contact").fill("Synthetic contact +61 400 000 000");
       await client.getByTestId("portal-stage3-save").click();
       await expect(stage3).toHaveAttribute("data-done", "true", { timeout: 15_000 });
+      const envelope = client.getByTestId("portal-waiver");
+      await expect(envelope.getByTestId("portal-doc-booking_terms")).toContainText(`E2E ${RUN}: booking terms`);
+      await expect(envelope.getByTestId("portal-doc-waiver")).toContainText(`E2E ${RUN}: I travel at my own risk.`);
+      await client.getByTestId("portal-insurance-declined").check();
+      await expect(envelope.getByTestId("portal-doc-insurance_declination")).toContainText(`E2E ${RUN}: I travel without`);
       await client.getByTestId("portal-sign-code").click();
       const signCode = await devCode(client, "portal-sign-hint");
       expect(signCode).toBeTruthy();
@@ -231,7 +247,8 @@ test.describe("CRM-18 thin full lifecycle on Dev", () => {
       await client.getByTestId("portal-sign-name").fill(PROSPECT.name);
       await client.getByTestId("portal-sign-code-input").fill(signCode ?? "");
       await client.getByTestId("portal-sign").click();
-      await expect(client.getByTestId("portal-waiver")).toHaveAttribute("data-signed", "true", { timeout: 15_000 });
+      await expect(envelope).toHaveAttribute("data-signed", "true", { timeout: 15_000 });
+      await expect(envelope.getByTestId("portal-signed")).toContainText(/decline travel insurance/i);
       await shot(client, "06-portal-done");
 
       await page.goto(tripUrl);
