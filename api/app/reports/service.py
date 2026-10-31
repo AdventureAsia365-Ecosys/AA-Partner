@@ -428,7 +428,7 @@ async def payments(ctx: TenantContext, sc: Scope) -> dict[str, Any]:
             "count": int(r["n"]),
             "received": _money(r["received"]),
             "refunded": _money(r["refunded"]),
-            "net": _money(Decimal(r["received"] or 0) - Decimal(r["refunded"] or 0)),
+            "kept": _money(Decimal(r["received"] or 0) - Decimal(r["refunded"] or 0)),  # not "net": a margin key name
         }
         for r in await ctx.conn.fetch(q.COLLECTED_SQL, sc.window.start, sc.window.end_excl, sc.owner)
     ]

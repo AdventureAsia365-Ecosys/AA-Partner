@@ -253,7 +253,7 @@ async def test_summary_for_the_owner_has_every_section_and_compares_with_last_ye
                           "upgrade_rate_pct": 25.0, "most_changed_type": "lodging"}  # fmt: skip
     inv = s["payments"]["open_invoices"][0]
     assert inv["outstanding"] == "750.00" and inv["overdue"] == "500.00"
-    assert s["payments"]["collected"][0]["net"] == "800.00"
+    assert s["payments"]["collected"][0]["kept"] == "800.00"
     team = {m["member_id"]: m for m in s["team"]["members"]}
     assert team[str(AGENT)]["first_reply_median_min"] == 60.0 and team[str(AGENT)]["new_trips"] == 8
     assert team[str(MEMBER)]["is_me"] and team[str(MEMBER)]["first_reply_median_min"] is None
@@ -285,6 +285,9 @@ async def test_summary_for_the_assistant_reads_no_money_and_shows_the_trend_for_
     assert all(args[3] == MEMBER for args in conn.sql("WITH cohort AS"))  # owner=me
     assert s["team"]["unassigned_open_trips"] == 0  # not asked for a single owner's view
     assert "margin_known_share" not in {m["key"] for m in s["success"]}
+    removed: set[str] = set()
+    margin.strip_margin(s, removed)
+    assert removed == set()  # the service builds no margin-named key for the assistant (nothing left to strip)
 
 
 @pytest.mark.asyncio

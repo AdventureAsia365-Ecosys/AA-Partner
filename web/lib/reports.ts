@@ -118,7 +118,7 @@ export interface ReportView extends TilesView {
   payments: {
     open_invoices: { currency: string; count: number; total: string; paid: string; outstanding: string; overdue_count: number; overdue: string }[];
     schedule_due: { currency: string; kind: string; count: number; total: string; overdue_count: number; overdue: string }[];
-    collected: { currency: string; count: number; received: string; refunded: string; net: string }[];
+    collected: { currency: string; count: number; received: string; refunded: string; kept: string }[];
   };
   team: {
     members: {

@@ -318,7 +318,7 @@ export default async function ReportsPage({
             {r.payments.collected.length > 0 && (
               <p style={{ margin: "8px 0 0", fontSize: 12.5 }}>
                 {tr("reports.payments.collected")}:{" "}
-                {r.payments.collected.map((c) => money(c.net, c.currency)).join(" · ")}
+                {r.payments.collected.map((c) => money(c.kept, c.currency)).join(" · ")}
               </p>
             )}
           </Panel>
