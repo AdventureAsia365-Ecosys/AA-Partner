@@ -68,6 +68,11 @@ SELECT document_id, trip_id, traveler_id, kind, s3_key, sha256, size_bytes, cont
        visible_to_travelers, write_only, created_at
   FROM crm.document WHERE document_id = $1 AND deleted_at IS NULL
 """
+# A traveller replaces a bad photo a few times at most; the agency trashes the old ones (abuse guard: 7 MiB each).
+MAX_LIVE_SCANS = 5
+SCAN_COUNT_SQL = """
+SELECT count(*) FROM crm.document WHERE traveler_id = $1 AND kind = 'passport_scan' AND deleted_at IS NULL
+"""
 SCAN_ON_FILE_SQL = """
 SELECT EXISTS (SELECT 1 FROM crm.document WHERE traveler_id = $1 AND kind = 'passport_scan' AND deleted_at IS NULL)
 """
@@ -248,6 +253,8 @@ async def upload_passport_scan(
     content_b64, filename, content_type = raw.get("content_b64"), raw.get("filename"), raw.get("content_type")
     if not isinstance(content_b64, str) or not isinstance(filename, str) or not isinstance(content_type, str):
         raise Invalid("invalid_submission", "the file, its name and its type", fields=["content_b64"])
+    if int(await ctx.conn.fetchval(SCAN_COUNT_SQL, traveler_id) or 0) >= MAX_LIVE_SCANS:
+        raise Conflict("scan_limit", "your travel agent has your passport scans; ask them to remove an old one")
     content = documents.decode(content_b64)
     saved = await documents.upload(
         ctx,  # type: ignore[arg-type]  # the portal's context: no member, the uploader is the traveller

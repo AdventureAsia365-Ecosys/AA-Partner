@@ -336,6 +336,7 @@ const PUBLIC_CODES = new Set([
   "invalid_content_type",
   "invalid_filename",
   "body_too_large",
+  "scan_limit",
 ]);
 
 /** The i18n key of a refusal on a client page (client.error.<code>, else a generic one). */

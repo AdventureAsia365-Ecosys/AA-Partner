@@ -206,10 +206,15 @@ async def test_r_a_companion_cannot_open_the_leads_passport(app_pool: asyncpg.Po
     saved = await portal.upload_passport_scan(app_pool, s["keys"], s["store"], ECHO, lead_link, lead, scan, origin=None)
     assert saved == {"received": True, "kind": "passport_scan", "size_bytes": len(JPEG)}
     assert (await _home(app_pool, s, lead_link, lead))["passport_scan_on_file"] is True
+    for _ in range(4):  # five live scans at most
+        await portal.upload_passport_scan(app_pool, s["keys"], s["store"], ECHO, lead_link, lead, scan, origin=None)
+    with pytest.raises(Conflict) as err:
+        await portal.upload_passport_scan(app_pool, s["keys"], s["store"], ECHO, lead_link, lead, scan, origin=None)
+    assert err.value.code == "scan_limit"
     async with tenant_tx(app_pool, s["agent"], s["tenant"]) as ctx:
         passport = await ctx.conn.fetchval(
             "SELECT document_id FROM crm.document WHERE traveler_id = $1 AND kind = 'passport_scan' "
-            "AND uploaded_by_kind = 'traveler' AND write_only AND NOT visible_to_travelers",
+            "AND uploaded_by_kind = 'traveler' AND write_only AND NOT visible_to_travelers LIMIT 1",
             s["lead"],
         )
     assert passport is not None

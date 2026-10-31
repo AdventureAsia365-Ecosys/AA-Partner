@@ -116,6 +116,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `/crm/public/v1/invitations/claim` | no token (AA-939): the invitation token in the body only; rate limited per address (`RATE_LIMIT_CLAIM_PER_MINUTE`) | `invitation_tx()`; creates or finds the partner-pool account |
 | `/crm/public/v1/s/{token}` | no token (AA-943): the signed client link in the path only (43-character token, SHA-256 stored); served on the client host | `client_link_tx()`; GET the Stage 2 planning form (pages, branches, F2 prefill), POST the answers (Origin check, per-address limit, 32 KiB cap); 404 `link_not_found` for any unusable token |
 | `/crm/public/v1/p/{token}`, `/crm/public/v1/portal/{token}` | no token (AA-946): the signed link in the path (purpose `proposal` / `portal`), plus in the portal the session cookie `aa_portal_s` a verified e-mail code set (httpOnly, Secure, SameSite=Strict, Path = that portal's own path, 12 h; SHA-256 stored); served on the client host | `client_link_tx()` of the purpose; the proposal page and accept (409 `price_changed` / `terms_changed`), the portal home, codes, session, Stage 3 (403 `stage3_locked` before the deposit), e-sign v1 (AA-955: the envelope, guardian signing, the terms re-accept); writes: Origin check, per-address limit, 32 KiB cap; 404 `link_not_found` for any unusable link |
+| `/crm/public/v1/traveller` | no token in the URL (AA-953, CRM-24a; §2.9 rule 1 for the portal): the web landing `/c/t/<token>` exchanges the link for the host-only cookie `aa_portal_link` (httpOnly, Secure, SameSite=Strict, Path `/crm/public/v1/traveller`) and redirects to `/c/t`; the session cookie `aa_portal_s` sits on the same path | `client_link_tx()` purpose `portal` (the cookie's token); the same home / code / session / Stage 3 / sign as the token routes, plus the "Who are you?" picker on `POST /session` (200 `pick` until a `traveler_id` is chosen; Fix E4), `POST /switch` (inside the address's group), `PUT /flights`, `POST /passport-scan` (write-only, 10 MiB body cap, five live scans), `GET /documents/{id}` (403 `document_write_only` / `document_not_shared` / `document_not_yours`), `POST /companions` (lead only); no cookie or a bad one: 404 `link_not_found` |
 | `/crm/public/v1/proposal[/pick\|/hold\|/accept\|/change-request]` | no token in the URL (AA-950, Fix B11): the host-only cookie `aa_proposal_link` the web set when the client opened `/c/p/<token>` (httpOnly, Secure, SameSite=Strict, Path `/crm/public/v1/proposal`); served on the client host | `client_link_tx()` of purpose `proposal` (`app/proposals/public.py`); C-03 / C-04 / C-12 of a builder version (Keep / Swap, Choose later, the hold set, accept 409 `hold_expired`, Ask for a change); writes: Origin check, per-address limit, 32 KiB cap; no cookie or an unusable link: 404 `link_not_found` |
 | `/crm/public/v1/calendar/{token}.ics` | no token header (AA-961): the 43-character feed token in the path only (SHA-256 stored), fetched by the member's calendar app; served on the partner host | `calendar_feed_tx()` (`app/calendar/public.py`); `text/calendar`, no names, titles or money; 404 `feed_not_found` for an unknown, revoked or expired token, an inactive member or a locked agency (subscribed calendars stop updating); public rate limit |
 | `/crm/v1` | PARTNER x {AA-Partner web} only (the Dev EXTERNAL x {`cis-portal`} bridge was removed at AA-979 P2b: its tokens are 401) | `X-AA-Tenant-Id` + `tenant_tx(action=...)` (membership in `crm.member`, then the permission matrix); `GET /crm/v1/memberships` and `POST /crm/v1/invitations/accept` need no header |
@@ -287,6 +288,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-027` | `api/migrations/027_crm_duty_of_care_calendar.sql` | CRM-30 duty of care + calendar (AA-961; needs crm-026; contract class under ADR 0017: a replaced `crm.erase_subject`, the crm-026 text with two agency-scope tables): `crm.incident_flag` (base template: an AA incident on a departure as the Booking feed reported it, departure id, the contract's incident code, open -> cleared, raised / cleared times and Booking event ids; one open flag per departure; ids and codes only; written by job / platform actors only, `crm.guard_incident_flag` CRM41), `crm.calendar_feed` (base template: one ICS subscription per member, the token's SHA-256 only, scope `mine` / `agency`, active -> revoked, expiry <= 400 days, fetch counters; one active per member; SELECT-only `calendar_feed_token_lookup` on `app.calendar_feed_hash`; `crm.guard_calendar_feed` CRM42: own feed only, token / member / scope / expiry fixed, only the member or an owner revokes, the fetch actor touches only its counters); crm_app SELECT / INSERT / UPDATE, no reader grant |
 | `crm-028` | `api/migrations/028_crm_invoice_claims.sql` | AA-952 CRM-23 slice 4 (needs crm-027; **expand** class under ADR 0017: ADD COLUMN only, shipped in the code PR and auto-applied before the deploy): `crm.invoice` + `claimed_at` (the client's "I have paid"), `hold_extended_at` / `hold_extend_code` (Booking's one hold extension), `rehold_requested_at` / `rehold_quote_id` / `rehold_price_hash` / `rehold_code` (the re-hold of a late deposit), `last_reminded_at` / `reminder_count` (overdue reminders); the value lists are the API's (no CHECK in an expand file) |
 | `crm-031` | `api/migrations/031_crm_insight_trip_fact.sql` | CRM-34 AA insights (AA-966; expand class under ADR 0017, applied after crm-028..030 in number order): the view `crm.v_insight_trip_fact` (security_barrier; trips per agency, month, budget band, lead age band, party size, stage and Lost reason in `trip_count`, no destination, no trip id; GROUP BY, so not updatable), SELECT to `crm_insights`, so module 17 counts a trip's party once outside the destination dimension. No existing object changes |
+| `crm-029` | `api/migrations/029_crm_traveler_flight.sql` | CRM-24a portal per person (AA-953; an **expand** file, ADR 0017: one new table only, so it ships in the code PR): `crm.traveler_flight` (base template; one arrival / departure flight per trip, traveller and direction: `flight_no_enc` under the vault DEK, `airport_iata`, `sched_local` (local time at that airport, no zone) + `tz` (IANA), `entered_by_kind`; all `pii:travel`; RLS, hold guard, no reader grant). Every key cascades (trip, traveler, trip_traveler), so the erase deletes flights through the rows it already deletes and `crm.erase_subject` is not replaced (`test_crm010_schema.py` `CASCADE_ERASED` checks the keys). crm-028 is another lane's key |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -749,9 +751,27 @@ Design v3 §6.3 CRM-18 (M4 base, M7 manual, M11 base, M12 v0); migration crm-016
   opens booked -> pre_departure (API and DB); the `waiting_on` hook `portal_stage3` (60) answers `client` for a booked
   trip below 100 whose travellers have portal access.
 - **Web**: the trip's Proposal tab (`components/proposals/ProposalPanel.tsx`), Settings > Agreements (`components/settings/AgreementsView.tsx`), the client pages
-  `/c/p/[token]` (`components/proposals/ProposalPage.tsx`) and `/c/t/[token]` (`components/portal/PortalPage.tsx`; the
+  `/c/p/[token]` (`components/proposals/ProposalPage.tsx`) and `/c/t` (AA-953; `components/portal/PortalPage.tsx`; the
   session cookie never reaches page script; only the `client.*` strings ship, `lib/clientMessages.ts`), BFF lines card
   AA-946 in `lib/bff.ts`. Dev E2E: `e2e/tests/lifecycle-thin.spec.ts` (portal steps need `PORTAL_OTP_DEV_ECHO`).
+- **Portal per person (AA-953, CRM-24a; `app/portal/person.py`, `docs/implementation-notes/AA-953.md`)**:
+  - **One link, cookie exchange** (§2.9 rule 1): `/c/t/<token>` (web route) sets `aa_portal_link` (Path
+    `/crm/public/v1/traveller`) and redirects to `/c/t`; the page talks only to `/crm/public/v1/traveller/*`. The
+    token routes `/crm/public/v1/portal/{token}/*` stay (same functions).
+  - **Who reaches whom (Fix E4)**: an e-mail address belongs to one client of the agency, so a companion without an
+    address of their own is reached through the lead's (`delivery_of`). A code goes to that address; when it reaches
+    more than one traveller with portal access, `POST /session` answers `pick` and the same code with a `traveler_id`
+    opens a session acting as that person only (the `otp_challenge` row is re-bound to the chosen access). Two people
+    on one address get two sessions; `POST /switch` moves a session inside its group without a new code. A session
+    is checked on every call against the link's group, so a companion given their own address leaves it at once.
+  - **Per person** (R22, §2.9 rules 2-3): own Stage 3, flights (`crm.traveler_flight`, local time + zone at the
+    airport, R33), a write-only passport scan (`document` kind `passport_scan`, `uploaded_by_kind = traveler`, never
+    readable here: 403 `document_write_only`, card R), the documents the agency shared with this traveller or the
+    whole trip (another traveller's: 403 `document_not_yours`), the trip's lines shown to travellers without prices
+    or cancelled ones, the accepted proposal's days. The lead also sees the group with names and each person's way in
+    and gives a companion without an address one at the invite (`POST /companions`: never over an address on file,
+    409 `email_in_use` for another client's address without naming them; returns the companion's new link once).
+  - A **lost or cancelled** trip has no portal (404 `link_not_found`).
 
 ## CRM-34 reports + AA insights (AA-966)
 
@@ -1194,8 +1214,7 @@ Design v3 §6.3 CRM-22 (M4, R38, R9; F4 / WF-5 A-05; Q1 2.3); migration crm-022;
   `app/observability/reveal_meter.py` counts committed allowed reveals (fields and document downloads) per agency and
   member over a sliding hour; the job metrics sampler publishes the peak as `AA/Jobs/Crm` `RevealsPerMemberPeakHour`
   (Infra alarm `aa-crm-<env>-bulk-reveal`), and 60 in an hour logs `crm_bulk_reveal`. A traveller sees their own record only through
-  `app/travellers/self_reveal.py` `traveller_self_reveal(session)` (masked passport, own trip only; the OTP session
-  is CRM-24a).
+  `app/travellers/self_reveal.py` `traveller_self_reveal(session)` (masked passport, own trip only).
 - **List views** (design §4.4): the board, the client directory (`GET /crm/v1/travelers`; exact search by e-mail /
   phone blind index or name tokens confirmed after decrypting is `POST /crm/v1/travelers/search`, the term in the body,
   and `GET ?q=` answers 422 `search_by_post`; the web keeps the term in a sealed 15-minute cookie on `/clients`, never
