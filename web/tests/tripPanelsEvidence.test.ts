@@ -157,10 +157,25 @@ describe("AA ground operations: the activity agrees with the receipt", () => {
     expect(c.querySelector('[data-testid="ops-activity-older"]')).toBeNull();
   });
 
-  it("points to the access log when older lines exist", async () => {
-    const c = await mount(createElement(OpsReleasePanel, { tripId: "trip-1", view: view({ activity_more: true }), lang: "vi", locale: "vi-VN" }));
+  it("points an owner to the access log when older lines exist", async () => {
+    const c = await mount(
+      createElement(OpsReleasePanel, {
+        tripId: "trip-1",
+        view: view({ activity_more: true }),
+        lang: "vi",
+        locale: "vi-VN",
+        canOpenAccessLog: true,
+      }),
+    );
     const older = c.querySelector('[data-testid="ops-activity-older"]')!;
     expect(older.textContent).toContain(t("vi", "ops.activityOlder"));
     expect(older.querySelector("a")!.getAttribute("href")).toBe("/settings/access-log");
+  });
+
+  it("gives other roles the sentence without a link (the access log is owner only)", async () => {
+    const c = await mount(createElement(OpsReleasePanel, { tripId: "trip-1", view: view({ activity_more: true }), lang: "en", locale: "en-AU" }));
+    const older = c.querySelector('[data-testid="ops-activity-older"]')!;
+    expect(older.textContent).toContain(t("en", "ops.activityOlder"));
+    expect(older.querySelector("a")).toBeNull();
   });
 });
