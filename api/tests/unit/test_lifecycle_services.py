@@ -687,7 +687,8 @@ async def test_verify_code_outcomes(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_home_without_and_with_a_session(monkeypatch: pytest.MonkeyPatch) -> None:
     conn = ScriptedConn().on("FROM crm.traveler_access a JOIN crm.trip t", _access_row()).on("display_name", "Sen")
     _portal(monkeypatch, conn)
-    assert await portal.home(object(), TOKEN, None) == {"agency_name": "Sen", "signed_in": False}  # type: ignore[arg-type]
+    signed_out = {"agency_name": "Sen", "signed_in": False, "offline_ref": portal.offline_ref(TOKEN)}
+    assert await portal.home(object(), TOKEN, None) == signed_out  # type: ignore[arg-type]
     signed = _signed_in(ScriptedConn()).on("display_name", "Sen")
     signed.on("SELECT doc_id, version_label, body_text", {"doc_id": DOC, "version_label": "v1", "body_text": "Risk",
                                                            "body_sha256": b"\x01" * 32})  # fmt: skip
