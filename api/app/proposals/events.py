@@ -35,9 +35,16 @@ BOOKING_UNAVAILABLE = "proposal.booking_unavailable"
 ACCEPTED = "proposal.accepted"
 NUDGE_DUE = "proposal.nudge_due"
 TERMS_REACCEPTED = "proposal.terms_reaccepted"  # AA-955: the client accepted the agency's newer terms version
+# AA-952 slice 4 (C31, Fix A8, U8): the client says they paid; an invoice is overdue (agent first); the money of a late
+# payment re-held the AA items, or could not (paid_unfulfillable: a refund request waits).
+PAYMENT_CLAIMED = "invoice.payment_claimed"
+INVOICE_OVERDUE = "invoice.overdue"
+INVOICE_REHELD = "invoice.reheld"
+INVOICE_UNFULFILLABLE = "invoice.unfulfillable"
 NAMES = (
     VIEWED, OPTION_CHOSEN, CHANGE_REQUESTED, HOLD_PLACED, REHOLD, RECHECK_REFUSED, OPTION_SOLD_OUT, HOLD_FAILED,
-    BOOKING_UNAVAILABLE, ACCEPTED, NUDGE_DUE, TERMS_REACCEPTED,
+    BOOKING_UNAVAILABLE, ACCEPTED, NUDGE_DUE, TERMS_REACCEPTED, PAYMENT_CLAIMED, INVOICE_OVERDUE, INVOICE_REHELD,
+    INVOICE_UNFULFILLABLE,
 )  # fmt: skip
 NUDGE_AFTER_DAYS = 2
 MAX_BELL = 50

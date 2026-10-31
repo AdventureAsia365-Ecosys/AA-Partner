@@ -163,10 +163,14 @@ async def test_one_broken_proposal_does_not_stop_the_agency(monkeypatch: pytest.
     async def feed(*_a: Any, **_k: Any) -> None:
         reached.append("feed")
 
+    async def invoice_holds(*_a: Any, **_k: Any) -> None:
+        reached.append("invoices")
+
     monkeypatch.setattr(ctx.conn, "fetch", no_requests, raising=False)
     monkeypatch.setattr(BookingSync, "pull_feed", feed)
+    monkeypatch.setattr(BookingSync, "invoice_holds", invoice_holds)
     await BookingSync(client).run_agency(object(), TENANT, Counter(), feed=True)  # type: ignore[arg-type]
-    assert reached == ["requests", "feed"]
+    assert reached == ["invoices", "requests", "feed"]
 
     async def locked(_ctx: Any, proposal_id: Any, held: Any) -> dict[str, Any]:
         raise sync.Forbidden("agency_locked")

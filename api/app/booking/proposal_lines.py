@@ -91,16 +91,19 @@ SELECT $1, $2, 'urgent', t.owner_member_id, 'created', now() + interval '1 day' 
 ON CONFLICT (trip_id, kind) WHERE status = 'open' AND deleted_at IS NULL AND trip_id IS NOT NULL DO NOTHING
 """
 # The first line of every set of an accepted proposal whose deposit is paid, the trip booked or later, the hold still
-# live, and no confirm of the set ever queued.
+# live, and no confirm of the set ever queued. AA-952 slice 4: the set is the accepted hold or the one a late deposit
+# placed again (crm.proposal.hold_id, app.booking.rehold); the hold is live by the line's expiry or by the proposal's
+# (the claim's one extension moves the proposal's at once, the lines' with the feed's hold.extended refresh).
 CONFIRM_DUE_SQL = """
 SELECT DISTINCT ON (l.bk_hold_id) l.booking_line_id, l.trip_id, l.bk_hold_id, p.proposal_id
   FROM crm.booking_line l
   JOIN crm.option o ON o.option_id = l.booking_line_id
   JOIN crm.proposal p ON p.proposal_id = o.proposal_id AND p.status = 'accepted' AND p.deleted_at IS NULL
-                     AND p.accepted_hold_id = l.bk_hold_id
+                     AND (p.accepted_hold_id = l.bk_hold_id OR p.hold_id = l.bk_hold_id)
   JOIN crm.trip t ON t.trip_id = l.trip_id AND t.deleted_at IS NULL
  WHERE l.supplier_kind = 'aa' AND l.status = 'planning' AND l.aa_sub_status = 'held' AND l.deleted_at IS NULL
-   AND l.hold_expires_at > now() AND t.stage = ANY($1::text[])
+   AND (l.hold_expires_at > now() OR (p.hold_id = l.bk_hold_id AND p.hold_expires_at > now()))
+   AND t.stage = ANY($1::text[])
    AND EXISTS (SELECT 1 FROM crm.payment_schedule s
                 WHERE s.proposal_id = p.proposal_id AND s.kind = 'deposit' AND s.status = 'paid'
                   AND s.deleted_at IS NULL)

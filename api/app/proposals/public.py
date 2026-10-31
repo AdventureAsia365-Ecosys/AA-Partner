@@ -43,7 +43,7 @@ import datetime as dt
 import hashlib
 import uuid
 from decimal import Decimal
-from typing import Any
+from typing import Any, NoReturn
 
 import asyncpg
 
@@ -54,6 +54,7 @@ from app.errors import Conflict, Invalid, NotFound
 from app.esign import merge, signing
 from app.esign import terms as esign_terms
 from app.intake import stage1
+from app.payments import claims
 from app.portal.public import check_origin
 from app.proposals import builder, client_page, events, holds, prep_packs
 from app.settings import Settings
@@ -233,6 +234,9 @@ async def _page(ctx: AnyContext, keys: KeyProvider, link: Any, row: Any) -> dict
             "body_sha256": bytes(reaccept["body_sha256"]).hex(),
         }
     )
+    # AA-952 slice 4 (C-04 "Accept and deposit", C31): the pay box of an accepted version.
+    accepted = row["status"] == "accepted"
+    out["payments"] = await claims.client_invoices(ctx, row["proposal_id"], _now()) if accepted else []
     if row["kind"] == "builder":
         s, picks = await _builder_state(ctx, row)
         out.update(await client_page.view(ctx, vault, row, s, picks, _now()))
@@ -714,3 +718,62 @@ async def change_request(
         await stages.touch(ctx, row["trip_id"])
         ctx.audit("proposal_change_request", "allowed", "proposal", str(row["proposal_id"]), reason=reason)
         return {"status": "sent", "reason": reason}
+
+
+# ── AA-952 slice 4: the pay box (C-04 deposit, C31, Fix A8) ───────────────────────────────────────────────────────
+
+
+def _invoice_id(raw: Any) -> uuid.UUID:
+    try:
+        return uuid.UUID(str(raw))
+    except ValueError:
+        raise NotFound("invoice_not_found") from None
+
+
+def _require_accepted(row: Any) -> None:
+    if row["status"] != "accepted":
+        raise Conflict("proposal_not_accepted", "accept the proposal first")
+
+
+async def claim_payment(
+    pool: asyncpg.Pool,
+    keys: KeyProvider,
+    settings: Settings,
+    booking: BookingClient | None,
+    token: str,
+    invoice_raw: Any,
+    *,
+    origin: str | None,
+) -> dict[str, Any]:
+    """The client's "I have paid" on an invoice of the accepted version (:mod:`app.payments.claims`): the claim in one
+    transaction, Booking's one hold extension outside any (the AA-947 rule: no connection is held while Booking
+    answers), its answer in a second one. 410 ``pay_link_expired`` once the AA hold ran out (no claim, no bank
+    details)."""
+    check_origin(settings, origin)
+    invoice_id = _invoice_id(invoice_raw)
+    hashed = hash_hex(token)
+    async with client_link_tx(pool, hashed, purpose=PURPOSE) as (ctx, link):
+        row = await _row(ctx, link)
+        _require_accepted(row)
+        made = await claims.claim(ctx, row["proposal_id"], invoice_id, _now())
+        if made.hold_id is None:
+            return {"outcome": "claimed", "extension": None, "page": await _page(ctx, keys, link, row)}
+        tenant_id = link.tenant_id
+    ext = await claims.extend(booking, tenant_id, made.invoice_id, made.hold_id)
+    async with client_link_tx(pool, hashed, purpose=PURPOSE) as (ctx, link):
+        extension = await claims.finish_claim(ctx, made.invoice_id, made.hold_id, ext)
+        row = await _row(ctx, link)
+        return {"outcome": "claimed", "extension": extension, "page": await _page(ctx, keys, link, row)}
+
+
+async def card_payment(
+    pool: asyncpg.Pool, settings: Settings, token: str, invoice_raw: Any, *, origin: str | None
+) -> NoReturn:
+    """The card pay button (C31): never a payment session past the AA hold's expiry (410 ``pay_link_expired``);
+    409 ``card_not_offered`` / ``provider_not_available`` until the agency's own card provider has code."""
+    check_origin(settings, origin)
+    invoice_id = _invoice_id(invoice_raw)
+    async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
+        row = await _row(ctx, link)
+        _require_accepted(row)
+        await claims.card_payment(ctx, row["proposal_id"], invoice_id, _now())

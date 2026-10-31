@@ -18,7 +18,10 @@ Migrate idle check count a queued row as busy; not deploy-gate exempt). For ever
    kept for the mail sender: a code mail held or never sent must not keep it until the purge); then codes
    (``crm.otp_challenge``) older than 24 hours are deleted (DM-7 row; counts only);
 7. AA-950 (R4): a sent proposal the client viewed 2 days ago without choosing anything or accepting gives the trip
-   owner one ``proposal_follow_up`` task and a bell item, once per version (:func:`app.proposals.events.nudge_due`).
+   owner one ``proposal_follow_up`` task and a bell item, once per version (:func:`app.proposals.events.nudge_due`);
+8. AA-952 slice 4 (U8, agent first): an issued invoice past its due date with money due gives the trip owner a bell
+   item and an ``invoice_overdue`` task, the day after and then every 3 days, at most 5 times
+   (:func:`app.payments.reminders.overdue`).
 
 Payload and result are ids and counts only. An agency that is locked or offboarding is skipped.
 """
@@ -39,6 +42,7 @@ from app.errors import Forbidden, NotFound, ServiceError
 from app.jobs import queue
 from app.jobs.kinds import STAGE_DATE_RULE
 from app.jobs.queue import Job
+from app.payments import reminders
 from app.portal import progress
 from app.proposals import events
 from app.tenancy import SystemContext, system_tx
@@ -131,6 +135,9 @@ async def run_agency(ctx: SystemContext) -> Counter[str]:
     nudged = await events.nudge_due(ctx)
     if nudged:
         counts["proposal_nudges"] += nudged
+    reminded = await reminders.overdue(ctx, today)
+    if reminded:
+        counts["invoice_reminders"] += reminded
     return counts
 
 

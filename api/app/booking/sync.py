@@ -58,10 +58,11 @@ import asyncpg
 from app import stages
 from app.audit import MAX_OBJECT_IDS
 from app.audit_export import registry
-from app.booking import contract, proposal_lines
+from app.booking import contract, proposal_lines, rehold
 from app.booking.client import BookingClient, BookingRefusal, BookingUnavailable
 from app.errors import Forbidden, NotFound
 from app.jobs.queue import Job
+from app.payments import claims
 from app.tenancy import SystemContext, system_tx
 
 log = logging.getLogger(__name__)
@@ -585,6 +586,11 @@ async def apply_event(ctx: SystemContext, ev: contract.Event) -> tuple[str, str]
         line_id, trip_id, hold_id = row["booking_line_id"], row["trip_id"], row["bk_hold_id"] or ev.hold_id
         trips.add(trip_id)
         if ev.type == "hold.expired":
+            if ev.hold_id and row["bk_hold_id"] and row["bk_hold_id"] != ev.hold_id:
+                # AA-952 slice 4: a late event of a hold the line left (a late deposit re-held it, app.booking.rehold):
+                # the old hold's commitment reads expired, the line stays on its new hold.
+                await ctx.conn.execute(COMMIT_SQL, trip_id, "expired", ev.hold_id)
+                continue
             if row["status"] == "planning" and row["aa_sub_status"] == "held":
                 await ctx.conn.execute(SUB_SQL, line_id, "expired", "hold_expired")
             if hold_id:
@@ -753,9 +759,54 @@ class BookingSync:
             log.error("crm_proposal_confirms_failed tenant_id=%s error_class=%s", tenant_id, type(exc).__name__)
         return None
 
+    async def invoice_holds(self, pool: asyncpg.Pool, tenant_id: uuid.UUID, counts: Counter[str]) -> str | None:
+        """AA-952 slice 4 (:mod:`app.booking.rehold`, :mod:`app.payments.claims`): the claimed invoices whose one
+        hold extension got no answer, then the late deposits that wait for their AA hold to be placed again. Returns
+        an outage class when Booking gave no answer (the run stops asking)."""
+        client = self.client
+        assert client is not None  # noqa: S101 — __call__ returns early without a client
+        async with system_tx(pool, tenant_id, actor=ACTOR) as ctx:
+            extends = await claims.extend_due(ctx)
+            invoices = await rehold.due(ctx)
+        for invoice_id, hold_id in extends:
+            ext = await claims.extend(client, tenant_id, invoice_id, hold_id)
+            if ext.code == claims.UNAVAILABLE:
+                counts["extend_retry"] += 1
+                return "booking_unavailable"
+            async with system_tx(pool, tenant_id, actor=ACTOR) as ctx:
+                await claims.finish_claim(ctx, invoice_id, hold_id, ext)
+            counts[f"extend_{ext.code}"] += 1
+        for invoice_id in invoices:
+            try:
+                async with system_tx(pool, tenant_id, actor=ACTOR) as ctx:
+                    p = await rehold.plan(ctx, invoice_id)
+                if p is None:
+                    counts["rehold_waiting"] += 1
+                    continue
+
+                async def remember(quote_id: str, price_hash: str, invoice_id: uuid.UUID = invoice_id) -> bool:
+                    async with system_tx(pool, tenant_id, actor=ACTOR) as rctx:
+                        return await rehold.remember(rctx, invoice_id, quote_id, price_hash)
+
+                asked = await rehold.ask(client, p, remember, self.now())
+                async with system_tx(pool, tenant_id, actor=ACTOR) as ctx:
+                    result = await rehold.apply(ctx, invoice_id, asked)
+            except (Forbidden, NotFound):
+                raise
+            except Exception as exc:  # noqa: BLE001 — one invoice must not block the agency's other work
+                counts["rehold_error"] += 1
+                log.error("crm_rehold_failed tenant_id=%s error_class=%s", tenant_id, type(exc).__name__)
+                continue
+            counts[f"rehold_{result or asked.outcome}"] += 1
+            if asked.outcome == "retry" and asked.code == "booking_unavailable":
+                return "booking_unavailable"
+        return None
+
     async def run_agency(self, pool: asyncpg.Pool, tenant_id: uuid.UUID, counts: Counter[str], *, feed: bool) -> None:
         sent = 0
         outage: str | None = await self.proposal_sets(pool, tenant_id, counts)
+        if outage is None:
+            outage = await self.invoice_holds(pool, tenant_id, counts)
         while sent < MAX_REQUESTS:
             async with system_tx(pool, tenant_id, actor=ACTOR) as ctx:
                 claimed = [dict(r) for r in await ctx.conn.fetch(CLAIM_SQL, MAX_REQUESTS - sent, LEASE_S)]
