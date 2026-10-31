@@ -3,6 +3,8 @@
 // helpers the trip's Proposal tab, Settings > Agreements and the client pages (/c/p/<token>, /c/t/<token>) share.
 // Amounts are the client's sell amounts (strings with two decimals from the API); no net, cost or margin here.
 
+import type { PortalPartyMember } from "./clientPortal";
+
 export type ProposalStatus = "draft" | "published" | "sent" | "accepted" | "superseded" | "withdrawn";
 export type ScheduleStatus = "due" | "paid" | "void";
 export type PayMethod = "bank_transfer" | "cash" | "card_offline" | "other";
@@ -159,7 +161,8 @@ export interface PortalHome {
   trip?: { title: string; start_date: string | null; end_date: string | null; stage: string };
   stage3?: { locked: boolean; fields: string[]; missing: string[]; done: boolean; submitted_at: string | null };
   waiver?: { doc_id: string; version_label: string; body_text: string; body_sha256: string; signed: boolean; signed_at: string | null } | null;
-  party?: { role: string; details_done: boolean; waiver_signed: boolean | null; me: boolean }[];
+  /** AA-953 adds each member's id, name and way in (lib/clientPortal.ts PortalPartyMember). */
+  party?: PortalPartyMember[];
   payments?: { kind: "deposit" | "balance"; amount: string; currency: string; due_on: string; status: ScheduleStatus }[];
   /** AA-955 (e-sign v1): the envelope documents and the envelopes this traveller signs (theirs, and a minor's as guardian). */
   agreements?: PortalAgreements | null;
@@ -315,6 +318,24 @@ const PUBLIC_CODES = new Set([
   "rate_limited",
   "pay_link_expired",
   "invoice_not_payable",
+  // AA-953 (CRM-24a): the per-person portal.
+  "not_your_traveller",
+  "lead_only",
+  "email_in_use",
+  "email_on_file",
+  "invalid_email",
+  "traveler_not_on_trip",
+  "document_write_only",
+  "document_not_shared",
+  "document_not_yours",
+  "document_not_found",
+  "invalid_flight",
+  "invalid_content",
+  "invalid_size",
+  "content_mismatch",
+  "invalid_content_type",
+  "invalid_filename",
+  "body_too_large",
 ]);
 
 /** The i18n key of a refusal on a client page (client.error.<code>, else a generic one). */

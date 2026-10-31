@@ -257,14 +257,6 @@
       "count": 1
     }
   },
-  "components/portal/PortalPage.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 6
-    },
-    "aa-kit/no-raw-aa-var": {
-      "count": 1
-    }
-  },
   "components/proposals/BuilderAaDrawer.tsx": {
     "aa-kit/no-raw-dialog": {
       "count": 1
