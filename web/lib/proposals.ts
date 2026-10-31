@@ -279,6 +279,7 @@ const ERROR_CODES = new Set([
   "proposal_not_accepted",
   "received_in_future",
   "trip_closed",
+  "trip_cancelled",
   "traveler_not_on_trip",
   "traveler_archived",
   "already_revoked",

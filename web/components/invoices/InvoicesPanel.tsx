@@ -7,6 +7,8 @@
 // refunds, refund requests); slice 4: the client's "I have paid" (verify before the AA hold's new expiry, "Not
 // received"), a late deposit being re-held, a paid-but-unfulfillable one. Owner and agent bill; the assistant reads.
 // Every refusal is worded from its code (lib/invoices.ts). Buttons wait for hydration (the page is a full server render).
+// S262 (AA-957 live): on a cancelled trip no new invoice is offered (from a schedule row or typed) and no draft issued;
+// a kept invoice can still record what the client paid, be voided, and its payments refunded.
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, Checkbox, Field, Input, K, Select, Textarea, useHydrated } from "@/app/_kit";
@@ -47,6 +49,7 @@ export function InvoicesPanel({
   lang,
   locale,
   timeZone,
+  closed = false,
 }: {
   tripId: string;
   invoices: Invoice[];
@@ -56,6 +59,8 @@ export function InvoicesPanel({
   locale: DateLocale;
   /** The agency timezone (the list's `timezone`): the claim note's deadline reads the same as on /payments. */
   timeZone: string;
+  /** S262 (C12 §2.7): the trip is cancelled (or being cancelled): no new invoice; what is kept stays workable. */
+  closed?: boolean;
 }) {
   const router = useRouter();
   const hydrated = useHydrated();
@@ -149,7 +154,7 @@ export function InvoicesPanel({
               <Button size="sm" variant="secondary" disabled={!hydrated || busy} onClick={() => showDocument(inv.invoice_id)}>
                 {tr("invoice.document")}
               </Button>
-              {bills && inv.actions.includes("issue") && (
+              {bills && !closed && inv.actions.includes("issue") && (
                 <Button size="sm" disabled={!hydrated || busy} onClick={() => run("POST", `invoices/${inv.invoice_id}/issue`, undefined, "invoice.issued")}>
                   {tr("invoice.issue")}
                 </Button>
@@ -165,7 +170,7 @@ export function InvoicesPanel({
                 </Button>
               )}
             </div>
-            <InvoiceMoney invoice={inv} role={role} lang={lang} locale={locale} onMessage={(tone, text) => setMessage({ tone, text })} />
+            <InvoiceMoney invoice={inv} role={role} lang={lang} locale={locale} closed={closed} onMessage={(tone, text) => setMessage({ tone, text })} />
             {voiding === inv.invoice_id && (
               <div style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap" }} data-testid="invoice-void-form">
                 <Field label={tr("invoice.voidReasonLabel")} style={{ minWidth: 220, flex: "1 1 220px" }}>
@@ -182,7 +187,7 @@ export function InvoicesPanel({
           </div>
         ))}
 
-        {bills && open.length > 0 && (
+        {bills && !closed && open.length > 0 && (
           <section data-testid="invoice-from-schedule" style={{ display: "grid", gap: 6 }}>
             <h3 style={{ margin: 0, fontSize: 13, color: K.ink }}>{tr("invoice.toInvoice")}</h3>
             {open.map((row) => (
@@ -197,14 +202,14 @@ export function InvoicesPanel({
           </section>
         )}
 
-        {bills && !typing && (
+        {bills && !closed && !typing && (
           <div>
             <Button size="sm" variant="secondary" disabled={!hydrated || busy} onClick={() => setTyping(true)}>
               {tr("invoice.newTyped")}
             </Button>
           </div>
         )}
-        {bills && typing && (
+        {bills && !closed && typing && (
           <form onSubmit={createTyped} data-testid="invoice-typed-form" style={{ display: "grid", gap: 8, minWidth: 0 }}>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <Field label={tr("invoice.kindLabel")}>

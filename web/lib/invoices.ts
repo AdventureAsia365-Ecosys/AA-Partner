@@ -211,6 +211,7 @@ const ERRORS = new Set([
   "invoice_claimed",
   "invoice_not_claimed",
   "invoice_settling",
+  "trip_cancelled",
 ]);
 
 /** The i18n key of an invoice refusal (invoice.error.<code>, else a generic one). */

@@ -216,6 +216,20 @@ export interface TripView {
   cancellation?: Cancellation | null;
 }
 
+/** S262 (C12 §2.7): a trip that is cancelled, or whose cancellation waits for AA, bills the client no more: its
+ * Proposal and Invoices cards turn read-only (the API answers 409 trip_cancelled anyway). */
+export function tripClosedForBilling(stage: string, cancellation: { status: string } | null | undefined): boolean {
+  return stage === "cancelled" || Boolean(cancellation);
+}
+
+/** Booking's fee percentage without trailing zeros: "75.00" -> "75", "12.50" -> "12.5". */
+export function percentText(pct: string | number | null | undefined): string {
+  if (pct === null || pct === undefined || pct === "") return "";
+  const n = Number(pct);
+  if (!Number.isFinite(n)) return String(pct);
+  return String(Number(n.toFixed(2)));
+}
+
 export interface Cancellation {
   status: "pending" | "done";
   reason_code: CancelReason;

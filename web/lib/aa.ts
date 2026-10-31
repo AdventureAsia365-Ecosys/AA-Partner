@@ -91,6 +91,45 @@ export function statusKey(aa: AaBlock): string {
   return `aa.status.${aa.sub_status ?? "confirmed"}`;
 }
 
+/** S262 (AA-957 live): the AA sub-status badge of a line, or null when it would only repeat (or contradict) the line's
+ * own status: a cancelled line whose AA booking was cancelled has no sub-status left, and the badge then fell back to
+ * "Confirmed by AA" next to "Cancelled". A released / declined / expired line keeps its badge (it says why). */
+export function aaBadgeKey(aa: AaBlock, lineStatus: string): string | null {
+  if (!aa.pending && lineStatus === "cancelled" && (aa.sub_status == null || (aa.sub_status as string) === "confirmed")) {
+    return null;
+  }
+  return statusKey(aa);
+}
+
+/** Every result code the Booking sync can write on a line (api/app/booking/sync.py, proposal_lines.py, the Booking
+ * contract's refusal codes): each has an `aa.result.<code>` sentence in EN and VI (tests/aaResults.test.ts). */
+export const AA_RESULT_CODES = [
+  "sold_out",
+  "price_changed",
+  "hold_expired",
+  "hold_released",
+  "hold_not_found",
+  "not_in_hold",
+  "hold_confirmed",
+  "rehold_limit",
+  "extend_limit",
+  "tour_not_served",
+  "unknown_partner",
+  "forbidden",
+  "invalid",
+  "not_found",
+  "gave_up",
+  "declined",
+  "booking_cancelled",
+  "cancelled_by_agency",
+  "cancelled",
+] as const;
+
+/** The i18n key of a line's AA result code; a code a later Booking version adds reads as a plain refusal, never raw. */
+export function aaResultKey(code: string): string {
+  return (AA_RESULT_CODES as readonly string[]).includes(code) ? `aa.result.${code}` : "aa.result.other";
+}
+
 /** Booking failed the last try and the request waits for the next one (card E: shown, never hidden). */
 export function isRetrying(aa: AaBlock): boolean {
   return !!aa.pending && aa.pending.attempts > 0 && !!aa.pending.last_error_class;

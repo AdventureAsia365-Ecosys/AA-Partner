@@ -19,6 +19,7 @@ import { Button, Checkbox, Field, Input, K } from "@/app/_kit";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, type Lang, type MessageKey, t } from "@/lib/i18n";
+import { aaResultKey } from "@/lib/aa";
 import {
   CANCEL_REASONS,
   codeLabel,
@@ -26,6 +27,7 @@ import {
   LOST_REASONS,
   moveErrorKey,
   OVERRIDE_REASONS,
+  percentText,
   stageLabel,
   type BoardStage,
   type BulkPreview,
@@ -57,8 +59,30 @@ export function effectLabel(lang: Lang, kind: string, n: number): string {
   return fmt(text, { n, kind });
 }
 
-export function Dialog({ title, onClose, children, testId }: { title: string; onClose: () => void; children: React.ReactNode; testId: string }) {
+/** The dialog box of the stage engine. S262 (AA-957 live, 390 px and 1440 px): the title and the `footer` (the
+ * confirm step and the buttons) stay in view; only the body between them scrolls, with a "more below" cue while it
+ * overflows (one scroll area, never one nested in another). */
+export function Dialog({
+  title,
+  onClose,
+  children,
+  footer,
+  moreLabel,
+  testId,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+  /** Kept in view under the scrolling body: the confirm step and the buttons. */
+  footer?: React.ReactNode;
+  /** The scroll cue's words ("More below"); no cue without them. */
+  moreLabel?: string;
+  testId: string;
+}) {
   const box = useRef<HTMLDivElement>(null);
+  const body = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
+  const [more, setMore] = useState(false);
   useEffect(() => {
     box.current?.querySelector<HTMLElement>("select, input, textarea, button")?.focus();
     const onKey = (e: KeyboardEvent) => {
@@ -67,6 +91,21 @@ export function Dialog({ title, onClose, children, testId }: { title: string; on
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // Focus once on open (the Escape handler keeps the onClose of the first render: the parent's close is stable).
+  }, []);
+  useEffect(() => {
+    // The cue follows the body: measured when it scrolls or when it or its content changes size (the observer also
+    // reports once on observe, so nothing is set during the effect itself).
+    const el = body.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const measure = () => setMore(el.scrollHeight - el.scrollTop - el.clientHeight > 4);
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    if (content.current) observer.observe(content.current);
+    el.addEventListener("scroll", measure, { passive: true });
+    return () => {
+      observer.disconnect();
+      el.removeEventListener("scroll", measure);
+    };
   }, []);
   return (
     <div
@@ -82,10 +121,46 @@ export function Dialog({ title, onClose, children, testId }: { title: string; on
         aria-modal="true"
         aria-label={title}
         data-testid={testId}
-        style={{ background: K.card, color: K.ink, borderRadius: 12, border: `1px solid ${K.line}`, padding: "18px 18px 16px", width: "min(480px, 100%)", maxHeight: "90vh", overflowY: "auto", display: "grid", gap: 12 }}
+        style={{
+          background: K.card,
+          color: K.ink,
+          borderRadius: 12,
+          border: `1px solid ${K.line}`,
+          width: "min(480px, 100%)",
+          maxHeight: "min(90vh, calc(100dvh - 32px))",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
       >
-        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>{title}</h2>
-        {children}
+        <h2 style={{ margin: 0, padding: "18px 18px 0", fontSize: 16, fontWeight: 600, flex: "none" }}>{title}</h2>
+        <div ref={body} data-testid={`${testId}-body`} style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", padding: "12px 18px", position: "relative" }}>
+          <div ref={content} style={{ display: "grid", gap: 12 }}>
+            {children}
+          </div>
+          {more && moreLabel && (
+            <div
+              aria-hidden="true"
+              data-testid="dialog-more"
+              style={{
+                position: "sticky",
+                bottom: -12,
+                marginTop: 4,
+                padding: "18px 0 4px",
+                textAlign: "center",
+                fontSize: 12,
+                color: K.muted,
+                background: `linear-gradient(to bottom, transparent, ${K.card} 60%)`,
+                pointerEvents: "none",
+              }}
+            >
+              ↓ {moreLabel}
+            </div>
+          )}
+        </div>
+        {footer && (
+          <div style={{ flex: "none", display: "grid", gap: 10, padding: "12px 18px 16px", borderTop: `1px solid ${K.line}` }}>{footer}</div>
+        )}
       </div>
     </div>
   );
@@ -121,7 +196,37 @@ export function GateDialog({
   const [reason, setReason] = useState(refusal.override_reasons.length === 1 ? refusal.override_reasons[0] : "");
   const [busy, setBusy] = useState(false);
   return (
-    <Dialog title={t(lang, `gate.title.${refusal.gate}` as MessageKey)} onClose={onClose} testId="gate-dialog">
+    <Dialog
+      title={t(lang, `gate.title.${refusal.gate}` as MessageKey)}
+      onClose={onClose}
+      testId="gate-dialog"
+      footer={
+        <Actions>
+          {onFill && refusal.gate === "stage2" && (
+            <Button size="sm" variant="ghost" onClick={onFill}>
+              {t(lang, "gate.fill")}
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={onClose}>
+            {t(lang, "trip.cancel")}
+          </Button>
+          <span data-testid="gate-confirm" style={{ display: "contents" }}>
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={!reason || busy}
+              onClick={async () => {
+                setBusy(true);
+                await onConfirm(reason);
+                setBusy(false);
+              }}
+            >
+              {t(lang, "gate.confirm")}
+            </Button>
+          </span>
+        </Actions>
+      }
+    >
       <p style={{ margin: 0, fontSize: 13.5, color: K.body }} data-testid="gate-dialog-body" data-gate={refusal.gate} data-s2={refusal.s2 ?? ""}>
         {fmt(t(lang, `gate.body.${refusal.gate}` as MessageKey), { n: refusal.s2 ?? 0 })}
       </p>
@@ -141,30 +246,6 @@ export function GateDialog({
           ))}
         </select>
       </label>
-      <Actions>
-        {onFill && refusal.gate === "stage2" && (
-          <Button size="sm" variant="ghost" onClick={onFill}>
-            {t(lang, "gate.fill")}
-          </Button>
-        )}
-        <Button size="sm" variant="ghost" onClick={onClose}>
-          {t(lang, "trip.cancel")}
-        </Button>
-        <span data-testid="gate-confirm" style={{ display: "contents" }}>
-          <Button
-            size="sm"
-            variant="primary"
-            disabled={!reason || busy}
-            onClick={async () => {
-              setBusy(true);
-              await onConfirm(reason);
-              setBusy(false);
-            }}
-          >
-            {t(lang, "gate.confirm")}
-          </Button>
-        </span>
-      </Actions>
     </Dialog>
   );
 }
@@ -224,8 +305,45 @@ export function CancelDialog({
     else setError(t(lang, moveErrorKey(res.detail)));
   }
 
+  const confirmStep = preview && !pending;
   return (
-    <Dialog title={t(lang, pending ? "cancelTrip.pendingTitle" : "cancelTrip.title")} onClose={onClose} testId="cancel-dialog">
+    <Dialog
+      title={t(lang, pending ? "cancelTrip.pendingTitle" : "cancelTrip.title")}
+      onClose={onClose}
+      testId="cancel-dialog"
+      moreLabel={tr("cancelTrip.moreBelow")}
+      footer={
+        <>
+          {confirmStep && (
+            <>
+              <p style={{ margin: 0, fontSize: 12.5, color: K.danger }}>{t(lang, "cancelTrip.noUndo")}</p>
+              <Field label={t(lang, "cancelTrip.typeToConfirm")}>
+                <Input size="sm" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" data-testid="cancel-typed" />
+              </Field>
+            </>
+          )}
+          <Problem text={error} />
+          <Actions>
+            <Button size="sm" variant="ghost" onClick={onClose}>
+              {t(lang, "cancelTrip.keep")}
+            </Button>
+            {pending ? (
+              <span data-testid="cancel-retry" style={{ display: "contents" }}>
+                <Button size="sm" disabled={busy} onClick={() => void run()}>
+                  {tr("cancelTrip.retry")}
+                </Button>
+              </span>
+            ) : (
+              <span data-testid="cancel-confirm" style={{ display: "contents" }}>
+                <Button size="sm" variant="danger" disabled={!preview || typed.trim() !== "CANCEL" || busy} onClick={() => void run()}>
+                  {t(lang, "cancelTrip.confirm")}
+                </Button>
+              </span>
+            )}
+          </Actions>
+        </>
+      }
+    >
       <label style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted }}>
         {t(lang, "cancelTrip.reason")}
         <select value={reason} onChange={(e) => void dryRun(e.target.value)} style={field} data-testid="cancel-reason">
@@ -239,7 +357,7 @@ export function CancelDialog({
       </label>
       {busy && !preview && <p style={{ margin: 0, fontSize: 13, color: K.muted }}>{t(lang, "cancelTrip.checking")}</p>}
       {preview && (
-        <div data-testid="cancel-effects" data-dry-run={String(preview.dry_run)} data-pending={pending ? "true" : undefined} style={{ display: "grid", gap: 10, maxHeight: "55vh", overflowY: "auto" }}>
+        <div data-testid="cancel-effects" data-dry-run={String(preview.dry_run)} data-pending={pending ? "true" : undefined} style={{ display: "grid", gap: 10 }}>
           {!pending && (
             <>
               <span style={{ fontSize: 13, color: K.body }}>{t(lang, "cancelTrip.effects")}</span>
@@ -262,9 +380,9 @@ export function CancelDialog({
                   <span style={{ overflowWrap: "anywhere" }}>{b.titles.join(", ")}</span>
                   <span style={{ display: "block", fontSize: 12, color: K.muted }} data-testid="cancel-aa-fee">
                     {b.fee
-                      ? fmt(tr("cancelTrip.aaFee"), { amount: formatAmount(b.fee.amount, b.fee.currency, locale), pct: b.fee.fee_pct, days: b.fee.days_before_departure })
+                      ? fmt(tr("cancelTrip.aaFee"), { amount: formatAmount(b.fee.amount, b.fee.currency, locale), pct: percentText(b.fee.fee_pct), days: b.fee.days_before_departure })
                       : pending && b.failed_code
-                        ? fmt(tr("cancelTrip.bookingFailed"), { code: b.failed_code })
+                        ? fmt(tr("cancelTrip.bookingFailed"), { code: tr(aaResultKey(b.failed_code)) })
                         : pending
                           ? tr("cancelTrip.bookingAsked")
                           : tr("cancelTrip.aaFeeUnknown")}
@@ -301,11 +419,13 @@ export function CancelDialog({
               {(preview.payments ?? []).map((p) => (
                 <div key={p.payment_id} data-payment={p.payment_id} style={{ display: "grid", gap: 4 }}>
                   <span>
-                    {fmt(tr("cancelTrip.refundFor"), {
-                      invoice: p.invoice_number ?? "—",
-                      amount: formatAmount(p.amount, p.currency, locale),
-                      date: formatDate(p.received_on, locale),
-                    })}
+                    {p.invoice_number
+                      ? fmt(tr("cancelTrip.refundFor"), {
+                          invoice: p.invoice_number,
+                          amount: formatAmount(p.amount, p.currency, locale),
+                          date: formatDate(p.received_on, locale),
+                        })
+                      : fmt(tr("cancelTrip.refundNoInvoice"), { amount: formatAmount(p.amount, p.currency, locale), date: formatDate(p.received_on, locale) })}
                   </span>
                   {p.needs_invoice ? (
                     <span style={{ fontSize: 12, color: K.amber }}>{tr("cancelTrip.needsInvoice")}</span>
@@ -344,37 +464,14 @@ export function CancelDialog({
                 ))}
             </section>
           )}
-          {!pending && (
-            <>
-              {(preview.aa_bookings ?? []).length > 0 && <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{t(lang, "trip.cancellationPendingHint")}</p>}
-              <p style={{ margin: 0, fontSize: 12.5, color: K.danger }}>{t(lang, "cancelTrip.noUndo")}</p>
-              <label style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted }}>
-                {t(lang, "cancelTrip.typeToConfirm")}
-                <input value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" style={field} data-testid="cancel-typed" />
-              </label>
-            </>
+          {!pending && (preview.aa_bookings ?? []).length > 0 && (
+            // Before the action (S262): the future, not the pending badge's "You cancelled this trip".
+            <p style={{ margin: 0, fontSize: 12.5, color: K.muted }} data-testid="cancel-will-wait">
+              {t(lang, "cancelTrip.willWaitHint")}
+            </p>
           )}
         </div>
       )}
-      <Problem text={error} />
-      <Actions>
-        <Button size="sm" variant="ghost" onClick={onClose}>
-          {t(lang, "cancelTrip.keep")}
-        </Button>
-        {pending ? (
-          <span data-testid="cancel-retry" style={{ display: "contents" }}>
-            <Button size="sm" disabled={busy} onClick={() => void run()}>
-              {tr("cancelTrip.retry")}
-            </Button>
-          </span>
-        ) : (
-          <span data-testid="cancel-confirm" style={{ display: "contents" }}>
-            <Button size="sm" variant="danger" disabled={!preview || typed.trim() !== "CANCEL" || busy} onClick={() => void run()}>
-              {t(lang, "cancelTrip.confirm")}
-            </Button>
-          </span>
-        )}
-      </Actions>
     </Dialog>
   );
 }
@@ -440,7 +537,42 @@ export function BulkDialog({
   const stage = stageLabel(lang, target.to);
   const blockedCodes = preview ? Object.entries(preview.blocked.reduce<Record<string, number>>((m, b) => ({ ...m, [b.code]: (m[b.code] ?? 0) + 1 }), {})) : [];
   return (
-    <Dialog title={fmt(t(lang, "pipeline.bulkTitle"), { stage })} onClose={onClose} testId="bulk-dialog">
+    <Dialog
+      title={fmt(t(lang, "pipeline.bulkTitle"), { stage })}
+      onClose={onClose}
+      testId="bulk-dialog"
+      footer={
+        <>
+          <Problem text={error} />
+          <Actions>
+            <Button size="sm" variant="ghost" onClick={onClose}>
+              {t(lang, "trip.cancel")}
+            </Button>
+            <span data-testid="bulk-confirm" style={{ display: "contents" }}>
+              <Button
+                size="sm"
+                variant="primary"
+                disabled={!preview || preview.eligible.length === 0 || busy}
+                onClick={async () => {
+                  if (!preview) return;
+                  setBusy(true);
+                  setError(null);
+                  const res = await bffSend<BulkPreview>("POST", "pipeline/bulk-stage", body(false, preview.preview_hash));
+                  setBusy(false);
+                  if (res.ok) onDone(res.data);
+                  else if (res.detail === "preview_stale") {
+                    setError(t(lang, "move.error.preview_stale"));
+                    void check();
+                  } else setError(t(lang, moveErrorKey(res.detail)));
+                }}
+              >
+                {fmt(t(lang, "pipeline.bulkConfirm"), { n: preview?.eligible.length ?? 0 })}
+              </Button>
+            </span>
+          </Actions>
+        </>
+      }
+    >
       {filtered && <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{t(lang, "pipeline.bulkFiltered")}</p>}
       {target.to === "lost" && (
         <label style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted }}>
@@ -486,33 +618,6 @@ export function BulkDialog({
           )}
         </div>
       )}
-      <Problem text={error} />
-      <Actions>
-        <Button size="sm" variant="ghost" onClick={onClose}>
-          {t(lang, "trip.cancel")}
-        </Button>
-        <span data-testid="bulk-confirm" style={{ display: "contents" }}>
-          <Button
-            size="sm"
-            variant="primary"
-            disabled={!preview || preview.eligible.length === 0 || busy}
-            onClick={async () => {
-              if (!preview) return;
-              setBusy(true);
-              setError(null);
-              const res = await bffSend<BulkPreview>("POST", "pipeline/bulk-stage", body(false, preview.preview_hash));
-              setBusy(false);
-              if (res.ok) onDone(res.data);
-              else if (res.detail === "preview_stale") {
-                setError(t(lang, "move.error.preview_stale"));
-                void check();
-              } else setError(t(lang, moveErrorKey(res.detail)));
-            }}
-          >
-            {fmt(t(lang, "pipeline.bulkConfirm"), { n: preview?.eligible.length ?? 0 })}
-          </Button>
-        </span>
-      </Actions>
     </Dialog>
   );
 }

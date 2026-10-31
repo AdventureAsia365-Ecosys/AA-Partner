@@ -12,7 +12,8 @@
 // slice 2: the Invoices card under the Proposal tab (GET /trips/{id}/invoices; due schedule rows from the lifecycle).
 // AA-955 (CRM-25): the Signed documents panel (GET /trips/{id}/agreements: who signed, guardian, insurance choice,
 // seal, the terms acceptances and the re-accept state, the signing log). AA-961 (CRM-30): the AA incident banner
-// (GET /trips/{id}/incidents: open flags on the trip's departures, and those cleared in the last 14 days).
+// (GET /trips/{id}/incidents: open flags on the trip's departures, and those cleared in the last 14 days). S262
+// (AA-957 live): a cancelled trip's Proposal and Invoices cards are read-only (no new payment, invoice or client link).
 import { notFound } from "next/navigation";
 import { ErrorState } from "@/app/_kit";
 import { TripIncidentBanner } from "@/components/duty/IncidentPanel";
@@ -32,7 +33,7 @@ import { t } from "@/lib/i18n";
 import type { Invoice } from "@/lib/invoices";
 import type { SuppliersView, TripLines } from "@/lib/ledger";
 import type { Conversation, SavedReply } from "@/lib/mail";
-import type { Member, Stage2View, TripView } from "@/lib/pipeline";
+import { tripClosedForBilling, type Member, type Stage2View, type TripView } from "@/lib/pipeline";
 import type { Agreement, LifecycleView, TripAgreements } from "@/lib/proposals";
 import { serverContext } from "@/lib/serverContext";
 
@@ -74,6 +75,8 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
     }
     return <ErrorState message={t(ctx.lang, "error.api")} />;
   }
+  // S262 (C12 §2.7): a cancelled trip, or one whose cancellation waits for AA, bills the client no more.
+  const closed = tripClosedForBilling(trip.data.trip.stage, trip.data.cancellation);
   return (
     <div style={{ display: "grid", gap: 16 }}>
     {incidents.ok && <TripIncidentBanner incidents={incidents.data.incidents} lang={ctx.lang} locale={ctx.locale} />}
@@ -99,6 +102,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
         locale={ctx.locale}
         clientOrigin={clientHost ? `https://${clientHost}` : null}
         timeZone={agencyZone}
+        closed={closed}
       />
     )}
     {invoices.ok && (
@@ -110,6 +114,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
         lang={ctx.lang}
         locale={ctx.locale}
         timeZone={invoices.data.timezone ?? "UTC"}
+        closed={closed}
       />
     )}
     {ops.ok && <OpsReleasePanel tripId={tripId} view={ops.data} lang={ctx.lang} locale={ctx.locale} canOpenAccessLog={ctx.role === "owner"} />}

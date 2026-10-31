@@ -57,6 +57,7 @@ export function ProposalPanel({
   locale,
   clientOrigin,
   timeZone = "UTC",
+  closed = false,
 }: {
   view: LifecycleView;
   /** Published booking terms versions (Settings > Agreements). */
@@ -69,6 +70,8 @@ export function ProposalPanel({
   clientOrigin: string | null;
   /** The agency's IANA zone (AA hold end times; S262, AA-957). */
   timeZone?: string;
+  /** S262 (C12 §2.7): the trip is cancelled (or its cancellation waits for AA): read-only, nothing billed again. */
+  closed?: boolean;
 }) {
   const router = useRouter();
   const hydrated = useHydrated();
@@ -78,7 +81,7 @@ export function ProposalPanel({
   const builderVersions = view.proposals.filter((p) => p.kind === "builder");
   const current = currentProposal(textProposals);
   const [builderCurrency, setBuilderCurrency] = useState("USD");
-  const canSend = role === "owner" || role === "agent";
+  const canSend = (role === "owner" || role === "agent") && !closed;
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "danger" | "success"; text: string } | null>(null);
   const [copies, setCopies] = useState<Copy[]>([]);
@@ -178,12 +181,17 @@ export function ProposalPanel({
     if (await run("POST", `schedule/${scheduleId}/void`)) router.refresh();
   }
 
-  const draftOpen = editing || !current || current.status === "superseded" || current.status === "withdrawn";
+  const draftOpen = !closed && (editing || !current || current.status === "superseded" || current.status === "withdrawn");
   const seed = editing && current ? current : null;
 
   return (
     <Panel title={tr("proposal.tab")} testId="trip-proposal">
       <div data-hydrated={hydrated ? "true" : undefined} style={{ display: "grid", gap: 14, minWidth: 0 }}>
+        {closed && (
+          <p data-testid="proposal-closed" style={{ margin: 0, padding: "8px 10px", borderRadius: 8, background: K.bg, fontSize: 12.5, color: K.muted }}>
+            {tr("trip.closedBilling")}
+          </p>
+        )}
         {message && (
           <p role="status" data-testid="proposal-message" style={{ margin: 0, fontSize: 13, color: message.tone === "danger" ? K.danger : K.success }}>
             {message.text}
@@ -219,7 +227,7 @@ export function ProposalPanel({
               {current.balance_due_on && ` · ${fmt(tr("proposal.balanceDue"), { date: formatDate(current.balance_due_on, locale) })}`}
             </p>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {current.status === "draft" && (
+              {current.status === "draft" && !closed && (
                 <Button size="sm" variant="secondary" disabled={!hydrated || busy} onClick={() => setEditing(true)}>
                   {tr("proposal.edit")}
                 </Button>
@@ -234,7 +242,7 @@ export function ProposalPanel({
                   {tr("proposal.withdraw")}
                 </Button>
               )}
-              {(current.status === "draft" || current.status === "sent") && (
+              {(current.status === "draft" || current.status === "sent") && !closed && (
                 // AA-951 (CRM-22, A-05): the same version as e-mail or WhatsApp text (one price hash).
                 <Link href={`/pipeline/${view.trip_id}/proposal/${current.proposal_id}/text`} style={{ fontSize: 12.5, color: K.accent }} data-testid="proposal-send-text">
                   {tr("text.open")}
@@ -243,7 +251,7 @@ export function ProposalPanel({
               {current.status === "sent" && (
                 <span style={{ fontSize: 12.5, color: K.muted }}>{tr("proposal.waitingClient")}</span>
               )}
-              {current.status !== "accepted" && current.status !== "draft" && (
+              {current.status !== "accepted" && current.status !== "draft" && !closed && (
                 <Button size="sm" variant="secondary" disabled={!hydrated || busy} onClick={() => setEditing(true)}>
                   {tr("proposal.newVersion")}
                 </Button>
@@ -252,7 +260,7 @@ export function ProposalPanel({
           </section>
         )}
 
-        {current?.status !== "accepted" && (
+        {current?.status !== "accepted" && !(closed && builderVersions.length === 0) && (
           <section data-testid="proposal-builder" style={{ display: "grid", gap: 6, padding: 10, borderRadius: 8, background: K.bg }}>
             <h3 style={{ margin: 0, fontSize: 13, color: K.ink }}>{tr("builder.section")}</h3>
             <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{tr("builder.sectionHint")}</p>
@@ -264,7 +272,7 @@ export function ProposalPanel({
                 <Link href={`/pipeline/${view.trip_id}/proposal/${p.proposal_id}`} style={{ color: K.accent }} data-testid="builder-open">
                   {tr("builder.open")}
                 </Link>
-                {canRenderText("builder", p.status) && (
+                {canRenderText("builder", p.status) && !closed && (
                   <Link href={`/pipeline/${view.trip_id}/proposal/${p.proposal_id}/text`} style={{ color: K.accent }} data-testid="builder-send-text">
                     {tr("text.open")}
                   </Link>
@@ -286,7 +294,7 @@ export function ProposalPanel({
                 />
               </div>
             ))}
-            {!builderVersions.some((p) => p.status === "draft") && (
+            {!closed && !builderVersions.some((p) => p.status === "draft") && (
               <div style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap" }}>
                 {builderVersions.length === 0 && (
                   <label style={{ display: "grid", gap: 2, fontSize: 12.5 }}>
@@ -433,9 +441,11 @@ export function ProposalPanel({
                   <Badge tone={x.waiver_signed ? "success" : "neutral"}>{tr(x.waiver_signed ? "proposal.waiverSigned" : "proposal.waiverPending")}</Badge>
                 )}
                 <span style={{ color: K.muted }}>{x.portal ? tr(`proposal.access.${x.portal.status}`) : tr("proposal.access.none")}</span>
-                <Button size="sm" variant="secondary" disabled={!hydrated || busy} onClick={() => invite(x.traveler_id)}>
-                  {tr(x.portal ? "proposal.reissue" : "proposal.invite")}
-                </Button>
+                {!closed && (
+                  <Button size="sm" variant="secondary" disabled={!hydrated || busy} onClick={() => invite(x.traveler_id)}>
+                    {tr(x.portal ? "proposal.reissue" : "proposal.invite")}
+                  </Button>
+                )}
               </div>
             ))}
           </section>

@@ -13,7 +13,7 @@ import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
 import { DateInput } from "@/components/DateInput";
 import { AaItemForm } from "@/components/ledger/AaItemForm";
-import { aaErrorKey, allowedAaActions, isRetrying, statusKey, type AaAction } from "@/lib/aa";
+import { aaBadgeKey, aaErrorKey, aaResultKey, allowedAaActions, isRetrying, type AaAction } from "@/lib/aa";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
@@ -139,17 +139,22 @@ export function LinesPanel({
   function aaStatus(line: Line) {
     const aa = line.aa;
     if (!aa) return null;
-    const key = statusKey(aa);
+    // S262: a cancelled line shows no "Confirmed by AA" next to its Cancelled badge; the result sentence says why.
+    const key = aaBadgeKey(aa, line.status);
     return (
       <span style={{ display: "grid", gap: 2, marginTop: 4 }} data-testid="aa-status">
-        <Badge tone={aa.pending ? "warning" : (AA_TONE[aa.sub_status ?? ""] ?? "neutral")}>{tr(key)}</Badge>
+        {key && <Badge tone={aa.pending ? "warning" : (AA_TONE[aa.sub_status ?? ""] ?? "neutral")}>{tr(key)}</Badge>}
         {aa.pending && <span style={{ color: K.muted, fontSize: 11.5 }}>{tr(`aa.ask.${aa.pending.kind}`)}</span>}
         {isRetrying(aa) && aa.pending && (
           <span style={{ color: K.muted, fontSize: 11.5 }} data-testid="aa-retrying">
             {fmt(tr("aa.retrying"), { at: formatDate(aa.pending.next_attempt_at.slice(0, 10), locale), n: aa.pending.attempts })}
           </span>
         )}
-        {aa.result_code && !aa.pending && <span style={{ color: K.muted, fontSize: 11.5 }}>{tr(`aa.result.${aa.result_code}`) ?? aa.result_code}</span>}
+        {aa.result_code && !aa.pending && (
+          <span style={{ color: K.muted, fontSize: 11.5 }} data-testid="aa-result" data-code={aa.result_code}>
+            {tr(aaResultKey(aa.result_code))}
+          </span>
+        )}
       </span>
     );
   }
