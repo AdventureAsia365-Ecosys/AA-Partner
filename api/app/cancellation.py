@@ -12,7 +12,10 @@ The dry run lists every effect and changes nothing; the run applies them in the 
 2. **Agency suppliers**: the confirmed agency lines are listed and one owner task ``cancel_with_suppliers`` opens (the
    CRM never calls an agency's supplier); the date rule closes it once no confirmed agency line is left.
 3. **Invoices**: drafts and issued invoices holding no money are voided; one the client says they paid is kept (its
-   ``verify_transfer`` task stays open); one holding money is kept and its payments get refund requests.
+   ``verify_transfer`` task stays open); one holding money is kept and its payments get refund requests. The due
+   balance rows of the payment schedule are voided with them (S262 live finding), except a row a kept invoice bills
+   (it settles through that invoice). From then on the trip takes no new invoice, "Mark paid" or client link
+   (:func:`ensure_not_cancelled`, 409 ``trip_cancelled``).
 4. **Refunds**: one ``proposed`` request per payment with something left to ask back, for the amount the member set
    (default everything left; lower keeps the non-refundable part; 0 none), the reason naming the booking terms the
    client accepted (§4.6 approval as usual). A payment without an invoice gets the owner task ``cancel_refund_review``.
@@ -169,6 +172,46 @@ VOID_SQL = """
 UPDATE crm.invoice SET status = 'void', voided_at = now(), voided_by = $2, void_reason = 'Trip cancelled'
  WHERE invoice_id = $1
 """
+# S262 (C12 item 3): the due balance rows of the schedule, with the live (not void) invoices that bill each one. A
+# deposit row is never void (crm-016 CHECK); a booked trip has paid it anyway.
+SCHEDULE_DUE_SQL = """
+SELECT s.schedule_id,
+       coalesce(array_agg(i.invoice_id) FILTER (WHERE i.invoice_id IS NOT NULL), '{}'::uuid[]) AS live_invoices
+  FROM crm.payment_schedule s
+  LEFT JOIN crm.invoice i ON i.schedule_id = s.schedule_id AND i.status <> 'void' AND i.deleted_at IS NULL
+ WHERE s.trip_id = $1 AND s.status = 'due' AND s.kind = 'balance' AND s.deleted_at IS NULL
+ GROUP BY s.schedule_id
+ ORDER BY s.schedule_id
+"""
+SCHEDULE_VOID_SQL = """
+UPDATE crm.payment_schedule SET status = 'void' WHERE schedule_id = $1 AND status = 'due' RETURNING schedule_id
+"""
+# S262 fix pass (M1): the hourly date rule's catch-up for trips cancelled before the run voided the schedule (Dev, 31
+# Oct 2026): the due balance rows of a cancelled (or cancelling) trip that no kept invoice bills, i.e. no live invoice
+# but a draft (the cancel voids drafts; issuing one is 409 trip_cancelled). ``drafts`` = the drafts that go with it.
+SCHEDULE_SWEEP_SQL = """
+SELECT s.schedule_id, s.trip_id,
+       coalesce(array_agg(i.invoice_id) FILTER (WHERE i.invoice_id IS NOT NULL), '{}'::uuid[]) AS drafts
+  FROM crm.payment_schedule s
+  JOIN crm.trip t ON t.trip_id = s.trip_id AND t.deleted_at IS NULL
+  LEFT JOIN crm.invoice i ON i.schedule_id = s.schedule_id AND i.status = 'draft' AND i.deleted_at IS NULL
+ WHERE s.status = 'due' AND s.kind = 'balance' AND s.deleted_at IS NULL
+   AND (t.stage = 'cancelled' OR EXISTS (SELECT 1 FROM crm.trip_cancellation x WHERE x.trip_id = t.trip_id))
+   AND NOT EXISTS (SELECT 1 FROM crm.invoice k
+                    WHERE k.schedule_id = s.schedule_id AND k.deleted_at IS NULL AND k.status NOT IN ('draft', 'void'))
+ GROUP BY s.schedule_id, s.trip_id
+ ORDER BY s.schedule_id
+ LIMIT $1
+"""
+DRAFT_VOID_SQL = """
+UPDATE crm.invoice SET status = 'void', voided_at = now(), voided_by = $2, void_reason = 'Trip cancelled'
+ WHERE invoice_id = $1 AND status = 'draft'
+"""
+SWEEP_BATCH = 500
+CLOSED_SQL = """
+SELECT t.stage, EXISTS (SELECT 1 FROM crm.trip_cancellation x WHERE x.trip_id = t.trip_id) AS cancelling
+  FROM crm.trip t WHERE t.trip_id = $1 AND t.deleted_at IS NULL
+"""
 INVOICE_COMMITMENT_SQL = """
 INSERT INTO crm.trip_commitment (trip_id, kind, line_status, source_ref) VALUES ($1, 'invoice', 'void', $2)
 ON CONFLICT (tenant_id, kind, source_ref) DO UPDATE SET line_status = EXCLUDED.line_status
@@ -261,6 +304,48 @@ async def pending(ctx: AnyContext, trip_id: uuid.UUID) -> dict[str, Any] | None:
 async def is_pending(ctx: AnyContext, trip_id: uuid.UUID) -> bool:
     row = await ctx.conn.fetchrow(PENDING_SQL, trip_id)
     return row is not None and row["status"] == "pending"
+
+
+async def is_closed(ctx: AnyContext, trip_id: uuid.UUID) -> bool:
+    """The trip is cancelled, or its cancellation waits for AA (a ``crm.trip_cancellation`` row, pending or done)."""
+    row = await ctx.conn.fetchrow(CLOSED_SQL, trip_id)
+    return row is not None and (row["stage"] == "cancelled" or bool(row["cancelling"]))
+
+
+async def ensure_not_cancelled(ctx: AnyContext, trip_id: uuid.UUID) -> None:
+    """S262 (C12 §2.7 items 3-4): a cancelled trip, or one whose cancellation waits for AA, bills the client no more:
+    no new invoice, no "Mark paid" on a schedule row, no new client link (409 ``trip_cancelled``). What the cancel
+    kept stays workable: a payment the client says they made is recorded on its invoice, refunds go on."""
+    if await is_closed(ctx, trip_id):
+        raise Conflict("trip_cancelled", "this trip is cancelled: it takes no new invoice, payment or client link")
+
+
+async def _schedule_to_void(ctx: AnyContext, trip_id: uuid.UUID, voided: set[uuid.UUID]) -> list[uuid.UUID]:
+    """The due balance rows the cancel voids: those no kept invoice bills (every live invoice of the row is one the
+    cancel voids). A row a kept invoice bills (the client says they paid it, or it holds money) settles through it."""
+    return [
+        r["schedule_id"]
+        for r in await ctx.conn.fetch(SCHEDULE_DUE_SQL, trip_id)
+        if set(r["live_invoices"] or []) <= voided
+    ]
+
+
+async def void_cancelled_schedule(ctx: AnyContext, actor: str) -> int:
+    """The hourly date rule (S262 fix pass): the due balance rows of cancelled or cancelling trips that the cancel run
+    did not void (a trip cancelled before it did) are voided now, with their draft invoices, by the same void and audit
+    as the run (``payment_schedule_void`` / ``invoice_void``, reason ``trip_cancelled``). A row a kept invoice bills
+    (payment claimed, money held, paid) stays: it settles through that invoice. Idempotent: a void row is never picked
+    again. Returns the number of rows voided."""
+    voided = 0
+    for r in await ctx.conn.fetch(SCHEDULE_SWEEP_SQL, SWEEP_BATCH):
+        for invoice_id in r["drafts"] or []:
+            await ctx.conn.execute(DRAFT_VOID_SQL, invoice_id, actor)
+            ctx.audit("invoice_void", "allowed", "invoice", str(invoice_id), reason="trip_cancelled")
+        if await ctx.conn.fetchval(SCHEDULE_VOID_SQL, r["schedule_id"]) is not None:
+            ctx.audit("payment_schedule_void", "allowed", "payment_schedule", str(r["schedule_id"]),
+                      reason="trip_cancelled")  # fmt: skip
+            voided += 1
+    return voided
 
 
 async def _aa_bookings(ctx: AnyContext, trip_id: uuid.UUID) -> list[dict[str, Any]]:
@@ -360,6 +445,7 @@ async def plan(
         for r in await ctx.conn.fetch(SUPPLIER_LINES_SQL, trip_id, MAX_LIST)
     ]  # fmt: skip
     invoices = await _invoices(ctx, trip_id)
+    schedule = await _schedule_to_void(ctx, trip_id, {r["invoice_id"] for r in invoices["void"]})
     payments = await _payments(ctx, trip_id, refunds or {})
     commissions = await _commissions(ctx, trip_id)
     workflows = int(await ctx.conn.fetchval(WORKFLOW_DISPATCH_SQL, trip_id))
@@ -377,6 +463,7 @@ async def plan(
         {"kind": "supplier_lines_to_cancel", "count": len(supplier_lines)},
         {"kind": "invoices_voided", "count": len(invoices["void"])},
         {"kind": "invoices_claimed_kept", "count": len(invoices["claimed"])},
+        {"kind": "schedule_rows_voided", "count": len(schedule)},
         {"kind": "refund_requests", "count": sum(1 for p in payments
                                                   if not p["needs_invoice"] and Decimal(p["refund_amount"]) > 0)},
         {"kind": "payments_without_invoice", "count": sum(1 for p in payments if p["needs_invoice"])},
@@ -451,6 +538,10 @@ async def run(
             await ctx.conn.execute(INVOICE_COMMITMENT_SQL, trip_id, f"invoice:{r['invoice_id']}")
             await reminders.settled(ctx, trip_id, r["invoice_id"], actor)
         ctx.audit("invoice_void", "allowed", "invoice", str(r["invoice_id"]), reason="trip_cancelled")
+    # The due balance rows go with them (S262): the client is never billed again for a cancelled trip.
+    for schedule_id in await _schedule_to_void(ctx, trip_id, {r["invoice_id"] for r in invoices["void"]}):
+        await ctx.conn.execute(SCHEDULE_VOID_SQL, schedule_id)
+        ctx.audit("payment_schedule_void", "allowed", "payment_schedule", str(schedule_id), reason="trip_cancelled")
     # 4. Refund requests (proposed; approved under §4.6 as usual).
     text = refund_reason(reason, before["terms"])
     requested = 0
@@ -606,7 +697,9 @@ __all__ = [
     "CANCEL_DONE_CODES",
     "CANCEL_FAILED_TASK",
     "booking_fees",
+    "ensure_not_cancelled",
     "finish_if_done",
+    "is_closed",
     "is_pending",
     "pending",
     "plan",
@@ -614,5 +707,6 @@ __all__ = [
     "register_cancel_hook",
     "retry",
     "run",
+    "void_cancelled_schedule",
     "void_if_refunded",
 ]

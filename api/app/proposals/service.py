@@ -32,7 +32,7 @@ from typing import Any
 
 import asyncpg
 
-from app import stages
+from app import cancellation, stages
 from app.dispatch import queue as dispatch
 from app.errors import Conflict, Invalid, NotFound
 from app.esign import terms as esign_terms
@@ -374,6 +374,7 @@ async def update_draft(
     _text_only(row)
     if row["status"] != "draft":
         raise Conflict("proposal_not_draft", "only a draft is edited; draft a new version")
+    await cancellation.ensure_not_cancelled(ctx, row["trip_id"])  # S262: read-only once the trip is cancelled
     text = (
         _body(changes["body"])
         if "body" in changes
@@ -557,6 +558,7 @@ async def reissue_link(ctx: TenantContext, proposal_id: uuid.UUID) -> dict[str, 
         raise NotFound("proposal_not_found")
     if row["status"] != "sent":
         raise Conflict("proposal_not_sent", "only a sent proposal has a link to re-issue")
+    await cancellation.ensure_not_cancelled(ctx, row["trip_id"])  # S262: no new client link on a cancelled trip
     lead = await ctx.conn.fetchval(LEAD_SQL, row["trip_id"])
     if lead is None:
         raise Conflict("no_lead_traveller", "the trip has no lead traveller to send the proposal to")
@@ -641,6 +643,9 @@ async def mark_paid(
         raise Conflict("schedule_not_due", "this row is paid or void already")
     if row["proposal_status"] != "accepted":
         raise Conflict("proposal_not_accepted")
+    # S262 (C12): a cancelled trip takes no payment on its schedule (the cancel voided its due balance; a payment the
+    # client says they made is recorded on its invoice, then refunded).
+    await cancellation.ensure_not_cancelled(ctx, row["trip_id"])
     # AA-952 slice 3: an issued invoice bills this row; its payments are recorded on the invoice (partial payments,
     # refunds), which settles the row when it is paid in full.
     if await ctx.conn.fetchval(ISSUED_INVOICE_SQL, schedule_id) is not None:

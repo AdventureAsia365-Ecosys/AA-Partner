@@ -51,7 +51,8 @@ SELECT c.commission_id, c.trip_id, c.booking_line_id, c.status, c.due_on, c.clai
        c.received_amount_base, c.fx_rate, c.fx_rate_date, c.fx_source, c.stale_days, c.short_amount,
        c.fx_difference_base, c.close_reason, c.note, c.keep_on_cancel, c.decided_by, c.created_at, c.updated_at,
        l.title AS line_title, l.status AS line_status, l.service_from, l.service_to, s.agency_supplier_id,
-       s.name AS supplier_name, t.title AS trip_title, t.stage AS trip_stage,
+       s.name AS supplier_name, t.title AS trip_title, t.stage AS trip_stage, t.start_date AS trip_start_date,
+       t.end_date AS trip_end_date, t.month AS trip_month,
        m.amount AS expected_amount, m.currency AS expected_currency, m.amount_base AS expected_amount_base,
        m.base_currency AS expected_base_currency
   FROM crm.commission c
@@ -168,6 +169,10 @@ def commission_view(r: Any, today: dt.date) -> dict[str, Any]:
         "trip_id": str(r["trip_id"]),
         "trip_title": r["trip_title"],
         "trip_stage": r["trip_stage"],
+        # S262: two trips of one title are told apart by their dates (A-12 shows them under the title).
+        "trip_start_date": _iso(r["trip_start_date"]),
+        "trip_end_date": _iso(r["trip_end_date"]),
+        "trip_month": _iso(r["trip_month"]),
         "booking_line_id": str(r["booking_line_id"]),
         "line_title": r["line_title"],
         "line_status": r["line_status"],

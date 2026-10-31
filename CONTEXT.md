@@ -712,11 +712,18 @@ Design v3 M13, C12 (§2.7, §3.5 "Cancellation"), R17, R21, A-12; lane §2.7 `co
   Booking's dry-run fee read outside the transaction by the route, supplier lines, payments with the refund the
   dialog proposes, expected commissions, the accepted booking terms). The run: queued sends and workflow sends
   cancelled (`register_cancel_hook` for Module 10), open tasks skipped (except `verify_transfer`), slots and links
-  cancelled, unpaid invoices voided, one `proposed` refund request per payment for the amount the member set (lower
+  cancelled, unpaid invoices voided (and with them the due balance rows of the schedule no kept invoice bills, S262;
+  the hourly date rule voids the same rows, with their drafts, on a trip cancelled before that,
+  `app.cancellation.void_cancelled_schedule`), one `proposed` refund request per payment for the amount the member set (lower
   keeps the rest; a payment without an invoice gets the owner task `cancel_refund_review`), the owner task
   `cancel_with_suppliers` (one per trip: the trip page lists each supplier on it as one checklist line; closed by the
   date rule once no confirmed agency line is left), expected commissions
   cancelled unless `keep_commission`, AA holds released, ops release withdrawn, one `cancel` request per AA booking.
+- **A cancelled trip bills no more** (S262 live finding, §2.7 items 3-4): once a trip has a `crm.trip_cancellation`
+  (pending or done) or is `cancelled`, a new invoice (from the schedule or typed), the issue of a draft, "Mark paid"
+  on a schedule row, a draft proposal edit, a re-issued proposal link and a portal invite answer 409 `trip_cancelled`
+  (`app.cancellation.ensure_not_cancelled`); what the cancel kept stays workable (a payment the client says they made
+  is recorded on its invoice, refunds go on). The trip page shows its Proposal and Invoices cards read-only.
 - **Never cancelled early** (card R): with AA bookings the trip keeps its stage and a pending `crm.trip_cancellation`
   ("Cancellation pending" on the trip and the board; moves and Undo 409 `cancellation_pending`; the date rule, the
   commission sweep and the invoice reminders skip it). An invoice the cancel kept because it held money is voided once
@@ -729,8 +736,10 @@ Design v3 M13, C12 (§2.7, §3.5 "Cancellation"), R17, R21, A-12; lane §2.7 `co
   for a booking still live at AA). Another refusal, or a cancel that ran out of attempts (`gave_up`), opens the owner
   task `aa_cancel_failed` (closed when the cancellation completes), and Cancel again on the pending trip asks Booking
   again. A pending cancellation drops queued quote / hold / refresh requests (`trip_closed`) like a closed stage.
-- **Web**: A-12 `/commissions` (`app/(crm)/commissions/page.tsx`, `components/commissions/CommissionActions.tsx`;
-  assistant: "not available for your role"), the commission and the AA fee on the Bookings tab, the cancel dialog
+- **Web**: A-12 `/commissions` (`app/(crm)/commissions/page.tsx`: the kit DataTable in
+  `components/commissions/CommissionsTable.tsx`, a card per commission on a phone; the kit underline tabs for the
+  filter, `CommissionFilters.tsx`; `CommissionActions.tsx`, success in a page toast; assistant: "not available for
+  your role"), the commission and the AA fee on the Bookings tab, the cancel dialog
   (`components/pipeline/StageDialogs.tsx`: fees, supplier bookings, refunds, commissions to keep, "Ask AA again"),
   the pending badge on the trip and the board, the supplier form field "Commission paid after (days)". Strings in
   `lib/i18nCommission.ts` (EN / VI), BFF lines card AA-957.

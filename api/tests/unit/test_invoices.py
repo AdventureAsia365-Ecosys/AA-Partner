@@ -13,6 +13,7 @@ from typing import Any
 import asyncpg
 import pytest
 
+from app import cancellation
 from app.errors import Conflict, Invalid, NotFound, ServiceError
 from app.invoices import render
 from app.invoices import service as inv
@@ -360,6 +361,25 @@ async def test_create_typed() -> None:
     assert [a[4] for a in on.sql("INSERT INTO crm.invoice_line")] == ["service_fee"]
     with _raises(Invalid, "memo_too_long"):
         await inv.create_typed(tenant_ctx(on), TRIP, **fee, memo="x" * 2001)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "closed", [{"stage": "cancelled", "cancelling": False}, {"stage": "booked", "cancelling": True}]
+)
+async def test_a_cancelled_trip_takes_no_new_invoice(closed: dict[str, Any]) -> None:
+    """S262 (C12 §2.7): a cancelled trip, or one whose cancellation waits for AA, bills the client no more: no invoice
+    from its schedule, no typed invoice, no issue of a draft (409 trip_cancelled), and nothing is written."""
+    fee = {"kind": "adjustment", "currency": "USD", "lines": [{"description": "Fee", "unit_amount": "50"}]}
+    conn = _conn(_invoice()).on("FROM crm.payment_schedule s", _schedule()).on("crm.invoice_sequence", 7)
+    conn.on(" ".join(cancellation.CLOSED_SQL.split()), closed)
+    with _raises(Conflict, "trip_cancelled"):
+        await inv.create_from_schedule(tenant_ctx(conn), TRIP, SCHEDULE)
+    with _raises(Conflict, "trip_cancelled"):
+        await inv.create_typed(tenant_ctx(conn), TRIP, **fee)
+    with _raises(Conflict, "trip_cancelled"):
+        await inv.issue(tenant_ctx(conn), INVOICE)
+    assert not any(sql.startswith(("INSERT", "UPDATE")) for sql, _ in conn.calls)
 
 
 # ── draft edits ───────────────────────────────────────────────────────────────────────────────────

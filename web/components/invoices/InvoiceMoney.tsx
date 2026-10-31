@@ -20,12 +20,15 @@ export function InvoiceMoney({
   role,
   lang,
   locale,
+  closed = false,
   onMessage,
 }: {
   invoice: Invoice;
   role: string;
   lang: Lang;
   locale: DateLocale;
+  /** S262: the trip is cancelled: a payment whose refund the cancel already proposed offers no second request. */
+  closed?: boolean;
   onMessage: (tone: "danger" | "success", text: string) => void;
 }) {
   const router = useRouter();
@@ -39,6 +42,7 @@ export function InvoiceMoney({
   const payments = invoice.payments ?? [];
   const refunds = invoice.refund_requests ?? [];
   const money = (v: string | undefined) => formatAmount(v ?? null, invoice.currency, locale);
+  const refundOpen = (paymentId: string) => refunds.some((r) => r.payment_id === paymentId && (r.status === "proposed" || r.status === "approved"));
 
   async function post(path: string, body: unknown, done: string): Promise<boolean> {
     setBusy(true);
@@ -92,7 +96,7 @@ export function InvoiceMoney({
               {formatDate(p.received_on, locale)} · {tr(`proposal.method.${p.method}`)}
               {p.reference ? ` · ${p.reference}` : ""}
             </span>
-            {bills && p.entry_kind === "payment" && Number(p.refundable_amount ?? 0) > 0 && refunding !== p.payment_id && (
+            {bills && p.entry_kind === "payment" && Number(p.refundable_amount ?? 0) > 0 && refunding !== p.payment_id && !(closed && refundOpen(p.payment_id)) && (
               <Button size="sm" variant="ghost" disabled={!hydrated || busy} onClick={() => setRefunding(p.payment_id)}>
                 {tr("refund.request")}
               </Button>

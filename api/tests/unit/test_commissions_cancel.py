@@ -241,6 +241,7 @@ def test_refund_choices_and_the_reason_text() -> None:
 def test_the_commission_view_flags_overdue_and_names_every_money_key() -> None:
     row = {
         "commission_id": uuid.uuid4(), "trip_id": uuid.uuid4(), "trip_title": "Highlands", "trip_stage": "completed",
+        "trip_start_date": None, "trip_end_date": None, "trip_month": dt.date(2026, 10, 1),
         "booking_line_id": uuid.uuid4(), "line_title": "Lodge", "line_status": "confirmed",
         "service_from": dt.date(2026, 10, 1), "service_to": dt.date(2026, 10, 3), "agency_supplier_id": uuid.uuid4(),
         "supplier_name": "Riverside", "status": "claimed", "due_on": dt.date(2026, 10, 20),

@@ -13,7 +13,7 @@
 // back the planning form an auto-send queued); Cancel trip runs the dry run first (owner / agent); the Traveller info
 // panel (completeness, planning form, fill in from call); the timeline names override, date-rule and undo reasons.
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
 import { DocumentsPanel } from "@/components/clients/DocumentsPanel";
 import { CancelDialog, GateDialog } from "@/components/pipeline/StageDialogs";
@@ -40,6 +40,7 @@ import {
   WAITING_ON,
   whenLabel,
   type GateRefusal,
+  type Cancellation,
   type HistoryRow,
   type Member,
   type MoveResult,
@@ -99,6 +100,18 @@ export function TripPanel({
   const [cancelOpen, setCancelOpen] = useState(false);
   const [fillOpen, setFillOpen] = useState(false);
   const [toastState, setToast] = useState<ToastState | null>(null);
+  // S262 (AA-957 live): the cancel's answer is shown at once (stage, "Cancellation pending", moves frozen) while the
+  // page reloads its server data; the server's view wins as soon as it has the cancellation (one per trip, never
+  // removed) or the cancelled stage.
+  const [ran, setRan] = useState<{ stage: Stage; cancellation: Cancellation | null } | null>(null);
+  const [refreshing, startRefresh] = useTransition();
+  const caughtUp = Boolean(view.cancellation) || trip.stage === "cancelled";
+  const cancellation = caughtUp || !ran ? (view.cancellation ?? null) : ran.cancellation;
+  const stageShown: Stage = caughtUp || !ran ? trip.stage : ran.stage;
+  const cancelPending = cancellation?.status === "pending";
+  // No move while AA has not confirmed the cancel (the API answers 409 cancellation_pending), nor before the page
+  // has the cancel's result.
+  const frozen = cancelPending || (ran !== null && !caughtUp);
   const me = members.find((m) => m.is_me);
 
   async function undoMove(historyId: string) {
@@ -160,12 +173,12 @@ export function TripPanel({
           {trip.title}
         </h1>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", fontSize: 13 }}>
-          <span data-testid="trip-stage" data-stage={trip.stage} style={{ display: "contents" }}>
-            <Badge tone="accent">{stageLabel(lang, trip.stage)}</Badge>
+          <span data-testid="trip-stage" data-stage={stageShown} style={{ display: "contents" }}>
+            <Badge tone="accent">{stageLabel(lang, stageShown)}</Badge>
           </span>
           {trip.lost_reason_code && <Badge tone="neutral">{codeLabel(lang, "lost", trip.lost_reason_code)}</Badge>}
           {trip.cancel_reason_code && <Badge tone="danger">{codeLabel(lang, "cancel", trip.cancel_reason_code)}</Badge>}
-          {view.cancellation?.status === "pending" && (
+          {cancelPending && (
             <span data-testid="trip-cancellation-pending" title={t(lang, "trip.cancellationPendingHint")} style={{ display: "contents" }}>
               <Badge tone="danger">{t(lang, "trip.cancellationPending")}</Badge>
             </span>
@@ -221,7 +234,7 @@ export function TripPanel({
           )}
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }} data-testid="trip-moves">
-          {view.allowed_moves
+          {(frozen ? [] : view.allowed_moves)
             .filter((s) => s !== "lost")
             .map((s: Stage) => (
               // The kit Button is a vendored CIS copy without a test id: the wrapper carries it (display: contents).
@@ -231,7 +244,7 @@ export function TripPanel({
                 </Button>
               </span>
             ))}
-          {view.allowed_moves.includes("lost") && !lostOpen && (
+          {!frozen && view.allowed_moves.includes("lost") && !lostOpen && (
             <Button
               size="sm"
               variant="ghost"
@@ -244,10 +257,11 @@ export function TripPanel({
               {t(lang, "trip.markLost")}
             </Button>
           )}
-          {view.can_cancel && role !== "assistant" && (
-            <span data-testid="trip-cancel" style={{ display: "contents" }}>
-              <Button size="sm" variant="danger" disabled={busy || !hydrated} onClick={() => setCancelOpen(true)}>
-                {t(lang, "cancelTrip.open")}
+          {view.can_cancel && role !== "assistant" && stageShown !== "cancelled" && (
+            // While AA has not confirmed it, the button only opens the cancellation's state ("Ask AA again").
+            <span data-testid="trip-cancel" data-pending={cancelPending ? "true" : undefined} style={{ display: "contents" }}>
+              <Button size="sm" variant={cancelPending ? "secondary" : "danger"} disabled={busy || !hydrated || refreshing} onClick={() => setCancelOpen(true)}>
+                {t(lang, cancelPending ? "cancelTrip.pendingOpen" : "cancelTrip.open")}
               </Button>
             </span>
           )}
@@ -536,8 +550,9 @@ export function TripPanel({
             // AA-957: with AA bookings the trip waits for AA ("Cancellation pending", never cancelled early).
             const pending = result.cancellation?.status === "pending";
             const key = pending ? (result.requeued !== undefined ? "cancelTrip.retried" : "cancelTrip.pendingDone") : "cancelTrip.done";
+            setRan({ stage: result.stage ?? trip.stage, cancellation: result.cancellation ?? null });
             setToast(toast(t(lang, key)));
-            router.refresh();
+            startRefresh(() => router.refresh());
           }}
         />
       )}

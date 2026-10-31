@@ -36,6 +36,7 @@ def flat(sql: str) -> str:
 def row(**over: Any) -> dict[str, Any]:
     base = {
         "commission_id": COM, "trip_id": TRIP, "trip_title": "Highlands", "trip_stage": "booked",
+        "trip_start_date": dt.date(2026, 12, 1), "trip_end_date": dt.date(2026, 12, 4), "trip_month": None,
         "booking_line_id": LINE, "line_title": "Lodge", "line_status": "confirmed",
         "service_from": dt.date(2026, 12, 1), "service_to": dt.date(2026, 12, 3),
         "agency_supplier_id": uuid.UUID(int=5),
