@@ -37,6 +37,7 @@ import {
   type ClientOption,
 } from "@/lib/clientProposal";
 import { clientErrorKey, formatAmount } from "@/lib/proposals";
+import { ClientPayBox } from "./ClientPayBox";
 import { TermsReaccept } from "./TermsReaccept";
 
 const input: React.CSSProperties = {
@@ -346,6 +347,7 @@ export function ClientBuilderProposal({ initial, dict, locale }: { initial: Clie
             </p>
           ))}
           {page.terms_reaccept && <TermsReaccept terms={page.terms_reaccept} agency={page.agency_name} t={t} onDone={() => void refresh()} />}
+          <ClientPayBox invoices={page.payments ?? []} agency={page.agency_name} locale={locale} t={t} onDone={() => void refresh()} />
         </div>
       ) : (
         <>

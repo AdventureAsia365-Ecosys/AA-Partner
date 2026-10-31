@@ -302,3 +302,59 @@ describe("the page", () => {
     expect(el.querySelector<HTMLButtonElement>('[data-testid="client-accept"]')!.disabled).toBe(true);
   });
 });
+
+// AA-952 (CRM-23 slice 4): the client's pay box states.
+describe("client pay box", () => {
+  it("picks the line for each pay window", async () => {
+    const { payStateKey } = await import("@/components/proposals/ClientPayBox");
+    const base = {
+      invoice_id: "00000000-0000-4000-8000-0000000000f1",
+      number: "INV-000001",
+      kind: "deposit" as const,
+      currency: "USD",
+      total_amount: "300.00",
+      balance_amount: "300.00",
+      due_on: "2026-11-02",
+      pay_by: null,
+      can_claim: false,
+    };
+    const until = "2026-11-02T09:00:00+00:00";
+    const key = (state: "open" | "claimed" | "settling" | "expired" | "paid" | "closed", at: string | null) =>
+      payStateKey({ ...base, pay_window: { state, until: at } });
+    expect(key("open", until)).toBe("client.pay.openUntil");
+    expect(key("open", null)).toBe("client.pay.open");
+    expect(key("claimed", until)).toBe("client.pay.claimedUntil");
+    expect(key("claimed", null)).toBe("client.pay.claimed");
+    expect(key("settling", null)).toBe("client.pay.settling");
+    expect(key("expired", until)).toBe("client.pay.expired");
+    expect(key("paid", null)).toBe("client.pay.paid");
+  });
+});
+
+describe("client pay box render", () => {
+  it("shows bank details and the button only while the window is open", async () => {
+    const { ClientPayBox } = await import("@/components/proposals/ClientPayBox");
+    const t = (k: string) => k;
+    const inv = {
+      invoice_id: "00000000-0000-4000-8000-0000000000f2",
+      number: "INV-000002",
+      kind: "deposit" as const,
+      currency: "USD",
+      total_amount: "300.00",
+      balance_amount: "300.00",
+      due_on: "2026-11-02",
+      pay_window: { state: "open" as const, until: "2026-11-02T09:00:00+00:00" },
+      pay_by: { name: "Bank transfer", instructions: "Account 0000 6666" },
+      can_claim: true,
+    };
+    const open = renderToString(createElement(ClientPayBox, { invoices: [inv], agency: "Lotus Trails", locale: "en-AU", t, onDone: () => undefined }));
+    expect(open).toContain("Account 0000 6666");
+    expect(open).toContain('data-testid="client-pay-claim"');
+    const expired = { ...inv, pay_window: { state: "expired" as const, until: inv.pay_window.until }, pay_by: null, can_claim: false };
+    const gone = renderToString(createElement(ClientPayBox, { invoices: [expired], agency: "Lotus Trails", locale: "en-AU", t, onDone: () => undefined }));
+    expect(gone).toContain("client.pay.expired");
+    expect(gone).not.toContain("Account 0000 6666");
+    expect(gone).not.toContain('data-testid="client-pay-claim"');
+    expect(renderToString(createElement(ClientPayBox, { invoices: [], agency: "x", locale: "en-AU", t, onDone: () => undefined }))).toBe("");
+  });
+});

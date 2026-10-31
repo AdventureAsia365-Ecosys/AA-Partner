@@ -219,7 +219,7 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "GET", pattern: /^invoices$/, tenant: true, card: "AA-952" },
   { method: "GET", pattern: new RegExp(`^invoices/${UUID}(/document)?$`), tenant: true, card: "AA-952" },
   { method: "PATCH", pattern: new RegExp(`^invoices/${UUID}$`), tenant: true, card: "AA-952" },
-  { method: "POST", pattern: new RegExp(`^invoices/${UUID}/(issue|void)$`), tenant: true, card: "AA-952" },
+  { method: "POST", pattern: new RegExp(`^invoices/${UUID}/(issue|void|reject-claim)$`), tenant: true, card: "AA-952" },
   { method: "GET", pattern: /^settings\/invoices$/, tenant: true, card: "AA-952" },
   { method: "PUT", pattern: /^settings\/invoices$/, tenant: true, card: "AA-952" },
   // AA-952 (CRM-23 slice 3): payments on an invoice, refund requests (ask, list, approve / reject, mark refunded) and

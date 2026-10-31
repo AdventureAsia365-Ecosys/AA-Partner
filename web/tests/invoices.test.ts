@@ -150,3 +150,59 @@ describe("payments and refunds (slice 3)", () => {
     expect(matchBff("DELETE", `refund-requests/${ID}`)).toBeNull();
   });
 });
+
+// AA-952 (CRM-23 slice 4): the claim / re-hold note of an invoice row, the "Not received" route, the client pay box.
+describe("slice 4 claims", () => {
+  it("words the claim and the re-hold of a row", async () => {
+    const { claimNote } = await import("@/lib/invoices");
+    const until = "2026-11-03T09:00:00+00:00";
+    expect(claimNote({ status: "payment_claimed", pay_window: { state: "claimed", until } })).toEqual({
+      key: "invoice.claim.verifyBefore",
+      vars: { until },
+    });
+    expect(claimNote({ status: "payment_claimed", pay_window: { state: "claimed", until: null } })?.key).toBe("invoice.claim.verify");
+    expect(claimNote({ status: "open", rehold: { requested_at: until, code: null } })?.key).toBe("invoice.claim.settling");
+    expect(claimNote({ status: "paid_unfulfillable", rehold: { requested_at: until, code: "sold_out" } })).toEqual({
+      key: "invoice.claim.unfulfillable",
+      vars: { code: "sold_out" },
+    });
+    expect(claimNote({ status: "open", pay_window: { state: "expired", until } })?.key).toBe("invoice.claim.windowClosed");
+    expect(claimNote({ status: "open", pay_window: { state: "open", until } })).toBeNull();
+    expect(claimNote({ status: "paid" })).toBeNull();
+  });
+
+  it("has every key the slice adds, in both languages", () => {
+    const keys = [
+      "invoice.claim.reject",
+      "invoice.claim.rejected",
+      "invoice.claim.verify",
+      "invoice.claim.verifyBefore",
+      "invoice.claim.settling",
+      "invoice.claim.unfulfillable",
+      "invoice.claim.windowClosed",
+      "invoice.rehold.other",
+      "invoice.rehold.price_higher",
+      "bell.event.payment_claimed",
+      "bell.event.overdue",
+      "bell.event.reheld",
+      "bell.event.unfulfillable",
+      "task.verify_transfer",
+      "task.payment_unfulfillable",
+      "task.invoice_overdue",
+      "client.pay.claim",
+      "client.pay.expired",
+      "client.error.pay_link_expired",
+    ];
+    for (const lang of ["en", "vi"] as const) {
+      for (const key of keys) expect(MESSAGES[lang][key as keyof (typeof MESSAGES)["en"]], `${lang} ${key}`).toBeTruthy();
+    }
+    for (const code of ["invoice_claimed", "invoice_not_claimed", "invoice_settling"]) {
+      expect(invoiceErrorKey(code)).toBe(`invoice.error.${code}`);
+    }
+  });
+
+  it("lets the agency answer a claim through the BFF", () => {
+    expect(matchBff("POST", `invoices/${ID}/reject-claim`)).not.toBeNull();
+    expect(matchBff("GET", `invoices/${ID}/reject-claim`)).toBeNull();
+  });
+});

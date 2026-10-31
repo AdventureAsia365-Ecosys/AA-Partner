@@ -9,8 +9,8 @@ import { PageTitle } from "@/components/PageTitle";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { formatDate } from "@/lib/dates";
-import { t, type MessageKey } from "@/lib/i18n";
-import { STATUSES, STATUS_TONE, type InvoiceStatus, type ReceivablesView, type RefundRequest } from "@/lib/invoices";
+import { fmt, t, type MessageKey } from "@/lib/i18n";
+import { claimNote, STATUSES, STATUS_TONE, type InvoiceStatus, type ReceivablesView, type RefundRequest } from "@/lib/invoices";
 import { formatAmount } from "@/lib/proposals";
 import { serverContext } from "@/lib/serverContext";
 
@@ -80,6 +80,18 @@ export default async function PaymentsPage({ searchParams }: { searchParams: Pro
               </span>
               <span>
                 <Badge tone={STATUS_TONE[inv.status]}>{tr(`invoice.status.${inv.status}`)}</Badge>
+                {(() => {
+                  // AA-952 slice 4 (WF-9): "Client says paid; verify before <time>", a late deposit being re-held, ...
+                  const note = claimNote(inv);
+                  if (!note) return null;
+                  const until = note.vars.until ? new Date(note.vars.until).toLocaleString(ctx.locale, { dateStyle: "medium", timeStyle: "short" }) : "";
+                  const code = note.vars.code !== undefined ? tr(`invoice.rehold.${note.vars.code || "other"}`) : "";
+                  return (
+                    <span data-testid="receivable-claim-note" style={{ display: "block", fontSize: 12, color: K.muted }}>
+                      {fmt(tr(note.key), { until, code })}
+                    </span>
+                  );
+                })()}
               </span>
             </div>
           ))}
