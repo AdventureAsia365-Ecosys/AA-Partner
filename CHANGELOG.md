@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.12.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.11.0...v0.12.0) (2026-10-31)
+
+
+### Features
+
+* AA support access L2 and break-glass L3 (owner grant, staff API, banner) ([#157](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/157)) ([9bf771e](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/9bf771e38f8076ef0bff4758e4c573ab0a9259b4))
+* agency invoices from the payment schedule or typed lines, issue with a gapless number, void, printable document ([#131](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/131)) ([b0918d8](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/b0918d8892d62872f25fbaa47d6a11b8aa9f890d))
+* CRM AI gateway v2 (Bedrock Converse provider, guardrail ledger rows, per-agency cap, budget alerts, Settings &gt; AI, ops LLM calls) ([#153](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/153)) ([ed154d9](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/ed154d92a1faf98fd5c4b5807106d3672d518074))
+* CRM onboarding checklist, phased client import with dry run, duplicate merge, connections and controller settings ([#146](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/146)) ([132112a](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/132112aa1fbfed66d45c44905b1d993abac8e0d3))
+* CRM reports (funnel, money, outstanding, team, success metrics, CSV) and AA insights read (crm-031) ([#144](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/144)) ([27f3cbb](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/27f3cbb15a21c910f7f2729495da16d962282ddf))
+* crm-024 invoices, payments against invoices, refund requests and payment methods (migration only) ([#130](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/130)) ([db9f491](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/db9f491f831366e8dd7f5de6b544614aff839398))
+* crm-025 e-sign v1 schema (signing envelope, guardian signer, terms acceptances, signing log, claim-period retention) ([#135](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/135)) ([09b1352](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/09b135276cf96a3e1982826b83c5b2b6e25e2744))
+* crm-026 portability exports, data-request log and agency-deletion cool-off (migration only) ([#137](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/137)) ([278c44c](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/278c44ce0671523f65be8d6801eb5ebbbbad34d5))
+* crm-027 duty of care and calendar schema (AA incident flags per departure, revocable ICS calendar feeds per member) ([#139](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/139)) ([82ce4aa](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/82ce4aa62e2b05056bdc0d27f325a6440e33c6f8))
+* crm-032 crm.llm_call ledger v2 columns, guard role and AI budget alert state ([#152](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/152)) ([361071d](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/361071d0b690b17edf01201b53e97c3bb99e16c4))
+* crm-033 AA support grants and sessions (contract) ([#156](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/156)) ([a7bb39f](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/a7bb39fae644c0266cfd22470c973390e6a6378c))
+* CRM-26 Module 8 ops release (release, refresh, T-21 alert, withdraw, purge, S-02 staff API) ([#160](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/160)) ([cceed8e](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/cceed8e53938200bbf399733d5b259b1f32cba21))
+* data portability exports, a data-request log, verified client erasure and a cool-off before agency deletion ([#138](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/138)) ([7e9d8db](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/7e9d8db053d5d51707827ea7ef8e465454ca6832))
+* duty of care and calendar (travelling now by region, AA incident banners, logged bulk reveal, agency calendar, revocable ICS feed) ([#140](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/140)) ([3718242](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/3718242a264c9ffe9bbb7f0db468c58deb866d73))
+* e-sign v1 for contracts and waivers (one sealed envelope per traveller, guardian signing, terms re-accept, signed documents panel) ([#136](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/136)) ([021d68e](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/021d68e69175077db995f1c0b649a3be18b425b5))
+* invoice claim, one hold extension, re-hold after a late deposit, overdue reminders (CRM-23 slice 4) ([#143](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/143)) ([26acce0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/26acce08f628d56ed6a235bbb0925c35ccfc36b6))
+* payments against invoices, refund requests with the approval matrix, the agency's own payment methods ([#132](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/132)) ([8525a21](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/8525a211adef04cf627e442ca91ad5626a2f98ba))
+* traveller portal per person (picker, flights, documents, passport scan, companion invite) ([#145](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/145)) ([df5ac86](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/df5ac86f257048d118063e467741abd0b20a57e4))
+
+
+### Bug Fixes
+
+* calendar times in the agency timezone and a singular signature count ([#142](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/142)) ([3a11651](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/3a116512dd27fdb25fee0f9c53482f8a2dc2fc7c))
+* client erasure refusal names what unblocks it ([#141](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/141)) ([80870f8](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/80870f8053626930459dcf996733c4e111e04a76))
+* client pay box waits for re-accepted terms, builder versions pin the published terms, claim deadline in the agency timezone ([#148](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/148)) ([ba225e4](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/ba225e4bf9093865c5838803baf3f03cdb206ace))
+* never hand mail for a .invalid address to a provider ([#150](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/150)) ([bc5f928](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/bc5f9280dd0b680fcd85f6750a0c9bba90cc2562))
+* separate per-address write limit for the signed-in traveller portal ([#149](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/149)) ([d29e29e](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/d29e29e628ec65a74a587361b60ea7feb9ef3f0f))
+
 ## [0.11.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.10.0...v0.11.0) (2026-10-30)
 
 
