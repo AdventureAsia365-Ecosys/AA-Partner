@@ -112,7 +112,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
         timeZone={invoices.data.timezone ?? "UTC"}
       />
     )}
-    {ops.ok && <OpsReleasePanel tripId={tripId} view={ops.data} lang={ctx.lang} locale={ctx.locale} />}
+    {ops.ok && <OpsReleasePanel tripId={tripId} view={ops.data} lang={ctx.lang} locale={ctx.locale} canOpenAccessLog={ctx.role === "owner"} />}
     {signed.ok && <TripAgreementsPanel view={signed.data} party={trip.data.party} lang={ctx.lang} locale={ctx.locale} />}
     {lines.ok && (
       <LinesPanel

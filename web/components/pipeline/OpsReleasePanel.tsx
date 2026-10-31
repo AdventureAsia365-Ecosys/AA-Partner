@@ -34,11 +34,13 @@ export function OpsReleasePanel({
   view,
   lang,
   locale,
+  canOpenAccessLog = false,
 }: {
   tripId: string;
   view: OpsReleaseView;
   lang: Lang;
   locale: DateLocale;
+  canOpenAccessLog?: boolean;
 }) {
   const hydrated = useHydrated();
   const router = useRouter();
@@ -170,9 +172,13 @@ export function OpsReleasePanel({
             )}
             {footer.older && (
               <p style={{ margin: 0, fontSize: 12, color: K.muted }} data-testid="ops-activity-older">
-                {tr("ops.activityOlder")} <Link href="/settings/access-log" style={{ color: K.accent }}>
-                  {tr("ops.activityOlderLink")}
-                </Link>
+                {tr("ops.activityOlder")}{" "}
+                {/* The access log is owner only (A-18); other roles get the sentence without a dead link. */}
+                {canOpenAccessLog && (
+                  <Link href="/settings/access-log" style={{ color: K.ink, textDecoration: "underline" }}>
+                    {tr("ops.activityOlderLink")}
+                  </Link>
+                )}
               </p>
             )}
           </section>
