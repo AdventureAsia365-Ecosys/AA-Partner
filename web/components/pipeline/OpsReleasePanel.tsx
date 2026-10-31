@@ -13,6 +13,19 @@ import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import { activityLines, missingItems, panelState, type OpsReleaseView } from "@/lib/opsRelease";
 
+const PANEL_ACTIONS = new Set([
+  "ops_release_create",
+  "ops_release_refresh",
+  "ops_release_view",
+  "ops_manifest_export",
+  "ops_release_t21_alert",
+  "ops_release_withdraw",
+  "ops_release_purge",
+  "ops_release_build",
+]);
+// Reasons that only name the object (the release or its supplier list) repeat what the line already says.
+const OBJECT_REASONS = new Set(["ops_release", "supplier_manifest"]);
+
 const line: React.CSSProperties = { margin: 0, fontSize: 13, color: K.body, overflowWrap: "anywhere" };
 
 export function OpsReleasePanel({
@@ -29,6 +42,9 @@ export function OpsReleasePanel({
   const hydrated = useHydrated();
   const router = useRouter();
   const tr = (key: string) => t(lang, key as MessageKey);
+  // The access-log labels end in "of" / "for" and expect an object; on the trip's own panel the trip is implied.
+  const activityPhrase = (action: string) =>
+    PANEL_ACTIONS.has(action) ? tr(`ops.line.${action}`) : codeLabel(lang, "log.act", action);
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -137,8 +153,8 @@ export function OpsReleasePanel({
               {activityLines(view).map((a, i) => (
                 <li key={`${a.at}-${i}`}>
                   {day(a.at)} · {codeLabel(lang, "log.actor", a.actor_kind)}{" "}
-                  {codeLabel(lang, "log.act", a.action)}
-                  {a.reason ? ` · ${codeLabel(lang, "why", a.reason)}` : ""}
+                  {activityPhrase(a.action)}
+                  {a.reason && !OBJECT_REASONS.has(a.reason) ? ` · ${codeLabel(lang, "why", a.reason)}` : ""}
                 </li>
               ))}
             </ul>

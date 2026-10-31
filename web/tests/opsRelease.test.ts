@@ -103,4 +103,11 @@ describe("wording", () => {
     expect(t("en", "task.ops_release_incomplete")).toContain("21 days");
     expect(t("en", "cancelTrip.effect.ops_release_withdrawn")).toContain("{n}");
   });
+  it("words the trip panel's activity lines without a dangling object", () => {
+    expect(t("en", "ops.line.ops_manifest_export")).toBe("downloaded the supplier list for this trip");
+    expect(t("vi", "ops.line.ops_release_view")).toBe("đã mở thông tin của chuyến này");
+    for (const key of Object.keys(opsReleaseEn).filter((k) => k.startsWith("ops.line."))) {
+      expect(opsReleaseEn[key as keyof typeof opsReleaseEn]).not.toMatch(/ (of|for)$/);
+    }
+  });
 });
