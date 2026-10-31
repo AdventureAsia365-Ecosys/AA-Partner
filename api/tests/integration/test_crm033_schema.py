@@ -2,7 +2,8 @@
 
 - ``crm.support_grant`` / ``crm.support_session``: base template (``test_crm002``), FORCE RLS across two agencies,
   crm_app SELECT / INSERT / UPDATE only (no DELETE), nothing for the other readers; the CHECKs (a grant of 1 to 7 days,
-  a break-glass session of at most an hour with a listed reason, the ticket pattern) and one active row per agency.
+  a break-glass session of at most an hour with a listed reason and never showing identity, the ticket pattern) and
+  one active row per agency.
 - ``crm.guard_support_access`` (CRM43 / CRM44): only an owner grants or revokes, for themselves; a session is opened
   and ended by its own staff actor, a support session only inside the active grant (not past it, the same
   show_identity); an owner revokes a support session, never a break-glass one; any actor marks an expired row
@@ -352,18 +353,19 @@ async def test_break_glass_needs_a_reason_and_at_most_an_hour(app_pool: asyncpg.
     t = ids["tenant"]
     common = ("breakglass", None, STAFF_ISS, STAFF_SUB, "INC-7")
     bg = f"breakglass:{STAFF_SUB}"
-    assert await _refused(app_pool, t, SESSION_SQL, *common, None, True, 30, actor=bg) == "CheckViolationError"
-    assert await _refused(app_pool, t, SESSION_SQL, *common, "curiosity", True, 30, actor=bg) == "CheckViolationError"
-    assert await _refused(app_pool, t, SESSION_SQL, *common, "service_outage", True, 61, actor=bg) == (
+    assert await _refused(app_pool, t, SESSION_SQL, *common, None, False, 30, actor=bg) == "CheckViolationError"
+    assert await _refused(app_pool, t, SESSION_SQL, *common, "curiosity", False, 30, actor=bg) == "CheckViolationError"
+    assert await _refused(app_pool, t, SESSION_SQL, *common, "service_outage", False, 61, actor=bg) == (
         "CheckViolationError"
     )
-    assert await _refused(app_pool, t, SESSION_SQL, *common, "service_outage", False, 30, actor=bg) == (
+    # Break-glass never shows identity (no MFA step-up on the in-app path; F1 names wait for the AWS-level role).
+    assert await _refused(app_pool, t, SESSION_SQL, *common, "service_outage", True, 30, actor=bg) == (
         "CheckViolationError"
     )
     # A support actor cannot open a break-glass row.
     sup = f"support:{STAFF_SUB}"
-    assert await _refused(app_pool, t, SESSION_SQL, *common, "service_outage", True, 30, actor=sup) == "CRM44"
-    session = await _session(app_pool, t, None, kind="breakglass", minutes=60, show=True, reason="security_incident")
+    assert await _refused(app_pool, t, SESSION_SQL, *common, "service_outage", False, 30, actor=sup) == "CRM44"
+    session = await _session(app_pool, t, None, kind="breakglass", minutes=60, reason="security_incident")
     # The owner cannot end a break-glass session; the notice is written once; its staff member ends it.
     owner = f"member:{ids['member']}"
     end = "UPDATE crm.support_session SET status = $2, ended_at = now(), ended_by = $3 WHERE support_session_id = $1"
@@ -393,7 +395,7 @@ async def test_the_agency_erase_deletes_both_tables(app_pool: asyncpg.Pool, admi
     t = ids["tenant"]
     grant = await _grant(app_pool, ids)
     await _session(app_pool, t, grant)
-    await _session(app_pool, t, None, kind="breakglass", minutes=15, show=True, reason="data_corruption")
+    await _session(app_pool, t, None, kind="breakglass", minutes=15, reason="data_corruption")
     await _in(app_pool, t, "UPDATE crm.tenant SET status = 'offboarding'", actor="platform:test")
     done = await _erase(app_pool, t, "tenant", t)
     assert done["counts"]["support_session"] == 2 and done["counts"]["support_grant"] == 1

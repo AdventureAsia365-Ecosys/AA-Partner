@@ -14,7 +14,7 @@
 --      it next).
 --   2. crm.support_session: one AA staff member working in one agency. kind support (needs the active grant, ends no
 --      later than it, copies its show_identity) or breakglass (no grant: a reason code from a fixed list, at most 1 hour,
---      identity shown). Every session names its ticket (the ops ticket pattern of crm.ops.v1) and the staff member's
+--      identity NEVER shown: show_identity must be false). Every session names its ticket (the ops ticket pattern of crm.ops.v1) and the staff member's
 --      WORKFORCE identity (iss, sub; never an e-mail). One active session per agency and kind (partial unique index):
 --      one staff member at a time. Status active -> ended (the staff member) | revoked (the owner revoked the grant) |
 --      expired (its window passed). owner_notified_at: when the break-glass mail to the owners went out.
@@ -156,10 +156,14 @@ CREATE TABLE IF NOT EXISTS crm.support_session (
     purge_after        TIMESTAMPTZ,
     CONSTRAINT support_session_grant_fk FOREIGN KEY (tenant_id, support_grant_id)
         REFERENCES crm.support_grant (tenant_id, support_grant_id),
+    -- Break-glass never shows identity: the in-app path trusts the WORKFORCE sign-in plus group crm-ops, with no MFA
+    -- step-up (the pool's MFA is OPTIONAL), and it skips the owner's consent. F1 display names stay out of reach
+    -- until the AWS-level break-glass of design §4.8 L3 (IAM role with MFA, tenant_id session tag, the KMS condition
+    -- CrmBreakGlassOneAgency) exists; a later migration may lift this for that path only.
     CONSTRAINT support_session_kind_chk CHECK (
         (kind = 'support' AND support_grant_id IS NOT NULL AND reason_code IS NULL
          AND expires_at <= started_at + interval '7 days')
-        OR (kind = 'breakglass' AND support_grant_id IS NULL AND show_identity AND reason_code IS NOT NULL
+        OR (kind = 'breakglass' AND support_grant_id IS NULL AND NOT show_identity AND reason_code IS NOT NULL
             AND reason_code IN ('security_incident', 'data_corruption', 'legal_request', 'owner_unreachable',
                                 'service_outage')
             AND expires_at <= started_at + interval '1 hour')),
@@ -204,7 +208,7 @@ CREATE OR REPLACE TRIGGER support_session_status_transition
     FOR EACH ROW EXECUTE FUNCTION crm.enforce_status_transition();
 REVOKE DELETE, TRUNCATE ON crm.support_session FROM crm_app;
 
-COMMENT ON TABLE crm.support_session IS 'AA-971 (crm-033, design v3 §4.8 L2 / L3): one AA staff member working read only in one agency. kind support: inside the owner''s active grant (ends no later than it, copies show_identity). kind breakglass: no grant, a reason code, at most 1 hour, identity shown, the owners mailed and AA ops alerted. One active session per agency and kind. Every read is an audit event of the agency (actor support:<sub> / breakglass:<sub>). Ids, codes and dates only.';
+COMMENT ON TABLE crm.support_session IS 'AA-971 (crm-033, design v3 §4.8 L2 / L3): one AA staff member working read only in one agency. kind support: inside the owner''s active grant (ends no later than it, copies show_identity). kind breakglass: no grant, a reason code, at most 1 hour, identity never shown (no F1 display names: in-app break-glass has no MFA step-up; names wait for the MFA-backed AWS break-glass role), the owners mailed and AA ops alerted. One active session per agency and kind. Every read is an audit event of the agency (actor support:<sub> / breakglass:<sub>). Ids, codes and dates only.';
 COMMENT ON COLUMN crm.support_session.staff_sub IS 'AA-971 (crm-033): the WORKFORCE Cognito sub of the AA staff member (a random id; the e-mail is never stored).';
 COMMENT ON COLUMN crm.support_session.ticket_ref IS 'AA-971 (crm-033): the support or incident ticket the session works on (crm.ops.v1 ticket pattern); in the audit as ticket:<REF>.';
 COMMENT ON COLUMN crm.support_session.reason_code IS 'AA-971 (crm-033): why break-glass was used (security_incident, data_corruption, legal_request, owner_unreachable, service_outage); NULL for a support session.';
