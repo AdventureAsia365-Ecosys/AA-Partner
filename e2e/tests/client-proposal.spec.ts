@@ -338,10 +338,12 @@ test.describe("CRM-21b client proposal on Dev", () => {
         .poll(
           async () => {
             const lines = await bff(page, "GET", `trips/${tripId}/lines`);
-            expect(lines.status, "GET trips/{id}/lines").toBe(200);
+            // A transient BFF error (a web deploy rolling) is polled through, not fatal.
+            if (lines.status !== 200) return -1;
             return (lines.body.lines as any[]).filter((l) => l.aa?.sub_status === "held").length;
           },
-          { message: "the held AA line written from the accepted proposal", timeout: 60_000, intervals: [2_000, 5_000] },
+          // As aa-lines.spec.ts: the sync is a nudge plus a once-a-minute run, so allow a missed nudge.
+          { message: "the held AA line written from the accepted proposal", timeout: 150_000, intervals: [3_000, 5_000, 10_000] },
         )
         .toBeGreaterThan(0);
       const blocked = await bff(page, "DELETE", `trips/${tripId}`);
