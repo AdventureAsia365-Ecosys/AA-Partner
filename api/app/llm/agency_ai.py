@@ -5,10 +5,11 @@
   plan's cap: AA pays for the calls); the month's spend from ``crm.llm_call`` (calls and guardrail rows), the share of
   the budget and the month's alert level (75 / 90 / 100, crm-032).
 - :func:`draft`: one AI draft for a trip. Behind ``ai_enabled``: with AI off it answers 409 ``ai_disabled`` before the
-  gateway runs, so nothing is scrubbed or paid. Otherwise the gateway does the rest in its fixed order (scrub with the
-  trip's known values -> budget -> call -> ledger row). The output's placeholders are put back only here, in the
-  member's session (one ``placeholder_restore`` event). A draft is a **suggestion**: nothing is sent from here; sending
-  stays the member's own action (``message_send`` / ``ai_draft_approve``, design R39 "humans send").
+  gateway runs, so nothing is scrubbed or paid. Otherwise the gateway does the rest in its fixed order (budget, so a
+  used-up month pays no guardrail units -> scrub with the trip's known values -> budget again -> call -> ledger row).
+  The output's placeholders are put back only here, in the member's session (one ``placeholder_restore`` event). A
+  draft is a **suggestion**: nothing is sent from here; sending stays the member's own action
+  (``message_send`` / ``ai_draft_approve``, design R39 "humans send").
 
 Prompt-injection rule (Linear AA-964 S261 scope): the client's text is **data**. It goes inside ``<client_message>``
 tags under a fixed system instruction that tells the model never to follow instructions found there, and the model has

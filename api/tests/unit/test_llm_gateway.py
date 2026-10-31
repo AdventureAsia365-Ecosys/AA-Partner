@@ -149,7 +149,10 @@ async def test_r_guardrails_timeout_no_call_manual_reply_needed() -> None:
     assert provider.prompts == []
     [args] = c.sql("INSERT INTO crm.llm_call")
     assert args[8:10] == ("refused", "scrub_timeout") and "Peter" not in repr(args)
-    assert c.sql("pg_advisory_xact_lock") == []  # refused before the budget step
+    flat = [sql for sql, _ in c.calls]  # the budget step (and its lock) runs before the scrub
+    assert next(i for i, q in enumerate(flat) if "pg_advisory_xact_lock" in q) < next(
+        i for i, q in enumerate(flat) if "INSERT INTO crm.llm_call" in q
+    )
 
 
 async def test_e_scrubber_failure_means_no_call() -> None:

@@ -562,8 +562,9 @@ original CIS commit). P2a moves the code only:
   paused / retired, last full pass, last ok, failures, last error class). Counts only, no agency id or business
   figure; counted through one platform context per registered agency WITHOUT an `ops_read` event (no agency data is
   read; one event per agency every 10 minutes would bury the owner's access log), logged once per call instead.
-- **LLM gateway** (`app/llm/gateway.py`, D12): scrub receipt -> month budget (`tenant_settings.ai_budget_usd`) ->
-  `ai_enabled` (default off) -> seal the placeholder map -> call -> one `crm.llm_call` row (no text) + the rollup ->
+- **LLM gateway** (`app/llm/gateway.py`, D12): per-agency rate cap -> month budget (`tenant_settings.ai_budget_usd`)
+  and `ai_enabled` (default off), before the paid scrub -> scrub receipt (guardrail rows) -> budget again when the
+  scrub wrote guard rows -> seal the placeholder map -> call -> one `crm.llm_call` row (no text) + the rollup ->
   store the map; every refusal is logged too and every non-`ok` result carries `fallback = manual_reply_needed`.
   Slice 1 shipped the stub scrubber / provider pair (a stub scrubber is refused with any real provider); AA-938 adds
   the F3 scrubber (below), CRM-33a Bedrock.

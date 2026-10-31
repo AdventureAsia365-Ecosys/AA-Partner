@@ -327,6 +327,43 @@ async def test_r_a_full_budget_refuses_with_manual_reply_and_raises_the_100_aler
     assert repeat.budget_alert is None and again.sql("INSERT INTO crm.tenant_settings (ai_alert_month") == []
 
 
+async def test_a_used_up_budget_refuses_before_the_scrub_and_pays_no_guardrail() -> None:
+    """Review AA-964: at 100 % the gateway used to scrub first and bill ApplyGuardrail on every refused draft."""
+    guard_client = FakeBedrockClient(guard=guard_answer(units=8))
+    detector = BedrockGuardrailsDetector("abc123", "1", region="us-west-1", timeout_s=3, client=guard_client)
+    c = conn(spent="2.5")
+    gateway = LlmGateway(PiiScrubber(detector), provider(FakeBedrockClient(converse=converse_answer())), keys=object())
+    result = await gateway.call(system_ctx(c), stage="crm_x", role="writer", prompt="Hello from Mira Okonkwo")
+    assert (result.refusal_code, result.fallback) == ("budget_exhausted", MANUAL_REPLY)
+    assert guard_client.guard_requests == []
+    [refusal] = insert_args(c)
+    assert refusal[:2] == ("crm_x", "writer") and refusal[6] == Decimal(0)
+    assert all(r[0] != "crm_scrub" for r in c.sql("INSERT INTO crm.llm_usage_daily"))
+
+
+async def test_ai_switched_off_refuses_before_the_scrub_for_any_caller() -> None:
+    guard_client = FakeBedrockClient(guard=guard_answer())
+    detector = BedrockGuardrailsDetector("abc123", "1", region="us-west-1", timeout_s=3, client=guard_client)
+    c = conn(enabled=False)
+    gateway = LlmGateway(PiiScrubber(detector), provider(FakeBedrockClient(converse=converse_answer())), keys=object())
+    result = await gateway.call(system_ctx(c), stage="crm_x", role="judge", prompt="Hello from Mira Okonkwo")
+    assert result.refusal_code == "ai_disabled" and guard_client.guard_requests == []
+    assert [r[1] for r in insert_args(c)] == ["judge"]
+
+
+async def test_a_guardrail_that_takes_the_month_to_100_refuses_the_call() -> None:
+    spends = iter([Decimal("1.9"), Decimal("2.1"), Decimal("2.1")])  # before the scrub, after its rows, alert
+    c = conn(spent=lambda *_: next(spends))
+    guard_client = FakeBedrockClient(guard=guard_answer(units=2))
+    converse = FakeBedrockClient(converse=converse_answer())
+    detector = BedrockGuardrailsDetector("abc123", "1", region="us-west-1", timeout_s=3, client=guard_client)
+    gateway = LlmGateway(PiiScrubber(detector), provider(converse), keys=object())
+    result = await gateway.call(system_ctx(c), stage="crm_x", role="writer", prompt="hello")
+    assert (result.refusal_code, result.budget_alert) == ("budget_exhausted", 100)
+    assert len(guard_client.guard_requests) == 1 and converse.requests == []
+    assert [r[1] for r in insert_args(c)] == ["guard", "writer"]
+
+
 async def test_alerts_fire_at_75_and_90_once_per_month() -> None:
     ctx = system_ctx(conn(spent="1.6"))
     result = await StubScrubberGateway().call(ctx, stage="crm_x", role="writer", prompt="hi")

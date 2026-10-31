@@ -3,18 +3,22 @@
 Every model call of the CRM goes through :meth:`LlmGateway.call`, inside the agency's context (``tenant_tx()`` or a
 job's ``system_tx()``), in this order — and any step that fails stops the call (fail closed):
 
-1. **scrub receipt**: the F3 scrubber (:class:`app.privacy.scrubber.PiiScrubber`, AA-938) replaces personal data
+1. **budget**: this month's ``crm.llm_call`` cost of the agency against ``crm.tenant_settings.ai_budget_usd``
+   (default 2 USD); at 100 % the call is refused with ``budget_exhausted`` (R5), then **ai_enabled** (default false):
+   refused with ``ai_disabled``. Both run **before the scrub**, so a used-up budget or AI switched off pays no
+   guardrail units (review AA-964: the scrub used to run first and kept billing ``ApplyGuardrail`` past 100 %).
+   The check runs under a transaction-scoped advisory lock per agency, taken here and held until the call is logged,
+   so two calls at 99 % cannot both pass (calls of one agency are serialised, the scrub included; acceptable for the
+   volumes of CRM-33a);
+2. **scrub receipt**: the F3 scrubber (:class:`app.privacy.scrubber.PiiScrubber`, AA-938) replaces personal data
    by numbered placeholders (known values of the trip, regex, Bedrock Guardrails) and returns counts only. Any scrub
    error refuses with ``scrub_failed``, a detector timeout with ``scrub_timeout`` (card CRM-10 R test: no call,
-   ``manual_reply_needed``); the **stub** scrubber (no real scrubbing) is accepted only with the **stub** provider,
-   so no real model ever receives unscrubbed text (``scrubber_unavailable``);
-2. **budget**: this month's ``crm.llm_call`` cost of the agency against ``crm.tenant_settings.ai_budget_usd``
-   (default 2 USD); at 100 % the call is refused with ``budget_exhausted`` (R5; the 75 / 90 % alerts are CRM-33a).
-   The check runs under a transaction-scoped advisory lock per agency, held until the call is logged, so two calls
-   at 99 % cannot both pass (calls of one agency are serialised; acceptable for the volumes of CRM-33a);
-3. **ai_enabled** (default false): refused with ``ai_disabled``; then, when the scrub replaced anything, the
-   placeholder map is sealed under the tenant ``scrub`` DEK **before** the call (a key failure refuses with
-   ``scrub_failed``; without a key provider the call is refused the same way: an unrestorable output is useless);
+   ``manual_reply_needed``). The **stub** scrubber (no real scrubbing) is accepted only with the **stub** provider,
+   so no real model ever receives unscrubbed text (``scrubber_unavailable``, checked before step 1: it costs nothing);
+3. **budget again** when the scrub wrote guardrail rows (their cost may reach 100 %: ``budget_exhausted``); then,
+   when the scrub replaced anything, the placeholder map is sealed under the tenant ``scrub`` DEK **before** the call
+   (a key failure refuses with ``scrub_failed``; without a key provider the call is refused the same way: an
+   unrestorable output is useless);
 4. **the call**: an error is recorded with its class (never its message);
 5. **the log**: one ``crm.llm_call`` row (no prompt, no output, no traveller token) and the platform rollup
    ``crm.llm_usage_daily`` the CIS cost page reads over ``/crm/ops/v1/llm/usage``. Refusals are logged too (cost 0);
@@ -28,8 +32,8 @@ Every non-``ok`` result carries ``fallback = "manual_reply_needed"``: the draft 
 AA-964 (card CRM-33a; root ADR 0008a §5-6, root ADR 0009 §8):
 
 - **Per-agency rate cap** first (``RATE_LIMIT_AI_PER_MINUTE``, :mod:`app.ratelimit`): over it the call is refused
-  ``rate_limited`` before the scrub, so a burst pays no guardrail units. Concurrency is already 1 per agency (the
-  budget lock).
+  ``rate_limited`` before the budget step and the scrub, so a burst pays no guardrail units. Concurrency is already 1
+  per agency (the budget lock).
 - **Ledger v2 row** (crm-032): ``app = 'crm'`` (column default), attempt 1, the provider's request id, connection,
   wire id, family, cache tokens, pricing mode, ``prompt_hash`` (sha256 of the scrubbed prompt as sent, never the
   prompt) and the caller's ``prompt_version`` / ``job_id``.
@@ -245,7 +249,24 @@ class LlmGateway:
         # 0. the per-agency cap, before anything that costs money
         if self.limiter is not None and not self.limiter.allow(str(ctx.tenant_id)):
             return await self._log(ctx, stage, role, "refused", refusal="rate_limited", meta=meta)
-        # 1. scrub receipt (every guardrail attempt it makes is its own ledger row)
+        # a real model never gets the stub scrubber (a free configuration check)
+        if self.scrubber.version.startswith(STUB_PREFIX) and self.provider.name != STUB_PREFIX:
+            return await self._log(ctx, stage, role, "refused", refusal="scrubber_unavailable", meta=meta)
+        # 1. budget and ai_enabled before the scrub, so a used-up budget or AI switched off pays no guardrail units.
+        # The per-agency lock is taken here and holds until this transaction ends (after the log row): calls of one
+        # agency are serialised, so a second call waits and then sees the first one's rows.
+        await ctx.conn.execute(BUDGET_LOCK_SQL, str(ctx.tenant_id))
+        settings = await ctx.conn.fetchrow(SETTINGS_SQL)
+        enabled = bool(settings["ai_enabled"]) if settings else False
+        budget = Decimal(settings["ai_budget_usd"]) if settings else DEFAULT_BUDGET_USD
+        spent = Decimal(await ctx.conn.fetchval(MONTH_SPEND_SQL))
+        pct = _pct(spent, budget)
+        if spent >= budget:
+            result = await self._log(ctx, stage, role, "refused", refusal="budget_exhausted", pct=pct, meta=meta)
+            return await self._alert(ctx, result, settings, pct)
+        if not enabled:
+            return await self._log(ctx, stage, role, "refused", refusal="ai_disabled", pct=pct, meta=meta)
+        # 2. scrub receipt (every guardrail attempt it makes is its own ledger row)
         with collect_guard_calls() as guards:
             try:
                 scrubbed = await self.scrubber.scrub(prompt, known)
@@ -262,20 +283,13 @@ class LlmGateway:
         receipt = scrubbed.receipt
         placeholders: dict[str, str] = dict(getattr(scrubbed, "placeholders", {}) or {})
         common = {"receipt": receipt, "meta": meta}
-        if self.scrubber.version.startswith(STUB_PREFIX) and self.provider.name != STUB_PREFIX:
-            return await self._log(ctx, stage, role, "refused", refusal="scrubber_unavailable", **common)
-        # 2. budget, 3. ai_enabled (the per-agency lock holds until this transaction ends, after the log row)
-        await ctx.conn.execute(BUDGET_LOCK_SQL, str(ctx.tenant_id))
-        settings = await ctx.conn.fetchrow(SETTINGS_SQL)
-        enabled = bool(settings["ai_enabled"]) if settings else False
-        budget = Decimal(settings["ai_budget_usd"]) if settings else DEFAULT_BUDGET_USD
-        spent = Decimal(await ctx.conn.fetchval(MONTH_SPEND_SQL))
-        pct = _pct(spent, budget)
-        if spent >= budget:
-            result = await self._log(ctx, stage, role, "refused", refusal="budget_exhausted", pct=pct, **common)
-            return await self._alert(ctx, result, settings, pct)
-        if not enabled:
-            return await self._log(ctx, stage, role, "refused", refusal="ai_disabled", pct=pct, **common)
+        # 3. the budget again once the guardrail rows are in (they may have taken the month to 100 %)
+        if guards:
+            spent = Decimal(await ctx.conn.fetchval(MONTH_SPEND_SQL))
+            pct = _pct(spent, budget)
+            if spent >= budget:
+                result = await self._log(ctx, stage, role, "refused", refusal="budget_exhausted", pct=pct, **common)
+                return await self._alert(ctx, result, settings, pct)
         # 3b. seal the placeholder map before paying for the call
         sealed: SealedMap | None = None
         if placeholders:

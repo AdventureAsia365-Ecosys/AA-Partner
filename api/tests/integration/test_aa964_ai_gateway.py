@@ -136,7 +136,9 @@ async def test_a_guardrail_row_counts_against_the_budget_and_raises_the_alert_on
     assert again["budget_alert"] == 100
     async with tenant_tx(app_pool, owner, tenant_id) as ctx:
         third = await agency_ai.draft(ctx, gateway, Vault(keys, ctx), trip_id, kind="reply", text="And again")
-    assert third["budget_alert"] is None
+    assert third["budget_alert"] is None and third["refusal_code"] == "budget_exhausted"
+    # Review AA-964: a used-up month refuses before the scrub, so the third draft pays no guardrail units.
+    assert len([r for r in await _rows(admin, tenant_id) if r["role"] == "guard"]) == 2
     alerts = await _owner_fetch(
         admin, tenant_id, "SELECT reason FROM crm.audit_event WHERE action = 'ai_budget_alert' ORDER BY at"
     )
