@@ -42,7 +42,11 @@ the daily `crm_lifecycle` run in DRY RUN by default, and Settings > Data and pri
 create agency, lock / unlock, first-owner invite, allowed features, insights opt-out, AA-raised export / deletion
 requests the owner confirms, failed-job retry, owner recovery) behind a response key allow-list; and **Module 18 portability and deletion** (AA-967, CRM-35, `crm-026`): the
 portability ZIP export (agency or one client) as a `crm.job` with progress and a single-use owner download link, the
-data-request log, the verified client erasure receipt, and the agency deletion's cool-off and post-erase verification.
+data-request log, the verified client erasure receipt, and the agency deletion's cool-off and post-erase verification; and
+**onboarding + import** (AA-962, CRM-31, `crm-030`): the getting-started checklist (three required steps, optional ones
+with "Later"), Connections and the controller settings, the owner's shared-responsibility acknowledgement, the phased
+client import (CSV / .xlsx: clients, relationships, trips, notes) with a dry run and idempotent re-runs as
+`crm_client_import` jobs, and the duplicate-client review and merge.
 
 > Read this file before designing or changing anything here (AA-Ecosys steering, "CONTEXT.md first"). Change it in the
 > same PR when a boundary, owner, route class or the stack changes.
@@ -290,6 +294,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-031` | `api/migrations/031_crm_insight_trip_fact.sql` | CRM-34 AA insights (AA-966; expand class under ADR 0017, applied after crm-028..030 in number order): the view `crm.v_insight_trip_fact` (security_barrier; trips per agency, month, budget band, lead age band, party size, stage and Lost reason in `trip_count`, no destination, no trip id; GROUP BY, so not updatable), SELECT to `crm_insights`, so module 17 counts a trip's party once outside the destination dimension. No existing object changes |
 | `crm-029` | `api/migrations/029_crm_traveler_flight.sql` | CRM-24a portal per person (AA-953; an **expand** file, ADR 0017: one new table only, so it ships in the code PR): `crm.traveler_flight` (base template; one arrival / departure flight per trip, traveller and direction: `flight_no_enc` under the vault DEK, `airport_iata`, `sched_local` (local time at that airport, no zone) + `tz` (IANA), `entered_by_kind`; all `pii:travel`; RLS, hold guard, no reader grant). Every key cascades (trip, traveler, trip_traveler), so the erase deletes flights through the rows it already deletes and `crm.erase_subject` is not replaced (`test_crm010_schema.py` `CASCADE_ERASED` checks the keys). crm-028 is another lane's key |
 | `crm-029` | `api/migrations/029_crm_traveler_flight.sql` | CRM-24a portal per person (AA-953; an **expand** file, ADR 0017: one new table and one new nullable column, so it ships in the code PR): `crm.otp_challenge.sent_to_bidx` (the blind index of the address a portal code went to: a session's proof) and `crm.traveler_flight` (base template; one arrival / departure flight per trip, traveller and direction: `flight_no_enc` under the vault DEK, `airport_iata`, `sched_local` (local time at that airport, no zone) + `tz` (IANA), `entered_by_kind`; all `pii:travel`; RLS, hold guard, no reader grant). Every key cascades (trip, traveler, trip_traveler), so the erase deletes flights through the rows it already deletes and `crm.erase_subject` is not replaced (`test_crm010_schema.py` `CASCADE_ERASED` checks the keys). needs crm-028 (AA-952) |
+| `crm-030` | `api/migrations/030_crm_onboarding_import.sql` | CRM-31 onboarding + import (AA-962; expand class under ADR 0017: nullable columns, columns with a constant default, non-unique partial indexes, column comments; no `crm.erase_subject` change: the new columns go with their rows): `import_ref_bidx` on `crm.traveler` / `crm.trip` / `crm.note` (blind index of the agency's own ref of an imported row; a partial non-unique index each, like every blind index here), `crm.tenant_settings` `onboarding_later` / `onboarding_done` (step codes), `privacy_notice_url`, `data_request_contact`, `consent_text` (controller settings), `responsibility_ack_version` / `_at` / `_member_id` (the owner acknowledgement). Values are checked by `app/onboarding.py` (an expand file adds no CHECK to an existing table) |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -330,6 +335,7 @@ queued / running rows as information, exempt kinds left out). Daily or slower ki
 | `crm_catalog_sync` | hourly, due-now hook (`app.catalog.sync.HourlyCatalogSync`, key per UTC hour) | AA-947: refreshes `crm.aa_catalog_tour` from `<CIS_API_URL>/catalog/v1` (scope `cis.catalog/read`): full passes comparing `content_hash`, a changed tour fetched with `If-None-Match`, tours no longer listed re-checked (410 retired, 404 paused); bounded per run, the pass continues next run; a CIS failure backs off. AA-951: after the tour pass, `crm.aa_content` from `/aa-content` (prep packs, starter templates; a body fetched only when version or hash changed, at most 60 a run; items CIS no longer lists unlisted after a complete list); a content failure is counted (`content_error_count`), never fatal. Not deploy-gate exempt |
 | `crm_studio_activation` | per accepted Content studio invitation (queued in the accept transaction, idempotency key per invitation, 12 attempts) | AA-979: CIS `tenant.membership.v1` 1.1 `activateInvitation` with an M2M token of scope `cis.tenant/activate` (`app/members/studio.py`, `app/cis/activation.py`); a CIS outage / 5xx / 401 / 403 retries with backoff, a CIS 404 / 409 fails it permanently with the code on the row. Not deploy-gate exempt |
 | `crm_data_export` | per owner request (queued in the request's transaction, idempotency key per export, 3 attempts) | AA-967: builds one portability ZIP (`app/portability/builder.py`: every tenant table of the catalog minus the never-exported ones as JSON + CSV, the documents and `documents/manifest.csv`, `manifest.json` with the schema version, `SHA256SUMS`), progress per step in its own short transaction, sealed under the agency `export` DEK into the documents bucket, then `ready` (`app/portability/exports.py`). A coded refusal fails the row at once, an outage retries, the last attempt fails it `export_error`. Not deploy-gate exempt |
+| `crm_client_import` | per slice of 500 rows of an owner's client import (the first queued in the start request's transaction, each slice queues the next, 3 attempts) | AA-962: reads the file from `imports/<tenant>/client-<import id>` in the ingest bucket, runs `app/imports/engine.py` with `apply=True` in chunks of 100 rows (one `system_tx()` each, the per-agency import lock, the intake's e-mail / phone dedupe locks), counts per outcome in the result (ids, codes and counts only), deletes the object after the last slice. A rerun or retry skips what is already in (`already_imported`). Not deploy-gate exempt |
 | `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
 
 ## CI and release
@@ -824,6 +830,53 @@ migration, `crm-031` (the trip-level insight fact for module 17).
 - **Web**: `/reports` (`web/app/(crm)/reports/page.tsx`, kit `KpiTile` + `DataTable`, filters in the URL, the CSV
   through the BFF line `reports/(summary|tiles|export)`), the Home tiles (`components/reports/HomeTiles.tsx`; a failed
   read shows nothing), the access log names a report download.
+## CRM-31 onboarding + import (AA-962)
+
+Design v3 §2.7 "Onboarding (Fix E2)", §11.5, R6, R43 (in-app); errata S247 §1 / §2 (Connections, controller settings,
+the owner acknowledgement). Implementation notes: `docs/implementation-notes/AA-962.md`.
+
+- **Checklist** (`app/onboarding.py`, `GET /crm/v1/onboarding`, every role): three required steps (connect a mailbox,
+  invite the team, embed the inquiry form) and optional ones (import clients, review duplicates, card payments or bank
+  transfer, deposit rules, templates, privacy settings, kickoff call, help centre). Done = the agency's data shows it
+  (a connected `channel_account`, a second member or an invitation, an inquiry from a form, an imported client, ...) or,
+  for the steps the data cannot show, the owner's mark (`PUT /onboarding/steps/{key}` `done` / `later` / `open`,
+  `ONBOARDING_MANAGE`, owner). A required step never goes on "Later". Home shows the required steps and the open
+  optional ones; `/onboarding` the full list.
+- **Connections** (same read): mailbox, card payments (Stripe; bank transfer as a flag), SMS / WhatsApp (Twilio), the
+  ICS calendar feed and an e-sign provider when one exists, each in `not_set_up` / `connected` / `needs_attention` /
+  `disconnected`, read from `channel_account`, `payment_provider_account`, `integration_credential`, `calendar_feed`:
+  status codes only, never a credential, account reference or address. Web: Settings > Connections and privacy.
+- **Controller settings and acknowledgement** (`PUT /onboarding/controller`, `POST /onboarding/acknowledgement`,
+  `DATA_SETTINGS`, owner): the privacy-notice link (https), the data-request contact (one line), the agency's consent
+  wording; the version of the shared-responsibility text (`ACK_VERSION`, the text is in the web EN / VI; a proposal
+  until the business owner's legal wording replaces it, then a new version asks again), who and when, one
+  `acknowledge` audit event. 409 `version_changed` for another version.
+- **Import** (`app/imports/`, `CLIENT_IMPORT`, owner; web Settings > Import clients): four files in the design's order,
+  clients (`client_ref`, `name`, optional contact fields, DOB, nationality, channel, marketing consent),
+  relationships (two client refs and a relation kind), trips (`trip_ref`, the lead's `client_ref`, `title`, dates,
+  status `completed` / `cancelled` / `lost` / `inquiry`, companions), notes (`text` and a client or trip ref). CSV
+  (comma, semicolon or tab; UTF-8) or the first sheet of an `.xlsx` (`formats.py`, a standard-library reader with
+  size caps), at most 5 MB and 5,000 rows. `POST /client-imports/preview?entity=` (raw body) is the dry run: **a missing
+  column is 422 `missing_columns` before anything is read or written (card R)**; otherwise the counts per outcome
+  (`create`, `match`, `already_imported`, `duplicate_in_file`, `invalid`), the `possible_duplicate` warnings and up to
+  200 row issues (row numbers and codes, never a value) and the file's SHA-256. `POST /client-imports?entity=&sha256=`
+  starts the job with the same file (409 `file_changed` otherwise); `GET /client-imports[/{id}]` reads the progress
+  from the job rows (no import table: a run leaves no personal data behind). Dedupe: the row's ref
+  (`import_ref_bidx`, **re-running an import creates nothing, card E**), then the e-mail / phone blind index (a known
+  client is matched and gets the ref, nothing else changes), then the earlier rows of the file. Imported clients get
+  `lead_source = 'import'` and belong to the importing owner; a marketing consent column writes one `consent` row
+  (`source = 'import'`) for a new client only. Trips: one `trip_stage_history` row (reason `import`), both party twins,
+  age bands at departure. `phone_region` (ISO alpha-2) reads local numbers without `+`.
+- **Duplicates and merge** (`app/travellers/merge.py`): `GET /client-duplicates` (every role, one `list_view` event)
+  lists live clients sharing the normalised name, e-mail or phone (blind indexes, no decrypt to find them);
+  `POST /travelers/{keep_id}/merge {other_traveler_id}` (`CLIENT_MERGE`, owner) moves trips (both twins; the lead role
+  when both were on a trip), notes, documents, conversations, dispatch rows, call slots and public-form submissions,
+  re-makes relationships from the kept client, copies consents (time and source kept), moves health codes when the kept
+  client has none, fills the F1 fields the kept client lacks (re-sealed under its row id) and the import ref, then puts
+  the other client in the trash (`app/lifecycle/trash.py`: its purge erases the rest, one F1 record stays). 409
+  `merge_blocked` (with `blockers` and `swap_possible`) when the client that would go has client links, portal access,
+  signatures or accepted terms (that evidence names it); 409 `legal_hold` for a held client.
+- **Help** (`web/app/(crm)/help/page.tsx`): the guides each step and connection links to (`/help#<topic>`), EN / VI.
 
 ## CRM-30 duty of care + calendar (AA-961)
 
