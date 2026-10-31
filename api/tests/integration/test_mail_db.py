@@ -277,6 +277,26 @@ async def test_a_send_whose_retries_run_out_fails_the_message(app_pool: asyncpg.
     assert status == "failed:retries_exhausted"
 
 
+async def test_a_message_to_an_invalid_address_is_recorded_and_never_sent(app_pool: asyncpg.Pool) -> None:
+    """AA-1014: a synthetic client at a reserved ``.invalid`` domain (RFC 6761) gets no mail through the agency's
+    mailbox; the message ends ``failed`` / ``invalid_tld`` and its dispatch row ``dropped`` / ``send_failed``."""
+    d = await _setup(app_pool)
+    async with tenant_tx(app_pool, d["owner"], d["tenant"], action=Action.CLIENT_EDIT) as ctx:
+        sealed = await Vault(d["keys"], ctx).encrypt("traveler", "email_enc", d["lead"], "Hoa@Tour.Example.INVALID")
+        await ctx.conn.execute("UPDATE crm.traveler SET email_enc = $2 WHERE traveler_id = $1", d["lead"], sealed)
+    provider = FakeProvider()
+    message_id, job = await _send(app_pool, d)
+    result = await build_dispatch(MailSender(MailRuntime(keys=d["keys"], providers={"gmail": provider})))(app_pool, job)
+    assert result["status"] == "dropped" and result["reason_code"] == "send_failed"
+    assert provider.sent == []
+    status = await _scalar(
+        app_pool, d["tenant"], "SELECT status || ':' || failure_code FROM crm.message WHERE message_id = $1", message_id
+    )
+    assert status == "failed:invalid_tld"
+    gate = await _scalar(app_pool, d["tenant"], "SELECT status || ':' || gate_result FROM crm.dispatch_queue")
+    assert gate == "dropped:send_failed"
+
+
 PROVIDER_ID = "<CAKnvzAQx-Q=WQ3_providerid@mail.gmail.com>"
 PROVIDER_OF = {"gmail": "google", "microsoft": "microsoft", "smtp": "smtp"}
 

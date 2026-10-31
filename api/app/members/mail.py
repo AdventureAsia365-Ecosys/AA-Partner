@@ -13,6 +13,9 @@ Two messages, each in English then Vietnamese in one mail (the person's language
 
 Mail bodies hold no client data. Nothing here is logged except ids and the SES message id.
 
+An address in the reserved ``.invalid`` top-level domain (:mod:`app.mail.recipients`, AA-1014) is never handed to
+SES: :meth:`SesMailer.send` logs the skip and returns an empty message id.
+
 Configuration: ``SES_FROM_ADDRESS`` (the AA sender, ``ses:FromAddress`` pins it in IAM) and
 ``SES_CONFIGURATION_SET`` (the transactional stream). Without them, outside test / local, sending answers 503
 ``mail_not_configured``; test / local use :class:`MemoryMailer`.
@@ -28,6 +31,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from app.errors import Unavailable
+from app.mail.recipients import INVALID_TLD, deliverable
 
 log = logging.getLogger(__name__)
 
@@ -226,6 +230,11 @@ class SesMailer:
             return self._client
 
     async def send(self, message: Message) -> str:
+        if not deliverable([message.to]):
+            # AA-1014: a .invalid address never resolves (RFC 6761); a bounce would only count against AA's sender.
+            log.info("crm_system_mail_skipped kind=%s reason=%s", message.kind, INVALID_TLD)
+            return ""
+
         def call() -> str:
             resp = self._ses().send_email(
                 FromEmailAddress=self.from_address,

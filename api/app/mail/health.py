@@ -31,6 +31,7 @@ from app.jobs.queue import Job
 from app.jobs.worker import Handler
 from app.mail import compose
 from app.mail.providers import AuthRevoked, ProviderError, Rejected
+from app.mail.recipients import deliverable
 from app.mail.sender import load_secret, store_rotated
 from app.mail.state import MailRuntime, alert_owners, mark_connected, mark_disconnected
 from app.members.mail import mailbox_test_message
@@ -141,6 +142,8 @@ async def test_mailbox(
         raise NotFound("mailbox_not_found")
     outcome, secret = await _check(ctx, runtime, row)
     sent = False
+    # AA-1014: never a test mail to a .invalid address (it only bounces back to the mailbox).
+    to_address = (deliverable([to_address]) or [None])[0] if to_address else None
     if outcome.startswith("ok") and secret is not None and to_address and runtime.keys is not None:
         vault = Vault(runtime.keys, ctx)
         from_address = await vault.decrypt(

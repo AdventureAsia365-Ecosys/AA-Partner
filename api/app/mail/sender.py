@@ -21,6 +21,11 @@ A portal code mail (AA-946 review S251: an ``otp_challenge`` row names the messa
 (:data:`app.portal.codes.CODE_MASK`); the code is opened from ``otp_challenge.code_enc`` here, put into the mail and
 cleared once sent. A code that is no longer pending or has expired -> the message ``failed`` (``code_expired``).
 
+AA-1014: a client address in the reserved ``.invalid`` top-level domain (:mod:`app.mail.recipients`; synthetic
+agencies, every environment) is never handed to the provider: the message ends ``failed`` (``invalid_tld``) and the
+dispatch row ``dropped`` / ``send_failed``. The action that queued the mail (proposal sent, portal code issued) is
+already committed and stays as it is.
+
 Nothing here logs an address, a subject or a body.
 """
 
@@ -34,6 +39,7 @@ from typing import Any
 from app.mail import compose
 from app.mail.parse import id_hash
 from app.mail.providers import AuthRevoked, Rejected
+from app.mail.recipients import INVALID_TLD, deliverable
 from app.mail.state import MailRuntime, alert_owners, mark_disconnected
 from app.portal.codes import CODE_MASK
 from app.tenancy import AnyContext, SystemContext
@@ -132,6 +138,12 @@ class MailSender:
             await ctx.conn.execute(FAIL_SQL, message_id, "no_client_address")
             return "send_failed"
         to_address = await vault.decrypt("traveler", "email_enc", row["traveler_id"], to_enc)
+        recipients = deliverable([to_address])
+        if not recipients:
+            # AA-1014: a .invalid address never resolves (RFC 6761); the provider is never called, nothing bounces.
+            await ctx.conn.execute(FAIL_SQL, message_id, INVALID_TLD)
+            log.info("mail_send_skipped reason=%s", INVALID_TLD)
+            return "send_failed"
         from_address = await vault.decrypt(
             "channel_account", "address_enc", mailbox["channel_account_id"], mailbox["address_enc"], purpose=PURPOSE
         )
@@ -172,7 +184,7 @@ class MailSender:
         )
         secret = await load_secret(vault, mailbox["credential_id"], mailbox["secret_enc"])
         try:
-            result = await provider.send(built.raw, secret, [to_address])
+            result = await provider.send(built.raw, secret, recipients)
         except AuthRevoked as exc:
             await ctx.conn.execute(HOLD_SQL, message_id, exc.code)
             if await mark_disconnected(ctx, mailbox["channel_account_id"], mailbox["credential_id"], exc.code):
