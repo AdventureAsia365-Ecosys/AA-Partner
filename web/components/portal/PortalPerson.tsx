@@ -378,8 +378,12 @@ export function PartySection({
                   e.preventDefault();
                   void step("POST", "/companions", { traveler_id: p.traveler_id, email: email.trim() || null }, (d) => {
                     setOpen(null);
-                    const link = typeof d.link_path === "string" ? `${window.location.origin}${d.link_path}` : "";
-                    onInvited(fmt(t("client.inviteLink"), { name, link }));
+                    // Their own address: the link went there, never to the lead (the API returns no link_path).
+                    if (typeof d.link_path === "string") {
+                      onInvited(fmt(t("client.inviteLink"), { name, link: `${window.location.origin}${d.link_path}` }));
+                    } else {
+                      onInvited(fmt(t("client.inviteSent"), { name }));
+                    }
                   });
                 }}
                 style={{ display: "grid", gap: 6, padding: "8px 10px", border: `1px solid ${K.line}`, borderRadius: 8 }}

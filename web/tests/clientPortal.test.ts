@@ -91,7 +91,7 @@ describe("pure helpers", () => {
     const keys = Object.keys(en).filter((k) => /^client\.(whoAreYou|flight|scan|document|reach|portal\.|invite|companion|switchTo|signedInAs|service\.|tripTitle)/.test(k));
     expect(keys.length).toBeGreaterThan(30);
     for (const k of keys) expect(vi[k] && vi[k] !== en[k], k).toBeTruthy();
-    for (const code of ["not_your_traveller", "lead_only", "email_in_use", "document_write_only", "document_not_yours", "invalid_flight", "body_too_large"]) {
+    for (const code of ["not_your_traveller", "lead_only", "email_in_use", "already_invited", "ask_your_agent", "too_many_attempts", "document_write_only", "document_not_yours", "invalid_flight", "body_too_large"]) {
       expect(clientErrorKey(code)).toBe(`client.error.${code}`);
       expect(en[`client.error.${code}`]).toBeTruthy();
     }
@@ -198,5 +198,30 @@ describe("the portal page", () => {
     expect(child.getAttribute("data-reach")).toBe("via_you");
     expect(child.textContent).toContain("through your e-mail");
     expect(el.querySelector<HTMLInputElement>('[data-testid="portal-field-passport_no"]')!.value).toBe("");
+  });
+
+  it("a companion given their own address: the link goes to them, the lead sees no link", async () => {
+    const posted: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        if (init.method === "GET") return reply(200, HOME);
+        posted.push(JSON.parse(String(init.body ?? "{}")) as Record<string, unknown>);
+        return reply(200, { traveler_id: CHILD, reach: "own", link_path: null, expires_at: "2026-12-01T00:00:00+00:00" });
+      }),
+    );
+    const el = await mount();
+    await act(async () => el.querySelector<HTMLButtonElement>('[data-testid="portal-invite-open-1"]')!.click());
+    const input = el.querySelector<HTMLInputElement>('[data-testid="portal-invite-email"]')!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(input, "pip.castell@example.test");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => el.querySelector<HTMLButtonElement>('[data-testid="portal-invite-send"]')!.click());
+    expect(posted.at(-1)).toEqual({ traveler_id: CHILD, email: "pip.castell@example.test" });
+    const note = el.querySelector('[data-testid="portal-note"]')?.textContent ?? "";
+    expect(note).toContain("Pip Castell's link goes to their own e-mail address");
+    expect(note).not.toContain("/c/t/");
   });
 });
