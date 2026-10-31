@@ -76,6 +76,7 @@ from app.routers import (
     proposal_text,
     proposals,
     public,
+    reports,
     staff,
     team,
     travellers,
@@ -248,6 +249,7 @@ def create_app(
     app.include_router(esign.router)
     app.include_router(duty.router)
     app.include_router(calendar.router)
+    app.include_router(reports.router)
     app.include_router(builder.router)
     app.include_router(proposal_text.router)
     app.include_router(mail.router)

@@ -31,6 +31,10 @@ POST   ``/tenants/{id}/jobs/{job_id}/retry``       re-queue one, 202
 POST   ``/tenants/{id}/studio-invitations``         AA-979 P2b: deliver a CIS Content studio invitation, 202
 =====  ==========================================  =============================================================
 
+AA-966 (crm.ops.v1 1.5, spec module 17, design S-03): ``GET /insights?dimension=&from=&to=``, AA insights across
+agencies (:func:`console.platform_insights`): a cell only with at least 10 travellers from at least 3 agencies, an
+opted-out agency never read; no agency id; no per-agency audit event (as ``/data-coverage``).
+
 AA-979 (crm.ops.v1 1.3): ``POST /tenants/{id}/studio-invitations`` ``{email, cis_invitation_id, locale}`` — the CIS
 staff relay (Tenant 360 Members invite / send again) hands over the address of an invitation CIS created; the CRM sends
 the AA system mail and owns the claim (:mod:`app.members.studio`). ``{id}`` is the CIS tenant, which may have no CRM
@@ -287,6 +291,28 @@ class DataCoverage(_Out):
     catalog_cache: CatalogCacheCounts
 
 
+# crm.ops.v1 1.5 (AA-966, spec module 17, design S-03): AA insights, published cells only (>= 10 travellers from >= 3
+# agencies); no agency id, no total.
+class InsightCell(_Out):
+    bucket: str
+    traveller_count: int
+    agency_count: int
+
+
+class Insights(_Out):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    generated_at: str
+    dimension: str
+    from_: str = Field(alias="from")
+    to: str
+    agencies_included: int
+    agencies_opted_out: int
+    k_min: int
+    agencies_min: int
+    cells: list[InsightCell]
+    suppressed_cells: int
+
+
 # ── Request bodies ───────────────────────────────────────────────────────────────────────────────
 class TenantCreate(_In):
     tenant_id: uuid.UUID
@@ -360,6 +386,37 @@ async def get_llm_usage(
 async def data_coverage(request: Request, caller: Reader) -> dict:
     pool = await request_pool(request)
     return await console.platform_coverage(pool, staff_sub=caller.sub)
+
+
+# ── AA-966: AA insights (crm.ops.v1 1.5, the CIS admin page S-03) ──────────────────────────────────────────────
+InsightDimension = Literal["destination", "budget_band", "age_band", "party_size", "stage_reached", "lost_reason_code"]
+MAX_INSIGHT_MONTHS = 36
+
+
+@router.get("/insights", response_model=Insights, response_model_by_alias=True)
+async def get_insights(
+    request: Request,
+    caller: Reader,
+    dimension: InsightDimension,
+    from_: Annotated[date, Query(alias="from")],
+    to: Annotated[date, Query()],
+) -> dict:
+    """Cross-agency totals of one dimension over the months from ``from`` to ``to`` (any day picks its month)."""
+    month_from, month_to = from_.replace(day=1), to.replace(day=1)
+    months = (month_to.year - month_from.year) * 12 + month_to.month - month_from.month
+    if months < 0 or months >= MAX_INSIGHT_MONTHS:
+        raise HTTPException(status_code=422, detail="invalid_range")
+    pool = await request_pool(request)
+    # Dev and stg hold synthetic agencies only (ADR 0010 decision 3), so they count there; on prod they never do.
+    synthetic = request.app.state.settings.environment != "prod"
+    return await console.platform_insights(
+        pool,
+        staff_sub=caller.sub,
+        dimension=dimension,
+        month_from=month_from,
+        month_to=month_to,
+        include_synthetic=synthetic,
+    )
 
 
 # ── AA-941: the console ──────────────────────────────────────────────────────────────────────────
