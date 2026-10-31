@@ -4,8 +4,23 @@
 // 0006b decision 6). Here the token's claims are only read to know whose session it is (sub, iss, client) and when it
 // expires; a token whose token_use / client_id do not match this client is refused anyway.
 
+//
+// AA-1019: the same flow serves the AA staff console with the WORKFORCE crm-staff client (lib/staffSession.ts
+// staffClient): every function takes an OAuthClient, which the agency WebConfig satisfies as it is.
+
 import { createHash, randomBytes } from "node:crypto";
-import type { WebConfig } from "./config";
+
+/** One confidential Cognito app client on this host. The agency WebConfig is one (paths default to the agency's). */
+export interface OAuthClient {
+  publicOrigin: string;
+  cognitoDomain: string;
+  cognitoClientId: string;
+  cognitoClientSecret: string;
+  /** Default "/auth/callback". */
+  callbackPath?: string;
+  /** The page Cognito's logout returns to. Default "/signed-out". */
+  logoutPath?: string;
+}
 
 export const SCOPES = "openid email profile";
 const TOKEN_TIMEOUT_MS = 10_000;
@@ -23,6 +38,8 @@ export interface AccessClaims {
   iss: string;
   clientId: string;
   exp: number;
+  /** cognito:groups (strings only). Shown by the staff console; the API decides on its own copy of the token. */
+  groups: string[];
 }
 
 export class OAuthError extends Error {
@@ -42,12 +59,12 @@ export function pkceChallenge(verifier: string): string {
   return createHash("sha256").update(verifier).digest("base64url");
 }
 
-export function callbackUrl(cfg: WebConfig): string {
-  return `${cfg.publicOrigin}/auth/callback`;
+export function callbackUrl(cfg: OAuthClient): string {
+  return `${cfg.publicOrigin}${cfg.callbackPath ?? "/auth/callback"}`;
 }
 
 export function authorizeUrl(
-  cfg: WebConfig,
+  cfg: OAuthClient,
   p: { state: string; verifier: string; nonce: string; lang: "en" | "vi" },
 ): string {
   const q = new URLSearchParams({
@@ -64,18 +81,18 @@ export function authorizeUrl(
   return `${cfg.cognitoDomain}/oauth2/authorize?${q.toString()}`;
 }
 
-export function logoutUrl(cfg: WebConfig): string {
-  const q = new URLSearchParams({ client_id: cfg.cognitoClientId, logout_uri: `${cfg.publicOrigin}/signed-out` });
+export function logoutUrl(cfg: OAuthClient): string {
+  const q = new URLSearchParams({ client_id: cfg.cognitoClientId, logout_uri: `${cfg.publicOrigin}${cfg.logoutPath ?? "/signed-out"}` });
   return `${cfg.cognitoDomain}/logout?${q.toString()}`;
 }
 
-function basicAuth(cfg: WebConfig): string {
+function basicAuth(cfg: OAuthClient): string {
   const id = encodeURIComponent(cfg.cognitoClientId);
   const secret = encodeURIComponent(cfg.cognitoClientSecret);
   return `Basic ${Buffer.from(`${id}:${secret}`).toString("base64")}`;
 }
 
-async function tokenCall(cfg: WebConfig, body: URLSearchParams, fetchImpl: Fetch): Promise<TokenSet> {
+async function tokenCall(cfg: OAuthClient, body: URLSearchParams, fetchImpl: Fetch): Promise<TokenSet> {
   let res: Response;
   try {
     res = await fetchImpl(`${cfg.cognitoDomain}/oauth2/token`, {
@@ -103,7 +120,7 @@ async function tokenCall(cfg: WebConfig, body: URLSearchParams, fetchImpl: Fetch
   };
 }
 
-export function exchangeCode(cfg: WebConfig, code: string, verifier: string, fetchImpl: Fetch = fetch) {
+export function exchangeCode(cfg: OAuthClient, code: string, verifier: string, fetchImpl: Fetch = fetch) {
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     client_id: cfg.cognitoClientId,
@@ -114,7 +131,7 @@ export function exchangeCode(cfg: WebConfig, code: string, verifier: string, fet
   return tokenCall(cfg, body, fetchImpl);
 }
 
-export function refreshTokens(cfg: WebConfig, refreshToken: string, fetchImpl: Fetch = fetch) {
+export function refreshTokens(cfg: OAuthClient, refreshToken: string, fetchImpl: Fetch = fetch) {
   const body = new URLSearchParams({
     grant_type: "refresh_token",
     client_id: cfg.cognitoClientId,
@@ -124,7 +141,7 @@ export function refreshTokens(cfg: WebConfig, refreshToken: string, fetchImpl: F
 }
 
 /** Revoke a refresh token at sign-out (best effort: the session cookies are cleared either way). */
-export async function revoke(cfg: WebConfig, refreshToken: string, fetchImpl: Fetch = fetch): Promise<boolean> {
+export async function revoke(cfg: OAuthClient, refreshToken: string, fetchImpl: Fetch = fetch): Promise<boolean> {
   try {
     const res = await fetchImpl(`${cfg.cognitoDomain}/oauth2/revoke`, {
       method: "POST",
@@ -140,7 +157,7 @@ export async function revoke(cfg: WebConfig, refreshToken: string, fetchImpl: Fe
 }
 
 /** The claims of a Cognito access token issued to THIS client, or an OAuthError. No signature check (see above). */
-export function accessClaims(cfg: WebConfig, token: string): AccessClaims {
+export function accessClaims(cfg: OAuthClient, token: string): AccessClaims {
   const parts = token.split(".");
   if (parts.length !== 3) throw new OAuthError("token_malformed");
   let payload: Record<string, unknown>;
@@ -154,5 +171,7 @@ export function accessClaims(cfg: WebConfig, token: string): AccessClaims {
   if (typeof sub !== "string" || typeof iss !== "string" || typeof exp !== "number") {
     throw new OAuthError("token_malformed");
   }
-  return { sub, iss, clientId, exp };
+  const raw = payload["cognito:groups"];
+  const groups = Array.isArray(raw) ? raw.filter((g): g is string => typeof g === "string") : [];
+  return { sub, iss, clientId, exp, groups };
 }

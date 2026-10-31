@@ -12,6 +12,11 @@ export const ENV = {
   COGNITO_CLIENT_SECRET: "cccccccc",
   WEB_SESSION_SECRET: "ssssssssssssssssssssssssssssssssssssssss",
   CONTENT_STUDIO_URL: "https://portal.example.test",
+  // AA-1019: the staff console's WORKFORCE client and its own cookie key (fake values).
+  STAFF_COGNITO_DOMAIN: "https://staff-auth.example.test",
+  STAFF_COGNITO_CLIENT_ID: "staffclient456",
+  STAFF_COGNITO_CLIENT_SECRET: "dddddddd",
+  STAFF_SESSION_SECRET: "tttttttttttttttttttttttttttttttttttttttt",
   APP_VERSION: "0.1.0",
   GIT_SHA: "abc123",
 };
@@ -47,3 +52,10 @@ export function cookieHeader(res: Response): string {
     .map((c) => c.split(";")[0])
     .join("; ");
 }
+
+/** AA-1019: a fake WORKFORCE access token of the crm-staff client with the given groups. */
+export function fakeStaffToken(groups: string[] = ["crm-ops"], claims: Record<string, unknown> = {}): string {
+  return fakeAccessToken({ client_id: ENV.STAFF_COGNITO_CLIENT_ID, iss: STAFF_ISS, sub: "staff-1", "cognito:groups": groups, ...claims });
+}
+
+export const STAFF_ISS = "https://cognito-idp.example.test/workforce";

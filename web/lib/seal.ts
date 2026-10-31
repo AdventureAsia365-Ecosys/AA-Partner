@@ -11,7 +11,17 @@ import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:cr
 
 // "client-search": the clients directory search term (AA-937, lib/clientSearch.ts), kept out of URLs.
 // "invite" / "invite-claim": the invitation token and the claim result of the join pages (AA-939, lib/invite.ts).
-export type Purpose = "session" | "refresh" | "oauth-tx" | "client-search" | "invite" | "invite-claim";
+// "staff-*": the AA staff console's own cookies (AA-1019, lib/staffSession.ts), sealed with STAFF_SESSION_SECRET.
+export type Purpose =
+  | "session"
+  | "refresh"
+  | "oauth-tx"
+  | "client-search"
+  | "invite"
+  | "invite-claim"
+  | "staff-session"
+  | "staff-refresh"
+  | "staff-oauth-tx";
 
 const VERSION = 1;
 const IV_BYTES = 12;

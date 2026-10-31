@@ -20,6 +20,15 @@
 //   CIS_API_URL            https://<CIS API host>             AA-979 P2b: the public CIS API the client-host trip page
 //                                                              /trip/<id> reads (GET /v1/trip/{id}); optional, empty =
 //                                                              trip pages answer 500 (lib/tripPage.ts)
+//   STAFF_COGNITO_DOMAIN   https://<WORKFORCE managed login>  AA-1019: the AA staff console (/staff/*) signs in with the
+//                                                              WORKFORCE pool's crm-staff client (root ADR 0006b
+//                                                              decision 6), never with the agency's partner client
+//   STAFF_COGNITO_CLIENT_ID      the crm-staff app client
+//   STAFF_COGNITO_CLIENT_SECRET  its secret (Secrets Manager key staff_cognito_client_secret of the web secret)
+//   STAFF_SESSION_SECRET         >= 32 random characters: seals the staff cookies only (key staff_session_secret), so
+//                                the agency session key (shared with the Content studio) can never open one
+//                                Any staff value missing = the staff console is off (its pages say so); the agency
+//                                app is unaffected.
 //   ENVIRONMENT            dev | stg | prod | test | local
 //   APP_VERSION, GIT_SHA   baked into the image, echoed by /healthz
 
@@ -46,6 +55,15 @@ export interface WebConfig {
   problems: string[];
   /** Cookies carry Secure and the __Host- / __Secure- prefixes (false only for http://localhost development). */
   secureCookies: boolean;
+  /** AA-1019: the AA staff console's WORKFORCE sign-in (crm-staff client) and its own cookie key. */
+  staffCognitoDomain: string;
+  staffCognitoClientId: string;
+  staffCognitoClientSecret: string;
+  staffSessionSecret: string;
+  /** Every staff value is present and valid (and the public origin is): the staff console can sign in. */
+  staffAuthConfigured: boolean;
+  /** What is missing for the staff console (names only). */
+  staffProblems: string[];
 }
 
 const ENVIRONMENTS: readonly Environment[] = ["dev", "stg", "prod", "test", "local"];
@@ -105,6 +123,21 @@ export function loadConfig(env: Env = process.env): WebConfig {
   const cisApiUrl = origin(text(env, "CIS_API_URL"), local) ?? "";
 
   const secureCookies = !(local && publicOrigin.startsWith("http://"));
+
+  // AA-1019: the staff console. Its own client and its own cookie key; never the agency's values.
+  const staffProblems: string[] = [];
+  const staffCognitoDomain = origin(text(env, "STAFF_COGNITO_DOMAIN"), false) ?? "";
+  if (!staffCognitoDomain) staffProblems.push("STAFF_COGNITO_DOMAIN");
+  const staffCognitoClientId = text(env, "STAFF_COGNITO_CLIENT_ID");
+  if (!/^[A-Za-z0-9]{1,128}$/.test(staffCognitoClientId) || staffCognitoClientId === cognitoClientId) {
+    staffProblems.push("STAFF_COGNITO_CLIENT_ID");
+  }
+  const staffCognitoClientSecret = text(env, "STAFF_COGNITO_CLIENT_SECRET");
+  if (!staffCognitoClientSecret) staffProblems.push("STAFF_COGNITO_CLIENT_SECRET");
+  const staffSessionSecret = text(env, "STAFF_SESSION_SECRET");
+  if (staffSessionSecret.length < MIN_SECRET || staffSessionSecret === sessionSecret) staffProblems.push("STAFF_SESSION_SECRET");
+  if (!publicOrigin) staffProblems.push("WEB_PUBLIC_ORIGIN");
+  if (!crmApiOrigin) staffProblems.push("CRM_API_ORIGIN");
   return {
     environment,
     publicOrigin,
@@ -122,6 +155,12 @@ export function loadConfig(env: Env = process.env): WebConfig {
     authConfigured: problems.length === 0,
     problems,
     secureCookies,
+    staffCognitoDomain,
+    staffCognitoClientId,
+    staffCognitoClientSecret,
+    staffSessionSecret,
+    staffAuthConfigured: staffProblems.length === 0,
+    staffProblems,
   };
 }
 

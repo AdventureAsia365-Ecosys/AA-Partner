@@ -16,6 +16,7 @@ import { onboardingEn, onboardingVi } from "./i18nOnboarding";
 import { commissionEn, commissionVi } from "./i18nCommission";
 import { offlineEn, offlineVi } from "./i18nOffline";
 import { opsReleaseEn, opsReleaseVi } from "./i18nOpsRelease";
+import { staffEn, staffVi } from "./i18nStaff";
 import { supportEn, supportVi } from "./i18nSupport";
 import { pluralsEn, pluralsVi } from "./i18nPlurals";
 import { tripClosedEn, tripClosedVi } from "./i18nTripClosed";
@@ -53,6 +54,7 @@ const en = {
   ...commissionEn, // AA-957: A-12 Commissions, commission follow-up, the cancel dialog (lib/i18nCommission.ts)
   ...tripClosedEn, // AA-957 round 3: a cancelled trip on every card, lead sources (lib/i18nTripClosed.ts)
   ...pluralsEn, // AA-957 round 3: the singular of counted messages, read by plural() (lib/i18nPlurals.ts)
+  ...staffEn, // AA-1019: the AA staff console, S-02 and S-04 (lib/i18nStaff.ts)
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Home",
@@ -2682,6 +2684,7 @@ const vi: Record<MessageKey, string> = {
   ...commissionVi,
   ...tripClosedVi,
   ...pluralsVi,
+  ...staffVi,
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Trang chủ",
