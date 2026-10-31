@@ -5,6 +5,7 @@
 - Erasure without a replaced ``crm.erase_subject``: every key cascades, so a trip erase, a traveller erase and an
   agency erase leave no flight; a held trip keeps its flights (``crm.guard_held_flight``), and another agency's hold
   never stops this agency's erase (a cascade runs without the agency's RLS).
+- ``crm.otp_challenge.sent_to_bidx``: a new nullable column (expand), tagged ``pii:contact``, no reader grant.
 """
 
 from __future__ import annotations
@@ -44,6 +45,21 @@ async def _flight(pool: asyncpg.Pool, ids: dict[str, Any], who: str = "lead", **
 
 async def test_crm029_is_registered(admin: asyncpg.Connection) -> None:
     assert await admin.fetchval("SELECT 1 FROM shared.schema_versions WHERE version = 'crm-029'") == 1
+
+
+async def test_a_code_keeps_the_address_it_went_to(admin: asyncpg.Connection) -> None:
+    column = await admin.fetchrow(
+        "SELECT format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull AS not_null, a.atthasdef AS has_default, "
+        "col_description(a.attrelid, a.attnum) AS comment FROM pg_attribute a "
+        "WHERE a.attrelid = 'crm.otp_challenge'::regclass AND a.attname = 'sent_to_bidx' AND NOT a.attisdropped"
+    )
+    assert column is not None and column["type"] == "bytea"
+    assert not column["not_null"] and not column["has_default"]  # expand: nullable, no default, no table rewrite
+    assert column["comment"].startswith("pii:contact;")
+    for reader in READERS:
+        assert not await admin.fetchval(
+            "SELECT has_column_privilege($1, 'crm.otp_challenge', 'sent_to_bidx', 'SELECT')", reader
+        )
 
 
 async def test_the_table_is_private_to_the_agency_and_the_app(

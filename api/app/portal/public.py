@@ -146,7 +146,7 @@ UPDATE crm.traveler_access SET last_sign_in_at = now(),
  WHERE access_id = $1
 """
 SESSION_SQL = """
-SELECT otp_id, access_id, traveler_id FROM crm.otp_challenge
+SELECT otp_id, access_id, traveler_id, sent_to_bidx FROM crm.otp_challenge
  WHERE trip_id = $1 AND session_hash = $2 AND status = 'verified' AND session_expires_at > now()
 """
 END_SESSION_SQL = """
@@ -155,6 +155,8 @@ UPDATE crm.otp_challenge SET status = 'expired' WHERE trip_id = $1 AND session_h
 # Fix E4: the picked (or switched-to) traveller takes the session row; the code was sent to the address that reaches
 # both of them (app.portal.person.group_of), so the row keeps its proof and changes only whom it acts as.
 REBIND_SQL = "UPDATE crm.otp_challenge SET access_id = $2, traveler_id = $3 WHERE otp_id = $1"
+# The session's proof: the blind index of the address the code went to (crm-029; app.portal.person.delivery_bidx).
+SENT_TO_SQL = "UPDATE crm.otp_challenge SET sent_to_bidx = $2 WHERE otp_id = $1"
 EMAIL_SQL = "SELECT email_enc FROM crm.traveler WHERE traveler_id = $1 AND deleted_at IS NULL"
 MAILBOX_SQL = """
 SELECT channel_account_id FROM crm.channel_account
@@ -265,17 +267,24 @@ async def _session_row(ctx: AnyContext, access: Any, session: str | None) -> Any
 
 async def _signed_in(ctx: AnyContext, access: Any, session: str | None) -> Any:
     """The access the session acts as: the link's own, or (Fix E4) another traveller of the trip whose codes go to the
-    same address as the link's traveller, picked after the code or switched to. Anything else: 403
-    ``portal_sign_in_required`` (a session of another trip, of another address, or of an access since revoked)."""
+    same address as the link's traveller, picked after the code or switched to. **The session is bound to the address
+    its code went to** (``sent_to_bidx``): the traveller it acts as (and the link's traveller) must still be reached
+    through that address now, so a companion who has since got an address of their own, or a lead whose address the
+    agency changed, ends every session proven by the old address, even on the companion's new link. Anything else: 403
+    ``portal_sign_in_required`` (a session of another trip, of another address, of an address since changed, or of an
+    access since revoked)."""
     found = await _session_row(ctx, access, session)
-    if found["access_id"] == access["access_id"]:
-        return access
     members = await person.party(ctx, access["trip_id"])
-    reach = person.delivery_of(members, access["traveler_id"])
-    if reach is not None and person.delivery_of(members, found["traveler_id"]) == reach:
-        acting = await ctx.conn.fetchrow(ACCESS_BY_ID_SQL, found["access_id"], access["trip_id"])
-        if acting is not None:
-            return acting
+    proof = found["sent_to_bidx"]
+    acting_reach = person.delivery_bidx(members, found["traveler_id"])
+    if proof is not None and acting_reach is not None and hmac.compare_digest(bytes(proof), acting_reach):
+        if found["access_id"] == access["access_id"]:
+            return access
+        reach = person.delivery_of(members, access["traveler_id"])
+        if reach is not None and person.delivery_of(members, found["traveler_id"]) == reach:
+            acting = await ctx.conn.fetchrow(ACCESS_BY_ID_SQL, found["access_id"], access["trip_id"])
+            if acting is not None:
+                return acting
     raise Forbidden("portal_sign_in_required", "sign in with the code we e-mail you")
 
 
@@ -296,11 +305,14 @@ async def _deliver(
     """Queue the code mail from the agency's own mailbox; the masked address, or None when no mailbox can send.
     The stored message carries :data:`CODE_MASK`; the code waits sealed on its ``otp_challenge`` row for the sender."""
     # Fix E4: a companion without an address of their own is reached through the lead's (app.portal.person).
-    to = person.delivery_of(await person.party(ctx, access["trip_id"]), access["traveler_id"])
+    members = await person.party(ctx, access["trip_id"])
+    to = person.delivery_of(members, access["traveler_id"])
     blob = await ctx.conn.fetchval(EMAIL_SQL, to) if to is not None else None
     if blob is None or to is None:
         raise Conflict("no_email_on_file", "your agent has no e-mail address for you")
     address = await vault.decrypt("traveler", "email_enc", to, blob)
+    # The session this code opens stays bound to this address (public._signed_in).
+    await ctx.conn.execute(SENT_TO_SQL, otp_id, person.delivery_bidx(members, access["traveler_id"]))
     mailbox = await ctx.conn.fetchval(MAILBOX_SQL, access["owner_member_id"])
     if mailbox is None:
         return None
@@ -994,10 +1006,17 @@ async def invite_companion(
     *,
     origin: str | None,
 ) -> dict[str, Any]:
-    """ "Companion e-mails are asked at the portal invite" (C-07): the lead gives a companion without an address of
-    their own one (or none: they then reach their page through the lead's address, Fix E4) and the companion gets
-    their portal link, returned once so the lead can forward it (the link alone opens nothing: the code goes to the
-    companion's address). Lead only (403 ``lead_only``)."""
+    """ "Companion e-mails are asked at the portal invite" (C-07), lead only (403 ``lead_only``):
+
+    - a companion **without an address of their own**: the lead gives one (``person.set_companion_email``: only for
+      a companion on this trip alone, never over an address on file, never another client's; refusals are capped and
+      audited) or none. With none, the companion reaches their page through the lead's address (Fix E4):
+      their link is (re-)issued and returned once so the lead can forward it (the lead holds that address anyway). With
+      an address, the link is (re-)issued to the companion and **not** returned to the lead: their old link (which the
+      lead may hold) is revoked, and every session proven by the lead's address ends (``_signed_in``).
+    - a companion **with an address of their own**: invited only when they have no live portal access yet, and the
+      link goes to their address only (never returned to the lead); with a live access, 409 ``already_invited`` (the
+      lead never rotates, so never revokes, another adult's link)."""
     check_origin(settings, origin)
     if not isinstance(raw, dict):
         raise Invalid("invalid_submission", "an object", fields=["body"])
@@ -1010,19 +1029,48 @@ async def invite_companion(
             ctx.audit("portal_invite", "denied", "traveler_access", str(access["access_id"]), reason="lead_only")
             raise Forbidden("lead_only", "only the lead traveller invites the party")
         members = await person.party(ctx, access["trip_id"])
-        if raw.get("email") not in (None, ""):
-            await person.set_companion_email(ctx, Vault(keys, ctx), members, companion, raw.get("email"))  # type: ignore[arg-type]
-            members = await person.party(ctx, access["trip_id"])
-        target = next((m for m in members if m.traveler_id == companion), None)
-        if target is None or target.role != "companion":
+        before = next((m for m in members if m.traveler_id == companion), None)
+        if before is None or before.role != "companion":
             raise NotFound("traveler_not_on_trip")
-        if person.delivery_of(members, companion) is None:
+        if before.has_email and before.access_id is not None:
+            ctx.audit(
+                "portal_companion_invite",
+                "denied",
+                "traveler_access",
+                str(access["access_id"]),
+                reason="already_invited",
+                object_ids=(str(companion),),
+            )
+            raise Conflict("already_invited", "they have their own link; ask your travel agent to send it again")
+        if raw.get("email") not in (None, ""):
+            await person.set_companion_email(
+                ctx,
+                Vault(keys, ctx),  # type: ignore[arg-type]
+                members,
+                access["trip_id"],
+                access["access_id"],
+                companion,
+                raw.get("email"),
+            )
+            members = await person.party(ctx, access["trip_id"])
+        reach = person.delivery_of(members, companion)
+        if reach is None:
             raise Conflict("no_email_on_file", "give their e-mail address, or add yours first")
+        own = reach == companion
         invited = await portal_access.invite(ctx, access["trip_id"], companion)
         await progress.refresh(ctx, access["trip_id"])
+        ctx.audit(  # app.portal.access.invite audits the link itself; this names the lead who asked
+            "portal_companion_invite",
+            "allowed",
+            "traveler_access",
+            invited["access_id"],
+            reason="own_address" if own else "via_lead",
+            object_ids=(str(access["access_id"]),),
+        )
         return {
             "traveler_id": str(companion),
-            "reach": "own" if target.has_email else "via_you",
-            "link_path": invited["link_path"],
+            "reach": "own" if own else "via_you",
+            # Their own address: the link goes there only (the dispatcher), never to the lead.
+            "link_path": None if own else invited["link_path"],
             "expires_at": invited["expires_at"],
         }

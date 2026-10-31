@@ -7,9 +7,11 @@ agency (the CRM refuses a second client with the same address), so "one family e
 companion without an address of their own is reached through the lead's address. :func:`delivery_of` names the
 traveller whose address gets a person's codes (their own, else the lead's when the person is a companion, else none);
 the people one address reaches (:func:`group_of`) are the "Who are you?" choices after a code, and a session may
-switch between them without a new code (the address owner proved control of it). Once the lead gives a companion an
-address of their own (:func:`set_companion_email`), the companion leaves the lead's group, and every session that
-acted as them through the lead's link ends at its next request.
+switch between them without a new code (the address owner proved control of it). **A session is bound to the
+address its code went to** (``otp_challenge.sent_to_bidx``, crm-029): it acts as a traveller only while
+:func:`delivery_bidx` of that traveller is still that address. So once a companion gets an address of their own (the
+lead at the invite, :func:`set_companion_email`, or the agency), or the agency changes the lead's address, every session
+that acted as them through the old address ends at its next request, whatever link it is presented with.
 
 **Per person (R22, §2.9 rules 2-3).** :func:`documents` lists only the documents the agency marked visible to
 travellers that belong to the trip as a whole or to this traveller; :func:`open_document` refuses (403) a write-only
@@ -34,7 +36,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.documents import service as documents
 from app.documents.store import DocumentStore
-from app.errors import Conflict, Forbidden, Invalid, NotFound, Unavailable
+from app.errors import Conflict, Forbidden, Invalid, NotFound, RateLimited, Unavailable
 from app.proposals import rules
 from app.tenancy import AnyContext
 from app.travellers.fields import clean_f1
@@ -48,7 +50,7 @@ FIRST_DAY = dt.datetime(2000, 1, 1)
 LAST_DAY = dt.datetime(2100, 1, 1)
 
 PARTY_SQL = """
-SELECT tt.traveler_id, tt.role, t.email_bidx IS NOT NULL AS has_email, t.display_name_enc,
+SELECT tt.traveler_id, tt.role, t.email_bidx IS NOT NULL AS has_email, t.email_bidx, t.display_name_enc,
        a.access_id, a.status AS access_status
   FROM crm.trip_traveler tt
   JOIN crm.traveler t ON t.traveler_id = tt.traveler_id AND t.deleted_at IS NULL
@@ -113,6 +115,20 @@ DELETE_FLIGHT_SQL = "DELETE FROM crm.traveler_flight WHERE traveler_flight_id = 
 TRAVELER_EMAIL_SQL = "SELECT email_enc FROM crm.traveler WHERE traveler_id = $1 AND deleted_at IS NULL FOR UPDATE"
 EMAIL_TAKEN_SQL = "SELECT 1 FROM crm.traveler WHERE email_bidx = $1 AND deleted_at IS NULL AND traveler_id <> $2"
 SET_EMAIL_SQL = "UPDATE crm.traveler SET email_enc = $2, email_bidx = $3 WHERE traveler_id = $1"
+# The client record is shared by every trip of that client: a lead sets an address only for someone on this trip alone.
+OTHER_TRIP_SQL = """
+SELECT EXISTS (SELECT 1 FROM crm.trip_traveler tt JOIN crm.trip t ON t.trip_id = tt.trip_id AND t.deleted_at IS NULL
+                WHERE tt.traveler_id = $1 AND tt.trip_id <> $2 AND tt.deleted_at IS NULL)
+"""
+# Refused companion addresses per lead access (the denied audit events): the cap that keeps email_in_use from listing
+# the agency's clients.
+MAX_EMAIL_REFUSALS = 3
+EMAIL_REFUSAL_WINDOW_H = 24
+EMAIL_REFUSALS_SQL = """
+SELECT count(*) FROM crm.audit_event
+ WHERE object_kind = 'traveler_access' AND object_id = $1 AND action = 'portal_companion_email' AND outcome = 'denied'
+   AND at > now() - make_interval(hours => $2)
+"""
 
 
 @dataclass(frozen=True)
@@ -123,11 +139,22 @@ class Member:
     name_enc: bytes | None
     access_id: uuid.UUID | None
     access_status: str | None
+    # The blind index of the person's own address (None without one): a session keeps the index of the address its
+    # code went to and stays valid only while that address still reaches the person it acts as (public._signed_in).
+    email_bidx: bytes | None = None
 
 
 async def party(ctx: AnyContext, trip_id: uuid.UUID) -> list[Member]:
     return [
-        Member(r["traveler_id"], r["role"], r["has_email"], r["display_name_enc"], r["access_id"], r["access_status"])
+        Member(
+            r["traveler_id"],
+            r["role"],
+            r["has_email"],
+            r["display_name_enc"],
+            r["access_id"],
+            r["access_status"],
+            bytes(r["email_bidx"]) if r.get("email_bidx") is not None else None,
+        )
         for r in await ctx.conn.fetch(PARTY_SQL, trip_id)
     ]
 
@@ -144,6 +171,12 @@ def delivery_of(members: list[Member], traveler_id: uuid.UUID) -> uuid.UUID | No
     if me.role == "companion" and lead is not None and lead.has_email:
         return lead.traveler_id
     return None
+
+
+def delivery_bidx(members: list[Member], traveler_id: uuid.UUID) -> bytes | None:
+    """The blind index of the address that receives ``traveler_id``'s codes now (see :func:`delivery_of`)."""
+    to = delivery_of(members, traveler_id)
+    return next((m.email_bidx for m in members if m.traveler_id == to), None) if to is not None else None
 
 
 def group_of(members: list[Member], traveler_id: uuid.UUID) -> list[Member]:
@@ -408,29 +441,73 @@ async def save_flights(
 # ── the lead: companion e-mails at the invite ──────────────────────────────────────────────────────────────────
 
 
+async def email_refusals(ctx: AnyContext, access_id: uuid.UUID) -> int:
+    """How many companion addresses this lead's access had refused in the last :data:`EMAIL_REFUSAL_WINDOW_H` hours
+    (the denied audit events, written even when the request fails)."""
+    return int(await ctx.conn.fetchval(EMAIL_REFUSALS_SQL, str(access_id), EMAIL_REFUSAL_WINDOW_H) or 0)
+
+
 async def set_companion_email(
-    ctx: AnyContext, vault: Vault, members: list[Member], companion_id: uuid.UUID, raw_email: Any
+    ctx: AnyContext,
+    vault: Vault,
+    members: list[Member],
+    trip_id: uuid.UUID,
+    lead_access_id: uuid.UUID,
+    companion_id: uuid.UUID,
+    raw_email: Any,
 ) -> None:
-    """Give a companion without an address of their own one (the lead asks them at the portal invite). Never replaces
-    an address on file; an address another client of the agency has is refused (409 ``email_in_use``, without saying
-    whose)."""
+    """Give a companion without an address of their own one (the lead asks them at the portal invite).
+
+    The address lands on the agency's client record, which every trip of that client shares, so the lead may set it
+    only for a companion who is on **this trip alone** (409 ``ask_your_agent``: otherwise the lead would choose where
+    the codes and links of the companion's other trips go). Never replaces an address on file (409
+    ``email_on_file``). An address another client of the agency has is refused (409 ``email_in_use``, without saying
+    whose); every refusal is audited as denied on the lead's access (the agency sees it in its access log) and after
+    :data:`MAX_EMAIL_REFUSALS` refusals in :data:`EMAIL_REFUSAL_WINDOW_H` hours the lead is stopped (429
+    ``too_many_attempts``), so the answer cannot be used to list the agency's clients."""
     target = next((m for m in members if m.traveler_id == companion_id), None)
     if target is None or target.role != "companion":
         raise NotFound("traveler_not_on_trip")
     email = clean_f1("email", raw_email)
     if not email:
         raise Invalid("invalid_email", "an e-mail address", fields=["email"])
+    if await email_refusals(ctx, lead_access_id) >= MAX_EMAIL_REFUSALS:
+        _refused(ctx, lead_access_id, companion_id, "attempt_cap")
+        raise RateLimited("too_many_attempts", EMAIL_REFUSAL_WINDOW_H * 3600, "ask your travel agent to add it")
     blob = await ctx.conn.fetchrow(TRAVELER_EMAIL_SQL, companion_id)
     if blob is None:
         raise NotFound("traveler_not_on_trip")
     if blob["email_enc"] is not None:
         raise Conflict("email_on_file", "your agent already has an address for this traveller")
+    if await ctx.conn.fetchval(OTHER_TRIP_SQL, companion_id, trip_id):
+        _refused(ctx, lead_access_id, companion_id, "other_trip")
+        raise Conflict("ask_your_agent", "ask your travel agent to add this traveller's address")
     index = await vault.email_index("traveler", "email", email)
     if await ctx.conn.fetchval(EMAIL_TAKEN_SQL, index, companion_id):
+        _refused(ctx, lead_access_id, companion_id, "email_in_use")
         raise Conflict("email_in_use", "use another address, or leave it empty to reach them through yours")
     sealed = await vault.encrypt("traveler", "email_enc", companion_id, email)
     await ctx.conn.execute(SET_EMAIL_SQL, companion_id, sealed, index)
-    ctx.audit("portal_companion_email", "allowed", "traveler", str(companion_id), fields=("email",))
+    ctx.audit(
+        "portal_companion_email",
+        "allowed",
+        "traveler",
+        str(companion_id),
+        fields=("email",),
+        object_ids=(str(lead_access_id),),
+    )
+
+
+def _refused(ctx: AnyContext, lead_access_id: uuid.UUID, companion_id: uuid.UUID, reason: str) -> None:
+    ctx.audit(
+        "portal_companion_email",
+        "denied",
+        "traveler_access",
+        str(lead_access_id),
+        fields=("email",),
+        reason=reason,
+        object_ids=(str(companion_id),),
+    )
 
 
 def _iso(value: Any) -> str | None:

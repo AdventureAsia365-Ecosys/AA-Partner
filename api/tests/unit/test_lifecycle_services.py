@@ -544,9 +544,10 @@ def _access_row(**over: Any) -> dict[str, Any]:
 
 
 # AA-953: the party as app.portal.person reads it (who reaches whom): the lead alone, with an address and access.
+LEAD_BIDX = b"\x0b" * 16
 PARTY_ROWS = [
-    {"traveler_id": LEAD, "role": "lead", "has_email": True, "display_name_enc": None, "access_id": ACCESS,
-     "access_status": "active"},
+    {"traveler_id": LEAD, "role": "lead", "has_email": True, "email_bidx": LEAD_BIDX, "display_name_enc": None,
+     "access_id": ACCESS, "access_status": "active"},
 ]  # fmt: skip
 
 
@@ -560,8 +561,8 @@ def _portal(monkeypatch: pytest.MonkeyPatch, conn: ScriptedConn, module: Any = p
     return ctx
 
 
-# AA-953: the session row names the access it acts as (the link's own here).
-SESSION_ROW = {"otp_id": OTP, "access_id": ACCESS, "traveler_id": LEAD}
+# AA-953: the session row names the access it acts as (the link's own here) and the address its code went to.
+SESSION_ROW = {"otp_id": OTP, "access_id": ACCESS, "traveler_id": LEAD, "sent_to_bidx": LEAD_BIDX}
 
 
 def _signed_in(conn: ScriptedConn) -> ScriptedConn:

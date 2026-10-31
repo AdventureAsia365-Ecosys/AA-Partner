@@ -30,8 +30,14 @@ ACCESS_ADULT = uuid.UUID("00000000-0000-4000-8000-0000000009d2")
 DOC = "00000000-0000-4000-8000-0000000009e1"
 
 
+def _bidx(traveler: uuid.UUID) -> bytes:
+    return traveler.bytes  # an invented 16-byte blind index per traveller
+
+
 def _m(traveler: uuid.UUID, role: str, email: bool, access: uuid.UUID | None) -> person.Member:
-    return person.Member(traveler, role, email, None, access, "active" if access else None)
+    return person.Member(
+        traveler, role, email, None, access, "active" if access else None, _bidx(traveler) if email else None
+    )
 
 
 PARTY = [
@@ -53,6 +59,9 @@ def test_who_reaches_whom() -> None:
     no_lead_address = [_m(LEAD, "lead", False, ACCESS), _m(CHILD, "companion", False, ACCESS_CHILD)]
     assert person.delivery_of(no_lead_address, CHILD) is None and person.group_of(no_lead_address, CHILD) == []
     assert person.delivery_of(no_lead_address, LEAD) is None
+    # The address a session is bound to: the lead's for the child, the adult's own for the adult, none without one.
+    assert person.delivery_bidx(PARTY, CHILD) == _bidx(LEAD) and person.delivery_bidx(PARTY, ADULT) == _bidx(ADULT)
+    assert person.delivery_bidx(no_lead_address, CHILD) is None
 
 
 def test_flight_rules() -> None:
@@ -82,9 +91,9 @@ def test_flight_rules() -> None:
 @pytest.mark.asyncio
 async def test_a_childs_code_goes_to_the_leads_address(monkeypatch: pytest.MonkeyPatch) -> None:
     rows = [
-        {"traveler_id": LEAD, "role": "lead", "has_email": True, "display_name_enc": None, "access_id": ACCESS,
-         "access_status": "active"},
-        {"traveler_id": CHILD, "role": "companion", "has_email": False, "display_name_enc": None,
+        {"traveler_id": LEAD, "role": "lead", "has_email": True, "email_bidx": _bidx(LEAD), "display_name_enc": None,
+         "access_id": ACCESS, "access_status": "active"},
+        {"traveler_id": CHILD, "role": "companion", "has_email": False, "email_bidx": None, "display_name_enc": None,
          "access_id": ACCESS_CHILD, "access_status": "invited"},
     ]  # fmt: skip
     conn = (
@@ -102,6 +111,47 @@ async def test_a_childs_code_goes_to_the_leads_address(monkeypatch: pytest.Monke
     assert conn.sql("SELECT email_enc FROM crm.traveler") == [(LEAD,)]  # the lead's address, not the child's
     code_row = conn.sql("INSERT INTO crm.otp_challenge")[0]
     assert code_row[1] == ACCESS_CHILD and code_row[3] == CHILD  # the code still belongs to the child's access
+    # The session this code opens is bound to the lead's address (the one the code went to).
+    assert conn.sql("SET sent_to_bidx = $2") == [(code_row[0], _bidx(LEAD))]
+
+
+def _party_rows(child_email: bool) -> list[dict[str, Any]]:
+    return [
+        {"traveler_id": LEAD, "role": "lead", "has_email": True, "email_bidx": _bidx(LEAD), "display_name_enc": None,
+         "access_id": ACCESS, "access_status": "active"},
+        {"traveler_id": CHILD, "role": "companion", "has_email": child_email,
+         "email_bidx": _bidx(CHILD) if child_email else None, "display_name_enc": None, "access_id": ACCESS_CHILD,
+         "access_status": "active"},
+    ]  # fmt: skip
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("child_email", "proof", "signed_in"),
+    [
+        (False, _bidx(LEAD), True),  # the child is reached through the lead's address, which the code went to
+        (True, _bidx(LEAD), False),  # the child has their own address since: the lead's proof no longer reaches them
+        (True, _bidx(CHILD), True),  # a code sent to the child's own address
+        (False, None, False),  # a session without a recorded address (opened before crm-029): sign in again
+    ],
+)
+async def test_a_session_is_bound_to_the_address_its_code_went_to(
+    monkeypatch: pytest.MonkeyPatch, child_email: bool, proof: bytes | None, signed_in: bool
+) -> None:
+    child_access = _access_row(access_id=ACCESS_CHILD, traveler_id=CHILD, role="companion")
+    conn = (
+        ScriptedConn()
+        .on("FROM crm.traveler_access a JOIN crm.trip t", child_access)
+        .on("AS has_email", _party_rows(child_email))
+        .on(
+            "AND session_hash = $2",
+            {"otp_id": uuid.uuid4(), "access_id": ACCESS_CHILD, "traveler_id": CHILD, "sent_to_bidx": proof},
+        )  # fmt: skip
+        .on("SELECT display_name FROM crm.tenant", "Sen")
+    )
+    _portal(monkeypatch, conn)
+    # The child's own link (the same access the session acts as): the address still decides.
+    assert (await portal.home(object(), TOKEN, "session"))["signed_in"] is signed_in  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio

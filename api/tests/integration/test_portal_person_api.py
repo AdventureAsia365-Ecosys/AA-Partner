@@ -13,8 +13,12 @@ companion without one (reached through the lead's address, Fix E4). A second age
 - Structured flights (R33): the local time and zone at the airport, an overnight arrival lands the day before the
   trip starts; invalid fields are 422; locked before the deposit.
 - Cancelled lines hidden, no prices; the accepted itinerary is not required.
-- Companion e-mails asked at the invite: the lead gives the child an address (they leave the lead's group), never
-  another client's address, never over one on file; a companion cannot invite.
+- Companion e-mails asked at the invite: the lead gives the child an address (they leave the lead's group, their new
+  link goes to their address only, and every session proven by the lead's address that acted as them ends, on any
+  link), never another client's address, never over one on file, never for a companion on another trip; refused
+  addresses are audited and capped; a companion cannot invite; the lead never re-issues the link of a companion with
+  their own address and a live link.
+- A session is bound to the address its code went to: an agency address change ends the sessions it proved.
 - A lost trip has no portal.
 """
 
@@ -31,7 +35,7 @@ import pytest
 from app import stages
 from app.documents import service as documents
 from app.documents.store import MemoryDocumentStore
-from app.errors import Conflict, Forbidden, Invalid, NotFound
+from app.errors import Conflict, Forbidden, Invalid, NotFound, RateLimited
 from app.portal import access
 from app.portal import public as portal
 from app.settings import Settings
@@ -375,45 +379,146 @@ async def test_cancelled_lines_are_hidden_and_no_price_is_shown(app_pool: asyncp
     assert home["itinerary"] == []  # no accepted day-by-day proposal on this trip
 
 
+async def _invite(pool: asyncpg.Pool, s: dict[str, Any], token: str, session: str, **body: Any) -> dict[str, Any]:
+    raw = {k: str(v) if isinstance(v, uuid.UUID) else v for k, v in body.items()}
+    return await portal.invite_companion(pool, s["keys"], ECHO, token, session, raw, origin=None)
+
+
+async def _agency_invite(pool: asyncpg.Pool, s: dict[str, Any], traveler: uuid.UUID) -> str:
+    """The agency re-sends a traveller's link ("Copy link" in the CRM): the only way a test reads a link token that
+    went to the traveller's own address."""
+    async with tenant_tx(pool, s["agent"], s["tenant"]) as ctx:
+        return _token((await access.invite(ctx, s["trip"], traveler))["link_path"])
+
+
 async def test_companion_emails_are_asked_at_the_invite(app_pool: asyncpg.Pool) -> None:
     s = await _party(app_pool)
     lead_link, child_link, adult_link = s["links"][s["lead"]], s["links"][s["child"]], s["links"][s["adult"]]
     lead = await _sign_in(app_pool, s, lead_link, s["lead"])
-    as_child = await _sign_in(app_pool, s, lead_link, s["child"])
+    as_child = await _sign_in(app_pool, s, lead_link, s["child"])  # proven by the lead's address
+    on_child_link = await _sign_in(app_pool, s, child_link, s["child"])  # the same, on the child's own link
     adult = await _sign_in(app_pool, s, adult_link)
     with pytest.raises(Forbidden) as err:
-        await portal.invite_companion(
-            app_pool, s["keys"], ECHO, adult_link, adult, {"traveler_id": str(s["child"]), "email": "x@example.test"},
-            origin=None,
-        )  # fmt: skip
+        await _invite(app_pool, s, adult_link, adult, traveler_id=s["child"], email="x@example.test")
     assert err.value.code == "lead_only"
     with pytest.raises(Conflict) as err:  # another client's address: refused without saying whose
-        await portal.invite_companion(
-            app_pool, s["keys"], ECHO, lead_link, lead,
-            {"traveler_id": str(s["child"]), "email": "oskar.l@example.test"}, origin=None,
-        )  # fmt: skip
+        await _invite(app_pool, s, lead_link, lead, traveler_id=s["child"], email="oskar.l@example.test")
     assert err.value.code == "email_in_use" and "traveler_id" not in err.value.extra
-    with pytest.raises(Conflict) as err:  # never over an address on file
-        await portal.invite_companion(
-            app_pool, s["keys"], ECHO, lead_link, lead,
-            {"traveler_id": str(s["adult"]), "email": "new@example.test"}, origin=None,
-        )  # fmt: skip
-    assert err.value.code == "email_on_file"
-    invited = await portal.invite_companion(
-        app_pool, s["keys"], ECHO, lead_link, lead,
-        {"traveler_id": str(s["child"]), "email": "pip.castell@example.test"}, origin=None,
-    )  # fmt: skip
-    assert invited["reach"] == "own" and invited["link_path"].startswith("/c/t/")
-    # The child left the lead's group: the session that acted as them through the lead's link has ended, the old
-    # link was re-issued, and the new link's code goes to the child's own address.
+    with pytest.raises(Conflict) as err:  # an adult with their own address and a live link: never re-issued by the lead
+        await _invite(app_pool, s, lead_link, lead, traveler_id=s["adult"], email="new@example.test")
+    assert err.value.code == "already_invited"
+    with pytest.raises(Conflict) as err:
+        await _invite(app_pool, s, lead_link, lead, traveler_id=s["adult"])
+    assert err.value.code == "already_invited"
+    assert (await _home(app_pool, s, adult_link, adult))["signed_in"] is True  # the adult's link still works
+    # Through the lead's address: the lead gets the link to forward (they hold that address anyway).
+    via = await _invite(app_pool, s, lead_link, lead, traveler_id=s["child"])
+    assert via["reach"] == "via_you" and via["link_path"].startswith("/c/t/")
+    child_link = _token(via["link_path"])
+    assert (await _home(app_pool, s, child_link, on_child_link))["signed_in"] is True  # same access, same address
+    invited = await _invite(app_pool, s, lead_link, lead, traveler_id=s["child"], email="pip.castell@example.test")
+    # The child's own address: their new link goes there only, never back to the lead.
+    assert invited["reach"] == "own" and invited["link_path"] is None
+    # Every session proven by the lead's address that acted as the child has ended, on any link: the lead's, the old
+    # child link (revoked) and the child's new one.
     assert (await _home(app_pool, s, lead_link, as_child))["signed_in"] is False
     with pytest.raises(NotFound):
         await _home(app_pool, s, child_link, None)
-    new_link = _token(invited["link_path"])
+    new_link = await _agency_invite(app_pool, s, s["child"])
+    assert (await _home(app_pool, s, new_link, on_child_link))["signed_in"] is False
+    assert (await _home(app_pool, s, new_link, as_child))["signed_in"] is False
+    assert (await _home(app_pool, s, lead_link, lead))["signed_in"] is True  # the lead's own session stays
+    # The new link's code goes to the child's own address.
     sent = await _code(app_pool, s, new_link)
     session, answer = await portal.verify_code(app_pool, ECHO, new_link, sent["dev_code"], origin=None, keys=s["keys"])
     assert session is not None and answer["signed_in"]
     assert [p["traveler_id"] for p in await _verify_pick_or_none(app_pool, s, lead_link)] == []
+    # Never over an address on file (the child has one now).
+    with pytest.raises(Conflict) as err:
+        await _invite(app_pool, s, lead_link, lead, traveler_id=s["child"], email="pip.other@example.test")
+    assert err.value.code == "already_invited"
+    async with tenant_tx(app_pool, s["agent"], s["tenant"]) as ctx:
+        audits = await ctx.conn.fetch(
+            "SELECT action, outcome, reason FROM crm.audit_event WHERE action IN "
+            "('portal_companion_email', 'portal_companion_invite') ORDER BY at, action"
+        )
+    seen = [(r["action"], r["outcome"], r["reason"]) for r in audits]
+    assert ("portal_companion_email", "denied", "email_in_use") in seen
+    assert ("portal_companion_invite", "denied", "already_invited") in seen
+    assert ("portal_companion_email", "allowed", None) in seen
+
+
+async def test_an_agency_address_change_ends_the_sessions_it_proved(app_pool: asyncpg.Pool) -> None:
+    s = await _party(app_pool)
+    lead_link, child_link = s["links"][s["lead"]], s["links"][s["child"]]
+    lead = await _sign_in(app_pool, s, lead_link, s["lead"])
+    as_child = await _sign_in(app_pool, s, child_link, s["child"])
+    async with tenant_tx(app_pool, s["agent"], s["tenant"]) as ctx:
+        await travellers.update_traveler(ctx, Vault(s["keys"], ctx), s["lead"], {"email": "mira.new@example.test"})
+    for token, session in ((lead_link, lead), (child_link, as_child), (lead_link, as_child)):
+        assert (await _home(app_pool, s, token, session))["signed_in"] is False
+    assert (await _home(app_pool, s, lead_link, await _sign_in(app_pool, s, lead_link, s["lead"])))["signed_in"]
+
+
+async def test_a_lead_sets_an_address_only_for_this_trip_and_cannot_probe(app_pool: asyncpg.Pool) -> None:
+    s = await _party(app_pool)
+    lead_link = s["links"][s["lead"]]
+    lead = await _sign_in(app_pool, s, lead_link, s["lead"])
+    # A companion with an address of their own but no portal access yet: invited to their address only.
+    async with tenant_tx(app_pool, s["agent"], s["tenant"]) as ctx:
+        late = uuid.UUID(
+            (
+                await travellers.add_to_trip(
+                    ctx,
+                    Vault(s["keys"], ctx),
+                    s["trip"],
+                    new={"display_name": "Ines Varga", "email": "ines@example.test"},
+                )
+            )["traveler_id"]
+        )
+        # The child is on another of the agency's trips too (another lead): their client record is not this lead's.
+        other_trip = uuid.uuid4()
+        await ctx.conn.execute(
+            "INSERT INTO crm.trip (trip_id, title, owner_member_id, start_date, end_date) "
+            "VALUES ($1, 'Coastal walk 4 nights', (SELECT owner_member_id FROM crm.trip WHERE trip_id = $2), "
+            "current_date + 90, current_date + 94)",
+            other_trip,
+            s["trip"],
+        )
+        await ctx.conn.execute(
+            "INSERT INTO crm.trip_traveler (trip_id, traveler_id, role) VALUES ($1, $2, 'lead'), ($1, $3, 'companion')",
+            other_trip,
+            s["adult"],
+            s["child"],
+        )
+    invited = await _invite(app_pool, s, lead_link, lead, traveler_id=late)
+    assert invited == {"traveler_id": str(late), "reach": "own", "link_path": None, "expires_at": invited["expires_at"]}
+    with pytest.raises(Conflict) as err:
+        await _invite(app_pool, s, lead_link, lead, traveler_id=late)
+    assert err.value.code == "already_invited"
+    with pytest.raises(Conflict) as err:
+        await _invite(app_pool, s, lead_link, lead, traveler_id=s["child"], email="pip.castell@example.test")
+    assert err.value.code == "ask_your_agent"
+    async with tenant_tx(app_pool, s["agent"], s["tenant"]) as ctx:
+        assert await ctx.conn.fetchval("SELECT email_enc FROM crm.traveler WHERE traveler_id = $1", s["child"]) is None
+        # Back to one trip: the cap of refused addresses (the email_in_use answer cannot list the agency's clients).
+        await ctx.conn.execute("DELETE FROM crm.trip_traveler WHERE trip_id = $1", other_trip)
+    for taken in ("oskar.l@example.test", "mira.castell@example.test"):  # two refusals more: three in all
+        with pytest.raises(Conflict) as err:
+            await _invite(app_pool, s, lead_link, lead, traveler_id=s["child"], email=taken)
+        assert err.value.code == "email_in_use"
+    with pytest.raises(RateLimited) as err:  # even a free address: the lead is stopped for the day
+        await _invite(app_pool, s, lead_link, lead, traveler_id=s["child"], email="pip.castell@example.test")
+    assert err.value.code == "too_many_attempts" and err.value.status_code == 429
+    async with tenant_tx(app_pool, s["agent"], s["tenant"]) as ctx:
+        reasons = await ctx.conn.fetch(
+            "SELECT reason FROM crm.audit_event WHERE action = 'portal_companion_email' AND outcome = 'denied' "
+            "ORDER BY at"
+        )
+        assert [r["reason"] for r in reasons] == ["other_trip", "email_in_use", "email_in_use", "attempt_cap"]
+        assert await ctx.conn.fetchval("SELECT email_enc FROM crm.traveler WHERE traveler_id = $1", s["child"]) is None
+    # Through the lead's address still works.
+    assert (await _invite(app_pool, s, lead_link, lead, traveler_id=s["child"]))["reach"] == "via_you"
 
 
 async def _verify_pick_or_none(pool: asyncpg.Pool, s: dict[str, Any], token: str) -> list[dict[str, Any]]:

@@ -26,16 +26,24 @@
 --      grant (AI, insights and support never see a flight, design §5.2); the updated_at trigger; the hold guard
 --      crm.guard_held_flight (hold rule 4h; not crm.guard_held_change, which a cascade would run without the agency's
 --      RLS: see the function's comment).
+--   4. crm.otp_challenge.sent_to_bidx (new nullable column): the blind index of the address a portal code went to.
+--      Fix E4 lets one address reach two travellers (a companion without an address of their own is reached through
+--      the lead's), so a session must stay bound to the address that proved it: the API accepts a session only while
+--      that address still reaches the traveller it acts as (a companion given their own address, or a lead whose
+--      address the agency changed, ends the sessions the old address proved). NULL (a code issued before this
+--      column) never opens a session. The row's 24-hour retention (crm-016) and erasure (crm.erase_subject deletes
+--      the traveller's and the trip's otp_challenge rows) are unchanged; the table is never exported.
 --
 -- Class: expand (root ADR 0017 d3): one new table and one new trigger function, with their constraints, indexes,
 -- triggers, policy and comments, and foreign keys from the table (the RI triggers they add on crm.trip, crm.traveler
--- and crm.trip_traveler are allowed); no change to any existing object, no DO block. Not re-runnable (no DROP / OR
+-- and crm.trip_traveler are allowed); one new nullable column without a default on crm.otp_challenge (not a hot
+-- table; no code reads it with SELECT * / RETURNING *); no other change to an existing object, no DO block. Not re-runnable (no DROP / OR
 -- REPLACE in an expand file): DB Migrate never applies a registered file twice, and the test conftest skips it. The code PR that reads it carries this file and raises
 -- REQUIRED_SCHEMA_VERSIONS to crm-029 (expand: one PR). The auto-apply stops at the first unregistered file that is not
 -- expand, so a contract crm-028 is applied by hand first.
 --
 -- Rollback (a forward crm- file, after the code that reads it is reverted): DROP TABLE crm.traveler_flight; DROP
--- FUNCTION crm.guard_held_flight().
+-- FUNCTION crm.guard_held_flight(); ALTER TABLE crm.otp_challenge DROP COLUMN sent_to_bidx.
 --
 -- Runs as crm_owner (DB Migrate switch), one BEGIN … COMMIT block, no role DDL.
 
@@ -138,8 +146,12 @@ COMMENT ON COLUMN crm.traveler_flight.sched_local IS 'pii:travel; the scheduled 
 COMMENT ON COLUMN crm.traveler_flight.tz IS 'the IANA zone of airport_iata (sched_local AT TIME ZONE tz is the instant)';
 COMMENT ON COLUMN crm.traveler_flight.entered_by_kind IS 'traveler (the client portal) | member (an agent)';
 
+-- 4. The address a portal code went to (a session's proof, app/portal/public.py _signed_in).
+ALTER TABLE crm.otp_challenge ADD COLUMN IF NOT EXISTS sent_to_bidx BYTEA;
+COMMENT ON COLUMN crm.otp_challenge.sent_to_bidx IS 'pii:contact; the blind index (crm.traveler.email_bidx) of the address the code went to: the traveller''s own, or the lead''s for a companion without an address of their own (AA-953 Fix E4). A portal session acts as a traveller only while that address still reaches them; NULL never opens a session';
+
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('crm-029', now(), 'AA-953 CRM-24a portal per person: crm.traveler_flight (structured arrival / departure flights per trip and traveller, flight number under the vault DEK, local time + IANA zone; cascading keys, no erase_subject change)')
+VALUES ('crm-029', now(), 'AA-953 CRM-24a portal per person: crm.traveler_flight (structured arrival / departure flights per trip and traveller, flight number under the vault DEK, local time + IANA zone; cascading keys, no erase_subject change); crm.otp_challenge.sent_to_bidx (a portal session bound to the address its code went to)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
