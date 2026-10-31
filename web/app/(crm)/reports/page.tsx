@@ -124,6 +124,7 @@ export default async function ReportsPage({
       {empty ? (
         <EmptyState title={tr("reports.empty.title")} description={tr("reports.empty.body")} />
       ) : (
+        <>
         <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))" }}>
           <Panel title={tr("reports.funnel")} testId="reports-funnel">
             <BarList
@@ -217,6 +218,9 @@ export default async function ReportsPage({
             )}
           </Panel>
 
+        </div>
+        {/* Table sections: wider columns so amounts are never cut (two per row on a desktop, one on a phone). */}
+        <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 520px), 1fr))" }}>
           {r.money && (
             <Panel title={tr("reports.money")} testId="reports-money">
               <p style={{ margin: "0 0 10px", fontSize: 13 }}>
@@ -355,6 +359,7 @@ export default async function ReportsPage({
             </p>
           </Panel>
         </div>
+        </>
       )}
 
       <Panel title={tr("reports.success")} testId="reports-success">

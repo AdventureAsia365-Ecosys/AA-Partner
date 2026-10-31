@@ -53,6 +53,7 @@ export function ReportTable({
         searchable={false}
         paginate={false}
         compact
+        tableMinWidth={Math.max(320, head.length * 110)}
         emptyTitle={empty}
       />
     </div>
