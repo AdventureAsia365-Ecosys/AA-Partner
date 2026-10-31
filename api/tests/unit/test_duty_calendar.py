@@ -111,6 +111,50 @@ def _bulk_ctx(n: int) -> tuple[Any, list[uuid.UUID]]:
     return tenant_ctx(conn, role="assistant"), ids
 
 
+@pytest.mark.asyncio
+async def test_trip_incidents_name_the_departure_by_the_agency_line_not_the_booking_id() -> None:
+    flag = {
+        "incident_flag_id": uuid.uuid4(),
+        "departure_id": "dep-8c1f",
+        "incident_code": "road",
+        "status": "cleared",
+        "raised_at": dt.datetime(2026, 10, 30, 1, tzinfo=dt.UTC),
+        "cleared_at": dt.datetime(2026, 10, 31, 2, tzinfo=dt.UTC),
+        "line_title": "Lotus valley trek 3 days",
+        "line_from": dt.date(2026, 11, 12),
+    }
+    conn = ScriptedConn().on("FROM crm.trip WHERE trip_id", TRIP).on("FROM crm.incident_flag f", [flag])
+    out = await service.trip_incidents(tenant_ctx(conn), TRIP)
+    row = out["incidents"][0]
+    assert row["departure"] == {"title": "Lotus valley trek 3 days", "date": "2026-11-12"}
+    assert row["departure_id"] == "dep-8c1f" and row["status"] == "cleared"
+    assert row["cleared_at"].startswith("2026-10-31")
+    assert service.departure_view({"line_title": "Lotus valley trek", "line_from": None}) == {
+        "title": "Lotus valley trek",
+        "date": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_open_flags_carry_the_departure_of_the_first_line_and_skip_departures_without_a_live_trip() -> None:
+    flags = [
+        {"incident_flag_id": uuid.uuid4(), "departure_id": "dep-1", "incident_code": "weather",
+         "raised_at": dt.datetime(2026, 10, 30, 1, tzinfo=dt.UTC)},
+        {"incident_flag_id": uuid.uuid4(), "departure_id": "dep-gone", "incident_code": "road",
+         "raised_at": dt.datetime(2026, 10, 29, 1, tzinfo=dt.UTC)},
+    ]  # fmt: skip
+    trip = {"title": "Lotus coast, 5 nights", "stage": "booked", "start_date": dt.date(2026, 11, 10),
+            "end_date": dt.date(2026, 11, 15), "departure_id": "dep-1"}  # fmt: skip
+    rows = [
+        {**trip, "trip_id": TRIP, "line_title": "Lotus coast ride", "line_from": dt.date(2026, 11, 11)},
+        {**trip, "trip_id": uuid.uuid4(), "line_title": "Other line title", "line_from": dt.date(2026, 11, 12)},
+    ]
+    conn = ScriptedConn().on("FROM crm.incident_flag WHERE status = 'open'", flags).on("DISTINCT ON", rows)
+    out = await service._open_flags(tenant_ctx(conn), dt.date(2026, 11, 1))
+    assert [f["departure_id"] for f in out] == ["dep-1"]
+    assert out[0]["departure"] == {"title": "Lotus coast ride", "date": "2026-11-11"} and len(out[0]["trips"]) == 2
+
+
 @pytest.fixture(autouse=True)
 def _meter() -> Any:
     reveal_meter.METER.reset()

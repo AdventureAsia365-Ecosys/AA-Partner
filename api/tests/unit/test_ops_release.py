@@ -27,6 +27,8 @@ from app.main import create_app
 from app.ops_release import job, service, staff
 from app.settings import SettingsError, load_settings
 from tests.tokens import LocalPools
+from tests.unit.fakes import ScriptedConn
+from tests.unit.slice_fakes import tenant_ctx
 
 TENANT = "00000000-0000-4000-8000-000000000001"
 TRIP = "00000000-0000-4000-8000-0000000000aa"
@@ -401,3 +403,56 @@ async def test_the_board_visits_every_registered_agency(monkeypatch: pytest.Monk
     monkeypatch.setattr(staff, "_agency_board", agency_board)
     got = await staff.board(None, None)  # type: ignore[arg-type]
     assert visited == ids and len(got["items"]) == len(ids)
+
+
+# ── S262 AA-956 live evidence: the receipt said 4 views while the panel listed 3 ─────────────────────────────────────
+
+
+def _purged_release() -> dict[str, Any]:
+    at = dt.datetime(2026, 10, 31, 21, 4, tzinfo=dt.UTC)
+    receipt = '{"manifest_exports": 4, "payload_version": 1, "reason": "withdrawn", "travellers": 1, "views": 4}'
+    return {
+        "ops_release_id": uuid.uuid4(), "trip_id": uuid.uuid4(), "payload_enc": None, "payload_version": 1,
+        "fields_released": ["name"], "completeness": "{}", "complete": True, "traveller_count": 1,
+        "departure_ids": [], "bk_booking_ids": [], "start_date": None, "end_date": None, "released_at": at,
+        "refreshed_at": at, "purge_at": dt.date(2027, 2, 1), "t21_alerted_at": None, "withdrawn_at": at,
+        "withdraw_reason": "trip_cancelled", "purged_at": at, "purge_reason": "withdrawn",
+        "deletion_receipt": receipt, "view_count": 4, "last_viewed_at": at,
+    }  # fmt: skip
+
+
+def _activity(n: int) -> list[dict[str, Any]]:
+    at = dt.datetime(2026, 10, 31, 20, 0, tzinfo=dt.UTC)
+    return [
+        {"at": at - dt.timedelta(minutes=i), "actor_kind": "aa_ops", "action": "ops_release_view", "reason": None}
+        for i in range(n)
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("lines", "shown", "more"), [(9, 9, False), (service.MAX_ACTIVITY + 1, service.MAX_ACTIVITY, True)]
+)
+async def test_agency_view_returns_every_activity_line_up_to_the_cap_and_says_when_older_ones_exist(
+    lines: int, shown: int, more: bool
+) -> None:
+    conn = (
+        ScriptedConn()
+        .on("SELECT 1 FROM crm.trip", 1)
+        .on("FROM crm.ops_release WHERE trip_id", _purged_release())
+        .on("AT TIME ZONE", dt.date(2026, 11, 1))
+        .on("FROM crm.booking_line", 0)
+        .on("FROM crm.audit_event", lambda trip, limit: _activity(lines)[:limit])
+    )
+    view = await service.agency_view(tenant_ctx(conn, role="agent"), uuid.uuid4())
+    assert len(view["activity"]) == shown and view["activity_more"] is more
+    assert conn.sql("FROM crm.audit_event")[0][1] == service.MAX_ACTIVITY + 1
+    assert view["release"]["deletion_receipt"]["views"] == 4 and view["release"]["status"] == "purged"
+
+
+@pytest.mark.asyncio
+async def test_agency_view_gives_an_assistant_no_activity() -> None:
+    conn = ScriptedConn().on("SELECT 1 FROM crm.trip", 1).on("FROM crm.booking_line", 0)
+    view = await service.agency_view(tenant_ctx(conn, role="assistant"), uuid.uuid4())
+    assert view["activity"] is None and view["activity_more"] is False and view["release"] is None
+    assert conn.sql("FROM crm.audit_event") == []

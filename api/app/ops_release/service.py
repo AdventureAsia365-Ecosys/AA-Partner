@@ -432,7 +432,8 @@ async def agency_view(ctx: TenantContext, trip_id: uuid.UUID) -> dict[str, Any]:
     """The trip workspace panel "AA ground operations": whether AA ops have the trip's details, how complete they
     are, when they were last refreshed and viewed, the purge countdown or the receipt. Never the document itself (the
     agency has the source data). ``activity`` (the ops lines of the trip's audit: created, refreshed, viewed, manifest,
-    alert, withdrawn, purged) for owner / agent (A-03 Activity, ``TRIP_ACTIVITY_VIEW``)."""
+    alert, withdrawn, purged; the newest :data:`MAX_ACTIVITY`, ``activity_more`` when older ones exist) for owner /
+    agent (A-03 Activity, ``TRIP_ACTIVITY_VIEW``)."""
     trip = await ctx.conn.fetchval("SELECT 1 FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL", trip_id)
     if trip is None:
         raise NotFound("trip_not_found", "no trip with this id")
@@ -475,9 +476,14 @@ async def agency_view(ctx: TenantContext, trip_id: uuid.UUID) -> dict[str, Any]:
             "can_withdraw": status == "live" and may(ctx.member_role, Action.TRIP_CANCEL),
         }
     view["activity"] = None
+    view["activity_more"] = False
     if may(ctx.member_role, Action.TRIP_ACTIVITY_VIEW):
+        # One line past the cap tells the panel there is more (S262 AA-956: a list cut without saying so read as a
+        # receipt that over-counts); the whole history stays in Settings > Access log.
+        rows = await ctx.conn.fetch(ACTIVITY_SQL, str(trip_id), MAX_ACTIVITY + 1)
         view["activity"] = [
             {"at": _iso(a["at"]), "actor_kind": a["actor_kind"], "action": a["action"], "reason": a["reason"]}
-            for a in await ctx.conn.fetch(ACTIVITY_SQL, str(trip_id), MAX_ACTIVITY)
+            for a in rows[:MAX_ACTIVITY]
         ]
+        view["activity_more"] = len(rows) > MAX_ACTIVITY
     return view
