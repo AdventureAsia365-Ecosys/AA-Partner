@@ -20,7 +20,10 @@ A builder version is a ``crm.proposal`` row with ``kind = builder``:
   then — when the working copy came from a version the client picked on since it was copied — 409
   ``version_conflict`` with those picks until the agent acknowledges them (card E, §11.2). Then the price hash is
   fixed, the amounts computed, the published v(N-1) superseded and the client's picks carried over to the copied
-  options (``carried``). Sending a published version is CRM-21b (AA-950).
+  options (``carried``). Sending a published version is CRM-21b (AA-950). **Terms** (design v3 F6 step 3, WF-7, R34;
+  S261 live finding): a version without booking terms is pinned to the agency's published booking terms version at
+  publish (a new skeleton starts with it too), so the client accepts the terms with the proposal and no re-accept
+  waits before the deposit (:func:`app.proposals.service.pin_current_terms`).
 - **Picks** (:func:`record_pick`, the seam CRM-21b's client page calls): one pick per block of a published / sent
   version; a swap the block does not allow, a sold-out option or a rule break is refused; every pick moves
   ``selection_seq``.
@@ -41,10 +44,18 @@ from typing import Any
 from app import stages
 from app.catalog import store as catalog
 from app.errors import Conflict, Forbidden, Invalid, NotFound
+from app.esign import terms as esign_terms
 from app.intake import completeness, stage2
 from app.margin import sees_margin
 from app.proposals import prep_packs, rules
-from app.proposals.service import ACCEPTED_EXISTS_SQL, DRAFTABLE_STAGES, MAX_BODY, MAX_VERSIONS, NEXT_VERSION_SQL
+from app.proposals.service import (
+    ACCEPTED_EXISTS_SQL,
+    DRAFTABLE_STAGES,
+    MAX_BODY,
+    MAX_VERSIONS,
+    NEXT_VERSION_SQL,
+    pin_current_terms,
+)
 from app.tenancy import AnyContext, TenantContext
 from app.vault import Vault
 
@@ -630,6 +641,8 @@ async def _skeleton(
     count = max(1, min(count, MAX_SKELETON_DAYS))
     tz = rules.default_tz(trip["destinations"], await ctx.conn.fetchval(AGENCY_TZ_SQL))
     rooms = rules.default_rooms(trip["party_adults"], trip["party_child_ages"] or [], trip["party_type"])
+    # The agency's published booking terms (when there is a version): the client accepts them with the proposal.
+    terms = await esign_terms.current(ctx)
     await ctx.conn.execute(
         INSERT_PROPOSAL_SQL,
         proposal_id,
@@ -638,7 +651,7 @@ async def _skeleton(
         await vault.encrypt("proposal", "body_enc", proposal_id, ""),
         currency,
         None,
-        None,
+        terms["doc_id"] if terms is not None else None,
         "total_with_deltas",
         json.dumps(rooms),
         DEFAULT_DEPOSIT_PCT,
@@ -1325,6 +1338,8 @@ async def publish(
         _raise_conflicts(_conflicts(s), s)
     if checks["blocking"]:
         raise Invalid("not_publishable", "fix the items listed first", blocking=checks["blocking"])
+    # A version without terms takes the agency's published booking terms (before the price hash, which covers them).
+    row = await pin_current_terms(ctx, row)
     terms_sha = None
     if row["terms_doc_id"] is not None:
         terms = await ctx.conn.fetchrow(TERMS_SQL, row["terms_doc_id"])

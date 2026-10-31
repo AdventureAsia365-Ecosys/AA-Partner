@@ -568,8 +568,10 @@ export function BuilderPage({
               )}
               <label style={label}>
                 {tr("proposal.terms")}
-                <select name="terms_doc_id" style={field} defaultValue={view.terms_doc_id ?? ""}>
-                  <option value="">{tr("proposal.noTerms")}</option>
+                {/* With published booking terms a version always carries them (publish pins them, S261): "No terms"
+                    is offered only when the agency has none. */}
+                <select name="terms_doc_id" style={field} defaultValue={view.terms_doc_id ?? terms[0]?.doc_id ?? ""}>
+                  {terms.length === 0 && <option value="">{tr("proposal.noTerms")}</option>}
                   {terms.map((d) => (
                     <option key={d.doc_id} value={d.doc_id}>
                       {d.version_label}

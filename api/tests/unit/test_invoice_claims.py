@@ -224,6 +224,93 @@ async def test_extend_due_and_client_invoices() -> None:
     assert [i["invoice_id"] for i in await claims.client_invoices(system_ctx(conn), PROPOSAL, NOW)] == [str(INVOICE)]
 
 
+# ── terms first (S261 live finding F1: AA-955 x AA-952) ────────────────────────────────────────────
+
+
+TERMS_DOC = uuid.UUID("00000000-0000-4000-8000-0000000000c6")
+CURRENT_TERMS = "kind = 'booking_terms' AND status = 'published'"
+
+
+def _terms_pending(conn: ScriptedConn, *, accepted: bool = False, deposit_paid: bool = False) -> ScriptedConn:
+    """The agency published booking terms the trip has not accepted (crm.terms_acceptance), deposit unpaid."""
+    conn.on(CURRENT_TERMS, {"doc_id": TERMS_DOC, "version_label": "v2026-11", "body_text": "Terms",
+                            "body_sha256": b"\x03" * 32, "published_at": NOW})  # fmt: skip
+    conn.on("AS deposit_paid", {"proposal_id": PROPOSAL, "price_hash": b"\x04" * 32, "link_id": None,
+                                "accepted": accepted, "deposit_paid": deposit_paid})  # fmt: skip
+    return conn
+
+
+def test_pay_window_terms_first() -> None:
+    until = (NOW + dt.timedelta(hours=10)).isoformat()
+    assert claims.pay_window(_row(), NOW, terms_first=True) == {"state": "terms", "until": until}
+    # A claim, a re-hold, an expired window or a settled invoice keep their own state.
+    assert claims.pay_window(_row(status="payment_claimed"), NOW, terms_first=True)["state"] == "claimed"
+    assert claims.pay_window(_row(rehold_requested_at=NOW), NOW, terms_first=True)["state"] == "settling"
+    expired = _row(hold_expires_at=NOW - dt.timedelta(seconds=1))
+    assert claims.pay_window(expired, NOW, terms_first=True)["state"] == "expired"
+    assert claims.pay_window(_row(status="paid"), NOW, terms_first=True)["state"] == "paid"
+    pay_by = {"display_name": "Bank transfer", "instructions": "Account 0000 5555"}
+    shown = claims._client_invoice(_row(), NOW, pay_by, terms_first=True)
+    assert shown["pay_window"]["state"] == "terms" and shown["pay_by"] is None and not shown["can_claim"]
+
+
+@pytest.mark.asyncio
+async def test_client_invoices_hide_the_pay_details_until_the_terms_are_accepted() -> None:
+    rows = [_row(), _row(invoice_id=uuid.uuid4(), kind="balance", number="INV-000008")]
+    pay_by = {"display_name": "Bank transfer", "instructions": "Account 0000 5555"}
+
+    def listed(**terms: bool) -> ScriptedConn:
+        conn = ScriptedConn().on("i.kind = ANY($2::text[])", rows).on("provider = 'manual'", pay_by)
+        return _terms_pending(conn, **terms)
+
+    deposit, balance = await claims.client_invoices(system_ctx(listed()), PROPOSAL, NOW)
+    assert deposit["pay_window"]["state"] == "terms" and deposit["pay_by"] is None and not deposit["can_claim"]
+    assert balance["pay_window"]["state"] == "open" and balance["can_claim"]  # the rule is the deposit's only
+    for done in ({"accepted": True}, {"deposit_paid": True}):
+        deposit, _ = await claims.client_invoices(system_ctx(listed(**done)), PROPOSAL, NOW)
+        assert deposit["pay_window"]["state"] == "open" and deposit["can_claim"] and deposit["pay_by"] is not None
+    # No deposit among the invoices: the terms are not even read.
+    conn = ScriptedConn().on("i.kind = ANY($2::text[])", rows[1:]).on("provider = 'manual'", pay_by)
+    await claims.client_invoices(system_ctx(_terms_pending(conn)), PROPOSAL, NOW)
+    assert not conn.sql(CURRENT_TERMS)
+
+
+@pytest.mark.asyncio
+async def test_claim_waits_for_the_terms_with_nothing_written() -> None:
+    conn = _terms_pending(_claim_conn(_row()))
+    ctx = system_ctx(conn)
+    with pytest.raises(Conflict) as err:
+        await claims.claim(ctx, PROPOSAL, INVOICE, NOW)
+    assert err.value.code == "terms_reaccept_required" and err.value.extra == {"version_label": "v2026-11"}
+    assert [(e.action, e.reason) for e in ctx.audit_events if e.outcome == "denied"] == [
+        ("invoice_claim", "terms_reaccept_required")
+    ]
+    # No claim, no verify task, no bell, no commitment move, nothing to extend.
+    for fragment in ("SET status = 'payment_claimed'", "INSERT INTO crm.task", "INSERT INTO crm.metric_event",
+                     "INSERT INTO crm.trip_commitment", "SET hold_extend_code"):  # fmt: skip
+        assert not conn.sql(fragment), fragment
+    # Accepted since: the claim goes through as before.
+    made = await claims.claim(system_ctx(_terms_pending(_claim_conn(_row()), accepted=True)), PROPOSAL, INVOICE, NOW)
+    assert made.new and made.hold_id == "h1"
+    # A balance invoice is not held by the deposit's rule; a claimed invoice answers as before.
+    conn = _terms_pending(_claim_conn(_row(kind="balance")))
+    assert (await claims.claim(system_ctx(conn), PROPOSAL, INVOICE, NOW)).new and not conn.sql(CURRENT_TERMS)
+    again = await claims.claim(system_ctx(_terms_pending(_claim_conn(_row(status="payment_claimed")))), PROPOSAL,
+                               INVOICE, NOW)  # fmt: skip
+    assert not again.new and again.hold_id is None
+
+
+@pytest.mark.asyncio
+async def test_card_payment_waits_for_the_terms(monkeypatch: pytest.MonkeyPatch) -> None:
+    asked: list[str] = []
+    monkeypatch.setattr(claims.providers, "provider", lambda name: asked.append(name))
+    conn = _terms_pending(_claim_conn(_row())).on("charges_enabled", {"account_id": uuid.uuid4(), "provider": "stripe"})
+    ctx = system_ctx(conn)
+    with _raises(Conflict, "terms_reaccept_required"):
+        await claims.card_payment(ctx, PROPOSAL, INVOICE, NOW)
+    assert asked == [] and [e.reason for e in ctx.audit_events if e.outcome == "denied"] == ["terms_reaccept_required"]
+
+
 # ── the re-hold ───────────────────────────────────────────────────────────────────────────────────
 
 

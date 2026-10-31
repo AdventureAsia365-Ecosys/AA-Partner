@@ -321,8 +321,10 @@ export function ProposalPanel({
               </label>
               <label style={{ display: "grid", gap: 2, fontSize: 12.5 }}>
                 {tr("proposal.terms")}
+                {/* Send pins the published booking terms to a version without them (S261): "No terms" only when there
+                    are none. */}
                 <select name="terms_doc_id" defaultValue={seed?.terms_doc_id ?? terms[0]?.doc_id ?? ""} style={field}>
-                  <option value="">{tr("proposal.noTerms")}</option>
+                  {terms.length === 0 && <option value="">{tr("proposal.noTerms")}</option>}
                   {terms.map((d) => (
                     <option key={d.doc_id} value={d.doc_id}>
                       {d.version_label}

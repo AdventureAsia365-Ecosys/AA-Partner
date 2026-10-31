@@ -523,6 +523,59 @@ async def test_publish() -> None:
         await _run(builder.publish, P, 5, acknowledge_selection_seq=None, conn=unpublished)
 
 
+CURRENT_TERMS = "kind = 'booking_terms' AND status = 'published'"
+
+
+async def test_a_version_without_terms_is_pinned_to_the_published_terms() -> None:
+    """S261 live finding (AA-952 x AA-955): a builder version saved terms_doc_id null, so the client accepted no terms
+    and the deposit then waited for a re-accept. The skeleton starts with the agency's published booking terms and
+    publish pins them to a version without terms, before the price hash (design v3 F6 step 3, WF-7, R34)."""
+    terms_id = uuid.uuid4()
+    current = {"doc_id": terms_id, "version_label": "v2026-10", "body_text": "Terms", "body_sha256": b"\x02" * 32,
+               "published_at": NOW}  # fmt: skip
+    trip = {"trip_id": TRIP, "stage": "proposal", "start_date": START, "end_date": START + dt.timedelta(days=1),
+            "nights": None, "destinations": ["nepal"], "party_adults": 2, "party_child_ages": [],
+            "party_type": "couple"}  # fmt: skip
+    conn = _conn().on("FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL FOR UPDATE", trip)
+    conn.on("coalesce(max(version), 0) + 1", 2).on(CURRENT_TERMS, current)
+    await _run(builder.create, TRIP, currency="USD", from_proposal_id=None, conn=conn)
+    assert conn.sql("INSERT INTO crm.proposal (")[0][6] == terms_id
+    # No published terms: the skeleton has none (and publish pins nothing).
+    conn = _conn().on("FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL FOR UPDATE", trip)
+    conn.on("coalesce(max(version), 0) + 1", 2)
+    await _run(builder.create, TRIP, currency="USD", from_proposal_id=None, conn=conn)
+    assert conn.sql("INSERT INTO crm.proposal (")[0][6] is None
+    # Publish: a version without terms takes the published version; the hash covers it.
+    conn = (
+        _conn()
+        .on(CURRENT_TERMS, current)
+        .on(
+            "FROM crm.agreement_doc WHERE doc_id",
+            {"doc_id": terms_id, "status": "published", "body_sha256": b"\x02" * 32},
+        )
+    )
+    conn.on("SET status = 'published'", NOW)
+    out = await _run(builder.publish, P, 5, acknowledge_selection_seq=None, conn=conn)
+    assert conn.sql("SET terms_doc_id = $2 WHERE proposal_id = $1 AND terms_doc_id IS NULL") == [(P, terms_id)]
+    s = {"days": _days(), "blocks": _blocks(), "options": _options(), "rules": []}
+    sums = builder._charged(s, None, Decimal("30"))
+    pinned = builder.price_hash(_proposal(terms_doc_id=terms_id), "Hello", b"\x02" * 32, s, sums)
+    assert out["publish"]["price_hash"] == pinned.hex()
+    assert out["publish"]["price_hash"] != builder.price_hash(_proposal(), "Hello", None, s, sums).hex()
+    # A version that names its terms keeps them; no published terms: nothing is pinned.
+    for conn in (
+        _conn(proposal=_proposal(terms_doc_id=BASE))
+        .on(CURRENT_TERMS, current)
+        .on(
+            "FROM crm.agreement_doc WHERE doc_id", {"doc_id": BASE, "status": "published", "body_sha256": b"\x01" * 32}
+        ),
+        _conn(),
+    ):
+        conn.on("SET status = 'published'", NOW)
+        await _run(builder.publish, P, 5, acknowledge_selection_seq=None, conn=conn)
+        assert not conn.sql("SET terms_doc_id = $2")
+
+
 async def test_publish_surfaces_client_picks_and_carries_them() -> None:
     base = {"proposal_id": BASE, "version": 1, "status": "sent", "selection_seq": 2}
     options = _options()

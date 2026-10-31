@@ -57,7 +57,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
     crmCall<{ saved_replies: SavedReply[] }>(ctx.cfg, session, "GET", "saved-replies"),
     crmCall<LifecycleView>(ctx.cfg, session, "GET", `trips/${tripId}/lifecycle`),
     crmCall<{ agreements: Agreement[] }>(ctx.cfg, session, "GET", "agreements"),
-    crmCall<{ invoices: Invoice[] }>(ctx.cfg, session, "GET", `trips/${tripId}/invoices`),
+    crmCall<{ invoices: Invoice[]; timezone?: string }>(ctx.cfg, session, "GET", `trips/${tripId}/invoices`),
     crmCall<TripAgreements>(ctx.cfg, session, "GET", `trips/${tripId}/agreements`),
     crmCall<{ incidents: TripIncident[] }>(ctx.cfg, session, "GET", `trips/${tripId}/incidents`),
   ]);
@@ -101,6 +101,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
         role={ctx.role}
         lang={ctx.lang}
         locale={ctx.locale}
+        timeZone={invoices.data.timezone ?? "UTC"}
       />
     )}
     {signed.ok && <TripAgreementsPanel view={signed.data} party={trip.data.party} lang={ctx.lang} locale={ctx.locale} />}

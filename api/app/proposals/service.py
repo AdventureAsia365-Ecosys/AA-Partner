@@ -414,6 +414,7 @@ async def send(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID) -> dict
     lead = await ctx.conn.fetchval(LEAD_SQL, trip_id)
     if lead is None:
         raise Conflict("no_lead_traveller", "the trip has no lead traveller to send the proposal to")
+    row = await pin_current_terms(ctx, row)
     terms = await _terms(ctx, row["terms_doc_id"], published=True)
     body = await vault.decrypt("proposal", "body_enc", proposal_id, row["body_enc"])
     digest = price_hash(
@@ -657,6 +658,25 @@ async def mark_paid(
     ctx.audit("payment_mark_received", "allowed", "payment_schedule", str(schedule_id), reason=row["kind"])
     out = await settle_schedule(ctx, vault, row)
     return {"schedule_id": str(schedule_id), "payment_id": str(payment_id), "status": "paid", **out}
+
+
+PIN_TERMS_SQL = "UPDATE crm.proposal SET terms_doc_id = $2 WHERE proposal_id = $1 AND terms_doc_id IS NULL"
+
+
+async def pin_current_terms(ctx: AnyContext, row: Any) -> Any:
+    """Design v3 F6 step 3 / WF-7 / R34 (S261 live finding on AA-952): the client accepts the agency's booking terms
+    with the proposal. A draft version that goes out without terms (text "Send", builder "Publish") is pinned to the
+    published booking terms version, when the agency has one, before its price hash is fixed; otherwise the accept
+    records no terms and the deposit then waits for a re-accept (:func:`require_terms_current`). A version that names
+    terms keeps them. Returns the row with ``terms_doc_id`` set (a dict copy when it changed)."""
+    if row["terms_doc_id"] is not None:
+        return row
+    current = await esign_terms.current(ctx)
+    if current is None:
+        return row
+    await ctx.conn.execute(PIN_TERMS_SQL, row["proposal_id"], current["doc_id"])
+    ctx.audit("proposal_terms_pin", "allowed", "proposal", str(row["proposal_id"]), reason="current_terms")
+    return {**dict(row), "terms_doc_id": current["doc_id"]}
 
 
 async def require_terms_current(ctx: AnyContext, row: Any) -> None:

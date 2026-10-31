@@ -147,7 +147,9 @@ export interface ClientInvoice {
   total_amount: string;
   balance_amount: string;
   due_on: string | null;
-  pay_window: { state: "open" | "claimed" | "settling" | "expired" | "paid" | "closed"; until: string | null };
+  /** `terms`: the agency's newer booking terms wait for the client's re-accept (shown above the box): no details and
+   * no "I have paid" until then (S261 F1; the claim answers 409 terms_reaccept_required anyway). */
+  pay_window: { state: "open" | "terms" | "claimed" | "settling" | "expired" | "paid" | "closed"; until: string | null };
   /** The agency's own pay-by details, only while the window is open. */
   pay_by: { name: string; instructions: string } | null;
   can_claim: boolean;
@@ -318,6 +320,7 @@ const PUBLIC_CODES = new Set([
   "rate_limited",
   "pay_link_expired",
   "invoice_not_payable",
+  "terms_reaccept_required",
   // AA-953 (CRM-24a): the per-person portal.
   "not_your_traveller",
   "lead_only",

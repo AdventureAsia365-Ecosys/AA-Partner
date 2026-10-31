@@ -19,6 +19,11 @@ instructions: the agency is the merchant, errata S247 BYO).
   allows one extension per hold) and writes the answer (:func:`finish_claim`): ``hold_extended_at`` + the proposal's
   hold expiry + the task's due time, or Booking's refusal code in ``hold_extend_code``. ``booking_unavailable`` is
   retried by the Booking sync (:func:`extend_due`). A second claim of a claimed invoice answers the same, nothing new.
+- **Terms first** (AA-955 x AA-952, S261 live finding F1): while the client still has to accept the agency's newer
+  booking terms (:func:`app.esign.terms.reaccept_needed`), a deposit invoice is not payable by the client either: the
+  window reads ``terms`` (no bank details, no "I have paid"), and a claim or a card session is 409
+  ``terms_reaccept_required`` **before** anything is written (no claim, no verify task, no bell, no hold extension),
+  the same code the agent's "Record payment" answers.
 - **"Not received"** (:func:`reject_claim`, owner / agent): ``payment_claimed`` -> ``open``; the task is closed. The
   window is the hold's again (the extension already used stays used).
 
@@ -37,6 +42,7 @@ from typing import Any, NoReturn
 from app.booking import contract
 from app.booking.client import BookingClient, BookingRefusal, BookingUnavailable
 from app.errors import Conflict, Gone, NotFound
+from app.esign import terms as esign_terms
 from app.payments import providers
 from app.proposals import events
 from app.tenancy import AnyContext, TenantContext
@@ -146,10 +152,12 @@ def holds_aa(row: Any) -> bool:
     )
 
 
-def pay_window(row: Any, now: dt.datetime) -> dict[str, Any]:
-    """``{"state", "until"}``: ``open`` (payable), ``claimed`` (the client says paid; the agent checks), ``settling``
-    (the money is in, the AA hold is being placed again), ``expired`` (the AA hold ran out: no bank details, no claim,
-    no card session), ``paid``, ``closed`` (void or a draft). ``until`` = the AA hold's expiry, when there is one."""
+def pay_window(row: Any, now: dt.datetime, *, terms_first: bool = False) -> dict[str, Any]:
+    """``{"state", "until"}``: ``open`` (payable), ``terms`` (payable once the client accepted the agency's newer
+    booking terms: ``terms_first``, the client view only), ``claimed`` (the client says paid; the agent checks),
+    ``settling`` (the money is in, the AA hold is being placed again), ``expired`` (the AA hold ran out: no bank
+    details, no claim, no card session), ``paid``, ``closed`` (void or a draft). ``until`` = the AA hold's expiry,
+    when there is one."""
     status = row["status"]
     until = row["hold_expires_at"] if holds_aa(row) else None
     if status in ("paid", "paid_unfulfillable"):
@@ -162,7 +170,30 @@ def pay_window(row: Any, now: dt.datetime) -> dict[str, Any]:
         return {"state": "claimed", "until": _iso(until)}
     if holds_aa(row) and (until is None or until <= now):
         return {"state": "expired", "until": _iso(until)}
+    if terms_first:
+        return {"state": "terms", "until": _iso(until)}
     return {"state": "open", "until": _iso(until)}
+
+
+async def terms_pending(ctx: AnyContext, row: Any) -> Any:
+    """The newer booking terms version the client must accept before paying this invoice (a deposit only, the rule of
+    :func:`app.proposals.service.require_terms_current`), or None."""
+    if row["kind"] != "deposit":
+        return None
+    return await esign_terms.reaccept_needed(ctx, row["trip_id"])
+
+
+async def _refuse_terms_first(ctx: AnyContext, row: Any, invoice_id: uuid.UUID, action: str) -> None:
+    """409 ``terms_reaccept_required`` (audited) while the client still has newer booking terms to accept."""
+    newer = await terms_pending(ctx, row)
+    if newer is None:
+        return
+    ctx.audit(action, "denied", "invoice", str(invoice_id), reason="terms_reaccept_required")
+    raise Conflict(
+        "terms_reaccept_required",
+        "accept the updated booking terms on this page before you pay",
+        version_label=newer["version_label"],
+    )
 
 
 def agency_view(row: Any, now: dt.datetime) -> dict[str, Any]:
@@ -191,8 +222,8 @@ async def window_facts(ctx: AnyContext, invoice_id: uuid.UUID) -> Any:
     return await ctx.conn.fetchrow(FACTS_SQL, invoice_id)
 
 
-def _client_invoice(row: Any, now: dt.datetime, pay_by: Any) -> dict[str, Any]:
-    window = pay_window(row, now)
+def _client_invoice(row: Any, now: dt.datetime, pay_by: Any, *, terms_first: bool = False) -> dict[str, Any]:
+    window = pay_window(row, now, terms_first=terms_first)
     balance = max(Decimal(row["total_amount"]) - Decimal(row["paid_amount"]), Decimal(0))
     payable = window["state"] == "open"
     return {
@@ -219,7 +250,10 @@ async def client_invoices(ctx: AnyContext, proposal_id: uuid.UUID, now: dt.datet
     if not rows:
         return []
     pay_by = await ctx.conn.fetchrow(PAY_BY_SQL)
-    return [_client_invoice(r, now, pay_by) for r in rows]
+    # One version, one trip: the terms rule is read once (deposit invoices only).
+    deposit = next((r for r in rows if r["kind"] == "deposit"), None)
+    pending = deposit is not None and await terms_pending(ctx, deposit) is not None
+    return [_client_invoice(r, now, pay_by, terms_first=pending and r["kind"] == "deposit") for r in rows]
 
 
 async def _client_row(ctx: AnyContext, proposal_id: uuid.UUID, invoice_id: uuid.UUID) -> Any:
@@ -242,7 +276,8 @@ class Claim:
 
 async def claim(ctx: AnyContext, proposal_id: uuid.UUID, invoice_id: uuid.UUID, now: dt.datetime) -> Claim:
     """Step 1 of "I have paid" (the client link's transaction): the claim, the task, the bell. 410
-    ``pay_link_expired`` once the window ended; 409 ``invoice_not_payable`` for a paid / void invoice."""
+    ``pay_link_expired`` once the window ended; 409 ``invoice_not_payable`` for a paid / void invoice; 409
+    ``terms_reaccept_required`` (nothing written, so no hold extension follows) while newer booking terms wait."""
     row = await _client_row(ctx, proposal_id, invoice_id)
     window = pay_window(row, now)
     if window["state"] in ("claimed", "settling"):
@@ -252,6 +287,7 @@ async def claim(ctx: AnyContext, proposal_id: uuid.UUID, invoice_id: uuid.UUID, 
         raise Gone("pay_link_expired", "this payment link has expired: ask your agent for a new one")
     if window["state"] != "open":
         raise Conflict("invoice_not_payable", "this invoice is paid or no longer payable")
+    await _refuse_terms_first(ctx, row, invoice_id, "invoice_claim")
     await ctx.conn.execute(CLAIM_SQL, invoice_id)
     await ctx.conn.execute(COMMITMENT_SQL, row["trip_id"], "payment_claimed", f"invoice:{invoice_id}")
     hold = holds_aa(row)
@@ -355,6 +391,7 @@ async def card_payment(ctx: AnyContext, proposal_id: uuid.UUID, invoice_id: uuid
         raise Gone("pay_link_expired", "this payment link has expired: ask your agent for a new one")
     if window["state"] != "open":
         raise Conflict("invoice_not_payable", "this invoice is paid, claimed or no longer payable")
+    await _refuse_terms_first(ctx, row, invoice_id, "invoice_card_session")
     account = await ctx.conn.fetchrow(CARD_ACCOUNT_SQL)
     if account is None:
         raise Conflict("card_not_offered", "this agency takes payment by transfer: use the details shown")

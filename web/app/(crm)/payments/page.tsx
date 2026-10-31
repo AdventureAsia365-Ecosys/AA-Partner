@@ -8,7 +8,7 @@ import { RefundsPanel } from "@/components/invoices/RefundsPanel";
 import { PageTitle } from "@/components/PageTitle";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
-import { formatDate } from "@/lib/dates";
+import { formatDate, formatInstant } from "@/lib/dates";
 import { fmt, t, type MessageKey } from "@/lib/i18n";
 import { claimNote, STATUSES, STATUS_TONE, type InvoiceStatus, type ReceivablesView, type RefundRequest } from "@/lib/invoices";
 import { formatAmount } from "@/lib/proposals";
@@ -84,7 +84,8 @@ export default async function PaymentsPage({ searchParams }: { searchParams: Pro
                   // AA-952 slice 4 (WF-9): "Client says paid; verify before <time>", a late deposit being re-held, ...
                   const note = claimNote(inv);
                   if (!note) return null;
-                  const until = note.vars.until ? new Date(note.vars.until).toLocaleString(ctx.locale, { dateStyle: "medium", timeStyle: "short" }) : "";
+                  // The agency timezone with its label (S261 F2), as on the trip's Invoices card.
+                  const until = formatInstant(note.vars.until, ctx.locale, view.data.timezone ?? "UTC");
                   const code = note.vars.code !== undefined ? tr(`invoice.rehold.${note.vars.code || "other"}`) : "";
                   return (
                     <span data-testid="receivable-claim-note" style={{ display: "block", fontSize: 12, color: K.muted }}>

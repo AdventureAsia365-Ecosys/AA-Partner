@@ -63,6 +63,32 @@ export function formatOutward(value: string | Date | null | undefined, locale: D
   return fmt(locale, { day: "numeric", month: "long", year: "numeric" }).format(d);
 }
 
+const INSTANT: Intl.DateTimeFormatOptions = {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  timeZoneName: "short",
+};
+
+/**
+ * An instant (ISO date-time) in a named IANA zone, with the zone's label: "5 Nov 2026, 11:23 am GMT+7". Agency views
+ * pass the agency timezone (the API's `timezone`), never the server's (UTC) or the browser's, so the server render and
+ * the browser print the same time (AA-952 S261 F2; the calendar fix of #142). An unknown zone prints UTC, labelled.
+ * "" for nothing; an unreadable value is returned as is.
+ */
+export function formatInstant(value: string | null | undefined, locale: DateLocale, timeZone: string): string {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  try {
+    return new Intl.DateTimeFormat(locale, { ...INSTANT, timeZone }).format(d);
+  } catch {
+    return new Intl.DateTimeFormat(locale, { ...INSTANT, timeZone: "UTC" }).format(d);
+  }
+}
+
 /** True when the locale writes the day before the month in numeric dates. */
 export function dayFirst(locale: DateLocale): boolean {
   return locale !== "en-US";
