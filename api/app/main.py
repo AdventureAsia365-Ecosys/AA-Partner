@@ -229,6 +229,9 @@ def create_app(
     # AA-953 follow-up: traveller portal writes made with a session cookie get their own per-address bucket, so a
     # family on one home address is not stopped by the intake ceiling (app.routers.client_pages).
     app.state.portal_write_limiter = FixedWindowLimiter(settings.rate_limit_portal_write_per_minute)
+    # ... and a session cookie only lifts a write to that bucket once it proves valid: each such write holds a slot of
+    # this one (the anonymous ceiling) until the session check passes, so forged or stale cookies stay at 5 a minute.
+    app.state.portal_unproven_limiter = FixedWindowLimiter(settings.rate_limit_intake_per_minute)
     app.add_exception_handler(ServiceError, service_error_handler)
     app.add_exception_handler(Exception, unhandled_error_handler)
     app.add_middleware(RequestIdMiddleware)

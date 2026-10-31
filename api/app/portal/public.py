@@ -41,6 +41,10 @@ masked e-mail hint of the traveller's own address.
   missing, attempts used up; card R).
 
 Unknown, expired, revoked or foreign link, a link of another purpose or a revoked access: 404 ``link_not_found``.
+
+:func:`session_proof`: the router opens it around a session-gated write; :func:`_signed_in` (and :func:`sign_out`
+when it ended a live session) marks it proven, so the router gives back the slot of its "unproven session" bucket
+(``app.routers.client_pages``): only refused sessions count against that per-address ceiling.
 """
 
 from __future__ import annotations
@@ -51,6 +55,9 @@ import hmac
 import json
 import secrets
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 import asyncpg
@@ -233,6 +240,37 @@ def session_hash(session: str) -> bytes:
     return hashlib.sha256(session.encode()).digest()
 
 
+class SessionProof:
+    """Whether this request's portal session proved valid (set by :func:`mark_session_proven`)."""
+
+    __slots__ = ("proven",)
+
+    def __init__(self) -> None:
+        self.proven = False
+
+
+# A mutable holder, not a bool: a mark made in a copied context (a task the service may start) still reaches the router.
+_SESSION_PROOF: ContextVar[SessionProof | None] = ContextVar("portal_session_proof", default=None)
+
+
+@contextmanager
+def session_proof() -> Iterator[SessionProof]:
+    """Watch the session check of the code run inside (the router's per-address limit of session-gated writes)."""
+    proof = SessionProof()
+    reset = _SESSION_PROOF.set(proof)
+    try:
+        yield proof
+    finally:
+        _SESSION_PROOF.reset(reset)
+
+
+def mark_session_proven() -> None:
+    """The session of this request is valid (no-op outside :func:`session_proof`)."""
+    proof = _SESSION_PROOF.get()
+    if proof is not None:
+        proof.proven = True
+
+
 def mask_email(address: str) -> str:
     """``t***@o*****.com``: the first character of the local part and of the domain, the top-level domain."""
     local, _, domain = address.partition("@")
@@ -279,11 +317,13 @@ async def _signed_in(ctx: AnyContext, access: Any, session: str | None) -> Any:
     acting_reach = person.delivery_bidx(members, found["traveler_id"])
     if proof is not None and acting_reach is not None and hmac.compare_digest(bytes(proof), acting_reach):
         if found["access_id"] == access["access_id"]:
+            mark_session_proven()
             return access
         reach = person.delivery_of(members, access["traveler_id"])
         if reach is not None and person.delivery_of(members, found["traveler_id"]) == reach:
             acting = await ctx.conn.fetchrow(ACCESS_BY_ID_SQL, found["access_id"], access["trip_id"])
             if acting is not None:
+                mark_session_proven()
                 return acting
     raise Forbidden("portal_sign_in_required", "sign in with the code we e-mail you")
 
@@ -513,7 +553,9 @@ async def sign_out(pool: asyncpg.Pool, token: str, session: str | None) -> dict[
     async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
         access = await _access(ctx, link)
         if session and len(session) <= 100:
-            await ctx.conn.execute(END_SESSION_SQL, access["trip_id"], session_hash(session))
+            ended = await ctx.conn.execute(END_SESSION_SQL, access["trip_id"], session_hash(session))
+            if ended != "UPDATE 0":  # a live session of this trip ended: the caller held it
+                mark_session_proven()
         return {"signed_in": False}
 
 

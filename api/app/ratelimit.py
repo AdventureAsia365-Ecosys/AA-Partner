@@ -20,6 +20,11 @@ otherwise rotate addresses inside it to get a fresh count per request.
 At most :data:`MAX_TRACKED_KEYS` keys are tracked per window. When the table is full, the least recently seen key is
 evicted (an idle one), instead of resetting every count, so a flood of new keys cannot clear the counts of the
 addresses that are busy right now.
+
+A caller can take a slot and give it back (:meth:`FixedWindowLimiter.release`): the client pages reserve a slot of the
+"unproven session" bucket before a session-gated write and return it once the session proved valid
+(``app.routers.client_pages``), so only refused sessions use it up, and a burst of parallel requests cannot pass
+before the first refusal is counted.
 """
 
 from __future__ import annotations
@@ -52,7 +57,13 @@ class FixedWindowLimiter:
         self._clock = clock
         self._max_keys = max_keys
         self._window_start = clock()
+        self._window = 0  # bumped at every new window, so a late release never frees a slot of the next one
         self._counts: OrderedDict[str, int] = OrderedDict()
+
+    @property
+    def window(self) -> int:
+        """The current window's number (read it right after :meth:`allow` to :meth:`release` that slot later)."""
+        return self._window
 
     def allow(self, key: str) -> bool:
         if self._limit <= 0:
@@ -60,12 +71,21 @@ class FixedWindowLimiter:
         now = self._clock()
         if now - self._window_start >= self.window_s:
             self._window_start = now
+            self._window += 1
             self._counts.clear()
         count = self._counts.pop(key, 0) + 1
         self._counts[key] = count  # re-inserted last: the most recently seen key
         while len(self._counts) > self._max_keys:
             self._counts.popitem(last=False)  # evict the least recently seen key only
         return count <= self._limit
+
+    def release(self, key: str, window: int) -> None:
+        """Give back one slot ``key`` took in ``window`` (no-op once that window ended or the key was evicted)."""
+        if self._limit <= 0 or window != self._window:
+            return
+        count = self._counts.get(key, 0)
+        if count > 0:
+            self._counts[key] = count - 1
 
     def tracked(self) -> int:
         return len(self._counts)

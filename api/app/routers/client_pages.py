@@ -44,7 +44,9 @@ cap. 404 ``link_not_found`` for any unusable link. Answers carry ``no-store`` an
 - writes only a signed-in traveller can make (Stage 3, flights, passport scan, the signing code, signing, companion
   invite, switch, sign-out), when the request carries a session cookie: the portal write limiter,
   ``RATE_LIMIT_PORTAL_WRITE_PER_MINUTE`` (default 30), so a family filling the portal from one address is not stopped
-  by the form ceiling. Without a session cookie they keep the intake limiter. See
+  by the form ceiling. Without a session cookie they keep the intake limiter. The cookie alone is not trusted: such a
+  write also holds a slot of the unproven-session limiter (``RATE_LIMIT_INTAKE_PER_MINUTE``) until the session check
+  passes (:func:`_session_write`), so a forged or stale cookie gets the anonymous ceiling of refused writes. See
   ``docs/implementation-notes/AA-953-write-limit.md`` for the per-route list.
 """
 
@@ -52,6 +54,8 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Cookie, Header, HTTPException, Request
@@ -82,33 +86,49 @@ def _write_limit(request: Request) -> None:
     _limit(request, "intake_limiter", client_address(request, settings.rate_limit_xff_hops))
 
 
-def _session_write_limit(request: Request, session: str | None) -> None:
-    """A write only a signed-in traveller can make (Stage 3, flights, passport scan, signing, invite, switch, sign-out).
+@asynccontextmanager
+async def _session_write(request: Request, session: str | None) -> AsyncIterator[None]:
+    """Wrap a write only a signed-in traveller can make (Stage 3, flights, passport scan, the signing code, signing,
+    companion invite, switch, sign-out). Every limit runs on entry, before the body or the database is read.
 
-    With a session cookie of the issued shape: the portal write limiter (``RATE_LIMIT_PORTAL_WRITE_PER_MINUTE``,
-    default 30 per address), so a family filling the portal from one home address is not stopped by the inquiry-form
-    ceiling (AA-953 follow-up). Without one (no cookie, a malformed one) the request cannot pass the handler's session
-    check anyway, so it keeps the anonymous intake limiter. The session itself is checked by the handler, after the
-    limit, as before.
+    - No session cookie of the issued shape (none, a malformed one): the anonymous intake limiter, as any write
+      without a session (such a request cannot pass the handler's session check anyway).
+    - A session cookie of the issued shape: one slot of the **unproven session** limiter
+      (``RATE_LIMIT_INTAKE_PER_MINUTE`` per address, the anonymous ceiling) is taken, then the portal write limiter
+      (``RATE_LIMIT_PORTAL_WRITE_PER_MINUTE``, default 30 per address: a family filling the portal from one home
+      address is not stopped by the inquiry-form ceiling, AA-953 follow-up). The handler checks the session as before;
+      once it proved valid (:func:`app.portal.public.mark_session_proven`) the unproven slot is given back. A forged
+      or stale cookie keeps its slot, so a caller who is not signed in still gets at most the anonymous ceiling of
+      such writes per address per minute, and a parallel burst cannot pass before the first refusal is counted.
     """
-    if not (session and _TOKEN.match(session)):
-        _write_limit(request)
-        return
     settings = request.app.state.settings
-    _limit(request, "portal_write_limiter", client_address(request, settings.rate_limit_xff_hops))
+    key = client_address(request, settings.rate_limit_xff_hops)
+    if not (session and _TOKEN.match(session)):
+        _limit(request, "intake_limiter", key)
+        yield
+        return
+    unproven = request.app.state.portal_unproven_limiter
+    _limit(request, "portal_unproven_limiter", key)
+    window = unproven.window
+    try:
+        _limit(request, "portal_write_limiter", key)
+    except HTTPException:
+        unproven.release(key, window)  # stopped before anything ran: not a refused session
+        raise
+    with portal.session_proof() as proof:
+        try:
+            yield
+        finally:
+            if proof.proven:
+                unproven.release(key, window)
 
 
-async def _code_limit(request: Request, session: str | None, content_length: int | None) -> Any:
-    """``POST .../code``: the body (capped, no database read) decides the limiter. A signing code (``purpose: sign``)
-    is asked by a signed-in traveller and takes the portal write limiter; a sign-in code is anonymous and e-mails
-    someone, so it keeps the intake limiter. Returns the parsed body."""
-    raw = await _json_body(request, content_length)
+def _code_write(request: Request, session: str | None, raw: Any) -> AbstractAsyncContextManager[None]:
+    """``POST .../code``: the body (capped, no database read) decides the bucket. A signing code (``purpose: sign``)
+    is asked by a signed-in traveller (:func:`_session_write`); a sign-in code is anonymous and e-mails someone, so it
+    keeps the intake limiter whatever the cookie."""
     purpose = raw.get("purpose", "sign_in") if isinstance(raw, dict) else None
-    if purpose == "sign":
-        _session_write_limit(request, session)
-    else:
-        _write_limit(request)
-    return raw
+    return _session_write(request, session if purpose == "sign" else None)
 
 
 def _evidence(request: Request) -> dict[str, str | None]:
@@ -310,20 +330,21 @@ async def post_portal_code(
     origin: Annotated[str | None, Header()] = None,
     content_length: Annotated[int | None, Header()] = None,
 ) -> JSONResponse:
-    raw = await _code_limit(request, session, content_length)
-    purpose = raw.get("purpose", "sign_in") if isinstance(raw, dict) else None
-    pool = await request_pool(request)
-    keys = require_keys(request.app.state.keys)
-    result = await portal.request_code(
-        pool,
-        keys,
-        request.app.state.settings,
-        token,
-        purpose=purpose if isinstance(purpose, str) else "",
-        session=session,
-        origin=origin,
-    )
-    return _json(result, 202)
+    raw = await _json_body(request, content_length)
+    async with _code_write(request, session, raw):
+        purpose = raw.get("purpose", "sign_in") if isinstance(raw, dict) else None
+        pool = await request_pool(request)
+        keys = require_keys(request.app.state.keys)
+        result = await portal.request_code(
+            pool,
+            keys,
+            request.app.state.settings,
+            token,
+            purpose=purpose if isinstance(purpose, str) else "",
+            session=session,
+            origin=origin,
+        )
+        return _json(result, 202)
 
 
 @router.post("/portal/{token}/session")
@@ -370,13 +391,13 @@ async def _verify(request: Request, token: str, raw: Any, origin: str | None, pa
 async def post_portal_sign_out(
     request: Request, token: LinkToken, session: SessionCookie = None, origin: Annotated[str | None, Header()] = None
 ) -> JSONResponse:
-    _session_write_limit(request, session)
-    portal.check_origin(request.app.state.settings, origin)
-    pool = await request_pool(request)
-    response = _json(await portal.sign_out(pool, token, session))
-    response.delete_cookie(portal.SESSION_COOKIE, path=_cookie_path(token), secure=True, httponly=True,
-                           samesite="strict")  # fmt: skip
-    return response
+    async with _session_write(request, session):
+        portal.check_origin(request.app.state.settings, origin)
+        pool = await request_pool(request)
+        response = _json(await portal.sign_out(pool, token, session))
+        response.delete_cookie(portal.SESSION_COOKIE, path=_cookie_path(token), secure=True, httponly=True,
+                               samesite="strict")  # fmt: skip
+        return response
 
 
 @router.put("/portal/{token}/stage3")
@@ -387,12 +408,12 @@ async def put_portal_stage3(
     origin: Annotated[str | None, Header()] = None,
     content_length: Annotated[int | None, Header()] = None,
 ) -> JSONResponse:
-    _session_write_limit(request, session)
-    raw = await _json_body(request, content_length)
-    pool = await request_pool(request)
-    keys = require_keys(request.app.state.keys)
-    result = await portal.submit_stage3(pool, keys, request.app.state.settings, token, session, raw, origin=origin)
-    return _json(result)
+    async with _session_write(request, session):
+        raw = await _json_body(request, content_length)
+        pool = await request_pool(request)
+        keys = require_keys(request.app.state.keys)
+        result = await portal.submit_stage3(pool, keys, request.app.state.settings, token, session, raw, origin=origin)
+        return _json(result)
 
 
 @router.post("/portal/{token}/sign")
@@ -403,22 +424,22 @@ async def post_portal_sign(
     origin: Annotated[str | None, Header()] = None,
     content_length: Annotated[int | None, Header()] = None,
 ) -> JSONResponse:
-    _session_write_limit(request, session)
-    raw = await _json_body(request, content_length)
-    pool = await request_pool(request)
-    keys = require_keys(request.app.state.keys)
-    signed, result = await portal.sign(
-        pool,
-        keys,
-        request.app.state.settings,
-        token,
-        session,
-        raw,
-        origin=origin,
-        sealer=getattr(request.app.state, "sealer", None),
-        **_evidence(request),
-    )
-    return _json(result, 200 if signed else 422)
+    async with _session_write(request, session):
+        raw = await _json_body(request, content_length)
+        pool = await request_pool(request)
+        keys = require_keys(request.app.state.keys)
+        signed, result = await portal.sign(
+            pool,
+            keys,
+            request.app.state.settings,
+            token,
+            session,
+            raw,
+            origin=origin,
+            sealer=getattr(request.app.state, "sealer", None),
+            **_evidence(request),
+        )
+        return _json(result, 200 if signed else 422)
 
 
 # ── the traveller portal by cookie (AA-953, CRM-24a; design v3 §2.9 rule 1 for the portal, Fix B11) ────────────────
@@ -463,20 +484,21 @@ async def post_traveller_code(
     origin: Annotated[str | None, Header()] = None,
     content_length: Annotated[int | None, Header()] = None,
 ) -> JSONResponse:
-    raw = await _code_limit(request, session, content_length)
-    purpose = raw.get("purpose", "sign_in") if isinstance(raw, dict) else None
-    pool = await request_pool(request)
-    keys = require_keys(request.app.state.keys)
-    result = await portal.request_code(
-        pool,
-        keys,
-        request.app.state.settings,
-        _cookie_token(token),
-        purpose=purpose if isinstance(purpose, str) else "",
-        session=session,
-        origin=origin,
-    )
-    return _json(result, 202)
+    raw = await _json_body(request, content_length)
+    async with _code_write(request, session, raw):
+        purpose = raw.get("purpose", "sign_in") if isinstance(raw, dict) else None
+        pool = await request_pool(request)
+        keys = require_keys(request.app.state.keys)
+        result = await portal.request_code(
+            pool,
+            keys,
+            request.app.state.settings,
+            _cookie_token(token),
+            purpose=purpose if isinstance(purpose, str) else "",
+            session=session,
+            origin=origin,
+        )
+        return _json(result, 202)
 
 
 @router.post("/traveller/session")
@@ -499,12 +521,12 @@ async def post_traveller_switch(
     origin: Annotated[str | None, Header()] = None,
     content_length: Annotated[int | None, Header()] = None,
 ) -> JSONResponse:
-    _session_write_limit(request, session)
-    raw = await _json_body(request, content_length)
-    pool = await request_pool(request)
-    return _json(
-        await portal.switch(pool, request.app.state.settings, _cookie_token(token), session, raw, origin=origin)
-    )
+    async with _session_write(request, session):
+        raw = await _json_body(request, content_length)
+        pool = await request_pool(request)
+        return _json(
+            await portal.switch(pool, request.app.state.settings, _cookie_token(token), session, raw, origin=origin)
+        )
 
 
 @router.post("/traveller/sign-out")
@@ -514,12 +536,14 @@ async def post_traveller_sign_out(
     session: SessionCookie = None,
     origin: Annotated[str | None, Header()] = None,
 ) -> JSONResponse:
-    _session_write_limit(request, session)
-    portal.check_origin(request.app.state.settings, origin)
-    pool = await request_pool(request)
-    response = _json(await portal.sign_out(pool, _cookie_token(token), session))
-    response.delete_cookie(portal.SESSION_COOKIE, path=TRAVELLER_PATH, secure=True, httponly=True, samesite="strict")
-    return response
+    async with _session_write(request, session):
+        portal.check_origin(request.app.state.settings, origin)
+        pool = await request_pool(request)
+        response = _json(await portal.sign_out(pool, _cookie_token(token), session))
+        response.delete_cookie(
+            portal.SESSION_COOKIE, path=TRAVELLER_PATH, secure=True, httponly=True, samesite="strict"
+        )
+        return response
 
 
 @router.put("/traveller/stage3")
@@ -530,15 +554,15 @@ async def put_traveller_stage3(
     origin: Annotated[str | None, Header()] = None,
     content_length: Annotated[int | None, Header()] = None,
 ) -> JSONResponse:
-    _session_write_limit(request, session)
-    raw = await _json_body(request, content_length)
-    pool = await request_pool(request)
-    keys = require_keys(request.app.state.keys)
-    return _json(
-        await portal.submit_stage3(
-            pool, keys, request.app.state.settings, _cookie_token(token), session, raw, origin=origin
+    async with _session_write(request, session):
+        raw = await _json_body(request, content_length)
+        pool = await request_pool(request)
+        keys = require_keys(request.app.state.keys)
+        return _json(
+            await portal.submit_stage3(
+                pool, keys, request.app.state.settings, _cookie_token(token), session, raw, origin=origin
+            )
         )
-    )
 
 
 @router.post("/traveller/sign")
@@ -549,22 +573,22 @@ async def post_traveller_sign(
     origin: Annotated[str | None, Header()] = None,
     content_length: Annotated[int | None, Header()] = None,
 ) -> JSONResponse:
-    _session_write_limit(request, session)
-    raw = await _json_body(request, content_length)
-    pool = await request_pool(request)
-    keys = require_keys(request.app.state.keys)
-    signed, result = await portal.sign(
-        pool,
-        keys,
-        request.app.state.settings,
-        _cookie_token(token),
-        session,
-        raw,
-        origin=origin,
-        sealer=getattr(request.app.state, "sealer", None),
-        **_evidence(request),
-    )
-    return _json(result, 200 if signed else 422)
+    async with _session_write(request, session):
+        raw = await _json_body(request, content_length)
+        pool = await request_pool(request)
+        keys = require_keys(request.app.state.keys)
+        signed, result = await portal.sign(
+            pool,
+            keys,
+            request.app.state.settings,
+            _cookie_token(token),
+            session,
+            raw,
+            origin=origin,
+            sealer=getattr(request.app.state, "sealer", None),
+            **_evidence(request),
+        )
+        return _json(result, 200 if signed else 422)
 
 
 @router.put("/traveller/flights")
@@ -575,15 +599,15 @@ async def put_traveller_flights(
     origin: Annotated[str | None, Header()] = None,
     content_length: Annotated[int | None, Header()] = None,
 ) -> JSONResponse:
-    _session_write_limit(request, session)
-    raw = await _json_body(request, content_length)
-    pool = await request_pool(request)
-    keys = require_keys(request.app.state.keys)
-    return _json(
-        await portal.save_flights(
-            pool, keys, request.app.state.settings, _cookie_token(token), session, raw, origin=origin
+    async with _session_write(request, session):
+        raw = await _json_body(request, content_length)
+        pool = await request_pool(request)
+        keys = require_keys(request.app.state.keys)
+        return _json(
+            await portal.save_flights(
+                pool, keys, request.app.state.settings, _cookie_token(token), session, raw, origin=origin
+            )
         )
-    )
 
 
 @router.post("/traveller/passport-scan")
@@ -594,16 +618,16 @@ async def post_traveller_passport_scan(
     origin: Annotated[str | None, Header()] = None,
     content_length: Annotated[int | None, Header()] = None,
 ) -> JSONResponse:
-    _session_write_limit(request, session)
-    raw = await _scan_body(request, content_length)
-    pool = await request_pool(request)
-    keys = require_keys(request.app.state.keys)
-    store = require_store(request.app.state.documents)
-    return _json(
-        await portal.upload_passport_scan(
-            pool, keys, store, request.app.state.settings, _cookie_token(token), session, raw, origin=origin
+    async with _session_write(request, session):
+        raw = await _scan_body(request, content_length)
+        pool = await request_pool(request)
+        keys = require_keys(request.app.state.keys)
+        store = require_store(request.app.state.documents)
+        return _json(
+            await portal.upload_passport_scan(
+                pool, keys, store, request.app.state.settings, _cookie_token(token), session, raw, origin=origin
+            )
         )
-    )
 
 
 @router.get("/traveller/documents/{document_id}")
@@ -628,12 +652,12 @@ async def post_traveller_companion(
     origin: Annotated[str | None, Header()] = None,
     content_length: Annotated[int | None, Header()] = None,
 ) -> JSONResponse:
-    _session_write_limit(request, session)
-    raw = await _json_body(request, content_length)
-    pool = await request_pool(request)
-    keys = require_keys(request.app.state.keys)
-    return _json(
-        await portal.invite_companion(
-            pool, keys, request.app.state.settings, _cookie_token(token), session, raw, origin=origin
+    async with _session_write(request, session):
+        raw = await _json_body(request, content_length)
+        pool = await request_pool(request)
+        keys = require_keys(request.app.state.keys)
+        return _json(
+            await portal.invite_companion(
+                pool, keys, request.app.state.settings, _cookie_token(token), session, raw, origin=origin
+            )
         )
-    )

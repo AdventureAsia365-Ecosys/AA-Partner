@@ -765,6 +765,45 @@ async def test_sign_out(monkeypatch: pytest.MonkeyPatch) -> None:
     assert conn.sql("status = 'verified'\n") or conn.sql("AND session_hash = $2 AND status = 'verified'")
 
 
+@pytest.mark.asyncio
+async def test_the_session_check_marks_the_request_proven(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AA-953 follow-up: the router gives back its unproven-session slot only when ``_signed_in`` passed."""
+    _portal(monkeypatch, _signed_in(ScriptedConn()))
+    with portal.session_proof() as proof:
+        with _raises(Forbidden, "stage3_locked"):  # signed in, then refused for another reason: still proven
+            await portal.submit_stage3(object(), object(), ECHO, TOKEN, "session", {}, origin=None)  # type: ignore[arg-type]
+    assert proof.proven
+    _portal(monkeypatch, ScriptedConn().on("FROM crm.traveler_access a JOIN crm.trip t", _access_row()))
+    with portal.session_proof() as proof:
+        with _raises(Forbidden, "portal_sign_in_required"):
+            await portal.submit_stage3(object(), object(), ECHO, TOKEN, "forged", {}, origin=None)  # type: ignore[arg-type]
+    assert not proof.proven
+    _portal(monkeypatch, ScriptedConn())
+    with portal.session_proof() as proof:
+        with _raises(NotFound, "link_not_found"):
+            await portal.submit_stage3(object(), object(), ECHO, TOKEN, "session", {}, origin=None)  # type: ignore[arg-type]
+    assert not proof.proven
+    portal.mark_session_proven()  # outside a watch: a no-op
+
+
+@pytest.mark.parametrize(("status", "proven"), [("UPDATE 1", True), ("UPDATE 0", False)])
+@pytest.mark.asyncio
+async def test_sign_out_is_proven_only_when_it_ended_a_session(
+    monkeypatch: pytest.MonkeyPatch, status: str, proven: bool
+) -> None:
+    conn = ScriptedConn().on("FROM crm.traveler_access a JOIN crm.trip t", _access_row())
+
+    async def execute(sql: str, *args: Any) -> str:
+        conn._answer(sql, args)
+        return status
+
+    monkeypatch.setattr(conn, "execute", execute)
+    _portal(monkeypatch, conn)
+    with portal.session_proof() as proof:
+        assert await portal.sign_out(object(), TOKEN, "session") == {"signed_in": False}  # type: ignore[arg-type]
+    assert proof.proven is proven
+
+
 # ── the proposal page (client side) ─────────────────────────────────────────────────────────────
 
 

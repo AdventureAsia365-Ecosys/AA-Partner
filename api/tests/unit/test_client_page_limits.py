@@ -3,17 +3,24 @@
 Anonymous and pre-sign-in writes keep the intake limiter (``RATE_LIMIT_INTAKE_PER_MINUTE``, 5 per address: the
 inquiry form's anti-abuse ceiling). Writes only a signed-in traveller can make take the portal write limiter
 (``RATE_LIMIT_PORTAL_WRITE_PER_MINUTE``, default 30) when the request carries a session cookie, so a family filling the
-portal from one home address is not stopped at the sixth write. The services are stubbed: only the limit is tested.
+portal from one home address is not stopped at the sixth write. A session cookie only lifts a write to that bucket
+once the session proves valid: until then the write holds a slot of the "unproven session" bucket (the intake ceiling),
+so a forged or stale cookie stays at 5 a minute. The services are stubbed (a valid session marks itself proven, as
+``app.portal.public._signed_in`` does): only the limit is tested.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import AsyncExitStack
 from typing import Any
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
+from app.errors import Forbidden
 from app.main import create_app
 from app.portal import public as portal
 from app.proposals import public as proposal_page
@@ -67,7 +74,23 @@ def pools() -> LocalPools:
     return LocalPools()
 
 
-def _client(pools: LocalPools, monkeypatch: pytest.MonkeyPatch, **limits: int) -> Iterator[TestClient]:
+def _session_stub(calls: list[tuple[str, Any]], name: str, valid: bool, result: Any = None) -> Any:
+    """A portal service: a valid session marks itself proven (as ``_signed_in`` does); a refused one is 403."""
+    inner = _stub(calls, name, result)
+
+    async def fn(*args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("purpose", "sign") == "sign":  # request_code: only a signing code checks the session
+            if not valid:
+                raise Forbidden("portal_sign_in_required")
+            portal.mark_session_proven()
+        return await inner(*args, **kwargs)
+
+    return fn
+
+
+def _client(
+    pools: LocalPools, monkeypatch: pytest.MonkeyPatch, *, valid: bool = True, **limits: int
+) -> Iterator[TestClient]:
     settings = pools.settings(rate_limit_intake_per_minute=INTAKE, **limits)
     app = create_app(settings, verifier=pools.verifier(settings), keys=object())
     app.state.documents = object()
@@ -77,7 +100,7 @@ def _client(pools: LocalPools, monkeypatch: pytest.MonkeyPatch, **limits: int) -
     calls: list[tuple[str, Any]] = []
     for name in ("submit_stage3", "sign_out", "request_code", "switch", "save_flights", "upload_passport_scan",
                  "invite_companion"):  # fmt: skip
-        monkeypatch.setattr(portal, name, _stub(calls, name))
+        monkeypatch.setattr(portal, name, _session_stub(calls, name, valid))
     for name in ("accept", "reaccept_terms", "pick", "change_request", "claim_payment", "card_payment"):
         monkeypatch.setattr(proposal_page, name, _stub(calls, name))
 
@@ -85,6 +108,9 @@ def _client(pools: LocalPools, monkeypatch: pytest.MonkeyPatch, **limits: int) -
         return 200, {"status": "held"}
 
     async def sign(*_: Any, **__: Any) -> tuple[bool, dict]:
+        if not valid:
+            raise Forbidden("portal_sign_in_required")
+        portal.mark_session_proven()
         return True, {"status": "signed"}
 
     async def verify(*_: Any, **__: Any) -> tuple[Any, dict]:
@@ -194,3 +220,89 @@ def test_a_zero_portal_limit_turns_the_bucket_off(pools: LocalPools, monkeypatch
         _signed_in(c)
         for n in range(PORTAL + 5):
             assert _send(c, SESSION_WRITES[4]).status_code == 200, n
+
+
+# ── a session cookie that does not prove valid (review of the first pass: the cookie's shape alone is not trust) ──
+
+
+@pytest.mark.parametrize("route", SESSION_WRITES, ids=lambda r: f"{r[0]} {r[1]}")
+def test_a_forged_session_cookie_keeps_the_anonymous_ceiling(
+    pools: LocalPools, monkeypatch: pytest.MonkeyPatch, route: tuple[str, str, dict[str, Any]]
+) -> None:
+    for c in _client(pools, monkeypatch, valid=False):
+        _signed_in(c)  # any 43-character value has the issued shape; the stub refuses it as the session check would
+        for n in range(INTAKE):
+            res = _send(c, route)
+            assert res.status_code == 403 and res.json()["detail"] == "portal_sign_in_required", (n, res.text)
+        _assert_limited(_send(c, route))
+        # The sixth was stopped before the portal bucket: only the five refused writes took a slot there.
+        assert c.app.state.portal_write_limiter._counts.get("testclient", 0) == INTAKE  # type: ignore[attr-defined]
+
+
+def test_refused_sessions_are_counted_across_routes(pools: LocalPools, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The unproven bucket is per address, not per route: 5 refused writes spread over 5 routes, then the 6th 429s."""
+    for c in _client(pools, monkeypatch, valid=False):
+        _signed_in(c)
+        for route in SESSION_WRITES[4:9]:
+            assert _send(c, route).status_code == 403, route
+        _assert_limited(_send(c, SESSION_WRITES[10]))  # the passport scan: stopped before its body is read
+        # An anonymous write still has its own intake budget (separate bucket, as before the portal bucket existed).
+        assert _send(c, ANONYMOUS_WRITES[12]).status_code == 422
+
+
+def test_a_valid_session_gives_its_unproven_slot_back(client: TestClient) -> None:
+    _signed_in(client)
+    for n in range(PORTAL):
+        assert _send(client, SESSION_WRITES[4]).status_code == 200, n
+    assert client.app.state.portal_unproven_limiter._counts.get("testclient", 0) == 0  # type: ignore[attr-defined]
+    # The 31st is stopped by the portal bucket, and that refusal does not use an unproven slot either.
+    _assert_limited(_send(client, SESSION_WRITES[4]))
+    assert client.app.state.portal_unproven_limiter._counts.get("testclient", 0) == 0  # type: ignore[attr-defined]
+
+
+def _request(app: Any, session: str) -> Request:
+    scope = {
+        "type": "http",
+        "method": "PUT",
+        "path": "/crm/public/v1/traveller/stage3",
+        "headers": [(b"cloudfront-viewer-address", b"198.51.100.7:40000")],
+        "client": ("10.0.0.1", 1),
+        "app": app,
+    }
+    return Request(scope)
+
+
+@pytest.mark.asyncio
+async def test_a_parallel_burst_cannot_pass_before_the_first_refusal(
+    pools: LocalPools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Five writes still in flight (session not checked yet) hold the five unproven slots: the sixth is 429 at once."""
+    settings = pools.settings(rate_limit_intake_per_minute=INTAKE)
+    app = create_app(settings, verifier=pools.verifier(settings), keys=object())
+    async with AsyncExitStack() as stack:
+        for _ in range(INTAKE):
+            await stack.enter_async_context(client_pages._session_write(_request(app, SESSION), SESSION))
+        with pytest.raises(HTTPException) as err:
+            await stack.enter_async_context(client_pages._session_write(_request(app, SESSION), SESSION))
+        assert err.value.status_code == 429 and err.value.detail == "rate_limited"
+        assert app.state.portal_write_limiter._counts["198.51.100.7"] == INTAKE  # the stopped one took no portal slot
+    # The five ended without proving a session: their slots stay used for the rest of the window.
+    with pytest.raises(HTTPException):
+        async with client_pages._session_write(_request(app, SESSION), SESSION):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_writes_that_prove_their_session_return_the_slot(pools: LocalPools) -> None:
+    settings = pools.settings(rate_limit_intake_per_minute=INTAKE)
+    app = create_app(settings, verifier=pools.verifier(settings), keys=object())
+    for _ in range(INTAKE * 3):
+        async with client_pages._session_write(_request(app, SESSION), SESSION):
+            portal.mark_session_proven()
+    assert app.state.portal_unproven_limiter._counts["198.51.100.7"] == 0
+    # A proven write that then fails (403 stage3_locked, 422 ...) still gave its slot back: it was signed in.
+    with pytest.raises(Forbidden):
+        async with client_pages._session_write(_request(app, SESSION), SESSION):
+            portal.mark_session_proven()
+            raise Forbidden("stage3_locked")
+    assert app.state.portal_unproven_limiter._counts["198.51.100.7"] == 0

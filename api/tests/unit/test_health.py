@@ -67,6 +67,27 @@ def test_limit_zero_turns_it_off_and_the_window_resets() -> None:
     assert limiter.allow("a")
 
 
+def test_a_released_slot_is_free_again_only_in_its_own_window() -> None:
+    """AA-953 follow-up: the client pages reserve a slot and give it back once the session proved valid."""
+    now = [0.0]
+    limiter = FixedWindowLimiter(1, clock=lambda: now[0])
+    assert limiter.allow("a")
+    window = limiter.window
+    limiter.release("a", window)
+    assert limiter.allow("a") and not limiter.allow("a")  # freed once; the refused allow counted too
+    limiter.release("a", window)
+    assert not limiter.allow("a")  # one release frees one slot, never the refusals beyond the limit
+    now[0] = 61.0
+    assert limiter.allow("a") and limiter.window == window + 1
+    limiter.release("a", window)  # a late release of the old window
+    assert not limiter.allow("a")  # never frees a slot of the new one
+    limiter.release("never-seen", limiter.window)  # an unknown or evicted key: nothing to give back
+    assert limiter.tracked() == 1
+    off = FixedWindowLimiter(0)
+    off.release("a", off.window)
+    assert off.allow("a")
+
+
 def test_cloudfront_viewer_address_wins_over_x_forwarded_for() -> None:
     """CloudFront sets CloudFront-Viewer-Address and a viewer cannot: it is the key when present, port stripped, and a
     different X-Forwarded-For per request does not dodge the limit (review round, AA-933)."""

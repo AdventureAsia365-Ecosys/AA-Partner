@@ -65,7 +65,9 @@ Rate limits (ADR 0010 decision 2: CloudFront → VPC origin bypasses API Gateway
 - ``RATE_LIMIT_PORTAL_WRITE_PER_MINUTE``: traveller portal writes made with a session cookie (Stage 3, flights,
   passport scan, signing code, signing, companion invite, switch, sign-out) per client address per minute (default
   30; 0 = off). A separate bucket from the intake limit, so a family on one home address can fill the portal
-  (AA-953 follow-up); see ``app.routers.client_pages``.
+  (AA-953 follow-up). Until the session check passes, each such write also holds a slot of a bucket sized by
+  ``RATE_LIMIT_INTAKE_PER_MINUTE``, so a forged cookie is held to the anonymous ceiling; see
+  ``app.routers.client_pages``.
 
 Public intake (AA-936, card CRM-08; ``app.intake.public``):
 
