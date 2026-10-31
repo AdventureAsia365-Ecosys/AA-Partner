@@ -89,8 +89,10 @@ async def test_a_childs_code_goes_to_the_leads_address(monkeypatch: pytest.Monke
     ]  # fmt: skip
     conn = (
         ScriptedConn()
-        .on("FROM crm.traveler_access a JOIN crm.trip t", _access_row(access_id=ACCESS_CHILD, traveler_id=CHILD,
-                                                                      role="companion"))  # fmt: skip
+        .on(
+            "FROM crm.traveler_access a JOIN crm.trip t",
+            _access_row(access_id=ACCESS_CHILD, traveler_id=CHILD, role="companion"),
+        )  # fmt: skip
         .on("AS has_email", rows)
         .on("SELECT email_enc FROM crm.traveler", enc("traveler", "email_enc", "mira.castell@example.test"))
     )
