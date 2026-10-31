@@ -155,7 +155,9 @@ def test_success_status() -> None:
     assert service._status("quiet_leads", 2) == "below"
     assert service._status("messages_sent", 4) == "info"
     assert service._status("upgrade_rate", None) == "no_data"
-    assert service._status("commission_unclaimed", 0) == "not_built"
+    assert service._status("commission_unclaimed", 0) == "met"  # AA-957: built (Module 13)
+    assert service._status("commission_unclaimed", 2) == "below"
+    assert service._status("ai_drafts_light_edit_share", 90) == "not_built"
 
 
 # ── the service over a scripted connection ─────────────────────────────────────────────────────────────────
@@ -284,7 +286,7 @@ async def test_summary_for_the_assistant_reads_no_money_and_shows_the_trend_for_
     assert tiles["inquiries"]["trend"][0]["from"] == "2031-03-01"
     assert all(args[3] == MEMBER for args in conn.sql("WITH cohort AS"))  # owner=me
     assert s["team"]["unassigned_open_trips"] == 0  # not asked for a single owner's view
-    assert "margin_known_share" not in {m["key"] for m in s["success"]}
+    assert {"margin_known_share", "commission_unclaimed"}.isdisjoint({m["key"] for m in s["success"]})
     removed: set[str] = set()
     margin.strip_margin(s, removed)
     assert removed == set()  # the service builds no margin-named key for the assistant (nothing left to strip)

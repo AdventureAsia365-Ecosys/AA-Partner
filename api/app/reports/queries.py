@@ -284,6 +284,13 @@ SELECT count(*)::int FROM crm.task k JOIN crm.trip t ON t.trip_id = k.trip_id AN
  WHERE k.deleted_at IS NULL AND k.status = 'open' AND k.due_at < now()
    AND t.stage IN ('booked', 'pre_departure', 'travelling') AND ($1::uuid IS NULL OR t.owner_member_id = $1)
 """
+# Module 13 (AA-957): commissions never claimed from the supplier and already past their due date (agency timezone).
+COMMISSION_UNCLAIMED_SQL = """
+SELECT count(*)::int FROM crm.commission c JOIN crm.trip t ON t.trip_id = c.trip_id AND t.deleted_at IS NULL
+ WHERE c.status = 'expected'
+   AND c.due_on < (now() AT TIME ZONE COALESCE((SELECT timezone FROM crm.tenant_settings), 'Asia/Ho_Chi_Minh'))::date
+   AND ($1::uuid IS NULL OR t.owner_member_id = $1)
+"""
 # Module 11: of the trips with a client portal link created in the window, how many clients opened it.
 PORTAL_SQL = f"""
 SELECT count(DISTINCT l.trip_id)::int AS trips,

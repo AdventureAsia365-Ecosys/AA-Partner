@@ -200,7 +200,7 @@ async def test_the_reports_reconcile_with_the_rows(app_pool: asyncpg.Pool) -> No
     assert report["team"]["unassigned_open_trips"] == 0
     metrics = {m["key"]: m for m in report["success"]}
     assert metrics["budget_band_share"]["value"] == pytest.approx(33.3)  # 2 of 6 gave a real band
-    assert metrics["margin_known_share"]["value"] == 100.0 and metrics["commission_unclaimed"]["status"] == "not_built"
+    assert metrics["margin_known_share"]["value"] == 100.0 and metrics["commission_unclaimed"]["value"] == 0
     assert isinstance(metrics["ops_release_errors"]["value"], int)
 
     # The owner filter keeps the agent's trips only.

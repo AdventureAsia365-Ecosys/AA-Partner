@@ -507,7 +507,9 @@ SUCCESS: dict[str, tuple[str, str, float | None, str | None]] = {
     "report_exports": ("16", "count", None, None),
     "data_exports": ("18", "count", None, None),
 }
-NOT_BUILT = frozenset({"commission_unclaimed", "ai_drafts_light_edit_share"})
+NOT_BUILT = frozenset({"ai_drafts_light_edit_share"})
+# Metrics read from margin-bearing data (§4.6): left out for a role without view_margin.
+MONEY_METRICS = frozenset({"margin_known_share", "commission_unclaimed"})
 
 
 def _status(key: str, value: float | int | None) -> str:
@@ -550,6 +552,7 @@ async def success_metrics(
         for line in lines:
             by_trip[line.trip_id] = by_trip.get(line.trip_id, True) and line.sell is not None and line.cost is not None
         values["margin_known_share"] = pct(sum(by_trip.values()), len(by_trip))
+        values["commission_unclaimed"] = int(await ctx.conn.fetchval(q.COMMISSION_UNCLAIMED_SQL, sc.owner) or 0)
     deposit = await ctx.conn.fetchrow(q.DEPOSIT_48H_SQL, *a)
     values["deposit_48h_share"] = pct(deposit["fast"], deposit["accepted"]) if deposit else None
     values["overdue_before_departure"] = int(await ctx.conn.fetchval(q.OVERDUE_BEFORE_DEPARTURE_SQL, sc.owner) or 0)
@@ -564,7 +567,7 @@ async def success_metrics(
     values["data_exports"] = int(await ctx.conn.fetchval(q.DATA_EXPORTS_SQL, *a[:3]) or 0)
     out = []
     for key, (module, unit, target, comparator) in SUCCESS.items():
-        if key == "margin_known_share" and not sc.money:
+        if key in MONEY_METRICS and not sc.money:
             continue
         value = None if key in NOT_BUILT else values.get(key)
         out.append(

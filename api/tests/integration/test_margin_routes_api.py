@@ -150,7 +150,12 @@ async def _seed(pool: asyncpg.Pool) -> dict[str, Any]:
             },
         )
         confirmed = await lines.confirm(ctx, line_id)
+        # AA-957: the confirm made the line's expected commission row (A-12, a margin route).
+        commission_id = await ctx.conn.fetchval(
+            "SELECT commission_id FROM crm.commission WHERE booking_line_id = $1", line_id
+        )
     assert confirmed["status"] == "confirmed" and confirmed["money"]["margin_base"] == LINE_MARGIN
+    assert commission_id is not None
 
     # An AA line: requested by the agent, quoted by Booking through the sync job (cost at the quote lock). The tour is
     # the builder's own catalog row (the AA lines tests retire T-100 and leave the shared catalog sync in backoff).
@@ -177,6 +182,7 @@ async def _seed(pool: asyncpg.Pool) -> dict[str, Any]:
         line=line_id,
         aa_line=uuid.UUID(aa_line["booking_line_id"]),
         invoice=uuid.UUID(invoice["invoice_id"]),
+        commission=commission_id,
         fake=fake,
     )
     return s
@@ -191,6 +197,7 @@ def _params(s: dict[str, Any], lead: str) -> dict[str, str]:
         "traveler_id": lead,
         "source_id": "T-949",
         "invoice_id": str(s["invoice"]),
+        "commission_id": str(s["commission"]),
     }
 
 
