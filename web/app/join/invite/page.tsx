@@ -8,7 +8,7 @@ import { LocaleSwitch } from "@/components/LocaleSwitch";
 import { SubmitOnceForm } from "@/components/SubmitOnceForm";
 import { K } from "@/app/_kit";
 import { t, type MessageKey } from "@/lib/i18n";
-import { inviteCookieNames, joinError, openClaim, openInvite } from "@/lib/invite";
+import { inviteCookieNames, joinError, openInvite, shownAnswer } from "@/lib/invite";
 import { serverContext } from "@/lib/serverContext";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +31,8 @@ export default async function JoinInvitePage({ searchParams }: { searchParams: P
   const jar = await cookies();
   const names = inviteCookieNames(cfg);
   const token = cfg.authConfigured ? openInvite(cfg, jar.get(names.token)?.value) : null;
-  const claim = cfg.authConfigured ? openClaim(cfg, jar.get(names.claim)?.value, token) : null;
+  // Only an answer of THIS invitation (S263: a stale cookie of an earlier link showed another address).
+  const claim = cfg.authConfigured ? shownAnswer(cfg, jar, token) : null;
   const problem = error ? joinError(error) : !token ? "no_invitation" : null;
   return (
     <CenteredCard testId="crm-join-invite">

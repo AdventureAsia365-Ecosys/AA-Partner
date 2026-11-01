@@ -34,7 +34,8 @@ function invited(token = TOKEN) {
 }
 
 function claimed(claim: ClaimResult, token = TOKEN) {
-  jar.set(inviteCookieNames(cfg).claim, claimCookie(cfg, claim, token).value);
+  const c = claimCookie(cfg, claim, token);
+  jar.set(c.name, c.value);
 }
 
 async function page(error?: string): Promise<string> {
@@ -65,9 +66,21 @@ describe("/join/invite", () => {
   it("never shows the answer of another invitation (a stale claim cookie of an earlier link)", async () => {
     invited(TOKEN);
     claimed({ state: "created", email: "kim@agency.example", temporaryPassword: "x" }, OTHER);
+    claimed({ state: "already_claimed", email: "kim@agency.example", temporaryPassword: null }, OTHER);
     const html = await page();
     expect(html).not.toContain('data-testid="join-claimed"');
+    expect(html).not.toContain("kim@agency.example");
     expect(html).toContain('action="/join/claim"');
+  });
+
+  it("shows the password when a later already_claimed answer sits next to it (double submit)", async () => {
+    invited();
+    const pw = ["Pw", "first"].join("-");
+    claimed({ state: "created", email: "kim@agency.example", temporaryPassword: pw });
+    claimed({ state: "already_claimed", email: "kim@agency.example", temporaryPassword: null });
+    const html = await page();
+    expect(html).toContain(pw);
+    expect(html).not.toContain(MESSAGES.en["join.alreadyClaimedHelp"]);
   });
 
   it("already claimed: says to ask for a new invitation when no password was ever seen (EN and VI)", async () => {

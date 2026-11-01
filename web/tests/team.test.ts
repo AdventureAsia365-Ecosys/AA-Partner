@@ -21,7 +21,9 @@ import {
   joinError,
   openClaim,
   openInvite,
-  replacesPrior,
+  openNotice,
+  shownAnswer,
+  staleAnswerCookies,
 } from "@/lib/invite";
 import { readSession, refreshCookie, sessionCookie } from "@/lib/session";
 import { memberLabel, reassignTargets, seatsLeft, teamError, type TeamMember } from "@/lib/team";
@@ -66,9 +68,17 @@ function claimCookieHeader(claim: ClaimResult, token = TOKEN): string {
   return `${c.name}=${c.value}`;
 }
 
+function setCookie(res: Response, name: string): string | undefined {
+  const set = res.headers.getSetCookie().find((c) => c.startsWith(`${name}=`));
+  return set?.split(";")[0].split("=").slice(1).join("=");
+}
+
 function setClaim(res: Response): string {
-  const set = res.headers.getSetCookie().find((c) => c.startsWith(`${inviteCookieNames(cfg).claim}=`))!;
-  return set.split(";")[0].split("=").slice(1).join("=");
+  return setCookie(res, inviteCookieNames(cfg).claim)!;
+}
+
+function jarOf(entries: Record<string, string>) {
+  return { get: (name: string) => (name in entries ? { value: entries[name] } : undefined) };
 }
 
 describe("invitation token and cookies", () => {
@@ -109,7 +119,28 @@ describe("invitation token and cookies", () => {
     expect(clearedInviteCookies(cfg).map((x) => [x.name, x.maxAge])).toEqual([
       ["__Secure-aa_crm_inv", 0],
       ["__Secure-aa_crm_invc", 0],
+      ["__Secure-aa_crm_invn", 0],
     ]);
+  });
+
+  // S263: "already_claimed" lives in its own cookie, so it can never overwrite the cookie holding a password.
+  it("keeps an already_claimed answer in the notice cookie, never in the claim cookie", () => {
+    const names = inviteCookieNames(cfg);
+    const notice = claimCookie(cfg, { state: "already_claimed", email: "lan@agency.example", temporaryPassword: "never" }, TOKEN, 50);
+    expect(notice.name).toBe(names.notice);
+    expect(openNotice(cfg, notice.value, TOKEN, 60)).toEqual({ state: "already_claimed", email: "lan@agency.example", temporaryPassword: null });
+    expect(openClaim(cfg, notice.value, TOKEN, 60)).toBeNull();
+    expect(openNotice(cfg, notice.value, OTHER_TOKEN, 60)).toBeNull();
+    const PW = ["Pw", "kept"].join("-");
+    const claim = claimCookie(cfg, { state: "created", email: "lan@agency.example", temporaryPassword: PW }, TOKEN, 50);
+    expect(claim.name).toBe(names.claim);
+    expect(openNotice(cfg, claim.value, TOKEN, 60)).toBeNull();
+    // The page reads the claim answer first (it holds the password), else the notice; never another invitation's.
+    const both = jarOf({ [names.claim]: claim.value, [names.notice]: notice.value });
+    expect(shownAnswer(cfg, both, TOKEN, 60)?.temporaryPassword).toBe(PW);
+    expect(shownAnswer(cfg, jarOf({ [names.notice]: notice.value }), TOKEN, 60)?.state).toBe("already_claimed");
+    expect(shownAnswer(cfg, both, OTHER_TOKEN, 60)).toBeNull();
+    expect(shownAnswer(cfg, both, null, 60)).toBeNull();
   });
 
   it("words known API errors and folds the rest into 'failed'", () => {
@@ -136,6 +167,24 @@ describe("GET /join?t=", () => {
     const res = await joinGet(request("/join?t=../../etc"));
     expect(res.status).toBe(303);
     expect(res.headers.getSetCookie()).toEqual([]);
+  });
+
+  // S263, found live on Dev: after a first invitation, the link of a second one (another address) showed the first
+  // one's address and "opened before" from the earlier answer cookie.
+  it("drops the answer cookies of another invitation and keeps this one's", async () => {
+    const names = inviteCookieNames(cfg);
+    const stale = `${claimCookieHeader({ state: "created", email: "first@agency.example", temporaryPassword: "x" }, OTHER_TOKEN)}; ${claimCookieHeader({ state: "already_claimed", email: "first@agency.example", temporaryPassword: null }, OTHER_TOKEN)}`;
+    const res = await joinGet(request(`/join?t=${TOKEN}`, { cookie: stale }));
+    expect(openInvite(cfg, setCookie(res, names.token))).toBe(TOKEN);
+    expect(setCookie(res, names.claim)).toBe("");
+    expect(setCookie(res, names.notice)).toBe("");
+    expect(res.headers.getSetCookie().filter((c) => c.startsWith(`${names.claim}=`))[0]).toContain("Max-Age=0");
+    // The same link opened again: its own answer (with the password) stays.
+    const own = claimCookieHeader({ state: "created", email: "kim@agency.example", temporaryPassword: "y" });
+    const again = await joinGet(request(`/join?t=${TOKEN}`, { cookie: own }));
+    expect(setCookie(again, names.claim)).toBeUndefined();
+    expect(staleAnswerCookies(cfg, jarOf({}), TOKEN)).toEqual([]);
+    expect(staleAnswerCookies(cfg, jarOf({ [names.claim]: "garbage" }), TOKEN).map((c) => [c.name, c.maxAge])).toEqual([[names.claim, 0]]);
   });
 });
 
@@ -184,7 +233,8 @@ describe("POST /join/claim", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("an already_claimed answer never replaces an answer of the same address, and a new password always does", async () => {
+  it("an already_claimed answer goes to the notice cookie and never replaces a claim answer", async () => {
+    const names = inviteCookieNames(cfg);
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ state: "already_claimed", email: "Lan@Agency.example" })));
     const kept = await claimPost(
       request("/join/claim", {
@@ -193,10 +243,8 @@ describe("POST /join/claim", () => {
         headers: SAME_ORIGIN,
       }),
     );
-    expect(kept.headers.getSetCookie()).toEqual([]);
-    // No answer yet (the cookie of the first POST had not arrived): already_claimed is stored as it is.
-    const first = await claimPost(request("/join/claim", { method: "POST", cookie: inviteCookieHeader(), headers: SAME_ORIGIN }));
-    expect(openClaim(cfg, setClaim(first), TOKEN)?.state).toBe("already_claimed");
+    expect(setCookie(kept, names.claim)).toBeUndefined();
+    expect(openNotice(cfg, setCookie(kept, names.notice), TOKEN)?.state).toBe("already_claimed");
     // The answer of another invitation is ignored: the API is asked and its answer stored.
     const PW = ["Pw", "new"].join("-");
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ state: "created", email: "lan@agency.example", temporary_password: PW })));
@@ -210,17 +258,35 @@ describe("POST /join/claim", () => {
     expect(openClaim(cfg, setClaim(other), TOKEN)?.temporaryPassword).toBe(PW);
   });
 
-  it("claimStep and replacesPrior", () => {
-    const pw = { state: "created" as const, email: "a@b.io", temporaryPassword: "p" };
-    const none = { state: "existing" as const, email: "a@b.io", temporaryPassword: null };
-    expect(claimStep(pw)).toBe("keep");
-    expect(claimStep(none)).toBe("ask");
+  // S263, the live race: a double click sends the second POST before the first answer's cookie arrived, so it carries
+  // no claim cookie; the API answers already_claimed. The browser must still hold (and the page still show) the
+  // password from the first answer.
+  it("a double submit that races keeps the password of the first answer", async () => {
+    const names = inviteCookieNames(cfg);
+    const PW = ["Pw", "race"].join("-");
+    const answers = [
+      { state: "created", email: "kim@agency.example", temporary_password: PW },
+      { state: "already_claimed", email: "kim@agency.example" },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(answers.shift())));
+    const post = () => claimPost(request("/join/claim", { method: "POST", cookie: inviteCookieHeader(), headers: SAME_ORIGIN }));
+    const [first, second] = [await post(), await post()];
+    // The browser applies both answers' cookies in order: the second sets only the notice cookie.
+    const jar: Record<string, string> = {};
+    for (const res of [first, second]) {
+      for (const name of [names.claim, names.notice]) {
+        const v = setCookie(res, name);
+        if (v !== undefined) jar[name] = v;
+      }
+    }
+    expect(setCookie(second, names.claim)).toBeUndefined();
+    expect(shownAnswer(cfg, jarOf(jar), TOKEN)).toEqual({ state: "created", email: "kim@agency.example", temporaryPassword: PW });
+  });
+
+  it("claimStep", () => {
+    expect(claimStep({ state: "created", email: "a@b.io", temporaryPassword: "p" })).toBe("keep");
+    expect(claimStep({ state: "existing", email: "a@b.io", temporaryPassword: null })).toBe("ask");
     expect(claimStep(null)).toBe("ask");
-    const again = { state: "already_claimed" as const, email: "A@b.io", temporaryPassword: null };
-    expect(replacesPrior(none, again)).toBe(false);
-    expect(replacesPrior({ ...none, email: "c@d.io" }, again)).toBe(true);
-    expect(replacesPrior(null, again)).toBe(true);
-    expect(replacesPrior(none, pw)).toBe(true);
   });
 
   it("sends API refusals back to the page as codes, and needs the invitation cookie", async () => {

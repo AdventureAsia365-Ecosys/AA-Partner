@@ -3,13 +3,15 @@
 // one-time temporary password, is kept only in a sealed 15-minute cookie on /join (lib/invite.ts) and shown by
 // /join/invite; never in a URL or a log line.
 //
-// Submitting again (a double click, a reload or Back that re-POSTs, a second tab) never loses the password: while the
-// claim cookie of this invitation holds one, the API is not asked again, and an "already_claimed" answer never
-// replaces a claim answer the browser already has (S263, found live on Dev). When the person never saw a password, the
-// API gives the account a new one as long as it was never signed in to (api app/members/invitations.py).
+// Submitting again (a double click, a reload or Back that re-POSTs, a second tab) never loses the password (S263,
+// found live on Dev): while the claim cookie of this invitation holds one, the API is not asked again; the API never
+// rotates the password of a claimed invitation (it answers "already_claimed"); and that answer is kept in its own
+// notice cookie, never over the claim cookie, so even a second POST sent before the first answer's cookie arrived
+// leaves the password where the page reads it. A person who never saw a password asks for a new invitation, whose
+// claim gives the never-signed-in account a new one (api app/members/invitations.py).
 import type { NextRequest } from "next/server";
 import { requestConfig } from "@/lib/config";
-import { claimCookie, claimInvitation, claimStep, inviteCookieNames, joinError, openClaim, openInvite, replacesPrior } from "@/lib/invite";
+import { claimCookie, claimInvitation, claimStep, inviteCookieNames, joinError, openClaim, openInvite } from "@/lib/invite";
 import { redirectTo, withCookies } from "@/lib/respond";
 import { refuseForeignWrite } from "@/lib/writeGuard";
 
@@ -30,6 +32,5 @@ export async function POST(request: NextRequest) {
     console.warn(JSON.stringify({ event: "crm_web_invite_claim_failed", status: outcome.status, detail: joinError(outcome.detail) }));
     return redirectTo(cfg, `/join/invite?error=${joinError(outcome.detail)}`, 303, request.nextUrl.origin);
   }
-  if (!replacesPrior(prior, outcome.claim)) return shown;
   return withCookies(shown, [claimCookie(cfg, outcome.claim, token)]);
 }

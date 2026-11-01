@@ -8,10 +8,13 @@
 //      (POST /crm/public/v1/invitations/claim, server to server). The API creates the partner-pool account (or finds
 //      the existing one) and answers the one-time temporary password. The web keeps that answer only in a second
 //      sealed cookie (purpose "invite-claim", path /join, 15 minutes) and shows it on /join/invite: never in a URL,
-//      never in page JavaScript beyond the rendered text, never logged. The claim cookie names the invitation it
-//      answers (a fingerprint of the token), so the answer of another invitation never shows on this one, and
-//      app/join/claim/route.ts never replaces a password it holds (S263, found live: a second "Open invitation"
-//      POST got already_claimed and overwrote the cookie that held the one-time password, which nobody then saw).
+//      never in page JavaScript beyond the rendered text, never logged. Both answer cookies name the invitation they
+//      answer (a fingerprint of the token), so the answer of another invitation never shows on this one, and GET /join
+//      with a new link drops them. S263, found live: a second "Open invitation" POST got already_claimed and
+//      overwrote the cookie that held the one-time password, which nobody then saw. Now an "already_claimed" answer
+//      goes into its own cookie (purpose "invite-notice"), never over the claim cookie, so even two POSTs that race
+//      (the second sent before the first answer's cookie arrived) leave the password in place; and
+//      app/join/claim/route.ts does not ask the API again while the claim cookie holds a password.
 //   3. "Continue to sign in" -> managed login (temporary password -> own password -> authenticator app; the partner
 //      pool requires MFA) -> back to /join/accept (session required), whose form POSTs /join/confirm: the API's
 //      POST /crm/v1/invitations/accept with the session's token and the sealed invitation token. The membership binds
@@ -40,10 +43,10 @@ export function isInviteToken(value: string | null | undefined): value is string
   return typeof value === "string" && TOKEN.test(value);
 }
 
-export function inviteCookieNames(cfg: Pick<WebConfig, "secureCookies">): { token: string; claim: string } {
+export function inviteCookieNames(cfg: Pick<WebConfig, "secureCookies">): { token: string; claim: string; notice: string } {
   return cfg.secureCookies
-    ? { token: "__Secure-aa_crm_inv", claim: "__Secure-aa_crm_invc" }
-    : { token: "aa_crm_inv", claim: "aa_crm_invc" };
+    ? { token: "__Secure-aa_crm_inv", claim: "__Secure-aa_crm_invc", notice: "__Secure-aa_crm_invn" }
+    : { token: "aa_crm_inv", claim: "aa_crm_invc", notice: "aa_crm_invn" };
 }
 
 function cookie(cfg: WebConfig, name: string, value: string, maxAge: number): CookieSpec {
@@ -64,47 +67,74 @@ function tokenFingerprint(token: string): string {
   return createHash("sha256").update(`aa-crm-invite-claim:${token}`).digest("base64url").slice(0, 22);
 }
 
+type SealedClaim = { s: ClaimState; e: string; p: string | null; t: string; exp: number };
+
+/** The cookie that keeps a claim answer: "created" / "existing" in the claim cookie, "already_claimed" in the notice
+ * cookie (purpose "invite-notice"), so an "already_claimed" answer can never overwrite a one-time password. */
 export function claimCookie(cfg: WebConfig, claim: ClaimResult, token: string, now: number = nowSeconds()): CookieSpec {
-  const value = seal(cfg.sessionSecret, "invite-claim", {
+  const notice = claim.state === "already_claimed";
+  const value = seal(cfg.sessionSecret, notice ? "invite-notice" : "invite-claim", {
     s: claim.state,
     e: claim.email,
-    p: claim.temporaryPassword,
+    p: notice ? null : claim.temporaryPassword,
     t: tokenFingerprint(token),
     exp: now + CLAIM_TTL_S,
-  });
-  return cookie(cfg, inviteCookieNames(cfg).claim, value, CLAIM_TTL_S);
+  } satisfies SealedClaim);
+  const names = inviteCookieNames(cfg);
+  return cookie(cfg, notice ? names.notice : names.claim, value, CLAIM_TTL_S);
 }
 
-/** The claim answer of the invitation `token` (null when absent, expired, tampered with or of another invitation). */
-export function openClaim(cfg: WebConfig, sealed: string | undefined, token: string | null, now: number = nowSeconds()): ClaimResult | null {
+function openSealed(cfg: WebConfig, purpose: "invite-claim" | "invite-notice", sealed: string | undefined, token: string | null, now: number): ClaimResult | null {
   if (!token) return null;
-  const v = open<{ s: ClaimState; e: string; p: string | null; t: string; exp: number }>(cfg.sessionSecret, "invite-claim", sealed, now);
-  if (!v || !["created", "existing", "already_claimed"].includes(v.s) || typeof v.e !== "string") return null;
-  if (v.t !== tokenFingerprint(token)) return null;
-  return { state: v.s, email: v.e, temporaryPassword: typeof v.p === "string" ? v.p : null };
+  const v = open<SealedClaim>(cfg.sessionSecret, purpose, sealed, now);
+  if (!v || typeof v.e !== "string" || v.t !== tokenFingerprint(token)) return null;
+  const states: ClaimState[] = purpose === "invite-notice" ? ["already_claimed"] : ["created", "existing"];
+  if (!states.includes(v.s)) return null;
+  return { state: v.s, email: v.e, temporaryPassword: purpose === "invite-claim" && typeof v.p === "string" ? v.p : null };
+}
+
+/** The claim answer ("created" / "existing") of the invitation `token`; null when absent, expired, tampered with or of
+ * another invitation. */
+export function openClaim(cfg: WebConfig, sealed: string | undefined, token: string | null, now: number = nowSeconds()): ClaimResult | null {
+  return openSealed(cfg, "invite-claim", sealed, token, now);
+}
+
+/** The "already_claimed" answer of the invitation `token` (notice cookie); null otherwise. */
+export function openNotice(cfg: WebConfig, sealed: string | undefined, token: string | null, now: number = nowSeconds()): ClaimResult | null {
+  return openSealed(cfg, "invite-notice", sealed, token, now);
+}
+
+/** What /join/invite shows: the claim answer of this invitation first (it holds the password), else its notice. */
+export function shownAnswer(cfg: WebConfig, jar: { get(name: string): { value: string } | undefined }, token: string | null, now: number = nowSeconds()): ClaimResult | null {
+  const names = inviteCookieNames(cfg);
+  return openClaim(cfg, jar.get(names.claim)?.value, token, now) ?? openNotice(cfg, jar.get(names.notice)?.value, token, now);
 }
 
 /**
  * What POST /join/claim does with a claim answer already in the browser (S263):
  * - "keep": the cookie already holds this invitation's one-time password, so the person is shown it again and the
- *   API is not asked (asking again would replace that password with a new one while they may be typing it);
+ *   API is not asked (an answer can only say "already_claimed" now, and showing the password again is the point);
  * - "ask": anything else (no answer yet, or one without a password).
  */
 export function claimStep(prior: ClaimResult | null): "keep" | "ask" {
   return prior?.temporaryPassword ? "keep" : "ask";
 }
 
-/**
- * Whether the API's answer replaces the claim cookie: never when the API says "already_claimed" for the address of
- * an answer the browser already has (that answer says more: the password, or that the account existed).
- */
-export function replacesPrior(prior: ClaimResult | null, answer: ClaimResult): boolean {
-  return !(answer.state === "already_claimed" && prior !== null && prior.email.toLowerCase() === answer.email.toLowerCase());
+/** GET /join with a link: drop the answer cookies that belong to another invitation (or to none), so a stale answer
+ * of an earlier link (another address, "opened before") never meets the new one. Answers of this link stay. */
+export function staleAnswerCookies(cfg: WebConfig, jar: { get(name: string): { value: string } | undefined }, token: string | null, now: number = nowSeconds()): CookieSpec[] {
+  const names = inviteCookieNames(cfg);
+  const stale: CookieSpec[] = [];
+  const claim = jar.get(names.claim)?.value;
+  if (claim !== undefined && !openClaim(cfg, claim, token, now)) stale.push(cookie(cfg, names.claim, "", 0));
+  const notice = jar.get(names.notice)?.value;
+  if (notice !== undefined && !openNotice(cfg, notice, token, now)) stale.push(cookie(cfg, names.notice, "", 0));
+  return stale;
 }
 
 export function clearedInviteCookies(cfg: WebConfig): CookieSpec[] {
   const names = inviteCookieNames(cfg);
-  return [cookie(cfg, names.token, "", 0), cookie(cfg, names.claim, "", 0)];
+  return [cookie(cfg, names.token, "", 0), cookie(cfg, names.claim, "", 0), cookie(cfg, names.notice, "", 0)];
 }
 
 /** The API's public claim (server to server; the person has no account yet, so no bearer). */
