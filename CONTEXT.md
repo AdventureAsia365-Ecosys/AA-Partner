@@ -1721,9 +1721,12 @@ Design v3 §6.3 CRM-22 (M4, R38, R9; F4 / WF-5 A-05; Q1 2.3); migration crm-022;
   `INVITATION_TTL_HOURS`) -> claim (public; `AdminCreateUser` SUPPRESS with a temporary password shown once by the web,
   or the existing account) -> managed login (own password, authenticator) -> accept (the caller's token must carry the
   claimed `(iss, sub)`). An account that was never signed in to (`FORCE_CHANGE_PASSWORD`) gets a new temporary password
-  (`AdminCreateUser` RESEND, which Cognito also mails) when a new invitation to its address is claimed or its claimed
-  link is opened again (S263). The API's partner-pool calls (`app/members/directory.py`) are AdminCreateUser, ListUsers
-  and AdminUserGlobalSignOut (IAM allows AdminDisableUser too; unused).
+  (`AdminCreateUser` RESEND, which Cognito also mails) when a **new** invitation to its address is claimed (S263); an
+  account with its own password is never reset. A claimed invitation claimed again answers `already_claimed` and
+  changes nothing (`invitation_claim` denied, reason `already_claimed`): a second tab or a double submit never rotates
+  the password the first claim shows. A person who never saw it gets a new invitation (the owner revokes and re-invites;
+  AA withdraws a first-owner invitation in the L1 console). The API's partner-pool calls (`app/members/directory.py`)
+  are AdminCreateUser, ListUsers and AdminUserGlobalSignOut (IAM allows AdminDisableUser too; unused).
 - **Team** (`/crm/v1/team*`, owner): members (invited address or short id), pending invitations (masked), role change
   (409 `last_owner`), removal (membership disabled + global sign-out), the **reassign queue** (open trips / clients of
   members who are no longer active) and reassign, the plan (`/crm/v1/plan`; no `tenant_entitlement` row = free, 10
@@ -1734,8 +1737,10 @@ Design v3 §6.3 CRM-22 (M4, R38, R9; F4 / WF-5 A-05; Q1 2.3); migration crm-022;
   makes one.
 - **Web**: `web/app/(crm)/settings/team` (owner page, `components/team/TeamAdmin.tsx`), the recovery banner in the
   `(crm)` layout, the join pages `web/app/join/*` (`lib/invite.ts`: token and claim answer in sealed cookies on
-  `/join`, never in a URL; the claim cookie names its invitation and a second "Open invitation" never replaces a
-  password it holds). Runbooks (lost second factor, rollout order): `docs/implementation-notes/AA-939.md`.
+  `/join`, never in a URL; both answer cookies name their invitation, `GET /join` drops another invitation's, an
+  `already_claimed` answer goes into its own notice cookie so it never overwrites a password, and "Open invitation"
+  submits once). Runbooks (lost second factor, rollout order): `docs/implementation-notes/AA-939.md`; the S263 join fix:
+  `docs/implementation-notes/AA-939-join-fix.md`.
 ## L1 console (AA-941, CRM-13a)
 
 Design v3 S-01 (CIS admin "Agencies (CRM)": usage meters only, never trips or revenue, no PII), Q1 6.3, Q2 3.12, §4.9
@@ -1759,7 +1764,14 @@ operations in `app/ops/console.py`):
   crm-011), AA data requests (`agency_export` / `agency_deletion` -> a `crm.erasure_request` the owner must confirm in
   Settings > Data and privacy; no job until then; crm-011 trigger CRM18), job retry (failed `crm_intake_process` /
   `crm_dispatch` / `crm_offboard` of this agency only, 404 `job_not_found` otherwise; locked agency 409), owner
-  recovery open (ticket required) / complete, member deactivation.
+  recovery open (ticket required) / complete, member deactivation. crm.ops.v1 1.8 (S263): **withdraw the first-owner
+  invitation** (`POST /tenants/{id}/owner-invite/withdraw`: AA's live owner invitations, pending or claimed and not
+  accepted, become `revoked`; 404 `owner_invite_not_found`; active or locked agency) and **delete a test agency**
+  (`POST /tenants/{id}/delete` with the agency name typed exactly: synthetic only, 403 `not_synthetic` on record
+  otherwise; 409 `has_members` (active or invited) / `has_travellers` / `legal_hold` / `tenant_status` (offboarding);
+  revokes live invitations, crypto-shreds the agency keys (`KeyProvider.destroy`) and trashes the `crm.tenant` row, so
+  no context opens it and the list leaves it out; `agency_delete` event). A real agency is deleted only by its owner's
+  confirmed offboarding (AA-942).
 - **Response allow-list** (`app/ops/serializer.py`, `OpsAllowListRoute` set by `class_router()` for OPS): every key at
   any depth must be listed and match no forbidden pattern (trip, pipeline, revenue, margin, commission, GMV, booking,
   invoice, payment, price, amount, net, proposal, personal-data names); 500 on test / local, dropped + logged
