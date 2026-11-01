@@ -5,12 +5,16 @@
 // to Booked and gives every traveller their own portal link, shown once to copy) and "Void", and the travellers'
 // Stage 3 / waiver progress with "Send portal link" (re-issue) per person. Every refusal is worded from its code
 // (lib/proposals.ts). Buttons wait for hydration (the page is a full server render, AA-936 lesson).
+// AA-957 S262 round 3 (C12 §2.7): the page's closed state (TripClosed) closes the card at once after the cancel run;
+// a closed trip's builder versions show no "Open builder", client choices or AA hold, and its Stage 3 copy says the
+// travellers send nothing more.
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
 import { DateInput } from "@/components/DateInput";
 import { Panel } from "@/components/PageTitle";
+import { useTripClosed } from "@/components/pipeline/TripClosed";
 import { BuilderClientRow } from "@/components/proposals/BuilderClientRow";
 import { bffSend } from "@/lib/bffClient";
 import { builderErrorKey } from "@/lib/builder";
@@ -57,7 +61,7 @@ export function ProposalPanel({
   locale,
   clientOrigin,
   timeZone = "UTC",
-  closed = false,
+  closed: closedProp = false,
 }: {
   view: LifecycleView;
   /** Published booking terms versions (Settings > Agreements). */
@@ -75,6 +79,7 @@ export function ProposalPanel({
 }) {
   const router = useRouter();
   const hydrated = useHydrated();
+  const closed = useTripClosed(closedProp);
   const tr = (key: string) => t(lang, key as MessageKey);
   // AA-949: builder versions live in the day-list builder (their own section below); this form handles text versions.
   const textProposals = view.proposals.filter((p) => (p.kind ?? "text") === "text");
@@ -263,15 +268,19 @@ export function ProposalPanel({
         {current?.status !== "accepted" && !(closed && builderVersions.length === 0) && (
           <section data-testid="proposal-builder" style={{ display: "grid", gap: 6, padding: 10, borderRadius: 8, background: K.bg }}>
             <h3 style={{ margin: 0, fontSize: 13, color: K.ink }}>{tr("builder.section")}</h3>
-            <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{tr("builder.sectionHint")}</p>
+            <p style={{ margin: 0, fontSize: 12.5, color: K.muted }} data-testid={closed ? "builder-closed" : undefined}>
+              {tr(closed ? "builder.closed" : "builder.sectionHint")}
+            </p>
             {builderVersions.map((p) => (
               <div key={p.proposal_id} data-testid="builder-version" data-status={p.status} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 13 }}>
                 <strong>{fmt(tr("proposal.version"), { n: p.version })}</strong>
                 <Badge tone={STATUS_TONE[p.status]}>{tr(`builder.status.${p.status}`)}</Badge>
                 <span style={{ color: K.muted }}>{formatAmount(p.total_amount, p.currency, locale)}</span>
-                <Link href={`/pipeline/${view.trip_id}/proposal/${p.proposal_id}`} style={{ color: K.accent }} data-testid="builder-open">
-                  {tr("builder.open")}
-                </Link>
+                {!closed && (
+                  <Link href={`/pipeline/${view.trip_id}/proposal/${p.proposal_id}`} style={{ color: K.accent }} data-testid="builder-open">
+                    {tr("builder.open")}
+                  </Link>
+                )}
                 {canRenderText("builder", p.status) && !closed && (
                   <Link href={`/pipeline/${view.trip_id}/proposal/${p.proposal_id}/text`} style={{ color: K.accent }} data-testid="builder-send-text">
                     {tr("text.open")}
@@ -280,6 +289,7 @@ export function ProposalPanel({
                 <BuilderClientRow
                   p={p}
                   canSend={canSend}
+                  closed={closed}
                   hydrated={hydrated}
                   busy={busy}
                   tr={tr}
@@ -431,14 +441,21 @@ export function ProposalPanel({
             <h3 style={{ margin: 0, fontSize: 13, color: K.ink }}>
               {fmt(tr("proposal.portalTitle"), { s3: view.portal.s3 })}
             </h3>
-            <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{tr(view.portal_unlocked ? "proposal.portalOpen" : "proposal.portalLocked")}</p>
+            <p style={{ margin: 0, fontSize: 12.5, color: K.muted }} data-testid="proposal-portal-note">
+              {tr(closed ? "proposal.portalClosed" : view.portal_unlocked ? "proposal.portalOpen" : "proposal.portalLocked")}
+            </p>
             {view.portal.travellers.map((x) => (
               <div key={x.traveler_id} data-testid="portal-row" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 13, padding: "6px 0", borderTop: `1px solid ${K.line}` }}>
                 <strong style={{ overflowWrap: "anywhere" }}>{name(x.traveler_id)}</strong>
                 <span style={{ color: K.muted }}>{tr(`proposal.role.${x.role}`)}</span>
-                <Badge tone={x.details_done ? "success" : "neutral"}>{tr(x.details_done ? "proposal.detailsDone" : "proposal.detailsMissing")}</Badge>
+                {/* A closed trip asks nothing more: what is still missing reads "not needed", never as a to-do. */}
+                <Badge tone={x.details_done ? "success" : "neutral"}>
+                  {tr(x.details_done ? "proposal.detailsDone" : closed ? "proposal.detailsNotNeeded" : "proposal.detailsMissing")}
+                </Badge>
                 {x.waiver_signed !== null && (
-                  <Badge tone={x.waiver_signed ? "success" : "neutral"}>{tr(x.waiver_signed ? "proposal.waiverSigned" : "proposal.waiverPending")}</Badge>
+                  <Badge tone={x.waiver_signed ? "success" : "neutral"}>
+                    {tr(x.waiver_signed ? "proposal.waiverSigned" : closed ? "proposal.waiverNotNeeded" : "proposal.waiverPending")}
+                  </Badge>
                 )}
                 <span style={{ color: K.muted }}>{x.portal ? tr(`proposal.access.${x.portal.status}`) : tr("proposal.access.none")}</span>
                 {!closed && (

@@ -509,6 +509,9 @@ async def update_trip(
         before = await ctx.conn.fetchrow(TRIP_DATES_SQL, trip_id)
         if before is None:
             raise NotFound("trip_not_found")
+        # S262 round 3 (C12 §2.7): the dates of a cancelled trip are history (the date rule, prep packs and reports
+        # read them), so they no longer change.
+        await cancellation.ensure_not_cancelled(ctx, trip_id, "its dates no longer change")
         for name in ("start_date", "end_date"):
             if name in changes:
                 value = changes[name]

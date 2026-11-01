@@ -99,3 +99,10 @@ a { color: inherit; }
   [data-crm-dialog="body"] { flex: none; overflow-y: visible; }
   [data-crm-dialog="footer"] { gap: 6px; padding: 8px 18px 10px; }
 }
+
+/* AA-957 S262 round 3: the kit toast is fixed at the bottom right (kit core, not edited here, ADR 0016) and on a phone
+   it covered the list's pagination ("25 / page", the page buttons) after "Commission recorded". A list page with
+   success toasts keeps room under its last row on a phone, so its end scrolls above the toast. */
+@media (max-width: 767px) {
+  [data-crm-toast-room] { padding-bottom: 96px; }
+}

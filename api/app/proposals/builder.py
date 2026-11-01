@@ -41,7 +41,7 @@ import uuid
 from decimal import Decimal
 from typing import Any
 
-from app import stages
+from app import cancellation, stages
 from app.catalog import store as catalog
 from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.esign import terms as esign_terms
@@ -294,6 +294,8 @@ async def _lock(ctx: TenantContext, proposal_id: uuid.UUID, seq: int | None) -> 
         raise Conflict("proposal_not_builder", "this version is a text proposal (Proposal tab)")
     if row["status"] != "draft":
         raise Conflict("proposal_not_draft", "a published version never changes; start a new version from it")
+    # S262 round 3 (C12 §2.7): a cancelled trip's builder is read-only (no AA quote, no new option, nothing to send).
+    await cancellation.ensure_not_cancelled(ctx, row["trip_id"], "its proposal no longer changes")
     if seq is not None and seq != row["edit_seq"]:
         raise Conflict(
             "version_conflict",

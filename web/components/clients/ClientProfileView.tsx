@@ -21,6 +21,7 @@ import {
   bandLabel,
   consentLabel,
   label,
+  leadSourceLabel,
   relationLabel,
   roleText,
   type ClientProfile,
@@ -28,7 +29,7 @@ import {
   type RelationKind,
 } from "@/lib/clients";
 import type { DateLocale } from "@/lib/dates";
-import { fmt, type Lang, type MessageKey, t } from "@/lib/i18n";
+import { fmt, type Lang, type MessageKey, plural, t } from "@/lib/i18n";
 import type { Role } from "@/lib/nav";
 import { memberLabel, stageLabel, whenLabel, type Member } from "@/lib/pipeline";
 
@@ -115,7 +116,7 @@ export function ClientProfileView({ view, members, role, lang, locale }: { view:
           </span>
           {traveler.lead_source && (
             <span>
-              {t(lang, "clients.source")}: <span style={{ color: K.ink }}>{traveler.lead_source}</span>
+              {t(lang, "clients.source")}: <span style={{ color: K.ink }}>{leadSourceLabel(lang, traveler.lead_source)}</span>
             </span>
           )}
           {role !== "assistant" && (
@@ -355,7 +356,7 @@ export function ClientProfileView({ view, members, role, lang, locale }: { view:
                     </a>{" "}
                     <span style={{ color: K.muted }}>
                       · {relationLabel(lang, r.kind)}
-                      {r.trips_together ? ` · ${fmt(t(lang, "clients.together"), { n: r.trips_together })}` : ""}
+                      {r.trips_together ? ` · ${plural(lang, "clients.together", r.trips_together)}` : ""}
                     </span>
                   </span>
                   <Button size="sm" variant="ghost" disabled={busy} onClick={() => void send("DELETE", `travelers/${id}/relations/${r.relation_id}`)}>

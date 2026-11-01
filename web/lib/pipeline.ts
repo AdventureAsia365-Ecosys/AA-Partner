@@ -7,7 +7,7 @@
 // the quiet flag, Stage 2 completeness and the answers of the stage-engine routes (moves, Undo, bulk, cancel).
 
 import { formatDate, type DateLocale } from "./dates";
-import { fmt, type Lang, type MessageKey, t } from "./i18n";
+import { fmt, plural, type Lang, type MessageKey, t } from "./i18n";
 import type { PlanPage } from "./planningForm";
 
 export const BOARD_STAGES = ["inquiry", "qualifying", "proposal", "booked", "pre_departure", "travelling"] as const;
@@ -220,6 +220,16 @@ export interface TripView {
  * Proposal and Invoices cards turn read-only (the API answers 409 trip_cancelled anyway). */
 export function tripClosedForBilling(stage: string, cancellation: { status: string } | null | undefined): boolean {
   return stage === "cancelled" || Boolean(cancellation);
+}
+
+/** The Booking details row of Traveller info (AA-957 S262 round 3: a booked trip read "Opens once the trip is booked."):
+ * not needed on a cancelled trip; sent by the travellers from their own page once the trip is booked; later before;
+ * kept as sent once the trip is over (a completed trip asks nothing more). */
+export function bookingDetailsKey(stage: string, closed: boolean): MessageKey {
+  if (closed || stage === "cancelled") return "info.bookingClosed";
+  if (stage === "completed") return "info.bookingDone";
+  if (stage === "booked" || stage === "pre_departure" || stage === "travelling") return "info.bookingOpen";
+  return "info.bookingLocked";
 }
 
 /** Booking's fee percentage without trailing zeros, in the page locale (the same as `formatAmount` beside it):
@@ -443,7 +453,7 @@ export function codeLabel(lang: Lang, prefix: string, code: string | null | unde
 
 /** "2 adults, children aged 7, 12" */
 export function partySummary(lang: Lang, adults: number, childAges: number[]): string {
-  const head = fmt(t(lang, "trip.adults"), { n: adults });
+  const head = plural(lang, "trip.adults", adults);
   return childAges.length ? `${head}, ${fmt(t(lang, "trip.children"), { ages: childAges.join(", ") })}` : head;
 }
 

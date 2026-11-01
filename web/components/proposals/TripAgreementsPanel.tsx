@@ -4,10 +4,12 @@
 // lead as guardian, the insurance choice and the seal; the booking-terms acceptances and the re-accept state (the
 // deposit waits for it); the signing log (codes sent and refused). "View sealed document" is a reveal: a reason is
 // asked first and the API writes one reveal event. Names come from the trip's party (GET /trips/{id}); the API sends
-// ids, codes and hashes only.
+// ids, codes and hashes only. AA-957 S262 round 3 (C12 §2.7): on a cancelled trip nothing waits for a signature (the
+// signed envelopes and the log stay readable).
 import { useState } from "react";
 import { Badge, Button, K, Modal, useHydrated } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
+import { useTripClosed } from "@/components/pipeline/TripClosed";
 import { bffSend } from "@/lib/bffClient";
 import { REVEAL_REASONS } from "@/lib/clients";
 import { formatDate, type DateLocale } from "@/lib/dates";
@@ -29,13 +31,17 @@ export function TripAgreementsPanel({
   party,
   lang,
   locale,
+  closed: closedProp = false,
 }: {
   view: TripAgreements;
   party: { traveler_id: string; display_name: string }[];
   lang: Lang;
   locale: DateLocale;
+  /** The trip is cancelled or being cancelled. */
+  closed?: boolean;
 }) {
   const hydrated = useHydrated();
+  const closed = useTripClosed(closedProp);
   const tr = (key: string) => t(lang, key as MessageKey);
   const [opening, setOpening] = useState<string | null>(null);
   const [reason, setReason] = useState("");
@@ -72,7 +78,13 @@ export function TripAgreementsPanel({
           <p style={{ margin: 0, fontSize: 13, color: K.body }}>{tr("esign.notRequired")}</p>
         ) : (
           <>
-            <Badge tone={view.all_signed ? "success" : "neutral"}>{tr(view.all_signed ? "esign.allSigned" : "esign.pending")}</Badge>
+            {closed && !view.all_signed ? (
+              <p data-testid="esign-closed" style={{ margin: 0, fontSize: 13, color: K.muted }}>
+                {tr("esign.closed")}
+              </p>
+            ) : (
+              <Badge tone={view.all_signed ? "success" : "neutral"}>{tr(view.all_signed ? "esign.allSigned" : "esign.pending")}</Badge>
+            )}
             {view.travellers.map((x) => {
               const sig = x.signature;
               return (
@@ -80,7 +92,7 @@ export function TripAgreementsPanel({
                   <strong style={{ overflowWrap: "anywhere" }}>{name(x.traveler_id)}</strong>
                   <span style={{ color: K.muted }}>{tr(`proposal.role.${x.role}`)}</span>
                   {!sig ? (
-                    <Badge tone="neutral">{tr("esign.notSigned")}</Badge>
+                    <Badge tone="neutral">{tr(closed ? "esign.notNeeded" : "esign.notSigned")}</Badge>
                   ) : (
                     <>
                       <Badge tone="success">
@@ -119,7 +131,7 @@ export function TripAgreementsPanel({
         <section style={{ display: "grid", gap: 4 }}>
           <h3 style={{ margin: 0, fontSize: 13, color: K.ink }}>{tr("esign.terms")}</h3>
           {view.terms.published && <span style={{ fontSize: 13 }}>{fmt(tr("esign.termsPublished"), { version: view.terms.published.version_label })}</span>}
-          {view.terms.reaccept_required && (
+          {view.terms.reaccept_required && !closed && (
             <p data-testid="esign-reaccept" style={{ margin: 0, fontSize: 13, color: K.danger }}>
               {tr("esign.termsReaccept")}
             </p>

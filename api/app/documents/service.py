@@ -18,6 +18,7 @@ import hashlib
 import uuid
 from typing import Any
 
+from app import cancellation
 from app.documents.store import DocumentStore
 from app.errors import Conflict, Invalid, NotFound, Unavailable
 from app.intake import stage1
@@ -50,6 +51,7 @@ INSERT INTO crm.document (document_id, trip_id, traveler_id, kind, s3_key, sha25
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 RETURNING created_at
 """
+TRAVELLER_SHARE = "no new document is shown to its travellers"
 ROW_SQL = """
 SELECT document_id, trip_id, traveler_id, kind, s3_key, sha256, size_bytes, content_type, filename_enc,
        visible_to_travelers, write_only, created_at
@@ -153,6 +155,9 @@ async def upload(
     write_only = kind == "passport_scan"
     if write_only and visible_to_travelers:
         raise Invalid("passport_never_visible", "a passport scan is never shown to travellers")
+    if visible_to_travelers and trip_id is not None:
+        # S262 round 3 (C12 §2.7): a cancelled trip shares nothing new with its travellers (internal files still go).
+        await cancellation.ensure_not_cancelled(ctx, trip_id, TRAVELLER_SHARE)
     document_id = uuid.uuid4()
     sealed = await vault.encrypt("document", "content", document_id, content, purpose="docs")
     key = object_key(ctx.tenant_id, document_id)
@@ -231,6 +236,8 @@ async def set_visibility(ctx: TenantContext, document_id: uuid.UUID, visible: bo
         raise NotFound("document_not_found")
     if row["write_only"] and visible:
         raise Conflict("passport_never_visible", "a write-only document is never shown to travellers")
+    if visible and row["trip_id"] is not None:
+        await cancellation.ensure_not_cancelled(ctx, row["trip_id"], TRAVELLER_SHARE)  # S262 round 3
     await ctx.conn.execute(VISIBLE_SQL, document_id, visible)
     ctx.audit("update", "allowed", "document", str(document_id), fields=("visible_to_travelers",))
     return {"document_id": str(document_id), "visible_to_travelers": visible}

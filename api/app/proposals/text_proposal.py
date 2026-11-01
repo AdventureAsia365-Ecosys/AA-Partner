@@ -33,6 +33,7 @@ import uuid
 from decimal import Decimal
 from typing import Any
 
+from app import cancellation
 from app.errors import Conflict, Invalid, NotFound
 from app.esign import terms as esign_terms
 from app.mail import conversations, templates
@@ -285,6 +286,8 @@ async def send(
     row = await ctx.conn.fetchrow(LOCK_SQL, proposal_id)
     if row is None:
         raise NotFound("proposal_not_found")
+    # S262 round 3 (C12 §2.7): the client of a cancelled trip gets no proposal text any more.
+    await cancellation.ensure_not_cancelled(ctx, row["trip_id"], "no new proposal is sent")
     digest = await current_hash(ctx, vault, row)
     if price_hash.lower() != digest:
         raise Conflict(

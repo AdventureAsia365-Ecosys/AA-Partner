@@ -14,6 +14,8 @@
 // seal, the terms acceptances and the re-accept state, the signing log). AA-961 (CRM-30): the AA incident banner
 // (GET /trips/{id}/incidents: open flags on the trip's departures, and those cleared in the last 14 days). S262
 // (AA-957 live): a cancelled trip's Proposal and Invoices cards are read-only (no new payment, invoice or client link).
+// S262 round 3: the trip is closed on every card (no new AA item, line, date, shared document, signature or proposal;
+// messages stay open), and the cancel run closes every card at once (TripClosedProvider), not only the header.
 import { notFound } from "next/navigation";
 import { ErrorState } from "@/app/_kit";
 import { TripIncidentBanner } from "@/components/duty/IncidentPanel";
@@ -23,6 +25,7 @@ import { MessagesPanel } from "@/components/mail/MessagesPanel";
 import { ProposalPanel } from "@/components/proposals/ProposalPanel";
 import { TripAgreementsPanel } from "@/components/proposals/TripAgreementsPanel";
 import { OpsReleasePanel } from "@/components/pipeline/OpsReleasePanel";
+import { TripClosedProvider } from "@/components/pipeline/TripClosed";
 import { TripPanel } from "@/components/pipeline/TripPanel";
 import type { DocumentRow } from "@/lib/clients";
 import type { TripIncident } from "@/lib/duty";
@@ -78,6 +81,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
   // S262 (C12 §2.7): a cancelled trip, or one whose cancellation waits for AA, bills the client no more.
   const closed = tripClosedForBilling(trip.data.trip.stage, trip.data.cancellation);
   return (
+    <TripClosedProvider closed={closed}>
     <div style={{ display: "grid", gap: 16 }}>
     {incidents.ok && <TripIncidentBanner incidents={incidents.data.incidents} lang={ctx.lang} locale={ctx.locale} />}
     <TripPanel
@@ -118,7 +122,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
       />
     )}
     {ops.ok && <OpsReleasePanel tripId={tripId} view={ops.data} lang={ctx.lang} locale={ctx.locale} canOpenAccessLog={ctx.role === "owner"} />}
-    {signed.ok && <TripAgreementsPanel view={signed.data} party={trip.data.party} lang={ctx.lang} locale={ctx.locale} />}
+    {signed.ok && <TripAgreementsPanel view={signed.data} party={trip.data.party} lang={ctx.lang} locale={ctx.locale} closed={closed} />}
     {lines.ok && (
       <LinesPanel
         tripId={tripId}
@@ -127,6 +131,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
         role={ctx.role}
         lang={ctx.lang}
         locale={ctx.locale}
+        closed={closed}
       />
     )}
     {convs.ok && (
@@ -136,8 +141,10 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
         savedReplies={replies.ok ? replies.data.saved_replies : []}
         lang={ctx.lang}
         locale={ctx.locale}
+        closed={closed}
       />
     )}
     </div>
+    </TripClosedProvider>
   );
 }

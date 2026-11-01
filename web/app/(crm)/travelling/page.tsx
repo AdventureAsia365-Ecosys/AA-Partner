@@ -11,7 +11,7 @@ import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { formatDate } from "@/lib/dates";
 import { WINDOWS, regionLabel, type TravellingView } from "@/lib/duty";
-import { fmt, t, type MessageKey } from "@/lib/i18n";
+import { fmt, plural, t, type MessageKey } from "@/lib/i18n";
 import { serverContext } from "@/lib/serverContext";
 
 export const dynamic = "force-dynamic";
@@ -50,7 +50,7 @@ export default async function TravellingPage({ searchParams }: { searchParams: P
             <Panel
               key={group.region}
               testId={`duty-region-${group.region}`}
-              title={`${regionLabel(group.region, tr)} · ${fmt(tr("duty.travellers"), { n: group.traveller_count })}`}
+              title={`${regionLabel(group.region, tr)} · ${plural(ctx.lang, "duty.travellers", group.traveller_count)}`}
             >
               <ul style={{ listStyle: "none", margin: "0 0 12px", padding: 0, display: "grid", gap: 10 }}>
                 {group.trips.map((trip) => (
@@ -75,7 +75,7 @@ export default async function TravellingPage({ searchParams }: { searchParams: P
                         : fmt(tr("duty.trip.leaves"), { date: formatDate(trip.start_date, ctx.locale) })}
                       {trip.place && ` · ${trip.place}`}
                       {" · "}
-                      {fmt(tr("duty.travellers"), { n: trip.traveler_ids.length })}
+                      {plural(ctx.lang, "duty.travellers", trip.traveler_ids.length)}
                     </div>
                     {trip.lines.length > 0 && (
                       <div style={{ fontSize: 12.5 }}>

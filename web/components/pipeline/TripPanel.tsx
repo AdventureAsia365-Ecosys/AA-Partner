@@ -12,20 +12,23 @@
 // with a logged override reason); every move shows the Undo toast (10 s, POST /trips/{id}/stage/undo, which also takes
 // back the planning form an auto-send queued); Cancel trip runs the dry run first (owner / agent); the Traveller info
 // panel (completeness, planning form, fill in from call); the timeline names override, date-rule and undo reasons.
+// AA-957 S262 round 3 (C12 §2.7): the cancel run marks every card of the page closed at once (TripClosed); a closed
+// trip offers no date change and no delete while AA has not confirmed the cancellation (the API answers 409 too).
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
 import { DocumentsPanel } from "@/components/clients/DocumentsPanel";
 import { CancelDialog, GateDialog } from "@/components/pipeline/StageDialogs";
+import { useMarkTripClosed, useTripClosed } from "@/components/pipeline/TripClosed";
 import { TravellerInfoPanel } from "@/components/pipeline/TravellerInfoPanel";
 import { toast, UndoToast, type ToastState } from "@/components/pipeline/UndoToast";
 import { RevealField } from "@/components/clients/RevealField";
 import { Panel } from "@/components/PageTitle";
-import type { DocumentRow } from "@/lib/clients";
 import { bffSend } from "@/lib/bffClient";
 import { deleteRefusal } from "@/lib/lifecycle";
 import { formatDate, formatInstant, type DateLocale } from "@/lib/dates";
-import { fmt, type Lang, type MessageKey, t } from "@/lib/i18n";
+import { leadSourceLabel, type DocumentRow } from "@/lib/clients";
+import { fmt, plural, type Lang, type MessageKey, t } from "@/lib/i18n";
 import type { Role } from "@/lib/nav";
 import {
   codeLabel,
@@ -36,6 +39,7 @@ import {
   partySummary,
   stageLabel,
   supplierChecklistLine,
+  tripClosedForBilling,
   waitingLabel,
   WAITING_ON,
   whenLabel,
@@ -112,6 +116,9 @@ export function TripPanel({
   // No move while AA has not confirmed the cancel (the API answers 409 cancellation_pending), nor before the page
   // has the cancel's result.
   const frozen = cancelPending || (ran !== null && !caughtUp);
+  // Closed for planning (C12 §2.7): cancelled, being cancelled, or just cancelled by the dialog (every card reads it).
+  const closed = useTripClosed(tripClosedForBilling(stageShown, cancellation));
+  const markClosed = useMarkTripClosed();
   const me = members.find((m) => m.is_me);
 
   async function undoMove(historyId: string) {
@@ -185,7 +192,7 @@ export function TripPanel({
           )}
           {trip.quiet && typeof trip.quiet_days === "number" && (
             <span data-testid="trip-quiet" style={{ display: "contents" }}>
-              <Badge tone="warning">{fmt(t(lang, "trip.quiet"), { n: trip.quiet_days })}</Badge>
+              <Badge tone="warning">{plural(lang, "trip.quiet", trip.quiet_days)}</Badge>
             </span>
           )}
           <label style={{ display: "flex", gap: 6, alignItems: "center", color: K.muted }}>
@@ -265,7 +272,9 @@ export function TripPanel({
               </Button>
             </span>
           )}
-          {role !== "assistant" && (
+          {role !== "assistant" && !frozen && (
+            // S262 round 3: not while AA has not confirmed the cancellation (409 cancellation_pending); a cancelled
+            // trip can still go to the trash when nothing blocks it (design §3.5).
             <Button
               size="sm"
               variant="ghost"
@@ -316,6 +325,13 @@ export function TripPanel({
             </span>
           )}
         </div>
+        {cancelPending && (
+          // Only while AA has not confirmed: a run that finished at once (no AA booking, or Booking answered) reads as
+          // cancelled (the stage, the closed dates note), never as a pending cancellation.
+          <p data-testid="trip-closed-pending" style={{ margin: 0, fontSize: 12.5, color: K.muted }}>
+            {t(lang, "trip.closedPending")}
+          </p>
+        )}
         {error && (
           <p role="alert" style={{ margin: 0, color: K.danger, fontSize: 13 }}>
             {error}
@@ -334,6 +350,7 @@ export function TripPanel({
             fillOpen={fillOpen}
             setFillOpen={setFillOpen}
             notify={setToast}
+            closed={closed}
           />
         )}
         <Panel title={t(lang, "trip.details")} testId="trip-details">
@@ -342,7 +359,7 @@ export function TripPanel({
             <dd style={{ margin: 0 }}>{trip.destinations.map((d) => codeLabel(lang, "dest", d)).join(", ") || "—"}</dd>
             <dt style={{ color: K.muted }}>{t(lang, "trip.when")}</dt>
             <dd style={{ margin: 0 }}>
-              {[whenLabel(trip, locale), trip.nights ? fmt(t(lang, "trip.nights"), { n: trip.nights }) : null, trip.date_flex_days ? fmt(t(lang, "trip.flex"), { n: trip.date_flex_days }) : null]
+              {[whenLabel(trip, locale), trip.nights ? plural(lang, "trip.nights", trip.nights) : null, trip.date_flex_days ? plural(lang, "trip.flex", trip.date_flex_days) : null]
                 .filter(Boolean)
                 .join(" · ") || "—"}
             </dd>
@@ -356,8 +373,13 @@ export function TripPanel({
             <dt style={{ color: K.muted }}>{t(lang, "trip.style")}</dt>
             <dd style={{ margin: 0 }}>{codeLabel(lang, "style", trip.trip_style)}</dd>
             <dt style={{ color: K.muted }}>{t(lang, "trip.source")}</dt>
-            <dd style={{ margin: 0 }}>{trip.lead_source ?? "—"}</dd>
+            <dd style={{ margin: 0 }} data-testid="trip-source">{leadSourceLabel(lang, trip.lead_source)}</dd>
           </dl>
+          {closed ? (
+            <p data-testid="trip-dates-closed" style={{ margin: "12px 0 0", fontSize: 12.5, color: K.muted }}>
+              {t(lang, "trip.closedPlanning")}
+            </p>
+          ) : (
           <form
             data-testid="trip-dates"
             onSubmit={(e) => {
@@ -378,6 +400,7 @@ export function TripPanel({
               {t(lang, "trip.saveDates")}
             </Button>
           </form>
+          )}
         </Panel>
 
         <Panel title={t(lang, "trip.travellers")} testId="trip-party">
@@ -493,7 +516,7 @@ export function TripPanel({
                   <span>
                     {[
                       Array.isArray(s.answers.destinations) ? (s.answers.destinations as string[]).map((d) => codeLabel(lang, "dest", d)).join(", ") : null,
-                      typeof s.answers.nights === "number" ? fmt(t(lang, "trip.nights"), { n: s.answers.nights }) : null,
+                      typeof s.answers.nights === "number" ? plural(lang, "trip.nights", s.answers.nights) : null,
                       typeof s.answers.budget_band === "string" ? codeLabel(lang, "budget", s.answers.budget_band) : null,
                       typeof s.answers.heard_from === "string" ? codeLabel(lang, "heard", s.answers.heard_from) : null,
                     ]
@@ -506,7 +529,7 @@ export function TripPanel({
           </ul>
         </Panel>
 
-        <DocumentsPanel documents={documents} tripId={trip.trip_id} role={role} lang={lang} locale={locale} />
+        <DocumentsPanel documents={documents} tripId={trip.trip_id} role={role} lang={lang} locale={locale} closed={closed} />
 
         <Panel title={t(lang, "trip.history")} testId="trip-history">
           <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 6 }}>
@@ -551,6 +574,7 @@ export function TripPanel({
             const pending = result.cancellation?.status === "pending";
             const key = pending ? (result.requeued !== undefined ? "cancelTrip.retried" : "cancelTrip.pendingDone") : "cancelTrip.done";
             setRan({ stage: result.stage ?? trip.stage, cancellation: result.cancellation ?? null });
+            markClosed(); // every card of the page: no billing or planning offered while the server view reloads
             setToast(toast(t(lang, key)));
             startRefresh(() => router.refresh());
           }}

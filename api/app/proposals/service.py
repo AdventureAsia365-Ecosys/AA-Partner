@@ -498,6 +498,8 @@ async def _send_builder(ctx: TenantContext, row: Any) -> dict[str, Any]:
     proposal_id, trip_id = row["proposal_id"], row["trip_id"]
     if row["status"] != "published":
         raise Conflict("proposal_not_published", "publish this version in the builder first")
+    # S262 round 3 (C12 §2.7): no new version goes to the client of a cancelled trip.
+    await cancellation.ensure_not_cancelled(ctx, trip_id, "no new proposal is sent")
     if row["stage"] != "proposal":
         raise Conflict("trip_not_in_proposal", "move the trip to Proposal first (the Stage 2 gate)")
     lead = await ctx.conn.fetchval(LEAD_SQL, trip_id)

@@ -73,7 +73,9 @@ describe("directory helpers", () => {
   it("labels codes, bands, relations and consent in both languages", () => {
     expect(label("en", "dietary", "vegetarian")).toBe("Vegetarian");
     expect(label("en", "doc", "passport_scan")).toBe("Passport scan");
-    expect(label("en", "source", "website_form")).toBe("website_form");
+    // S262 round 3: every lead source the API writes has a label (lib/i18nTripClosed.ts); an unknown code stays raw here.
+    expect(label("en", "source", "website_form")).toBe("Website form");
+    expect(label("en", "source", "facebook_ads")).toBe("facebook_ads");
     expect(label("en", "doc", null)).toBe("—");
     expect(bandLabel("en", "35_44")).toBe("35–44");
     expect(bandLabel("vi", null)).toBe("—");

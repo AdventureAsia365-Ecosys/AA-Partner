@@ -32,7 +32,7 @@ from typing import Any
 
 import asyncpg
 
-from app import stages
+from app import cancellation, stages
 from app.booking import views as aa_views
 from app.commissions import service as commissions
 from app.errors import Conflict, Forbidden, Invalid, NotFound
@@ -393,6 +393,7 @@ async def _own_supplier(ctx: TenantContext, supplier_id: uuid.UUID) -> None:
 async def create_line(ctx: TenantContext, trip_id: uuid.UUID, body: dict[str, Any]) -> dict[str, Any]:
     if await ctx.conn.fetchval(TRIP_SQL, trip_id) is None:
         raise NotFound("trip_not_found")
+    await cancellation.ensure_not_cancelled(ctx, trip_id, "no new booking line")  # S262 round 3 (C12 §2.7)
     supplier_id = _uuid(body.get("agency_supplier_id"), "agency_supplier_id")
     await _own_supplier(ctx, supplier_id)
     start, end = _date(body.get("service_from"), "service_from"), _date(body.get("service_to"), "service_to")
@@ -487,6 +488,8 @@ async def confirm(ctx: TenantContext, line_id: uuid.UUID) -> dict[str, Any]:
     current = await ctx.conn.fetchrow(TRIP_OF_LINE_SQL, line_id)
     if current is None:
         raise NotFound("line_not_found")
+    # S262 round 3 (C12 §2.7): a cancelled trip confirms nothing more (its supplier lines are being cancelled).
+    await cancellation.ensure_not_cancelled(ctx, current["trip_id"], "no booking line is confirmed")
     try:
         async with ctx.conn.transaction():
             raw = await ctx.conn.fetchval(CONFIRM_SQL, line_id)

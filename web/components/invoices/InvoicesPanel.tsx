@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, Checkbox, Field, Input, K, Select, Textarea, useHydrated } from "@/app/_kit";
 import { InvoiceMoney } from "@/components/invoices/InvoiceMoney";
+import { useTripClosed } from "@/components/pipeline/TripClosed";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, formatInstant, type DateLocale } from "@/lib/dates";
@@ -49,7 +50,7 @@ export function InvoicesPanel({
   lang,
   locale,
   timeZone,
-  closed = false,
+  closed: closedProp = false,
 }: {
   tripId: string;
   invoices: Invoice[];
@@ -64,6 +65,8 @@ export function InvoicesPanel({
 }) {
   const router = useRouter();
   const hydrated = useHydrated();
+  // AA-957 S262 round 3: the page's closed state (the cancel run closes the card at once, before the server refresh).
+  const closed = useTripClosed(closedProp);
   const tr = (key: string) => t(lang, key as MessageKey);
   const bills = canBill(role);
   const [busy, setBusy] = useState(false);

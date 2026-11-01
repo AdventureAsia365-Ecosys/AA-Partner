@@ -165,6 +165,7 @@ async def test_trip_documents_visibility_and_trash() -> None:
         .on("SELECT 1 FROM crm.trip", 1)
         .on("FROM crm.document WHERE trip_id", [doc_row(sealed)])
         .on("FROM crm.document WHERE document_id", doc_row(sealed))
+        .on("trip_cancellation", {"stage": "booked", "cancelling": False})  # S262: an open trip shares documents
     )
     ctx = tenant_ctx(conn)
     got = await documents.trip_documents(ctx, DocVault(), TRIP)

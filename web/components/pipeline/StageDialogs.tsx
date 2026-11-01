@@ -18,7 +18,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button, Checkbox, Field, Input, K } from "@/app/_kit";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
-import { fmt, type Lang, type MessageKey, t } from "@/lib/i18n";
+import { fmt, plural, type Lang, type MessageKey, t } from "@/lib/i18n";
 import { aaCancelFailedKey } from "@/lib/aa";
 import {
   CANCEL_REASONS,
@@ -381,7 +381,7 @@ export function CancelDialog({
                   <span style={{ overflowWrap: "anywhere" }}>{b.titles.join(", ")}</span>
                   <span style={{ display: "block", fontSize: 12, color: K.muted }} data-testid="cancel-aa-fee">
                     {b.fee
-                      ? fmt(tr("cancelTrip.aaFee"), { amount: formatAmount(b.fee.amount, b.fee.currency, locale), pct: percentText(b.fee.fee_pct, locale), days: b.fee.days_before_departure })
+                      ? plural(lang, "cancelTrip.aaFee", Number(b.fee.days_before_departure), { amount: formatAmount(b.fee.amount, b.fee.currency, locale), pct: percentText(b.fee.fee_pct, locale), days: b.fee.days_before_departure })
                       : pending && b.failed_code
                         ? fmt(tr("cancelTrip.bookingFailed"), { reason: tr(aaCancelFailedKey(b.failed_code)) })
                         : pending
@@ -567,7 +567,7 @@ export function BulkDialog({
                   } else setError(t(lang, moveErrorKey(res.detail)));
                 }}
               >
-                {fmt(t(lang, "pipeline.bulkConfirm"), { n: preview?.eligible.length ?? 0 })}
+                {plural(lang, "pipeline.bulkConfirm", preview?.eligible.length ?? 0)}
               </Button>
             </span>
           </Actions>
@@ -604,10 +604,10 @@ export function BulkDialog({
       {busy && !preview && <p style={{ margin: 0, fontSize: 13, color: K.muted }}>{t(lang, "pipeline.bulkPreviewing")}</p>}
       {preview && (
         <div data-testid="bulk-preview" data-eligible={preview.eligible.length} data-blocked={preview.blocked.length} style={{ display: "grid", gap: 4, fontSize: 13, color: K.body }}>
-          <span>{fmt(t(lang, "pipeline.bulkPreview"), { n: preview.eligible.length, stage })}</span>
+          <span>{plural(lang, "pipeline.bulkPreview", preview.eligible.length, { stage })}</span>
           {preview.blocked.length > 0 && (
             <>
-              <span>{fmt(t(lang, "pipeline.bulkBlocked"), { n: preview.blocked.length })}</span>
+              <span>{plural(lang, "pipeline.bulkBlocked", preview.blocked.length)}</span>
               <ul style={{ margin: 0, paddingLeft: 18, color: K.muted }}>
                 {blockedCodes.map(([code, n]) => (
                   <li key={code}>

@@ -5,7 +5,7 @@
 // field is masked ("••••") until a member presses Reveal and picks a reason (one reveal event per field). No partial
 // digits are ever formatted here. Edge-safe, unit-tested.
 
-import { fmt, type Lang, type MessageKey, t } from "./i18n";
+import { type Lang, type MessageKey, plural, t } from "./i18n";
 import type { Stage, WaitingOn } from "./pipeline";
 
 export const REVEAL_FIELDS = [
@@ -152,6 +152,17 @@ export function label(lang: Lang, prefix: string, code: string | null | undefine
   return text ?? code;
 }
 
+/** A lead source in words (AA-957 S262 round 3: the trip card printed "synthetic_seed"): the label of every code the
+ * API writes (api/app/lead_sources.py, lib/i18nTripClosed.ts); a code someone else chose (a form or an API caller)
+ * reads as words, "facebook_ads" -> "Facebook ads", never the raw code. */
+export function leadSourceLabel(lang: Lang, code: string | null | undefined): string {
+  if (!code) return "—";
+  const text = t(lang, `source.${code}` as MessageKey);
+  if (text) return text;
+  const words = code.replace(/_+/g, " ").trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 /** Directory URL for a filter (archived, mine, page) and whether the saved search applies: links, so the list stays a
  * server render. The search term itself never goes into a URL (Vercel / CDN request logs, browser history): the form
  * POSTs it to /clients/search, which keeps it in a short-lived sealed cookie and links here with `s=1`. */
@@ -238,5 +249,5 @@ export function roleText(lang: Lang, role: "lead" | "companion"): string {
 }
 
 export function tripsCount(lang: Lang, n: number): string {
-  return fmt(t(lang, "clients.trips"), { n });
+  return plural(lang, "clients.trips", n);
 }

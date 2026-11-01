@@ -312,12 +312,18 @@ async def is_closed(ctx: AnyContext, trip_id: uuid.UUID) -> bool:
     return row is not None and (row["stage"] == "cancelled" or bool(row["cancelling"]))
 
 
-async def ensure_not_cancelled(ctx: AnyContext, trip_id: uuid.UUID) -> None:
+async def ensure_not_cancelled(
+    ctx: AnyContext, trip_id: uuid.UUID, what: str = "no new invoice, payment or client link"
+) -> None:
     """S262 (C12 §2.7 items 3-4): a cancelled trip, or one whose cancellation waits for AA, bills the client no more:
     no new invoice, no "Mark paid" on a schedule row, no new client link (409 ``trip_cancelled``). What the cancel
-    kept stays workable: a payment the client says they made is recorded on its invoice, refunds go on."""
+    kept stays workable: a payment the client says they made is recorded on its invoice, refunds go on.
+
+    S262 round 3: the trip is closed for planning too (``what`` words the refusal): no new AA quote, hold or confirm,
+    no new or confirmed agency line, no new dates, no document shown to the traveller, no builder edit or send. A
+    pending cancellation counts: the cancel applied every local effect at once."""
     if await is_closed(ctx, trip_id):
-        raise Conflict("trip_cancelled", "this trip is cancelled: it takes no new invoice, payment or client link")
+        raise Conflict("trip_cancelled", f"this trip is cancelled: {what}")
 
 
 async def _schedule_to_void(ctx: AnyContext, trip_id: uuid.UUID, voided: set[uuid.UUID]) -> list[uuid.UUID]:

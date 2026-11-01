@@ -4,7 +4,9 @@
 // (expected frozen at the confirmation day, received at the day it arrived). Owner and agent only: commission is a
 // margin field (design §4.6); the assistant gets the "not available for your role" state (the API refuses it too).
 // S262 (AA-957 live): the kit DataTable (a card per commission on a phone, status and follow-up in view) and the kit
-// underline tabs for the filter (components/commissions/CommissionsTable.tsx, CommissionFilters.tsx).
+// underline tabs for the filter (components/commissions/CommissionsTable.tsx, CommissionFilters.tsx). S262 round 3:
+// counted words in the singular for 1 ("1 commission"), the active tab in view on a phone, room under the list for
+// the toast.
 import { EmptyState, ErrorState, K, KpiTile } from "@/app/_kit";
 import { CommissionFilters } from "@/components/commissions/CommissionFilters";
 import { CommissionsTable } from "@/components/commissions/CommissionsTable";
@@ -12,7 +14,7 @@ import { PageTitle } from "@/components/PageTitle";
 import { canFollowUp, type CommissionList, isFilter } from "@/lib/commissions";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
-import { fmt, t, type MessageKey } from "@/lib/i18n";
+import { plural, t, type MessageKey } from "@/lib/i18n";
 import { formatAmount } from "@/lib/proposals";
 import { serverContext } from "@/lib/serverContext";
 
@@ -40,21 +42,22 @@ export default async function CommissionsPage({ searchParams }: { searchParams: 
   const money = (amount: string | null | undefined, currency: string) => formatAmount(amount, currency, ctx.locale);
   return (
     // minmax(0, 1fr): the table's min width never stretches the page's grid (S254 lesson).
-    <div data-testid="crm-commissions" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 14, maxWidth: 1200 }}>
+    // data-crm-toast-room: on a phone the list's end scrolls above the kit toast (S262 round 3, app/globals.css).
+    <div data-testid="crm-commissions" data-crm-toast-room="" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 14, maxWidth: 1200 }}>
       <PageTitle title={tr("commissions.title")} subtitle={tr("commissions.subtitle")} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-        <KpiTile size="sm" testId="commissions-open" label={tr("commissions.total.open")} value={money(totals.open_base, base)} hint={fmt(tr("commissions.total.count"), { n: totals.open_count })} />
+        <KpiTile size="sm" testId="commissions-open" label={tr("commissions.total.open")} value={money(totals.open_base, base)} hint={plural(ctx.lang, "commissions.total.count", totals.open_count)} />
         <KpiTile
           size="sm"
           testId="commissions-overdue"
           label={tr("commissions.total.overdue")}
           value={money(totals.overdue_base, base)}
           valueTone={totals.overdue_count > 0 ? "danger" : undefined}
-          hint={fmt(tr("commissions.total.count"), { n: totals.overdue_count })}
+          hint={plural(ctx.lang, "commissions.total.count", totals.overdue_count)}
         />
         <KpiTile size="sm" testId="commissions-received" label={tr("commissions.total.received")} value={money(totals.received_base, base)} />
       </div>
-      {totals.open_other_base > 0 && <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{fmt(tr("commissions.otherBase"), { n: totals.open_other_base })}</p>}
+      {totals.open_other_base > 0 && <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{plural(ctx.lang, "commissions.otherBase", totals.open_other_base)}</p>}
       <CommissionFilters active={status} lang={ctx.lang} />
       {commissions.length === 0 ? (
         <p style={{ margin: 0, fontSize: 13, color: K.muted }} data-testid="commissions-empty">

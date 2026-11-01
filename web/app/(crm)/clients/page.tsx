@@ -9,7 +9,7 @@ import Link from "next/link";
 import { EmptyState, ErrorState, K } from "@/app/_kit";
 import { NewClientForm } from "@/components/clients/NewClientForm";
 import { PageTitle } from "@/components/PageTitle";
-import { directoryHref, label, parseDirectory, SEARCH_MAX, tripsCount, type Directory } from "@/lib/clients";
+import { directoryHref, leadSourceLabel, parseDirectory, SEARCH_MAX, tripsCount, type Directory } from "@/lib/clients";
 import { openSearch, searchCookieName } from "@/lib/clientSearch";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
@@ -113,7 +113,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
                 <span style={{ fontSize: 12.5, color: K.muted, display: "flex", flexWrap: "wrap", gap: 10 }}>
                   <span>{[c.has_email ? t(lang, "clients.hasEmail") : null, c.has_phone ? t(lang, "clients.hasPhone") : null].filter(Boolean).join(" · ") || t(lang, "clients.noContact")}</span>
                   <span>{tripsCount(lang, c.trips)}</span>
-                  {c.lead_source && <span>{label(lang, "source", c.lead_source)}</span>}
+                  {c.lead_source && <span>{leadSourceLabel(lang, c.lead_source)}</span>}
                   <span>{formatDate(c.created_at, locale, { year: true })}</span>
                 </span>
               </li>
