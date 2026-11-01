@@ -541,8 +541,43 @@ async def test_a_draft_on_retired_terms_is_not_publishable_until_the_current_ter
     assert out["status"] == "published" and out["terms_doc_id"] == str(second)
     # A working copy of a version whose terms were retired since starts with the current version.
     third = await _terms(app_pool, s, "Ruby-3")
+    # S262 fix pass (T1): the published version keeps Ruby-2 (R34) and its view lists no terms check.
+    pub = await _as(app_pool, s, "agent", builder.view, _pid(out))
+    assert pub["terms_status"] == "retired" and not {"terms_retired", "terms_not_published"} & set(
+        pub["checks"]["blocking"])  # fmt: skip
     v2 = await _create(app_pool, s, from_proposal_id=_pid(out))
     assert v2["terms_doc_id"] == str(third) and v2["terms_status"] == "published"
     with pytest.raises(Conflict) as err:
         await _as(app_pool, s, "agent", builder.update_settings, _pid(v2), v2["edit_seq"], {"terms_doc_id": second})
     assert err.value.code == "terms_not_published"
+
+
+async def test_a_text_draft_takes_only_the_published_terms_as_a_new_choice(app_pool: asyncpg.Pool) -> None:
+    """S262 fix pass (T2, parity with the builder settings): a text draft keeps the version it names after that version
+    is retired, but a new choice must be the published version (409 terms_not_published for a draft or retired one)."""
+    s = await _setup(app_pool)
+    first = await _terms(app_pool, s, "Opal-1")
+    async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:
+        doc = await agreements.create(ctx, kind="booking_terms", version_label="Opal-x", body_text="Invented x")
+    unpublished = uuid.UUID(doc["doc_id"])  # never published: a draft version
+    draft = await _as(app_pool, s, "agent", service.create_draft, s["trip"], body="Five days in Nepal.",
+                      currency="USD", total=Decimal("1000"), deposit=Decimal("300"),
+                      balance_due_on=s["start"], terms_doc_id=first)  # fmt: skip
+    pid = uuid.UUID(draft["proposal_id"])
+    second = await _terms(app_pool, s, "Opal-2")  # retires Opal-1
+    # Keeping the named (now retired) version while editing is allowed.
+    await _as(app_pool, s, "agent", service.update_draft, pid, {"body": "Six days in Nepal.", "terms_doc_id": first})
+    await _as(app_pool, s, "agent", service.update_draft, pid, {"total_amount": Decimal("1100")})
+    with pytest.raises(Conflict) as err:
+        await _as(app_pool, s, "agent", service.update_draft, pid, {"terms_doc_id": unpublished})
+    assert err.value.code == "terms_not_published"
+    with pytest.raises(NotFound):
+        await _as(app_pool, s, "agent", service.update_draft, pid, {"terms_doc_id": uuid.uuid4()})
+    # "Use the current terms" saves; going back to the retired version is then a new choice and refused.
+    await _as(app_pool, s, "agent", service.update_draft, pid, {"terms_doc_id": second})
+    with pytest.raises(Conflict) as err:
+        await _as(app_pool, s, "agent", service.update_draft, pid, {"terms_doc_id": first})
+    assert err.value.code == "terms_not_published"
+    overview = await _as(app_pool, s, "agent", service.trip_overview, s["trip"])
+    mine = next(p for p in overview["proposals"] if p["proposal_id"] == str(pid))
+    assert mine["terms_doc_id"] == str(second) and mine["total_amount"] == "1100.00"

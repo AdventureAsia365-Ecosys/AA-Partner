@@ -575,8 +575,9 @@ def _checks(row: Any, s: dict[str, Any], now: dt.datetime) -> dict[str, Any]:
         warnings.append("aa_no_longer_offered")
     if any(o["net_amount"] is None for o in s["options"]):
         warnings.append("net_missing")
-    if row["terms_doc_id"] is not None and row["terms_status"] != "published":
+    if row["status"] == "draft" and row["terms_doc_id"] is not None and row["terms_status"] != "published":
         # S262 round 3 (AA-957 x AA-952): Publish refuses terms that are not the published version; say so up front.
+        # Only a draft: a published / sent / accepted version keeps the terms it went out with (R34), never "blocked".
         blocking.append("terms_retired" if row["terms_status"] == "retired" else "terms_not_published")
     sums = _charged(s, None, row["deposit_pct"])
     if sums["sell_total"] <= 0:

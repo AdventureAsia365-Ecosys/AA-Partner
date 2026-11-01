@@ -682,3 +682,16 @@ async def test_retired_terms_block_publish_until_the_agent_picks_the_current_ver
     conn.on("coalesce(max(version), 0) + 1", 3).on(CURRENT_TERMS, current_terms)
     await _run(builder.create, TRIP, currency=None, from_proposal_id=BASE, conn=conn)
     assert conn.sql("INSERT INTO crm.proposal (")[0][6] == BASE
+
+
+async def test_retired_terms_block_only_a_draft() -> None:
+    """S262 fix pass (T1): a published / sent / accepted version keeps the terms it went out with (R34), so its view
+    never lists terms_retired / terms_not_published (the builder showed a red check on a version nobody edits)."""
+    for status in ("published", "sent", "accepted", "superseded"):
+        for terms_status in ("retired", "draft", None):
+            row = _proposal(status=status, terms_doc_id=BASE, terms_status=terms_status, sent_at=NOW, published_at=NOW)
+            v = await _run(builder.view, P, conn=_conn(proposal=row))
+            assert not {"terms_retired", "terms_not_published"} & set(v["checks"]["blocking"]), (status, terms_status)
+            assert v["terms_status"] == terms_status
+    draft = await _run(builder.view, P, conn=_conn(proposal=_proposal(terms_doc_id=BASE, terms_status="retired")))
+    assert "terms_retired" in draft["checks"]["blocking"]
