@@ -17,11 +17,10 @@ import { useState, useEffect, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, XCircle, ExternalLink, Loader2, FileText, Milestone } from "lucide-react";
 import { T, sans, Card, CardHead, Btn, EmptyState, StickyBar } from "./ui";
-import { AiContentNotice } from "./AiContentNotice";
 import { stripMarkdown } from "./markdownText";
 import { PUBLISH_LOG_QUERY_KEY, channelName } from "./PublishedList";
 import { channelName as channelLabel } from "./channelLabels";
-import { formatDate } from "@/app/_kit";
+import { AiNotice, formatDate } from "@/app/_kit";
 import {
   ServedBadge, plainError, publishClosedLabel, servedTitle, workClosed, type ServedFields,
 } from "./ServedBadge";
@@ -118,7 +117,7 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
         <CardHead title="Ready to Publish" />
       </StickyBar>
       {/* AA-819 — AUP notice above the Publish buttons; AA-760: only when there is something to review. */}
-      {pieces !== null && pieces.length > 0 && <AiContentNotice style={{ marginBottom: 14 }} />}
+      {pieces !== null && pieces.length > 0 && <AiNotice variant="publisher" style={{ marginBottom: 14 }} />}
       {pieces === null ? (
         <div aria-busy="true" style={{ padding: 24, textAlign: "center", color: T.muted, fontSize: 13 }}>Loading…</div>
       ) : pieces.length === 0 ? (

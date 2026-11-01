@@ -459,6 +459,8 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
   (no token; CIS stamps `url_alive` for its T10 gate): CIS 301 (superseded version) -> 308 to `/trip/<current id>`,
   410 / 404 -> not-found page, a CIS fault or an unset `CIS_API_URL` -> 500. Indexable (page metadata overrides the
   root `noindex`; `public/robots.txt` allows `/trip/` only). Next data cache 1 h.
+  AA-1033: under the AI-written summary, highlights and itinerary it shows the kit `AiNotice` traveller line
+  (English; "may contain mistakes … confirmed in your official quote").
   **AA-979 P2b window**: the agency host `portal.` is a partner host too (`WEB_PARTNER_HOSTS` lists both
   `partner-dev.` and `portal.`), and each partner host answers with its OWN public origin (`lib/config.ts`
   `forHost` / `requestConfig`): redirects, the OAuth redirect / logout URIs and the same-origin write guard stay on
@@ -514,6 +516,18 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
 - **Deploy**: `.github/workflows/deploy-web-dev.yml` (same model as the API deploy, no job guard: the web runs no
   worker), gated by the `dev` environment variable `CRM_WEB_ENABLED` (unset = red), then the post-deploy verify
   (`app: crm-web`, section "CI and release").
+
+- **AI notice and terms (AA-1033)**: the kit `AiNotice` (AA-CIS-App canonical core, wording in
+  `core/aiNotice.messages.ts`) is the one notice under AI-written text. CRM web: every component or page that asks for
+  an AI draft (`trips/{id}/ai/draft`) must render `<AiNotice lang={lang} />` (staff variant) under the draft —
+  guarded by `web/tests/aiNotice.test.ts` (no draft UI exists yet; the CRM-33a draft slice must add it). Settings > AI
+  lists "AI can make mistakes: check facts before sending." first, shows the notice as a draft carries it and links
+  `/terms#ai`. `/terms` (`web/app/(crm)/terms`, strings `web/lib/i18nTerms.ts` EN + VI, signed-in, linked from the
+  shell footer) is a draft holding the "AI-generated content" section only (mistakes, for information, a person
+  reviews and sends, the confirmed quote and booking terms bind; no liability waiver; counsel reviews later). Privacy
+  wording there and in Settings > AI describes the F3 scrubber as it works (the trip's known details plus what it can
+  detect, may not catch every detail), never an absolute promise.
+  Portal: the `publisher` variant replaces the local `AiContentNotice` at review, publish and export, same sentence.
 
 ## Tenant portal (`portal/`, AA-979 CRM-P2a)
 

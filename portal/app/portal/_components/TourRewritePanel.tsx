@@ -16,8 +16,7 @@
 // already refetches every 5 s while any version is being written, and hands the row in (`version`).
 
 import { CheckCircle2, Download, ExternalLink, RotateCcw } from "lucide-react";
-import { Button, K } from "@/app/_kit";
-import { AiContentNotice } from "./AiContentNotice";
+import { AiNotice, Button, K } from "@/app/_kit";
 import LiveWriter from "./LiveWriter";
 import { WriterDrawer, type WatchItem, type WatchOutcome } from "./WriterPanel";
 import { fetchVersionDetail, type Version } from "./catalogApi";
@@ -88,7 +87,7 @@ export function TourRewritePanel({
       ] : []}
       footer={ready && target ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%", minWidth: 0 }}>
-          <AiContentNotice />
+          <AiNotice variant="publisher" />
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
             <Button size="sm" variant="secondary" disabled={exporting} onClick={onExportDocx}>
               <Download size={12} /> {exporting ? "Exporting…" : "Export DOCX"}

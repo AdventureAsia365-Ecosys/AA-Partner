@@ -26,6 +26,8 @@ export { KpiTile } from "./core/KpiTile";
 export * from "./core/FormControls";
 export * from "./core/csv";
 export * from "./core/savedViews";
+export { AiNotice } from "./core/AiNotice";
+export { AI_NOTICE_MESSAGES, aiNoticeText, type AiNoticeVariant } from "./core/aiNotice.messages";
 export { Providers } from "./core/Providers";
 export {
   PageFrame, PageFrameHeader, PageFrameBody, AdminMain, AdminPaneHeader, AdminPaneBody,

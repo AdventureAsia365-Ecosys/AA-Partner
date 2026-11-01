@@ -10,7 +10,7 @@
 import type { Metadata } from "next";
 import { notFound, permanentRedirect } from "next/navigation";
 import { cache } from "react";
-import { K, sans, serif } from "@/app/_kit";
+import { AiNotice, K, sans, serif } from "@/app/_kit";
 import { SUPPORT_EMAIL } from "@/app/_kit/core/brand";
 import { config } from "@/lib/config";
 import { itineraryParagraphs, loadTrip, TOUR_ID, type TripLookup } from "@/lib/tripPage";
@@ -114,6 +114,9 @@ export default async function TripPage({ params }: { params: Promise<{ tourId: s
             ))}
           </div>
         )}
+
+        {/* AA-1033: the summary, highlights and itinerary above are written with the help of AI (CIS pipeline). */}
+        <AiNotice variant="traveller" lang="en" testId="trip-ai-notice" style={{ margin: "0 0 28px", fontSize: 13 }} />
 
         {/* No price shown — ADR-2026-030 §8.4: never display a price without a real source. */}
         <div style={{ textAlign: "center", padding: "36px 0 0", borderTop: `1px solid ${K.line}` }}>
