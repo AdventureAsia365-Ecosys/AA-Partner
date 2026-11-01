@@ -67,7 +67,7 @@ describe("termsChoices", () => {
     const r = termsChoices(TERMS, OLD);
     expect(r.options).toEqual([
       { doc_id: NEW, version_label: "Marigold-2", stale: false },
-      { doc_id: OLD, version_label: "Marigold-1", stale: true },
+      { doc_id: OLD, version_label: "Marigold-1", stale: true, state: "retired" },
     ]);
     expect(r.value).toBe(OLD);
     expect(r.current?.doc_id).toBe(NEW);
@@ -79,7 +79,7 @@ describe("termsChoices", () => {
     expect(termsChoices([], null)).toEqual({ options: [], value: "", current: null, stale: null });
   });
   it("a removed version is stale with no label; an unreadable list claims nothing", () => {
-    expect(termsChoices(TERMS, "gone").stale).toEqual({ doc_id: "gone", version_label: "", stale: true });
+    expect(termsChoices(TERMS, "gone").stale).toEqual({ doc_id: "gone", version_label: "", stale: true, state: null });
     const unread = termsChoices([], OLD);
     expect(unread.stale).toBeNull();
     expect(unread.options).toEqual([{ doc_id: OLD, version_label: "", stale: false }]);

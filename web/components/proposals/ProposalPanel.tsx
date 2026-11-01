@@ -30,7 +30,9 @@ import {
   formatAmount,
   PAY_METHODS,
   proposalErrorKey,
+  termsChoiceLabel,
   termsChoices,
+  termsStaleNote,
   type Agreement,
   type InviteResult,
   type LifecycleView,
@@ -209,8 +211,12 @@ export function ProposalPanel({
     seed?.status === "draft" || terms.some((d) => d.doc_id === seedTerms && d.status === "published") ? seedTerms : null,
   );
   const currentTerms = current?.status === "draft" ? termsChoices(terms, current.terms_doc_id) : null;
-  const termsLabel = (o: { version_label: string; stale: boolean }) =>
-    o.stale ? (o.version_label ? fmt(tr("proposal.termsRetired"), { label: o.version_label }) : tr("proposal.termsRetiredUnknown")) : o.version_label || "—";
+  // S262 fix pass: the form's terms select is controlled. It follows the draft's terms whenever the server view names
+  // another version (after "Use the current terms" the open form shows the new terms) and keeps an unsaved pick between.
+  const formTermsKey = `${draftOpen}:${seed?.proposal_id ?? "new"}:${formTerms.value}`;
+  const [termsPick, setTermsPick] = useState({ key: formTermsKey, value: formTerms.value });
+  if (termsPick.key !== formTermsKey) setTermsPick({ key: formTermsKey, value: formTerms.value });
+  const formTermsValue = termsPick.key === formTermsKey ? termsPick.value : formTerms.value;
 
   return (
     <Panel title={tr("proposal.tab")} testId="trip-proposal">
@@ -287,7 +293,7 @@ export function ProposalPanel({
             </div>
             {currentTerms?.stale && !closed && (
               <div data-testid="proposal-terms-stale" style={{ display: "grid", gap: 6, padding: "8px 10px", borderRadius: 8, background: K.bg, fontSize: 12.5 }}>
-                <span style={{ color: K.danger }}>{fmt(tr("proposal.termsStaleNote"), { label: termsLabel(currentTerms.stale) })}</span>
+                <span style={{ color: K.danger }}>{termsStaleNote(currentTerms.stale, lang)}</span>
                 {currentTerms.current ? (
                   <span data-testid="proposal-terms-use-current">
                     <Button
@@ -387,11 +393,17 @@ export function ProposalPanel({
                 {tr("proposal.terms")}
                 {/* Send pins the published booking terms to a version without them (S261): "No terms" only when there
                     are none. */}
-                <select name="terms_doc_id" defaultValue={formTerms.value} style={field} data-testid="proposal-terms">
+                <select
+                  name="terms_doc_id"
+                  value={formTermsValue}
+                  onChange={(e) => setTermsPick({ key: formTermsKey, value: e.target.value })}
+                  style={field}
+                  data-testid="proposal-terms"
+                >
                   {!formTerms.current && <option value="">{tr("proposal.noTerms")}</option>}
                   {formTerms.options.map((d) => (
                     <option key={d.doc_id} value={d.doc_id}>
-                      {termsLabel(d)}
+                      {termsChoiceLabel(d, lang)}
                     </option>
                   ))}
                 </select>

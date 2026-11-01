@@ -4,6 +4,7 @@
 // Amounts are the client's sell amounts (strings with two decimals from the API); no net, cost or margin here.
 
 import type { PortalPartyMember } from "./clientPortal";
+import { fmt, t, type Lang } from "./i18n";
 
 export type ProposalStatus = "draft" | "published" | "sent" | "accepted" | "superseded" | "withdrawn";
 export type ScheduleStatus = "due" | "paid" | "void";
@@ -113,6 +114,25 @@ export interface TermsChoice {
   version_label: string;
   /** The version is no longer the published one (retired, a draft, or removed): Publish / Send refuse it. */
   stale: boolean;
+  /** A stale entry's state (S262 fix pass): "retired" (published once, replaced), "draft" (never published) or null
+   *  (removed: no label either). Absent on a published entry. */
+  state?: "retired" | "draft" | null;
+}
+
+/**
+ * The words of one terms entry (S262 fix pass): a published version is its label; a retired one "(no longer
+ * published)"; a draft one, never published, "(not published)"; a removed one a plain sentence (no label left).
+ */
+export function termsChoiceLabel(o: TermsChoice, lang: Lang): string {
+  if (!o.stale) return o.version_label || "—";
+  if (!o.version_label) return t(lang, "proposal.termsRetiredUnknown");
+  return fmt(t(lang, o.state === "draft" ? "proposal.termsNotPublished" : "proposal.termsRetired"), { label: o.version_label });
+}
+
+/** The note under a stale terms entry: a draft version was never the published one, a retired one is no longer. */
+export function termsStaleNote(o: TermsChoice, lang: Lang): string {
+  const key = o.state === "draft" ? "proposal.termsStaleNoteDraft" : "proposal.termsStaleNote";
+  return fmt(t(lang, key), { label: termsChoiceLabel(o, lang) });
 }
 
 /**
@@ -137,7 +157,8 @@ export function termsChoices(
       // The versions could not be read (GET /agreements failed): keep the named one selected, claim nothing about it.
       options.push({ doc_id: pinned, version_label: "", stale: false });
     } else {
-      stale = { doc_id: pinned, version_label: doc?.version_label ?? "", stale: true };
+      const state = doc === undefined ? null : doc.status === "draft" ? "draft" : "retired";
+      stale = { doc_id: pinned, version_label: doc?.version_label ?? "", stale: true, state };
       options.push(stale);
     }
   }
