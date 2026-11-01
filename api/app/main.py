@@ -194,6 +194,7 @@ def create_app(
                     ingest_store=app.state.ingest_store,
                     ingest_domain=settings.crm_ingest_domain,
                     messaging_runtime=app.state.messaging_runtime,
+                    partner_account_cleanup_dry_run=settings.partner_account_cleanup_dry_run,
                 ),
                 recurring=job_handlers.RECURRING,
                 hooks=job_handlers.build_hooks(

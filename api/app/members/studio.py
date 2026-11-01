@@ -20,6 +20,10 @@ accounts (root ADR 0006b decision 5). The flow, end to end:
    (``app.cis.activation``); success -> ``activated``; a CIS outage -> the job retries with its backoff; a CIS refusal
    (another identity, a removed membership) -> the code is kept and the job fails permanently (the L1 console shows it).
 
+6. **Clean-up read** (:func:`account_links`, S263): the partner-account clean-up (:mod:`app.members.accounts`) reads
+   every row bound to an identity, as ``job:crm_partner_accounts`` (crm-039, read only), so it never deletes an account
+   a studio invitation still uses.
+
 No agency audit: a studio-only CIS tenant has no CRM agency, and ``crm.audit_event`` belongs to one. Log lines carry
 ids and codes only, never the address (not even masked) or the token.
 """
@@ -54,7 +58,13 @@ from app.members.invitations import Claimed, claim_reason, token_hash_hex
 from app.members.mail import Mailer, studio_invitation_message
 from app.members.recovery import platform_actor
 from app.members.team import new_token, normalise_email
-from app.tenancy import STUDIO_ACTIVATION_ACTOR, studio_invitation_tx, studio_platform_tx, synthetic_agency
+from app.tenancy import (
+    ACCOUNT_CLEANUP_ACTOR,
+    STUDIO_ACTIVATION_ACTOR,
+    studio_invitation_tx,
+    studio_platform_tx,
+    synthetic_agency,
+)
 
 log = logging.getLogger(__name__)
 
@@ -427,3 +437,48 @@ def build_handler(config: ActivationConfig | None):
         raise ActivationRetry(outcome.code)
 
     return handler
+
+
+# ── 6. the partner-account clean-up's read (S263, AA-939 follow-up; crm-039) ─────────────────────────────────────────
+# Every row that names a partner-pool identity, with what decides whether that account is still needed. crm-039 lets
+# ACCOUNT_CLEANUP_ACTOR read (never write) the rows; before crm-039 is applied that actor would see no row at all, so
+# the read refuses to run then (fail closed: no studio link must never mean "not read").
+CLEANUP_VERSION = "crm-039"
+CLEANUP_READY_SQL = "SELECT EXISTS (SELECT 1 FROM crm.v_schema_versions WHERE version = $1) AS ok"
+ACCOUNT_LINKS_SQL = """
+SELECT studio_invitation_id, cognito_iss, cognito_sub, status, expires_at, updated_at
+  FROM crm.studio_invitation
+ WHERE cognito_sub IS NOT NULL
+"""
+
+
+@dataclass(frozen=True)
+class StudioLink:
+    """A Content studio invitation bound to a partner-pool identity (ids, a status and times only)."""
+
+    studio_invitation_id: uuid.UUID
+    cognito_iss: str
+    cognito_sub: str
+    status: str
+    expires_at: dt.datetime
+    updated_at: dt.datetime
+
+
+async def account_links(pool: asyncpg.Pool) -> list[StudioLink]:
+    """Every studio invitation bound to an identity, read as the clean-up job (:data:`ACCOUNT_CLEANUP_ACTOR`).
+    Raises :class:`~app.errors.Unavailable` ``cleanup_not_ready`` while crm-039 is not registered."""
+    async with studio_platform_tx(pool, actor=ACCOUNT_CLEANUP_ACTOR) as ctx:
+        if not await ctx.conn.fetchval(CLEANUP_READY_SQL, CLEANUP_VERSION):
+            raise Unavailable("cleanup_not_ready", f"{CLEANUP_VERSION} is not applied")
+        rows = await ctx.conn.fetch(ACCOUNT_LINKS_SQL)
+    return [
+        StudioLink(
+            studio_invitation_id=r["studio_invitation_id"],
+            cognito_iss=r["cognito_iss"],
+            cognito_sub=r["cognito_sub"],
+            status=r["status"],
+            expires_at=r["expires_at"],
+            updated_at=r["updated_at"],
+        )
+        for r in rows
+    ]

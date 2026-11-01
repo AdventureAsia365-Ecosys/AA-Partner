@@ -319,6 +319,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-036` | `api/migrations/036_crm_messaging.sql` | CRM-28 Module 9 SMS + WhatsApp (AA-958; **contract** file under ADR 0017 (no expand directive; applied by hand with DB Migrate)): `crm.messaging_connection` (base template; the agency's one live Twilio / sandbox connection, credential key ON DELETE CASCADE from `crm.integration_credential` provider `twilio`, `hook_id` = 32 random hex characters of the webhook path, the SMS and WhatsApp senders, last inbound / status times; SELECT-only lookup policy `messaging_connection_hook_lookup` on `app.messaging_hook_id`, set by `app.tenancy.messaging_hook_tx()`), `crm.channel_template` (base template; the WhatsApp templates of the agency's account: `content_sid`, name, language, category, approval, body with `{{n}}`, variables; cascades from its connection), `crm.message_delivery` (base template; one per outbound SMS / WhatsApp `crm.message`: template + sealed variables, `provider_status`, `status_rank`, `error_code`, `status_at`; crm_app no DELETE), `crm.conversation.wa_window_expires_at` + `opted_out_at`; every new table cascades from a row the erasure already deletes, no `crm.erase_subject` change |
 | `crm-037` | `api/migrations/037_crm_llm_stage_profile.sql` | AI gateway on the shared core (AA-964, S263 gateway plan F1 + F2; **contract** class under ADR 0017: a replaced outcome CHECK on the `crm.llm_call` ledger, so MIG-4 order, manual DB Migrate apply before the code PR): `crm.llm_stage_profile` (platform configuration, no tenant column: one row per CRM stage, role, `is_active` = the stage kill switch, `max_attempts` 1..6, `route_deadline_s` 1..120, `degrade_mode` `manual_reply_needed`) and `crm.llm_stage_route` (the stage's Bedrock route in order, position 0..5: model wire id, family = maker, catalog prices per million tokens both or neither, `is_enabled`); crm_app SELECT only, no reader grant; seed `crm_draft_reply` (writer, 2 attempts, 30 s: Haiku 4.5, then Sonnet 4.5). `crm.llm_call.outcome` + `billed_unusable`, `truncated` (ledger v2 statuses). crm-036 is AA-958's (CRM-28 messaging), which merges first |
 | `crm-038` | `api/migrations/038_crm_workflows_tasks.sql` | CRM-29a Module 10 workflows + tasks (AA-959; **contract** class under ADR 0017: new columns, a CHECK and a re-created hold guard on `crm.task`, a new `crm.tenant_settings` column, `crm.status_transition` rows, a replaced `crm.erase_subject`, so MIG-4 order, manual DB Migrate apply before the code PR): `crm.workflow_rule` (base template; the agency's automations: trigger `stage_enter` / `event` / `date_anchor` / `special_date` / `manual` (a task list), offset days, conditions and 1..20 steps as JSON validated by the API, active / paused / archived, `version`, `template_key` of the AA library template, one live rule per template; crm_app no DELETE) and `crm.workflow_run` (base template; one run of a rule for one trip or one client, `UNIQUE (tenant, rule, trigger_key)` = the idempotent tick, active -> completed / stopped / failed, `step_index`, `next_at`, `stop_reason`, a log of codes and ids; hold guard; crm_app no DELETE); `crm.task.traveler_id` (a client task: a trip or a client, never both), `title_enc` (vault DEK: a custom task, kind family `custom_<hex>`), `workflow_run_id`; `crm.tenant_settings.task_digest`; `crm.erase_subject` = the crm-033 text + the workflow tables (trip, traveller and agency scopes) |
+| `crm-039` | `api/migrations/039_crm_partner_account_cleanup.sql` | S263 AA-939 follow-up (**contract**: a changed policy): `studio_invitation_platform` (crm-020) also lets `job:crm_partner_accounts` read `crm.studio_invitation` (USING only; its WITH CHECK and guard CRM37 refuse that actor's writes), so the partner-account clean-up sees every studio link |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -370,6 +371,7 @@ queued / running rows as information, exempt kinds left out). Daily or slower ki
 | `crm_workflow_run` | per workflow run: queued when it starts (after the 20 s Undo window for a member's action) and by the tick for a run whose wait ended (never queued ahead) | AA-959: `app/workflows/runner.py`: the run's due steps in one `system_tx` (actor `job:crm_workflow_run`); idempotent (a run not due or no longer active is left). Not deploy-gate exempt |
 | `crm_workflow_tick` | hourly, due-now hook (`app.workflows.tick.HourlyWorkflowTick`, key per UTC hour) | AA-959: per active agency: date triggers (anchor + offset within the last 3 days), special dates (at 08:00-09:59 local: birthdays, passport expiry, trip anniversaries), one `crm_workflow_run` job per run whose `next_at` passed, task due dates from the trip's dates, the digest job at 07:00 local. Counts only. Not deploy-gate exempt |
 | `crm_task_digest` | per agency and local day, queued by the tick (idempotency key per agency and date) | AA-959: the morning digest (counts only, AA SES) when `task_digest` is on. Not deploy-gate exempt |
+| `crm_partner_accounts` | daily, from `JOB_RETENTION_UTC_HOUR`, due-now hook (`app.members.accounts.DailyPartnerAccountSchedule`), plus one run per deleted test agency (queued in the delete's transaction, payload `tenant_id`) | S263 (AA-939 follow-up): deletes never-signed-in partner-pool accounts that no member, live invitation or studio invitation needs (section "Partner-account clean-up"); counts only while `PARTNER_ACCOUNT_CLEANUP_DRY_RUN` is on; at most 50 deletes per run. Not deploy-gate exempt |
 | `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
 
 
@@ -1740,7 +1742,22 @@ Design v3 §6.3 CRM-22 (M4, R38, R9; F4 / WF-5 A-05; Q1 2.3); migration crm-022;
   changes nothing (`invitation_claim` denied, reason `already_claimed`): a second tab or a double submit never rotates
   the password the first claim shows. A person who never saw it gets a new invitation (the owner revokes and re-invites;
   AA withdraws a first-owner invitation in the L1 console). The API's partner-pool calls (`app/members/directory.py`)
-  are AdminCreateUser, ListUsers and AdminUserGlobalSignOut (IAM allows AdminDisableUser too; unused).
+  are AdminCreateUser, ListUsers, AdminUserGlobalSignOut and (S263, root ADR 0006b amendment A1) AdminDeleteUser
+  (IAM allows AdminDisableUser too; unused).
+- **Partner-account clean-up** (S263, AA-939 follow-up; `app/members/accounts.py`, job `crm_partner_accounts`): an
+  invitation that ends unused (withdrawn, revoked, expired, or its synthetic test agency deleted) left the claim's
+  partner-pool account behind in `FORCE_CHANGE_PASSWORD`. The clean-up deletes such an account (`AdminDeleteUser`)
+  only when a CRM invitation claim bound it, no CRM member row (`active` / `invited`) in any agency, no live or
+  accepted CRM invitation and no live Content studio invitation or membership names it, all its invitations ended more
+  than 7 days ago (at once for a trashed agency's), and Cognito, read again right before the delete, still says
+  `FORCE_CHANGE_PASSWORD` and no change since those invitations ended. A `CONFIRMED` account is never deleted
+  (the directory refuses it). Reads: every agency of the audit registry through `partner_account_tx()` (trashed ones
+  too, `tenant_isolation` per agency) and `crm.studio_invitation` through `studio.account_links()` (crm-039 lets the
+  actor `job:crm_partner_accounts` read it; the read refuses to run before crm-039). Each delete: a
+  `partner_account_delete` event (invitation ids, reason `never_signed_in`) in every agency whose invitation it was.
+  Runs daily and once per test agency delete (queued in its transaction); `PARTNER_ACCOUNT_CLEANUP_DRY_RUN` (default
+  on; Dev off) and at most 50 deletes per run. By hand in the container: `python -m app.members.accounts [--apply]
+  [--limit N] [--tenant <uuid>]` (dry run unless `--apply`).
 - **Team** (`/crm/v1/team*`, owner): members (invited address or short id), pending invitations (masked), role change
   (409 `last_owner`), removal (membership disabled + global sign-out), the **reassign queue** (open trips / clients of
   members who are no longer active) and reassign, the plan (`/crm/v1/plan`; no `tenant_entitlement` row = free, 10
@@ -1784,8 +1801,8 @@ operations in `app/ops/console.py`):
   (`POST /tenants/{id}/delete` with the agency name typed exactly: synthetic only, 403 `not_synthetic` on record
   otherwise; 409 `has_members` (active or invited) / `has_travellers` / `legal_hold` / `tenant_status` (offboarding);
   revokes live invitations, crypto-shreds the agency keys (`KeyProvider.destroy`) and trashes the `crm.tenant` row, so
-  no context opens it and the list leaves it out; `agency_delete` event). A real agency is deleted only by its owner's
-  confirmed offboarding (AA-942).
+  no context opens it and the list leaves it out; `agency_delete` event; and queues the `crm_partner_accounts` run for
+  its never-used partner-pool accounts). A real agency is deleted only by its owner's confirmed offboarding (AA-942).
 - **Response allow-list** (`app/ops/serializer.py`, `OpsAllowListRoute` set by `class_router()` for OPS): every key at
   any depth must be listed and match no forbidden pattern (trip, pipeline, revenue, margin, commission, GMV, booking,
   invoice, payment, price, amount, net, proposal, personal-data names); 500 on test / local, dropped + logged

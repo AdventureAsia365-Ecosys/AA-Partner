@@ -31,6 +31,7 @@ from app.jobs.kinds import (
     MEMBERSHIP_PULL,
     MESSAGING_HEALTH,
     OPS_RELEASE_SYNC,
+    PARTNER_ACCOUNTS,
     PLACEHOLDER_PURGE,
     STAGE_DATE_RULE,
     WORKFLOW_TICK,
@@ -231,6 +232,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         (MEMBERSHIP_PULL, False),  # AA-978: Recurring like the heartbeat, its next slot queued ahead (exempt)
         (MESSAGING_HEALTH, True),  # AA-958: the daily SMS / WhatsApp connection check, due now like the mail one
         (OPS_RELEASE_SYNC, True),  # AA-956: the hourly ops release pass, due now
+        (PARTNER_ACCOUNTS, True),  # S263: the daily never-signed-in partner account clean-up, due now
         (PLACEHOLDER_PURGE, True),  # AA-938: the hourly purge, queued due now like the daily retention
         (STAGE_DATE_RULE, True),  # AA-943: the hourly trip date rule, due now too
         (WORKFLOW_TICK, True),  # AA-959: the hourly workflow tick, due now
@@ -249,6 +251,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         OPS_RELEASE_SYNC: 1,
         MESSAGING_HEALTH: 1,
         WORKFLOW_TICK: 1,
+        PARTNER_ACCOUNTS: 1,
     }
     while await worker.run_once():
         pass

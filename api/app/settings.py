@@ -293,6 +293,8 @@ class Settings:
     rate_limit_ai_per_minute: int = DEFAULT_AI_PER_MINUTE
     ai_budget_max_usd: Decimal = DEFAULT_AI_BUDGET_MAX_USD
     lifecycle_dry_run: bool = True
+    # S263 (AA-939 follow-up): the partner-account clean-up (app.members.accounts) only counts while true.
+    partner_account_cleanup_dry_run: bool = True
     offboarding_cool_off_hours: int = DEFAULT_OFFBOARDING_COOL_OFF_HOURS
     fx_provider: str = "synthetic"
     cis_api_url: str = ""
@@ -663,6 +665,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ),
         ai_budget_max_usd=_decimal(env.get("AI_BUDGET_MAX_USD"), DEFAULT_AI_BUDGET_MAX_USD, "AI_BUDGET_MAX_USD"),
         lifecycle_dry_run=_flag(env.get("LIFECYCLE_DRY_RUN"), True, "LIFECYCLE_DRY_RUN"),
+        partner_account_cleanup_dry_run=_flag(
+            env.get("PARTNER_ACCOUNT_CLEANUP_DRY_RUN"), True, "PARTNER_ACCOUNT_CLEANUP_DRY_RUN"
+        ),
         offboarding_cool_off_hours=_int(
             env.get("OFFBOARDING_COOL_OFF_HOURS"), DEFAULT_OFFBOARDING_COOL_OFF_HOURS, "OFFBOARDING_COOL_OFF_HOURS"
         ),

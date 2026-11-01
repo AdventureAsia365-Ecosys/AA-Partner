@@ -5,6 +5,7 @@ The SQL, RLS and the crm-008 / crm-010 / crm-011 triggers run on PostgreSQL in t
 from __future__ import annotations
 
 import datetime as dt
+import json
 import uuid
 from collections.abc import Iterator
 from contextlib import asynccontextmanager, contextmanager
@@ -613,6 +614,13 @@ async def test_delete_test_agency_revokes_shreds_and_trashes_in_that_order(statu
     assert conn.sql("UPDATE crm.tenant SET deleted_at") == [(TENANT, f"platform:{STAFF}", 30)]
     order = [flat.split()[0] + " " + flat.split()[1] for flat, _ in conn.calls if flat.startswith(("UPDATE", "INSERT"))]
     assert order.index("UPDATE crm.member_invitation") < order.index("UPDATE crm.tenant")
+    # S263 (AA-939 follow-up): the partner-account clean-up of this agency is queued in the same transaction.
+    (job,) = conn.sql("INSERT INTO crm.job")
+    assert job[0] == "crm_partner_accounts" and json.loads(job[1]) == {
+        "purpose": "agency_delete",
+        "tenant_id": str(TENANT),
+    }
+    assert job[2] == f"crm_partner_accounts:agency_delete:{TENANT}"
     events = [(e["action"], e["reason"], e["object_ids"]) for e in audits(conn)]
     assert events == [
         ("invite_revoke", "agency_delete", []),
@@ -637,7 +645,7 @@ async def test_delete_test_agency_refusals_change_nothing(over: dict[str, Any], 
     with raises(cls, code):
         await _delete(conn, keys)
     assert keys.destroyed == [] and not conn.sql("UPDATE crm.tenant SET deleted_at")
-    assert not conn.sql("SET status = 'revoked'")
+    assert not conn.sql("SET status = 'revoked'") and not conn.sql("INSERT INTO crm.job")
     denied = [(e["action"], e["outcome"], e["reason"]) for e in audits(conn)]
     # A real agency's refusal is on record (an attempt to delete client data); the others write nothing.
     assert denied == ([("agency_delete", "denied", "not_synthetic")] if code == "not_synthetic" else [])

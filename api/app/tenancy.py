@@ -55,6 +55,12 @@ One more platform context (AA-940): :func:`audit_export_tx` is the audit export'
 a locked or trashed agency: an offboarded agency's audit is still exported and verified until its partitions are
 dropped (crm-007 offboarding path). Only the ``app/audit_export/`` job modules may open it.
 
+One more (S263, AA-939 follow-up): :func:`partner_account_tx` is the partner-account clean-up in one agency (actor
+``job:crm_partner_accounts``): like :func:`audit_export_tx` it accepts any agency the registry holds, a trashed one
+included (a deleted test agency's invitations are what the clean-up reads), and like :func:`system_tx` it writes the
+queued audit events when the block ends. It reads the agency's invitations and members and records each account it
+deleted. Only ``app/members/accounts.py`` may open it.
+
 One more (AA-978): :func:`membership_feed_tx` is one CIS membership event in one agency (actor
 ``platform:feed-tenant-membership``), opened whatever the agency's status and also for a tenant the CRM does not know
 (the event is still recorded). Only ``app/cis/membership_feed.py`` may open it.
@@ -632,6 +638,37 @@ async def audit_export_tx(
         yield ExportContext(conn=conn, tenant_id=tenant_id, actor=actor)
 
 
+@asynccontextmanager
+async def partner_account_tx(pool: asyncpg.Pool, tenant_id: uuid.UUID) -> AsyncIterator[SystemContext]:
+    """The partner-account clean-up in one agency (S263, AA-939 follow-up): ``app.tenant_id`` and ``app.actor`` =
+    :data:`ACCOUNT_CLEANUP_ACTOR`. The agency row must exist; any status and a trashed agency are accepted (a deleted
+    test agency's invitations are what the clean-up reads). One transaction; the queued audit events are written when
+    the block ends (on an exception only the denied ones, as :func:`system_tx`). Only ``app/members/accounts.py`` may
+    open it (``tests/unit/test_code_rules.py``)."""
+    if not isinstance(tenant_id, uuid.UUID):
+        raise TypeError("tenant_id must be a UUID")
+    pending: Exception | None = None
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        if await conn.fetchval(TENANT_EXISTS_SQL, tenant_id) is None:
+            raise NotFound("tenant_not_found")
+        await conn.execute("SELECT set_config('app.actor', $1, true)", ACCOUNT_CLEANUP_ACTOR)
+        ctx = SystemContext(conn=conn, tenant_id=tenant_id, actor=ACCOUNT_CLEANUP_ACTOR)
+        try:
+            async with conn.transaction():  # savepoint: the clean-up's reads and its Cognito call
+                yield ctx
+        except Exception as exc:
+            denied = [e for e in ctx.audit_events if e.outcome == "denied"]
+            if not denied:
+                raise
+            await _write_audit(ctx, denied)
+            pending = exc
+        else:
+            await _write_audit(ctx, ctx.audit_events)
+    if pending is not None:
+        raise pending
+
+
 INVITATION_SQL = """
 SELECT invitation_id, tenant_id, role, status, expires_at, cognito_iss, cognito_sub, member_id, email_enc,
        expires_at <= now() AS expired
@@ -726,6 +763,10 @@ SELECT studio_invitation_id, cis_tenant_id, cis_invitation_id, email_enc, status
    FOR UPDATE
 """
 STUDIO_ACTIVATION_ACTOR = "job:crm_studio_activation"
+# S263 (AA-939 follow-up, crm-039): the partner-account clean-up. crm-039 lets it READ crm.studio_invitation (USING
+# only); its row security WITH CHECK and guard CRM37 refuse any write by it.
+ACCOUNT_CLEANUP_ACTOR = "job:crm_partner_accounts"
+STUDIO_ACTORS = frozenset({STUDIO_ACTIVATION_ACTOR, ACCOUNT_CLEANUP_ACTOR})
 
 
 @dataclass(frozen=True)
@@ -754,12 +795,13 @@ class StudioInvitation:
 
 @asynccontextmanager
 async def studio_platform_tx(pool: asyncpg.Pool, *, actor: str) -> AsyncIterator[StudioContext]:
-    """AA staff (``platform:<staff sub>``, the L1 relay of a CIS invitation) or the activation job
-    (:data:`STUDIO_ACTIVATION_ACTOR`) on ``crm.studio_invitation``: the crm-020 row security lets exactly these actors
-    reach the rows, and its guard (CRM37) decides what each may change. One transaction. Only
-    ``app/members/studio.py`` may open it (``tests/unit/test_code_rules.py``)."""
-    if not (actor.startswith(PLATFORM_ACTOR_PREFIX) or actor == STUDIO_ACTIVATION_ACTOR) or len(actor) > 100:
-        raise ValueError("studio actor must be platform:<sub> or the activation job")
+    """AA staff (``platform:<staff sub>``, the L1 relay of a CIS invitation), the activation job
+    (:data:`STUDIO_ACTIVATION_ACTOR`) or, read only, the partner-account clean-up (:data:`ACCOUNT_CLEANUP_ACTOR`,
+    crm-039) on ``crm.studio_invitation``: the crm-020 / crm-039 row security lets exactly these actors reach the rows,
+    and its guard (CRM37) decides what each may change. One transaction. Only ``app/members/studio.py`` may open it
+    (``tests/unit/test_code_rules.py``)."""
+    if not (actor.startswith(PLATFORM_ACTOR_PREFIX) or actor in STUDIO_ACTORS) or len(actor) > 100:
+        raise ValueError("studio actor must be platform:<sub>, the activation job or the account clean-up")
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.actor', $1, true)", actor)
         yield StudioContext(conn=conn, actor=actor)
