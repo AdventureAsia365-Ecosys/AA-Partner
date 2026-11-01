@@ -202,6 +202,7 @@ def build_handlers(
     from app.privacy.purge import purge_expired_maps
     from app.stages_job import date_rule
 
+    text_runtime = messaging_runtime or _MessagingRuntime(keys=keys)
     return {
         HEARTBEAT: heartbeat,
         JOB_RETENTION: build_job_retention(retention_dry_run),
@@ -226,8 +227,8 @@ def build_handlers(
         DATA_EXPORT: portability_exports.build_handler(keys=keys, store=documents),
         CLIENT_IMPORT: client_imports.build_handler(ingest_store, keys),
         OPS_RELEASE_SYNC: ops_release_job.build_handler(keys),
-        MESSAGING_TEMPLATES: messaging_health.build_templates_handler(messaging_runtime or _MessagingRuntime(keys=keys)),
-        MESSAGING_HEALTH: messaging_health.build_health_handler(messaging_runtime or _MessagingRuntime(keys=keys)),
+        MESSAGING_TEMPLATES: messaging_health.build_templates_handler(text_runtime),
+        MESSAGING_HEALTH: messaging_health.build_health_handler(text_runtime),
     }
 
 
@@ -332,5 +333,14 @@ SCHEDULED_KINDS: frozenset[str] = frozenset(
 EVENT_KINDS: frozenset[str] = frozenset(
     # AA-967: one per export; AA-962: one per import slice.
     # AA-958: one template sync per connect / Refresh.
-    {INTAKE_PROCESS, OFFBOARD, DISPATCH, MAIL_IMPORT, STUDIO_ACTIVATION, DATA_EXPORT, CLIENT_IMPORT, MESSAGING_TEMPLATES}
+    {
+        INTAKE_PROCESS,
+        OFFBOARD,
+        DISPATCH,
+        MAIL_IMPORT,
+        STUDIO_ACTIVATION,
+        DATA_EXPORT,
+        CLIENT_IMPORT,
+        MESSAGING_TEMPLATES,
+    }
 )

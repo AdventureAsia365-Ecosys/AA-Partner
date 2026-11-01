@@ -48,12 +48,12 @@ from app.llm.gateway import build_gateway
 from app.mail.providers.registry import build_providers
 from app.mail.sender import MailSender
 from app.mail.state import MailRuntime
-from app.messaging.providers import build_providers as build_text_providers
-from app.messaging.sender import ChannelSender, TextSender
-from app.messaging.state import MessagingRuntime
 from app.mail.store import IngestStore, MemoryIngestStore, S3IngestStore
 from app.members.directory import CognitoDirectory, MemoryDirectory, PartnerDirectory
 from app.members.mail import Mailer, MemoryMailer, SesMailer
+from app.messaging.providers import build_providers as build_text_providers
+from app.messaging.sender import ChannelSender, TextSender
+from app.messaging.state import MessagingRuntime
 from app.observability import setup as setup_observability
 from app.observability.request_id import RequestIdMiddleware, unhandled_error_handler
 from app.ratelimit import FixedWindowLimiter

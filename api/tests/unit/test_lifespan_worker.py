@@ -95,6 +95,8 @@ def test_worker_runs_for_the_app_lifetime_when_enabled() -> None:
         "crm_data_export",  # AA-967
         "crm_client_import",  # AA-962
         "crm_ops_release_sync",  # AA-956
+        "crm_messaging_templates",  # AA-958
+        "crm_messaging_health",  # AA-958
     }
     # Only the deploy-gate exempt kinds queue ahead (the heartbeat and, AA-978, the CIS membership pull); the daily
     # retention run is a due-now maintenance hook (review round: a queued-ahead daily row would block the deploy gate
@@ -117,6 +119,7 @@ def test_worker_runs_for_the_app_lifetime_when_enabled() -> None:
         "MailIngestScan",
         "HourlyCatalogSync",
         "HourlyOpsReleaseSync",
+        "DailyMessagingHealthSchedule",  # AA-958
     ]
     assert worker.no_release == frozenset()
     # AA-751: the backlog metrics sampler runs for the app lifetime too and is cancelled on shutdown.

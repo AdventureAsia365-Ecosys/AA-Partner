@@ -153,9 +153,7 @@ async def test_connection(
                 outcome = exc.code
     result = "ok" if outcome == "ok" else "failed"
     await ctx.conn.execute(TEST_RESULT_SQL, row["credential_id"], result)
-    ctx.audit(
-        "messaging_test", "allowed", "messaging_connection", str(row["messaging_connection_id"]), reason=outcome
-    )
+    ctx.audit("messaging_test", "allowed", "messaging_connection", str(row["messaging_connection_id"]), reason=outcome)
     return {"result": result, "check": outcome, "test_message_sent": sent}
 
 

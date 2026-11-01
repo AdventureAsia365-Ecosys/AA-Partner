@@ -240,9 +240,7 @@ async def inbound(ctx: SystemContext, vault: Vault, conn: Any, params: list[tupl
     opt = opt_word(params, text)
     if opt is not None:
         await ctx.conn.execute(OPT_SQL, conversation_id, traveler_id, channel, opt)
-        ctx.audit(
-            "messaging_opt_out" if opt else "messaging_opt_in", "allowed", "conversation", str(conversation_id)
-        )
+        ctx.audit("messaging_opt_out" if opt else "messaging_opt_in", "allowed", "conversation", str(conversation_id))
     await ctx.conn.execute(LAST_INBOUND_SQL, conn["messaging_connection_id"])
     ctx.audit("message_received", "allowed", "message", str(message_id), reason=method)
     await events.emit(
@@ -274,4 +272,3 @@ async def status(ctx: SystemContext, conn: Any, params: list[tuple[str, str]]) -
         if row is not None:
             await ctx.conn.execute(OPT_SQL, row["conversation_id"], row["traveler_id"], row["channel"], True)
     return "status_applied" if applied else "status_kept"
-

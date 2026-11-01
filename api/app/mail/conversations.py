@@ -226,8 +226,7 @@ async def conversation_messages(ctx: TenantContext, vault: Vault, conversation_i
     if conv["channel"] in ("sms", "whatsapp"):
         # AA-958: each text message's delivery state; the WhatsApp window and the client's opt-out.
         delivery = {
-            r["message_id"]: r
-            for r in await ctx.conn.fetch(DELIVERY_SQL, [uuid.UUID(m["message_id"]) for m in out])
+            r["message_id"]: r for r in await ctx.conn.fetch(DELIVERY_SQL, [uuid.UUID(m["message_id"]) for m in out])
         }
         for m in out:
             d = delivery.get(uuid.UUID(m["message_id"]))

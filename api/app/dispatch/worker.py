@@ -94,7 +94,8 @@ OUTCOMES = {
 
 class Sender(Protocol):
     async def send(self, ctx: SystemContext, dispatch_id: uuid.UUID, channel: str, message_id: uuid.UUID | None) -> str:
-        """Deliver the row's message (CRM-17 e-mail; CRM-28 SMS / WhatsApp, :class:`app.messaging.sender.ChannelSender`). Returns a key of :data:`OUTCOMES`; raise to
+        """Deliver the row's message (CRM-17 e-mail; CRM-28 SMS / WhatsApp through
+        :class:`app.messaging.sender.ChannelSender`). Returns a key of :data:`OUTCOMES`; raise to
         retry the job."""
         ...
 

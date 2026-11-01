@@ -66,7 +66,9 @@ SELECT content_sid, name, language, category, body, variables FROM crm.channel_t
  ORDER BY name, language
  LIMIT 200
 """
-ROW_SQL = "SELECT message_id, status, author_member_id, conversation_id FROM crm.message WHERE message_id = $1 FOR UPDATE"
+ROW_SQL = """
+SELECT message_id, status, author_member_id, conversation_id FROM crm.message WHERE message_id = $1 FOR UPDATE
+"""
 INSERT_SQL = """
 INSERT INTO crm.message (message_id, conversation_id, direction, status, channel, sender_kind, author_member_id,
                          body_enc, from_enc, to_enc, match_method)
