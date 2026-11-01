@@ -133,20 +133,22 @@ class CognitoDirectory:
             if not sub:
                 raise Unavailable("directory_unavailable", "the account has no subject") from None
             if found.get("UserStatus") == FORCE_CHANGE_PASSWORD:
-                return Account(sub=sub, temporary_password=self._resend(found, email), reissued=True)
+                return Account(sub=sub, temporary_password=self._resend(email), reissued=True)
             return Account(sub=sub, temporary_password=None)
         sub = _attr(created, "sub")
         if not sub:
             raise Unavailable("directory_unavailable", "the new account has no subject")
         return Account(sub=sub, temporary_password=password)
 
-    def _resend(self, user: dict[str, Any], email: str) -> str:
+    def _resend(self, email: str) -> str:
         """A new temporary password for an account that never finished its first sign-in: ``AdminCreateUser`` with
         ``MessageAction=RESEND`` (Cognito also mails it to the address; ``EMAIL``, never the SMS default)."""
         password = temporary_password()
+        # The partner pool uses e-mail usernames: AdminCreateUser takes the address, never the internal username (the
+        # sub), or Cognito answers "Username should be an email" (S263 live).
         self._idp().admin_create_user(
             UserPoolId=self.pool_id,
-            Username=user.get("Username") or email,
+            Username=email,
             TemporaryPassword=password,
             MessageAction="RESEND",
             DesiredDeliveryMediums=["EMAIL"],
