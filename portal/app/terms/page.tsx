@@ -56,7 +56,7 @@ export default function TermsPage() {
             Amazon Bedrock (Amazon Web Services), writes it, and OpenAI models, also through Amazon Bedrock, review,
             score and check it. When those models are unavailable, the review and check steps may fall back to other
             models on Amazon Bedrock (Amazon Nova, Meta Llama), and the Anthropic API or the OpenAI API, used directly
-            and with a spending cap, may be used as a last fallback.
+            and with a spending cap, may be used as a fallback after them.
           </li>
           <li>
             You must follow these providers&apos; usage policies, including the{" "}

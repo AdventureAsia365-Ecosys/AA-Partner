@@ -80,8 +80,10 @@ export default function PrivacyPage() {
       <LegalSection id="ai" title="5. AI processing">
         <p>
           Content is generated and checked by AI models. Claude (Anthropic), through Amazon Bedrock, writes it; OpenAI
-          models, also through Amazon Bedrock, review, score and check the drafts. If Amazon Bedrock is unavailable,
-          the Anthropic API or the OpenAI API, used directly and with a spending cap, may be used as a fallback; those
+          models, also through Amazon Bedrock, review, score and check the drafts. When those models are unavailable,
+          the review and check steps may fall back to other models on Amazon Bedrock (Amazon Nova, Meta Llama). If
+          Amazon Bedrock is unavailable, the Anthropic API or the OpenAI API, used directly and with a spending cap, may
+          be used as a fallback; those
           calls go from Amazon Web Services to Anthropic or OpenAI. For some partners, a decision-checking service (Jev,
           by TypeSafe) also answers yes-or-no checks about the drafts. These providers receive tour content,
           your brand settings and the instructions for each piece. Our policy is not to send personal data to these
