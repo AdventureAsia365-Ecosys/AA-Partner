@@ -7,7 +7,10 @@ Called inside the transaction of the change that triggers them, so a rolled-back
   Undo of that move stops it before its first step (:func:`stop_for_trigger`, Fix B8).
 - :func:`on_trip_event`: a trip event (``crm.metric_event``, :mod:`app.proposals.events`). Keyed ``event:<event id>``.
 - :func:`on_message`: the AA-958 seam (:mod:`app.messaging.events`): ``message.received`` / ``message.sent`` on a
-  trip. Keyed ``event:<message id>``; :func:`install` subscribes it.
+  trip. Keyed ``event:<message id>``; :func:`install` subscribes it. Loop guards (S263 review): a text a workflow sent
+  (its dispatch row has ``origin workflow``) starts nothing, and a message rule starts at most one run per trip every
+  :data:`MESSAGE_COOLDOWN_HOURS` (a client's auto-reply cannot ping-pong with a rule that answers it; a rule started
+  by ``message.sent`` may not send a text at all, :func:`app.workflows.model.validate`).
 - :func:`apply_manual`: a member applies a manual rule (a task list, R9) to trips. Keyed ``manual:<request id>:<trip>``.
 - Date and special-date triggers start in the hourly tick (:mod:`app.workflows.tick`).
 
@@ -42,6 +45,7 @@ log = logging.getLogger(__name__)
 
 UNDO_DELAY = 20  # seconds: the stage Undo window (app.stages.UNDO_SECONDS, 15 s) plus a margin
 RUN_ATTEMPTS = 5
+MESSAGE_COOLDOWN_HOURS = 12  # a message rule runs at most once per trip in this window
 
 RULES_SQL = """
 SELECT workflow_rule_id, version, trigger_kind, trigger_value, conditions
@@ -61,6 +65,15 @@ UPDATE crm.workflow_run SET status = 'stopped', stop_reason = $2, next_at = NULL
  WHERE trip_id = $1 AND status = 'active'
 """
 COUNT_TRIP_SQL = "SELECT count(*)::int FROM crm.workflow_run WHERE trip_id = $1 AND status = 'active'"
+WORKFLOW_MESSAGE_SQL = """
+SELECT EXISTS (SELECT 1 FROM crm.dispatch_queue WHERE message_id = $1 AND origin = 'workflow') AS from_workflow
+"""
+RECENT_RUN_SQL = """
+SELECT EXISTS (
+    SELECT 1 FROM crm.workflow_run
+     WHERE trip_id = $1 AND workflow_rule_id = $2 AND created_at > now() - make_interval(hours => $3)
+) AS recent
+"""
 STOP_KEY_SQL = """
 UPDATE crm.workflow_run SET status = 'stopped', stop_reason = $3, next_at = NULL, finished_at = now()
  WHERE trip_id = $1 AND trigger_key = $2 AND status = 'active'
@@ -108,7 +121,7 @@ async def start(
 
 
 async def _start_matching(
-    ctx: AnyContext, kind: str, value: str, trip_id: uuid.UUID, key: str, delay_s: float = 0
+    ctx: AnyContext, kind: str, value: str, trip_id: uuid.UUID, key: str, delay_s: float = 0, cooldown_h: int = 0
 ) -> list[uuid.UUID]:
     rules = await ctx.conn.fetch(RULES_SQL, kind, value)
     if not rules:
@@ -120,16 +133,21 @@ async def _start_matching(
     for rule in rules:
         if model.matches(_conditions(rule["conditions"]), facts) is not None:
             continue
+        if cooldown_h and await ctx.conn.fetchval(RECENT_RUN_SQL, trip_id, rule["workflow_rule_id"], cooldown_h):
+            log.info("workflow_start_skipped trigger=%s reason=cooldown", value)
+            continue
         run_id = await start(ctx, rule, trip_id=trip_id, traveler_id=None, key=key, delay_s=delay_s)
         if run_id is not None:
             started.append(run_id)
     return started
 
 
-async def _safely(ctx: AnyContext, what: str, kind: str, value: str, trip_id: uuid.UUID, key: str, delay: float) -> int:
+async def _safely(
+    ctx: AnyContext, what: str, kind: str, value: str, trip_id: uuid.UUID, key: str, delay: float, cooldown_h: int = 0
+) -> int:
     try:
         async with ctx.conn.transaction():
-            return len(await _start_matching(ctx, kind, value, trip_id, key, delay))
+            return len(await _start_matching(ctx, kind, value, trip_id, key, delay, cooldown_h))
     except (asyncpg.PostgresError, ValueError) as exc:
         log.error("workflow_start_failed trigger=%s error_class=%s", what, type(exc).__name__)
         return 0
@@ -157,7 +175,10 @@ async def on_message(ctx: AnyContext, event: Any) -> None:
     if event.trip_id is None:
         return
     name = "message.received" if event.kind == "received" else "message.sent"
-    await _safely(ctx, "message", "event", name, event.trip_id, f"event:{event.message_id}", 0)
+    if event.kind != "received" and await ctx.conn.fetchval(WORKFLOW_MESSAGE_SQL, event.message_id):
+        return  # a workflow's own text: never a trigger (no rule answers itself)
+    key = f"event:{event.message_id}"
+    await _safely(ctx, "message", "event", name, event.trip_id, key, 0, MESSAGE_COOLDOWN_HOURS)
 
 
 async def stop_trip_runs(ctx: AnyContext, trip_id: uuid.UUID, dry_run: bool, *, reason: str = "trip_cancelled") -> int:

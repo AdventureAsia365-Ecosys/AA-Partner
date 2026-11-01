@@ -914,9 +914,12 @@ in `docs/implementation-notes/AA-959.md`. CRM-29b (AA-960: tags, system tags, co
   R9). Conditions: stages, trip styles, lead sources, destinations, children, AA services, Stage 3 incomplete
   (`tags_any` is refused with 422 `condition_not_available` until CRM-29b). Steps: `create_task` (a library kind or a
   custom title; due = anchor + offset, 09:00 local for a date; assignee = the owner of the trip / client or a member),
-  `send_email` (an agency message template merged with `{{traveller_first_name}}` ...; transactional or marketing),
+  `send_email` (an agency message template merged with `{{traveller_first_name}}` ...; transactional or marketing; a
+  birthday or trip-anniversary rule's messages are always marketing, 422 `marketing_only` on transactional),
   `send_text` (an approved SMS / WhatsApp template of the agency's Twilio, variables from merge fields; never free
-  text), `set_field` (`waiting_on`, the trip owner), `wait` (days / hours, or until a trip date). The owner edits
+  text; never in a rule started by `message.sent`, 422 `message_loop`), `set_field` (`waiting_on`, the trip owner),
+  `wait` (days / hours, or until a trip date). Message loops: a text a workflow sent (dispatch `origin workflow`)
+  starts no rule, and a message rule starts at most one run per trip per 12 hours (`triggers.MESSAGE_COOLDOWN_HOURS`). The owner edits
   (`WORKFLOW_EDIT`: create, install from the library, edit with `version`, active / paused / archived; a rule with a
   send step needs its template before it is switched on, 409 `templates_missing`); owner and agent apply
   (`WORKFLOW_APPLY`: a task list to trips with a dry run, stop a run); everyone reads.
@@ -925,8 +928,10 @@ in `docs/implementation-notes/AA-959.md`. CRM-29b (AA-960: tags, system tags, co
   the trip, birthday greeting, passport expiring (200 days), trip anniversary, visa and documents task list. One live
   rule per template; a template that sends starts paused until its message template is picked.
 - **Runs** (`crm.workflow_run`): one per rule and **trigger key** (`stage:<history id>`, `event:<event or message id>`,
-  `date:<anchor>:<offset>:<date>`, `special:<code>:<date>`, `manual:<request id>:<trip>`; UNIQUE, so a tick or a
-  signal that runs twice starts nothing twice, card E). Started inside the change that triggers them
+  `date:<trip id>:<anchor>:<offset>:<date>`, `special:<code>:<client id>:<date>` (the anniversary
+  `special:trip_anniversary:<trip id>:<date>`), `manual:<request id>:<trip>`; every key names its subject, so two trips
+  or clients on one date each get their run; UNIQUE, so a tick or a signal that runs twice starts nothing twice, card
+  E). Started inside the change that triggers them
   (`app/workflows/triggers.py`: `app.stages.move` and the date rule and a new inquiry, `app.proposals.events.record`,
   the AA-958 message listener; each start in a savepoint, a failure never fails the change); a member's move or apply
   starts the run after the Undo window (20 s, Fix B8) and Undo of the move stops it (`undone`). The trip cancel's hook

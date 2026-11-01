@@ -6,7 +6,10 @@
   mail is queued from the agency's mailbox path (``origin workflow``).
 - Undo of the move stops the run before its first step; the trip cancel's hook stops every active run (Fix C3).
 - **E**: a date trigger (T-48 h arrival flight) ticked twice starts one run; the task is due two days before departure
-  at 09:00 local.
+  at 09:00 local. Two trips leaving on one day each get their run, and two clients with one birthday each get theirs
+  (the trigger key names its subject, S263 review).
+- Message triggers: a rule on ``message.received`` runs once per trip per cool-down window, and a text a workflow sent
+  (``origin workflow``) starts no ``message.sent`` rule (no loop, S263 review).
 - **R**: a birthday greeting (marketing) to a client without marketing consent is not sent: no message, the step
   logged ``skipped_no_consent``, an audit event ``workflow_send`` denied.
 - A special-date run of an archived client stops itself (``archived``).
@@ -27,13 +30,14 @@ import pytest
 
 from app import cancellation, pipeline, stages
 from app.errors import Conflict
+from app.intake import public as intake
 from app.jobs.queue import Job
 from app.mail import templates
 from app.permissions import Action
 from app.tenancy import system_tx, tenant_tx
 from app.vault import Vault
 from app.workflows import engine, runner, service, tasks, tick, triggers
-from tests.integration.test_crm005_intake import _keys, _owner_fetch
+from tests.integration.test_crm005_intake import SETTINGS, _keys, _owner_fetch, _process_all, answers
 from tests.integration.test_crm010_lifecycle import _inquiry
 from tests.integration.test_crm012_schema import _put_stage
 
@@ -177,7 +181,7 @@ async def test_a_date_tick_twice_starts_one_run(app_pool: asyncpg.Pool, admin: a
             counts = await tick.run_agency(ctx, Vault(d["keys"], ctx), now)
     assert counts.get("date_runs_started", 0) == 0
     [run] = await _runs(app_pool, d)
-    assert run["trigger_key"] == f"date:departure:-2:{start.isoformat()}"
+    assert run["trigger_key"] == f"date:{d['trip']}:departure:-2:{start.isoformat()}"
     assert (await _advance(app_pool, d, run["workflow_run_id"], now + dt.timedelta(seconds=1)))["status"] == "completed"
     [task] = await _sql(
         app_pool,
@@ -191,6 +195,96 @@ async def test_a_date_tick_twice_starts_one_run(app_pool: asyncpg.Pool, admin: a
     with pytest.raises(Conflict):
         async with tenant_tx(app_pool, d["owner"], d["tenant"], action=Action.WORKFLOW_EDIT) as ctx:
             await service.install(ctx, "arrival_flight_t48h")
+
+
+async def _second_inquiry(pool: asyncpg.Pool, d: dict[str, Any]) -> tuple[uuid.UUID, uuid.UUID]:
+    """Another client's inquiry through the same form: a second trip and a second lead client in the agency."""
+    other = answers(name="Lê Minh Khoa", email="khoa.le@example.test", phone="+84987654321", companions=[])
+    assert (await intake.submit(pool, d["keys"], SETTINGS, d["form"].public_key, other, origin=None)).stored
+    [made] = [r for r in await _process_all(pool, d["keys"], d["tenant"]) if r["status"] == "created"]
+    return uuid.UUID(made["trip_id"]), uuid.UUID(made["traveler_id"])
+
+
+async def test_two_trips_on_one_date_and_two_clients_with_one_birthday_each_get_a_run(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection
+) -> None:
+    d = await _setup(app_pool)
+    d["member"] = d["owner_id"]
+    other_trip, other_lead = await _second_inquiry(app_pool, d)
+    start = dt.datetime.now(TZ).date() + dt.timedelta(days=2)
+    for trip in (d["trip"], other_trip):
+        await _put_stage(admin, d | {"trip": trip}, "booked")
+        await _sql(app_pool, d["tenant"], "UPDATE crm.trip SET start_date = $2 WHERE trip_id = $1", trip, start)
+    template_id = await _template(app_pool, d)
+    async with tenant_tx(app_pool, d["owner"], d["tenant"], action=Action.WORKFLOW_EDIT) as ctx:
+        await service.install(ctx, "arrival_flight_t48h")
+        await service.install(
+            ctx,
+            "birthday_greeting",
+            steps=[
+                {"action": "send_email", "message_template_id": template_id},
+                {"action": "create_task", "kind": "client_birthday"},
+            ],
+        )
+    for lead in (d["lead"], other_lead):
+        await _birthday_today(app_pool, d, lead)
+    for _ in range(2):
+        async with system_tx(app_pool, d["tenant"], actor=tick.ACTOR) as ctx:
+            await tick.run_agency(ctx, Vault(d["keys"], ctx), _at_local_hour(8))
+    runs = await _runs(app_pool, d)
+    assert {r["trip_id"] for r in runs if r["trigger_key"].startswith("date:")} == {d["trip"], other_trip}
+    assert {r["traveler_id"] for r in runs if r["trigger_key"].startswith("special:birthday:")} == {
+        d["lead"],
+        other_lead,
+    }
+    assert len(runs) == 4  # twice ticked, one run per subject
+
+
+async def test_message_rules_cool_down_and_never_answer_a_workflow_text(app_pool: asyncpg.Pool) -> None:
+    from app.messaging import events
+
+    d = await _setup(app_pool)
+    for value in ("message.received", "message.sent"):
+        await _rule(
+            app_pool,
+            d,
+            {
+                "name": f"After {value}",
+                "trigger": {"kind": "event", "value": value},
+                "steps": [{"action": "create_task", "kind": "reply_client_message"}],
+            },
+        )
+
+    def event(kind: str, message_id: uuid.UUID) -> events.MessageEvent:
+        return events.MessageEvent(kind, "sms", message_id, uuid.uuid4(), d["trip"], d["lead"])
+
+    # A message a workflow sent (here its mail: the dispatch row carries origin workflow and the message id).
+    await _rule(app_pool, d, WELCOME_MAIL_RULE | {"steps": [WELCOME_MAIL_RULE["steps"][0] | {
+        "message_template_id": await _template(app_pool, d)}]})  # fmt: skip
+    await _move(app_pool, d, "qualifying")
+    [welcome] = [r for r in await _runs(app_pool, d) if r["trigger_key"].startswith("stage:")]
+    await _advance(app_pool, d, welcome["workflow_run_id"], welcome["next_at"] + dt.timedelta(seconds=1))
+    [sent] = await _sql(app_pool, d["tenant"], "SELECT message_id FROM crm.dispatch_queue WHERE origin = 'workflow'")
+    async with system_tx(app_pool, d["tenant"], actor="job:crm_messaging_test") as ctx:
+        for _ in range(3):  # a client's auto-reply ping-pong: one run in the window
+            await triggers.on_message(ctx, event("received", uuid.uuid4()))
+        await triggers.on_message(ctx, event("sent", sent["message_id"]))  # the workflow's own message: no run
+        await triggers.on_message(ctx, event("sent", uuid.uuid4()))  # a member's text: one run
+    runs = await _sql(
+        app_pool,
+        d["tenant"],
+        "SELECT w.trigger_value AS value, count(*)::int AS n FROM crm.workflow_run r "
+        "JOIN crm.workflow_rule w ON w.workflow_rule_id = r.workflow_rule_id WHERE w.trigger_kind = 'event' "
+        "GROUP BY 1 ORDER BY 1",
+    )
+    assert [(r["value"], r["n"]) for r in runs] == [("message.received", 1), ("message.sent", 1)]
+
+
+WELCOME_MAIL_RULE: dict[str, Any] = {
+    "name": "Welcome",
+    "trigger": {"kind": "stage_enter", "value": "qualifying"},
+    "steps": [{"action": "send_email", "message_template_id": None, "purpose": "transactional"}],
+}
 
 
 async def _template(pool: asyncpg.Pool, d: dict[str, Any]) -> str:
@@ -301,7 +395,7 @@ async def test_an_archived_clients_special_date_run_stops(app_pool: asyncpg.Pool
         await service.install(ctx, "passport_expiry_200d")
         rule_id = await ctx.conn.fetchrow("SELECT workflow_rule_id, version FROM crm.workflow_rule")
         run_id = await triggers.start(
-            ctx, rule_id, trip_id=None, traveler_id=d["lead"], key="special:passport_expiry:2027-05-01"
+            ctx, rule_id, trip_id=None, traveler_id=d["lead"], key=f"special:passport_expiry:{d['lead']}:2027-05-01"
         )
         await ctx.conn.execute(
             "UPDATE crm.traveler SET archived_at = now(), archive_reason = 'agent', archived_by = $2 "

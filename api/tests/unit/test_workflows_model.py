@@ -308,6 +308,55 @@ def test_client_rules_and_task_lists_have_their_own_limits() -> None:
         model.validate("rule")  # type: ignore[arg-type]
 
 
+def test_a_greeting_is_always_marketing() -> None:
+    """S263 review: a birthday or anniversary send is marketing (consent checked, card R); transactional is refused."""
+    template, sid = str(uuid.uuid4()), "HX" + "a" * 32
+    for value in ("birthday", "trip_anniversary"):
+        trigger = {"kind": "special_date", "value": value}
+        rule = model.validate(
+            raw(
+                trigger=trigger,
+                steps=[
+                    {"action": "send_email", "message_template_id": template},
+                    {"action": "send_text", "channel": "sms", "content_sid": sid},
+                ],
+            )
+        )
+        assert [s["purpose"] for s in rule.steps] == ["marketing", "marketing"]
+        assert model.marketing_only("special_date", value)
+        for n, step in enumerate(
+            ({"action": "send_email", "message_template_id": template, "purpose": "transactional"},
+             {"action": "send_text", "channel": "sms", "content_sid": sid, "purpose": "transactional"})
+        ):  # fmt: skip
+            with pytest.raises(Invalid) as err:
+                model.validate(raw(trigger=trigger, steps=[{"action": "create_task", "kind": "client_birthday"}] * n
+                                   + [step]))  # fmt: skip
+            assert err.value.code == "marketing_only" and err.value.extra["field"] == f"steps.{n}.purpose"
+    # A passport-expiry notice stays the owner's choice; a stage rule keeps its transactional mail and text.
+    passport = {"kind": "special_date", "value": "passport_expiry"}
+    assert not model.marketing_only("special_date", "passport_expiry")
+    mail = {"action": "send_email", "message_template_id": template, "purpose": "transactional"}
+    assert model.validate(raw(trigger=passport, steps=[mail])).steps[0]["purpose"] == "transactional"
+    text = model.validate(raw(steps=[{"action": "send_text", "channel": "sms", "content_sid": sid}])).steps[0]
+    assert "purpose" not in text
+    with pytest.raises(Invalid) as err:
+        model.validate(raw(steps=[{"action": "send_text", "channel": "sms", "content_sid": sid, "purpose": "x"}]))
+    assert err.value.code == "invalid_purpose"
+
+
+def test_a_rule_started_by_a_sent_text_sends_no_text() -> None:
+    """S263 review: send_text on message.sent would start the rule again with its own message, for ever."""
+    sid = "HX" + "a" * 32
+    text = {"action": "send_text", "channel": "whatsapp", "content_sid": sid}
+    with pytest.raises(Invalid) as err:
+        model.validate(raw(trigger={"kind": "event", "value": "message.sent"}, steps=[text]))
+    assert err.value.code == "message_loop" and err.value.extra["field"] == "steps.0.action"
+    task = {"action": "create_task", "kind": "reply_client_message"}
+    assert model.validate(raw(trigger={"kind": "event", "value": "message.sent"}, steps=[task])).steps
+    # message.received may answer with a text: the trigger caps it (one run per trip per cool-down window).
+    assert model.validate(raw(trigger={"kind": "event", "value": "message.received"}, steps=[text])).steps
+
+
 def test_drafts_may_miss_their_templates_until_switched_on() -> None:
     steps = [{"action": "send_email"}, {"action": "send_text", "channel": "sms"}]
     rule = model.validate(raw(steps=steps), draft=True)

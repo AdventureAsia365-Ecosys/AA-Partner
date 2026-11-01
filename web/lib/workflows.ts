@@ -52,6 +52,22 @@ export interface Trigger {
 
 export type Step = { action: "create_task" | "send_email" | "send_text" | "set_field" | "wait" } & Record<string, unknown>;
 
+/** A client's birthday or trip anniversary: every message of the rule is marketing (sent only with consent); the API
+ * refuses "transactional" there (422 marketing_only, api/app/workflows/model.py marketing_only). */
+export const GREETING_DATES = ["birthday", "trip_anniversary"] as const;
+export function isGreeting(trigger: Pick<Trigger, "kind" | "value">): boolean {
+  return trigger.kind === "special_date" && (GREETING_DATES as readonly string[]).includes(String(trigger.value));
+}
+
+/** The actions a rule's step may take for its trigger: a task list never sends, a client's date sets no trip field,
+ * and a rule started by a sent text sends no text (its own text would start it again: 422 message_loop). */
+export function actionsFor(trigger: Pick<Trigger, "kind" | "value">): Step["action"][] {
+  if (trigger.kind === "manual") return ["create_task", "set_field", "wait"];
+  if (trigger.kind === "special_date") return ["create_task", "send_email", "send_text", "wait"];
+  if (trigger.kind === "event" && trigger.value === "message.sent") return ["create_task", "send_email", "set_field", "wait"];
+  return ["create_task", "send_email", "send_text", "set_field", "wait"];
+}
+
 export interface Rule {
   workflow_rule_id: string;
   name: string;
@@ -218,6 +234,8 @@ const ERRORS = new Set([
   "title_fixed",
   "role_forbidden",
   "condition_not_available",
+  "marketing_only",
+  "message_loop",
 ]);
 
 /** The wording key of a refusal of these routes (a 422 with a field path reads as "check the highlighted field"). */

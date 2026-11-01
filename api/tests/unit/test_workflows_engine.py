@@ -271,6 +271,29 @@ async def test_r_a_marketing_mail_without_consent_is_not_sent_and_audited_denied
 
 
 @pytest.mark.asyncio
+async def test_r_a_greeting_run_sends_marketing_whatever_its_step_says() -> None:
+    """S263 review: a birthday run whose stored step says transactional still needs the consent (card R)."""
+    steps = [{"action": "send_email", "message_template_id": str(TEMPLATE), "purpose": "transactional"}]
+    greeting = run_row(steps, trigger_kind="special_date", trigger_value="birthday")
+    conn = mail_conn("transactional", consent=False).on("FROM crm.workflow_run r JOIN crm.workflow_rule w", greeting)
+    await advance(conn)
+    assert logged(finished(conn)) == ["skipped_no_consent"] and not conn.sql("INSERT INTO crm.dispatch_queue")
+    conn = mail_conn("transactional", consent=True).on("FROM crm.workflow_run r JOIN crm.workflow_rule w", greeting)
+    await advance(conn)
+    assert conn.sql("INSERT INTO crm.dispatch_queue")[0][3] == "marketing"
+    text_steps = [{"action": "send_text", "channel": "whatsapp", "content_sid": SID,
+                   "variables": {"1": "traveller_first_name", "2": "trip_name"}}]  # fmt: skip
+    anniversary = run_row(text_steps, trigger_kind="special_date", trigger_value="trip_anniversary")
+    conn = text_conn().on("FROM crm.workflow_run r JOIN crm.workflow_rule w", anniversary)
+    await advance(conn)
+    assert logged(finished(conn)) == ["skipped_no_consent"]  # a UTILITY template, but a greeting
+    marked = run_row([text_steps[0] | {"purpose": "marketing"}])
+    conn = text_conn(consent=True).on("FROM crm.workflow_run r JOIN crm.workflow_rule w", marked)
+    await advance(conn)
+    assert conn.sql("INSERT INTO crm.dispatch_queue")[0][2:5] == ("whatsapp", "marketing", "workflow")
+
+
+@pytest.mark.asyncio
 async def test_mail_steps_skip_with_a_code() -> None:
     conn = mail_conn().on("SELECT archived_at IS NOT NULL AS archived", {"archived": True, "deleted": False})
     await advance(conn)
@@ -453,6 +476,41 @@ async def test_events_messages_and_errors() -> None:
     assert len(conn.sql("INSERT INTO crm.workflow_run")) == 2
     broken = ScriptedConn().on("FROM crm.workflow_rule", asyncpg.UndefinedTableError("x"))
     assert await triggers.on_stage_enter(system_ctx(broken), TRIP, "booked", uuid.UUID(int=6)) == 0  # never fails
+
+
+@pytest.mark.asyncio
+async def test_a_workflow_text_never_triggers_and_a_message_rule_cools_down() -> None:
+    """S263 review: no rule answers its own text (origin workflow), and a message rule runs at most once per trip
+    per cool-down window (a client's auto-reply cannot ping-pong with it)."""
+    conn = ScriptedConn().on("FROM crm.workflow_rule", [rule_row(trigger_kind="event", trigger_value="message.sent")])
+    conn.on("WHERE t.trip_id = ANY($1::uuid[])", [trip_row()])
+    conn.on("INSERT INTO crm.workflow_run", {"workflow_run_id": RUN, "next_at": NOW})
+    conn.on("FROM crm.dispatch_queue WHERE message_id = $1 AND origin = 'workflow'", True)
+    ctx = system_ctx(conn)
+
+    class Sent:
+        kind, trip_id, message_id = "sent", TRIP, uuid.UUID(int=3)
+
+    await triggers.on_message(ctx, Sent())
+    assert conn.sql("FROM crm.dispatch_queue WHERE message_id")[0] == (uuid.UUID(int=3),)
+    assert not conn.sql("INSERT INTO crm.workflow_run")
+    conn.on("FROM crm.dispatch_queue WHERE message_id = $1 AND origin = 'workflow'", False)  # a member's text
+    await triggers.on_message(ctx, Sent())
+    assert len(conn.sql("INSERT INTO crm.workflow_run")) == 1
+    conn.on("FROM crm.workflow_run WHERE trip_id = $1 AND workflow_rule_id = $2", True)  # a run in the window
+    await triggers.on_message(ctx, Sent())
+    assert len(conn.sql("INSERT INTO crm.workflow_run")) == 1
+    assert conn.sql("AND created_at > now() - make_interval")[-1] == (TRIP, RULE, triggers.MESSAGE_COOLDOWN_HOURS)
+
+    class Received:
+        kind, trip_id, message_id = "received", TRIP, uuid.UUID(int=4)
+
+    before = len(conn.sql("FROM crm.dispatch_queue WHERE message_id"))
+    await triggers.on_message(ctx, Received())  # an inbound text has no dispatch row: not looked up
+    assert len(conn.sql("FROM crm.dispatch_queue WHERE message_id")) == before
+    assert len(conn.sql("INSERT INTO crm.workflow_run")) == 1  # still cooling down
+    # Stage and event triggers have no cool-down.
+    assert await triggers.on_trip_event(ctx, TRIP, "proposal.accepted", uuid.UUID(int=5)) == 1
 
 
 @pytest.mark.asyncio
@@ -647,7 +705,7 @@ async def test_date_and_special_triggers_on_a_scripted_agency() -> None:
     conn.on("INSERT INTO crm.workflow_run", {"workflow_run_id": RUN, "next_at": NOW})
     counts = await tick._date_triggers(system_ctx(conn), tick.ZoneInfo("Asia/Ho_Chi_Minh"), today)  # noqa: SLF001
     assert counts["date_runs_started"] == 1  # the second trip is gone
-    assert conn.sql("INSERT INTO crm.workflow_run")[0][4] == f"date:departure:-2:{today.isoformat()}"
+    assert conn.sql("INSERT INTO crm.workflow_run")[0][4] == f"date:{TRIP}:departure:-2:{today.isoformat()}"
     special = ScriptedConn()
     rules = [
         rule_row(trigger_kind="special_date", trigger_value=v, trigger_offset_days=o)
@@ -671,11 +729,50 @@ async def test_date_and_special_triggers_on_a_scripted_agency() -> None:
     assert counts["special_runs_started"] == 3
     keys = [args[4] for args in special.sql("INSERT INTO crm.workflow_run")]
     assert keys == [
-        "special:birthday:2026-11-01",
-        "special:passport_expiry:2027-05-20",
+        f"special:birthday:{LEAD}:2026-11-01",
+        f"special:passport_expiry:{LEAD}:2027-05-20",
         f"special:trip_anniversary:{TRIP}:2026-11-01",
     ]
     assert await tick._special_dates(system_ctx(ScriptedConn()), FakeVault(), today) == {}  # noqa: SLF001  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_two_trips_on_one_date_and_two_clients_with_one_birthday_each_get_a_run() -> None:
+    """The trigger key names its subject: crm-038 workflow_run_trigger_uq is (tenant, rule, key), so a key without the
+    trip or the client would let only the first of two subjects on one date start (review finding, S263)."""
+    today = dt.date(2026, 11, 1)
+    other_trip, other_client = uuid.UUID(int=0x7E2), uuid.UUID(int=0xC12)
+    clients = (LEAD, other_client)
+    conn = ScriptedConn()
+    date_rule = rule_row(trigger_kind="date_anchor", trigger_value="departure", trigger_offset_days=-2)
+    conn.on("FROM crm.workflow_rule", lambda kind: [date_rule] if kind == "date_anchor" else [])
+    conn.on(
+        "SELECT t.trip_id, t.start_date AS anchor_date",
+        [{"trip_id": TRIP, "anchor_date": today}, {"trip_id": other_trip, "anchor_date": today}],
+    )
+    conn.on("WHERE t.trip_id = ANY($1::uuid[])", [trip_row(), trip_row(trip_id=other_trip)])
+    conn.on("INSERT INTO crm.workflow_run", {"workflow_run_id": RUN, "next_at": NOW})
+    counts = await tick._date_triggers(system_ctx(conn), tick.ZoneInfo("Asia/Ho_Chi_Minh"), today)  # noqa: SLF001
+    keys = [args[4] for args in conn.sql("INSERT INTO crm.workflow_run")]
+    assert counts["date_runs_started"] == 2 and len(set(keys)) == 2
+    assert keys == [f"date:{t}:departure:-2:{today.isoformat()}" for t in (TRIP, other_trip)]
+    special = ScriptedConn()
+    codes = ("birthday", "passport_expiry")
+    rules = [rule_row(trigger_kind="special_date", trigger_value=v, trigger_offset_days=0) for v in codes]
+    special.on("FROM crm.workflow_rule", lambda kind: rules if kind == "special_date" else [])
+    special.on(
+        "dob_enc AS blob",
+        [{"traveler_id": c, "blob": enc("traveler", "dob_enc", "1990-11-01")} for c in clients],
+    )
+    special.on(
+        "passport_expiry_enc AS blob",
+        [{"traveler_id": c, "blob": enc("traveler", "passport_expiry_enc", "2026-10-31")} for c in clients],
+    )
+    special.on("INSERT INTO crm.workflow_run", {"workflow_run_id": RUN, "next_at": NOW})
+    counts = await tick._special_dates(system_ctx(special), FakeVault(), today)  # noqa: SLF001  # type: ignore[arg-type]
+    keys = [args[4] for args in special.sql("INSERT INTO crm.workflow_run")]
+    assert counts["special_runs_started"] == 4 and len(set(keys)) == 4
+    assert {args[3] for args in special.sql("INSERT INTO crm.workflow_run")} == {LEAD, other_client}
 
 
 @pytest.mark.asyncio

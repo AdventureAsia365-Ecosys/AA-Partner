@@ -11,7 +11,7 @@ import { t, type Lang, type MessageKey } from "@/lib/i18n";
 import { memberLabel, type Member } from "@/lib/pipeline";
 import type { ChannelTemplate } from "@/lib/messaging";
 import type { MessageTemplate } from "@/lib/textProposal";
-import { STAGES, workflowErrorKey, type Rule, type Step, type Trigger, type WorkflowOptions } from "@/lib/workflows";
+import { STAGES, actionsFor, isGreeting, workflowErrorKey, type Rule, type Step, type Trigger, type WorkflowOptions } from "@/lib/workflows";
 
 export interface EditorDraft {
   name: string;
@@ -30,12 +30,12 @@ export function draftOf(rule?: Pick<Rule, "name" | "trigger" | "conditions" | "s
   };
 }
 
-function blankStep(action: Step["action"]): Step {
+function blankStep(action: Step["action"], greeting = false): Step {
   switch (action) {
     case "create_task":
       return { action, kind: "custom", title: "", due: { anchor: "created", offset_days: 0 }, priority: "normal", assignee: "owner" };
     case "send_email":
-      return { action, message_template_id: null, purpose: "transactional" };
+      return { action, message_template_id: null, purpose: greeting ? "marketing" : "transactional" };
     case "send_text":
       return { action, channel: "whatsapp", content_sid: null, variables: {} };
     case "set_field":
@@ -53,12 +53,15 @@ function num(value: string, fallback = 0): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-/** The body the API takes (POST /workflows, PATCH /workflows/{id}): the draft as it is, empty titles trimmed. */
+/** The body the API takes (POST /workflows, PATCH /workflows/{id}): the draft as it is, empty titles trimmed; a
+ * birthday or anniversary rule's messages are marketing (the API refuses transactional there). */
 export function payloadOf(draft: EditorDraft): Record<string, unknown> {
   const trigger: Record<string, unknown> = { kind: draft.trigger.kind, value: draft.trigger.kind === "manual" ? null : draft.trigger.value };
   if (draft.trigger.kind === "date_anchor" || draft.trigger.kind === "special_date") trigger.offset_days = draft.trigger.offset_days;
   const conditions = draft.trigger.kind === "special_date" ? {} : Object.fromEntries(Object.entries(draft.conditions).filter(([, v]) => v !== undefined && !(Array.isArray(v) && v.length === 0)));
-  return { name: draft.name.trim(), trigger, conditions, steps: draft.steps };
+  const greeting = isGreeting(draft.trigger);
+  const steps = greeting ? draft.steps.map((s) => (s.action === "send_email" || s.action === "send_text" ? { ...s, purpose: "marketing" } : s)) : draft.steps;
+  return { name: draft.name.trim(), trigger, conditions, steps };
 }
 
 function StepFields({
@@ -70,6 +73,7 @@ function StepFields({
   textTemplates,
   members,
   client,
+  greeting,
   onChange,
 }: {
   step: Step;
@@ -80,6 +84,7 @@ function StepFields({
   textTemplates: ChannelTemplate[];
   members: Member[];
   client: boolean;
+  greeting: boolean;
   onChange: (next: Step) => void;
 }) {
   const tr = (key: string) => t(lang, key as MessageKey);
@@ -117,8 +122,8 @@ function StepFields({
         <Field label={tr("wf.template")} required>
           <Select value={String(step.message_template_id ?? "")} onChange={(e) => set({ message_template_id: e.target.value || null })} placeholder={tr("wf.templatePick")} options={templates.map((tp) => ({ value: tp.message_template_id, label: `${tp.title} · ${tp.locale.toUpperCase()}` }))} />
         </Field>
-        <Field label={tr("wf.purpose")}>
-          <Select value={String(step.purpose ?? "transactional")} onChange={(e) => set({ purpose: e.target.value })} options={["transactional", "marketing"].map((p) => ({ value: p, label: tr(`wf.purpose.${p}`) }))} />
+        <Field label={tr("wf.purpose")} hint={greeting ? tr("wf.purpose.greeting") : undefined}>
+          <Select value={greeting ? "marketing" : String(step.purpose ?? "transactional")} disabled={greeting} onChange={(e) => set({ purpose: e.target.value })} options={["transactional", "marketing"].map((p) => ({ value: p, label: tr(`wf.purpose.${p}`) }))} data-testid="wf-purpose" />
         </Field>
       </div>
     );
@@ -202,6 +207,8 @@ export function RuleEditor({
   const [busy, setBusy] = useState(false);
   const kind = draft.trigger.kind;
   const client = kind === "special_date";
+  const greeting = isGreeting(draft.trigger);
+  const actions = actionsFor(draft.trigger);
   const values = TRIGGER_VALUES(options, kind);
   const stages = (draft.conditions.stages as string[] | undefined) ?? [];
   const setCond = (key: string, value: unknown) => setDraft({ ...draft, conditions: { ...draft.conditions, [key]: value } });
@@ -282,8 +289,8 @@ export function RuleEditor({
                 <Field label={`${n + 1}. ${tr("wf.action")}`} style={{ minWidth: 220 }}>
                   <Select
                     value={step.action}
-                    onChange={(e) => setDraft({ ...draft, steps: draft.steps.map((s, i) => (i === n ? blankStep(e.target.value as Step["action"]) : s)) })}
-                    options={(kind === "manual" ? ["create_task", "set_field", "wait"] : client ? ["create_task", "send_email", "send_text", "wait"] : ["create_task", "send_email", "send_text", "set_field", "wait"]).map((a) => ({ value: a, label: tr(`wf.action.${a}`) }))}
+                    onChange={(e) => setDraft({ ...draft, steps: draft.steps.map((s, i) => (i === n ? blankStep(e.target.value as Step["action"], greeting) : s)) })}
+                    options={(actions.includes(step.action) ? actions : [...actions, step.action]).map((a) => ({ value: a, label: tr(`wf.action.${a}`) }))}
                   />
                 </Field>
                 {draft.steps.length > 1 && (
@@ -301,6 +308,7 @@ export function RuleEditor({
                 textTemplates={textTemplates}
                 members={members}
                 client={client}
+                greeting={greeting}
                 onChange={(next) => setDraft({ ...draft, steps: draft.steps.map((s, i) => (i === n ? next : s)) })}
               />
             </div>

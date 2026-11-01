@@ -12,8 +12,10 @@ import { MESSAGES } from "@/lib/i18n";
 import {
   BUCKETS,
   bucketOf,
+  actionsFor,
   canApply,
   canEdit,
+  isGreeting,
   outcomeText,
   stepText,
   stopText,
@@ -201,6 +203,26 @@ describe("wording", () => {
     const manual = payloadOf({ ...draftOf(), trigger: { kind: "manual", value: "x", offset_days: 3 }, conditions: { stages: [], stage3_incomplete: undefined, has_children: true } });
     expect(manual.trigger).toEqual({ kind: "manual", value: null });
     expect(manual.conditions).toEqual({ has_children: true });
+  });
+
+  it("sends a birthday or anniversary message as marketing and offers no text on a sent text", () => {
+    const mail = { action: "send_email", message_template_id: "t-1", purpose: "transactional" } as const;
+    const text = { action: "send_text", channel: "sms", content_sid: null, variables: {} } as const;
+    const task = { action: "create_task", kind: "client_birthday" } as const;
+    for (const value of ["birthday", "trip_anniversary"]) {
+      const body = payloadOf({ name: "Greeting", trigger: { kind: "special_date", value, offset_days: 0 }, conditions: {}, steps: [mail, text, task] });
+      expect((body.steps as Record<string, unknown>[]).map((s) => s.purpose)).toEqual(["marketing", "marketing", undefined]);
+      expect(isGreeting({ kind: "special_date", value })).toBe(true);
+    }
+    const passport = payloadOf({ name: "Passport", trigger: { kind: "special_date", value: "passport_expiry", offset_days: -200 }, conditions: {}, steps: [mail] });
+    expect((passport.steps as Record<string, unknown>[])[0].purpose).toBe("transactional");
+    expect(isGreeting({ kind: "event", value: "birthday" })).toBe(false);
+    expect(actionsFor({ kind: "event", value: "message.sent" })).not.toContain("send_text");
+    expect(actionsFor({ kind: "event", value: "message.received" })).toContain("send_text");
+    expect(actionsFor({ kind: "manual", value: null })).toEqual(["create_task", "set_field", "wait"]);
+    expect(actionsFor({ kind: "special_date", value: "birthday" })).not.toContain("set_field");
+    expect(workflowErrorKey("marketing_only")).toBe("wf.error.marketing_only");
+    expect(workflowErrorKey("message_loop")).toBe("wf.error.message_loop");
   });
 });
 

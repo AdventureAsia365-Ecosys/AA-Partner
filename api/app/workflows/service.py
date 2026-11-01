@@ -213,8 +213,9 @@ async def install(
     ctx: TenantContext, template_key: str, *, name: str | None = None, steps: list[dict[str, Any]] | None = None
 ) -> dict[str, Any]:
     """Install a library template as the agency's rule. ``steps`` may replace the template's (the same count and
-    actions: the owner picked the message templates or edited the titles); without every message template the rule
-    starts paused."""
+    actions: the owner picked the message templates or edited the titles; a send step keeps the template's purpose, so
+    a marketing greeting cannot be installed as transactional); without every message template the rule starts
+    paused."""
     require(ctx, Action.WORKFLOW_EDIT, object_kind="workflow_rule")
     template = library.get(template_key)
     if template is None:
@@ -227,7 +228,10 @@ async def install(
             (s or {}).get("action") != t["action"] for s, t in zip(steps, raw["steps"], strict=True)
         ):
             raise Invalid("steps_mismatch", "the template's steps, in order, with your choices")
-        raw["steps"] = steps
+        raw["steps"] = [
+            {**s, "purpose": t["purpose"]} if "purpose" in t else dict(s)
+            for s, t in zip(steps, raw["steps"], strict=True)
+        ]
     rule = model.validate(raw, draft=True)
     await _check_references(ctx, rule)
     status = _status_for(rule, "active")

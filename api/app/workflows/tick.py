@@ -6,13 +6,15 @@ counts a queued row as busy; not deploy-gate exempt). Per agency, in one :func:`
 
 1. **Date triggers**: for each active ``date_anchor`` rule, the live trips whose anchor date (departure, return,
    stage entered, last activity, created) + the rule's offset falls within the last :data:`CATCHUP_DAYS` days, matching
-   the rule's conditions, start one run each, keyed ``date:<anchor>:<offset>:<anchor date>``. A tick that runs twice
-   starts nothing twice (the key is unique per rule, card E); a trip whose departure moves gets a run for the new date;
-   a new rule never fires for dates older than the catch-up window.
+   the rule's conditions, start one run each, keyed ``date:<trip id>:<anchor>:<offset>:<anchor date>``. A tick that
+   runs twice starts nothing twice (the key is unique per rule, card E); two trips on one date each get their run (the
+   key names the trip); a trip whose departure moves gets a run for the new date; a new rule never fires for dates
+   older than the catch-up window.
 2. **Special dates** (R2), at :data:`SPECIAL_HOURS` local only (the client data is opened once or twice a day): a
    client's birthday, passport expiry and the anniversary of a completed trip's end (its lead client), + the rule's
-   offset, within the catch-up window: one run per client and date (``special:<code>:<date>``). Archived or trashed
-   clients are left out. The consent of a marketing send is checked by the engine (card R).
+   offset, within the catch-up window: one run per client and date (``special:<code>:<client id>:<date>``; the
+   anniversary ``special:trip_anniversary:<trip id>:<date>``), so two clients with one birthday each get theirs.
+   Archived or trashed clients are left out. The consent of a marketing send is checked by the engine (card R).
 3. **Due runs**: every active run of an active (or archived: it stops) rule whose ``next_at`` has passed gets one
    ``crm_workflow_run`` job, due now (a wait never queues a row ahead).
 4. **Task dates** (R20): every open task anchored on the departure or the return, not edited by hand
@@ -163,7 +165,7 @@ async def _date_triggers(ctx: SystemContext, tz: ZoneInfo, today: dt.date) -> Co
             facts = all_facts.get(r["trip_id"])
             if facts is None or model.stop_reason(facts) or model.matches(conditions, facts) is not None:
                 continue
-            key = f"date:{anchor}:{offset}:{r['anchor_date'].isoformat()}"
+            key = f"date:{r['trip_id']}:{anchor}:{offset}:{r['anchor_date'].isoformat()}"
             if await triggers.start(ctx, rule, trip_id=r["trip_id"], traveler_id=None, key=key) is not None:
                 counts["date_runs_started"] += 1
     return counts
@@ -194,12 +196,13 @@ async def _special_dates(ctx: SystemContext, vault: Vault, today: dt.date) -> Co
         starts: list[tuple[Any, str]] = []
         if code == "birthday":
             for row, dob in dates.get("birthday", []):
-                starts += [(row["traveler_id"], f"special:birthday:{t.isoformat()}")
+                starts += [(row["traveler_id"], f"special:birthday:{row['traveler_id']}:{t.isoformat()}")
                            for t in birthday_targets(dob, offset, today)]  # fmt: skip
         elif code == "passport_expiry":
             for row, expiry in dates.get("passport_expiry", []):
                 if in_window(expiry + dt.timedelta(days=offset), today):
-                    starts.append((row["traveler_id"], f"special:passport_expiry:{expiry.isoformat()}"))
+                    key = f"special:passport_expiry:{row['traveler_id']}:{expiry.isoformat()}"
+                    starts.append((row["traveler_id"], key))
         elif code == "trip_anniversary":
             for row in trips:
                 for _years, target in anniversary_targets(row["end_date"], offset, today):

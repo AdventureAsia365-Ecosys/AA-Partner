@@ -14,6 +14,8 @@
   holds it (``held_reconnect``, errata S247 §1: never sent another way). A **marketing** send to a client whose latest
   marketing consent is not a yes is **not sent**: the step is logged ``skipped_no_consent`` and audited ``denied``
   (card R: "a birthday mail without consent -> not sent, logged"); the dispatcher's gate checks it again at send time.
+  A birthday or trip-anniversary run sends marketing whatever its step says
+  (:func:`app.workflows.model.marketing_only`).
 - **send_text**: an approved SMS / WhatsApp template of the agency's own Twilio (a workflow never sends free text: the
   WhatsApp 24 h window, AA-958), its variables from merge fields; the same consent rule for a marketing template; a
   client without a number, opted out, or a channel not connected: the step is skipped with that code.
@@ -246,6 +248,11 @@ async def _create_task(
     return Step("created", {"task_id": str(task_id)})
 
 
+def _greeting(run: Any) -> bool:
+    """A birthday or anniversary run: its messages are marketing whatever the step says (card R, S263 review)."""
+    return model.marketing_only(run["trigger_kind"], run["trigger_value"])
+
+
 async def _send_email(ctx: AnyContext, vault: Vault, run: Any, step: dict[str, Any], subject: Subject) -> Step:
     traveler_id = subject.traveler_id
     refused = await _client_ok(ctx, traveler_id)
@@ -254,7 +261,7 @@ async def _send_email(ctx: AnyContext, vault: Vault, run: Any, step: dict[str, A
     template = await ctx.conn.fetchrow(TEMPLATE_SQL, uuid.UUID(step["message_template_id"]))
     if template is None:
         return Step("skipped_template_missing")
-    purpose = step.get("purpose", "transactional")
+    purpose = "marketing" if _greeting(run) else step.get("purpose", "transactional")
     if purpose == "marketing" and not await _marketing_ok(ctx, traveler_id):
         ctx.audit("workflow_send", "denied", "workflow_run", str(run["workflow_run_id"]), reason="no_consent")
         return Step("skipped_no_consent")
@@ -307,7 +314,8 @@ async def _send_text(ctx: AnyContext, vault: Vault, run: Any, step: dict[str, An
     template = await ctx.conn.fetchrow(text_compose.TEMPLATE_SQL, step["content_sid"])
     if template is None:
         return Step("skipped_template_not_approved")
-    purpose = "marketing" if text_compose.is_marketing(template["category"]) else "transactional"
+    marketing = text_compose.is_marketing(template["category"]) or step.get("purpose") == "marketing"
+    purpose = "marketing" if marketing or _greeting(run) else "transactional"
     if purpose == "marketing" and not await _marketing_ok(ctx, traveler_id):
         ctx.audit("workflow_send", "denied", "workflow_run", str(run["workflow_run_id"]), reason="no_consent")
         return Step("skipped_no_consent")

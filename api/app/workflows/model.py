@@ -15,6 +15,11 @@ A rule is ``trigger`` + ``conditions`` + ``steps``:
   SMS / WhatsApp template of the agency's Twilio, its variables mapped to merge fields), ``set_field`` (``waiting_on``,
   or ``owner`` = one member), ``wait`` (days / hours, or until a date of the trip).
 
+Two guards (S263 review): a birthday or trip-anniversary greeting is always marketing (:func:`marketing_only`: the
+consent is checked before it is sent, card R; an explicit ``transactional`` is refused, 422 ``marketing_only``), and a
+rule started by ``message.sent`` sends no text (``send_text`` would start the rule again with its own message, 422
+``message_loop``; ``message.received`` rules are rate-capped in :mod:`app.workflows.triggers` instead).
+
 Names and step titles are agency text (no client data by design: a rule runs for many trips); the editor says so.
 Everything here is pure (no database): :func:`validate`, :func:`matches`, :func:`due_at`, :func:`step_kind`.
 """
@@ -47,8 +52,11 @@ EVENTS = (
     "message.received",
     "message.sent",
 )
+MESSAGE_EVENTS = ("message.received", "message.sent")
 DATE_ANCHORS = ("departure", "return", "stage_entered", "last_activity", "created")
 SPECIAL_DATES = ("birthday", "passport_expiry", "trip_anniversary")
+# Special dates whose message is a greeting, never a service message: every send of such a rule is marketing.
+GREETING_DATES = ("birthday", "trip_anniversary")
 # A trigger date anchor -> the due anchor of a task (crm-005 task_anchor_chk).
 DUE_ANCHORS = ("created", "departure", "return", "stage_entered")
 ACTIONS = ("create_task", "send_email", "send_text", "set_field", "wait")
@@ -286,7 +294,9 @@ def _step(raw: Any, n: int, subject: str, *, draft: bool) -> dict[str, Any]:
             raise _err("invalid_purpose", f"{where}.purpose")
         return {"action": action, "message_template_id": template, "purpose": purpose}
     if action == "send_text":
-        _only(raw, where, {"channel", "content_sid", "variables"})
+        _only(raw, where, {"channel", "content_sid", "variables", "purpose"})
+        if raw.get("purpose", "transactional") not in PURPOSES:
+            raise _err("invalid_purpose", f"{where}.purpose")
         channel = raw.get("channel")
         if channel not in TEXT_CHANNELS:
             raise _err("invalid_channel", f"{where}.channel", "sms or whatsapp")
@@ -302,7 +312,11 @@ def _step(raw: Any, n: int, subject: str, *, draft: bool) -> dict[str, Any]:
         for key, field in variables.items():
             if not _VARIABLE.match(str(key)) or field not in MERGE_FIELDS:
                 raise _err("invalid_variables", f"{where}.variables.{key}", ", ".join(MERGE_FIELDS))
-        return {"action": action, "channel": channel, "content_sid": sid, "variables": dict(variables)}
+        out = {"action": action, "channel": channel, "content_sid": sid, "variables": dict(variables)}
+        if raw.get("purpose") == "marketing":
+            # A floor: the engine also treats a marketing template category as marketing (consent checked).
+            out["purpose"] = "marketing"
+        return out
     if action == "set_field":
         if subject != "trip":
             raise _err("invalid_action", f"{where}.action", "a client's special date sets no trip field")
@@ -355,7 +369,29 @@ def validate(raw: dict[str, Any], *, draft: bool = False) -> Rule:
     if kind == "manual" and any(s["action"] in ("send_email", "send_text") for s in steps):
         # A task list is applied by a member to a trip; a message to a client goes through the composer (Undo).
         raise _err("invalid_steps", "steps", "a task list holds tasks, field changes and waits only")
+    if kind == "event" and value == "message.sent":
+        for n, s in enumerate(steps):
+            if s["action"] == "send_text":
+                # The text it sends emits message.sent again: the rule would start itself with no end.
+                raise _err("message_loop", f"steps.{n}.action", "a rule started by a sent text does not send a text")
+    if marketing_only(kind, value):
+        for n, s in enumerate(steps):
+            if s["action"] not in ("send_email", "send_text"):
+                continue
+            if steps_raw[n].get("purpose", "marketing") != "marketing":
+                raise _err(
+                    "marketing_only",
+                    f"steps.{n}.purpose",
+                    "a birthday or anniversary message is marketing: it is sent only with the client's consent",
+                )
+            s["purpose"] = "marketing"
     return Rule(name, kind, value, offset, conditions, steps)
+
+
+def marketing_only(trigger_kind: str | None, trigger_value: str | None) -> bool:
+    """A rule whose every message is marketing whatever its steps say: a client's birthday or trip anniversary (a
+    greeting is never a service message; the consent is checked before it is sent, card R)."""
+    return trigger_kind == "special_date" and trigger_value in GREETING_DATES
 
 
 def missing_templates(steps: list[dict[str, Any]]) -> list[int]:

@@ -138,6 +138,21 @@ async def test_install_a_library_template() -> None:
     with pytest.raises(Invalid) as err:
         await service.install(tenant_ctx(ScriptedConn()), "birthday_greeting", steps=[{"action": "wait"}])
     assert err.value.code == "steps_mismatch"
+    # A send step keeps the library's purpose: the birthday greeting cannot be installed as transactional.
+    chosen = (
+        ScriptedConn()
+        .on("INSERT INTO crm.workflow_rule", RULE)
+        .on("WHERE workflow_rule_id = $1 AND deleted_at IS NULL", rule_row())
+    )
+    template = str(uuid.uuid4())
+    chosen.on("FROM crm.message_template", [{"message_template_id": template}])
+    picked = [
+        {"action": "send_email", "message_template_id": template, "purpose": "transactional"},
+        {"action": "create_task", "kind": "client_birthday"},
+    ]
+    await service.install(tenant_ctx(chosen), "birthday_greeting", steps=picked)
+    stored = json.loads(chosen.sql("INSERT INTO crm.workflow_rule")[0][7])
+    assert stored[0] == {"action": "send_email", "message_template_id": template, "purpose": "marketing"}
     taken = ScriptedConn().on("SELECT 1 FROM crm.workflow_rule WHERE template_key", 1)
     with pytest.raises(Conflict):
         await service.install(tenant_ctx(taken), "arrival_flight_t48h", name="Flights")
