@@ -349,6 +349,11 @@ describe("counted words", () => {
     expect(plural("en", "clients.together", 2)).toBe("2 trips together");
     expect(plural("en", "messages.attachments", 1)).toBe("1 attachment kept in Documents");
     expect(plural("en", "messages.attachments", 4)).toBe("4 attachments kept in Documents");
+    expect(plural("en", "reports.picks.total", 1, { n: "1" })).toBe("1 choice made by clients");
+    expect(plural("en", "reports.money.missing", 1)).toBe("1 confirmed line has no cost or price yet; its margin is not counted.");
+    expect(plural("en", "pipeline.bulkPreview", 1, { stage: "Booked" })).toBe("1 trip will move to Booked.");
+    expect(plural("en", "pipeline.bulkConfirm", 1)).toBe("Move 1 trip");
+    expect(plural("en", "pipeline.bulkBlocked", 2)).toBe("2 trips cannot move:");
   });
   it("every singular has its counted message and the same slots, in both languages", () => {
     const slots = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();

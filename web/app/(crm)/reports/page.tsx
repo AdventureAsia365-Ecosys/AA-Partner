@@ -13,7 +13,7 @@ import { leadSourceLabel } from "@/lib/clients";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { formatDate } from "@/lib/dates";
-import { fmt, t, type MessageKey } from "@/lib/i18n";
+import { fmt, plural, t, type MessageKey } from "@/lib/i18n";
 import { formatMoney } from "@/lib/ledger";
 import { memberLabel, type Member } from "@/lib/pipeline";
 import {
@@ -205,7 +205,7 @@ export default async function ReportsPage({
               <p style={{ margin: 0, fontSize: 13, color: K.muted }}>{tr("reports.picks.none")}</p>
             ) : (
               <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 6, fontSize: 13 }}>
-                <li>{fmt(tr("reports.picks.total"), { n: n(r.picks.picks) })}</li>
+                <li>{plural(lang, "reports.picks.total", r.picks.picks, { n: n(r.picks.picks) })}</li>
                 <li>{fmt(tr("reports.picks.upgraded"), { pct: pct(r.picks.upgrade_rate_pct) })}</li>
                 <li>{fmt(tr("reports.picks.kept"), { pct: pct(r.picks.kept_default_pct) })}</li>
                 {r.picks.most_changed_type && (
@@ -249,7 +249,7 @@ export default async function ReportsPage({
               />
               {r.money.lines_missing_amounts > 0 && (
                 <p style={{ margin: "8px 0 0", fontSize: 12.5, color: K.muted }}>
-                  {fmt(tr("reports.money.missing"), { n: n(r.money.lines_missing_amounts) })}
+                  {plural(lang, "reports.money.missing", r.money.lines_missing_amounts, { n: n(r.money.lines_missing_amounts) })}
                 </p>
               )}
               {r.money.by_party_type.length > 0 && (

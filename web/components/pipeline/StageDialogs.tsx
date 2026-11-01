@@ -567,7 +567,7 @@ export function BulkDialog({
                   } else setError(t(lang, moveErrorKey(res.detail)));
                 }}
               >
-                {fmt(t(lang, "pipeline.bulkConfirm"), { n: preview?.eligible.length ?? 0 })}
+                {plural(lang, "pipeline.bulkConfirm", preview?.eligible.length ?? 0)}
               </Button>
             </span>
           </Actions>
@@ -604,10 +604,10 @@ export function BulkDialog({
       {busy && !preview && <p style={{ margin: 0, fontSize: 13, color: K.muted }}>{t(lang, "pipeline.bulkPreviewing")}</p>}
       {preview && (
         <div data-testid="bulk-preview" data-eligible={preview.eligible.length} data-blocked={preview.blocked.length} style={{ display: "grid", gap: 4, fontSize: 13, color: K.body }}>
-          <span>{fmt(t(lang, "pipeline.bulkPreview"), { n: preview.eligible.length, stage })}</span>
+          <span>{plural(lang, "pipeline.bulkPreview", preview.eligible.length, { stage })}</span>
           {preview.blocked.length > 0 && (
             <>
-              <span>{fmt(t(lang, "pipeline.bulkBlocked"), { n: preview.blocked.length })}</span>
+              <span>{plural(lang, "pipeline.bulkBlocked", preview.blocked.length)}</span>
               <ul style={{ margin: 0, paddingLeft: 18, color: K.muted }}>
                 {blockedCodes.map(([code, n]) => (
                   <li key={code}>

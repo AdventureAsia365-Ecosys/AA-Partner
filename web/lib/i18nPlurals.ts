@@ -24,6 +24,11 @@ export const pluralsEn = {
   "clients.trips.one": "{n} trip",
   "clients.together.one": "{n} trip together",
   "messages.attachments.one": "{n} attachment kept in Documents",
+  "reports.picks.total.one": "{n} choice made by clients",
+  "reports.money.missing.one": "{n} confirmed line has no cost or price yet; its margin is not counted.",
+  "pipeline.bulkPreview.one": "{n} trip will move to {stage}.",
+  "pipeline.bulkBlocked.one": "{n} trip cannot move:",
+  "pipeline.bulkConfirm.one": "Move {n} trip",
 } as const;
 
 export const pluralsVi: Record<keyof typeof pluralsEn, string> = {
@@ -46,4 +51,9 @@ export const pluralsVi: Record<keyof typeof pluralsEn, string> = {
   "clients.trips.one": "{n} chuyến",
   "clients.together.one": "{n} chuyến đi cùng nhau",
   "messages.attachments.one": "{n} tệp đính kèm đã lưu trong Tài liệu",
+  "reports.picks.total.one": "{n} lựa chọn của khách",
+  "reports.money.missing.one": "{n} dòng đã xác nhận chưa có chi phí hoặc giá bán; lợi nhuận của chúng chưa được tính.",
+  "pipeline.bulkPreview.one": "{n} chuyến sẽ chuyển sang {stage}.",
+  "pipeline.bulkBlocked.one": "{n} chuyến không chuyển được:",
+  "pipeline.bulkConfirm.one": "Chuyển {n} chuyến",
 };
