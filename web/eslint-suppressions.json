@@ -96,11 +96,6 @@
       "count": 1
     }
   },
-  "app/join/invite/page.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    }
-  },
   "app/not-found.tsx": {
     "@next/next/no-html-link-for-pages": {
       "count": 2

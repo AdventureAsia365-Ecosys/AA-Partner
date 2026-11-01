@@ -11,6 +11,8 @@ import { MESSAGES } from "@/lib/i18n";
 import {
   claimCookie,
   claimInvitation,
+  claimStep,
+  type ClaimResult,
   clearedInviteCookies,
   INVITE_TTL_S,
   inviteCookie,
@@ -19,6 +21,7 @@ import {
   joinError,
   openClaim,
   openInvite,
+  replacesPrior,
 } from "@/lib/invite";
 import { readSession, refreshCookie, sessionCookie } from "@/lib/session";
 import { memberLabel, reassignTargets, seatsLeft, teamError, type TeamMember } from "@/lib/team";
@@ -26,6 +29,7 @@ import { cookieHeader, fakeAccessToken, testConfig } from "./helpers";
 
 const ORIGIN = "https://partner.example.test";
 const TOKEN = "A".repeat(20) + "b_c-" + "9".repeat(19);
+const OTHER_TOKEN = "B".repeat(20) + "d_e-" + "8".repeat(19);
 const UUID = "00000000-0000-4000-8000-000000000001";
 let cfg = testConfig();
 
@@ -57,6 +61,16 @@ function inviteCookieHeader(token = TOKEN): string {
   return `${c.name}=${c.value}`;
 }
 
+function claimCookieHeader(claim: ClaimResult, token = TOKEN): string {
+  const c = claimCookie(cfg, claim, token);
+  return `${c.name}=${c.value}`;
+}
+
+function setClaim(res: Response): string {
+  const set = res.headers.getSetCookie().find((c) => c.startsWith(`${inviteCookieNames(cfg).claim}=`))!;
+  return set.split(";")[0].split("=").slice(1).join("=");
+}
+
 describe("invitation token and cookies", () => {
   it("accepts only 43-character URL-safe tokens", () => {
     expect(isInviteToken(TOKEN)).toBe(true);
@@ -81,13 +95,16 @@ describe("invitation token and cookies", () => {
   it("keeps the claim answer sealed (the one-time password is never readable from the cookie)", () => {
     // Built at run time so the secret scan does not read a test value as a password literal.
     const PW = ["Pw", "123456789"].join("-");
-    const c = claimCookie(cfg, { state: "created", email: "lan@agency.example", temporaryPassword: PW }, 50);
+    const c = claimCookie(cfg, { state: "created", email: "lan@agency.example", temporaryPassword: PW }, TOKEN, 50);
     expect(c.value).not.toContain(PW);
     expect(c.value).not.toContain("lan@agency.example");
-    expect(openClaim(cfg, c.value, 60)).toEqual({ state: "created", email: "lan@agency.example", temporaryPassword: PW });
-    expect(openClaim(cfg, c.value, 50 + 15 * 60 + 1)).toBeNull();
+    expect(openClaim(cfg, c.value, TOKEN, 60)).toEqual({ state: "created", email: "lan@agency.example", temporaryPassword: PW });
+    expect(openClaim(cfg, c.value, TOKEN, 50 + 15 * 60 + 1)).toBeNull();
+    // S263: the answer belongs to one invitation; another invitation's token (or none) never opens it.
+    expect(openClaim(cfg, c.value, OTHER_TOKEN, 60)).toBeNull();
+    expect(openClaim(cfg, c.value, null, 60)).toBeNull();
     // A value sealed for the token cookie never opens as a claim, and the other way round.
-    expect(openClaim(cfg, inviteCookie(cfg, TOKEN).value)).toBeNull();
+    expect(openClaim(cfg, inviteCookie(cfg, TOKEN).value, TOKEN)).toBeNull();
     expect(openInvite(cfg, c.value)).toBeNull();
     expect(clearedInviteCookies(cfg).map((x) => [x.name, x.maxAge])).toEqual([
       ["__Secure-aa_crm_inv", 0],
@@ -144,8 +161,66 @@ describe("POST /join/claim", () => {
     expect(res.headers.get("location")).toBe(`${ORIGIN}/join/invite`);
     const set = res.headers.getSetCookie().find((c) => c.startsWith(`${inviteCookieNames(cfg).claim}=`))!;
     expect(set).toContain("Path=/join");
-    expect(openClaim(cfg, set.split(";")[0].split("=").slice(1).join("="))?.temporaryPassword).toBe("Pw-1");
+    expect(openClaim(cfg, set.split(";")[0].split("=").slice(1).join("="), TOKEN)?.temporaryPassword).toBe("Pw-1");
     expect(res.headers.get("location")).not.toContain("Pw-1");
+  });
+
+  // S263, found live on Dev: a second "Open invitation" POST got already_claimed from the API and replaced the cookie
+  // that held the one-time password; the person never saw it and could not sign in.
+  it("a second POST keeps the password the browser already holds and does not ask the API again", async () => {
+    const PW = ["Pw", "first"].join("-");
+    const fetchSpy = vi.fn(async () => Response.json({ state: "already_claimed", email: "lan@agency.example" }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const res = await claimPost(
+      request("/join/claim", {
+        method: "POST",
+        cookie: `${inviteCookieHeader()}; ${claimCookieHeader({ state: "created", email: "lan@agency.example", temporaryPassword: PW })}`,
+        headers: SAME_ORIGIN,
+      }),
+    );
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe(`${ORIGIN}/join/invite`);
+    expect(res.headers.getSetCookie()).toEqual([]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("an already_claimed answer never replaces an answer of the same address, and a new password always does", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ state: "already_claimed", email: "Lan@Agency.example" })));
+    const kept = await claimPost(
+      request("/join/claim", {
+        method: "POST",
+        cookie: `${inviteCookieHeader()}; ${claimCookieHeader({ state: "existing", email: "lan@agency.example", temporaryPassword: null })}`,
+        headers: SAME_ORIGIN,
+      }),
+    );
+    expect(kept.headers.getSetCookie()).toEqual([]);
+    // No answer yet (the cookie of the first POST had not arrived): already_claimed is stored as it is.
+    const first = await claimPost(request("/join/claim", { method: "POST", cookie: inviteCookieHeader(), headers: SAME_ORIGIN }));
+    expect(openClaim(cfg, setClaim(first), TOKEN)?.state).toBe("already_claimed");
+    // The answer of another invitation is ignored: the API is asked and its answer stored.
+    const PW = ["Pw", "new"].join("-");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ state: "created", email: "lan@agency.example", temporary_password: PW })));
+    const other = await claimPost(
+      request("/join/claim", {
+        method: "POST",
+        cookie: `${inviteCookieHeader()}; ${claimCookieHeader({ state: "created", email: "lan@agency.example", temporaryPassword: "x" }, OTHER_TOKEN)}`,
+        headers: SAME_ORIGIN,
+      }),
+    );
+    expect(openClaim(cfg, setClaim(other), TOKEN)?.temporaryPassword).toBe(PW);
+  });
+
+  it("claimStep and replacesPrior", () => {
+    const pw = { state: "created" as const, email: "a@b.io", temporaryPassword: "p" };
+    const none = { state: "existing" as const, email: "a@b.io", temporaryPassword: null };
+    expect(claimStep(pw)).toBe("keep");
+    expect(claimStep(none)).toBe("ask");
+    expect(claimStep(null)).toBe("ask");
+    const again = { state: "already_claimed" as const, email: "A@b.io", temporaryPassword: null };
+    expect(replacesPrior(none, again)).toBe(false);
+    expect(replacesPrior({ ...none, email: "c@d.io" }, again)).toBe(true);
+    expect(replacesPrior(null, again)).toBe(true);
+    expect(replacesPrior(none, pw)).toBe(true);
   });
 
   it("sends API refusals back to the page as codes, and needs the invitation cookie", async () => {

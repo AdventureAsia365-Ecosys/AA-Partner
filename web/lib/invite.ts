@@ -8,11 +8,15 @@
 //      (POST /crm/public/v1/invitations/claim, server to server). The API creates the partner-pool account (or finds
 //      the existing one) and answers the one-time temporary password. The web keeps that answer only in a second
 //      sealed cookie (purpose "invite-claim", path /join, 15 minutes) and shows it on /join/invite: never in a URL,
-//      never in page JavaScript beyond the rendered text, never logged.
+//      never in page JavaScript beyond the rendered text, never logged. The claim cookie names the invitation it
+//      answers (a fingerprint of the token), so the answer of another invitation never shows on this one, and
+//      app/join/claim/route.ts never replaces a password it holds (S263, found live: a second "Open invitation"
+//      POST got already_claimed and overwrote the cookie that held the one-time password, which nobody then saw).
 //   3. "Continue to sign in" -> managed login (temporary password -> own password -> authenticator app; the partner
 //      pool requires MFA) -> back to /join/accept (session required), whose form POSTs /join/confirm: the API's
 //      POST /crm/v1/invitations/accept with the session's token and the sealed invitation token. The membership binds
 //      to the token's (iss, sub); both invitation cookies are cleared and the person lands on their agency.
+import { createHash } from "node:crypto";
 import type { WebConfig } from "./config";
 import { nowSeconds, open, seal } from "./seal";
 import type { CookieSpec } from "./session";
@@ -55,20 +59,47 @@ export function openInvite(cfg: WebConfig, sealed: string | undefined, now: numb
   return v && isInviteToken(v.t) ? v.t : null;
 }
 
-export function claimCookie(cfg: WebConfig, claim: ClaimResult, now: number = nowSeconds()): CookieSpec {
+/** Which invitation a claim answer belongs to (inside the sealed value; never the token itself). */
+function tokenFingerprint(token: string): string {
+  return createHash("sha256").update(`aa-crm-invite-claim:${token}`).digest("base64url").slice(0, 22);
+}
+
+export function claimCookie(cfg: WebConfig, claim: ClaimResult, token: string, now: number = nowSeconds()): CookieSpec {
   const value = seal(cfg.sessionSecret, "invite-claim", {
     s: claim.state,
     e: claim.email,
     p: claim.temporaryPassword,
+    t: tokenFingerprint(token),
     exp: now + CLAIM_TTL_S,
   });
   return cookie(cfg, inviteCookieNames(cfg).claim, value, CLAIM_TTL_S);
 }
 
-export function openClaim(cfg: WebConfig, sealed: string | undefined, now: number = nowSeconds()): ClaimResult | null {
-  const v = open<{ s: ClaimState; e: string; p: string | null; exp: number }>(cfg.sessionSecret, "invite-claim", sealed, now);
+/** The claim answer of the invitation `token` (null when absent, expired, tampered with or of another invitation). */
+export function openClaim(cfg: WebConfig, sealed: string | undefined, token: string | null, now: number = nowSeconds()): ClaimResult | null {
+  if (!token) return null;
+  const v = open<{ s: ClaimState; e: string; p: string | null; t: string; exp: number }>(cfg.sessionSecret, "invite-claim", sealed, now);
   if (!v || !["created", "existing", "already_claimed"].includes(v.s) || typeof v.e !== "string") return null;
+  if (v.t !== tokenFingerprint(token)) return null;
   return { state: v.s, email: v.e, temporaryPassword: typeof v.p === "string" ? v.p : null };
+}
+
+/**
+ * What POST /join/claim does with a claim answer already in the browser (S263):
+ * - "keep": the cookie already holds this invitation's one-time password, so the person is shown it again and the
+ *   API is not asked (asking again would replace that password with a new one while they may be typing it);
+ * - "ask": anything else (no answer yet, or one without a password).
+ */
+export function claimStep(prior: ClaimResult | null): "keep" | "ask" {
+  return prior?.temporaryPassword ? "keep" : "ask";
+}
+
+/**
+ * Whether the API's answer replaces the claim cookie: never when the API says "already_claimed" for the address of
+ * an answer the browser already has (that answer says more: the password, or that the account existed).
+ */
+export function replacesPrior(prior: ClaimResult | null, answer: ClaimResult): boolean {
+  return !(answer.state === "already_claimed" && prior !== null && prior.email.toLowerCase() === answer.email.toLowerCase());
 }
 
 export function clearedInviteCookies(cfg: WebConfig): CookieSpec[] {

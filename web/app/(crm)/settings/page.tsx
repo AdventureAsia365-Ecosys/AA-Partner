@@ -110,7 +110,7 @@ export default async function SettingsPage() {
       </Panel>
       <Panel title={t(lang, "settings.language")} testId="settings-language">
         <p style={{ margin: "0 0 12px", fontSize: 13, color: K.muted }}>{t(lang, "settings.languageHelp")}</p>
-        <LocaleSwitch locale={locale} label={t(lang, "settings.language")} next="/settings" saveLabel={t(lang, "settings.save")} />
+        <LocaleSwitch locale={locale} label={t(lang, "settings.language")} example={t(lang, "shell.dateExample")} next="/settings" saveLabel={t(lang, "settings.save")} />
         <div style={{ marginTop: 18 }}>
           <DateInput
             locale={locale}
