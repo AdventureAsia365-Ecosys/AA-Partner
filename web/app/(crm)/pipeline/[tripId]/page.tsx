@@ -17,6 +17,7 @@
 // (AA-957 live): a cancelled trip's Proposal and Invoices cards are read-only (no new payment, invoice or client link).
 // S262 round 3: the trip is closed on every card (no new AA item, line, date, shared document, signature or proposal;
 // messages stay open), and the cancel run closes every card at once (TripClosedProvider), not only the header.
+// AA-959 (CRM-29a): the trip's automations under the workspace (its workflow runs, Apply a task list).
 import { notFound } from "next/navigation";
 import { ErrorState } from "@/app/_kit";
 import { TripIncidentBanner } from "@/components/duty/IncidentPanel";
@@ -29,6 +30,7 @@ import { TripAgreementsPanel } from "@/components/proposals/TripAgreementsPanel"
 import { OpsReleasePanel } from "@/components/pipeline/OpsReleasePanel";
 import { TripClosedProvider } from "@/components/pipeline/TripClosed";
 import { TripPanel } from "@/components/pipeline/TripPanel";
+import { TripWorkflows } from "@/components/workflows/TripWorkflows";
 import type { DocumentRow } from "@/lib/clients";
 import type { TripIncident } from "@/lib/duty";
 import { crmCall } from "@/lib/crmApi";
@@ -99,6 +101,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
       lostHint={lines.ok ? (lines.data.lost_reason_hint ?? null) : null}
       timeZone={agencyZone}
     />
+    <TripWorkflows tripId={tripId} role={ctx.role} lang={ctx.lang} locale={ctx.locale} timeZone={agencyZone} />
     {lifecycle.ok && (
       <ProposalPanel
         view={lifecycle.data}

@@ -535,3 +535,20 @@ def test_the_assistant_does_not_apply(pools: LocalPools, monkeypatch: pytest.Mon
 
 def test_model_keeps_the_merge_fields_of_the_text_proposal() -> None:
     assert "traveller_first_name" in model.MERGE_FIELDS
+
+
+@pytest.mark.asyncio
+async def test_a_due_date_is_due_at_nine_in_the_agency_zone() -> None:
+    conn = (
+        ScriptedConn().on("FROM crm.task k LEFT JOIN crm.trip t", task_row()).on("SELECT timezone", "Asia/Ho_Chi_Minh")
+    )
+    await tasks.create(tenant_ctx(conn), FakeVault(), title="Call", due_on=dt.date(2026, 11, 5))
+    (args,) = conn.sql("INSERT INTO crm.task")
+    assert args[8] == dt.datetime(2026, 11, 5, 2, tzinfo=dt.UTC) and args[9] is True
+    with pytest.raises(Invalid):
+        await tasks.create(tenant_ctx(conn), FakeVault(), title="Call", due_on=dt.date(2026, 11, 5), due_at=NOW)
+    conn.on(
+        "FOR UPDATE", {"task_id": TASK, "kind": "reply_inquiry", "status": "open", "trip_id": None, "traveler_id": None}
+    )
+    await tasks.update(tenant_ctx(conn), FakeVault(), TASK, due_on=dt.date(2026, 11, 6))
+    assert conn.sql("UPDATE crm.task")[0][2:4] == (True, dt.datetime(2026, 11, 6, 2, tzinfo=dt.UTC))

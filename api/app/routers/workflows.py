@@ -65,6 +65,7 @@ class TaskIn(_Body):
     trip_id: uuid.UUID | None = None
     traveler_id: uuid.UUID | None = None
     due_at: dt.datetime | None = None
+    due_on: dt.date | None = None
     due_rule: DueRule | None = None
     priority: Literal["normal", "urgent"] = "normal"
     assignee_member_id: uuid.UUID | None = None
@@ -73,6 +74,7 @@ class TaskIn(_Body):
 class TaskChange(_Body):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     due_at: dt.datetime | None = None
+    due_on: dt.date | None = None
     assignee_member_id: uuid.UUID | None = None
     priority: Literal["normal", "urgent"] | None = None
 
@@ -154,11 +156,12 @@ async def get_tasks(
 async def post_task(request: Request, caller: CallerDep, tenant_id: TenantDep, body: TaskIn) -> dict[str, Any]:
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
+    rule = (body.due_rule.anchor, body.due_rule.offset_days) if body.due_rule else None
     async with tenant_tx(pool, caller, tenant_id, action=Action.TASK_UPDATE) as ctx:
         return await tasks.create(
             ctx, Vault(keys, ctx), title=body.title, trip_id=body.trip_id, traveler_id=body.traveler_id,
-            due_at=body.due_at, due_rule=(body.due_rule.anchor, body.due_rule.offset_days) if body.due_rule else None,
-            priority=body.priority, assignee_member_id=body.assignee_member_id,
+            due_at=body.due_at, due_on=body.due_on, due_rule=rule, priority=body.priority,
+            assignee_member_id=body.assignee_member_id,
         )  # fmt: skip
 
 
@@ -186,7 +189,8 @@ async def patch_task(
     sent = body.model_fields_set
     async with tenant_tx(pool, caller, tenant_id, action=Action.TASK_UPDATE) as ctx:
         return await tasks.update(
-            ctx, Vault(keys, ctx), task_id, title=body.title, due_at=body.due_at, set_due="due_at" in sent,
+            ctx, Vault(keys, ctx), task_id, title=body.title, due_at=body.due_at, due_on=body.due_on,
+            set_due="due_at" in sent,
             assignee_member_id=body.assignee_member_id, set_assignee="assignee_member_id" in sent,
             priority=body.priority,
         )  # fmt: skip

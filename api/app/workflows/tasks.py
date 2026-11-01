@@ -239,6 +239,7 @@ async def create(
     trip_id: uuid.UUID | None = None,
     traveler_id: uuid.UUID | None = None,
     due_at: dt.datetime | None = None,
+    due_on: dt.date | None = None,
     due_rule: tuple[str, int] | None = None,
     priority: str = "normal",
     assignee_member_id: uuid.UUID | None = None,
@@ -251,8 +252,10 @@ async def create(
         raise NotFound("traveler_not_found")
     if priority not in model.PRIORITIES:
         raise Invalid("invalid_priority", "normal or urgent")
-    if due_at is not None and due_rule is not None:
-        raise Invalid("invalid_due", "a due time or a due rule, not both")
+    if sum(x is not None for x in (due_at, due_on, due_rule)) > 1:
+        raise Invalid("invalid_due", "a due time, a due date or a due rule, not one more")
+    if due_on is not None:  # a date: due at 09:00 in the agency's timezone
+        due_at = model.at_local(due_on, await wf_facts.timezone(ctx))
     clean = model.clean_text(title, "title", model.MAX_TITLE)
     assignee = await _assignee(ctx, assignee_member_id) if assignee_member_id else ctx.member_id
     anchor, offset, overridden = ("created", 0, due_at is not None)
@@ -279,6 +282,7 @@ async def update(
     *,
     title: str | None = None,
     due_at: dt.datetime | None = None,
+    due_on: dt.date | None = None,
     set_due: bool = False,
     assignee_member_id: uuid.UUID | None = None,
     set_assignee: bool = False,
@@ -297,6 +301,8 @@ async def update(
     if priority is not None and priority not in model.PRIORITIES:
         raise Invalid("invalid_priority", "normal or urgent")
     assignee = await _assignee(ctx, assignee_member_id) if set_assignee else None
+    if due_on is not None:
+        due_at, set_due = model.at_local(due_on, await wf_facts.timezone(ctx)), True
     await ctx.conn.execute(UPDATE_SQL, task_id, blob, set_due, due_at, set_assignee, assignee, priority)
     fields = [f for f, on in (("title", title is not None), ("due_at", set_due), ("assignee", set_assignee),
                               ("priority", priority is not None)) if on]  # fmt: skip

@@ -48,7 +48,7 @@ export const SECTIONS: readonly Section[] = [
   { key: "pipeline", path: "/pipeline", group: "crm", label: "nav.pipeline", icon: "kanban", roles: ALL, empty: { title: "section.pipeline.title", body: "section.pipeline.body" } }, // AA-936
   { key: "clients", path: "/clients", group: "crm", label: "nav.clients", icon: "users", roles: ALL, empty: { title: "section.clients.title", body: "section.clients.body" } }, // AA-937
   { key: "inbox", path: "/inbox", group: "crm", label: "nav.inbox", icon: "inbox", roles: ALL, empty: { title: "section.inbox.title", body: "section.inbox.body" } }, // AA-945
-  { key: "tasks", path: "/tasks", group: "crm", label: "nav.tasks", icon: "check", roles: ALL, empty: { title: "section.tasks.title", body: "section.tasks.body" } }, // AA-959
+  { key: "tasks", path: "/tasks", group: "crm", label: "nav.tasks", icon: "check", roles: ALL }, // AA-959
   { key: "travelling", path: "/travelling", group: "crm", label: "nav.travelling", icon: "plane", roles: ALL }, // AA-961
   { key: "calendar", path: "/calendar", group: "crm", label: "nav.calendar", icon: "calendar", roles: ALL }, // AA-961
   { key: "payments", path: "/payments", group: "money", label: "nav.payments", icon: "wallet", roles: ALL, empty: { title: "section.payments.title", body: "section.payments.body" } }, // AA-952
@@ -58,7 +58,7 @@ export const SECTIONS: readonly Section[] = [
   { key: "marketing", path: "/marketing", group: "grow", label: "nav.marketing", icon: "megaphone", roles: NO_ASSISTANT, empty: { title: "section.marketing.title", body: "section.marketing.body" } }, // AA-968
   { key: "suppliers", path: "/suppliers", group: "grow", label: "nav.suppliers", icon: "truck", roles: ALL, empty: { title: "section.suppliers.title", body: "section.suppliers.body" } }, // AA-944
   { key: "library", path: "/library", group: "grow", label: "nav.library", icon: "book", roles: ALL, empty: { title: "section.library.title", body: "section.library.body" } }, // AA-963
-  { key: "automations", path: "/automations", group: "grow", label: "nav.automations", icon: "zap", roles: ALL, empty: { title: "section.automations.title", body: "section.automations.body" } }, // AA-959
+  { key: "automations", path: "/automations", group: "grow", label: "nav.automations", icon: "zap", roles: ALL }, // AA-959
   { key: "settings", path: "/settings", group: "settings", label: "nav.settings", icon: "settings", roles: ALL }, // AA-935
   { key: "help", path: "/help", group: "settings", label: "nav.help", icon: "help", roles: ALL, empty: { title: "section.help.title", body: "section.help.body" } }, // AA-970
 ];

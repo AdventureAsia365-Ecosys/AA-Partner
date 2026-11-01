@@ -367,6 +367,9 @@ queued / running rows as information, exempt kinds left out). Daily or slower ki
 | `crm_ops_release_sync` | hourly, due-now hook (`app.ops_release.job.HourlyOpsReleaseSync`, key per UTC hour), plus a one-trip nudge (payload `tenant_id`, `trip_id`) when Booking confirms / declines / cancels an AA line, a member withdraws or the trip is cancelled | AA-956: per active agency, "today" in `tenant_settings.timezone`: create / refresh / T-21 alert / withdraw the trip's ops release, then purge the due ones with a receipt (section "CRM-26 Module 8 ops release") |
 | `crm_messaging_templates` | per connect / Refresh of an agency's SMS / WhatsApp connection (queued in the request's transaction, payload `tenant_id`) | AA-958: reads the agency's WhatsApp templates from its own Twilio account (Content API) into `crm.channel_template`; a refused token disconnects the connection. Not deploy-gate exempt |
 | `crm_messaging_health` | daily, from `JOB_RETENTION_UTC_HOUR`, due-now hook (`app.messaging.health.DailyMessagingHealthSchedule`) | AA-958: every agency's SMS / WhatsApp connection: account read + template sync; passing -> connected, refused -> disconnected + one owner alert, anything else -> needs attention. Counts only. Not deploy-gate exempt |
+| `crm_workflow_run` | per workflow run: queued when it starts (after the 20 s Undo window for a member's action) and by the tick for a run whose wait ended (never queued ahead) | AA-959: `app/workflows/runner.py`: the run's due steps in one `system_tx` (actor `job:crm_workflow_run`); idempotent (a run not due or no longer active is left). Not deploy-gate exempt |
+| `crm_workflow_tick` | hourly, due-now hook (`app.workflows.tick.HourlyWorkflowTick`, key per UTC hour) | AA-959: per active agency: date triggers (anchor + offset within the last 3 days), special dates (at 08:00-09:59 local: birthdays, passport expiry, trip anniversaries), one `crm_workflow_run` job per run whose `next_at` passed, task due dates from the trip's dates, the digest job at 07:00 local. Counts only. Not deploy-gate exempt |
+| `crm_task_digest` | per agency and local day, queued by the tick (idempotency key per agency and date) | AA-959: the morning digest (counts only, AA SES) when `task_digest` is on. Not deploy-gate exempt |
 | `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
 
 
@@ -886,7 +889,7 @@ already sends `/crm/public/*` to the API).
   latest state); error 21610 marks the conversation opted out. Answer: an empty TwiML `<Response>`.
 - **Events** (`app/messaging/events.py`, the seam CRM-29a workflows and CRM-29b tags build on): `message.received` (a
   bell item for the trip owner) and `message.sent` as `crm.metric_event` rows on the trip, ids and codes only, then the
-  in-process listeners registered with `subscribe()` (none yet).
+  in-process listeners registered with `subscribe()` (AA-959: the workflow triggers, `app.workflows.triggers.on_message`).
 - **Web**: Settings > SMS and WhatsApp (`web/app/(crm)/settings/channels`, `components/messaging/ChannelsSettings.tsx`:
   status, who pays, the two webhook URLs, connect / reconnect, Test, templates + Refresh, Disconnect), the trip's
   WhatsApp / SMS panel (`components/messaging/TextMessagesPanel.tsx`: the thread with delivery states, the window, free
@@ -895,6 +898,62 @@ already sends `/crm/public/*` to the API).
   (`components/messaging/NoTripInbox.tsx`).
 - **Dev live check**: `api/scripts/messaging_hook_probe.py` posts a signed Twilio-shaped inbound message or status
   callback to an agency's hook URL (`PROBE_AUTH_TOKEN` = the sandbox connection's token; `--bad-signature` expects 403).
+
+## CRM-29a Module 10 workflows and tasks (AA-959)
+
+Design v3 §6.3 CRM-29a (M10, §5 automation, R2, R9, R20, R44 step 1, Fix B8 Undo, Fix C3 "cancel stops runs"), A-09
+Tasks / A-17 Automations, WF-10, BYO errata S247 §1 (nudges to travellers go from the agency's mailbox) and §3 (the
+digest is AA system mail). Migration crm-038; code in `app/workflows/`, routes in `app/routers/workflows.py`; decisions
+in `docs/implementation-notes/AA-959.md`. CRM-29b (AA-960: tags, system tags, coverage, ready to travel) builds on it.
+
+- **Rules** (`crm.workflow_rule`, `app/workflows/model.py`): a trigger, conditions and 1..20 steps. Triggers:
+  `stage_enter` (a stage), `event` (`proposal.viewed` / `option_chosen` / `change_requested` / `accepted`,
+  `invoice.payment_claimed` / `overdue` / `unfulfillable`, `message.received` / `message.sent`), `date_anchor`
+  (departure, return, stage entered, last activity, created + offset days), `special_date` (a client's birthday,
+  passport expiry, trip anniversary + offset; the run is about the client) and `manual` (a task list a member applies,
+  R9). Conditions: stages, trip styles, lead sources, destinations, children, AA services, Stage 3 incomplete
+  (`tags_any` is refused with 422 `condition_not_available` until CRM-29b). Steps: `create_task` (a library kind or a
+  custom title; due = anchor + offset, 09:00 local for a date; assignee = the owner of the trip / client or a member),
+  `send_email` (an agency message template merged with `{{traveller_first_name}}` ...; transactional or marketing),
+  `send_text` (an approved SMS / WhatsApp template of the agency's Twilio, variables from merge fields; never free
+  text), `set_field` (`waiting_on`, the trip owner), `wait` (days / hours, or until a trip date). The owner edits
+  (`WORKFLOW_EDIT`: create, install from the library, edit with `version`, active / paused / archived; a rule with a
+  send step needs its template before it is switched on, 409 `templates_missing`); owner and agent apply
+  (`WORKFLOW_APPLY`: a task list to trips with a dry run, stop a run); everyone reads.
+- **AA library** (`app/workflows/library.py`, code with key + version, worded by the web `wf.tpl.<key>`): arrival flight
+  T-48 h (R44), Stage 3 nudge T-21, pre-departure checklist, quiet client (3 days), reply to a client's text, review after
+  the trip, birthday greeting, passport expiring (200 days), trip anniversary, visa and documents task list. One live
+  rule per template; a template that sends starts paused until its message template is picked.
+- **Runs** (`crm.workflow_run`): one per rule and **trigger key** (`stage:<history id>`, `event:<event or message id>`,
+  `date:<anchor>:<offset>:<date>`, `special:<code>:<date>`, `manual:<request id>:<trip>`; UNIQUE, so a tick or a
+  signal that runs twice starts nothing twice, card E). Started inside the change that triggers them
+  (`app/workflows/triggers.py`: `app.stages.move` and the date rule and a new inquiry, `app.proposals.events.record`,
+  the AA-958 message listener; each start in a savepoint, a failure never fails the change); a member's move or apply
+  starts the run after the Undo window (20 s, Fix B8) and Undo of the move stops it (`undone`). The trip cancel's hook
+  (`app.cancellation.CANCEL_HOOKS`, registered by `triggers.install()` in `app.main`) stops every active run of the
+  trip (`trip_cancelled`, counted in the dry run's `workflows_stopped`). The engine (`app/workflows/engine.py`) stops a
+  run itself when the rule is archived, the trip is lost (unless the rule starts on Lost), trashed, cancelled or
+  cancelling, or the client is trashed or archived (`archived`); a paused rule's runs wait. Each step is logged as a
+  code (`created`, `already_open`, `queued`, `skipped_no_consent`, ...); a database error fails the run once
+  (`step_failed`). Marketing sends without the client's current marketing yes are **not sent**, logged
+  `skipped_no_consent` and audited `workflow_send` denied (card R); the dispatcher's gate checks again at send time.
+  Workflow mail leaves from the trip owner's mailbox, else the agency's; a missing / disconnected mailbox holds it
+  (`held_reconnect`); dispatch rows are `origin workflow` (no Undo delay).
+- **Tasks** (`app/workflows/tasks.py`): `GET /tasks` buckets Overdue / Today / Next 7 days / Later / Waiting for dates
+  in the agency's timezone (scope mine / team / trip / client, or done in 7 days; one `list_view`); a custom task
+  (kind `custom_<hex>`: a member's own, or a workflow step's with the suffix fixed per rule and step) carries its title
+  under the vault DEK; a task names a trip or a client, never both. Due dates anchored on departure / return follow the
+  trip's dates (the hourly tick and every date change, `tasks.redate`) unless a member set the date by hand
+  (`due_overridden`, R20). `GET /tasks/{id}` of `confirm_arrival_flight` adds the trip's arrival flights with a public
+  status link (flight numbers opened and audited). The source (`workflow`, `manual`, `aa_event`, `system`) is derived.
+- **Digest** (`app/workflows/digest.py`, `crm_task_digest`): the owner's switch `tenant_settings.task_digest` (default
+  off); at 07:00 local each active member with open tasks gets the counts (overdue, today, 7 days, waiting) through
+  AA's SES (`task_digest`), no client, trip or task text.
+- **Web**: `/tasks` (`components/workflows/TasksBoard.tsx`: buckets, sources, Done / Reopen, reassign in the team view,
+  New task, the T-48 h flight links, the digest switch for the owner), `/automations`
+  (`components/workflows/AutomationsBoard.tsx` + `RuleEditor.tsx`: rules with trigger and steps in words, preview count,
+  switch on / pause / archive, the editor, the library), the trip page's Automations panel
+  (`components/workflows/TripWorkflows.tsx`: runs with each step's outcome, stop, Check then Apply a task list).
 
 ## CRM-18 thin full lifecycle (AA-946)
 

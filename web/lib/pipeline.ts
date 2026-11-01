@@ -197,6 +197,8 @@ export interface TripView {
   tasks: {
     task_id: string;
     kind: string;
+    /** AA-959: a custom task's own title (a member's own task, a workflow step's); null for a coded kind. */
+    title?: string | null;
     priority?: "normal" | "urgent";
     assignee_member_id: string | null;
     status: "open" | "done" | "skipped";
