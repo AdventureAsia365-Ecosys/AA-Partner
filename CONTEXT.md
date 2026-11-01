@@ -1720,8 +1720,10 @@ Design v3 §6.3 CRM-22 (M4, R38, R9; F4 / WF-5 A-05; Q1 2.3); migration crm-022;
   AA system mail (`app/members/mail.py`, SES) with `/join?t=<token>` (only the SHA-256 is stored, expires after
   `INVITATION_TTL_HOURS`) -> claim (public; `AdminCreateUser` SUPPRESS with a temporary password shown once by the web,
   or the existing account) -> managed login (own password, authenticator) -> accept (the caller's token must carry the
-  claimed `(iss, sub)`). The API's partner-pool calls (`app/members/directory.py`) are AdminCreateUser, ListUsers and
-  AdminUserGlobalSignOut (IAM allows AdminDisableUser too; unused).
+  claimed `(iss, sub)`). An account that was never signed in to (`FORCE_CHANGE_PASSWORD`) gets a new temporary password
+  (`AdminCreateUser` RESEND, which Cognito also mails) when a new invitation to its address is claimed or its claimed
+  link is opened again (S263). The API's partner-pool calls (`app/members/directory.py`) are AdminCreateUser, ListUsers
+  and AdminUserGlobalSignOut (IAM allows AdminDisableUser too; unused).
 - **Team** (`/crm/v1/team*`, owner): members (invited address or short id), pending invitations (masked), role change
   (409 `last_owner`), removal (membership disabled + global sign-out), the **reassign queue** (open trips / clients of
   members who are no longer active) and reassign, the plan (`/crm/v1/plan`; no `tenant_entitlement` row = free, 10
@@ -1732,7 +1734,8 @@ Design v3 §6.3 CRM-22 (M4, R38, R9; F4 / WF-5 A-05; Q1 2.3); migration crm-022;
   makes one.
 - **Web**: `web/app/(crm)/settings/team` (owner page, `components/team/TeamAdmin.tsx`), the recovery banner in the
   `(crm)` layout, the join pages `web/app/join/*` (`lib/invite.ts`: token and claim answer in sealed cookies on
-  `/join`, never in a URL). Runbooks (lost second factor, rollout order): `docs/implementation-notes/AA-939.md`.
+  `/join`, never in a URL; the claim cookie names its invitation and a second "Open invitation" never replaces a
+  password it holds). Runbooks (lost second factor, rollout order): `docs/implementation-notes/AA-939.md`.
 ## L1 console (AA-941, CRM-13a)
 
 Design v3 S-01 (CIS admin "Agencies (CRM)": usage meters only, never trips or revenue, no PII), Q1 6.3, Q2 3.12, §4.9
