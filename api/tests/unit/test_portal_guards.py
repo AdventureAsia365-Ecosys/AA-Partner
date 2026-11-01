@@ -282,6 +282,8 @@ PROVIDER_PHRASES = (
     "Anthropic API",
     "OpenAI API",
     "may be used as a fallback",
+    "Amazon Nova",  # S263: the acc2 Bedrock fallback of the review / check steps (CIS migrations 331-333)
+    "Meta Llama",
 )
 
 
