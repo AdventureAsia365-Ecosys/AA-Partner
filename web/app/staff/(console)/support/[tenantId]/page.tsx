@@ -1,8 +1,9 @@
 // web/app/staff/(console)/support/[tenantId]/page.tsx — S-04, one agency inside the caller's live support or emergency
 // session (AA-1019 on the AA-971 API): the banner (amber support / red emergency, End session), the agency overview
-// (settings codes, trips per stage) and its trips, read-only. Every read is checked again by the API (a grant the owner
+// (settings with their labels, trips per stage) and its trips, read-only. Every read is checked again by the API (a grant the owner
 // ended answers 403 support_session_ended on the very next page) and written to the agency's access log, so a navigation
-// from another origin gets the OpenStep first (review finding B1).
+// from another origin gets the OpenStep first (review finding B1). With no live session the page reads nothing more: the
+// caller's latest session says why it is over (ended by the owner, by the caller, or its time is up; S262 finding D1).
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ErrorState, K } from "@/app/_kit";
@@ -14,8 +15,9 @@ import { SessionHistory } from "@/components/staff/SessionHistory";
 import { codeLabel } from "@/lib/accessLog";
 import { t } from "@/lib/i18n";
 import { staffCall } from "@/lib/staffApi";
-import { liveSession, refusalKey, TRIPS_PAGE, uuidParam, type MySessions, type Overview, type TripsPage } from "@/lib/staffConsole";
+import { endedNoticeKey, liveSession, refusalKey, TRIPS_PAGE, uuidParam, type MySessions, type Overview, type TripsPage } from "@/lib/staffConsole";
 import { staffContext } from "@/lib/staffContext";
+import { settingRows } from "@/lib/staffSettings";
 
 export const dynamic = "force-dynamic";
 
@@ -26,12 +28,6 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
       <span style={{ color: K.body, overflowWrap: "anywhere" }}>{children}</span>
     </div>
   );
-}
-
-function settingValue(value: unknown): string {
-  if (Array.isArray(value)) return value.length ? value.join(", ") : "—";
-  if (value === null || value === undefined || value === "") return "—";
-  return String(value);
 }
 
 export default async function StaffAgencyPage({ params }: { params: Promise<{ tenantId: string }> }) {
@@ -64,12 +60,12 @@ export default async function StaffAgencyPage({ params }: { params: Promise<{ te
   );
   const overview = live ? await staffCall<Overview>(cfg, session, "GET", `agencies/${tenantId}/overview`) : null;
   if (!live || !overview || !overview.ok) {
-    const detail = overview && !overview.ok ? overview.detail : "no_support_session";
+    const message = overview && !overview.ok ? refusalKey(overview.detail) : (endedNoticeKey(mine.data.sessions) ?? refusalKey("no_support_session"));
     return (
       <div style={{ display: "grid", gap: 12 }} data-testid="staff-agency-refused">
         {back}
         <PageTitle title={agencyName} />
-        <ErrorState message={t(lang, refusalKey(detail))} />
+        <ErrorState message={t(lang, message)} />
         {mine.data.sessions.length > 0 && history}
       </div>
     );
@@ -97,9 +93,9 @@ export default async function StaffAgencyPage({ params }: { params: Promise<{ te
       {o.settings && (
         <Panel title={t(lang, "staff.agency.settings")}>
           <div style={{ display: "grid", gap: 4 }}>
-            {Object.entries(o.settings).map(([key, value]) => (
-              <Row key={key} label={key.replace(/_/g, " ")}>
-                <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12 }}>{settingValue(value)}</span>
+            {settingRows(lang, o.settings, locale).map((r) => (
+              <Row key={r.key} label={r.label}>
+                <span data-setting={r.key}>{r.value}</span>
               </Row>
             ))}
           </div>

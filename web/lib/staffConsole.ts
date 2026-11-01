@@ -224,6 +224,10 @@ export interface BreakglassAgency {
 
 export type SessionKind = "support" | "breakglass";
 
+/** Why a session of the caller's is over (API sessions.END_REASONS, AA-1019 D1); null while it is live. */
+export const END_REASONS = ["staff_ended", "owner_ended", "session_expired", "grant_expired"] as const;
+export type EndReason = (typeof END_REASONS)[number];
+
 export interface SessionView {
   tenant_id: string;
   session_id: string;
@@ -234,6 +238,9 @@ export interface SessionView {
   show_identity: boolean;
   started_at: string;
   expires_at: string;
+  /** When it ended (null while live, and for one still marked open whose window passed). */
+  ended_at?: string | null;
+  end_reason?: EndReason | null;
   owners_notified?: number | null;
 }
 
@@ -303,6 +310,31 @@ export interface TripDetail extends StaffTrip {
 /** The live session among the caller's own (newest first from the API), or null. */
 export function liveSession(sessions: readonly SessionView[]): SessionView | null {
   return sessions.find((s) => s.status === "active") ?? null;
+}
+
+/** How long after a session ended its agency page still names the reason instead of "no open session". */
+export const ENDED_NOTICE_MS = 24 * 60 * 60 * 1000;
+
+/** The reason of a session that is over: the API's end_reason, else read from its status (an older API). */
+export function endReason(s: Pick<SessionView, "status" | "end_reason">): EndReason | null {
+  if (s.end_reason && (END_REASONS as readonly string[]).includes(s.end_reason)) return s.end_reason;
+  if (s.status === "revoked") return "owner_ended";
+  if (s.status === "ended") return "staff_ended";
+  if (s.status === "expired") return "session_expired";
+  return null;
+}
+
+/** The agency page with no live session (AA-1019 D1): the message key saying why the caller's latest session is over
+ * when it ended within ENDED_NOTICE_MS (no further API call), else null (the page says "no open session"). */
+export function endedNoticeKey(sessions: readonly SessionView[], now: Date = new Date()): `staff.ended.${EndReason}` | null {
+  if (liveSession(sessions)) return null;
+  const latest = sessions[0];
+  if (!latest) return null;
+  const reason = endReason(latest);
+  if (!reason) return null;
+  const at = Date.parse(latest.ended_at || latest.expires_at);
+  if (!Number.isFinite(at) || now.getTime() - at > ENDED_NOTICE_MS) return null;
+  return `staff.ended.${reason}`;
 }
 
 /** The refusal codes the console words itself (each has an EN and a VI line in lib/i18nStaff.ts); anything else is the

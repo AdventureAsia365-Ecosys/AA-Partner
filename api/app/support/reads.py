@@ -40,6 +40,23 @@ STAGES = (
 )
 
 TENANT_SQL = "SELECT tenant_id, status, display_name, default_locale FROM crm.tenant WHERE tenant_id = $1"
+# The agency settings the overview shows, in order (``OverviewOut.settings``). The staff console labels every one in EN
+# and VI (web/lib/staffSettings.ts; web/tests/staffSettings.test.ts reads this tuple, AA-1019 S262 live finding O2).
+SETTINGS_KEYS = (
+    "ai_enabled",
+    "ai_budget_usd",
+    "timezone",
+    "base_currency",
+    "booking_validation_level",
+    "fx_mode",
+    "trash_days",
+    "auto_archive_months",
+    "stage2_auto_send",
+    "invoice_due_days",
+    "service_fee_enabled",
+    "onboarding_later",
+    "onboarding_done",
+)
 SETTINGS_SQL = """
 SELECT ai_enabled, ai_budget_usd, timezone, base_currency, booking_validation_level, fx_mode, trash_days,
        auto_archive_months, stage2_auto_send, invoice_due_days, service_fee_enabled, onboarding_later, onboarding_done
@@ -111,6 +128,18 @@ def _trip(r: asyncpg.Record) -> dict[str, Any]:
     }
 
 
+def _settings(row: asyncpg.Record) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key in SETTINGS_KEYS:
+        value = row[key]
+        if key == "ai_budget_usd":
+            value = str(value)
+        elif key in ("onboarding_later", "onboarding_done"):
+            value = list(value or ())
+        out[key] = value
+    return out
+
+
 async def overview(pool: asyncpg.Pool, caller: Caller, tenant_id: uuid.UUID) -> dict[str, Any]:
     async with support_tx(pool, caller, tenant_id) as ctx:
         tenant = await ctx.conn.fetchrow(TENANT_SQL, tenant_id)
@@ -122,25 +151,7 @@ async def overview(pool: asyncpg.Pool, caller: Caller, tenant_id: uuid.UUID) -> 
             "agency_name": tenant["display_name"],
             "status": tenant["status"],
             "default_locale": tenant["default_locale"],
-            "settings": (
-                {
-                    "ai_enabled": settings["ai_enabled"],
-                    "ai_budget_usd": str(settings["ai_budget_usd"]),
-                    "timezone": settings["timezone"],
-                    "base_currency": settings["base_currency"],
-                    "booking_validation_level": settings["booking_validation_level"],
-                    "fx_mode": settings["fx_mode"],
-                    "trash_days": settings["trash_days"],
-                    "auto_archive_months": settings["auto_archive_months"],
-                    "stage2_auto_send": settings["stage2_auto_send"],
-                    "invoice_due_days": settings["invoice_due_days"],
-                    "service_fee_enabled": settings["service_fee_enabled"],
-                    "onboarding_later": list(settings["onboarding_later"] or ()),
-                    "onboarding_done": list(settings["onboarding_done"] or ()),
-                }
-                if settings is not None
-                else None
-            ),
+            "settings": _settings(settings) if settings is not None else None,
             "pipeline": {stage: pipeline.get(stage, 0) for stage in STAGES},
             "session": _session(ctx),
         }
