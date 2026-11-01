@@ -13,6 +13,8 @@
 - AA items: the live quote (net = b2b price, availability, "from"-price warning), sold out cannot be added, Booking
   down adds nothing (503), Refresh AA prices; the assistant never sees net or margin.
 - Another agency cannot read or change a version (RLS: not found).
+- S262 round 3 (AA-957 x AA-952): a draft naming booking terms the agency has since retired is not publishable
+  (``terms_retired``) until the agent picks the current version; a working copy starts with the current terms.
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ import pytest
 from app import stages
 from app.errors import Conflict, Invalid, NotFound, Unavailable
 from app.intake import completeness
-from app.proposals import aa_options, builder, service
+from app.proposals import aa_options, agreements, builder, service
 from app.tenancy import tenant_tx
 from app.travellers import service as travellers
 from app.vault import Vault
@@ -501,3 +503,46 @@ async def test_another_agency_cannot_read_or_change_a_version(app_pool: asyncpg.
         with pytest.raises(NotFound):
             await builder.update_settings(ctx, Vault(other["keys"], ctx), _pid(v), v["edit_seq"], {})
         assert await ctx.conn.fetchval("SELECT count(*) FROM crm.option_block") == 0
+
+
+async def _terms(pool: asyncpg.Pool, s: dict[str, Any], label: str) -> uuid.UUID:
+    """A published booking terms version (the owner publishes; the one before it is retired)."""
+    async with tenant_tx(pool, s["who"]["owner"], s["tenant"]) as ctx:
+        doc = await agreements.create(ctx, kind="booking_terms", version_label=label, body_text=f"Invented {label}")
+        await agreements.publish(ctx, uuid.UUID(doc["doc_id"]))
+    return uuid.UUID(doc["doc_id"])
+
+
+async def test_a_draft_on_retired_terms_is_not_publishable_until_the_current_terms_are_picked(
+    app_pool: asyncpg.Pool,
+) -> None:
+    """S262 round 3: the draft was reported publishable, yet Publish answered 409 terms_not_published although the
+    agency had published terms (a newer version). The check now says so, and picking the current version fixes it."""
+    s = await _setup(app_pool)
+    first = await _terms(app_pool, s, "Ruby-1")
+    v = await _publishable(app_pool, s)
+    assert v["terms_doc_id"] == str(first) and v["terms_status"] == "published" and v["checks"]["publishable"]
+    second = await _terms(app_pool, s, "Ruby-2")  # retires Ruby-1
+    v = await _as(app_pool, s, "agent", builder.view, _pid(v))
+    assert v["terms_status"] == "retired" and v["checks"]["blocking"] == ["terms_retired"]
+    with pytest.raises(Invalid) as err:
+        await _as(app_pool, s, "agent", builder.publish, _pid(v), v["edit_seq"], acknowledge_selection_seq=None)
+    assert err.value.extra["blocking"] == ["terms_retired"]
+    # Saving other settings keeps the named version; choosing a retired one anew is refused.
+    v = await _as(app_pool, s, "agent", builder.update_settings, _pid(v), v["edit_seq"],
+                  {"intro": "Hello", "terms_doc_id": first})  # fmt: skip
+    assert v["terms_doc_id"] == str(first)
+    with pytest.raises(NotFound):
+        await _as(app_pool, s, "agent", builder.update_settings, _pid(v), v["edit_seq"], {"terms_doc_id": uuid.uuid4()})
+    # "Use the current terms": the draft is publishable again and publishes with them.
+    v = await _as(app_pool, s, "agent", builder.update_settings, _pid(v), v["edit_seq"], {"terms_doc_id": second})
+    assert v["terms_status"] == "published" and v["checks"]["publishable"]
+    out = await _as(app_pool, s, "agent", builder.publish, _pid(v), v["edit_seq"], acknowledge_selection_seq=None)
+    assert out["status"] == "published" and out["terms_doc_id"] == str(second)
+    # A working copy of a version whose terms were retired since starts with the current version.
+    third = await _terms(app_pool, s, "Ruby-3")
+    v2 = await _create(app_pool, s, from_proposal_id=_pid(out))
+    assert v2["terms_doc_id"] == str(third) and v2["terms_status"] == "published"
+    with pytest.raises(Conflict) as err:
+        await _as(app_pool, s, "agent", builder.update_settings, _pid(v2), v2["edit_seq"], {"terms_doc_id": second})
+    assert err.value.code == "terms_not_published"

@@ -40,7 +40,7 @@ def _proposal(**over: Any) -> dict[str, Any]:
         "starts_on": START, "edit_seq": 5, "selection_seq": 0, "based_on_proposal_id": None,
         "based_on_selection_seq": None, "published_at": None, "sent_at": None, "created_at": NOW, "updated_at": NOW,
         "trip_stage": "proposal", "party_adults": 2, "party_child_ages": [], "party_type": "couple",
-        "destinations": ["nepal"],
+        "destinations": ["nepal"], "terms_status": None,
     }  # fmt: skip
     row.update(over)
     return row
@@ -253,7 +253,7 @@ async def test_create_a_skeleton_or_a_copy() -> None:
 
 
 async def test_settings() -> None:
-    conn = _conn().on("FROM crm.agreement_doc", {"doc_id": BASE, "status": "draft", "body_sha256": b"x"})
+    conn = _conn().on("FROM crm.agreement_doc", {"doc_id": BASE, "status": "published", "body_sha256": b"x"})
     await _run(builder.update_settings, P, 5, {"price_visibility": "total_only", "deposit_pct": Decimal("50"),
                "room_config": [{"type": "single", "adults": 1}], "intro": "Hi", "terms_doc_id": BASE},
                conn=conn)  # fmt: skip
@@ -492,7 +492,7 @@ async def test_rules() -> None:
 
 
 async def test_publish() -> None:
-    conn = _conn(proposal=_proposal(terms_doc_id=BASE)).on(
+    conn = _conn(proposal=_proposal(terms_doc_id=BASE, terms_status="published")).on(
         "FROM crm.agreement_doc", {"doc_id": BASE, "status": "published", "body_sha256": b"\x01" * 32}
     )
     conn.on("SET status = 'superseded'", [{"proposal_id": BASE}])
@@ -518,9 +518,13 @@ async def test_publish() -> None:
     with pytest.raises(Invalid) as err:
         await _run(builder.publish, P, 5, acknowledge_selection_seq=None, conn=_conn(rules=rules))
     assert err.value.code == "option_conflict"
-    unpublished = _conn(proposal=_proposal(terms_doc_id=BASE)).on("FROM crm.agreement_doc", None)
-    with pytest.raises(Conflict):
+    # The terms were retired between the page's read and the lock-time re-read: still refused (no stale hash).
+    unpublished = _conn(proposal=_proposal(terms_doc_id=BASE, terms_status="published")).on(
+        "FROM crm.agreement_doc", {"doc_id": BASE, "status": "retired", "body_sha256": b"\x01" * 32}
+    )
+    with pytest.raises(Conflict) as err:
         await _run(builder.publish, P, 5, acknowledge_selection_seq=None, conn=unpublished)
+    assert err.value.code == "terms_not_published"
 
 
 CURRENT_TERMS = "kind = 'booking_terms' AND status = 'published'"
@@ -564,7 +568,7 @@ async def test_a_version_without_terms_is_pinned_to_the_published_terms() -> Non
     assert out["publish"]["price_hash"] != builder.price_hash(_proposal(), "Hello", None, s, sums).hex()
     # A version that names its terms keeps them; no published terms: nothing is pinned.
     for conn in (
-        _conn(proposal=_proposal(terms_doc_id=BASE))
+        _conn(proposal=_proposal(terms_doc_id=BASE, terms_status="published"))
         .on(CURRENT_TERMS, current)
         .on(
             "FROM crm.agreement_doc WHERE doc_id", {"doc_id": BASE, "status": "published", "body_sha256": b"\x01" * 32}
@@ -623,3 +627,58 @@ async def test_picks() -> None:
     with pytest.raises(Conflict) as err:
         await builder.record_pick(tenant_ctx(_conn(proposal=published, options=sold)), P, B1, O2)
     assert err.value.code == "option_sold_out"
+
+
+async def test_retired_terms_block_publish_until_the_agent_picks_the_current_version() -> None:
+    """S262 round 3 (AA-957 x AA-952): a draft naming a booking terms version the agency has since retired read
+    "publishable", yet Publish answered 409 terms_not_published. The check now blocks up front (``terms_retired``; a
+    draft or removed version: ``terms_not_published``), the view says which state the named version is in, settings
+    take only the published version (keeping the named one is allowed), and a working copy of a version whose terms
+    were retired starts with the current terms."""
+    retired = await _run(builder.view, P, conn=_conn(proposal=_proposal(terms_doc_id=BASE, terms_status="retired")))
+    assert retired["checks"] == {"publishable": False, "blocking": ["terms_retired"], "warnings": []}
+    assert retired["terms_status"] == "retired" and retired["terms_doc_id"] == str(BASE)
+    for status in ("draft", None):
+        v = await _run(builder.view, P, conn=_conn(proposal=_proposal(terms_doc_id=BASE, terms_status=status)))
+        assert v["checks"]["blocking"] == ["terms_not_published"]
+    current = await _run(builder.view, P, conn=_conn(proposal=_proposal(terms_doc_id=BASE, terms_status="published")))
+    assert current["checks"]["publishable"] and current["terms_status"] == "published"
+    with pytest.raises(Invalid) as err:
+        await _run(builder.publish, P, 5, acknowledge_selection_seq=None,
+                   conn=_conn(proposal=_proposal(terms_doc_id=BASE, terms_status="retired")))  # fmt: skip
+    assert err.value.code == "not_publishable" and err.value.extra["blocking"] == ["terms_retired"]
+    # Settings: a new choice must be the published version; the named (retired) one may stay while other fields change.
+    new_id = uuid.uuid4()
+    for status in ("retired", "draft"):
+        conn = _conn(proposal=_proposal(terms_doc_id=BASE, terms_status="retired"))
+        conn.on("FROM crm.agreement_doc", {"doc_id": new_id, "status": status, "body_sha256": b"x"})
+        with pytest.raises(Conflict) as err:
+            await _run(builder.update_settings, P, 5, {"terms_doc_id": new_id}, conn=conn)
+        assert err.value.code == "terms_not_published"
+        assert not conn.sql("UPDATE crm.proposal SET price_visibility")
+    keep = _conn(proposal=_proposal(terms_doc_id=BASE, terms_status="retired"))
+    await _run(builder.update_settings, P, 5, {"terms_doc_id": BASE, "intro": "Hi"}, conn=keep)
+    assert keep.sql("UPDATE crm.proposal SET price_visibility")[0][6] == BASE
+    assert not keep.sql("FROM crm.agreement_doc WHERE doc_id")
+    switch = _conn(proposal=_proposal(terms_doc_id=BASE, terms_status="retired"))
+    switch.on("FROM crm.agreement_doc", {"doc_id": new_id, "status": "published", "body_sha256": b"x"})
+    await _run(builder.update_settings, P, 5, {"terms_doc_id": new_id}, conn=switch)
+    assert switch.sql("UPDATE crm.proposal SET price_visibility")[0][6] == new_id
+    # A working copy of a version whose terms were retired starts with the current terms (or none when none is out).
+    trip = {"trip_id": TRIP, "stage": "proposal", "start_date": START, "end_date": START + dt.timedelta(days=2),
+            "nights": None, "destinations": ["nepal"], "party_adults": 2, "party_child_ages": [],
+            "party_type": "couple"}  # fmt: skip
+    current_terms = {"doc_id": new_id, "version_label": "v-new", "body_text": "Terms", "body_sha256": b"\x02" * 32,
+                     "published_at": NOW}  # fmt: skip
+    for answer, expected in ((current_terms, new_id), (None, None)):
+        conn = _conn(proposal=_proposal(terms_doc_id=BASE, terms_status="retired"))
+        conn.on("FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL FOR UPDATE", trip)
+        conn.on("coalesce(max(version), 0) + 1", 3).on(CURRENT_TERMS, answer)
+        await _run(builder.create, TRIP, currency=None, from_proposal_id=BASE, conn=conn)
+        assert conn.sql("INSERT INTO crm.proposal (")[0][6] == expected
+    # A copy of a version on the published terms keeps them.
+    conn = _conn(proposal=_proposal(terms_doc_id=BASE, terms_status="published"))
+    conn.on("FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL FOR UPDATE", trip)
+    conn.on("coalesce(max(version), 0) + 1", 3).on(CURRENT_TERMS, current_terms)
+    await _run(builder.create, TRIP, currency=None, from_proposal_id=BASE, conn=conn)
+    assert conn.sql("INSERT INTO crm.proposal (")[0][6] == BASE
