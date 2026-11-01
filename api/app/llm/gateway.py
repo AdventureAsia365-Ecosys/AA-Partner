@@ -47,6 +47,26 @@ AA-964 (card CRM-33a; root ADR 0008a §5-6, root ADR 0009 §8):
   hand" and ``crm_scrub_unavailable`` is logged (an alarm can count it). No second guardrail elsewhere: a scrub path
   that was never corpus-tested must not see traveller text (decision in ``docs/implementation-notes/AA-964.md``).
 
+AA-964, S263 gateway plan F1 + F2 (root ADR 0009 decisions 4-6, 8 and 13; root ADR 0008a §6):
+
+- **Stage profile first** (crm-037, :mod:`app.llm.profiles`): the stage's profile is read in the call's transaction
+  before anything else. No profile -> ``stage_unrouted``; unreadable -> ``profile_unavailable``; another role ->
+  ``profile_mismatch``; **kill switch** off (``is_active`` false) -> ``stage_disabled``. Each is one refused row at
+  0 USD, nothing scrubbed or sent. A gateway built without a profile source (tests, :func:`stub_gateway`) runs one
+  attempt of its own provider.
+- **Route with several attempts**: the profile's enabled route entries in order, at most ``max_attempts`` (<= 6); every
+  attempt is its own ledger row (``attempt_no`` 1, 2, ...). A failed attempt moves on to the next entry; no new attempt
+  starts after ``route_deadline_s`` (class ``deadline``) or once a billed failure took the month to the budget (class
+  ``budget``). The process's provider plays each entry (``for_route``): Bedrock calls that model; the stub answers as
+  that model (its family, cost 0).
+- **The shared core** (``app.aa_llm``, vendored): ``errors.classify`` names the class of a failed attempt and
+  ``ledger.failed_outcome`` its status (``refused`` for access / credit / rate-limit refusals, else ``error`` /
+  ``other``); ``ledger.derive_status`` makes a reply cut at its token limit ``truncated`` (never ``ok``: the next entry
+  is tried, the draft falls back to "reply by hand"); a billed answer with nothing usable is ``billed_unusable``;
+  ``budget.decide`` is the spend decision (an unreadable month is ``spend_unreadable``, fail closed); Bedrock prices
+  come from ``pricing.quote`` (:mod:`app.llm.providers.bedrock`). The row's ``family`` is the maker (``anthropic``,
+  ``amazon`` for the guardrail).
+
 Slice 1 ships the stub pair (:class:`StubScrubber`, :class:`StubProvider`: deterministic, no network, cost 0) so the
 order, the refusals and the log are tested end to end before CRM-10 (scrubber) and CRM-33a (Bedrock) plug in.
 """
@@ -59,11 +79,16 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Protocol
 
+from app.aa_llm import budget as llm_budget
+from app.aa_llm import errors as llm_errors
+from app.aa_llm import ledger
 from app.audit import AuditEvent, current_request_id
+from app.llm.profiles import DbProfileSource, RouteEntry, StageProfile, fixed_profile
 from app.privacy.guardrails import GUARD_OPERATION, GUARD_STAGE, GuardCall, collect_guard_calls
 from app.privacy.placeholder_store import SealedMap, check_scrubber_version, seal_map, store_map
 from app.privacy.scrubber import KnownValues, ScrubError
@@ -75,13 +100,28 @@ STAGE_PREFIX = "crm_"
 ROLES = frozenset({"writer", "judge", "validate"})  # callers' roles; "guard" is the gateway's own guardrail row
 GUARD_ROLE = "guard"
 GUARD_PROVIDER = "bedrock_guardrails"
-GUARD_FAMILY = "guardrails"
+GUARD_FAMILY = "amazon"  # the maker of Bedrock Guardrails (root ADR 0009 §3: family = maker)
 ALERT_LEVELS = (75, 90, 100)
-ATTEMPT = 1  # one attempt per request: no fallback route in the CRM today
+ATTEMPT = 1  # the guardrail row and the refusals before any model attempt
 DEFAULT_BUDGET_USD = Decimal("2")
 STUB_PREFIX = "stub"
 MANUAL_REPLY = "manual_reply_needed"
 MAP_STORE_FAILED = "PlaceholderMapStoreError"
+# Outcomes of the gateway result (the API); the ledger rows carry the ledger v2 statuses (ledger.STATUSES).
+OK, REFUSED, ERROR = ledger.STATUS_OK, ledger.STATUS_REFUSED, ledger.STATUS_ERROR
+# Refusal codes of the stage profile (S263 F2) and of an unreadable month (budget.decide).
+STAGE_DISABLED = "stage_disabled"
+STAGE_UNROUTED = "stage_unrouted"
+PROFILE_UNAVAILABLE = "profile_unavailable"
+PROFILE_MISMATCH = "profile_mismatch"
+BUDGET_EXHAUSTED = "budget_exhausted"
+SPEND_UNREADABLE = llm_budget.REASON_SPEND_UNREADABLE
+UNROUTED_MODEL = "unrouted"
+# The stub provider's $0 test switches (Dev only: the stub never runs next to a real model). A prompt that contains
+# STUB_TRUNCATE gets a reply cut at its token limit; STUB_FAIL_FIRST makes the first route entry answer with a
+# throttle, so the second attempt is visible on Dev without paying for a model.
+STUB_TRUNCATE = "[stub:truncate]"
+STUB_FAIL_FIRST = "[stub:fail-first]"
 
 log = logging.getLogger(__name__)
 
@@ -134,6 +174,7 @@ class Completion:
     cache_write_tokens: int | None = None
     pricing_mode: str | None = None
     truncated: bool = False
+    stop_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -181,18 +222,43 @@ class StubScrubber:
         return Scrubbed(text=text, receipt={"scrubber": self.version, "entities": 0})
 
 
+class StubThrottled(Exception):
+    """The stub's throttle (``STUB_FAIL_FIRST``): the shared core classifies it ``throttled`` (a refused attempt)."""
+
+    error_class = "ThrottlingException"
+    llm_error_class = llm_errors.THROTTLED
+
+    def __init__(self) -> None:
+        super().__init__("ThrottlingException: stub")
+
+
 class StubProvider:
-    """A deterministic model: no network, cost 0, token counts from the text length."""
+    """A deterministic model: no network, cost 0, token counts from the text length. In a route it answers as the
+    entry's model and family (:meth:`for_route`), so the ledger shows the route the profile names."""
 
     name = "stub"
-    model = "stub-echo-1"
-    family = "stub"
     connection_key = "stub"
 
+    def __init__(self, model: str = "stub-echo-1", family: str | None = "stub", position: int = 0) -> None:
+        self.model = model
+        self.family = family
+        self.position = position
+
+    def for_route(self, entry: RouteEntry) -> StubProvider:
+        return StubProvider(entry.model, entry.family, entry.position)
+
     async def complete(self, prompt: str, *, system: str | None = None) -> Completion:
+        if STUB_FAIL_FIRST in prompt and self.position == 0:
+            raise StubThrottled()
         words = len(prompt.split())
+        cut = STUB_TRUNCATE in prompt
         return Completion(
-            text=f"[stub reply to {words} words]", input_tokens=words, output_tokens=6, cost_usd=Decimal(0)
+            text=f"[stub reply to {words} words]",
+            input_tokens=words,
+            output_tokens=6,
+            cost_usd=Decimal(0),
+            truncated=cut,
+            stop_reason="max_tokens" if cut else "end_turn",
         )
 
 
@@ -222,13 +288,19 @@ class LlmGateway:
         provider: Provider,
         keys: Any | None = None,
         limiter: FixedWindowLimiter | None = None,
+        profiles: Any | None = None,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         """``keys``: the :class:`app.vault.KeyProvider` that seals placeholder maps (required once the scrub replaces
-        anything; without it such a call is refused). ``limiter``: the per-agency calls-per-minute cap."""
+        anything; without it such a call is refused). ``limiter``: the per-agency calls-per-minute cap.
+        ``profiles``: the stage profile source (:class:`app.llm.profiles.DbProfileSource`; None = one attempt of
+        ``provider``, every stage active). ``clock``: monotonic seconds (tests pin the route deadline)."""
         self.scrubber = scrubber
         self.provider = provider
         self.keys = keys
         self.limiter = limiter
+        self.profiles = profiles
+        self.clock = clock or time.monotonic
 
     async def call(
         self,
@@ -246,12 +318,17 @@ class LlmGateway:
         if not stage.startswith(STAGE_PREFIX) or stage == GUARD_STAGE or role not in ROLES:
             raise ValueError("stage must be crm_* (not crm_scrub) and role writer / judge / validate")
         meta = meta or CallMeta()
-        # 0. the per-agency cap, before anything that costs money
+        # 0. the stage profile and its kill switch (free: nothing scrubbed, nothing sent, no rate token used)
+        profile, refusal = await self._profile(ctx, stage, role)
+        first = self._entry_provider(profile.attempts[0]) if profile and profile.attempts else self.provider
+        if refusal is not None or profile is None:
+            return await self._log(ctx, stage, role, REFUSED, who=first, refusal=refusal or STAGE_UNROUTED, meta=meta)
+        # the per-agency cap, before anything that costs money
         if self.limiter is not None and not self.limiter.allow(str(ctx.tenant_id)):
-            return await self._log(ctx, stage, role, "refused", refusal="rate_limited", meta=meta)
+            return await self._log(ctx, stage, role, REFUSED, who=first, refusal="rate_limited", meta=meta)
         # a real model never gets the stub scrubber (a free configuration check)
         if self.scrubber.version.startswith(STUB_PREFIX) and self.provider.name != STUB_PREFIX:
-            return await self._log(ctx, stage, role, "refused", refusal="scrubber_unavailable", meta=meta)
+            return await self._log(ctx, stage, role, REFUSED, who=first, refusal="scrubber_unavailable", meta=meta)
         # 1. budget and ai_enabled before the scrub, so a used-up budget or AI switched off pays no guardrail units.
         # The per-agency lock is taken here and holds until this transaction ends (after the log row): calls of one
         # agency are serialised, so a second call waits and then sees the first one's rows.
@@ -259,13 +336,13 @@ class LlmGateway:
         settings = await ctx.conn.fetchrow(SETTINGS_SQL)
         enabled = bool(settings["ai_enabled"]) if settings else False
         budget = Decimal(settings["ai_budget_usd"]) if settings else DEFAULT_BUDGET_USD
-        spent = Decimal(await ctx.conn.fetchval(MONTH_SPEND_SQL))
-        pct = _pct(spent, budget)
-        if spent >= budget:
-            result = await self._log(ctx, stage, role, "refused", refusal="budget_exhausted", pct=pct, meta=meta)
-            return await self._alert(ctx, result, settings, pct)
+        spent = await self._month_spend(ctx)
+        refused = await self._budget_refusal(ctx, stage, role, first, spent, budget, settings, meta)
+        if refused is not None:
+            return refused
+        pct = _pct(spent, budget)  # type: ignore[arg-type] — readable: checked by _budget_refusal
         if not enabled:
-            return await self._log(ctx, stage, role, "refused", refusal="ai_disabled", pct=pct, meta=meta)
+            return await self._log(ctx, stage, role, REFUSED, who=first, refusal="ai_disabled", pct=pct, meta=meta)
         # 2. scrub receipt (every guardrail attempt it makes is its own ledger row)
         with collect_guard_calls() as guards:
             try:
@@ -279,17 +356,17 @@ class LlmGateway:
             await self._log_guard(ctx, guard, meta)
         if failure is not None:
             log.warning("crm_scrub_unavailable refusal=%s guard_calls=%d", failure, len(guards))
-            return await self._log(ctx, stage, role, "refused", refusal=failure, meta=meta)
+            return await self._log(ctx, stage, role, REFUSED, who=first, refusal=failure, meta=meta)
         receipt = scrubbed.receipt
         placeholders: dict[str, str] = dict(getattr(scrubbed, "placeholders", {}) or {})
         common = {"receipt": receipt, "meta": meta}
         # 3. the budget again once the guardrail rows are in (they may have taken the month to 100 %)
         if guards:
-            spent = Decimal(await ctx.conn.fetchval(MONTH_SPEND_SQL))
-            pct = _pct(spent, budget)
-            if spent >= budget:
-                result = await self._log(ctx, stage, role, "refused", refusal="budget_exhausted", pct=pct, **common)
-                return await self._alert(ctx, result, settings, pct)
+            spent = await self._month_spend(ctx)
+            refused = await self._budget_refusal(ctx, stage, role, first, spent, budget, settings, meta, receipt)
+            if refused is not None:
+                return refused
+            pct = _pct(spent, budget)  # type: ignore[arg-type]
         # 3b. seal the placeholder map before paying for the call
         sealed: SealedMap | None = None
         if placeholders:
@@ -299,35 +376,12 @@ class LlmGateway:
                 check_scrubber_version(str(receipt.get("scrubber", "")))
                 sealed = await seal_map(Vault(self.keys, ctx), placeholders)  # type: ignore[arg-type]
             except Exception:  # noqa: BLE001 — a map that cannot be sealed stops the call
-                return await self._log(ctx, stage, role, "refused", refusal="scrub_failed", pct=pct, **common)
-        # 4. the call
-        hashed = prompt_hash(scrubbed.text, system)
-        started = time.monotonic()
-        try:
-            if system:
-                done = await self.provider.complete(scrubbed.text, system=system)  # type: ignore[call-arg]
-            else:
-                done = await self.provider.complete(scrubbed.text)
-        except Exception as exc:  # noqa: BLE001 — recorded by class only
-            latency = int((time.monotonic() - started) * 1000)
-            billed = getattr(exc, "billed", None)
-            failed = await self._log(
-                ctx,
-                stage,
-                role,
-                "error",
-                error=str(getattr(exc, "error_class", "") or type(exc).__name__),
-                pct=pct,
-                latency=latency,
-                completion=billed if isinstance(billed, Completion) else None,
-                hashed=hashed,
-                **common,
-            )
-            return await self._alert(ctx, failed, settings, None)
-        latency = int((time.monotonic() - started) * 1000)
-        result = await self._log(
-            ctx, stage, role, "ok", pct=pct, latency=latency, completion=done, hashed=hashed, **common
-        )
+                return await self._log(ctx, stage, role, REFUSED, who=first, refusal="scrub_failed", pct=pct, **common)
+        # 4. the route: one attempt per entry until one answers
+        answer = await self._attempts(ctx, stage, role, profile, scrubbed.text, system, spent, budget, pct, common)
+        if isinstance(answer, GatewayResult):
+            return await self._alert(ctx, answer, settings, None)
+        result, done = answer
         result = await self._alert(ctx, result, settings, None)
         map_id = None
         if sealed is not None:
@@ -339,17 +393,207 @@ class LlmGateway:
                     await store_map(ctx, sealed, result.llm_call_id or "", str(receipt.get("scrubber", "")))
             except Exception as exc:  # noqa: BLE001 — class only
                 log.warning("llm gateway: placeholder map not stored (%s), output dropped", type(exc).__name__)
-                return GatewayResult(**{**result.__dict__, "outcome": "error", "error_class": MAP_STORE_FAILED})
+                return GatewayResult(**{**result.__dict__, "outcome": ERROR, "error_class": MAP_STORE_FAILED})
             map_id = str(sealed.placeholder_map_id)
-        return GatewayResult(
-            **{**result.__dict__, "text": done.text, "placeholder_map_id": map_id, "truncated": done.truncated}
+        return GatewayResult(**{**result.__dict__, "text": done.text, "placeholder_map_id": map_id})
+
+    # ── the stage profile ───────────────────────────────────────────────────────────────────────
+    async def _profile(self, ctx: AnyContext, stage: str, role: str) -> tuple[StageProfile | None, str | None]:
+        """(profile, refusal code or None). Fails closed: no profile, an unreadable one, another role or the kill
+        switch off each refuse."""
+        if self.profiles is None:
+            return fixed_profile(stage, role, self.provider.model, getattr(self.provider, "family", None)), None
+        try:
+            # a savepoint: an unreadable profile leaves the call's transaction usable for the refusal row
+            async with ctx.conn.transaction():
+                profile = await self.profiles.load_route(ctx, stage)
+        except Exception as exc:  # noqa: BLE001 — class only
+            log.warning("crm_llm_profile_unavailable stage=%s error=%s", stage, type(exc).__name__)
+            return None, PROFILE_UNAVAILABLE
+        if profile is None:
+            return None, STAGE_UNROUTED
+        if profile.role != role:
+            return profile, PROFILE_MISMATCH
+        if not profile.is_active:
+            return profile, STAGE_DISABLED
+        if not profile.attempts:
+            return profile, STAGE_UNROUTED
+        return profile, None
+
+    def _entry_provider(self, entry: RouteEntry) -> Any:
+        """The process's provider playing one route entry (its model and family); itself without a profile source."""
+        for_route = getattr(self.provider, "for_route", None) if self.profiles is not None else None
+        return for_route(entry) if for_route is not None else self.provider
+
+    # ── the budget (the shared core's decision) ─────────────────────────────────────────────────
+    async def _month_spend(self, ctx: AnyContext) -> Decimal | None:
+        """This month's spend of the agency; None when it cannot be read (the decision then fails closed)."""
+        try:
+            async with ctx.conn.transaction():
+                value = await ctx.conn.fetchval(MONTH_SPEND_SQL)
+            return Decimal(value)
+        except Exception as exc:  # noqa: BLE001 — class only
+            log.warning("crm_llm_spend_unreadable error=%s", type(exc).__name__)
+            return None
+
+    async def _budget_refusal(
+        self,
+        ctx: AnyContext,
+        stage: str,
+        role: str,
+        who: Any,
+        spent: Decimal | None,
+        budget: Decimal,
+        settings: Any,
+        meta: CallMeta,
+        receipt: dict[str, Any] | None = None,
+    ) -> GatewayResult | None:
+        """The refused result when ``budget.decide`` says no (cap reached, or the month unreadable), else None."""
+        decision = llm_budget.decide(float(spent) if spent is not None else None, float(budget))
+        if decision.allowed:
+            return None
+        if decision.reason != llm_budget.REASON_CAP:
+            return await self._log(
+                ctx, stage, role, REFUSED, who=who, refusal=SPEND_UNREADABLE, receipt=receipt, meta=meta
+            )
+        pct = _pct(spent, budget)  # type: ignore[arg-type]
+        result = await self._log(
+            ctx, stage, role, REFUSED, who=who, refusal=BUDGET_EXHAUSTED, pct=pct, receipt=receipt, meta=meta
         )
+        return await self._alert(ctx, result, settings, pct)
+
+    # ── the attempts ────────────────────────────────────────────────────────────────────────────
+    async def _attempts(
+        self,
+        ctx: AnyContext,
+        stage: str,
+        role: str,
+        profile: StageProfile,
+        text: str,
+        system: str | None,
+        spent: Decimal,
+        budget: Decimal,
+        pct: float,
+        common: dict[str, Any],
+    ) -> tuple[GatewayResult, Completion] | GatewayResult:
+        """Each route entry in order until one answers ``ok``: (its result, its completion). Otherwise the result of
+        the last attempt, with the gateway outcome (``refused`` when every attempt was refused, else ``error``) and
+        the class that ended the route (``deadline`` / ``budget`` when those stopped it)."""
+        hashed = prompt_hash(text, system)
+        started = self.clock()
+        failures: list[tuple[str, str]] = []  # (ledger status, error class) per failed attempt
+        last: GatewayResult | None = None
+        stopped: str | None = None
+        for number, entry in enumerate(profile.attempts, start=1):
+            if number > 1 and self.clock() - started >= profile.route_deadline_s:
+                stopped = llm_errors.DEADLINE
+                break
+            who = self._entry_provider(entry)
+            begun = self.clock()
+            try:
+                done = await (who.complete(text, system=system) if system else who.complete(text))
+            except Exception as exc:  # noqa: BLE001 — recorded by class only
+                billed = getattr(exc, "billed", None)
+                billed = billed if isinstance(billed, Completion) else None
+                if billed is not None:
+                    status, cls = ledger.STATUS_BILLED_UNUSABLE, llm_errors.OTHER
+                else:
+                    status, cls = ledger.failed_outcome(exc)
+                log.warning(
+                    "crm_llm_attempt_failed stage=%s attempt=%d status=%s class=%s kind=%s",
+                    stage,
+                    number,
+                    status,
+                    cls,
+                    getattr(exc, "error_class", None) or type(exc).__name__,
+                )
+                last = await self._log(
+                    ctx,
+                    stage,
+                    role,
+                    status,
+                    who=who,
+                    attempt=number,
+                    refusal=cls if status == REFUSED else None,
+                    error=cls,
+                    pct=pct,
+                    latency=self._ms(begun),
+                    completion=billed,
+                    hashed=hashed,
+                    **common,
+                )
+                failures.append((status, cls))
+                if billed is not None:
+                    spent += billed.cost_usd
+                    if not llm_budget.decide(float(spent), float(budget)).allowed:
+                        stopped = llm_errors.BUDGET
+                        break
+                continue
+            cut = ledger.STATUS_TRUNCATED if done.truncated else None
+            status = ledger.derive_status(cut, stop_reason=done.stop_reason)
+            if status == ledger.STATUS_TRUNCATED:
+                last = await self._log(
+                    ctx,
+                    stage,
+                    role,
+                    status,
+                    who=who,
+                    attempt=number,
+                    error=llm_errors.TRUNCATED,
+                    pct=pct,
+                    latency=self._ms(begun),
+                    completion=done,
+                    hashed=hashed,
+                    **common,
+                )
+                failures.append((status, llm_errors.TRUNCATED))
+                spent += done.cost_usd
+                if not llm_budget.decide(float(spent), float(budget)).allowed:
+                    stopped = llm_errors.BUDGET
+                    break
+                continue
+            result = await self._log(
+                ctx,
+                stage,
+                role,
+                OK,
+                who=who,
+                attempt=number,
+                pct=pct,
+                latency=self._ms(begun),
+                completion=done,
+                hashed=hashed,
+                **common,
+            )
+            return result, done
+        if last is None:  # unreachable: the first entry always runs (a profile without entries is refused)
+            raise RuntimeError("a route without attempts")
+        classes = [cls for _, cls in failures]
+        if all(status == REFUSED for status, _ in failures) and stopped is None:
+            code = llm_errors.account_level_class(classes) or classes[-1]
+            return GatewayResult(**{**last.__dict__, "outcome": REFUSED, "refusal_code": code, "error_class": code})
+        final = stopped or llm_errors.account_level_class(classes) or classes[-1]
+        return GatewayResult(
+            **{
+                **last.__dict__,
+                "outcome": ERROR,
+                "refusal_code": None,
+                "error_class": final,
+                "truncated": failures[-1][0] == ledger.STATUS_TRUNCATED,
+            }
+        )
+
+    def _ms(self, begun: float) -> int:
+        return max(0, int((self.clock() - begun) * 1000))
 
     async def _alert(self, ctx: AnyContext, result: GatewayResult, settings: Any, pct: float | None) -> GatewayResult:
         """R5: raise the month's 75 / 90 / 100 % alert once per level (after the row that crossed it is logged)."""
         if pct is None:
             budget = Decimal(settings["ai_budget_usd"]) if settings else DEFAULT_BUDGET_USD
-            pct = _pct(Decimal(await ctx.conn.fetchval(MONTH_SPEND_SQL)), budget)
+            spent = await self._month_spend(ctx)
+            if spent is None:  # the call is logged; no alert without a readable month (the next call refuses)
+                return result
+            pct = _pct(spent, budget)
             result = GatewayResult(**{**result.__dict__, "budget_used_pct": round(pct, 1)})
         level = alert_level(pct)
         if level is None:
@@ -416,6 +660,8 @@ class LlmGateway:
         role: str,
         outcome: str,
         *,
+        who: Any | None = None,
+        attempt: int = ATTEMPT,
         refusal: str | None = None,
         error: str | None = None,
         receipt: dict[str, Any] | None = None,
@@ -425,8 +671,11 @@ class LlmGateway:
         meta: CallMeta | None = None,
         hashed: str | None = None,
     ) -> GatewayResult:
+        """One ``crm.llm_call`` row (``outcome`` = the ledger v2 status) as attempt ``attempt`` of ``who`` (the
+        provider playing the route entry; the gateway's own provider by default), its rollup and audit event."""
         receipt = receipt or {}
         meta = meta or CallMeta()
+        who = who or self.provider
         tokens_in = completion.input_tokens if completion else 0
         tokens_out = completion.output_tokens if completion else 0
         cost = completion.cost_usd if completion else Decimal(0)
@@ -434,8 +683,8 @@ class LlmGateway:
             INSERT_CALL_SQL,
             stage,
             role,
-            self.provider.name,
-            self.provider.model,
+            who.name,
+            who.model,
             tokens_in,
             tokens_out,
             cost,
@@ -444,12 +693,12 @@ class LlmGateway:
             refusal,
             error,
             json.dumps(receipt),
-            ATTEMPT,
+            attempt,
             completion.request_id if completion else None,
             meta.job_id,
-            getattr(self.provider, "connection_key", None) or self.provider.name,
-            self.provider.model,
-            getattr(self.provider, "family", None),
+            getattr(who, "connection_key", None) or who.name,
+            who.model,
+            getattr(who, "family", None),
             completion.cache_read_tokens if completion else None,
             completion.cache_write_tokens if completion else None,
             None,
@@ -458,9 +707,7 @@ class LlmGateway:
             hashed,
             meta.prompt_version,
         )
-        await ctx.conn.execute(
-            ROLLUP_SQL, stage, self.provider.model, 0 if outcome == "ok" else 1, tokens_in, tokens_out, cost
-        )
+        await ctx.conn.execute(ROLLUP_SQL, stage, who.model, 0 if outcome == OK else 1, tokens_in, tokens_out, cost)
         # Design §4.9 "AI context builds" (AA-940): one agency audit event per gateway call, actor = the AI stage
         # (the member or job that asked is the llm_call row's created_by). A refusal is a denied event.
         ctx.audit_events.append(
@@ -468,10 +715,10 @@ class LlmGateway:
                 actor_kind="ai_agent",
                 actor_ref=f"ai:{stage}",
                 action="ai_context_build",
-                outcome="denied" if outcome == "refused" else "allowed",
+                outcome="denied" if outcome == REFUSED else "allowed",
                 object_kind="llm_call",
                 object_id=str(call_id),
-                reason=refusal or ("provider_error" if outcome == "error" else None),
+                reason=refusal or ("provider_error" if outcome != OK else None),
                 request_id=current_request_id(),
             )
         )
@@ -490,6 +737,7 @@ def _pct(spent: Decimal, budget: Decimal) -> float:
 
 
 def stub_gateway() -> LlmGateway:
+    """The stub pair without a profile source: one attempt of the stub, every stage active (tests)."""
     return LlmGateway(StubScrubber(), StubProvider())
 
 
@@ -502,6 +750,8 @@ def build_gateway(settings: Any, keys: Any | None = None) -> LlmGateway:
     - **provider**: :class:`app.llm.providers.bedrock.BedrockConverseProvider` only when ``CRM_LLM_PROVIDER=bedrock``
       (``app.settings`` refuses it without a model id and both prices); the stub otherwise (the default).
     - **limiter**: ``RATE_LIMIT_AI_PER_MINUTE`` calls per agency per minute (0 = off).
+    - **profiles**: the stage profiles in ``crm`` (crm-037, :class:`app.llm.profiles.DbProfileSource`): the route, the
+      attempts, the deadline and the kill switch of each stage. The provider plays each route entry (``for_route``).
 
     No AWS call here: the Bedrock and guardrail clients are made on first use.
     """
@@ -521,4 +771,10 @@ def build_gateway(settings: Any, keys: Any | None = None) -> LlmGateway:
         )
     real_scrub = bool(settings.scrub_guardrail_id) or provider.name != STUB_PREFIX
     scrubber: Any = build_scrubber(settings) if real_scrub else StubScrubber()
-    return LlmGateway(scrubber, provider, keys=keys, limiter=FixedWindowLimiter(settings.rate_limit_ai_per_minute))
+    return LlmGateway(
+        scrubber,
+        provider,
+        keys=keys,
+        limiter=FixedWindowLimiter(settings.rate_limit_ai_per_minute),
+        profiles=DbProfileSource(),
+    )

@@ -8,51 +8,53 @@ an outage is one ``error`` row and the draft says "reply by hand" (the gateway n
 - The client is **injectable** (tests pass a fake; nothing here calls AWS at import or construction). Without one, a
   ``bedrock-runtime`` client is made on first use, with the task role, or with the CRM-only invoker role
   ``CRM_LLM_ROLE_ARN`` when set (STS ``AssumeRole``, credentials cached until 5 minutes before they expire).
-- **Cost** is priced here from the configured per-million-token prices (``CRM_LLM_USD_PER_MTOK_IN`` / ``_OUT``,
-  ``pricing_mode code_table``), so every call counts against the agency budget. Cache tokens are recorded as reported;
-  the CRM sends no cache point, so they are 0 today and not priced.
+- **Cost** is priced with the shared core (``app.aa_llm.pricing.quote``, AA-964 S263 F1): the route entry's catalog
+  prices (crm-037 ``crm.llm_stage_route``, ``pricing_mode catalog``), overridden by ``CRM_LLM_USD_PER_MTOK_IN`` /
+  ``_OUT`` for the configured model (``override``), else the core's code table (``code_table``) or its high estimate
+  (``estimate``, never 0), so every call counts against the agency budget. Cache tokens are recorded as reported and
+  priced at the core's cache rates (the CRM sends no cache point, so they are 0 today).
+- **Route** (S263 F2): :meth:`BedrockConverseProvider.for_route` gives the provider of one route entry (its model,
+  family and prices) on the same client.
 - Errors leave as :class:`ProviderCallError` with a class code only (the AWS error code, e.g.
   ``AccessDeniedException``, ``ThrottlingException``), never the message: botocore messages can echo request fields.
+  Its ``llm_error_class`` is the shared core's class (``app.aa_llm.errors.classify`` of the whole exception, read here
+  and never stored), so the gateway records ``access_denied`` / ``quota_exhausted`` / ``throttled`` / ``other``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import logging
 import re
 import threading
 from decimal import Decimal
 from typing import Any
 
+from app.aa_llm import errors as llm_errors
+from app.aa_llm import pricing
+from app.aa_llm.ledger import TRUNCATED_STOP_REASONS
 from app.llm.gateway import Completion
+from app.llm.profiles import RouteEntry, family_of
 
-MTOK = Decimal(1_000_000)
 _CODE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 ROLE_SESSION = "crm-llm-gateway"
 REFRESH_BEFORE = dt.timedelta(minutes=5)
 DEFAULT_TEMPERATURE = 0.3
 
+log = logging.getLogger(__name__)
+
 
 class ProviderCallError(Exception):
     """A provider call failed; ``error_class`` is the code the ledger records (no message). ``billed``: the tokens and
     cost of a call the provider billed although its answer is unusable (an empty turn), so the budget still sees it."""
 
-    def __init__(self, error_class: str, billed: Completion | None = None) -> None:
+    def __init__(self, error_class: str, billed: Completion | None = None, llm_error_class: str | None = None) -> None:
         super().__init__(error_class)
         self.error_class = error_class if _CODE.match(error_class or "") else "ProviderError"
         self.billed = billed
-
-
-def model_family(model_id: str) -> str | None:
-    """``us.anthropic.claude-haiku-5-5-...-v1:0`` -> ``claude-haiku``; None when the id has no recognisable name."""
-    name = model_id.rsplit("/", 1)[-1]
-    parts = name.split(".")
-    name = parts[-1] if len(parts) > 1 else name
-    words = [w for w in re.split(r"[-:]", name.lower()) if w]
-    if len(words) >= 2 and words[0].isalpha() and words[1].isalpha():
-        return f"{words[0]}-{words[1]}"
-    return words[0] if words and words[0].isalpha() else None
+        self.llm_error_class = llm_error_class or llm_errors.classify_text(self.error_class)
 
 
 def _error_class(exc: BaseException) -> str:
@@ -76,30 +78,62 @@ class BedrockConverseProvider:
         self,
         model_id: str,
         *,
-        usd_per_mtok_in: Decimal,
-        usd_per_mtok_out: Decimal,
+        usd_per_mtok_in: Decimal | None = None,
+        usd_per_mtok_out: Decimal | None = None,
+        catalog: tuple[Decimal, Decimal] | None = None,
+        family: str | None = None,
         region: str = "us-west-1",
         max_tokens: int = 800,
         timeout_s: float = 30.0,
         role_arn: str = "",
         client: Any | None = None,
+        parent: BedrockConverseProvider | None = None,
     ) -> None:
+        """``usd_per_mtok_in`` / ``_out``: the configured price override of this model (both or neither, > 0).
+        ``catalog``: the route entry's catalog prices (in, out per million tokens). ``parent``: the provider whose
+        client this one shares (a route entry of the process's provider)."""
         if not model_id:
             raise ValueError("a model id is required")
-        if usd_per_mtok_in <= 0 or usd_per_mtok_out <= 0:
-            raise ValueError("a real model needs both prices (the budget must see its cost)")
+        if (usd_per_mtok_in is None) != (usd_per_mtok_out is None):
+            raise ValueError("a price override needs both prices")
+        if usd_per_mtok_in is not None and (usd_per_mtok_in <= 0 or usd_per_mtok_out <= 0):  # type: ignore[operator]
+            raise ValueError("a price override must be above 0 (the budget must see the cost)")
         self.model = model_id
-        self.family = model_family(model_id)
+        self.family = family or family_of(model_id)
         self.connection_key = "bedrock_role" if role_arn else "bedrock"
         self.usd_in = usd_per_mtok_in
         self.usd_out = usd_per_mtok_out
+        self.catalog = catalog
         self.region = region
         self.max_tokens = max_tokens
         self.timeout_s = timeout_s
         self.role_arn = role_arn
         self._client = client
+        self._parent = parent
         self._expires: dt.datetime | None = None
         self._lock = threading.Lock()
+        self._children: dict[RouteEntry, BedrockConverseProvider] = {}
+
+    def for_route(self, entry: RouteEntry) -> BedrockConverseProvider:
+        """The provider of one route entry: its model, family and catalog prices, on this provider's client. The
+        configured price override applies only to the configured model."""
+        child = self._children.get(entry)
+        if child is None:
+            same = entry.model == self.model
+            child = BedrockConverseProvider(
+                entry.model,
+                usd_per_mtok_in=self.usd_in if same else None,
+                usd_per_mtok_out=self.usd_out if same else None,
+                catalog=entry.catalog_prices,
+                family=entry.family,
+                region=self.region,
+                max_tokens=self.max_tokens,
+                timeout_s=self.timeout_s,
+                role_arn=self.role_arn,
+                parent=self._parent or self,
+            )
+            self._children[entry] = child
+        return child
 
     # ── the client ──────────────────────────────────────────────────────────────────────────────
     def _config(self) -> Any:
@@ -112,7 +146,10 @@ class BedrockConverseProvider:
         )
 
     def _runtime(self) -> Any:
-        """The injected client, else a client with the task role or the assumed invoker role (refreshed)."""
+        """The injected client, else a client with the task role or the assumed invoker role (refreshed). A route
+        entry's provider uses its parent's client."""
+        if self._parent is not None:
+            return self._parent._runtime()
         with self._lock:
             now = dt.datetime.now(dt.UTC)
             if self._client is not None and (self._expires is None or now < self._expires - REFRESH_BEFORE):
@@ -136,10 +173,16 @@ class BedrockConverseProvider:
             self._expires = c["Expiration"]
             return self._client
 
-    # ── the call ────────────────────────────────────────────────────────────────────────────────
-    def cost(self, input_tokens: int, output_tokens: int) -> Decimal:
-        return (Decimal(input_tokens) * self.usd_in + Decimal(output_tokens) * self.usd_out) / MTOK
+    # ── the price ───────────────────────────────────────────────────────────────────────────────
+    def quote(self, usage: pricing.Usage) -> pricing.Quote:
+        """The shared core's quote: the override, else the catalog prices, else the code table, else the estimate."""
+        catalog = pricing.catalog_rates(*self.catalog) if self.catalog else None
+        override = (
+            {"price_in_override": self.usd_in, "price_out_override": self.usd_out} if self.usd_in is not None else None
+        )
+        return pricing.quote(self.model, usage, override, catalog=catalog, on_estimate=_log_estimate)
 
+    # ── the call ────────────────────────────────────────────────────────────────────────────────
     def _request(self, prompt: str, system: str | None) -> dict[str, Any]:
         request: dict[str, Any] = {
             "modelId": self.model,
@@ -155,7 +198,7 @@ class BedrockConverseProvider:
             client = await asyncio.to_thread(self._runtime)
             response = await asyncio.to_thread(client.converse, **self._request(prompt, system))
         except Exception as exc:  # noqa: BLE001 — class only, never the message
-            raise ProviderCallError(_error_class(exc)) from None
+            raise ProviderCallError(_error_class(exc), llm_error_class=llm_errors.classify(exc)) from None
         return self.parse(response)
 
     def parse(self, response: Any) -> Completion:
@@ -165,20 +208,35 @@ class BedrockConverseProvider:
         texts = [part.get("text") for part in content if isinstance(part, dict) and isinstance(part.get("text"), str)]
         usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
         tokens_in, tokens_out = _int(usage.get("inputTokens")), _int(usage.get("outputTokens"))
+        cache_read, cache_write = _int(usage.get("cacheReadInputTokens")), _int(usage.get("cacheWriteInputTokens"))
         request_id = ((response.get("ResponseMetadata") or {}).get("RequestId")) or None
         stop = response.get("stopReason")
+        stop = stop if isinstance(stop, str) and _CODE.match(stop) else None
+        quote = self.quote(
+            pricing.Usage(
+                input_tokens=tokens_in,
+                output_tokens=tokens_out,
+                cache_read_tokens=cache_read,
+                cache_write_tokens=cache_write,
+            )
+        )
         done = Completion(
             text="".join(texts),
             input_tokens=tokens_in,
             output_tokens=tokens_out,
-            cost_usd=self.cost(tokens_in, tokens_out),
+            cost_usd=Decimal(str(quote.cost_usd)),
             request_id=request_id if isinstance(request_id, str) and _REQUEST_ID.match(request_id) else None,
-            cache_read_tokens=_int(usage.get("cacheReadInputTokens")),
-            cache_write_tokens=_int(usage.get("cacheWriteInputTokens")),
-            pricing_mode="code_table",
-            truncated=stop == "max_tokens",
+            cache_read_tokens=cache_read,
+            cache_write_tokens=cache_write,
+            pricing_mode=quote.pricing_mode,
+            truncated=stop in TRUNCATED_STOP_REASONS,
+            stop_reason=stop,
         )
         if not texts:
             # Billed but nothing usable (a refusal or an empty turn): the cost is real, the draft is not.
             raise ProviderCallError("EmptyOutput", billed=done)
         return done
+
+
+def _log_estimate(model: str) -> None:
+    log.warning("crm_llm_price_estimate model=%s (no catalog price, no override, not in the core table)", model)

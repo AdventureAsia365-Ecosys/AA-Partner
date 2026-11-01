@@ -10,7 +10,8 @@ reference as ``ticket:<REF>``).
 AA-936 (card CRM-08, what CIS #975 reads): ``GET /jobs/summary`` (``crm.job`` per kind), ``GET /llm/usage``.
 AA-964 (crm.ops.v1 1.6, root ADR 0009 §8): ``GET /llm/calls?from&to&tenant_id&stage&status&limit&cursor``, the CRM
 ledger rows (``crm.llm_call``, scrubbed fields only) newest first, for the CIS admin Calls tab
-(:func:`console.platform_llm_calls`; one ``ops_read`` event in each agency whose rows were returned).
+(:func:`console.platform_llm_calls`; one ``ops_read`` event in each agency whose rows were returned). crm.ops.v1 1.7
+(S263 F1, crm-037): ``status`` adds the ledger v2 values ``billed_unusable`` and ``truncated``.
 AA-992 (crm.ops.v1 1.4, the CIS admin page /admin/data-coverage): ``GET /data-coverage``, platform-wide counts only
 (agencies and members per status, the AA catalog cache); no per-agency audit event (:func:`console.platform_coverage`).
 AA-939 (card CRM-11, Q1 6.3): members, member deactivation, owner recovery open / complete.
@@ -76,6 +77,9 @@ from app.reports import insights
 from app.vault.provider import require_keys
 
 router = class_router(OPS, tags=["ops"])
+
+# The ledger v2 statuses of a crm.llm_call row (app.aa_llm.ledger.STATUSES; crm-037, crm.ops.v1 1.7).
+LlmStatus = Literal["ok", "refused", "error", "billed_unusable", "truncated"]
 
 PlatformAdmin = Annotated[Caller, Depends(require_group(GROUP_CRM_PLATFORM_ADMIN))]
 Reader = Annotated[Caller, Depends(current_caller)]
@@ -280,7 +284,7 @@ class LlmCallRow(_Out):
     attempt_no: int | None
     provider_request_id: str | None
     job_id: str | None
-    status: Literal["ok", "refused", "error"]
+    status: LlmStatus
     refusal_code: str | None
     error_class: str | None
     input_tokens: int
@@ -439,7 +443,7 @@ async def get_llm_calls(
     to: Annotated[date, Query()],
     tenant_id: Annotated[uuid.UUID | None, Query()] = None,
     stage: Annotated[str | None, Query(pattern=r"^crm_[a-z0-9_]{1,40}$")] = None,
-    status: Annotated[Literal["ok", "refused", "error"] | None, Query()] = None,
+    status: Annotated[LlmStatus | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=console.LLM_CALLS_MAX_LIMIT)] = 100,
     cursor: Annotated[str | None, Query(max_length=120)] = None,
 ) -> dict:
