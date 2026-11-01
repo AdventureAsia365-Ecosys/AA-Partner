@@ -5,7 +5,7 @@
 // field is masked ("••••") until a member presses Reveal and picks a reason (one reveal event per field). No partial
 // digits are ever formatted here. Edge-safe, unit-tested.
 
-import { fmt, type Lang, type MessageKey, t } from "./i18n";
+import { type Lang, type MessageKey, plural, t } from "./i18n";
 import type { Stage, WaitingOn } from "./pipeline";
 
 export const REVEAL_FIELDS = [
@@ -249,5 +249,5 @@ export function roleText(lang: Lang, role: "lead" | "companion"): string {
 }
 
 export function tripsCount(lang: Lang, n: number): string {
-  return fmt(t(lang, "clients.trips"), { n });
+  return plural(lang, "clients.trips", n);
 }

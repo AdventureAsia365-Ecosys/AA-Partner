@@ -2,7 +2,7 @@
 // AA-957 S262 round 3 — the singular of every counted message on the pages the live acceptance read ("1 commissions",
 // "1 travellers", "1 days"): `<key>.one`, picked by `plural()` (lib/i18n.ts) when the count is 1. Vietnamese has no
 // plural form, so its `.one` text is the same as the counted message (every key exists in both languages:
-// tests/i18n.test.ts; tests/plurals.test.ts checks each `.one` has its counted key and the same slots).
+// tests/i18n.test.ts; tests/closedTripRound3.test.ts checks each `.one` has its counted key and the same slots).
 
 export const pluralsEn = {
   "commissions.total.count.one": "{n} commission",
@@ -21,6 +21,9 @@ export const pluralsEn = {
   "duty.travellers.one": "{n} traveller",
   "aa.add.days.one": "{n} day",
   "aa.add.seats.one": "{n} seat left",
+  "clients.trips.one": "{n} trip",
+  "clients.together.one": "{n} trip together",
+  "messages.attachments.one": "{n} attachment kept in Documents",
 } as const;
 
 export const pluralsVi: Record<keyof typeof pluralsEn, string> = {
@@ -40,4 +43,7 @@ export const pluralsVi: Record<keyof typeof pluralsEn, string> = {
   "duty.travellers.one": "{n} khách",
   "aa.add.days.one": "{n} ngày",
   "aa.add.seats.one": "còn {n} chỗ",
+  "clients.trips.one": "{n} chuyến",
+  "clients.together.one": "{n} chuyến đi cùng nhau",
+  "messages.attachments.one": "{n} tệp đính kèm đã lưu trong Tài liệu",
 };

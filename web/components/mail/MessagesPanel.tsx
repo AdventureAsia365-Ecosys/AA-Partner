@@ -10,7 +10,7 @@ import { useTripClosed } from "@/components/pipeline/TripClosed";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
-import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
+import { plural, t, type Lang, type MessageKey } from "@/lib/i18n";
 import {
   createAutosave,
   htmlFrame,
@@ -87,7 +87,7 @@ function MessageItem({
         </div>
       )}
       {m.attachments.length > 0 && (
-        <span style={{ fontSize: 12, color: K.muted }}>{fmt(tr("messages.attachments"), { n: m.attachments.length })}</span>
+        <span style={{ fontSize: 12, color: K.muted }}>{plural(lang, "messages.attachments", m.attachments.length)}</span>
       )}
       {m.attachment_notes.map((code, i) => (
         <span key={`${code}-${i}`} style={{ fontSize: 12, color: K.muted }}>

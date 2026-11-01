@@ -29,7 +29,7 @@ import {
   type RelationKind,
 } from "@/lib/clients";
 import type { DateLocale } from "@/lib/dates";
-import { fmt, type Lang, type MessageKey, t } from "@/lib/i18n";
+import { fmt, type Lang, type MessageKey, plural, t } from "@/lib/i18n";
 import type { Role } from "@/lib/nav";
 import { memberLabel, stageLabel, whenLabel, type Member } from "@/lib/pipeline";
 
@@ -356,7 +356,7 @@ export function ClientProfileView({ view, members, role, lang, locale }: { view:
                     </a>{" "}
                     <span style={{ color: K.muted }}>
                       · {relationLabel(lang, r.kind)}
-                      {r.trips_together ? ` · ${fmt(t(lang, "clients.together"), { n: r.trips_together })}` : ""}
+                      {r.trips_together ? ` · ${plural(lang, "clients.together", r.trips_together)}` : ""}
                     </span>
                   </span>
                   <Button size="sm" variant="ghost" disabled={busy} onClick={() => void send("DELETE", `travelers/${id}/relations/${r.relation_id}`)}>

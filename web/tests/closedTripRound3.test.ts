@@ -13,6 +13,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Commission } from "@/lib/commissions";
+import { tripsCount } from "@/lib/clients";
 import { MESSAGES, plural, type MessageKey } from "@/lib/i18n";
 import type { Receivable } from "@/lib/invoices";
 import type { Line, TripLines } from "@/lib/ledger";
@@ -341,6 +342,13 @@ describe("counted words", () => {
     expect(plural("en", "cancelTrip.aaFee", 1, { amount: "10.00 USD", pct: "10", days: 1 })).toBe("Fee 10.00 USD (10 %, 1 day before departure)");
     expect(plural("vi", "commissions.total.count", 1)).toBe("1 khoản hoa hồng");
     expect(plural("vi", "commission.overdueDays", 1)).toBe(plural("vi", "commission.overdueDays", 2).replace("2", "1"));
+    expect(tripsCount("en", 1)).toBe("1 trip");
+    expect(tripsCount("en", 3)).toBe("3 trips");
+    expect(tripsCount("vi", 1)).toBe("1 chuyến");
+    expect(plural("en", "clients.together", 1)).toBe("1 trip together");
+    expect(plural("en", "clients.together", 2)).toBe("2 trips together");
+    expect(plural("en", "messages.attachments", 1)).toBe("1 attachment kept in Documents");
+    expect(plural("en", "messages.attachments", 4)).toBe("4 attachments kept in Documents");
   });
   it("every singular has its counted message and the same slots, in both languages", () => {
     const slots = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
