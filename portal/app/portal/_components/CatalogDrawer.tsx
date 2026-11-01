@@ -11,7 +11,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Download, Save, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { T, mono, sans, Btn, LoadingScreen, parseContent, parseHighlights, fmtDateTime } from "./ui";
-import { AiContentNotice } from "./AiContentNotice";
+import { AiNotice } from "@/app/_kit";
 import { MasterNewerNotice } from "./MasterNewerNotice";
 import { SeeOriginalToggle } from "./SeeOriginalToggle";
 import { fetchVersionDetail, type Version } from "./catalogApi";
@@ -275,7 +275,7 @@ export function CatalogDrawer(props: CatalogDrawerBody) {
 
         <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", flexWrap: "wrap", gap: 8, paddingTop: 14, marginTop: 14, borderTop: `1px solid ${T.line}` }}>
           {/* AA-819 — AUP notice beside Export DOCX; takes the free space, wraps above the buttons on phones. */}
-          <AiContentNotice style={{ flex: "1 1 260px", minWidth: 0 }} />
+          <AiNotice variant="publisher" style={{ flex: "1 1 260px", minWidth: 0 }} />
           <Btn variant="ghost" disabled={exporting} onClick={() => props.onExportDocx(detail.id)}>
             <Download size={12} /> {exporting ? "Exporting…" : "Export DOCX"}
           </Btn>

@@ -27,11 +27,10 @@ import { CheckCircle2, Download, ExternalLink, Send } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, ConfirmModal, Drawer, K, useToast } from "@/app/_kit";
+import { AiNotice, Button, ConfirmModal, Drawer, K, useToast } from "@/app/_kit";
 import { pieceWorkStatus } from "./workStatus";
 import { T, sans } from "./ui";
 import AngleGateWizard, { type ContentPiece } from "./AngleGateWizard";
-import { AiContentNotice } from "./AiContentNotice";
 import { PUBLISHABLE_CHANNELS, exportPiece, publishPiece } from "./reviewListApi";
 import { channelName } from "./channelLabels";
 import { MarkdownBody } from "./markdownText";
@@ -203,7 +202,7 @@ function ResultActions({ piece, target, confirmPublish, setConfirmPublish }: {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%", minWidth: 0 }}>
       {/* AA-819 — the neutral AI notice beside every publish/export action. */}
-      <AiContentNotice />
+      <AiNotice variant="publisher" />
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
         <Button size="sm" variant="secondary" onClick={() => doExport("text")}>
           <Download size={12} /> Export text
@@ -228,7 +227,7 @@ function ResultActions({ piece, target, confirmPublish, setConfirmPublish }: {
         onConfirm={doPublish}
         busy={publishing}
         title={`Publish to ${channelName(channel)}?`}
-        body={<>This posts the content to your connected {channelName(channel)} account now. <AiContentNotice style={{ marginTop: 10 }} /></>}
+        body={<>This posts the content to your connected {channelName(channel)} account now. <AiNotice variant="publisher" style={{ marginTop: 10 }} /></>}
         confirmLabel="Publish now"
       />
     </div>

@@ -20,6 +20,7 @@ import { useCallback, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { T, sans, Btn, CtaLink, parseContent } from "./ui";
 import {
+  AiNotice,
   type ColumnDef,
   DataTable,
   Drawer,
@@ -34,7 +35,6 @@ import { MasterNewerBadge } from "./MasterNewerNotice";
 import { showMasterNotice } from "@/lib/masterNotice";
 import { useWriteWatcher } from "./WriterPanel";
 import { forgetLiveSnapshot } from "./LiveWriter";
-import { AiContentNotice } from "./AiContentNotice";
 import {
   fetchMyVersions,
   fetchVersionDetail,
@@ -373,7 +373,7 @@ function CatalogInner() {
         )}
       </div>
       {/* AA-819 — AUP notice for the CSV/XLSX/DOCX exports on this page. */}
-      <AiContentNotice style={{ marginBottom: 12 }} />
+      <AiNotice variant="publisher" style={{ marginBottom: 12 }} />
 
       <DataTable<Version>
         data={visible}

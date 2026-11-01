@@ -6,9 +6,8 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { Send } from "lucide-react";
-import { K, PageHeader, sans } from "@/app/_kit";
+import { AiNotice, K, PageHeader, sans } from "@/app/_kit";
 import { ReviewList } from "../_components/ReviewList";
-import { AiContentNotice } from "../_components/AiContentNotice";
 import { ROUTES } from "@/app/_kit/local/portalNav";
 
 export default function MyContentPage() {
@@ -21,7 +20,7 @@ export default function MyContentPage() {
         description={<>
           See everything you&rsquo;ve written — where it came from and whether it&rsquo;s ready — before you publish.
           {/* AA-819 — AUP notice; covers the list's bulk export/publish too. */}
-          <AiContentNotice style={{ marginTop: 8 }} />
+          <AiNotice variant="publisher" style={{ marginTop: 8 }} />
         </>}
         actions={
           <Link href={ROUTES.publish} data-testid="my-content-publish" style={{

@@ -35,6 +35,8 @@ export { useMediaQuery, useIsPhone, PHONE_QUERY } from "./core/useMediaQuery";
 export { useSidebarCollapsed } from "./core/useSidebar";
 export { useHydrated } from "./core/useHydrated";
 export type { ThemeChoice, ResolvedTheme } from "./core/theme";
+export { AiNotice } from "./core/AiNotice";
+export { AI_NOTICE_MESSAGES, aiNoticeText, type AiNoticeVariant } from "./core/aiNotice.messages";
 
 // ── portal-local ─────────────────────────────────────────────────────────────────────────────────────────────
 export * from "./local/api";
