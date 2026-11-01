@@ -1,9 +1,9 @@
--- Migration crm-040: AA-964 (S263 gateway plan F1 + F2; root ADR 0009 decisions 4, 5 and 8, root ADR 0008a §5-6) —
+-- Migration crm-037: AA-964 (S263 gateway plan F1 + F2; root ADR 0009 decisions 4, 5 and 8, root ADR 0008a §5-6) —
 -- CRM stage profiles in schema crm (route, attempts, deadline, kill switch) and the ledger v2 status values on
 -- crm.llm_call.
 --
--- Owner: AA-Partner (api/migrations/040_crm_llm_stage_profile.sql). AA-CIS-Infra db/migrations/crm/ holds the byte copy
--- DB Migrate applies (Migration Copy Guard). Key crm-040 (crm-036..039 belong to the parallel CRM-28 lanes).
+-- Owner: AA-Partner (api/migrations/037_crm_llm_stage_profile.sql). AA-CIS-Infra db/migrations/crm/ holds the byte copy
+-- DB Migrate applies (Migration Copy Guard). Key crm-037: crm-036 is AA-958's (CRM-28 messaging), which merges first.
 --
 -- Why: root ADR 0009 §4 gives every stage a profile (route + parameters + budget + kill switch) and keeps the CRM's
 -- profiles in schema crm with the same shape (ADR 0008a §6: the CRM reads no shared.llm_* table and holds no grant
@@ -33,7 +33,7 @@
 -- Class: contract (root ADR 0017 d3): a replaced CHECK on an existing table (crm.llm_call, a ledger). So no
 -- "-- migrate: expand" header: MIG-4 order, this migration-only PR first, the Infra copy (Migration Sync bot; the root
 -- DM-7.1 retention rows for the two new tables merge before it), a manual DB Migrate apply, the bot/db-schema-reference
--- PR, then the code PR (adds crm-040 to REQUIRED_SCHEMA_VERSIONS). The code before it never reads the new tables and
+-- PR, then the code PR (adds crm-037 to REQUIRED_SCHEMA_VERSIONS). The code before it never reads the new tables and
 -- writes only ok / refused / error, so it keeps working on this schema.
 --
 -- Order: after crm-035 (AA-957). Runs as crm_owner (DB Migrate switch), one BEGIN … COMMIT block, no role DDL.
@@ -51,15 +51,15 @@ SET LOCAL statement_timeout = '60s';
 DO $$
 BEGIN
     IF current_user <> 'crm_owner' THEN
-        RAISE EXCEPTION 'crm-040: must run as crm_owner (DB Migrate live-owner switch), runs as %', current_user;
+        RAISE EXCEPTION 'crm-037: must run as crm_owner (DB Migrate live-owner switch), runs as %', current_user;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM shared.schema_versions WHERE version = 'crm-035') THEN
-        RAISE EXCEPTION 'crm-040: crm-035 (AA-957 commission and cancel) lands first';
+        RAISE EXCEPTION 'crm-037: crm-035 (AA-957 commission and cancel) lands first';
     END IF;
     IF to_regclass('crm.llm_call') IS NULL
        OR NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conrelid = 'crm.llm_call'::regclass
                         AND conname = 'llm_call_refusal_chk') THEN
-        RAISE EXCEPTION 'crm-040: crm.llm_call (crm-005) with its refusal CHECK missing';
+        RAISE EXCEPTION 'crm-037: crm.llm_call (crm-005) with its refusal CHECK missing';
     END IF;
 END $$;
 
@@ -82,11 +82,11 @@ CREATE TABLE IF NOT EXISTS crm.llm_stage_profile (
 );
 REVOKE ALL ON crm.llm_stage_profile FROM crm_app;
 GRANT SELECT ON crm.llm_stage_profile TO crm_app;
-COMMENT ON TABLE crm.llm_stage_profile IS 'AA-964 (crm-040, root ADR 0009 §4): one AI stage profile of the CRM gateway: role, kill switch (is_active), attempts, route deadline, degrade mode. Platform configuration, no tenant column, no PII. crm_app SELECT.';
-COMMENT ON COLUMN crm.llm_stage_profile.is_active IS 'AA-964 (crm-040): the stage kill switch; false = every call is refused stage_disabled (a 0 USD ledger row), nothing scrubbed or sent.';
-COMMENT ON COLUMN crm.llm_stage_profile.max_attempts IS 'AA-964 (crm-040): at most this many route attempts per request (1..6, root ADR 0009 §5).';
-COMMENT ON COLUMN crm.llm_stage_profile.route_deadline_s IS 'AA-964 (crm-040): no new attempt starts after this many seconds of one request.';
-COMMENT ON COLUMN crm.llm_stage_profile.degrade_mode IS 'AA-964 (crm-040): what the product shows without AI (manual_reply_needed: "reply by hand").';
+COMMENT ON TABLE crm.llm_stage_profile IS 'AA-964 (crm-037, root ADR 0009 §4): one AI stage profile of the CRM gateway: role, kill switch (is_active), attempts, route deadline, degrade mode. Platform configuration, no tenant column, no PII. crm_app SELECT.';
+COMMENT ON COLUMN crm.llm_stage_profile.is_active IS 'AA-964 (crm-037): the stage kill switch; false = every call is refused stage_disabled (a 0 USD ledger row), nothing scrubbed or sent.';
+COMMENT ON COLUMN crm.llm_stage_profile.max_attempts IS 'AA-964 (crm-037): at most this many route attempts per request (1..6, root ADR 0009 §5).';
+COMMENT ON COLUMN crm.llm_stage_profile.route_deadline_s IS 'AA-964 (crm-037): no new attempt starts after this many seconds of one request.';
+COMMENT ON COLUMN crm.llm_stage_profile.degrade_mode IS 'AA-964 (crm-037): what the product shows without AI (manual_reply_needed: "reply by hand").';
 
 -- ── 2. crm.llm_stage_route ───────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS crm.llm_stage_route (
@@ -112,9 +112,9 @@ CREATE TABLE IF NOT EXISTS crm.llm_stage_route (
 );
 REVOKE ALL ON crm.llm_stage_route FROM crm_app;
 GRANT SELECT ON crm.llm_stage_route TO crm_app;
-COMMENT ON TABLE crm.llm_stage_route IS 'AA-964 (crm-040, root ADR 0009 §5): the route of a CRM AI stage in order (position 0 = primary): Bedrock model id, family (maker), catalog prices per million tokens (both or neither), enabled. Platform configuration, no tenant column, no PII. crm_app SELECT.';
-COMMENT ON COLUMN crm.llm_stage_route.price_in_per_mtok IS 'AA-964 (crm-040): USD per million input tokens, copied from the CIS model catalog (pricing_mode catalog); NULL = the shared core prices it (code_table or a high estimate, never 0).';
-COMMENT ON COLUMN crm.llm_stage_route.family IS 'AA-964 (crm-040): the model family = its maker (anthropic, amazon, ...; root ADR 0009 §3).';
+COMMENT ON TABLE crm.llm_stage_route IS 'AA-964 (crm-037, root ADR 0009 §5): the route of a CRM AI stage in order (position 0 = primary): Bedrock model id, family (maker), catalog prices per million tokens (both or neither), enabled. Platform configuration, no tenant column, no PII. crm_app SELECT.';
+COMMENT ON COLUMN crm.llm_stage_route.price_in_per_mtok IS 'AA-964 (crm-037): USD per million input tokens, copied from the CIS model catalog (pricing_mode catalog); NULL = the shared core prices it (code_table or a high estimate, never 0).';
+COMMENT ON COLUMN crm.llm_stage_route.family IS 'AA-964 (crm-037): the model family = its maker (anthropic, amazon, ...; root ADR 0009 §3).';
 
 INSERT INTO crm.llm_stage_profile (stage, role, is_active, max_attempts, route_deadline_s)
 VALUES ('crm_draft_reply', 'writer', true, 2, 30)
@@ -128,10 +128,10 @@ ON CONFLICT (stage, position) DO NOTHING;
 ALTER TABLE crm.llm_call DROP CONSTRAINT IF EXISTS llm_call_outcome_chk;
 ALTER TABLE crm.llm_call ADD CONSTRAINT llm_call_outcome_chk
     CHECK (outcome IN ('ok', 'refused', 'error', 'billed_unusable', 'truncated'));
-COMMENT ON COLUMN crm.llm_call.outcome IS 'AA-964 (crm-005, crm-040): the ledger v2 status of the attempt: ok, refused (with refusal_code), error, billed_unusable (billed, no usable answer), truncated (cut at its token limit; never ok).';
+COMMENT ON COLUMN crm.llm_call.outcome IS 'AA-964 (crm-005, crm-037): the ledger v2 status of the attempt: ok, refused (with refusal_code), error, billed_unusable (billed, no usable answer), truncated (cut at its token limit; never ok).';
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('crm-040', now(), 'AA-964 S263 F1/F2: crm.llm_stage_profile (role, kill switch, attempts, route deadline, degrade mode) and crm.llm_stage_route (Bedrock route in order with family and catalog prices), seed crm_draft_reply; crm.llm_call outcome + billed_unusable, truncated')
+VALUES ('crm-037', now(), 'AA-964 S263 F1/F2: crm.llm_stage_profile (role, kill switch, attempts, route deadline, degrade mode) and crm.llm_stage_route (Bedrock route in order with family and catalog prices), seed crm_draft_reply; crm.llm_call outcome + billed_unusable, truncated')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

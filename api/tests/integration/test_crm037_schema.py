@@ -1,4 +1,4 @@
-"""crm-040 (AA-964 S263 F1 + F2, a contract file) on PostgreSQL with the RDS role shape.
+"""crm-037 (AA-964 S263 F1 + F2, a contract file) on PostgreSQL with the RDS role shape.
 
 - ``crm.llm_stage_profile`` / ``crm.llm_stage_route``: platform configuration (no tenant column), seeded with the draft
   stage (writer, active, two Bedrock attempts with family and catalog prices); the CHECKs refuse a bad stage, role,
@@ -24,8 +24,8 @@ ROW_SQL = (
 )
 
 
-async def test_crm040_is_registered(admin: asyncpg.Connection) -> None:
-    assert await admin.fetchval("SELECT 1 FROM shared.schema_versions WHERE version = 'crm-040'") == 1
+async def test_crm037_is_registered(admin: asyncpg.Connection) -> None:
+    assert await admin.fetchval("SELECT 1 FROM shared.schema_versions WHERE version = 'crm-037'") == 1
 
 
 async def test_the_draft_stage_is_seeded_with_a_two_step_route(admin: asyncpg.Connection) -> None:
