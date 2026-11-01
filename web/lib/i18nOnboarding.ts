@@ -269,7 +269,7 @@ export const onboardingEn = {
   "onb.h.kickoff.b": "Ask the Adventure Asia team for a short call to walk through your setup, then mark the step done.",
   "onb.h.sms.t": "SMS and WhatsApp",
   "onb.h.sms.b":
-    "Messages by SMS and WhatsApp will use your own Twilio account, registered in your agency's name. The setup screen arrives in a later release.",
+    "SMS and WhatsApp use your own Twilio account, registered in your agency's name; Twilio bills you directly. In Settings > SMS and WhatsApp, enter the Account SID and Auth Token and your senders, then paste the two webhook addresses shown there into Twilio. Outside the 24-hour WhatsApp window only your approved templates can be sent. A client who texts STOP gets no more messages on that channel.",
   "onb.h.calendar.t": "Calendar",
   "onb.h.calendar.b": "Open Calendar and copy your feed link into Google Calendar, Outlook or Apple Calendar.",
   "onb.h.esign.t": "E-sign",
@@ -545,7 +545,7 @@ export const onboardingVi: Record<OnboardingKey, string> = {
   "onb.h.kickoff.b": "Hãy hẹn đội Adventure Asia một cuộc gọi ngắn để cùng xem phần thiết lập, rồi đánh dấu bước này là xong.",
   "onb.h.sms.t": "SMS và WhatsApp",
   "onb.h.sms.b":
-    "Tin nhắn SMS và WhatsApp sẽ dùng tài khoản Twilio của chính bạn, đăng ký dưới tên đại lý. Màn hình thiết lập có trong bản phát hành sau.",
+    "SMS và WhatsApp dùng tài khoản Twilio của chính bạn, đăng ký dưới tên đại lý; Twilio tính phí trực tiếp cho bạn. Trong Cài đặt > SMS và WhatsApp, nhập Account SID, Auth Token và số gửi, rồi dán hai địa chỉ webhook hiển thị ở đó vào Twilio. Ngoài khung 24 giờ của WhatsApp chỉ gửi được mẫu tin đã duyệt. Khách nhắn STOP sẽ không nhận thêm tin trên kênh đó.",
   "onb.h.calendar.t": "Lịch",
   "onb.h.calendar.b": "Mở Lịch và sao chép đường dẫn lịch vào Google Calendar, Outlook hoặc Apple Calendar.",
   "onb.h.esign.t": "Ký điện tử",

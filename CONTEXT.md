@@ -316,6 +316,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-033` | `api/migrations/033_crm_support_access.sql` | CRM-13b AA support access (AA-971; contract class under ADR 0017, applied before crm-034): `crm.support_grant` (the owner's grant: one active per agency, a 1 to 7 day window, `show_identity`; active -> revoked \| expired) and `crm.support_session` (one AA staff member in one agency: kind `support` inside the grant, or `breakglass` with a reason code, at most one hour, identity never shown; the ticket and the WORKFORCE `(iss, sub)` of the staff member; `owner_notified_at` for the break-glass mail), guard `crm.guard_support_access` (binds each row to its session), and the NOLOGIN reader `crm_support_reader` with SELECT on named columns of four non-F1 tables; every read lands in the agency's own audit |
 | `crm-034` | `api/migrations/034_crm_ops_release.sql` | CRM-26 Module 8 ops release (AA-956; **expand** class under ADR 0017, applied after crm-033): `crm.ops_release` (base template; one live release per trip, partial unique on `purged_at IS NULL`; `payload_enc` under the agency's `ops_release` DEK, `payload_version`, `fields_released`, `completeness` counts, `complete`, Booking `departure_ids` / `bk_booking_ids`, dates, `purge_at` = end + 90 days, `t21_alerted_at`, withdraw + purge with a `deletion_receipt`, view counters; cascades from its trip) and `crm.supplier_manifest_export` (one minimal manifest AA ops exported: version, field codes, csv, row count, watermark; no personal data; cascades from its release); guards `crm.guard_ops_release` / `crm.guard_supplier_manifest_export` (CRM45: a job creates and purges, `ops:<sub>` only counts a view or inserts a manifest record, a member only withdraws, nobody deletes, a held trip's purge CRM10); no reader grant |
 | `crm-035` | `api/migrations/035_crm_commission_cancel.sql` | CRM-27 Module 13 commission + one-action cancel (AA-957; **contract** class under ADR 0017: widened CHECKs on `crm.aa_request.kind` (+ `cancel`) and `crm.booking_line_money.kind` (+ `cancellation_cost`), a new column `crm.agency_supplier.commission_due_days`, `crm.status_transition` rows, so MIG-4 order, manual DB Migrate apply before the code PR): `crm.commission` (base template; one live row per confirmed agency line with an expected commission: expected -> claimed -> received | written_off, or cancelled; due date; the receipt frozen at the receipt day's rate, `short_amount` in the original currency only, `fx_difference_base`; RESTRICTIVE `commission_margin_roles`; crm_app SELECT + UPDATE of the follow-up columns, guard CRM46), `crm.trip_cancellation` (base template; one per trip, pending until Booking cancelled the trip's AA bookings, then done; crm_app SELECT only, written by `crm.trip_cancellation_open` (owner / agent; the database decides pending / done from the live AA bookings) and `crm.trip_cancellation_finish` (done only once no AA booking is live and the trip is cancelled)), `crm.commission_sync(trip)`, `crm.commission_receive(...)`, `crm.booking_line_aa_cancel_fee(...)` (SECURITY DEFINER); both tables cascade from their trip (and line), no `crm.erase_subject` change |
+| `crm-036` | `api/migrations/036_crm_messaging.sql` | CRM-28 Module 9 SMS + WhatsApp (AA-958; **expand** class under ADR 0017: three new tables, two new nullable columns, one PR with the code): `crm.messaging_connection` (base template; the agency's one live Twilio / sandbox connection, credential key ON DELETE CASCADE from `crm.integration_credential` provider `twilio`, `hook_id` = 32 random hex characters of the webhook path, the SMS and WhatsApp senders, last inbound / status times; SELECT-only lookup policy `messaging_connection_hook_lookup` on `app.messaging_hook_id`, set by `app.tenancy.messaging_hook_tx()`), `crm.channel_template` (base template; the WhatsApp templates of the agency's account: `content_sid`, name, language, category, approval, body with `{{n}}`, variables; cascades from its connection), `crm.message_delivery` (base template; one per outbound SMS / WhatsApp `crm.message`: template + sealed variables, `provider_status`, `status_rank`, `error_code`, `status_at`; crm_app no DELETE), `crm.conversation.wa_window_expires_at` + `opted_out_at`; every new table cascades from a row the erasure already deletes, no `crm.erase_subject` change |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -361,6 +362,8 @@ queued / running rows as information, exempt kinds left out). Daily or slower ki
 | `crm_data_export` | per owner request (queued in the request's transaction, idempotency key per export, 3 attempts) | AA-967: builds one portability ZIP (`app/portability/builder.py`: every tenant table of the catalog minus the never-exported ones as JSON + CSV, the documents and `documents/manifest.csv`, `manifest.json` with the schema version, `SHA256SUMS`), progress per step in its own short transaction, sealed under the agency `export` DEK into the documents bucket, then `ready` (`app/portability/exports.py`). A coded refusal fails the row at once, an outage retries, the last attempt fails it `export_error`. Not deploy-gate exempt |
 | `crm_client_import` | per slice of 500 rows of an owner's client import (the first queued in the start request's transaction, each slice queues the next, 3 attempts) | AA-962: reads the file from `imports/<tenant>/client-<import id>` in the ingest bucket, runs `app/imports/engine.py` with `apply=True` in chunks of 100 rows (one `system_tx()` each, the per-agency import lock, the intake's e-mail / phone dedupe locks), counts per outcome in the result (ids, codes and counts only), deletes the object after the last slice. A rerun or retry skips what is already in (`already_imported`). Not deploy-gate exempt |
 | `crm_ops_release_sync` | hourly, due-now hook (`app.ops_release.job.HourlyOpsReleaseSync`, key per UTC hour), plus a one-trip nudge (payload `tenant_id`, `trip_id`) when Booking confirms / declines / cancels an AA line, a member withdraws or the trip is cancelled | AA-956: per active agency, "today" in `tenant_settings.timezone`: create / refresh / T-21 alert / withdraw the trip's ops release, then purge the due ones with a receipt (section "CRM-26 Module 8 ops release") |
+| `crm_messaging_templates` | per connect / Refresh of an agency's SMS / WhatsApp connection (queued in the request's transaction, payload `tenant_id`) | AA-958: reads the agency's WhatsApp templates from its own Twilio account (Content API) into `crm.channel_template`; a refused token disconnects the connection. Not deploy-gate exempt |
+| `crm_messaging_health` | daily, from `JOB_RETENTION_UTC_HOUR`, due-now hook (`app.messaging.health.DailyMessagingHealthSchedule`) | AA-958: every agency's SMS / WhatsApp connection: account read + template sync; passing -> connected, refused -> disconnected + one owner alert, anything else -> needs attention. Counts only. Not deploy-gate exempt |
 | `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
 
 ## CI and release
@@ -816,6 +819,53 @@ secret `crm/<env>/mail-oauth`.
   (`MessagesPanel.tsx`: HTML only in `<iframe sandbox="" srcdoc>` behind a CSP `<meta>` that blocks every remote
   load, autosave every 3 s, Undo, the held chip), `/inbox`
   (Unmatched, link to a client), Settings > Saved replies, the red banner when a mailbox is disconnected.
+
+## CRM-28 Module 9 SMS and WhatsApp (AA-958)
+
+Design v3 §6.3 CRM-28 (M9, §5.4, WF-11), lane `data-privacy-integrations.md` §2.8 group G / §6.4, **as changed by the
+BYO errata S247** §1 / §2: the agency's **own Twilio account** only (no AA account, no AA subaccount, no Tech Provider;
+AA pays nothing). Migration crm-036; code in `app/messaging/`, routes in `app/routers/messaging.py` and two public
+webhook routes in `app/routers/public.py`; decisions in `docs/implementation-notes/AA-958.md`. No Infra change: the
+webhook origin is `MESSAGING_HOOK_BASE`, else the first `INTAKE_PAGE_ORIGINS` entry (the client host, whose ALB rule
+already sends `/crm/public/*` to the API).
+
+- **Providers** (`app/messaging/providers.py`): one `TextProvider` interface (`send`, `check`, `templates`).
+  `TwilioProvider` (Messages API for SMS and WhatsApp, Content API for templates, the account read for health; stdlib
+  HTTP through the mail `HttpClient`) and `SandboxProvider`, a deterministic stub with no network, accepted on `dev` /
+  `test` / `local` only, so the Dev live check costs $0 (a recipient ending `0000` is refused, `0001` is transient, an
+  Auth Token starting `revoked` is revoked; three fixed templates, two approved).
+- **Connection** (Settings > Channels, owner, `INTEGRATIONS_MANAGE`; every other role sees status and channels only):
+  Account SID + Auth Token (+ optional API key), the SMS sender (E.164, alphanumeric id or Messaging Service SID) and
+  the WhatsApp sender. The account is read before anything is stored; the credential is `crm.integration_credential`
+  provider `twilio`, agency level, sealed under the `integration` DEK like the AA-945 SMTP login (`Vault.decrypt_secret`
+  is lint-allowed in `app/messaging/sender.py` only). A reconnect keeps the hook id, so the URLs pasted into Twilio stay
+  valid. Disconnect deletes the credential and, by cascade, the connection and templates. Test button: account read
+  now + an optional test message to the owner's own phone. Health states `connected | needs_attention | disconnected`.
+- **Send**: `POST /crm/v1/messaging/messages` (`MESSAGE_SEND`) stores an outbound `crm.message` (channel `sms` /
+  `whatsapp`, text under the mail DEK) and its `crm.message_delivery` row, then queues one `crm_dispatch` row with the
+  10 s Undo (Undo / Edit are the AA-945 message routes). WhatsApp free text only inside the 24-hour window opened by the
+  client's last inbound message, else **409 `template_required`** (card R); outside it only an `approved` template with
+  its variables. The dispatcher (`ChannelSender` routes e-mail to the AA-945 sender, text to `TextSender`) re-checks
+  the window, the template, the client's number and the opt-out at send time; a refused token disconnects the
+  connection with one owners' alert (`messaging_disconnected`, AA SES); nothing is ever sent another way.
+- **Webhooks**: `POST /crm/public/v1/hooks/twilio/{hook_id}` (inbound) and `.../{hook_id}/status`, form-encoded,
+  64 KiB, public rate limit. `X-Twilio-Signature` is checked with the agency's own Auth Token over the URL the CRM
+  printed (never the Host header) and the `AccountSid` must match, before anything is stored: **403
+  `invalid_signature`**. Inbound: deduplicated by `MessageSid`; threaded by the sender's phone blind index (one client
+  -> their latest conversation on the channel or their latest open trip; none or two -> Unmatched); media not kept;
+  WhatsApp window = now + 24 h; `STOP` / `START` (and `OptOutType`) set / clear `opted_out_at` on the client's
+  conversations of that channel. Status: applied only when its rank is higher (card E: out-of-order callbacks keep the
+  latest state); error 21610 marks the conversation opted out. Answer: an empty TwiML `<Response>`.
+- **Events** (`app/messaging/events.py`, the seam CRM-29a workflows and CRM-29b tags build on): `message.received` (a
+  bell item for the trip owner) and `message.sent` as `crm.metric_event` rows on the trip, ids and codes only, then the
+  in-process listeners registered with `subscribe()` (none yet).
+- **Web**: Settings > SMS and WhatsApp (`web/app/(crm)/settings/channels`, `components/messaging/ChannelsSettings.tsx`:
+  status, who pays, the two webhook URLs, connect / reconnect, Test, templates + Refresh, Disconnect), the trip's
+  WhatsApp / SMS panel (`components/messaging/TextMessagesPanel.tsx`: the thread with delivery states, the window, free
+  text or an approved template with its values and preview, Undo, why a channel cannot send), and the Unmatched inbox
+  shows the channel.
+- **Dev live check**: `api/scripts/messaging_hook_probe.py` posts a signed Twilio-shaped inbound message or status
+  callback to an agency's hook URL (`PROBE_AUTH_TOKEN` = the sandbox connection's token; `--bad-signature` expects 403).
 
 ## CRM-18 thin full lifecycle (AA-946)
 
