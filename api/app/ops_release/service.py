@@ -38,6 +38,7 @@ from typing import Any
 from app.errors import Conflict, NotFound
 from app.jobs import queue
 from app.jobs.kinds import OPS_RELEASE_SYNC
+from app.observability import ops_alerts
 from app.ops_release import build
 from app.permissions import Action, may
 from app.tenancy import AnyContext, TenantContext
@@ -131,12 +132,13 @@ BATCH = 200
 
 WITHDRAWN_EVENT = "crm_ops_release_withdrawn"
 T21_EVENT = "crm_ops_release_incomplete_t21"
+OPS_ALERT_CHECKS = {WITHDRAWN_EVENT: "ops_release_withdrawn", T21_EVENT: "ops_release_incomplete_t21"}
 
 
 @dataclass(frozen=True)
 class Notice:
-    """One AA ops alarm line (AA-CIS-Infra ``crm_ops_release_alarms.tf``: a metric filter on the event name), ids and
-    counts only. The work queues it and the caller writes it once the transaction that caused it has committed (the
+    """One AA ops alarm line (logged, and raised as an in-app ops check since S263: app.observability.ops_alerts), ids
+    and counts only. The work queues it and the caller writes it once the transaction that caused it has committed (the
     break-glass pattern of :mod:`app.support.sessions`): a rolled-back withdrawal or T-21 alert never reaches AA ops,
     and a T-21 alert whose ``t21_alerted_at`` was not saved is not sent again every hour."""
 
@@ -146,6 +148,9 @@ class Notice:
 
     def emit(self) -> None:
         log.log(self.level, "%s %s", self.event, " ".join(f"{k}={v}" for k, v in self.fields))
+        # S263 (AA-1025): the in-app check e-mails AA ops once per release (was a log metric filter + alarm).
+        fields = dict(self.fields)
+        ops_alerts.emit(OPS_ALERT_CHECKS[self.event], fields.get("ops_release_id"), **fields)
 
 
 Notices = list[Notice]
@@ -328,7 +333,7 @@ async def sync_trip(
         await ctx.conn.execute(ALERTED_SQL, release_id)
         await ctx.conn.execute(TASK_SQL, trip_id, ALERT_TASK)
         ctx.audit("ops_release_t21_alert", "allowed", "trip", str(trip_id), reason="incomplete_t21")
-        # AA ops are alerted from this line (a log metric filter, like crm_breakglass_opened); ids and counts only.
+        # AA ops are alerted from this notice (the ops check, like crm_breakglass_opened); ids and counts only.
         fields = (
             ("tenant_id", ctx.tenant_id),
             ("ops_release_id", release_id),
@@ -399,7 +404,7 @@ async def withdraw(
     """C12 step 6 (cancel trip) and the agency's own "Withdraw from AA ops": the live release is withdrawn now (AA ops
     stop seeing the document), and the job is nudged to purge it when the trip has not started. 404
     ``release_not_found`` without a live release, 409 ``release_withdrawn`` when it already is. The AA ops notice
-    (``crm_ops_release_withdrawn``, the Infra alarm) goes to ``notices``: the route writes it after the commit."""
+    (``crm_ops_release_withdrawn``, the ops check) goes to ``notices``: the route writes it after the commit."""
     if reason not in MEMBER_WITHDRAW_REASONS:
         raise ValueError(f"not a member withdraw reason: {reason!r}")
     release = await ctx.conn.fetchrow(LIVE_SQL, trip_id)

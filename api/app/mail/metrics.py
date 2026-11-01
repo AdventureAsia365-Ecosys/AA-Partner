@@ -1,5 +1,5 @@
-"""Mail counters the job metrics sampler publishes (AA-945): ``MailIngestDropped`` in ``AA/Jobs/Crm`` (the only
-namespace the task role may write), so no new IAM grant is needed. Per process, reset on each sample."""
+"""Mail counters the job sampler logs (AA-945): ``mail_dropped`` on its ``ops_metrics_sampled`` line (until S263 the
+CloudWatch metric ``MailIngestDropped``; it never had an alarm). Per process, reset on each sample."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import threading
 
 
 class DropCounter:
-    """Mail discarded for an unknown address since the last metrics sample (``MailIngestDropped``, AA/Jobs/Crm)."""
+    """Mail discarded for an unknown address since the last sample (``mail_dropped``)."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()

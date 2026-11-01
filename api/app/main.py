@@ -10,7 +10,7 @@ Every path is under ``/crm`` (CloudFront -> VPC origin -> ALB host + path rule -
   (``app.auth.route_guard``, root ADR 0006b decision 6).
 
 When ``WORKER_ENABLED`` is on, the lifespan also runs the ``crm.job`` worker loop (``app.jobs.worker``) as one
-background task of this process — never from a request path — and the backlog metrics sampler (``AA/Jobs/Crm``).
+background task of this process — never from a request path — and the job sampler with its ops checks (S263).
 
 Observability (copied from AA-Booking, AA-871): JSON log lines on stdout, a request id per request, Sentry when
 ``SENTRY_DSN`` is set. :func:`build_app` sets logging and Sentry up once per process; :func:`create_app` only adds the

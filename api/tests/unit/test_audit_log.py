@@ -19,6 +19,7 @@ from app.errors import Forbidden, Invalid
 from app.jobs import metrics
 from app.llm.gateway import stub_gateway
 from app.main import create_app
+from app.observability import ops_alerts
 from app.routers import audit as audit_router
 from tests.tokens import LocalPools
 from tests.unit.fakes import ScriptedConn
@@ -226,14 +227,16 @@ async def test_an_ai_call_is_an_audit_event_of_the_ai_actor() -> None:
     )
 
 
-def test_audit_metrics_join_the_job_metrics() -> None:
+def test_audit_values_feed_the_ops_checks() -> None:
+    """S263: the audit export state is checked in-app (was the three AA/Jobs/Crm audit alarms)."""
     sample = metrics.Sample(0.0, 0, 0, 0.0)
-    audit = metrics.AuditSample(export_lag_minutes=-3.0, partition_months_ahead=3, verify_lag_hours=30.0)
-    data = metrics.metric_data(sample, 0, audit)
-    assert data[-3:] == [
-        {"MetricName": "AuditExportLagMinutes", "Value": 0.0, "Unit": "Count"},
-        {"MetricName": "AuditPartitionMonthsAhead", "Value": 3.0, "Unit": "Count"},
-        {"MetricName": "AuditVerifyLagHours", "Value": 30.0, "Unit": "Count"},
+    healthy = metrics.AuditSample(export_lag_minutes=-3.0, partition_months_ahead=3, verify_lag_hours=30.0)
+    assert ops_alerts.state_findings(sample, healthy) == []
+    bad = metrics.AuditSample(export_lag_minutes=180.0, partition_months_ahead=0, verify_lag_hours=50.0)
+    assert [f.check for f in ops_alerts.state_findings(sample, bad)] == [
+        "audit_export_lag",
+        "audit_partitions",
+        "audit_verify_lag",
     ]
 
 
