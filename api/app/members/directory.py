@@ -8,8 +8,13 @@ The IAM allow-list of the API's task role on the partner pool is exactly ``Admin
   person must set their own password and enrol an authenticator at the first sign-in (the pool requires MFA). An
   address that already has an account (a member of another agency) is found with ``ListUsers`` (exact e-mail
   filter; the pool's usernames are case-insensitive e-mails, so one address is one account) and gets no password.
-  An existing account that never finished its first sign-in (``FORCE_CHANGE_PASSWORD``) is refused with 409
-  ``account_setup_pending``: resetting it needs a call outside the allow-list (runbook, AA support).
+  An existing account that never finished its first sign-in (``FORCE_CHANGE_PASSWORD``: the person never saw or
+  never used the temporary password, or it lapsed after the pool's 7 days) gets a **new** temporary password through
+  ``AdminCreateUser`` with ``MessageAction=RESEND`` (the same allow-listed action; S263 join fix). RESEND makes
+  Cognito mail the new temporary password to the address too (its default invitation text): the address is the one
+  the invitation link went to, so this opens nothing the link did not already open. Only the first claim of an
+  invitation calls this: a claimed invitation is never claimed again (``already_claimed``), so a second tab or a
+  double submit cannot replace the password the first claim is showing.
 - :meth:`PartnerDirectory.global_sign_out` (member removed): ``AdminUserGlobalSignOut`` revokes the person's refresh
   tokens; their access token still lives up to its lifetime, but every request re-checks ``crm.member`` anyway.
 - :meth:`PartnerDirectory.email_for` (owner recovery notice): ``ListUsers`` filtered by ``sub``.
@@ -38,6 +43,8 @@ from app.errors import Conflict, Unavailable
 # password is 24 characters with each class present.
 TEMP_PASSWORD_LENGTH = 24
 _SYMBOLS = "!#$%&*+-=?@^_"
+# The Cognito status of an account created by AdminCreateUser until its first sign-in sets the person's own password.
+FORCE_CHANGE_PASSWORD = "FORCE_CHANGE_PASSWORD"  # noqa: S105 — a Cognito UserStatus, not a password
 
 
 def temporary_password() -> str:
@@ -51,10 +58,12 @@ def temporary_password() -> str:
 
 @dataclass(frozen=True)
 class Account:
-    """The partner-pool account of an invited address. ``temporary_password`` only when the claim created it."""
+    """The partner-pool account of an invited address. ``temporary_password`` when the claim created the account or
+    gave an account that never finished its first sign-in a new one (``reissued``)."""
 
     sub: str
     temporary_password: str | None
+    reissued: bool = False
 
 
 class PartnerDirectory(Protocol):
@@ -120,18 +129,29 @@ class CognitoDirectory:
             found = self._find(email)
             if found is None:
                 raise Unavailable("directory_unavailable", "the account could not be read") from None
-            if found.get("UserStatus") == "FORCE_CHANGE_PASSWORD":
-                raise Conflict(
-                    "account_setup_pending", "this address has an account that never finished its first sign-in"
-                ) from None
             sub = _attr(found, "sub")
             if not sub:
                 raise Unavailable("directory_unavailable", "the account has no subject") from None
+            if found.get("UserStatus") == FORCE_CHANGE_PASSWORD:
+                return Account(sub=sub, temporary_password=self._resend(found, email), reissued=True)
             return Account(sub=sub, temporary_password=None)
         sub = _attr(created, "sub")
         if not sub:
             raise Unavailable("directory_unavailable", "the new account has no subject")
         return Account(sub=sub, temporary_password=password)
+
+    def _resend(self, user: dict[str, Any], email: str) -> str:
+        """A new temporary password for an account that never finished its first sign-in: ``AdminCreateUser`` with
+        ``MessageAction=RESEND`` (Cognito also mails it to the address; ``EMAIL``, never the SMS default)."""
+        password = temporary_password()
+        self._idp().admin_create_user(
+            UserPoolId=self.pool_id,
+            Username=user.get("Username") or email,
+            TemporaryPassword=password,
+            MessageAction="RESEND",
+            DesiredDeliveryMediums=["EMAIL"],
+        )
+        return password
 
     async def create_or_find(self, email: str) -> Account:
         return await asyncio.to_thread(self._create_or_find, email)
@@ -155,6 +175,7 @@ class MemoryDirectory:
         self.issuer = issuer
         self.accounts: dict[str, dict[str, Any]] = {}
         self.signed_out: list[str] = []
+        self.resent: list[str] = []
 
     def add(self, email: str, *, status: str = "CONFIRMED") -> str:
         sub = str(uuid.uuid4())
@@ -164,13 +185,18 @@ class MemoryDirectory:
     async def create_or_find(self, email: str) -> Account:
         found = self.accounts.get(email.lower())
         if found is not None:
-            if found["status"] == "FORCE_CHANGE_PASSWORD":
-                raise Conflict(
-                    "account_setup_pending", "this address has an account that never finished its first sign-in"
-                )
+            if found["status"] == FORCE_CHANGE_PASSWORD:
+                return Account(sub=found["sub"], temporary_password=self._resend(found), reissued=True)
             return Account(sub=found["sub"], temporary_password=None)
-        sub = self.add(email, status="FORCE_CHANGE_PASSWORD")
-        return Account(sub=sub, temporary_password=temporary_password())
+        sub = self.add(email, status=FORCE_CHANGE_PASSWORD)
+        account = self.accounts[email.lower()]
+        account["password"] = temporary_password()
+        return Account(sub=sub, temporary_password=account["password"])
+
+    def _resend(self, account: dict[str, Any]) -> str:
+        account["password"] = temporary_password()
+        self.resent.append(account["sub"])
+        return account["password"]
 
     async def global_sign_out(self, sub: str) -> None:
         self.signed_out.append(sub)

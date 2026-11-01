@@ -18,7 +18,13 @@ price, revenue or a person's data; the response allow-list (:mod:`app.ops.serial
 
 Statuses: reads accept every agency status; lock / unlock and the allowed features / insights opt-out accept active
 and locked; a retry accepts active and offboarding (an offboarding agency's erase job); the first-owner invite and AA
-data requests need an active agency (the owner must be able to answer in the CRM).
+data requests need an active agency (the owner must be able to answer in the CRM); withdrawing the first-owner
+invitation accepts active and locked; deleting a test agency accepts active, locked and offboarded.
+
+S263 (AA-939 join fix, found live on Dev): :func:`withdraw_owner_invitation` closes the first-owner invitation AA sent
+while it is pending or claimed but not accepted (a claimed owner invitation used to block a new one for its 7 days), and
+:func:`delete_test_agency` moves a **synthetic** agency with no member and no traveller to the trash and crypto-shreds
+its keys (Dev test clean-up; a real agency is only ever deleted by its owner's confirmed offboarding, AA-942).
 """
 
 from __future__ import annotations
@@ -35,9 +41,10 @@ from app import agencies
 from app.audit_export import registry
 from app.catalog import store as catalog_store
 from app.cis import feed_state
-from app.errors import Conflict, Invalid, NotFound
+from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.jobs import queue
 from app.lifecycle import offboarding
+from app.lifecycle.rules import BACKUP_PURGE_DAYS
 from app.llm.gateway import DEFAULT_BUDGET_USD, MONTH_SPEND_SQL
 from app.members import team
 from app.members.directory import PartnerDirectory
@@ -83,6 +90,30 @@ OWNER_INVITE_PENDING_SQL = """
 SELECT 1 FROM crm.member_invitation
  WHERE role = 'owner' AND status IN ('pending', 'claimed') AND expires_at > now() AND deleted_at IS NULL
  LIMIT 1
+"""
+# S263: the first-owner invitations AA sent that are still live (pending, or claimed but not accepted), newest first,
+# locked: what "Withdraw owner invitation" closes. An owner's own team invitations are never touched here.
+LIVE_OWNER_INVITES_SQL = """
+SELECT invitation_id FROM crm.member_invitation
+ WHERE role = 'owner' AND invited_by LIKE 'platform:%' AND status IN ('pending', 'claimed') AND deleted_at IS NULL
+ ORDER BY created_at DESC, invitation_id
+   FOR UPDATE
+"""
+# S263: what keeps a synthetic agency from being deleted by AA: a member who is (or is about to be) inside it.
+LIVE_MEMBERS_SQL = "SELECT 1 FROM crm.member WHERE status IN ('active', 'invited') AND deleted_at IS NULL LIMIT 1"
+DELETE_TENANT_LOCK_SQL = "SELECT status, is_synthetic, display_name FROM crm.tenant WHERE tenant_id = $1 FOR UPDATE"
+DELETE_STATUSES = frozenset({"active", "locked", "offboarded"})
+LIVE_INVITES_SQL = """
+SELECT invitation_id FROM crm.member_invitation WHERE status IN ('pending', 'claimed') AND deleted_at IS NULL
+ ORDER BY created_at, invitation_id FOR UPDATE
+"""
+TENANT_HOLD_SQL = "SELECT crm.legal_hold_blocks('tenant', NULL)"
+# The agency row goes to the trash (base template trash columns; every context refuses a trashed agency, and the L1
+# list skips it). purge_after = the backups window (lifecycle rules BACKUP_PURGE_DAYS).
+TRASH_TENANT_SQL = """
+UPDATE crm.tenant SET deleted_at = now(), deleted_by = $2, purge_after = now() + make_interval(days => $3)
+ WHERE tenant_id = $1 AND deleted_at IS NULL
+RETURNING purge_after
 """
 # Any traveller row (trashed and archived ones too) or any stored inquiry (it becomes a traveller soon): a flag.
 HOLDS_TRAVELLERS_SQL = "SELECT EXISTS (SELECT 1 FROM crm.traveler) OR EXISTS (SELECT 1 FROM crm.form_submission)"
@@ -380,6 +411,82 @@ async def invite_first_owner(
         "status": "pending",
         "expires_at": made["expires_at"],
     }
+
+
+async def withdraw_owner_invitation(
+    pool: asyncpg.Pool, tenant_id: uuid.UUID, *, staff_sub: str, ticket_ref: str
+) -> dict[str, Any]:
+    """S263: close the first-owner invitation(s) AA sent that are still live (pending, or claimed and not accepted),
+    so "Invite first owner" works again (``owner_invite_pending`` blocked it for the invitation's 7 days). Each one is
+    ``revoked`` (its link answers 410 ``invitation_used``) with an ``owner_invite_withdraw`` event carrying
+    ``ticket:<REF>``. The partner-pool account a claim created is left alone: if it never signed in, the claim of the
+    next invitation to that address gives it a new temporary password (:mod:`app.members.directory`). 404
+    ``owner_invite_not_found`` when there is none. Active and locked agencies (a locked agency's owner invitation can be
+    withdrawn before it is unlocked)."""
+    async with platform_tx(pool, tenant_id, actor=platform_actor(staff_sub), statuses=LOCKABLE) as ctx:
+        live = [r["invitation_id"] for r in await ctx.conn.fetch(LIVE_OWNER_INVITES_SQL)]
+        if not live:
+            raise NotFound("owner_invite_not_found", "no first-owner invitation is pending")
+        for invitation_id in live:
+            await ctx.conn.fetchval(team.REVOKE_SQL, invitation_id)
+            ctx.audit(
+                "owner_invite_withdraw", "allowed", "member_invitation", str(invitation_id), fields=("status",),
+                object_ids=ticket_ids(ticket_ref),
+            )  # fmt: skip
+    log.info("crm_ops_owner_invite_withdrawn tenant_id=%s count=%s", tenant_id, len(live))
+    return {"tenant_id": str(tenant_id), "invitation_id": str(live[0]), "status": "revoked"}
+
+
+async def delete_test_agency(
+    pool: asyncpg.Pool,
+    tenant_id: uuid.UUID,
+    *,
+    staff_sub: str,
+    agency_name: str,
+    ticket_ref: str,
+    keys: KeyProvider,
+) -> dict[str, Any]:
+    """S263: AA deletes a **synthetic** (test) agency it created. Refused unless the agency is synthetic (403
+    ``not_synthetic``: a real agency is deleted only through its owner's confirmed offboarding), the typed name is the
+    agency's name exactly (422 ``agency_name_mismatch``), no member is active or invited (409 ``has_members``), it
+    holds no traveller or inquiry (409 ``has_travellers``), no legal hold is active (409 ``legal_hold``) and it is not
+    being erased (409 ``tenant_status``). Then, in one transaction: every live invitation is revoked, the agency's
+    keys are crypto-shredded (:meth:`KeyProvider.destroy`: anything encrypted under them, such as invited addresses,
+    is unreadable for good) and the agency row goes to the trash (``deleted_at``; no context opens it any more and the
+    L1 list leaves it out). Audited in the agency's own log: ``agency_delete`` with ``ticket:<REF>`` (plus the
+    ``key_destroy`` event). The rows stay as the trash keeps them (DM-7.1); nothing can read their personal data."""
+    async with platform_tx(pool, tenant_id, actor=platform_actor(staff_sub), statuses=DELETE_STATUSES) as ctx:
+        row = await ctx.conn.fetchrow(DELETE_TENANT_LOCK_SQL, tenant_id)
+        if row is None:  # trashed between the context check and the row lock
+            raise NotFound("tenant_not_found", "no agency with this id")
+        if not row["is_synthetic"]:
+            ctx.audit("agency_delete", "denied", "tenant", str(tenant_id), reason="not_synthetic")
+            raise Forbidden(
+                "not_synthetic", "only a test agency can be deleted here; a real agency is offboarded by its owner"
+            )
+        if agency_name != row["display_name"]:
+            raise Invalid("agency_name_mismatch", "type the agency name exactly as it is shown")
+        if row["status"] not in DELETE_STATUSES:  # moved on between the context check and the row lock
+            raise Conflict("tenant_status", f"the agency is {row['status']}", state=row["status"])
+        if await ctx.conn.fetchval(LIVE_MEMBERS_SQL):
+            raise Conflict("has_members", "the agency has active or invited members")
+        if await ctx.conn.fetchval(HOLDS_TRAVELLERS_SQL):
+            raise Conflict("has_travellers", "the agency holds travellers or inquiries")
+        if await ctx.conn.fetchval(TENANT_HOLD_SQL):
+            raise Conflict("legal_hold", "an active legal hold covers the agency")
+        for r in await ctx.conn.fetch(LIVE_INVITES_SQL):
+            await ctx.conn.fetchval(team.REVOKE_SQL, r["invitation_id"])
+            ctx.audit("invite_revoke", "allowed", "member_invitation", str(r["invitation_id"]), reason="agency_delete")
+        await keys.destroy(ctx)  # crypto-shred, after the checks, before the trash and the commit
+        purge_after = await ctx.conn.fetchval(TRASH_TENANT_SQL, tenant_id, ctx.actor, BACKUP_PURGE_DAYS)
+        if purge_after is None:
+            raise NotFound("tenant_not_found", "no agency with this id")
+        ctx.audit(
+            "agency_delete", "allowed", "tenant", str(tenant_id), fields=("deleted_at",),
+            reason="synthetic_test_agency", object_ids=ticket_ids(ticket_ref),
+        )  # fmt: skip
+    log.info("crm_ops_test_agency_deleted tenant_id=%s", tenant_id)
+    return {"tenant_id": str(tenant_id), "status": "deleted"}
 
 
 async def allow_features(

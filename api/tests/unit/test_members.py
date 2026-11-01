@@ -388,9 +388,13 @@ async def test_claim_finds_an_existing_account_and_shows_no_password(
 async def test_claim_again_and_closed_invitations(monkeypatch: pytest.MonkeyPatch, vault: None) -> None:
     directory = MemoryDirectory(PARTNER_ISSUER)
     conn = ScriptedConn()
-    monkeypatch.setattr(invitations, "invitation_tx", fake_tx(_system(conn), _invitation("claimed", sub="s-1")))
+    claimed_ctx = _system(conn)
+    monkeypatch.setattr(invitations, "invitation_tx", fake_tx(claimed_ctx, _invitation("claimed", sub="s-1")))
     again = await invitations.claim(conn, object(), directory, TOKEN)  # type: ignore[arg-type]
     assert again.state == "already_claimed" and directory.accounts == {}
+    # S263: a claim of a claimed invitation is on record (it changes nothing).
+    event = claimed_ctx.audit_events[-1]
+    assert (event.action, event.outcome, event.reason) == ("invitation_claim", "denied", "already_claimed")
     for status, code in (
         ("revoked", "invitation_used"),
         ("accepted", "invitation_used"),
@@ -405,11 +409,41 @@ async def test_claim_again_and_closed_invitations(monkeypatch: pytest.MonkeyPatc
     with raises(invitations.Gone, "invitation_expired"):
         await invitations.claim(late, object(), directory, TOKEN)  # type: ignore[arg-type]
     assert late.sql("SET status = 'expired'") == [(INV,)]
+
+
+@pytest.mark.asyncio
+async def test_a_new_invitation_to_an_account_never_signed_in_gives_a_new_temporary_password(
+    monkeypatch: pytest.MonkeyPatch, vault: None
+) -> None:
+    """S263 (live, Dev): the first claim's password was never seen and the account stayed in FORCE_CHANGE_PASSWORD.
+    A new invitation to that address used to answer 409 account_setup_pending; now it re-issues a password."""
+    conn = ScriptedConn()
+    ctx = _system(conn)
     pending_setup = MemoryDirectory(PARTNER_ISSUER)
-    pending_setup.add("lan@agency.example", status="FORCE_CHANGE_PASSWORD")
-    monkeypatch.setattr(invitations, "invitation_tx", fake_tx(_system(conn), _invitation()))
-    with raises(Conflict, "account_setup_pending"):
-        await invitations.claim(conn, object(), pending_setup, TOKEN)  # type: ignore[arg-type]
+    sub = pending_setup.add("lan@agency.example", status="FORCE_CHANGE_PASSWORD")
+    monkeypatch.setattr(invitations, "invitation_tx", fake_tx(ctx, _invitation()))
+    claimed = await invitations.claim(conn, object(), pending_setup, TOKEN)  # type: ignore[arg-type]
+    assert claimed.state == "created" and claimed.temporary_password
+    assert claimed.temporary_password == pending_setup.accounts["lan@agency.example"]["password"]
+    assert pending_setup.resent == [sub] and len(pending_setup.accounts) == 1
+    assert conn.sql("SET status = 'claimed'") == [(INV, PARTNER_ISSUER, sub)]
+    assert ctx.audit_events[-1].reason == "account_password_reissued"
+
+
+@pytest.mark.asyncio
+async def test_claim_again_never_replaces_a_password_even_while_the_account_was_never_signed_in(
+    monkeypatch: pytest.MonkeyPatch, vault: None
+) -> None:
+    """S263 (live, Dev): a second claim of one invitation (a double submit, a second tab) must not rotate the password
+    the first claim is showing. It answers already_claimed and never calls the directory; a new invitation re-issues."""
+    directory = MemoryDirectory(PARTNER_ISSUER)
+    first = await directory.create_or_find("lan@agency.example")
+    conn = ScriptedConn()
+    monkeypatch.setattr(invitations, "invitation_tx", fake_tx(_system(conn), _invitation("claimed", sub=first.sub)))
+    again = await invitations.claim(conn, object(), directory, TOKEN)  # type: ignore[arg-type]
+    assert again.state == "already_claimed" and again.temporary_password is None
+    assert directory.resent == [] and directory.accounts["lan@agency.example"]["password"] == first.temporary_password
+    assert conn.sql("SET status = 'claimed'") == []
 
 
 @pytest.mark.asyncio
@@ -699,6 +733,8 @@ class FakeIdp:
 
     def admin_create_user(self, **kw: Any) -> dict[str, Any]:
         self.calls.append(("admin_create_user", kw))
+        if kw["MessageAction"] == "RESEND":  # resets an existing account's temporary password
+            return {"User": self.exists or {}}
         if self.exists is not None:
             raise self.exceptions.UsernameExistsException()
         attrs = [{"Name": "sub", "Value": self.sub}] if self.sub else []
@@ -740,10 +776,6 @@ async def test_cognito_directory_existing_accounts() -> None:
     assert await directory.create_or_find("e@x.io") == type(await directory.create_or_find("e@x.io"))("s-old", None)
     assert idp.calls[1] == ("list_users", {"UserPoolId": POOL, "Filter": 'email = "e@x.io"', "Limit": 2})
     assert await directory.email_for("s-old") == "e@x.io"
-    with raises(Conflict, "account_setup_pending"):
-        await CognitoDirectory(
-            POOL, PARTNER_ISSUER, client=FakeIdp(exists={**existing, "UserStatus": "FORCE_CHANGE_PASSWORD"})
-        ).create_or_find("e@x.io")
     with pytest.raises(Unavailable):
         await CognitoDirectory(
             POOL, PARTNER_ISSUER, client=FakeIdp(exists={"UserStatus": "CONFIRMED", "Attributes": []})
@@ -767,6 +799,29 @@ async def test_cognito_directory_existing_accounts() -> None:
     assert await CognitoDirectory(POOL, PARTNER_ISSUER, client=FakeIdp()).email_for("nobody") is None
 
 
+@pytest.mark.asyncio
+async def test_cognito_directory_resends_a_temporary_password_to_an_account_never_signed_in() -> None:
+    """S263: an existing FORCE_CHANGE_PASSWORD account gets a new temporary password through AdminCreateUser RESEND
+    (the action the task role already has), mailed by e-mail (never the SMS default)."""
+    pending = {
+        "Username": "u-1",
+        "UserStatus": "FORCE_CHANGE_PASSWORD",
+        "Attributes": [{"Name": "sub", "Value": "s-old"}, {"Name": "email", "Value": "e@x.io"}],
+    }
+    idp = FakeIdp(exists=pending)
+    account = await CognitoDirectory(POOL, PARTNER_ISSUER, client=idp).create_or_find("e@x.io")
+    assert account.sub == "s-old" and account.temporary_password and account.reissued
+    name, kw = idp.calls[-1]
+    assert name == "admin_create_user" and kw == {
+        "UserPoolId": POOL,
+        "Username": "u-1",
+        "TemporaryPassword": account.temporary_password,
+        "MessageAction": "RESEND",
+        "DesiredDeliveryMediums": ["EMAIL"],
+    }
+    assert [c[1]["MessageAction"] for c in idp.calls if c[0] == "admin_create_user"] == ["SUPPRESS", "RESEND"]
+
+
 def test_directory_helpers() -> None:
     for _ in range(50):
         value = temporary_password()
@@ -784,8 +839,11 @@ async def test_memory_directory() -> None:
     directory = MemoryDirectory()
     created = await directory.create_or_find("A@B.io")
     assert created.temporary_password and await directory.email_for(created.sub) == "a@b.io"
-    with pytest.raises(Conflict):  # created but never signed in
-        await directory.create_or_find("a@b.io")
+    again = await directory.create_or_find("a@b.io")  # created but never signed in: a new password
+    assert again.sub == created.sub and again.reissued and again.temporary_password != created.temporary_password
+    directory.accounts["a@b.io"]["status"] = "CONFIRMED"
+    confirmed = await directory.create_or_find("a@b.io")  # has its own password: found, never reset
+    assert not confirmed.reissued and confirmed.temporary_password is None
     assert await directory.email_for("nobody") is None
 
 

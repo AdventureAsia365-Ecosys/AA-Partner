@@ -29,7 +29,7 @@ export default async function SignedOutPage({ searchParams }: { searchParams: Pr
             {t(lang, "auth.signIn")}
           </a>
         )}
-        <LocaleSwitch locale={locale} label={t(lang, "shell.language")} next="/signed-out" />
+        <LocaleSwitch locale={locale} label={t(lang, "shell.language")} example={t(lang, "shell.dateExample")} next="/signed-out" />
       </div>
     </CenteredCard>
   );

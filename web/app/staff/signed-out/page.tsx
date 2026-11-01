@@ -35,7 +35,7 @@ export default async function StaffSignedOutPage({ searchParams }: { searchParam
           </form>
         )}
         <p style={{ margin: 0, fontSize: 12.5, color: K.muted2 }}>{t(lang, "staff.subtitle")}</p>
-        <LocaleSwitch locale={locale} label={t(lang, "shell.language")} next="/staff/signed-out" />
+        <LocaleSwitch locale={locale} label={t(lang, "shell.language")} example={t(lang, "shell.dateExample")} next="/staff/signed-out" />
       </div>
     </CenteredCard>
   );

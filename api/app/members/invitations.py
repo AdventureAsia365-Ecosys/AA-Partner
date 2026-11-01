@@ -8,8 +8,14 @@ The flow, end to end:
    The token finds the invitation (:func:`app.tenancy.invitation_tx`); it must be pending and not expired. The address
    is opened by the vault and the partner pool account is **created** (``AdminCreateUser``, ``SUPPRESS``, a random
    temporary password the page shows once) or **found** (the address already has an account). The invitation becomes
-   ``claimed`` and keeps that account's ``(iss, sub)``. Calling claim again on a claimed invitation shows no password
-   again (``already_claimed``).
+   ``claimed`` and keeps that account's ``(iss, sub)``. An existing account that never finished its first sign-in
+   (``FORCE_CHANGE_PASSWORD``: a password nobody saw, an earlier invitation that was withdrawn or expired) gets a new
+   temporary password (``created``; S263 join fix, see :mod:`app.members.directory`); an account with its own password
+   is ``existing`` and is never reset. Calling claim again on a claimed invitation answers ``already_claimed`` with no
+   password and changes nothing (a ``denied`` event, reason ``already_claimed``): a second claim must never replace a
+   password the first one is showing (a double submit, a second tab). A person who never saw the password asks for a
+   new invitation (the owner revokes and re-invites; AA withdraws a first-owner invitation in the L1 console), whose
+   claim gives the never-signed-in account a new temporary password.
 3. The person signs in through managed login: the temporary password, then their own password, then an authenticator
    app (the pool requires MFA, so no membership is ever active without a second factor).
 4. **Accept** (:func:`accept`, ``POST /crm/v1/invitations/accept``, partner-pool bearer): the invitation must be
@@ -37,7 +43,7 @@ import asyncpg
 
 from app.auth.route_guard import Caller
 from app.errors import Conflict, Forbidden, NotFound, ServiceError
-from app.members.directory import PartnerDirectory
+from app.members.directory import Account, PartnerDirectory
 from app.tenancy import SystemContext, invitation_tx
 from app.vault import KeyProvider, Vault
 
@@ -119,6 +125,13 @@ async def _refuse_if_closed(ctx: SystemContext, invitation: Any, *, accepting: b
         raise Gone("invitation_not_claimed", "open the invitation link first")
 
 
+def claim_reason(account: Account) -> str:
+    """The audit reason of a first claim: a new account, an unfinished one with a new password, or an existing one."""
+    if account.reissued:
+        return "account_password_reissued"
+    return "account_created" if account.temporary_password else "account_existing"
+
+
 class _CommitThen(Exception):  # noqa: N818 — internal control flow: commit the work done, then raise ``error``
     def __init__(self, error: ServiceError) -> None:
         super().__init__(error.code)
@@ -143,6 +156,13 @@ async def claim(pool: asyncpg.Pool, keys: KeyProvider, directory: PartnerDirecto
                 tenant_id=invitation.tenant_id,
             )
             if invitation.status == "claimed":
+                ctx.audit(
+                    "invitation_claim",
+                    "denied",
+                    "member_invitation",
+                    str(invitation.invitation_id),
+                    reason="already_claimed",
+                )
                 result = Claimed(state="already_claimed", email=email)
             else:
                 account = await directory.create_or_find(email)
@@ -152,7 +172,7 @@ async def claim(pool: asyncpg.Pool, keys: KeyProvider, directory: PartnerDirecto
                     "allowed",
                     "member_invitation",
                     str(invitation.invitation_id),
-                    reason="account_created" if account.temporary_password else "account_existing",
+                    reason=claim_reason(account),
                 )
                 result = Claimed(
                     state="created" if account.temporary_password else "existing",

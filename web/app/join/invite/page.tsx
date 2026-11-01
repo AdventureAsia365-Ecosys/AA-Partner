@@ -5,9 +5,10 @@
 import { cookies } from "next/headers";
 import { CenteredCard, linkButton } from "@/components/CenteredCard";
 import { LocaleSwitch } from "@/components/LocaleSwitch";
+import { SubmitOnceForm } from "@/components/SubmitOnceForm";
 import { K } from "@/app/_kit";
 import { t, type MessageKey } from "@/lib/i18n";
-import { inviteCookieNames, joinError, openClaim, openInvite } from "@/lib/invite";
+import { inviteCookieNames, joinError, openInvite, shownAnswer } from "@/lib/invite";
 import { serverContext } from "@/lib/serverContext";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +31,8 @@ export default async function JoinInvitePage({ searchParams }: { searchParams: P
   const jar = await cookies();
   const names = inviteCookieNames(cfg);
   const token = cfg.authConfigured ? openInvite(cfg, jar.get(names.token)?.value) : null;
-  const claim = cfg.authConfigured ? openClaim(cfg, jar.get(names.claim)?.value) : null;
+  // Only an answer of THIS invitation (S263: a stale cookie of an earlier link showed another address).
+  const claim = cfg.authConfigured ? shownAnswer(cfg, jar, token) : null;
   const problem = error ? joinError(error) : !token ? "no_invitation" : null;
   return (
     <CenteredCard testId="crm-join-invite">
@@ -65,14 +67,11 @@ export default async function JoinInvitePage({ searchParams }: { searchParams: P
             </a>
           </div>
         ) : (
-          <form method="post" action="/join/claim" style={{ display: "grid", gap: 10 }}>
+          <SubmitOnceForm action="/join/claim" label={t(lang, "join.open")} pendingLabel={t(lang, "join.opening")} testId="join-open">
             <p style={{ margin: 0, fontSize: 13.5, color: K.muted }}>{t(lang, "join.openHelp")}</p>
-            <button type="submit" style={linkButton} data-testid="join-open">
-              {t(lang, "join.open")}
-            </button>
-          </form>
+          </SubmitOnceForm>
         )}
-        <LocaleSwitch locale={locale} label={t(lang, "shell.language")} next="/join/invite" />
+        <LocaleSwitch locale={locale} label={t(lang, "shell.language")} example={t(lang, "shell.dateExample")} next="/join/invite" />
       </div>
     </CenteredCard>
   );

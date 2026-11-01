@@ -248,10 +248,17 @@ def pools() -> LocalPools:
     return LocalPools()
 
 
+class _Keys:
+    """The key provider as the routes see it: only the S263 test-agency delete calls it (the crypto-shred)."""
+
+    async def destroy(self, ctx: Any) -> int:
+        return 1
+
+
 @pytest.fixture
 def ops_app(pools: LocalPools, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[TestClient, dict[str, Any]]]:
     settings = pools.settings()
-    app = create_app(settings, verifier=pools.verifier(settings), keys=object())
+    app = create_app(settings, verifier=pools.verifier(settings), keys=_Keys())
     state: dict[str, Any] = {"conn": base_conn()}
 
     async def pool(_request: Any) -> ScriptedConn:
@@ -350,6 +357,29 @@ SCENARIOS: list[tuple[str, str, str, Any, Any, str, int, str | None]] = [
      lambda c: c.on("WHERE role = 'owner' AND status IN ('active', 'invited')", 1), "admin", 409, "owner_exists"),
     ("POST", "/tenants/{tenant_id}/owner-invite", f"{T}/owner-invite",
      {"owner_email": "not an address", "ticket_ref": TICKET}, None, "admin", 422, "invalid_email"),
+    # S263 (crm.ops.v1 1.8): withdraw AA's live first-owner invitation; delete a synthetic agency.
+    ("POST", "/tenants/{tenant_id}/owner-invite/withdraw", f"{T}/owner-invite/withdraw", {"ticket_ref": TICKET},
+     lambda c: c.on("FROM crm.member_invitation WHERE role = 'owner' AND invited_by", [{"invitation_id": REQ}]),
+     "admin", 200, None),
+    ("POST", "/tenants/{tenant_id}/owner-invite/withdraw", f"{T}/owner-invite/withdraw", {"ticket_ref": TICKET},
+     None, "admin", 404, "owner_invite_not_found"),
+    ("POST", "/tenants/{tenant_id}/owner-invite/withdraw", f"{T}/owner-invite/withdraw", {"ticket_ref": TICKET},
+     None, "reader", 403, "missing_group"),
+    ("POST", "/tenants/{tenant_id}/delete", f"{T}/delete", {"agency_name": "Lữ hành Sen Vàng", "ticket_ref": TICKET},
+     lambda c: (c.on("SELECT status, is_synthetic, display_name FROM crm.tenant",
+                     {"status": "active", "is_synthetic": True, "display_name": "Lữ hành Sen Vàng"}),
+                c.on("UPDATE crm.tenant SET deleted_at", NOW)),
+     "admin", 200, None),
+    ("POST", "/tenants/{tenant_id}/delete", f"{T}/delete", {"agency_name": "Lữ hành Sen Vàng", "ticket_ref": TICKET},
+     lambda c: c.on("SELECT status, is_synthetic, display_name FROM crm.tenant",
+                    {"status": "active", "is_synthetic": False, "display_name": "Lữ hành Sen Vàng"}),
+     "admin", 403, "not_synthetic"),
+    ("POST", "/tenants/{tenant_id}/delete", f"{T}/delete", {"agency_name": "Sen", "ticket_ref": TICKET},
+     lambda c: c.on("SELECT status, is_synthetic, display_name FROM crm.tenant",
+                    {"status": "active", "is_synthetic": True, "display_name": "Lữ hành Sen Vàng"}),
+     "admin", 422, "agency_name_mismatch"),
+    ("POST", "/tenants/{tenant_id}/delete", f"{T}/delete", {"agency_name": "Lữ hành Sen Vàng"}, None, "admin", 422,
+     "invalid_request"),
     ("GET", "/tenants/{tenant_id}/entitlements", f"{T}/entitlements", None, None, "reader", 200, None),
     ("PUT", "/tenants/{tenant_id}/entitlements-allowed", f"{T}/entitlements-allowed",
      {"features_allowed": ["ai_assist"], "ticket_ref": TICKET}, None, "admin", 200, None),

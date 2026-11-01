@@ -2,7 +2,8 @@
 // web/components/LocaleSwitch.tsx
 // AA-935 — language and date-locale picker (R32). A plain form POST to /prefs/locale (same-origin only), submitted
 // on change; works without JavaScript through the button. The option labels name the language in itself and show how
-// a date will look, so the choice is clear before saving.
+// a date will look, so the choice is clear before saving. S263: the sample date is labelled as an example ("English
+// (US) · dates like Apr 3, 2026"); without the label it read as a strange date of its own.
 
 import { K } from "@/app/_kit";
 import { DATE_LOCALES, formatDate, type DateLocale } from "@/lib/dates";
@@ -16,7 +17,13 @@ const NAMES: Record<DateLocale, string> = {
 
 const SHORT: Record<DateLocale, string> = { "en-AU": "EN (AU)", "en-GB": "EN (UK)", "en-US": "EN (US)", "vi-VN": "Tiếng Việt" };
 
+// A day above 12 in no month position (3 April): every locale's day/month order shows at a glance.
 const SAMPLE = "2026-04-03";
+
+/** The text of one option: the language, then how a date looks in it, introduced by `example` ("dates like"). */
+export function localeOptionLabel(l: DateLocale, example: string, compact = false): string {
+  return compact ? SHORT[l] : `${NAMES[l]} · ${example} ${formatDate(SAMPLE, l)}`;
+}
 
 export function LocaleSwitch({
   locale,
@@ -24,12 +31,15 @@ export function LocaleSwitch({
   next,
   compact = false,
   saveLabel = "OK",
+  example = "dates like",
 }: {
   locale: DateLocale;
   label: string;
   next: string;
   compact?: boolean;
   saveLabel?: string;
+  /** Introduces the sample date of each option (i18n `shell.dateExample`); unused when `compact`. */
+  example?: string;
 }) {
   return (
     <form action="/prefs/locale" method="post" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
@@ -55,7 +65,7 @@ export function LocaleSwitch({
       >
         {DATE_LOCALES.map((l) => (
           <option key={l} value={l}>
-            {compact ? SHORT[l] : `${NAMES[l]} · ${formatDate(SAMPLE, l)}`}
+            {localeOptionLabel(l, example, compact)}
           </option>
         ))}
       </select>
