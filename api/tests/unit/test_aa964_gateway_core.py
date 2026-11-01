@@ -375,3 +375,12 @@ async def test_a_bedrock_error_carries_the_shared_class_never_the_message() -> N
 
 async def test_the_guardrail_row_family_is_its_maker() -> None:
     assert gw.GUARD_FAMILY == "amazon"
+
+
+async def test_the_ops_read_serves_every_ledger_status_of_the_core() -> None:
+    from typing import get_args
+
+    from app.aa_llm import ledger
+    from app.routers import ops
+
+    assert set(get_args(ops.LlmStatus)) == set(ledger.STATUSES)
