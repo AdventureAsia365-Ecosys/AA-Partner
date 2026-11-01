@@ -22,9 +22,10 @@
 --      deletes it.
 --   2. crm.workflow_run (base template): one run of one rule for one subject, the trip (stage, event, date triggers,
 --      manual apply) or the client (special dates: birthday, passport expiry, trip anniversary) — exactly one of
---      trip_id / traveler_id. trigger_key is the run's idempotency key (stage:<history id>, event:<event id>,
---      date:<anchor>:<offset>:<anchor date>, special:<code>:<date>, manual:<id>): UNIQUE (tenant, rule, trigger_key),
---      so a tick that runs twice starts nothing twice (card E). status active -> completed | stopped | failed;
+--      trip_id / traveler_id. trigger_key is the run's idempotency key and always names its subject (stage:<history
+--      id>, event:<event id>, date:<trip id>:<anchor>:<offset>:<anchor date>, special:<code>:<client or trip id>:<date>,
+--      manual:<id>:<trip id>): UNIQUE (tenant, rule, trigger_key), so a tick that runs twice starts nothing twice
+--      (card E) and two trips or clients on one date each get their run. status active -> completed | stopped | failed;
 --      step_index (the next step), next_at (when the next step is due: a run started by a member's action waits the
 --      Undo window first, Fix B8; a wait step sets it later), stop_reason (a code: trip_cancelled, trip_lost,
 --      trip_trashed, archived, undone, stopped_by_member, rule_archived ...), log (a JSON array of the steps done:
@@ -227,7 +228,7 @@ REVOKE DELETE, TRUNCATE ON crm.workflow_run FROM crm_app;
 
 COMMENT ON TABLE crm.workflow_run IS 'AA-959 (crm-038, design v3 M10, R30 seam): one run of one workflow rule for one trip or one client. trigger_key = the idempotency key (UNIQUE per rule): a tick that runs twice starts nothing twice. status active -> completed | stopped | failed; step_index / next_at = the next step and when it is due (a run a member''s action started waits the Undo window, Fix B8); stop_reason a code (trip_cancelled, undone, archived, ...); log = the steps done as codes and ids only. Stopped by the trip cancel (Fix C3). No DELETE for crm_app: crm.erase_subject only.';
 COMMENT ON COLUMN crm.workflow_run.log IS 'AA-959 (crm-038): [{step, action, outcome, at, task_id?, message_id?}] codes and ids only, never a name, an address or a text.';
-COMMENT ON COLUMN crm.workflow_run.trigger_key IS 'AA-959 (crm-038): stage:<history id> | event:<event id> | date:<anchor>:<offset>:<anchor date> | special:<code>:<date> | manual:<id>.';
+COMMENT ON COLUMN crm.workflow_run.trigger_key IS 'AA-959 (crm-038): stage:<history id> | event:<event id> | date:<trip id>:<anchor>:<offset>:<anchor date> | special:<code>:<client or trip id>:<date> | manual:<id>:<trip id>; the key always names its subject, so two trips or clients on one date never share a key.';
 
 -- ── 3. crm.task: client tasks, custom titles, the run that opened a task ──────────────────────────
 ALTER TABLE crm.task ADD COLUMN IF NOT EXISTS traveler_id UUID REFERENCES crm.traveler (traveler_id);
