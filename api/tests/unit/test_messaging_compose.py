@@ -1,7 +1,8 @@
 """AA-958 the composer (scripted SQL): card R, WhatsApp free text with the window closed is 409 ``template_required``
 while a template goes; the other refusals in order (unmatched, assistant, no connection / sender, no phone, opted out,
-template not approved, variables); a send stores the message sealed with its delivery row and queues one dispatch row
-with the Undo delay; a resend after Undo reuses the author's draft; what the composer may offer per channel."""
+template not approved, variables); a marketing template needs a marketing yes and is queued as marketing; a send
+stores the message sealed with its delivery row and queues one dispatch row with the Undo delay; a resend after Undo
+reuses the author's draft; what the composer may offer per channel."""
 
 from __future__ import annotations
 
@@ -31,6 +32,7 @@ TEMPLATE = {
     "body": "Hi {{1}}, the deposit for {{2}} is due.",
     "variables": ["1", "2"],
 }
+PROMO = TEMPLATE | {"content_sid": "HX" + "b2" * 16, "name": "autumn_offer", "category": "MARKETING"}
 
 
 def _conn(**over: Any) -> ScriptedConn:
@@ -43,6 +45,7 @@ def _conn(**over: Any) -> ScriptedConn:
         "opted_out": False,
         "template": TEMPLATE,
         "existing": None,
+        "marketing": None,
     } | over
     conn = ScriptedConn()
     conn.on("FROM crm.conversation WHERE conversation_id", values["conversation"])
@@ -52,7 +55,8 @@ def _conn(**over: Any) -> ScriptedConn:
     conn.on("SELECT max(wa_window_expires_at)", values["window"])
     conn.on("SELECT EXISTS (SELECT 1 FROM crm.conversation", values["opted_out"])
     conn.on("FROM crm.channel_template WHERE content_sid", values["template"])
-    conn.on("FROM crm.channel_template WHERE approval", [TEMPLATE])
+    conn.on("FROM crm.channel_template WHERE approval", [TEMPLATE, PROMO])
+    conn.on("FROM crm.consent c WHERE c.traveler_id", values["marketing"])
     conn.on("FROM crm.message WHERE message_id = $1 FOR UPDATE", values["existing"])
     conn.on("SELECT archived_at, deleted_at FROM crm.traveler", {"archived_at": None, "deleted_at": None})
     conn.on("INSERT INTO crm.dispatch_queue", {"dispatch_id": uuid.uuid4(), "not_before": NOW})
@@ -88,6 +92,7 @@ async def test_free_text_inside_the_window_is_queued_with_undo() -> None:
     assert conn.sql("SET status = 'queued'")[0] == (MSG,)
     (dispatch,) = conn.sql("INSERT INTO crm.dispatch_queue")
     assert dispatch[0] == CLIENT and dispatch[2] == "whatsapp" and dispatch[4] == "user_action" and dispatch[6] == 10
+    assert dispatch[3] == "transactional"
 
 
 @pytest.mark.parametrize("window", [None, NOW - dt.timedelta(minutes=1)])
@@ -231,3 +236,40 @@ async def test_compose_state_on_a_conversation_and_a_trip() -> None:
         )
     with pytest.raises(Invalid):
         await compose.compose_state(tenant_ctx(_conn()), vault, conversation_id=None, trip_id=None)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("category", ["MARKETING", None, "promo"])
+@pytest.mark.asyncio
+async def test_a_marketing_template_needs_marketing_consent(category: Any) -> None:
+    """A template that is not a service one (utility / authentication) is marketing: refused without a current
+    marketing yes, and queued with purpose marketing so the dispatcher checks the consent again at send time."""
+    promo = PROMO | {"category": category}
+    for consent in (None, False):
+        conn = _conn(window=None, template=promo, marketing=consent)
+        with pytest.raises(Conflict) as caught:
+            await _send(conn, body=None, content_sid=PROMO["content_sid"], variables={"1": "Lan", "2": "Hoi An"})
+        assert caught.value.code == "no_marketing_consent" and conn.sql("INSERT INTO crm.dispatch_queue") == []
+    conn = _conn(window=None, template=promo, marketing=True)
+    await _send(conn, body=None, content_sid=PROMO["content_sid"], variables={"1": "Lan", "2": "Hoi An"})
+    (dispatch,) = conn.sql("INSERT INTO crm.dispatch_queue")
+    assert dispatch[3] == "marketing"
+
+
+@pytest.mark.parametrize("category", ["UTILITY", "authentication"])
+@pytest.mark.asyncio
+async def test_a_service_template_is_transactional_without_consent(category: str) -> None:
+    conn = _conn(window=None, template=TEMPLATE | {"category": category}, marketing=False)
+    await _send(conn, body=None, content_sid=CONTENT_SID, variables={"1": "Lan", "2": "Hoi An"})
+    assert conn.sql("INSERT INTO crm.dispatch_queue")[0][3] == "transactional"
+    assert conn.sql("FROM crm.consent") == []
+
+
+@pytest.mark.asyncio
+async def test_compose_state_marks_marketing_templates_without_consent() -> None:
+    vault = TextVault()
+    out = await compose.compose_state(tenant_ctx(_conn()), vault, conversation_id=CONV, trip_id=None)  # type: ignore[arg-type]
+    service, promo = out["templates"]
+    assert (service["marketing"], service["available"], service["reason"]) == (False, True, None)
+    assert (promo["marketing"], promo["available"], promo["reason"]) == (True, False, "no_marketing_consent")
+    agreed = await compose.compose_state(tenant_ctx(_conn(marketing=True)), vault, conversation_id=CONV, trip_id=None)  # type: ignore[arg-type]
+    assert all(t["available"] for t in agreed["templates"])

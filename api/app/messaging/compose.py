@@ -12,9 +12,16 @@
 Refusals, in order: 404 / 422 for a bad target; 409 ``conversation_unmatched`` (link the client first);
 403 for an assistant on a trip not assigned to them; 409 ``channel_not_connected`` (no connection, a disconnected one,
 no sender for the channel); 409 ``no_client_phone`` (none or not E.164); 409 ``client_opted_out``; 409
-``template_not_approved``; 422 ``template_variables_missing`` / ``invalid_template_variable``; WhatsApp free text with
+``template_not_approved``; 409 ``no_marketing_consent`` (a marketing template to a client whose latest marketing
+consent is not a yes); 422 ``template_variables_missing`` / ``invalid_template_variable``; WhatsApp free text with
 the window closed (or never opened): **409 ``template_required``**; 422 ``body_required`` / ``body_too_long``. An
 archived client: 409 ``traveler_archived`` (:func:`app.dispatch.queue.enqueue_message`).
+
+**Marketing templates.** A template whose WhatsApp category is not ``UTILITY`` / ``AUTHENTICATION`` (``MARKETING``, or
+none reported) is a marketing message: it is queued with ``purpose marketing``, so the dispatcher's consent gate
+(``no_consent`` without a current ``crm.consent`` marketing yes) applies at send time too, and the composer offers it
+as unavailable (``no_marketing_consent``) to a client without that consent. Free text and service templates stay
+``transactional``.
 """
 
 from __future__ import annotations
@@ -57,7 +64,7 @@ INSERT INTO crm.conversation (traveler_id, trip_id, channel) VALUES ($1, $2, $3)
 """
 PHONE_SQL = "SELECT phone_enc FROM crm.traveler WHERE traveler_id = $1 AND deleted_at IS NULL"
 TEMPLATE_SQL = """
-SELECT content_sid, name, language, body, variables FROM crm.channel_template
+SELECT content_sid, name, language, category, body, variables FROM crm.channel_template
  WHERE content_sid = $1 AND approval = 'approved' AND deleted_at IS NULL
 """
 APPROVED_SQL = """
@@ -65,6 +72,12 @@ SELECT content_sid, name, language, category, body, variables FROM crm.channel_t
  WHERE approval = 'approved' AND deleted_at IS NULL
  ORDER BY name, language
  LIMIT 200
+"""
+# The client's latest marketing consent (the dispatcher's own rule, app.dispatch.worker): true, false or none.
+MARKETING_SQL = """
+SELECT c.value FROM crm.consent c WHERE c.traveler_id = $1 AND c.purpose = 'marketing'
+ ORDER BY c.at DESC, c.created_at DESC, c.consent_id DESC
+ LIMIT 1
 """
 ROW_SQL = """
 SELECT message_id, status, author_member_id, conversation_id FROM crm.message WHERE message_id = $1 FOR UPDATE
@@ -80,6 +93,18 @@ INSERT INTO crm.message_delivery (message_id, channel, content_sid, variables_en
 ON CONFLICT (message_id) DO UPDATE SET content_sid = EXCLUDED.content_sid, variables_enc = EXCLUDED.variables_enc
 """
 QUEUE_SQL = "UPDATE crm.message SET status = 'queued', occurred_at = now() WHERE message_id = $1"
+
+
+SERVICE_CATEGORIES = frozenset({"UTILITY", "AUTHENTICATION"})
+
+
+def is_marketing(category: str | None) -> bool:
+    """A template is a marketing message unless its category says service (utility / authentication)."""
+    return (category or "").strip().upper() not in SERVICE_CATEGORIES
+
+
+async def marketing_consent(ctx: TenantContext, traveler_id: uuid.UUID) -> bool:
+    return await ctx.conn.fetchval(MARKETING_SQL, traveler_id) is True
 
 
 def _iso(value: Any) -> str | None:
@@ -127,13 +152,18 @@ async def _client_phone(ctx: TenantContext, vault: Vault, traveler_id: uuid.UUID
         return None
 
 
-def _template_out(r: Any) -> dict[str, Any]:
+def _template_out(r: Any, consent: bool) -> dict[str, Any]:
+    marketing = is_marketing(r["category"])
+    blocked = marketing and not consent
     return {
         "content_sid": r["content_sid"],
         "name": r["name"],
         "language": r["language"],
         "body": r["body"],
         "variables": list(r["variables"] or []) or list(placeholders(r["body"])),
+        "marketing": marketing,
+        "available": not blocked,
+        "reason": "no_marketing_consent" if blocked else None,
     }
 
 
@@ -179,7 +209,10 @@ async def compose_state(
             until = await state.window_until(ctx, conv_ids.get(channel, uuid.UUID(int=0)), traveler_id)
             entry["window_until"] = _iso(until)
         channels[channel] = entry
-    templates = [_template_out(r) for r in await ctx.conn.fetch(APPROVED_SQL)] if conn is not None else []
+    templates: list[dict[str, Any]] = []
+    if conn is not None:
+        consent = traveler_id is not None and await marketing_consent(ctx, traveler_id)
+        templates = [_template_out(r, consent) for r in await ctx.conn.fetch(APPROVED_SQL)]
     return {"traveler_id": str(traveler_id) if traveler_id else None, "channels": channels, "templates": templates}
 
 
@@ -232,10 +265,16 @@ async def send(
     if await state.opted_out(ctx, conv["conversation_id"], conv["traveler_id"], channel):
         raise Conflict("client_opted_out", "the client asked not to get messages on this channel")
     variables_enc: bytes | None = None
+    purpose = "transactional"
     if content_sid:
         template = await ctx.conn.fetchrow(TEMPLATE_SQL, content_sid)
         if template is None:
             raise Conflict("template_not_approved", "only an approved template can be sent")
+        if is_marketing(template["category"]):
+            # The dispatcher checks the consent again at send time (purpose marketing -> no_consent).
+            purpose = "marketing"
+            if not await marketing_consent(ctx, conv["traveler_id"]):
+                raise Conflict("no_marketing_consent", "the client has not agreed to marketing messages")
         values = _variables(template, variables)
         text = render(template["body"], values)
         if values:
@@ -279,12 +318,12 @@ async def send(
         ctx,
         traveler_id=conv["traveler_id"],
         channel=channel,
-        purpose="transactional",
+        purpose=purpose,
         origin="user_action",
         trip_id=conv["trip_id"],
         message_id=message_id,
     )
-    ctx.audit("message_send", "allowed", "message", str(message_id), reason=channel)
+    ctx.audit("message_send", "allowed", "message", str(message_id), reason=f"{channel}_{purpose}")
     return {
         "message_id": str(message_id),
         "conversation_id": str(conv["conversation_id"]),
