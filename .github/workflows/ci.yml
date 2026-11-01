@@ -2,7 +2,8 @@ name: CI
 
 # Required checks (branch protection on main; names like AA-Booking's and AA-CIS-App's so the rules read the same):
 #   Lint, Security Audit, Unit Tests, Integration Tests, Docker Build Check, Portal Build, Web Build (the last two since
-#   AA-994 hand step H1), plus Docs lint, PR title and gitleaks from their own workflows.
+#   AA-994 hand step H1), plus Docs lint, PR title and gitleaks from their own workflows. "Integration Tests" is the
+#   aggregate of the "Integration shard i/N" matrix jobs (AA-1032), which are not required themselves.
 # Non-required: "Vendored CIS copies" (byte copies of AA-CIS-App files: the job table template + comparator, ADR 0003a,
 # the multi-issuer verifier, ADR 0006 §8 rule 9, and the web's and portal's BFF helpers, AA-935 / AA-979).
 # Non-required (AA-993 M4b): "Migration preflight" classifies a PR's new crm-NNN files (expand = auto-applied, else
@@ -121,20 +122,35 @@ jobs:
       # Includes the route-class guard over every served path, the job payload guard (ids only), the DB access lint,
       # the import boundary, the deploy preflight script (stub aws/curl) and the vendored-copy checker.
       # AA-993 (P3): the Python 3.12 sys.monitoring coverage tracer, about 1.7x faster here with the same TOTAL.
+      # AA-1032: 4 pytest-xdist workers (pinned in requirements-dev.txt); `--dist loadfile` keeps each test file on one
+      # worker (module fixtures and module state stay per file). Locally the same 3133 tests and the same per-file
+      # coverage report as the single process, 180 s -> 58 s; pytest-cov combines the workers before the 90% gate.
       - name: Run unit tests
         env:
           ENVIRONMENT: test
           COVERAGE_CORE: sysmon
-        run: pytest tests/unit -v --tb=short --cov=app --cov-report=term-missing --cov-fail-under=90
+        run: pytest tests/unit -v -n 4 --dist loadfile --tb=short --cov=app --cov-report=term-missing --cov-fail-under=90
 
   # Applies api/migrations/*.sql in order to a real PostgreSQL 15 (the RDS major) as AA-CIS-Infra DB Migrate does:
   # logged in as aa_cis_admin (NOT superuser, the RDS master shape), each file as crm_owner (SET ROLE), after a role
   # bootstrap that mirrors Infra rl-003 / rl-004 (tests/integration/bootstrap_roles.py). Then: re-apply (idempotency),
   # the base-table catalogue guard, cross-tenant RLS, tenant_tx() as crm_app, crm.job against the ADR 0003a template,
   # lease re-claim of a stopped worker, /crm/health/ready as crm_app.
-  test-integration:
-    name: Integration Tests
+  # AA-1032: INTEGRATION_SHARDS parallel jobs ("Integration shard i/N"), each with its OWN Postgres (its session fixture
+  # bootstraps the roles and applies every migration, as the single job did). Each shard is one consecutive range of
+  # the path-ordered files (.github/scripts/ci_shards.py --contiguous, balanced on .github/test-durations/
+  # integration.json), so a module keeps the predecessors it had in the single job. The required check keeps its name:
+  # "Integration Tests" below passes only when every shard passed. Before (main, 01/11/2026): one job, 6-9 min.
+  test-integration-shard:
+    name: Integration shard ${{ matrix.shard }}/3
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    env:
+      INTEGRATION_SHARDS: 3
+      SHARD: ${{ matrix.shard }}
     services:
       postgres:
         image: postgres:15
@@ -163,17 +179,72 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       # -rs lists skips; a skipped integration test would make this check green without testing anything.
-      - name: Run integration tests (no skips allowed)
+      - name: Run integration tests (this shard, no skips allowed)
         env:
           ENVIRONMENT: test
           CRM_TEST_ADMIN_DSN: postgresql://aa_cis_admin:ci-only@localhost:5432/crm_ci # gitleaks:allow (CI-only)
         run: |
-          set -o pipefail
+          set -euo pipefail
           python -m tests.integration.bootstrap_roles "postgresql://postgres:ci-only@localhost:5432/crm_ci" # gitleaks:allow (CI-only)
-          pytest tests/integration -v --tb=short -rs -p no:cacheprovider | tee /tmp/integration.txt
+          mapfile -t FILES < <(python3 ../.github/scripts/ci_shards.py files --contiguous --shards "$INTEGRATION_SHARDS" \
+            --index "$SHARD" --durations ../.github/test-durations/integration.json tests/integration)
+          echo "Integration shard $SHARD/$INTEGRATION_SHARDS: ${#FILES[@]} test files"
+          pytest "${FILES[@]}" -v --tb=short -rs -p no:cacheprovider \
+            --junitxml="junit-integration-$SHARD.xml" -o junit_family=xunit1 | tee /tmp/integration.txt
           if grep -qE "^SKIPPED|[0-9]+ skipped" /tmp/integration.txt; then
             echo "::error::integration tests were skipped"; exit 1
           fi
+
+      - name: Upload the shard's junit report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-shard-${{ matrix.shard }}
+          path: api/junit-integration-${{ matrix.shard }}.xml
+          if-no-files-found: ignore
+          retention-days: 5
+
+  test-integration:
+    name: Integration Tests
+    needs: test-integration-shard
+    # Runs when a shard failed too, so the required check turns red instead of "skipped" (a skipped required check
+    # counts as passed).
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - name: Every integration shard passed
+        env:
+          RESULT: ${{ needs.test-integration-shard.result }}
+        run: |
+          if [ "$RESULT" != "success" ]; then
+            echo "::error::an integration shard did not pass (result: $RESULT); see the 'Integration shard i/N' jobs"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: integration-shard-*
+          merge-multiple: true
+          path: shards
+
+      # Report only: each shard's real seconds, and the per-file durations of this run as an artifact to refresh
+      # .github/test-durations/integration.json when the shards drift apart.
+      - name: Shard balance (report)
+        run: |
+          python3 .github/scripts/ci_shards.py durations --out integration-durations.json \
+            shards/junit-integration-*.xml | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-durations-integration
+          path: integration-durations.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   docker-build:
     name: Docker Build Check
