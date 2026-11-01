@@ -82,6 +82,11 @@ UNSEEDED = {
     "/crm/v1/lifecycle/offboarding/{request_id}/export": "owner-only agency export: never the assistant",
     "/crm/v1/data/exports/{export_id}/download": "owner-only portability ZIP (AA-967): never the assistant",
     "/crm/v1/client-imports/{import_id}": "owner-only client import status (AA-962): counts only",
+    # AA-959: a task (kind, title, due, assignee), an automation rule (trigger, conditions, steps) and its preview
+    # (trip ids and a count): no money table behind any of them. The lists (/tasks, /workflows) are called below.
+    "/crm/v1/tasks/{task_id}": "a task: no money table behind it",
+    "/crm/v1/workflows/{rule_id}": "an automation rule: no money table behind it",
+    "/crm/v1/workflows/{rule_id}/preview": "trip ids and a count",
 }
 
 

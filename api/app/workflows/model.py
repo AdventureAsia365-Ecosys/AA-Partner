@@ -295,7 +295,8 @@ def _step(raw: Any, n: int, subject: str, *, draft: bool) -> dict[str, Any]:
             raise _err("template_required", f"{where}.content_sid", "pick an approved template")
         if sid is not None and (not isinstance(sid, str) or not _CONTENT_SID.match(sid)):
             raise _err("invalid_template", f"{where}.content_sid")
-        variables = raw.get("variables") or {}
+        variables = raw.get("variables")
+        variables = {} if variables is None else variables
         if not isinstance(variables, dict) or len(variables) > 20:
             raise _err("invalid_variables", f"{where}.variables")
         for key, field in variables.items():
