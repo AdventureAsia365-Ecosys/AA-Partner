@@ -1123,7 +1123,10 @@ signing in `app/portal/public.py`, the terms re-accept in `app/proposals/public.
   paid"; the claim and the card session are 409 `terms_reaccept_required` with nothing written). **Pinned terms**
   (S261): with published booking terms, a builder skeleton starts with them and a draft without terms is pinned to
   them at builder publish / text send (`proposals.service.pin_current_terms`, before the price hash), so the client
-  accepts them with the proposal.
+  accepts them with the proposal. A version that names terms keeps them; once that version is retired, a builder draft
+  is not publishable (blocking check `terms_retired`, or `terms_not_published`; the view's `terms_status`) and the
+  builder / Proposal tab show the named version marked with "Use the current terms"; settings take only the published
+  version, and a working copy of a version on retired terms starts on the current ones (S262 round 3).
 - **One envelope per traveller** (C-08): booking terms + waiver + the insurance declination when the traveller
   declines (the choice is asked whenever a declination version is published); each document's id and SHA-256 as
   shown (409 `document_changed` with the current documents); typed name, consent tick, a fresh signing code.
