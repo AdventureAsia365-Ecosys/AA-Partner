@@ -25,6 +25,8 @@ GET    ``/tenants/{id}``                           one TenantSummary
 GET    ``/tenants/{id}/usage``                     usage meters
 POST   ``/tenants/{id}/lock`` / ``unlock``         lock / unlock (ticket, lock reason)
 POST   ``/tenants/{id}/owner-invite``              first-owner invitation (no owner, no travellers), 202
+POST   ``/tenants/{id}/owner-invite/withdraw``     S263: withdraw AA's live first-owner invitation (ticket)
+POST   ``/tenants/{id}/delete``                    S263: delete a synthetic agency (typed name, ticket; no member)
 GET    ``/tenants/{id}/entitlements``              plan, seats, features allowed, insights opt-out
 PUT    ``/tenants/{id}/entitlements-allowed``      allow features (the owner switches them on)
 PUT    ``/tenants/{id}/insights-opt-out``          insights opt-out on the owner's written request (Q2 3.12)
@@ -147,6 +149,21 @@ class OwnerInviteAccepted(_Out):
     invitation_id: str
     status: Literal["pending"]
     expires_at: str
+
+
+class OwnerInviteWithdrawn(_Out):
+    """crm.ops.v1 1.8 (S263): the newest first-owner invitation that was withdrawn (every live one was)."""
+
+    tenant_id: str
+    invitation_id: str
+    status: Literal["revoked"]
+
+
+class AgencyDeleted(_Out):
+    """crm.ops.v1 1.8 (S263): a synthetic agency moved to the trash, its keys crypto-shredded."""
+
+    tenant_id: str
+    status: Literal["deleted"]
 
 
 Feature = Literal["ai_assist", "whatsapp_sms", "stripe_connect", "campaigns", "custom_domain", "insights_export"]
@@ -394,6 +411,12 @@ class OwnerInviteIn(_In):
     ticket_ref: TicketRef
 
 
+class DeleteTestAgencyIn(_In):
+    # The agency's name typed exactly as shown (not personal data: the business name the L1 list already returns).
+    agency_name: str = Field(min_length=1, max_length=200)
+    ticket_ref: TicketRef
+
+
 class AllowedIn(_In):
     features_allowed: list[str] = Field(max_length=6)
     ticket_ref: TicketRef
@@ -618,6 +641,30 @@ async def owner_invite(request: Request, tenant_id: uuid.UUID, body: OwnerInvite
         mailer=require_mailer(request.app.state.mailer),
         web_origin=settings.invitation_origin,
         ttl_hours=settings.invitation_ttl_hours,
+    )
+
+
+@router.post("/tenants/{tenant_id}/owner-invite/withdraw", response_model=OwnerInviteWithdrawn)
+async def owner_invite_withdraw(request: Request, tenant_id: uuid.UUID, body: TicketIn, caller: PlatformAdmin) -> dict:
+    """S263: withdraw the first-owner invitation AA sent (pending, or claimed and not accepted) so a new one can go."""
+    pool = await request_pool(request)
+    return await console.withdraw_owner_invitation(pool, tenant_id, staff_sub=caller.sub, ticket_ref=body.ticket_ref)
+
+
+@router.post("/tenants/{tenant_id}/delete", response_model=AgencyDeleted)
+async def delete_test_agency(
+    request: Request, tenant_id: uuid.UUID, body: DeleteTestAgencyIn, caller: PlatformAdmin
+) -> dict:
+    """S263: delete a synthetic (test) agency with no member and no traveller (typed name + ticket); a real agency is
+    only ever deleted by its owner's confirmed offboarding."""
+    pool = await request_pool(request)
+    return await console.delete_test_agency(
+        pool,
+        tenant_id,
+        staff_sub=caller.sub,
+        agency_name=body.agency_name,
+        ticket_ref=body.ticket_ref,
+        keys=require_keys(request.app.state.keys),
     )
 
 

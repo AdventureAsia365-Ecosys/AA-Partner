@@ -18,7 +18,7 @@ import uuid
 import asyncpg
 import pytest
 
-from app.errors import Conflict, Forbidden, NotFound
+from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.intake import public as intake
 from app.lifecycle import offboarding
 from app.members import invitations, recovery
@@ -244,6 +244,124 @@ async def test_the_first_owner_rule_is_checked_again_at_accept(
     await recovery.deactivate_member(app_pool, empty, first_owner, staff_sub=STAFF, directory=None)
     token, person = await _aa_owner_invite(app_pool, empty, "first.owner@agency.example", "SUP-22")
     assert (await invitations.accept(app_pool, person, token))["member_role"] == "owner"
+
+
+async def test_s263_withdraw_a_claimed_owner_invitation_then_a_new_one_reissues_the_password(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection
+) -> None:
+    """S263, found live on Dev: the first owner's invitation was claimed once, the password was never seen, and a new
+    owner invitation was refused (409 owner_invite_pending) for the claimed one's 7 days. AA withdraws it (ticket); the
+    old link is used; a new invitation to the address gives the never-signed-in account a new temporary password and
+    the owner joins."""
+    keys, mailer, directory = _keys(), MemoryMailer(), MemoryDirectory(ISS)
+    tenant_id = uuid.uuid4()
+    await console.create_agency(
+        app_pool, tenant_id=tenant_id, agency_name="Hoa Sen Test Tours", is_synthetic=True, default_locale="en-US",
+        environment="test", staff_sub=STAFF, ticket_ref="SUP-30",
+    )  # fmt: skip
+    invite = dict(staff_sub=STAFF, owner_email="mai.owner@lotus.example", keys=keys, mailer=mailer,
+                  web_origin=ORIGIN, ttl_hours=168)  # fmt: skip
+    await console.invite_first_owner(app_pool, tenant_id, ticket_ref="SUP-31", **invite)
+    first_token = mailer.sent[0].text.split("/join?t=")[1].split()[0]
+    first = await invitations.claim(app_pool, keys, directory, first_token)
+    assert first.state == "created" and first.temporary_password
+    with pytest.raises(Conflict) as exc:
+        await console.invite_first_owner(app_pool, tenant_id, ticket_ref="SUP-32", **invite)
+    assert exc.value.code == "owner_invite_pending"
+    out = await console.withdraw_owner_invitation(app_pool, tenant_id, staff_sub=STAFF, ticket_ref="SUP-33")
+    assert out["status"] == "revoked"
+    [inv] = await _owner_fetch(admin, tenant_id, "SELECT invitation_id, status FROM crm.member_invitation")
+    assert (str(inv["invitation_id"]), inv["status"]) == (out["invitation_id"], "revoked")
+    with pytest.raises(invitations.Gone) as gone:
+        await invitations.claim(app_pool, keys, directory, first_token)
+    assert gone.value.code == "invitation_used"
+    with pytest.raises(NotFound) as none:
+        await console.withdraw_owner_invitation(app_pool, tenant_id, staff_sub=STAFF, ticket_ref="SUP-34")
+    assert none.value.code == "owner_invite_not_found"
+    # Invite first owner works again; the account never signed in -> a new temporary password, then the owner joins.
+    await console.invite_first_owner(app_pool, tenant_id, ticket_ref="SUP-35", **invite)
+    second_token = mailer.sent[-1].text.split("/join?t=")[1].split()[0]
+    second = await invitations.claim(app_pool, keys, directory, second_token)
+    account = directory.accounts["mai.owner@lotus.example"]
+    assert second.state == "created" and second.temporary_password == account["password"] != first.temporary_password
+    assert directory.resent == [account["sub"]] and len(directory.accounts) == 1
+    assert (await invitations.accept(app_pool, _caller(account["sub"]), second_token))["member_role"] == "owner"
+    withdrawn = [e for e in await _audit(admin, tenant_id) if e["action"] == "owner_invite_withdraw"]
+    assert [(e["actor_kind"], e["object_id"], e["object_ids"]) for e in withdrawn] == [
+        ("aa_ops", out["invitation_id"], ["ticket:SUP-33"])
+    ]
+    # An agency with an owner has no AA invitation to withdraw.
+    with pytest.raises(NotFound):
+        await console.withdraw_owner_invitation(app_pool, tenant_id, staff_sub=STAFF, ticket_ref="SUP-36")
+
+
+async def test_s263_aa_deletes_a_synthetic_test_agency_and_nothing_else(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection
+) -> None:
+    """S263: AA deletes a synthetic agency without members or travellers (typed name, ticket): its live invitations
+    are revoked, its keys destroyed (the invited address is unreadable for good), the row trashed; no context opens it,
+    the L1 list leaves it out, its invitation link is dead. A real agency, or one with a member, is refused."""
+    keys, mailer, directory = _keys(), MemoryMailer(), MemoryDirectory(ISS)
+    tenant_id = uuid.uuid4()
+    await console.create_agency(
+        app_pool, tenant_id=tenant_id, agency_name="Bamboo Test Agency", is_synthetic=True, default_locale="en-US",
+        environment="test", staff_sub=STAFF, ticket_ref="SUP-40",
+    )  # fmt: skip
+    await console.invite_first_owner(
+        app_pool, tenant_id, staff_sub=STAFF, owner_email="tester@bamboo.example", ticket_ref="SUP-41", keys=keys,
+        mailer=mailer, web_origin=ORIGIN, ttl_hours=168,
+    )  # fmt: skip
+    token = mailer.sent[0].text.split("/join?t=")[1].split()[0]
+    await invitations.claim(app_pool, keys, directory, token)
+    with pytest.raises(Invalid):
+        await console.delete_test_agency(
+            app_pool, tenant_id, staff_sub=STAFF, agency_name="bamboo test agency", ticket_ref="SUP-42", keys=keys
+        )
+    out = await console.delete_test_agency(
+        app_pool, tenant_id, staff_sub=STAFF, agency_name="Bamboo Test Agency", ticket_ref="SUP-43", keys=keys
+    )
+    assert out == {"tenant_id": str(tenant_id), "status": "deleted"}
+    [row] = await _owner_fetch(admin, tenant_id, "SELECT deleted_at, deleted_by, purge_after FROM crm.tenant")
+    assert row["deleted_at"] is not None and row["deleted_by"] == f"platform:{STAFF}"
+    assert row["purge_after"] > row["deleted_at"]
+    [inv] = await _owner_fetch(admin, tenant_id, "SELECT status FROM crm.member_invitation")
+    assert inv["status"] == "revoked"
+    key_rows = await _owner_fetch(admin, tenant_id, "SELECT wrapped_dek, destroyed_at FROM crm.tenant_key")
+    assert key_rows and all(k["wrapped_dek"] is None and k["destroyed_at"] is not None for k in key_rows)
+    with pytest.raises(NotFound):
+        await console.agency_summary(app_pool, tenant_id, staff_sub=STAFF)
+    listed = await console.list_agencies(app_pool, staff_sub=STAFF, cursor=None, limit=200)
+    assert str(tenant_id) not in [a["tenant_id"] for a in listed["items"]]
+    with pytest.raises(NotFound):
+        await invitations.claim(app_pool, keys, directory, token)
+    events = [(e["action"], e["reason"], e["object_ids"]) for e in await _audit(admin, tenant_id)
+              if e["action"] in ("invite_revoke", "key_destroy", "agency_delete")]  # fmt: skip
+    assert events == [
+        ("invite_revoke", "agency_delete", []),
+        ("key_destroy", "crypto_shred", []),
+        ("agency_delete", "synthetic_test_agency", ["ticket:SUP-43"]),
+    ]
+    # A real agency is refused (and the attempt is on record); so is a synthetic one with an active member.
+    real = uuid.uuid4()
+    await console.create_agency(
+        app_pool, tenant_id=real, agency_name="Real Lotus Travel", is_synthetic=False, default_locale="en-US",
+        environment="prod", staff_sub=STAFF, ticket_ref="SUP-44",
+    )  # fmt: skip
+    with pytest.raises(Forbidden) as exc:
+        await console.delete_test_agency(
+            app_pool, real, staff_sub=STAFF, agency_name="Real Lotus Travel", ticket_ref="SUP-45", keys=keys
+        )
+    assert exc.value.code == "not_synthetic"
+    [denied] = [e for e in await _audit(admin, real) if e["action"] == "agency_delete"]
+    assert denied["reason"] == "not_synthetic"
+    staffed, _people = await _agency(app_pool, "owner")
+    with pytest.raises(Conflict) as exc:
+        await console.delete_test_agency(
+            app_pool, staffed, staff_sub=STAFF, agency_name="Sen Vàng Travel", ticket_ref="SUP-46", keys=keys
+        )
+    assert exc.value.code == "has_members"
+    [kept] = await _owner_fetch(admin, staffed, "SELECT deleted_at FROM crm.tenant")
+    assert kept["deleted_at"] is None
 
 
 async def test_lock_refuses_member_requests_until_the_unlock(app_pool: asyncpg.Pool, admin: asyncpg.Connection) -> None:

@@ -17,7 +17,7 @@ import pytest
 
 from app import agencies
 from app.audit_export.registry import Agency
-from app.errors import Conflict, Invalid, NotFound
+from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.members.directory import MemoryDirectory
 from app.members.mail import MemoryMailer
 from app.ops import console, serializer
@@ -535,6 +535,133 @@ async def test_retry_only_a_failed_job_of_this_agency() -> None:
         await console.retry_agency_job(agency_conn("locked"), TENANT, JOB, staff_sub=STAFF, ticket_ref="SUP-6")  # type: ignore[arg-type]
 
 
+# ── S263: withdraw the first-owner invitation; delete a test agency ──────────────────────────────
+INV_A = uuid.UUID("00000000-0000-4000-8000-0000000000c1")
+INV_B = uuid.UUID("00000000-0000-4000-8000-0000000000c2")
+
+
+@pytest.mark.asyncio
+async def test_withdraw_closes_every_live_first_owner_invitation_with_the_ticket() -> None:
+    """Found live on Dev: a claimed-but-not-accepted owner invitation blocked "Invite first owner" (409
+    owner_invite_pending) for its 7 days. AA withdraws it; a locked agency's too."""
+    for status in ("active", "locked"):
+        conn = agency_conn(status)
+        conn.on("FROM crm.member_invitation WHERE role = 'owner' AND invited_by LIKE 'platform:%'",
+                [{"invitation_id": INV_B}, {"invitation_id": INV_A}])  # fmt: skip
+        out = await console.withdraw_owner_invitation(conn, TENANT, staff_sub=STAFF, ticket_ref="SUP-7")  # type: ignore[arg-type]
+        assert out == {"tenant_id": str(TENANT), "invitation_id": str(INV_B), "status": "revoked"}
+        assert conn.sql("UPDATE crm.member_invitation SET status = 'revoked'") == [(INV_B,), (INV_A,)]
+        events = audits(conn)
+        assert [(e["action"], e["object_id"], e["object_ids"], e["actor_kind"]) for e in events] == [
+            ("owner_invite_withdraw", str(INV_B), ["ticket:SUP-7"], "aa_ops"),
+            ("owner_invite_withdraw", str(INV_A), ["ticket:SUP-7"], "aa_ops"),
+        ]
+    # Only AA's own owner invitations, live ones: the query says so.
+    (sql,) = [flat for flat, _ in conn.calls if "invited_by LIKE 'platform:%'" in flat]
+    assert "status IN ('pending', 'claimed')" in sql and "role = 'owner'" in sql and "FOR UPDATE" in sql
+
+
+@pytest.mark.asyncio
+async def test_withdraw_without_a_live_invitation_is_404_and_writes_nothing() -> None:
+    conn = agency_conn()
+    with raises(NotFound, "owner_invite_not_found"):
+        await console.withdraw_owner_invitation(conn, TENANT, staff_sub=STAFF, ticket_ref="SUP-7")  # type: ignore[arg-type]
+    assert not conn.sql("SET status = 'revoked'") and not audits(conn)
+    with raises(Conflict, "tenant_status"):
+        await console.withdraw_owner_invitation(agency_conn("offboarded"), TENANT, staff_sub=STAFF, ticket_ref="SUP-7")  # type: ignore[arg-type]
+
+
+class _Keys:
+    def __init__(self) -> None:
+        self.destroyed: list[uuid.UUID] = []
+
+    async def destroy(self, ctx: Any) -> int:
+        ctx.audit("key_destroy", "allowed", "tenant_key", reason="crypto_shred")
+        self.destroyed.append(ctx.tenant_id)
+        return 2
+
+
+def _delete_conn(status: str = "active", **over: Any) -> ScriptedConn:
+    conn = agency_conn(status)
+    row = {"status": status, "is_synthetic": True, "display_name": "Lữ hành Sen Vàng"} | over.pop("row", {})
+    conn.on("SELECT status, is_synthetic, display_name FROM crm.tenant", row)
+    conn.on("UPDATE crm.tenant SET deleted_at", NOW + dt.timedelta(days=30))
+    conn.on("SELECT invitation_id FROM crm.member_invitation WHERE status IN", [{"invitation_id": INV_A}])
+    for fragment, answer in over.items():
+        conn.on(fragment, answer)
+    return conn
+
+
+async def _delete(conn: ScriptedConn, keys: _Keys, name: str = "Lữ hành Sen Vàng") -> dict[str, Any]:
+    return await console.delete_test_agency(
+        conn,  # type: ignore[arg-type]
+        TENANT,
+        staff_sub=STAFF,
+        agency_name=name,
+        ticket_ref="SUP-8",
+        keys=keys,  # type: ignore[arg-type]
+    )
+
+
+@pytest.mark.parametrize("status", ["active", "locked", "offboarded"])
+@pytest.mark.asyncio
+async def test_delete_test_agency_revokes_shreds_and_trashes_in_that_order(status: str) -> None:
+    conn, keys = _delete_conn(status), _Keys()
+    assert await _delete(conn, keys) == {"tenant_id": str(TENANT), "status": "deleted"}
+    assert keys.destroyed == [TENANT]
+    assert conn.sql("SET status = 'revoked'") == [(INV_A,)]
+    assert conn.sql("UPDATE crm.tenant SET deleted_at") == [(TENANT, f"platform:{STAFF}", 30)]
+    order = [flat.split()[0] + " " + flat.split()[1] for flat, _ in conn.calls if flat.startswith(("UPDATE", "INSERT"))]
+    assert order.index("UPDATE crm.member_invitation") < order.index("UPDATE crm.tenant")
+    events = [(e["action"], e["reason"], e["object_ids"]) for e in audits(conn)]
+    assert events == [
+        ("invite_revoke", "agency_delete", []),
+        ("key_destroy", "crypto_shred", []),
+        ("agency_delete", "synthetic_test_agency", ["ticket:SUP-8"]),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("over", "cls", "code"),
+    [
+        ({"row": {"is_synthetic": False}}, Forbidden, "not_synthetic"),
+        ({"FROM crm.member WHERE status IN ('active', 'invited')": 1}, Conflict, "has_members"),
+        ({"SELECT EXISTS (SELECT 1 FROM crm.traveler) OR EXISTS": True}, Conflict, "has_travellers"),
+        ({"crm.legal_hold_blocks('tenant', NULL)": True}, Conflict, "legal_hold"),
+        ({"row": {"status": "offboarding"}}, Conflict, "tenant_status"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_delete_test_agency_refusals_change_nothing(over: dict[str, Any], cls: type, code: str) -> None:
+    conn, keys = _delete_conn(**over), _Keys()
+    with raises(cls, code):
+        await _delete(conn, keys)
+    assert keys.destroyed == [] and not conn.sql("UPDATE crm.tenant SET deleted_at")
+    assert not conn.sql("SET status = 'revoked'")
+    denied = [(e["action"], e["outcome"], e["reason"]) for e in audits(conn)]
+    # A real agency's refusal is on record (an attempt to delete client data); the others write nothing.
+    assert denied == ([("agency_delete", "denied", "not_synthetic")] if code == "not_synthetic" else [])
+
+
+@pytest.mark.asyncio
+async def test_delete_test_agency_needs_the_exact_name_and_a_deletable_status() -> None:
+    conn, keys = _delete_conn(), _Keys()
+    for typed in ("lữ hành sen vàng", "Lữ hành Sen Vàng ", "Sen Vàng"):
+        with raises(Invalid, "agency_name_mismatch"):
+            await _delete(conn, keys, typed)
+    assert keys.destroyed == []
+    with raises(Conflict, "tenant_status"):
+        await _delete(_delete_conn("offboarding"), keys)
+    gone = _delete_conn()
+    gone.on("SELECT status, is_synthetic, display_name FROM crm.tenant", None)
+    with raises(NotFound, "tenant_not_found"):
+        await _delete(gone, keys)
+    raced = _delete_conn()
+    raced.on("UPDATE crm.tenant SET deleted_at", None)
+    with raises(NotFound, "tenant_not_found"):
+        await _delete(raced, keys)
+
+
 def test_every_write_needs_and_every_read_skips_a_ticket() -> None:
     """The console's write functions take the ticket (or the owner's request ref); its reads do not."""
     import inspect
@@ -548,6 +675,8 @@ def test_every_write_needs_and_every_read_skips_a_ticket() -> None:
         "set_insights_opt_out": "owner_request_ref",
         "raise_data_request": "ticket_ref",
         "retry_agency_job": "ticket_ref",
+        "withdraw_owner_invitation": "ticket_ref",
+        "delete_test_agency": "ticket_ref",
     }
     for name, param in writes.items():
         assert param in inspect.signature(getattr(console, name)).parameters, name
