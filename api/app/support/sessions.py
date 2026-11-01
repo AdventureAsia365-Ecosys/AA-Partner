@@ -126,7 +126,11 @@ def _end_reason(row: asyncpg.Record) -> str | None:
         return None
     if row["status"] == "ended":
         return "staff_ended"
-    if row["status"] == "revoked" or row["grant_status"] == "revoked":
+    if row["status"] == "revoked":
+        return "owner_ended"
+    # The grant's status speaks only for a session still marked active (not swept yet): revoking a grant revokes only
+    # its active sessions, so one that had already expired keeps 'expired' and must not read "ended by the owner".
+    if row["status"] == "active" and row["grant_status"] == "revoked":
         return "owner_ended"
     return "session_expired" if row["window_passed"] else "grant_expired"
 

@@ -186,6 +186,17 @@ def _row(**kw: object) -> dict[str, object]:
         (_row(live=False, window_passed=True), "expired", "session_expired"),
         (_row(live=False, grant_status="expired"), "expired", "grant_expired"),
         (_row(live=False, grant_status="revoked"), "expired", "owner_ended"),
+        # It expired on its own before the owner revoked the grant: it timed out, it was not ended by the owner.
+        (
+            _row(status="expired", live=False, ended_at=_NOW, window_passed=True, grant_status="revoked"),
+            "expired",
+            "session_expired",
+        ),
+        (
+            _row(status="expired", live=False, ended_at=_NOW, window_passed=False, grant_status="revoked"),
+            "expired",
+            "grant_expired",
+        ),
         (_row(kind="breakglass", status="ended", live=False, ended_at=_NOW, grant_status=None), "ended", "staff_ended"),
     ],
 )
