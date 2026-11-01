@@ -1788,6 +1788,11 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   `CRM_LLM_ROLE_ARN` when set; the service refuses to start without `CRM_LLM_MODEL_ID` and both per-million-token
   prices). The F3 scrubber whenever `SCRUB_GUARDRAIL_*` is set or the provider is real (without a guardrail it refuses
   every scrub); the stub scrubber only with the stub provider and no guardrail.
+- **Bypass guard** (AA-642 L6, `api/tests/unit/test_gateway_bypass.py`): any Bedrock method (`converse*`,
+  `invoke_model*`, `apply_guardrail`, `create_model_invocation_job`, called or passed uncalled), vendor SDK call or
+  import (`openai`, `anthropic`) or vendor endpoint string (`api.anthropic.com`, `api.openai.com`, `bedrock-runtime`)
+  in `api/app` / `api/scripts` outside `app/llm/providers/bedrock.py` and `app/privacy/guardrails.py` fails CI; so
+  does a vendor AI SDK import or endpoint in `web/` or `portal/`.
 - **Settings > AI** (`app/llm/agency_ai.py`, `app/routers/ai.py`, web `/settings/ai`): `GET /crm/v1/settings/ai`
   (every role, action `ai_use`): switch, budget, plan cap `AI_BUDGET_MAX_USD` (default 2), this month's spend and
   share, alert level, test mode, cap per minute; `PUT` (owner, action `ai_settings`): `ai_enabled`, `ai_budget_usd`
