@@ -163,6 +163,21 @@ class JobMetricsSampler:
         )
         return sample
 
+    async def flush_events(self) -> dict[str, str]:
+        """Send the events raised since the last tick (S263 review: called once by the lifespan on shutdown).
+        No database call when nothing is pending. Never raises."""
+        if not ops_alerts.PENDING:
+            return {}
+        try:
+            pool = await self._pool()
+            results = await ops_alerts.flush_events(pool, self._publisher)
+        except Exception as exc:  # noqa: BLE001 — shutdown goes on; the log lines stay
+            log.warning("ops_checks_flush_failed error=%s", type(exc).__name__)
+            return {}
+        if results:
+            log.warning("ops_checks_flushed checks=%s", ",".join(f"{k}:{v}" for k, v in sorted(results.items())))
+        return results
+
     async def run_forever(self, stop: asyncio.Event) -> None:
         """Sample at once, then every ``every_s`` seconds until ``stop`` is set (or the task is cancelled)."""
         log.info("job checks sampler started (every %.0fs)", self._every_s)

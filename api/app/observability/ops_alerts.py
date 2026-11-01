@@ -14,12 +14,13 @@ alarms used, so the recipients are the same):
   (per release), a refused CIS membership event (per event), the membership feed stuck (per UTC day) and a bulk reveal
   (per member and hour). The log lines stay as they were.
 
-The sampler drains the events and evaluates the state checks every tick, then :class:`AlertPublisher` sends each
-finding once: the dedupe is a ledger row in ``crm.job`` (kind :data:`OPS_ALERT_KIND`, status ``succeeded``, never
-claimed) whose idempotency key is ``crm_ops_alert:<check>:<scope>`` (the scope is the id, or the UTC day), written by
-:func:`app.jobs.queue.record_alert`. Only the task whose insert wins publishes, so two API tasks or a restart never
-send twice; a failed publish deletes the row (:func:`app.jobs.queue.forget_alert`) and puts the event back for the
-next tick. Without ``ALERTS_TOPIC_ARN`` (local, tests) a finding is logged only.
+The sampler drains the events and evaluates the state checks every tick (and the lifespan flushes the events once more
+on shutdown, :func:`flush_events`, so a deploy or a scale-in does not drop them; only a hard kill does), then
+:class:`AlertPublisher` sends each finding once: the dedupe is a ledger row in ``crm.job`` (kind :data:`OPS_ALERT_KIND`,
+status ``succeeded``, never claimed) whose idempotency key is ``crm_ops_alert:<check>:<scope>`` (the scope is the id, or
+the UTC day), written by :func:`app.jobs.queue.record_alert`. Only the task whose insert wins publishes, so two API
+tasks or a restart never send twice; a failed publish deletes the row (:func:`app.jobs.queue.forget_alert`) and puts the
+event back for the next tick. Without ``ALERTS_TOPIC_ARN`` (local, tests) a finding is logged only.
 
 E-mails hold ids, codes and counts only (no names, no ticket text), like the log lines they replace.
 """
@@ -164,6 +165,10 @@ class _Pending:
     def restore(self, items: Iterable[Finding]) -> None:
         with self._lock:
             self._items.extendleft(reversed(list(items)))
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._items)
 
 
 PENDING = _Pending()
@@ -315,8 +320,29 @@ async def run_checks(
 ) -> dict[str, str]:
     """One tick: the state checks of this read plus the events raised since the last tick. Events whose alert failed
     are put back for the next tick (state checks are simply evaluated again). Never raises."""
+    return await _publish(pool, publisher, state_findings(sample, audit), now)
+
+
+async def flush_events(pool: asyncpg.Pool, publisher: AlertPublisher, now: datetime | None = None) -> dict[str, str]:
+    """The events raised since the last tick, without a sampler read: the lifespan calls it once on shutdown, after
+    the worker stopped, so a deploy or a scale-in within 5 minutes of a break-glass opening does not drop its e-mail.
+    Never raises (the caller bounds it in time)."""
+    return await _publish(pool, publisher, [], now)
+
+
+async def _publish(
+    pool: asyncpg.Pool, publisher: AlertPublisher, state: list[Finding], now: datetime | None
+) -> dict[str, str]:
     events = PENDING.drain()
-    results, retry = await publisher.alert(pool, state_findings(sample, audit) + events, now)
+    if not state and not events:
+        return {}
+    try:
+        results, retry = await publisher.alert(pool, state + events, now)
+    except BaseException:
+        # Cancelled (the lifespan cancels the sampler on shutdown) or timed out mid-way: put every event back so the
+        # shutdown flush sends it. One already sent has its ledger row, so it is not sent twice.
+        PENDING.restore(events)
+        raise
     pending = [f for f in retry if f.check in EVENT_CHECKS]
     if pending:
         PENDING.restore(pending)

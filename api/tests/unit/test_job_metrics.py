@@ -185,3 +185,33 @@ async def test_sample_once_logs_the_reveal_peak_and_dropped_mail(caplog: pytest.
         reveal_meter.METER.reset()
     assert "reveal_peak=7 mail_dropped=2 checks=ok" in caplog.text
     assert mail_metrics.DROPPED.take() == 0
+
+
+@pytest.mark.asyncio
+async def test_flush_events_on_shutdown(caplog: pytest.LogCaptureFixture) -> None:
+    """S263 review: nothing pending = no database call; pending events go to the publisher; a failure never raises."""
+    ops_alerts.PENDING.drain()
+    reads: list[int] = []
+
+    async def provide() -> Any:
+        reads.append(1)
+        return object()
+
+    pub = FakePublisher()
+    sampler = JobMetricsSampler(provide, publisher=pub)  # type: ignore[arg-type]
+    assert await sampler.flush_events() == {} and reads == []
+    ops_alerts.emit("membership_apply_refused", "e-1", event_id="e-1")
+    caplog.set_level(logging.INFO, logger="app.jobs.metrics")
+    assert await sampler.flush_events() == {"membership_apply_refused": "sent"}
+    assert [f.check for f in pub.calls[0]] == ["membership_apply_refused"]
+    assert "ops_checks_flushed checks=membership_apply_refused:sent" in caplog.text
+
+    async def no_pool() -> Any:
+        raise OSError("connect refused")
+
+    ops_alerts.emit("membership_apply_refused", "e-2", event_id="e-2")
+    try:
+        assert await JobMetricsSampler(no_pool, publisher=pub).flush_events() == {}  # type: ignore[arg-type]
+        assert "ops_checks_flush_failed error=OSError" in caplog.text
+    finally:
+        ops_alerts.PENDING.drain()

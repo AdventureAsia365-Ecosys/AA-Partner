@@ -4,6 +4,7 @@ against Postgres in tests/integration/test_job_metrics.py."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import uuid
@@ -224,3 +225,35 @@ async def test_run_checks_puts_failed_events_back_but_not_state_checks(ledger: d
     results = await run_checks(object(), pub, Sample(1200.0, 0, 0, 1200.0), None, NOW)  # type: ignore[arg-type]
     assert results == {"jobs_stuck": "failed", "breakglass_opened": "failed"}
     assert [f.check for f in ops_alerts.PENDING.drain()] == ["breakglass_opened"]
+
+
+@pytest.mark.asyncio
+async def test_flush_events_sends_the_pending_events_only(ledger: dict[str, Any]) -> None:
+    """S263 review: the lifespan's shutdown flush sends the events of the last tick, no state check."""
+    sns = FakeSns()
+    pub = AlertPublisher("topic-placeholder", client_factory=lambda: sns)
+    assert await ops_alerts.flush_events(object(), pub, NOW) == {}  # type: ignore[arg-type]
+    assert sns.calls == [] and ledger["keys"] == {}  # nothing pending: no ledger write
+    ops_alerts.emit("breakglass_opened", "s-7", session_id="s-7")
+    assert len(ops_alerts.PENDING) == 1
+    assert await ops_alerts.flush_events(object(), pub, NOW) == {"breakglass_opened": "sent"}  # type: ignore[arg-type]
+    assert len(sns.calls) == 1 and len(ops_alerts.PENDING) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_tick_cancelled_mid_way_puts_its_events_back(ledger: dict[str, Any]) -> None:
+    """The lifespan cancels the sampler: events a cancelled tick had drained must reach the shutdown flush."""
+    started = asyncio.Event()
+
+    class SlowPublisher(AlertPublisher):
+        async def alert(self, pool: Any, found: list[Finding], now: Any = None) -> Any:
+            started.set()
+            await asyncio.Event().wait()
+
+    ops_alerts.emit("ops_release_withdrawn", "r-1", release_id="r-1")
+    tick = asyncio.create_task(run_checks(object(), SlowPublisher("topic-placeholder"), Sample(0.0, 0, 0, 0.0)))  # type: ignore[arg-type]
+    await started.wait()
+    tick.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await tick
+    assert [f.check for f in ops_alerts.PENDING.drain()] == ["ops_release_withdrawn"]

@@ -98,6 +98,8 @@ from app.vault import KeyProvider, build_key_provider
 # On shutdown a job in flight gets this long to finish; then the worker task is cancelled and releases the job back to
 # the queue at once (app.jobs.queue.release). ECS gives the container 30 s after SIGTERM (stopTimeout).
 WORKER_STOP_TIMEOUT_S = 20.0
+# S263 review: the last flush of the ops alert events, after the worker (20 s + 5 s stays inside the 30 s stopTimeout).
+OPS_FLUSH_ON_STOP_TIMEOUT_S = 5.0
 
 _UNSET = object()
 
@@ -164,6 +166,7 @@ def create_app(
         stop = asyncio.Event()
         task: asyncio.Task[None] | None = None
         sampler_task: asyncio.Task[None] | None = None
+        sampler: JobMetricsSampler | None = None
         prefetch_task = identity_config.start_jwks_prefetch(app.state.verifier, settings)
         if settings.worker_enabled and db.configured:
             worker = Worker(
@@ -196,7 +199,8 @@ def create_app(
             )
             task = asyncio.create_task(worker.run_forever(stop), name="crm-job-worker")
             # Independent of the worker task: a stuck worker loop must still show in the metrics.
-            sampler_task = asyncio.create_task(JobMetricsSampler(db.pool).run_forever(stop), name="crm-job-metrics")
+            sampler = JobMetricsSampler(db.pool)
+            sampler_task = asyncio.create_task(sampler.run_forever(stop), name="crm-job-metrics")
         yield
         stop.set()
         await identity_config.stop_jwks_prefetch(prefetch_task)
@@ -207,6 +211,11 @@ def create_app(
         if task is not None:
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(task, timeout=WORKER_STOP_TIMEOUT_S)
+        if sampler is not None:
+            # S263 review: the ops alert events (break-glass, ops release, refused membership event, ...) raised since
+            # the last 5-minute tick, including by the job the worker just finished, go out before the pool closes.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(sampler.flush_events(), timeout=OPS_FLUSH_ON_STOP_TIMEOUT_S)
         await app.state.db.close()
 
     app = FastAPI(

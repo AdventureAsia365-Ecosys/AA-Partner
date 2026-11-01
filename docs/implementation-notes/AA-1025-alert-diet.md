@@ -21,13 +21,22 @@ Decision table: root `AA-Ecosys/docs/audits/2026-11-01-S263-alerting-cost/diet.m
 
 - `app/jobs/metrics.py`: `JobMetricsSampler(pool, every_s, publisher=...)`, no boto3 CloudWatch.
 - `app/jobs/queue.py`: `record_alert`, `forget_alert`.
+- Review pass: `ops_alerts.flush_events`, `JobMetricsSampler.flush_events`, the lifespan's shutdown flush
+  (`app/main.py`), `_Pending.__len__`.
 - Emit calls: `app/support/sessions.py`, `app/ops_release/service.py` (`Notice.emit`), `app/cis/membership_feed.py`,
   `app/observability/reveal_meter.py`.
 
 ## Tradeoffs
 
-- Events wait in memory until the next sampler tick (at most 5 minutes; bounded at 500). A task killed in between
-  loses them (the log line remains). The old metric filter did not have that gap; accepted for $0.
+- Events wait in memory until the next sampler tick (at most 5 minutes; bounded at 500). Review pass: the lifespan
+  flushes them once more on shutdown, after the worker stopped and before the pool closes (`JobMetricsSampler.
+  flush_events`, bounded at `OPS_FLUSH_ON_STOP_TIMEOUT_S` = 5 s: 20 s worker + 5 s inside the 30 s stopTimeout), and a
+  tick the lifespan cancels mid-way puts its drained events back first. So a deploy, a scale-in or a task replacement
+  no longer drops a break-glass or ops-release alert; only a hard kill (OOM, SIGKILL, host failure) between the event
+  and the next tick does (the log line remains, and a break-glass read is also in the agency's access log).
+- A durable ledger row at emit time was weighed and rejected for now: `emit` is sync and called from inside request
+  and job transactions (break-glass open, ops release notice); writing `crm.job` there would tie the alert to the
+  caller's transaction and add a DB round trip to the request. Revisit before prod if the hard-kill window matters.
 - The sampler runs only when the worker is enabled (as before). With `WORKER_ENABLED` off, no CRM check runs.
 - One e-mail per check per UTC day for state checks: a check that recovers and breaks again the same day is not mailed
   twice.
@@ -36,6 +45,6 @@ Decision table: root `AA-Ecosys/docs/audits/2026-11-01-S263-alerting-cost/diet.m
 
 - Needs the AA-CIS-Infra apply (`sns:Publish` on the task role, `ALERTS_TOPIC_ARN` in the task definition) and then a
   deploy; before that a finding is only logged (`ops_check_finding`).
-- Coverage: `app/observability/ops_alerts.py` and `app/jobs/metrics.py` at 100 %; full unit TOTAL 90.93 %.
+- Coverage: `app/observability/ops_alerts.py` and `app/jobs/metrics.py` at 100 %; full unit TOTAL 91.25 % (review pass).
 - Live proof: one due `crm.job` row of an unhandled kind 20 minutes old (or an `ops_alerts.emit` through a break-glass
   open on a synthetic agency) mails once and leaves one `crm_ops_alert` row.
