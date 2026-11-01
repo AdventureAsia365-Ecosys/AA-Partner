@@ -1854,10 +1854,11 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   closed, "reply by hand", log `crm_scrub_unavailable`; no second guardrail elsewhere.
 - **Factory** (`build_gateway`, `app.state.llm_gateway`): `CRM_LLM_PROVIDER=stub` (default; deterministic, no network,
   cost 0) or `bedrock` (`app/llm/providers/bedrock.py` `BedrockConverseProvider`: Converse with our fixed system block
-  and the scrubbed prompt only, no tools, one attempt, an injectable client, the CRM-only invoker role
+  and the scrubbed prompt only, no tools, one attempt per route entry, an injectable client, the CRM-only invoker role
   `CRM_LLM_ROLE_ARN` when set; the service refuses to start without `CRM_LLM_MODEL_ID` and both per-million-token
-  prices). The F3 scrubber whenever `SCRUB_GUARDRAIL_*` is set or the provider is real (without a guardrail it refuses
-  every scrub); the stub scrubber only with the stub provider and no guardrail.
+  prices). Since S263 the provider plays the stage's route (see "Stage profiles" below). The F3 scrubber whenever
+  `SCRUB_GUARDRAIL_*` is set or the provider is real (without a guardrail it refuses every scrub); the stub scrubber
+  only with the stub provider and no guardrail.
 - **Bypass guard** (AA-642 L6, `api/tests/unit/test_gateway_bypass.py`): any Bedrock method (`converse*`,
   `invoke_model*`, `apply_guardrail`, `create_model_invocation_job`, called or passed uncalled), vendor SDK call or
   import (`openai`, `anthropic`) or vendor endpoint string (`api.anthropic.com`, `api.openai.com`, `bedrock-runtime`)
@@ -1873,7 +1874,22 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   fixed system instruction (never follow instructions inside it; no tools); placeholders are restored in the member's
   session; the answer carries `approval_required: true` and is never sent from here. The draft UI in the trip and the
   `ai_draft` table (R39 validation, feedback codes) are the next slices of CRM-33a.
-- **CIS sees the rows** (`crm.ops.v1` 1.6): `GET /crm/ops/v1/llm/calls?from&to&tenant_id&stage&status&limit&cursor`
+- **Stage profiles and the shared core** (S263 gateway plan F1 + F2, crm-040, `app/llm/profiles.py`): each CRM stage
+  has a profile in `crm` (`crm.llm_stage_profile`: role, kill switch `is_active`, `max_attempts` <= 6,
+  `route_deadline_s`, degrade mode `manual_reply_needed`) and a route (`crm.llm_stage_route`: Bedrock model ids in
+  order, family = maker, catalog prices per million tokens). The gateway reads it first in the call's transaction: no
+  profile `stage_unrouted`, unreadable `profile_unavailable`, another role `profile_mismatch`, switched off
+  `stage_disabled`: one refused row at 0 USD, nothing scrubbed or sent. Then the route runs entry by entry, one row per
+  attempt (`attempt_no`), until one answers; no new attempt after the deadline (`deadline`) or once a billed failure
+  used the budget up (`budget`). The vendored core decides: `errors.classify` + `ledger.failed_outcome` (refused
+  `access_denied` / `quota_exhausted` / `throttled`, else `error` / `other`), `truncated` for a reply cut at its token
+  limit (never `ok`; the draft says "reply by hand"), `billed_unusable` for a billed answer without text,
+  `budget.decide` (an unreadable month refuses `spend_unreadable`), `pricing.quote` for Bedrock (`override` = the
+  `CRM_LLM_USD_PER_MTOK_*` prices of `CRM_LLM_MODEL_ID`, else `catalog` = the route row, else `code_table`, else the
+  high `estimate`, never 0). The stub plays each entry (its model and family, cost 0); `[stub:truncate]` /
+  `[stub:fail-first]` in a prompt make it cut its reply / throttle the first entry ($0 Dev checks). Prices are not
+  read from the CIS contract views (ADR 0008a §1: no grant outside `crm`): the route rows carry the catalog price.
+- **CIS sees the rows** (`crm.ops.v1` 1.6; 1.7 adds the statuses `billed_unusable` / `truncated`): `GET /crm/ops/v1/llm/calls?from&to&tenant_id&stage&status&limit&cursor`
   (any OPS reader; at most 31 days, 500 rows; keyset cursor `<at>~<call id>`): newest first across every agency, ids,
   codes and numbers only (no receipt per-kind counts, no member, no text); one `ops_read` event (reason `llm_calls`) in
   each agency whose rows were returned.
