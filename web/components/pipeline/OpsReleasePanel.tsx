@@ -11,7 +11,7 @@ import { Panel } from "@/components/PageTitle";
 import { codeLabel } from "@/lib/accessLog";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
-import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
+import { fmt, plural, t, type Lang, type MessageKey } from "@/lib/i18n";
 import { activityFooter, activityLines, missingItems, panelState, type OpsReleaseView } from "@/lib/opsRelease";
 
 const PANEL_ACTIONS = new Set([
@@ -100,7 +100,7 @@ export function OpsReleasePanel({
             {state === "live" && (
               <>
                 <p style={line} data-testid="ops-release-count">
-                  {fmt(tr(r.completeness.travellers === 1 ? "ops.travellers.one" : "ops.travellers"), { complete: r.completeness.complete, n: r.completeness.travellers })}
+                  {plural(lang, "ops.travellers", r.completeness.travellers, { complete: r.completeness.complete })}
                 </p>
                 {missingItems(r.completeness).length > 0 && (
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", fontSize: 13 }}>
@@ -115,12 +115,12 @@ export function OpsReleasePanel({
                 {r.t21_alerted_at && <p style={{ ...line, color: K.amber }}>{tr("ops.alerted")}</p>}
                 <p style={line}>
                   {r.view_count > 0
-                    ? `${fmt(tr(r.view_count === 1 ? "ops.views.one" : "ops.views"), { n: r.view_count })}${r.last_viewed_at ? `, ${fmt(tr("ops.lastView"), { date: day(r.last_viewed_at) })}` : ""}`
+                    ? `${plural(lang, "ops.views", r.view_count)}${r.last_viewed_at ? `, ${fmt(tr("ops.lastView"), { date: day(r.last_viewed_at) })}` : ""}`
                     : tr("ops.neverViewed")}
                 </p>
                 <p style={line} data-testid="ops-release-purge">
                   {r.purge_at && r.days_to_purge !== null
-                    ? fmt(tr(r.days_to_purge === 1 ? "ops.purgeDays.one" : "ops.purgeDays"), { date: day(r.purge_at), n: r.days_to_purge })
+                    ? plural(lang, "ops.purgeDays", r.days_to_purge, { date: day(r.purge_at) })
                     : tr("ops.purgeUnknown")}
                 </p>
               </>

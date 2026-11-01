@@ -1,6 +1,6 @@
 """AA-957 S262 round 3: the trip card printed the raw lead source "synthetic_seed". ``app.lead_sources`` lists every
 code the API writes; this test reads app/ and keeps the list complete in both directions (the web test
-``web/tests/leadSources.test.ts`` then checks each listed code has an EN and a VI label).
+``web/tests/closedTripRound3.test.ts`` then checks each listed code has an EN and a VI label).
 
 What counts as "written": a ``lead_source=`` keyword literal (or a parameter default), a ``"lead_source": "..."`` dict
 literal, the fallback of ``.get("lead_source") or "..."``, and a literal in the ``lead_source`` column of an

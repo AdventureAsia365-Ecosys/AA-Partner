@@ -448,9 +448,14 @@ export function ProposalPanel({
               <div key={x.traveler_id} data-testid="portal-row" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 13, padding: "6px 0", borderTop: `1px solid ${K.line}` }}>
                 <strong style={{ overflowWrap: "anywhere" }}>{name(x.traveler_id)}</strong>
                 <span style={{ color: K.muted }}>{tr(`proposal.role.${x.role}`)}</span>
-                <Badge tone={x.details_done ? "success" : "neutral"}>{tr(x.details_done ? "proposal.detailsDone" : "proposal.detailsMissing")}</Badge>
+                {/* A closed trip asks nothing more: what is still missing reads "not needed", never as a to-do. */}
+                <Badge tone={x.details_done ? "success" : "neutral"}>
+                  {tr(x.details_done ? "proposal.detailsDone" : closed ? "proposal.detailsNotNeeded" : "proposal.detailsMissing")}
+                </Badge>
                 {x.waiver_signed !== null && (
-                  <Badge tone={x.waiver_signed ? "success" : "neutral"}>{tr(x.waiver_signed ? "proposal.waiverSigned" : "proposal.waiverPending")}</Badge>
+                  <Badge tone={x.waiver_signed ? "success" : "neutral"}>
+                    {tr(x.waiver_signed ? "proposal.waiverSigned" : closed ? "proposal.waiverNotNeeded" : "proposal.waiverPending")}
+                  </Badge>
                 )}
                 <span style={{ color: K.muted }}>{x.portal ? tr(`proposal.access.${x.portal.status}`) : tr("proposal.access.none")}</span>
                 {!closed && (

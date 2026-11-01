@@ -223,10 +223,12 @@ export function tripClosedForBilling(stage: string, cancellation: { status: stri
 }
 
 /** The Booking details row of Traveller info (AA-957 S262 round 3: a booked trip read "Opens once the trip is booked."):
- * not needed on a cancelled trip; sent by the travellers from their own page once the trip is booked; later before. */
+ * not needed on a cancelled trip; sent by the travellers from their own page once the trip is booked; later before;
+ * kept as sent once the trip is over (a completed trip asks nothing more). */
 export function bookingDetailsKey(stage: string, closed: boolean): MessageKey {
   if (closed || stage === "cancelled") return "info.bookingClosed";
-  if (stage === "booked" || stage === "pre_departure" || stage === "travelling" || stage === "completed") return "info.bookingOpen";
+  if (stage === "completed") return "info.bookingDone";
+  if (stage === "booked" || stage === "pre_departure" || stage === "travelling") return "info.bookingOpen";
   return "info.bookingLocked";
 }
 

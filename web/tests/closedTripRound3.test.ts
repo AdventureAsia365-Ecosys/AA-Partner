@@ -245,6 +245,21 @@ describe("the cancel run closes every card at once", () => {
     expect(has(c, "builder-open")).toBe(false);
   });
 
+  it("a run that finished at once (no AA booking) reads cancelled, not 'being cancelled', before the server refresh", async () => {
+    const done: Cancellation = { ...PENDING, status: "done", aa_bookings: 0, finished_at: "2026-10-31T21:04:04Z" };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(json(200, PREVIEW)).mockResolvedValueOnce(json(200, { ...PREVIEW, dry_run: false, stage: "cancelled", cancellation: done })));
+    const c = await mount(page(false));
+    await act(async () => c.querySelector<HTMLButtonElement>("[data-testid=trip-cancel] button")!.click());
+    await setValue(c.querySelector<HTMLSelectElement>("[data-testid=cancel-reason]")!, "client_request");
+    await setValue(c.querySelector<HTMLInputElement>("[data-testid=cancel-typed]")!, "CANCEL");
+    await act(async () => c.querySelector<HTMLButtonElement>("[data-testid=cancel-confirm] button")!.click());
+    expect(has(c, "trip-closed-pending")).toBe(false);
+    expect(has(c, "trip-cancellation-pending")).toBe(false);
+    expect(text(c)).not.toContain(MESSAGES.en["trip.closedPending"]);
+    expect(has(c, "trip-dates-closed")).toBe(true); // "This trip is cancelled: …"
+    expect(has(c, "ledger-closed")).toBe(true);
+  });
+
   it("a trip the server already shows as cancelled keeps Delete (the API decides) but nothing else", async () => {
     const done: TripView = { ...VIEW, trip: { ...VIEW.trip, stage: "cancelled", cancel_reason_code: "client_request" }, allowed_moves: [], cancellation: { ...PENDING, status: "done", finished_at: "2026-10-31T21:05:00Z" } };
     const c = await mount(page(true, done));
@@ -269,6 +284,19 @@ describe("a closed trip reads closed on every card", () => {
     expect(html).toContain(MESSAGES.en["proposal.portalClosed"]);
     expect(html).toContain(MESSAGES.en["builder.closed"]);
     expect(html).toContain("Viewed once"); // the singular (S262 round 3)
+  });
+
+  it("Proposal Stage 3 rows: what is missing reads 'not needed' on a closed trip, never as a to-do", () => {
+    const open = renderToString(createElement(ProposalPanel, { view: LIFECYCLE, terms: [], party: PARTY, role: "owner", lang: "en", locale: "en-AU", clientOrigin: null }));
+    expect(open).toContain(MESSAGES.en["proposal.detailsMissing"]);
+    expect(open).toContain(MESSAGES.en["proposal.waiverPending"]);
+    for (const lang of ["en", "vi"] as const) {
+      const html = renderToString(createElement(ProposalPanel, { view: LIFECYCLE, terms: [], party: PARTY, role: "owner", lang, locale: "en-AU", clientOrigin: null, closed: true }));
+      expect(html).not.toContain(MESSAGES[lang]["proposal.detailsMissing"]);
+      expect(html).not.toContain(MESSAGES[lang]["proposal.waiverPending"]);
+      expect(html).toContain(MESSAGES[lang]["proposal.detailsNotNeeded"]);
+      expect(html).toContain(MESSAGES[lang]["proposal.waiverNotNeeded"]);
+    }
   });
 
   it("Signed documents: nothing waits for a signature", () => {
@@ -320,6 +348,7 @@ describe("Traveller info: Booking details", () => {
     expect(bookingDetailsKey("proposal", false)).toBe("info.bookingLocked");
     expect(bookingDetailsKey("booked", false)).toBe("info.bookingOpen");
     expect(bookingDetailsKey("travelling", false)).toBe("info.bookingOpen");
+    expect(bookingDetailsKey("completed", false)).toBe("info.bookingDone"); // over: not an open request
     expect(bookingDetailsKey("booked", true)).toBe("info.bookingClosed");
     expect(bookingDetailsKey("cancelled", false)).toBe("info.bookingClosed");
   });

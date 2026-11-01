@@ -325,7 +325,9 @@ export function TripPanel({
             </span>
           )}
         </div>
-        {frozen && (
+        {cancelPending && (
+          // Only while AA has not confirmed: a run that finished at once (no AA booking, or Booking answered) reads as
+          // cancelled (the stage, the closed dates note), never as a pending cancellation.
           <p data-testid="trip-closed-pending" style={{ margin: 0, fontSize: 12.5, color: K.muted }}>
             {t(lang, "trip.closedPending")}
           </p>
