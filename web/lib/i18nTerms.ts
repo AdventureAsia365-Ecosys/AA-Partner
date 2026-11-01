@@ -4,8 +4,9 @@
 //
 // Draft: today the page holds the "AI-generated content" section only, modelled on the Content studio terms §3
 // (portal/app/terms/page.tsx). It states what the CRM does (drafts are suggestions, nothing is sent without a person,
-// personal details are replaced before text reaches the model: CONTEXT.md "Settings > AI" / "Draft"), that AI can make
-// mistakes, that a draft is for information, and that the confirmed quote and the booking terms are what binds. It
+// the F3 scrubber replaces the personal details it knows for the trip and those it detects before text reaches the
+// model, best effort, so it never promises that every detail is caught: CONTEXT.md "Settings > AI" / "Draft"), that AI
+// can make mistakes, that a draft is for information, and that the confirmed quote and the booking terms are what binds. It
 // never claims to exclude liability; the final legal wording is reviewed by counsel later.
 
 export const termsEn = {
@@ -22,7 +23,7 @@ export const termsEn = {
   "terms.ai.binding":
     "What binds your agency and your client is the confirmed quote and the booking terms the client accepts, not an AI draft.",
   "terms.ai.models":
-    "Drafts are written by AI models of third-party providers, called through Adventure Asia's AI gateway. Personal details (names, e-mail addresses, phone numbers, passport numbers) are replaced with placeholders before any text reaches the model.",
+    "Drafts are written by AI models of third-party providers, called through Adventure Asia's AI gateway. Before text reaches the model, the CRM replaces with placeholders the personal details it knows for the trip's clients and travellers (names, e-mail addresses, phone numbers, passport numbers) and the details it can detect. It may not catch every detail, so do not add personal data a draft does not need.",
   "terms.ai.misuse":
     "Do not use AI drafts to give false or misleading information, in particular about visas and entry rules, health, safety, prices or availability.",
   "terms.ai.responsible": "Your agency reviews what it sends and is responsible for it.",
@@ -44,7 +45,7 @@ export const termsVi: Record<keyof typeof termsEn, string> = {
   "terms.ai.binding":
     "Điều ràng buộc đại lý và khách của bạn là báo giá đã xác nhận và điều khoản đặt chỗ mà khách chấp nhận, không phải bản nháp AI.",
   "terms.ai.models":
-    "Bản nháp được viết bởi các mô hình AI của nhà cung cấp bên thứ ba, gọi qua cổng AI của Adventure Asia. Thông tin cá nhân (tên, e-mail, số điện thoại, số hộ chiếu) được thay bằng ký hiệu trước khi văn bản đến mô hình.",
+    "Bản nháp được viết bởi các mô hình AI của nhà cung cấp bên thứ ba, gọi qua cổng AI của Adventure Asia. Trước khi văn bản đến mô hình, CRM thay bằng ký hiệu những thông tin cá nhân mà CRM biết về khách và người đi trong chuyến (tên, e-mail, số điện thoại, số hộ chiếu) và những thông tin CRM phát hiện được. CRM có thể không bắt được mọi thông tin, vì vậy đừng thêm dữ liệu cá nhân mà bản nháp không cần.",
   "terms.ai.misuse":
     "Không dùng bản nháp AI để đưa thông tin sai hoặc gây hiểu lầm, nhất là về visa và quy định nhập cảnh, sức khỏe, an toàn, giá hoặc tình trạng còn chỗ.",
   "terms.ai.responsible": "Đại lý của bạn xem lại những gì mình gửi và chịu trách nhiệm về nội dung đó.",

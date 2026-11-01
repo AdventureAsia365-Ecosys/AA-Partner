@@ -105,6 +105,22 @@ describe("terms of use: AI-generated content", () => {
     expect(text).not.toMatch(/liab|not responsible|no responsibility|disclaim/i);
   });
 
+  it("describes the scrubber as it works (known and detected details, best effort), never an absolute promise", () => {
+    // The F3 scrubber replaces the trip's known values and what its detectors find; a name it does not know can pass.
+    const texts = [termsEn["terms.ai.models"], MESSAGES.en["ai.enableHelp"]];
+    for (const t of texts) {
+      expect(t).toContain("the personal details it knows for the trip");
+      expect(t).toMatch(/can detect/);
+      expect(t).toContain("It may not catch every detail");
+      expect(t).not.toMatch(/are replaced with placeholders before any text/);
+    }
+    expect(termsEn["terms.ai.models"]).toContain("do not add personal data a draft does not need");
+    for (const t of [termsVi["terms.ai.models"], MESSAGES.vi["ai.enableHelp"]]) {
+      expect(t).toContain("CRM có thể không bắt được mọi thông tin");
+      expect(t).toContain("CRM phát hiện được");
+    }
+  });
+
   it("the page renders the section with id ai, and the shell footer links it", () => {
     const page = readFileSync(join(WEB, "app/(crm)/terms/page.tsx"), "utf8");
     expect(page).toContain('<section id="ai"');

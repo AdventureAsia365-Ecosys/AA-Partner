@@ -524,7 +524,9 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
   lists "AI can make mistakes: check facts before sending." first, shows the notice as a draft carries it and links
   `/terms#ai`. `/terms` (`web/app/(crm)/terms`, strings `web/lib/i18nTerms.ts` EN + VI, signed-in, linked from the
   shell footer) is a draft holding the "AI-generated content" section only (mistakes, for information, a person
-  reviews and sends, the confirmed quote and booking terms bind; no liability waiver; counsel reviews later).
+  reviews and sends, the confirmed quote and booking terms bind; no liability waiver; counsel reviews later). Privacy
+  wording there and in Settings > AI describes the F3 scrubber as it works (the trip's known details plus what it can
+  detect, may not catch every detail), never an absolute promise.
   Portal: the `publisher` variant replaces the local `AiContentNotice` at review, publish and export, same sentence.
 
 ## Tenant portal (`portal/`, AA-979 CRM-P2a)

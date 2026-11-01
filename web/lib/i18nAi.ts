@@ -13,7 +13,7 @@ export const aiEn = {
   "ai.off": "Off",
   "ai.enable": "Let the team ask for AI drafts",
   "ai.enableHelp":
-    "Off by default. Personal details (names, e-mail addresses, phone numbers, passport numbers) are replaced with placeholders before any text reaches the AI model, and put back only in your own session.",
+    "Off by default. Before text reaches the AI model, the CRM replaces with placeholders the personal details it knows for the trip (names, e-mail addresses, phone numbers, passport numbers) and those it can detect, and puts them back only in your own session. It may not catch every detail.",
   "ai.budget": "Monthly AI budget (USD)",
   "ai.budgetHelp": "Up to {max} a month on your plan. At 100 % AI drafts stop until next month and nothing more is charged.",
   "ai.meter": "This month",
@@ -50,7 +50,7 @@ export const aiVi: Record<keyof typeof aiEn, string> = {
   "ai.off": "Tắt",
   "ai.enable": "Cho phép đội yêu cầu bản nháp AI",
   "ai.enableHelp":
-    "Mặc định tắt. Thông tin cá nhân (tên, e-mail, số điện thoại, số hộ chiếu) được thay bằng ký hiệu trước khi văn bản đến mô hình AI, và chỉ được điền lại trong phiên của chính bạn.",
+    "Mặc định tắt. Trước khi văn bản đến mô hình AI, CRM thay bằng ký hiệu những thông tin cá nhân mà CRM biết về chuyến đi (tên, e-mail, số điện thoại, số hộ chiếu) và những thông tin CRM phát hiện được, và chỉ điền lại trong phiên của chính bạn. CRM có thể không bắt được mọi thông tin.",
   "ai.budget": "Ngân sách AI mỗi tháng (USD)",
   "ai.budgetHelp": "Tối đa {max} mỗi tháng theo gói của bạn. Khi dùng hết 100 %, bản nháp AI dừng đến tháng sau và không tính thêm phí.",
   "ai.meter": "Tháng này",
