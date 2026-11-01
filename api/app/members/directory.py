@@ -12,11 +12,9 @@ The IAM allow-list of the API's task role on the partner pool is exactly ``Admin
   never used the temporary password, or it lapsed after the pool's 7 days) gets a **new** temporary password through
   ``AdminCreateUser`` with ``MessageAction=RESEND`` (the same allow-listed action; S263 join fix). RESEND makes
   Cognito mail the new temporary password to the address too (its default invitation text): the address is the one
-  the invitation link went to, so this opens nothing the link did not already open.
-- :meth:`PartnerDirectory.reissue_temporary_password` (claim of an invitation that is already claimed): the same
-  RESEND for the account the invitation is bound to (found by ``sub``), only while that account is still in
-  ``FORCE_CHANGE_PASSWORD`` and has the invited address; otherwise ``None`` (the person signs in with their own
-  password).
+  the invitation link went to, so this opens nothing the link did not already open. Only the first claim of an
+  invitation calls this: a claimed invitation is never claimed again (``already_claimed``), so a second tab or a
+  double submit cannot replace the password the first claim is showing.
 - :meth:`PartnerDirectory.global_sign_out` (member removed): ``AdminUserGlobalSignOut`` revokes the person's refresh
   tokens; their access token still lives up to its lifetime, but every request re-checks ``crm.member`` anyway.
 - :meth:`PartnerDirectory.email_for` (owner recovery notice): ``ListUsers`` filtered by ``sub``.
@@ -72,8 +70,6 @@ class PartnerDirectory(Protocol):
     issuer: str
 
     async def create_or_find(self, email: str) -> Account: ...
-
-    async def reissue_temporary_password(self, sub: str, email: str) -> str | None: ...
 
     async def global_sign_out(self, sub: str) -> None: ...
 
@@ -157,20 +153,8 @@ class CognitoDirectory:
         )
         return password
 
-    def _reissue(self, sub: str, email: str) -> str | None:
-        users = self._idp().list_users(UserPoolId=self.pool_id, Filter=f"sub = {_quoted(sub)}", Limit=1)["Users"]
-        if not users:
-            return None
-        user = users[0]
-        if user.get("UserStatus") != FORCE_CHANGE_PASSWORD or (_attr(user, "email") or "").lower() != email.lower():
-            return None
-        return self._resend(user, email)
-
     async def create_or_find(self, email: str) -> Account:
         return await asyncio.to_thread(self._create_or_find, email)
-
-    async def reissue_temporary_password(self, sub: str, email: str) -> str | None:
-        return await asyncio.to_thread(self._reissue, sub, email)
 
     async def global_sign_out(self, sub: str) -> None:
         # E-mail-username pools: the internal username is the sub.
@@ -213,12 +197,6 @@ class MemoryDirectory:
         account["password"] = temporary_password()
         self.resent.append(account["sub"])
         return account["password"]
-
-    async def reissue_temporary_password(self, sub: str, email: str) -> str | None:
-        account = self.accounts.get(email.lower())
-        if account is None or account["sub"] != sub or account["status"] != FORCE_CHANGE_PASSWORD:
-            return None
-        return self._resend(account)
 
     async def global_sign_out(self, sub: str) -> None:
         self.signed_out.append(sub)

@@ -388,9 +388,13 @@ async def test_claim_finds_an_existing_account_and_shows_no_password(
 async def test_claim_again_and_closed_invitations(monkeypatch: pytest.MonkeyPatch, vault: None) -> None:
     directory = MemoryDirectory(PARTNER_ISSUER)
     conn = ScriptedConn()
-    monkeypatch.setattr(invitations, "invitation_tx", fake_tx(_system(conn), _invitation("claimed", sub="s-1")))
+    claimed_ctx = _system(conn)
+    monkeypatch.setattr(invitations, "invitation_tx", fake_tx(claimed_ctx, _invitation("claimed", sub="s-1")))
     again = await invitations.claim(conn, object(), directory, TOKEN)  # type: ignore[arg-type]
     assert again.state == "already_claimed" and directory.accounts == {}
+    # S263: a claim of a claimed invitation is on record (it changes nothing).
+    event = claimed_ctx.audit_events[-1]
+    assert (event.action, event.outcome, event.reason) == ("invitation_claim", "denied", "already_claimed")
     for status, code in (
         ("revoked", "invitation_used"),
         ("accepted", "invitation_used"),
@@ -427,34 +431,19 @@ async def test_a_new_invitation_to_an_account_never_signed_in_gives_a_new_tempor
 
 
 @pytest.mark.asyncio
-async def test_claim_again_reissues_only_while_the_bound_account_was_never_signed_in(
+async def test_claim_again_never_replaces_a_password_even_while_the_account_was_never_signed_in(
     monkeypatch: pytest.MonkeyPatch, vault: None
 ) -> None:
-    """S263: the invitation was claimed but the person never saw the one-time password. Opening the same link again
-    gives the bound account a new one while it is still in FORCE_CHANGE_PASSWORD; never once it has its own password,
-    never for another account with that address, never for a binding to another pool."""
+    """S263 (live, Dev): a second claim of one invitation (a double submit, a second tab) must not rotate the password
+    the first claim is showing. It answers already_claimed and never calls the directory; a new invitation re-issues."""
     directory = MemoryDirectory(PARTNER_ISSUER)
     first = await directory.create_or_find("lan@agency.example")
     conn = ScriptedConn()
-    ctx = _system(conn)
-    monkeypatch.setattr(invitations, "invitation_tx", fake_tx(ctx, _invitation("claimed", sub=first.sub)))
+    monkeypatch.setattr(invitations, "invitation_tx", fake_tx(_system(conn), _invitation("claimed", sub=first.sub)))
     again = await invitations.claim(conn, object(), directory, TOKEN)  # type: ignore[arg-type]
-    assert again.state == "created" and again.temporary_password not in (None, first.temporary_password)
-    assert directory.resent == [first.sub] and conn.sql("SET status = 'claimed'") == []
-    assert ctx.audit_events[-1].reason == "account_password_reissued"
-    # The person finished the first sign-in: no password any more.
-    directory.accounts["lan@agency.example"]["status"] = "CONFIRMED"
-    done = await invitations.claim(conn, object(), directory, TOKEN)  # type: ignore[arg-type]
-    assert done.state == "already_claimed" and done.temporary_password is None
-    # A binding to another sub (the address has another account now) or to another pool: nothing is reissued.
-    directory.accounts["lan@agency.example"]["status"] = "FORCE_CHANGE_PASSWORD"
-    monkeypatch.setattr(invitations, "invitation_tx", fake_tx(ctx, _invitation("claimed", sub="someone-else")))
-    assert (await invitations.claim(conn, object(), directory, TOKEN)).state == "already_claimed"  # type: ignore[arg-type]
-    other_pool = MemoryDirectory("https://cognito-idp.local.test/other_pool")
-    other_pool.accounts = directory.accounts
-    monkeypatch.setattr(invitations, "invitation_tx", fake_tx(ctx, _invitation("claimed", sub=first.sub)))
-    assert (await invitations.claim(conn, object(), other_pool, TOKEN)).state == "already_claimed"  # type: ignore[arg-type]
-    assert directory.resent == [first.sub]
+    assert again.state == "already_claimed" and again.temporary_password is None
+    assert directory.resent == [] and directory.accounts["lan@agency.example"]["password"] == first.temporary_password
+    assert conn.sql("SET status = 'claimed'") == []
 
 
 @pytest.mark.asyncio
@@ -833,32 +822,6 @@ async def test_cognito_directory_resends_a_temporary_password_to_an_account_neve
     assert [c[1]["MessageAction"] for c in idp.calls if c[0] == "admin_create_user"] == ["SUPPRESS", "RESEND"]
 
 
-@pytest.mark.asyncio
-async def test_cognito_directory_reissue_by_sub() -> None:
-    pending = {
-        "Username": "u-1",
-        "UserStatus": "FORCE_CHANGE_PASSWORD",
-        "Attributes": [{"Name": "sub", "Value": "s-old"}, {"Name": "email", "Value": "E@x.io"}],
-    }
-    idp = FakeIdp(exists=pending)
-    password = await CognitoDirectory(POOL, PARTNER_ISSUER, client=idp).reissue_temporary_password("s-old", "e@x.io")
-    assert password and idp.calls[0] == ("list_users", {"UserPoolId": POOL, "Filter": 'sub = "s-old"', "Limit": 1})
-    assert idp.calls[1][1]["MessageAction"] == "RESEND" and idp.calls[1][1]["TemporaryPassword"] == password
-    for user, email in (
-        ({**pending, "UserStatus": "CONFIRMED"}, "e@x.io"),  # finished the first sign-in
-        (pending, "other@x.io"),  # the bound account has another address
-        (None, "e@x.io"),  # the account is gone
-    ):
-        quiet = FakeIdp(exists=user)
-        directory = CognitoDirectory(POOL, PARTNER_ISSUER, client=quiet)
-        assert await directory.reissue_temporary_password("s-old", email) is None
-        assert [c[0] for c in quiet.calls] == ["list_users"]
-    no_username = FakeIdp(exists={k: v for k, v in pending.items() if k != "Username"})
-    directory = CognitoDirectory(POOL, PARTNER_ISSUER, client=no_username)
-    assert await directory.reissue_temporary_password("s-old", "e@x.io")
-    assert no_username.calls[-1][1]["Username"] == "e@x.io"
-
-
 def test_directory_helpers() -> None:
     for _ in range(50):
         value = temporary_password()
@@ -878,12 +841,9 @@ async def test_memory_directory() -> None:
     assert created.temporary_password and await directory.email_for(created.sub) == "a@b.io"
     again = await directory.create_or_find("a@b.io")  # created but never signed in: a new password
     assert again.sub == created.sub and again.reissued and again.temporary_password != created.temporary_password
-    assert await directory.reissue_temporary_password(created.sub, "a@b.io")
-    assert await directory.reissue_temporary_password("other", "a@b.io") is None
-    assert await directory.reissue_temporary_password(created.sub, "nobody@b.io") is None
     directory.accounts["a@b.io"]["status"] = "CONFIRMED"
-    assert await directory.reissue_temporary_password(created.sub, "a@b.io") is None
-    assert not (await directory.create_or_find("a@b.io")).reissued
+    confirmed = await directory.create_or_find("a@b.io")  # has its own password: found, never reset
+    assert not confirmed.reissued and confirmed.temporary_password is None
     assert await directory.email_for("nobody") is None
 
 

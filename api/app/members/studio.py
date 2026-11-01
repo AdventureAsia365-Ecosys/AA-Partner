@@ -50,7 +50,7 @@ from app.jobs.kinds import STUDIO_ACTIVATION
 from app.jobs.queue import Job
 from app.jobs.worker import PermanentError
 from app.members.directory import PartnerDirectory
-from app.members.invitations import Claimed, claim_reason, reissue_if_never_signed_in, token_hash_hex
+from app.members.invitations import Claimed, claim_reason, token_hash_hex
 from app.members.mail import Mailer, studio_invitation_message
 from app.members.recovery import platform_actor
 from app.members.team import new_token, normalise_email
@@ -273,16 +273,13 @@ async def claim(pool: asyncpg.Pool, directory: PartnerDirectory, token: str) -> 
         else:
             email = open_email(token, inv.cis_invitation_id, inv.email_enc)
             if inv.status == "claimed":
-                # S263 join fix: the bound account never signed in -> a new temporary password (as a CRM invitation).
-                password = await reissue_if_never_signed_in(directory, inv.cognito_iss, inv.cognito_sub, email)
-                if password is not None:
-                    result = Claimed(state="created", email=email, temporary_password=password)
-                    log.info(
-                        "crm_studio_invitation_claimed studio_invitation_id=%s reason=account_password_reissued",
-                        inv.studio_invitation_id,
-                    )
-                else:
-                    result = Claimed(state="already_claimed", email=email)
+                # S263 join fix: never a second password for one claimed link (a second tab or a double submit must
+                # not replace the one shown); a new invitation re-issues it while the account was never signed in to.
+                result = Claimed(state="already_claimed", email=email)
+                log.info(
+                    "crm_studio_invitation_claimed studio_invitation_id=%s reason=already_claimed",
+                    inv.studio_invitation_id,
+                )
             else:
                 account = await directory.create_or_find(email)
                 await ctx.conn.execute(CLAIM_SQL, inv.studio_invitation_id, directory.issuer, account.sub)

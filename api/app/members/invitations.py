@@ -9,12 +9,13 @@ The flow, end to end:
    is opened by the vault and the partner pool account is **created** (``AdminCreateUser``, ``SUPPRESS``, a random
    temporary password the page shows once) or **found** (the address already has an account). The invitation becomes
    ``claimed`` and keeps that account's ``(iss, sub)``. An existing account that never finished its first sign-in
-   (``FORCE_CHANGE_PASSWORD``) gets a new temporary password (``created``; S263 join fix, see
-   :mod:`app.members.directory`). Calling claim again on a claimed invitation shows no password again
-   (``already_claimed``) once the bound account has its own password; while that account has still never been signed
-   in to, the claim gives it a new temporary password instead (``created``): the first one was shown once and may
-   never have been seen (a double submit, a closed tab), and the token holder could have had one before the claim
-   anyway. The join page keeps a password it already shows and does not ask again (web ``app/join/claim/route.ts``).
+   (``FORCE_CHANGE_PASSWORD``: a password nobody saw, an earlier invitation that was withdrawn or expired) gets a new
+   temporary password (``created``; S263 join fix, see :mod:`app.members.directory`); an account with its own password
+   is ``existing`` and is never reset. Calling claim again on a claimed invitation answers ``already_claimed`` with no
+   password and changes nothing (a ``denied`` event, reason ``already_claimed``): a second claim must never replace a
+   password the first one is showing (a double submit, a second tab). A person who never saw the password asks for a
+   new invitation (the owner revokes and re-invites; AA withdraws a first-owner invitation in the L1 console), whose
+   claim gives the never-signed-in account a new temporary password.
 3. The person signs in through managed login: the temporary password, then their own password, then an authenticator
    app (the pool requires MFA, so no membership is ever active without a second factor).
 4. **Accept** (:func:`accept`, ``POST /crm/v1/invitations/accept``, partner-pool bearer): the invitation must be
@@ -131,17 +132,6 @@ def claim_reason(account: Account) -> str:
     return "account_created" if account.temporary_password else "account_existing"
 
 
-async def reissue_if_never_signed_in(
-    directory: PartnerDirectory, iss: str | None, sub: str | None, email: str
-) -> str | None:
-    """A new temporary password for the account a claimed invitation is bound to, only while that account has never
-    been signed in to (the directory checks ``FORCE_CHANGE_PASSWORD`` and the address); ``None`` otherwise, and for a
-    binding to another pool (an issuer this directory does not serve)."""
-    if not sub or iss != directory.issuer:
-        return None
-    return await directory.reissue_temporary_password(sub, email)
-
-
 class _CommitThen(Exception):  # noqa: N818 — internal control flow: commit the work done, then raise ``error``
     def __init__(self, error: ServiceError) -> None:
         super().__init__(error.code)
@@ -166,20 +156,14 @@ async def claim(pool: asyncpg.Pool, keys: KeyProvider, directory: PartnerDirecto
                 tenant_id=invitation.tenant_id,
             )
             if invitation.status == "claimed":
-                password = await reissue_if_never_signed_in(
-                    directory, invitation.cognito_iss, invitation.cognito_sub, email
+                ctx.audit(
+                    "invitation_claim",
+                    "denied",
+                    "member_invitation",
+                    str(invitation.invitation_id),
+                    reason="already_claimed",
                 )
-                if password is not None:
-                    ctx.audit(
-                        "invitation_claim",
-                        "allowed",
-                        "member_invitation",
-                        str(invitation.invitation_id),
-                        reason="account_password_reissued",
-                    )
-                    result = Claimed(state="created", email=email, temporary_password=password)
-                else:
-                    result = Claimed(state="already_claimed", email=email)
+                result = Claimed(state="already_claimed", email=email)
             else:
                 account = await directory.create_or_find(email)
                 await ctx.conn.execute(CLAIM_SQL, invitation.invitation_id, directory.issuer, account.sub)
