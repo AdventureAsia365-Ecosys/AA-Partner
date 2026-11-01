@@ -15,7 +15,8 @@ agency is :mod:`app.support.reads`.
   and the AA system mail to every active owner (best effort; ``owner_notified_at`` is recorded when at least one went
   out).
 - :func:`end_session`: the caller ends their own live session of one kind.
-- :func:`my_sessions` / :func:`granted_agencies`: what the staff UI needs to start (no agency data).
+- :func:`my_sessions` / :func:`granted_agencies`: what the staff UI needs to start, and why a session is over (no
+  agency data).
 """
 
 from __future__ import annotations
@@ -42,6 +43,10 @@ alerts = structlog.get_logger("crm.support")
 
 SUPPORT_SESSION_HOURS = 8  # a working day; the staff member starts again inside the same grant if needed
 BREAKGLASS_MINUTES_MIN, BREAKGLASS_MINUTES_MAX = 15, 60
+MY_SESSIONS_LIMIT = 10  # the console's "Your sessions in this agency": the live one and the last few that ended
+# Why a session the caller holds is over (AA-1019 D1), for the console's wording: the staff member ended it, the owner
+# ended AA support (grant revoked), its own window passed, or the owner's grant window passed first.
+END_REASONS = ("staff_ended", "owner_ended", "session_expired", "grant_expired")
 
 EXPIRE_SQL = """
 UPDATE crm.support_session s SET status = 'expired', ended_at = now(), ended_by = $1
@@ -61,13 +66,21 @@ SELECT support_session_id, kind, status, staff_iss, staff_sub, ticket_ref, reaso
        expires_at, ended_at, owner_notified_at, true AS live
   FROM crm.support_session WHERE status = 'active' AND kind = $1
 """
+# The caller's own sessions in this agency for the console (AA-1019 S262 live finding D1): the live one first, then the
+# most recent ended / revoked / expired ones, so the page can say why the session is over and list the history. A
+# support session is live only while its grant is active and unexpired too (as ``support_tx`` and the owner's view).
 MINE_SQL = """
-SELECT support_session_id, kind, status, staff_iss, staff_sub, ticket_ref, reason_code, show_identity, started_at,
-       expires_at, ended_at, owner_notified_at,
-       expires_at > now() AS live
-  FROM crm.support_session
- WHERE status = 'active' AND staff_iss = $1 AND staff_sub = $2
- ORDER BY started_at DESC
+SELECT s.support_session_id, s.kind, s.status, s.staff_iss, s.staff_sub, s.ticket_ref, s.reason_code, s.show_identity,
+       s.started_at, s.expires_at, s.ended_at, s.owner_notified_at,
+       s.status = 'active' AND s.expires_at > now()
+         AND (s.kind = 'breakglass' OR (g.status = 'active' AND g.expires_at > now())) AS live,
+       s.expires_at <= coalesce(s.ended_at, now()) AS window_passed,
+       g.status AS grant_status
+  FROM crm.support_session s
+  LEFT JOIN crm.support_grant g ON g.support_grant_id = s.support_grant_id
+ WHERE s.staff_iss = $1 AND s.staff_sub = $2
+ ORDER BY (s.status = 'active') DESC, s.started_at DESC, s.support_session_id
+ LIMIT $3
 """
 START_SUPPORT_SQL = """
 INSERT INTO crm.support_session (kind, support_grant_id, staff_iss, staff_sub, ticket_ref, show_identity, expires_at)
@@ -106,17 +119,34 @@ def _iso(value: dt.datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
+def _end_reason(row: asyncpg.Record) -> str | None:
+    """One of :data:`END_REASONS`, or None while the session is live. Rows without the ``window_passed`` /
+    ``grant_status`` columns (the start and active queries) are live by construction."""
+    if row["live"]:
+        return None
+    if row["status"] == "ended":
+        return "staff_ended"
+    if row["status"] == "revoked" or row["grant_status"] == "revoked":
+        return "owner_ended"
+    return "session_expired" if row["window_passed"] else "grant_expired"
+
+
 def _view(tenant_id: uuid.UUID, row: asyncpg.Record) -> dict[str, Any]:
+    status = row["status"]
+    if status == "active" and not row["live"]:
+        status = "expired"  # its window, or its grant's, passed: shown as what it is
     return {
         "tenant_id": str(tenant_id),
         "session_id": str(row["support_session_id"]),
         "kind": row["kind"],
-        "status": row["status"] if row["live"] else "expired",
+        "status": status,
         "ticket_ref": row["ticket_ref"],
         "reason_code": row["reason_code"],
         "show_identity": bool(row["show_identity"]),
         "started_at": _iso(row["started_at"]),
         "expires_at": _iso(row["expires_at"]),
+        "ended_at": _iso(row["ended_at"]),
+        "end_reason": _end_reason(row),
     }
 
 
@@ -253,10 +283,12 @@ async def end_session(pool: asyncpg.Pool, caller: Caller, tenant_id: uuid.UUID, 
 
 
 async def my_sessions(pool: asyncpg.Pool, caller: Caller, tenant_id: uuid.UUID) -> dict[str, Any]:
-    """The caller's sessions in this agency that are still marked active (expired ones shown as expired)."""
+    """The caller's own sessions in this agency, newest first with the live one on top: the live session (if any) and
+    the last :data:`MY_SESSIONS_LIMIT` in all, ended / revoked / expired ones with their ``end_reason`` (AA-1019 D1:
+    after the owner ends AA support the console says so instead of "no open session"). Ids, codes and times only."""
     actor = staff_actor("support", caller)
     async with staff_tx(pool, tenant_id, caller=caller, actor=actor, statuses=TENANT_STATUSES) as ctx:
-        rows = await ctx.conn.fetch(MINE_SQL, caller.iss, caller.sub)
+        rows = await ctx.conn.fetch(MINE_SQL, caller.iss, caller.sub, MY_SESSIONS_LIMIT)
         agency = await ctx.conn.fetchval(AGENCY_SQL, tenant_id)
         return {
             "tenant_id": str(tenant_id),

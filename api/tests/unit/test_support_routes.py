@@ -151,3 +151,91 @@ def test_break_glass_never_shows_identity() -> None:
     assert check is not None and check.group(1) == "NOT "
     assert "VALUES ('breakglass', $1, $2, $3, $4, false," in sessions.START_BREAKGLASS_SQL
     assert 'show_identity=bool(row["show_identity"]) and kind == "support"' in inspect.getsource(tenancy.support_tx)
+
+
+# ── AA-1019 S262 live findings: D1 (why a session is over) and O2 (the settings the overview shows) ─────────────────
+_NOW = dt.datetime(2026, 4, 2, 9, 0, tzinfo=dt.UTC)
+
+
+def _row(**kw: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "support_session_id": "11111111-1111-4111-8111-111111111111",
+        "kind": "support",
+        "status": "active",
+        "ticket_ref": "SUP-12",
+        "reason_code": None,
+        "show_identity": False,
+        "started_at": _NOW,
+        "expires_at": _NOW + dt.timedelta(hours=8),
+        "ended_at": None,
+        "live": True,
+        "window_passed": False,
+        "grant_status": "active",
+    }
+    return base | kw
+
+
+@pytest.mark.parametrize(
+    ("row", "status", "reason"),
+    [
+        (_row(), "active", None),
+        (_row(status="ended", live=False, ended_at=_NOW), "ended", "staff_ended"),
+        (_row(status="revoked", live=False, ended_at=_NOW, grant_status="revoked"), "revoked", "owner_ended"),
+        (_row(status="expired", live=False, ended_at=_NOW, window_passed=True), "expired", "session_expired"),
+        (_row(status="expired", live=False, ended_at=_NOW, grant_status="expired"), "expired", "grant_expired"),
+        (_row(live=False, window_passed=True), "expired", "session_expired"),
+        (_row(live=False, grant_status="expired"), "expired", "grant_expired"),
+        (_row(live=False, grant_status="revoked"), "expired", "owner_ended"),
+        (_row(kind="breakglass", status="ended", live=False, ended_at=_NOW, grant_status=None), "ended", "staff_ended"),
+    ],
+)
+def test_a_session_that_is_over_says_why(row: dict[str, object], status: str, reason: str | None) -> None:
+    view = sessions._view(TENANT, row)  # type: ignore[arg-type]
+    assert (view["status"], view["end_reason"]) == (status, reason)
+    assert view["ended_at"] == (row["ended_at"].isoformat() if row["ended_at"] else None)  # type: ignore[union-attr]
+    assert reason is None or reason in sessions.END_REASONS
+
+
+def test_the_start_rows_are_live_without_the_history_columns() -> None:
+    """The start / active queries select ``true AS live`` and no ``window_passed`` / ``grant_status``: the view must not
+    read those for a live row (a KeyError there would 500 every session start)."""
+    row = {k: v for k, v in _row().items() if k not in ("window_passed", "grant_status")}
+    assert sessions._view(TENANT, row)["end_reason"] is None  # type: ignore[arg-type]
+    for sql in (sessions.START_SUPPORT_SQL, sessions.START_BREAKGLASS_SQL, sessions.ACTIVE_SQL):
+        assert "true AS live" in sql and "ended_at" in sql
+
+
+def test_my_sessions_reads_ended_ones_too_capped_and_live_first() -> None:
+    sql = " ".join(sessions.MINE_SQL.split())
+    assert "s.status = 'active' AND s.staff_iss" not in sql  # D1: not only the sessions still marked active
+    assert "WHERE s.staff_iss = $1 AND s.staff_sub = $2" in sql
+    assert "ORDER BY (s.status = 'active') DESC, s.started_at DESC" in sql and sql.endswith("LIMIT $3")
+    assert "g.status = 'active' AND g.expires_at > now()" in sql  # a support session lives only inside its grant
+    assert 1 <= sessions.MY_SESSIONS_LIMIT <= 20
+
+
+def test_the_session_model_names_every_end_reason() -> None:
+    from app.routers.staff import SessionOut
+
+    literal = typing.get_args(SessionOut.model_fields["end_reason"].annotation)[0]
+    assert set(typing.get_args(literal)) == set(sessions.END_REASONS)
+    SessionOut.model_validate(sessions._view(TENANT, _row(status="ended", live=False, ended_at=_NOW)))  # type: ignore[arg-type]
+
+
+def test_the_overview_settings_are_one_list() -> None:
+    """O2: the overview's settings keys are ``reads.SETTINGS_KEYS`` in the model, the SQL and the response (the web
+    labels each key from that tuple: web/tests/staffSettings.test.ts)."""
+    from decimal import Decimal
+
+    from app.routers.staff import SettingsOut
+    from app.support import reads
+
+    assert tuple(SettingsOut.model_fields) == reads.SETTINGS_KEYS
+    columns = re.search(r"SELECT (.*?)\s+FROM", reads.SETTINGS_SQL, re.S)
+    assert columns is not None
+    assert tuple(c.strip() for c in columns.group(1).split(",")) == reads.SETTINGS_KEYS
+    row = {k: None for k in reads.SETTINGS_KEYS}
+    row |= {"ai_budget_usd": Decimal("2.00"), "onboarding_later": ["kickoff_call"]}
+    out = reads._settings(row)  # type: ignore[arg-type]
+    assert tuple(out) == reads.SETTINGS_KEYS
+    assert (out["ai_budget_usd"], out["onboarding_later"], out["onboarding_done"]) == ("2.00", ["kickoff_call"], [])

@@ -111,6 +111,10 @@ async def test_grant_read_audit_revoke_then_403(app_pool: asyncpg.Pool, admin: a
     with pytest.raises(Forbidden) as revoked:
         await reads.trips(app_pool, sup, tenant_id, stage=None, cursor=None, limit=10)
     assert revoked.value.code == "support_session_ended"
+    # AA-1019 D1: the console still finds the session, with why it is over (not "no open session").
+    [gone] = (await sessions.my_sessions(app_pool, sup, tenant_id))["sessions"]
+    assert gone["session_id"] == started["session_id"]
+    assert (gone["status"], gone["end_reason"]) == ("revoked", "owner_ended") and gone["ended_at"]
     denied = [e for e in await _audit(admin, tenant_id, "support_read") if e["outcome"] == "denied"]
     assert [e["reason"] for e in denied][-1] == "support_session_ended"
     [revoke] = await _audit(admin, tenant_id, "support_revoke")
@@ -152,6 +156,9 @@ async def test_a_read_after_the_window_passed_is_403(app_pool: asyncpg.Pool, adm
     with pytest.raises(Forbidden) as expired:
         await reads.overview(app_pool, sup, tenant_id)
     assert expired.value.code == "support_access_expired"
+    # AA-1019 D1: still marked active, but the owner's window passed first: shown as expired, reason grant_expired.
+    [mine] = (await sessions.my_sessions(app_pool, sup, tenant_id))["sessions"]
+    assert (mine["status"], mine["end_reason"], mine["ended_at"]) == ("expired", "grant_expired", None)
     # The owner's page shows no live grant; a new grant marks the old one expired first.
     async with tenant_tx(app_pool, owner, tenant_id) as ctx:
         assert (await grants.support_access(ctx))["grant"] is None
@@ -261,5 +268,30 @@ async def test_granted_agencies_and_my_sessions(app_pool: asyncpg.Pool) -> None:
     assert (mine["in_use"], mine["mine"]) == (True, True)
     current = await sessions.my_sessions(app_pool, sup, tenant_id)
     assert [s["kind"] for s in current["sessions"]] == ["support"] and current["agency_status"] == "active"
+    assert (current["sessions"][0]["status"], current["sessions"][0]["end_reason"]) == ("active", None)
     await sessions.end_session(app_pool, sup, tenant_id, kind="support")
-    assert (await sessions.my_sessions(app_pool, sup, tenant_id))["sessions"] == []
+    # AA-1019 D1: the ended session stays in the caller's history, with its reason and end time.
+    [ended] = (await sessions.my_sessions(app_pool, sup, tenant_id))["sessions"]
+    assert (ended["status"], ended["end_reason"], ended["ticket_ref"]) == ("ended", "staff_ended", "SUP-10")
+    assert ended["ended_at"] is not None
+
+
+async def test_my_sessions_lists_the_live_one_first_then_the_last_ended(app_pool: asyncpg.Pool) -> None:
+    """AA-1019 D1: the live session on top, then the most recent ended ones, at most MY_SESSIONS_LIMIT; another staff
+    member's sessions never appear."""
+    keys = _keys()
+    tenant_id, owner, _trip, _lead = await _inquiry(app_pool, keys)
+    await _grant(app_pool, owner, tenant_id, days=2)
+    sup, other = staff(), staff()
+    for n in range(sessions.MY_SESSIONS_LIMIT + 1):
+        await sessions.start_support(app_pool, sup, tenant_id, ticket_ref=f"SUP-{100 + n}")
+        await sessions.end_session(app_pool, sup, tenant_id, kind="support")
+    await sessions.start_support(app_pool, other, tenant_id, ticket_ref="SUP-999")
+    await sessions.end_session(app_pool, other, tenant_id, kind="support")
+    live = await sessions.start_support(app_pool, sup, tenant_id, ticket_ref="SUP-200")
+    listed = (await sessions.my_sessions(app_pool, sup, tenant_id))["sessions"]
+    assert len(listed) == sessions.MY_SESSIONS_LIMIT
+    assert listed[0]["session_id"] == live["session_id"] and listed[0]["end_reason"] is None
+    assert [s["ticket_ref"] for s in listed[1:]] == [f"SUP-{100 + n}" for n in range(10, 1, -1)]
+    assert {s["end_reason"] for s in listed[1:]} == {"staff_ended"}
+    assert "SUP-999" not in {s["ticket_ref"] for s in listed}

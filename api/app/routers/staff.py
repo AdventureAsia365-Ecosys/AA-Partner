@@ -89,6 +89,9 @@ class SessionOut(_Out):
     show_identity: bool
     started_at: str
     expires_at: str
+    ended_at: str | None = None
+    # AA-1019 D1: why a session that is no longer live is over (sessions.END_REASONS); None while it is live.
+    end_reason: Literal["staff_ended", "owner_ended", "session_expired", "grant_expired"] | None = None
     owners_notified: int | None = None
 
 
