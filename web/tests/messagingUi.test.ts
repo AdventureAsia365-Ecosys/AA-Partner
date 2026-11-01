@@ -2,15 +2,17 @@
 // AA-958 (CRM-28) web, components: the trip's WhatsApp / SMS panel (card R: with the window closed only an approved
 // template is offered and sent with its values; free text inside the window; a 409 is said in words; a channel that
 // cannot send says why; Undo) and Settings > SMS and WhatsApp (the owner connects with what they typed; an agent sees
-// the status only).
+// the status only; the WhatsApp test sends an approved template and the webhook check waits for a reply), marketing
+// templates hidden without the client's marketing yes, and the Inbox list of known clients with no open trip.
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChannelsSettings } from "@/components/messaging/ChannelsSettings";
+import { NoTripInbox } from "@/components/messaging/NoTripInbox";
 import { TextMessagesPanel } from "@/components/messaging/TextMessagesPanel";
 import { MESSAGES } from "@/lib/i18n";
 import type { Conversation } from "@/lib/mail";
-import type { ComposeState, MessagingView } from "@/lib/messaging";
+import { sendableTemplates, testTemplates, type ComposeState, type MessagingView } from "@/lib/messaging";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => {}, push: () => {}, replace: () => {} }) }));
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -296,5 +298,127 @@ describe("Settings > SMS and WhatsApp", () => {
     expect(q(c, "msg-connect")).toBeNull();
     expect(q(c, "msg-webhooks")).toBeNull();
     expect(q(c, "msg-channel-sms")?.textContent).toBe(EN["msg.channelOff"].replace("{channel}", "SMS"));
+  });
+});
+
+describe("marketing templates", () => {
+  it("are hidden from a client without a marketing yes, with a line that says why", async () => {
+    const promo = "HX" + "b2".repeat(16);
+    stubFetch((call) => {
+      if (call.url.includes("messaging/compose")) {
+        const state = compose();
+        state.templates.push({
+          content_sid: promo,
+          name: "autumn_offer",
+          language: "en",
+          body: "Hello {{1}}",
+          variables: ["1"],
+          marketing: true,
+          available: false,
+          reason: "no_marketing_consent",
+        });
+        return json(200, state);
+      }
+      if (call.url.includes(`conversations/${CONV}/messages`)) return json(200, thread(null));
+      return json(202, {});
+    });
+    const c = await mountPanel([CONVERSATION]);
+    const options = Array.from(c.querySelectorAll("select option")).map((o) => (o as HTMLOptionElement).value);
+    expect(options).toContain(SID);
+    expect(options).not.toContain(promo);
+    expect(q(c, "texts-marketing-hidden")?.textContent).toBe(EN["msg.marketingHidden"]);
+  });
+
+  it("helpers: sendable and test templates", () => {
+    const base = { name: "n", language: "en", body: "x", variables: [] };
+    expect(sendableTemplates([{ ...base, content_sid: "a", available: false }, { ...base, content_sid: "b" }]).map((x) => x.content_sid)).toEqual(["b"]);
+    const list = testTemplates([
+      { ...base, content_sid: "m", approval: "approved", category: "MARKETING" },
+      { ...base, content_sid: "p", approval: "pending", category: "UTILITY" },
+      { ...base, content_sid: "u", approval: "approved", category: "utility" },
+    ]);
+    expect(list.map((x) => x.content_sid)).toEqual(["u", "m"]);
+    expect(testTemplates(undefined)).toEqual([]);
+  });
+});
+
+describe("Settings > WhatsApp test", () => {
+  it("sends the chosen approved template and shows the webhook check", async () => {
+    const calls = stubFetch(() => json(200, { result: "ok", check: "ok", test_message_sent: true, template: SID, inbound_check: "pending" }));
+    const v = view();
+    v.connection!.inbound_check = "pending";
+    const c = await mountSettings(v);
+    expect(q(c, "msg-inbound-check")?.textContent).toBe(EN["msg.inboundCheck.pending"]);
+    const selects = Array.from(q(c, "msg-test")!.querySelectorAll("select")) as HTMLSelectElement[];
+    expect(selects.map((x) => x.value)).toEqual(["whatsapp", SID]); // the channel, then the approved template
+    const input = q(c, "msg-test")!.querySelector("input") as HTMLInputElement;
+    await typeInto(input, "+61491570110");
+    await act(async () => (q(c, "msg-test-button")!.closest("button") as HTMLButtonElement).click());
+    const post = calls.find((x) => x.url === "/bff/messaging/test")!;
+    expect(post.body).toEqual({ channel: "whatsapp", to: "+61491570110", content_sid: SID });
+    expect(q(c, "msg-notice")?.textContent).toBe(EN["msg.testSent"]);
+  });
+
+  it("without an approved template says what to do, also on a 409", async () => {
+    stubFetch(() => json(409, { detail: "template_required" }));
+    const c = await mountSettings(view({ templates: [] }));
+    expect(q(c, "msg-test-no-template")?.textContent).toBe(EN["msg.testNoTemplate"]);
+    await typeInto(q(c, "msg-test")!.querySelector("input") as HTMLInputElement, "+61491570110");
+    await act(async () => (q(c, "msg-test-button")!.closest("button") as HTMLButtonElement).click());
+    expect(q(c, "msg-notice")?.textContent).toBe(EN["msg.testNoTemplate"]);
+  });
+});
+
+describe("Inbox: clients with no open trip", () => {
+  const NO_TRIP: Conversation = { ...CONVERSATION, trip_id: null, traveler_id: "2f0e0d0c-0b0a-4908-8706-050403020100" };
+
+  async function mountInbox(list: Conversation[]): Promise<HTMLElement> {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    await act(async () => {
+      const root = createRoot(container);
+      roots.push(root);
+      root.render(createElement(NoTripInbox, { conversations: list, lang: "en", locale: "en-AU" }));
+    });
+    return container;
+  }
+
+  it("shows nothing when there is none", async () => {
+    const c = await mountInbox([]);
+    expect(q(c, "inbox-no-trip")).toBeNull();
+  });
+
+  it("opens the message and links it to one of the client's trips", async () => {
+    const calls = stubFetch((call) => {
+      if (call.url.includes("/messages")) return json(200, { ...thread(null), trip_id: null });
+      if (call.url.includes("travelers/")) {
+        return json(200, {
+          traveler: { traveler_id: NO_TRIP.traveler_id, display_name: "Mai Tran" },
+          trips: [{ trip_id: TRIP, title: "Lake walks", stage: "lost", role: "lead" }],
+        });
+      }
+      return json(200, { conversation_id: CONV, traveler_id: NO_TRIP.traveler_id, trip_id: TRIP });
+    });
+    const c = await mountInbox([NO_TRIP]);
+    expect(q(c, "inbox-no-trip")?.textContent).toContain(EN["msg.noTrip.title"]);
+    await act(async () => (q(c, `no-trip-${CONV}-open`)!.closest("button") as HTMLButtonElement).click());
+    expect(q(c, `no-trip-${CONV}-text`)?.textContent).toBe("Is the kayak OK for kids?");
+    expect(c.textContent).toContain("Mai Tran");
+    await act(async () => (q(c, `no-trip-link-${TRIP}`)!.closest("button") as HTMLButtonElement).click());
+    const post = calls.find((x) => x.method === "POST")!;
+    expect(post.url).toBe(`/bff/conversations/${CONV}/link`);
+    expect(post.body).toEqual({ traveler_id: NO_TRIP.traveler_id, trip_id: TRIP });
+    expect(c.textContent).toContain(EN["msg.noTrip.linked"]);
+  });
+
+  it("a client without any trip is told to start one", async () => {
+    stubFetch((call) =>
+      call.url.includes("/messages")
+        ? json(200, thread(null))
+        : json(200, { traveler: { traveler_id: NO_TRIP.traveler_id, display_name: "Mai Tran" }, trips: [] }),
+    );
+    const c = await mountInbox([NO_TRIP]);
+    await act(async () => (q(c, `no-trip-${CONV}-open`)!.closest("button") as HTMLButtonElement).click());
+    expect(q(c, `no-trip-${CONV}-none`)?.textContent).toBe(EN["msg.noTrip.noTrips"]);
   });
 });

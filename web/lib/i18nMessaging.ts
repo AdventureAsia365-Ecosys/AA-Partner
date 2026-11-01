@@ -50,7 +50,7 @@ export const messagingEn = {
   "msg.testTo": "Your own mobile number (for a test message)",
   "msg.testChannel": "Test on",
   "msg.testOk": "The connection works.",
-  "msg.testSent": "The connection works and a test message was sent to your number.",
+  "msg.testSent": "The connection works and a test message was sent to your number. Reply to it to check incoming messages.",
   "msg.testFailed": "The test failed: {reason}",
   "msg.disconnect": "Disconnect",
   "msg.disconnectConfirm":
@@ -157,6 +157,21 @@ export const messagingEn = {
   "msg.error.assigned_only": "You can message clients only on trips assigned to you.",
   "msg.error.network": "The CRM could not be reached. Try again.",
   "msg.error.other": "Something went wrong. Try again.",
+  "msg.marketingHidden": "Marketing templates are hidden: this client has not agreed to marketing messages.",
+  "msg.error.no_marketing_consent": "This is a marketing template and the client has not agreed to marketing messages.",
+  "msg.testTemplate": "Template for the WhatsApp test",
+  "msg.testNoTemplate":
+    "A WhatsApp test needs an approved template. Get one approved in your Twilio account, then refresh the templates below.",
+  "msg.inboundCheck": "Incoming messages",
+  "msg.inboundCheck.ok": "Working: a message arrived after the last test.",
+  "msg.inboundCheck.pending": "Not checked yet: reply to the test message to check that incoming messages arrive.",
+  "msg.noTrip.title": "Clients with no open trip",
+  "msg.noTrip.help":
+    "These clients wrote on SMS or WhatsApp while no open trip holds them. Link the message to one of their trips to reply from the trip.",
+  "msg.noTrip.openClient": "Open client",
+  "msg.noTrip.link": "Link to this trip",
+  "msg.noTrip.linked": "Linked. The conversation is on the trip now.",
+  "msg.noTrip.noTrips": "This client has no trip yet. Open the client to start one, then link the message.",
   "bell.event.received": "{trip}: the client wrote on WhatsApp or SMS ({count})",
 } as const;
 
@@ -207,7 +222,7 @@ export const messagingVi: Record<keyof typeof messagingEn, string> = {
   "msg.testTo": "Số di động của bạn (để nhận tin thử)",
   "msg.testChannel": "Thử trên",
   "msg.testOk": "Kết nối hoạt động.",
-  "msg.testSent": "Kết nối hoạt động và một tin thử đã được gửi tới số của bạn.",
+  "msg.testSent": "Kết nối hoạt động và một tin thử đã được gửi tới số của bạn. Hãy trả lời tin đó để kiểm tra tin nhắn đến.",
   "msg.testFailed": "Kiểm tra không thành công: {reason}",
   "msg.disconnect": "Ngắt kết nối",
   "msg.disconnectConfirm":
@@ -313,5 +328,20 @@ export const messagingVi: Record<keyof typeof messagingEn, string> = {
   "msg.error.assigned_only": "Bạn chỉ nhắn tin cho khách trên những chuyến đi được giao cho bạn.",
   "msg.error.network": "Không kết nối được CRM. Hãy thử lại.",
   "msg.error.other": "Đã có lỗi. Hãy thử lại.",
+  "msg.marketingHidden": "Mẫu tiếp thị đang ẩn: khách này chưa đồng ý nhận tin tiếp thị.",
+  "msg.error.no_marketing_consent": "Đây là mẫu tiếp thị và khách chưa đồng ý nhận tin tiếp thị.",
+  "msg.testTemplate": "Mẫu dùng cho tin thử WhatsApp",
+  "msg.testNoTemplate":
+    "Tin thử WhatsApp cần một mẫu đã được duyệt. Hãy duyệt một mẫu trong tài khoản Twilio, rồi làm mới danh sách mẫu bên dưới.",
+  "msg.inboundCheck": "Tin nhắn đến",
+  "msg.inboundCheck.ok": "Hoạt động: đã có tin nhắn đến sau lần thử gần nhất.",
+  "msg.inboundCheck.pending": "Chưa kiểm tra: hãy trả lời tin thử để kiểm tra tin nhắn đến.",
+  "msg.noTrip.title": "Khách chưa có chuyến đi đang mở",
+  "msg.noTrip.help":
+    "Những khách này đã nhắn SMS hoặc WhatsApp khi chưa có chuyến đi nào đang mở. Gắn tin nhắn với một chuyến đi của khách để trả lời từ chuyến đi.",
+  "msg.noTrip.openClient": "Mở hồ sơ khách",
+  "msg.noTrip.link": "Gắn với chuyến này",
+  "msg.noTrip.linked": "Đã gắn. Cuộc trò chuyện giờ nằm trên chuyến đi.",
+  "msg.noTrip.noTrips": "Khách này chưa có chuyến đi. Mở hồ sơ khách để tạo chuyến, rồi gắn tin nhắn.",
   "bell.event.received": "{trip}: khách đã nhắn WhatsApp hoặc SMS ({count})",
 };

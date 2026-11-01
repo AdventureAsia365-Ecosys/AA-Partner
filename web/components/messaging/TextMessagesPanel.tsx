@@ -4,7 +4,8 @@
 // agency's, each outbound one with its delivery state from the status callbacks), the WhatsApp window, and the
 // composer: free text while the window is open (SMS always), otherwise an approved template with its values and a
 // preview. Send queues the message with the 10-second Undo of the mail composer (POST messages/{id}/undo). Why a
-// channel cannot send (not connected, no mobile number, the client texted STOP) is said in words.
+// channel cannot send (not connected, no mobile number, the client texted STOP) is said in words. Marketing templates
+// are offered only to a client who agreed to marketing messages.
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Badge, Button, Field, Input, K, Select, Tabs, Textarea, useHydrated } from "@/app/_kit";
@@ -20,6 +21,7 @@ import {
   MAX_TEXT,
   messagingErrorKey,
   renderTemplate,
+  sendableTemplates,
   TEXT_CHANNELS,
   templateVariables,
   variableOk,
@@ -158,7 +160,10 @@ export function TextMessagesPanel({
   const hours = channel === "whatsapp" ? windowHoursLeft(shown?.window_until ?? here?.window_until) : 0;
   const needsTemplate = channel === "whatsapp" && hours === 0;
   const useTemplate = needsTemplate || templateSid !== "";
-  const template = state?.templates.find((x) => x.content_sid === templateSid);
+  // Marketing templates need the client's marketing yes (the API refuses them too, and the dispatcher checks again).
+  const templates = sendableTemplates(state?.templates ?? []);
+  const hiddenMarketing = (state?.templates.length ?? 0) > templates.length;
+  const template = templates.find((x) => x.content_sid === templateSid);
   const names = template ? templateVariables(template) : [];
   const ready = useTemplate
     ? !!template && names.every((n) => variableOk(values[n] ?? ""))
@@ -239,16 +244,21 @@ export function TextMessagesPanel({
                 {hours > 0 ? fmt(tr("msg.window"), { hours }) : tr("msg.windowClosed")}
               </span>
             )}
-            {channel === "whatsapp" && (state?.templates.length ?? 0) > 0 && (
+            {channel === "whatsapp" && templates.length > 0 && (
               <Field label={tr("msg.template")}>
                 <Select
                   value={templateSid}
                   onChange={(e) => setTemplateSid(e.currentTarget.value)}
                   placeholder={needsTemplate ? tr("msg.templatePick") : tr("msg.templateNone")}
-                  options={(state?.templates ?? []).map((x) => ({ value: x.content_sid, label: `${x.name} (${x.language})` }))}
+                  options={templates.map((x) => ({ value: x.content_sid, label: `${x.name} (${x.language})` }))}
                   data-testid="texts-template"
                 />
               </Field>
+            )}
+            {channel === "whatsapp" && hiddenMarketing && (
+              <span data-testid="texts-marketing-hidden" style={{ fontSize: 12.5, color: K.muted }}>
+                {tr("msg.marketingHidden")}
+              </span>
             )}
             {useTemplate ? (
               template && (

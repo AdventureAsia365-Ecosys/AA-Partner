@@ -17,6 +17,10 @@ export interface ChannelTemplate {
   body: string;
   variables: string[];
   synced_at?: string | null;
+  /** Composer only: a marketing template (not utility / authentication), offered only with the client's marketing yes. */
+  marketing?: boolean;
+  available?: boolean;
+  reason?: string | null;
 }
 
 export interface MessagingConnection {
@@ -31,6 +35,8 @@ export interface MessagingConnection {
   last_test_at: string | null;
   last_test_result: "ok" | "failed" | null;
   last_inbound_at: string | null;
+  /** The webhook check of the last Test: ok once a message arrived after it, pending until then. */
+  inbound_check?: "ok" | "pending" | null;
   last_status_at: string | null;
   connected_at: string | null;
   hook_url: string;
@@ -44,6 +50,26 @@ export interface MessagingView {
   can_manage: boolean;
   connection?: MessagingConnection;
   templates?: ChannelTemplate[];
+}
+
+export interface TestResult {
+  result: "ok" | "failed";
+  check: string;
+  test_message_sent: boolean;
+  template?: string | null;
+  inbound_check?: "pending" | null;
+}
+
+/** The templates the composer may send to this client (marketing ones need the client's marketing yes). */
+export function sendableTemplates(templates: ChannelTemplate[]): ChannelTemplate[] {
+  return templates.filter((x) => x.available !== false);
+}
+
+/** Approved templates, service ones (utility / authentication) first: the WhatsApp Test picks the first by default. */
+export function testTemplates(templates: ChannelTemplate[] | undefined): ChannelTemplate[] {
+  const service = (x: ChannelTemplate) => ["UTILITY", "AUTHENTICATION"].includes((x.category ?? "").toUpperCase());
+  const approved = (templates ?? []).filter((x) => x.approval === "approved");
+  return [...approved.filter(service), ...approved.filter((x) => !service(x))];
 }
 
 export interface ChannelState {
@@ -113,6 +139,7 @@ const ERRORS = new Set([
   "no_client_phone",
   "client_opted_out",
   "template_not_approved",
+  "no_marketing_consent",
   "template_variables_missing",
   "invalid_template_variable",
   "conversation_unmatched",

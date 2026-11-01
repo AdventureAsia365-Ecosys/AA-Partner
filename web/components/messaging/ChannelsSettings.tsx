@@ -3,7 +3,9 @@
 // "Connections": owner edits, agents and assistants see status only; each card says who pays). The owner connects the
 // agency's own Twilio account (Account SID + Auth Token, optional API key, the SMS and WhatsApp senders; the sandbox
 // provider on Dev only), copies the two webhook addresses into Twilio, tests the connection (optionally a test message
-// to their own mobile), refreshes the approved WhatsApp templates, or disconnects (the credentials are deleted).
+// to their own mobile: on WhatsApp an approved template, since free text outside their own 24-hour window fails later;
+// a reply to it checks the incoming webhook), refreshes the approved WhatsApp templates, or disconnects (the
+// credentials are deleted).
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, ConfirmModal, Field, Input, K, Select, useHydrated } from "@/app/_kit";
@@ -11,7 +13,14 @@ import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
-import { messagingErrorKey, TEXT_CHANNELS, type MessagingView, type TextChannel } from "@/lib/messaging";
+import {
+  messagingErrorKey,
+  testTemplates,
+  TEXT_CHANNELS,
+  type MessagingView,
+  type TestResult,
+  type TextChannel,
+} from "@/lib/messaging";
 
 type Form = {
   provider: "twilio" | "sandbox";
@@ -41,6 +50,8 @@ export function ChannelsSettings({ view, lang, locale }: { view: MessagingView; 
   });
   const [testTo, setTestTo] = useState("");
   const [testChannel, setTestChannel] = useState<TextChannel>(conn?.whatsapp_sender ? "whatsapp" : "sms");
+  const approved = testTemplates(view.templates);
+  const [testTemplate, setTestTemplate] = useState(approved[0]?.content_sid ?? "");
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
@@ -50,13 +61,18 @@ export function ChannelsSettings({ view, lang, locale }: { view: MessagingView; 
     setForm((f) => ({ ...f, [name]: value }));
   };
 
-  async function call<T>(method: "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<T | null> {
+  async function call<T>(
+    method: "POST" | "PUT" | "DELETE",
+    path: string,
+    body?: unknown,
+    errors: Record<string, string> = {},
+  ): Promise<T | null> {
     setBusy(true);
     setNotice(null);
     const res = await bffSend<T>(method, path, body);
     setBusy(false);
     if (!res.ok) {
-      setNotice({ ok: false, text: tr(messagingErrorKey(res.detail)) });
+      setNotice({ ok: false, text: tr(errors[res.detail] ?? messagingErrorKey(res.detail)) });
       return null;
     }
     return res.data;
@@ -81,8 +97,13 @@ export function ChannelsSettings({ view, lang, locale }: { view: MessagingView; 
   }
 
   async function test() {
-    const body = testTo.trim() ? { channel: testChannel, to: testTo.trim() } : {};
-    const out = await call<{ result: string; check: string; test_message_sent: boolean }>("POST", "messaging/test", body);
+    const body = !testTo.trim()
+      ? {}
+      : testChannel === "whatsapp" && testTemplate
+        ? { channel: testChannel, to: testTo.trim(), content_sid: testTemplate }
+        : { channel: testChannel, to: testTo.trim() };
+    // A WhatsApp test without an approved template: say what to do (not the client-window wording of the composer).
+    const out = await call<TestResult>("POST", "messaging/test", body, { template_required: "msg.testNoTemplate" });
     if (out) {
       const reason = tr(`msg.failure.${out.check}`) === `msg.failure.${out.check}` ? out.check : tr(`msg.failure.${out.check}`);
       setNotice(
@@ -145,6 +166,14 @@ export function ChannelsSettings({ view, lang, locale }: { view: MessagingView; 
                 <>
                   <dt style={{ color: K.muted }}>{tr("msg.lastInbound")}</dt>
                   <dd style={{ margin: 0 }}>{formatDate(conn.last_inbound_at.slice(0, 10), locale)}</dd>
+                </>
+              )}
+              {conn.inbound_check && (
+                <>
+                  <dt style={{ color: K.muted }}>{tr("msg.inboundCheck")}</dt>
+                  <dd style={{ margin: 0 }} data-testid="msg-inbound-check">
+                    {tr(`msg.inboundCheck.${conn.inbound_check}`)}
+                  </dd>
                 </>
               )}
             </dl>
@@ -231,6 +260,21 @@ export function ChannelsSettings({ view, lang, locale }: { view: MessagingView; 
                 options={TEXT_CHANNELS.map((c) => ({ value: c, label: tr(`msg.channel.${c}`) }))}
               />
             </Field>
+            {testChannel === "whatsapp" &&
+              (approved.length > 0 ? (
+                <Field label={tr("msg.testTemplate")}>
+                  <Select
+                    value={testTemplate}
+                    onChange={(e) => setTestTemplate(e.currentTarget.value)}
+                    options={approved.map((x) => ({ value: x.content_sid, label: `${x.name} (${x.language})` }))}
+                    data-testid="msg-test-template"
+                  />
+                </Field>
+              ) : (
+                <p style={{ margin: 0, fontSize: 12.5, color: K.muted }} data-testid="msg-test-no-template">
+                  {tr("msg.testNoTemplate")}
+                </p>
+              ))}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
               <Button size="sm" disabled={!hydrated || busy} onClick={test} testId="msg-test-button">
                 {tr("msg.test")}
