@@ -60,8 +60,15 @@ async def test_sampler_mails_a_stuck_queue_once(admin: asyncpg.Connection, app_p
         sample = await sampler.sample_once()
         await sampler.sample_once()
         assert sample is not None and sample.oldest_queued_age_s >= 1195
-        assert [c["Subject"] for c in calls] == ["[AA-Partner test] Ops check: Job queue stuck"]
-        n = await admin.fetchval("SELECT count(*) FROM crm.job WHERE kind = $1", ops_alerts.OPS_ALERT_KIND)
+        # Other state checks (e.g. the agency audit export) may also fire on a fresh test database; this test is
+        # about the stuck queue: mailed once over two samples, one ledger row for it.
+        stuck = [c for c in calls if c["Subject"] == "[AA-Partner test] Ops check: Job queue stuck"]
+        assert len(stuck) == 1
+        n = await admin.fetchval(
+            "SELECT count(*) FROM crm.job WHERE kind = $1 AND payload->>'kind' = $2",
+            ops_alerts.OPS_ALERT_KIND,
+            "jobs_stuck",
+        )
         assert n == 1
     finally:
         await _clean(admin)
