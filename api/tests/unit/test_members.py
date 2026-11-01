@@ -814,7 +814,7 @@ async def test_cognito_directory_resends_a_temporary_password_to_an_account_neve
     name, kw = idp.calls[-1]
     assert name == "admin_create_user" and kw == {
         "UserPoolId": POOL,
-        "Username": "u-1",
+        "Username": "e@x.io",  # the address: e-mail-username pools refuse the internal username (S263 live)
         "TemporaryPassword": account.temporary_password,
         "MessageAction": "RESEND",
         "DesiredDeliveryMediums": ["EMAIL"],
