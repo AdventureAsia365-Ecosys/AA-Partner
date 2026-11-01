@@ -444,7 +444,7 @@ async def advance(
         if result.wait_until is not None:
             index = index + 1 if result.advance else index
             await ctx.conn.execute(SAVE_SQL, run_id, index, result.wait_until, _dump(log_rows))
-            return {**out, "status": "waiting", "steps_done_count": done, "step_index": index}
+            return {**out, "status": "waiting", "steps_done_count": done, "next_step_count": index}
         index += 1
     return await _finish(ctx, run_id, "completed", None, index, log_rows, {**out, "steps_done_count": done})
 

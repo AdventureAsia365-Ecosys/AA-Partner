@@ -109,7 +109,7 @@ async def test_a_stage_rule_runs_after_the_undo_window_and_dates_wait_for_the_tr
     assert (await runner.build_handler(d["keys"])(app_pool, job))["status"] == "not_due"
     now = run["next_at"] + dt.timedelta(seconds=1)
     out = await _advance(app_pool, d, run["workflow_run_id"], now)
-    assert out["status"] == "waiting" and out["step_index"] == 3
+    assert out["status"] == "waiting" and out["next_step_count"] == 3
     async with tenant_tx(app_pool, d["owner"], d["tenant"], action=Action.PIPELINE_VIEW) as ctx:
         listed = await tasks.listing(ctx, Vault(d["keys"], ctx), scope="trip", trip_id=d["trip"])
     titles = {t["title"] for b in listed["buckets"].values() for t in b if t["source"] == "workflow"}

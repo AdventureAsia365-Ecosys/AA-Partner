@@ -163,7 +163,7 @@ async def test_tasks_waits_and_fields() -> None:
     ]
     conn = conn_for(steps).on("INSERT INTO crm.task", RUN).on("FROM crm.member WHERE member_id = $1", 1)
     out = await advance(conn)
-    assert out == {"workflow_run_id": str(RUN), "status": "waiting", "steps_done_count": 5, "step_index": 5}
+    assert out == {"workflow_run_id": str(RUN), "status": "waiting", "steps_done_count": 5, "next_step_count": 5}
     custom, pack = conn.sql("INSERT INTO crm.task")
     assert custom[2].startswith("custom_") and custom[4] == member and custom[8].startswith(b"enc:task.title_enc")
     assert pack[2] == "send_pre_travel_pack" and pack[7] is None and pack[8] is None  # no return date yet: waiting
@@ -185,7 +185,7 @@ async def test_an_open_task_inactive_member_waits_for_dates_and_unknown_actions(
     ]
     conn = conn_for(steps)
     out = await advance(conn)
-    assert out["status"] == "waiting" and out["step_index"] == 3  # the wait for a missing date stays on its step
+    assert out["status"] == "waiting" and out["next_step_count"] == 3  # the wait for a missing date stays on its step
     (save,) = conn.sql("UPDATE crm.workflow_run SET step_index = $2")
     assert save[2] == NOW + engine.NO_DATE_RECHECK
     assert [e["outcome"] for e in json.loads(save[3])] == [
@@ -201,7 +201,7 @@ async def test_an_open_task_inactive_member_waits_for_dates_and_unknown_actions(
         {"action": "create_task", "kind": "request_review"},
     ]
     conn = conn_for(steps)
-    assert (await advance(conn))["step_index"] == 2
+    assert (await advance(conn))["next_step_count"] == 2
     (save,) = conn.sql("UPDATE crm.workflow_run SET step_index = $2")
     assert save[2] == NOW + dt.timedelta(days=2) and [e["outcome"] for e in json.loads(save[3])] == [
         "passed",
@@ -676,3 +676,25 @@ async def test_date_and_special_triggers_on_a_scripted_agency() -> None:
         f"special:trip_anniversary:{TRIP}:2026-11-01",
     ]
     assert await tick._special_dates(system_ctx(ScriptedConn()), FakeVault(), today) == {}  # noqa: SLF001  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_every_job_result_passes_the_payload_guard() -> None:
+    """crm.job results are ids and codes only (app.jobs.payload_guard): every shape the engine answers."""
+    from app.jobs.payload_guard import check_payload
+
+    steps = [
+        {"action": "create_task", "kind": "request_review"},
+        {"action": "wait", "days": 1},
+        {"action": "create_task", "kind": "request_review"},
+    ]
+    results = [
+        await advance(ScriptedConn()),
+        await advance(conn_for(steps, run_row(steps, rule_status="paused"))),
+        await advance(conn_for(steps, run_row(steps, rule_status="archived"))),
+        await advance(conn_for(steps).on("INSERT INTO crm.task", RUN)),
+        await advance(conn_for(steps[:1]).on("INSERT INTO crm.task", asyncpg.CheckViolationError("x"))),
+    ]
+    for result in results:
+        check_payload(result, what="result")
+    assert {r["status"] for r in results} == {"missing", "paused", "stopped", "waiting", "failed"}
