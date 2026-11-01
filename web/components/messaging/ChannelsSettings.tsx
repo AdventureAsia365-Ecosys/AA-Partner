@@ -44,8 +44,11 @@ export function ChannelsSettings({ view, lang, locale }: { view: MessagingView; 
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
-  const set = (name: keyof Form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-    setForm((f) => ({ ...f, [name]: e.currentTarget.value }));
+  const set = (name: keyof Form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    // Read the value now: React clears currentTarget once the handler returns, before the updater runs.
+    const value = e.currentTarget.value;
+    setForm((f) => ({ ...f, [name]: value }));
+  };
 
   async function call<T>(method: "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<T | null> {
     setBusy(true);
@@ -207,7 +210,7 @@ export function ChannelsSettings({ view, lang, locale }: { view: MessagingView; 
               <Input value={form.whatsapp_sender} onChange={set("whatsapp_sender")} autoComplete="off" inputMode="tel" maxLength={40} />
             </Field>
             <div>
-              <Button type="submit" variant="primary" disabled={!hydrated || busy} data-testid="msg-connect-submit">
+              <Button type="submit" variant="primary" disabled={!hydrated || busy} testId="msg-connect-submit">
                 {tr(conn ? "msg.reconnect" : "msg.connect")}
               </Button>
             </div>
@@ -229,7 +232,7 @@ export function ChannelsSettings({ view, lang, locale }: { view: MessagingView; 
               />
             </Field>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              <Button size="sm" disabled={!hydrated || busy} onClick={test} data-testid="msg-test-button">
+              <Button size="sm" disabled={!hydrated || busy} onClick={test} testId="msg-test-button">
                 {tr("msg.test")}
               </Button>
               <Button size="sm" variant="danger" disabled={!hydrated || busy} onClick={() => setConfirm(true)}>
@@ -267,7 +270,7 @@ export function ChannelsSettings({ view, lang, locale }: { view: MessagingView; 
               </ul>
             )}
             <div>
-              <Button size="sm" disabled={!hydrated || busy} onClick={refresh} data-testid="msg-refresh">
+              <Button size="sm" disabled={!hydrated || busy} onClick={refresh} testId="msg-refresh">
                 {tr("msg.refresh")}
               </Button>
             </div>

@@ -29,6 +29,10 @@ import {
   type TextChannel,
 } from "@/lib/messaging";
 
+/** The end of the Undo delay, and the time left to it (outside render: the clock is read in handlers / effects). */
+const undoUntil = () => Date.now() + UNDO_MS;
+const msUntil = (until: number) => Math.max(0, until - Date.now());
+
 type TextMessage = MailMessage & { delivery?: Delivery | null };
 type TextThread = Thread & { messages: TextMessage[]; window_until?: string | null; opted_out_at?: string | null };
 
@@ -105,30 +109,34 @@ export function TextMessagesPanel({
     .filter((c) => c.channel === channel)
     .sort((a, b) => b.last_message_at.localeCompare(a.last_message_at))[0];
 
-  async function loadState() {
-    const res = await bffSend<ComposeState>("GET", `messaging/compose?trip_id=${tripId}`);
-    if (res.ok) setState(res.data);
-  }
-
-  async function loadThread(id: string | undefined) {
-    if (!id) {
-      setThread(null);
-      return;
-    }
-    const res = await bffSend<TextThread>("GET", `conversations/${id}/messages`);
-    if (res.ok) setThread(res.data);
-    else setNotice({ ok: false, text: tr(messagingErrorKey(res.detail)) });
-  }
+  const conversationId = conversation?.conversation_id;
+  const [stateTick, setStateTick] = useState(0);
+  const [threadTick, setThreadTick] = useState(0);
 
   useEffect(() => {
-    void loadState();
-  }, [tripId]);
+    let stopped = false;
+    void (async () => {
+      const res = await bffSend<ComposeState>("GET", `messaging/compose?trip_id=${tripId}`);
+      if (!stopped && res.ok) setState(res.data);
+    })();
+    return () => {
+      stopped = true;
+    };
+  }, [tripId, stateTick]);
 
   useEffect(() => {
-    void loadThread(conversation?.conversation_id);
-    setTemplateSid("");
-    setValues({});
-  }, [channel, conversation?.conversation_id]);
+    if (!conversationId) return;
+    let stopped = false;
+    void (async () => {
+      const res = await bffSend<TextThread>("GET", `conversations/${conversationId}/messages`);
+      if (stopped) return;
+      if (res.ok) setThread(res.data);
+      else setNotice({ ok: false, text: t(lang, messagingErrorKey(res.detail) as MessageKey) });
+    })();
+    return () => {
+      stopped = true;
+    };
+  }, [conversationId, threadTick, lang]);
 
   useEffect(() => {
     if (!undo) return;
@@ -138,15 +146,16 @@ export function TextMessagesPanel({
       setBody("");
       setTemplateSid("");
       setValues({});
-      void loadThread(conversation?.conversation_id);
-      void loadState();
+      setThreadTick((n) => n + 1);
+      setStateTick((n) => n + 1);
       router.refresh();
-    }, Math.max(0, undo.until - Date.now()));
+    }, msUntil(undo.until));
     return () => clearTimeout(timer);
-  }, [undo]);
+  }, [undo, router]);
 
+  const shown = conversationId && thread?.conversation_id === conversationId ? thread : null;
   const here = state?.channels[channel];
-  const hours = channel === "whatsapp" ? windowHoursLeft(thread?.window_until ?? here?.window_until) : 0;
+  const hours = channel === "whatsapp" ? windowHoursLeft(shown?.window_until ?? here?.window_until) : 0;
   const needsTemplate = channel === "whatsapp" && hours === 0;
   const useTemplate = needsTemplate || templateSid !== "";
   const template = state?.templates.find((x) => x.content_sid === templateSid);
@@ -172,7 +181,7 @@ export function TextMessagesPanel({
       return;
     }
     setNotice({ ok: true, text: tr("msg.queued") });
-    setUndo({ messageId: draftId, until: Date.now() + UNDO_MS });
+    setUndo({ messageId: draftId, until: undoUntil() });
     if (!conversation) router.refresh();
   }
 
@@ -183,14 +192,18 @@ export function TextMessagesPanel({
     setNotice(res.ok ? { ok: true, text: tr("msg.undone") } : { ok: false, text: tr(messagingErrorKey(res.detail)) });
   }
 
-  const visible = (thread?.messages ?? []).filter((m) => m.status !== "draft_autosaved");
+  const visible = (shown?.messages ?? []).filter((m) => m.status !== "draft_autosaved");
   return (
     <Panel title={tr("msg.panel")} testId="trip-texts">
       <div style={{ display: "grid", gap: 12 }}>
         <Tabs
           tabs={TEXT_CHANNELS.map((c) => ({ key: c, label: tr(`msg.channel.${c}`) }))}
           active={channel}
-          onChange={(k) => setChannel(k as TextChannel)}
+          onChange={(k) => {
+            setChannel(k as TextChannel);
+            setTemplateSid("");
+            setValues({});
+          }}
           testId="texts-channel"
         />
         {closed && (
@@ -272,11 +285,11 @@ export function TextMessagesPanel({
             )}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {undo ? (
-                <Button size="sm" variant="danger" onClick={undoSend} data-testid="texts-undo">
+                <Button size="sm" variant="danger" onClick={undoSend} testId="texts-undo">
                   {tr("msg.undo")}
                 </Button>
               ) : (
-                <Button size="sm" variant="primary" disabled={!canSend} onClick={send} data-testid="texts-send">
+                <Button size="sm" variant="primary" disabled={!canSend} onClick={send} testId="texts-send">
                   {tr("msg.send")}
                 </Button>
               )}
