@@ -41,10 +41,14 @@ PAYMENT_CLAIMED = "invoice.payment_claimed"
 INVOICE_OVERDUE = "invoice.overdue"
 INVOICE_REHELD = "invoice.reheld"
 INVOICE_UNFULFILLABLE = "invoice.unfulfillable"
+# AA-958 (CRM-28): a client's SMS / WhatsApp message arrived on the trip (bell: the trip owner), one left through the
+# agency's Twilio (app.messaging.events; the seam CRM-29a workflows listen on).
+MESSAGE_RECEIVED = "message.received"
+MESSAGE_SENT = "message.sent"
 NAMES = (
     VIEWED, OPTION_CHOSEN, CHANGE_REQUESTED, HOLD_PLACED, REHOLD, RECHECK_REFUSED, OPTION_SOLD_OUT, HOLD_FAILED,
     BOOKING_UNAVAILABLE, ACCEPTED, NUDGE_DUE, TERMS_REACCEPTED, PAYMENT_CLAIMED, INVOICE_OVERDUE, INVOICE_REHELD,
-    INVOICE_UNFULFILLABLE,
+    INVOICE_UNFULFILLABLE, MESSAGE_RECEIVED, MESSAGE_SENT,
 )  # fmt: skip
 NUDGE_AFTER_DAYS = 2
 MAX_BELL = 50

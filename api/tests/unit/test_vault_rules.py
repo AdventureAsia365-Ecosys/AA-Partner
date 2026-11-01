@@ -23,8 +23,9 @@ from app.settings import Settings
 
 APP = Path(__file__).resolve().parents[2] / "app"
 # AA-945: the mail sender (app/mail/sender.py, the dispatcher's Sender; the health check opens credentials through it).
+# AA-958: the SMS / WhatsApp sender (app/messaging/sender.py; the webhook and the health check open the token through it).
 SECRET_DECRYPT_ALLOWED = re.compile(
-    r"^app/(vault/vault\.py|integrations/(dispatch|webhook|health)[a-z_]*\.py|mail/sender\.py)$"
+    r"^app/(vault/vault\.py|integrations/(dispatch|webhook|health)[a-z_]*\.py|mail/sender\.py|messaging/sender\.py)$"
 )
 FORBIDDEN_FIELD = re.compile(r"(_enc|_bidx)$|^secret|^wrapped_dek$")
 

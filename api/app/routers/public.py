@@ -26,12 +26,19 @@ is decided by the form key inside :func:`app.tenancy.intake_tx`.
   404 ``feed_not_found`` for an unknown, revoked or expired token, an inactive member or a locked agency (subscribed
   calendars stop updating). Public rate limit.
 
+- ``POST /crm/public/v1/hooks/twilio/{hook_id}`` and ``.../{hook_id}/status`` (AA-958): an agency's Twilio webhooks
+  (an inbound SMS / WhatsApp message, a status callback), form-encoded, at most 64 KiB
+  (:func:`app.messaging.webhook.handle`). ``X-Twilio-Signature`` is checked with the agency's own Auth Token before
+  anything is stored: 403 ``invalid_signature``; 404 ``hook_not_found``; else 200 with an empty TwiML response. Public
+  rate limit.
+
 Responses never carry an id, a name, or whether an e-mail is already known.
 """
 
 from __future__ import annotations
 
 import json
+import urllib.parse
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Header, HTTPException, Path, Request
@@ -41,6 +48,7 @@ from app.calendar import public as calendar_public
 from app.db import request_pool
 from app.intake import public as intake
 from app.intake import stage2_public
+from app.messaging import webhook as messaging_hooks
 from app.ratelimit import PublicRateLimit, client_address
 from app.vault.provider import require_keys
 
@@ -49,6 +57,9 @@ router = APIRouter(prefix="/crm/public/v1", tags=["public"])
 MAX_BODY_BYTES = 32 * 1024
 PublicKey = Annotated[str, Path(min_length=20, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")]
 LinkToken = Annotated[str, Path(min_length=43, max_length=43, pattern=r"^[A-Za-z0-9_-]+$")]
+HookId = Annotated[str, Path(min_length=32, max_length=32, pattern=r"^[0-9a-f]+$")]
+MAX_HOOK_BYTES = 64 * 1024
+EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
 NO_STORE = {"Cache-Control": "no-store"}
 
 
@@ -167,3 +178,42 @@ async def get_calendar_feed(request: Request, token: LinkToken, _: PublicRateLim
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+async def _hook(request: Request, hook_id: str, kind: str, signature: str | None) -> Response:
+    runtime = getattr(request.app.state, "messaging_runtime", None)
+    if runtime is None:
+        raise HTTPException(status_code=503, detail="messaging_not_configured")
+    try:
+        body = await read_capped(request, MAX_HOOK_BYTES)
+    except BodyTooLarge:
+        raise HTTPException(status_code=413, detail="body_too_large") from None
+    try:
+        params = urllib.parse.parse_qsl(body.decode("utf-8"), keep_blank_values=True, max_num_fields=200)
+    except (UnicodeDecodeError, ValueError):
+        raise HTTPException(status_code=400, detail="invalid_form") from None
+    pool = await request_pool(request)
+    await messaging_hooks.handle(
+        pool, runtime, messaging_hooks.HookRequest(hook_id=hook_id, kind=kind, params=params, signature=signature)
+    )
+    return Response(EMPTY_TWIML, media_type="text/xml", headers=NO_STORE)
+
+
+@router.post("/hooks/twilio/{hook_id}")
+async def post_twilio_inbound(
+    request: Request,
+    hook_id: HookId,
+    _: PublicRateLimit,
+    x_twilio_signature: Annotated[str | None, Header()] = None,
+) -> Response:
+    return await _hook(request, hook_id, "inbound", x_twilio_signature)
+
+
+@router.post("/hooks/twilio/{hook_id}/status")
+async def post_twilio_status(
+    request: Request,
+    hook_id: HookId,
+    _: PublicRateLimit,
+    x_twilio_signature: Annotated[str | None, Header()] = None,
+) -> Response:
+    return await _hook(request, hook_id, "status", x_twilio_signature)

@@ -57,6 +57,8 @@ from app.jobs.kinds import (
     MAIL_IMPORT,
     MAIL_INGEST,
     MEMBERSHIP_PULL,
+    MESSAGING_HEALTH,
+    MESSAGING_TEMPLATES,
     OFFBOARD,
     OPS_RELEASE_SYNC,
     PLACEHOLDER_PURGE,
@@ -77,6 +79,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from app.mail.state import MailRuntime
     from app.mail.store import IngestStore
     from app.members.directory import PartnerDirectory
+    from app.messaging.state import MessagingRuntime
     from app.vault import KeyProvider
 
 log = logging.getLogger(__name__)
@@ -159,6 +162,7 @@ def build_handlers(
     booking_client: BookingClient | None = None,
     catalog: CatalogConfig | None = None,
     studio_activation: ActivationConfig | None = None,
+    messaging_runtime: MessagingRuntime | None = None,
 ) -> dict[str, Handler]:
     """Every kind the worker runs. ``keys``: the field-encryption provider the intake kind needs (AA-936); without
     it ``crm_intake_process`` jobs are retried until the provider is configured. ``audit_archive``: the two audit
@@ -173,7 +177,8 @@ def build_handlers(
     without them the ingest answers not_configured and the import is retried).
     AA-947: ``booking_client`` (``BOOKING_API_URL`` + the M2M token: the AA outage queue and the Booking feed; None =
     the sync logs not_configured) and ``catalog`` (``CIS_API_URL`` + the token: the AA tour cache).
-    AA-979: ``studio_activation`` (``CIS_API_URL`` + the token: CIS activateInvitation; None = the job is retried)."""
+    AA-979: ``studio_activation`` (``CIS_API_URL`` + the token: CIS activateInvitation; None = the job is retried).
+    AA-958: ``messaging_runtime`` (the SMS / WhatsApp providers: the template sync and the daily connection check)."""
     from app.audit_export import export as audit_export
     from app.audit_export import retention as audit_retention
     from app.booking.sync import BookingSync
@@ -190,6 +195,8 @@ def build_handlers(
     from app.mail import ingest as mail_ingest
     from app.mail.state import MailRuntime as _MailRuntime
     from app.members import studio
+    from app.messaging import health as messaging_health
+    from app.messaging.state import MessagingRuntime as _MessagingRuntime
     from app.ops_release import job as ops_release_job
     from app.portability import exports as portability_exports
     from app.privacy.purge import purge_expired_maps
@@ -219,6 +226,8 @@ def build_handlers(
         DATA_EXPORT: portability_exports.build_handler(keys=keys, store=documents),
         CLIENT_IMPORT: client_imports.build_handler(ingest_store, keys),
         OPS_RELEASE_SYNC: ops_release_job.build_handler(keys),
+        MESSAGING_TEMPLATES: messaging_health.build_templates_handler(messaging_runtime or _MessagingRuntime(keys=keys)),
+        MESSAGING_HEALTH: messaging_health.build_health_handler(messaging_runtime or _MessagingRuntime(keys=keys)),
     }
 
 
@@ -271,6 +280,7 @@ def build_hooks(
     from app.lifecycle.job import DailyLifecycleSchedule
     from app.mail.health import DailyMailHealthSchedule
     from app.mail.ingest import MailIngestScan
+    from app.messaging.health import DailyMessagingHealthSchedule
     from app.ops_release.job import HourlyOpsReleaseSync
     from app.privacy.purge import HourlyPlaceholderPurge
     from app.stages_job import HourlyStageDateRule
@@ -288,6 +298,7 @@ def build_hooks(
         MailIngestScan(ingest_store, clock),
         HourlyCatalogSync(clock),
         HourlyOpsReleaseSync(clock),
+        DailyMessagingHealthSchedule(retention_utc_hour, clock),
     )
 
 
@@ -313,11 +324,13 @@ SCHEDULED_KINDS: frozenset[str] = frozenset(
         MAIL_HEALTH,
         CATALOG_SYNC,
         OPS_RELEASE_SYNC,
+        MESSAGING_HEALTH,
     }
 )
 # Kinds queued by request code, one row per event (AA-936: each stored inquiry), never scheduled.
 # AA-979: one crm_studio_activation row per accepted Content studio invitation.
 EVENT_KINDS: frozenset[str] = frozenset(
     # AA-967: one per export; AA-962: one per import slice.
-    {INTAKE_PROCESS, OFFBOARD, DISPATCH, MAIL_IMPORT, STUDIO_ACTIVATION, DATA_EXPORT, CLIENT_IMPORT}
+    # AA-958: one template sync per connect / Refresh.
+    {INTAKE_PROCESS, OFFBOARD, DISPATCH, MAIL_IMPORT, STUDIO_ACTIVATION, DATA_EXPORT, CLIENT_IMPORT, MESSAGING_TEMPLATES}
 )

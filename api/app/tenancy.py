@@ -74,6 +74,11 @@ And (AA-961): :func:`calendar_feed_tx` is a member's ICS feed fetched by a calen
 feed through the crm-027 SELECT-only policy ``calendar_feed_token_lookup`` (``app.calendar_feed_hash``), then
 ``app.tenant_id``, the member (still active) and ``app.actor`` = ``calendar_feed:<id>``. Only
 ``app/calendar/public.py`` may open it.
+
+And (AA-958): :func:`messaging_hook_tx` is a Twilio webhook's context: the hook id in the URL finds the agency's
+text-message connection through the crm-036 SELECT-only policy ``messaging_connection_hook_lookup``
+(``app.messaging_hook_id``), then ``app.tenant_id`` and ``app.actor`` = ``job:crm_messaging_hook``. Only
+``app/messaging/webhook.py`` may open it.
 """
 
 from __future__ import annotations
@@ -917,6 +922,60 @@ async def ingest_tx(pool: asyncpg.Pool, local_part: str) -> AsyncIterator[tuple[
         try:
             async with conn.transaction():  # savepoint: the mail's work
                 yield ctx, address
+        except Exception as exc:
+            denied = [e for e in ctx.audit_events if e.outcome == "denied"]
+            if not denied:
+                raise
+            await _write_audit(ctx, denied)
+            pending = exc
+        else:
+            await _write_audit(ctx, ctx.audit_events)
+    if pending is not None:
+        raise pending
+
+
+MESSAGING_HOOK_SQL = """
+SELECT messaging_connection_id, tenant_id FROM crm.messaging_connection WHERE hook_id = $1 AND deleted_at IS NULL
+"""
+MESSAGING_HOOK_ACTOR = "job:crm_messaging_hook"
+_HOOK_ID = re.compile(r"^[0-9a-f]{32}$")
+
+
+@dataclass(frozen=True)
+class MessagingHook:
+    """The live text-message connection :func:`messaging_hook_tx` found by its webhook id (ids only)."""
+
+    messaging_connection_id: uuid.UUID
+    tenant_id: uuid.UUID
+
+
+@asynccontextmanager
+async def messaging_hook_tx(pool: asyncpg.Pool, hook_id: str) -> AsyncIterator[tuple[SystemContext, MessagingHook]]:
+    """A Twilio webhook (AA-958, crm-036): the hook id in the URL finds the agency's live
+    ``crm.messaging_connection`` through the SELECT-only policy ``messaging_connection_hook_lookup``
+    (``app.messaging_hook_id``) before any agency is known; then ``app.tenant_id`` = its agency (which must be active)
+    and ``app.actor`` = ``job:crm_messaging_hook``. An unknown, malformed or trashed hook id, or an agency that is not
+    active: 404 ``hook_not_found``. The caller checks the request signature with the agency's token before it stores
+    anything. Audit semantics as :func:`system_tx`. Only ``app/messaging/webhook.py`` may open it."""
+    if not isinstance(hook_id, str) or not _HOOK_ID.match(hook_id):
+        raise NotFound("hook_not_found")
+    pending: Exception | None = None
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.messaging_hook_id', $1, true)", hook_id)
+        row = await conn.fetchrow(MESSAGING_HOOK_SQL, hook_id)
+        await conn.execute("SELECT set_config('app.messaging_hook_id', '', true)")
+        if row is None:
+            raise NotFound("hook_not_found")
+        tenant_id = row["tenant_id"]
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        if await conn.fetchval(TENANT_SQL, tenant_id) != "active":
+            raise NotFound("hook_not_found")
+        await conn.execute("SELECT set_config('app.actor', $1, true)", MESSAGING_HOOK_ACTOR)
+        hook = MessagingHook(messaging_connection_id=row["messaging_connection_id"], tenant_id=tenant_id)
+        ctx = SystemContext(conn=conn, tenant_id=tenant_id, actor=MESSAGING_HOOK_ACTOR, status="active")
+        try:
+            async with conn.transaction():  # savepoint: the webhook's work
+                yield ctx, hook
         except Exception as exc:
             denied = [e for e in ctx.audit_events if e.outcome == "denied"]
             if not denied:

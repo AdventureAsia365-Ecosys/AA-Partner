@@ -199,6 +199,31 @@ def mailbox_disconnected_message(to: str, *, agency: str, link: str) -> Message:
     return Message(to=to, subject=subject[:200], text=text, kind="mailbox_disconnected")
 
 
+def messaging_disconnected_message(to: str, *, agency: str, link: str) -> Message:
+    """AA-958 (errata S247 §2 "on failure: a system alert mail"; §3 item 3): the agency's own Twilio connection
+    stopped working (Auth Token changed, account closed). SMS and WhatsApp messages are not sent (each says why) until
+    the owner connects it again; nothing is sent another way."""
+    text = "\n".join(
+        [
+            f"The SMS and WhatsApp connection of {agency} on AA Partner stopped working (the Twilio account refused "
+            "its credentials).",
+            "SMS and WhatsApp messages to clients are not sent until it is connected again; e-mail is not affected.",
+            f"Connect it again in Settings > Channels: {link}/settings/channels",
+            "",
+            "---",
+            "",
+            f"Kết nối SMS và WhatsApp của {agency} trên AA Partner đã ngừng hoạt động (tài khoản Twilio từ chối "
+            "thông tin đăng nhập).",
+            "Tin nhắn SMS và WhatsApp gửi khách sẽ không được gửi cho tới khi kết nối lại; e-mail không bị ảnh hưởng.",
+            f"Kết nối lại trong Cài đặt > Kênh liên lạc: {link}/settings/channels",
+            "",
+            "Adventure Asia — AA Partner",
+        ]
+    )
+    subject = f"SMS and WhatsApp disconnected for {agency} / SMS và WhatsApp của {agency} đã ngắt kết nối"
+    return Message(to=to, subject=subject[:200], text=text, kind="messaging_disconnected")
+
+
 BREAKGLASS_REASONS = {
     "security_incident": ("a security incident", "một sự cố bảo mật"),
     "data_corruption": ("damaged or inconsistent data", "dữ liệu bị hỏng hoặc không nhất quán"),

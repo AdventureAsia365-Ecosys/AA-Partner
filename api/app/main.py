@@ -48,6 +48,9 @@ from app.llm.gateway import build_gateway
 from app.mail.providers.registry import build_providers
 from app.mail.sender import MailSender
 from app.mail.state import MailRuntime
+from app.messaging.providers import build_providers as build_text_providers
+from app.messaging.sender import ChannelSender, TextSender
+from app.messaging.state import MessagingRuntime
 from app.mail.store import IngestStore, MemoryIngestStore, S3IngestStore
 from app.members.directory import CognitoDirectory, MemoryDirectory, PartnerDirectory
 from app.members.mail import Mailer, MemoryMailer, SesMailer
@@ -73,6 +76,7 @@ from app.routers import (
     ledger,
     lifecycle,
     mail,
+    messaging,
     onboarding,
     ops,
     ops_release,
@@ -111,6 +115,7 @@ def create_app(
     ingest_store: IngestStore | None | object = _UNSET,
     mail_runtime: MailRuntime | None | object = _UNSET,
     booking_client: BookingClient | None | object = _UNSET,
+    messaging_runtime: MessagingRuntime | None | object = _UNSET,
 ) -> FastAPI:
     settings = settings or load_settings()
     db = db or Database(settings)
@@ -143,6 +148,16 @@ def create_app(
             directory=directory,  # type: ignore[arg-type]
             web_origin=settings.invitation_origin,
         )
+    if messaging_runtime is _UNSET:
+        # AA-958: the agency's own Twilio (and the dev-only sandbox stub); no AA vendor account exists.
+        messaging_runtime = MessagingRuntime(
+            keys=keys,  # type: ignore[arg-type]
+            providers=build_text_providers(settings.environment),
+            hooks_origin=settings.messaging_hooks_origin(),
+            mailer=mailer,  # type: ignore[arg-type]
+            directory=directory,  # type: ignore[arg-type]
+            web_origin=settings.invitation_origin,
+        )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -171,6 +186,7 @@ def create_app(
                     mail_runtime=app.state.mail_runtime,
                     ingest_store=app.state.ingest_store,
                     ingest_domain=settings.crm_ingest_domain,
+                    messaging_runtime=app.state.messaging_runtime,
                 ),
                 recurring=job_handlers.RECURRING,
                 hooks=job_handlers.build_hooks(
@@ -223,7 +239,12 @@ def create_app(
     # AA-979 P2b: CIS activateInvitation for accepted Content studio invitations (None without CIS_API_URL /
     # M2M_CLIENT: the accept answers "accepted" and the crm_studio_activation job waits).
     app.state.studio_activation = build_studio_activation(settings, tokens)
-    app.state.dispatch_sender = MailSender(mail_runtime) if isinstance(mail_runtime, MailRuntime) else None
+    app.state.messaging_runtime = messaging_runtime
+    # AA-958: one dispatcher sender, e-mail through the AA-945 mail sender, SMS / WhatsApp through the agency's Twilio.
+    app.state.dispatch_sender = ChannelSender(
+        mail=MailSender(mail_runtime) if isinstance(mail_runtime, MailRuntime) else None,
+        text=TextSender(messaging_runtime) if isinstance(messaging_runtime, MessagingRuntime) else None,
+    )
     app.state.ingest_store = ingest_store
     # AA-955 (CRM-25): the platform seal of signed envelopes (KMS alias/crm-<env>/seal; the HMAC stub on dev / test /
     # local without KMS_SEAL_KEY_ID; None on stg / prod without it: signing answers 503 esign_not_configured).
@@ -269,6 +290,7 @@ def create_app(
     app.include_router(builder.router)
     app.include_router(proposal_text.router)
     app.include_router(mail.router)
+    app.include_router(messaging.router)
     app.include_router(ai.router)
     app.include_router(ops.router)
     app.include_router(support_access.router)

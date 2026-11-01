@@ -20,7 +20,7 @@ class SenderRow:
     path: str  # the code of the send path (a Message kind of app.members.mail, or a mail send path)
     sender_kind: str  # agency_mailbox | system
     recipient: str  # client | agency_member
-    via: str  # agency_mailbox | aa_ses
+    via: str  # agency_mailbox | aa_ses | agency_twilio (AA-958)
     module: str
 
 
@@ -35,6 +35,11 @@ SENDERS: tuple[SenderRow, ...] = (
     SenderRow("studio_invitation", "system", "agency_member", "aa_ses", "app.members.mail"),
     # AA-971: the agency owners are told when AA opens break-glass (emergency) read access (app.support.sessions).
     SenderRow("breakglass_notice", "system", "agency_member", "aa_ses", "app.members.mail"),
+    # AA-958 (CRM-28): SMS / WhatsApp to a client leave only through the agency's own Twilio account (errata S247 §1);
+    # a dead connection fails the message with a reason (errata §2), nothing is sent another way. The owners' alert.
+    SenderRow("client_text_message", "agency_mailbox", "client", "agency_twilio", "app.messaging.sender"),
+    SenderRow("messaging_test", "agency_mailbox", "agency_member", "agency_twilio", "app.messaging.health"),
+    SenderRow("messaging_disconnected", "system", "agency_member", "aa_ses", "app.members.mail"),
 )
 SENDER_KINDS = frozenset({"agency_mailbox", "system"})
 
