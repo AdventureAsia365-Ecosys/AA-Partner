@@ -14,5 +14,7 @@ export function GET() {
     git_sha: cfg.gitSha,
     environment: cfg.environment,
     auth_configured: cfg.authConfigured,
+    // AA-1019: the AA staff console's WORKFORCE sign-in is configured (names of missing values never leave the server).
+    staff_auth_configured: cfg.staffAuthConfigured,
   });
 }

@@ -22,6 +22,7 @@ const ALLOWED: { file: string; text: string; why: string }[] = [
 // component, never part of a response).
 const ALLOWED_PROPS: { file: string; prop: string; why: string }[] = [
   { file: "lib/bff.ts", prop: "card", why: "BFF allow-list review trail; read by the route handler and server components only" },
+  { file: "lib/staffBff.ts", prop: "card", why: "staff BFF allow-list review trail (AA-1019); route handler and server components only" },
 ];
 
 function sourceFiles(rel: string): string[] {

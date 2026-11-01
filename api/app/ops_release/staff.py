@@ -35,7 +35,7 @@ import asyncpg
 
 from app.audit_export import registry
 from app.auth.route_guard import Caller
-from app.errors import Invalid, NotFound
+from app.errors import Forbidden, Invalid, NotFound
 from app.ops_release import service
 from app.tenancy import OpsContext, ops_tx
 from app.vault import KeyProvider, Vault
@@ -119,6 +119,8 @@ async def board(
                 items.extend(await _agency_board(ctx, horizon_days))
         except NotFound:
             continue  # offboarding or gone
+        except Forbidden:
+            continue  # AA-1019: the Dev-only E2E staff identity, an agency that is not synthetic
     items.sort(key=lambda i: (i["start_date"] or "9999-12-31", i["agency_name"] or "", i["trip_id"]))
     return {
         "items": items,

@@ -10,6 +10,11 @@
 //   partner host, /bff/*     through: the route handler answers 401 JSON itself (no redirect for fetch calls)
 //   partner host, any other  needs a session whose access token is still valid; otherwise -> /auth/refresh?next=...
 //                            (which renews with the refresh token or falls back to sign-in)
+//   partner host, /staff*    AA-1019, the AA staff console, decided BEFORE the agency rule and only by the staff
+//                            session (lib/staffSession.ts): /staff/auth/* and /staff/signed-out public, /staff/bff/*
+//                            through (the handler answers 401 JSON), any other /staff page needs a valid staff access
+//                            token, otherwise -> /staff/auth/refresh?next=... The agency session never opens a staff
+//                            page and the staff session never opens an agency page.
 //
 // Headers the app reads (x-aa-path, x-aa-host-kind) are always set here after any client-sent copy is dropped, so a
 // browser cannot forge them.
@@ -19,6 +24,7 @@ import { config as webConfig, forHost } from "./lib/config";
 import { classifyHost, clientOnlyPath, clientPathAllowed, isPublicPartnerPath, type HostKind } from "./lib/hosts";
 import { formKey, frameAncestors, loadForm, viewerKey } from "./lib/intakeForms";
 import { accessValid, readSession } from "./lib/session";
+import { isPublicStaffPath, isStaffPath, readStaffSession, STAFF_AUTH_PREFIX, STAFF_BFF_PREFIX, staffAccessValid } from "./lib/staffSession";
 
 const INTERNAL_HEADERS = ["x-aa-path", "x-aa-host-kind"];
 
@@ -27,8 +33,9 @@ const INTERNAL_HEADERS = ["x-aa-path", "x-aa-host-kind"];
  * origin and the managed-login domain (sign-out answers with a redirect to its logout page, and browsers apply
  * form-action to that redirect). script-src / style-src stay open for the kit's inline styles and Next's scripts.
  */
-export function contentSecurityPolicy(cognitoDomain: string, ancestors = "'none'"): string {
-  const forms = ["'self'", cognitoDomain].filter(Boolean).join(" ");
+export function contentSecurityPolicy(cognitoDomain: string, ancestors = "'none'", staffCognitoDomain = ""): string {
+  // AA-1019: the staff console's sign-out redirects to the WORKFORCE managed login (its own domain).
+  const forms = ["'self'", cognitoDomain, staffCognitoDomain].filter(Boolean).join(" ");
   return `frame-ancestors ${ancestors}; base-uri 'self'; form-action ${forms}; object-src 'none'`;
 }
 
@@ -70,12 +77,37 @@ export function gate(request: NextRequest): NextResponse {
   const localDev = cfg.environment === "local" || cfg.environment === "test";
   if (clientOnlyPath(pathname) && !localDev) return notFound();
   if (ancestors) return pass(request, kind, cfg.cognitoDomain, ancestors);
+  if (isStaffPath(pathname)) return staffGate(request, cfg);
   if (isPublicPartnerPath(pathname) || pathname.startsWith("/prefs/") || pathname.startsWith("/bff/")) {
     return pass(request, kind, cfg.cognitoDomain);
   }
   if (cfg.authConfigured && accessValid(readSession(cfg, request.cookies))) return pass(request, kind, cfg.cognitoDomain);
 
   const target = new URL("/auth/refresh", cfg.publicOrigin || request.nextUrl.origin);
+  target.searchParams.set("next", `${pathname}${search}`);
+  const res = NextResponse.redirect(target, 307);
+  res.headers.set("Cache-Control", "no-store");
+  return res;
+}
+
+/** AA-1019: the staff console's gate (partner host only; see the header). */
+function staffGate(request: NextRequest, cfg: ReturnType<typeof forHost>): NextResponse {
+  const { pathname, search } = request.nextUrl;
+  const passStaff = () => {
+    const res = pass(request, "partner", cfg.cognitoDomain);
+    res.headers.set("Content-Security-Policy", contentSecurityPolicy(cfg.cognitoDomain, undefined, cfg.staffCognitoDomain));
+    return res;
+  };
+  if (isPublicStaffPath(pathname) || pathname === STAFF_BFF_PREFIX || pathname.startsWith(`${STAFF_BFF_PREFIX}/`)) {
+    return passStaff();
+  }
+  if (cfg.staffAuthConfigured && staffAccessValid(readStaffSession(cfg, request.cookies))) return passStaff();
+  if (!cfg.staffAuthConfigured) {
+    const off = NextResponse.redirect(new URL("/staff/signed-out?reason=unavailable", cfg.publicOrigin || request.nextUrl.origin), 307);
+    off.headers.set("Cache-Control", "no-store");
+    return off;
+  }
+  const target = new URL(`${STAFF_AUTH_PREFIX}/refresh`, cfg.publicOrigin || request.nextUrl.origin);
   target.searchParams.set("next", `${pathname}${search}`);
   const res = NextResponse.redirect(target, 307);
   res.headers.set("Cache-Control", "no-store");

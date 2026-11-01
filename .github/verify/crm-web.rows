@@ -7,7 +7,9 @@
 # The /crm/* rows prove the host's API rule still sits above the web default and that the API is up and ready. They do
 # not compare the API's git_sha or version: a web deploy does not deploy the API (its own verify, crm.rows, does), so
 # the API may run an older commit on a healthy Dev. $required is not used for the same reason.
+#
+# AA-1019: staff_auth_configured = the AA staff console (/staff/*) has its WORKFORCE client and cookie key.
 
-healthz|public|GET /healthz|200|.status == "ok" and .service == "aa-crm-web" and .git_sha == $sha and .version == $version and .auth_configured == true
+healthz|public|GET /healthz|200|.status == "ok" and .service == "aa-crm-web" and .git_sha == $sha and .version == $version and .auth_configured == true and .staff_auth_configured == true
 api-health|public|GET /crm/health|200|.status == "ok" and .service == "aa-crm-api"
 api-ready|public|GET /crm/health/ready|200|.status == "ok" and .db == "ok"

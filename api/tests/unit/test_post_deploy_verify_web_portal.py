@@ -75,6 +75,7 @@ def _good_http(app: str) -> dict:
                     "git_sha": SHA,
                     "environment": "dev",
                     "auth_configured": True,
+                    "staff_auth_configured": True,
                 },
             }
         }
@@ -174,6 +175,7 @@ def _status(path: str, code: int):
         ("crm-web", _set("/healthz", git_sha=OLD_SHA), {"healthz"}),
         ("crm-web", _set("/healthz", version="0.0.1"), {"healthz"}),
         ("crm-web", _set("/healthz", auth_configured=False), {"healthz"}),
+        ("crm-web", _set("/healthz", staff_auth_configured=False), {"healthz"}),  # AA-1019
         # /crm/health answered by the web default (rule order lost) or the API down.
         ("crm-web", _set("/crm/health", service="aa-crm-web"), {"api-health"}),
         ("crm-web", _status("/crm/health", 503), {"api-health"}),

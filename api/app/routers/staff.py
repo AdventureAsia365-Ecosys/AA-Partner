@@ -9,6 +9,8 @@ Route                                       What                                
 ``GET  /support/agencies``                  agencies whose owner allows AA support now                     crm-support
 ``POST /support/sessions``                  start a support session (ticket; inside the owner's grant)     crm-support
 ``POST /support/sessions/end``              end one's own support session                                  any
+``GET  /breakglass/agencies``               AA-1019: the agencies break-glass may open (picker: id, name,  crm-ops
+                                            status, the caller's live session)
 ``POST /breakglass/sessions``               break-glass: reason code, ticket, 15-60 minutes; owners mailed  crm-ops
                                             and AA ops alerted
 ``POST /breakglass/sessions/end``           end one's own break-glass session                              any
@@ -101,6 +103,17 @@ class GrantedAgency(_Out):
 
 class GrantedAgenciesOut(_Out):
     items: list[GrantedAgency]
+
+
+class BreakglassAgency(_Out):
+    tenant_id: str
+    agency_name: str | None
+    agency_status: Literal["active", "locked"]
+    my_session_expires_at: str | None
+
+
+class BreakglassAgenciesOut(_Out):
+    items: list[BreakglassAgency]
 
 
 class EndOut(_Out):
@@ -215,6 +228,11 @@ async def start_support(request: Request, caller: Support, body: SupportStartIn)
 @router.post("/support/sessions/end", response_model=EndOut)
 async def end_support(request: Request, caller: Staff, body: EndIn) -> dict[str, Any]:
     return await sessions.end_session(await request_pool(request), caller, body.tenant_id, kind="support")
+
+
+@router.get("/breakglass/agencies", response_model=BreakglassAgenciesOut)
+async def breakglass_agencies(request: Request, caller: Ops) -> dict[str, Any]:
+    return await sessions.breakglass_agencies(await request_pool(request), caller)
 
 
 @router.post("/breakglass/sessions", response_model=SessionOut, status_code=201)
