@@ -79,6 +79,11 @@ CLIENT_IMPORT = "crm_client_import"
 # queued when Booking confirms / cancels an AA line, a member withdraws or a trip is cancelled. Not deploy-gate exempt
 # (exists only while due / queued by an event).
 OPS_RELEASE_SYNC = "crm_ops_release_sync"
+# AA-958: one agency's WhatsApp template sync from its own Twilio account (app.messaging.health), queued on connect and
+# on Refresh; the daily SMS / WhatsApp connection check of every agency (account read + template sync), queued due-now.
+# Neither is deploy-gate exempt (each exists only while due / queued by an action).
+MESSAGING_TEMPLATES = "crm_messaging_templates"
+MESSAGING_HEALTH = "crm_messaging_health"
 
 DEFAULT_EXPECTED_SECONDS = 300
 OVERDUE_FACTOR = 2
@@ -119,6 +124,8 @@ EXPECTED_SECONDS: dict[str, int] = {
     DATA_EXPORT: 600,
     CLIENT_IMPORT: 120,  # one slice (imports.service.SLICE rows)
     OPS_RELEASE_SYNC: 300,
+    MESSAGING_TEMPLATES: 60,
+    MESSAGING_HEALTH: 300,
 }
 
 

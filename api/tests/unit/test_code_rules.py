@@ -110,6 +110,8 @@ SYSTEM_MODULES = frozenset(
         "app/booking/sync.py",
         # AA-956: the ops release job (one agency per transaction, actor job:crm_ops_release_sync).
         "app/ops_release/job.py",
+        # AA-958: the SMS / WhatsApp template sync and daily check (one agency per transaction, actor job:<kind>).
+        "app/messaging/health.py",
     }
 )
 INTAKE_MODULES = frozenset({"app/intake/public.py"})
@@ -126,6 +128,8 @@ CLIENT_LINK_MODULES = frozenset({"app/intake/stage2_public.py", "app/proposals/p
 INGEST_MODULES = frozenset({"app/mail/ingest.py"})
 # AA-961: a member's ICS calendar feed fetched by its token (the token picks the agency and the member): the feed only.
 CALENDAR_FEED_MODULES = frozenset({"app/calendar/public.py"})
+# AA-958: a Twilio webhook (the hook id picks the agency; the signature is checked inside): the webhook module only.
+MESSAGING_HOOK_MODULES = frozenset({"app/messaging/webhook.py"})
 # AA-942: the lifecycle jobs' context (the daily run, the offboarding steps).
 LIFECYCLE_MODULES = frozenset(
     {"app/lifecycle/job.py", "app/lifecycle/offboarding.py", "app/portability/exports.py"}  # + AA-967 export job
@@ -197,6 +201,7 @@ CONTEXT_FACTORIES = frozenset(
         "membership_feed_tx",
         "ingest_tx",
         "calendar_feed_tx",
+        "messaging_hook_tx",
         "studio_platform_tx",
         "studio_invitation_tx",
         "staff_tx",
@@ -446,6 +451,10 @@ def test_ingest_tx_is_used_only_by_the_mail_ingest_job() -> None:
 
 def test_calendar_feed_tx_is_used_only_by_the_public_feed_module() -> None:
     assert _users_of("calendar_feed_tx", CALENDAR_FEED_MODULES) == []
+
+
+def test_messaging_hook_tx_is_used_only_by_the_webhook_module() -> None:
+    assert _users_of("messaging_hook_tx", MESSAGING_HOOK_MODULES) == []
 
 
 def test_every_router_tenant_tx_names_its_permission_action() -> None:

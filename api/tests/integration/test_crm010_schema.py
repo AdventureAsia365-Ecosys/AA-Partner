@@ -1197,6 +1197,11 @@ CASCADE_ERASED = {
     # AA-957 (crm-035): a commission leaves with its trip or its line, a cancellation record with its trip.
     "commission": {"trip", "booking_line"},
     "trip_cancellation": {"trip"},
+    # AA-958 (crm-036): the text-message connection leaves with its credential (agency erase, disconnect), its
+    # templates with it, a delivery row with its message (trip, traveller, conversation and agency scopes).
+    "messaging_connection": {"integration_credential"},
+    "channel_template": {"messaging_connection"},
+    "message_delivery": {"message"},
 }
 
 

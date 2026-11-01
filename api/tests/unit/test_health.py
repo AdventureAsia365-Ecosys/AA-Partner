@@ -67,6 +67,17 @@ def test_limit_zero_turns_it_off_and_the_window_resets() -> None:
     assert limiter.allow("a")
 
 
+def test_exhausted_looks_without_taking_a_slot() -> None:
+    now = [0.0]
+    limiter = FixedWindowLimiter(2, clock=lambda: now[0])
+    assert not limiter.exhausted("a") and not limiter.exhausted("a")  # looking is free
+    assert limiter.allow("a") and limiter.allow("a")
+    assert limiter.exhausted("a") and not limiter.exhausted("b")
+    now[0] = 61.0
+    assert not limiter.exhausted("a")  # a new window
+    assert not FixedWindowLimiter(0).exhausted("a")
+
+
 def test_a_released_slot_is_free_again_only_in_its_own_window() -> None:
     """AA-953 follow-up: the client pages reserve a slot and give it back once the session proved valid."""
     now = [0.0]

@@ -25,6 +25,10 @@ A caller can take a slot and give it back (:meth:`FixedWindowLimiter.release`): 
 "unproven session" bucket before a session-gated write and return it once the session proved valid
 (``app.routers.client_pages``), so only refused sessions use it up, and a burst of parallel requests cannot pass
 before the first refusal is counted.
+
+A caller can also look before it charges (:meth:`FixedWindowLimiter.exhausted`): the Twilio webhooks (AA-958,
+``app.routers.public``) are refused only once an address has run out of *misses* (unknown hook ids), so the shared
+Twilio egress addresses that carry every agency's genuine callbacks are never counted.
 """
 
 from __future__ import annotations
@@ -39,6 +43,8 @@ from fastapi import Depends, HTTPException, Request
 
 WINDOW_S = 60.0
 MAX_TRACKED_KEYS = 10_000
+# AA-958: unknown-hook-id requests (404) per client address per minute on the Twilio webhook routes.
+HOOK_MISSES_PER_MINUTE = 600
 IPV6_PREFIX = 64
 VIEWER_ADDRESS_HEADER = "cloudfront-viewer-address"
 
@@ -68,16 +74,26 @@ class FixedWindowLimiter:
     def allow(self, key: str) -> bool:
         if self._limit <= 0:
             return True
-        now = self._clock()
-        if now - self._window_start >= self.window_s:
-            self._window_start = now
-            self._window += 1
-            self._counts.clear()
+        self._roll()
         count = self._counts.pop(key, 0) + 1
         self._counts[key] = count  # re-inserted last: the most recently seen key
         while len(self._counts) > self._max_keys:
             self._counts.popitem(last=False)  # evict the least recently seen key only
         return count <= self._limit
+
+    def _roll(self) -> None:
+        now = self._clock()
+        if now - self._window_start >= self.window_s:
+            self._window_start = now
+            self._window += 1
+            self._counts.clear()
+
+    def exhausted(self, key: str) -> bool:
+        """Whether ``key`` has used its window already, without taking a slot (charge with :meth:`allow` later)."""
+        if self._limit <= 0:
+            return False
+        self._roll()
+        return self._counts.get(key, 0) >= self._limit
 
     def release(self, key: str, window: int) -> None:
         """Give back one slot ``key`` took in ``window`` (no-op once that window ended or the key was evicted)."""

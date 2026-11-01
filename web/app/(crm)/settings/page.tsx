@@ -1,6 +1,7 @@
 // web/app/(crm)/settings/page.tsx — Settings (A-18). AA-935: agency and role, language and dates (R32) with a
 // live date reading; the other sections (team, channels, payments, forms, AI, data and privacy) arrive with their
-// cards. AA-939: Team & roles (owner). AA-945: Mailbox and Saved replies. AA-964: AI assistant.
+// cards. AA-939: Team & roles (owner). AA-945: Mailbox and Saved replies. AA-964: AI assistant. AA-958: SMS and
+// WhatsApp.
 import Link from "next/link";
 import { DateInput } from "@/components/DateInput";
 import { LocaleSwitch } from "@/components/LocaleSwitch";
@@ -65,6 +66,11 @@ export default async function SettingsPage() {
           <a href="/settings/templates" data-testid="settings-templates-link">
             {t(lang, "templates.link")}
           </a>
+        </p>
+        <p style={{ margin: "8px 0 0", fontSize: 13.5 }}>
+          <Link href="/settings/channels" data-testid="settings-channels-link">
+            {t(lang, "msg.link")}
+          </Link>
         </p>
       </Panel>
       <Panel title={t(lang, "forms.title")} testId="settings-forms">

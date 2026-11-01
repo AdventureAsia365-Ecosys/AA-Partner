@@ -6,6 +6,7 @@
 // planning form's link opens on the first client host. AA-944 (CRM-16): the Bookings tab under the workspace
 // (GET /trips/{id}/lines, money for owner / agent only; the supplier list for the add form). AA-945 (CRM-17): the
 // Messages tab (the trip's conversations, the composer with saved replies, autosaved drafts, Undo, held messages).
+// AA-958: e-mail threads stay in the Messages panel; SMS / WhatsApp threads go to the WhatsApp and SMS panel.
 // AA-946 (CRM-18): the Proposal tab (GET /trips/{id}/lifecycle: proposals, payment schedule, portal progress; the
 // booking terms versions from GET /agreements); its client links open on the first client host. AA-947 (CRM-19): AA
 // lines in the Bookings tab; the Lost picker pre-selects the reason the AA lines suggest (lost_reason_hint). CRM-23
@@ -22,6 +23,7 @@ import { TripIncidentBanner } from "@/components/duty/IncidentPanel";
 import { InvoicesPanel } from "@/components/invoices/InvoicesPanel";
 import { LinesPanel } from "@/components/ledger/LinesPanel";
 import { MessagesPanel } from "@/components/mail/MessagesPanel";
+import { TextMessagesPanel } from "@/components/messaging/TextMessagesPanel";
 import { ProposalPanel } from "@/components/proposals/ProposalPanel";
 import { TripAgreementsPanel } from "@/components/proposals/TripAgreementsPanel";
 import { OpsReleasePanel } from "@/components/pipeline/OpsReleasePanel";
@@ -30,6 +32,7 @@ import { TripPanel } from "@/components/pipeline/TripPanel";
 import type { DocumentRow } from "@/lib/clients";
 import type { TripIncident } from "@/lib/duty";
 import { crmCall } from "@/lib/crmApi";
+import { isTextChannel } from "@/lib/messaging";
 import { crmContext } from "@/lib/crmContext";
 import type { OpsReleaseView } from "@/lib/opsRelease";
 import { t } from "@/lib/i18n";
@@ -137,8 +140,17 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
     {convs.ok && (
       <MessagesPanel
         tripId={tripId}
-        conversations={convs.data.conversations}
+        conversations={convs.data.conversations.filter((c) => !isTextChannel(c.channel))}
         savedReplies={replies.ok ? replies.data.saved_replies : []}
+        lang={ctx.lang}
+        locale={ctx.locale}
+        closed={closed}
+      />
+    )}
+    {convs.ok && (
+      <TextMessagesPanel
+        tripId={tripId}
+        conversations={convs.data.conversations.filter((c) => isTextChannel(c.channel))}
         lang={ctx.lang}
         locale={ctx.locale}
         closed={closed}

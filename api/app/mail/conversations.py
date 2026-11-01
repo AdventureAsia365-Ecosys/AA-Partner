@@ -2,6 +2,8 @@
 drafts"; Fix B8 Undo; R24 held_reconnect).
 
 - **Lists** carry ids, counts and dates only (design §4.4: no contact data in lists), one ``list_view`` audit event.
+  ``unmatched``: no client and no trip. ``no_trip`` (AA-958): an SMS / WhatsApp conversation of a known client that no
+  trip holds (the client wrote with no open trip): the Inbox lists it with "Link to trip", so it is never lost.
 - **A conversation's messages** are decrypted for the agent (subject, text, HTML for the sandboxed iframe, From / To):
   one ``view`` audit event with the fields. A member sees their own drafts only.
 - **Link** (the Unmatched inbox): a conversation without a client gets one (and optionally a trip); a link set from
@@ -50,12 +52,19 @@ SELECT c.conversation_id, c.trip_id, c.traveler_id, c.channel, c.last_message_at
    AND ($1::uuid IS NULL OR c.trip_id = $1)
    AND ($2::uuid IS NULL OR c.traveler_id = $2)
    AND (NOT $3 OR (c.trip_id IS NULL AND c.traveler_id IS NULL))
+   AND (NOT $5 OR (c.trip_id IS NULL AND c.traveler_id IS NOT NULL AND c.channel IN ('sms', 'whatsapp')))
  ORDER BY c.last_message_at DESC, c.conversation_id
  LIMIT $4
 """
 CONVERSATION_SQL = """
-SELECT conversation_id, trip_id, traveler_id, channel, last_message_at FROM crm.conversation
+SELECT conversation_id, trip_id, traveler_id, channel, last_message_at, wa_window_expires_at, opted_out_at
+  FROM crm.conversation
  WHERE conversation_id = $1 AND deleted_at IS NULL
+"""
+# AA-958: the delivery state and template of the SMS / WhatsApp messages of a thread (crm-036).
+DELIVERY_SQL = """
+SELECT message_id, content_sid, provider_status, error_code, status_at FROM crm.message_delivery
+ WHERE message_id = ANY($1::uuid[])
 """
 MESSAGES_SQL = """
 SELECT message_id, direction, status, sender_kind, author_member_id, subject_enc, body_enc, body_html_enc, from_enc,
@@ -140,9 +149,10 @@ async def list_conversations(
     trip_id: uuid.UUID | None = None,
     traveler_id: uuid.UUID | None = None,
     unmatched: bool = False,
+    no_trip: bool = False,
     limit: int = 50,
 ) -> dict[str, Any]:
-    rows = await ctx.conn.fetch(LIST_SQL, trip_id, traveler_id, unmatched, max(1, min(limit, MAX_LIST)))
+    rows = await ctx.conn.fetch(LIST_SQL, trip_id, traveler_id, unmatched, max(1, min(limit, MAX_LIST)), no_trip)
     items = [
         {
             "conversation_id": str(r["conversation_id"]),
@@ -210,12 +220,33 @@ async def conversation_messages(ctx: TenantContext, vault: Vault, conversation_i
         fields=("subject", "body", "from", "to"),
         object_ids=tuple(m["message_id"] for m in out),
     )
-    return {
+    result: dict[str, Any] = {
         "conversation_id": str(conversation_id),
         "trip_id": str(conv["trip_id"]) if conv["trip_id"] else None,
         "traveler_id": str(conv["traveler_id"]) if conv["traveler_id"] else None,
+        "channel": conv["channel"],
         "messages": out,
     }
+    if conv["channel"] in ("sms", "whatsapp"):
+        # AA-958: each text message's delivery state; the WhatsApp window and the client's opt-out.
+        delivery = {
+            r["message_id"]: r for r in await ctx.conn.fetch(DELIVERY_SQL, [uuid.UUID(m["message_id"]) for m in out])
+        }
+        for m in out:
+            d = delivery.get(uuid.UUID(m["message_id"]))
+            m["delivery"] = (
+                {
+                    "template": d["content_sid"],
+                    "status": d["provider_status"],
+                    "error_code": d["error_code"],
+                    "status_at": _iso(d["status_at"]),
+                }
+                if d is not None
+                else None
+            )
+        result["window_until"] = _iso(conv.get("wa_window_expires_at"))
+        result["opted_out_at"] = _iso(conv.get("opted_out_at"))
+    return result
 
 
 async def link(
@@ -244,7 +275,10 @@ async def link(
 
 async def _target(ctx: TenantContext, conversation_id: uuid.UUID | None, trip_id: uuid.UUID | None) -> uuid.UUID:
     if conversation_id is not None:
-        return (await _conversation(ctx, conversation_id))["conversation_id"]
+        conv = await _conversation(ctx, conversation_id)
+        if conv["channel"] != "email":  # AA-958: SMS / WhatsApp go through POST /messaging/messages
+            raise Invalid("channel_mismatch", "this conversation is an SMS / WhatsApp conversation")
+        return conv["conversation_id"]
     if trip_id is None:
         raise Invalid("target_required", "a conversation or a trip")
     if await ctx.conn.fetchrow(TRIP_SQL, trip_id) is None:

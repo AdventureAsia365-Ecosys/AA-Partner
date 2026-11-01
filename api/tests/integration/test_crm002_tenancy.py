@@ -45,6 +45,8 @@ EXTRA_POLICIES = {
     ("calendar_feed", "calendar_feed_token_lookup"): ("r", {APP_ROLE}),
     #   crm-035: the RESTRICTIVE margin gate on commissions (design §4.6 commission.*; same rule as line money).
     ("commission", "commission_margin_roles"): ("r", {APP_ROLE}),
+    #   crm-036: the Twilio webhook lookup of app.tenancy.messaging_hook_tx() (keyed on app.messaging_hook_id).
+    ("messaging_connection", "messaging_connection_hook_lookup"): ("r", {APP_ROLE}),
 }
 # Extra policies that must be RESTRICTIVE (ANDed with tenant_isolation); every other extra policy is permissive.
 RESTRICTIVE_POLICIES = {

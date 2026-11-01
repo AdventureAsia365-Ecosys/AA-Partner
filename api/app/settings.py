@@ -160,6 +160,16 @@ Mail (AA-945, card CRM-17; ``app.mail``; AA-CIS-Infra ``crm_mail.tf``):
   ``ms_client_id``, ``ms_client_secret``): AA's own OAuth clients for the agencies' Gmail / Microsoft 365 send-as.
   Without a provider's pair its connect answers 503 ``mail_oauth_not_configured``; SMTP needs none.
 
+Text messages (AA-958, card CRM-28; ``app.messaging``):
+
+- ``MESSAGING_HOOK_BASE``: the https origin Twilio posts an agency's webhooks to (the client host, whose ALB rule sends
+  ``/crm/public/*`` here); the URL is ``<it>/crm/public/v1/hooks/twilio/<hook_id>``. Empty = the first
+  ``INTAKE_PAGE_ORIGINS`` entry (the same client host); both empty = no webhook URL (connect answers 503
+  ``messaging_hook_not_configured``; on ``test`` / ``local`` a fixed test origin). The webhook signature covers this
+  URL, so it must be the one the agency pastes into Twilio.
+- The ``sandbox`` provider (a deterministic stub that sends nothing) is accepted on ``dev`` / ``test`` / ``local``
+  only (``DEV_ONLY_ENVIRONMENTS``).
+
 Traveller portal (AA-946, card CRM-18; ``app.portal``):
 
 - ``PORTAL_OTP_DEV_ECHO``: ``true`` returns the portal sign-in / signing code in the API answer (``dev_code``) instead
@@ -188,6 +198,8 @@ SSL_MODES = frozenset({"require", "disable"})
 INSECURE_ENVIRONMENTS = frozenset({"test", "local"})
 # Environments where Dev-only aids are allowed (PORTAL_OTP_DEV_ECHO).
 DEV_ONLY_ENVIRONMENTS = frozenset({"dev", "test", "local"})
+# AA-958: the webhook origin on test / local when none is configured (never dialled; the signature covers it).
+TEST_HOOK_ORIGIN = "https://go.crm.example.test"
 TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 
@@ -294,6 +306,15 @@ class Settings:
     mail_oauth: tuple[tuple[str, str], ...] = field(default=(), repr=False)
     portal_otp_dev_echo: bool = False
     kms_seal_key_id: str = ""
+    messaging_hook_base: str = ""
+
+    def messaging_hooks_origin(self) -> str:
+        """AA-958: the origin of the agencies' Twilio webhook URLs ("" = not configured)."""
+        if self.messaging_hook_base:
+            return self.messaging_hook_base
+        if self.intake_page_origins:
+            return self.intake_page_origins[0].lower().rstrip("/")
+        return TEST_HOOK_ORIGIN if self.environment in INSECURE_ENVIRONMENTS else ""
 
     def _check_llm(self) -> None:
         """AA-964: the CRM AI gateway's provider values."""
@@ -454,6 +475,8 @@ class Settings:
             raise SettingsError(f"CRM_INGEST_DOMAIN must be a domain name, got {self.crm_ingest_domain!r}")
         if self.mail_oauth_redirect_base and not _ORIGIN.match(self.mail_oauth_redirect_base):
             raise SettingsError("MAIL_OAUTH_REDIRECT_BASE must be an https origin")
+        if self.messaging_hook_base and not _ORIGIN.match(self.messaging_hook_base):
+            raise SettingsError("MESSAGING_HOOK_BASE must be an https origin")
         keys = {k for k, _ in self.mail_oauth}
         if keys - MAIL_OAUTH_KEYS or not all(isinstance(v, str) for _, v in self.mail_oauth):
             # values are never echoed
@@ -653,6 +676,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         crm_ingest_bucket=_text(env, "CRM_INGEST_BUCKET"),
         crm_ingest_domain=_text(env, "CRM_INGEST_DOMAIN").lower(),
         mail_oauth_redirect_base=_text(env, "MAIL_OAUTH_REDIRECT_BASE").lower().rstrip("/"),
+        messaging_hook_base=_text(env, "MESSAGING_HOOK_BASE").lower().rstrip("/"),
         mail_oauth=_mail_oauth(env.get("MAIL_OAUTH")),
         portal_otp_dev_echo=_flag(env.get("PORTAL_OTP_DEV_ECHO"), False, "PORTAL_OTP_DEV_ECHO"),
         kms_seal_key_id=_text(env, "KMS_SEAL_KEY_ID"),

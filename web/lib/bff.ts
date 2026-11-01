@@ -202,6 +202,15 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "GET", pattern: /^mail\/senders$/, tenant: true, card: "AA-945" },
   { method: "POST", pattern: /^mail\/imports$/, tenant: true, card: "AA-945", maxBody: MAIL_IMPORT_BODY_BYTES, raw: true, timeoutMs: 50_000 },
   { method: "GET", pattern: new RegExp(`^mail/imports/${UUID}$`), tenant: true, card: "AA-945" },
+  // AA-958 (CRM-28): Settings > Channels (SMS / WhatsApp on the agency's own Twilio: status for every role; connect,
+  // test, template refresh, disconnect: owner, the API checks), the composer state and the send of a text message.
+  // Undo / Edit / threads / Unmatched / Link are the AA-945 lines above.
+  { method: "GET", pattern: /^messaging$/, tenant: true, card: "AA-958" },
+  { method: "PUT", pattern: /^messaging\/connection$/, tenant: true, card: "AA-958" },
+  { method: "DELETE", pattern: /^messaging\/connection$/, tenant: true, card: "AA-958" },
+  { method: "POST", pattern: /^messaging\/(test|templates\/refresh)$/, tenant: true, card: "AA-958" },
+  { method: "GET", pattern: /^messaging\/compose$/, tenant: true, card: "AA-958" },
+  { method: "POST", pattern: /^messaging\/messages$/, tenant: true, card: "AA-958" },
   // AA-962 (CRM-31): onboarding (checklist marks, controller settings, the shared-responsibility acknowledgement), the
   // client import (raw CSV / .xlsx preview and start, progress), duplicate clients and the merge. Roles: the API's.
   { method: "GET", pattern: /^onboarding$/, tenant: true, card: "AA-962" },

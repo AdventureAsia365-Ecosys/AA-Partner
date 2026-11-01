@@ -14,7 +14,7 @@ Route                                          What                             
 ``DELETE /mailbox``                            disconnect (the credential is deleted)
 ``GET    /mailbox/ingest-address``             the forward-in address + Gmail forwarding code every role
 ``GET    /mail/senders``                       the sender table (R24)                         every role
-``GET    /conversations``                      by trip / client / Unmatched (ids, counts)     every role
+``GET    /conversations``                      by trip / client / Unmatched / no trip (ids)   every role
 ``GET    /conversations/{id}/messages``        the thread, decrypted (one view event)         every role
 ``POST   /conversations/{id}/link``            Unmatched -> a client (and trip)               every role
 ``PUT    /messages/drafts/{id}``               autosave a draft (id chosen by the composer)   every role
@@ -235,12 +235,13 @@ async def get_conversations(
     trip_id: uuid.UUID | None = None,
     traveler_id: uuid.UUID | None = None,
     unmatched: bool = False,
+    no_trip: bool = False,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> dict[str, Any]:
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_VIEW) as ctx:
         return await conversations.list_conversations(
-            ctx, trip_id=trip_id, traveler_id=traveler_id, unmatched=unmatched, limit=limit
+            ctx, trip_id=trip_id, traveler_id=traveler_id, unmatched=unmatched, no_trip=no_trip, limit=limit
         )
 
 

@@ -5,7 +5,8 @@ The gate, in order (first match wins; the row ends ``dropped`` with the code as 
 1. the traveller is in the trash -> ``traveler_trashed``; the trip of the message is in the trash -> ``trip_trashed``;
 2. the traveller is **archived** -> ``archived`` (R23, card R "an archived contact's queued message is dropped");
 3. a marketing message without a current marketing consent (latest ``crm.consent`` row of purpose ``marketing``) ->
-   ``no_consent``.
+   ``no_consent``; AA-958: an SMS / WhatsApp message to a client who texted STOP on that channel (any of their
+   conversations on it has ``opted_out_at``) -> ``no_consent``.
 
 A row that passes goes to the sender: ``sent``; with no sender configured -> ``held`` / ``no_sender``. AA-945
 (CRM-17): the e-mail sender (:mod:`app.mail.sender`) answers a gate code: ``sent``; ``held_reconnect`` (the agency's
@@ -56,7 +57,11 @@ ROW_SQL = """
 SELECT d.dispatch_id, d.status, d.channel, d.purpose, d.message_ref, d.message_id, d.traveler_id, d.trip_id,
        t.archived_at, t.deleted_at AS traveler_deleted_at, tr.deleted_at AS trip_deleted_at,
        (SELECT c.value FROM crm.consent c WHERE c.traveler_id = d.traveler_id AND c.purpose = 'marketing'
-         ORDER BY c.at DESC, c.created_at DESC, c.consent_id DESC LIMIT 1) AS marketing_ok
+         ORDER BY c.at DESC, c.created_at DESC, c.consent_id DESC LIMIT 1) AS marketing_ok,
+       (d.channel IN ('sms', 'whatsapp') AND EXISTS (
+            SELECT 1 FROM crm.conversation cv
+             WHERE cv.traveler_id = d.traveler_id AND cv.channel = d.channel AND cv.opted_out_at IS NOT NULL
+               AND cv.deleted_at IS NULL)) AS text_opted_out
   FROM crm.dispatch_queue d
   JOIN crm.traveler t ON t.traveler_id = d.traveler_id
   LEFT JOIN crm.trip tr ON tr.trip_id = d.trip_id
@@ -89,7 +94,8 @@ OUTCOMES = {
 
 class Sender(Protocol):
     async def send(self, ctx: SystemContext, dispatch_id: uuid.UUID, channel: str, message_id: uuid.UUID | None) -> str:
-        """Deliver the row's message (CRM-17 e-mail; CRM-28 later). Returns a key of :data:`OUTCOMES`; raise to
+        """Deliver the row's message (CRM-17 e-mail; CRM-28 SMS / WhatsApp through
+        :class:`app.messaging.sender.ChannelSender`). Returns a key of :data:`OUTCOMES`; raise to
         retry the job."""
         ...
 
@@ -103,6 +109,8 @@ def gate(row: Any) -> str | None:
     if row["archived_at"] is not None:
         return "archived"
     if row["purpose"] == "marketing" and row["marketing_ok"] is not True:
+        return "no_consent"
+    if row.get("text_opted_out"):  # AA-958: the client texted STOP on this SMS / WhatsApp channel
         return "no_consent"
     return None
 
