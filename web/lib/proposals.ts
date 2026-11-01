@@ -107,6 +107,43 @@ export interface Agreement {
   published_at: string | null;
 }
 
+/** One entry of a version's booking terms select: a published version, or the retired one the version still names. */
+export interface TermsChoice {
+  doc_id: string;
+  version_label: string;
+  /** The version is no longer the published one (retired, a draft, or removed): Publish / Send refuse it. */
+  stale: boolean;
+}
+
+/**
+ * S262 round 3 (AA-957 x AA-952): the terms select of a proposal version. ``terms`` is every booking terms version of
+ * the agency (any status, from GET /agreements); ``pinned`` the version the proposal names. Before, the select listed
+ * only published versions with ``defaultValue = pinned``: a retired pinned version had no option, so the browser
+ * showed the current one while the draft still held the retired one (Publish then answered terms_not_published).
+ * Now the pinned version is listed (marked stale) and selected, and ``current`` is offered as the one-click fix.
+ */
+export function termsChoices(
+  terms: Agreement[],
+  pinned: string | null | undefined,
+): { options: TermsChoice[]; value: string; current: TermsChoice | null; stale: TermsChoice | null } {
+  const booking = terms.filter((d) => d.kind === "booking_terms");
+  const published = booking.filter((d) => d.status === "published");
+  const options: TermsChoice[] = published.map((d) => ({ doc_id: d.doc_id, version_label: d.version_label, stale: false }));
+  const current = options[0] ?? null;
+  let stale: TermsChoice | null = null;
+  if (pinned && !options.some((o) => o.doc_id === pinned)) {
+    const doc = booking.find((d) => d.doc_id === pinned);
+    if (booking.length === 0) {
+      // The versions could not be read (GET /agreements failed): keep the named one selected, claim nothing about it.
+      options.push({ doc_id: pinned, version_label: "", stale: false });
+    } else {
+      stale = { doc_id: pinned, version_label: doc?.version_label ?? "", stale: true };
+      options.push(stale);
+    }
+  }
+  return { options, value: pinned ?? current?.doc_id ?? "", current, stale };
+}
+
 export interface InviteResult {
   access_id: string;
   traveler_id: string;

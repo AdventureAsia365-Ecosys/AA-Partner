@@ -111,6 +111,10 @@ describe("trip page: gate dialog and Undo", () => {
     const dialog = c.querySelector("[data-testid=gate-dialog]");
     expect(dialog).not.toBeNull();
     expect(c.querySelector("[data-testid=gate-dialog-body]")!.textContent).toContain("60 %");
+    // S262 round 3: one element per test id (the dialog shell's scrolling body is "gate-dialog-scroll", not "-body").
+    expect(c.querySelectorAll("[data-testid=gate-dialog-body]")).toHaveLength(1);
+    expect(c.querySelector("[data-testid=gate-dialog-body]")!.tagName).toBe("P");
+    expect(c.querySelectorAll("[data-testid=gate-dialog-scroll]")).toHaveLength(1);
     expect(c.querySelector("[data-testid=gate-missing]")!.textContent).toBe("Missing: Is it a special occasion?, How flexible is your budget?");
     const confirm = c.querySelector<HTMLButtonElement>("[data-testid=gate-confirm] button")!;
     expect(confirm.disabled).toBe(true); // a reason first

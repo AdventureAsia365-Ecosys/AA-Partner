@@ -7,7 +7,7 @@
 // (GET /trips/{id}/lines, money for owner / agent only; the supplier list for the add form). AA-945 (CRM-17): the
 // Messages tab (the trip's conversations, the composer with saved replies, autosaved drafts, Undo, held messages).
 // AA-946 (CRM-18): the Proposal tab (GET /trips/{id}/lifecycle: proposals, payment schedule, portal progress; the
-// published booking terms from GET /agreements); its client links open on the first client host. AA-947 (CRM-19): AA
+// booking terms versions from GET /agreements); its client links open on the first client host. AA-947 (CRM-19): AA
 // lines in the Bookings tab; the Lost picker pre-selects the reason the AA lines suggest (lost_reason_hint). CRM-23
 // slice 2: the Invoices card under the Proposal tab (GET /trips/{id}/invoices; due schedule rows from the lifecycle).
 // AA-955 (CRM-25): the Signed documents panel (GET /trips/{id}/agreements: who signed, guardian, insurance choice,
@@ -99,7 +99,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
     {lifecycle.ok && (
       <ProposalPanel
         view={lifecycle.data}
-        terms={agreements.ok ? agreements.data.agreements.filter((d) => d.kind === "booking_terms" && d.status === "published") : []}
+        terms={agreements.ok ? agreements.data.agreements.filter((d) => d.kind === "booking_terms") : []}
         party={trip.data.party}
         role={ctx.role}
         lang={ctx.lang}

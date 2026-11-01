@@ -1,8 +1,8 @@
 // web/app/(crm)/pipeline/[tripId]/proposal/[proposalId]/page.tsx — A-04, the day-list builder of one proposal version
 // (AA-949, card CRM-21a). Reads GET /proposals/{id}/builder (one "view" audit event; net and margin only for owner /
-// agent), the published booking terms and the agency's suppliers (the drawer's agency items). The page is a client
-// component from there on (components/proposals/BuilderPage.tsx); every write goes through the BFF lines of card
-// AA-949 in lib/bff.ts.
+// agent), every booking terms version (the select shows the published one, and a retired one the version still
+// names: S262 round 3) and the agency's suppliers (the drawer's agency items). The page is a client component from
+// there on (components/proposals/BuilderPage.tsx); every write goes through the BFF lines of card AA-949 in lib/bff.ts.
 import { notFound } from "next/navigation";
 import { ErrorState } from "@/app/_kit";
 import { BuilderPage } from "@/components/proposals/BuilderPage";
@@ -42,7 +42,7 @@ export default async function BuilderRoute({ params }: { params: Promise<{ tripI
       role={ctx.role}
       lang={ctx.lang}
       locale={ctx.locale}
-      terms={agreements.ok ? agreements.data.agreements.filter((d) => d.kind === "booking_terms" && d.status === "published") : []}
+      terms={agreements.ok ? agreements.data.agreements.filter((d) => d.kind === "booking_terms") : []}
       suppliers={suppliers.ok ? suppliers.data.suppliers.map((s) => ({ agency_supplier_id: s.agency_supplier_id, name: s.name, kind: s.kind })) : []}
     />
   );

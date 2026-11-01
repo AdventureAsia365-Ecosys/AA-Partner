@@ -21,6 +21,7 @@ export function InvoiceMoney({
   lang,
   locale,
   closed = false,
+  readOnly = false,
   onMessage,
 }: {
   invoice: Invoice;
@@ -29,12 +30,14 @@ export function InvoiceMoney({
   locale: DateLocale;
   /** S262: the trip is cancelled: a payment whose refund the cancel already proposed offers no second request. */
   closed?: boolean;
+  /** S262 round 3: the trip's cancel run is being applied (TripClosed "updating"): amounts only, no money action. */
+  readOnly?: boolean;
   onMessage: (tone: "danger" | "success", text: string) => void;
 }) {
   const router = useRouter();
   const hydrated = useHydrated();
   const tr = (key: string) => t(lang, key as MessageKey);
-  const bills = canBill(role);
+  const bills = canBill(role) && !readOnly;
   const [busy, setBusy] = useState(false);
   const [paying, setPaying] = useState(false);
   const [method, setMethod] = useState("bank_transfer");
@@ -128,7 +131,7 @@ export function InvoiceMoney({
         </div>
       ))}
       {refunds.map((r) => (
-        <RefundActions key={r.refund_id} refund={r} role={role} lang={lang} locale={locale} onMessage={onMessage} />
+        <RefundActions key={r.refund_id} refund={r} role={role} lang={lang} locale={locale} onMessage={onMessage} readOnly={readOnly} />
       ))}
       {bills && invoice.actions.includes("record_payment") && !paying && (
         <div>

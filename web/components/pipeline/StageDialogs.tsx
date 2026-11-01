@@ -135,7 +135,9 @@ export function Dialog({
         style={{ background: K.card, color: K.ink, borderRadius: 12, border: `1px solid ${K.line}`, width: "min(480px, 100%)" }}
       >
         <h2 style={{ margin: 0, padding: "18px 18px 0", fontSize: 16, fontWeight: 600, flex: "none" }}>{title}</h2>
-        <div ref={body} data-testid={`${testId}-body`} data-crm-dialog="body" style={{ padding: "12px 18px", position: "relative" }}>
+        {/* The scrolling body is "<testId>-scroll" (S262 round 3): "-body" clashed with GateDialog's own
+            "gate-dialog-body" paragraph, which the E2E and UAT scenarios read. */}
+        <div ref={body} data-testid={`${testId}-scroll`} data-crm-dialog="body" style={{ padding: "12px 18px", position: "relative" }}>
           <div ref={content} style={{ display: "grid", gap: 12 }}>
             {children}
           </div>

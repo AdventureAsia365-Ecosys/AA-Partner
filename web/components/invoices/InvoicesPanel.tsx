@@ -8,12 +8,14 @@
 // received"), a late deposit being re-held, a paid-but-unfulfillable one. Owner and agent bill; the assistant reads.
 // Every refusal is worded from its code (lib/invoices.ts). Buttons wait for hydration (the page is a full server render).
 // S262 (AA-957 live): on a cancelled trip no new invoice is offered (from a schedule row or typed) and no draft issued;
-// a kept invoice can still record what the client paid, be voided, and its payments refunded.
+// a kept invoice can still record what the client paid, be voided, and its payments refunded. S262 round 3: in the
+// moment between the cancel run's answer and the server refresh (TripClosed "updating") the invoices are read-only
+// (no Void, Record payment or refund step on an invoice the run is voiding), with a short note.
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, Checkbox, Field, Input, K, Select, Textarea, useHydrated } from "@/app/_kit";
 import { InvoiceMoney } from "@/components/invoices/InvoiceMoney";
-import { useTripClosed } from "@/components/pipeline/TripClosed";
+import { useTripClosed, useTripUpdating } from "@/components/pipeline/TripClosed";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, formatInstant, type DateLocale } from "@/lib/dates";
@@ -67,8 +69,9 @@ export function InvoicesPanel({
   const hydrated = useHydrated();
   // AA-957 S262 round 3: the page's closed state (the cancel run closes the card at once, before the server refresh).
   const closed = useTripClosed(closedProp);
+  const updating = useTripUpdating();
   const tr = (key: string) => t(lang, key as MessageKey);
-  const bills = canBill(role);
+  const bills = canBill(role) && !updating;
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "danger" | "success"; text: string } | null>(null);
   const [voiding, setVoiding] = useState<string | null>(null);
@@ -141,6 +144,11 @@ export function InvoicesPanel({
             {message.text}
           </p>
         )}
+        {updating && invoices.length > 0 && (
+          <p data-testid="invoice-updating" style={{ margin: 0, fontSize: 12.5, color: K.muted }}>
+            {tr("invoice.updating")}
+          </p>
+        )}
         {invoices.length === 0 && <p style={{ margin: 0, fontSize: 13, color: K.muted }}>{tr("invoice.none")}</p>}
         {invoices.map((inv) => (
           <div key={inv.invoice_id} data-testid="invoice-row" data-status={inv.status} style={{ display: "grid", gap: 6, padding: "8px 0", borderTop: `1px solid ${K.line}` }}>
@@ -173,8 +181,8 @@ export function InvoicesPanel({
                 </Button>
               )}
             </div>
-            <InvoiceMoney invoice={inv} role={role} lang={lang} locale={locale} closed={closed} onMessage={(tone, text) => setMessage({ tone, text })} />
-            {voiding === inv.invoice_id && (
+            <InvoiceMoney invoice={inv} role={role} lang={lang} locale={locale} closed={closed} readOnly={updating} onMessage={(tone, text) => setMessage({ tone, text })} />
+            {bills && voiding === inv.invoice_id && (
               <div style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap" }} data-testid="invoice-void-form">
                 <Field label={tr("invoice.voidReasonLabel")} style={{ minWidth: 220, flex: "1 1 220px" }}>
                   <Input size="sm" value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} />
