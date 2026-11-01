@@ -840,19 +840,29 @@ already sends `/crm/public/*` to the API).
   provider `twilio`, agency level, sealed under the `integration` DEK like the AA-945 SMTP login (`Vault.decrypt_secret`
   is lint-allowed in `app/messaging/sender.py` only). A reconnect keeps the hook id, so the URLs pasted into Twilio stay
   valid. Disconnect deletes the credential and, by cascade, the connection and templates. Test button: account read
-  now + an optional test message to the owner's own phone. Health states `connected | needs_attention | disconnected`.
+  now + an optional test message to the owner's own phone (SMS: a short text; WhatsApp: an **approved template**, the
+  chosen one or the first service one, values `Test`; none approved -> 409 `template_required`); the incoming webhook
+  is checked by a reply (`inbound_check` `pending` until a message arrives after the test, then `ok`). Health states
+  `connected | needs_attention | disconnected`.
 - **Send**: `POST /crm/v1/messaging/messages` (`MESSAGE_SEND`) stores an outbound `crm.message` (channel `sms` /
   `whatsapp`, text under the mail DEK) and its `crm.message_delivery` row, then queues one `crm_dispatch` row with the
   10 s Undo (Undo / Edit are the AA-945 message routes). WhatsApp free text only inside the 24-hour window opened by the
   client's last inbound message, else **409 `template_required`** (card R); outside it only an `approved` template with
-  its variables. The dispatcher (`ChannelSender` routes e-mail to the AA-945 sender, text to `TextSender`) re-checks
+  its variables. A template whose category is not `UTILITY` / `AUTHENTICATION` is **marketing**: 409
+  `no_marketing_consent` without the client's current marketing yes, queued with `purpose marketing` so the
+  dispatcher's consent gate (`no_consent`) applies at send time too; the composer hides it from such a client. The
+  dispatcher (`ChannelSender` routes e-mail to the AA-945 sender, text to `TextSender`) re-checks
   the window, the template, the client's number and the opt-out at send time; a refused token disconnects the
   connection with one owners' alert (`messaging_disconnected`, AA SES); nothing is ever sent another way.
 - **Webhooks**: `POST /crm/public/v1/hooks/twilio/{hook_id}` (inbound) and `.../{hook_id}/status`, form-encoded,
-  64 KiB, public rate limit. `X-Twilio-Signature` is checked with the agency's own Auth Token over the URL the CRM
+  64 KiB. Not under the per-address public limit (Twilio posts every agency's callbacks from one shared address pool,
+  and a 429 loses an inbound message for good): only unknown hook ids (404) are counted per address
+  (`HOOK_MISSES_PER_MINUTE` 600), and an address over that is 429 before any work. `X-Twilio-Signature` is checked with the agency's own Auth Token over the URL the CRM
   printed (never the Host header) and the `AccountSid` must match, before anything is stored: **403
   `invalid_signature`**. Inbound: deduplicated by `MessageSid`; threaded by the sender's phone blind index (one client
-  -> their latest conversation on the channel or their latest open trip; none or two -> Unmatched); media not kept;
+  -> their latest conversation on the channel or their latest open trip, else a conversation of the client with no
+  trip, listed in the Inbox under "Clients with no open trip" (`GET /conversations?no_trip=true`, link to one of
+  the client's trips); none or two -> Unmatched); media not kept;
   WhatsApp window = now + 24 h; `STOP` / `START` (and `OptOutType`) set / clear `opted_out_at` on the client's
   conversations of that channel. Status: applied only when its rank is higher (card E: out-of-order callbacks keep the
   latest state); error 21610 marks the conversation opted out. Answer: an empty TwiML `<Response>`.
@@ -862,8 +872,9 @@ already sends `/crm/public/*` to the API).
 - **Web**: Settings > SMS and WhatsApp (`web/app/(crm)/settings/channels`, `components/messaging/ChannelsSettings.tsx`:
   status, who pays, the two webhook URLs, connect / reconnect, Test, templates + Refresh, Disconnect), the trip's
   WhatsApp / SMS panel (`components/messaging/TextMessagesPanel.tsx`: the thread with delivery states, the window, free
-  text or an approved template with its values and preview, Undo, why a channel cannot send), and the Unmatched inbox
-  shows the channel.
+  text or an approved template with its values and preview, Undo, why a channel cannot send), the Unmatched inbox
+  shows the channel, and the Inbox lists known clients' text conversations with no open trip
+  (`components/messaging/NoTripInbox.tsx`).
 - **Dev live check**: `api/scripts/messaging_hook_probe.py` posts a signed Twilio-shaped inbound message or status
   callback to an agency's hook URL (`PROBE_AUTH_TOKEN` = the sandbox connection's token; `--bad-signature` expects 403).
 
