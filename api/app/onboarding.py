@@ -140,7 +140,7 @@ def connections(facts: Any) -> list[dict[str, Any]]:
             "href": "/settings/payments",
             "help": "/help#payments",
         },
-        {"key": "sms_whatsapp", "required": False, "status": twilio, "href": None, "help": "/help#sms"},
+        {"key": "sms_whatsapp", "required": False, "status": twilio, "href": "/settings/channels", "help": "/help#sms"},
         {
             "key": "calendar",
             "required": False,

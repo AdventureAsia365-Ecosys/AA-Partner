@@ -2,6 +2,7 @@
 // web/components/mail/UnmatchedInbox.tsx — the Unmatched inbox (AA-945, card CRM-17; lane §6.5 "no match ->
 // Unmatched"): forwarded mail no trip token, reply header or client address placed. Open a thread, search a client
 // (the term travels in the POST body, never in the URL: AA-937), link it; the conversation then belongs to that client.
+// AA-958: SMS / WhatsApp messages from an unknown number are listed here too, with their channel.
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button, K, useHydrated } from "@/app/_kit";
@@ -57,6 +58,10 @@ function Row({ c, lang, locale }: { c: Conversation; lang: Lang; locale: DateLoc
     <li data-testid={`unmatched-${c.conversation_id}`} style={{ listStyle: "none", border: `1px solid ${K.line2}`, borderRadius: 10, padding: 10, display: "grid", gap: 8 }}>
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", fontSize: 13 }}>
         <span>{formatDate(c.last_message_at.slice(0, 10), locale)}</span>
+        {/* AA-958: unknown numbers on SMS / WhatsApp land here too. */}
+        <span data-testid={`unmatched-${c.conversation_id}-channel`} style={{ color: K.muted }}>
+          {tr(`msg.channel.${["sms", "whatsapp"].includes(c.channel) ? c.channel : "email"}`)}
+        </span>
         <span style={{ color: K.muted }}>{c.message_count}</span>
         {!thread && (
           <Button size="sm" disabled={!hydrated} onClick={open}>
