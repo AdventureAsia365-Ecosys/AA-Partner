@@ -4,7 +4,8 @@
   limited per address before anything is read (``RATE_LIMIT_CLAIM_PER_MINUTE``). 200 ``{"state": "created",
   "email", "temporary_password"}`` (shown once by the join page), ``{"state": "existing", "email"}`` (sign in with
   the account you have) or ``{"state": "already_claimed", "email"}``; 404 ``invitation_not_found``; 410
-  ``invitation_expired`` / ``invitation_used``; 409 ``account_setup_pending``. ``Cache-Control: no-store``.
+  ``invitation_expired`` / ``invitation_used``. ``Cache-Control: no-store``. (An account that never finished its first
+  sign-in gets a new temporary password, ``created``; 409 ``account_setup_pending`` is no longer answered, S263.)
 - ``POST /crm/v1/invitations/accept`` ``{"token": ...}``: AGENCY class, no ``X-AA-Tenant-Id`` (the token decides the
   agency). The caller's token must carry the ``(iss, sub)`` the claim bound; 200 ``{"tenant_id", "member_id",
   "member_role"}``.

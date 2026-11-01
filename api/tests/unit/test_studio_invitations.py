@@ -216,6 +216,31 @@ async def test_claim_again_shows_no_password_and_finished_rows_are_gone() -> Non
         assert exc.value.code == code
 
 
+async def test_claim_again_gives_an_account_never_signed_in_a_new_password() -> None:
+    """S263 join fix, the studio side: the bound account is still in FORCE_CHANGE_PASSWORD -> a new temporary
+    password (``created``), the binding unchanged; once the person set their own password -> ``already_claimed``."""
+    token, _ = new_token()
+    directory = MemoryDirectory(issuer=ISS)
+    first = await directory.create_or_find(ADDRESS)
+    conn = ScriptedConn([("FROM crm.studio_invitation WHERE token_hash", token_row(token, "claimed", sub=first.sub))])
+    again = await studio.claim(conn, directory, token)
+    assert again.state == "created" and again.temporary_password not in (None, first.temporary_password)
+    assert directory.resent == [first.sub] and conn.sql("SET status = 'claimed'") == []
+    directory.accounts[ADDRESS]["status"] = "CONFIRMED"
+    conn = ScriptedConn([("FROM crm.studio_invitation WHERE token_hash", token_row(token, "claimed", sub=first.sub))])
+    assert (await studio.claim(conn, directory, token)).state == "already_claimed"
+
+
+async def test_claim_of_an_address_whose_account_never_signed_in_reissues() -> None:
+    token, _ = new_token()
+    directory = MemoryDirectory(issuer=ISS)
+    sub = directory.add(ADDRESS, status="FORCE_CHANGE_PASSWORD")
+    conn = ScriptedConn([("FROM crm.studio_invitation WHERE token_hash", token_row(token))])
+    claimed = await studio.claim(conn, directory, token)
+    assert claimed.state == "created" and claimed.temporary_password and directory.resent == [sub]
+    assert conn.sql("SET status = 'claimed'") == [(SID, ISS, sub)]
+
+
 async def test_claim_marks_an_overdue_invitation_expired_then_answers_410() -> None:
     token, _ = new_token()
     conn = ScriptedConn([("FROM crm.studio_invitation WHERE token_hash", token_row(token, expired=True))])

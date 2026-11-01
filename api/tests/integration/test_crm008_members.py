@@ -120,6 +120,38 @@ async def test_an_existing_account_is_bound_without_a_new_password(app_pool: asy
     assert (await invitations.accept(app_pool, _caller(sub), token))["member_role"] == "owner"
 
 
+async def test_a_password_never_seen_is_reissued_by_the_same_link_and_by_a_new_invitation(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection
+) -> None:
+    """S263, found live on Dev: the invitation was claimed once, the join page never showed the temporary password
+    (a second submit replaced it) and the account stayed in FORCE_CHANGE_PASSWORD. Opening the same link again gives
+    a new temporary password; so does a new invitation to the address after the owner revoked the first one."""
+    keys = _keys()
+    tenant_id, [(owner, _)] = await _agency(app_pool, "owner")
+    directory = MemoryDirectory(ISS)
+    invited, token = await _invite(app_pool, keys, owner, tenant_id, "kim@agency.example", "agent")
+    first = await invitations.claim(app_pool, keys, directory, token)
+    again = await invitations.claim(app_pool, keys, directory, token)
+    assert (first.state, again.state) == ("created", "created")
+    assert again.temporary_password and again.temporary_password != first.temporary_password
+    account = directory.accounts["kim@agency.example"]
+    assert account["password"] == again.temporary_password and directory.resent == [account["sub"]]
+    reasons = [e["reason"] for e in await _events(admin, tenant_id, "invitation_claim")]
+    assert reasons == ["account_created", "account_password_reissued"]
+    # The owner withdraws it and invites the address again: the account is still never signed in -> a new password.
+    async with tenant_tx(app_pool, owner, tenant_id, action=Action.TEAM_MANAGE) as ctx:
+        await team.revoke_invitation(ctx, uuid.UUID(invited["invitation_id"]))
+    _, token2 = await _invite(app_pool, keys, owner, tenant_id, "kim@agency.example", "agent")
+    fresh = await invitations.claim(app_pool, keys, directory, token2)
+    assert fresh.state == "created" and fresh.temporary_password == account["password"]
+    assert len(directory.accounts) == 1 and directory.resent == [account["sub"], account["sub"]]
+    assert (await invitations.accept(app_pool, _caller(account["sub"]), token2))["member_role"] == "agent"
+    # Once the person has their own password, the link answers already_claimed (no password) — here: used.
+    account["status"] = "CONFIRMED"
+    with pytest.raises(invitations.Gone):
+        await invitations.claim(app_pool, keys, directory, token2)
+
+
 async def test_revoked_and_duplicate_invitations(app_pool: asyncpg.Pool) -> None:
     keys = _keys()
     tenant_id, [(owner, _)] = await _agency(app_pool, "owner")
@@ -287,9 +319,14 @@ async def test_two_claims_and_two_accepts_of_one_invitation_run_one_after_the_ot
         first, second = await asyncio.gather(
             invitations.claim(pool, keys, directory, token), invitations.claim(pool, keys, directory, token)
         )
-        # One account, one password; the waiting claim saw "claimed" after the first committed.
-        assert sorted([first.state, second.state]) == ["already_claimed", "created"]
+        # One account; the waiting claim saw "claimed" after the first committed. The account has never been signed
+        # in to, so that claim gave it a new temporary password (S263 join fix: a double submit must not leave the
+        # person with a password they never saw); only the later one is valid.
+        assert [first.state, second.state] == ["created", "created"]
         assert _SlowDirectory.calls == 1 and len(directory.accounts) == 1
+        account = directory.accounts["twice@agency.example"]
+        assert directory.resent == [account["sub"]]
+        assert account["password"] in (first.temporary_password, second.temporary_password)
         person = _caller(directory.accounts["twice@agency.example"]["sub"])
 
         async def accept() -> str:

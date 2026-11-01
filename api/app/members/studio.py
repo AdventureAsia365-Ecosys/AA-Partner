@@ -50,7 +50,7 @@ from app.jobs.kinds import STUDIO_ACTIVATION
 from app.jobs.queue import Job
 from app.jobs.worker import PermanentError
 from app.members.directory import PartnerDirectory
-from app.members.invitations import Claimed, token_hash_hex
+from app.members.invitations import Claimed, claim_reason, reissue_if_never_signed_in, token_hash_hex
 from app.members.mail import Mailer, studio_invitation_message
 from app.members.recovery import platform_actor
 from app.members.team import new_token, normalise_email
@@ -273,7 +273,16 @@ async def claim(pool: asyncpg.Pool, directory: PartnerDirectory, token: str) -> 
         else:
             email = open_email(token, inv.cis_invitation_id, inv.email_enc)
             if inv.status == "claimed":
-                result = Claimed(state="already_claimed", email=email)
+                # S263 join fix: the bound account never signed in -> a new temporary password (as a CRM invitation).
+                password = await reissue_if_never_signed_in(directory, inv.cognito_iss, inv.cognito_sub, email)
+                if password is not None:
+                    result = Claimed(state="created", email=email, temporary_password=password)
+                    log.info(
+                        "crm_studio_invitation_claimed studio_invitation_id=%s reason=account_password_reissued",
+                        inv.studio_invitation_id,
+                    )
+                else:
+                    result = Claimed(state="already_claimed", email=email)
             else:
                 account = await directory.create_or_find(email)
                 await ctx.conn.execute(CLAIM_SQL, inv.studio_invitation_id, directory.issuer, account.sub)
@@ -282,7 +291,11 @@ async def claim(pool: asyncpg.Pool, directory: PartnerDirectory, token: str) -> 
                     email=email,
                     temporary_password=account.temporary_password,
                 )
-                log.info("crm_studio_invitation_claimed studio_invitation_id=%s", inv.studio_invitation_id)
+                log.info(
+                    "crm_studio_invitation_claimed studio_invitation_id=%s reason=%s",
+                    inv.studio_invitation_id,
+                    claim_reason(account),
+                )
     if expired:
         raise Gone("invitation_expired", "the invitation expired; ask Adventure Asia to send it again")
     assert result is not None  # noqa: S101 — set on every path that reaches here
