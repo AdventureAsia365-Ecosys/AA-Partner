@@ -65,7 +65,7 @@ REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = (
     "crm-034",  # AA-956 Module 8 ops release (expand: crm.ops_release, crm.supplier_manifest_export; after crm-033)
     "crm-035",  # AA-957 commission + one-action cancel (contract: crm.commission, crm.trip_cancellation, cancel kind)
     "crm-036",  # AA-958 SMS / WhatsApp (contract: messaging_connection, channel_template, message_delivery, window)
-    "crm-040",  # AA-964 S263 F1/F2: AI stage profiles + routes, ledger v2 statuses on crm.llm_call (contract)
+    "crm-037",  # AA-964 S263 F1/F2: AI stage profiles + routes, ledger v2 statuses on crm.llm_call (contract)
 )
 REQUIRED_SCHEMA_VERSION = max(REQUIRED_SCHEMA_VERSIONS)
 

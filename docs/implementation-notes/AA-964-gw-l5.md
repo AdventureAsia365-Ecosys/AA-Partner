@@ -3,10 +3,10 @@
 Plan: root `docs/audits/2026-11-01-S263-gateway-gap-audit/plan.md` §1.F (F1, F2) and §2 (lane L5). Builds on the
 AA-964 gateway (`AA-964.md`). Two PRs in this repo, MIG-4 order (crm-037 is a contract file):
 
-1. `api/migrations/040_crm_llm_stage_profile.sql` + `test_crm040_schema.py` + the platform-table rows of
+1. `api/migrations/037_crm_llm_stage_profile.sql` + `test_crm037_schema.py` + the platform-table rows of
    `test_crm002_tenancy.py` + the CONTEXT.md migration row (migration only).
-2. The code (`api/app/llm/*`, `app/routers/ops.py` status type, `crm-040` in `REQUIRED_SCHEMA_VERSIONS`), merged
-   after crm-040 is applied on Dev.
+2. The code (`api/app/llm/*`, `app/routers/ops.py` status type, `crm-037` in `REQUIRED_SCHEMA_VERSIONS`), merged
+   after crm-037 is applied on Dev.
 
 A root PR (DM-7.1 retention rows for the two new tables; `crm.ops.v1` 1.7 status enum) merges before the Infra copy.
 
@@ -21,8 +21,8 @@ A root PR (DM-7.1 retention rows for the two new tables; `crm.ops.v1` 1.7 status
   chain: `override` (the `CRM_LLM_USD_PER_MTOK_*` prices of `CRM_LLM_MODEL_ID`) > `catalog` (route row) >
   `code_table` (core table) > `estimate` (Sonnet list price, never 0). A live sync of the price needs a CIS HTTP
   contract (follow-up) or the tech lead's T-10 with an ADR 0008a amendment.
-- **One contract migration, crm-040.** Widening the `crm.llm_call` outcome CHECK is contract (ADR 0017 d3), so the
-  two new platform tables go in the same file (no second key). Key 040: 036..039 are the CRM-28 lanes'.
+- **One contract migration, crm-037.** Widening the `crm.llm_call` outcome CHECK is contract (ADR 0017 d3), so the
+  two new platform tables go in the same file (no second key). Key 037: 036 is AA-958's (CRM-28 messaging).
 - **Profile tables are platform configuration** (no tenant column, no RLS, like `aa_catalog_state`): AA owns the
   route and the kill switch for every agency; the agency's own switch stays `tenant_settings.ai_enabled`. `crm_app`
   has SELECT only; a stage is switched off or rerouted by a forward migration or a DB Migrate run-script as the owner
@@ -80,11 +80,11 @@ A root PR (DM-7.1 retention rows for the two new tables; `crm.ops.v1` 1.7 status
   file, and DB Migrate applies crm- files in number order with no gap. The only parallel CRM lane this session
   (AA-958 messaging) takes crm-036, so 037..039 stayed free and crm-040 would never land or apply. This PR merges
   after the crm-036 PR; if that one is not on main first, renumber to 036 (`git grep -n '037_\|crm-037\|crm037'`).
-- Apply order: crm-040 on Dev **before** the code PR deploys (the code reads `crm.llm_stage_profile` and may write
+- Apply order: crm-037 on Dev **before** the code PR deploys (the code reads `crm.llm_stage_profile` and may write
   `truncated`; on the old schema every call would refuse `profile_unavailable`).
 - CIS Calls tab maps an unknown CRM status to `error` today (`ai_gateway_calls.py` `SOURCE_STATUSES["crm"]`): add
   `truncated` / `billed_unusable` there (follow-up, CIS lane).
 - Tests: `api/tests/unit/test_aa964_gateway_core.py` (F1/F2 unit), updated `test_aa964_crm_ai.py` /
-  `test_llm_gateway.py`, `api/tests/integration/test_crm040_schema.py`, `api/tests/integration/
+  `test_llm_gateway.py`, `api/tests/integration/test_crm037_schema.py`, `api/tests/integration/
   test_aa964_gateway_profiles.py` (real PostgreSQL: seeded route as anthropic, kill switch, fallback, truncated).
 - Unit suite as ci.yml: 2835 passed, TOTAL 90.97 %.

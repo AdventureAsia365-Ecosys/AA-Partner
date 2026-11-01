@@ -49,7 +49,7 @@ AA-964 (card CRM-33a; root ADR 0008a §5-6, root ADR 0009 §8):
 
 AA-964, S263 gateway plan F1 + F2 (root ADR 0009 decisions 4-6, 8 and 13; root ADR 0008a §6):
 
-- **Stage profile first** (crm-040, :mod:`app.llm.profiles`): the stage's profile is read in the call's transaction
+- **Stage profile first** (crm-037, :mod:`app.llm.profiles`): the stage's profile is read in the call's transaction
   before anything else. No profile -> ``stage_unrouted``; unreadable -> ``profile_unavailable``; another role ->
   ``profile_mismatch``; **kill switch** off (``is_active`` false) -> ``stage_disabled``. Each is one refused row at
   0 USD, nothing scrubbed or sent. A gateway built without a profile source (tests, :func:`stub_gateway`) runs one
@@ -750,7 +750,7 @@ def build_gateway(settings: Any, keys: Any | None = None) -> LlmGateway:
     - **provider**: :class:`app.llm.providers.bedrock.BedrockConverseProvider` only when ``CRM_LLM_PROVIDER=bedrock``
       (``app.settings`` refuses it without a model id and both prices); the stub otherwise (the default).
     - **limiter**: ``RATE_LIMIT_AI_PER_MINUTE`` calls per agency per minute (0 = off).
-    - **profiles**: the stage profiles in ``crm`` (crm-040, :class:`app.llm.profiles.DbProfileSource`): the route, the
+    - **profiles**: the stage profiles in ``crm`` (crm-037, :class:`app.llm.profiles.DbProfileSource`): the route, the
       attempts, the deadline and the kill switch of each stage. The provider plays each route entry (``for_route``).
 
     No AWS call here: the Bedrock and guardrail clients are made on first use.

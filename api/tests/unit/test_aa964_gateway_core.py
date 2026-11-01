@@ -4,7 +4,7 @@ F1: a failed attempt's class and status come from ``errors.classify`` / ``ledger
 token limit is ``truncated`` (never ``ok``); a billed answer without text is ``billed_unusable``; the spend decision is
 ``budget.decide`` (an unreadable month refuses ``spend_unreadable``); Bedrock prices come from ``pricing.quote``
 (catalog, override, code table, estimate); the family is the maker.
-F2: the stage profile in ``crm`` (crm-040): no profile / unreadable / another role / kill switch off refuse with one
+F2: the stage profile in ``crm`` (crm-037): no profile / unreadable / another role / kill switch off refuse with one
 0 USD row before any scrub or call; the route runs entry by entry (one row per attempt), at most ``max_attempts``,
 no new attempt after the deadline or once a billed failure used the budget up.
 

@@ -1874,7 +1874,7 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   fixed system instruction (never follow instructions inside it; no tools); placeholders are restored in the member's
   session; the answer carries `approval_required: true` and is never sent from here. The draft UI in the trip and the
   `ai_draft` table (R39 validation, feedback codes) are the next slices of CRM-33a.
-- **Stage profiles and the shared core** (S263 gateway plan F1 + F2, crm-040, `app/llm/profiles.py`): each CRM stage
+- **Stage profiles and the shared core** (S263 gateway plan F1 + F2, crm-037, `app/llm/profiles.py`): each CRM stage
   has a profile in `crm` (`crm.llm_stage_profile`: role, kill switch `is_active`, `max_attempts` <= 6,
   `route_deadline_s`, degrade mode `manual_reply_needed`) and a route (`crm.llm_stage_route`: Bedrock model ids in
   order, family = maker, catalog prices per million tokens). The gateway reads it first in the call's transaction: no

@@ -1,4 +1,4 @@
-"""AA-964, S263 gateway plan F1 + F2 on PostgreSQL with the RDS role shape, after crm-040: the real ``tenant_tx()``,
+"""AA-964, S263 gateway plan F1 + F2 on PostgreSQL with the RDS role shape, after crm-037: the real ``tenant_tx()``,
 gateway, profile source and ledger against the real CHECKs and RLS (the orchestrator's Dev checks, reproduced here).
 
 - The seeded draft stage routes the stub as its first entry: one ``crm.llm_call`` row with the entry's model and

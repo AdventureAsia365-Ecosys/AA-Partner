@@ -498,7 +498,7 @@ def ai_conn(enabled: bool = False, budget: str = "2", spent: str = "0.5", row: b
     )
 
 
-# crm-040's seed of the draft stage, as PROFILE_SQL returns it (invented maker, not a real model id).
+# crm-037's seed of the draft stage, as PROFILE_SQL returns it (invented maker, not a real model id).
 DRAFT_PROFILE_ROWS = [
     {
         "stage": "crm_draft_reply",

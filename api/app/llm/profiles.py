@@ -1,6 +1,6 @@
 """CRM AI stage profiles (AA-964, S263 gateway plan F2; root ADR 0009 decisions 4 and 5, root ADR 0008a §6).
 
-A stage profile is the CRM's own control plane for one AI stage, in schema ``crm`` (crm-040), never ``shared.llm_*``:
+A stage profile is the CRM's own control plane for one AI stage, in schema ``crm`` (crm-037), never ``shared.llm_*``:
 
 - ``crm.llm_stage_profile``: role, ``is_active`` (the stage kill switch), ``max_attempts`` (1..6), ``route_deadline_s``
   and ``degrade_mode`` (``manual_reply_needed``);
@@ -117,7 +117,7 @@ def profile_from_rows(rows: list[Any]) -> StageProfile | None:
 
 
 class DbProfileSource:
-    """The stage profiles in ``crm`` (crm-040), read in the caller's context (``app.aa_llm.ports.ConfigSource``)."""
+    """The stage profiles in ``crm`` (crm-037), read in the caller's context (``app.aa_llm.ports.ConfigSource``)."""
 
     async def load_route(self, db: AnyContext, stage: str) -> StageProfile | None:
         return profile_from_rows(list(await db.conn.fetch(PROFILE_SQL, stage)))

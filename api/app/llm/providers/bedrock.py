@@ -9,7 +9,7 @@ an outage is one ``error`` row and the draft says "reply by hand" (the gateway n
   ``bedrock-runtime`` client is made on first use, with the task role, or with the CRM-only invoker role
   ``CRM_LLM_ROLE_ARN`` when set (STS ``AssumeRole``, credentials cached until 5 minutes before they expire).
 - **Cost** is priced with the shared core (``app.aa_llm.pricing.quote``, AA-964 S263 F1): the route entry's catalog
-  prices (crm-040 ``crm.llm_stage_route``, ``pricing_mode catalog``), overridden by ``CRM_LLM_USD_PER_MTOK_IN`` /
+  prices (crm-037 ``crm.llm_stage_route``, ``pricing_mode catalog``), overridden by ``CRM_LLM_USD_PER_MTOK_IN`` /
   ``_OUT`` for the configured model (``override``), else the core's code table (``code_table``) or its high estimate
   (``estimate``, never 0), so every call counts against the agency budget. Cache tokens are recorded as reported and
   priced at the core's cache rates (the CRM sends no cache point, so they are 0 today).
