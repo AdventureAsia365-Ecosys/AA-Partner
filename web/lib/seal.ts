@@ -10,7 +10,8 @@
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
 
 // "client-search": the clients directory search term (AA-937, lib/clientSearch.ts), kept out of URLs.
-// "invite" / "invite-claim": the invitation token and the claim result of the join pages (AA-939, lib/invite.ts).
+// "invite" / "invite-claim" / "invite-notice": the invitation token, the claim result and the "already claimed" notice
+// of the join pages (AA-939, lib/invite.ts; the notice has its own purpose and cookie since S263).
 // "staff-*": the AA staff console's own cookies (AA-1019, lib/staffSession.ts), sealed with STAFF_SESSION_SECRET.
 export type Purpose =
   | "session"
@@ -19,6 +20,7 @@ export type Purpose =
   | "client-search"
   | "invite"
   | "invite-claim"
+  | "invite-notice"
   | "staff-session"
   | "staff-refresh"
   | "staff-oauth-tx";
