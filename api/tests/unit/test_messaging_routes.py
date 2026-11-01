@@ -1,6 +1,7 @@
 """AA-958 routes: each ``/crm/v1/messaging`` route reaches its helper; managing the connection is owner-only and the
 account is read only after that check and before anything is stored; the public Twilio webhook routes answer TwiML,
-403 on a bad signature, 404 on an unknown hook, 413 over 64 KiB."""
+403 on a bad signature, 404 on an unknown hook, 413 over 64 KiB, and are not held by the per-address public limit
+(only unknown hook ids are counted)."""
 
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from app.errors import Forbidden, NotFound
 from app.main import create_app
 from app.messaging import compose, connection, health, webhook
 from app.messaging.providers import AuthRevoked
+from app.ratelimit import FixedWindowLimiter
 from app.routers import messaging as router
 from app.routers import public as public_router
 from tests.tokens import LocalPools
@@ -177,3 +179,33 @@ def test_public_webhook_routes(pools: LocalPools, monkeypatch: pytest.MonkeyPatc
         big = client.post(f"/crm/public/v1/hooks/twilio/{HOOK_ID}", content=b"a=" + b"x" * (64 * 1024))
         assert big.status_code == 413
         assert client.post(f"/crm/public/v1/hooks/twilio/{HOOK_ID}", content=b"\xff\xfe").status_code == 400
+
+
+def test_webhooks_are_not_held_by_the_per_address_public_limit(pools: LocalPools, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Twilio posts every agency's callbacks from one shared pool of addresses: signed callbacks are never counted
+    (a 429 loses an inbound message for good); only unknown hook ids are, and an address over that ceiling is 429
+    before any work."""
+    settings = pools.settings()
+    app = create_app(settings, verifier=pools.verifier(settings), keys=object(), messaging_runtime=runtime())
+    monkeypatch.setattr(public_router, "request_pool", _pool)
+    handled: list[str] = []
+
+    async def handle(_pool: Any, _runtime: Any, request: webhook.HookRequest) -> str:
+        handled.append(request.hook_id)
+        if request.hook_id == "f" * 32:
+            raise NotFound("hook_not_found")
+        return "stored"
+
+    monkeypatch.setattr(webhook, "handle", handle)
+    with TestClient(app) as client:
+        app.state.public_limiter = FixedWindowLimiter(1)
+        app.state.hook_miss_limiter = FixedWindowLimiter(2)
+        for _ in range(5):  # far over the public limit of 1: every signed callback still goes through
+            assert client.post(f"/crm/public/v1/hooks/twilio/{HOOK_ID}/status", content=b"a=b").status_code == 200
+        assert client.post(f"/crm/public/v1/hooks/twilio/{'f' * 32}", content=b"a=b").status_code == 404
+        assert client.post(f"/crm/public/v1/hooks/twilio/{'f' * 32}", content=b"a=b").status_code == 404
+        before = len(handled)
+        miss = client.post(f"/crm/public/v1/hooks/twilio/{'f' * 32}", content=b"a=b")
+        assert miss.status_code == 429 and miss.headers["Retry-After"] == "60"
+        assert client.post(f"/crm/public/v1/hooks/twilio/{HOOK_ID}", content=b"a=b").status_code == 429
+        assert len(handled) == before  # refused before any lookup

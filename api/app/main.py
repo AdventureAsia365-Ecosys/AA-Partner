@@ -56,7 +56,7 @@ from app.messaging.sender import ChannelSender, TextSender
 from app.messaging.state import MessagingRuntime
 from app.observability import setup as setup_observability
 from app.observability.request_id import RequestIdMiddleware, unhandled_error_handler
-from app.ratelimit import FixedWindowLimiter
+from app.ratelimit import HOOK_MISSES_PER_MINUTE, FixedWindowLimiter
 from app.routers import (
     aa,
     agency,
@@ -250,6 +250,8 @@ def create_app(
     # local without KMS_SEAL_KEY_ID; None on stg / prod without it: signing answers 503 esign_not_configured).
     app.state.sealer = build_sealer(settings)
     app.state.public_limiter = FixedWindowLimiter(settings.rate_limit_public_per_minute)
+    # AA-958: the Twilio webhooks count only unknown hook ids per address (app.routers.public), never genuine callbacks.
+    app.state.hook_miss_limiter = FixedWindowLimiter(HOOK_MISSES_PER_MINUTE)
     # AA-964 (CRM-33a): the one LLM gateway of the process (stub provider unless CRM_LLM_PROVIDER=bedrock).
     app.state.llm_gateway = build_gateway(settings, keys)
     # AA-936: inquiry-form submissions, per client address per minute and per form per hour.

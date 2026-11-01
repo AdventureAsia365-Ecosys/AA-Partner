@@ -29,8 +29,11 @@ is decided by the form key inside :func:`app.tenancy.intake_tx`.
 - ``POST /crm/public/v1/hooks/twilio/{hook_id}`` and ``.../{hook_id}/status`` (AA-958): an agency's Twilio webhooks
   (an inbound SMS / WhatsApp message, a status callback), form-encoded, at most 64 KiB
   (:func:`app.messaging.webhook.handle`). ``X-Twilio-Signature`` is checked with the agency's own Auth Token before
-  anything is stored: 403 ``invalid_signature``; 404 ``hook_not_found``; else 200 with an empty TwiML response. Public
-  rate limit.
+  anything is stored: 403 ``invalid_signature``; 404 ``hook_not_found``; else 200 with an empty TwiML response. **Not**
+  under the per-address public limit: Twilio posts every agency's webhooks from one shared pool of addresses, and a
+  429 would lose a client's message for good (Twilio does not retry an inbound webhook). The signature authenticates
+  them; only unknown hook ids (404) are counted, per address (``HOOK_MISSES_PER_MINUTE``), and an address over that
+  ceiling is answered 429 before any work, so random-id floods stay cheap.
 
 Responses never carry an id, a name, or whether an e-mail is already known.
 """
@@ -46,6 +49,7 @@ from fastapi.responses import JSONResponse, Response
 
 from app.calendar import public as calendar_public
 from app.db import request_pool
+from app.errors import NotFound
 from app.intake import public as intake
 from app.intake import stage2_public
 from app.messaging import webhook as messaging_hooks
@@ -184,6 +188,10 @@ async def _hook(request: Request, hook_id: str, kind: str, signature: str | None
     runtime = getattr(request.app.state, "messaging_runtime", None)
     if runtime is None:
         raise HTTPException(status_code=503, detail="messaging_not_configured")
+    misses = request.app.state.hook_miss_limiter
+    address = client_address(request, request.app.state.settings.rate_limit_xff_hops)
+    if misses.exhausted(address):
+        raise HTTPException(status_code=429, detail="rate_limited", headers={"Retry-After": str(int(misses.window_s))})
     try:
         body = await read_capped(request, MAX_HOOK_BYTES)
     except BodyTooLarge:
@@ -193,9 +201,13 @@ async def _hook(request: Request, hook_id: str, kind: str, signature: str | None
     except (UnicodeDecodeError, ValueError):
         raise HTTPException(status_code=400, detail="invalid_form") from None
     pool = await request_pool(request)
-    await messaging_hooks.handle(
-        pool, runtime, messaging_hooks.HookRequest(hook_id=hook_id, kind=kind, params=params, signature=signature)
-    )
+    try:
+        await messaging_hooks.handle(
+            pool, runtime, messaging_hooks.HookRequest(hook_id=hook_id, kind=kind, params=params, signature=signature)
+        )
+    except NotFound:
+        misses.allow(address)  # only a miss is counted: genuine (signed) callbacks never use the address's minute
+        raise
     return Response(EMPTY_TWIML, media_type="text/xml", headers=NO_STORE)
 
 
@@ -203,7 +215,6 @@ async def _hook(request: Request, hook_id: str, kind: str, signature: str | None
 async def post_twilio_inbound(
     request: Request,
     hook_id: HookId,
-    _: PublicRateLimit,
     x_twilio_signature: Annotated[str | None, Header()] = None,
 ) -> Response:
     return await _hook(request, hook_id, "inbound", x_twilio_signature)
@@ -213,7 +224,6 @@ async def post_twilio_inbound(
 async def post_twilio_status(
     request: Request,
     hook_id: HookId,
-    _: PublicRateLimit,
     x_twilio_signature: Annotated[str | None, Header()] = None,
 ) -> Response:
     return await _hook(request, hook_id, "status", x_twilio_signature)
