@@ -1,10 +1,12 @@
 "use client";
 // web/components/settings/AiSettingsView.tsx — Settings > AI (AA-964, card CRM-33a): the AI switch and the monthly
 // budget (owner), this month's meter with the 75 / 90 / 100 % alert (design R5), the test-mode note while the
-// environment runs the test model, and the three rules of AI drafts. Writes go through the BFF allow-list (lib/bff.ts).
+// environment runs the test model, and the rules of AI drafts (AA-1033: "AI can make mistakes" first, the kit notice
+// as it shows under a draft, and a link to the terms' AI section). Writes go through the BFF allow-list (lib/bff.ts).
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Badge, Button, Checkbox, Field, Input, K, useHydrated } from "@/app/_kit";
+import Link from "next/link";
+import { AiNotice, Badge, Button, Checkbox, Field, Input, K, useHydrated } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
 import { aiErrorKey, budgetError, meterTone, meterWidth, usd, type AiSettings } from "@/lib/ai";
 import { bffSend } from "@/lib/bffClient";
@@ -126,10 +128,19 @@ export function AiSettingsView({ settings, lang, locale }: { settings: AiSetting
 
       <Panel title={tr("ai.rules")} testId="ai-rules">
         <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 6, fontSize: 13, color: K.ink }}>
+          <li>{tr("ai.rule.mistakes")}</li>
           <li>{tr("ai.rule.review")}</li>
           <li>{tr("ai.rule.data")}</li>
           <li>{tr("ai.rule.manual")}</li>
         </ul>
+        {/* AA-1033: the kit staff notice every AI draft carries, shown here as it appears, and the terms section. */}
+        <p style={{ margin: "14px 0 6px", fontSize: 12.5, color: K.muted }}>{tr("ai.noticeExample")}</p>
+        <AiNotice lang={lang} testId="ai-notice-example" />
+        <p style={{ margin: "12px 0 0", fontSize: 13 }}>
+          <Link href="/terms#ai" style={{ color: K.accentDeep }} data-testid="ai-terms-link">
+            {tr("ai.termsLink")}
+          </Link>
+        </p>
       </Panel>
     </div>
   );

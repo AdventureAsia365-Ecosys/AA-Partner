@@ -42,6 +42,9 @@ a { color: inherit; }
   border-bottom: 1px solid var(--aa-line); position: sticky; top: 0; z-index: 5;
 }
 [data-crm="main"] { flex: 1; min-width: 0; padding: 22px 24px 40px; }
+/* AA-1033: one quiet line under every agency page (the terms of use). */
+[data-crm="footer"] { padding: 0 24px 18px; font-size: 12px; color: var(--aa-muted); }
+[data-crm="footer"] a { color: var(--aa-muted); }
 [data-crm="menu-button"] { display: none; }
 [data-crm="backdrop"] { display: none; }
 [data-crm="nav-item"] {
@@ -73,6 +76,7 @@ a { color: inherit; }
   }
   [data-crm="menu-button"] { display: inline-flex; }
   [data-crm="main"] { padding: 16px 16px 32px; }
+  [data-crm="footer"] { padding: 0 16px 16px; }
   [data-crm="topbar"] { padding: 8px 12px; }
 }
 @media (max-width: 599px) {

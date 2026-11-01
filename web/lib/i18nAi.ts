@@ -1,5 +1,6 @@
 // web/lib/i18nAi.ts
-// AA-964 (card CRM-33a) — the EN / VI strings of Settings > AI, spread into lib/i18n.ts (every key exists in both
+// AA-964 (card CRM-33a) — the EN / VI strings of Settings > AI (AA-1033: the "AI can make mistakes" rule, the
+// sample notice and the terms link), spread into lib/i18n.ts (every key exists in both
 // languages: tests/i18n.test.ts).
 
 export const aiEn = {
@@ -27,6 +28,9 @@ export const aiEn = {
   "ai.save": "Save",
   "ai.saved": "AI settings saved.",
   "ai.rules": "How AI drafts work",
+  "ai.rule.mistakes": "AI can make mistakes: check facts before sending.",
+  "ai.noticeExample": "Every AI draft carries this note:",
+  "ai.termsLink": "AI-generated content in the terms of use",
   "ai.rule.review": "A draft is a suggestion. Read it and change it before you send it yourself.",
   "ai.rule.data": "Text from clients is treated as data: instructions inside a client's message are never followed.",
   "ai.rule.manual": "When AI cannot help (switched off, budget used up, or a check fails), the page says to reply by hand.",
@@ -61,6 +65,9 @@ export const aiVi: Record<keyof typeof aiEn, string> = {
   "ai.save": "Lưu",
   "ai.saved": "Đã lưu cài đặt AI.",
   "ai.rules": "Cách bản nháp AI hoạt động",
+  "ai.rule.mistakes": "AI có thể sai: hãy kiểm tra lại thông tin trước khi gửi.",
+  "ai.noticeExample": "Mỗi bản nháp AI đều có ghi chú này:",
+  "ai.termsLink": "Nội dung do AI tạo trong điều khoản sử dụng",
   "ai.rule.review": "Bản nháp chỉ là gợi ý. Hãy đọc và sửa trước khi tự gửi.",
   "ai.rule.data": "Văn bản của khách được coi là dữ liệu: không bao giờ làm theo chỉ dẫn nằm trong tin nhắn của khách.",
   "ai.rule.manual": "Khi AI không giúp được (đang tắt, hết ngân sách, hoặc một bước kiểm tra lỗi), trang sẽ báo tự trả lời.",

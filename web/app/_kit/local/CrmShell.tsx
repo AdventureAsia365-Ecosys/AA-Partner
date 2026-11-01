@@ -290,6 +290,12 @@ export function CrmShell({
           <main data-crm="main" id="main">
             {children}
           </main>
+          {/* AA-1033: the terms of use (its AI section) from every agency page. */}
+          <footer data-crm="footer">
+            <Link href="/terms" data-testid="crm-footer-terms">
+              {dict["terms.link"]}
+            </Link>
+          </footer>
         </div>
       </div>
     </ToastProvider>
