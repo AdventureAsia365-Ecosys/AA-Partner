@@ -10,6 +10,10 @@ provider (no network): the Done-when "two-way WhatsApp on a trip timeline".
 - An unknown number lands in Unmatched, never on a trip; STOP blocks a queued message at the dispatcher
   (``no_consent``) and new sends (409); ``messaging_hook_tx`` sees only its agency; a disconnect deletes the
   credential, the connection and its templates (cascade) and keeps the messages.
+- A marketing template is refused (409 ``no_marketing_consent``) without a current marketing yes, and a queued one
+  whose consent was withdrawn before it left ends ``no_consent`` at the dispatcher.
+- A known client with no conversation on the channel and no open trip: the conversation is listed for the Inbox
+  (``no_trip``), never lost.
 """
 
 from __future__ import annotations
@@ -227,3 +231,57 @@ async def test_disconnect_deletes_credential_connection_and_templates(app_pool: 
     with pytest.raises(Conflict) as caught:
         await _send(app_pool, d)
     assert caught.value.code == "channel_not_connected"
+
+
+async def _consent(pool: asyncpg.Pool, d: dict[str, Any], value: bool) -> None:
+    await _sql(
+        pool,
+        d["tenant"],
+        "INSERT INTO crm.consent (traveler_id, purpose, value, source) VALUES ($1, 'marketing', $2, 'agent_recorded')",
+        d["lead"],
+        value,
+    )
+
+
+async def test_a_marketing_template_follows_the_marketing_consent(app_pool: asyncpg.Pool) -> None:
+    d = await _setup(app_pool)
+    job = Job("j", "crm_messaging_templates", {"tenant_id": str(d["tenant"])}, 1, 3)
+    await health.build_templates_handler(d["runtime"])(app_pool, job)
+    # The sandbox's marketing template is pending; the agency's Meta review approves it.
+    (promo,) = await _sql(
+        app_pool,
+        d["tenant"],
+        "UPDATE crm.channel_template SET approval = 'approved' WHERE category = 'MARKETING' RETURNING content_sid",
+    )
+    args = {"body": None, "content_sid": promo["content_sid"], "variables": {"1": "Hoa"}}
+    await _consent(app_pool, d, False)
+    with pytest.raises(Conflict) as caught:
+        await _send(app_pool, d, **args)
+    assert caught.value.code == "no_marketing_consent"
+    async with tenant_tx(app_pool, d["owner"], d["tenant"], action=Action.MESSAGE_SEND) as ctx:
+        offered = await compose.compose_state(ctx, Vault(d["keys"], ctx), conversation_id=None, trip_id=d["trip"])
+    assert {t["content_sid"]: t["available"] for t in offered["templates"]}[promo["content_sid"]] is False
+
+    await _consent(app_pool, d, True)
+    queued = await _send(app_pool, d, **args)
+    (row,) = await _sql(app_pool, d["tenant"], "SELECT purpose FROM crm.dispatch_queue WHERE dispatch_id = $1",
+                        uuid.UUID(queued["dispatch_id"]))  # fmt: skip
+    assert row["purpose"] == "marketing"
+    await _consent(app_pool, d, False)  # withdrawn during the Undo delay
+    assert (await _dispatch(app_pool, d, queued["dispatch_id"]))["reason_code"] == "no_consent"
+
+
+async def test_a_known_client_without_an_open_trip_is_listed_for_the_inbox(app_pool: asyncpg.Pool) -> None:
+    d = await _setup(app_pool)
+    lost = "UPDATE crm.trip SET stage = 'lost', lost_reason_code = 'postponed' WHERE trip_id = $1"
+    await _sql(app_pool, d["tenant"], lost, d["trip"])  # the client's only trip is closed
+    assert await webhook.handle(app_pool, d["runtime"], _inbound(d)) == "stored"
+    (conv,) = await _sql(app_pool, d["tenant"], "SELECT conversation_id, trip_id, traveler_id FROM crm.conversation")
+    assert (conv["trip_id"], conv["traveler_id"]) == (None, d["lead"])
+    async with tenant_tx(app_pool, d["owner"], d["tenant"], action=Action.TRIP_VIEW) as ctx:
+        assert (await conversations.list_conversations(ctx, unmatched=True))["conversations"] == []
+        (listed,) = (await conversations.list_conversations(ctx, no_trip=True))["conversations"]
+        assert listed["conversation_id"] == str(conv["conversation_id"]) and listed["traveler_id"] == str(d["lead"])
+        # Link to trip (the Inbox action): the conversation moves to that trip and leaves the list.
+        await conversations.link(ctx, conv["conversation_id"], d["lead"], d["trip"])
+        assert (await conversations.list_conversations(ctx, no_trip=True))["conversations"] == []

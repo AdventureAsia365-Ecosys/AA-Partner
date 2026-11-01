@@ -2,6 +2,8 @@
 drafts"; Fix B8 Undo; R24 held_reconnect).
 
 - **Lists** carry ids, counts and dates only (design §4.4: no contact data in lists), one ``list_view`` audit event.
+  ``unmatched``: no client and no trip. ``no_trip`` (AA-958): an SMS / WhatsApp conversation of a known client that no
+  trip holds (the client wrote with no open trip): the Inbox lists it with "Link to trip", so it is never lost.
 - **A conversation's messages** are decrypted for the agent (subject, text, HTML for the sandboxed iframe, From / To):
   one ``view`` audit event with the fields. A member sees their own drafts only.
 - **Link** (the Unmatched inbox): a conversation without a client gets one (and optionally a trip); a link set from
@@ -50,6 +52,7 @@ SELECT c.conversation_id, c.trip_id, c.traveler_id, c.channel, c.last_message_at
    AND ($1::uuid IS NULL OR c.trip_id = $1)
    AND ($2::uuid IS NULL OR c.traveler_id = $2)
    AND (NOT $3 OR (c.trip_id IS NULL AND c.traveler_id IS NULL))
+   AND (NOT $5 OR (c.trip_id IS NULL AND c.traveler_id IS NOT NULL AND c.channel IN ('sms', 'whatsapp')))
  ORDER BY c.last_message_at DESC, c.conversation_id
  LIMIT $4
 """
@@ -146,9 +149,10 @@ async def list_conversations(
     trip_id: uuid.UUID | None = None,
     traveler_id: uuid.UUID | None = None,
     unmatched: bool = False,
+    no_trip: bool = False,
     limit: int = 50,
 ) -> dict[str, Any]:
-    rows = await ctx.conn.fetch(LIST_SQL, trip_id, traveler_id, unmatched, max(1, min(limit, MAX_LIST)))
+    rows = await ctx.conn.fetch(LIST_SQL, trip_id, traveler_id, unmatched, max(1, min(limit, MAX_LIST)), no_trip)
     items = [
         {
             "conversation_id": str(r["conversation_id"]),
