@@ -71,6 +71,10 @@ PLATFORM_TABLES = {
     "(crm-020, AA-979)",
     "aa_content": "AA-authored content (prep packs, starter templates) cached from CIS catalog.http.v1, no tenant "
     "column, no PII (crm-022, AA-951)",
+    "llm_stage_profile": "AI stage profiles of the gateway (kill switch, attempts, deadline), AA configuration, no "
+    "tenant column, no PII (crm-037, AA-964)",
+    "llm_stage_route": "the route of each AI stage (Bedrock model, family, catalog prices), AA configuration, no "
+    "tenant column, no PII (crm-037, AA-964)",
 }
 # Append-only tenant tables (crm-003): tenant column, RLS and policy as the template, but no updated_at, no trash
 # columns; instead the append-only trigger, and crm_app may only INSERT and SELECT.
