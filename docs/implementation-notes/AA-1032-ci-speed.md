@@ -56,3 +56,7 @@ one of its 21 tests 17-33 s. Run alone it takes 12 s.
   fix its setup rather than moving files.
 - Shard count changes: the matrix list, `INTEGRATION_SHARDS` and the `/N` in the job name together
   (`test_aa1032_ci_shards.py` checks them).
+- The durations refresh needs no `--prefix` here: pytest's rootdir is `api/` (no ini file in `tests/integration`), so
+  the junit `file` paths already match `discover()`. The script copy gained `durations --prefix` for CIS, whose
+  `tests/integration/pytest.ini` makes that folder the rootdir (review finding, fix pass); the copy stays byte-equal.
+  `test_committed_durations_name_the_files_discover_returns` guards both the rootdir and the committed keys.

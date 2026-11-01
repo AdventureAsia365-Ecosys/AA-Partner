@@ -5,6 +5,9 @@
 - ``.github/workflows/ci.yml``: "Integration Tests" is the aggregate of the "Integration shard i/N" matrix, runs when a
   shard failed (never "skipped", which a required check counts as passed) and fails unless every shard passed; the
   matrix size equals the shard count each shard splits by; skips still fail a shard; Unit Tests run on 4 workers.
+- ``.github/test-durations/integration.json``: its keys are real test files under the names ``discover`` returns
+  (pytest's rootdir is ``api/``, so junit paths need no ``--prefix``; a refresh under other names would turn the split
+  into a file count).
 """
 
 from __future__ import annotations
@@ -75,6 +78,16 @@ def test_junit_durations_read_the_xunit1_file_attribute(tmp_path: Path) -> None:
     )  # fmt: skip
     assert out.returncode == 0, out.stderr
     assert json.loads(out_file.read_text()) == {"tests/integration/test_a.py": 2.0}
+
+
+def test_committed_durations_name_the_files_discover_returns() -> None:
+    # No ini file under tests/integration: pytest's rootdir stays api/, so junit "file" paths match discover() as is.
+    # (CIS has tests/integration/pytest.ini and passes durations --prefix tests/integration/.)
+    assert not any((API / "tests" / "integration" / n).exists() for n in ("pytest.ini", "pyproject.toml", "tox.ini"))
+    keys = list(shards.load_durations(str(DURATIONS)))
+    real = [k for k in keys if (API / k).is_file()]
+    # A few stale keys (deleted tests) are harmless; a refresh written under other names matches almost none.
+    assert keys and len(real) >= 0.8 * len(keys), f"{len(real)}/{len(keys)} keys are test files"
 
 
 def test_integration_tests_is_the_aggregate_of_its_shards() -> None:
