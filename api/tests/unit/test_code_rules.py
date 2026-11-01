@@ -112,6 +112,10 @@ SYSTEM_MODULES = frozenset(
         "app/ops_release/job.py",
         # AA-958: the SMS / WhatsApp template sync and daily check (one agency per transaction, actor job:<kind>).
         "app/messaging/health.py",
+        # AA-959: one workflow run, the hourly workflow tick and the morning digest (one agency per transaction).
+        "app/workflows/runner.py",
+        "app/workflows/tick.py",
+        "app/workflows/digest.py",
     }
 )
 INTAKE_MODULES = frozenset({"app/intake/public.py"})

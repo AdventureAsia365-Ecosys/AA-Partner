@@ -10,7 +10,8 @@ both sides check against:
   listed here (or one listed here is no longer written);
 - ``web/tests/tripCodes.test.ts`` reads this file and fails when a listed code has no EN or VI label.
 
-Adding a task kind or a stage reason = one line here + its two labels in the web.
+Adding a task kind or a stage reason = one line here + its two labels in the web. AA-959: the workflow library's
+kinds (``app/workflows/model.py``, ``*_TASK``) are listed here like every other module's.
 """
 
 from __future__ import annotations
@@ -29,22 +30,35 @@ TASK_KINDS: frozenset[str] = frozenset(
         "call_slot_taken",
         "cancel_refund_review",
         "cancel_with_suppliers",
+        "client_birthday",
         "collect_deposit",
         "commission_overdue",
+        "confirm_arrival_flight",
+        "confirm_supplier_bookings",
         "date_rule_gate_unmet",
+        "follow_up_quiet_client",
         "get_planning_info",
         "invoice_overdue",
         "ops_release_incomplete",
+        "passport_expiring",
         "payment_unfulfillable",
         "proposal_change_request",
         "proposal_follow_up",
         "proposal_hold_problem",
+        "reply_client_message",
         "reply_inquiry",
+        "request_review",
         "return_date_missing",
+        "send_pre_travel_pack",
         "stage3_due_t21",
+        "trip_anniversary",
         "verify_transfer",
     }
 )
+
+# AA-959: the custom-task family (a member's own task, a workflow's create-task step): kind custom_<hex>, worded by
+# its sealed title (crm-038 task_title_chk), never by a label.
+TASK_KIND_PREFIXES: tuple[str, ...] = ("custom_",)
 
 # Every whole reason code a stage move writes into crm.trip_stage_history.
 STAGE_REASONS: frozenset[str] = frozenset(

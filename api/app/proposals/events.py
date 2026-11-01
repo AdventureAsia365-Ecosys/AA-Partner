@@ -6,7 +6,8 @@ with ``bell=True`` is addressed to the trip owner (``bell_member_id``): it is an
 it seen. The bell bundles at read time: unseen events of one (proposal, name) are one line with a count, so several
 swaps of one client are one "Client changed their choices (3)" line, not three.
 
-- :func:`record`: one event (every context; the client page writes through ``client_link_tx``).
+- :func:`record`: one event (every context; the client page writes through ``client_link_tx``); AA-959: the
+  workflows whose trigger is this event start (:func:`app.workflows.triggers.on_trip_event`).
 - :func:`bell`: the caller's unseen items, grouped (``TRIP_VIEW``).
 - :func:`mark_seen`: mark the caller's items seen (all, or the listed groups).
 - :func:`nudge_due`: R4, the hourly run: a sent version the client viewed 2 days ago without choosing anything or
@@ -125,7 +126,13 @@ async def record(
     if name not in NAMES:
         raise ValueError(f"unknown event {name}")
     member = await ctx.conn.fetchval(OWNER_SQL, trip_id) if bell else None
-    return await ctx.conn.fetchval(INSERT_SQL, trip_id, proposal_id, name, _detail(detail), member)
+    event_id = await ctx.conn.fetchval(INSERT_SQL, trip_id, proposal_id, name, _detail(detail), member)
+    if event_id is not None:
+        # AA-959: the workflows that start on this trip event (message events come through app.messaging.events).
+        from app.workflows import triggers
+
+        await triggers.on_trip_event(ctx, trip_id, name, event_id)
+    return event_id
 
 
 async def recent(ctx: AnyContext, proposal_id: uuid.UUID, name: str, seconds: int) -> bool:

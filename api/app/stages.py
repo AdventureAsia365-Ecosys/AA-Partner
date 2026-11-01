@@ -417,6 +417,12 @@ async def move(
     audit_reason = f"override_{override}" if override is not None else reason
     ctx.audit("stage_change", "allowed", "trip", str(trip_id), reason=audit_reason[:40])
     effects = await _enter_effects(ctx, vault, trip_id, stage, to, owner_member_id=trip["owner_member_id"])
+    # AA-959: the workflows that start on this stage; a member's move starts them after the Undo window (Fix B8).
+    from app.workflows import triggers
+
+    effects["workflow_runs"] = await triggers.on_stage_enter(
+        ctx, trip_id, to, history["history_id"], user_action=getattr(ctx, "member_id", None) is not None
+    )
     if to == "lost":
         # AA-947: a lost trip gives its AA holds back (queued after the Undo window; Undo cancels them).
         from app.booking import aa_lines
@@ -543,9 +549,14 @@ async def _undo_one(ctx: TenantContext, trip: Any, history_id: uuid.UUID, *, bat
         if last["to_stage"] == "qualifying"
         else 0
     )
+    # AA-959 (Fix B8): the workflows the undone move started stop before their first step.
+    from app.workflows import triggers
+
+    workflows = await triggers.stop_for_trigger(ctx, trip_id, f"stage:{history_id}")
     ctx.audit("stage_change", "allowed", "trip", str(trip_id), reason="undo")
     return {
         "trip_id": str(trip_id),
+        "workflows_stopped": workflows,
         "stage": back,
         "waiting_on": waiting_on,
         "allowed_moves": allowed_moves(back),

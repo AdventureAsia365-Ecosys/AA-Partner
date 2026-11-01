@@ -40,6 +40,9 @@ SENDERS: tuple[SenderRow, ...] = (
     SenderRow("client_text_message", "agency_mailbox", "client", "agency_twilio", "app.messaging.sender"),
     SenderRow("messaging_test", "agency_mailbox", "agency_member", "agency_twilio", "app.messaging.health"),
     SenderRow("messaging_disconnected", "system", "agency_member", "aa_ses", "app.members.mail"),
+    # AA-959 (CRM-29a): the morning digest of a member's open tasks, counts only (errata S247 §3 item 3). A workflow's
+    # client message is a client_message / client_text_message row (the agency's own mailbox or Twilio).
+    SenderRow("task_digest", "system", "agency_member", "aa_ses", "app.members.mail"),
 )
 SENDER_KINDS = frozenset({"agency_mailbox", "system"})
 

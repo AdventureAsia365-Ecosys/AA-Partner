@@ -48,7 +48,7 @@ class Message:
     subject: str
     text: str
     # invitation | recovery_notice | data_request_notice | mailbox_disconnected (AA-945) | studio_invitation |
-    # breakglass_notice (AA-971)
+    # breakglass_notice (AA-971) | task_digest (AA-959)
     kind: str
 
 
@@ -197,6 +197,37 @@ def mailbox_disconnected_message(to: str, *, agency: str, link: str) -> Message:
     )
     subject = f"Mailbox disconnected for {agency} / Hộp thư của {agency} đã ngắt kết nối"
     return Message(to=to, subject=subject[:200], text=text, kind="mailbox_disconnected")
+
+
+def task_digest_message(to: str, *, agency: str, counts: dict[str, int], link: str) -> Message:
+    """AA-959 (design WF-10 "the morning digest carries counts only"; errata S247 §3 item 3): one member's open tasks
+    in one agency, as counts: overdue, due today, due in the next 7 days, waiting for dates. No client, trip or task
+    text: the member opens the Tasks page for the rest."""
+    o, d, u, w = (counts.get(k, 0) for k in ("overdue", "today", "upcoming", "waiting"))
+    text = "\n".join(
+        [
+            f"Your tasks in {agency} on AA Partner this morning:",
+            f"- overdue: {o}",
+            f"- due today: {d}",
+            f"- due in the next 7 days: {u}",
+            f"- waiting for trip dates: {w}",
+            f"Open your tasks: {link}/tasks",
+            "",
+            "---",
+            "",
+            f"Việc của bạn tại {agency} trên AA Partner sáng nay:",
+            f"- quá hạn: {o}",
+            f"- đến hạn hôm nay: {d}",
+            f"- đến hạn trong 7 ngày tới: {u}",
+            f"- chờ ngày đi: {w}",
+            f"Mở danh sách việc: {link}/tasks",
+            "",
+            "The owner can switch this mail off on the Tasks page. / Chủ đại lý có thể tắt thư này ở trang Việc.",
+            "Adventure Asia — AA Partner",
+        ]
+    )
+    subject = f"Your tasks today: {o} overdue, {d} due / Việc hôm nay: {o} quá hạn, {d} đến hạn"
+    return Message(to=to, subject=subject[:200], text=text, kind="task_digest")
 
 
 def messaging_disconnected_message(to: str, *, agency: str, link: str) -> Message:
