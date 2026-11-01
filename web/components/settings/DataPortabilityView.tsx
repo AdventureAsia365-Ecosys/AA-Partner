@@ -8,7 +8,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, Field, Input, K, Select } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
-import { bffSend } from "@/lib/bffClient";
+import { bffDownload, bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import {
@@ -75,21 +75,9 @@ export function DataPortabilityView({
   async function download(e: DataExport) {
     const link = await send<ExportLink>("POST", `data/exports/${e.export_id}/link`);
     if (!link) return;
-    try {
-      const res = await fetch(`/bff/${link.path}`, { credentials: "same-origin" });
-      if (!res.ok) throw new Error(String(res.status));
-      const url = URL.createObjectURL(await res.blob());
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = exportFileName(e);
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      router.refresh();
-    } catch {
-      setError(t(lang, "data.error"));
-    }
+    const res = await bffDownload(link.path, { filename: exportFileName(e) });
+    if (!res.ok) setError(t(lang, "data.error"));
+    else router.refresh();
   }
 
   const exportsList = exportsView?.exports ?? [];
