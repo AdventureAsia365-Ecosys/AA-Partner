@@ -28,10 +28,14 @@ export function ExportMenu({
   async function download() {
     setBusy(true);
     setError(null);
-    // AA-1014: an access token that expired since the page loaded is renewed in the background, then retried.
-    const res = await bffDownload(exportPath(section, { period, owner }), { filename: exportFilename(section, period) });
-    if (!res.ok) setError(t(lang, "reports.export.error"));
-    setBusy(false);
+    try {
+      // AA-1014: an access token that expired since the page loaded is renewed in the background, then retried; when
+      // that fails too the page is already on its way to sign in again (`redirecting`), so no error flashes first.
+      const res = await bffDownload(exportPath(section, { period, owner }), { filename: exportFilename(section, period) });
+      if (!res.ok && !res.redirecting) setError(t(lang, "reports.export.error"));
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (

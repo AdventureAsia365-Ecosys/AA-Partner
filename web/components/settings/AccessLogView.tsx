@@ -81,6 +81,7 @@ export function AccessLogView({
     setError(null);
     try {
       const res = await bffFetch(eventsPath(filter, cursor), { headers: { Accept: "application/json" } });
+      if (res.status === 401) return; // AA-1014: the renewal failed too; the page is reloading through /auth/refresh
       if (!res.ok) throw new Error(String(res.status));
       const page = (await res.json()) as AuditPage;
       setEvents((prev) => [...prev, ...page.events]);
@@ -95,9 +96,12 @@ export function AccessLogView({
   async function download(format: ExportFormat) {
     setBusy(format);
     setError(null);
-    const res = await bffDownload(exportPath(filter, format), { filename: exportFilename(format) });
-    if (!res.ok) setError(t(lang, "log.downloadError"));
-    setBusy(null);
+    try {
+      const res = await bffDownload(exportPath(filter, format), { filename: exportFilename(format) });
+      if (!res.ok && !res.redirecting) setError(t(lang, "log.downloadError"));
+    } finally {
+      setBusy(null);
+    }
   }
 
   return (

@@ -73,8 +73,8 @@ export function DataLifecycleView({
   async function download(requestId: string) {
     setError(null);
     const res = await bffDownload(`lifecycle/offboarding/${requestId}/export`, { filename: `agency-export-${requestId}.jsonl` });
-    if (!res.ok) setError(t(lang, "data.error"));
-    else router.refresh();
+    if (res.ok) router.refresh();
+    else if (!res.redirecting) setError(t(lang, "data.error"));
   }
 
   const off = view.offboarding ?? null;

@@ -11,8 +11,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const { bffDownload, bffFetch } = await import("@/lib/bffClient");
+const { bffDownload, bffFetch, bffSend } = await import("@/lib/bffClient");
 const { ExportMenu } = await import("@/components/reports/ExportMenu");
+const { exportPath } = await import("@/lib/reports");
+
+// The real paths the Reports page asks for (lib/reports.ts exportPath), so the fixtures follow the helper.
+const PIPELINE = exportPath("funnel", { period: "30d", owner: null });
+const CLIENTS = exportPath("lead_sources", { period: "30d", owner: null });
+const MARGINS = exportPath("money_by_month", { period: "30d", owner: null });
 
 type Call = { url: string; init: RequestInit | undefined };
 
@@ -67,9 +73,10 @@ afterEach(() => {
 describe("bffDownload", () => {
   it("renews an expired token once in the background, then downloads", async () => {
     stubFetch({ "/bff/": [EXPIRED, CSV], "/auth/refresh": [REDIRECTED] });
-    const res = await bffDownload("reports/export/pipeline?period=30d", { filename: "pipeline.csv" });
+    const res = await bffDownload(PIPELINE, { filename: "pipeline.csv" });
     expect(res).toEqual({ ok: true, data: null });
-    expect(bffCalls().map((c) => c.url)).toEqual(["/bff/reports/export/pipeline?period=30d", "/bff/reports/export/pipeline?period=30d"]);
+    expect(PIPELINE).toBe("reports/export?period=30d&section=funnel");
+    expect(bffCalls().map((c) => c.url)).toEqual([`/bff/${PIPELINE}`, `/bff/${PIPELINE}`]);
     expect(refreshCalls()).toHaveLength(1);
     const renew = refreshCalls()[0];
     expect(renew.url).toBe(`/auth/refresh?next=${encodeURIComponent("/reports?period=30d")}`);
@@ -81,8 +88,8 @@ describe("bffDownload", () => {
 
   it("sends the person to sign in again when the renewal did not help", async () => {
     stubFetch({ "/bff/": [EXPIRED, EXPIRED], "/auth/refresh": [REDIRECTED] });
-    const res = await bffDownload("reports/export/pipeline", { filename: "pipeline.csv" });
-    expect(res).toMatchObject({ ok: false, status: 401, detail: "session_expired" });
+    const res = await bffDownload(PIPELINE, { filename: "pipeline.csv" });
+    expect(res).toEqual({ ok: false, status: 401, detail: "session_expired", redirecting: true });
     expect(refreshCalls()).toHaveLength(1);
     expect(bffCalls()).toHaveLength(2);
     expect(assign).toHaveBeenCalledTimes(1);
@@ -92,14 +99,14 @@ describe("bffDownload", () => {
 
   it("downloads straight away with a valid token (no renewal)", async () => {
     stubFetch({ "/bff/": [CSV] });
-    expect(await bffDownload("reports/export/pipeline", { filename: "a.csv" })).toEqual({ ok: true, data: null });
+    expect(await bffDownload(PIPELINE, { filename: "a.csv" })).toEqual({ ok: true, data: null });
     expect(refreshCalls()).toHaveLength(0);
     expect(saved).toEqual(["a.csv"]);
   });
 
   it("returns the API's refusal without renewing (403 is not an expired token)", async () => {
     stubFetch({ "/bff/": [() => respond(403, { detail: "forbidden" })] });
-    expect(await bffDownload("reports/export/margins", { filename: "m.csv" })).toMatchObject({ ok: false, status: 403, detail: "forbidden" });
+    expect(await bffDownload(MARGINS, { filename: "m.csv" })).toMatchObject({ ok: false, status: 403, detail: "forbidden" });
     expect(refreshCalls()).toHaveLength(0);
     expect(assign).not.toHaveBeenCalled();
     expect(saved).toEqual([]);
@@ -113,18 +120,57 @@ describe("bffDownload", () => {
 
   it("a network failure is a plain error, not a sign-in", async () => {
     stubFetch({});
-    expect(await bffDownload("reports/export/pipeline", { filename: "a.csv" })).toMatchObject({ ok: false, status: 0, detail: "network" });
+    expect(await bffDownload(PIPELINE, { filename: "a.csv" })).toMatchObject({ ok: false, status: 0, detail: "network" });
     expect(assign).not.toHaveBeenCalled();
   });
 
   it("two downloads that expire together share one renewal", async () => {
     stubFetch({ "/bff/": [EXPIRED, EXPIRED, CSV, CSV], "/auth/refresh": [REDIRECTED] });
     const both = await Promise.all([
-      bffDownload("reports/export/pipeline", { filename: "a.csv" }),
-      bffDownload("reports/export/clients", { filename: "b.csv" }),
+      bffDownload(PIPELINE, { filename: "a.csv" }),
+      bffDownload(CLIENTS, { filename: "b.csv" }),
     ]);
     expect(both.every((r) => r.ok)).toBe(true);
     expect(refreshCalls()).toHaveLength(1);
+  });
+
+  it("a browser that cannot save the blob is an error result, not a throw", async () => {
+    stubFetch({ "/bff/": [CSV] });
+    vi.spyOn(URL, "createObjectURL").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    expect(await bffDownload(PIPELINE, { filename: "a.csv" })).toMatchObject({ ok: false, status: 0, detail: "save_failed" });
+  });
+});
+
+describe("bffSend", () => {
+  const LINK = { path: "data/exports/e1/file?token=t" };
+
+  it("with renew, renews in the background and sends the same JSON body again", async () => {
+    stubFetch({ "/bff/": [EXPIRED, () => respond(200, LINK)], "/auth/refresh": [REDIRECTED] });
+    const res = await bffSend("POST", "data/exports/e1/link", {}, { renew: true });
+    expect(res).toEqual({ ok: true, data: LINK });
+    expect(refreshCalls()).toHaveLength(1);
+    expect(bffCalls().map((c) => [c.init?.method, c.init?.body])).toEqual([
+      ["POST", "{}"],
+      ["POST", "{}"],
+    ]);
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("with renew, a second 401 reloads once and says it is redirecting", async () => {
+    stubFetch({ "/bff/": [EXPIRED, EXPIRED], "/auth/refresh": [REDIRECTED] });
+    const res = await bffSend("POST", "data/exports/e1/link", {}, { renew: true });
+    expect(res).toEqual({ ok: false, status: 401, detail: "session_expired", redirecting: true });
+    expect(assign).toHaveBeenCalledTimes(1);
+  });
+
+  it("without renew, keeps the full-page reload on the first 401", async () => {
+    stubFetch({ "/bff/": [EXPIRED] });
+    const res = await bffSend("POST", "data/exports", { scope: "tenant" });
+    expect(res).toMatchObject({ ok: false, status: 401, redirecting: true });
+    expect(refreshCalls()).toHaveLength(0);
+    expect(assign).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -169,6 +215,23 @@ describe("Reports export button", () => {
     expect(page.querySelector('[role="alert"]')).toBeNull();
   });
 
+  it("shows no error when the renewal failed and the page is going to sign in again", async () => {
+    stubFetch({ "/bff/": [EXPIRED, EXPIRED], "/auth/refresh": [REDIRECTED] });
+    const page = await clickExport();
+    expect(assign).toHaveBeenCalledTimes(1);
+    expect(page.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("clears the busy state even when saving the file throws", async () => {
+    stubFetch({ "/bff/": [CSV] });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    const page = await clickExport();
+    expect(page.querySelector("button")?.disabled).toBe(false);
+    expect(page.querySelector('[role="alert"]')?.textContent).toBe("The file could not be downloaded. Try again.");
+  });
+
   it("shows the error for a refusal that is not an expired token", async () => {
     stubFetch({ "/bff/": [() => respond(500, { detail: "error" })] });
     const page = await clickExport();
@@ -177,7 +240,8 @@ describe("Reports export button", () => {
 });
 
 describe("no raw /bff fetch in the browser code", () => {
-  // Every browser call to the BFF goes through lib/bffClient.ts, so an expired token is always renewed.
+  // Every browser call to the BFF goes through lib/bffClient.ts, so an expired token is always renewed. Scanned:
+  // web/components, web/lib and the client components ("use client") under web/app.
   const WEB = path.resolve(__dirname, "..");
   function files(dir: string): string[] {
     return readdirSync(dir).flatMap((name) => {
@@ -186,12 +250,52 @@ describe("no raw /bff fetch in the browser code", () => {
       return /\.tsx?$/.test(name) ? [full] : [];
     });
   }
+  const isClient = (src: string) => /^\s*(?:\/\/[^\n]*\n\s*|\/\*[\s\S]*?\*\/\s*)*["']use client["']/.test(src);
+  // Files that name a /bff/ path for another reason. Anything else that holds a "/bff/…" string or template literal is
+  // a raw call in the making (fetch(url) with the url built a line earlier, or an XMLHttpRequest).
+  const LITERAL_OK: Record<string, string> = {
+    "lib/bffClient.ts": "the one place that calls /bff/",
+    "lib/bff.ts": "server-side allow-list (UNPROXIED_BFF_PREFIX)",
+    "lib/hosts.ts": "safeNext refuses /bff/ as a return path",
+    "lib/onboarding.ts": "raw file upload over XMLHttpRequest (progress; a Blob body, reloads on 401)",
+    "lib/mailImport.ts": "raw file upload over XMLHttpRequest (progress; a Blob body, reloads on 401)",
+  };
 
-  it("components and lib call /bff only through bffClient", () => {
-    const offenders = [...files(path.join(WEB, "components")), ...files(path.join(WEB, "lib"))]
-      .filter((f) => !f.endsWith(path.join("lib", "bffClient.ts")))
-      .filter((f) => /fetch\(\s*[`'"]\/bff\//.test(readFileSync(f, "utf8")))
-      .map((f) => path.relative(WEB, f));
-    expect(offenders).toEqual([]);
+  /** Code without comments (a `//` only counts at a line start or after whitespace, so "https://" stays). */
+  function code(src: string): string {
+    return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|\s)\/\/.*$/gm, "$1");
+  }
+  /** fetch( whose first argument is a string or template literal naming /bff/ (not /staff/bff/), prefixed or not. */
+  const RAW_FETCH = /fetch\(\s*[`'"][^`'"\n]*(?<!\/staff)\/bff\//;
+  /** Any string or template literal naming /bff/ (not /staff/bff/). */
+  const BFF_LITERAL = /[`'"][^`'"\n]*(?<!\/staff)\/bff\//;
+
+  function offences(rel: string, src: string): string[] {
+    const body = code(src);
+    if (RAW_FETCH.test(body)) return [`${rel}: fetch(/bff/...)`];
+    if (!(rel in LITERAL_OK) && BFF_LITERAL.test(body)) return [`${rel}: /bff/ literal`];
+    return [];
+  }
+
+  it("the detector catches quoted, template and prefixed template /bff URLs, not /staff/bff or comments", () => {
+    expect(offences("x.ts", "await fetch('/bff/a')")).toHaveLength(1);
+    expect(offences("x.ts", 'await fetch("/bff/a")')).toHaveLength(1);
+    expect(offences("x.ts", "await fetch(`/bff/${p}`)")).toHaveLength(1);
+    expect(offences("x.ts", "await fetch(`${window.location.origin}/bff/${p}`)")).toHaveLength(1);
+    expect(offences("x.ts", "const url = `/bff/${p}`;\nawait fetch(url)")).toHaveLength(1);
+    expect(offences("x.ts", "await fetch(`/staff/bff/${p}`)")).toEqual([]);
+    expect(offences("x.ts", "// GET /bff/bell lists events\n/* POST '/bff/x' */\nbffSend('GET', 'bell')")).toEqual([]);
+    expect(offences("x.ts", "const u = 'https://example.org/a'; // see /bff/")).toEqual([]);
+    expect(offences("lib/hosts.ts", "fetch(`/bff/${path}`)")).toHaveLength(1);
+  });
+
+  it("components, lib and app client components call /bff only through bffClient", () => {
+    const appClient = files(path.join(WEB, "app")).filter((f) => isClient(readFileSync(f, "utf8")));
+    expect(appClient.length).toBeGreaterThan(0);
+    const found = [...files(path.join(WEB, "components")), ...files(path.join(WEB, "lib")), ...appClient]
+      .map((f) => [path.relative(WEB, f).split(path.sep).join("/"), readFileSync(f, "utf8")] as const)
+      .filter(([rel]) => rel !== "lib/bffClient.ts")
+      .flatMap(([rel, src]) => offences(rel, src));
+    expect(found).toEqual([]);
   });
 });

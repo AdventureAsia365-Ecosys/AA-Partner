@@ -29,6 +29,23 @@ API. Every other browser call goes through `bffSend` (`web/lib/bffClient.ts`), w
 - **Guard test:** `tests/bffDownload.test.ts` fails when a file under `web/components` or `web/lib` (other than
   `bffClient.ts`) calls `fetch('/bff/…')` directly.
 
+- **Review fix pass (S262 w14):**
+  - Callers clear their busy state in a `finally` again; `bffDownload` never throws (a blob that cannot be saved is
+    `save_failed`, a 401 after the renewal is `redirecting`).
+  - `BffResult` failures may carry `redirecting: true` (the page is already navigating to `/auth/refresh`); the four
+    download callers, "Load more" and the portability `send` skip their error message in that case, so no error
+    flashes before the navigation.
+  - `bffSend(method, path, body, { renew: true })` goes through `bffFetch` (silent renewal, one retry). Only the
+    portability link POST (`data/exports/{id}/link`) uses it: its body is the JSON string `"{}"`, safe to send twice,
+    and a 401 means nothing was minted. Every other `bffSend` keeps the full-page reload (see Tradeoffs).
+  - `bffFetch` documents that the request is sent twice: one-shot bodies (a `ReadableStream`) cannot be retried;
+    callers pass strings/JSON only.
+  - The guard also scans the `"use client"` files under `web/app`, flags `fetch(` with any string or template literal
+    naming `/bff/` (also `${origin}/bff/…`), and any `/bff/` literal outside a short allow-list (`bffClient.ts`, the
+    server allow-list `lib/bff.ts`, `lib/hosts.ts` safeNext, and the two XMLHttpRequest uploads in `lib/onboarding.ts`
+    and `lib/mailImport.ts`, which keep the reload on 401). Comments are ignored; `/staff/bff/` is not flagged.
+  - Test fixtures build their paths with `lib/reports.ts` `exportPath` (`reports/export?period=…&section=…`).
+
 ## Changed
 
 - Same error texts as before (`reports.export.error`, `log.downloadError`, `data.error`); no new UI strings.
