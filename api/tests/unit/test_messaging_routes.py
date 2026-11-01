@@ -181,7 +181,7 @@ def test_public_webhook_routes(pools: LocalPools, monkeypatch: pytest.MonkeyPatc
         assert client.post(f"/crm/public/v1/hooks/twilio/{HOOK_ID}", content=b"\xff\xfe").status_code == 400
 
 
-def test_webhooks_are_not_held_by_the_per_address_public_limit(pools: LocalPools, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_webhooks_skip_the_per_address_public_limit(pools: LocalPools, monkeypatch: pytest.MonkeyPatch) -> None:
     """Twilio posts every agency's callbacks from one shared pool of addresses: signed callbacks are never counted
     (a 429 loses an inbound message for good); only unknown hook ids are, and an address over that ceiling is 429
     before any work."""

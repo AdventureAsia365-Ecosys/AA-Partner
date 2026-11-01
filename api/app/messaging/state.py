@@ -93,6 +93,14 @@ async def connection(ctx: AnyContext) -> Any:
     return await ctx.conn.fetchrow(CONNECTION_SQL)
 
 
+def inbound_check(last_test_at: dt.datetime | None, last_inbound_at: dt.datetime | None) -> str | None:
+    """The webhook check of the last Test: ``ok`` once a message arrived after it, ``pending`` until then, None
+    before any test (Settings > Channels)."""
+    if last_test_at is None:
+        return None
+    return "ok" if last_inbound_at is not None and last_inbound_at >= last_test_at else "pending"
+
+
 def sender_for(row: Any, channel: str) -> str | None:
     return row["whatsapp_sender"] if channel == "whatsapp" else row["sms_sender"]
 

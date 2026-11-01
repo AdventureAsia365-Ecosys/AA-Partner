@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 from app.audit_export import registry
-from app.errors import Invalid, NotFound, Unavailable
+from app.errors import Conflict, Invalid, NotFound, Unavailable
 from app.jobs.queue import Job
 from app.jobs.worker import PermanentError
 from app.messaging import connection, health, state
@@ -240,13 +240,31 @@ async def test_template_sync_upserts_and_drops_the_rest(monkeypatch: pytest.Monk
 async def test_the_test_button(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(health, "Vault", lambda keys, ctx: TextVault())
     provider = FakeTextProvider()
+    template = {"content_sid": CONTENT_SID, "body": "Hi {{1}}, your trip {{2}} is confirmed.", "variables": []}
     conn = ScriptedConn().on("FROM crm.messaging_connection c", connection_row(sms_sender=None))
+    conn.on("FROM crm.channel_template WHERE approval = 'approved'", template)
     ctx = tenant_ctx(conn)
     out = await health.test_connection(ctx, runtime(provider), channel="whatsapp", to="+61 491 570 110")
-    assert out == {"result": "ok", "check": "ok", "test_message_sent": True}
+    assert out == {
+        "result": "ok",
+        "check": "ok",
+        "test_message_sent": True,
+        "template": CONTENT_SID,
+        "inbound_check": "pending",
+    }
     ((_, sent),) = provider.sent
-    assert sent.to == "+61491570110" and sent.body == health.TEST_TEXT
+    # WhatsApp: an approved template (free text outside the owner's window would fail later, 63016), values "Test".
+    assert sent.to == "+61491570110" and sent.content_sid == CONTENT_SID
+    assert sent.variables == {"1": "Test", "2": "Test"} and sent.body == "Hi Test, your trip Test is confirmed."
+    assert conn.sql("FROM crm.channel_template")[0] == (None,)
     assert conn.sql("SET last_test_at")[0][1] == "ok" and ctx.audit_events[-1].action == "messaging_test"
+    await health.test_connection(ctx, runtime(provider), channel="whatsapp", to="+61491570110", content_sid=CONTENT_SID)
+    assert conn.sql("FROM crm.channel_template")[-1] == (CONTENT_SID,)
+    sms = FakeTextProvider()
+    sms_conn = ScriptedConn().on("FROM crm.messaging_connection c", connection_row())
+    out = await health.test_connection(tenant_ctx(sms_conn), runtime(sms), channel="sms", to="+61491570110")
+    assert out["template"] is None and sms.sent[0][1].body == health.TEST_TEXT and sms.sent[0][1].content_sid is None
+    assert sms_conn.sql("FROM crm.channel_template") == []
     out = await health.test_connection(ctx, runtime(provider), channel="sms", to="+61491570110")
     assert out["check"] == "channel_not_configured" and out["result"] == "failed"
     failing = FakeTextProvider(error=Rejected("window_closed"))
@@ -258,6 +276,24 @@ async def test_the_test_button(monkeypatch: pytest.MonkeyPatch) -> None:
         await health.test_connection(ctx, runtime(provider), channel="sms", to="not a number")
     with pytest.raises(NotFound):
         await health.test_connection(tenant_ctx(), runtime(provider), channel=None, to=None)
+
+
+@pytest.mark.asyncio
+async def test_a_whatsapp_test_without_an_approved_template_is_refused_before_any_call() -> None:
+    provider = FakeTextProvider()
+    conn = ScriptedConn().on("FROM crm.messaging_connection c", connection_row())
+    with pytest.raises(Conflict) as caught:
+        await health.test_connection(tenant_ctx(conn), runtime(provider), channel="whatsapp", to="+61491570110")
+    assert caught.value.code == "template_required"
+    assert provider.checked == 0 and provider.sent == [] and conn.sql("SET last_test_at") == []
+
+
+def test_the_inbound_check_waits_for_a_message_after_the_test() -> None:
+    at = dt.datetime(2026, 11, 1, 9, tzinfo=dt.UTC)
+    assert state.inbound_check(None, at) is None
+    assert state.inbound_check(at, None) == "pending"
+    assert state.inbound_check(at, at - dt.timedelta(minutes=1)) == "pending"
+    assert state.inbound_check(at, at + dt.timedelta(minutes=1)) == "ok"
 
 
 def _job(payload: dict[str, Any]) -> Job:

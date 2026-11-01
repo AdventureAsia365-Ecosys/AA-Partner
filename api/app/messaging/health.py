@@ -3,7 +3,13 @@ approved template to the owner's own phone"; "Health check: nightly account read
 plain words"; design §5.4 "the CRM reads approved templates").
 
 - :func:`test_connection` is the Settings > Channels **Test** button: the account read now, then (when the owner gave
-  their own number) one short test message from the agency's sender to it. Nothing is stored as a client message.
+  their own number) one test message from the agency's sender to it: a short text on SMS, an **approved template** on
+  WhatsApp (the one the owner chose, else the first approved service template, else the first approved one; each
+  value filled with ``Test``), because free text outside the owner's own 24-hour window is accepted by Twilio and then
+  fails later (63016). No approved template: 409 ``template_required`` before anything is called. The webhook is
+  checked by a reply: the answer says ``inbound_check: pending`` and Settings shows it ``ok`` once a message arrived
+  after the test (``last_inbound_at`` >= ``last_test_at``, :func:`app.messaging.state.inbound_check`). Nothing is
+  stored as a client message.
 - :func:`sync_templates` reads the templates of the agency's account (Content API) into ``crm.channel_template``:
   every one the provider lists is inserted or updated, the rest deleted. Run by ``crm_messaging_templates`` (one agency,
   queued on connect and on Refresh) and by the daily check.
@@ -28,13 +34,13 @@ from typing import Any
 import asyncpg
 
 from app.audit_export import registry
-from app.errors import Forbidden, Invalid, NotFound, ServiceError
+from app.errors import Conflict, Forbidden, Invalid, NotFound, ServiceError
 from app.jobs import queue
 from app.jobs.kinds import MESSAGING_HEALTH
 from app.jobs.queue import Job
 from app.jobs.worker import Handler, PermanentError
 from app.messaging import state
-from app.messaging.providers import AuthRevoked, ProviderError, Rejected, TextOut
+from app.messaging.providers import AuthRevoked, ProviderError, Rejected, TextOut, placeholders, render
 from app.messaging.sender import load_secret
 from app.tenancy import AnyContext, system_tx
 from app.vault import Vault
@@ -48,6 +54,14 @@ SCHEDULER = "scheduler:crm-messaging-health"
 MAX_ATTEMPTS = 3
 HISTORY_DAYS = 30
 TEST_TEXT = "AA Partner: this is a test message. Your SMS / WhatsApp connection works."
+TEST_VALUE = "Test"
+# The WhatsApp test template: the chosen one ($1), else a service one (utility / authentication) first.
+TEST_TEMPLATE_SQL = """
+SELECT content_sid, body, variables FROM crm.channel_template
+ WHERE approval = 'approved' AND deleted_at IS NULL AND ($1::text IS NULL OR content_sid = $1)
+ ORDER BY (upper(coalesce(category, '')) IN ('UTILITY', 'AUTHENTICATION')) DESC, name, language
+ LIMIT 1
+"""
 
 UPSERT_TEMPLATE_SQL = """
 INSERT INTO crm.channel_template (messaging_connection_id, content_sid, name, language, category, approval, body,
@@ -118,10 +132,29 @@ async def sync_templates(ctx: AnyContext, runtime: state.MessagingRuntime, row: 
     }
 
 
+async def _test_template(ctx: AnyContext, content_sid: str | None) -> dict[str, Any]:
+    """(content_sid, rendered body, values) of the WhatsApp test template; 409 ``template_required`` without one."""
+    found = await ctx.conn.fetchrow(TEST_TEMPLATE_SQL, content_sid)
+    if found is None:
+        raise Conflict(
+            "template_required",
+            "a WhatsApp test needs an approved template: approve one in Twilio, then Refresh the templates",
+        )
+    names = list(found["variables"] or []) or list(placeholders(found["body"]))
+    values = {name: TEST_VALUE for name in names}
+    return {"content_sid": found["content_sid"], "body": render(found["body"], values), "variables": values or None}
+
+
 async def test_connection(
-    ctx: AnyContext, runtime: state.MessagingRuntime, *, channel: str | None, to: str | None
+    ctx: AnyContext,
+    runtime: state.MessagingRuntime,
+    *,
+    channel: str | None,
+    to: str | None,
+    content_sid: str | None = None,
 ) -> dict[str, Any]:
-    """Settings > Channels Test: the account read now, then a test message to the owner's own number."""
+    """Settings > Channels Test: the account read now, then a test message to the owner's own number (WhatsApp: an
+    approved template)."""
     row = await state.connection(ctx)
     if row is None:
         raise NotFound("messaging_not_connected")
@@ -131,6 +164,7 @@ async def test_connection(
             number = normalise_phone(to.strip())
         except NormalisationError:
             raise Invalid("invalid_test_number", "an international number starting with +") from None
+    template = await _test_template(ctx, content_sid) if number and channel == "whatsapp" else None
     outcome = await check_row(ctx, runtime, row)
     sent = False
     if outcome == "ok" and number and channel in state.CHANNELS:
@@ -144,7 +178,9 @@ async def test_connection(
                 sender=sender,
                 status_callback=runtime.status_url(row["hook_id"]),
                 reference=f"test:{uuid.uuid4()}",
-                body=TEST_TEXT,
+                body=template["body"] if template else TEST_TEXT,
+                content_sid=template["content_sid"] if template else None,
+                variables=template["variables"] if template else None,
             )
             try:
                 await runtime.providers[row["provider"]].send(await _secret(ctx, runtime, row), out)
@@ -154,7 +190,14 @@ async def test_connection(
     result = "ok" if outcome == "ok" else "failed"
     await ctx.conn.execute(TEST_RESULT_SQL, row["credential_id"], result)
     ctx.audit("messaging_test", "allowed", "messaging_connection", str(row["messaging_connection_id"]), reason=outcome)
-    return {"result": result, "check": outcome, "test_message_sent": sent}
+    return {
+        "result": result,
+        "check": outcome,
+        "test_message_sent": sent,
+        "template": template["content_sid"] if template and sent else None,
+        # The webhook is proved by a reply to the test (Settings shows it ok once a message arrived after it).
+        "inbound_check": "pending" if sent else None,
+    }
 
 
 def build_templates_handler(runtime: state.MessagingRuntime) -> Handler:

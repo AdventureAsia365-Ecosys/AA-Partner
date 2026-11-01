@@ -14,6 +14,8 @@ provider (no network): the Done-when "two-way WhatsApp on a trip timeline".
   whose consent was withdrawn before it left ends ``no_consent`` at the dispatcher.
 - A known client with no conversation on the channel and no open trip: the conversation is listed for the Inbox
   (``no_trip``), never lost.
+- The WhatsApp Test sends an approved template (409 ``template_required`` without one) and its webhook check stays
+  ``pending`` until a message arrives after it.
 """
 
 from __future__ import annotations
@@ -285,3 +287,20 @@ async def test_a_known_client_without_an_open_trip_is_listed_for_the_inbox(app_p
         # Link to trip (the Inbox action): the conversation moves to that trip and leaves the list.
         await conversations.link(ctx, conv["conversation_id"], d["lead"], d["trip"])
         assert (await conversations.list_conversations(ctx, no_trip=True))["conversations"] == []
+
+
+async def test_the_whatsapp_test_sends_a_template_and_waits_for_a_reply(app_pool: asyncpg.Pool) -> None:
+    d = await _setup(app_pool)
+    async with tenant_tx(app_pool, d["owner"], d["tenant"], action=Action.INTEGRATIONS_MANAGE) as ctx:
+        with pytest.raises(Conflict) as caught:  # nothing synced yet: no approved template
+            await health.test_connection(ctx, d["runtime"], channel="whatsapp", to=STRANGER)
+        assert caught.value.code == "template_required"
+    job = Job("j", "crm_messaging_templates", {"tenant_id": str(d["tenant"])}, 1, 3)
+    await health.build_templates_handler(d["runtime"])(app_pool, job)
+    async with tenant_tx(app_pool, d["owner"], d["tenant"], action=Action.INTEGRATIONS_MANAGE) as ctx:
+        out = await health.test_connection(ctx, d["runtime"], channel="whatsapp", to=STRANGER)
+        assert out["test_message_sent"] and out["template"] and out["inbound_check"] == "pending"
+        assert (await connection.view(ctx, d["runtime"]))["connection"]["inbound_check"] == "pending"
+    await webhook.handle(app_pool, d["runtime"], _inbound(d, sender=STRANGER, body="Got it"))  # the owner replies
+    async with tenant_tx(app_pool, d["owner"], d["tenant"], action=Action.INTEGRATIONS_MANAGE) as ctx:
+        assert (await connection.view(ctx, d["runtime"]))["connection"]["inbound_check"] == "ok"

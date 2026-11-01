@@ -67,6 +67,7 @@ class ConnectionIn(_Body):
 class TestIn(_Body):
     channel: Channel | None = None
     to: str | None = Field(default=None, max_length=40)
+    content_sid: str | None = Field(default=None, pattern=r"^HX[0-9a-f]{32}$")  # the WhatsApp test template
 
 
 class SendIn(_Body):
@@ -136,7 +137,9 @@ async def post_test(request: Request, caller: CallerDep, tenant_id: TenantDep, b
     pool = await request_pool(request)
     runtime = _runtime(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.INTEGRATIONS_MANAGE) as ctx:
-        return await health.test_connection(ctx, runtime, channel=body.channel, to=body.to)
+        return await health.test_connection(
+            ctx, runtime, channel=body.channel, to=body.to, content_sid=body.content_sid
+        )
 
 
 @router.post("/messaging/templates/refresh", status_code=202)
