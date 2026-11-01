@@ -106,8 +106,8 @@ async def test_provider_error_is_logged_by_class() -> None:
     result = await LlmGateway(RealScrubber(), Bedrock(fail=True)).call(
         system_ctx(c), stage="crm_x", role="validate", prompt="x"
     )
-    assert (result.outcome, result.error_class) == ("error", "TimeoutError")
-    assert c.sql("INSERT INTO crm.llm_call")[0][10] == "TimeoutError"
+    assert (result.outcome, result.error_class) == ("error", "other")  # the shared core's class, never the text
+    assert c.sql("INSERT INTO crm.llm_call")[0][8:11] == ("error", None, "other")
 
 
 async def test_bad_stage_or_role_is_a_programming_error() -> None:

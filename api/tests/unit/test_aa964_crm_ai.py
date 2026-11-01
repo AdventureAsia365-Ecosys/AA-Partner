@@ -30,7 +30,8 @@ from app.llm.gateway import (
     build_gateway,
     prompt_hash,
 )
-from app.llm.providers.bedrock import BedrockConverseProvider, ProviderCallError, model_family
+from app.llm.profiles import family_of
+from app.llm.providers.bedrock import BedrockConverseProvider, ProviderCallError
 from app.main import create_app
 from app.privacy.guardrails import (
     USD_PER_TEXT_UNIT,
@@ -149,7 +150,7 @@ async def test_converse_sends_the_system_block_and_the_scrubbed_prompt_only_no_t
     assert "toolConfig" not in request and request["inferenceConfig"]["maxTokens"] == 800
     assert (done.input_tokens, done.output_tokens) == (1200, 300)
     assert done.cost_usd == Decimal("0.0027")  # 1200 x 1 + 300 x 5 per million
-    assert done.request_id == "11111111-2222-4333-8444-555555555555" and done.pricing_mode == "code_table"
+    assert done.request_id == "11111111-2222-4333-8444-555555555555" and done.pricing_mode == "override"
     assert done.cache_read_tokens == 0 and not done.truncated
 
 
@@ -168,13 +169,15 @@ async def test_converse_errors_leave_by_code_only_and_an_empty_turn_keeps_its_co
     assert truncated.truncated
 
 
-async def test_a_real_provider_needs_a_model_and_both_prices() -> None:
+async def test_a_real_provider_needs_a_model_and_a_whole_positive_override() -> None:
     with pytest.raises(ValueError):
         BedrockConverseProvider(WIRE_ID, usd_per_mtok_in=Decimal(0), usd_per_mtok_out=Decimal(1))
     with pytest.raises(ValueError):
+        BedrockConverseProvider(WIRE_ID, usd_per_mtok_in=Decimal(1))
+    with pytest.raises(ValueError):
         BedrockConverseProvider("", usd_per_mtok_in=Decimal(1), usd_per_mtok_out=Decimal(1))
-    assert model_family("us.vendor.small-model-v1:0") == "small-model"
-    assert model_family("us.anthropic.claude-haiku-5-5-v1:0") == "claude-haiku"
+    assert family_of("us.vendor.small-model-v1:0") == "vendor"
+    assert family_of("us.anthropic.claude-haiku-5-5-v1:0") == "anthropic"
 
 
 # ── Gateway v2 ledger row ─────────────────────────────────────────────────────────────────────────
@@ -203,12 +206,12 @@ async def test_an_ok_call_writes_the_v2_columns_and_never_text() -> None:
         job,
         "bedrock",
         WIRE_ID,
-        "small-model",
+        "vendor",
         0,
         0,
         None,
         None,
-        "code_table",
+        "override",  # the configured price of the configured model (the shared core's quote)
         prompt_hash("Please help with the trip", "rules"),
         "crm-draft-1",
     )
@@ -396,9 +399,9 @@ async def test_a_billed_empty_turn_is_an_error_row_with_its_cost() -> None:
     client = FakeBedrockClient(converse=converse_answer(text=""))
     gateway = LlmGateway(PiiScrubber(_NoFindings()), provider(client), keys=object())
     result = await gateway.call(system_ctx(c), stage="crm_x", role="writer", prompt="hello")
-    assert (result.outcome, result.error_class, result.fallback) == ("error", "EmptyOutput", MANUAL_REPLY)
+    assert (result.outcome, result.error_class, result.fallback) == ("error", "other", MANUAL_REPLY)
     [row] = insert_args(c)
-    assert row[4:7] == (1200, 300, Decimal("0.0027")) and row[10] == "EmptyOutput"
+    assert row[4:7] == (1200, 300, Decimal("0.0027")) and (row[8], row[10]) == ("billed_unusable", "other")
 
 
 class _NoFindings:
@@ -491,7 +494,27 @@ def ai_conn(enabled: bool = False, budget: str = "2", spent: str = "0.5", row: b
         .on("sum(cost_usd_est)", Decimal(spent))
         .on("INSERT INTO crm.llm_call", CALL_ID)
         .on("SELECT 1 FROM crm.trip", 1)
+        .on("FROM crm.llm_stage_profile", DRAFT_PROFILE_ROWS)
     )
+
+
+# crm-040's seed of the draft stage, as PROFILE_SQL returns it (invented maker, not a real model id).
+DRAFT_PROFILE_ROWS = [
+    {
+        "stage": "crm_draft_reply",
+        "role": "writer",
+        "is_active": True,
+        "max_attempts": 2,
+        "route_deadline_s": 30,
+        "degrade_mode": "manual_reply_needed",
+        "position": position,
+        "model": model,
+        "family": "maker",
+        "price_in_per_mtok": Decimal("1"),
+        "price_out_per_mtok": Decimal("5"),
+    }
+    for position, model in ((0, "us.maker.small-v1:0"), (1, "us.maker.large-v1:0"))
+]
 
 
 LIMITS = {"budget_max": Decimal("2"), "provider": "stub", "rate_per_minute": 6}
@@ -629,7 +652,8 @@ async def test_routes_a_draft_from_the_api(agent: tuple[TestClient, dict, Script
     client, headers, c = agent
     ok = client.post(f"/crm/v1/trips/{TRIP}/ai/draft", headers=headers, json={"text": "Is breakfast included?"})
     assert ok.status_code == 200 and ok.json()["outcome"] == "ok" and ok.json()["fallback"] is None
-    assert len(c.sql("INSERT INTO crm.llm_call")) == 1
+    [row] = c.sql("INSERT INTO crm.llm_call")
+    assert (row[2], row[3], row[8], row[12], row[17]) == ("stub", "us.maker.small-v1:0", "ok", 1, "maker")
     bad = client.post(f"/crm/v1/trips/{TRIP}/ai/draft", headers=headers, json={"text": "x", "send": True})
     assert bad.status_code == 422
 
