@@ -168,7 +168,8 @@ class Database:
                 },
             )
         # AA-978: the CIS membership feed in one word (ok / pending / stale / failing / not_configured / unknown). It
-        # never fails readiness (a CIS outage must not roll a deploy back); the alarm keys on crm_membership_feed_stuck.
+        # never fails readiness (a CIS outage must not roll a deploy back); the ops check membership_feed_stuck alerts
+        # AA ops.
         feed_configured = bool(self._settings.cis_api_url and self._settings.m2m_client)
         feed = await feed_state.health(pool, configured=feed_configured)
         return Readiness(

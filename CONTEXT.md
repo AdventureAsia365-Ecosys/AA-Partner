@@ -332,7 +332,8 @@ push to `main` that touches `api/migrations/`, so the byte copy opens at once.
 
 Ported from AA-Booking (AA-751 rules): `FOR UPDATE SKIP LOCKED` claims, guarded state changes, lease + heartbeat,
 reaper (a stopped worker's job is re-claimed), release on graceful shutdown, `cancel_requested`, backoff, the backlog
-sampler to CloudWatch `AA/Jobs/Crm`. CRM differences: the job row keeps the **error class only** (crm-001 column
+sampler (S263 alert diet, AA-1025: no CloudWatch metric; it runs the in-app ops checks of
+`app/observability/ops_alerts.py`, see "Ops checks" below). CRM differences: the job row keeps the **error class only** (crm-001 column
 comment); recurring kinds are scheduled with an idempotency key per time slot (`<kind>:<slot>`) because crm-001 has no
 singleton index. **Only a deploy-gate / DB Migrate exempt kind may be Recurring**: a Recurring kind always holds its
 next slot's row queued ahead, and the Infra DB Migrate idle check counts any queued row of a non-exempt kind as busy
@@ -367,6 +368,21 @@ queued / running rows as information, exempt kinds left out). Daily or slower ki
 | `crm_messaging_health` | daily, from `JOB_RETENTION_UTC_HOUR`, due-now hook (`app.messaging.health.DailyMessagingHealthSchedule`) | AA-958: every agency's SMS / WhatsApp connection: account read + template sync; passing -> connected, refused -> disconnected + one owner alert, anything else -> needs attention. Counts only. Not deploy-gate exempt |
 | `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
 
+
+### Ops checks (S263 alert diet, AA-1025)
+
+`app/observability/ops_alerts.py` replaced the CRM CloudWatch alarms (root `docs/audits/2026-11-01-S263-alerting-cost/
+diet.md`). The job sampler (`app/jobs/metrics.py`, every 5 minutes, API process) evaluates the **state checks**
+`jobs_stuck` (due row > 900 s, no healthy job running), `jobs_overdue`, `audit_export_lag`, `audit_partitions`,
+`audit_verify_lag`, and drains the **events** the code raises with `ops_alerts.emit(check, scope, **ids)` next to the
+log lines it already wrote: `breakglass_opened`, `breakglass_owner_not_mailed` (per session), `ops_release_incomplete_t21`,
+`ops_release_withdrawn` (per release), `membership_apply_refused` (per event), `membership_feed_stuck` (per day),
+`bulk_reveal` (per member and hour). Each finding is e-mailed once on the platform alerts SNS topic (env
+`ALERTS_TOPIC_ARN`, task role `sns:Publish`, both AA-CIS-Infra), deduped by a ledger row in `crm.job` (kind
+`crm_ops_alert`, status `succeeded`, idempotency key `crm_ops_alert:<check>:<scope or UTC day>`, payload ids only;
+`queue.record_alert` / `queue.forget_alert`). The ledger rows are never claimed and are not busy work for the deploy
+gate or DB Migrate. A test keeps every event check raised somewhere in `app/` (`tests/unit/test_ops_alerts.py`). The
+service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
 ## CI and release
 
 - Web checks (AA-935): **Web Build** (kit core integrity + provenance, vitest, `next build` with the type check,
@@ -1136,8 +1152,8 @@ code in `app/ops_release/` (`build.py`, `service.py`, `job.py`, `staff.py`). Imp
   messages, documents, money or the trip title. A changed text is sealed again and `payload_version` moves up.
 - **Completeness** (counts only): Stage 3 details on file, waiver signed (when the agency has one), both flights.
   **T-21**: still incomplete within 21 days of departure -> one urgent `ops_release_incomplete` task for the trip owner
-  (anchor `ops_handoff`), `t21_alerted_at`, and the log line `crm_ops_release_incomplete_t21` (ids and counts) that the
-  Infra alarm `aa-crm-<env>-ops-release-incomplete-t21` mails AA ops from; once per release.
+  (anchor `ops_handoff`), `t21_alerted_at`, and the log line `crm_ops_release_incomplete_t21` (ids and counts) plus the
+  ops check `ops_release_incomplete_t21` that mails AA ops (S263); once per release.
 - **Purge date** = `end_date` + 90 days, recomputed every pass (dates moved -> purge moved); at `purge_at` the job
   deletes the document and the manifest records and keeps `deletion_receipt` (counts) and `ops_release_purge` in the
   agency's audit. A held trip is skipped (CRM10). A trip past its window is never released again.
@@ -1146,11 +1162,11 @@ code in `app/ops_release/` (`build.py`, `service.py`, `job.py`, `staff.py`). Imp
   (AA ops lose it at once) and nudge the job, which purges it now if the trip has not started. No confirmed AA line
   left -> the job withdraws it (`aa_lines_cancelled`; a new confirm releases again). A cancel or the agency's own
   withdrawal is never lifted. Each withdrawal (the cancel, the agency's own, the job's) logs `crm_ops_release_withdrawn`
-  (Infra alarm `...-ops-release-withdrawn`: the notice to AA ops) and stays on the S-02 board for 14 days.
+  (ops check `ops_release_withdrawn`: the notice to AA ops) and stays on the S-02 board for 14 days.
 - **Alarm lines after the commit**: the withdrawn and T-21 lines are `service.Notice`s the code queues and the route
   (cancel, withdraw) or the job writes only once its transaction committed (the break-glass pattern), so a rollback
-  never alarms and a T-21 alert whose `t21_alerted_at` was not saved is not repeated. Renaming either event silences
-  its alarm (AA-CIS-Infra `crm_ops_release_alarms.tf`).
+  never alarms and a T-21 alert whose `t21_alerted_at` was not saved is not repeated. `Notice.emit` raises the ops
+  check too (`service.OPS_ALERT_CHECKS`).
 - **One trip at a time**: the job syncs each trip and purges each release in its own savepoint
   (`service.item_tx`, which also drops that item's queued audit events, except denials, and the DEKs it generated): a
   failing trip is counted `failed` and logged `ops_release_trip_failed` by id, the agency's other work commits, the
@@ -1539,8 +1555,8 @@ Design v3 §6.3 CRM-22 (M4, R38, R9; F4 / WF-5 A-05; Q1 2.3); migration crm-022;
   walks the import graph of every router under `/crm/public` or `/crm/client` (found by `APIRouter(prefix=)`, by
   `class_router(<RouteClass>)` and by the live routes). **Reveals per member per hour** (design §4.4):
   `app/observability/reveal_meter.py` counts committed allowed reveals (fields and document downloads) per agency and
-  member over a sliding hour; the job metrics sampler publishes the peak as `AA/Jobs/Crm` `RevealsPerMemberPeakHour`
-  (Infra alarm `aa-crm-<env>-bulk-reveal`), and 60 in an hour logs `crm_bulk_reveal`. A traveller sees their own record only through
+  member over a sliding hour; the job sampler logs the peak (`reveal_peak`), and 60 in an hour logs `crm_bulk_reveal`
+  and raises the ops check `bulk_reveal` (one AA ops e-mail per member and hour; S263, was an Infra alarm). A traveller sees their own record only through
   `app/travellers/self_reveal.py` `traveller_self_reveal(session)` (masked passport, own trip only).
 - **List views** (design §4.4): the board, the client directory (`GET /crm/v1/travelers`; exact search by e-mail /
   phone blind index or name tokens confirmed after decrypting is `POST /crm/v1/travelers/search`, the term in the body,
@@ -1591,8 +1607,8 @@ Design v3 §6.3 CRM-22 (M4, R38, R9; F4 / WF-5 A-05; Q1 2.3); migration crm-022;
   `ai_agent` / `ai:<stage>`, one per LLM gateway call), intake job events, the access log's own views and downloads.
   Later cards add their actors (L1 writes, support reads, break-glass Decrypts) with the same table.
 - **Partitions and retention** (crm-007): one partition per UTC month; the hourly job keeps three months ahead (no
-  DEFAULT partition: an insert with no partition fails, which fails the request; alarm on `AuditPartitionMonthsAhead`
-  < 1). A partition is dropped only when it ends at or before the start of the UTC month twelve months ago **and**
+  DEFAULT partition: an insert with no partition fails, which fails the request; ops check `audit_partitions`
+  when next month has no partition). A partition is dropped only when it ends at or before the start of the UTC month twelve months ago **and**
   every agency is verified past it; `DROP TABLE` fires no row trigger, so every kept row stays append-only.
   `verified_until` moves only through `crm.audit_mark_verified()` (forward, never past `exported_until`; `crm_app`
   updates only `exported_until` / `last_seq`). Accepted risk: the database cannot re-read the buckets, so a
@@ -1618,9 +1634,9 @@ Design v3 §6.3 CRM-22 (M4, R38, R9; F4 / WF-5 A-05; Q1 2.3); migration crm-022;
   last 365 days; newest first with a keyset cursor; download as CSV (formula-guarded) or JSON lines, at most 50,000
   rows (422 `export_too_large`). Lines show the member's role and a short id, never a traveller's name; a client or
   trip id links to its page.
-- **Metrics** (`AA/Jobs/Crm`, the job sampler): `AuditExportLagMinutes` (Infra alarm at 180),
-  `AuditPartitionMonthsAhead` (alarm below 1) and `AuditVerifyLagHours` (largest exported-minus-verified gap over
-  agencies; alarm at 50: one agency failing verification stops drops for all).
+- **Checks** (the job sampler, `app/observability/ops_alerts.py`; CloudWatch metrics until S263): `audit_export_lag`
+  (export 180 minutes or more behind), `audit_partitions` (next month has no partition) and `audit_verify_lag`
+  (largest exported-minus-verified gap over agencies at 50 hours: one agency failing verification stops drops for all).
 
 ## F4 roles and team (AA-939, CRM-11)
 
@@ -1918,7 +1934,8 @@ Design v3 §4.8 (L2, L3), §2.3 "Support banner", S-04, WF-12; root ADR 0006b de
   (`security_incident`, `data_corruption`, `legal_request`, `owner_unreachable`, `service_outage`), a ticket, 15 to 60
   minutes, an active or locked agency, identity **never** shown (crm-033 CHECK: the in-app path has no MFA step-up and
   skips the owner's consent, so F1 names wait for the AWS-level role below). After the commit: the structlog warning
-  `crm_breakglass_opened` (ids and codes; the AA ops alarm is an AA-CIS-Infra metric filter on `$.event`) and the AA
+  `crm_breakglass_opened` (ids and codes) with the ops check `breakglass_opened` (one AA ops e-mail per session, S263;
+  `breakglass_owner_not_mailed` when no owner could be mailed) and the AA
   system mail `breakglass_notice` to every active owner (`owner_notified_at` once sent). The owner cannot end an
   emergency session; it closes by itself.
 - **Reads** (`app/support/reads.py`, `support_tx()`): `GET /crm/staff/v1/agencies/{id}/overview | trips | trips/{trip}`;
@@ -2055,10 +2072,9 @@ Root contract `tenant.membership.v1` (vendored byte copy and samples in `docs/co
   `platform:feed-tenant-membership`, object id `cis_event:<id>`). Job results are counts and codes only.
 - Monitoring: `/crm/health/ready` carries `membership_feed` (`ok` / `pending` / `stale` = no success for 10 minutes /
   `failing` / `not_configured` / `unknown`; never fails readiness), and from 10 consecutive failures every failed run
-  logs the ERROR line `crm_membership_feed_stuck` (the CloudWatch metric filter and alarm key on it, AA-CIS-Infra
-  `crm_membership_alarms.tf`, with a second alarm on `crm_membership_event_apply_refused`). The L1 agency summary
-  carries the same word and the lag (crm.ops.v1 1.2). Keep both log line names: renaming one silently disables its
-  alarm.
+  logs the ERROR line `crm_membership_feed_stuck` and raises the ops check `membership_feed_stuck` (one e-mail a UTC
+  day); a refused event raises `membership_apply_refused` (one per event). Both were CloudWatch metric filters until
+  S263. The L1 agency summary carries the same word and the lag (crm.ops.v1 1.2).
 - Retention: inbox rows are deleted 90 days after they were received by the daily `crm_lifecycle` run
   (`crm.lifecycle_purge_expired`, crm-018; count `membership_inbox_purged`) and with the agency at offboarding.
 

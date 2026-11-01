@@ -7,14 +7,14 @@ rate and no KMS alarm would see it. This meter counts what the app itself releas
 sliding hour. :func:`app.tenancy.tenant_tx` records them **after** the transaction committed, so a reveal that was
 rolled back (its value never returned) is not counted.
 
-- :meth:`RevealMeter.peak` is the highest count of any member in the last hour. The job metrics sampler
-  (:mod:`app.jobs.metrics`) publishes it as ``RevealsPerMemberPeakHour`` in the same ``PutMetricData`` call as the
-  backlog metrics (namespace ``AA/Jobs/Crm``, the only one the task role may write); AA-CIS-Infra alarms on it.
+- :meth:`RevealMeter.peak` is the highest count of any member in the last hour; the job sampler logs it on its
+  ``ops_metrics_sampled`` line (S263: no longer a CloudWatch metric).
 - Crossing :data:`BULK_REVEAL_THRESHOLD` in the hour logs one ``crm_bulk_reveal`` warning per member and crossing
-  (agency id, member id and the count: random ids, no value).
+  (agency id, member id and the count: random ids, no value) and raises the in-app check ``bulk_reveal``
+  (:mod:`app.observability.ops_alerts`: one AA ops e-mail per member and hour; it replaced the S263-removed alarm).
 
 Per process: one API task on Dev, so the count is exact there; with several tasks each task meters its own requests
-(the alarm then sees the busiest task's member, a lower bound). Rate limiting bulk reveal itself is a later card
+(a lower bound). Rate limiting bulk reveal itself is a later card
 (design §6 incident card: "bulk reveal above a threshold needs a reason and is rate-limited").
 """
 
@@ -26,6 +26,9 @@ import time
 import uuid
 from collections import deque
 from collections.abc import Callable
+from datetime import UTC, datetime
+
+from app.observability import ops_alerts
 
 log = logging.getLogger(__name__)
 
@@ -77,6 +80,11 @@ class RevealMeter:
                 member_id,
                 after,
                 self._threshold,
+            )
+            # S263 (AA-1025): one AA ops e-mail per member and hour (was the RevealsPerMemberPeakHour alarm).
+            hour = datetime.now(UTC).strftime("%Y-%m-%dT%H")
+            ops_alerts.emit(
+                "bulk_reveal", f"{member_id}:{hour}", tenant_id=tenant_id, member_id=member_id, reveals_last_hour=after
             )
         return after
 

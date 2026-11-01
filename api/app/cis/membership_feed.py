@@ -43,7 +43,7 @@ Rules (outcome / reason code in the inbox; every applied change also writes the 
 
 Monitoring: ``/crm/health/ready`` reports ``membership_feed`` (:func:`app.cis.feed_state.health`; never fails
 readiness), and from :data:`STUCK_FAILURES` consecutive failures on every failed run logs the ERROR line
-``crm_membership_feed_stuck`` (the CloudWatch metric filter / alarm keys on it).
+``crm_membership_feed_stuck`` (and raises the ops check ``membership_feed_stuck``, S263).
 """
 
 from __future__ import annotations
@@ -64,6 +64,7 @@ from app.cis.http import DEFAULT_TIMEOUT_S, HttpError, Transport, urllib_transpo
 from app.cis.m2m import TokenError, TokenProvider
 from app.jobs.queue import Job
 from app.members.directory import PartnerDirectory
+from app.observability import ops_alerts
 from app.tenancy import SystemContext, membership_feed_tx
 
 log = logging.getLogger(__name__)
@@ -324,6 +325,7 @@ async def process_event(pool: asyncpg.Pool, event: Any, counts: RunCounts, issue
         # The database refused this event for a reason of its own: record it as rejected and go on, so one event
         # never holds back every later revocation. ERROR: a refused event is a bug or a rule this code does not know.
         log.error("crm_membership_event_apply_refused event_id=%s sqlstate=%s", event_id, exc.sqlstate)
+        ops_alerts.emit("membership_apply_refused", event_id, event_id=event_id, sqlstate=exc.sqlstate)
         await _record_refusal(pool, event_id, tenant_id, event_type)
         counts.rejected += 1
         return
@@ -376,6 +378,7 @@ class MembershipFeed:
             if failures >= STUCK_FAILURES:
                 # Revocations stopped reaching the CRM: the alarm line (an error class code and a count only).
                 log.error("crm_membership_feed_stuck error=%s failures=%d", exc.error_class, failures)
+                ops_alerts.emit("membership_feed_stuck", error=exc.error_class, failures=failures)
             return counts.result("error", exc.error_class)
         finally:
             await self._sign_out(counts)

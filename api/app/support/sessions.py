@@ -11,7 +11,7 @@ agency is :mod:`app.support.reads`.
   while one's own session is live returns it.
 - :func:`start_breakglass` (group ``crm-ops``): no grant; a reason code from :data:`BREAKGLASS_REASONS` and a ticket;
   15 to 60 minutes; identity never shown (no MFA step-up here; crm-033 CHECK); an active or locked agency. Then,
-  after the commit: the ``crm_breakglass_opened`` warning (AA ops alarm: AA-CIS-Infra metric filter on ``$.event``)
+  after the commit: the ``crm_breakglass_opened`` warning (and the in-app ops check ``breakglass_opened``, S263)
   and the AA system mail to every active owner (best effort; ``owner_notified_at`` is recorded when at least one went
   out).
 - :func:`end_session`: the caller ends their own live session of one kind.
@@ -35,6 +35,7 @@ from app.errors import Conflict, Forbidden, NotFound
 from app.members.directory import PartnerDirectory
 from app.members.mail import BREAKGLASS_REASONS, Mailer, breakglass_message
 from app.members.recovery import OWNERS_SQL, TENANT_LABEL_SQL, mail_owners
+from app.observability import ops_alerts
 from app.support.grants import staff_ref
 from app.tenancy import STAFF_STATUSES, TENANT_STATUSES, SystemContext, staff_actor, staff_tx
 
@@ -239,11 +240,21 @@ async def start_breakglass(
         )
         owners = await ctx.conn.fetch(OWNERS_SQL)
         agency = await ctx.conn.fetchval(TENANT_LABEL_SQL, tenant_id) or "AA Partner"
-    # Committed. AA ops alarm (Infra metric filter on this event name): ids and codes only.
+    # Committed. AA ops are alerted (S263: the in-app check e-mails the alerts topic once per session; the line stays
+    # in the log): ids and codes only.
     alerts.warning(
         "crm_breakglass_opened",
         tenant_id=str(tenant_id),
         session_id=str(session_id),
+        reason_code=reason_code,
+        staff_ref=staff_ref(caller.sub),
+        expires_at=_iso(row["expires_at"]),
+    )
+    ops_alerts.emit(
+        "breakglass_opened",
+        session_id,
+        tenant_id=tenant_id,
+        session_id=session_id,
         reason_code=reason_code,
         staff_ref=staff_ref(caller.sub),
         expires_at=_iso(row["expires_at"]),
@@ -269,6 +280,7 @@ async def start_breakglass(
             ctx.audit("breakglass_owner_notice", "allowed", "support_session", str(session_id))
     else:
         log.warning("crm_breakglass_owner_not_mailed tenant=%s session=%s", tenant_id, session_id)
+        ops_alerts.emit("breakglass_owner_not_mailed", session_id, tenant_id=tenant_id, session_id=session_id)
     return {**_view(tenant_id, row), "owners_notified": notified}
 
 

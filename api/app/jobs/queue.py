@@ -79,6 +79,32 @@ async def enqueue(
     )
 
 
+async def record_alert(
+    conn: asyncpg.Connection | asyncpg.Pool, kind: str, idempotency_key: str, payload: dict[str, Any]
+) -> str | None:
+    """S263 (app.observability.ops_alerts): write the ledger row of an ops alert, already ``succeeded`` (no worker runs
+    it). Returns its id, or None when the key already holds a row (this alert was sent). Ids-only payload, like every
+    job row."""
+    check_payload(payload)
+    return await conn.fetchval(
+        """
+        INSERT INTO crm.job (kind, payload, status, idempotency_key, max_attempts, created_by, started_at,
+                             finished_at, result)
+        VALUES ($1, $2::jsonb, 'succeeded', $3, 1, 'ops_alerts', now(), now(), '{"status": "published"}'::jsonb)
+        ON CONFLICT DO NOTHING
+        RETURNING id::text
+        """,
+        kind,
+        json.dumps(payload),
+        idempotency_key,
+    )
+
+
+async def forget_alert(conn: asyncpg.Connection | asyncpg.Pool, job_id: str) -> None:
+    """S263: drop the ledger row of an alert whose publish failed, so the next tick retries it."""
+    await conn.execute("DELETE FROM crm.job WHERE id = $1::uuid AND status = 'succeeded'", job_id)
+
+
 async def claim(pool: asyncpg.Pool, worker_id: str, kinds: list[str], lease_seconds: int) -> Job | None:
     """Claim the next due job of one of ``kinds`` (oldest ``run_after`` first), never one with a cancel request.
     ``started_at`` keeps the first attempt's time; ``progress.attempt_started_at`` is this attempt's (F18)."""

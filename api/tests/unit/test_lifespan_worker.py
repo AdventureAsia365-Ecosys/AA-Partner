@@ -44,7 +44,13 @@ class FakeSampler:
     def __init__(self, pool: Any) -> None:
         self.pool = pool
         self.started = self.cancelled = False
+        self.flushed_after_worker: bool | None = None
         FakeSampler.instances.append(self)
+
+    async def flush_events(self) -> dict:
+        # S263 review: the lifespan flushes the ops alert events once more, after the worker stopped
+        self.flushed_after_worker = all(w.stopped for w in FakeWorker.instances)
+        return {}
 
     async def run_forever(self, stop: asyncio.Event) -> None:
         self.started = True
@@ -125,6 +131,7 @@ def test_worker_runs_for_the_app_lifetime_when_enabled() -> None:
     # AA-751: the backlog metrics sampler runs for the app lifetime too and is cancelled on shutdown.
     (sampler,) = FakeSampler.instances
     assert sampler.started and sampler.cancelled
+    assert sampler.flushed_after_worker is True
 
 
 def test_every_handled_kind_has_an_expected_run_time() -> None:
@@ -145,3 +152,18 @@ def test_worker_not_started(kw: dict) -> None:
         client.get("/crm/health")
     assert FakeWorker.instances == []
     assert FakeSampler.instances == []
+
+
+def test_shutdown_flush_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A hung flush (SNS or the database unreachable) never holds the shutdown past its budget."""
+
+    async def hang(self: FakeSampler) -> dict:
+        await asyncio.Event().wait()
+        return {}
+
+    monkeypatch.setattr(FakeSampler, "flush_events", hang)
+    monkeypatch.setattr(main_module, "OPS_FLUSH_ON_STOP_TIMEOUT_S", 0.05)
+    with TestClient(_app(worker_enabled=True)):
+        pass
+    (sampler,) = FakeSampler.instances
+    assert sampler.cancelled
