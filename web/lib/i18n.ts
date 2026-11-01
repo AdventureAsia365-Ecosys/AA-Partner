@@ -22,6 +22,7 @@ import { supportEn, supportVi } from "./i18nSupport";
 import { pluralsEn, pluralsVi } from "./i18nPlurals";
 import { tripClosedEn, tripClosedVi } from "./i18nTripClosed";
 import { tripCodesEn, tripCodesVi } from "./i18nTripCodes";
+import { workflowsEn, workflowsVi } from "./i18nWorkflows";
 
 export type Lang = "en" | "vi";
 export const LOCALE_COOKIE = "aa_crm_locale";
@@ -57,6 +58,7 @@ const en = {
   ...pluralsEn, // AA-957 round 3: the singular of counted messages, read by plural() (lib/i18nPlurals.ts)
   ...staffEn, // AA-1019: the AA staff console, S-02 and S-04 (lib/i18nStaff.ts)
   ...messagingEn, // AA-958: SMS and WhatsApp, Settings > Channels and the trip panel (lib/i18nMessaging.ts)
+  ...workflowsEn, // AA-959: Tasks, Automations, the trip's automations panel, workflow task kinds (lib/i18nWorkflows.ts)
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Home",
@@ -2700,6 +2702,7 @@ const vi: Record<MessageKey, string> = {
   ...pluralsVi,
   ...staffVi,
   ...messagingVi,
+  ...workflowsVi,
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Trang chủ",

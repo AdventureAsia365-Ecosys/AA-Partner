@@ -55,6 +55,7 @@ from app.payments import reminders
 from app.portal import progress
 from app.proposals import events
 from app.tenancy import SystemContext, system_tx
+from app.workflows import triggers
 
 log = logging.getLogger(__name__)
 
@@ -91,6 +92,7 @@ UPDATE crm.trip SET stage = $2, stage_entered_at = now(), waiting_on = 'none', l
 """
 HISTORY_SQL = """
 INSERT INTO crm.trip_stage_history (trip_id, from_stage, to_stage, reason_code) VALUES ($1, $2, $3, $4)
+RETURNING history_id
 """
 T21_SQL = """
 SELECT t.trip_id FROM crm.trip t
@@ -123,8 +125,10 @@ async def run_agency(ctx: SystemContext) -> Counter[str]:
         else:
             to, reason = "travelling", "date_rule"
         await ctx.conn.execute(MOVE_SQL, trip_id, to)
-        await ctx.conn.execute(HISTORY_SQL, trip_id, stage, to, reason)
+        history_id = await ctx.conn.fetchval(HISTORY_SQL, trip_id, stage, to, reason)
         ctx.audit("stage_change", "allowed", "trip", str(trip_id), reason=reason)
+        if history_id is not None:  # AA-959: workflows that start when the trip enters the stage
+            counts["workflow_runs"] += await triggers.on_stage_enter(ctx, trip_id, to, history_id)
         counts[f"{stage}_to_{to}"] += 1
         if reason == "date_rule_gate_unmet":
             await ctx.conn.execute(TASK_SQL, trip_id, "date_rule_gate_unmet", "urgent")

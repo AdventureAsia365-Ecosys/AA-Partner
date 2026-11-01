@@ -15,6 +15,10 @@
   :class:`app.catalog.sync.HourlyCatalogSync`): the AA tour cache.
 - ``crm_ops_release_sync`` (AA-956, hourly, :class:`app.ops_release.job.HourlyOpsReleaseSync`, plus one-trip nudges):
   the Module 8 ops release (create, refresh, T-21 alert, withdraw, purge with a receipt).
+- ``crm_workflow_run`` / ``crm_workflow_tick`` / ``crm_task_digest`` (AA-959, CRM-29a): one workflow run's due
+  steps (:mod:`app.workflows.runner`), the hourly tick (:class:`app.workflows.tick.HourlyWorkflowTick`: date and
+  special-date triggers, due runs, task dates, the digest) and one agency's morning digest
+  (:mod:`app.workflows.digest`).
 - ``crm_job_retention`` (daily, :class:`DailyRetentionSchedule`): data standards §7 row ``crm.job`` — succeeded rows
   30 days, cancelled 90 days after ``finished_at``; queued / running never. **Failed rows are kept**: §7 says "archive
   before delete: failed rows only", and the CRM has no archive bucket yet (CRM-04 rest), so nothing that must be
@@ -64,6 +68,9 @@ from app.jobs.kinds import (
     PLACEHOLDER_PURGE,
     STAGE_DATE_RULE,
     STUDIO_ACTIVATION,
+    TASK_DIGEST,
+    WORKFLOW_RUN,
+    WORKFLOW_TICK,
 )
 from app.jobs.queue import Job
 from app.jobs.worker import Handler, MaintenanceHook, Recurring
@@ -201,6 +208,9 @@ def build_handlers(
     from app.portability import exports as portability_exports
     from app.privacy.purge import purge_expired_maps
     from app.stages_job import date_rule
+    from app.workflows import digest as task_digest
+    from app.workflows import runner as workflow_runner
+    from app.workflows import tick as workflow_tick
 
     text_runtime = messaging_runtime or _MessagingRuntime(keys=keys)
     return {
@@ -229,6 +239,9 @@ def build_handlers(
         OPS_RELEASE_SYNC: ops_release_job.build_handler(keys),
         MESSAGING_TEMPLATES: messaging_health.build_templates_handler(text_runtime),
         MESSAGING_HEALTH: messaging_health.build_health_handler(text_runtime),
+        WORKFLOW_RUN: workflow_runner.build_handler(keys),
+        WORKFLOW_TICK: workflow_tick.build_handler(keys),
+        TASK_DIGEST: task_digest.build_handler(mail_runtime),
     }
 
 
@@ -285,6 +298,7 @@ def build_hooks(
     from app.ops_release.job import HourlyOpsReleaseSync
     from app.privacy.purge import HourlyPlaceholderPurge
     from app.stages_job import HourlyStageDateRule
+    from app.workflows.tick import HourlyWorkflowTick
 
     clock = now or (lambda: datetime.now(UTC))
     return (
@@ -300,6 +314,7 @@ def build_hooks(
         HourlyCatalogSync(clock),
         HourlyOpsReleaseSync(clock),
         DailyMessagingHealthSchedule(retention_utc_hour, clock),
+        HourlyWorkflowTick(clock),
     )
 
 
@@ -326,6 +341,7 @@ SCHEDULED_KINDS: frozenset[str] = frozenset(
         CATALOG_SYNC,
         OPS_RELEASE_SYNC,
         MESSAGING_HEALTH,
+        WORKFLOW_TICK,
     }
 )
 # Kinds queued by request code, one row per event (AA-936: each stored inquiry), never scheduled.
@@ -333,6 +349,7 @@ SCHEDULED_KINDS: frozenset[str] = frozenset(
 EVENT_KINDS: frozenset[str] = frozenset(
     # AA-967: one per export; AA-962: one per import slice.
     # AA-958: one template sync per connect / Refresh.
+    # AA-959: one workflow run's due steps (its start, or the tick after a wait); one agency's morning digest.
     {
         INTAKE_PROCESS,
         OFFBOARD,
@@ -342,5 +359,7 @@ EVENT_KINDS: frozenset[str] = frozenset(
         DATA_EXPORT,
         CLIENT_IMPORT,
         MESSAGING_TEMPLATES,
+        WORKFLOW_RUN,
+        TASK_DIGEST,
     }
 )

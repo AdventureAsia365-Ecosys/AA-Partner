@@ -84,6 +84,14 @@ OPS_RELEASE_SYNC = "crm_ops_release_sync"
 # Neither is deploy-gate exempt (each exists only while due / queued by an action).
 MESSAGING_TEMPLATES = "crm_messaging_templates"
 MESSAGING_HEALTH = "crm_messaging_health"
+# AA-959 (CRM-29a, Module 10): one workflow run's due steps (app.workflows.runner), queued when the run starts (after
+# the Undo window for a member's action) and by the hourly tick for runs whose wait ended; the hourly tick
+# (app.workflows.tick: date and special-date triggers, due runs, task due dates, the digest), queued due-now; and one
+# agency's morning task digest (counts only, AA system mail), queued by the tick once per local day. None is
+# deploy-gate exempt (each exists only while due); a run's long wait is never a queued-ahead row (the tick picks it).
+WORKFLOW_RUN = "crm_workflow_run"
+WORKFLOW_TICK = "crm_workflow_tick"
+TASK_DIGEST = "crm_task_digest"
 
 DEFAULT_EXPECTED_SECONDS = 300
 OVERDUE_FACTOR = 2
@@ -126,6 +134,9 @@ EXPECTED_SECONDS: dict[str, int] = {
     OPS_RELEASE_SYNC: 300,
     MESSAGING_TEMPLATES: 60,
     MESSAGING_HEALTH: 300,
+    WORKFLOW_RUN: 60,
+    WORKFLOW_TICK: 300,
+    TASK_DIGEST: 120,
 }
 
 

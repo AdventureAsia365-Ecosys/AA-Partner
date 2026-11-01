@@ -450,7 +450,7 @@ export function TripPanel({
             {view.tasks.map((task) => (
               <li key={task.task_id} data-testid="trip-task" data-kind={task.kind} data-status={task.status} style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
                 <span style={{ fontSize: 13.5, textDecoration: task.status === "open" ? "none" : "line-through", color: task.status === "open" ? K.ink : K.muted }}>
-                  {task.priority === "urgent" && task.status === "open" && <Badge tone="danger">{t(lang, "trip.urgent")}</Badge>} {codeLabel(lang, "task", task.kind)}
+                  {task.priority === "urgent" && task.status === "open" && <Badge tone="danger">{t(lang, "trip.urgent")}</Badge>} {task.title ?? codeLabel(lang, "task", task.kind)}
                   {task.due_at && task.status === "open" ? ` · ${fmt(t(lang, "trip.due"), { when: formatInstant(task.due_at, locale, timeZone) })}` : ""}
                 </span>
                 {task.checklist && task.checklist.length > 0 && (

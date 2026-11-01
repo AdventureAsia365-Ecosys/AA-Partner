@@ -47,6 +47,7 @@ from app.jobs.worker import Handler, PermanentError
 from app.tenancy import AnyContext, system_tx
 from app.vault import DecryptionDenied, KeyProvider, Vault
 from app.vault.blind_index import NormalisationError
+from app.workflows import triggers
 
 log = logging.getLogger(__name__)
 
@@ -119,6 +120,7 @@ INSERT_PARTY_SQL = "INSERT INTO crm.trip_traveler (trip_id, traveler_id, role) V
 INSERT_PARTY_F2_SQL = "INSERT INTO crm.trip_party (trip_id, traveler_token, role) VALUES ($1, $2, $3)"
 INSERT_HISTORY_SQL = """
 INSERT INTO crm.trip_stage_history (trip_id, from_stage, to_stage, reason_code) VALUES ($1, NULL, 'inquiry', 'intake')
+RETURNING history_id
 """
 OPEN_REPLY_TASK_SQL = """
 INSERT INTO crm.task (trip_id, kind, assignee_member_id, due_anchor, due_at)
@@ -271,7 +273,7 @@ async def process_submission(ctx: AnyContext, vault: Vault, submission_id: uuid.
         row["intake_form_id"],
         lead_source,
     )
-    await ctx.conn.execute(INSERT_HISTORY_SQL, trip_id)
+    history_id = await ctx.conn.fetchval(INSERT_HISTORY_SQL, trip_id)
     await ctx.conn.execute(INSERT_PARTY_SQL, trip_id, traveler_id, "lead")
     if token is not None:
         await ctx.conn.execute(INSERT_PARTY_F2_SQL, trip_id, token, "lead")
@@ -295,6 +297,8 @@ async def process_submission(ctx: AnyContext, vault: Vault, submission_id: uuid.
     await _consent(ctx, traveler_id, answers, submission_id)
     await ctx.conn.execute(DONE_SQL, submission_id, "created", trip_id, traveler_id)
     await _after(ctx, vault, answers, trip_id, traveler_id, submission_id, owner)
+    if history_id is not None:  # AA-959: workflows that start on a new inquiry
+        await triggers.on_stage_enter(ctx, trip_id, "inquiry", history_id)
     ctx.audit(
         "intake_created", "allowed", "trip", str(trip_id), reason="new_inquiry" if match is None else "repeat_client"
     )

@@ -91,9 +91,11 @@ from app.routers import (
     support_access,
     team,
     travellers,
+    workflows,
 )
 from app.settings import INSECURE_ENVIRONMENTS, Settings, load_settings
 from app.vault import KeyProvider, build_key_provider
+from app.workflows import triggers as workflow_triggers
 
 # On shutdown a job in flight gets this long to finish; then the worker task is cancelled and releases the job back to
 # the queue at once (app.jobs.queue.release). ECS gives the container 30 s after SIGTERM (stopTimeout).
@@ -121,6 +123,8 @@ def create_app(
 ) -> FastAPI:
     settings = settings or load_settings()
     db = db or Database(settings)
+    # AA-959: the trip cancel stops workflow runs (Fix C3) and the AA-958 message events start them.
+    workflow_triggers.install()
     identity = identity_config.identity_from_settings(settings)
     if verifier is _UNSET:
         verifier = identity_config.build_verifier(identity)
@@ -309,6 +313,7 @@ def create_app(
     app.include_router(staff_ops.router)
     app.include_router(ops_release.router)
     app.include_router(commissions.router)
+    app.include_router(workflows.router)
     return app
 
 

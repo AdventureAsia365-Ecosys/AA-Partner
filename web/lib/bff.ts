@@ -291,6 +291,19 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   // AA-956 (CRM-26): the trip's AA ground operations panel (counts and dates only) and the agency's withdrawal.
   { method: "GET", pattern: new RegExp(`^trips/${UUID}/ops-release$`), tenant: true, card: "AA-956" },
   { method: "POST", pattern: new RegExp(`^trips/${UUID}/ops-release/withdraw$`), tenant: true, card: "AA-956" },
+  // AA-959 (CRM-29a): A-09 Tasks (buckets, a member's own task, edits, the digest switch: owner) and A-17 Automations
+  // (read: every role; edit: owner; apply a task list and stop a run: owner / agent; the API checks each role).
+  { method: "GET", pattern: /^tasks$/, tenant: true, card: "AA-959" },
+  { method: "POST", pattern: /^tasks$/, tenant: true, card: "AA-959" },
+  { method: "PUT", pattern: /^tasks\/digest$/, tenant: true, card: "AA-959" },
+  { method: "GET", pattern: new RegExp(`^tasks/${UUID}$`), tenant: true, card: "AA-959" },
+  { method: "PATCH", pattern: new RegExp(`^tasks/${UUID}$`), tenant: true, card: "AA-959" },
+  { method: "GET", pattern: /^workflows(\/runs)?$/, tenant: true, card: "AA-959" },
+  { method: "POST", pattern: /^workflows(\/install)?$/, tenant: true, card: "AA-959" },
+  { method: "POST", pattern: new RegExp(`^workflows/runs/${UUID}/stop$`), tenant: true, card: "AA-959" },
+  { method: "GET", pattern: new RegExp(`^workflows/${UUID}(/preview)?$`), tenant: true, card: "AA-959" },
+  { method: "PATCH", pattern: new RegExp(`^workflows/${UUID}$`), tenant: true, card: "AA-959" },
+  { method: "POST", pattern: new RegExp(`^workflows/${UUID}/(status|apply)$`), tenant: true, card: "AA-959" },
 ];
 
 /** Calls only the web server makes (lib/crmApi.ts crmCall), never reachable through /bff from the browser. */

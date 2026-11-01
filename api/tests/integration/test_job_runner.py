@@ -33,6 +33,7 @@ from app.jobs.kinds import (
     OPS_RELEASE_SYNC,
     PLACEHOLDER_PURGE,
     STAGE_DATE_RULE,
+    WORKFLOW_TICK,
 )
 from app.jobs.payload_guard import PersonalDataInPayload
 from app.jobs.queue import Job
@@ -232,6 +233,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         (OPS_RELEASE_SYNC, True),  # AA-956: the hourly ops release pass, due now
         (PLACEHOLDER_PURGE, True),  # AA-938: the hourly purge, queued due now like the daily retention
         (STAGE_DATE_RULE, True),  # AA-943: the hourly trip date rule, due now too
+        (WORKFLOW_TICK, True),  # AA-959: the hourly workflow tick, due now
     ]
     # The due runs count while they wait (they would be interrupted by a deploy) ...
     assert (await queue.active_count(app_pool, DEPLOY_GATE_EXEMPT))["by_kind"] == {
@@ -246,6 +248,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         CATALOG_SYNC: 1,
         OPS_RELEASE_SYNC: 1,
         MESSAGING_HEALTH: 1,
+        WORKFLOW_TICK: 1,
     }
     while await worker.run_once():
         pass

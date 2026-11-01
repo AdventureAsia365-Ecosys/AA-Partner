@@ -127,7 +127,9 @@ SELECT tt.traveler_id, tt.role, tr.display_name_enc, tr.preferred_channel,
  ORDER BY tt.role DESC, tt.created_at, tt.traveler_id
 """
 TASKS_SQL = """
-SELECT task_id, kind, priority, assignee_member_id, status, due_at, done_at, created_at FROM crm.task
+SELECT task_id, kind, priority, assignee_member_id, status, due_at, done_at, created_at, title_enc, workflow_run_id,
+       due_anchor, due_offset_days, due_overridden
+  FROM crm.task
  WHERE trip_id = $1 AND deleted_at IS NULL ORDER BY (status = 'open') DESC, due_at NULLS LAST, created_at
 """
 NOTES_SQL = """
@@ -325,7 +327,12 @@ async def trip_detail(ctx: TenantContext, vault: Vault, trip_id: uuid.UUID) -> d
                 "answers": answers,
             }
         )
-    tasks = [_task(r) for r in await ctx.conn.fetch(TASKS_SQL, trip_id)]
+    tasks = []
+    for r in await ctx.conn.fetch(TASKS_SQL, trip_id):
+        # AA-959: a custom task (a member's own, a workflow step's) carries its sealed title.
+        blob = r.get("title_enc")
+        title = await vault.decrypt("task", "title_enc", r["task_id"], blob) if blob else None
+        tasks.append(_task(r, title))
     await _supplier_checklist(ctx, trip_id, tasks)
     link = await ctx.conn.fetchrow(STAGE2_LINK_SQL, trip_id)
     history = [
@@ -443,10 +450,15 @@ async def _supplier_checklist(ctx: TenantContext, trip_id: uuid.UUID, tasks: lis
         k["checklist"] = list(suppliers.values())
 
 
-def _task(r: Any) -> dict[str, Any]:
+def _task(r: Any, title: str | None = None) -> dict[str, Any]:
+    keys = r.keys() if hasattr(r, "keys") else ()
     return {
         "task_id": str(r["task_id"]),
         "kind": r["kind"],
+        "title": title,
+        "workflow_run_id": _id(r["workflow_run_id"]) if "workflow_run_id" in keys else None,
+        "due_anchor": r["due_anchor"] if "due_anchor" in keys else None,
+        "due_offset_days": r["due_offset_days"] if "due_offset_days" in keys else None,
         "priority": r["priority"],
         "assignee_member_id": _id(r["assignee_member_id"]),
         "status": r["status"],
@@ -553,6 +565,10 @@ async def update_trip(
         if vault is None:
             raise RuntimeError("a start date change needs the vault (age bands)")
         await age_bands.recompute_for_trip(ctx, vault, trip_id, changes["start_date"])
+    if before is not None:
+        from app.workflows import tasks as workflow_tasks
+
+        await workflow_tasks.redate(ctx)  # AA-959 (R20): tasks due relative to the trip's dates follow them
     return _trip(row, ctx)
 
 
