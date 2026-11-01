@@ -8,7 +8,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, K } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
-import { bffSend } from "@/lib/bffClient";
+import { bffDownload, bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import {
@@ -72,21 +72,9 @@ export function DataLifecycleView({
 
   async function download(requestId: string) {
     setError(null);
-    try {
-      const res = await fetch(`/bff/lifecycle/offboarding/${requestId}/export`, { credentials: "same-origin" });
-      if (!res.ok) throw new Error(String(res.status));
-      const url = URL.createObjectURL(await res.blob());
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `agency-export-${requestId}.jsonl`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      router.refresh();
-    } catch {
-      setError(t(lang, "data.error"));
-    }
+    const res = await bffDownload(`lifecycle/offboarding/${requestId}/export`, { filename: `agency-export-${requestId}.jsonl` });
+    if (res.ok) router.refresh();
+    else if (!res.redirecting) setError(t(lang, "data.error"));
   }
 
   const off = view.offboarding ?? null;

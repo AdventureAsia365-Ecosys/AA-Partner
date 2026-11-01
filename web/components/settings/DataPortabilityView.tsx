@@ -8,7 +8,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, Field, Input, K, Select } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
-import { bffSend } from "@/lib/bffClient";
+import { type BffResult, bffDownload, bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import {
@@ -51,12 +51,17 @@ export function DataPortabilityView({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  async function send<T>(method: "POST", path: string, body?: unknown) {
+  async function send<T>(method: "POST", path: string, body?: unknown, opts: { renew?: boolean } = {}) {
     setError(null);
     setBusy(true);
-    const res = await bffSend<T>(method, path, body ?? {});
-    setBusy(false);
+    let res: BffResult<T>;
+    try {
+      res = await bffSend<T>(method, path, body ?? {}, opts);
+    } finally {
+      setBusy(false);
+    }
     if (!res.ok) {
+      if (res.redirecting) return null; // the page is on its way to sign in again
       const known = erasureRefusal(res.detail);
       setError(
         known
@@ -73,23 +78,13 @@ export function DataPortabilityView({
   }
 
   async function download(e: DataExport) {
-    const link = await send<ExportLink>("POST", `data/exports/${e.export_id}/link`);
+    // AA-1014: the link POST renews an expired token in the background too (its body is the JSON string "{}", safe to
+    // send twice, and a 401 means the API minted nothing), so the download does not reload the page on the first 401.
+    const link = await send<ExportLink>("POST", `data/exports/${e.export_id}/link`, {}, { renew: true });
     if (!link) return;
-    try {
-      const res = await fetch(`/bff/${link.path}`, { credentials: "same-origin" });
-      if (!res.ok) throw new Error(String(res.status));
-      const url = URL.createObjectURL(await res.blob());
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = exportFileName(e);
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      router.refresh();
-    } catch {
-      setError(t(lang, "data.error"));
-    }
+    const res = await bffDownload(link.path, { filename: exportFileName(e) });
+    if (res.ok) router.refresh();
+    else if (!res.redirecting) setError(t(lang, "data.error"));
   }
 
   const exportsList = exportsView?.exports ?? [];

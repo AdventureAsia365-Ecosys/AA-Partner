@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, EmptyState, K } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
+import { bffDownload, bffFetch } from "@/lib/bffClient";
 import {
   ACTIONS,
   ACTOR_GROUPS,
@@ -79,7 +80,8 @@ export function AccessLogView({
     setBusy("more");
     setError(null);
     try {
-      const res = await fetch(`/bff/${eventsPath(filter, cursor)}`, { headers: { Accept: "application/json" }, credentials: "same-origin" });
+      const res = await bffFetch(eventsPath(filter, cursor), { headers: { Accept: "application/json" } });
+      if (res.status === 401) return; // AA-1014: the renewal failed too; the page is reloading through /auth/refresh
       if (!res.ok) throw new Error(String(res.status));
       const page = (await res.json()) as AuditPage;
       setEvents((prev) => [...prev, ...page.events]);
@@ -95,18 +97,8 @@ export function AccessLogView({
     setBusy(format);
     setError(null);
     try {
-      const res = await fetch(`/bff/${exportPath(filter, format)}`, { credentials: "same-origin" });
-      if (!res.ok) throw new Error(String(res.status));
-      const url = URL.createObjectURL(await res.blob());
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = exportFilename(format);
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch {
-      setError(t(lang, "log.downloadError"));
+      const res = await bffDownload(exportPath(filter, format), { filename: exportFilename(format) });
+      if (!res.ok && !res.redirecting) setError(t(lang, "log.downloadError"));
     } finally {
       setBusy(null);
     }

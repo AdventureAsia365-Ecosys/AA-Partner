@@ -5,6 +5,7 @@
 // them to anyone else anyway.
 import { useState } from "react";
 import { Button, K, Select } from "@/app/_kit";
+import { bffDownload } from "@/lib/bffClient";
 import { type Lang, t, type MessageKey } from "@/lib/i18n";
 import { type ExportSection, type Period, exportFilename, exportPath, exportableSections } from "@/lib/reports";
 
@@ -28,18 +29,10 @@ export function ExportMenu({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/bff/${exportPath(section, { period, owner })}`, { credentials: "same-origin" });
-      if (!res.ok) throw new Error(String(res.status));
-      const url = URL.createObjectURL(await res.blob());
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = exportFilename(section, period);
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch {
-      setError(t(lang, "reports.export.error"));
+      // AA-1014: an access token that expired since the page loaded is renewed in the background, then retried; when
+      // that fails too the page is already on its way to sign in again (`redirecting`), so no error flashes first.
+      const res = await bffDownload(exportPath(section, { period, owner }), { filename: exportFilename(section, period) });
+      if (!res.ok && !res.redirecting) setError(t(lang, "reports.export.error"));
     } finally {
       setBusy(false);
     }
