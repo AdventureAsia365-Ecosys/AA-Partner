@@ -28,6 +28,7 @@ from __future__ import annotations
 import datetime as dt
 import os
 import uuid
+from collections import Counter
 from decimal import Decimal
 from typing import Any
 
@@ -55,7 +56,7 @@ from app.vault import KeyProvider, Vault
 from app.vault.wrapping import LocalKeyWrapper
 from tests.aa_fakes import FakeBooking, booking_client
 from tests.integration.test_aa_lines_api import _body as _aa_body
-from tests.integration.test_aa_lines_api import _due_now, _scalar, _sync
+from tests.integration.test_aa_lines_api import _due_now, _scalar
 from tests.integration.test_aa_lines_api import _setup as _aa_setup
 from tests.integration.test_lifecycle_api import _accept as _lc_accept
 from tests.integration.test_lifecycle_api import _proposal as _lc_proposal
@@ -85,6 +86,17 @@ async def _setup(pool: asyncpg.Pool) -> dict[str, Any]:
 
 def _body(**over: Any) -> dict[str, Any]:
     return _aa_body(tour_source_id=TOUR, **over)
+
+
+async def _sync(pool: asyncpg.Pool, fake: FakeBooking, tenant: uuid.UUID) -> Counter[str]:
+    """One run of the Booking sync job for this test's agency, feed included: the job's own per-agency step
+    (``BookingSync.run_agency``, what ``__call__`` runs for each agency). AA-1032: the shared helper runs the whole job,
+    which walks every agency the session has made by then (hundreds by this file) and sent their leftover requests to
+    this test's fake; that made this file ~300 s of the ~450 s CI integration run. Stricter, not looser: an error of
+    this agency's run raises here instead of being counted as ``agency_failed``."""
+    counts: Counter[str] = Counter()
+    await sync.BookingSync(booking_client(fake)).run_agency(pool, tenant, counts, feed=True)
+    return counts
 
 
 def _keys() -> KeyProvider:

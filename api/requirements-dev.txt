@@ -2,5 +2,7 @@
 pytest==9.1.1
 pytest-asyncio==1.4.0
 pytest-cov==7.1.0
+# AA-1032: Unit Tests run on 4 workers (-n 4 --dist loadfile); 3.8.0 brings execnet>=2.1.
+pytest-xdist==3.8.0
 httpx==0.28.1
 ruff==0.16.9
