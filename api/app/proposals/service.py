@@ -386,7 +386,11 @@ async def update_draft(
     balance = changes["balance_due_on"] if "balance_due_on" in changes else row["balance_due_on"]
     terms = changes["terms_doc_id"] if "terms_doc_id" in changes else row["terms_doc_id"]
     _check_amounts(currency, total, deposit, balance)
-    await _terms(ctx, terms, published=False)
+    if terms is not None and terms != row["terms_doc_id"]:
+        # S262 round 3 (rule parity with the builder settings): a new choice must be the published version (409
+        # terms_not_published); the version the draft already names may stay (Send then refuses it until the agent
+        # picks the current terms, "Use the current terms").
+        await _terms(ctx, terms, published=True)
     await ctx.conn.execute(
         UPDATE_SQL,
         proposal_id,

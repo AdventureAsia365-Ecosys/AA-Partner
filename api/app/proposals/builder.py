@@ -23,7 +23,13 @@ A builder version is a ``crm.proposal`` row with ``kind = builder``:
   options (``carried``). Sending a published version is CRM-21b (AA-950). **Terms** (design v3 F6 step 3, WF-7, R34;
   S261 live finding): a version without booking terms is pinned to the agency's published booking terms version at
   publish (a new skeleton starts with it too), so the client accepts the terms with the proposal and no re-accept
-  waits before the deposit (:func:`app.proposals.service.pin_current_terms`).
+  waits before the deposit (:func:`app.proposals.service.pin_current_terms`). A version that names terms keeps them;
+  when that version is retired (the agency published a newer one), the draft is **not publishable** (blocking check
+  ``terms_retired``, ``terms_not_published`` for a draft or removed version) until the agent picks the current terms
+  (S262 round 3, AA-957): the agent chose the version the client accepts, so publish never swaps it silently. A
+  working copy of a version whose terms are retired starts with the current published terms, like a new skeleton.
+  Settings take only a published terms version (409 ``terms_not_published``); keeping the version already named is
+  allowed.
 - **Picks** (:func:`record_pick`, the seam CRM-21b's client page calls): one pick per block of a published / sent
   version; a swap the block does not allow, a sold-out option or a rule break is refused; every pick moves
   ``selection_seq``.
@@ -87,8 +93,9 @@ SELECT p.proposal_id, p.trip_id, p.version, p.status, p.kind, p.body_enc, p.curr
        p.deposit_amount, p.balance_due_on, p.terms_doc_id, p.price_hash, p.price_visibility, p.room_config,
        p.deposit_pct, p.starts_on, p.edit_seq, p.selection_seq, p.based_on_proposal_id, p.based_on_selection_seq,
        p.published_at, p.sent_at, p.created_at, p.updated_at, t.stage AS trip_stage, t.party_adults,
-       t.party_child_ages, t.party_type, t.destinations
+       t.party_child_ages, t.party_type, t.destinations, d.status AS terms_status
   FROM crm.proposal p JOIN crm.trip t ON t.trip_id = p.trip_id AND t.deleted_at IS NULL
+  LEFT JOIN crm.agreement_doc d ON d.doc_id = p.terms_doc_id AND d.kind = 'booking_terms' AND d.deleted_at IS NULL
  WHERE p.proposal_id = $1 AND p.deleted_at IS NULL
 """
 LOCK_SQL = PROPOSAL_SQL + "   FOR UPDATE OF p"
@@ -490,6 +497,8 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
         "starts_on": _iso(row["starts_on"]),
         "balance_due_on": _iso(row["balance_due_on"]),
         "terms_doc_id": str(row["terms_doc_id"]) if row["terms_doc_id"] else None,
+        # S262 round 3: the named version's state (published / retired / draft; None without terms or once removed).
+        "terms_status": row["terms_status"],
         "intro": body,
         "price_hash": bytes(row["price_hash"]).hex() if row["price_hash"] else None,
         "published_at": _iso(row["published_at"]),
@@ -566,6 +575,10 @@ def _checks(row: Any, s: dict[str, Any], now: dt.datetime) -> dict[str, Any]:
         warnings.append("aa_no_longer_offered")
     if any(o["net_amount"] is None for o in s["options"]):
         warnings.append("net_missing")
+    if row["status"] == "draft" and row["terms_doc_id"] is not None and row["terms_status"] != "published":
+        # S262 round 3 (AA-957 x AA-952): Publish refuses terms that are not the published version; say so up front.
+        # Only a draft: a published / sent / accepted version keeps the terms it went out with (R34), never "blocked".
+        blocking.append("terms_retired" if row["terms_status"] == "retired" else "terms_not_published")
     sums = _charged(s, None, row["deposit_pct"])
     if sums["sell_total"] <= 0:
         blocking.append("nothing_to_charge")
@@ -681,6 +694,11 @@ async def _copy(
     if src["kind"] != KIND:
         raise Conflict("proposal_not_builder", "only a builder version is copied")
     body = await vault.decrypt("proposal", "body_enc", source_id, src["body_enc"])
+    terms_doc_id = src["terms_doc_id"]
+    if terms_doc_id is not None and src["terms_status"] != "published":
+        # S262 round 3: the source's terms were retired since it went out; the copy starts with the current version.
+        current = await esign_terms.current(ctx)
+        terms_doc_id = current["doc_id"] if current is not None else None
     await ctx.conn.execute(
         INSERT_PROPOSAL_SQL,
         proposal_id,
@@ -689,7 +707,7 @@ async def _copy(
         await vault.encrypt("proposal", "body_enc", proposal_id, body),
         src["currency"],
         src["balance_due_on"],
-        src["terms_doc_id"],
+        terms_doc_id,
         src["price_visibility"],
         json.dumps(_jsonb(src["room_config"])) if src["room_config"] is not None else None,
         src["deposit_pct"],
@@ -761,8 +779,14 @@ async def update_settings(
     starts_on = changes["starts_on"] if "starts_on" in changes else row["starts_on"]
     balance = changes["balance_due_on"] if "balance_due_on" in changes else row["balance_due_on"]
     terms = changes["terms_doc_id"] if "terms_doc_id" in changes else row["terms_doc_id"]
-    if terms is not None and await ctx.conn.fetchrow(TERMS_SQL, terms) is None:
-        raise NotFound("terms_not_found")
+    if terms is not None and terms != row["terms_doc_id"]:
+        # A new choice must be the published version (S262 round 3); the version already named may stay (a retired
+        # one then blocks Publish with terms_retired until the agent picks the current terms).
+        doc = await ctx.conn.fetchrow(TERMS_SQL, terms)
+        if doc is None:
+            raise NotFound("terms_not_found")
+        if doc["status"] != "published":
+            raise Conflict("terms_not_published", "choose the published booking terms version")
     body = row["body_enc"]
     if "intro" in changes:
         text = (changes["intro"] or "").replace("\r\n", "\n").strip()

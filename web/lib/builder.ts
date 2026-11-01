@@ -93,6 +93,8 @@ export interface BuilderView {
   starts_on: string | null;
   balance_due_on: string | null;
   terms_doc_id: string | null;
+  /** S262 round 3: the named version's state (null without terms or once removed). */
+  terms_status?: "published" | "retired" | "draft" | null;
   intro: string;
   price_hash: string | null;
   published_at: string | null;
@@ -225,6 +227,8 @@ export function checkKey(code: string): MessageKey {
     aa_no_longer_offered: "builder.check.aa_no_longer_offered",
     net_missing: "builder.check.net_missing",
     prep_packs_not_chosen: "builder.check.prep_packs_not_chosen",
+    terms_retired: "builder.check.terms_retired",
+    terms_not_published: "builder.check.terms_not_published",
   };
   return known[code] ?? "builder.err.generic";
 }

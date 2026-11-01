@@ -19,17 +19,20 @@ export function RefundActions({
   lang,
   locale,
   onMessage,
+  readOnly = false,
 }: {
   refund: RefundRequest;
   role: string;
   lang: Lang;
   locale: DateLocale;
   onMessage: (tone: "danger" | "success", text: string) => void;
+  /** S262 round 3: the trip's cancel run is being applied (TripClosed "updating"): the status only, no next step. */
+  readOnly?: boolean;
 }) {
   const router = useRouter();
   const hydrated = useHydrated();
   const tr = (key: string) => t(lang, key as MessageKey);
-  const step = refundStep(refund, role);
+  const step = readOnly ? null : refundStep(refund, role);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
   const [executing, setExecuting] = useState(false);

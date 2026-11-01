@@ -7,14 +7,17 @@
 // (lib/proposals.ts). Buttons wait for hydration (the page is a full server render, AA-936 lesson).
 // AA-957 S262 round 3 (C12 §2.7): the page's closed state (TripClosed) closes the card at once after the cancel run;
 // a closed trip's builder versions show no "Open builder", client choices or AA hold, and its Stage 3 copy says the
-// travellers send nothing more.
+// travellers send nothing more. S262 round 3 (AA-957 x AA-952): a draft naming booking terms that are no longer
+// published shows them (marked) with "Use the current terms" and no Send (which would be refused); the edit form lists
+// the version the draft names instead of showing the current one in its place. While the cancel run's answer is in
+// but the server view has not reloaded (TripClosed "updating"), the schedule shows no stale "Due".
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
 import { DateInput } from "@/components/DateInput";
 import { Panel } from "@/components/PageTitle";
-import { useTripClosed } from "@/components/pipeline/TripClosed";
+import { useTripClosed, useTripUpdating } from "@/components/pipeline/TripClosed";
 import { BuilderClientRow } from "@/components/proposals/BuilderClientRow";
 import { bffSend } from "@/lib/bffClient";
 import { builderErrorKey } from "@/lib/builder";
@@ -27,6 +30,9 @@ import {
   formatAmount,
   PAY_METHODS,
   proposalErrorKey,
+  termsChoiceLabel,
+  termsChoices,
+  termsStaleNote,
   type Agreement,
   type InviteResult,
   type LifecycleView,
@@ -64,7 +70,8 @@ export function ProposalPanel({
   closed: closedProp = false,
 }: {
   view: LifecycleView;
-  /** Published booking terms versions (Settings > Agreements). */
+  /** Every booking terms version of the agency (Settings > Agreements, any status; the select lists the published one
+   *  and a retired one a draft still names). */
   terms: Agreement[];
   /** Names of the trip's travellers (from GET /trips/{id}). */
   party: { traveler_id: string; display_name: string; role: string }[];
@@ -80,6 +87,7 @@ export function ProposalPanel({
   const router = useRouter();
   const hydrated = useHydrated();
   const closed = useTripClosed(closedProp);
+  const updating = useTripUpdating();
   const tr = (key: string) => t(lang, key as MessageKey);
   // AA-949: builder versions live in the day-list builder (their own section below); this form handles text versions.
   const textProposals = view.proposals.filter((p) => (p.kind ?? "text") === "text");
@@ -186,8 +194,29 @@ export function ProposalPanel({
     if (await run("POST", `schedule/${scheduleId}/void`)) router.refresh();
   }
 
+  async function switchToCurrentTerms(p: Proposal, docId: string, label: string) {
+    if (await run("PATCH", `proposals/${p.proposal_id}`, { terms_doc_id: docId })) {
+      setMessage({ tone: "success", text: fmt(tr("proposal.termsSwitched"), { label }) });
+      router.refresh();
+    }
+  }
+
   const draftOpen = !closed && (editing || !current || current.status === "superseded" || current.status === "withdrawn");
   const seed = editing && current ? current : null;
+  // The draft being edited keeps the version it names (listed, marked when no longer published); a new version starts
+  // from the sent one's terms only while they are still the published version, else from the current terms.
+  const seedTerms = seed?.terms_doc_id ?? null;
+  const formTerms = termsChoices(
+    terms,
+    seed?.status === "draft" || terms.some((d) => d.doc_id === seedTerms && d.status === "published") ? seedTerms : null,
+  );
+  const currentTerms = current?.status === "draft" ? termsChoices(terms, current.terms_doc_id) : null;
+  // S262 fix pass: the form's terms select is controlled. It follows the draft's terms whenever the server view names
+  // another version (after "Use the current terms" the open form shows the new terms) and keeps an unsaved pick between.
+  const formTermsKey = `${draftOpen}:${seed?.proposal_id ?? "new"}:${formTerms.value}`;
+  const [termsPick, setTermsPick] = useState({ key: formTermsKey, value: formTerms.value });
+  if (termsPick.key !== formTermsKey) setTermsPick({ key: formTermsKey, value: formTerms.value });
+  const formTermsValue = termsPick.key === formTermsKey ? termsPick.value : formTerms.value;
 
   return (
     <Panel title={tr("proposal.tab")} testId="trip-proposal">
@@ -238,7 +267,7 @@ export function ProposalPanel({
                 </Button>
               )}
               {current.status === "draft" && canSend && (
-                <Button size="sm" disabled={!hydrated || busy} onClick={() => send(current)}>
+                <Button size="sm" disabled={!hydrated || busy || !!currentTerms?.stale} onClick={() => send(current)}>
                   {tr("proposal.send")}
                 </Button>
               )}
@@ -262,6 +291,25 @@ export function ProposalPanel({
                 </Button>
               )}
             </div>
+            {currentTerms?.stale && !closed && (
+              <div data-testid="proposal-terms-stale" style={{ display: "grid", gap: 6, padding: "8px 10px", borderRadius: 8, background: K.bg, fontSize: 12.5 }}>
+                <span style={{ color: K.danger }}>{termsStaleNote(currentTerms.stale, lang)}</span>
+                {currentTerms.current ? (
+                  <span data-testid="proposal-terms-use-current">
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      disabled={!hydrated || busy}
+                      onClick={() => void switchToCurrentTerms(current, currentTerms.current!.doc_id, currentTerms.current!.version_label)}
+                    >
+                      {fmt(tr("proposal.termsUseCurrent"), { label: currentTerms.current.version_label })}
+                    </Button>
+                  </span>
+                ) : (
+                  <span style={{ color: K.muted }}>{tr("proposal.termsNoCurrent")}</span>
+                )}
+              </div>
+            )}
           </section>
         )}
 
@@ -345,11 +393,17 @@ export function ProposalPanel({
                 {tr("proposal.terms")}
                 {/* Send pins the published booking terms to a version without them (S261): "No terms" only when there
                     are none. */}
-                <select name="terms_doc_id" defaultValue={seed?.terms_doc_id ?? terms[0]?.doc_id ?? ""} style={field}>
-                  {terms.length === 0 && <option value="">{tr("proposal.noTerms")}</option>}
-                  {terms.map((d) => (
+                <select
+                  name="terms_doc_id"
+                  value={formTermsValue}
+                  onChange={(e) => setTermsPick({ key: formTermsKey, value: e.target.value })}
+                  style={field}
+                  data-testid="proposal-terms"
+                >
+                  {!formTerms.current && <option value="">{tr("proposal.noTerms")}</option>}
+                  {formTerms.options.map((d) => (
                     <option key={d.doc_id} value={d.doc_id}>
-                      {d.version_label}
+                      {termsChoiceLabel(d, lang)}
                     </option>
                   ))}
                 </select>
@@ -386,7 +440,10 @@ export function ProposalPanel({
                   <strong>{tr(`proposal.kind.${row.kind}`)}</strong>
                   <span>{formatAmount(row.amount, row.currency, locale)}</span>
                   <span style={{ color: K.muted }}>{fmt(tr("proposal.dueOn"), { date: formatDate(row.due_on, locale) })}</span>
-                  <Badge tone={ROW_TONE[row.status]}>{tr(`proposal.row.${row.status}`)}</Badge>
+                  {/* The cancel run voids an unpaid row: no "Due" until the server view says what it did. */}
+                  <Badge tone={updating && row.status === "due" ? "neutral" : ROW_TONE[row.status]}>
+                    {updating && row.status === "due" ? tr("trip.updating") : tr(`proposal.row.${row.status}`)}
+                  </Badge>
                   {row.status === "due" && canSend && paying !== row.schedule_id && (
                     <>
                       <Button size="sm" disabled={!hydrated || busy} onClick={() => setPaying(row.schedule_id)}>

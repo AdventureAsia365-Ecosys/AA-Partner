@@ -41,7 +41,7 @@ import {
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import { formatMoney, seesMargin } from "@/lib/ledger";
-import type { Agreement } from "@/lib/proposals";
+import { termsChoiceLabel, termsChoices, termsStaleNote, type Agreement } from "@/lib/proposals";
 
 const field: React.CSSProperties = {
   font: "inherit",
@@ -73,6 +73,8 @@ export function BuilderPage({
   role: string;
   lang: Lang;
   locale: DateLocale;
+  /** Every booking terms version of the agency (any status): the select lists the published one, plus the retired
+   *  one this version still names (S262 round 3). */
   terms: Agreement[];
   suppliers: Supplier[];
 }) {
@@ -92,6 +94,13 @@ export function BuilderPage({
   const canPublish = role === "owner" || role === "agent";
   const money = (v: string | null | undefined) => formatMoney(v, view.currency, locale);
   const day = view.days.find((d) => d.proposal_day_id === dayId) ?? view.days[0];
+  const termsSelect = termsChoices(terms, view.terms_doc_id);
+  // S262 fix pass: the terms select is controlled. It follows the version's terms whenever the page reads a new
+  // version state (a save, "Use the current terms"), and keeps the agent's unsaved pick in between.
+  const termsKey = `${view.proposal_id}:${view.edit_seq}:${termsSelect.value}`;
+  const [termsPick, setTermsPick] = useState({ key: termsKey, value: termsSelect.value });
+  if (termsPick.key !== termsKey) setTermsPick({ key: termsKey, value: termsSelect.value });
+  const termsValue = termsPick.key === termsKey ? termsPick.value : termsSelect.value;
   const roomWords = Object.fromEntries(ROOM_TYPES.map((r) => [r, tr(`builder.room.${r}`)])) as Record<RoomType, string>;
 
   async function reload() {
@@ -179,6 +188,15 @@ export function BuilderPage({
     };
     if (canMoney) body.deposit_pct = String(data.get("deposit_pct") ?? "");
     if (await write("PATCH", `proposals/${view.proposal_id}/builder`, body)) setMessage({ tone: "success", text: tr("builder.saved") });
+  }
+
+  /** S262 round 3: the version names booking terms that are no longer published; one click picks the current ones. */
+  async function switchToCurrentTerms() {
+    const current = termsSelect.current;
+    if (!current) return;
+    if (await write("PATCH", `proposals/${view.proposal_id}/builder`, { terms_doc_id: current.doc_id })) {
+      setMessage({ tone: "success", text: fmt(tr("proposal.termsSwitched"), { label: current.version_label }) });
+    }
   }
 
   async function saveRooms() {
@@ -569,17 +587,38 @@ export function BuilderPage({
               <label style={label}>
                 {tr("proposal.terms")}
                 {/* With published booking terms a version always carries them (publish pins them, S261): "No terms"
-                    is offered only when the agency has none. */}
-                <select name="terms_doc_id" style={field} defaultValue={view.terms_doc_id ?? terms[0]?.doc_id ?? ""}>
-                  {terms.length === 0 && <option value="">{tr("proposal.noTerms")}</option>}
-                  {terms.map((d) => (
+                    is offered only when the agency has none. S262 round 3: a version naming terms that are no longer
+                    published shows them (marked), never the current version in their place. */}
+                <select
+                  name="terms_doc_id"
+                  style={field}
+                  value={termsValue}
+                  onChange={(e) => setTermsPick({ key: termsKey, value: e.target.value })}
+                  data-testid="builder-terms"
+                >
+                  {!termsSelect.current && <option value="">{tr("proposal.noTerms")}</option>}
+                  {termsSelect.options.map((d) => (
                     <option key={d.doc_id} value={d.doc_id}>
-                      {d.version_label}
+                      {termsChoiceLabel(d, lang)}
                     </option>
                   ))}
                 </select>
               </label>
             </div>
+            {termsSelect.stale && view.terms_status !== "published" && (
+              <div data-testid="builder-terms-stale" style={{ display: "grid", gap: 6, padding: "8px 10px", borderRadius: 8, background: K.bg, fontSize: 12.5 }}>
+                <span style={{ color: K.danger }}>{termsStaleNote(termsSelect.stale, lang)}</span>
+                {termsSelect.current ? (
+                  <span data-testid="builder-terms-use-current">
+                    <Button type="button" size="sm" variant="primary" disabled={!hydrated || busy} onClick={() => void switchToCurrentTerms()}>
+                      {fmt(tr("proposal.termsUseCurrent"), { label: termsSelect.current.version_label })}
+                    </Button>
+                  </span>
+                ) : (
+                  <span style={{ color: K.muted }}>{tr("proposal.termsNoCurrent")}</span>
+                )}
+              </div>
+            )}
             <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))" }}>
               <DateInput locale={locale} name="starts_on" label={tr("builder.startsOn")} readAs={tr("settings.readAs")} invalid={tr("settings.invalidDate")} defaultValue={view.starts_on ?? ""} />
               <DateInput locale={locale} name="balance_due_on" label={tr("proposal.balanceDueLabel")} readAs={tr("settings.readAs")} invalid={tr("settings.invalidDate")} defaultValue={view.balance_due_on ?? ""} />

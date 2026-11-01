@@ -301,7 +301,7 @@ describe("cancel dialog", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(json(200, PREVIEW)));
     const c = await mount(createElement(CancelDialog, { tripId: ID, lang: "en", locale: "en-AU", onDone: () => {}, onClose: () => {} }));
     await setValue(c.querySelector<HTMLSelectElement>("[data-testid=cancel-reason]")!, "client_request");
-    const body = c.querySelector("[data-testid=cancel-dialog-body]")!;
+    const body = c.querySelector("[data-testid=cancel-dialog-scroll]")!;
     expect(body.textContent).toContain(MESSAGES.en["cancelTrip.willWaitHint"]);
     expect(body.textContent).not.toContain(MESSAGES.en["trip.cancellationPendingHint"]); // "You cancelled ..." is the badge's
     expect(c.querySelector("[data-testid=cancel-aa-fee]")!.textContent).toBe("Fee 118.91 USD (75 %, 13 days before departure)");
@@ -313,7 +313,7 @@ describe("cancel dialog", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(json(200, PREVIEW)));
     const c = await mount(createElement(CancelDialog, { tripId: ID, lang: "vi", locale: "vi-VN", onDone: () => {}, onClose: () => {} }));
     await setValue(c.querySelector<HTMLSelectElement>("[data-testid=cancel-reason]")!, "client_request");
-    const body = c.querySelector("[data-testid=cancel-dialog-body]")!;
+    const body = c.querySelector("[data-testid=cancel-dialog-scroll]")!;
     const typed = c.querySelector<HTMLInputElement>("[data-testid=cancel-typed]")!;
     expect(typed).not.toBeNull();
     expect(body.contains(typed)).toBe(false);

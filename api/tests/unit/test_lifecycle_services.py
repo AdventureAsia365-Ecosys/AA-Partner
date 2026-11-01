@@ -166,6 +166,43 @@ async def test_update_draft_only_while_draft() -> None:
 
 
 @pytest.mark.asyncio
+async def test_update_draft_takes_only_the_published_terms_as_a_new_choice() -> None:
+    """S262 fix pass (T2, parity with the builder settings): a text draft's new terms choice must be the published
+    version (409 terms_not_published for a draft or retired one, 404 for an unknown one); the version the draft already
+    names may stay, retired or not, while other fields change (Send refuses it until the current terms are picked)."""
+    other = uuid.uuid4()
+    for status in ("draft", "retired"):
+        conn = (
+            ScriptedConn()
+            .on("FROM crm.proposal p JOIN crm.trip", _proposal_row(terms_doc_id=DOC))
+            .on("FROM crm.agreement_doc", {"doc_id": other, "status": status, "body_sha256": b"\x00" * 32})
+        )
+        with _raises(Conflict, "terms_not_published"):
+            await service.update_draft(tenant_ctx(conn), FakeVault(), PROPOSAL, {"terms_doc_id": other})
+        assert not conn.sql("UPDATE crm.proposal SET body_enc")
+    unknown = ScriptedConn().on("FROM crm.proposal p JOIN crm.trip", _proposal_row()).on("FROM crm.agreement_doc", None)
+    with _raises(NotFound, "terms_not_found"):
+        await service.update_draft(tenant_ctx(unknown), FakeVault(), PROPOSAL, {"terms_doc_id": other})
+    # Keeping the named version (retired since): no terms lookup, the edit saves.
+    keep = ScriptedConn().on("FROM crm.proposal p JOIN crm.trip", _proposal_row(terms_doc_id=DOC))
+    await service.update_draft(tenant_ctx(keep), FakeVault(), PROPOSAL, {"terms_doc_id": DOC, "body": "Day 2"})
+    await service.update_draft(tenant_ctx(keep), FakeVault(), PROPOSAL, {"body": "Day 3"})
+    assert not keep.sql("FROM crm.agreement_doc")
+    assert [args[6] for args in keep.sql("UPDATE crm.proposal SET body_enc")] == [DOC, DOC]
+    # Switching to the published version ("Use the current terms") saves it; clearing the terms needs no lookup.
+    switch = (
+        ScriptedConn()
+        .on("FROM crm.proposal p JOIN crm.trip", _proposal_row(terms_doc_id=DOC))
+        .on("FROM crm.agreement_doc", {"doc_id": other, "status": "published", "body_sha256": b"\x01" * 32})
+    )
+    await service.update_draft(tenant_ctx(switch), FakeVault(), PROPOSAL, {"terms_doc_id": other})
+    assert switch.sql("UPDATE crm.proposal SET body_enc")[0][6] == other
+    cleared = ScriptedConn().on("FROM crm.proposal p JOIN crm.trip", _proposal_row(terms_doc_id=DOC))
+    await service.update_draft(tenant_ctx(cleared), FakeVault(), PROPOSAL, {"terms_doc_id": None})
+    assert cleared.sql("UPDATE crm.proposal SET body_enc")[0][6] is None and not cleared.sql("FROM crm.agreement_doc")
+
+
+@pytest.mark.asyncio
 async def test_send_refusals() -> None:
     with _raises(NotFound, "proposal_not_found"):
         await service.send(tenant_ctx(), FakeVault(), PROPOSAL)

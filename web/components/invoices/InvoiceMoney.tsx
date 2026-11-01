@@ -21,6 +21,7 @@ export function InvoiceMoney({
   lang,
   locale,
   closed = false,
+  readOnly = false,
   onMessage,
 }: {
   invoice: Invoice;
@@ -29,12 +30,14 @@ export function InvoiceMoney({
   locale: DateLocale;
   /** S262: the trip is cancelled: a payment whose refund the cancel already proposed offers no second request. */
   closed?: boolean;
+  /** S262 round 3: the trip's cancel run is being applied (TripClosed "updating"): amounts only, no money action. */
+  readOnly?: boolean;
   onMessage: (tone: "danger" | "success", text: string) => void;
 }) {
   const router = useRouter();
   const hydrated = useHydrated();
   const tr = (key: string) => t(lang, key as MessageKey);
-  const bills = canBill(role);
+  const bills = canBill(role) && !readOnly;
   const [busy, setBusy] = useState(false);
   const [paying, setPaying] = useState(false);
   const [method, setMethod] = useState("bank_transfer");
@@ -43,6 +46,20 @@ export function InvoiceMoney({
   const refunds = invoice.refund_requests ?? [];
   const money = (v: string | undefined) => formatAmount(v ?? null, invoice.currency, locale);
   const refundOpen = (paymentId: string) => refunds.some((r) => r.payment_id === paymentId && (r.status === "proposed" || r.status === "approved"));
+  // S262 fix pass: a form opened before the cancel run closes when the trip closes or its cancel run is being applied
+  // (the run may propose this very refund); the agent opens it again on the refreshed view if a refund is still due.
+  const locked = closed || readOnly;
+  const [wasLocked, setWasLocked] = useState(locked);
+  if (wasLocked !== locked) {
+    setWasLocked(locked);
+    if (locked) {
+      setRefunding(null);
+      setPaying(false);
+    }
+  }
+  /** "Request refund" (and its form) for this payment: what is left to ask back, none already open on a closed trip. */
+  const canRefund = (p: { payment_id: string; entry_kind: string; refundable_amount?: string }) =>
+    bills && p.entry_kind === "payment" && Number(p.refundable_amount ?? 0) > 0 && !(closed && refundOpen(p.payment_id));
 
   async function post(path: string, body: unknown, done: string): Promise<boolean> {
     setBusy(true);
@@ -96,13 +113,13 @@ export function InvoiceMoney({
               {formatDate(p.received_on, locale)} · {tr(`proposal.method.${p.method}`)}
               {p.reference ? ` · ${p.reference}` : ""}
             </span>
-            {bills && p.entry_kind === "payment" && Number(p.refundable_amount ?? 0) > 0 && refunding !== p.payment_id && !(closed && refundOpen(p.payment_id)) && (
+            {canRefund(p) && refunding !== p.payment_id && (
               <Button size="sm" variant="ghost" disabled={!hydrated || busy} onClick={() => setRefunding(p.payment_id)}>
                 {tr("refund.request")}
               </Button>
             )}
           </div>
-          {refunding === p.payment_id && (
+          {refunding === p.payment_id && canRefund(p) && (
             <form
               data-testid="refund-request-form"
               style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap" }}
@@ -128,7 +145,7 @@ export function InvoiceMoney({
         </div>
       ))}
       {refunds.map((r) => (
-        <RefundActions key={r.refund_id} refund={r} role={role} lang={lang} locale={locale} onMessage={onMessage} />
+        <RefundActions key={r.refund_id} refund={r} role={role} lang={lang} locale={locale} onMessage={onMessage} readOnly={readOnly} />
       ))}
       {bills && invoice.actions.includes("record_payment") && !paying && (
         <div>

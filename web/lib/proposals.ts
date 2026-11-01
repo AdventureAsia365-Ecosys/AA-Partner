@@ -4,6 +4,7 @@
 // Amounts are the client's sell amounts (strings with two decimals from the API); no net, cost or margin here.
 
 import type { PortalPartyMember } from "./clientPortal";
+import { fmt, t, type Lang } from "./i18n";
 
 export type ProposalStatus = "draft" | "published" | "sent" | "accepted" | "superseded" | "withdrawn";
 export type ScheduleStatus = "due" | "paid" | "void";
@@ -105,6 +106,63 @@ export interface Agreement {
   body_text: string;
   body_sha256: string;
   published_at: string | null;
+}
+
+/** One entry of a version's booking terms select: a published version, or the retired one the version still names. */
+export interface TermsChoice {
+  doc_id: string;
+  version_label: string;
+  /** The version is no longer the published one (retired, a draft, or removed): Publish / Send refuse it. */
+  stale: boolean;
+  /** A stale entry's state (S262 fix pass): "retired" (published once, replaced), "draft" (never published) or null
+   *  (removed: no label either). Absent on a published entry. */
+  state?: "retired" | "draft" | null;
+}
+
+/**
+ * The words of one terms entry (S262 fix pass): a published version is its label; a retired one "(no longer
+ * published)"; a draft one, never published, "(not published)"; a removed one a plain sentence (no label left).
+ */
+export function termsChoiceLabel(o: TermsChoice, lang: Lang): string {
+  if (!o.stale) return o.version_label || "—";
+  if (!o.version_label) return t(lang, "proposal.termsRetiredUnknown");
+  return fmt(t(lang, o.state === "draft" ? "proposal.termsNotPublished" : "proposal.termsRetired"), { label: o.version_label });
+}
+
+/** The note under a stale terms entry: a draft version was never the published one, a retired one is no longer. */
+export function termsStaleNote(o: TermsChoice, lang: Lang): string {
+  const key = o.state === "draft" ? "proposal.termsStaleNoteDraft" : "proposal.termsStaleNote";
+  return fmt(t(lang, key), { label: termsChoiceLabel(o, lang) });
+}
+
+/**
+ * S262 round 3 (AA-957 x AA-952): the terms select of a proposal version. ``terms`` is every booking terms version of
+ * the agency (any status, from GET /agreements); ``pinned`` the version the proposal names. Before, the select listed
+ * only published versions with ``defaultValue = pinned``: a retired pinned version had no option, so the browser
+ * showed the current one while the draft still held the retired one (Publish then answered terms_not_published).
+ * Now the pinned version is listed (marked stale) and selected, and ``current`` is offered as the one-click fix.
+ */
+export function termsChoices(
+  terms: Agreement[],
+  pinned: string | null | undefined,
+): { options: TermsChoice[]; value: string; current: TermsChoice | null; stale: TermsChoice | null } {
+  const booking = terms.filter((d) => d.kind === "booking_terms");
+  const published = booking.filter((d) => d.status === "published");
+  const options: TermsChoice[] = published.map((d) => ({ doc_id: d.doc_id, version_label: d.version_label, stale: false }));
+  const current = options[0] ?? null;
+  let stale: TermsChoice | null = null;
+  if (pinned && !options.some((o) => o.doc_id === pinned)) {
+    const doc = booking.find((d) => d.doc_id === pinned);
+    if (booking.length === 0) {
+      // The versions could not be read (GET /agreements failed): keep the named one selected, claim nothing about it.
+      options.push({ doc_id: pinned, version_label: "", stale: false });
+    } else {
+      const state = doc === undefined ? null : doc.status === "draft" ? "draft" : "retired";
+      stale = { doc_id: pinned, version_label: doc?.version_label ?? "", stale: true, state };
+      options.push(stale);
+    }
+  }
+  return { options, value: pinned ?? current?.doc_id ?? "", current, stale };
 }
 
 export interface InviteResult {

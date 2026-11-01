@@ -7,13 +7,16 @@
 // come from a Booking quote / hold / feed event; the row shows the AA status ("AA pending" while Booking has not
 // answered, with the next try when it is down), "no longer offered", the hold expiry and the "from"-price warning, and
 // offers only the asks the API lists (Hold, Confirm with AA, Release, Re-quote). "Add AA item" opens AaItemForm.
+// S262 round 3: on a phone (< 768 px, the kit's cut) each line is a card with labelled rows, so Status (with a
+// cancelled line's badge and fee note), Cost, Sell and Collect are never cut off to the right; the desktop table is
+// unchanged. Between the cancel run's answer and the server refresh, a line's commission reads "Updating".
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { Badge, Button, K, useHydrated } from "@/app/_kit";
+import { Fragment, useState } from "react";
+import { Badge, Button, K, useHydrated, useIsPhone } from "@/app/_kit";
 import { DateInput } from "@/components/DateInput";
 import { AaItemForm } from "@/components/ledger/AaItemForm";
-import { useTripClosed } from "@/components/pipeline/TripClosed";
+import { useTripClosed, useTripUpdating } from "@/components/pipeline/TripClosed";
 import { aaBadgeKey, aaErrorKey, aaResultKey, allowedAaActions, isRetrying, type AaAction } from "@/lib/aa";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
@@ -81,7 +84,9 @@ export function LinesPanel({
   // A closed trip books nothing new (C12 §2.7): no AA item, no line, no confirm, no hold; a release and a line's cancel
   // stay (they undo), and money stays editable for a supplier's cancellation fee. The API answers 409 trip_cancelled.
   const closed = useTripClosed(closedProp);
+  const updating = useTripUpdating();
   const hydrated = useHydrated();
+  const isPhone = useIsPhone();
   const tr = (key: string) => t(lang, key as MessageKey);
   const margin = seesMargin(role);
   const own = suppliers.filter((s) => s.kind === "own");
@@ -208,6 +213,124 @@ export function LinesPanel({
     );
   }
 
+  function supplierCell(line: Line) {
+    return (
+      <>
+        {line.supplier_name}
+        {line.read_only && <div style={{ color: K.muted, fontSize: 11.5 }}>{tr("ledger.aaReadOnly")}</div>}
+      </>
+    );
+  }
+
+  function statusCell(line: Line) {
+    return (
+      <>
+        <Badge tone={TONE[line.status]}>{tr(`ledger.status.${line.status}`)}</Badge>
+        {aaStatus(line)}
+        {line.commission && (
+          // AA-957: the commission follow-up of an agency line (owner / agent; A-12 acts on it). S262 round 3: while the
+          // cancel run's answer waits for the server view, no stale "Expected" (the run may cancel the commission).
+          <div style={{ marginTop: 4, fontSize: 11.5 }} data-testid="line-commission" data-status={updating ? "updating" : line.commission.status}>
+            <Link href="/commissions" style={{ color: line.commission.overdue && !updating ? K.danger : K.muted }}>
+              {tr("commission.onLine")}: {updating ? tr("trip.updating") : tr(`commission.status.${line.commission.status}`)}
+            </Link>
+          </div>
+        )}
+        {line.money?.cancellation_cost && (
+          <div style={{ marginTop: 4, fontSize: 11.5, color: K.muted }} data-testid="line-cancellation-fee">
+            {fmt(tr("ledger.cancellationFee"), { amount: formatMoney(line.money.cancellation_cost.amount, line.money.cancellation_cost.currency, locale) })}
+          </div>
+        )}
+      </>
+    );
+  }
+
+  function sellCell(line: Line) {
+    return (
+      <>
+        {line.money ? amount(line, "sell") : "—"}
+        {line.aa?.below_from_price && (
+          <div style={{ marginTop: 4 }} data-testid="aa-below-from">
+            <Badge tone="warning">{tr("aa.belowFrom")}</Badge>
+          </div>
+        )}
+      </>
+    );
+  }
+
+  /** The phone card's label / value rows (the status first: what happened to the line is what the agent looks for). */
+  function cardRows(line: Line): [string, React.ReactNode][] {
+    const rows: [string, React.ReactNode][] = [
+      ["status", statusCell(line)],
+      ["day", line.service_from ? formatDate(line.service_from, locale) : "—"],
+      ["supplier", supplierCell(line)],
+      ["conf", line.confirmation_no ?? "—"],
+    ];
+    if (margin) rows.push(["cost", amount(line, "cost")]);
+    rows.push(["sell", sellCell(line)], ["fx", fxCell(line)], ["collect", tr(`ledger.collect.${line.collect}`)]);
+    return rows;
+  }
+
+  function actions(line: Line) {
+    return (
+      <>
+        {allowedAaActions(line.aa?.actions ?? [], role).filter((action) => !closed || action === "release").map((action: AaAction) => (
+          <Button
+            key={action}
+            size="sm"
+            variant={action === "confirm" || action === "hold" ? "primary" : "ghost"}
+            disabled={!hydrated || busy}
+            onClick={() => run("POST", `lines/${line.booking_line_id}/aa/${action}`, undefined, () => tr("aa.asked"))}
+          >
+            {tr(`aa.action.${action}`)}
+          </Button>
+        ))}
+        {!line.read_only && line.status === "planning" && !closed && (
+          <Button size="sm" variant="primary" disabled={!hydrated || busy} onClick={() => run("POST", `lines/${line.booking_line_id}/confirm`, undefined, confirmNote)}>
+            {tr("ledger.confirm")}
+          </Button>
+        )}{" "}
+        {!line.read_only && margin && line.status !== "cancelled" && (
+          <Button size="sm" disabled={!hydrated || busy} onClick={() => setEditing(editing === line.booking_line_id ? null : line.booking_line_id)}>
+            {tr("ledger.editMoney")}
+          </Button>
+        )}{" "}
+        {!line.read_only && line.status !== "cancelled" && (
+          <Button size="sm" variant="ghost" disabled={!hydrated || busy} onClick={() => run("POST", `lines/${line.booking_line_id}/cancel`)}>
+            {tr("ledger.cancel")}
+          </Button>
+        )}{" "}
+        {!line.read_only && line.status === "planning" && role !== "assistant" && (
+          <Button size="sm" variant="danger" disabled={!hydrated || busy} onClick={() => run("DELETE", `lines/${line.booking_line_id}`)}>
+            {tr("ledger.delete")}
+          </Button>
+        )}
+        {editing === line.booking_line_id && (
+          <div style={{ display: "grid", gap: 6, marginTop: 8, maxWidth: 260, width: "100%" }} data-testid="ledger-money-form">
+            {(["cost", "sell", "commission_expected"] as const).map((kind) => (
+              <label key={kind} style={{ display: "grid", gap: 2, fontSize: 12 }}>
+                {tr(`ledger.money.${kind}`)}
+                <input
+                  style={field}
+                  inputMode="decimal"
+                  value={money[kind] ?? line.money?.[kind]?.amount ?? ""}
+                  onChange={(e) => setMoney({ ...money, [kind]: e.target.value })}
+                />
+              </label>
+            ))}
+            <label style={{ display: "grid", gap: 2, fontSize: 12 }}>
+              {tr("ledger.currency")}
+              <input style={field} maxLength={3} value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())} />
+            </label>
+            <Button size="sm" variant="primary" disabled={!hydrated || busy} onClick={() => saveMoney(line)}>
+              {tr("ledger.save")}
+            </Button>
+          </div>
+        )}
+      </>
+    );
+  }
+
   return (
     <Panel title={tr("ledger.tab")} testId="trip-bookings">
       <p style={{ margin: "0 0 10px", fontSize: 12.5, color: K.muted }}>
@@ -220,6 +343,36 @@ export function LinesPanel({
       )}
       {view.lines.length === 0 ? (
         <p style={{ margin: "0 0 10px", fontSize: 13 }}>{tr("ledger.empty")}</p>
+      ) : isPhone ? (
+        // S262 round 3: a card per line on a phone (the kit's phone card cut, as /payments and /commissions): Status,
+        // Cost, Sell and Collect stay in view, with a cancelled line's badge and fee note, never columns cut off.
+        <ul data-testid="ledger-cards" style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 10, minWidth: 0 }}>
+          {view.lines.map((line) => (
+            <li
+              key={line.booking_line_id}
+              data-testid={`line-${line.booking_line_id}`}
+              data-layout="card"
+              data-status={line.status}
+              style={{ border: `1px solid ${K.line}`, borderRadius: 10, padding: "10px 12px", display: "grid", gap: 8, minWidth: 0 }}
+            >
+              <div style={{ display: "grid", gap: 2, minWidth: 0, overflowWrap: "anywhere", fontSize: 13.5, color: K.ink }}>
+                <strong>{line.title}</strong>
+                {aaDetails(line)}
+              </div>
+              <dl style={{ margin: 0, display: "grid", gridTemplateColumns: "minmax(72px, max-content) minmax(0, 1fr)", gap: "6px 12px", fontSize: 13 }}>
+                {cardRows(line).map(([key, value]) => (
+                  <Fragment key={key}>
+                    <dt style={{ color: K.muted, fontSize: 12 }}>{tr(`ledger.col.${key}`)}</dt>
+                    <dd style={{ margin: 0, minWidth: 0, overflowWrap: "anywhere" }} data-testid={`line-card-${key}`}>
+                      {value}
+                    </dd>
+                  </Fragment>
+                ))}
+              </dl>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", minWidth: 0 }}>{actions(line)}</div>
+            </li>
+          ))}
+        </ul>
       ) : (
         <div style={{ overflowX: "auto" }}>
           <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 760 }} data-testid="ledger-lines">
@@ -240,94 +393,14 @@ export function LinesPanel({
                     {line.title}
                     {aaDetails(line)}
                   </td>
-                  <td style={cell}>
-                    {line.supplier_name}
-                    {line.read_only && <div style={{ color: K.muted, fontSize: 11.5 }}>{tr("ledger.aaReadOnly")}</div>}
-                  </td>
+                  <td style={cell}>{supplierCell(line)}</td>
                   <td style={cell}>{line.confirmation_no ?? "—"}</td>
-                  <td style={cell}>
-                    <Badge tone={TONE[line.status]}>{tr(`ledger.status.${line.status}`)}</Badge>
-                    {aaStatus(line)}
-                    {line.commission && (
-                      // AA-957: the commission follow-up of an agency line (owner / agent; A-12 acts on it).
-                      <div style={{ marginTop: 4, fontSize: 11.5 }} data-testid="line-commission" data-status={line.commission.status}>
-                        <Link href="/commissions" style={{ color: line.commission.overdue ? K.danger : K.muted }}>
-                          {tr("commission.onLine")}: {tr(`commission.status.${line.commission.status}`)}
-                        </Link>
-                      </div>
-                    )}
-                    {line.money?.cancellation_cost && (
-                      <div style={{ marginTop: 4, fontSize: 11.5, color: K.muted }} data-testid="line-cancellation-fee">
-                        {fmt(tr("ledger.cancellationFee"), { amount: formatMoney(line.money.cancellation_cost.amount, line.money.cancellation_cost.currency, locale) })}
-                      </div>
-                    )}
-                  </td>
+                  <td style={cell}>{statusCell(line)}</td>
                   {margin && <td style={cell}>{amount(line, "cost")}</td>}
-                  <td style={cell}>
-                    {line.money ? amount(line, "sell") : "—"}
-                    {line.aa?.below_from_price && (
-                      <div style={{ marginTop: 4 }} data-testid="aa-below-from">
-                        <Badge tone="warning">{tr("aa.belowFrom")}</Badge>
-                      </div>
-                    )}
-                  </td>
+                  <td style={cell}>{sellCell(line)}</td>
                   <td style={cell}>{fxCell(line)}</td>
                   <td style={cell}>{tr(`ledger.collect.${line.collect}`)}</td>
-                  <td style={{ ...cell, whiteSpace: "nowrap" }}>
-                    {allowedAaActions(line.aa?.actions ?? [], role).filter((action) => !closed || action === "release").map((action: AaAction) => (
-                      <Button
-                        key={action}
-                        size="sm"
-                        variant={action === "confirm" || action === "hold" ? "primary" : "ghost"}
-                        disabled={!hydrated || busy}
-                        onClick={() => run("POST", `lines/${line.booking_line_id}/aa/${action}`, undefined, () => tr("aa.asked"))}
-                      >
-                        {tr(`aa.action.${action}`)}
-                      </Button>
-                    ))}
-                    {!line.read_only && line.status === "planning" && !closed && (
-                      <Button size="sm" variant="primary" disabled={!hydrated || busy} onClick={() => run("POST", `lines/${line.booking_line_id}/confirm`, undefined, confirmNote)}>
-                        {tr("ledger.confirm")}
-                      </Button>
-                    )}{" "}
-                    {!line.read_only && margin && line.status !== "cancelled" && (
-                      <Button size="sm" disabled={!hydrated || busy} onClick={() => setEditing(editing === line.booking_line_id ? null : line.booking_line_id)}>
-                        {tr("ledger.editMoney")}
-                      </Button>
-                    )}{" "}
-                    {!line.read_only && line.status !== "cancelled" && (
-                      <Button size="sm" variant="ghost" disabled={!hydrated || busy} onClick={() => run("POST", `lines/${line.booking_line_id}/cancel`)}>
-                        {tr("ledger.cancel")}
-                      </Button>
-                    )}{" "}
-                    {!line.read_only && line.status === "planning" && role !== "assistant" && (
-                      <Button size="sm" variant="danger" disabled={!hydrated || busy} onClick={() => run("DELETE", `lines/${line.booking_line_id}`)}>
-                        {tr("ledger.delete")}
-                      </Button>
-                    )}
-                    {editing === line.booking_line_id && (
-                      <div style={{ display: "grid", gap: 6, marginTop: 8, maxWidth: 260 }} data-testid="ledger-money-form">
-                        {(["cost", "sell", "commission_expected"] as const).map((kind) => (
-                          <label key={kind} style={{ display: "grid", gap: 2, fontSize: 12 }}>
-                            {tr(`ledger.money.${kind}`)}
-                            <input
-                              style={field}
-                              inputMode="decimal"
-                              value={money[kind] ?? line.money?.[kind]?.amount ?? ""}
-                              onChange={(e) => setMoney({ ...money, [kind]: e.target.value })}
-                            />
-                          </label>
-                        ))}
-                        <label style={{ display: "grid", gap: 2, fontSize: 12 }}>
-                          {tr("ledger.currency")}
-                          <input style={field} maxLength={3} value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())} />
-                        </label>
-                        <Button size="sm" variant="primary" disabled={!hydrated || busy} onClick={() => saveMoney(line)}>
-                          {tr("ledger.save")}
-                        </Button>
-                      </div>
-                    )}
-                  </td>
+                  <td style={{ ...cell, whiteSpace: "nowrap" }}>{actions(line)}</td>
                 </tr>
               ))}
             </tbody>
