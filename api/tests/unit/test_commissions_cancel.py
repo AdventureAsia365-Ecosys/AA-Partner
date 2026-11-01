@@ -236,6 +236,9 @@ def test_refund_choices_and_the_reason_text() -> None:
     assert cancellation.refund_reason("client_request", None).endswith("No booking terms were accepted in the CRM.")
     text = cancellation.refund_reason("force_majeure", {"version_label": "v3", "accepted_at": "2026-10-02T10:00:00"})
     assert text == "Trip cancelled (force majeure). Booking terms v3 accepted on 2026-10-02."
+    # S262 round 3: the label is printed as the agency typed it, never prefixed ("rv-rv..." was a synthetic UAT label).
+    labelled = cancellation.refund_reason("client_request", {"version_label": "rv-x1", "accepted_at": "2026-10-02"})
+    assert "Booking terms rv-x1 accepted" in labelled and "rv-rv-" not in labelled
 
 
 def test_the_commission_view_flags_overdue_and_names_every_money_key() -> None:
