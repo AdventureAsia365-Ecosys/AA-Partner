@@ -65,6 +65,7 @@ from app.jobs.kinds import (
     MESSAGING_TEMPLATES,
     OFFBOARD,
     OPS_RELEASE_SYNC,
+    PARTNER_ACCOUNTS,
     PLACEHOLDER_PURGE,
     STAGE_DATE_RULE,
     STUDIO_ACTIVATION,
@@ -170,6 +171,7 @@ def build_handlers(
     catalog: CatalogConfig | None = None,
     studio_activation: ActivationConfig | None = None,
     messaging_runtime: MessagingRuntime | None = None,
+    partner_account_cleanup_dry_run: bool = True,
 ) -> dict[str, Handler]:
     """Every kind the worker runs. ``keys``: the field-encryption provider the intake kind needs (AA-936); without
     it ``crm_intake_process`` jobs are retried until the provider is configured. ``audit_archive``: the two audit
@@ -185,7 +187,9 @@ def build_handlers(
     AA-947: ``booking_client`` (``BOOKING_API_URL`` + the M2M token: the AA outage queue and the Booking feed; None =
     the sync logs not_configured) and ``catalog`` (``CIS_API_URL`` + the token: the AA tour cache).
     AA-979: ``studio_activation`` (``CIS_API_URL`` + the token: CIS activateInvitation; None = the job is retried).
-    AA-958: ``messaging_runtime`` (the SMS / WhatsApp providers: the template sync and the daily connection check)."""
+    AA-958: ``messaging_runtime`` (the SMS / WhatsApp providers: the template sync and the daily connection check).
+    S263 (AA-939 follow-up): ``partner_account_cleanup_dry_run`` (``PARTNER_ACCOUNT_CLEANUP_DRY_RUN``) for the
+    partner-account clean-up, which uses ``directory``."""
     from app.audit_export import export as audit_export
     from app.audit_export import retention as audit_retention
     from app.booking.sync import BookingSync
@@ -201,6 +205,7 @@ def build_handlers(
     from app.mail import history_import
     from app.mail import ingest as mail_ingest
     from app.mail.state import MailRuntime as _MailRuntime
+    from app.members import accounts as partner_accounts
     from app.members import studio
     from app.messaging import health as messaging_health
     from app.messaging.state import MessagingRuntime as _MessagingRuntime
@@ -242,6 +247,7 @@ def build_handlers(
         WORKFLOW_RUN: workflow_runner.build_handler(keys),
         WORKFLOW_TICK: workflow_tick.build_handler(keys),
         TASK_DIGEST: task_digest.build_handler(mail_runtime),
+        PARTNER_ACCOUNTS: partner_accounts.build_handler(directory, dry_run=partner_account_cleanup_dry_run),
     }
 
 
@@ -294,6 +300,7 @@ def build_hooks(
     from app.lifecycle.job import DailyLifecycleSchedule
     from app.mail.health import DailyMailHealthSchedule
     from app.mail.ingest import MailIngestScan
+    from app.members.accounts import DailyPartnerAccountSchedule
     from app.messaging.health import DailyMessagingHealthSchedule
     from app.ops_release.job import HourlyOpsReleaseSync
     from app.privacy.purge import HourlyPlaceholderPurge
@@ -315,6 +322,7 @@ def build_hooks(
         HourlyOpsReleaseSync(clock),
         DailyMessagingHealthSchedule(retention_utc_hour, clock),
         HourlyWorkflowTick(clock),
+        DailyPartnerAccountSchedule(retention_utc_hour, clock),
     )
 
 
@@ -342,6 +350,7 @@ SCHEDULED_KINDS: frozenset[str] = frozenset(
         OPS_RELEASE_SYNC,
         MESSAGING_HEALTH,
         WORKFLOW_TICK,
+        PARTNER_ACCOUNTS,  # S263: daily; a test agency's delete also queues one run for its accounts
     }
 )
 # Kinds queued by request code, one row per event (AA-936: each stored inquiry), never scheduled.

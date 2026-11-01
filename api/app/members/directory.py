@@ -1,7 +1,8 @@
 """The partner pool admin calls of the CRM API (root ADR 0006b decisions 1 and 5; AA-939).
 
 The IAM allow-list of the API's task role on the partner pool is exactly ``AdminCreateUser``, ``ListUsers``,
-``AdminDisableUser`` and ``AdminUserGlobalSignOut`` (AA-CIS-Infra ``identity_partner.tf``). This module uses three:
+``AdminDisableUser``, ``AdminUserGlobalSignOut`` and (S263, root ADR 0006b amendment A1) ``AdminDeleteUser``
+(AA-CIS-Infra ``identity_partner.tf``). This module uses four:
 
 - :meth:`PartnerDirectory.create_or_find` (claim step): ``AdminCreateUser`` with ``MessageAction=SUPPRESS`` (Cognito
   never mails anything), ``email_verified=true`` and a random temporary password that the claim page shows once; the
@@ -18,6 +19,11 @@ The IAM allow-list of the API's task role on the partner pool is exactly ``Admin
 - :meth:`PartnerDirectory.global_sign_out` (member removed): ``AdminUserGlobalSignOut`` revokes the person's refresh
   tokens; their access token still lives up to its lifetime, but every request re-checks ``crm.member`` anyway.
 - :meth:`PartnerDirectory.email_for` (owner recovery notice): ``ListUsers`` filtered by ``sub``.
+- :meth:`PartnerDirectory.account_state` and :meth:`PartnerDirectory.delete_never_signed_in` (S263, the partner-account
+  clean-up, :mod:`app.members.accounts`): ``ListUsers`` filtered by ``sub`` for the status and the last change, then
+  ``AdminDeleteUser``, only for an account that never finished its first sign-in (``FORCE_CHANGE_PASSWORD``) and was
+  not changed after ``untouched_since``. The state is read again right before the delete, here, so whatever the caller
+  decided, an account with its own password (``CONFIRMED`` or any other status) is never deleted by this code.
 
 ``AdminDisableUser`` is not called by the app: a person may belong to several agencies, and removal from one is a
 membership change, not an account change.
@@ -30,6 +36,7 @@ test / local, the invitation routes answer 503 ``directory_not_configured``; tes
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import secrets
 import string
 import threading
@@ -57,6 +64,33 @@ def temporary_password() -> str:
 
 
 @dataclass(frozen=True)
+class AccountState:
+    """What the clean-up needs to know about a partner-pool account: its Cognito ``UserStatus`` and when it last
+    changed (``UserLastModifiedDate``; a claim's ``RESEND`` changes it)."""
+
+    status: str
+    last_modified: dt.datetime | None
+
+
+# The outcomes of :meth:`PartnerDirectory.delete_never_signed_in`.
+DELETED = "deleted"
+GONE = "gone"
+SIGNED_IN = "signed_in"
+CHANGED_SINCE = "changed_since"
+
+
+def delete_verdict(state: AccountState | None, untouched_since: dt.datetime) -> str | None:
+    """None when the account may be deleted, else the outcome code that keeps it."""
+    if state is None:
+        return GONE
+    if state.status != FORCE_CHANGE_PASSWORD:
+        return SIGNED_IN
+    if state.last_modified is None or state.last_modified > untouched_since:
+        return CHANGED_SINCE
+    return None
+
+
+@dataclass(frozen=True)
 class Account:
     """The partner-pool account of an invited address. ``temporary_password`` when the claim created the account or
     gave an account that never finished its first sign-in a new one (``reissued``)."""
@@ -74,6 +108,10 @@ class PartnerDirectory(Protocol):
     async def global_sign_out(self, sub: str) -> None: ...
 
     async def email_for(self, sub: str) -> str | None: ...
+
+    async def account_state(self, sub: str) -> AccountState | None: ...
+
+    async def delete_never_signed_in(self, sub: str, *, untouched_since: dt.datetime) -> str: ...
 
 
 def _attr(user: dict[str, Any], name: str) -> str | None:
@@ -169,6 +207,43 @@ class CognitoDirectory:
 
         return await asyncio.to_thread(read)
 
+    def _by_sub(self, sub: str) -> dict[str, Any] | None:
+        users = self._idp().list_users(UserPoolId=self.pool_id, Filter=f"sub = {_quoted(sub)}", Limit=2)["Users"]
+        if len(users) > 1:  # a sub is unique in a pool; refuse rather than pick one
+            raise Conflict("account_ambiguous", "more than one account has this subject")
+        return users[0] if users else None
+
+    @staticmethod
+    def _state(user: dict[str, Any] | None) -> AccountState | None:
+        if user is None:
+            return None
+        modified = user.get("UserLastModifiedDate")
+        return AccountState(
+            status=str(user.get("UserStatus") or ""),
+            last_modified=modified if isinstance(modified, dt.datetime) else None,
+        )
+
+    async def account_state(self, sub: str) -> AccountState | None:
+        return await asyncio.to_thread(lambda: self._state(self._by_sub(sub)))
+
+    def _delete_never_signed_in(self, sub: str, untouched_since: dt.datetime) -> str:
+        user = self._by_sub(sub)
+        refused = delete_verdict(self._state(user), untouched_since)
+        if refused is not None:
+            return refused
+        idp = self._idp()
+        try:
+            idp.admin_delete_user(UserPoolId=self.pool_id, Username=user["Username"])  # type: ignore[index]
+        except idp.exceptions.UserNotFoundException:
+            return GONE
+        return DELETED
+
+    async def delete_never_signed_in(self, sub: str, *, untouched_since: dt.datetime) -> str:
+        """``AdminDeleteUser`` of the account with this ``sub`` only when it is still ``FORCE_CHANGE_PASSWORD`` and
+        unchanged since ``untouched_since`` (read again here, right before the delete). Returns :data:`DELETED`,
+        :data:`GONE` (no such account), :data:`SIGNED_IN` or :data:`CHANGED_SINCE`."""
+        return await asyncio.to_thread(self._delete_never_signed_in, sub, untouched_since)
+
 
 class MemoryDirectory:
     """In-process stand-in for tests and local runs (never configured on dev / stg / prod)."""
@@ -178,10 +253,11 @@ class MemoryDirectory:
         self.accounts: dict[str, dict[str, Any]] = {}
         self.signed_out: list[str] = []
         self.resent: list[str] = []
+        self.deleted: list[str] = []
 
-    def add(self, email: str, *, status: str = "CONFIRMED") -> str:
+    def add(self, email: str, *, status: str = "CONFIRMED", modified: dt.datetime | None = None) -> str:
         sub = str(uuid.uuid4())
-        self.accounts[email.lower()] = {"sub": sub, "status": status}
+        self.accounts[email.lower()] = {"sub": sub, "status": status, "modified": modified or _now()}
         return sub
 
     async def create_or_find(self, email: str) -> Account:
@@ -197,6 +273,7 @@ class MemoryDirectory:
 
     def _resend(self, account: dict[str, Any]) -> str:
         account["password"] = temporary_password()
+        account["modified"] = _now()
         self.resent.append(account["sub"])
         return account["password"]
 
@@ -205,6 +282,23 @@ class MemoryDirectory:
 
     async def email_for(self, sub: str) -> str | None:
         return next((e for e, a in self.accounts.items() if a["sub"] == sub), None)
+
+    async def account_state(self, sub: str) -> AccountState | None:
+        found = next((a for a in self.accounts.values() if a["sub"] == sub), None)
+        return None if found is None else AccountState(status=found["status"], last_modified=found.get("modified"))
+
+    async def delete_never_signed_in(self, sub: str, *, untouched_since: dt.datetime) -> str:
+        refused = delete_verdict(await self.account_state(sub), untouched_since)
+        if refused is not None:
+            return refused
+        email = next(e for e, a in self.accounts.items() if a["sub"] == sub)
+        del self.accounts[email]
+        self.deleted.append(sub)
+        return DELETED
+
+
+def _now() -> dt.datetime:
+    return dt.datetime.now(dt.UTC)
 
 
 def require_directory(directory: PartnerDirectory | None) -> PartnerDirectory:

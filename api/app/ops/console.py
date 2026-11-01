@@ -46,6 +46,7 @@ from app.jobs import queue
 from app.lifecycle import offboarding
 from app.lifecycle.rules import BACKUP_PURGE_DAYS
 from app.llm.gateway import DEFAULT_BUDGET_USD, MONTH_SPEND_SQL
+from app.members import accounts as partner_accounts
 from app.members import team
 from app.members.directory import PartnerDirectory
 from app.members.mail import Mailer, data_request_message
@@ -454,7 +455,10 @@ async def delete_test_agency(
     keys are crypto-shredded (:meth:`KeyProvider.destroy`: anything encrypted under them, such as invited addresses,
     is unreadable for good) and the agency row goes to the trash (``deleted_at``; no context opens it any more and the
     L1 list leaves it out). Audited in the agency's own log: ``agency_delete`` with ``ticket:<REF>`` (plus the
-    ``key_destroy`` event). The rows stay as the trash keeps them (DM-7.1); nothing can read their personal data."""
+    ``key_destroy`` event). The rows stay as the trash keeps them (DM-7.1); nothing can read their personal data.
+    In the same transaction a ``crm_partner_accounts`` job is queued for the agency (:mod:`app.members.accounts`): the
+    partner-pool accounts its invitation claims created and that never signed in, and that no other agency or Content
+    studio invitation needs, are deleted (``partner_account_delete`` events in this agency's log)."""
     async with platform_tx(pool, tenant_id, actor=platform_actor(staff_sub), statuses=DELETE_STATUSES) as ctx:
         row = await ctx.conn.fetchrow(DELETE_TENANT_LOCK_SQL, tenant_id)
         if row is None:  # trashed between the context check and the row lock
@@ -485,6 +489,9 @@ async def delete_test_agency(
             "agency_delete", "allowed", "tenant", str(tenant_id), fields=("deleted_at",),
             reason="synthetic_test_agency", object_ids=ticket_ids(ticket_ref),
         )  # fmt: skip
+        # S263 (AA-939 follow-up): the partner-pool accounts its invitation claims created and nobody signed in to
+        # are deleted by the clean-up job, queued here so it runs only if this delete commits.
+        await partner_accounts.queue_after_agency_delete(ctx)
     log.info("crm_ops_test_agency_deleted tenant_id=%s", tenant_id)
     return {"tenant_id": str(tenant_id), "status": "deleted"}
 

@@ -142,6 +142,8 @@ LIFECYCLE_MODULES = frozenset(
 MEMBERSHIP_FEED_MODULES = frozenset({"app/cis/membership_feed.py"})
 # AA-979 P2b: Content studio invitations (crm-020 platform table): the platform / job context and the token context.
 STUDIO_MODULES = frozenset({"app/members/studio.py"})
+# S263 (AA-939 follow-up): the partner-account clean-up in one agency (any agency the registry holds, trashed ones too).
+ACCOUNT_CLEANUP_MODULES = frozenset({"app/members/accounts.py"})
 # AA-971 (CRM-13b): AA staff in one agency. The session rows (staff_tx: start / end / look up one's own session) and
 # the reads of a live session (support_tx, crm_support_reader; as_login_role steps out of it for the party's names).
 STAFF_SESSION_MODULES = frozenset({"app/support/sessions.py"})
@@ -211,6 +213,7 @@ CONTEXT_FACTORIES = frozenset(
         "staff_tx",
         "support_tx",
         "ops_tx",
+        "partner_account_tx",
     }
 )
 
@@ -440,6 +443,11 @@ def test_the_feed_state_is_reached_only_by_the_feed() -> None:
 def test_studio_contexts_are_used_only_by_the_studio_module() -> None:
     assert _users_of("studio_platform_tx", STUDIO_MODULES) == []
     assert _users_of("studio_invitation_tx", STUDIO_MODULES) == []
+
+
+def test_partner_account_tx_is_used_only_by_the_account_cleanup() -> None:
+    """S263: the clean-up's context reads every agency, trashed ones too, and records deleted accounts."""
+    assert _users_of("partner_account_tx", ACCOUNT_CLEANUP_MODULES) == []
 
 
 def test_staff_contexts_are_used_only_by_the_support_modules() -> None:

@@ -321,6 +321,16 @@ async def test_s263_aa_deletes_a_synthetic_test_agency_and_nothing_else(
         app_pool, tenant_id, staff_sub=STAFF, agency_name="Bamboo Test Agency", ticket_ref="SUP-43", keys=keys
     )
     assert out == {"tenant_id": str(tenant_id), "status": "deleted"}
+    # S263 (AA-939 follow-up): the partner-account clean-up of this agency was queued with the delete.
+    async with app_pool.acquire() as conn:
+        assert (
+            await conn.fetchval(
+                "SELECT count(*) AS n FROM crm.job WHERE kind = 'crm_partner_accounts' AND payload->>'tenant_id' = $1",
+                str(tenant_id),
+            )
+            == 1
+        )
+    await _cancel_queued(app_pool, tenant_id)
     [row] = await _owner_fetch(admin, tenant_id, "SELECT deleted_at, deleted_by, purge_after FROM crm.tenant")
     assert row["deleted_at"] is not None and row["deleted_by"] == f"platform:{STAFF}"
     assert row["purge_after"] > row["deleted_at"]

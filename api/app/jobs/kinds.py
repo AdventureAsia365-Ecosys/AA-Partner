@@ -92,6 +92,10 @@ MESSAGING_HEALTH = "crm_messaging_health"
 WORKFLOW_RUN = "crm_workflow_run"
 WORKFLOW_TICK = "crm_workflow_tick"
 TASK_DIGEST = "crm_task_digest"
+# S263 (AA-939 follow-up): the partner-account clean-up (app.members.accounts): partner-pool accounts that never signed
+# in and that no member, live invitation or studio invitation needs any more are deleted. Queued due-now once per UTC
+# day and by a test agency's delete (in its transaction). Not deploy-gate exempt (exists only while due / queued).
+PARTNER_ACCOUNTS = "crm_partner_accounts"
 
 DEFAULT_EXPECTED_SECONDS = 300
 OVERDUE_FACTOR = 2
@@ -137,6 +141,7 @@ EXPECTED_SECONDS: dict[str, int] = {
     WORKFLOW_RUN: 60,
     WORKFLOW_TICK: 300,
     TASK_DIGEST: 120,
+    PARTNER_ACCOUNTS: 300,
 }
 
 
