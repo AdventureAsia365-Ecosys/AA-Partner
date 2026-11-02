@@ -1,8 +1,9 @@
-// web/app/(crm)/terms/page.tsx — AA-1033: the CRM terms of use (draft). Today it holds one section, "AI-generated
+// web/app/(crm)/legal/terms/page.tsx — AA-1033: the CRM terms of use (draft). Today it holds one section, "AI-generated
 // content" (id "ai", linked from Settings > AI and the shell footer), modelled on the Content studio terms §3
 // (portal/app/terms/page.tsx): AI drafts can contain mistakes, a draft is for information, a person in the agency
 // reviews and sends it, and the confirmed quote and booking terms are what binds. Plain, honest text; it does not claim
 // to exclude liability, and the final legal wording is reviewed by counsel later. Strings: lib/i18nTerms.ts (EN + VI).
+// Path /legal/terms, not /terms: on the agency host the ALB sends /terms to the Content studio (lib/legal.ts).
 import { K } from "@/app/_kit";
 import { Panel, PageTitle } from "@/components/PageTitle";
 import { crmContext } from "@/lib/crmContext";

@@ -38,6 +38,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { K, ToastProvider, useThemeChoice, type ThemeChoice } from "@/app/_kit";
 import type { DateLocale } from "@/lib/dates";
+import { CRM_TERMS_PATH } from "@/lib/legal";
 import type { MessageKey } from "@/lib/i18n";
 import { GROUP_LABEL, GROUP_ORDER, visibleSections, type IconName, type Role, type Section } from "@/lib/nav";
 import { BellMenu } from "@/components/BellMenu";
@@ -290,9 +291,9 @@ export function CrmShell({
           <main data-crm="main" id="main">
             {children}
           </main>
-          {/* AA-1033: the terms of use (its AI section) from every agency page. */}
+          {/* AA-1033: the terms of use (its AI section) from every agency page; /legal/terms, never /terms (lib/legal.ts). */}
           <footer data-crm="footer">
-            <Link href="/terms" data-testid="crm-footer-terms">
+            <Link href={CRM_TERMS_PATH} data-testid="crm-footer-terms">
               {dict["terms.link"]}
             </Link>
           </footer>

@@ -12,6 +12,7 @@ import { aiErrorKey, budgetError, meterTone, meterWidth, usd, type AiSettings } 
 import { bffSend } from "@/lib/bffClient";
 import type { DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
+import { CRM_TERMS_AI_HREF } from "@/lib/legal";
 
 const BAR: Record<ReturnType<typeof meterTone>, string> = { success: K.success, warning: K.amber, danger: K.danger };
 
@@ -137,7 +138,7 @@ export function AiSettingsView({ settings, lang, locale }: { settings: AiSetting
         <p style={{ margin: "14px 0 6px", fontSize: 12.5, color: K.muted }}>{tr("ai.noticeExample")}</p>
         <AiNotice lang={lang} testId="ai-notice-example" />
         <p style={{ margin: "12px 0 0", fontSize: 13 }}>
-          <Link href="/terms#ai" style={{ color: K.accentDeep }} data-testid="ai-terms-link">
+          <Link href={CRM_TERMS_AI_HREF} style={{ color: K.accentDeep }} data-testid="ai-terms-link">
             {tr("ai.termsLink")}
           </Link>
         </p>

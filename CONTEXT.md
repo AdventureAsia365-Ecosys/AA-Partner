@@ -524,8 +524,10 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
   an AI draft (`trips/{id}/ai/draft`) must render `<AiNotice lang={lang} />` (staff variant) under the draft —
   guarded by `web/tests/aiNotice.test.ts` (no draft UI exists yet; the CRM-33a draft slice must add it). Settings > AI
   lists "AI can make mistakes: check facts before sending." first, shows the notice as a draft carries it and links
-  `/terms#ai`. `/terms` (`web/app/(crm)/terms`, strings `web/lib/i18nTerms.ts` EN + VI, signed-in, linked from the
-  shell footer) is a draft holding the "AI-generated content" section only (mistakes, for information, a person
+  `/legal/terms#ai`. `/legal/terms` (`web/app/(crm)/legal/terms`, strings `web/lib/i18nTerms.ts` EN + VI, signed-in,
+  linked from the shell footer; never `/terms`: on the agency host the ALB sends `/terms`, `/privacy` and `/assets/*`
+  to the Content studio, so the path and every link come from `web/lib/legal.ts`, guarded by
+  `web/tests/crmTermsPath.test.ts` against the agency-host rule patterns) is a draft holding the "AI-generated content" section only (mistakes, for information, a person
   reviews and sends, the confirmed quote and booking terms bind; no liability waiver; counsel reviews later). Privacy
   wording there and in Settings > AI describes the F3 scrubber as it works (the trip's known details plus what it can
   detect, may not catch every detail), never an absolute promise.

@@ -1,5 +1,5 @@
 // web/lib/i18nTerms.ts
-// AA-1033 — the EN / VI strings of the CRM terms of use page (/terms) and its links (shell footer, Settings > AI),
+// AA-1033 — the EN / VI strings of the CRM terms of use page (/legal/terms, lib/legal.ts) and its links (shell footer, Settings > AI),
 // spread into lib/i18n.ts (every key exists in both languages: tests/i18n.test.ts).
 //
 // Draft: today the page holds the "AI-generated content" section only, modelled on the Content studio terms §3
