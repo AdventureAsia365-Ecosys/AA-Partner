@@ -19,6 +19,8 @@ import {
 import { T, sans, Card, CardSkeleton, PageHeader, Btn, ProgressBar, fmtBillingMonth } from "./ui";
 import { usePortalShell, type ShellBilling } from "./PortalShellContext";
 import { fmtDay, fmtUsd, usageMeter, type Quota } from "@/lib/account";
+import { signedInText } from "@/lib/crmIdentity";
+import { useCrmIdentity } from "@/lib/useCrmIdentity";
 
 
 const titleCase = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
@@ -39,6 +41,7 @@ function LoadError({ what, onRetry }: { what: string; onRetry: () => void }) {
 
 // ─── Contact modal (plan / account changes) ───────────────────────────────────
 // AA-761 — on the kit Modal (focus trap, Escape, scroll lock); was a hand-rolled dialog (AA-732 kit rule).
+// AA-1025 (S264): the address is labelled "Contact Adventure Asia" (was "Email"), so it never reads as the account's.
 function ContactModal({ heading, body, subject, onClose }: {
   heading: string; body: string; subject: string; onClose: () => void;
 }) {
@@ -47,7 +50,7 @@ function ContactModal({ heading, body, subject, onClose }: {
       footer={<Btn size="sm" variant="ghost" onClick={onClose}>Close</Btn>}>
       <p style={{ fontSize: 13, color: T.muted, lineHeight: 1.6, margin: "0 0 18px" }}>{body}</p>
       <div style={{ padding: "12px 14px", background: T.bg, border: `1px solid ${T.line}`, borderRadius: 10, marginBottom: 16 }}>
-        <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.12em", color: T.muted, fontWeight: 600, marginBottom: 4 }}>Email</div>
+        <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.12em", color: T.muted, fontWeight: 600, marginBottom: 4 }}>Contact Adventure Asia</div>
         <div style={{ fontSize: 14, fontWeight: 600, color: T.ink, userSelect: "all" }}>{SUPPORT_EMAIL}</div>
         <div style={{ fontSize: 11.5, color: T.muted2, marginTop: 4 }}>Subject: {subject}</div>
       </div>
@@ -184,7 +187,7 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
             title="No invoices yet"
             description="Invoices Adventure Asia issues to you will be listed here. For a copy of an earlier invoice, email us."
             action={<a href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(`Invoice copy — ${tenantName}`)}`}
-              style={{ fontSize: 12.5, fontWeight: 600, color: T.ink3 }}>Email {SUPPORT_EMAIL}</a>}
+              style={{ fontSize: 12.5, fontWeight: 600, color: T.ink3 }}>Email Adventure Asia at {SUPPORT_EMAIL}</a>}
           />
         </div>
       </Card>
@@ -275,6 +278,8 @@ export function SettingsTab() {
   const loadingMe = tenantStatus === "pending";
   const skel = (w: number) => <SkeletonBar w={w} h={11} style={{ marginTop: 4 }} />;
   const [contact, setContact] = useState(false);
+  // AA-1025 (S264): who is signed in, live from the CRM web (absent on an API-key session or off the agency host).
+  const signedIn = signedInText(useCrmIdentity());
 
   const row: React.CSSProperties = {
     display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
@@ -311,6 +316,7 @@ export function SettingsTab() {
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <Card>
           <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted, marginBottom: 6 }}>Account</div>
+          {signedIn && <div style={row} data-testid="settings-signed-in-as">{label("Signed in", signedIn)}</div>}
           <div style={row}>{label("Company", loadingMe ? skel(120) : tenantName)}</div>
           <div style={row}>{label("Plan", loadingMe ? skel(70) : titleCase(planTier) || "No plan attached")}<a href="/portal/account/billing" style={{ fontSize: 12, color: T.ink3, fontWeight: 500, textDecoration: "none" }}>View billing →</a></div>
           <div style={last}>

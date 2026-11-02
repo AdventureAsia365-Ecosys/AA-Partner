@@ -598,7 +598,9 @@ original CIS commit). P2a moves the code only:
   `SENTRY_DSN`. **Sign-in** (`portal/proxy.ts`, `portal/lib/tenantSession.ts`): the CRM web's partner session (its sealed cookie, read only: `portal/lib/session.ts` and
   `seal.ts` are byte copies of `web/lib/`, guarded by `test_portal_guards.py`) is exchanged at CIS `POST
   /auth/tenant-session` for a tenant JWT of at most 15 minutes in the same five `cis_*` cookies; several studios ->
-  `/portal-access/select`, none -> `/portal-access/none`; no session -> the web's `/auth/refresh`. The BFF renews an
+  `/portal-access/select`, none -> `/portal-access/none` (both show the CRM sign-in, read live from the web's
+  `GET /bff/me` on the same origin, and Adventure Asia's address only labelled as a contact, AA-1025 S264); no
+  session -> the web's `/auth/refresh`. The BFF renews an
   expiring exchanged token itself and answers 401 + `x-aa-session: expired` when it cannot (the shell reloads once).
   One sign-out: the studio clears its cookies, then posts the web's `/auth/sign-out`. Sentry (`instrumentation*.ts`):
   only with a DSN, no PII. **Clean-up (AA-979 §4.5, S256)**: API-key sign-in off, Vercel deleted, the CIS copy deleted,
