@@ -49,7 +49,15 @@ class GuardClient:
         }
 
 
-async def _trip(pool: asyncpg.Pool, tenant_id: uuid.UUID) -> uuid.UUID:
+async def allow_ai_assist(pool: asyncpg.Pool, tenant_id: uuid.UUID) -> None:
+    """AA-1027 F3: AA allows the plan's ``ai_assist`` (the L1 console), which every draft needs (else 403)."""
+    await console.allow_features(pool, tenant_id, staff_sub=STAFF, features=["ai_assist"], ticket_ref="SUP-1027")
+
+
+async def _trip(pool: asyncpg.Pool, tenant_id: uuid.UUID, *, ai_assist: bool = True) -> uuid.UUID:
+    """A trip in the agency; by default the agency's plan also gets ``ai_assist`` (the drafts of these tests)."""
+    if ai_assist:
+        await allow_ai_assist(pool, tenant_id)
     trip_id = uuid.uuid4()
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))

@@ -482,9 +482,12 @@ async def test_a_role_arn_is_accepted_and_names_its_connection() -> None:
 # ── Settings > AI and the draft (service) ─────────────────────────────────────────────────────────
 
 
-def ai_conn(enabled: bool = False, budget: str = "2", spent: str = "0.5", row: bool = True) -> ScriptedConn:
+def ai_conn(
+    enabled: bool = False, budget: str = "2", spent: str = "0.5", row: bool = True, entitled: bool = True
+) -> ScriptedConn:
     return (
         ScriptedConn()
+        .on("FROM crm.tenant_entitlement", entitled)  # AA-1027 F3: the plan's ai_assist
         .on(
             "SELECT ai_enabled, ai_budget_usd, ai_alert_month",
             {"ai_enabled": enabled, "ai_budget_usd": Decimal(budget), "ai_alert_month": None, "ai_alert_pct": None}
@@ -521,7 +524,7 @@ LIMITS = {"budget_max": Decimal("2"), "provider": "stub", "rate_per_minute": 6}
 
 
 async def test_the_settings_view_defaults_to_off_and_shows_the_meter() -> None:
-    view = await agency_ai.ai_settings(tenant_ctx(ai_conn(row=False), role="agent"), **LIMITS)
+    view = await agency_ai.ai_settings(tenant_ctx(ai_conn(row=False, entitled=False), role="agent"), **LIMITS)
     assert view == {
         "ai_enabled": False,
         "ai_budget_usd": "2.00",
@@ -534,6 +537,7 @@ async def test_the_settings_view_defaults_to_off_and_shows_the_meter() -> None:
         "test_mode": True,
         "rate_limit_per_minute": 6,
         "can_edit": False,
+        "ai_assist_allowed": False,
     }
 
 

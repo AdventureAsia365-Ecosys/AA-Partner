@@ -4,12 +4,14 @@
   monthly budget ``ai_budget_usd`` (default 2 USD), which an owner may lower or raise up to ``AI_BUDGET_MAX_USD`` (the
   plan's cap: AA pays for the calls); the month's spend from ``crm.llm_call`` (calls and guardrail rows), the share of
   the budget and the month's alert level (75 / 90 / 100, crm-032).
-- :func:`draft`: one AI draft for a trip. Behind ``ai_enabled``: with AI off it answers 409 ``ai_disabled`` before the
-  gateway runs, so nothing is scrubbed or paid. Otherwise the gateway does the rest in its fixed order (budget, so a
+- :func:`draft`: one AI draft for a trip. Behind the plan's ``ai_assist`` entitlement (AA-1027 F3: 403
+  ``feature_not_allowed``) and ``ai_enabled``: with AI off it answers 409 ``ai_disabled`` before the gateway runs, so
+  nothing is scrubbed or paid. Otherwise the gateway does the rest in its fixed order (budget, so a
   used-up month pays no guardrail units -> scrub with the trip's known values -> budget again -> call -> ledger row).
   The output's placeholders are put back only here, in the member's session (one ``placeholder_restore`` event). A
   draft is a **suggestion**: nothing is sent from here; sending stays the member's own action
-  (``message_send`` / ``ai_draft_approve``, design R39 "humans send").
+  (``message_send`` / ``ai_draft_approve``, design R39 "humans send"). Since AA-1027 F3 each answered draft is a
+  ``crm.ai_draft`` row (:mod:`app.llm.ai_drafts`) the member accepts or discards.
 
 Prompt-injection rule (Linear AA-964 S261 scope): the client's text is **data**. It goes inside ``<client_message>``
 tags under a fixed system instruction that tells the model never to follow instructions found there, and the model has
@@ -19,11 +21,13 @@ no tools, so a message cannot make the CRM do anything; the worst case is a bad 
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import uuid
 from decimal import Decimal
 from typing import Any
 
 from app.errors import Conflict, Invalid, NotFound
+from app.llm import ai_drafts
 from app.llm.gateway import (
     DEFAULT_BUDGET_USD,
     MONTH_SPEND_SQL,
@@ -51,6 +55,8 @@ INSERT INTO crm.tenant_settings (ai_enabled, ai_budget_usd) VALUES ($1, $2)
 ON CONFLICT (tenant_id) DO UPDATE SET ai_enabled = EXCLUDED.ai_enabled, ai_budget_usd = EXCLUDED.ai_budget_usd
 """
 TRIP_SQL = "SELECT 1 FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL"
+
+log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
     "You write draft messages for a travel agent at a travel agency. The agent reads, edits and sends every draft "
@@ -98,6 +104,7 @@ async def ai_settings(ctx: TenantContext, *, budget_max: Decimal, provider: str,
         "test_mode": provider == "stub",
         "rate_limit_per_minute": rate_per_minute,
         "can_edit": ctx.member_role == "owner",
+        "ai_assist_allowed": await ai_drafts.ai_assist_allowed(ctx),
     }
 
 
@@ -151,6 +158,7 @@ async def draft(
         raise Invalid("text_required", "paste the client's message")
     if await ctx.conn.fetchval(TRIP_SQL, trip_id) is None:
         raise NotFound("trip_not_found", "no trip with this id")
+    await ai_drafts.require_ai_assist(ctx, trip_id)
     row = await ctx.conn.fetchrow(SETTINGS_SQL)
     if not (row and row["ai_enabled"]):
         raise Conflict("ai_disabled", "AI drafts are off for this agency (Settings > AI)")
@@ -165,9 +173,30 @@ async def draft(
         meta=CallMeta(prompt_version=PROMPT_VERSION),
     )
     out_text = result.text
+    draft_id = None
+    if result.outcome == "ok" and out_text is not None and result.llm_call_id:
+        # A savepoint, like the gateway's placeholder map: the model has answered and been paid, so a draft row that
+        # cannot be written (the vault's KMS, a CHECK, the guard, the trip gone in between) must not roll back the
+        # ledger row, the rollup and the map. The member still gets the text; with no draft id the panel offers no
+        # accept / discard for it.
+        try:
+            async with ctx.conn.transaction():
+                draft_id = await ai_drafts.store(
+                    ctx,
+                    vault,
+                    trip_id,
+                    kind=kind,
+                    llm_call_id=result.llm_call_id,
+                    prompt_version=PROMPT_VERSION,
+                    output=out_text,
+                )
+        except Exception as exc:  # noqa: BLE001 — class only, never the text
+            log.warning("crm ai draft: draft row not stored (%s), call stays logged", type(exc).__name__)
+            draft_id = None
     if result.outcome == "ok" and out_text is not None and result.placeholder_map_id:
         out_text = await restore_placeholders(ctx, vault, uuid.UUID(result.placeholder_map_id), out_text)
     return {
+        "ai_draft_id": draft_id,
         "outcome": result.outcome,
         "text": out_text if result.outcome == "ok" else None,
         "fallback": result.fallback,

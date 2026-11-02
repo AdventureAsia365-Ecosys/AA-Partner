@@ -6,12 +6,17 @@ Route                                          What                             
 ``GET    /settings/ai``                        AI on / off, monthly budget, this month's      every role
                                                spend and alert level, test mode
 ``PUT    /settings/ai``                        switch AI on / off, set the budget (<= plan)   owner
-``POST   /trips/{id}/ai/draft``                one AI draft for the trip (behind ai_enabled;  every role
-                                               a suggestion, never sent from here)
+``POST   /trips/{id}/ai/draft``                one AI draft for the trip (behind the plan's   every role
+                                               ai_assist and ai_enabled; a suggestion, never
+                                               sent from here; stored as a crm.ai_draft row)
+``POST   /ai/drafts/{id}/accept``              accept a pending draft (+ feedback code)       owner, agent;
+                                                                                              assistant on
+                                                                                              assigned trips
+``POST   /ai/drafts/{id}/discard``             discard a pending draft (+ feedback code)      every role
 =============================================  =============================================  ======================
 
-The service is :mod:`app.llm.agency_ai`; every model call goes through the process's
-:class:`app.llm.gateway.LlmGateway` (``app.state.llm_gateway``).
+The services are :mod:`app.llm.agency_ai` and :mod:`app.llm.ai_drafts` (AA-1027 F3); every model call goes through
+the process's :class:`app.llm.gateway.LlmGateway` (``app.state.llm_gateway``).
 """
 
 from __future__ import annotations
@@ -26,7 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
 from app.db import request_pool
-from app.llm import agency_ai
+from app.llm import agency_ai, ai_drafts
 from app.permissions import Action
 from app.routers.agency import tenant_header
 from app.tenancy import tenant_tx
@@ -52,6 +57,10 @@ class DraftIn(_Body):
     kind: Literal["reply", "follow_up"] = "reply"
     text: str = Field(min_length=1, max_length=agency_ai.MAX_TEXT)
     instruction: str | None = Field(default=None, max_length=agency_ai.MAX_INSTRUCTION)
+
+
+class DecisionIn(_Body):
+    feedback_code: Literal["good", "wrong_facts", "wrong_tone", "not_relevant", "too_long", "other"] | None = None
 
 
 def _limits(request: Request) -> dict[str, Any]:
@@ -94,4 +103,20 @@ async def post_ai_draft(
             kind=body.kind,
             text=body.text,
             instruction=body.instruction,
+        )
+
+
+@router.post("/ai/drafts/{draft_id}/{decision}")
+async def post_ai_draft_decision(
+    request: Request,
+    caller: CallerDep,
+    tenant_id: TenantDep,
+    draft_id: uuid.UUID,
+    decision: Literal["accept", "discard"],
+    body: DecisionIn | None = None,
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.AI_USE) as ctx:
+        return await ai_drafts.decide(
+            ctx, draft_id, action=decision, feedback_code=body.feedback_code if body else None
         )

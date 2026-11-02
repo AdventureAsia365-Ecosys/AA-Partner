@@ -12,6 +12,7 @@
 
 import { isDateLocale, type DateLocale } from "./dates";
 import { aiEn, aiVi } from "./i18nAi";
+import { aiDraftEn, aiDraftVi } from "./i18nAiDraft";
 import { termsEn, termsVi } from "./i18nTerms";
 import { onboardingEn, onboardingVi } from "./i18nOnboarding";
 import { messagingEn, messagingVi } from "./i18nMessaging";
@@ -51,6 +52,7 @@ const en = {
   ...tripCodesEn, // AA-957: task kinds, stage reasons, incident departure, ops activity (lib/i18nTripCodes.ts)
   ...onboardingEn, // AA-962: onboarding, client import, duplicates, Connections, help (lib/i18nOnboarding.ts)
   ...aiEn, // AA-964: Settings > AI (lib/i18nAi.ts)
+  ...aiDraftEn, // AA-1027 F3: the AI draft panel of the trip workspace (lib/i18nAiDraft.ts)
   ...termsEn, // AA-1033: the terms of use page, its AI section and links (lib/i18nTerms.ts)
   ...supportEn, // AA-971: AA support access and the support / emergency banner (lib/i18nSupport.ts)
   ...opsReleaseEn, // AA-956: the AA ground operations panel and its log lines (lib/i18nOpsRelease.ts)
@@ -2698,6 +2700,7 @@ const vi: Record<MessageKey, string> = {
   ...tripCodesVi,
   ...onboardingVi,
   ...aiVi,
+  ...aiDraftVi,
   ...termsVi,
   ...supportVi,
   ...opsReleaseVi,

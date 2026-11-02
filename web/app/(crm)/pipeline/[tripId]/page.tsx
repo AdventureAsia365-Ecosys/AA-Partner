@@ -18,6 +18,8 @@
 // S262 round 3: the trip is closed on every card (no new AA item, line, date, shared document, signature or proposal;
 // messages stay open), and the cancel run closes every card at once (TripClosedProvider), not only the header.
 // AA-959 (CRM-29a): the trip's automations under the workspace (its workflow runs, Apply a task list).
+// AA-1027 F3: the AI draft card under the trip panel (GET settings/ai: the plan's ai_assist and the AI switch decide
+// whether its Draft action works).
 import { notFound } from "next/navigation";
 import { ErrorState } from "@/app/_kit";
 import { TripIncidentBanner } from "@/components/duty/IncidentPanel";
@@ -30,7 +32,9 @@ import { TripAgreementsPanel } from "@/components/proposals/TripAgreementsPanel"
 import { OpsReleasePanel } from "@/components/pipeline/OpsReleasePanel";
 import { TripClosedProvider } from "@/components/pipeline/TripClosed";
 import { TripPanel } from "@/components/pipeline/TripPanel";
+import { AiDraftPanel } from "@/components/pipeline/AiDraftPanel";
 import { TripWorkflows } from "@/components/workflows/TripWorkflows";
+import type { AiSettings } from "@/lib/ai";
 import type { DocumentRow } from "@/lib/clients";
 import type { TripIncident } from "@/lib/duty";
 import { crmCall } from "@/lib/crmApi";
@@ -57,7 +61,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
   const { session } = await serverContext();
   if (!session) return null;
   const tripQuery = new URLSearchParams({ trip_id: tripId });
-  const [trip, members, docs, stage2, lines, suppliers, convs, replies, lifecycle, agreements, invoices, signed, incidents, ops] = await Promise.all([
+  const [trip, members, docs, stage2, lines, suppliers, convs, replies, lifecycle, agreements, invoices, signed, incidents, ops, ai] = await Promise.all([
     crmCall<TripView>(ctx.cfg, session, "GET", `trips/${tripId}`),
     crmCall<{ members: Member[] }>(ctx.cfg, session, "GET", "members"),
     crmCall<{ documents: DocumentRow[] }>(ctx.cfg, session, "GET", `trips/${tripId}/documents`),
@@ -72,6 +76,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
     crmCall<TripAgreements>(ctx.cfg, session, "GET", `trips/${tripId}/agreements`),
     crmCall<{ incidents: TripIncident[] }>(ctx.cfg, session, "GET", `trips/${tripId}/incidents`),
     crmCall<OpsReleaseView>(ctx.cfg, session, "GET", `trips/${tripId}/ops-release`),
+    crmCall<AiSettings>(ctx.cfg, session, "GET", "settings/ai"),
   ]);
   const clientHost = ctx.cfg.clientHosts[0];
   // The agency's zone for times on the page (S262 AA-957: a time printed in the server's zone on the server and the
@@ -101,6 +106,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
       lostHint={lines.ok ? (lines.data.lost_reason_hint ?? null) : null}
       timeZone={agencyZone}
     />
+    <AiDraftPanel tripId={tripId} settings={ai.ok ? ai.data : null} isOwner={ctx.role === "owner"} lang={ctx.lang} />
     <TripWorkflows tripId={tripId} role={ctx.role} lang={ctx.lang} locale={ctx.locale} timeZone={agencyZone} />
     {lifecycle.ok && (
       <ProposalPanel
