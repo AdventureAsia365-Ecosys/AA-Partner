@@ -4,7 +4,8 @@
 // left [to be confirmed] for counsel. AA-820: §3 is the plain-English summary of the AI Schedule
 // (.2–.6, root docs/legal/tenant-terms-ai-clause-draft.md v0.2); the full Schedule is attached to the
 // partner agreement. Still a draft pending legal review. Not indexed while it is a draft. S262 (v0.3): the provider
-// list in §3 follows the AI Use Register (root docs/architecture/ai-use-register.md, ADR 0009).
+// list in §3 follows the AI Use Register (root docs/architecture/ai-use-register.md, ADR 0009). S264 (register v1.2,
+// CIS migration 344): when Claude is unavailable, an OpenAI model through the OpenAI API may write, as a last resort.
 import type { Metadata } from "next";
 import LegalPage, { A, LegalSection } from "../_legal/LegalPage";
 import { SUPPORT_EMAIL } from "../_kit/core/brand";
@@ -56,7 +57,9 @@ export default function TermsPage() {
             Amazon Bedrock (Amazon Web Services), writes it, and OpenAI models, also through Amazon Bedrock, review,
             score and check it. When those models are unavailable, the review and check steps may fall back to other
             models on Amazon Bedrock (Amazon Nova, Meta Llama), and the Anthropic API or the OpenAI API, used directly
-            and with a spending cap, may be used as a fallback after them.
+            and with a spending cap, may be used as a fallback after them. When Claude is unavailable on Amazon
+            Bedrock, the writing step may fall back to Claude through the Anthropic API and, as a last resort, to an
+            OpenAI model through the OpenAI API, used directly and with a spending cap.
           </li>
           <li>
             You must follow these providers&apos; usage policies, including the{" "}

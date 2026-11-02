@@ -3,7 +3,8 @@
 // adventure.asia/privacy-policy, which does not describe portal data). Every factual sentence describes
 // what the platform does today (sources in docs/implementation-notes/AA-886-s245.md); open legal points
 // are marked [to be confirmed]. Not indexed while it is a draft. S262 (v0.3): the AI provider list in §5 and §6 follows
-// the AI Use Register (root docs/architecture/ai-use-register.md, ADR 0009); AA-820.
+// the AI Use Register (root docs/architecture/ai-use-register.md, ADR 0009); AA-820. S264 (register v1.2, CIS
+// migration 344): the writing fallback, Claude through the Anthropic API, then an OpenAI model as a last resort.
 import type { Metadata } from "next";
 import LegalPage, { A, LegalSection } from "../_legal/LegalPage";
 import { SUPPORT_EMAIL } from "../_kit/core/brand";
@@ -83,8 +84,8 @@ export default function PrivacyPage() {
           models, also through Amazon Bedrock, review, score and check the drafts. When those models are unavailable,
           the review and check steps may fall back to other models on Amazon Bedrock (Amazon Nova, Meta Llama). If
           Amazon Bedrock is unavailable, the Anthropic API or the OpenAI API, used directly and with a spending cap, may
-          be used as a fallback; those
-          calls go from Amazon Web Services to Anthropic or OpenAI. For some partners, a decision-checking service (Jev,
+          be used as a fallback; those calls go from Amazon Web Services to Anthropic or OpenAI. For writing, that means
+          Claude through the Anthropic API first and, as a last resort, an OpenAI model through the OpenAI API. For some partners, a decision-checking service (Jev,
           by TypeSafe) also answers yes-or-no checks about the drafts. These providers receive tour content,
           your brand settings and the instructions for each piece. Our policy is not to send personal data to these
           models and not to store any in our AI call records, so please do not enter personal data about other people
