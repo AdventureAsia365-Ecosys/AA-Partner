@@ -2,6 +2,8 @@
 // AA-935 — every agency page: the signed-in agency context (lib/crmContext.ts: session, /me, memberships, locale)
 // and the shell around the page. An unreachable API, or one that refuses a just-refreshed token, shows an error state
 // instead of the shell.
+// AA-1025 (S264): the "Open Content studio" link shows only when CIS lists the current agency among the person's studio
+// memberships (lib/studioAccess.ts; kept when CIS cannot answer).
 import { ErrorState } from "@/app/_kit";
 import { MailboxBanner } from "@/components/mail/MailboxBanner";
 import { SupportBanner } from "@/components/support/SupportBanner";
@@ -11,6 +13,7 @@ import { crmContext } from "@/lib/crmContext";
 import { dictionary, t } from "@/lib/i18n";
 import { contentStudioHref } from "@/lib/nav";
 import { serverContext } from "@/lib/serverContext";
+import { studioAccess, studioLink } from "@/lib/studioAccess";
 import { disconnected, type MailboxView } from "@/lib/mail";
 import { bannerState, type SupportAccess } from "@/lib/supportAccess";
 import type { Recovery } from "@/lib/team";
@@ -48,13 +51,15 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
   const support = session ? await crmCall<SupportAccess>(ctx.cfg, session, "GET", "support-access") : null;
   const supportView = support && support.ok ? support.data : null;
   const banner = bannerState(supportView);
+  const studioHref = contentStudioHref(ctx.cfg.contentStudioUrl, ctx.cfg.publicOrigin);
+  const studio = studioHref && session ? await studioAccess(ctx.cfg.cisApiUrl, session) : "unknown";
   return (
     <CrmShell
       dict={dictionary(ctx.lang)}
       role={ctx.role}
       agencyName={ctx.me.display_name ?? ctx.me.tenant_id}
       agencyCount={active}
-      contentStudioHref={contentStudioHref(ctx.cfg.contentStudioUrl, ctx.cfg.publicOrigin)}
+      contentStudioHref={studioLink(studioHref, studio)}
       locale={ctx.locale}
       syntheticBadge={ctx.cfg.environment !== "prod"}
     >

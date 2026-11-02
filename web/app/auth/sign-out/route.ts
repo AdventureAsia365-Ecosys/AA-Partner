@@ -1,6 +1,6 @@
 // POST /auth/sign-out — same-origin only (AA-911 rule: every *.lumiguides.it.com host is the same site); revoke the
 // refresh token, clear every session cookie, end the managed-login session. AA-935.
-// AA-979 P2b: the Content studio shares the agency host, so this also expires its five host-only cis_* cookies (one
+// AA-979 P2b: the Content studio shares the agency host, so this also expires its host-only cis_* cookies (one
 // sign-out for both apps).
 import type { NextRequest } from "next/server";
 import { requestConfig } from "@/lib/config";

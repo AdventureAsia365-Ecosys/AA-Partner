@@ -2,10 +2,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  boundTo,
   exchange,
   isPartnerToken,
   memberships,
   needsRenewal,
+  PARTNER_REF_COOKIE,
+  partnerRef,
   safeStudioNext,
   studioClaims,
   studioCookies,
@@ -31,13 +34,33 @@ test("claims and renewal: partner tokens renew a minute before they expire; unre
   assert.deepEqual(studioClaims("a.###.c"), { exp: null, amr: null, sub: null });
 });
 
-test("the five studio cookies live as long as the token", () => {
-  const cookies = studioCookies({
+test("the studio cookies live as long as the token and carry the partner reference", () => {
+  const session = {
     token: "tok", tenant_id: "t1", tenant_name: "Sen Vàng", plan_tier: "growth", content_studio_role: "editor", expires_in: 840,
-  });
+  };
+  const cookies = studioCookies(session, "0123456789abcdef");
   assert.deepEqual(cookies.map((c) => c.name), [...STUDIO_COOKIES]);
   assert.ok(cookies.every((c) => c.maxAge === 840));
   assert.equal(cookies.find((c) => c.name === "cis_tenant_token")?.value, "tok");
+  assert.equal(cookies.find((c) => c.name === PARTNER_REF_COOKIE)?.value, "0123456789abcdef");
+  // without a reference (no partner session) the reference cookie is not written
+  assert.ok(!studioCookies(session).some((c) => c.name === PARTNER_REF_COOKIE));
+});
+
+test("partnerRef: 16 hex, stable for one sign-in, different for another person or pool", async () => {
+  const a = await partnerRef("https://idp.example.test/pool-a", "sub-1");
+  assert.match(a, /^[0-9a-f]{16}$/);
+  assert.equal(await partnerRef("https://idp.example.test/pool-a", "sub-1"), a);
+  assert.notEqual(await partnerRef("https://idp.example.test/pool-a", "sub-2"), a);
+  assert.notEqual(await partnerRef("https://idp.example.test/pool-b", "sub-1"), a);
+  assert.ok(!a.includes("sub-1"));
+});
+
+test("boundTo: only the same reference counts", () => {
+  assert.equal(boundTo("0123456789abcdef", "0123456789abcdef"), true);
+  assert.equal(boundTo("fedcba9876543210", "0123456789abcdef"), false);
+  assert.equal(boundTo(undefined, "0123456789abcdef"), false); // cookies from before the reference existed
+  assert.equal(boundTo("", "0123456789abcdef"), false);
 });
 
 test("next paths stay inside the studio", () => {

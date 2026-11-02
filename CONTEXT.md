@@ -468,7 +468,7 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
   `forHost` / `requestConfig`): redirects, the OAuth redirect / logout URIs and the same-origin write guard stay on
   the host the person is on, so the DNS cutover of `portal.` needs no web or API change. `WEB_PUBLIC_ORIGIN` is the
   fallback for any other Host. On `portal.` the Content studio link is the same-origin `/portal/dashboard`, a person
-  with no CRM agency goes straight to it (a Content-studio-only member), and sign-out also expires the studio's five
+  with no CRM agency goes straight to it (a Content-studio-only member), and sign-out also expires the studio's
   `cis_*` cookies (`lib/studioCookies.ts`): one host, one sign-in, one sign-out.
 - **Sign-in**: Cognito managed login, authorization code + PKCE, confidential client: the partner pool's `partner-web`
   client (MFA required) once AA-CIS-Infra `crm_partner_signin_enabled` is on, the EXTERNAL `cis-portal` client before
@@ -492,7 +492,10 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
   `trip_title`). Dates are always shown with the month spelled ("3 Apr 2026" en-AU, "Apr 3, 2026" en-US,
   "3 thg 4, 2026" vi-VN); typed dates follow the locale's order and the field shows the reading.
 - **Shell**: the whole agency IA of design v3 §2.2 in the sidebar (each section an empty state that names its card in
-  `data-card`), the Content studio cross-link (`CONTENT_STUDIO_URL`), Settings with language and dates. The portal
+  `data-card`), the Content studio cross-link (`CONTENT_STUDIO_URL`), Settings with language and dates. The
+  cross-link shows only when CIS `GET /auth/tenant-memberships` (the person's partner access token, `CIS_API_URL`)
+  lists the current agency among the person's studios; kept when CIS cannot answer; memoised 5 min per person and
+  agency, CIS throttles that route (`web/lib/studioAccess.ts`, AA-1025 S264). The portal
   sidebar (`portal/`, AA-979) links back ("Open CRM").
 - **UI kit** (AA-994 S2a, root ADR 0016): `web/app/_kit/core/` is a byte copy of AA-CIS-App `frontend/app/_kit/core/`
   (full profile), written only by the root `tools/kit/kit-sync.sh crm-web` and pinned by `web/kit.lock.json`; never
@@ -597,10 +600,15 @@ original CIS commit). P2a moves the code only:
   `PORTAL_API_KEY_SIGNIN` (off; on only for a local studio), `WEB_SESSION_SECRET` (the CRM web's session key), `API_URL`,
   `SENTRY_DSN`. **Sign-in** (`portal/proxy.ts`, `portal/lib/tenantSession.ts`): the CRM web's partner session (its sealed cookie, read only: `portal/lib/session.ts` and
   `seal.ts` are byte copies of `web/lib/`, guarded by `test_portal_guards.py`) is exchanged at CIS `POST
-  /auth/tenant-session` for a tenant JWT of at most 15 minutes in the same five `cis_*` cookies; several studios ->
-  `/portal-access/select`, none -> `/portal-access/none`; no session -> the web's `/auth/refresh`. The BFF renews an
+  /auth/tenant-session` for a tenant JWT of at most 15 minutes in the same `cis_*` cookies; several studios ->
+  `/portal-access/select`, none -> `/portal-access/none` (both show the CRM sign-in, read live from the web's
+  `GET /bff/me` on the same origin, and Adventure Asia's address only labelled as a contact, AA-1025 S264); no
+  session -> the web's `/auth/refresh`. The BFF renews an
   expiring exchanged token itself and answers 401 + `x-aa-session: expired` when it cannot (the shell reloads once).
-  One sign-out: the studio clears its cookies, then posts the web's `/auth/sign-out`. Sentry (`instrumentation*.ts`):
+  One sign-out: the studio clears its cookies, then posts the web's `/auth/sign-out`. The studio cookies are bound to
+  the partner sign-in they were exchanged for (`cis_partner_ref` = 16 hex of SHA-256 `iss|sub`, AA-1025 S264): the
+  gate and the BFF never use a studio token made for another person than the CRM web's live session (exchange again,
+  without the old agency choice), so a second sign-in on the same browser never sees the previous person's studio. Sentry (`instrumentation*.ts`):
   only with a DSN, no PII. **Clean-up (AA-979 §4.5, S256)**: API-key sign-in off, Vercel deleted, the CIS copy deleted,
   `partner-dev.` answers 301 to `portal.` except `/crm/*` (AA-CIS-Infra CloudFront Function), the CRM API's join-link
   and mail OAuth origins on `portal.`.

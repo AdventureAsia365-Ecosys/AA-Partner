@@ -1,7 +1,7 @@
 // portal/app/portal-access/AccessCard.tsx
 // AA-979 P2b — the frame of the two studio access pages (chooser, no access): light card like /tenant-login, outside the
 // /portal shell (which needs a studio session these pages do not have yet).
-import { BRAND, FONT_DISPLAY, FONT_SANS, LOGO_SRC } from "../_kit/core/brand";
+import { BRAND, FONT_DISPLAY, FONT_SANS, LOGO_SRC, SUPPORT_EMAIL } from "../_kit/core/brand";
 
 export function AccessCard({ title, testId, children }: { title: string; testId: string; children: React.ReactNode }) {
   return (
@@ -40,3 +40,18 @@ export const buttonStyle: React.CSSProperties = {
   fontSize: 13,
   cursor: "pointer",
 };
+
+/**
+ * AA-1025 (S264): Adventure Asia's address, labelled as a contact. A bare address under "sign in with the address it
+ * was sent to" read as the account's own address (the tech lead's "the studio shows an old session's e-mail").
+ */
+export function SupportContact() {
+  return (
+    <p data-testid="portal-support-contact" style={{ margin: 0, fontSize: 13, color: BRAND.muted }}>
+      Questions? Contact Adventure Asia:{" "}
+      <a href={`mailto:${SUPPORT_EMAIL}`} style={linkStyle}>
+        {SUPPORT_EMAIL}
+      </a>
+    </p>
+  );
+}

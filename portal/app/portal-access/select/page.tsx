@@ -2,13 +2,15 @@
 // AA-979 P2b — the agency chooser of a person who belongs to several Content studios (CIS POST /auth/tenant-session
 // answered 409 choose_tenant). The list comes from CIS GET /auth/tenant-memberships with the partner access token
 // (the CRM web's session, read only); each choice POSTs /api/auth/tenant-select, which exchanges for that tenant.
+// AA-1025 (S264): the CRM sign-in (SignedInAs) and the labelled support contact, as on /portal-access/none.
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { API_URL } from "@/lib/auth-server";
 import { config } from "@/lib/config";
 import { memberships, partnerSession, safeStudioNext } from "@/lib/tenantSession";
 import { BRAND } from "../../_kit/core/brand";
-import { AccessCard, buttonStyle, linkStyle } from "../AccessCard";
+import { AccessCard, buttonStyle, linkStyle, SupportContact } from "../AccessCard";
+import { SignedInAs } from "../SignedInAs";
 import { SignOutButton } from "../SignOutButton";
 
 export const dynamic = "force-dynamic";
@@ -25,6 +27,7 @@ export default async function SelectTenantPage({ searchParams }: { searchParams:
   if (list !== null && list.length === 0) redirect("/portal-access/none");
   return (
     <AccessCard title="Choose a Content studio" testId="portal-select-tenant">
+      <SignedInAs />
       {params.error && (
         <p role="alert" style={{ margin: 0, fontSize: 13.5, color: BRAND.danger }}>
           That agency could not be opened. Choose again.
@@ -63,6 +66,7 @@ export default async function SelectTenantPage({ searchParams }: { searchParams:
         </a>
         <SignOutButton />
       </div>
+      <SupportContact />
     </AccessCard>
   );
 }
