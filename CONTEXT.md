@@ -492,7 +492,10 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
   `trip_title`). Dates are always shown with the month spelled ("3 Apr 2026" en-AU, "Apr 3, 2026" en-US,
   "3 thg 4, 2026" vi-VN); typed dates follow the locale's order and the field shows the reading.
 - **Shell**: the whole agency IA of design v3 §2.2 in the sidebar (each section an empty state that names its card in
-  `data-card`), the Content studio cross-link (`CONTENT_STUDIO_URL`), Settings with language and dates. The portal
+  `data-card`), the Content studio cross-link (`CONTENT_STUDIO_URL`), Settings with language and dates. The
+  cross-link shows only when CIS `GET /auth/tenant-memberships` (the person's partner access token, `CIS_API_URL`)
+  lists the current agency among the person's studios; kept when CIS cannot answer; memoised 5 min per person and
+  agency, CIS throttles that route (`web/lib/studioAccess.ts`, AA-1025 S264). The portal
   sidebar (`portal/`, AA-979) links back ("Open CRM").
 - **UI kit** (AA-994 S2a, root ADR 0016): `web/app/_kit/core/` is a byte copy of AA-CIS-App `frontend/app/_kit/core/`
   (full profile), written only by the root `tools/kit/kit-sync.sh crm-web` and pinned by `web/kit.lock.json`; never
