@@ -481,7 +481,10 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
 - **BFF allow-list** (`web/lib/bff.ts`): the browser calls `/bff/<path>` on its own origin; only listed (method, path)
   pairs are forwarded to `/crm/v1/<path>`, with the session's token and the session's agency (`X-AA-Tenant-Id` never
   comes from the browser). Cross-site writes are refused first (vendored `lib/crossSiteGuard.ts`, AA-911 rule).
-  Adding a browser call = adding one line there.
+  Adding a browser call = adding one line there. One literal route beside the catch-all: `GET /bff/identity`
+  (`web/app/bff/identity/route.ts`, AA-1025 S264) answers the Content studio's "who is signed in" ALWAYS with 200
+  (`signed_out` / `no_agency` / `agency` with only `display_name` + `member_role` / `unknown`), because the studio
+  page must not log a console error; `/bff/me` keeps its 401 / 409 for the CRM pages.
 - **Agency picker**: `GET /crm/v1/memberships` -> one active agency is picked automatically, several -> the chooser;
   `/auth/agency` checks the id against the caller's own list before it goes into the session.
 - **EN/VI and dates** (`web/lib/i18n.ts`, `web/lib/dates.ts`, R32): date locale en-AU, en-GB, en-US or vi-VN, UI
@@ -602,7 +605,7 @@ original CIS commit). P2a moves the code only:
   `seal.ts` are byte copies of `web/lib/`, guarded by `test_portal_guards.py`) is exchanged at CIS `POST
   /auth/tenant-session` for a tenant JWT of at most 15 minutes in the same `cis_*` cookies; several studios ->
   `/portal-access/select`, none -> `/portal-access/none` (both show the CRM sign-in, read live from the web's
-  `GET /bff/me` on the same origin, and Adventure Asia's address only labelled as a contact, AA-1025 S264); no
+  `GET /bff/identity` on the same origin, always 200, and Adventure Asia's address only labelled as a contact, AA-1025 S264); no
   session -> the web's `/auth/refresh`. The BFF renews an
   expiring exchanged token itself and answers 401 + `x-aa-session: expired` when it cannot (the shell reloads once).
   One sign-out: the studio clears its cookies, then posts the web's `/auth/sign-out`. The studio cookies are bound to
