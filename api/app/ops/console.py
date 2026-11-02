@@ -305,8 +305,9 @@ async def create_agency(
 ) -> dict[str, Any]:
     """Create an agency without any member (S-01 "create agency"); the first owner is invited after. The rules are
     :func:`app.agencies.provision_agency`'s (Dev: synthetic only; prod: real only), create-only: an id that already
-    exists is 409 ``tenant_exists`` and nothing is written (never a silent rename, whatever the agency's status). The
-    ``agency_create`` event carries ``ticket:<REF>``. Returns the new agency's summary."""
+    exists is 409 ``tenant_exists`` and nothing is written (never a silent rename, whatever the agency's status); an id
+    whose agency is in the trash (a deleted test agency) is 409 ``tenant_deleted`` (AA-1031: the id is never reused).
+    The ``agency_create`` event carries ``ticket:<REF>``. Returns the new agency's summary."""
     await agencies.provision_agency(
         pool,
         agencies.AgencySpec(

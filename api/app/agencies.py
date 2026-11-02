@@ -17,6 +17,9 @@ admits exactly that agency's rows). Creating the same agency twice converges ins
 roles are brought to the spec, ``is_synthetic`` never flips (409), a disabled member is never re-activated here.
 That convergence is the seeder's. The L1 console creates with ``create_only=True``: an existing id is 409
 ``tenant_exists`` and nothing is written (an L1 call must never rename an agency, whatever its status, AA-941 review).
+An id whose agency is in the trash (``deleted_at`` set, e.g. a deleted test agency waiting for its purge) is 409
+``tenant_deleted`` instead (AA-1031, S264): the id can never be reused, so the console tells staff to create a new CIS
+tenant rather than show an opaque "already exists" for an agency no list shows any more.
 """
 
 from __future__ import annotations
@@ -117,6 +120,9 @@ RETURNING tenant_id
 """
 TENANT_CURRENT_SQL = "SELECT display_name, default_locale, is_synthetic FROM crm.tenant WHERE tenant_id = $1"
 TENANT_UPDATE_SQL = "UPDATE crm.tenant SET display_name = $2, default_locale = $3 WHERE tenant_id = $1"
+# AA-1031 (S264): is the existing row of this id in the trash? Read in the provisioning transaction (app.tenant_id =
+# this id, so the crm-002 tenant_isolation policy shows the row whatever its deleted_at).
+TENANT_TRASHED_SQL = "SELECT deleted_at IS NOT NULL AS trashed FROM crm.tenant WHERE tenant_id = $1"
 # AA-944 (crm-014): every agency has the built-in Adventure Asia supplier row (M15); idempotent.
 ENSURE_AA_SUPPLIER_SQL = "SELECT crm.ensure_aa_supplier()"
 MEMBER_INSERT_SQL = """
@@ -145,7 +151,8 @@ async def provision_agency(
     """Create (or converge) one agency and its members in one transaction. Validation happens before any SQL.
     ``audit_object_ids`` go on the ``agency_create`` event (AA-941: the L1 console's ``ticket:<REF>``).
     ``create_only``: an agency that already exists is 409 ``tenant_exists`` and the transaction writes nothing (the
-    L1 console's create; the seeder converges)."""
+    L1 console's create; the seeder converges); one that exists in the trash is 409 ``tenant_deleted`` (its id can
+    never be reused)."""
     agency = validate_agency(spec, environment)
     people = tuple(validate_member(m) for m in members)
     created = updated = False
@@ -158,6 +165,11 @@ async def provision_agency(
             created = True
             ctx.audit("agency_create", "agency", str(agency.tenant_id), object_ids=audit_object_ids)
         elif create_only:
+            if await ctx.conn.fetchval(TENANT_TRASHED_SQL, agency.tenant_id):
+                raise Conflict(
+                    "tenant_deleted",
+                    "the agency with this id was deleted and its id cannot be reused; create a new CIS tenant",
+                )
             raise Conflict("tenant_exists", "an agency with this id already exists; nothing was changed")
         else:
             current = await ctx.conn.fetchrow(TENANT_CURRENT_SQL, agency.tenant_id)

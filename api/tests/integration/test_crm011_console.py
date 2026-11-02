@@ -374,6 +374,46 @@ async def test_s263_aa_deletes_a_synthetic_test_agency_and_nothing_else(
     assert kept["deleted_at"] is None
 
 
+async def test_create_on_a_deleted_test_agency_id_is_409_tenant_deleted(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection
+) -> None:
+    """AA-1031 (S264, tech lead test): create a synthetic agency, delete it (trash), then create again with the same
+    id -> 409 ``tenant_deleted`` (not the opaque ``tenant_exists``); the trashed row and its audit stay as they were."""
+    keys = _keys()
+    tenant_id = uuid.uuid4()
+    await console.create_agency(
+        app_pool, tenant_id=tenant_id, agency_name="Kingfisher Test Agency", is_synthetic=True, default_locale="en-AU",
+        environment="test", staff_sub=STAFF, ticket_ref="SUP-60",
+    )  # fmt: skip
+    await console.delete_test_agency(
+        app_pool, tenant_id, staff_sub=STAFF, agency_name="Kingfisher Test Agency", ticket_ref="SUP-61", keys=keys
+    )
+    await _cancel_queued(app_pool, tenant_id)
+    before = await _audit(admin, tenant_id)
+    with pytest.raises(Conflict) as exc:
+        await console.create_agency(
+            app_pool, tenant_id=tenant_id, agency_name="Kingfisher Again", is_synthetic=True, default_locale="vi-VN",
+            environment="test", staff_sub=STAFF, ticket_ref="SUP-62",
+        )  # fmt: skip
+    assert exc.value.code == "tenant_deleted"
+    [row] = await _owner_fetch(admin, tenant_id, "SELECT display_name, default_locale, deleted_at FROM crm.tenant")
+    assert (row["display_name"], row["default_locale"]) == ("Kingfisher Test Agency", "en-AU")
+    assert row["deleted_at"] is not None
+    assert len(await _audit(admin, tenant_id)) == len(before)
+    # A live agency of another id still answers tenant_exists.
+    live = uuid.uuid4()
+    await console.create_agency(
+        app_pool, tenant_id=live, agency_name="Heron Test Agency", is_synthetic=True, default_locale="en-AU",
+        environment="test", staff_sub=STAFF, ticket_ref="SUP-63",
+    )  # fmt: skip
+    with pytest.raises(Conflict) as exc:
+        await console.create_agency(
+            app_pool, tenant_id=live, agency_name="Heron Test Agency", is_synthetic=True, default_locale="en-AU",
+            environment="test", staff_sub=STAFF, ticket_ref="SUP-64",
+        )  # fmt: skip
+    assert exc.value.code == "tenant_exists"
+
+
 async def test_lock_refuses_member_requests_until_the_unlock(app_pool: asyncpg.Pool, admin: asyncpg.Connection) -> None:
     tenant_id, [(owner, _)] = await _agency(app_pool, "owner")
     locked = await console.lock_agency(app_pool, tenant_id, staff_sub=STAFF, reason_code="payment", ticket_ref="SUP-7")
