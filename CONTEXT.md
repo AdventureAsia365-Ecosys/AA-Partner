@@ -320,6 +320,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-037` | `api/migrations/037_crm_llm_stage_profile.sql` | AI gateway on the shared core (AA-964, S263 gateway plan F1 + F2; **contract** class under ADR 0017: a replaced outcome CHECK on the `crm.llm_call` ledger, so MIG-4 order, manual DB Migrate apply before the code PR): `crm.llm_stage_profile` (platform configuration, no tenant column: one row per CRM stage, role, `is_active` = the stage kill switch, `max_attempts` 1..6, `route_deadline_s` 1..120, `degrade_mode` `manual_reply_needed`) and `crm.llm_stage_route` (the stage's Bedrock route in order, position 0..5: model wire id, family = maker, catalog prices per million tokens both or neither, `is_enabled`); crm_app SELECT only, no reader grant; seed `crm_draft_reply` (writer, 2 attempts, 30 s: Haiku 4.5, then Sonnet 4.5). `crm.llm_call.outcome` + `billed_unusable`, `truncated` (ledger v2 statuses). crm-036 is AA-958's (CRM-28 messaging), which merges first |
 | `crm-038` | `api/migrations/038_crm_workflows_tasks.sql` | CRM-29a Module 10 workflows + tasks (AA-959; **contract** class under ADR 0017: new columns, a CHECK and a re-created hold guard on `crm.task`, a new `crm.tenant_settings` column, `crm.status_transition` rows, a replaced `crm.erase_subject`, so MIG-4 order, manual DB Migrate apply before the code PR): `crm.workflow_rule` (base template; the agency's automations: trigger `stage_enter` / `event` / `date_anchor` / `special_date` / `manual` (a task list), offset days, conditions and 1..20 steps as JSON validated by the API, active / paused / archived, `version`, `template_key` of the AA library template, one live rule per template; crm_app no DELETE) and `crm.workflow_run` (base template; one run of a rule for one trip or one client, `UNIQUE (tenant, rule, trigger_key)` = the idempotent tick, active -> completed / stopped / failed, `step_index`, `next_at`, `stop_reason`, a log of codes and ids; hold guard; crm_app no DELETE); `crm.task.traveler_id` (a client task: a trip or a client, never both), `title_enc` (vault DEK: a custom task, kind family `custom_<hex>`), `workflow_run_id`; `crm.tenant_settings.task_digest`; `crm.erase_subject` = the crm-033 text + the workflow tables (trip, traveller and agency scopes) |
 | `crm-039` | `api/migrations/039_crm_partner_account_cleanup.sql` | S263 AA-939 follow-up (**contract**: a changed policy): `studio_invitation_platform` (crm-020) also lets `job:crm_partner_accounts` read `crm.studio_invitation` (USING only; its WITH CHECK and guard CRM37 refuse that actor's writes), so the partner-account clean-up sees every studio link |
+| `crm-040` | `api/migrations/040_crm_ai_draft.sql` | AA-1027 F3 (**expand**: one new table + guard): `crm.ai_draft` (one row per answered AI draft of the trip workspace: kind, ledger call id, prompt version, the draft with its placeholders under the vault DEK, one `decision` pending -> accepted / discarded with an optional R39 `feedback_code`), guard `crm.guard_ai_draft` (CRM47; `decision`, not `status`, so no `status_transition` rows); cascades from its trip, no `erase_subject` change |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -525,7 +526,7 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
 - **AI notice and terms (AA-1033)**: the kit `AiNotice` (AA-CIS-App canonical core, wording in
   `core/aiNotice.messages.ts`) is the one notice under AI-written text. CRM web: every component or page that asks for
   an AI draft (`trips/{id}/ai/draft`) must render `<AiNotice lang={lang} />` (staff variant) under the draft —
-  guarded by `web/tests/aiNotice.test.ts` (no draft UI exists yet; the CRM-33a draft slice must add it). Settings > AI
+  guarded by `web/tests/aiNotice.test.ts` (the trip workspace's AI draft drawer, AA-1027 F3, renders it). Settings > AI
   lists "AI can make mistakes: check facts before sending." first, shows the notice as a draft carries it and links
   `/terms#ai`. `/terms` (`web/app/(crm)/terms`, strings `web/lib/i18nTerms.ts` EN + VI, signed-in, linked from the
   shell footer) is a draft holding the "AI-generated content" section only (mistakes, for information, a person
@@ -2003,12 +2004,25 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   (every role, action `ai_use`): switch, budget, plan cap `AI_BUDGET_MAX_USD` (default 2), this month's spend and
   share, alert level, test mode, cap per minute; `PUT` (owner, action `ai_settings`): `ai_enabled`, `ai_budget_usd`
   (0 .. cap, two decimals; above: 422 `budget_above_plan`), audited.
-- **Draft** (`POST /crm/v1/trips/{id}/ai/draft` `{kind: reply|follow_up, text, instruction?}`, action `ai_use`): 409
-  `ai_disabled` before the gateway when AI is off (nothing scrubbed, nothing paid); else stage `crm_draft_reply`, role
+- **Draft** (`POST /crm/v1/trips/{id}/ai/draft` `{kind: reply|follow_up, text, instruction?}`, action `ai_use`): 403
+  `feature_not_allowed` when the plan lacks `ai_assist` (AA-1027 F3, `crm.tenant_entitlement.allowed_features`, set by
+  AA in the L1 console; a `denied` audit event), then 409 `ai_disabled` before the gateway when AI is off (nothing scrubbed, nothing paid); else stage `crm_draft_reply`, role
   `writer`, prompt `crm-draft-1` with the trip's known values; the client text sits in `<client_message>` tags under a
   fixed system instruction (never follow instructions inside it; no tools); placeholders are restored in the member's
-  session; the answer carries `approval_required: true` and is never sent from here. The draft UI in the trip and the
-  `ai_draft` table (R39 validation, feedback codes) are the next slices of CRM-33a.
+  session; the answer carries `approval_required: true` and is never sent from here.
+- **AI drafts in the trip workspace** (AA-1027 F3, S263 gateway plan row F3, gap CRM-4; design R39; crm-040,
+  `app/llm/ai_drafts.py`): every answered draft (outcome `ok`) is one `crm.ai_draft` row: trip, kind, the ledger call
+  id (no key: the ledger is purged after 180 days), prompt version and the draft **as the model wrote it**
+  (placeholders kept, never restored at rest) under the vault DEK (`output_enc`); the response carries `ai_draft_id`.
+  No prompt is stored. `POST /crm/v1/ai/drafts/{id}/accept|discard` `{feedback_code?}` (`good`, `wrong_facts`,
+  `wrong_tone`, `not_relevant`, `too_long`, `other`): accept needs `ai_draft_approve` (assistant only on an assigned
+  trip), discard every role; once, from `pending` (409 `draft_decided`); the guard `crm.guard_ai_draft` (CRM47) holds
+  the same rules (a member inserts and decides, nothing else changes, no delete; the row cascades from its trip).
+  `GET /settings/ai` carries `ai_assist_allowed`. Web: the "AI draft" card under the trip panel
+  (`components/pipeline/AiDraftPanel.tsx`, strings `lib/i18nAiDraft.ts`): Draft opens the kit Drawer (kind, client
+  message, optional instruction), the draft with the staff `AiNotice`, a feedback select, Copy and accept (clipboard;
+  sending stays the member's own message) / Discard; disabled with the reason without the plan or with AI off (the
+  owner gets the Settings > AI link). R39 `validation` and the stored scrubbed prompt come with CRM-33b.
 - **Stage profiles and the shared core** (S263 gateway plan F1 + F2, crm-037, `app/llm/profiles.py`): each CRM stage
   has a profile in `crm` (`crm.llm_stage_profile`: role, kill switch `is_active`, `max_attempts` <= 6,
   `route_deadline_s`, degrade mode `manual_reply_needed`) and a route (`crm.llm_stage_route`: Bedrock model ids in

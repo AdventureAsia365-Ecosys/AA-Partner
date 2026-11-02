@@ -151,6 +151,8 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "GET", pattern: /^settings\/ai$/, tenant: true, card: "AA-964" },
   { method: "PUT", pattern: /^settings\/ai$/, tenant: true, card: "AA-964" },
   { method: "POST", pattern: new RegExp(`^trips/${UUID}/ai/draft$`), tenant: true, card: "AA-964", timeoutMs: 45_000 },
+  // AA-1027 F3: the member accepts or discards a pending AI draft (with an optional feedback code); nothing is sent.
+  { method: "POST", pattern: new RegExp(`^ai/drafts/${UUID}/(accept|discard)$`), tenant: true, card: "AA-1027" },
   { method: "GET", pattern: /^settings\/payments$/, tenant: true, card: "AA-944" },
   { method: "PUT", pattern: /^settings\/payments$/, tenant: true, card: "AA-944" },
   { method: "GET", pattern: /^fx\/overrides$/, tenant: true, card: "AA-944" },

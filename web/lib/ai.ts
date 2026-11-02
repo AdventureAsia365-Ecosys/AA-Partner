@@ -15,6 +15,8 @@ export interface AiSettings {
   test_mode: boolean;
   rate_limit_per_minute: number;
   can_edit: boolean;
+  /** AA-1027 F3: the agency's plan has the AI assistant (crm.tenant_entitlement ai_assist); without it a draft is 403. */
+  ai_assist_allowed?: boolean;
 }
 
 export type MeterTone = "success" | "warning" | "danger";
