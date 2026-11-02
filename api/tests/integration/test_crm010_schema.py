@@ -1202,6 +1202,8 @@ CASCADE_ERASED = {
     "messaging_connection": {"integration_credential"},
     "channel_template": {"messaging_connection"},
     "message_delivery": {"message"},
+    # AA-1027 F3 (crm-040, an expand file): an AI draft leaves with its trip.
+    "ai_draft": {"trip"},
 }
 
 
