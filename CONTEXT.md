@@ -441,7 +441,8 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
   `git_sha`/`version`/`auth_configured`; `/crm/health` + `/crm/health/ready` reaching a ready API through the host's
   API rule, without comparing the API's commit: a web deploy does not deploy the API) and `crm-portal.rows` (the
   studio's `/api/healthz` `sha`/`version`: on the agency host `/healthz` is the CRM web's; the API rule), plus
-  `.github/scripts/edge_verify.sh` (signed-out redirects to the web's `/auth/refresh`; for the studio a public page
+  `.github/scripts/edge_verify.sh` (signed-out redirects to the web's `/auth/refresh`, for the web also `/legal/terms`, which proves the agency host
+  routes the CRM terms to the CRM web (AA-1033); for the studio a public page
   (`/terms`) and its `/portal-assets`, and `/tenant-login` 308 to the partner sign-in). Same red rules (desired 0, rollout, image). `CRM_WEB_ENABLED` / `CRM_PORTAL_ENABLED` unset is red
   (`config` fails). The portal deploy then runs the Playwright smoke (`ui-smoke-portal.yml`, always the Fargate studio,
   `require_tenant_login: true`: a missing e2e studio sign-in secret `E2EPORTALEMAIL` / `E2EPORTALPASSWORD` /
@@ -527,8 +528,10 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
   an AI draft (`trips/{id}/ai/draft`) must render `<AiNotice lang={lang} />` (staff variant) under the draft —
   guarded by `web/tests/aiNotice.test.ts` (no draft UI exists yet; the CRM-33a draft slice must add it). Settings > AI
   lists "AI can make mistakes: check facts before sending." first, shows the notice as a draft carries it and links
-  `/terms#ai`. `/terms` (`web/app/(crm)/terms`, strings `web/lib/i18nTerms.ts` EN + VI, signed-in, linked from the
-  shell footer) is a draft holding the "AI-generated content" section only (mistakes, for information, a person
+  `/legal/terms#ai`. `/legal/terms` (`web/app/(crm)/legal/terms`, strings `web/lib/i18nTerms.ts` EN + VI, signed-in,
+  linked from the shell footer; never `/terms`: on the agency host the ALB sends `/terms`, `/privacy` and `/assets/*`
+  to the Content studio, so the path and every link come from `web/lib/legal.ts`, guarded by
+  `web/tests/crmTermsPath.test.ts` against the agency-host rule patterns) is a draft holding the "AI-generated content" section only (mistakes, for information, a person
   reviews and sends, the confirmed quote and booking terms bind; no liability waiver; counsel reviews later). Privacy
   wording there and in Settings > AI describes the F3 scrubber as it works (the trip's known details plus what it can
   detect, may not catch every detail), never an absolute promise.

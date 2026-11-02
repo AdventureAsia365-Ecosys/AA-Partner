@@ -1,6 +1,6 @@
 // AA-1033: the AI notice in CRM web — the kit staff notice under every AI draft surface (guard), Settings > AI (the
 // "AI can make mistakes" rule first, the notice as a draft shows it, the link to the terms' AI section), the terms of
-// use page (/terms#ai: mistakes, for information, what binds; never a liability waiver), the shell footer link, and
+// use page (/legal/terms#ai: mistakes, for information, what binds; never a liability waiver), the shell footer link, and
 // the traveller notice on the public trip page.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -76,7 +76,7 @@ describe("Settings > AI", () => {
     expect(html).toContain('data-testid="ai-notice-example"');
     expect(html).toContain('role="note"');
     expect(html).toContain(aiNoticeText("staff", "en"));
-    expect(html).toContain('href="/terms#ai"');
+    expect(html).toContain('href="/legal/terms#ai"');
   });
 
   it("speaks Vietnamese, the notice included, when the person picked it", () => {
@@ -122,11 +122,11 @@ describe("terms of use: AI-generated content", () => {
   });
 
   it("the page renders the section with id ai, and the shell footer links it", () => {
-    const page = readFileSync(join(WEB, "app/(crm)/terms/page.tsx"), "utf8");
+    const page = readFileSync(join(WEB, "app/(crm)/legal/terms/page.tsx"), "utf8");
     expect(page).toContain('<section id="ai"');
     expect(page).toContain("AI_TERMS.map");
     const shell = readFileSync(join(WEB, "app/_kit/local/CrmShell.tsx"), "utf8");
-    expect(shell).toMatch(/<footer data-crm="footer">[\s\S]*<Link href="\/terms"[\s\S]*dict\["terms.link"\]/);
+    expect(shell).toMatch(/<footer data-crm="footer">[\s\S]*<Link href=\{CRM_TERMS_PATH\}[\s\S]*dict\["terms.link"\]/);
   });
 });
 

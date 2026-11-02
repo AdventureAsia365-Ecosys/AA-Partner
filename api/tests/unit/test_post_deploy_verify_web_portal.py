@@ -266,7 +266,10 @@ ASSET = "/portal-assets/_next/static/chunks/main-abc123.js"
 
 def _edge_good(app: str) -> dict:
     if app == "crm-web":
-        return {"/pipeline": {"status": 307, "location": f"{BASE}/auth/refresh?next=%2Fpipeline"}}
+        return {
+            "/pipeline": {"status": 307, "location": f"{BASE}/auth/refresh?next=%2Fpipeline"},
+            "/legal/terms": {"status": 307, "location": f"{BASE}/auth/refresh?next=%2Flegal%2Fterms"},
+        }
     return {
         "/terms": {"status": 200, "body": f'<html><script src="{ASSET}" async></script></html>'},
         ASSET: {"status": 200, "body": "js"},
@@ -308,7 +311,7 @@ def test_edge_all_good_is_green(run_edge, app: str) -> None:
     assert r.returncode == 0, r.stdout + r.stderr
     assert f"### {app} edge checks: PASS" in summary and "**FAIL**" not in summary
     expected = (
-        {"signin-redirect"}
+        {"signin-redirect", "crm-terms"}
         if app == "crm-web"
         else {"studio-page", "studio-assets", "api-key-signin-off", "signin-redirect"}
     )
@@ -334,6 +337,8 @@ def _edge_break(app: str, path: str, **route: Any) -> dict:
         # The web default answers the page itself (no session gate) or sends elsewhere.
         ("crm-web", _edge_break("crm-web", "/pipeline", status=200, body="<html>"), {"signin-redirect"}),
         ("crm-web", _edge_break("crm-web", "/pipeline", status=307, location=f"{BASE}/login"), {"signin-redirect"}),
+        # AA-1033: the CRM terms answered by another service (the studio's own page) instead of the CRM web's gate.
+        ("crm-web", _edge_break("crm-web", "/legal/terms", status=200, body="<html>"), {"crm-terms"}),
         # A signed-out studio page sent anywhere but the CRM web's refresh.
         (
             "crm-portal",

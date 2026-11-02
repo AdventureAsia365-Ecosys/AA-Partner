@@ -8,6 +8,8 @@
 #
 # Checks (each gets VERIFY_TRIES tries, VERIFY_RETRY_DELAY seconds apart):
 #   crm-web     signin-redirect   GET /pipeline without a session -> 307 to <BASE>/auth/refresh?next=%2Fpipeline
+#               crm-terms         GET /legal/terms without a session -> 307 to <BASE>/auth/refresh?next=%2Flegal%2Fterms
+#                                 (AA-1033: the CRM terms reach the CRM web on the agency host; /terms is the studio's)
 #   crm-portal  studio-page       GET /terms -> 200 (a public studio page: the draft terms)
 #               studio-assets     the first /portal-assets/_next/static/*.js of that page -> 200
 #               api-key-signin-off  GET /tenant-login -> 308 to <BASE>/auth/refresh?next=%2Fportal%2Fdashboard
@@ -117,6 +119,7 @@ else
   case "$APP" in
     crm-web)
       retry signin-redirect check_redirect /pipeline "${BASE}/auth/refresh?next=%2Fpipeline"
+      retry crm-terms check_redirect /legal/terms "${BASE}/auth/refresh?next=%2Flegal%2Fterms"
       ;;
     crm-portal)
       if retry studio-page check_page /terms; then
