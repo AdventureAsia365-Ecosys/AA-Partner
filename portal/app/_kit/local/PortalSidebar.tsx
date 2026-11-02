@@ -7,12 +7,19 @@
 // Presentation is CSS-driven (globals.css `data-pshell` rules): the width, the collapsed rail
 // (labels and group titles hidden, a dot instead of the count pill) and the phone drawer (fixed,
 // off-canvas, `data-open`). Nothing here sets width or position inline, so the CSS always wins.
+//
+// S264 — the titled groups (Tours, Brand, Create, Content, Account, Partner CRM) fold through the kit NavGroup +
+// useNavGroups (core, scope "portal"): folded unless the user opened them, the group of the current page open on
+// arrival. Overview has no title and stays open. The collapsed rail (desktop, >= 900 px) shows every item. The item
+// counts (tours available, my tours) are sizes, not things to act on, so a folded header does not repeat them.
 
 import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronsLeft, ChevronsRight, ExternalLink, Users } from "lucide-react";
-import { alpha, sans, serif, useHydrated, useSidebarCollapsed } from "@/app/_kit";
+import {
+  NavGroup, alpha, navGroupId, sans, serif, useHydrated, useMediaQuery, useNavGroups, useSidebarCollapsed,
+} from "@/app/_kit";
 import { LOGO_SRC } from "../core/brand";
 import { NAV_GROUPS, ROUTES, navActive, type NavEntry } from "./portalNav";
 
@@ -32,6 +39,11 @@ export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate 
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useSidebarCollapsed();
   const hydrated = useHydrated();
+  // The 68 px rail is a desktop state only (globals.css: >= 900 px); below that the sidebar is the full drawer.
+  const desktop = useMediaQuery("(min-width: 900px)");
+  const rail = collapsed && desktop;
+  const activeGroup = NAV_GROUPS.find((g) => g.items.some((e) => navActive(e, pathname)));
+  const navGroups = useNavGroups("portal", activeGroup ? navGroupId(activeGroup.label) : null, pathname);
 
   // `[` toggles the rail, ignored while typing (input / textarea / select / contenteditable).
   useEffect(() => {
@@ -87,12 +99,21 @@ export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate 
       </div>
 
       <nav aria-label="Primary" style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
-        {NAV_GROUPS.map((group) => (
-          <div key={group.label} data-testid={`portal-nav-group-${group.label.toLowerCase()}`}>
-            {group.label !== "Overview" && (
-              <div data-pshell-label="true" style={groupTitleStyle}>{group.label}</div>
-            )}
-            <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+        {NAV_GROUPS.map((group) => {
+          const id = navGroupId(group.label);
+          return (
+            <NavGroup
+              key={group.label}
+              id={id}
+              label={group.label !== "Overview" ? group.label : null}
+              open={navGroups.isOpen(id)}
+              onToggle={() => navGroups.toggle(id)}
+              rail={rail}
+              active={group.items.some((e) => navActive(e, pathname))}
+              testId={`portal-nav-group-${group.label.toLowerCase()}`}
+              headerStyle={groupTitleStyle}
+              headerProps={PSHELL_LABEL}
+            >
               {group.items.map((entry) => (
                 <NavItem
                   key={entry.href}
@@ -102,11 +123,19 @@ export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate 
                   onClick={onNavigate}
                 />
               ))}
-            </div>
-          </div>
-        ))}
-        <div data-testid="portal-nav-group-crm">
-          <div data-pshell-label="true" style={groupTitleStyle}>Partner CRM</div>
+            </NavGroup>
+          );
+        })}
+        <NavGroup
+          id="partner-crm"
+          label="Partner CRM"
+          open={navGroups.isOpen("partner-crm")}
+          onToggle={() => navGroups.toggle("partner-crm")}
+          rail={rail}
+          testId="portal-nav-group-crm"
+          headerStyle={groupTitleStyle}
+          headerProps={PSHELL_LABEL}
+        >
           <a
             href={`${CRM_URL}/`}
             data-pshell-row="true"
@@ -124,7 +153,7 @@ export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate 
             </span>
             <span data-pshell-label="true" aria-hidden style={{ display: "flex", opacity: 0.6 }}><ExternalLink size={12} /></span>
           </a>
-        </div>
+        </NavGroup>
       </nav>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -150,10 +179,10 @@ export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate 
   );
 }
 
-const groupTitleStyle: React.CSSProperties = {
-  fontSize: 9.5, textTransform: "uppercase", letterSpacing: "0.16em",
-  color: "var(--aa-side-text3)", padding: "0 10px 6px", fontWeight: 600,
-};
+// The kit NavGroupHeader look, with the portal's tighter 6 px under the title. The header carries
+// data-pshell-label so the collapsed-rail CSS hides it before hydration too.
+const groupTitleStyle: React.CSSProperties = { padding: "0 10px 6px" };
+const PSHELL_LABEL = { "data-pshell-label": "true" };
 
 function NavItem({ entry, active, count, onClick }: {
   entry: NavEntry; active: boolean; count?: number; onClick: () => void;

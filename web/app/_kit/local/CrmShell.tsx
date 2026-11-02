@@ -4,6 +4,9 @@
 // the portal's (ink ground, gold active rule): agency card on top, HOME, CRM, MONEY, GROW, the CONTENT STUDIO
 // cross-link to the portal (Fix C10), Settings and Help. Below 900 px it is an off-canvas drawer (CSS in
 // app/globals.css, data-crm hooks). The shell owns only the drawer state; everything else comes from the server.
+// S264: the titled groups (CRM, Money, Grow, Content studio) fold through the kit NavGroup + useNavGroups (core,
+// scope "crm-web"): folded unless the user opened them, the group of the current page open on arrival. Home and
+// Settings have no title and stay open. The CRM sidebar has no icon rail (only the phone drawer), so `rail` is unset.
 
 import {
   BookOpen,
@@ -36,7 +39,7 @@ import {
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { K, ToastProvider, useThemeChoice, type ThemeChoice } from "@/app/_kit";
+import { K, NavGroup, ToastProvider, useNavGroups, useThemeChoice, type ThemeChoice } from "@/app/_kit";
 import type { DateLocale } from "@/lib/dates";
 import { CRM_TERMS_PATH } from "@/lib/legal";
 import type { MessageKey } from "@/lib/i18n";
@@ -98,22 +101,8 @@ function NavLink({ section, dict, pathname, onNavigate }: { section: Section; di
   );
 }
 
-function GroupTitle({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        fontSize: 10,
-        fontWeight: 600,
-        letterSpacing: "0.12em",
-        textTransform: "uppercase",
-        color: "var(--aa-side-text2)",
-        padding: "14px 20px 4px",
-      }}
-    >
-      {children}
-    </div>
-  );
-}
+// The kit NavGroupHeader look, aligned with the CRM nav items (20 px inset, 14 px above the title).
+const groupHeaderStyle: React.CSSProperties = { padding: "14px 20px 4px", fontSize: 10, letterSpacing: "0.12em" };
 
 const THEME_NEXT: Record<ThemeChoice, ThemeChoice> = { system: "light", light: "dark", dark: "system" };
 
@@ -160,6 +149,8 @@ export function CrmShell({
   const [open, setOpen] = useState(false);
   const sections = visibleSections(role);
   const close = () => setOpen(false);
+  const activeGroup = sections.find((s) => isActive(s, pathname))?.group ?? null;
+  const navGroups = useNavGroups("crm-web", activeGroup, pathname);
 
   useEffect(() => {
     if (!open) return;
@@ -216,26 +207,45 @@ export function CrmShell({
             if (group === "studio") {
               if (!contentStudioHref) return null;
               return (
-                <div key={group} style={{ borderTop: "1px solid var(--aa-side-panel)", marginTop: 8 }}>
-                  <GroupTitle>{dict["nav.group.studio"]}</GroupTitle>
+                <NavGroup
+                  key={group}
+                  id={group}
+                  label={dict["nav.group.studio"]}
+                  open={navGroups.isOpen(group)}
+                  onToggle={() => navGroups.toggle(group)}
+                  testId={`crm-nav-group-${group}`}
+                  style={{ borderTop: "1px solid var(--aa-side-panel)", marginTop: 8 }}
+                  headerStyle={groupHeaderStyle}
+                  itemsStyle={{ gap: 0 }}
+                >
                   <a href={contentStudioHref} data-crm="nav-item" data-testid="crm-studio-link">
                     <Palette size={16} aria-hidden />
                     <span>{dict["nav.studio"]}</span>
                     <ExternalLink size={12} aria-hidden style={{ marginLeft: "auto", opacity: 0.7 }} />
                   </a>
-                </div>
+                </NavGroup>
               );
             }
             const items = sections.filter((s) => s.group === group);
             if (items.length === 0) return null;
             const title = GROUP_LABEL[group];
             return (
-              <div key={group} style={group === "settings" ? { marginTop: "auto", paddingBottom: 12 } : undefined}>
-                {title && <GroupTitle>{dict[title]}</GroupTitle>}
+              <NavGroup
+                key={group}
+                id={group}
+                label={title ? dict[title] : null}
+                open={navGroups.isOpen(group)}
+                onToggle={() => navGroups.toggle(group)}
+                active={group === activeGroup}
+                testId={`crm-nav-group-${group}`}
+                style={group === "settings" ? { marginTop: "auto", paddingBottom: 12 } : undefined}
+                headerStyle={groupHeaderStyle}
+                itemsStyle={{ gap: 0 }}
+              >
                 {items.map((s) => (
                   <NavLink key={s.key} section={s} dict={dict} pathname={pathname} onNavigate={close} />
                 ))}
-              </div>
+              </NavGroup>
             );
           })}
         </nav>

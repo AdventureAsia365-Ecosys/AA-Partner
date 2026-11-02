@@ -35,7 +35,8 @@ export {
 // core/useMediaQuery.ts joined the barrel in AA-994 S2b: the CIS core file is a client module since AA-CIS-App #1083
 // (it was left out in S2a because many CRM server components import this barrel and Turbopack refused the build).
 export { useMediaQuery, useIsPhone, PHONE_QUERY } from "./core/useMediaQuery";
-export { useSidebarCollapsed } from "./core/useSidebar";
+export { useSidebarCollapsed, useNavGroups } from "./core/useSidebar";
+export { NavGroup } from "./core/NavGroup";
 export { useHydrated } from "./core/useHydrated";
 export type { ThemeChoice, ResolvedTheme } from "./core/theme";
 
