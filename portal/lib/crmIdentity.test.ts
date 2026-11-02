@@ -4,38 +4,51 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { CRM_ME_PATH, fetchCrmIdentity, readCrmIdentity, signedInText } from "./crmIdentity.ts";
+import { CRM_IDENTITY_PATH, fetchCrmIdentity, readCrmIdentity, signedInText } from "./crmIdentity.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 
 test("an agency answer gives the agency name and the role", () => {
-  const id = readCrmIdentity(200, { tenant_id: "t-1", member_id: "m-1", member_role: "agent", display_name: "Lotus Trail Travel" });
+  const id = readCrmIdentity(200, { kind: "agency", member_role: "agent", display_name: "Lotus Trail Travel" });
   assert.deepEqual(id, { kind: "agency", agencyName: "Lotus Trail Travel", role: "agent" });
   assert.equal(signedInText(id), "Signed in to AA Partner as Agent of Lotus Trail Travel.");
 });
 
 test("an unknown role keeps the agency name and drops the role", () => {
-  const id = readCrmIdentity(200, { member_role: "superuser", display_name: "  Lotus Trail Travel  " });
+  const id = readCrmIdentity(200, { kind: "agency", member_role: "superuser", display_name: "  Lotus Trail Travel  " });
   assert.deepEqual(id, { kind: "agency", agencyName: "Lotus Trail Travel", role: null });
   assert.equal(signedInText(id), "Signed in to AA Partner for Lotus Trail Travel.");
+  for (const role of ["constructor", "toString", "__proto__"]) {
+    assert.deepEqual(readCrmIdentity(200, { kind: "agency", member_role: role, display_name: "Lotus Trail Travel" }), {
+      kind: "agency",
+      agencyName: "Lotus Trail Travel",
+      role: null,
+    });
+  }
 });
 
 test("no agency name never falls back to the agency id", () => {
-  assert.equal(readCrmIdentity(200, { tenant_id: "t-1", member_role: "owner", display_name: null }), null);
-  assert.equal(readCrmIdentity(200, { tenant_id: "t-1", member_role: "owner", display_name: "   " }), null);
+  assert.equal(readCrmIdentity(200, { kind: "agency", member_role: "owner", display_name: null }), null);
+  assert.equal(readCrmIdentity(200, { kind: "agency", member_role: "owner", display_name: "   " }), null);
 });
 
 test("a session without an agency says so", () => {
-  const id = readCrmIdentity(409, { detail: "no_agency_selected" });
+  const id = readCrmIdentity(200, { kind: "no_agency" });
   assert.deepEqual(id, { kind: "no_agency" });
   assert.equal(signedInText(id), "Signed in to AA Partner, with no agency selected.");
 });
 
 test("anything else shows nothing", () => {
   for (const [status, body] of [
+    [200, { kind: "signed_out" }],
+    [200, { kind: "unknown" }],
+    [200, { kind: "something_new" }],
+    // the old /bff/me shapes: no `kind`, so nothing is shown
+    [200, { tenant_id: "t-1", member_role: "owner", display_name: "Lotus Trail Travel" }],
+    [409, { detail: "no_agency_selected" }],
     [401, { detail: "session_expired" }],
     [404, { detail: "not_found" }],
-    [409, { detail: "other" }],
+    [404, { kind: "agency", member_role: "owner", display_name: "Lotus Trail Travel" }],
     [500, null],
     [200, null],
     [200, "text"],
@@ -47,7 +60,7 @@ test("anything else shows nothing", () => {
 });
 
 test("a very long agency name is cut", () => {
-  const id = readCrmIdentity(200, { member_role: "owner", display_name: "x".repeat(500) });
+  const id = readCrmIdentity(200, { kind: "agency", member_role: "owner", display_name: "x".repeat(500) });
   assert.equal(id?.kind === "agency" ? id.agencyName.length : 0, 120);
 });
 
@@ -55,12 +68,13 @@ test("fetchCrmIdentity asks the CRM web on this origin with the session cookie",
   const calls: { url: string; init: RequestInit | undefined }[] = [];
   const fake = (async (url: string, init?: RequestInit) => {
     calls.push({ url, init });
-    return new Response(JSON.stringify({ member_role: "owner", display_name: "Lotus Trail Travel" }), { status: 200 });
+    return new Response(JSON.stringify({ kind: "agency", member_role: "owner", display_name: "Lotus Trail Travel" }), { status: 200 });
   }) as unknown as typeof fetch;
   const id = await fetchCrmIdentity(fake);
   assert.deepEqual(id, { kind: "agency", agencyName: "Lotus Trail Travel", role: "owner" });
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, CRM_ME_PATH);
+  assert.equal(calls[0].url, CRM_IDENTITY_PATH);
+  assert.equal(CRM_IDENTITY_PATH, "/bff/identity"); // never /bff/me: its 401 / 409 are console errors on the studio
   assert.equal(calls[0].init?.credentials, "same-origin");
 });
 
