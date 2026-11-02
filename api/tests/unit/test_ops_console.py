@@ -274,6 +274,29 @@ async def test_create_agency_refuses_an_existing_id_and_writes_nothing(monkeypat
         assert ctx.audit_events == [] and not audits(conn), status
 
 
+@pytest.mark.asyncio
+async def test_create_agency_on_a_trashed_id_is_409_tenant_deleted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AA-1031 (S264): the agency of this id was deleted (in the trash): 409 ``tenant_deleted`` with a message that
+    says to create a new CIS tenant; no rename, no audit, no summary read."""
+    conn = agency_conn(None)
+    conn.on("INSERT INTO crm.tenant (tenant_id", None)
+    conn.on("SELECT deleted_at IS NOT NULL AS trashed FROM crm.tenant", True)
+    ctx = ProvisioningContext(conn=conn, tenant_id=TENANT, actor="platform:staff-1")  # type: ignore[arg-type]
+
+    @asynccontextmanager
+    async def fake_provisioning(*_: Any, **__: Any):  # noqa: ANN202
+        yield ctx
+
+    monkeypatch.setattr(agencies, "provisioning_tx", fake_provisioning)
+    with raises(Conflict, "tenant_deleted"):
+        await console.create_agency(
+            conn, staff_sub=STAFF, tenant_id=TENANT, agency_name="Alpha Travel", is_synthetic=True,
+            default_locale="en-AU", environment="dev", ticket_ref="SUP-9",
+        )  # type: ignore[arg-type]  # fmt: skip
+    assert not conn.sql("UPDATE crm.tenant SET display_name") and ctx.audit_events == [] and not audits(conn)
+    assert not conn.sql("FROM crm.tenant t")
+
+
 # ── Lock / unlock ────────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_lock_and_unlock() -> None:

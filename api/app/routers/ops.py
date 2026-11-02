@@ -20,7 +20,8 @@ AA-941 (card CRM-13a, design S-01), :mod:`app.ops.console`:
 =====  ==========================================  =============================================================
 GET    ``/console``                                ``{can_write}``: the caller is in ``crm-platform-admin``
 GET    ``/tenants?cursor=&limit=``                 agency list (TenantSummary page)
-POST   ``/tenants``                                create agency (201; an existing id is 409 tenant_exists); no member
+POST   ``/tenants``                                create agency (201; an existing id is 409 tenant_exists, a trashed
+                                                   one 409 tenant_deleted); no member
 GET    ``/tenants/{id}``                           one TenantSummary
 GET    ``/tenants/{id}/usage``                     usage meters
 POST   ``/tenants/{id}/lock`` / ``unlock``         lock / unlock (ticket, lock reason)

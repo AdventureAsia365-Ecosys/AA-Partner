@@ -205,6 +205,23 @@ async def test_create_only_refuses_an_existing_agency_and_writes_nothing() -> No
 
 
 @pytest.mark.asyncio
+async def test_create_only_on_a_trashed_agency_is_409_tenant_deleted_and_writes_nothing() -> None:
+    """AA-1031 (S264): an id whose agency is in the trash (a deleted test agency) is 409 ``tenant_deleted``, not the
+    opaque ``tenant_exists``: the id can never be reused. Nothing is written; the seeder's converge is unchanged."""
+    conn = ScriptedConn().on("SELECT deleted_at IS NOT NULL AS trashed FROM crm.tenant", True)
+    with pytest.raises(Conflict) as info:
+        await provision_agency(conn, spec(), environment="dev", actor="platform:l1", create_only=True)
+    assert info.value.code == "tenant_deleted"
+    assert "new CIS tenant" in str(info.value)
+    assert conn.sql("UPDATE crm.tenant") == [] and conn.sql("INSERT INTO crm.audit_event") == []
+    assert conn.sql("crm.ensure_aa_supplier") == []
+    live = ScriptedConn().on("SELECT deleted_at IS NOT NULL AS trashed FROM crm.tenant", False)
+    with pytest.raises(Conflict) as info:
+        await provision_agency(live, spec(), environment="dev", actor="platform:l1", create_only=True)
+    assert info.value.code == "tenant_exists"
+
+
+@pytest.mark.asyncio
 async def test_validation_happens_before_any_sql() -> None:
     conn = ScriptedConn()
     with pytest.raises(Invalid):

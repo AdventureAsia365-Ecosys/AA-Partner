@@ -331,6 +331,12 @@ SCENARIOS: list[tuple[str, str, str, Any, Any, str, int, str | None]] = [
                 c.on("SELECT display_name, default_locale, is_synthetic FROM crm.tenant",
                      {"display_name": "Sen Vàng", "default_locale": "en-AU", "is_synthetic": True})),
      "admin", 409, "tenant_exists"),
+    # AA-1031 (S264): the id belongs to a deleted (trashed) agency: 409 tenant_deleted, never reusable.
+    ("POST", "/tenants", f"{PREFIX}/tenants",
+     {"tenant_id": str(TENANT), "agency_name": "Sen Vàng", "is_synthetic": True, "ticket_ref": TICKET},
+     lambda c: (c.on("INSERT INTO crm.tenant (tenant_id", None),
+                c.on("SELECT deleted_at IS NOT NULL AS trashed FROM crm.tenant", True)),
+     "admin", 409, "tenant_deleted"),
     ("GET", "/tenants/{tenant_id}", T, None, None, "reader", 200, None),
     ("GET", "/tenants/{tenant_id}", T, None, lambda c: c.on(
         "SELECT status FROM crm.tenant WHERE tenant_id = $1 AND deleted_at IS NULL", None), "reader", 404,
