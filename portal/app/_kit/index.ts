@@ -32,7 +32,9 @@ export {
   PageFrame, PageFrameHeader, PageFrameBody, AdminMain, AdminPaneHeader, AdminPaneBody,
 } from "./core/PageFrame";
 export { useMediaQuery, useIsPhone, PHONE_QUERY } from "./core/useMediaQuery";
-export { useSidebarCollapsed } from "./core/useSidebar";
+export { useSidebarCollapsed, useNavGroups } from "./core/useSidebar";
+export { NavGroup } from "./core/NavGroup";
+export { navGroupId } from "./core/sidebarStore";
 export { useHydrated } from "./core/useHydrated";
 export type { ThemeChoice, ResolvedTheme } from "./core/theme";
 export { AiNotice } from "./core/AiNotice";

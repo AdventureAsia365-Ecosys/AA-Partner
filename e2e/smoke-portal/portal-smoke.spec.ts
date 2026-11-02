@@ -71,6 +71,12 @@ test.describe('UI smoke — portal pages', () => {
     const page = await context.newPage();
     try {
       await page.goto('/portal/dashboard', { waitUntil: 'domcontentloaded' });
+      // S264: the sidebar groups fold (kit NavGroup); Partner CRM is folded unless this browser opened it.
+      const crmToggle = page.getByTestId('portal-nav-group-crm-toggle');
+      await expect(crmToggle).toBeVisible({ timeout: 15000 });
+      await expect(page.getByTestId('portal-sidebar')).toHaveAttribute('data-hydrated', 'true', { timeout: 15000 });
+      if ((await crmToggle.getAttribute('aria-expanded')) === 'false') await crmToggle.click();
+      await expect(crmToggle).toHaveAttribute('aria-expanded', 'true', { timeout: 5000 });
       const link = page.getByTestId('portal-crm-link');
       await expect(link).toBeVisible({ timeout: 15000 });
       // AA-979 §4.5: one agency host for both apps, so the link is the same-origin CRM home.
