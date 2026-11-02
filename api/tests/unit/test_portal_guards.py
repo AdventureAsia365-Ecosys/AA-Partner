@@ -285,6 +285,13 @@ PROVIDER_PHRASES = (
     "Amazon Nova",  # S263: the acc2 Bedrock fallback of the review / check steps (CIS migrations 331-333)
     "Meta Llama",
 )
+# S264 (register v1.2, CIS migration 344): the tenant writer stages may fall back to an OpenAI model through the
+# OpenAI API, as a last resort, when Claude is unavailable. Both pages say who may write.
+WRITING_FALLBACK_PHRASES = (
+    "Claude through the Anthropic API",
+    "as a last resort",
+    "an OpenAI model through the OpenAI API",
+)
 
 
 def test_terms_ai_section_names_the_register_providers() -> None:
@@ -292,6 +299,13 @@ def test_terms_ai_section_names_the_register_providers() -> None:
     for phrase in PROVIDER_PHRASES:
         assert phrase in ai, f"/terms §3 must name: {phrase}"
     assert 'href="https://openai.com/policies/usage-policies/"' in ai
+
+
+@pytest.mark.parametrize("page", ["terms", "privacy"])
+def test_ai_section_names_the_writing_fallback(page: str) -> None:
+    ai = re.sub(r"\s+", " ", _ai_section() if page == "terms" else _privacy_ai_section())
+    for phrase in WRITING_FALLBACK_PHRASES:
+        assert phrase in ai, f"/{page} AI section must say: {phrase}"
 
 
 def test_privacy_ai_section_lists_every_provider() -> None:
