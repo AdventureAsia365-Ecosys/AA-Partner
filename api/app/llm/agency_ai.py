@@ -21,6 +21,7 @@ no tools, so a message cannot make the CRM do anything; the worst case is a bad 
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import uuid
 from decimal import Decimal
 from typing import Any
@@ -54,6 +55,8 @@ INSERT INTO crm.tenant_settings (ai_enabled, ai_budget_usd) VALUES ($1, $2)
 ON CONFLICT (tenant_id) DO UPDATE SET ai_enabled = EXCLUDED.ai_enabled, ai_budget_usd = EXCLUDED.ai_budget_usd
 """
 TRIP_SQL = "SELECT 1 FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL"
+
+log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
     "You write draft messages for a travel agent at a travel agency. The agent reads, edits and sends every draft "
@@ -172,15 +175,24 @@ async def draft(
     out_text = result.text
     draft_id = None
     if result.outcome == "ok" and out_text is not None and result.llm_call_id:
-        draft_id = await ai_drafts.store(
-            ctx,
-            vault,
-            trip_id,
-            kind=kind,
-            llm_call_id=result.llm_call_id,
-            prompt_version=PROMPT_VERSION,
-            output=out_text,
-        )
+        # A savepoint, like the gateway's placeholder map: the model has answered and been paid, so a draft row that
+        # cannot be written (the vault's KMS, a CHECK, the guard, the trip gone in between) must not roll back the
+        # ledger row, the rollup and the map. The member still gets the text; with no draft id the panel offers no
+        # accept / discard for it.
+        try:
+            async with ctx.conn.transaction():
+                draft_id = await ai_drafts.store(
+                    ctx,
+                    vault,
+                    trip_id,
+                    kind=kind,
+                    llm_call_id=result.llm_call_id,
+                    prompt_version=PROMPT_VERSION,
+                    output=out_text,
+                )
+        except Exception as exc:  # noqa: BLE001 — class only, never the text
+            log.warning("crm ai draft: draft row not stored (%s), call stays logged", type(exc).__name__)
+            draft_id = None
     if result.outcome == "ok" and out_text is not None and result.placeholder_map_id:
         out_text = await restore_placeholders(ctx, vault, uuid.UUID(result.placeholder_map_id), out_text)
     return {

@@ -8,7 +8,8 @@ from __future__ import annotations
 import datetime as dt
 import typing
 import uuid
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
 from decimal import Decimal
 from typing import Any
 
@@ -131,6 +132,65 @@ async def test_no_row_without_a_usable_answer(result: gateway_module.GatewayResu
     c = draft_conn()
     out = await agency_ai.draft(tenant_ctx(c), ScriptedGateway(result), FakeVault(), TRIP, kind="reply", text="Hi")
     assert c.sql("INSERT INTO crm.ai_draft") == [] and out["ai_draft_id"] is None and out["text"] is None
+
+
+class SavepointConn(ScriptedConn):
+    """Records how each ``transaction()`` (a savepoint inside ``tenant_tx``) ended: released or the error class."""
+
+    def __init__(self, rules: list[tuple[str, Any]]) -> None:
+        super().__init__(rules)
+        self.savepoints: list[str] = []
+
+    @asynccontextmanager
+    async def transaction(self, **_: Any) -> AsyncIterator[SavepointConn]:
+        try:
+            yield self
+        except BaseException as exc:
+            self.savepoints.append(type(exc).__name__)
+            raise
+        self.savepoints.append("released")
+
+
+class KmsUnavailable(Exception):
+    pass
+
+
+class KmsDownVault(FakeVault):
+    async def encrypt(self, *_: Any, **__: Any) -> bytes:
+        raise KmsUnavailable("no data key")
+
+
+class CheckViolation(Exception):
+    pass
+
+
+async def test_a_draft_row_that_cannot_be_stored_keeps_the_paid_call_and_the_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The model has answered and the gateway logged the call: a vault (KMS) failure rolls back the draft's savepoint
+    # only, never the tenant transaction that holds the ledger row; the member still gets the restored text.
+    monkeypatch.setattr(agency_ai, "restore_placeholders", _restore)
+    c = SavepointConn(draft_conn().rules)
+    ctx = tenant_ctx(c)
+    out = await agency_ai.draft(ctx, ok_gateway(), KmsDownVault(), TRIP, kind="reply", text="Is day two free?")
+    assert c.savepoints == ["KmsUnavailable"] and c.sql("INSERT INTO crm.ai_draft") == []
+    assert (out["outcome"], out["ai_draft_id"], out["llm_call_id"]) == ("ok", None, CALL_ID)
+    assert out["text"] == "Dear Odile Brank, the day in Fakeville is free."
+    assert [e for e in ctx.audit_events if e.object_kind == "ai_draft"] == []
+
+
+async def test_a_refused_insert_is_contained_in_its_savepoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(agency_ai, "restore_placeholders", _restore)
+    c = SavepointConn(draft_conn().on("INSERT INTO crm.ai_draft", CheckViolation("ai_draft_enc_chk")).rules)
+    out = await agency_ai.draft(tenant_ctx(c), ok_gateway(), FakeVault(), TRIP, kind="reply", text="Hi")
+    assert c.savepoints == ["CheckViolation"] and out["ai_draft_id"] is None and out["text"].startswith("Dear Odile")
+
+
+async def test_a_stored_draft_releases_its_savepoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(agency_ai, "restore_placeholders", _restore)
+    c = SavepointConn(draft_conn().rules)
+    out = await agency_ai.draft(tenant_ctx(c), ok_gateway(), FakeVault(), TRIP, kind="reply", text="Hi")
+    assert c.savepoints == ["released"] and out["ai_draft_id"]
 
 
 # ── The decision ────────────────────────────────────────────────────────────────────────────────

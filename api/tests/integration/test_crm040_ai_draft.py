@@ -6,6 +6,8 @@ checks, reproduced here.
   audit event.
 - With the plan and AI on, a stub draft writes one pending ``crm.ai_draft`` row (ciphertext only, the ledger call id)
   next to its ``crm.llm_call`` row; the member accepts it once (decided_by = the member); a second decision is 409.
+- A draft row the database refuses (here its blob CHECK) rolls back only its savepoint: the paid call's ledger row
+  stays and the member still gets the text, with no draft id.
 - The guard: only a member inserts (pending) and decides, once; nothing else changes; no delete; another agency sees
   no row.
 """
@@ -98,6 +100,35 @@ async def test_a_stub_draft_is_one_pending_row_the_member_accepts_once(
     other, [(other_owner, _)] = await _agency(app_pool)
     async with tenant_tx(app_pool, other_owner, other) as ctx:
         assert await ctx.conn.fetchval("SELECT count(*) AS n FROM crm.ai_draft") == 0
+
+
+class _ShortBlobVault(Vault):
+    """The real vault for every read, but a draft blob the table's CHECK refuses (a real PostgreSQL error)."""
+
+    async def encrypt(
+        self, table: str, column: str, row_id: uuid.UUID | str, value: str | bytes, *, purpose: str = "vault"
+    ) -> bytes:
+        if table == "ai_draft":
+            return b"too short"
+        return await super().encrypt(table, column, row_id, value, purpose=purpose)
+
+
+async def test_a_draft_row_the_database_refuses_keeps_the_paid_call(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection
+) -> None:
+    # The model answered: the ledger row (cost, budget) commits even though the draft row failed its CHECK.
+    tenant_id, [(owner, _)] = await _agency(app_pool)
+    trip_id = await _trip(app_pool, tenant_id)
+    await _enable(app_pool, owner, tenant_id)
+    async with tenant_tx(app_pool, owner, tenant_id) as ctx:
+        out = await agency_ai.draft(
+            ctx, LlmGateway(StubScrubber(), StubProvider()), _ShortBlobVault(_keys(), ctx), trip_id,
+            kind="reply", text="Is the river cruise on day three?",
+        )  # fmt: skip
+    assert (out["outcome"], out["ai_draft_id"]) == ("ok", None) and out["text"] and out["llm_call_id"]
+    [call] = await _owner_fetch(admin, tenant_id, "SELECT llm_call_id FROM crm.llm_call")
+    assert str(call["llm_call_id"]) == out["llm_call_id"]
+    assert await _owner_fetch(admin, tenant_id, DRAFT_SQL) == []
 
 
 async def _seed_draft(pool: asyncpg.Pool, admin: asyncpg.Connection) -> tuple[uuid.UUID, object, uuid.UUID]:
