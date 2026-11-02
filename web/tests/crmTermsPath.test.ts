@@ -3,6 +3,7 @@
 // rule, so a CRM page or link there opens another service's page (the studio's partner terms for /terms).
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { NextRequest } from "next/server";
 import { describe, expect, it } from "vitest";
 import {
   AGENCY_HOST_ROUTED_ELSEWHERE,
@@ -11,6 +12,8 @@ import {
   agencyHostRuleFor,
   albPathMatches,
 } from "@/lib/legal";
+import { gate } from "@/proxy";
+import { testConfig } from "./helpers";
 
 const WEB = join(__dirname, "..");
 
@@ -73,5 +76,15 @@ describe("CRM terms of use path", () => {
       .filter((f) => /["'`]\/(terms|privacy)(?=["'`#?])/.test(f.text))
       .map((f) => f.path);
     expect(hits).toEqual([]);
+  });
+});
+
+describe("CRM terms of use behind the session gate", () => {
+  it("a signed-out visitor goes to /auth/refresh and back to the terms (the post-deploy crm-terms edge check)", () => {
+    testConfig();
+    const headers = new Headers({ host: "partner.example.test" });
+    const res = gate(new NextRequest(`https://partner.example.test${CRM_TERMS_PATH}`, { headers }));
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe("https://partner.example.test/auth/refresh?next=%2Flegal%2Fterms");
   });
 });

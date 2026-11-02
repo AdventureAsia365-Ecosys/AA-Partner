@@ -441,7 +441,8 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
   `git_sha`/`version`/`auth_configured`; `/crm/health` + `/crm/health/ready` reaching a ready API through the host's
   API rule, without comparing the API's commit: a web deploy does not deploy the API) and `crm-portal.rows` (the
   studio's `/api/healthz` `sha`/`version`: on the agency host `/healthz` is the CRM web's; the API rule), plus
-  `.github/scripts/edge_verify.sh` (signed-out redirects to the web's `/auth/refresh`; for the studio a public page
+  `.github/scripts/edge_verify.sh` (signed-out redirects to the web's `/auth/refresh`, for the web also `/legal/terms`, which proves the agency host
+  routes the CRM terms to the CRM web (AA-1033); for the studio a public page
   (`/terms`) and its `/portal-assets`, and `/tenant-login` 308 to the partner sign-in). Same red rules (desired 0, rollout, image). `CRM_WEB_ENABLED` / `CRM_PORTAL_ENABLED` unset is red
   (`config` fails). The portal deploy then runs the Playwright smoke (`ui-smoke-portal.yml`, always the Fargate studio,
   `require_tenant_login: true`: a missing e2e studio sign-in secret `E2EPORTALEMAIL` / `E2EPORTALPASSWORD` /
