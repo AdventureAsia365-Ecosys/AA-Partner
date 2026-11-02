@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { API_URL } from "@/lib/auth-server";
 import { config } from "@/lib/config";
-import { cookieOptions, exchange, partnerSession, safeStudioNext, studioCookies } from "@/lib/tenantSession";
+import { cookieOptions, exchange, partnerRef, partnerSession, safeStudioNext, studioCookies } from "@/lib/tenantSession";
 import { publicUrl, refuseForeignWrite } from "@/lib/writeGuard";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -34,6 +34,8 @@ export async function POST(req: NextRequest) {
     return redirect(where, req);
   }
   const res = redirect(next, req);
-  for (const c of studioCookies(result.session)) res.cookies.set(c.name, c.value, cookieOptions(c.maxAge));
+  // AA-1025 (S264): the cookies name the partner sign-in they were exchanged for (proxy.ts / requireStudio check it).
+  const ref = await partnerRef(partner.iss, partner.sub);
+  for (const c of studioCookies(result.session, ref)) res.cookies.set(c.name, c.value, cookieOptions(c.maxAge));
   return res;
 }

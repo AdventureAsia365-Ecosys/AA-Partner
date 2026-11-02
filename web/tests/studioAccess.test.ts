@@ -1,8 +1,9 @@
 // AA-1025 (S264): the "Open Content studio" link shows only for an agency that is one of the person's studios
-// (lib/studioAccess.ts).
+// (lib/studioAccess.ts), and the studio's cookie list stays the same in the web (sign-out) and the portal.
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { STUDIO_COOKIES } from "@/lib/studioCookies";
 import {
   ANSWER_TTL_MS, UNKNOWN_TTL_MS, decide, resetStudioAccessMemo, studioAccess, studioLink,
 } from "@/lib/studioAccess";
@@ -94,5 +95,13 @@ describe("wiring", () => {
     const layout = readFileSync(path.join(root, "web/app/(crm)/layout.tsx"), "utf8");
     expect(layout).toContain("studioAccess(ctx.cfg.cisApiUrl, session)");
     expect(layout).toContain("contentStudioHref={studioLink(studioHref, studio)}");
+  });
+
+  it("the web's sign-out clears exactly the portal's studio cookies", () => {
+    const portal = readFileSync(path.join(root, "portal/lib/studioSession.ts"), "utf8");
+    const block = portal.slice(portal.indexOf("export const STUDIO_COOKIES"), portal.indexOf("] as const"));
+    const names = [...block.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+    expect([...STUDIO_COOKIES].sort()).toEqual(names.sort());
+    expect(STUDIO_COOKIES).toContain("cis_partner_ref");
   });
 });

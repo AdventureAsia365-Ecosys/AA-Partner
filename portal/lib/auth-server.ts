@@ -9,10 +9,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { config } from "./config";
 import {
+  boundTo,
   cookieOptions,
   exchange,
   isPartnerToken,
   needsRenewal,
+  PARTNER_REF_COOKIE,
+  partnerRef,
   partnerSession,
   studioCookies,
   type CookieSpec,
@@ -31,6 +34,7 @@ export const TENANT_COOKIES = [
   "cis_tenant_id",
   "cis_tenant_name",
   "cis_tenant_plan",
+  PARTNER_REF_COOKIE, // AA-1025 (S264): the partner sign-in the studio cookies belong to
 ] as const;
 
 export const TENANT_TOKEN_COOKIE = "cis_tenant_token";
@@ -157,18 +161,26 @@ function unauthorizedStudio(): NextResponse {
  * 15 minutes, so when the cookie holds a partner token that is missing or about to expire and the CRM web's partner
  * session is still valid, it is exchanged again here (the caller sets `renewed` on its response). Then the token is
  * verified at CIS exactly as before. API-key tokens are never renewed (they live 24 h, as on Vercel).
+ * AA-1025 (S264): a partner token made for ANOTHER partner sign-in than the CRM web's live session (cookie
+ * cis_partner_ref, lib/studioSession.ts partnerRef) is never used: it is exchanged again for the live person, without
+ * the old agency choice, and a failed exchange answers 401 instead of serving the previous person's studio.
  */
 export async function requireStudio(request: NextRequest): Promise<RequireStudioResult> {
   let token = request.cookies.get(TENANT_TOKEN_COOKIE)?.value;
   let renewed: CookieSpec[] = [];
-  if (!token || (isPartnerToken(token) && needsRenewal(token))) {
-    const partner = partnerSession(config(), request.cookies);
-    if (partner) {
-      const chosen = request.cookies.get("cis_tenant_id")?.value ?? null;
+  const partner = partnerSession(config(), request.cookies);
+  const ref = partner ? await partnerRef(partner.iss, partner.sub) : null;
+  const stale = !!token && isPartnerToken(token) && !!ref
+    && !boundTo(request.cookies.get(PARTNER_REF_COOKIE)?.value, ref);
+  if (!token || (isPartnerToken(token) && needsRenewal(token)) || stale) {
+    if (partner && ref) {
+      const chosen = stale ? null : (request.cookies.get("cis_tenant_id")?.value ?? null);
       const result = await exchange(API_URL, partner.at, chosen);
       if (result.ok) {
         token = result.session.token;
-        renewed = studioCookies(result.session);
+        renewed = studioCookies(result.session, ref);
+      } else if (stale) {
+        token = undefined;
       }
     }
   }

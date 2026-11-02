@@ -14,6 +14,10 @@
 //                     2. the CRM web's partner session with a valid access token -> make sure a studio token for it
 //                        exists and is fresh (CIS POST /auth/tenant-session), then through; several agencies ->
 //                        /portal-access/select; none -> /portal-access/none (outside the /portal shell);
+//                        AA-1025 (S264): "for it" is checked: studio cookies made for another partner sign-in
+//                        (cis_partner_ref differs, e.g. someone signed in to the CRM as another person on the same
+//                        browser) are never used: exchanged again without the old agency choice, and cleared when
+//                        the new person has no studio or must choose;
 //                     3. otherwise -> the CRM web's /auth/refresh?next=<path> (renews or signs in), built on
 //                        PORTAL_PUBLIC_ORIGIN (never the standalone server's bind address, critic C2); on Vercel ->
 //                        /tenant-login as before.
@@ -24,10 +28,13 @@ import { API_URL, TENANT_COOKIES, TENANT_TOKEN_COOKIE, verifyTenantToken } from 
 import { config as portalConfig, hostAllowed } from "./lib/config";
 import { contentSecurityPolicy } from "./lib/csp";
 import {
+  boundTo,
   cookieOptions,
   exchange,
   isPartnerToken,
   needsRenewal,
+  PARTNER_REF_COOKIE,
+  partnerRef,
   partnerSession,
   studioCookies,
   type CookieSpec,
@@ -68,12 +75,16 @@ function apiKeySignInGone(request: NextRequest): NextResponse {
   return noStore(NextResponse.redirect(target, 308));
 }
 
-function toStudioPage(request: NextRequest, path: string, extra: Record<string, string> = {}): NextResponse {
+function toStudioPage(
+  request: NextRequest, path: string, extra: Record<string, string> = {}, clearCookies = false,
+): NextResponse {
   const { pathname, search } = request.nextUrl;
   const target = publicUrl(path, request.url);
   target.searchParams.set("next", `${pathname}${search}`);
   for (const [k, v] of Object.entries(extra)) target.searchParams.set(k, v);
-  return noStore(NextResponse.redirect(target, 307));
+  const res = NextResponse.redirect(target, 307);
+  if (clearCookies) for (const name of TENANT_COOKIES) res.cookies.delete(name);
+  return noStore(res);
 }
 
 /** Through, with the renewed studio cookies on the response AND on the request the page renders with. */
@@ -135,17 +146,24 @@ async function gate(request: NextRequest): Promise<NextResponse> {
   // 2. The partner session of the CRM web (same host).
   if (partner) {
     if (studioPage) return NextResponse.next();
-    if (token && isPartnerToken(token) && !needsRenewal(token)) {
+    const ref = await partnerRef(partner.iss, partner.sub);
+    // AA-1025 (S264): studio cookies made for another partner sign-in (or before the reference existed) are stale.
+    const bound = boundTo(request.cookies.get(PARTNER_REF_COOKIE)?.value, ref);
+    if (bound && token && isPartnerToken(token) && !needsRenewal(token)) {
       const verified = await verifyTenantToken(token);
       if (verified.ok) return NextResponse.next();
     }
-    const chosen = request.cookies.get("cis_tenant_id")?.value ?? null;
+    // The agency choice of a stale session belongs to the previous person: never send it.
+    const chosen = bound ? (request.cookies.get("cis_tenant_id")?.value ?? null) : null;
     let result = await exchange(API_URL, partner.at, chosen);
     // A cis_tenant_id cookie left by another session (an API-key sign-in of another agency): ask again without it.
     if (!result.ok && result.reason === "tenant_not_member" && chosen) result = await exchange(API_URL, partner.at, null);
-    if (result.ok) return passWith(request, studioCookies(result.session));
-    if (result.reason === "choose_tenant" || result.reason === "tenant_not_member") return toStudioPage(request, SELECT_PATH);
-    if (result.reason === "no_membership") return toStudioPage(request, NO_ACCESS_PATH);
+    if (result.ok) return passWith(request, studioCookies(result.session, ref));
+    const stale = !bound && Boolean(token);
+    if (result.reason === "choose_tenant" || result.reason === "tenant_not_member") {
+      return toStudioPage(request, SELECT_PATH, {}, stale);
+    }
+    if (result.reason === "no_membership") return toStudioPage(request, NO_ACCESS_PATH, {}, stale);
     if (result.reason === "unauthorized") return toPartnerSignIn(request); // the access token was refused: renew it
     return toStudioPage(request, NO_ACCESS_PATH, { reason: "unavailable" }); // CIS unreachable: fail closed
   }

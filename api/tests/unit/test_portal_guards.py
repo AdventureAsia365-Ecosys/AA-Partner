@@ -589,3 +589,24 @@ def test_sentry_sends_no_personal_data() -> None:
         src = _read(name)
         assert "beforeSend: scrubEvent" in src and "userInfo: false" in src and "cookies: false" in src, name
         assert "tracesSampleRate: 0" in src, name
+
+
+def test_studio_cookies_are_bound_to_the_live_partner_sign_in() -> None:
+    """AA-1025 (S264): studio cookies made for another partner sign-in on the same browser (a join link, a second
+    account) are never used: the gate and the BFF compare cis_partner_ref with the CRM web's live session, exchange
+    again without the old agency choice, and the web's sign-out clears the reference too."""
+    gate = _strip_comments(_read("portal/proxy.ts"))
+    partner = gate[gate.index("if (partner) {") :]
+    assert "const ref = await partnerRef(partner.iss, partner.sub);" in partner
+    assert "if (bound && token && isPartnerToken(token) && !needsRenewal(token))" in partner
+    assert 'const chosen = bound ? (request.cookies.get("cis_tenant_id")?.value ?? null) : null;' in partner
+    assert "passWith(request, studioCookies(result.session, ref))" in partner
+    bff = _strip_comments(_read("portal/lib/auth-server.ts"))
+    assert "PARTNER_REF_COOKIE" in bff[bff.index("export const TENANT_COOKIES") :][:400]
+    require = bff[bff.index("export async function requireStudio") :]
+    assert "!boundTo(request.cookies.get(PARTNER_REF_COOKIE)?.value, ref)" in require
+    assert "studioCookies(result.session, ref)" in require and "} else if (stale) {" in require
+    select = _read("portal/app/api/auth/tenant-select/route.ts")
+    assert "studioCookies(result.session, ref)" in select
+    assert '"cis_partner_ref"' in _read("web/lib/studioCookies.ts")
+    assert '"cis_partner_ref"' in _read("portal/lib/studioSession.ts")

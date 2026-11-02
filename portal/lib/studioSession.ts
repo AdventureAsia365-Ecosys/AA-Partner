@@ -1,10 +1,14 @@
 // portal/lib/studioSession.ts
 // AA-979 P2b — the pure helpers of the Content studio's partner-pool sign-in (no imports, so `npm test` runs them with
 // node --test): the CIS token's claims, when to renew it, the exchange with CIS POST /auth/tenant-session and the
-// chooser read GET /auth/tenant-memberships, the five studio cookies. lib/tenantSession.ts wires them to the request.
+// chooser read GET /auth/tenant-memberships, the studio cookies. lib/tenantSession.ts wires them to the request.
 
-/** The five host-only cookies of a studio session (AA-427 names; the CRM web clears them at sign-out). */
-export const STUDIO_COOKIES = ["cis_role", "cis_tenant_token", "cis_tenant_id", "cis_tenant_name", "cis_tenant_plan"] as const;
+/** The host-only cookies of a studio session (AA-427 names; the CRM web clears them at sign-out). AA-1025 (S264):
+ *  `cis_partner_ref` names the partner sign-in the studio token was exchanged for (see partnerRef). */
+export const STUDIO_COOKIES = [
+  "cis_role", "cis_tenant_token", "cis_tenant_id", "cis_tenant_name", "cis_tenant_plan", "cis_partner_ref",
+] as const;
+export const PARTNER_REF_COOKIE = "cis_partner_ref";
 /** Re-exchange this long before the studio token expires, so no page or BFF call carries a token that dies mid-flight. */
 export const RENEW_SKEW_S = 60;
 const EXCHANGE_TIMEOUT_MS = 5000;
@@ -131,8 +135,26 @@ export interface CookieSpec {
   maxAge: number;
 }
 
-/** The five studio cookies of an exchanged session; they live exactly as long as the token. */
-export function studioCookies(s: StudioSession): CookieSpec[] {
+/**
+ * AA-1025 (S264): a short reference of the partner sign-in (the CRM web session's `iss` + `sub`): the first 16 hex of
+ * SHA-256, never the identity itself. The studio cookies carry it, and a studio token is used only while the CRM web's
+ * live session has the same reference. Before this, a person who signed in to the CRM as someone else on the same
+ * browser (a join link, a second account) kept the previous person's studio, name and agency for up to 15 minutes.
+ */
+export async function partnerRef(iss: string, sub: string): Promise<string> {
+  const data = new TextEncoder().encode(`${iss}|${sub}`);
+  const digest = new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", data));
+  return Array.from(digest.slice(0, 8), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** True when the studio cookies were made for this partner sign-in (`ref` = partnerRef of the live session). */
+export function boundTo(cookieRef: string | undefined | null, ref: string): boolean {
+  return !!cookieRef && cookieRef === ref;
+}
+
+/** The studio cookies of an exchanged session (with the partner reference when given); they live exactly as long
+ *  as the token. */
+export function studioCookies(s: StudioSession, ref?: string): CookieSpec[] {
   const maxAge = Math.max(0, Math.floor(s.expires_in));
   return [
     { name: "cis_role", value: "tenant", maxAge },
@@ -140,6 +162,7 @@ export function studioCookies(s: StudioSession): CookieSpec[] {
     { name: "cis_tenant_id", value: s.tenant_id, maxAge },
     { name: "cis_tenant_name", value: s.tenant_name ?? "", maxAge },
     { name: "cis_tenant_plan", value: s.plan_tier ?? "", maxAge },
+    ...(ref ? [{ name: PARTNER_REF_COOKIE, value: ref, maxAge }] : []),
   ];
 }
 
