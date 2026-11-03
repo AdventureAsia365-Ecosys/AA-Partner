@@ -232,6 +232,19 @@ describe("the draft drawer", () => {
     expect(q(c, "ai-draft-accept")).toBeNull();
   });
 
+  it("says in test mode whether the privacy check is billed (never 'costs nothing' while it is)", async () => {
+    const billed = await mount({ ...SETTINGS, test_mode: false, model_test_mode: true, scrub_billed: true });
+    await click(q(billed, "ai-draft-open"));
+    expect(q(billed, "ai-draft-test-mode")!.textContent).toContain(MESSAGES.en["aiDraft.testModeScrub"]);
+    expect(q(billed, "ai-draft-test-mode")!.textContent).not.toContain(MESSAGES.en["aiDraft.testMode"]);
+    const free = await mount({ ...SETTINGS, test_mode: true, model_test_mode: true, scrub_billed: false });
+    await click(q(free, "ai-draft-open"));
+    expect(q(free, "ai-draft-test-mode")!.textContent).toContain(MESSAGES.en["aiDraft.testMode"]);
+    const real = await mount({ ...SETTINGS, provider: "bedrock", test_mode: false, model_test_mode: false, scrub_billed: true });
+    await click(q(real, "ai-draft-open"));
+    expect(q(real, "ai-draft-test-mode")).toBeNull();
+  });
+
   it("discards without feedback, and says so", async () => {
     const calls = stubFetch((call) =>
       call.url.endsWith("/ai/draft")

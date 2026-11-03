@@ -535,10 +535,24 @@ async def test_the_settings_view_defaults_to_off_and_shows_the_meter() -> None:
         "period_start": THIS_MONTH.isoformat(),
         "provider": "stub",
         "test_mode": True,
+        "model_test_mode": True,
+        "scrub_billed": False,
         "rate_limit_per_minute": 6,
         "can_edit": False,
         "ai_assist_allowed": False,
     }
+
+
+async def test_test_mode_holds_only_while_nothing_billable_runs() -> None:
+    """AA-1027 F3 follow-up: the stub model with a guardrail still pays the privacy check, so not "nothing charged"."""
+    billed = await agency_ai.ai_settings(tenant_ctx(ai_conn()), **LIMITS, scrub_billed=True)
+    assert (billed["test_mode"], billed["model_test_mode"], billed["scrub_billed"]) == (False, True, True)
+    real = await agency_ai.ai_settings(tenant_ctx(ai_conn()), **{**LIMITS, "provider": "bedrock"}, scrub_billed=True)
+    assert (real["test_mode"], real["model_test_mode"], real["scrub_billed"]) == (False, False, True)
+    updated = await agency_ai.update_ai_settings(
+        tenant_ctx(ai_conn()), {"ai_enabled": True}, **LIMITS, scrub_billed=True
+    )
+    assert updated["scrub_billed"] is True and updated["test_mode"] is False
 
 
 async def test_the_owner_switches_ai_on_and_sets_a_budget_within_the_plan() -> None:
@@ -626,8 +640,10 @@ async def _pool(_request: Any) -> object:
     return object()
 
 
-def _client(pools: LocalPools, monkeypatch: pytest.MonkeyPatch, role: str, c: ScriptedConn) -> tuple[Any, dict]:
-    settings = pools.settings()
+def _client(
+    pools: LocalPools, monkeypatch: pytest.MonkeyPatch, role: str, c: ScriptedConn, **overrides: Any
+) -> tuple[Any, dict]:
+    settings = pools.settings(**overrides)
     app = create_app(settings, verifier=pools.verifier(settings), keys=object())
     monkeypatch.setattr(ai_router, "request_pool", _pool)
     monkeypatch.setattr(ai_router, "tenant_tx", fake_tx(tenant_ctx(c, role=role)))
@@ -648,8 +664,24 @@ async def test_routes_every_role_reads_only_the_owner_changes(agent: tuple[TestC
     client, headers, _ = agent
     view = client.get("/crm/v1/settings/ai", headers=headers)
     assert view.status_code == 200 and view.json()["test_mode"] is True and view.json()["can_edit"] is False
+    assert view.json()["scrub_billed"] is False and view.json()["model_test_mode"] is True
     refused = client.put("/crm/v1/settings/ai", headers=headers, json={"ai_enabled": True})
     assert refused.status_code == 403 and refused.json()["detail"] == "role_forbidden"
+
+
+async def test_routes_say_the_privacy_check_is_billed_when_a_guardrail_is_set(
+    pools: LocalPools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guard = {"scrub_guardrail_id": "abc123guard", "scrub_guardrail_version": "2"}
+    app, headers = _client(pools, monkeypatch, "agent", ai_conn(enabled=True), **guard)
+    with TestClient(app) as client:
+        view = client.get("/crm/v1/settings/ai", headers=headers).json()
+    assert (view["provider"], view["model_test_mode"], view["scrub_billed"], view["test_mode"]) == (
+        "stub",
+        True,
+        True,
+        False,
+    )
 
 
 async def test_routes_a_draft_from_the_api(agent: tuple[TestClient, dict, ScriptedConn]) -> None:

@@ -10,7 +10,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { AiNotice, Badge, Button, Drawer, Field, Input, K, Select, SegmentedControl, Textarea, useHydrated } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
-import type { AiSettings } from "@/lib/ai";
+import { testModeNote, type AiSettings } from "@/lib/ai";
 import {
   DRAFT_KINDS,
   FEEDBACK_CODES,
@@ -48,6 +48,7 @@ export function AiDraftPanel({
   const hydrated = useHydrated();
   const tr = (key: string) => t(lang, key as MessageKey);
   const state = draftAvailability(settings);
+  const testNote = testModeNote(settings);
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState<DraftKind>("reply");
   const [text, setText] = useState("");
@@ -151,10 +152,12 @@ export function AiDraftPanel({
       </div>
       <Drawer open={open} onClose={() => setOpen(false)} title={tr("aiDraft.title")} width={560}>
         <div data-testid="ai-draft-drawer" style={{ display: "grid", gap: 14, minWidth: 0 }}>
-          {settings?.test_mode && (
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          {testNote && (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }} data-testid="ai-draft-test-mode">
               <Badge tone="info">{tr("ai.testMode")}</Badge>
-              <span style={{ fontSize: 12.5, color: K.muted }}>{tr("aiDraft.testMode")}</span>
+              <span style={{ fontSize: 12.5, color: K.muted }}>
+                {tr(testNote === "free" ? "aiDraft.testMode" : "aiDraft.testModeScrub")}
+              </span>
             </div>
           )}
           <form onSubmit={write} style={{ display: "grid", gap: 12, minWidth: 0 }} data-testid="ai-draft-form">

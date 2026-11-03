@@ -4,7 +4,8 @@
 Route                                          What                                           Who
 =============================================  =============================================  ======================
 ``GET    /settings/ai``                        AI on / off, monthly budget, this month's      every role
-                                               spend and alert level, test mode
+                                               spend and alert level, test mode and
+                                               whether the privacy check is billed
 ``PUT    /settings/ai``                        switch AI on / off, set the budget (<= plan)   owner
 ``POST   /trips/{id}/ai/draft``                one AI draft for the trip (behind the plan's   every role
                                                ai_assist and ai_enabled; a suggestion, never
@@ -33,6 +34,7 @@ from app.auth.route_guard import Caller, class_router, current_caller
 from app.db import request_pool
 from app.llm import agency_ai, ai_drafts
 from app.permissions import Action
+from app.privacy.guardrails import guardrail_billed
 from app.routers.agency import tenant_header
 from app.tenancy import tenant_tx
 from app.vault import Vault
@@ -69,6 +71,7 @@ def _limits(request: Request) -> dict[str, Any]:
         "budget_max": settings.ai_budget_max_usd,
         "provider": settings.crm_llm_provider,
         "rate_per_minute": settings.rate_limit_ai_per_minute,
+        "scrub_billed": guardrail_billed(settings),
     }
 
 

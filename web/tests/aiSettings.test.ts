@@ -3,7 +3,7 @@
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { aiErrorKey, budgetError, meterTone, meterWidth, usd, type AiSettings } from "@/lib/ai";
+import { aiErrorKey, budgetError, meterTone, meterWidth, notOnPlan, testModeNote, usd, type AiSettings } from "@/lib/ai";
 import { matchBff } from "@/lib/bff";
 import { MESSAGES } from "@/lib/i18n";
 
@@ -48,6 +48,18 @@ describe("AI settings helpers", () => {
     expect(usd("1.5", "en-AU")).toContain("1.50");
   });
 
+  it("says nothing is charged only when the API says no billable step runs", () => {
+    expect(testModeNote(null)).toBeNull();
+    expect(testModeNote({ ...VIEW, test_mode: true, model_test_mode: true, scrub_billed: false })).toBe("free");
+    expect(testModeNote({ ...VIEW, test_mode: false, model_test_mode: true, scrub_billed: true })).toBe("scrub_billed");
+    expect(testModeNote({ ...VIEW, provider: "bedrock", test_mode: false, model_test_mode: false, scrub_billed: true })).toBeNull();
+    // An older API sends only test_mode (the stub model): the note does not claim the privacy check is free.
+    expect(testModeNote({ ...VIEW, test_mode: true })).toBe("scrub_billed");
+    expect(notOnPlan({ ...VIEW, ai_assist_allowed: false })).toBe(true);
+    expect(notOnPlan({ ...VIEW, ai_assist_allowed: true })).toBe(false);
+    expect(notOnPlan(VIEW)).toBe(false);
+  });
+
   it("lets the web read and change the settings and ask for a draft, nothing else", () => {
     expect(matchBff("GET", "settings/ai")?.tenant).toBe(true);
     expect(matchBff("PUT", "settings/ai")?.tenant).toBe(true);
@@ -80,6 +92,58 @@ describe("AI settings page", () => {
     expect(html).not.toContain("<form");
     expect(html).toContain("budget is used up");
     expect(html).not.toContain('data-testid="ai-test-mode"');
+  });
+
+  it("says the privacy check is billed while the test model writes the drafts", () => {
+    const free = renderToString(
+      createElement(AiSettingsView, { settings: { ...VIEW, model_test_mode: true, scrub_billed: false }, lang: "en", locale: "en-AU" }),
+    );
+    expect(free).toContain("nothing is charged");
+    const billed = renderToString(
+      createElement(AiSettingsView, {
+        settings: { ...VIEW, test_mode: false, model_test_mode: true, scrub_billed: true },
+        lang: "en",
+        locale: "en-AU",
+      }),
+    );
+    expect(billed).toContain('data-testid="ai-test-mode"');
+    expect(billed).toContain("Only the privacy check");
+    expect(billed).not.toContain("nothing is charged");
+    const vi = renderToString(
+      createElement(AiSettingsView, {
+        settings: { ...VIEW, test_mode: false, model_test_mode: true, scrub_billed: true },
+        lang: "vi",
+        locale: "vi-VN",
+      }),
+    );
+    expect(vi).toContain("Chỉ bước kiểm tra quyền riêng tư");
+    expect(vi).not.toContain("không tính phí");
+  });
+
+  it("shows the plan state when the plan lacks the AI assistant, with the trip card's wording", () => {
+    const html = renderToString(
+      createElement(AiSettingsView, { settings: { ...VIEW, ai_enabled: true, ai_assist_allowed: false }, lang: "en", locale: "en-AU" }),
+    );
+    expect(html).toContain('data-testid="ai-no-plan"');
+    expect(html).toContain('data-testid="ai-status-no-plan"');
+    expect(html).toContain("The AI assistant is not on your agency");
+    expect(MESSAGES.en["aiDraft.noPlan"]).toContain("The AI assistant is not on your agency");
+    expect(html).toContain("You can still switch AI on now");
+    expect(html).toContain('data-testid="ai-settings-form"'); // the owner keeps the switch
+    const member = renderToString(
+      createElement(AiSettingsView, {
+        settings: { ...VIEW, can_edit: false, ai_assist_allowed: false },
+        lang: "en",
+        locale: "en-AU",
+      }),
+    );
+    expect(member).toContain("The AI assistant is not on your agency");
+    expect(member).not.toContain("You can still switch AI on now");
+    const allowed = renderToString(
+      createElement(AiSettingsView, { settings: { ...VIEW, ai_assist_allowed: true }, lang: "en", locale: "en-AU" }),
+    );
+    expect(allowed).not.toContain('data-testid="ai-no-plan"');
+    expect(allowed).not.toContain('data-testid="ai-status-no-plan"');
   });
 
   it("speaks Vietnamese only when the person picked it", () => {

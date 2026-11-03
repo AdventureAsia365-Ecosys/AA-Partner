@@ -4,6 +4,11 @@
   monthly budget ``ai_budget_usd`` (default 2 USD), which an owner may lower or raise up to ``AI_BUDGET_MAX_USD`` (the
   plan's cap: AA pays for the calls); the month's spend from ``crm.llm_call`` (calls and guardrail rows), the share of
   the budget and the month's alert level (75 / 90 / 100, crm-032).
+  The view also says what a draft costs on this environment (AA-1027 F3 follow-up): ``model_test_mode`` (the stub
+  model answers, it costs nothing), ``scrub_billed`` (a guardrail is configured, so the privacy check before each
+  draft pays ``ApplyGuardrail`` units and its ``crm_scrub`` rows count in the month's spend) and ``test_mode``, true
+  only when **nothing** billable runs (stub model and no guardrail), so the web never says "nothing is charged" while
+  the privacy check is billed.
 - :func:`draft`: one AI draft for a trip. Behind the plan's ``ai_assist`` entitlement (AA-1027 F3: 403
   ``feature_not_allowed``) and ``ai_enabled``: with AI off it answers 409 ``ai_disabled`` before the gateway runs, so
   nothing is scrubbed or paid. Otherwise the gateway does the rest in its fixed order (budget, so a
@@ -84,7 +89,14 @@ def _pct(spent: Decimal, budget: Decimal) -> float:
     return round(float(spent / budget * 100), 1) if budget > 0 else 100.0
 
 
-async def ai_settings(ctx: TenantContext, *, budget_max: Decimal, provider: str, rate_per_minute: int) -> dict:
+async def ai_settings(
+    ctx: TenantContext,
+    *,
+    budget_max: Decimal,
+    provider: str,
+    rate_per_minute: int,
+    scrub_billed: bool = False,
+) -> dict:
     row = await ctx.conn.fetchrow(SETTINGS_SQL)
     enabled = bool(row["ai_enabled"]) if row else False
     budget = Decimal(row["ai_budget_usd"]) if row else DEFAULT_BUDGET_USD
@@ -101,7 +113,9 @@ async def ai_settings(ctx: TenantContext, *, budget_max: Decimal, provider: str,
         "alert_level": int(raised) if raised is not None else alert_level(pct),
         "period_start": month.isoformat(),
         "provider": provider,
-        "test_mode": provider == "stub",
+        "test_mode": provider == "stub" and not scrub_billed,
+        "model_test_mode": provider == "stub",
+        "scrub_billed": scrub_billed,
         "rate_limit_per_minute": rate_per_minute,
         "can_edit": ctx.member_role == "owner",
         "ai_assist_allowed": await ai_drafts.ai_assist_allowed(ctx),
@@ -115,6 +129,7 @@ async def update_ai_settings(
     budget_max: Decimal,
     provider: str,
     rate_per_minute: int,
+    scrub_billed: bool = False,
 ) -> dict:
     row = await ctx.conn.fetchrow(SETTINGS_SQL)
     enabled = bool(row["ai_enabled"]) if row else False
@@ -129,7 +144,9 @@ async def update_ai_settings(
     await ctx.conn.execute(UPSERT_SQL, enabled, budget)
     fields = tuple(sorted(k for k in ("ai_enabled", "ai_budget_usd") if changes.get(k) is not None))
     ctx.audit("update", "allowed", "tenant_settings", str(ctx.tenant_id), fields=fields)
-    return await ai_settings(ctx, budget_max=budget_max, provider=provider, rate_per_minute=rate_per_minute)
+    return await ai_settings(
+        ctx, budget_max=budget_max, provider=provider, rate_per_minute=rate_per_minute, scrub_billed=scrub_billed
+    )
 
 
 def build_prompt(kind: str, text: str, instruction: str | None) -> str:
