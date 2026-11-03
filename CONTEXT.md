@@ -48,8 +48,8 @@ with "Later"), Connections and the controller settings, the owner's shared-respo
 client import (CSV / .xlsx: clients, relationships, trips, notes) with a dry run and idempotent re-runs as
 `crm_client_import` jobs, and the duplicate-client review and merge. Since then, through **crm-035**: AA insights
 (`crm-031`), the **AI gateway v2** (AA-964, `crm-032`: the vendored `app/aa_llm/` core of AA-CIS-App, its own control
-plane and the `crm.llm_call` ledger in the root ADR 0009 ledger v2 shape; Dev still runs the stub provider, so no
-real model is called), the AA staff console with owner-granted support access and audited break-glass (AA-971,
+plane and the `crm.llm_call` ledger in the root ADR 0009 ledger v2 shape; since AA-1027 F4 (`crm-042` and AA-CIS-Infra
+`crm_llm.tf`) Dev drafts call Amazon Nova Lite on acc2, the interim path while acc3 refuses every model), the AA staff console with owner-granted support access and audited break-glass (AA-971,
 `crm-033`, WORKFORCE `crm-staff` client), ops releases to AA ground operations (AA-956, `crm-034`), commissions and
 one-action cancel (AA-957, `crm-035`), and the offline traveller itinerary (AA-954, CRM-24b). The migrations table
 below lists every file.
@@ -322,6 +322,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-039` | `api/migrations/039_crm_partner_account_cleanup.sql` | S263 AA-939 follow-up (**contract**: a changed policy): `studio_invitation_platform` (crm-020) also lets `job:crm_partner_accounts` read `crm.studio_invitation` (USING only; its WITH CHECK and guard CRM37 refuse that actor's writes), so the partner-account clean-up sees every studio link |
 | `crm-040` | `api/migrations/040_crm_ai_draft.sql` | AA-1027 F3 (**expand**: one new table + guard): `crm.ai_draft` (one row per answered AI draft of the trip workspace: kind, ledger call id, prompt version, the draft with its placeholders under the vault DEK, one `decision` pending -> accepted / discarded with an optional R39 `feedback_code`), guard `crm.guard_ai_draft` (CRM47; `decision`, not `status`, so no `status_transition` rows); cascades from its trip, no `erase_subject` change |
 | `crm-041` | `api/migrations/041_crm_llm_app_profile.sql` | AA-1025 H1c (**contract**: REVOKE of the default privileges, so MIG-4): `crm.llm_app_profile` (platform configuration, at most one row `app = 'crm'`: `ai_enabled`, `bulk_paused`, `default_daily_budget_usd` 0..100000, `degrade_mode` `manual_reply_needed`, `disabled_reason` <= 500, `updated_at` / `_by`), no seed row (no row = AI on, no daily budget); crm_app SELECT, INSERT, UPDATE (no DELETE: a deleted row would switch AI back on), no reader grant |
+| `crm-042` | `api/migrations/042_crm_draft_route_acc2_nova_lite.sql` | AA-1027 F4 interim path (**contract**: an UPDATE and an INSERT of configuration rows in `crm.llm_stage_route`, so MIG-4; no code depends on it): `crm_draft_reply` routes to Amazon Nova Lite on acc2 (position 2, `us.amazon.nova-lite-v1:0`, family `amazon`, 0.0770 / 0.3080 USD per million tokens = the CIS catalogue row `nova-lite`); the crm-037 Claude Haiku / Sonnet entries are kept but `is_enabled = false` (acc3 refuses every model, acc2 cannot run Claude); the acc3 return is a forward file that switches them back on |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -2213,8 +2214,10 @@ secret `MAIL_OAUTH` (`crm/<env>/mail-oauth`, mapped only once it has a value), a
 `PORTAL_OTP_DEV_ECHO` (default false; refused outside dev / test / local; on, the portal code answer carries the code
 for the synthetic Dev agencies that have no mailbox), and the AI gateway (AA-964) `CRM_LLM_PROVIDER` (default `stub`),
 `CRM_LLM_MODEL_ID`, `CRM_LLM_USD_PER_MTOK_IN` / `CRM_LLM_USD_PER_MTOK_OUT`, `CRM_LLM_REGION`, `CRM_LLM_ROLE_ARN`,
-`CRM_LLM_MAX_TOKENS`, `RATE_LIMIT_AI_PER_MINUTE` (default 6) and `AI_BUDGET_MAX_USD` (default 2); none is set on Dev
-today, so Dev runs the stub provider. Meanings and defaults:
+`CRM_LLM_MAX_TOKENS`, `RATE_LIMIT_AI_PER_MINUTE` (default 6) and `AI_BUDGET_MAX_USD` (default 2); on Dev, AA-CIS-Infra
+`crm_llm.tf` (AA-1027 F4) sets the provider `bedrock`, the model Amazon Nova Lite on acc2 with its catalogue prices, the
+region and the output cap, and grants the task role `bedrock:InvokeModel` on that inference profile only (no
+`CRM_LLM_ROLE_ARN`: acc3 is not used while it refuses every model). Meanings and defaults:
 `api/app/settings.py`. Live check of the key provider inside the
 container: `python -m app.vault.selftest` (KMS round trip under the nil tenant context, nothing stored).
 

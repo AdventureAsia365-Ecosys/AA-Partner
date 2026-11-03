@@ -42,7 +42,7 @@ async def test_the_draft_stage_is_seeded_with_a_two_step_route(admin: asyncpg.Co
     }
     route = await admin.fetch(
         "SELECT position, provider, family, price_in_per_mtok > 0 AS priced FROM crm.llm_stage_route "
-        "WHERE stage = 'crm_draft_reply' ORDER BY position"
+        "WHERE stage = 'crm_draft_reply' AND position < 2 ORDER BY position"  # crm-042 adds position 2
     )
     assert [(r["position"], r["provider"], r["family"], r["priced"]) for r in route] == [
         (0, "bedrock", "anthropic", True),
@@ -82,9 +82,9 @@ async def test_crm_app_reads_the_profiles_and_cannot_change_them(app_pool: async
     async with app_pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT p.stage AS stage, r.position AS position FROM crm.llm_stage_profile p "
-            "JOIN crm.llm_stage_route r USING (stage) WHERE p.stage = 'crm_draft_reply'"
+            "JOIN crm.llm_stage_route r USING (stage) WHERE p.stage = 'crm_draft_reply' AND r.position < 2"
         )
-        assert len(rows) == 2
+        assert len(rows) == 2  # the crm-037 seed (crm-042 adds position 2)
         for sql in (
             "UPDATE crm.llm_stage_profile SET is_active = false",
             "INSERT INTO crm.llm_stage_profile (stage, role) VALUES ('crm_x', 'writer')",
