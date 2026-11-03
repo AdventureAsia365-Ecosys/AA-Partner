@@ -23,6 +23,8 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 MIGRATION = Path(__file__).resolve().parents[2] / "migrations" / "013_crm_membership_feed.sql"
 FEED = "platform:feed-tenant-membership"
+# Later files that restate an object of crm-013 (crm.sync_tenant_lock_source): re-applied after the re-run.
+LATER = (MIGRATION.parent / "043_crm_entitlement_feed.sql",)
 
 
 async def _status(pool: asyncpg.Pool, tenant: uuid.UUID, actor: str, sql: str, *args: object) -> asyncpg.Record:
@@ -52,6 +54,10 @@ async def test_crm013_is_registered_and_runs_again_as_a_no_op(admin: asyncpg.Con
     await admin.execute(f"SET ROLE {OWNER}")
     try:
         await admin.execute(MIGRATION.read_text(encoding="utf-8"))
+        # crm-043 replaces crm.sync_tenant_lock_source() on top of this file's text: re-apply the later files that
+        # restate it, so the rest of the session sees the head version (lesson: a re-run of an old file).
+        for later in LATER:
+            await admin.execute(later.read_text(encoding="utf-8"))
     finally:
         await admin.execute("RESET ROLE")
     assert await admin.fetchval("SELECT count(*) FROM crm.membership_feed_state") == 1

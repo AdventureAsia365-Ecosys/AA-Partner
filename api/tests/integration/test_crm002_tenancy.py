@@ -64,6 +64,7 @@ PLATFORM_TABLES = {
     "llm_usage_daily": "LLM usage rollup over every agency (crm-005), no tenant column, no PII",
     "audit_export_tenant": "audit export registry, one row per agency, ids and times only (crm-007, AA-940)",
     "membership_feed_state": "the CIS membership feed cursor, one platform row, no tenant column (crm-013, AA-978)",
+    "entitlement_feed_state": "the CIS account feed cursor, one platform row, no tenant column (crm-043, AA-1028)",
     "fx_rate_platform": "reference FX rates per day, no tenant column, no PII (crm-014, AA-944)",
     "aa_catalog_tour": "published AA tour content cached from CIS catalog.http.v1, no tenant column (crm-017, AA-947)",
     "aa_catalog_state": "the catalog sync's one platform row, no tenant column (crm-017, AA-947)",
