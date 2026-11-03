@@ -205,11 +205,18 @@ def parse_assessments(response: dict[str, Any]) -> list[Detection]:
     return found
 
 
+def guardrail_billed(settings: Any) -> bool:
+    """Whether a scrub pays ``ApplyGuardrail`` units: true whenever a guardrail is configured, whatever the model
+    provider (``build_gateway`` then uses this scrubber even with the stub model). Settings > AI reads it so its
+    test-mode note never says "nothing is charged" while the privacy check is billed (AA-1027 F3 follow-up)."""
+    return bool(settings.scrub_guardrail_id)
+
+
 def build_scrubber(settings: Any) -> PiiScrubber:
     """The production scrubber: Guardrails when configured, else one that refuses every scrub (fail closed)."""
     timeout_s = settings.scrub_detector_timeout_ms / 1000
     detector: Any = UnavailableDetector()
-    if settings.scrub_guardrail_id:
+    if guardrail_billed(settings):
         detector = BedrockGuardrailsDetector(
             settings.scrub_guardrail_id,
             settings.scrub_guardrail_version,

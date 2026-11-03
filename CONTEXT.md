@@ -2008,8 +2008,12 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   does a vendor AI SDK import or endpoint in `web/` or `portal/`.
 - **Settings > AI** (`app/llm/agency_ai.py`, `app/routers/ai.py`, web `/settings/ai`): `GET /crm/v1/settings/ai`
   (every role, action `ai_use`): switch, budget, plan cap `AI_BUDGET_MAX_USD` (default 2), this month's spend and
-  share, alert level, test mode, cap per minute; `PUT` (owner, action `ai_settings`): `ai_enabled`, `ai_budget_usd`
-  (0 .. cap, two decimals; above: 422 `budget_above_plan`), audited.
+  share, alert level, test mode, cap per minute, `ai_assist_allowed`; `PUT` (owner, action `ai_settings`):
+  `ai_enabled`, `ai_budget_usd` (0 .. cap, two decimals; above: 422 `budget_above_plan`), audited. Test mode has three
+  fields (AA-1027 F3 follow-up): `model_test_mode` (the stub model writes, free), `scrub_billed` (`SCRUB_GUARDRAIL_ID`
+  set, so the privacy check pays `ApplyGuardrail` units even with the stub model) and `test_mode`, true only when
+  nothing billable runs; the web says "nothing is charged" only then. Without `ai_assist` on the plan the page shows
+  "Not on your plan" with the trip card's wording; the owner keeps the switch (AI drafts are its only use).
 - **Draft** (`POST /crm/v1/trips/{id}/ai/draft` `{kind: reply|follow_up, text, instruction?}`, action `ai_use`): 403
   `feature_not_allowed` when the plan lacks `ai_assist` (AA-1027 F3, `crm.tenant_entitlement.allowed_features`, set by
   AA in the L1 console; a `denied` audit event), then 409 `ai_disabled` before the gateway when AI is off (nothing scrubbed, nothing paid); else stage `crm_draft_reply`, role

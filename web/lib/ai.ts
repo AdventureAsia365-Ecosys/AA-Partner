@@ -12,7 +12,12 @@ export interface AiSettings {
   alert_level: 75 | 90 | 100 | null;
   period_start: string;
   provider: "stub" | "bedrock";
+  /** True only when nothing billable runs on this environment: the test model and no billed privacy check. */
   test_mode: boolean;
+  /** The test model writes the drafts (it costs nothing). Older APIs send only `test_mode`. */
+  model_test_mode?: boolean;
+  /** The privacy check before each draft (Bedrock Guardrails) is billed; its cost counts in this month's spend. */
+  scrub_billed?: boolean;
   rate_limit_per_minute: number;
   can_edit: boolean;
   /** AA-1027 F3: the agency's plan has the AI assistant (crm.tenant_entitlement ai_assist); without it a draft is 403. */
@@ -53,4 +58,22 @@ export function usd(value: string, locale: string): string {
   const n = Number(value);
   if (!Number.isFinite(n)) return value;
   return new Intl.NumberFormat(locale, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+}
+
+/**
+ * The test-mode note (AA-1027 F3 follow-up): null when a real model writes the drafts; "free" only when the API says
+ * nothing billable runs; "scrub_billed" when the test model writes but the privacy check is billed. An API that does
+ * not say whether the check is billed gets the billed wording: the page never claims "nothing is charged" unless sure.
+ */
+export type TestModeNote = "free" | "scrub_billed" | null;
+
+export function testModeNote(settings: AiSettings | null): TestModeNote {
+  if (!settings) return null;
+  if (!(settings.model_test_mode ?? settings.test_mode)) return null;
+  return settings.scrub_billed === false && settings.test_mode ? "free" : "scrub_billed";
+}
+
+/** The plan lacks the AI assistant (AI drafts are its only use, so the switch alone does not start them). */
+export function notOnPlan(settings: AiSettings): boolean {
+  return settings.ai_assist_allowed === false;
 }

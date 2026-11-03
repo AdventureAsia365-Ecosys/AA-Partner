@@ -1,14 +1,15 @@
 "use client";
 // web/components/settings/AiSettingsView.tsx — Settings > AI (AA-964, card CRM-33a): the AI switch and the monthly
 // budget (owner), this month's meter with the 75 / 90 / 100 % alert (design R5), the test-mode note while the
-// environment runs the test model, and the rules of AI drafts (AA-1033: "AI can make mistakes" first, the kit notice
+// environment runs the test model (saying whether the privacy check is still billed), the plan state when the plan
+// lacks the AI assistant (AI drafts are its only use; the trip card's wording), and the rules of AI drafts (AA-1033: "AI can make mistakes" first, the kit notice
 // as it shows under a draft, and a link to the terms' AI section). Writes go through the BFF allow-list (lib/bff.ts).
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import Link from "next/link";
 import { AiNotice, Badge, Button, Checkbox, Field, Input, K, useHydrated } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
-import { aiErrorKey, budgetError, meterTone, meterWidth, usd, type AiSettings } from "@/lib/ai";
+import { aiErrorKey, budgetError, meterTone, meterWidth, notOnPlan, testModeNote, usd, type AiSettings } from "@/lib/ai";
 import { bffSend } from "@/lib/bffClient";
 import type { DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
@@ -25,6 +26,8 @@ export function AiSettingsView({ settings, lang, locale }: { settings: AiSetting
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "danger" | "success"; text: string } | null>(null);
   const tone = meterTone(settings.budget_used_pct);
+  const note = testModeNote(settings);
+  const noPlan = notOnPlan(settings);
 
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -47,13 +50,21 @@ export function AiSettingsView({ settings, lang, locale }: { settings: AiSetting
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
-      {settings.test_mode && (
+      {note && (
         <Panel testId="ai-test-mode">
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <Badge tone="info">{tr("ai.testMode")}</Badge>
-            <span style={{ fontSize: 13, color: K.muted }}>{tr("ai.testModeHelp")}</span>
+            <span style={{ fontSize: 13, color: K.muted }}>
+              {tr(note === "free" ? "ai.testModeHelp" : "ai.testModeHelpScrub")}
+            </span>
           </div>
         </Panel>
+      )}
+      {noPlan && (
+        <p role="status" data-testid="ai-no-plan" style={{ margin: 0, fontSize: 13, color: K.amber }}>
+          {tr("aiDraft.noPlan")}
+          {settings.can_edit && <> {tr("ai.noPlanSwitch")}</>}
+        </p>
       )}
       {settings.alert_level && (
         <p
@@ -69,7 +80,14 @@ export function AiSettingsView({ settings, lang, locale }: { settings: AiSetting
         <div style={{ display: "grid", gap: 8 }}>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <span style={{ fontSize: 13, color: K.muted }}>{tr("ai.status")}</span>
-            <Badge tone={settings.ai_enabled ? "success" : "neutral"}>{tr(settings.ai_enabled ? "ai.on" : "ai.off")}</Badge>
+            <Badge tone={settings.ai_enabled && !noPlan ? "success" : "neutral"}>
+              {tr(settings.ai_enabled ? "ai.on" : "ai.off")}
+            </Badge>
+            {noPlan && (
+              <span data-testid="ai-status-no-plan">
+                <Badge tone="warning">{tr("ai.notOnPlan")}</Badge>
+              </span>
+            )}
           </div>
           <div
             role="meter"

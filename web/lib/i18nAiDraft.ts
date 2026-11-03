@@ -22,6 +22,8 @@ export const aiDraftEn = {
   "aiDraft.writing": "Writing…",
   "aiDraft.result": "Draft",
   "aiDraft.testMode": "Test mode: this draft comes from a test model and costs nothing.",
+  "aiDraft.testModeScrub":
+    "Test mode: this draft comes from a test model, so the model costs nothing. Only the privacy check is billed, at a very small cost.",
   "aiDraft.feedback": "How was this draft? (optional)",
   "aiDraft.feedback.none": "No feedback",
   "aiDraft.feedback.good": "Good",
@@ -75,6 +77,8 @@ export const aiDraftVi: Record<keyof typeof aiDraftEn, string> = {
   "aiDraft.writing": "Đang viết…",
   "aiDraft.result": "Bản nháp",
   "aiDraft.testMode": "Chế độ thử: bản nháp này do mô hình thử viết và không tốn phí.",
+  "aiDraft.testModeScrub":
+    "Chế độ thử: bản nháp này do mô hình thử viết nên mô hình không tốn phí. Chỉ bước kiểm tra quyền riêng tư bị tính phí, ở mức rất nhỏ.",
   "aiDraft.feedback": "Bản nháp này thế nào? (không bắt buộc)",
   "aiDraft.feedback.none": "Không nhận xét",
   "aiDraft.feedback.good": "Tốt",

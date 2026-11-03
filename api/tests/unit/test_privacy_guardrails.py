@@ -8,7 +8,13 @@ from typing import Any
 
 import pytest
 
-from app.privacy.guardrails import BedrockGuardrailsDetector, UnavailableDetector, build_scrubber, parse_assessments
+from app.privacy.guardrails import (
+    BedrockGuardrailsDetector,
+    UnavailableDetector,
+    build_scrubber,
+    guardrail_billed,
+    parse_assessments,
+)
 from app.privacy.scrubber import Detection, PiiScrubber, ScrubError, ScrubTimeout
 from app.settings import Settings
 
@@ -130,6 +136,7 @@ async def test_unconfigured_guardrail_refuses_every_scrub() -> None:
         await UnavailableDetector().detect("x")
     scrubber = build_scrubber(Settings(environment="test"))
     assert scrubber.detector.name == "unavailable" and scrubber.timeout_s == 3.0
+    assert guardrail_billed(Settings(environment="test")) is False
     with pytest.raises(ScrubError):
         await scrubber.scrub("hello")
     with pytest.raises(ValueError):
@@ -144,6 +151,7 @@ async def test_configured_guardrail_builds_a_boto3_client() -> None:
         scrub_detector_timeout_ms=1500,
     )
     scrubber = build_scrubber(settings)
+    assert guardrail_billed(settings) is True
     assert isinstance(scrubber.detector, BedrockGuardrailsDetector)
     assert scrubber.detector.guardrail_version == "2" and scrubber.timeout_s == 1.5
     assert scrubber.detector._client.meta.region_name == "us-west-1"

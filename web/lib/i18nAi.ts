@@ -23,6 +23,10 @@ export const aiEn = {
   "ai.alert.100": "This month's AI budget is used up. Write replies by hand until next month, or raise the budget.",
   "ai.testMode": "Test mode",
   "ai.testModeHelp": "Drafts come from a test model on this environment: no real AI model is called and nothing is charged.",
+  "ai.testModeHelpScrub":
+    "Drafts come from a test model on this environment, so the model costs nothing. Only the privacy check that replaces personal details before each draft is billed, at a very small cost, and it counts in this month's spend.",
+  "ai.notOnPlan": "Not on your plan",
+  "ai.noPlanSwitch": "You can still switch AI on now: drafts start once AA support adds the AI assistant to your plan.",
   "ai.limit": "Up to {n} AI requests a minute for your agency.",
   "ai.ownerOnly": "Only the owner switches AI on or off and sets the budget.",
   "ai.save": "Save",
@@ -60,6 +64,10 @@ export const aiVi: Record<keyof typeof aiEn, string> = {
   "ai.alert.100": "Đã dùng hết ngân sách AI tháng này. Hãy tự viết câu trả lời đến tháng sau, hoặc tăng ngân sách.",
   "ai.testMode": "Chế độ thử",
   "ai.testModeHelp": "Bản nháp ở môi trường này đến từ mô hình thử: không gọi mô hình AI thật và không tính phí.",
+  "ai.testModeHelpScrub":
+    "Bản nháp ở môi trường này đến từ mô hình thử nên mô hình không tốn phí. Chỉ bước kiểm tra quyền riêng tư (thay thông tin cá nhân trước mỗi bản nháp) bị tính phí, ở mức rất nhỏ, và được tính vào chi tiêu tháng này.",
+  "ai.notOnPlan": "Chưa có trong gói",
+  "ai.noPlanSwitch": "Bạn vẫn có thể bật AI ngay bây giờ: bản nháp sẽ hoạt động khi bộ phận hỗ trợ AA thêm trợ lý AI vào gói.",
   "ai.limit": "Tối đa {n} yêu cầu AI mỗi phút cho đại lý của bạn.",
   "ai.ownerOnly": "Chỉ chủ đại lý bật hoặc tắt AI và đặt ngân sách.",
   "ai.save": "Lưu",
