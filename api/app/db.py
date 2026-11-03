@@ -70,6 +70,10 @@ REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = (
     "crm-039",  # AA-939 follow-up: the partner-account clean-up reads crm.studio_invitation (contract: policy)
     "crm-040",  # AA-1027 F3: crm.ai_draft, the AI drafts of the trip workspace (expand: new table + guard)
     "crm-041",  # AA-1025 H1c: crm.llm_app_profile, the CRM app profile (contract: MIG-4, applied before this code)
+    # crm-042 (AA-1027 F4 route data) is not read by code. crm-043: AA-1028 R1 slice 2, crm.entitlement_feed_state and
+    # crm.tenant_entitlement.projected_at (contract: MIG-4, applied before this code; needs crm-042 in number order).
+    "crm-042",
+    "crm-043",
 )
 REQUIRED_SCHEMA_VERSION = max(REQUIRED_SCHEMA_VERSIONS)
 
@@ -176,6 +180,8 @@ class Database:
         # AA ops.
         feed_configured = bool(self._settings.cis_api_url and self._settings.m2m_client)
         feed = await feed_state.health(pool, configured=feed_configured)
+        # AA-1028: the CIS account feed (crm_entitlement_pull), the same words; never fails readiness either.
+        account_feed = await feed_state.health(pool, configured=feed_configured, table=feed_state.ENTITLEMENT)
         return Readiness(
             True,
             {
@@ -184,6 +190,7 @@ class Database:
                 "schema_version": version,
                 "registered_keys": registered,
                 "membership_feed": feed,
+                "entitlement_feed": account_feed,
             },
         )
 

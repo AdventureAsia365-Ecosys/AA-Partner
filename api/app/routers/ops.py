@@ -35,7 +35,7 @@ POST   ``/tenants/{id}/owner-invite``              first-owner invitation (no ow
 POST   ``/tenants/{id}/owner-invite/withdraw``     S263: withdraw AA's live first-owner invitation (ticket)
 POST   ``/tenants/{id}/delete``                    S263: delete a synthetic agency (typed name, ticket; no member)
 GET    ``/tenants/{id}/entitlements``              plan, seats, features allowed, insights opt-out
-PUT    ``/tenants/{id}/entitlements-allowed``      allow features (the owner switches them on)
+PUT    ``/tenants/{id}/entitlements-allowed``      allow features while managed_by ops; 409 once CIS projects (1.11)
 PUT    ``/tenants/{id}/insights-opt-out``          insights opt-out on the owner's written request (Q2 3.12)
 GET    ``/tenants/{id}/data-requests``             latest agency export / deletion requests
 POST   ``/tenants/{id}/data-requests``             raise one the owner confirms, 202
@@ -183,6 +183,8 @@ class Entitlements(_Out):
     seats_allowed: int
     features_allowed: list[Feature]
     insights_opt_out: bool
+    # AA-1028 (1.11): cis = projected from the tenant's CIS account (crm_entitlement_pull), ops = not projected yet
+    managed_by: Literal["cis", "ops"]
 
 
 class InsightsOptOutOut(_Out):

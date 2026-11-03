@@ -186,6 +186,7 @@ def create_app(
                     sender=app.state.dispatch_sender,
                     fx_provider=settings.fx_provider,
                     membership_feed=build_membership_feed(settings, tokens),
+                    entitlement_feed=build_membership_feed(settings, tokens),  # AA-1028: same endpoint and token
                     studio_activation=app.state.studio_activation,
                     booking_client=app.state.booking_client,
                     catalog=build_catalog(settings, tokens),

@@ -400,6 +400,7 @@ SCENARIOS: list[tuple[str, str, str, Any, Any, str, int, str | None]] = [
     ("POST", "/tenants/{tenant_id}/delete", f"{T}/delete", {"agency_name": "Lữ hành Sen Vàng"}, None, "admin", 422,
      "invalid_request"),
     ("GET", "/tenants/{tenant_id}/entitlements", f"{T}/entitlements", None, None, "reader", 200, None),
+    # AA-1028 (1.11): the L1 write while the agency is managed_by ops; 409 once CIS projected it
     ("PUT", "/tenants/{tenant_id}/entitlements-allowed", f"{T}/entitlements-allowed",
      {"features_allowed": ["ai_assist"], "ticket_ref": TICKET}, None, "admin", 200, None),
     ("PUT", "/tenants/{tenant_id}/entitlements-allowed", f"{T}/entitlements-allowed",

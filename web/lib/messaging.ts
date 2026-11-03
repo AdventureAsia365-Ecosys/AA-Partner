@@ -178,6 +178,7 @@ export function messagingErrorKey(detail: string): string {
 export const FAILURE_CODES = new Set([
   "window_closed",
   "channel_disconnected",
+  "feature_not_allowed",
   "channel_not_configured",
   "no_client_phone",
   "template_not_approved",

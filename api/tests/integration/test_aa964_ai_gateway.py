@@ -20,6 +20,7 @@ from typing import Any
 import asyncpg
 import pytest
 
+from app.cis import entitlement_feed
 from app.errors import Conflict
 from app.llm import agency_ai
 from app.llm.gateway import LlmGateway, StubProvider, StubScrubber
@@ -50,8 +51,11 @@ class GuardClient:
 
 
 async def allow_ai_assist(pool: asyncpg.Pool, tenant_id: uuid.UUID) -> None:
-    """AA-1027 F3: AA allows the plan's ``ai_assist`` (the L1 console), which every draft needs (else 403)."""
-    await console.allow_features(pool, tenant_id, staff_sub=STAFF, features=["ai_assist"], ticket_ref="SUP-1027")
+    """AA-1027 F3: the plan's ``ai_assist``, which every draft needs (else 403). Since AA-1028 it is the projection of
+    the tenant's CIS entitlements, written here the way crm_entitlement_pull writes it."""
+    await entitlement_feed.apply(
+        pool, tenant_id, entitlement_feed.Projection("core", None, ("ai_assist",), True), entitlement_feed.RunCounts()
+    )
 
 
 async def _trip(pool: asyncpg.Pool, tenant_id: uuid.UUID, *, ai_assist: bool = True) -> uuid.UUID:

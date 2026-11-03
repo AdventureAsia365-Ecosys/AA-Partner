@@ -18,6 +18,11 @@ Route                                          What                             
                                                template_required outside the window)
 =============================================  =============================================  ======================
 
+AA-1028 R1 slice 2: connecting an account, the test message and a send need the agency's ``whatsapp_sms`` feature
+(the projection of the tenant's CIS ``crm.whatsapp_sms`` entitlement, :mod:`app.entitlements`): 403
+``feature_not_allowed`` otherwise. Reading the status, the composer state, a template refresh and disconnecting stay
+open, so an agency whose plan lost the feature can still see and remove its connection.
+
 Undo / Edit of a queued text message are the mail routes (``POST /messages/{id}/undo`` and ``/edit``); threads,
 Unmatched and Link are the mail conversation routes (every channel). No response carries a secret.
 """
@@ -30,16 +35,17 @@ from typing import Annotated, Any, Literal
 from fastapi import Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from app import entitlements
 from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
 from app.db import request_pool
 from app.errors import Invalid, Unavailable
 from app.messaging import compose, connection, health
 from app.messaging.providers import ProviderError
-from app.messaging.state import MessagingRuntime
+from app.messaging.state import TEXT_FEATURE, MessagingRuntime
 from app.permissions import Action
 from app.routers.agency import tenant_header
-from app.tenancy import tenant_tx
+from app.tenancy import TenantContext, tenant_tx
 from app.vault import Vault
 from app.vault.provider import require_keys
 
@@ -87,6 +93,10 @@ def _runtime(request: Request) -> MessagingRuntime:
     return runtime
 
 
+async def _require_text(ctx: TenantContext, action: Action) -> None:
+    await entitlements.require_feature(ctx, TEXT_FEATURE, action=action.value, object_kind="channel", object_id=None)
+
+
 @router.get("/messaging")
 async def get_messaging(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
     pool = await request_pool(request)
@@ -103,8 +113,8 @@ async def put_connection(
     keys = require_keys(request.app.state.keys)
     runtime = _runtime(request)
     # Authorise first (membership + owner): the account read below calls the provider with what the caller typed.
-    async with tenant_tx(pool, caller, tenant_id, action=Action.INTEGRATIONS_MANAGE):
-        pass
+    async with tenant_tx(pool, caller, tenant_id, action=Action.INTEGRATIONS_MANAGE) as ctx:
+        await _require_text(ctx, Action.INTEGRATIONS_MANAGE)
     checked = connection.validate(
         provider=body.provider,
         account_sid=body.account_sid,
@@ -137,6 +147,7 @@ async def post_test(request: Request, caller: CallerDep, tenant_id: TenantDep, b
     pool = await request_pool(request)
     runtime = _runtime(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.INTEGRATIONS_MANAGE) as ctx:
+        await _require_text(ctx, Action.INTEGRATIONS_MANAGE)
         return await health.test_connection(
             ctx, runtime, channel=body.channel, to=body.to, content_sid=body.content_sid
         )
@@ -176,6 +187,7 @@ async def post_message(request: Request, caller: CallerDep, tenant_id: TenantDep
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     async with tenant_tx(pool, caller, tenant_id, action=Action.MESSAGE_SEND) as ctx:
+        await _require_text(ctx, Action.MESSAGE_SEND)
         return await compose.send(
             ctx,
             Vault(keys, ctx),

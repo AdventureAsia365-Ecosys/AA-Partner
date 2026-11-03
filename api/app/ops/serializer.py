@@ -80,6 +80,7 @@ OPS_ALLOWED_KEYS: frozenset[str] = frozenset(
         "plan",
         "features_allowed",
         "insights_opt_out",
+        "managed_by",
         "opt_out",
         # data requests
         "request_id",

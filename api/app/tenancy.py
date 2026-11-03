@@ -498,6 +498,32 @@ async def membership_feed_tx(pool: asyncpg.Pool, tenant_id: uuid.UUID) -> AsyncI
             await _write_audit(ctx, ctx.audit_events)
 
 
+# AA-1028 R1 slice 2: the CIS account feed's actor (crm_entitlement_pull, tenant.entitlements.v1). crm-043 lets this
+# actor name the cis_tenant lock source too; a platform: actor, so the crm-008 guard lets it write the entitlement row.
+ENTITLEMENT_FEED_ACTOR = "platform:feed-tenant-account"
+
+
+@asynccontextmanager
+async def entitlement_feed_tx(pool: asyncpg.Pool, tenant_id: uuid.UUID) -> AsyncIterator[SystemContext]:
+    """One agency's projection from its CIS account snapshot (AA-1028, ``crm_entitlement_pull``): ``app.tenant_id`` =
+    the agency, ``app.actor`` = :data:`ENTITLEMENT_FEED_ACTOR` (audit actor kind ``aa_ops``: CIS is AA's master of the
+    account). Like :func:`membership_feed_tx` it refuses no agency status: ``ctx.status`` is the agency's status,
+    ``None`` when the CRM has no (untrashed) agency with that id; the caller decides what each status allows. The work
+    runs in a savepoint; queued audit events are written on success, only when the agency exists. Only
+    ``app/cis/entitlement_feed.py`` may open it (``tests/unit/test_code_rules.py``)."""
+    if not isinstance(tenant_id, uuid.UUID):
+        raise TypeError("tenant_id must be a UUID")
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        status = await conn.fetchval(TENANT_SQL, tenant_id)
+        await conn.execute("SELECT set_config('app.actor', $1, true)", ENTITLEMENT_FEED_ACTOR)
+        ctx = SystemContext(conn=conn, tenant_id=tenant_id, actor=ENTITLEMENT_FEED_ACTOR, status=status)
+        async with conn.transaction():  # savepoint: the projection's work
+            yield ctx
+        if status is not None:
+            await _write_audit(ctx, ctx.audit_events)
+
+
 # AA-979 (root ADR 0006a A10b-1): the one fact the Dev-only E2E CIS admin's studio-invitation relay needs from the CRM.
 SYNTHETIC_AGENCY_SQL = "SELECT is_synthetic IS TRUE FROM crm.tenant WHERE tenant_id = $1 AND deleted_at IS NULL"
 

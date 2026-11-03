@@ -28,6 +28,7 @@ from app.vault import KeyProvider
 log = logging.getLogger(__name__)
 
 CHANNELS = ("sms", "whatsapp")
+TEXT_FEATURE = "whatsapp_sms"  # the CRM feature code (app.entitlements) every SMS / WhatsApp send needs
 HOOK_PATH = "/crm/public/v1/hooks/twilio/"
 WINDOW = dt.timedelta(hours=24)
 FAILURE_CLASSES = frozenset({"auth_revoked", "permission_missing", "vendor_rejected", "rate_limited", "unreachable"})

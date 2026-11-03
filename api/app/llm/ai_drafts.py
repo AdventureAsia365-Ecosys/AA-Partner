@@ -18,7 +18,8 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from app.errors import Conflict, Forbidden, Invalid, NotFound
+from app import entitlements
+from app.errors import Conflict, Invalid, NotFound
 from app.permissions import Action, require
 from app.tenancy import TenantContext
 
@@ -26,9 +27,6 @@ FEATURE = "ai_assist"
 DECISIONS = {"accept": "accepted", "discard": "discarded"}
 FEEDBACK_CODES = ("good", "wrong_facts", "wrong_tone", "not_relevant", "too_long", "other")
 
-ENTITLEMENT_SQL = """
-SELECT coalesce((SELECT $1 = ANY (allowed_features) FROM crm.tenant_entitlement WHERE deleted_at IS NULL), false)
-"""
 INSERT_SQL = """
 INSERT INTO crm.ai_draft (ai_draft_id, trip_id, kind, llm_call_id, prompt_version, output_enc)
 VALUES ($1, $2, $3, $4, $5, $6)
@@ -47,15 +45,15 @@ RETURNING ai_draft_id, trip_id, decision, feedback_code, decided_at
 
 
 async def ai_assist_allowed(ctx: TenantContext) -> bool:
-    return bool(await ctx.conn.fetchval(ENTITLEMENT_SQL, FEATURE))
+    return await entitlements.feature_allowed(ctx, FEATURE)
 
 
 async def require_ai_assist(ctx: TenantContext, trip_id: uuid.UUID) -> None:
-    """403 ``feature_not_allowed`` (with a ``denied`` audit event) unless the agency's plan has the AI assistant."""
-    if await ai_assist_allowed(ctx):
-        return
-    ctx.audit(Action.AI_USE.value, "denied", "trip", str(trip_id), reason="feature_not_allowed")
-    raise Forbidden("feature_not_allowed", "the AI assistant is not on this agency's plan (ask AA to add it)")
+    """403 ``feature_not_allowed`` (with a ``denied`` audit event) unless the agency's plan has the AI assistant
+    (since AA-1028 the projection of the tenant's CIS ``crm.ai_assist`` entitlement, :mod:`app.entitlements`)."""
+    await entitlements.require_feature(
+        ctx, FEATURE, action=Action.AI_USE.value, object_kind="trip", object_id=str(trip_id)
+    )
 
 
 async def store(

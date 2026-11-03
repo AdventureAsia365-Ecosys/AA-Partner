@@ -141,6 +141,8 @@ LIFECYCLE_MODULES = frozenset(
 )
 # AA-978: one CIS membership event in one agency (actor platform:feed-tenant-membership, any agency status).
 MEMBERSHIP_FEED_MODULES = frozenset({"app/cis/membership_feed.py"})
+# AA-1028 R1 slice 2: one agency's projection from its CIS account (actor platform:feed-tenant-account, any status).
+ENTITLEMENT_FEED_MODULES = frozenset({"app/cis/entitlement_feed.py"})
 # AA-979 P2b: Content studio invitations (crm-020 platform table): the platform / job context and the token context.
 STUDIO_MODULES = frozenset({"app/members/studio.py"})
 # S263 (AA-939 follow-up): the partner-account clean-up in one agency (any agency the registry holds, trashed ones too).
@@ -206,6 +208,7 @@ CONTEXT_FACTORIES = frozenset(
         "lifecycle_tx",
         "client_link_tx",
         "membership_feed_tx",
+        "entitlement_feed_tx",
         "ingest_tx",
         "calendar_feed_tx",
         "messaging_hook_tx",
@@ -433,11 +436,16 @@ def test_membership_feed_tx_is_used_only_by_the_feed_module() -> None:
     assert _users_of("membership_feed_tx", MEMBERSHIP_FEED_MODULES) == []
 
 
+def test_entitlement_feed_tx_is_used_only_by_the_account_feed_module() -> None:
+    """AA-1028: the account feed's context is a platform actor that writes entitlements and locks an agency."""
+    assert _users_of("entitlement_feed_tx", ENTITLEMENT_FEED_MODULES) == []
+
+
 def test_the_feed_state_is_reached_only_by_the_feed() -> None:
     """Plus the readiness probe in ``app/db.py`` (a DB module, so skipped here): ``feed_state.health``, and the L1
     console's agency summary (AA-978 follow-up, crm.ops.v1 1.2), which reads the row in its own SQL and only calls the
     pure ``feed_state.health_word``."""
-    allowed = MEMBERSHIP_FEED_MODULES | {"app/cis/feed_state.py", "app/ops/console.py"}
+    allowed = MEMBERSHIP_FEED_MODULES | ENTITLEMENT_FEED_MODULES | {"app/cis/feed_state.py", "app/ops/console.py"}
     assert _users_of("feed_state", allowed) == []
 
 

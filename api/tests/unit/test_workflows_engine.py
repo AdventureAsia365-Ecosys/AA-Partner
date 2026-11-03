@@ -345,6 +345,7 @@ def text_conn(**over: Any) -> ScriptedConn:
         ),
     )
     conn.on("FROM crm.consent", over.get("consent"))
+    conn.on("FROM crm.tenant_entitlement", over.get("entitled", True))  # the agency's whatsapp_sms (AA-1028)
     conn.on(
         "SELECT given_name_enc, display_name_enc",
         {"given_name_enc": None, "display_name_enc": enc("traveler", "display_name_enc", "Mai Tran")},
@@ -399,6 +400,19 @@ async def test_workflow_text_skips(over: dict[str, Any], outcome: str) -> None:
     await advance(conn)
     assert logged(finished(conn)) == [outcome]
     assert not conn.sql("INSERT INTO crm.dispatch_queue")
+
+
+@pytest.mark.asyncio
+async def test_a_workflow_text_is_not_sent_once_the_plan_drops_whatsapp_sms() -> None:
+    conn = text_conn(entitled=False)
+    ctx = system_ctx(conn)
+    await engine.advance(ctx, FakeVault(), RUN, now=NOW)  # type: ignore[arg-type]
+    assert logged(finished(conn)) == ["skipped_feature_not_allowed"]
+    assert conn.sql("FROM crm.tenant_entitlement") == [("whatsapp_sms",)]
+    assert not conn.sql("INSERT INTO crm.message (") and not conn.sql("INSERT INTO crm.dispatch_queue")
+    assert [(e.action, e.outcome, e.reason) for e in ctx.audit_events if e.action == "workflow_send"] == [
+        ("workflow_send", "denied", "feature_not_allowed")
+    ]
 
 
 @pytest.mark.asyncio

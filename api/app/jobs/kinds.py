@@ -96,6 +96,10 @@ TASK_DIGEST = "crm_task_digest"
 # in and that no member, live invitation or studio invitation needs any more are deleted. Queued due-now once per UTC
 # day and by a test agency's delete (in its transaction). Not deploy-gate exempt (exists only while due / queued).
 PARTNER_ACCOUNTS = "crm_partner_accounts"
+# AA-1028 R1 slice 2: pull the CIS tenant.entitlements.v1 account feed and project each agency's plan, seats, allowed
+# features and CIS lock (app.cis.entitlement_feed), queued due-now once per 2-minute slot by a maintenance hook. Not
+# deploy-gate or DB Migrate exempt: a row exists only while due or running (seconds).
+ENTITLEMENT_PULL = "crm_entitlement_pull"
 
 DEFAULT_EXPECTED_SECONDS = 300
 OVERDUE_FACTOR = 2
@@ -142,6 +146,7 @@ EXPECTED_SECONDS: dict[str, int] = {
     WORKFLOW_TICK: 300,
     TASK_DIGEST: 120,
     PARTNER_ACCOUNTS: 300,
+    ENTITLEMENT_PULL: 60,
 }
 
 
