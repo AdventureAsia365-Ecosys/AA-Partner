@@ -6,8 +6,13 @@
 // partner agreement. Still a draft pending legal review. Not indexed while it is a draft. S262 (v0.3): the provider
 // list in §3 follows the AI Use Register (root docs/architecture/ai-use-register.md, ADR 0009). S264 (register v1.2,
 // CIS migration 344): when Claude is unavailable, an OpenAI model through the OpenAI API may write, as a last resort.
+// S266 (AA-820 part 1): §3 summarises the AI Schedule v1.0 (root docs/legal/tenant-ai-schedule.md, approved by the
+// tech lead under root ADR 0019 b20): the direct APIs run on Adventure Asia's own company accounts (b19), the policies
+// apply on every path, the high-risk rule, automations, direct AI chat, the monthly AI allowance and the records. The
+// version label and the policy links come from _legal/aiTerms.ts (shared with the CRM terms by a guard test).
 import type { Metadata } from "next";
 import LegalPage, { A, LegalSection } from "../_legal/LegalPage";
+import { AI_PROVIDER_POLICIES, AI_SCHEDULE_VERSION } from "../_legal/aiTerms";
 import { SUPPORT_EMAIL } from "../_kit/core/brand";
 import { PRIVACY_PATH } from "@/lib/hosts";
 
@@ -62,10 +67,20 @@ export default function TermsPage() {
             OpenAI model through the OpenAI API, used directly and with a spending cap.
           </li>
           <li>
-            You must follow these providers&apos; usage policies, including the{" "}
-            <A href="https://www.anthropic.com/legal/aup">Anthropic Usage Policy</A>, the{" "}
-            <A href="https://openai.com/policies/usage-policies/">OpenAI Usage Policies</A> and the{" "}
-            <A href="https://aws.amazon.com/aup/">AWS Acceptable Use Policy</A>, as well as these terms.
+            Every AI feature runs on accounts that Adventure Asia holds in its own company name with these providers.
+            You do not get an account or a key with any of them, and you must not try to reach them through the portal
+            other than through its AI features.
+          </li>
+          <li>
+            These providers&apos; usage policies apply to you as a user of a service built on their models, whichever
+            way Adventure Asia reaches the model. You must follow them, including the{" "}
+            {AI_PROVIDER_POLICIES.map((policy, i) => (
+              <span key={policy.href}>
+                {i === 0 ? "" : i === AI_PROVIDER_POLICIES.length - 1 ? " and the " : ", the "}
+                <A href={policy.href}>{policy.name}</A>
+              </span>
+            ))}
+            , as well as these terms. The updated Anthropic Usage Policy applies from 12 November 2026.
           </li>
           <li>
             You must not use the portal or its content for:
@@ -84,13 +99,19 @@ export default function TermsPage() {
                 availability;
               </li>
               <li>
-                advice on insurance, finance, visas or other high-risk matters, unless a qualified person reviews it
-                before it is delivered and the person receiving it is told that AI was used;
+                advice to a specific person on insurance, finance, visas or other high-risk matters, unless a qualified
+                person reviews it before it is delivered and the person receiving it is told that AI was used (general
+                travel information, such as which visa rules exist, is not advice);
               </li>
-              <li>getting around Adventure Asia&apos;s content checks, limits or other safeguards.</li>
+              <li>getting around Adventure Asia&apos;s content checks, limits or other safeguards;</li>
+              <li>any automation or AI agent you run through the API that does one of the above: you are responsible for it.</li>
             </ul>
           </li>
           <li>If the law or a channel&apos;s rules require content to be labelled as AI-generated, you add that label.</li>
+          <li>
+            If you use AI content to talk directly with your customers, for example in a chat or in automated replies,
+            tell them they are talking to AI, at least at the start of each conversation.
+          </li>
           <li>
             You review each piece before it is published, and you are its publisher. Telling Adventure Asia to publish a
             piece, in the portal or through the API, confirms that you have reviewed it.
@@ -98,6 +119,18 @@ export default function TermsPage() {
           <li>
             Adventure Asia may hold, rewrite or decline to generate or publish content that breaks these rules.
             Unpublishing and suspension are covered in sections 4 and 5.
+          </li>
+          <li>
+            Your plan may include a monthly AI allowance. When it is used up, AI features may pause until the next month
+            or until Adventure Asia raises it; nothing extra is charged for AI use.
+          </li>
+          <li>
+            Adventure Asia keeps records of AI use (model, provider, step, time and cost, not the text itself) and of
+            publishing, to run and secure the service and to show that these rules are followed.
+          </li>
+          <li>
+            This section summarises the {AI_SCHEDULE_VERSION} attached to your partner agreement. If they differ, the AI
+            Schedule applies.
           </li>
         </ul>
       </LegalSection>

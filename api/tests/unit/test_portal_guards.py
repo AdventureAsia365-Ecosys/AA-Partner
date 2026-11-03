@@ -7,7 +7,8 @@ Ported from the portal side of the AA-CIS-App unit tests (the admin side stays t
   Fargate deploy redeploys for a portal change (the Vercel copy went at the P2b clean-up, AA-979 §4.5).
 - test_aa886_portal_legal_pages: ``/privacy`` and ``/terms`` are draft, noindex pages outside the gate.
 - test_aa820_portal_terms_ai: ``/terms`` section 3 keeps the AI acceptable-use summary (draft v0.2), and since S262
-  (draft v0.3) ``/terms`` §3 and ``/privacy`` §5 name the AI providers of the root AI Use Register (ADR 0009).
+  (draft v0.3) ``/terms`` §3 and ``/privacy`` §5 name the AI providers of the root AI Use Register (ADR 0009); since
+  S266 (draft v0.4) §3 summarises the AI Schedule v1.0, whose version and policy links the CRM terms share.
 - test_aa760_muted_contrast (portal tokens) and test_aa760_portal_calls_not_metered (the sign-in asks for a portal
   session, ``client: "portal"``, so portal page loads are not metered as API calls).
 - test_aa911_bff_cross_site: every portal BFF write route refuses a cross-site request before it reads a cookie or a
@@ -242,10 +243,32 @@ def _ai_section() -> str:
     return m.group(0)
 
 
+POLICY_HREFS = (
+    "https://www.anthropic.com/legal/aup",
+    "https://openai.com/policies/usage-policies/",
+    "https://aws.amazon.com/aup/",
+)
+
+
+def _ai_terms_body(rel: str) -> str:
+    """The code of an aiTerms.ts copy without its header comment (the two copies differ only in that header)."""
+    src = _read(rel)
+    return src[src.index("/** The AI Schedule version") :]
+
+
+def test_ai_terms_copies_of_the_studio_and_the_crm_agree() -> None:
+    # AA-820 (S266): the Content studio terms §3 and the CRM terms §1 show the same AI Schedule version and the same
+    # provider policies (root docs/legal/tenant-ai-schedule.md); the kit has no legal-links module, so two copies.
+    studio = _ai_terms_body("portal/app/_legal/aiTerms.ts")
+    assert studio == _ai_terms_body("web/lib/aiTerms.ts"), "portal and web aiTerms.ts must hold the same values"
+    assert 'AI_SCHEDULE_VERSION = "AI Schedule v1.0"' in studio
+    assert re.findall(r'href: "([^"]+)"', studio) == list(POLICY_HREFS)
+
+
 def test_terms_ai_section_links_the_policies_and_lists_the_prohibited_uses() -> None:
     ai = _ai_section()
-    assert 'href="https://www.anthropic.com/legal/aup"' in ai
-    assert 'href="https://aws.amazon.com/aup/"' in ai
+    assert "AI_PROVIDER_POLICIES.map" in ai and "<A href={policy.href}>" in ai, "/terms §3 links every provider policy"
+    assert "{AI_SCHEDULE_VERSION}" in ai, "/terms §3 names the AI Schedule version it summarises"
     assert 'title="3. AI-generated content and acceptable use"' in ai
     assert "This content was generated with AI." in ai
     assert "[to be confirmed]" not in ai
@@ -262,6 +285,17 @@ def test_terms_ai_section_links_the_policies_and_lists_the_prohibited_uses() -> 
         "content checks, limits or other safeguards",
         "labelled as AI-generated",
         "you are its publisher",
+        # AA-820 S266, AI Schedule v1.0 (root ADR 0019 b19, b20)
+        "accounts that Adventure Asia holds in its own company name",
+        "You do not get an account or a key",
+        "whichever way Adventure Asia reaches the model",
+        "12 November 2026",
+        "advice to a specific person on insurance",
+        "automation or AI agent",
+        "tell them they are talking to AI",
+        "monthly AI allowance",
+        "not the text itself",
+        "If they differ, the AI Schedule applies.",
     ):
         assert phrase in flat, f"/terms §3 must mention: {phrase}"
 
@@ -298,7 +332,6 @@ def test_terms_ai_section_names_the_register_providers() -> None:
     ai = re.sub(r"\s+", " ", _ai_section())
     for phrase in PROVIDER_PHRASES:
         assert phrase in ai, f"/terms §3 must name: {phrase}"
-    assert 'href="https://openai.com/policies/usage-policies/"' in ai
 
 
 @pytest.mark.parametrize("page", ["terms", "privacy"])
@@ -313,6 +346,7 @@ def test_privacy_ai_section_lists_every_provider() -> None:
     for phrase in (*PROVIDER_PHRASES, "Jev"):
         assert phrase in ai, f"/privacy §5 must name: {phrase}"
     assert "[to be confirmed]" not in ai, "/privacy §5: the provider list is no longer open"
+    assert "in its own company name" in ai, "/privacy §5: the direct APIs run on AA's own accounts (ADR 0019 b19)"
 
 
 # --- AA-760: muted text contrast and the unmetered portal session -----------------------------------------------------

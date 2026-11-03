@@ -2074,6 +2074,28 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   core's `insert_sql()` (it targets `shared.llm_call_log`) or the CIS contract views (guarded by that test). Coverage
   omits the copy (tested in CIS).
 
+## AI boundary for high-risk advice (AA-820)
+
+The CRM sells non-AA ancillaries (flights, insurance, visas, transfers, fees; root ADR 0019 b6), so it is where an AI
+feature could drift into advice the Anthropic Usage Policy (effective 12/11/2026) calls high-risk. The rule:
+
+- **No CRM AI feature advises or decides about a specific client on insurance (choice, cover, underwriting or
+  claims), visas and immigration, financing, instalments or credit, refunds or claims, unless a qualified agency member
+  reviews each recommendation, with authority to change it, before it reaches the client, and the client is clearly
+  told that AI was used.** The disclosure need not name the provider or the model.
+- General travel information that does not apply a rule to one client's situation ("a visa on arrival exists for many
+  nationalities") is not advice (the policy's exclusion for general information).
+- Today this holds by design: the only AI feature is the reply / follow-up draft, which a member copies and sends by
+  hand (`approval_required: true`, CRM-33a above), under the staff `AiNotice`. A new AI feature that touches these
+  topics (an insurance or visa suggester, an auto-reply, a traveller-facing chat) must add the review step and the
+  disclosure before it ships, and its design cites this section.
+- The agency-facing wording is in the terms of use (`web/lib/i18nTerms.ts`, keys `terms.ai.highRisk` and
+  `terms.ai.prohibited`, page `/legal/terms#ai`), which summarise the AI Schedule v1.0 (root
+  `docs/legal/tenant-ai-schedule.md`, approved by the tech lead under ADR 0019 b20; counsel reviews it before the first
+  paying agency). The Content studio terms §3 (`portal/app/terms/page.tsx`) carry the same Schedule; both take its
+  version and the provider policy links from an `aiTerms.ts` copy (`portal/app/_legal/`, `web/lib/`), kept equal by
+  `api/tests/unit/test_portal_guards.py`. AA-Booking `CONTEXT.md` holds the same rule for Booking.
+
 ## AA support access L2 + break-glass L3 (AA-971, CRM-13b)
 
 Design v3 §4.8 (L2, L3), §2.3 "Support banner", S-04, WF-12; root ADR 0006b decision 6; crm-033.
