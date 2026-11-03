@@ -7,8 +7,12 @@ alarms used, so the recipients are the same):
 
 - **state checks** from the job sampler's 5-minute read (:mod:`app.jobs.metrics`): ``jobs_stuck`` (due queued row
   > 900 s while no healthy job runs), ``jobs_overdue`` (a running row past 2 x its expected time), ``audit_export_lag``
-  (>= 180 min), ``audit_partitions`` (< 1 month ahead), ``audit_verify_lag`` (>= 50 h). One e-mail per check per UTC
-  day while it lasts.
+  (>= 180 min), ``audit_partitions`` (< 1 month ahead), ``audit_verify_lag`` (>= 50 h), and the CRM's daily AI
+  budget (AA-1025 H1c, the app profile of :mod:`app.llm.app_profile`): ``llm_app_spend_near`` when today's (UTC) AI
+  spend of every agency together passes 80 % of ``default_daily_budget_usd`` and ``llm_app_spend_cap`` at 100 % (the
+  gateway then refuses every call ``app_budget_exhausted``), the thresholds of the shared core's ``budget.threshold``;
+  two checks so a cap reached after the near e-mail still mails. No daily budget = no check. One e-mail per check per
+  UTC day while it lasts.
 - **events** raised where the code already writes the alarm line, with :func:`emit` (sync, never raises): the
   break-glass opening and the owner not mailed (one e-mail per session), an ops release incomplete at T-21 or withdrawn
   (per release), a refused CIS membership event (per event), the membership feed stuck (per UTC day) and a bulk reveal
@@ -39,6 +43,7 @@ from typing import Any, Protocol
 
 import asyncpg
 
+from app.aa_llm import budget as llm_budget
 from app.jobs import queue
 
 log = logging.getLogger(__name__)
@@ -82,6 +87,19 @@ CHECKS: dict[str, Check] = {
         "Agency audit not verified",
         "An agency's exported audit has not been verified for 50 hours or more: no partition can be dropped for any "
         "agency. Read the crm_audit_retention rows and the audit_verify_failed lines.",
+    ),
+    "llm_app_spend_near": Check(
+        "CRM AI spend near its daily budget",
+        "The CRM's AI spend today (every agency together) passed 80 % of the daily budget of its app profile. At 100 % "
+        "the CRM gateway refuses every AI call (app_budget_exhausted) until the UTC day ends and agencies reply by "
+        "hand. Check the CRM's AI calls on the platform console, then raise the budget on AI providers > App profiles "
+        "(row crm) if the traffic is real.",
+    ),
+    "llm_app_spend_cap": Check(
+        "CRM AI spend reached its daily budget",
+        "The CRM reached the daily AI budget of its app profile: its gateway refuses every AI call "
+        "(app_budget_exhausted) until the UTC day ends and agencies reply by hand. Check the CRM's AI calls on the "
+        "platform console, then raise the budget on AI providers > App profiles (row crm) if the traffic is real.",
     ),
     "breakglass_opened": Check(
         "Break-glass access opened",
@@ -189,8 +207,28 @@ def emit(check: str, scope: Any = None, **details: Any) -> None:
 # ── state checks ───────────────────────────────────────────────────────────────────────────────
 
 
-def state_findings(sample: Any, audit: Any = None) -> list[Finding]:
-    """Findings of one sampler read (:class:`app.jobs.metrics.Sample`, :class:`app.jobs.metrics.AuditSample`)."""
+def spend_findings(spend: Any) -> list[Finding]:
+    """The daily budget finding of one read (:class:`app.llm.app_profile.DaySpend`, None = no budget or unreadable):
+    ``llm_app_spend_cap`` at 100 % (a budget of 0 is reached at once: the CRM makes no AI call), ``llm_app_spend_near``
+    from 80 %. Pure."""
+    if spend is None:
+        return []
+    spent, cap = float(spend.spent_usd), float(spend.cap_usd)
+    threshold = llm_budget.threshold(spent, cap)
+    if threshold is None:
+        return []
+    pct = None if cap <= 0 else round(100.0 * spent / cap, 1)
+    check = "llm_app_spend_cap" if threshold == llm_budget.THRESHOLD_CAP else "llm_app_spend_near"
+    summary = f"spent {spent:.4f} USD of the {cap:.4f} USD daily budget" + (f" ({pct} %)" if pct is not None else "")
+    details = {"day": spend.day, "spent_usd": f"{spent:.6f}", "cap_usd": f"{cap:.4f}", "threshold": threshold}
+    if pct is not None:
+        details["used_pct"] = str(pct)
+    return [Finding(check, summary, details=details)]
+
+
+def state_findings(sample: Any, audit: Any = None, spend: Any = None) -> list[Finding]:
+    """Findings of one sampler read (:class:`app.jobs.metrics.Sample`, :class:`app.jobs.metrics.AuditSample`,
+    :class:`app.llm.app_profile.DaySpend`)."""
     out: list[Finding] = []
     if sample.oldest_queued_age_s > STUCK_AFTER_S:
         out.append(
@@ -209,6 +247,7 @@ def state_findings(sample: Any, audit: Any = None) -> list[Finding]:
             out.append(Finding("audit_partitions", f"{audit.partition_months_ahead} month(s) ahead"))
         if audit.verify_lag_hours >= AUDIT_VERIFY_LAG_H:
             out.append(Finding("audit_verify_lag", f"{int(audit.verify_lag_hours)} hours unverified"))
+    out += spend_findings(spend)
     return out
 
 
@@ -316,11 +355,17 @@ class AlertPublisher:
 
 
 async def run_checks(
-    pool: asyncpg.Pool, publisher: AlertPublisher, sample: Any, audit: Any = None, now: datetime | None = None
+    pool: asyncpg.Pool,
+    publisher: AlertPublisher,
+    sample: Any,
+    audit: Any = None,
+    now: datetime | None = None,
+    *,
+    spend: Any = None,
 ) -> dict[str, str]:
     """One tick: the state checks of this read plus the events raised since the last tick. Events whose alert failed
     are put back for the next tick (state checks are simply evaluated again). Never raises."""
-    return await _publish(pool, publisher, state_findings(sample, audit), now)
+    return await _publish(pool, publisher, state_findings(sample, audit, spend), now)
 
 
 async def flush_events(pool: asyncpg.Pool, publisher: AlertPublisher, now: datetime | None = None) -> dict[str, str]:

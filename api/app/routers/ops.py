@@ -12,6 +12,12 @@ AA-964 (crm.ops.v1 1.6, root ADR 0009 §8): ``GET /llm/calls?from&to&tenant_id&s
 ledger rows (``crm.llm_call``, scrubbed fields only) newest first, for the CIS admin Calls tab
 (:func:`console.platform_llm_calls`; one ``ops_read`` event in each agency whose rows were returned). crm.ops.v1 1.7
 (S263 F1, crm-037): ``status`` adds the ledger v2 values ``billed_unusable`` and ``truncated``.
+AA-1025 H1c (crm.ops.v1 1.10, root ADR 0009 §4): ``GET /llm/app-profile`` (any OPS reader) and ``PUT /llm/app-profile``
+(``crm-platform-admin``), the CRM app profile (``crm.llm_app_profile``, crm-041: AI switch, bulk pause, default daily
+budget, degrade mode; :mod:`app.llm.app_profile`). The CIS admin relays the PUT when it edits the ``crm`` row of its
+App profiles card; the whole profile is sent. A platform setting, not an agency's: no agency audit event (CIS writes
+its own audit row; the CRM row keeps ``updated_by`` = ``platform:<staff sub>``). 503 ``app_profile_unavailable`` before
+crm-041 is applied.
 AA-992 (crm.ops.v1 1.4, the CIS admin page /admin/data-coverage): ``GET /data-coverage``, platform-wide counts only
 (agencies and members per status, the AA catalog cache); no per-agency audit event (:func:`console.platform_coverage`).
 AA-939 (card CRM-11, Q1 6.3): members, member deactivation, owner recovery open / complete.
@@ -63,6 +69,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Annotated, Literal
 
 from fastapi import Depends, HTTPException, Query, Request
@@ -72,6 +79,7 @@ from app.auth.identity_config import GROUP_CRM_PLATFORM_ADMIN, OPS
 from app.auth.route_guard import Caller, class_router, current_caller, require_group
 from app.db import request_pool
 from app.jobs import queue
+from app.llm import app_profile
 from app.llm.usage import MAX_DAYS, llm_usage
 from app.members import recovery, studio
 from app.members.mail import require_mailer
@@ -329,6 +337,36 @@ class LlmCalls(_Out):
     next_cursor: str | None
 
 
+# crm.ops.v1 1.10 (AA-1025 H1c): the CRM app profile.
+DegradeMode = Literal["manual_reply_needed"]
+
+
+class AppProfileOut(_Out):
+    app: Literal["crm"]
+    ai_enabled: bool
+    bulk_paused: bool
+    default_daily_budget_usd: str | None
+    degrade_mode: DegradeMode
+    disabled_reason: str | None
+    updated_at: str | None
+
+
+class AppProfileIn(_In):
+    """The whole profile (CIS sends its row after the edit). Switching AI off needs ``disabled_reason``."""
+
+    ai_enabled: bool
+    bulk_paused: bool = False
+    default_daily_budget_usd: Annotated[Decimal | None, Field(ge=0, le=100000, decimal_places=4)] = None
+    degrade_mode: DegradeMode = "manual_reply_needed"
+    disabled_reason: Annotated[str | None, Field(max_length=app_profile.REASON_MAX)] = None
+
+
+def _profile_out(p: app_profile.AppProfile) -> dict:
+    out = p.as_dict()
+    out.pop("updated_by", None)  # a staff id: CIS shows the date, never who
+    return out
+
+
 # crm.ops.v1 1.4 (AA-992): platform-wide counts for the CIS admin page /admin/data-coverage. Counts only.
 class AgencyCounts(_Out):
     active: int
@@ -456,6 +494,28 @@ async def get_llm_usage(
         raise HTTPException(status_code=422, detail="invalid_range")
     pool = await request_pool(request)
     return {"from": from_.isoformat(), "to": to.isoformat(), "rows": await llm_usage(pool, from_, to)}
+
+
+# ── AA-1025 H1c: the CRM app profile (crm.ops.v1 1.10) ─────────────────────────────────────────────────────────
+@router.get("/llm/app-profile", response_model=AppProfileOut)
+async def get_llm_app_profile(request: Request, caller: Reader) -> dict:
+    pool = await request_pool(request)
+    try:
+        return _profile_out(await app_profile.read(pool))
+    except app_profile.AppProfileUnavailable:
+        raise HTTPException(status_code=503, detail="app_profile_unavailable") from None
+
+
+@router.put("/llm/app-profile", response_model=AppProfileOut)
+async def put_llm_app_profile(request: Request, body: AppProfileIn, caller: PlatformAdmin) -> dict:
+    pool = await request_pool(request)
+    try:
+        saved = await app_profile.write(pool, body.model_dump(), actor=f"platform:{caller.sub}")
+    except ValueError:
+        raise HTTPException(status_code=422, detail="invalid_app_profile") from None
+    except app_profile.AppProfileUnavailable:
+        raise HTTPException(status_code=503, detail="app_profile_unavailable") from None
+    return _profile_out(saved)
 
 
 # ── AA-964: the CRM ledger rows (crm.ops.v1 1.6, the CIS admin Calls tab) ──────────────────────────────────────

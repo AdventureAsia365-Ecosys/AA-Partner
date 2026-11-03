@@ -69,6 +69,7 @@ REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = (
     "crm-038",  # AA-959 workflows + tasks (contract: workflow_rule, workflow_run, task title / client / run, digest)
     "crm-039",  # AA-939 follow-up: the partner-account clean-up reads crm.studio_invitation (contract: policy)
     "crm-040",  # AA-1027 F3: crm.ai_draft, the AI drafts of the trip workspace (expand: new table + guard)
+    "crm-041",  # AA-1025 H1c: crm.llm_app_profile, the CRM app profile (contract: MIG-4, applied before this code)
 )
 REQUIRED_SCHEMA_VERSION = max(REQUIRED_SCHEMA_VERSIONS)
 

@@ -80,10 +80,11 @@ export function draftErrorKey(detail: string): string {
 /** A draft the gateway did not write (refused, error, cut at its token limit): the reason key, "write it by hand". */
 export function fallbackKey(result: Pick<DraftResult, "outcome" | "refusal_code" | "truncated">): string {
   if (result.truncated) return "aiDraft.fallback.truncated";
-  if (result.refusal_code === "budget_exhausted" || result.refusal_code === "spend_unreadable") {
+  // AA-1025 H1c: the CRM app profile's refusals (AI off for the whole CRM, its daily budget used up) read the same.
+  if (["budget_exhausted", "spend_unreadable", "app_budget_exhausted"].includes(result.refusal_code ?? "")) {
     return "aiDraft.fallback.budget";
   }
-  if (result.refusal_code === "stage_disabled") return "aiDraft.fallback.paused";
+  if (result.refusal_code === "stage_disabled" || result.refusal_code === "app_disabled") return "aiDraft.fallback.paused";
   if (result.refusal_code === "rate_limited") return "aiDraft.fallback.rate_limited";
   return "aiDraft.fallback.generic";
 }

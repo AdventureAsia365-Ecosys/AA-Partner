@@ -173,6 +173,13 @@ OPS_ALLOWED_KEYS: frozenset[str] = frozenset(
         "traveller_count",
         "agency_count",
         "suppressed_cells",
+        # the CRM app profile (crm.ops.v1 1.10, AA-1025 H1c): switches and one budget figure, no staff id
+        "ai_enabled",
+        "bulk_paused",
+        "default_daily_budget_usd",
+        "degrade_mode",
+        "disabled_reason",
+        "updated_at",
     }
 )
 

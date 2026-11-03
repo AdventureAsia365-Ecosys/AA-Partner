@@ -279,6 +279,19 @@ SCENARIOS: list[tuple[str, str, str, Any, Any, str, int, str | None]] = [
     ("GET", "/llm/usage", f"{PREFIX}/llm/usage?from=2026-10-24&to=2026-10-01", None, None, "reader", 422,
      "invalid_range"),
     ("GET", "/data-coverage", f"{PREFIX}/data-coverage", None, None, "reader", 200, None),
+    # crm.ops.v1 1.10 (AA-1025 H1c): the CRM app profile (no row = the defaults); the CIS admin writes it.
+    ("GET", "/llm/app-profile", f"{PREFIX}/llm/app-profile", None, None, "reader", 200, None),
+    ("PUT", "/llm/app-profile", f"{PREFIX}/llm/app-profile",
+     {"ai_enabled": False, "default_daily_budget_usd": "1.5", "disabled_reason": "zz provider outage"},
+     lambda c: c.on("INSERT INTO crm.llm_app_profile", {
+         "ai_enabled": False, "bulk_paused": False, "default_daily_budget_usd": Decimal("1.5000"),
+         "degrade_mode": "manual_reply_needed", "disabled_reason": "zz provider outage", "updated_at": NOW,
+         "updated_by": "platform:staff"}),
+     "admin", 200, None),
+    ("PUT", "/llm/app-profile", f"{PREFIX}/llm/app-profile", {"ai_enabled": False}, None, "admin", 422,
+     "invalid_app_profile"),
+    ("PUT", "/llm/app-profile", f"{PREFIX}/llm/app-profile", {"ai_enabled": True}, None, "reader", 403,
+     "missing_group"),
     # crm.ops.v1 1.6 (AA-964): the CRM ledger rows, newest first, scrubbed fields only.
     ("GET", "/llm/calls", f"{PREFIX}/llm/calls?from=2026-10-01&to=2026-10-24&limit=1", None,
      lambda c: c.on("FROM crm.llm_call", [_llm_call_row(), {**_llm_call_row(), "llm_call_id": REQ}]),
@@ -439,7 +452,7 @@ SCENARIOS: list[tuple[str, str, str, Any, Any, str, int, str | None]] = [
      {"email": "not an address", "cis_invitation_id": str(REQ)}, None, "admin", 422, "invalid_email"),
 ]  # fmt: skip
 # AA-979: routes that write no agency audit (the CIS tenant of a studio invitation may have no CRM agency).
-NO_AGENCY_AUDIT = {"/tenants/{tenant_id}/studio-invitations"}
+NO_AGENCY_AUDIT = {"/tenants/{tenant_id}/studio-invitations", "/llm/app-profile"}  # + AA-1025: a platform setting
 
 
 def test_every_ops_route_answers_inside_the_allow_list(ops_app: Any, pools: LocalPools) -> None:

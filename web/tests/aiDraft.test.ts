@@ -144,6 +144,8 @@ describe("AI draft rules", () => {
     expect(draftErrorKey("something_new")).toBe("aiDraft.error.generic");
     expect(fallbackKey({ outcome: "refused", refusal_code: "budget_exhausted", truncated: false })).toBe("aiDraft.fallback.budget");
     expect(fallbackKey({ outcome: "refused", refusal_code: "stage_disabled", truncated: false })).toBe("aiDraft.fallback.paused");
+    expect(fallbackKey({ outcome: "refused", refusal_code: "app_disabled", truncated: false })).toBe("aiDraft.fallback.paused");
+    expect(fallbackKey({ outcome: "refused", refusal_code: "app_budget_exhausted", truncated: false })).toBe("aiDraft.fallback.budget");
     expect(fallbackKey({ outcome: "refused", refusal_code: "rate_limited", truncated: false })).toBe("aiDraft.fallback.rate_limited");
     expect(fallbackKey({ outcome: "error", refusal_code: null, truncated: true })).toBe("aiDraft.fallback.truncated");
     expect(fallbackKey({ outcome: "error", refusal_code: null, truncated: false })).toBe("aiDraft.fallback.generic");

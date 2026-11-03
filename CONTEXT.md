@@ -321,6 +321,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-038` | `api/migrations/038_crm_workflows_tasks.sql` | CRM-29a Module 10 workflows + tasks (AA-959; **contract** class under ADR 0017: new columns, a CHECK and a re-created hold guard on `crm.task`, a new `crm.tenant_settings` column, `crm.status_transition` rows, a replaced `crm.erase_subject`, so MIG-4 order, manual DB Migrate apply before the code PR): `crm.workflow_rule` (base template; the agency's automations: trigger `stage_enter` / `event` / `date_anchor` / `special_date` / `manual` (a task list), offset days, conditions and 1..20 steps as JSON validated by the API, active / paused / archived, `version`, `template_key` of the AA library template, one live rule per template; crm_app no DELETE) and `crm.workflow_run` (base template; one run of a rule for one trip or one client, `UNIQUE (tenant, rule, trigger_key)` = the idempotent tick, active -> completed / stopped / failed, `step_index`, `next_at`, `stop_reason`, a log of codes and ids; hold guard; crm_app no DELETE); `crm.task.traveler_id` (a client task: a trip or a client, never both), `title_enc` (vault DEK: a custom task, kind family `custom_<hex>`), `workflow_run_id`; `crm.tenant_settings.task_digest`; `crm.erase_subject` = the crm-033 text + the workflow tables (trip, traveller and agency scopes) |
 | `crm-039` | `api/migrations/039_crm_partner_account_cleanup.sql` | S263 AA-939 follow-up (**contract**: a changed policy): `studio_invitation_platform` (crm-020) also lets `job:crm_partner_accounts` read `crm.studio_invitation` (USING only; its WITH CHECK and guard CRM37 refuse that actor's writes), so the partner-account clean-up sees every studio link |
 | `crm-040` | `api/migrations/040_crm_ai_draft.sql` | AA-1027 F3 (**expand**: one new table + guard): `crm.ai_draft` (one row per answered AI draft of the trip workspace: kind, ledger call id, prompt version, the draft with its placeholders under the vault DEK, one `decision` pending -> accepted / discarded with an optional R39 `feedback_code`), guard `crm.guard_ai_draft` (CRM47; `decision`, not `status`, so no `status_transition` rows); cascades from its trip, no `erase_subject` change |
+| `crm-041` | `api/migrations/041_crm_llm_app_profile.sql` | AA-1025 H1c (**contract**: REVOKE of the default privileges, so MIG-4): `crm.llm_app_profile` (platform configuration, at most one row `app = 'crm'`: `ai_enabled`, `bulk_paused`, `default_daily_budget_usd` 0..100000, `degrade_mode` `manual_reply_needed`, `disabled_reason` <= 500, `updated_at` / `_by`), no seed row (no row = AI on, no daily budget); crm_app SELECT, INSERT, UPDATE (no DELETE: a deleted row would switch AI back on), no reader grant |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -381,7 +382,8 @@ queued / running rows as information, exempt kinds left out). Daily or slower ki
 `app/observability/ops_alerts.py` replaced the CRM CloudWatch alarms (root `docs/audits/2026-11-01-S263-alerting-cost/
 diet.md`). The job sampler (`app/jobs/metrics.py`, every 5 minutes, API process) evaluates the **state checks**
 `jobs_stuck` (due row > 900 s, no healthy job running), `jobs_overdue`, `audit_export_lag`, `audit_partitions`,
-`audit_verify_lag`, and drains the **events** the code raises with `ops_alerts.emit(check, scope, **ids)` next to the
+`audit_verify_lag`, the CRM's daily AI budget `llm_app_spend_near` (80 %) and `llm_app_spend_cap` (100 %; AA-1025 H1c,
+`app_profile.read_day_spend`, only when the app profile sets a daily budget), and drains the **events** the code raises with `ops_alerts.emit(check, scope, **ids)` next to the
 log lines it already wrote: `breakglass_opened`, `breakglass_owner_not_mailed` (per session), `ops_release_incomplete_t21`,
 `ops_release_withdrawn` (per release), `membership_apply_refused` (per event), `membership_feed_stuck` (per day),
 `bulk_reveal` (per member and hour). Each finding is e-mailed once on the platform alerts SNS topic (env
@@ -2033,6 +2035,18 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   message, optional instruction), the draft with the staff `AiNotice`, a feedback select, Copy and accept (clipboard;
   sending stays the member's own message) / Discard; disabled with the reason without the plan or with AI off (the
   owner gets the Settings > AI link). R39 `validation` and the stored scrubbed prompt come with CRM-33b.
+- **App profile** (AA-1025 H1c, crm-041, `app/llm/app_profile.py`; root ADR 0009 §4): the CRM's row of the
+  ecosystem app profiles, kept in `crm` (ADR 0008a §6). The CIS admin edits it on AI providers › Providers › App
+  profiles and relays the whole profile to `PUT /crm/ops/v1/llm/app-profile` (crm.ops.v1 1.10, the staff member's own
+  token, `crm-platform-admin`; `GET` for any OPS reader; no agency audit event, CIS audits the edit). The gateway reads
+  it right after the stage profile and refuses first: AI off `app_disabled` (class `disabled`), the daily budget of
+  every agency together (`crm.llm_usage_daily`, guardrail rows included) reached `app_budget_exhausted` (class
+  `budget`), that spend unreadable `spend_unreadable`; one refused row at 0 USD, the draft says "reply by hand"
+  (`aiDraft.fallback.paused` / `.budget`). The read fails open (no table, no row or a read error = AI on, no daily
+  budget); each agency's own monthly budget still applies after it. The CRM's own signal of that budget is the job
+  sampler's ops checks `llm_app_spend_near` / `llm_app_spend_cap` (one AA ops e-mail per check and UTC day on the
+  platform alerts topic, the recipients of the CIS ops e-mail): CIS cannot read the CRM ledger (ADR 0008a), so there
+  is no CIS bell for it.
 - **Stage profiles and the shared core** (S263 gateway plan F1 + F2, crm-037, `app/llm/profiles.py`): each CRM stage
   has a profile in `crm` (`crm.llm_stage_profile`: role, kill switch `is_active`, `max_attempts` <= 6,
   `route_deadline_s`, degrade mode `manual_reply_needed`) and a route (`crm.llm_stage_route`: Bedrock model ids in
