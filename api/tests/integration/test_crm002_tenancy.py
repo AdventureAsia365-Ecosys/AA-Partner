@@ -75,6 +75,8 @@ PLATFORM_TABLES = {
     "tenant column, no PII (crm-037, AA-964)",
     "llm_stage_route": "the route of each AI stage (Bedrock model, family, catalog prices), AA configuration, no "
     "tenant column, no PII (crm-037, AA-964)",
+    "llm_app_profile": "the CRM app profile (AI switch, daily budget), one AA configuration row, no tenant column, no "
+    "PII (crm-041, AA-1025)",
 }
 # Append-only tenant tables (crm-003): tenant column, RLS and policy as the template, but no updated_at, no trash
 # columns; instead the append-only trigger, and crm_app may only INSERT and SELECT.
