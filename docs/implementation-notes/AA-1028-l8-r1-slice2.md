@@ -25,3 +25,42 @@ feature gate, crm.ops.v1 1.11).
   idle) or a DB Migrate apply of `crm/043_crm_entitlement_feed.sql`; then the code PR (it raises readiness to crm-043).
 - DM-7.1 row for `crm.entitlement_feed_state`: root `docs/architecture/data-standards/02-data-management.md` (root PR of
   the same set, merged before the Infra copy).
+
+## Code PR: the pull, the gate, crm.ops.v1 1.11
+
+### Decisions
+
+- **Snapshot per named tenant, not event by event.** The account feed's change bodies are small and typed; the contract
+  says a consumer that needs the full state re-reads the snapshot. The pull keeps no inbox: the projection is
+  state-based and idempotent, so a replayed page writes nothing (unchanged projection = no write, no audit event).
+- **A due-now hook every 2 minutes, not a Recurring kind.** A Recurring kind is always queued ahead and must be listed as
+  idle-exempt in AA-CIS-Infra `owners.yaml` and `run_migration.py` (an Infra PR); a due-now row exists only while it runs
+  (seconds), like the hourly catalog sync. Feature changes reach the CRM within about 2 minutes.
+- **No snapshot call for a tenant the CRM does not hold** (`held()` first): most CIS tenants have no CRM agency.
+- **Hourly reconcile of every agency** (`registry.agencies`): an agency created in the CRM after its tenant's last CIS
+  event would otherwise wait for the next CIS event.
+- **No CIS crm subscription = free, no feature.** CIS is the only source (ADR 0019 d1); existing Dev agencies lose
+  `ai_assist` etc. on the first run until CIS staff attach the crm add-on with the `tenant_provision` saga. `crm.core`
+  absent does not lock the agency (the CRM free plan stays usable; the nav by entitlement is R3).
+- **`member_limit` kept when CIS gives no `crm.seats`** (a canceled add-on): never drops below what the agency had.
+- **Status writes reuse the membership feed's rules**: lock only an active agency, lift only a `cis_tenant` lock.
+- **`whatsapp_sms` gates connect, test and send**; reading the status, refresh and disconnect stay open so an agency
+  that lost the feature can see and remove its connection. The other four codes have no feature to gate yet.
+- **crm.ops.v1 1.11 is additive**: `PUT /entitlements-allowed` stays a route and answers 409
+  `entitlements_managed_by_cis` (nothing read or written); `Entitlements.managed_by` (cis / ops) is a new field.
+- **`app.entitlements.FEATURES` is the one list** (the console imports it).
+
+### Tradeoffs
+
+- One snapshot GET per changed tenant per run (tens of tenants on Dev) against an incremental apply of event bodies: the
+  snapshot is always the truth and needs no inbox table or erase registration.
+- The two CIS feeds may both lock an agency (`cis_tenant`); both follow the same CIS status, so they converge.
+
+### Should know
+
+- Order: crm-043 applied on Dev (DB Migrate) -> this PR (readiness requires crm-043).
+- CIS must serve `/tenant/v1` (AA-CIS-App producer PR + AA-CIS-Infra gateway route) for the pull to do anything;
+  until then it records `cis_not_found` / `cis_forbidden` and backs off, harmlessly.
+- The tenant.entitlements.v1 contract is not vendored here yet (the membership one is, with a hash pin); `parse_account`
+  checks the fields this consumer reads and ignores unknown ones.
+- Tests that need `ai_assist` write it through `entitlement_feed.apply` (the projection path), not the L1 console.
