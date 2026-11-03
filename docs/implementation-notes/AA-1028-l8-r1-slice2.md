@@ -39,13 +39,21 @@ feature gate, crm.ops.v1 1.11).
 - **No snapshot call for a tenant the CRM does not hold** (`held()` first): most CIS tenants have no CRM agency.
 - **Hourly reconcile of every agency** (`registry.agencies`): an agency created in the CRM after its tenant's last CIS
   event would otherwise wait for the next CIS event.
-- **No CIS crm subscription = free, no feature.** CIS is the only source (ADR 0019 d1); existing Dev agencies lose
-  `ai_assist` etc. on the first run until CIS staff attach the crm add-on with the `tenant_provision` saga. `crm.core`
-  absent does not lock the agency (the CRM free plan stays usable; the nav by entitlement is R3).
+- **No CIS crm subscription = free, no feature, except before the first projection (review fix).** CIS is the only
+  source (ADR 0019 d1), but CIS 355 backfilled no crm subscription, so a plain projection would wipe every existing Dev
+  agency's `ai_assist` on the first run. Adoption guard: a row with `projected_at` NULL whose account has no crm
+  subscription in any status is left as the L1 console wrote it (`awaiting_cis_count`, log
+  `crm_entitlement_awaiting_cis`); the CIS lock still applies. Once CIS has a crm row (even canceled) the projection
+  takes over; after that an account without one projects free. `crm.core` absent does not lock the agency (the CRM
+  free plan stays usable; the nav by entitlement is R3).
 - **`member_limit` kept when CIS gives no `crm.seats`** (a canceled add-on): never drops below what the agency had.
 - **Status writes reuse the membership feed's rules**: lock only an active agency, lift only a `cis_tenant` lock.
 - **`whatsapp_sms` gates connect, test and send**; reading the status, refresh and disconnect stay open so an agency
-  that lost the feature can see and remove its connection. The other four codes have no feature to gate yet.
+  that lost the feature can see and remove its connection. Review fix: the workflow `send_text` step
+  (`skipped_feature_not_allowed`, `workflow_send` denied) and the dispatcher's `TextSender` (message `failed`
+  `feature_not_allowed`, `message_send` denied, checked before the credential is read) check it too, so a connected
+  Twilio account stops sending for automations and texts queued before the feature was removed. Web labels for both
+  codes (EN / VI). `TEXT_FEATURE` lives in `app.messaging.state`. The other four codes have no feature to gate yet.
 - **crm.ops.v1 1.11 is additive**: `PUT /entitlements-allowed` stays a route and answers 409
   `entitlements_managed_by_cis` (nothing read or written); `Entitlements.managed_by` (cis / ops) is a new field.
 - **`app.entitlements.FEATURES` is the one list** (the console imports it).
@@ -64,3 +72,11 @@ feature gate, crm.ops.v1 1.11).
 - The tenant.entitlements.v1 contract is not vendored here yet (the membership one is, with a hash pin); `parse_account`
   checks the fields this consumer reads and ignores unknown ones.
 - Tests that need `ai_assist` write it through `entitlement_feed.apply` (the projection path), not the L1 console.
+
+### Review fixes (S266 fix pass)
+
+- Adoption guard and the two extra `whatsapp_sms` checks above; unit tests (`test_entitlement_feed.py`,
+  `test_workflows_engine.py`, `test_messaging_sender.py`) and integration tests (`test_crm043_entitlement_feed.py`
+  adoption case, `test_messaging_db.py` queued text after the feature was removed).
+- Deploy order still matters for the live 403 check: attach crm.core to the E2E agency with the CIS saga first (then
+  ai_assist is projected), and show a 403 on `whatsapp_sms` (crm.pro only).

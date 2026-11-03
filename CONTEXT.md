@@ -2289,10 +2289,15 @@ entitlements). `crm_entitlement_pull` (`app/cis/entitlement_feed.py`) makes `crm
   integrity) is counted and the run goes on.
 - Enforcement (`app/entitlements.py`, `require_feature`): `ai_assist` (AI drafts, AA-1027 F3) and `whatsapp_sms`
   (connecting an account, the test message and a send; status, composer state, refresh and disconnect stay open) answer
-  403 `feature_not_allowed` with a `denied` audit event. `stripe_connect`, `campaigns`, `custom_domain` and
+  403 `feature_not_allowed` with a `denied` audit event. `whatsapp_sms` is also checked where no route is: a workflow
+  `send_text` step is skipped `skipped_feature_not_allowed` (audited `denied`), and the dispatcher's text sender fails a
+  queued SMS / WhatsApp `feature_not_allowed` at send time, so automations and texts queued before the feature was
+  taken away send nothing. `stripe_connect`, `campaigns`, `custom_domain` and
   `insights_export` have no CRM feature yet; each gates its entry with the same call when it is built.
-- An agency whose tenant has no CIS crm subscription is projected as free with no allowed feature: CIS staff add the
-  add-on with the CIS `tenant_provision` saga (attach mode). `/crm/health/ready` reports `entitlement_feed` in one word
+- Adoption guard: an agency never projected before (`projected_at` NULL, what the L1 console wrote) whose CIS account
+  has no crm subscription in any status keeps its plan, seats and features (`awaiting_cis`, logged; CIS 355 created no
+  crm subscription for the agencies that existed before). Once CIS holds a crm row the projection follows it (free with
+  no feature after a cancel or offboard). CIS staff add the add-on with the CIS `tenant_provision` saga (attach mode). `/crm/health/ready` reports `entitlement_feed` in one word
   (never fails readiness).
 
 ## Content studio invitations (AA-979 CRM-P2b, root ADR 0010a)
