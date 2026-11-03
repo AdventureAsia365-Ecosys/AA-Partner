@@ -452,14 +452,17 @@ async def test_entitlements_opt_out_and_reads_are_on_record(app_pool: asyncpg.Po
         "insights_opt_out": False,
         "managed_by": "ops",
     }
-    # AA-1028 (crm.ops.v1 1.11): the L1 write is refused; the CIS account feed projects the features instead
-    with pytest.raises(Conflict) as refused:
-        await console.allow_features(
-            app_pool, tenant_id, staff_sub=STAFF, features=["campaigns", "ai_assist"], ticket_ref="SUP-10"
-        )
-    assert refused.value.code == "entitlements_managed_by_cis"
+    # AA-1028 (crm.ops.v1 1.11): while the agency is managed_by ops (never projected from CIS) the L1 write works
+    allowed = await console.allow_features(
+        app_pool, tenant_id, staff_sub=STAFF, features=["campaigns", "ai_assist"], ticket_ref="SUP-10"
+    )
+    assert allowed["features_allowed"] == ["ai_assist", "campaigns"] and allowed["managed_by"] == "ops"
+    # the CIS account feed projects the agency: from then on the L1 write is refused and writes nothing
     projection = entitlement_feed.Projection("core", None, ("ai_assist", "campaigns"), True)
     await entitlement_feed.apply(app_pool, tenant_id, projection, entitlement_feed.RunCounts())
+    with pytest.raises(Conflict) as refused:
+        await console.allow_features(app_pool, tenant_id, staff_sub=STAFF, features=["campaigns"], ticket_ref="SUP-11")
+    assert refused.value.code == "entitlements_managed_by_cis"
     assert await console.set_insights_opt_out(
         app_pool, tenant_id, staff_sub=STAFF, opt_out=True, owner_request_ref="OWN-1"
     ) == {"opt_out": True}
@@ -482,7 +485,12 @@ async def test_entitlements_opt_out_and_reads_are_on_record(app_pool: asyncpg.Po
     assert reads == ["entitlements", "entitlements", "usage", "list"]
     writes = [(e["action"], e["reason"]) for e in await _audit(admin, tenant_id) if e["actor_kind"] == "aa_ops"
               and e["action"] != "ops_read"]  # fmt: skip
-    assert writes == [("entitlements_projected", "cis_account"), ("insights_opt_out", "opt_out")]
+    assert writes == [
+        ("entitlements_allow", None),
+        ("entitlements_projected", "cis_account"),
+        ("entitlements_allow", "entitlements_managed_by_cis"),
+        ("insights_opt_out", "opt_out"),
+    ]
 
 
 async def test_aa_raises_a_deletion_the_owner_confirms_or_declines(

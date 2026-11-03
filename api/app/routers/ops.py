@@ -35,7 +35,7 @@ POST   ``/tenants/{id}/owner-invite``              first-owner invitation (no ow
 POST   ``/tenants/{id}/owner-invite/withdraw``     S263: withdraw AA's live first-owner invitation (ticket)
 POST   ``/tenants/{id}/delete``                    S263: delete a synthetic agency (typed name, ticket; no member)
 GET    ``/tenants/{id}/entitlements``              plan, seats, features allowed, insights opt-out
-PUT    ``/tenants/{id}/entitlements-allowed``      409 entitlements_managed_by_cis since 1.11 (AA-1028)
+PUT    ``/tenants/{id}/entitlements-allowed``      allow features while managed_by ops; 409 once CIS projects (1.11)
 PUT    ``/tenants/{id}/insights-opt-out``          insights opt-out on the owner's written request (Q2 3.12)
 GET    ``/tenants/{id}/data-requests``             latest agency export / deletion requests
 POST   ``/tenants/{id}/data-requests``             raise one the owner confirms, 202

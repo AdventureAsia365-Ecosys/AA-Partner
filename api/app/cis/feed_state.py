@@ -10,6 +10,8 @@ module is on the DB-module list of ``tests/unit/test_code_rules.py``, and only t
 - :func:`advance`: moves the cursor **only from the value the caller read** (compare and set), so two pulls that
   overlap (a slow run and the next slot's) never move it backwards; records the success.
 - :func:`succeed` / :func:`fail`: the run's outcome (an error class code only, never a message).
+- :func:`reconcile_state` / :func:`reconciled` / :func:`reconcile_failed` (crm-043 only): the hourly reconcile's
+  last pass and its own consecutive failures.
 - :func:`health`: one word for ``/crm/health/ready`` (review round 1: a stuck feed must show without reading the
   table); ``app/db.py`` calls it from the readiness probe.
 """
@@ -37,9 +39,15 @@ UPDATE {table}
    SET last_error_class = $1, last_error_at = now(), failures = least(failures + 1, 1000000)
 RETURNING failures
 """
-# crm-043 only: the hourly pass that re-projects every agency.
-RECONCILE_DUE_SQL = "SELECT last_reconcile_at FROM crm.entitlement_feed_state"
-RECONCILED_SQL = "UPDATE crm.entitlement_feed_state SET last_reconcile_at = now()"
+# crm-043 only: the hourly pass that re-projects every agency, with its own consecutive failures (review fix: the
+# event pull's success resets ``failures`` every run, so the reconcile cannot count on it).
+RECONCILE_DUE_SQL = "SELECT last_reconcile_at, reconcile_failures FROM crm.entitlement_feed_state"
+RECONCILED_SQL = "UPDATE crm.entitlement_feed_state SET last_reconcile_at = now(), reconcile_failures = 0"
+RECONCILE_FAILED_SQL = """
+UPDATE crm.entitlement_feed_state
+   SET last_reconcile_at = now(), reconcile_failures = least(reconcile_failures + 1, 1000000)
+RETURNING reconcile_failures
+"""
 
 
 def _sql(template: str, table: str) -> str:
@@ -81,13 +89,28 @@ async def fail(pool: asyncpg.Pool, error_class: str, table: str = MEMBERSHIP) ->
     return int(await pool.fetchval(_sql(FAIL_SQL, table), error_class) or 0)
 
 
-async def last_reconcile(pool: asyncpg.Pool) -> dt.datetime | None:
-    """crm-043: when the account feed last re-projected every agency (None = never)."""
-    return await pool.fetchval(RECONCILE_DUE_SQL)
+@dataclass(frozen=True)
+class ReconcileState:
+    last_at: dt.datetime | None  # None = never
+    failures: int  # consecutive passes in which at least one agency failed
+
+
+async def reconcile_state(pool: asyncpg.Pool) -> ReconcileState:
+    """crm-043: when the account feed last re-projected every agency, and how many passes in a row had a failure."""
+    row = await pool.fetchrow(RECONCILE_DUE_SQL)
+    if row is None:
+        raise RuntimeError(f"{ENTITLEMENT} has no row")
+    return ReconcileState(row["last_reconcile_at"], int(row["reconcile_failures"] or 0))
 
 
 async def reconciled(pool: asyncpg.Pool) -> None:
+    """A pass in which every agency was projected (or ignored): the failure count goes back to 0."""
     await pool.execute(RECONCILED_SQL)
+
+
+async def reconcile_failed(pool: asyncpg.Pool) -> int:
+    """A pass that went past at least one failing agency; returns the consecutive failing passes so far."""
+    return int(await pool.fetchval(RECONCILE_FAILED_SQL) or 0)
 
 
 def health_word(state: FeedState, now: dt.datetime) -> str:

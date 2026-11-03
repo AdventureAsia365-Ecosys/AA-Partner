@@ -358,7 +358,7 @@ queued / running rows as information, exempt kinds left out). Daily or slower ki
 | `crm_offboard` | per owner step (queued in the request's transaction) | AA-942: `mode=export` builds and seals the agency export; `mode=erase` erases the agency, deletes its objects, destroys its keys, writes the receipt. Not deploy-gate exempt |
 | `crm_dispatch` | per queued message (after the 10 s undo delay for a user action) | AA-942: the dispatcher gate at send time (trashed, archived, no marketing consent -> dropped; no sender -> held). Not deploy-gate exempt. AA-993 G4b (crm-023): a `crm.dispatch_attempt` row is committed **before** the provider call and closed with the decision; a run that finds an open attempt (stopped between the send and its decision) holds the row `send_uncertain` (message `failed` / `send_uncertain`) instead of sending again, and a run cancelled before the sender was called closes it `not_sent`. So it is **not deploy-blocking** any more (it was from G5 until G4b) |
 | `crm_membership_pull` | 20 s, Recurring (next slot queued at each worker maintenance pass, about every 30 s when idle) | AA-978: pulls `<CIS_API_URL>/tenant/membership/v1/events` with an M2M token of scope `cis.tenant/read` (section "CIS membership feed"). Deploy-gate exempt and DB Migrate idle exempt (Infra `owners.yaml`), like the heartbeat; a CIS failure ends the run successfully with the error class in `crm.membership_feed_state` and backs off (20 s doubling to 5 min) |
-| `crm_entitlement_pull` | every 2-minute slot, due-now hook (`app.cis.entitlement_feed.EntitlementPullSchedule`, key `crm_entitlement_pull:slot:<n>`) | AA-1028 R1 slice 2: pulls `<CIS_API_URL>/tenant/v1/account-events` and the snapshot of each agency an event names (section "CIS account feed"), plus an hourly pass over every agency. Not deploy-gate or DB Migrate exempt (a row exists only while due or running, seconds); a CIS failure ends the run successfully with the error class in `crm.entitlement_feed_state` and backs off. Counts only |
+| `crm_entitlement_pull` | every 2-minute slot, due-now hook (`app.cis.entitlement_feed.EntitlementPullSchedule`, key `crm_entitlement_pull:slot:<n>`) | AA-1028 R1 slice 2: pulls `<CIS_API_URL>/tenant/v1/account-events` and the snapshot of each agency an event names (section "CIS account feed"), plus an hourly pass over every agency. Not deploy-gate or DB Migrate exempt (a row exists only while due or running, seconds); a failing agency in the hourly pass is counted and skipped (`reconcile_failures`); a CIS failure ends the run successfully with the error class in `crm.entitlement_feed_state` and backs off. Counts only |
 | `crm_stage_date_rule` | hourly, due-now hook (`app.stages_job.HourlyStageDateRule`, key per UTC hour) | AA-943: per active agency, "today" in `tenant_settings.timezone`: booked -> travelling on the start date (reason `date_rule_gate_unmet` + an urgent task), pre_departure -> travelling, travelling -> completed on the end date, one `return_date_missing` task for a travelling trip without one. AA-946: booked -> travelling says `date_rule` when Stage 3 is complete (s3 = 100, recomputed) and `date_rule_gate_unmet` + the urgent task only when it is not; one `stage3_due_t21` task for a booked trip within 21 days of departure with s3 < 100; deletes e-mail codes older than 24 hours. Counts only. Not deploy-gate exempt |
 | `crm_fx_fetch` | daily, due-now hook from 00:00 UTC (`app.fx.fetch.DailyFxSchedule`, key `crm_fx_fetch:<date>`) | AA-944: the platform FX rates in `crm.fx_rate_platform` (`ON CONFLICT DO NOTHING`, the only writer): `FX_PROVIDER=synthetic` a fixed USD table incl. VND (Dev), `live` ExchangeRate-API open access (USD base, VND crosses) + ECB (EUR base), fawazahmed0 stored as a cross-check only (a gap > 1 % is logged and counted). Counts only. Not deploy-gate exempt |
 | `crm_mail_ingest` | per UTC minute, only while `raw/` of the ingest bucket holds objects (`app.mail.ingest.MailIngestScan` hook lists one key; payload `{"purpose": "mail_ingest"}`, never an object key) | AA-945: up to 50 forwarded mails per run: parse, `ingest_tx`, thread, store under the mail DEK, keep allowed attachments as documents, delete the raw object; an unknown address is deleted and counted (`MailIngestDropped`, card R). Not deploy-gate exempt |
@@ -1817,9 +1817,10 @@ operations in `app/ops/console.py`):
   `ticket:<REF>`): create agency (`app.agencies.provision_agency` create-only, no member; 201, an existing id 409 `tenant_exists` with nothing written; an id whose agency is in the trash, e.g. a deleted test agency, 409 `tenant_deleted`: the id is never reused, create a new CIS tenant (AA-1031, crm.ops.v1 1.9)), lock / unlock
   (active <-> locked; a no-op writes nothing), first-owner invite (409 `owner_exists` / `owner_invite_pending` /
   `has_travellers` (any traveller row incl. trashed, or any stored inquiry) / `member_limit_reached`; the shared
-  `team.create_invitation`; the address never stored in clear, logged or returned), allowed features (refused since
-  crm.ops.v1 1.11, AA-1028: 409 `entitlements_managed_by_cis`; the CIS account feed projects them; GET `/entitlements`
-  says `managed_by` cis / ops), insights opt-out (`tenant_entitlement.insights_opt_out`,
+  `team.create_invitation`; the address never stored in clear, logged or returned), allowed features (crm.ops.v1
+  1.11, AA-1028: written only while the agency is `managed_by` ops, never projected from CIS; once the CIS account feed
+  has projected it, 409 `entitlements_managed_by_cis`, audited as denied; GET `/entitlements` says `managed_by` cis /
+  ops), insights opt-out (`tenant_entitlement.insights_opt_out`,
   crm-011), AA data requests (`agency_export` / `agency_deletion` -> a `crm.erasure_request` the owner must confirm in
   Settings > Data and privacy; no job until then; crm-011 trigger CRM18), job retry (failed `crm_intake_process` /
   `crm_dispatch` / `crm_offboard` of this agency only, 404 `job_not_found` otherwise; locked agency 409), owner
@@ -2280,7 +2281,10 @@ entitlements). `crm_entitlement_pull` (`app/cis/entitlement_feed.py`) makes `crm
   as the membership feed), at most 5 a run; the feed only names the tenants that changed: each one the CRM holds
   (active or locked) is projected once per run from `GET /tenant/v1/tenants/{id}/account` (no snapshot call for a CIS
   tenant without a CRM agency). Once an hour (`last_reconcile_at`) every agency is projected, so an agency created
-  after its tenant's last CIS event is covered. Scope `cis.tenant/read`, the CRM's M2M client (`M2M_CLIENT`).
+  after its tenant's last CIS event is covered; an agency whose snapshot fails is counted (`reconcile_failed_count`)
+  and the pass goes on, with its own consecutive count (`reconcile_failures`, crm-043, never reset by the event pull):
+  the next pass comes after 5, 10, 20, 40 minutes, then hourly, and 5 failing passes in a row log
+  `crm_entitlement_feed_stuck part=reconcile`. Scope `cis.tenant/read`, the CRM's M2M client (`M2M_CLIENT`).
 - The projection (`entitlement_feed_tx`, actor `platform:feed-tenant-account`, audit `aa_ops`): `plan` = the CIS crm
   subscription's plan while live (core / pro), else free (display only); `allowed_features` = the codes whose
   `crm.<code>` key is entitled; `member_limit` = `crm.seats` (kept when CIS gives none); `projected_at` = now. An
@@ -2297,7 +2301,11 @@ entitlements). `crm_entitlement_pull` (`app/cis/entitlement_feed.py`) makes `crm
 - Adoption guard: an agency never projected before (`projected_at` NULL, what the L1 console wrote) whose CIS account
   has no crm subscription in any status keeps its plan, seats and features (`awaiting_cis`, logged; CIS 355 created no
   crm subscription for the agencies that existed before). Once CIS holds a crm row the projection follows it (free with
-  no feature after a cancel or offboard). CIS staff add the add-on with the CIS `tenant_provision` saga (attach mode). `/crm/health/ready` reports `entitlement_feed` in one word
+  no feature after a cancel or offboard). CIS staff add the add-on with the CIS `tenant_provision` saga (attach mode).
+  While an agency is not projected (`managed_by` ops: no CIS tenant, such as the CRM-seeded E2E agencies, or held
+  here) AA still sets its allowed features on the L1 console (`PUT /entitlements-allowed`); once projected, 409
+  `entitlements_managed_by_cis`. No revoke path yet once CIS manages an agency (no saga cancel, no override endpoint):
+  slice 3. `/crm/health/ready` reports `entitlement_feed` in one word
   (never fails readiness).
 
 ## Content studio invitations (AA-979 CRM-P2b, root ADR 0010a)

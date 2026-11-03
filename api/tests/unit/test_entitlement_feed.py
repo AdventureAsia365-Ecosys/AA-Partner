@@ -96,7 +96,7 @@ class Transport:
 
 def pool(*, statuses: dict[uuid.UUID, str | None] | None = None, cursor: str | None = None, failures: int = 0,
          last_error_at: dt.datetime | None = None, reconciled_at: dt.datetime | None = NOW,
-         entitlement: dict[str, Any] | None = None, lock: dict[str, Any] | None = None,
+         reconcile_failures: int = 0, entitlement: dict[str, Any] | None = None, lock: dict[str, Any] | None = None,
          agencies: list[uuid.UUID] = ()) -> ScriptedConn:  # fmt: skip
     statuses = statuses or {}
     conn = ScriptedConn()
@@ -104,7 +104,8 @@ def pool(*, statuses: dict[uuid.UUID, str | None] | None = None, cursor: str | N
                                                 "last_error_at": last_error_at, "last_ok_at": None})  # fmt: skip
     conn.on("SET feed_cursor", 1)
     conn.on("RETURNING failures", failures + 1)
-    conn.on("SELECT last_reconcile_at", reconciled_at)
+    conn.on("SELECT last_reconcile_at", {"last_reconcile_at": reconciled_at, "reconcile_failures": reconcile_failures})
+    conn.on("RETURNING reconcile_failures", reconcile_failures + 1)
     conn.on("FROM crm.audit_export_agencies()", [
         {"tenant_id": t, "exported_until": NOW, "verified_until": None, "last_seq": 0} for t in agencies])  # fmt: skip
     # entitlement_feed_tx: the agency's status (the GUC set just before names the tenant)
@@ -346,9 +347,43 @@ async def test_hourly_reconcile_projects_every_agency() -> None:
     transport = Transport(page([], ""), ok(account(A)), HttpResponse(404, b"{}"))
     result = await make(transport)(conn, JOB)  # type: ignore[arg-type]
     assert result["reconciled_count"] == 1 and result["applied_count"] == 1 and result["ignored_count"] == 1
-    assert conn.sql("SET last_reconcile_at = now()") == [()]
+    assert conn.sql("SET last_reconcile_at = now(), reconcile_failures = 0") == [()]
+    assert result["reconcile_failed_count"] == 0
     conn = pool(reconciled_at=None, agencies=[])
     assert (await make(Transport(page([], "")))(conn, JOB))["reconciled_count"] == 1  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_agency_does_not_stop_the_reconcile(caplog: pytest.LogCaptureFixture) -> None:
+    """Review fix: one agency's snapshot fails (a CIS 5xx); the agencies after it are still projected, the event pull's
+    success does not hide it (the reconcile keeps its own count) and the next pass comes sooner."""
+    conn = pool(statuses={A: "active", B: "active"}, reconciled_at=NOW - dt.timedelta(hours=2), agencies=[A, B])
+    transport = Transport(page([], ""), HttpResponse(503, b"{}"), ok(account(B)))
+    result = await make(transport)(conn, JOB)  # type: ignore[arg-type]
+    check_payload(result, what="result")
+    assert result["status"] == "ok" and result["reconcile_failed_count"] == 1 and result["applied_count"] == 1
+    assert transport.urls[-1] == feed.account_url(BASE, B)  # B after the failing A
+    assert conn.sql("RETURNING reconcile_failures") == [()]
+    assert conn.sql("SET last_reconcile_at = now(), reconcile_failures = 0") == []
+    assert conn.sql("SET last_error_class") == []  # the event pull's own health is not touched
+    assert any("crm_entitlement_reconcile_failed" in r.message for r in caplog.records)
+    assert not any("crm_entitlement_feed_stuck" in r.message for r in caplog.records)
+    # the retry comes sooner than an hour and backs off; RECONCILE_STUCK failing passes in a row log the alarm
+    assert feed.reconcile_wait(0) == feed.RECONCILE_EVERY
+    assert [feed.reconcile_wait(n) for n in (1, 2, 3, 4, 5, 50)] == [dt.timedelta(minutes=m) for m in
+                                                                     (5, 10, 20, 40, 60, 60)]  # fmt: skip
+    conn = pool(statuses={A: "active"}, reconciled_at=NOW - dt.timedelta(minutes=6), reconcile_failures=1,
+                agencies=[A])  # fmt: skip
+    transport = Transport(page([], ""), HttpResponse(503, b"{}"))
+    caplog.clear()
+    conn.on("RETURNING reconcile_failures", feed.RECONCILE_STUCK)
+    result = await make(transport)(conn, JOB)  # type: ignore[arg-type]
+    assert result["reconciled_count"] == 1 and result["reconcile_failed_count"] == 1
+    assert any("crm_entitlement_feed_stuck part=reconcile" in r.message for r in caplog.records)
+    # not due yet: the last failing pass was 3 minutes ago, the wait after one failure is 5 minutes
+    conn = pool(reconciled_at=NOW - dt.timedelta(minutes=3), reconcile_failures=1, agencies=[A])
+    result = await make(Transport(page([], "")))(conn, JOB)  # type: ignore[arg-type]
+    assert result["reconciled_count"] == 0
 
 
 @pytest.mark.asyncio
@@ -416,7 +451,9 @@ async def test_feed_state_names_only_its_two_tables() -> None:
     with pytest.raises(ValueError, match="unknown feed state table"):
         await feed_state.load(conn, "crm.member")  # type: ignore[arg-type]
     assert await feed_state.health(conn, configured=True, table=feed_state.ENTITLEMENT) == "unknown"  # type: ignore[arg-type]
-    assert await feed_state.last_reconcile(conn) is None  # type: ignore[arg-type]
+    with pytest.raises(RuntimeError, match="has no row"):
+        await feed_state.reconcile_state(conn)  # type: ignore[arg-type]
+    assert await feed_state.reconcile_failed(conn) == 0  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio

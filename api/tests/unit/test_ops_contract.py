@@ -400,9 +400,11 @@ SCENARIOS: list[tuple[str, str, str, Any, Any, str, int, str | None]] = [
     ("POST", "/tenants/{tenant_id}/delete", f"{T}/delete", {"agency_name": "Lữ hành Sen Vàng"}, None, "admin", 422,
      "invalid_request"),
     ("GET", "/tenants/{tenant_id}/entitlements", f"{T}/entitlements", None, None, "reader", 200, None),
-    # AA-1028 (1.11): CIS manages the allowed features; the L1 write is refused
+    # AA-1028 (1.11): the L1 write while the agency is managed_by ops; 409 once CIS projected it
     ("PUT", "/tenants/{tenant_id}/entitlements-allowed", f"{T}/entitlements-allowed",
-     {"features_allowed": ["ai_assist"], "ticket_ref": TICKET}, None, "admin", 409, "entitlements_managed_by_cis"),
+     {"features_allowed": ["ai_assist"], "ticket_ref": TICKET}, None, "admin", 200, None),
+    ("PUT", "/tenants/{tenant_id}/entitlements-allowed", f"{T}/entitlements-allowed",
+     {"features_allowed": ["ai"], "ticket_ref": TICKET}, None, "admin", 422, "invalid_feature"),
     ("PUT", "/tenants/{tenant_id}/insights-opt-out", f"{T}/insights-opt-out",
      {"opt_out": True, "owner_request_ref": "OWN-1"}, None, "admin", 200, None),
     ("PUT", "/tenants/{tenant_id}/insights-opt-out", f"{T}/insights-opt-out", {"opt_out": True}, None, "admin",

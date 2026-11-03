@@ -8,7 +8,8 @@ tenant.entitlements.v1 feed and snapshots.
 - Suspension in CIS (in_service false) locks the agency with ``lock_source = cis_tenant``; reinstatement lifts it; an
   AA lock is never lifted by CIS.
 - A tenant the CRM has no agency for is ignored (no snapshot call); the cursor moves and a second run with nothing new
-  writes nothing; the hourly reconcile projects an agency no event named.
+  writes nothing; the hourly reconcile projects an agency no event named, and goes past an agency whose snapshot
+  fails (counted with its own failure count, retried sooner, reset by a clean pass).
 - Adoption guard: an agency the L1 console set up (projected_at NULL) keeps its features while CIS has no crm
   subscription for it (``awaiting_cis``); once CIS attaches one, the projection takes over.
 """
@@ -60,6 +61,7 @@ class Cis:
         self.events: list[dict[str, Any]] = []
         self.accounts: dict[str, dict[str, Any]] = {}
         self.snapshots: list[str] = []
+        self.failing: set[str] = set()  # tenants whose snapshot answers 503
 
     def account(self, tenant: uuid.UUID, *, in_service: bool = True, plan: str | None = "crm.core",
                 ents: dict[str, str | None] | None = None) -> None:  # fmt: skip
@@ -87,6 +89,8 @@ class Cis:
         if path.startswith("/tenant/v1/tenants/"):
             tenant = path.split("/")[4]
             self.snapshots.append(tenant)
+            if tenant in self.failing:
+                return HttpResponse(503, b'{"error":"unavailable","message":"x"}')
             if tenant not in self.accounts:
                 return HttpResponse(404, b'{"error":"not_found","message":"x"}')
             return HttpResponse(200, json.dumps(self.accounts[tenant]).encode())
@@ -103,7 +107,7 @@ async def cis(admin: asyncpg.Connection) -> Cis:
     # The singleton is shared by every test of the session: start from no cursor, no failure, a fresh reconcile.
     await admin.execute(
         "UPDATE crm.entitlement_feed_state SET feed_cursor = NULL, failures = 0, last_error_class = NULL, "
-        "last_error_at = NULL, last_reconcile_at = now()"
+        "last_error_at = NULL, last_reconcile_at = now(), reconcile_failures = 0"
     )
     return Cis()
 
@@ -189,6 +193,34 @@ async def test_the_hourly_reconcile_projects_an_agency_no_event_named(
     assert await admin.fetchval(
         "SELECT last_reconcile_at > now() - interval '1 minute' FROM crm.entitlement_feed_state"
     )
+
+
+async def test_the_reconcile_goes_past_a_failing_agency(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection, cis: Cis
+) -> None:
+    bad, _ = await _agency(app_pool)
+    good, _ = await _agency(app_pool)
+    cis.account(bad)
+    cis.account(good, plan="crm.pro", ents=ALL | {"crm.seats": "6.00"})
+    cis.events.clear()
+    cis.failing.add(str(bad))
+    await admin.execute("UPDATE crm.entitlement_feed_state SET last_reconcile_at = now() - interval '2 hours'")
+    result = await _job(cis)(app_pool, JOB)
+    check_payload(result, what="result")
+    assert result["status"] == "ok" and result["reconciled_count"] == 1 and result["reconcile_failed_count"] == 1
+    assert (await _entitlement(app_pool, good))["plan"] == "pro"  # projected although bad failed
+    assert (await _entitlement(app_pool, bad))["managed_by"] == "ops"
+    state = await admin.fetchrow("SELECT failures, reconcile_failures, last_reconcile_at > now() - interval '1 minute' "
+                                 "AS fresh FROM crm.entitlement_feed_state")  # fmt: skip
+    assert (state["failures"], state["reconcile_failures"], state["fresh"]) == (0, 1, True)
+    # the next pass is due after 5 minutes (not an hour), and a clean pass resets the reconcile's count
+    assert (await _job(cis)(app_pool, JOB))["reconciled_count"] == 0
+    await admin.execute("UPDATE crm.entitlement_feed_state SET last_reconcile_at = now() - interval '6 minutes'")
+    cis.failing.clear()
+    result = await _job(cis)(app_pool, JOB)
+    assert result["reconciled_count"] == 1 and result["reconcile_failed_count"] == 0
+    assert (await _entitlement(app_pool, bad))["managed_by"] == "cis"
+    assert await admin.fetchval("SELECT reconcile_failures FROM crm.entitlement_feed_state") == 0
 
 
 async def test_an_agency_set_up_before_cis_keeps_its_features_until_cis_attaches_the_crm_add_on(

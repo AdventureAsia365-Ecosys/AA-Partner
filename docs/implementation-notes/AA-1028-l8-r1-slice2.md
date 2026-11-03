@@ -54,8 +54,19 @@ feature gate, crm.ops.v1 1.11).
   `feature_not_allowed`, `message_send` denied, checked before the credential is read) check it too, so a connected
   Twilio account stops sending for automations and texts queued before the feature was removed. Web labels for both
   codes (EN / VI). `TEXT_FEATURE` lives in `app.messaging.state`. The other four codes have no feature to gate yet.
-- **crm.ops.v1 1.11 is additive**: `PUT /entitlements-allowed` stays a route and answers 409
-  `entitlements_managed_by_cis` (nothing read or written); `Entitlements.managed_by` (cis / ops) is a new field.
+- **crm.ops.v1 1.11 is additive**: `Entitlements.managed_by` (cis / ops) is a new field. Fix pass 2 (re-review
+  finding 2): `PUT /entitlements-allowed` keeps writing while the agency is `managed_by` ops (never projected: an agency
+  with no CIS tenant, such as the CRM-seeded E2E agencies 'Lữ hành Sen Vàng' bab16039-a064-517f-a99f-172b729ad3c4,
+  southern-cross and harbour-lights, or one the adoption guard holds) and answers 409 `entitlements_managed_by_cis`
+  (audited `denied`, nothing written) only once the pull projected the row. The check and the write are one statement
+  (`ON CONFLICT ... DO UPDATE ... WHERE projected_at IS NULL`; no row back = projected), so a pull that projects the row
+  concurrently wins and the console answers 409. Without this the always-409 PUT left an agency without a CIS tenant
+  with no way at all to change its features (and the new `whatsapp_sms` gate would have cut its SMS for good).
+- **Reconcile goes past a failing agency (fix pass 2, re-review minor 0).** A `_FeedError` of one agency in the hourly
+  pass is counted (`reconcile_failed_count`) and the pass goes on; the pass then records `reconcile_failures + 1` and
+  `last_reconcile_at`, and the next pass is due after 5, 10, 20, 40 minutes (then hourly) instead of every slot; a
+  clean pass resets the count; 5 failing passes in a row log `crm_entitlement_feed_stuck part=reconcile`. The event
+  pull's own error handling (stop before the cursor moves) is unchanged.
 - **`app.entitlements.FEATURES` is the one list** (the console imports it).
 
 ### Tradeoffs
@@ -66,7 +77,13 @@ feature gate, crm.ops.v1 1.11).
 
 ### Should know
 
-- Order: crm-043 applied on Dev (DB Migrate) -> this PR (readiness requires crm-043).
+- Order: crm-043 applied on Dev (DB Migrate) -> **the CIS saga PR deployed** -> this PR (readiness requires
+  crm-043). The CIS saga must be live first so that, once this pull projects an agency, the CIS path to change its
+  features exists (nothing enforces the order across repos: the PR bodies state it).
+- No revoke path in this slice (re-review minor 1): once CIS manages an agency, removing a CRM feature or cancelling
+  the add-on needs a CIS path that does not exist yet (the saga only adds or changes add-ons; no admin endpoint writes
+  `shared.tenant_entitlement_override`). Slice 3 adds it; until then a partial revoke is a saga attach of a crm plan
+  without the feature, or a lock. An agency still `managed_by` ops is changed on the L1 console as before.
 - CIS must serve `/tenant/v1` (AA-CIS-App producer PR + AA-CIS-Infra gateway route) for the pull to do anything;
   until then it records `cis_not_found` / `cis_forbidden` and backs off, harmlessly.
 - The tenant.entitlements.v1 contract is not vendored here yet (the membership one is, with a hash pin); `parse_account`
@@ -78,5 +95,8 @@ feature gate, crm.ops.v1 1.11).
 - Adoption guard and the two extra `whatsapp_sms` checks above; unit tests (`test_entitlement_feed.py`,
   `test_workflows_engine.py`, `test_messaging_sender.py`) and integration tests (`test_crm043_entitlement_feed.py`
   adoption case, `test_messaging_db.py` queued text after the feature was removed).
-- Deploy order still matters for the live 403 check: attach crm.core to the E2E agency with the CIS saga first (then
-  ai_assist is projected), and show a 403 on `whatsapp_sms` (crm.pro only).
+- Live projection check after deploy: use a CRM agency that IS a CIS tenant (Atlas & Hearth
+  9149d3c6-fcaf-4400-8e7a-4ed5e557e146): attach crm.core with the CIS saga, then ai_assist is projected
+  (`managed_by` cis, the L1 PUT answers 409) and `whatsapp_sms` answers 403 (crm.pro only). Not 'Lữ hành Sen Vàng':
+  it has no CIS tenant (the saga answers tenant_not_found, the pull ignores its 404), so it stays `managed_by` ops and
+  its features are set on the L1 console.

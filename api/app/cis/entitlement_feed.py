@@ -1,7 +1,8 @@
 """``crm_entitlement_pull`` (AA-1028 R1 slice 2, root ADR 0019 d1 / d2): the CRM consumer of the CIS contract
 ``tenant.entitlements.v1``. ``crm.tenant_entitlement`` and the CIS part of ``crm.tenant.status`` become a read-only
-projection of the CIS tenant master; the L1 console no longer writes the allowed features (crm.ops.v1 1.11:
-``PUT /entitlements-allowed`` answers 409 ``entitlements_managed_by_cis``).
+projection of the CIS tenant master; once this pull has projected an agency (``projected_at`` set) the L1 console no
+longer writes its allowed features (crm.ops.v1 1.11: ``PUT /entitlements-allowed`` answers 409
+``entitlements_managed_by_cis``; before that the agency is ``managed_by`` ops and the console still writes them).
 
 One run (a due-now maintenance hook every :data:`SLOT_SECONDS`, :class:`EntitlementPullSchedule`; not deploy-gate or
 DB Migrate exempt: a row exists only while it is due or running, a few seconds):
@@ -15,7 +16,9 @@ DB Migrate exempt: a row exists only while it is due or running, a few seconds):
    the snapshot"). Then the cursor moves (compare and set, :mod:`app.cis.feed_state`, table
    ``crm.entitlement_feed_state``).
 3. Once an hour (``last_reconcile_at``), every agency the CRM holds is projected from its snapshot too, so an agency
-   created in the CRM after its tenant's last CIS event (and any drift) is projected without waiting for one.
+   created in the CRM after its tenant's last CIS event (and any drift) is projected without waiting for one. A
+   failing agency is counted (``reconcile_failed_count``) and the pass goes on; the reconcile keeps its own failure
+   count (``reconcile_failures``) and retries sooner (5, 10, 20, 40 min) until a clean pass.
 4. A 401 / 403 / 404 / 5xx on the feed, a transport error or a malformed page records the error class and ends the run
    **successfully** (the next slot retries after the backoff); a tenant whose snapshot fails stops the run before the
    cursor moves (it is retried, never skipped). A tenant CIS answers 404 for is ignored (``unknown_tenant``).
@@ -76,6 +79,8 @@ ACCOUNT_PATH = "/tenant/v1/tenants/{tenant_id}/account"
 PAGE_LIMIT = 200
 MAX_PAGES = 5
 RECONCILE_EVERY = dt.timedelta(hours=1)
+RECONCILE_RETRY = dt.timedelta(minutes=5)  # after a failing pass: 5, 10, 20, 40 min, then hourly again
+RECONCILE_STUCK = 5  # consecutive failing passes (about 1 h 15 min) before crm_entitlement_feed_stuck
 SLOT_SECONDS = 120
 MAX_ATTEMPTS = 3
 HISTORY_DAYS = 1
@@ -128,6 +133,7 @@ class RunCounts:
     locked: int = 0
     unlocked: int = 0
     reconciled: bool = False
+    reconcile_failed: int = 0
 
     def result(self, status: str, reason_code: str | None = None) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -142,6 +148,7 @@ class RunCounts:
             "locked_count": self.locked,
             "unlocked_count": self.unlocked,
             "reconciled_count": int(self.reconciled),
+            "reconcile_failed_count": self.reconcile_failed,
         }
         if reason_code is not None:
             out["reason_code"] = reason_code
@@ -361,13 +368,32 @@ class EntitlementFeed:
                 return
 
     async def _reconcile(self, pool: asyncpg.Pool, counts: RunCounts) -> None:
-        last = await feed_state.last_reconcile(pool)
-        if last is not None and self._now() < last + RECONCILE_EVERY:
+        """Every agency from its snapshot, once per :data:`RECONCILE_EVERY`. Review fix: a failing agency (a CIS 5xx or
+        429, a malformed snapshot, a database error) no longer stops the pass, so the agencies after it are still
+        projected; it is counted and retried by the next pass, which comes sooner (:func:`reconcile_wait`). The
+        reconcile keeps its own consecutive failures (``reconcile_failures``, crm-043), which the event pull's success
+        never resets; :data:`RECONCILE_STUCK` failing passes in a row log ``crm_entitlement_feed_stuck``."""
+        state = await feed_state.reconcile_state(pool)
+        if state.last_at is not None and self._now() < state.last_at + reconcile_wait(state.failures):
             return
+        error_class: str | None = None
         for agency in await registry.agencies(pool):
-            await self._project(pool, agency.tenant_id, counts)
-        await feed_state.reconciled(pool)
+            try:
+                await self._project(pool, agency.tenant_id, counts)
+            except _FeedError as exc:
+                counts.reconcile_failed += 1
+                error_class = error_class or exc.error_class
         counts.reconciled = True
+        if error_class is None:
+            await feed_state.reconciled(pool)
+            return
+        failures = await feed_state.reconcile_failed(pool)
+        log.warning(
+            "crm_entitlement_reconcile_failed error=%s agencies=%d failures=%d",
+            error_class, counts.reconcile_failed, failures,
+        )  # fmt: skip
+        if failures >= RECONCILE_STUCK:
+            log.error("crm_entitlement_feed_stuck part=reconcile error=%s failures=%d", error_class, failures)
 
     async def _project(self, pool: asyncpg.Pool, tenant_id: uuid.UUID, counts: RunCounts) -> None:
         counts.tenants += 1
@@ -426,6 +452,14 @@ class EntitlementFeed:
             return parse_account(json.loads(resp.body), tenant_id)
         except (ValueError, AccountError):
             raise _FeedError("cis_contract") from None
+
+
+def reconcile_wait(failures: int) -> dt.timedelta:
+    """Time from the last reconcile pass to the next: :data:`RECONCILE_EVERY` after a clean pass; after ``failures``
+    failing passes in a row :data:`RECONCILE_RETRY` doubled each time, capped at :data:`RECONCILE_EVERY`."""
+    if failures <= 0:
+        return RECONCILE_EVERY
+    return min(RECONCILE_RETRY * 2 ** min(failures - 1, 10), RECONCILE_EVERY)
 
 
 # ── the schedule ────────────────────────────────────────────────────────────────────────────────────────────────────

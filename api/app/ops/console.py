@@ -122,6 +122,14 @@ ENTITLEMENT_SQL = """
 SELECT plan, member_limit, allowed_features, insights_opt_out, projected_at
   FROM crm.tenant_entitlement WHERE deleted_at IS NULL
 """
+# AA-1028 (crm.ops.v1 1.11): the L1 write only while the row is managed_by ops (never projected from CIS). The WHERE
+# on the conflict arm makes the check and the write one statement: no row back = crm_entitlement_pull projected it.
+ALLOW_FEATURES_SQL = """
+INSERT INTO crm.tenant_entitlement (allowed_features) VALUES ($1::text[])
+ON CONFLICT (tenant_id) DO UPDATE SET allowed_features = EXCLUDED.allowed_features
+ WHERE crm.tenant_entitlement.projected_at IS NULL
+RETURNING plan, member_limit, allowed_features, insights_opt_out, projected_at
+"""
 OPT_OUT_SQL = """
 INSERT INTO crm.tenant_entitlement (insights_opt_out) VALUES ($1)
 ON CONFLICT (tenant_id) DO UPDATE SET insights_opt_out = EXCLUDED.insights_opt_out
@@ -499,14 +507,31 @@ async def delete_test_agency(
 async def allow_features(
     pool: asyncpg.Pool, tenant_id: uuid.UUID, *, staff_sub: str, features: list[str], ticket_ref: str
 ) -> dict[str, Any]:
-    """AA-1028 R1 slice 2 (crm.ops.v1 1.11, root ADR 0019 d1): refused. The allowed features are the projection of
-    the tenant's CIS entitlements (``crm_entitlement_pull``); AA changes them in CIS (the tenant's CRM subscription or
-    an override), never here. 409 ``entitlements_managed_by_cis``, nothing read or written."""
-    del pool, tenant_id, staff_sub, features, ticket_ref
-    raise Conflict(
-        "entitlements_managed_by_cis",
-        "the allowed features follow the tenant's CRM subscription in CIS (Tenants); change them there",
-    )
+    """AA allows features; the owner switches them on (this never writes ``crm.tenant_settings``).
+
+    AA-1028 R1 slice 2 (crm.ops.v1 1.11, root ADR 0019 d1): only while the agency is ``managed_by`` ``ops``, that is
+    ``crm_entitlement_pull`` has never projected its CIS account (``projected_at`` NULL: no CIS tenant, or the adoption
+    guard still holds it at awaiting_cis). Once the pull has projected the row the allowed features follow the
+    tenant's CIS entitlements and this answers 409 ``entitlements_managed_by_cis`` (audited as denied, nothing
+    written): AA changes them in CIS (the tenant's CRM subscription)."""
+    if len(set(features)) != len(features) or not set(features) <= set(FEATURES):
+        raise Invalid("invalid_feature", f"unique codes from {', '.join(FEATURES)}")
+    async with platform_tx(pool, tenant_id, actor=platform_actor(staff_sub), statuses=LOCKABLE) as ctx:
+        row = await ctx.conn.fetchrow(ALLOW_FEATURES_SQL, sorted(features))
+        if row is None:  # the conflict arm's WHERE refused: crm_entitlement_pull projected the row from CIS
+            ctx.audit(
+                "entitlements_allow", "denied", "tenant_entitlement", str(tenant_id), fields=("allowed_features",),
+                reason="entitlements_managed_by_cis", object_ids=ticket_ids(ticket_ref),
+            )  # fmt: skip
+            raise Conflict(
+                "entitlements_managed_by_cis",
+                "the allowed features follow the tenant's CRM subscription in CIS (Tenants); change them there",
+            )
+        ctx.audit(
+            "entitlements_allow", "allowed", "tenant_entitlement", str(tenant_id), fields=("allowed_features",),
+            object_ids=ticket_ids(ticket_ref),
+        )  # fmt: skip
+        return _entitlements(row)
 
 
 async def set_insights_opt_out(

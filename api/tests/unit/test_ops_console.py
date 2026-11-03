@@ -427,15 +427,43 @@ async def test_first_owner_invite_refuses_a_bad_address_before_any_sql(monkeypat
 
 # ── Entitlements, insights ───────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
-async def test_allow_features_is_refused_since_cis_manages_them() -> None:
-    """AA-1028 (crm.ops.v1 1.11): the allowed features are the projection of the tenant's CIS account; the L1 write
-    answers 409 entitlements_managed_by_cis and reads or writes nothing."""
+async def test_allow_features_upserts_while_managed_by_ops_and_never_touches_tenant_settings() -> None:
+    """AA-1028 (crm.ops.v1 1.11, review fix): the L1 write still works while the agency is managed_by ops (never
+    projected from CIS: no CIS tenant, or the pull's adoption guard holds it)."""
     conn = agency_conn("locked")
+    conn.on(
+        "INSERT INTO crm.tenant_entitlement (allowed_features)",
+        {"plan": "free", "member_limit": 10, "allowed_features": ["ai_assist", "campaigns"], "insights_opt_out": False,
+         "projected_at": None},
+    )  # fmt: skip
+    out = await console.allow_features(  # type: ignore[arg-type]
+        conn, TENANT, staff_sub=STAFF, features=["campaigns", "ai_assist"], ticket_ref="SUP-4"
+    )
+    assert out["features_allowed"] == ["ai_assist", "campaigns"] and out["managed_by"] == "ops"
+    assert conn.sql("INSERT INTO crm.tenant_entitlement (allowed_features)") == [(["ai_assist", "campaigns"],)]
+    assert "WHERE crm.tenant_entitlement.projected_at IS NULL" in console.ALLOW_FEATURES_SQL
+    assert not [c for c, _ in conn.calls if "tenant_settings" in c]
+    (event,) = audits(conn)
+    assert event["action"] == "entitlements_allow" and event["outcome"] == "allowed"
+    assert event["fields"] == ["allowed_features"]
+    for bad in (["ai"], ["campaigns", "campaigns"]):
+        with raises(Invalid, "invalid_feature"):
+            await console.allow_features(conn, TENANT, staff_sub=STAFF, features=bad, ticket_ref="SUP-4")  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_allow_features_is_refused_once_cis_projected_the_agency() -> None:
+    """Once crm_entitlement_pull projected the row (projected_at set) the upsert's conflict arm writes nothing: 409
+    entitlements_managed_by_cis, audited as denied."""
+    conn = agency_conn()
+    conn.on("INSERT INTO crm.tenant_entitlement (allowed_features)", None)
     with raises(Conflict, "entitlements_managed_by_cis"):
         await console.allow_features(  # type: ignore[arg-type]
             conn, TENANT, staff_sub=STAFF, features=["campaigns", "ai_assist"], ticket_ref="SUP-4"
         )
-    assert conn.calls == []
+    (event,) = audits(conn)
+    assert event["action"] == "entitlements_allow" and event["outcome"] == "denied"
+    assert event["reason"] == "entitlements_managed_by_cis"
 
 
 @pytest.mark.asyncio
