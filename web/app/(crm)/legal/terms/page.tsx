@@ -4,7 +4,10 @@
 // reviews and sends it, and the confirmed quote and booking terms are what binds. Plain, honest text; it does not claim
 // to exclude liability, and the final legal wording is reviewed by counsel later. Strings: lib/i18nTerms.ts (EN + VI).
 // Path /legal/terms, not /terms: on the agency host the ALB sends /terms to the Content studio (lib/legal.ts).
+// AA-820 (S266): the section summarises the AI Schedule v1.0; the providers' usage policies (lib/aiTerms.ts, the same
+// list as the Content studio terms) are linked under the "terms.ai.policies" bullet.
 import { K } from "@/app/_kit";
+import { AI_PROVIDER_POLICIES } from "@/lib/aiTerms";
 import { Panel, PageTitle } from "@/components/PageTitle";
 import { crmContext } from "@/lib/crmContext";
 import { t } from "@/lib/i18n";
@@ -21,7 +24,20 @@ export default async function TermsPage() {
         <Panel title={`1. ${t(lang, "terms.ai.title")}`} testId="terms-ai">
           <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 8, fontSize: 13.5, color: K.body, lineHeight: 1.55 }}>
             {AI_TERMS.map((key) => (
-              <li key={key}>{t(lang, key)}</li>
+              <li key={key}>
+                {t(lang, key)}
+                {key === "terms.ai.policies" ? (
+                  <ul data-testid="terms-ai-policies" style={{ margin: "6px 0 0", paddingLeft: 18, display: "grid", gap: 4 }}>
+                    {AI_PROVIDER_POLICIES.map((policy) => (
+                      <li key={policy.href}>
+                        <a href={policy.href} target="_blank" rel="noopener noreferrer" style={{ color: K.accent }}>
+                          {policy.name}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </li>
             ))}
           </ul>
         </Panel>
