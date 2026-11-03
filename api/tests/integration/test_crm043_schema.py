@@ -1,7 +1,8 @@
 """crm-043 (AA-1028 R1 slice 2) on PostgreSQL 15 with the RDS role shape: the storage of crm_entitlement_pull.
 
 - registered, and a re-run as crm_owner is a no-op (one feed state row);
-- ``crm.entitlement_feed_state``: one platform row, crm_app reads and updates it, never inserts or deletes;
+- ``crm.entitlement_feed_state``: one platform row, crm_app reads and updates it, never inserts or deletes; the
+  reconcile's own failure count is never negative;
 - ``crm.tenant_entitlement.projected_at``: written by a platform actor (the account feed), refused to a member
   (the crm-008 platform-only guard, CRM04);
 - the lock source rule: the account feed actor names ``cis_tenant`` (and an unlock clears it), never
@@ -69,6 +70,10 @@ async def test_the_feed_state_is_one_row_crm_app_only_updates(app_pool: asyncpg.
                 await conn.execute(sql)
         with pytest.raises(asyncpg.CheckViolationError):
             await conn.execute("UPDATE crm.entitlement_feed_state SET feed_cursor = 'has space'")
+        # the reconcile's own failure count (review fix): never negative, reset to 0 by a clean pass
+        await conn.execute("UPDATE crm.entitlement_feed_state SET reconcile_failures = 0")
+        with pytest.raises(asyncpg.CheckViolationError):
+            await conn.execute("UPDATE crm.entitlement_feed_state SET reconcile_failures = -1")
 
 
 async def test_projected_at_is_written_by_the_account_feed_only(app_pool: asyncpg.Pool) -> None:

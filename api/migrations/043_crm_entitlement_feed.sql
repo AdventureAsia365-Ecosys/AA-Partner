@@ -13,9 +13,12 @@
 --   1. crm.entitlement_feed_state: platform singleton like crm.membership_feed_state (crm-013): the opaque cursor
 --      CIS returned last, the last success, the last error class and time, the consecutive failures it backs off on,
 --      and last_reconcile_at (the hourly pass that re-projects every agency, so an agency created in the CRM after its
---      tenant's last CIS event is projected too). No tenant column, no personal data. One row; crm_app SELECT + UPDATE.
---   2. crm.tenant_entitlement.projected_at (timestamptz, NULL = never projected from CIS: the row still holds what the
---      L1 console wrote): set by the pull on every projection; crm.ops.v1 1.11 serves it as managed_by.
+--      tenant's last CIS event is projected too) with reconcile_failures (consecutive passes in which an agency's
+--      snapshot failed: the reconcile's own health, which the event pull's success never resets). No tenant column, no
+--      personal data. One row; crm_app SELECT + UPDATE.
+--   2. crm.tenant_entitlement.projected_at (timestamptz, NULL = never projected from CIS: the row holds what the
+--      L1 console wrote, and the console may still write it): set by the pull on every projection; crm.ops.v1 1.11
+--      serves it as managed_by (the L1 PUT /entitlements-allowed answers 409 only once it is set).
 --   3. crm.sync_tenant_lock_source() (crm-013 text plus one actor): a cis_tenant source may come from the membership
 --      feed (platform:feed-tenant-membership) or the account feed (platform:feed-tenant-account); cis_membership stays
 --      the membership feed's only. Everything else as crm-013.
@@ -52,6 +55,7 @@ CREATE TABLE IF NOT EXISTS crm.entitlement_feed_state (
     last_error_at     TIMESTAMPTZ,
     failures          INTEGER NOT NULL DEFAULT 0,
     last_reconcile_at TIMESTAMPTZ,
+    reconcile_failures INTEGER NOT NULL DEFAULT 0,
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT entitlement_feed_state_singleton_chk CHECK (singleton),
     CONSTRAINT entitlement_feed_state_cursor_chk CHECK (feed_cursor IS NULL OR feed_cursor ~ '^[!-~]{1,200}$'),
@@ -59,7 +63,8 @@ CREATE TABLE IF NOT EXISTS crm.entitlement_feed_state (
         (last_error_class IS NULL) = (last_error_at IS NULL)
         AND (last_error_class IS NULL OR last_error_class ~ '^[a-z][a-z0-9_]{0,39}$')
     ),
-    CONSTRAINT entitlement_feed_state_failures_chk CHECK (failures BETWEEN 0 AND 1000000)
+    CONSTRAINT entitlement_feed_state_failures_chk CHECK (failures BETWEEN 0 AND 1000000),
+    CONSTRAINT entitlement_feed_state_reconcile_failures_chk CHECK (reconcile_failures BETWEEN 0 AND 1000000)
 );
 DROP TRIGGER IF EXISTS entitlement_feed_state_set_updated_at ON crm.entitlement_feed_state;
 CREATE TRIGGER entitlement_feed_state_set_updated_at
@@ -70,11 +75,11 @@ INSERT INTO crm.entitlement_feed_state (singleton) VALUES (true) ON CONFLICT DO 
 REVOKE ALL ON crm.entitlement_feed_state FROM PUBLIC;
 REVOKE INSERT, DELETE, TRUNCATE, REFERENCES, TRIGGER ON crm.entitlement_feed_state FROM crm_app;
 GRANT SELECT, UPDATE ON crm.entitlement_feed_state TO crm_app;
-COMMENT ON TABLE crm.entitlement_feed_state IS 'AA-1028 R1 slice 2 (crm-043): the one consumer state of the CIS feed tenant.entitlements.v1 (crm_entitlement_pull): the opaque cursor CIS returned last (printable ASCII, <= 200), the last successful pull, the last error class and time, the consecutive failures the job backs off on, and the last hourly reconcile of every agency. Platform table: no tenant column, no personal data. One row; crm_app SELECT + UPDATE only.';
+COMMENT ON TABLE crm.entitlement_feed_state IS 'AA-1028 R1 slice 2 (crm-043): the one consumer state of the CIS feed tenant.entitlements.v1 (crm_entitlement_pull): the opaque cursor CIS returned last (printable ASCII, <= 200), the last successful pull, the last error class and time, the consecutive failures the job backs off on, the last hourly reconcile of every agency and the consecutive reconcile passes in which an agency failed. Platform table: no tenant column, no personal data. One row; crm_app SELECT + UPDATE only.';
 
 -- ── 2. The projection marker ──────────────────────────────────────────────────────────────────────────────────────
 ALTER TABLE crm.tenant_entitlement ADD COLUMN IF NOT EXISTS projected_at TIMESTAMPTZ;
-COMMENT ON COLUMN crm.tenant_entitlement.projected_at IS 'AA-1028 R1 slice 2 (crm-043): when crm_entitlement_pull last wrote plan, member_limit and allowed_features from the tenant''s CIS account (tenant.entitlements.v1); NULL = never projected (the row holds what the L1 console wrote before ADR 0019 d1). Served by crm.ops.v1 1.11 as managed_by.';
+COMMENT ON COLUMN crm.tenant_entitlement.projected_at IS 'AA-1028 R1 slice 2 (crm-043): when crm_entitlement_pull last wrote plan, member_limit and allowed_features from the tenant''s CIS account (tenant.entitlements.v1); NULL = never projected (the row holds what the L1 console wrote, and the console may still write it). Served by crm.ops.v1 1.11 as managed_by.';
 
 -- ── 3. The lock source rule: cis_tenant from either CIS feed ──────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION crm.sync_tenant_lock_source() RETURNS trigger
