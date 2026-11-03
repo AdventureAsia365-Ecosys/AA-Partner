@@ -159,6 +159,16 @@ def build_prompt(kind: str, text: str, instruction: str | None) -> str:
     return "\n\n".join(parts)
 
 
+AI_GENERATOR = "Adventure Asia CRM AI assistant"
+
+
+def ai_mark(generated_at: str) -> dict[str, Any]:
+    """AA-1040 — the mark of an AI draft: always AI-generated, by the CRM assistant, at ``generated_at``. The model
+    of the call is in the ledger row (``llm_call_id``), not repeated here; a member's edits after copying the draft
+    are their own message (crm.message), which carries no mark."""
+    return {"ai_generated": True, "generator": AI_GENERATOR, "generated_at": generated_at}
+
+
 async def draft(
     ctx: TenantContext,
     gateway: LlmGateway,
@@ -212,6 +222,7 @@ async def draft(
             draft_id = None
     if result.outcome == "ok" and out_text is not None and result.placeholder_map_id:
         out_text = await restore_placeholders(ctx, vault, uuid.UUID(result.placeholder_map_id), out_text)
+    drafted_at = dt.datetime.now(dt.UTC).isoformat()
     return {
         "ai_draft_id": draft_id,
         "outcome": result.outcome,
@@ -224,5 +235,7 @@ async def draft(
         "budget_alert": result.budget_alert,
         "truncated": result.truncated,
         "approval_required": True,
-        "drafted_at": dt.datetime.now(dt.UTC).isoformat(),
+        "drafted_at": drafted_at,
+        # AA-1040 (EU AI Act Art. 50(2)): the machine-readable mark of the model's text; None when there is no text.
+        "ai": ai_mark(drafted_at) if result.outcome == "ok" and out_text is not None else None,
     }

@@ -132,6 +132,15 @@ async def test_no_row_without_a_usable_answer(result: gateway_module.GatewayResu
     c = draft_conn()
     out = await agency_ai.draft(tenant_ctx(c), ScriptedGateway(result), FakeVault(), TRIP, kind="reply", text="Hi")
     assert c.sql("INSERT INTO crm.ai_draft") == [] and out["ai_draft_id"] is None and out["text"] is None
+    assert out["ai"] is None  # AA-1040: no model text, no mark
+
+
+async def test_an_answered_draft_carries_the_machine_readable_ai_mark(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AA-1040 (EU AI Act Art. 50(2)): the draft's JSON says the text is AI-generated, by whom and when."""
+    monkeypatch.setattr(agency_ai, "restore_placeholders", _restore)
+    out = await agency_ai.draft(tenant_ctx(draft_conn()), ok_gateway(), FakeVault(), TRIP, kind="reply", text="Hi")
+    assert out["ai"] == {"ai_generated": True, "generator": agency_ai.AI_GENERATOR, "generated_at": out["drafted_at"]}
+    assert dt.datetime.fromisoformat(out["ai"]["generated_at"]).tzinfo is not None
 
 
 class SavepointConn(ScriptedConn):

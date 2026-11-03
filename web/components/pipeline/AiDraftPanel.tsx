@@ -192,8 +192,12 @@ export function AiDraftPanel({
           {usable && (
             <section data-testid="ai-draft-result" style={{ display: "grid", gap: 8, minWidth: 0 }}>
               <h3 style={{ margin: 0, fontSize: 13, fontWeight: 600, color: K.ink }}>{tr("aiDraft.result")}</h3>
+              {/* AA-1040: machine-readable mark of the model's text (EU AI Act Art. 50(2)), next to the staff notice. */}
               <div
                 data-testid="ai-draft-text"
+                data-ai-generated="true"
+                data-ai-generator={draft.ai?.generator ?? undefined}
+                data-ai-generated-at={draft.ai?.generated_at ?? draft.drafted_at}
                 style={{
                   whiteSpace: "pre-wrap",
                   overflowWrap: "anywhere",

@@ -221,6 +221,10 @@ describe("the draft drawer", () => {
     const notice = q(c, "ai-draft-result")!.querySelector('[data-testid="ai-notice"]');
     expect(notice?.getAttribute("data-ai-notice")).toBe("staff");
     expect(notice?.textContent).toBe(aiNoticeText("staff", "en"));
+    // AA-1040: the draft text carries the machine-readable mark (the API's `ai`, else the draft time).
+    const text = q(c, "ai-draft-text")!;
+    expect(text.getAttribute("data-ai-generated")).toBe("true");
+    expect(text.getAttribute("data-ai-generated-at")).toBe(result().drafted_at);
     const select = q(c, "ai-draft-result")!.querySelector("select") as HTMLSelectElement;
     await act(async () => {
       select.value = "good";
@@ -280,5 +284,19 @@ describe("the draft drawer", () => {
     await typeInto(q(c, "ai-draft-drawer")!.querySelector("textarea")!, "Can we swap the hotel?");
     await submit(c);
     expect(c.querySelector('[role="alert"]')!.textContent).toBe(MESSAGES.en["aiDraft.error.feature_not_allowed"]);
+  });
+});
+
+describe("the AI mark (AA-1040)", () => {
+  it("uses the API's mark on the draft text", async () => {
+    const ai = { ai_generated: true as const, generator: "Adventure Asia CRM AI assistant", generated_at: "2026-11-03T08:00:00+00:00" };
+    stubFetch(() => json(200, result({ ai })));
+    const c = await mount(SETTINGS);
+    await click(q(c, "ai-draft-open"));
+    await typeInto(q(c, "ai-draft-drawer")!.querySelector("textarea")!, "Is the lantern walk included?");
+    await submit(c);
+    const text = q(c, "ai-draft-text")!;
+    expect(text.getAttribute("data-ai-generator")).toBe(ai.generator);
+    expect(text.getAttribute("data-ai-generated-at")).toBe(ai.generated_at);
   });
 });

@@ -24,6 +24,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { T, sans } from "./ui";
 import { ServedBadge, plainError } from "./ServedBadge";
 import {
+  AiNotice,
   Badge,
   ConfirmModal,
   type ColumnDef,
@@ -288,7 +289,13 @@ function ReviewListInner() {
         id: "channel",
         accessorFn: (r) => channelName(r.channel),
         header: "Channel",
-        cell: (c) => <Badge tone="neutral">{channelName(c.row.original.channel)}</Badge>,
+        // AA-1040 — the "AI-assisted" label of every piece (kit AiNotice badge form), under the channel.
+        cell: (c) => (
+          <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
+            <Badge tone="neutral">{channelName(c.row.original.channel)}</Badge>
+            <AiNotice variant="publisher" form="badge" testId="my-content-ai-badge" />
+          </span>
+        ),
       },
       {
         id: "place",
@@ -524,9 +531,10 @@ function ReviewListInner() {
         width={720}
         title={
           openItem ? (
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               {pieceTitle(openItem)}
               <Badge tone="neutral">{channelName(openItem.channel)}</Badge>
+              <AiNotice variant="publisher" form="badge" testId="review-drawer-ai-badge" />
             </span>
           ) : (
             ""

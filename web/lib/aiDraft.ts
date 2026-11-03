@@ -31,6 +31,8 @@ export interface DraftResult {
   truncated: boolean;
   approval_required: true;
   drafted_at: string;
+  /** AA-1040: the machine-readable mark of the model's text (null when there is no text). */
+  ai?: { ai_generated: true; generator: string; generated_at: string } | null;
 }
 
 export interface DraftDecision {
