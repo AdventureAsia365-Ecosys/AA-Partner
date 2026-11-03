@@ -13,6 +13,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Undo2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
+  AiNotice,
   ApiError,
   Badge,
   ConfirmModal,
@@ -108,7 +109,13 @@ function PublishedListInner({ onUnpublished }: { onUnpublished?: () => void }) {
       {
         accessorKey: "channel",
         header: "Channel",
-        cell: (c) => <Badge tone="neutral">{channelName(c.row.original.channel)}</Badge>,
+        // AA-1040 — the "AI-assisted" label of every piece (kit AiNotice badge form), under the channel.
+        cell: (c) => (
+          <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
+            <Badge tone="neutral">{channelName(c.row.original.channel)}</Badge>
+            <AiNotice variant="publisher" form="badge" testId="published-ai-badge" />
+          </span>
+        ),
       },
       {
         accessorKey: "status",

@@ -142,6 +142,8 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                   <div style={{ minWidth: 0, flex: "1 1 320px" }}>
                     <div style={{ fontSize: 14, fontWeight: 600, color: T.ink, marginBottom: 3, overflowWrap: "anywhere" }}>{p.title}</div>
+                    {/* AA-1040 — the "AI-assisted" label of the piece (kit AiNotice badge form). */}
+                    <div style={{ marginBottom: 5 }}><AiNotice variant="publisher" form="badge" testId="publish-pending-ai-badge" /></div>
                     {/* AA-986 L3: persistent badge; publishing is closed for a tour AA no longer serves */}
                     {p.served_notice && <div style={{ marginBottom: 5 }}><ServedBadge fields={p} /></div>}
                     {/* AA-519 Việc 4 — Route-aware piece, distinct from a plain single-atom one. */}

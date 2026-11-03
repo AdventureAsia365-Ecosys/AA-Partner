@@ -543,6 +543,14 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
   wording there and in Settings > AI describes the F3 scrubber as it works (the trip's known details plus what it can
   detect, may not catch every detail), never an absolute promise.
   Portal: the `publisher` variant replaces the local `AiContentNotice` at review, publish and export, same sentence.
+- **AI-content mark (AA-1040, EU AI Act Art. 50)**: Content studio shows the kit badge form
+  (`<AiNotice variant="publisher" form="badge" />`, "AI-assisted", the publisher sentence as its accessible name) under
+  the channel of each My Content and Published row, in the piece drawer title and on each publish card. The
+  machine-readable mark of a piece lives in CIS (`content_piece.writer_input -> 'ai_provenance'`, `piece["ai"]`,
+  `data-ai-*` / `<meta name="ai-*">` in the WordPress post). CRM AI drafts: `POST trips/{id}/ai/draft` answers
+  `ai: {ai_generated, generator, generated_at}` (null without model text; the model is on the ledger row
+  `llm_call_id`) and the draft text element carries `data-ai-generated` / `data-ai-generated-at`. A message a member
+  writes from a draft is their own (crm.message carries no mark).
 
 ## Tenant portal (`portal/`, AA-979 CRM-P2a)
 
