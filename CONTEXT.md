@@ -382,7 +382,8 @@ queued / running rows as information, exempt kinds left out). Daily or slower ki
 `app/observability/ops_alerts.py` replaced the CRM CloudWatch alarms (root `docs/audits/2026-11-01-S263-alerting-cost/
 diet.md`). The job sampler (`app/jobs/metrics.py`, every 5 minutes, API process) evaluates the **state checks**
 `jobs_stuck` (due row > 900 s, no healthy job running), `jobs_overdue`, `audit_export_lag`, `audit_partitions`,
-`audit_verify_lag`, and drains the **events** the code raises with `ops_alerts.emit(check, scope, **ids)` next to the
+`audit_verify_lag`, the CRM's daily AI budget `llm_app_spend_near` (80 %) and `llm_app_spend_cap` (100 %; AA-1025 H1c,
+`app_profile.read_day_spend`, only when the app profile sets a daily budget), and drains the **events** the code raises with `ops_alerts.emit(check, scope, **ids)` next to the
 log lines it already wrote: `breakglass_opened`, `breakglass_owner_not_mailed` (per session), `ops_release_incomplete_t21`,
 `ops_release_withdrawn` (per release), `membership_apply_refused` (per event), `membership_feed_stuck` (per day),
 `bulk_reveal` (per member and hour). Each finding is e-mailed once on the platform alerts SNS topic (env
@@ -2042,7 +2043,10 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   every agency together (`crm.llm_usage_daily`, guardrail rows included) reached `app_budget_exhausted` (class
   `budget`), that spend unreadable `spend_unreadable`; one refused row at 0 USD, the draft says "reply by hand"
   (`aiDraft.fallback.paused` / `.budget`). The read fails open (no table, no row or a read error = AI on, no daily
-  budget); each agency's own monthly budget still applies after it.
+  budget); each agency's own monthly budget still applies after it. The CRM's own signal of that budget is the job
+  sampler's ops checks `llm_app_spend_near` / `llm_app_spend_cap` (one AA ops e-mail per check and UTC day on the
+  platform alerts topic, the recipients of the CIS ops e-mail): CIS cannot read the CRM ledger (ADR 0008a), so there
+  is no CIS bell for it.
 - **Stage profiles and the shared core** (S263 gateway plan F1 + F2, crm-037, `app/llm/profiles.py`): each CRM stage
   has a profile in `crm` (`crm.llm_stage_profile`: role, kill switch `is_active`, `max_attempts` <= 6,
   `route_deadline_s`, degrade mode `manual_reply_needed`) and a route (`crm.llm_stage_route`: Bedrock model ids in

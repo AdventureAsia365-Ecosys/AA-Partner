@@ -111,6 +111,21 @@ async def test_sample_once_hands_the_findings_to_the_publisher(caplog: pytest.Lo
 
 
 @pytest.mark.asyncio
+async def test_sample_once_checks_the_daily_budget() -> None:
+    """AA-1025 H1c: the CRM's daily AI budget (app profile) is read on each tick and handed to the checks."""
+    import datetime as dt
+    from decimal import Decimal
+
+    conn = _conn(None, []).on(
+        "FROM crm.llm_app_profile p",
+        {"cap_usd": Decimal(5), "spent_usd": Decimal("5.5"), "day": dt.date(2026, 11, 1)},
+    )
+    pub = FakePublisher()
+    await JobMetricsSampler(_pool(conn), publisher=pub).sample_once()  # type: ignore[arg-type]
+    assert [f.check for f in pub.calls[0]] == ["llm_app_spend_cap"]
+
+
+@pytest.mark.asyncio
 async def test_sample_once_never_raises_on_a_failed_read(caplog: pytest.LogCaptureFixture) -> None:
     pub = FakePublisher()
     broken_read = JobMetricsSampler(_pool(_conn(oldest=ConnectionError("db down"))), publisher=pub)  # type: ignore[arg-type]

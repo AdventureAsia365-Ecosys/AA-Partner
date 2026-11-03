@@ -12,6 +12,9 @@ when the worker is enabled and the database is configured) and independent of it
 - ``overdue_running``: running rows whose current attempt (``coalesce(progress->>'attempt_started_at', started_at)``,
   written by every claim since AA-751 B2) has run longer than :func:`app.jobs.kinds.overdue_after_seconds`
   (2 x ``EXPECTED_SECONDS[kind]``, default 300 s).
+- the CRM's daily AI budget (AA-1025 H1c, :func:`app.llm.app_profile.read_day_spend`, own statement, left out when
+  no daily budget is set, before crm-041 or on any error): today's (UTC) spend of every agency against it, for the
+  ``llm_app_spend_near`` / ``llm_app_spend_cap`` checks.
 - the audit export state (AA-940; ``crm.audit_export_agencies()`` / ``crm.audit_partition_bounds()``, own statement,
   left out before crm-007 or on any error): minutes since the oldest agency's last exported hour, whole months ahead
   that already have a partition, and the largest export-to-verification gap in hours.
@@ -36,6 +39,7 @@ from dataclasses import dataclass
 import asyncpg
 
 from app.jobs.kinds import overdue_after_seconds
+from app.llm import app_profile
 from app.mail import metrics as mail_metrics
 from app.observability import ops_alerts, reveal_meter
 
@@ -149,7 +153,8 @@ class JobMetricsSampler:
             log.warning("ops_metrics_sample_failed stage=read error=%s", type(exc).__name__)
             return None
         audit = await read_audit_sample(pool)
-        checks = await ops_alerts.run_checks(pool, self._publisher, sample, audit)
+        spend = await app_profile.read_day_spend(pool)
+        checks = await ops_alerts.run_checks(pool, self._publisher, sample, audit, spend=spend)
         log.info(
             "ops_metrics_sampled oldest_queued_age_s=%.0f overdue_running_jobs=%d running=%d due_queued_age_s=%.0f"
             " reveal_peak=%d mail_dropped=%d checks=%s",

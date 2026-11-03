@@ -9,6 +9,7 @@ import logging
 import re
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ import pytest
 
 from app.jobs import queue
 from app.jobs.metrics import AuditSample, Sample
+from app.llm.app_profile import DaySpend
 from app.observability import ops_alerts, reveal_meter
 from app.observability.ops_alerts import AlertPublisher, Finding, alert_key, render, run_checks, state_findings
 from app.ops_release import service as ops_release
@@ -106,6 +108,49 @@ def test_state_thresholds_are_the_old_alarms() -> None:
     ]
     assert all(f.scope is None for f in found)
     assert state_findings(Sample(0.0, 0, 0, 0.0), None) == []
+
+
+def _spend(spent: str, cap: str) -> DaySpend:
+    return DaySpend(day="2026-11-01", spent_usd=Decimal(spent), cap_usd=Decimal(cap))
+
+
+def test_daily_budget_checks_near_at_80_and_cap_at_100() -> None:
+    """AA-1025 H1c: the CRM's daily budget signal, the shared core's thresholds; no budget (None) = no check."""
+    assert ops_alerts.spend_findings(None) == []
+    assert ops_alerts.spend_findings(_spend("7.9999", "10")) == []
+    (near,) = ops_alerts.spend_findings(_spend("8", "10"))
+    assert (near.check, near.scope) == ("llm_app_spend_near", None)
+    assert near.summary == "spent 8.0000 USD of the 10.0000 USD daily budget (80.0 %)"
+    assert near.details == {
+        "day": "2026-11-01",
+        "spent_usd": "8.000000",
+        "cap_usd": "10.0000",
+        "threshold": "near",
+        "used_pct": "80.0",
+    }
+    (cap,) = ops_alerts.spend_findings(_spend("10.5", "10"))
+    assert (cap.check, cap.details["threshold"], cap.details["used_pct"]) == ("llm_app_spend_cap", "cap", "105.0")
+    (zero,) = ops_alerts.spend_findings(_spend("0", "0"))  # a 0 USD budget: the CRM makes no AI call
+    assert zero.check == "llm_app_spend_cap" and "used_pct" not in zero.details and "%" not in zero.summary
+
+
+def test_daily_budget_checks_join_the_state_checks_with_their_own_keys() -> None:
+    found = state_findings(Sample(0.0, 0, 0, 0.0), None, _spend("12", "10"))
+    assert [f.check for f in found] == ["llm_app_spend_cap"]
+    near_key = alert_key(ops_alerts.spend_findings(_spend("9", "10"))[0], NOW)
+    assert near_key == "crm_ops_alert:llm_app_spend_near:2026-11-01"
+    assert alert_key(found[0], NOW) == "crm_ops_alert:llm_app_spend_cap:2026-11-01"  # a cap after a near still mails
+    subject, text = render(found[0], "dev")
+    assert subject == "[AA-Partner dev] Ops check: CRM AI spend reached its daily budget"
+    assert "app_budget_exhausted" in text and "per check and UTC day" in text
+
+
+@pytest.mark.asyncio
+async def test_run_checks_publishes_the_daily_budget_finding(ledger: dict[str, Any]) -> None:
+    pub = AlertPublisher("topic-placeholder", client_factory=FakeSns)
+    sample = Sample(0.0, 0, 0, 0.0)
+    results = await run_checks(object(), pub, sample, None, NOW, spend=_spend("8.5", "10"))  # type: ignore[arg-type]
+    assert results == {"llm_app_spend_near": "sent"}
 
 
 def test_keys_are_per_event_or_per_utc_day() -> None:

@@ -14,6 +14,11 @@ The gateway (:mod:`app.llm.gateway`) reads it at the start of every call, in the
   ``budget``), unreadable refused ``spend_unreadable`` (fail closed, as the agency budget). Each agency's own monthly
   budget still applies after it.
 
+The job sampler's ops checks (:mod:`app.observability.ops_alerts`, :func:`read_day_spend`) e-mail AA ops when that
+spend passes 80 % (``llm_app_spend_near``) and 100 % (``llm_app_spend_cap``) of the daily budget, at most once per
+check and UTC day: the CRM's own signal of its daily budget on the platform alerts topic (CIS cannot read the CRM's
+ledger, ADR 0008a).
+
 A missing table (before crm-041 is applied) or an unreadable profile counts as the defaults (fail open, the CIS rule
 for the app switch: a database blip must not stop every AI call; the stage profile read that follows fails closed on
 the same blip). Platform table: no tenant column, no personal data, read on a pool connection by the ops routes (a DB
@@ -52,6 +57,17 @@ ON CONFLICT (app) DO UPDATE
        default_daily_budget_usd = EXCLUDED.default_daily_budget_usd, degrade_mode = EXCLUDED.degrade_mode,
        disabled_reason = EXCLUDED.disabled_reason, updated_at = now(), updated_by = EXCLUDED.updated_by
 RETURNING ai_enabled, bulk_paused, default_daily_budget_usd, degrade_mode, disabled_reason, updated_at, updated_by
+"""
+
+# The ops check of the daily budget (app.observability.ops_alerts): the budget and today's spend of every agency, no row
+# when no daily budget is set.
+SPEND_STATE_SQL = """
+SELECT p.default_daily_budget_usd AS cap_usd,
+       (SELECT coalesce(sum(u.cost_usd), 0) FROM crm.llm_usage_daily u
+         WHERE u.day = (now() AT TIME ZONE 'UTC')::date) AS spent_usd,
+       (now() AT TIME ZONE 'UTC')::date AS day
+  FROM crm.llm_app_profile p
+ WHERE p.app = 'crm' AND p.default_daily_budget_usd IS NOT NULL
 """
 
 log = logging.getLogger(__name__)
@@ -119,6 +135,37 @@ async def day_spend(conn: asyncpg.Connection) -> Decimal | None:
     except Exception as exc:  # noqa: BLE001 — class only
         log.warning("crm_llm_app_spend_unreadable error=%s", type(exc).__name__)
         return None
+
+
+@dataclass(frozen=True)
+class DaySpend:
+    """Today's (UTC) AI spend of every agency together against the profile's daily budget (the ops check's read)."""
+
+    day: str
+    spent_usd: Decimal
+    cap_usd: Decimal
+
+
+async def read_day_spend(pool: asyncpg.Pool) -> DaySpend | None:
+    """The daily budget and today's spend for the ops check of the job sampler (``SPEND_STATE_SQL``, one statement on
+    a pool connection). None when no daily budget is set, before crm-041, or on a read error (one warning line, class
+    only): the check simply does not run this tick. Never raises."""
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(SPEND_STATE_SQL)
+    except asyncpg.UndefinedTableError:
+        return None
+    except Exception as exc:  # noqa: BLE001 — never block the job checks
+        log.warning("crm_llm_app_spend_check_unreadable error=%s", type(exc).__name__)
+        return None
+    if row is None or row["cap_usd"] is None:
+        return None
+    day = row["day"]
+    return DaySpend(
+        day=day.isoformat() if hasattr(day, "isoformat") else str(day),
+        spent_usd=Decimal(row["spent_usd"] or 0),
+        cap_usd=Decimal(row["cap_usd"]),
+    )
 
 
 # ── the ops routes (crm.ops.v1 1.10) ─────────────────────────────────────────────────────────────────────────────

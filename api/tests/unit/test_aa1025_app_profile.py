@@ -188,3 +188,31 @@ async def test_read_and_write_say_unavailable_before_crm_041() -> None:
 @pytest.mark.asyncio
 async def test_read_without_a_row_is_the_defaults() -> None:
     assert await app_profile.read(ScriptedConn()) == app_profile.DEFAULT  # type: ignore[arg-type]
+
+
+# ── the job sampler's daily budget read (the llm_app_spend_near / _cap ops checks) ───────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_read_day_spend_returns_the_budget_and_todays_spend() -> None:
+    row = {"cap_usd": Decimal("10.0000"), "spent_usd": Decimal("8.250000"), "day": dt.date(2026, 11, 1)}
+    c = ScriptedConn().on("FROM crm.llm_app_profile p", row)
+    spend = await app_profile.read_day_spend(c)  # type: ignore[arg-type]
+    assert spend == app_profile.DaySpend(day="2026-11-01", spent_usd=Decimal("8.25"), cap_usd=Decimal(10))
+    [sql] = [flat for flat, _ in c.calls]
+    assert "crm.llm_usage_daily" in sql and "default_daily_budget_usd IS NOT NULL" in sql
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "answer",
+    [None, asyncpg.UndefinedTableError("relation does not exist"), ConnectionError("db down")],
+    ids=["no-budget", "before-crm-041", "read-error"],
+)
+async def test_read_day_spend_is_none_without_a_budget_or_on_any_error(
+    answer: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    c = ScriptedConn().on("FROM crm.llm_app_profile p", answer)
+    assert await app_profile.read_day_spend(c) is None  # type: ignore[arg-type]
+    unreadable = "crm_llm_app_spend_check_unreadable error=ConnectionError" in caplog.text
+    assert unreadable is isinstance(answer, ConnectionError)
