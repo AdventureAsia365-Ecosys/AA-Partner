@@ -50,6 +50,7 @@ DB_MODULES = frozenset(
         "app/jobs/handlers.py",  # crm.job retention (platform table)
         "app/vault/store.py",  # DEK store: crm.tenant_key, only on the connection of a TenantContext (AA-934)
         "app/llm/usage.py",  # crm.llm_usage_daily: platform rollup, no tenant rows (AA-936)
+        "app/llm/app_profile.py",  # crm.llm_app_profile: platform singleton, no tenant rows (AA-1025 H1c)
         "app/audit_export/registry.py",  # crm-007 platform functions: agency list, partition maker, drop (AA-940)
         "app/privacy/purge.py",  # expired placeholder maps, crm-009 DELETE-only purge policy, no reads (AA-938)
         "app/fx/fetch.py",  # crm.fx_rate_platform: platform reference rates, no tenant rows, insert only (AA-944)

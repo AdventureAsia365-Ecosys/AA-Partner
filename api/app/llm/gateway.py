@@ -67,6 +67,12 @@ AA-964, S263 gateway plan F1 + F2 (root ADR 0009 decisions 4-6, 8 and 13; root A
   come from ``pricing.quote`` (:mod:`app.llm.providers.bedrock`). The row's ``family`` is the maker (``anthropic``,
   ``amazon`` for the guardrail).
 
+AA-1025 H1c (root ADR 0009 §4; crm-041): the **CRM app profile** (:mod:`app.llm.app_profile`) is read right after the
+stage profile and refuses first: AI off for the whole CRM -> ``app_disabled`` (class ``disabled``), the CRM's daily
+budget (every agency together, ``crm.llm_usage_daily``) reached -> ``app_budget_exhausted`` (class ``budget``), that
+spend unreadable -> ``spend_unreadable``. Each is one 0 USD refused row, nothing scrubbed or sent. The CIS admin writes
+the profile over crm.ops.v1 (``PUT /llm/app-profile``).
+
 Slice 1 ships the stub pair (:class:`StubScrubber`, :class:`StubProvider`: deterministic, no network, cost 0) so the
 order, the refusals and the log are tested end to end before CRM-10 (scrubber) and CRM-33a (Bedrock) plug in.
 """
@@ -88,6 +94,7 @@ from app.aa_llm import budget as llm_budget
 from app.aa_llm import errors as llm_errors
 from app.aa_llm import ledger
 from app.audit import AuditEvent, current_request_id
+from app.llm import app_profile
 from app.llm.profiles import DbProfileSource, RouteEntry, StageProfile, fixed_profile
 from app.privacy.guardrails import GUARD_OPERATION, GUARD_STAGE, GuardCall, collect_guard_calls
 from app.privacy.placeholder_store import SealedMap, check_scrubber_version, seal_map, store_map
@@ -115,6 +122,9 @@ STAGE_UNROUTED = "stage_unrouted"
 PROFILE_UNAVAILABLE = "profile_unavailable"
 PROFILE_MISMATCH = "profile_mismatch"
 BUDGET_EXHAUSTED = "budget_exhausted"
+# AA-1025 H1c: the CRM app profile (crm-041, app.llm.app_profile): AI off for the whole CRM, its daily budget used up.
+APP_DISABLED = "app_disabled"
+APP_BUDGET_EXHAUSTED = "app_budget_exhausted"
 SPEND_UNREADABLE = llm_budget.REASON_SPEND_UNREADABLE
 UNROUTED_MODEL = "unrouted"
 # The stub provider's $0 test switches (Dev only: the stub never runs next to a real model). A prompt that contains
@@ -321,6 +331,12 @@ class LlmGateway:
         # 0. the stage profile and its kill switch (free: nothing scrubbed, nothing sent, no rate token used)
         profile, refusal = await self._profile(ctx, stage, role)
         first = self._entry_provider(profile.attempts[0]) if profile and profile.attempts else self.provider
+        # AA-1025 H1c: the app profile first (AI off for the whole CRM, or its daily budget used up), also free
+        app_refusal, app_error = await self._app_refusal(ctx)
+        if app_refusal is not None:
+            return await self._log(
+                ctx, stage, role, REFUSED, who=first, refusal=app_refusal, error=app_error, meta=meta
+            )
         if refusal is not None or profile is None:
             return await self._log(ctx, stage, role, REFUSED, who=first, refusal=refusal or STAGE_UNROUTED, meta=meta)
         # the per-agency cap, before anything that costs money
@@ -419,6 +435,26 @@ class LlmGateway:
         if not profile.attempts:
             return profile, STAGE_UNROUTED
         return profile, None
+
+    async def _app_refusal(self, ctx: AnyContext) -> tuple[str | None, str | None]:
+        """AA-1025 H1c: (refusal code, error class) when the CRM app profile refuses the call, else (None, None). AI
+        off -> ``app_disabled``; the daily budget of every agency together reached -> ``app_budget_exhausted``; that
+        spend unreadable -> ``spend_unreadable`` (fail closed). The profile read itself fails open
+        (:func:`app.llm.app_profile.for_call`)."""
+        app = await app_profile.for_call(ctx.conn)
+        if not app.ai_enabled:
+            log.warning("crm_llm_app_ai_off_refused")
+            return APP_DISABLED, llm_errors.DISABLED
+        if app.default_daily_budget_usd is None:
+            return None, None
+        spent = await app_profile.day_spend(ctx.conn)
+        decision = llm_budget.decide(float(spent) if spent is not None else None, float(app.default_daily_budget_usd))
+        if decision.allowed:
+            return None, None
+        if decision.reason == llm_budget.REASON_CAP:
+            log.warning("crm_llm_app_budget_refused")
+            return APP_BUDGET_EXHAUSTED, llm_errors.BUDGET
+        return SPEND_UNREADABLE, None
 
     def _entry_provider(self, entry: RouteEntry) -> Any:
         """The process's provider playing one route entry (its model and family); itself without a profile source."""
