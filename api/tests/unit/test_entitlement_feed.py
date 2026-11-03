@@ -161,7 +161,8 @@ def test_projection_rules() -> None:
     assert _proj(crm=("crm.pro", "trialing"), ents=pro) == feed.Projection("pro", 500, entitlements.FEATURES, True)
     assert _proj(crm=("crm.enterprise", "past_due")).plan == "core"  # another live plan
     assert _proj(crm=("crm.pro", "canceled"), ents={}) == feed.Projection("free", None, (), True)
-    assert _proj(crm=None, ents={"content.rewrite": "50.00"}) == feed.Projection("free", None, (), True)
+    assert _proj(crm=("crm.pro", "canceled"), ents={}).crm_subscribed is True  # a crm row in any status
+    assert _proj(crm=None, ents={"content.rewrite": "50.00"}) == feed.Projection("free", None, (), True, False)
     assert _proj(in_service=False).in_service is False
     assert _proj(ents={"crm.seats": "0.00"}).member_limit == 1
 
@@ -214,6 +215,36 @@ async def test_apply_keeps_member_limit_and_writes_nothing_when_unchanged() -> N
     conn = pool(statuses={A: "active"}, entitlement=row | {"projected_at": None})
     await feed.apply(conn, A, feed.Projection("core", None, ("ai_assist",), True), counts)  # type: ignore[arg-type]
     assert conn.sql("INSERT INTO crm.tenant_entitlement") == [("core", 7, ["ai_assist"])]
+
+
+@pytest.mark.asyncio
+async def test_apply_waits_for_cis_before_the_first_projection(caplog: pytest.LogCaptureFixture) -> None:
+    # never projected (the L1 console's row) and no crm subscription at CIS yet: nothing is wiped
+    row = {"plan": "core", "member_limit": 7, "allowed_features": ["ai_assist"], "projected_at": None}
+    no_crm = feed.Projection("free", None, (), True, False)
+    conn = pool(statuses={A: "active"}, entitlement=row)
+    counts = feed.RunCounts()
+    with caplog.at_level("INFO"):
+        assert await feed.apply(conn, A, no_crm, counts) == "awaiting_cis"  # type: ignore[arg-type]
+    assert conn.sql("INSERT INTO crm.tenant_entitlement") == [] and conn.sql("INSERT INTO crm.audit_event") == []
+    assert counts.awaiting_cis == 1 and counts.result("ok")["awaiting_cis_count"] == 1
+    assert "crm_entitlement_awaiting_cis" in caplog.text
+    # the CIS lock still applies while the features wait
+    conn = pool(statuses={A: "active"}, entitlement=row)
+    assert await feed.apply(conn, A, feed.Projection("free", None, (), False, False), counts) == "applied"  # type: ignore[arg-type]
+    assert conn.sql("INSERT INTO crm.tenant_entitlement") == [] and conn.sql("SET status = 'locked'") == [(A,)]
+    # once CIS has a crm row (here canceled) the projection follows it
+    conn = pool(statuses={A: "active"}, entitlement=row)
+    assert await feed.apply(conn, A, feed.Projection("free", None, (), True, True), counts) == "applied"  # type: ignore[arg-type]
+    assert conn.sql("INSERT INTO crm.tenant_entitlement") == [("free", 7, [])]
+    # already projected from CIS: a later account without a crm row (an erased subscription) projects normally
+    conn = pool(statuses={A: "active"}, entitlement=row | {"projected_at": NOW})
+    assert await feed.apply(conn, A, no_crm, counts) == "applied"  # type: ignore[arg-type]
+    assert conn.sql("INSERT INTO crm.tenant_entitlement") == [("free", 7, [])]
+    # no row at all: nothing to keep, the free projection is written
+    conn = pool(statuses={A: "active"})
+    assert await feed.apply(conn, A, no_crm, counts) == "applied"  # type: ignore[arg-type]
+    assert conn.sql("INSERT INTO crm.tenant_entitlement") == [("free", 10, [])]
 
 
 @pytest.mark.asyncio

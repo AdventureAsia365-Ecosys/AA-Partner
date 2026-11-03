@@ -30,6 +30,10 @@ The projection (:func:`projection`, one :func:`app.tenancy.entitlement_feed_tx` 
   the owner still switches an allowed feature on in Settings);
 - ``member_limit``: the ``crm.seats`` limit (1-500), kept as it is when CIS gives none;
 - ``projected_at`` = now; an unchanged projection writes nothing;
+- adoption guard: an agency never projected before (``projected_at`` NULL: what the L1 console wrote) whose CIS account
+  has no ``crm`` subscription in any status keeps its plan, seats and features (outcome ``awaiting_cis``, logged): CIS
+  created no crm subscription for the agencies that existed before slice 2 (CIS 355), so the first run must not wipe
+  them. Once CIS holds a crm row (any status) the projection follows it, a cancel or an offboard included;
 - status: ``in_service`` false (suspended, offboarding, closed, lead, applied) locks an active agency with
   ``lock_source = cis_tenant``; ``in_service`` true lifts a lock whose source is ``cis_tenant`` (an AA lock or a
   last-owner lock stays), as the membership feed does for tenant.locked / tenant.unlocked.
@@ -109,12 +113,14 @@ class Projection:
     member_limit: int | None
     features: tuple[str, ...]
     in_service: bool
+    crm_subscribed: bool = True  # the CIS account has a crm subscription in any status (the adoption guard)
 
 
 @dataclass
 class RunCounts:
     applied: int = 0
     unchanged: int = 0
+    awaiting_cis: int = 0
     ignored: int = 0
     rejected: int = 0
     tenants: int = 0
@@ -128,6 +134,7 @@ class RunCounts:
             "status": status,
             "applied_count": self.applied,
             "unchanged_count": self.unchanged,
+            "awaiting_cis_count": self.awaiting_cis,
             "ignored_count": self.ignored,
             "rejected_count": self.rejected,
             "tenant_count": self.tenants,
@@ -201,7 +208,7 @@ def projection(account: dict[str, Any]) -> Projection:
     features = tuple(code for code in FEATURES if f"crm.{code}" in ents)
     seats = ents.get(SEATS_KEY)
     member_limit = None if seats is None else max(1, min(int(seats), MEMBER_LIMIT_MAX))
-    return Projection(plan, member_limit, features, bool(account["in_service"]))
+    return Projection(plan, member_limit, features, bool(account["in_service"]), crm is not None)
 
 
 def status_change(in_service: bool, status: str, lock_source: str | None) -> str | None:
@@ -246,7 +253,8 @@ async def held(pool: asyncpg.Pool, tenant_id: uuid.UUID) -> bool:
 
 
 async def apply(pool: asyncpg.Pool, tenant_id: uuid.UUID, wanted: Projection, counts: RunCounts) -> str:
-    """One agency's projection in one transaction; returns the outcome (applied / unchanged / ignored / rejected)."""
+    """One agency's projection in one transaction; returns the outcome (applied / unchanged / awaiting_cis / ignored /
+    rejected)."""
     try:
         async with entitlement_feed_tx(pool, tenant_id) as ctx:
             if ctx.status not in HELD:
@@ -268,7 +276,10 @@ async def _apply_in(ctx: SystemContext, wanted: Projection, counts: RunCounts) -
     if member_limit is None:
         member_limit = int(row["member_limit"]) if row is not None else DEFAULT_MEMBER_LIMIT
     features = sorted(wanted.features)
-    changed = (
+    awaiting = row is not None and row["projected_at"] is None and not wanted.crm_subscribed
+    if awaiting:
+        log.info("crm_entitlement_awaiting_cis tenant_id=%s", ctx.tenant_id)  # kept as the L1 console left it
+    changed = not awaiting and (
         row is None
         or row["projected_at"] is None
         or row["plan"] != wanted.plan
@@ -291,7 +302,9 @@ async def _apply_in(ctx: SystemContext, wanted: Projection, counts: RunCounts) -
         await ctx.conn.execute(UNLOCK_SQL, ctx.tenant_id)
         ctx.audit("tenant_unlock", "allowed", "tenant", str(ctx.tenant_id), fields=("status",), reason="cis_account")
         counts.unlocked += 1
-    return "applied" if changed or change else "unchanged"
+    if changed or change:
+        return "applied"
+    return "awaiting_cis" if awaiting else "unchanged"
 
 
 # ── the job ─────────────────────────────────────────────────────────────────────────────────────────────────────────

@@ -9,6 +9,8 @@ tenant.entitlements.v1 feed and snapshots.
   AA lock is never lifted by CIS.
 - A tenant the CRM has no agency for is ignored (no snapshot call); the cursor moves and a second run with nothing new
   writes nothing; the hourly reconcile projects an agency no event named.
+- Adoption guard: an agency the L1 console set up (projected_at NULL) keeps its features while CIS has no crm
+  subscription for it (``awaiting_cis``); once CIS attaches one, the projection takes over.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from app.jobs.queue import Job
 from app.ops import console
 from app.tenancy import tenant_tx
 from tests.integration.test_crm005_intake import _agency
+from tests.integration.test_crm010_schema import _ctx
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -186,3 +189,28 @@ async def test_the_hourly_reconcile_projects_an_agency_no_event_named(
     assert await admin.fetchval(
         "SELECT last_reconcile_at > now() - interval '1 minute' FROM crm.entitlement_feed_state"
     )
+
+
+async def test_an_agency_set_up_before_cis_keeps_its_features_until_cis_attaches_the_crm_add_on(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection, cis: Cis
+) -> None:
+    tenant, people = await _agency(app_pool)
+    async with app_pool.acquire() as conn, conn.transaction():  # what the L1 console wrote before slice 2
+        await _ctx(conn, tenant, "platform:staff-sub-1")
+        await conn.execute(
+            "INSERT INTO crm.tenant_entitlement (plan, member_limit, allowed_features) VALUES ('core', 4, "
+            "ARRAY['ai_assist']) ON CONFLICT (tenant_id) DO UPDATE SET plan = EXCLUDED.plan, "
+            "member_limit = EXCLUDED.member_limit, allowed_features = EXCLUDED.allowed_features, projected_at = NULL"
+        )
+    cis.account(tenant, plan=None, ents={})  # CIS 355 created no crm subscription for it
+    result = await _job(cis)(app_pool, JOB)
+    assert (result["awaiting_cis_count"], result["applied_count"]) == (1, 0)
+    ent = await _entitlement(app_pool, tenant)
+    assert (ent["plan"], ent["seats_allowed"], ent["features_allowed"]) == ("core", 4, ["ai_assist"])
+    async with tenant_tx(app_pool, people[0][0], tenant) as ctx:
+        assert await entitlements.feature_allowed(ctx, "ai_assist") is True
+    # CIS staff attach crm.core: the projection takes over (seats and features from CIS)
+    cis.account(tenant)
+    assert (await _job(cis)(app_pool, JOB))["applied_count"] == 1
+    ent = await _entitlement(app_pool, tenant)
+    assert (ent["plan"], ent["seats_allowed"], ent["managed_by"]) == ("core", 3, "cis")
