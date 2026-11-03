@@ -42,7 +42,7 @@ from app.db import request_pool
 from app.errors import Invalid, Unavailable
 from app.messaging import compose, connection, health
 from app.messaging.providers import ProviderError
-from app.messaging.state import MessagingRuntime
+from app.messaging.state import TEXT_FEATURE, MessagingRuntime
 from app.permissions import Action
 from app.routers.agency import tenant_header
 from app.tenancy import TenantContext, tenant_tx
@@ -91,9 +91,6 @@ def _runtime(request: Request) -> MessagingRuntime:
     if runtime is None:
         raise Unavailable("messaging_not_configured")
     return runtime
-
-
-TEXT_FEATURE = "whatsapp_sms"
 
 
 async def _require_text(ctx: TenantContext, action: Action) -> None:

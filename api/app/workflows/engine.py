@@ -18,7 +18,9 @@
   (:func:`app.workflows.model.marketing_only`).
 - **send_text**: an approved SMS / WhatsApp template of the agency's own Twilio (a workflow never sends free text: the
   WhatsApp 24 h window, AA-958), its variables from merge fields; the same consent rule for a marketing template; a
-  client without a number, opted out, or a channel not connected: the step is skipped with that code.
+  client without a number, opted out, or a channel not connected: the step is skipped with that code. An agency whose
+  plan no longer allows ``whatsapp_sms`` (the CIS entitlement, AA-1028) sends nothing: ``skipped_feature_not_allowed``,
+  audited ``denied`` (the dispatcher's sender checks it again at send time).
 - **set_field**: the trip's ``waiting_on``, or its owner (an active member).
 - **wait**: ``next_at`` moves on (days / hours, or a date of the trip + offset at 09:00 local). The run's job is not
   queued ahead (the DB Migrate idle check counts a queued row as busy): the hourly tick queues the run again once
@@ -43,6 +45,7 @@ from zoneinfo import ZoneInfo
 
 import asyncpg
 
+from app import entitlements
 from app.dispatch import queue as dispatch
 from app.errors import Conflict, NotFound, ServiceError
 from app.mail import threads
@@ -293,6 +296,9 @@ async def _send_text(ctx: AnyContext, vault: Vault, run: Any, step: dict[str, An
     refused = await _client_ok(ctx, traveler_id)
     if refused or traveler_id is None:
         return Step(refused or "skipped_no_client")
+    if not await entitlements.feature_allowed(ctx, text_state.TEXT_FEATURE):
+        ctx.audit("workflow_send", "denied", "workflow_run", str(run["workflow_run_id"]), reason="feature_not_allowed")
+        return Step("skipped_feature_not_allowed")
     channel = step["channel"]
     connection = await text_state.connection(ctx)
     sender = text_state.sender_for(connection, channel) if connection is not None else None

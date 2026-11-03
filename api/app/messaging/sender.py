@@ -3,7 +3,9 @@ and the channel router the process registers.
 
 For one dispatch row of channel ``sms`` / ``whatsapp`` whose gate passed (inside the dispatcher's ``system_tx``):
 
-1. the row's message: an outbound ``queued`` message of a conversation with a client, else ``no_message``;
+1. the row's message: an outbound ``queued`` message of a conversation with a client, else ``no_message``; an
+   agency whose plan no longer allows ``whatsapp_sms`` (the CIS entitlement, AA-1028): the message ``failed``
+   (``feature_not_allowed``, audited ``denied``), so a text queued before the feature was taken away never leaves;
 2. the agency's connection: none, or its credential ``disconnected`` -> the message ``failed``
    (``channel_disconnected``) and the row dropped ``send_failed``: errata S247 §2 "SMS / WhatsApp blocked with a
    clear reason"; nothing is ever sent another way (no AA account exists). No sender for the channel ->
@@ -30,6 +32,7 @@ import logging
 import uuid
 from typing import Any
 
+from app import entitlements
 from app.dispatch.worker import Sender
 from app.messaging import events, state
 from app.messaging.providers import AuthRevoked, Rejected, TextOut
@@ -118,6 +121,9 @@ class TextSender:
             or row["channel"] != channel
         ):
             return "no_message"
+        if not await entitlements.feature_allowed(ctx, state.TEXT_FEATURE):
+            ctx.audit("message_send", "denied", "message", str(message_id), reason="feature_not_allowed")
+            return await self._fail(ctx, message_id, "feature_not_allowed")
         conn = await state.connection(ctx)
         provider = self.runtime.providers.get(conn["provider"]) if conn else None
         if conn is None or provider is None or conn["credential_status"] == "disconnected":

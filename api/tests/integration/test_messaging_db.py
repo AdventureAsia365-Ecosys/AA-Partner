@@ -16,6 +16,7 @@ provider (no network): the Done-when "two-way WhatsApp on a trip timeline".
   (``no_trip``), never lost.
 - The WhatsApp Test sends an approved template (409 ``template_required`` without one) and its webhook check stays
   ``pending`` until a message arrives after it.
+- AA-1028: a text queued before CIS took ``whatsapp_sms`` away fails ``feature_not_allowed`` at the dispatcher.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from typing import Any
 import asyncpg
 import pytest
 
+from app.cis import entitlement_feed
 from app.dispatch.worker import build_handler as build_dispatch
 from app.errors import Conflict, Forbidden, NotFound
 from app.jobs.queue import Job
@@ -62,6 +64,9 @@ async def _setup(pool: asyncpg.Pool) -> dict[str, Any]:
     d = await _inquiry(pool, keys, "owner")
     runtime = MessagingRuntime(keys=keys, providers={"sandbox": SandboxProvider()}, hooks_origin=ORIGIN)
     d |= {"keys": keys, "runtime": runtime}
+    # the agency's plan allows SMS and WhatsApp (the CIS projection, AA-1028; the sender checks it at send time)
+    projection = entitlement_feed.Projection("pro", None, ("whatsapp_sms",), True)
+    await entitlement_feed.apply(pool, d["tenant"], projection, entitlement_feed.RunCounts())
     async with tenant_tx(pool, d["owner"], d["tenant"], action=Action.INTEGRATIONS_MANAGE) as ctx:
         vault = Vault(keys, ctx)
         await ctx.conn.execute(
@@ -304,3 +309,15 @@ async def test_the_whatsapp_test_sends_a_template_and_waits_for_a_reply(app_pool
     await webhook.handle(app_pool, d["runtime"], _inbound(d, sender=STRANGER, body="Got it"))  # the owner replies
     async with tenant_tx(app_pool, d["owner"], d["tenant"], action=Action.INTEGRATIONS_MANAGE) as ctx:
         assert (await connection.view(ctx, d["runtime"]))["connection"]["inbound_check"] == "ok"
+
+
+async def test_a_queued_text_fails_when_cis_takes_whatsapp_sms_away(app_pool: asyncpg.Pool) -> None:
+    d = await _setup(app_pool)
+    assert await webhook.handle(app_pool, d["runtime"], _inbound(d)) == "stored"
+    sent = await _send(app_pool, d)
+    projection = entitlement_feed.Projection("core", None, (), True)  # the CRM add-on lost the feature in CIS
+    await entitlement_feed.apply(app_pool, d["tenant"], projection, entitlement_feed.RunCounts())
+    result = await _dispatch(app_pool, d, sent["dispatch_id"])
+    assert (result["status"], result["reason_code"]) == ("dropped", "send_failed")
+    (out,) = await _sql(app_pool, d["tenant"], "SELECT status, failure_code FROM crm.message WHERE direction = 'out'")
+    assert (out["status"], out["failure_code"]) == ("failed", "feature_not_allowed")

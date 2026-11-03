@@ -72,6 +72,7 @@ def _conn(message: Any = None, connection: Any = "default", window: Any = FUTURE
     conn.on("INSERT INTO crm.metric_event", uuid.uuid4())
     conn.on("RETURNING integration_credential_id", CREDENTIAL)
     conn.on("SELECT cognito_iss, cognito_sub FROM crm.member", [])
+    conn.on("FROM crm.tenant_entitlement", True)  # the agency's whatsapp_sms (AA-1028)
     return conn
 
 
@@ -262,3 +263,20 @@ async def test_events_record_a_bell_for_received_and_listeners_can_leave() -> No
         "message_id": str(MESSAGE),
         "match_method": "sender",
     }
+
+
+@pytest.mark.asyncio
+async def test_a_queued_text_fails_once_the_plan_drops_whatsapp_sms() -> None:
+    """AA-1028: a text queued before the CIS entitlement was taken away never leaves (the gate is at send time)."""
+    provider = FakeTextProvider()
+    conn = _conn().on("FROM crm.tenant_entitlement", False)
+    ctx = system_ctx(conn)
+    assert await TextSender(runtime(provider)).send(ctx, DISPATCH, "sms", MESSAGE) == "no_message"  # channel mismatch
+    conn = _conn(message=_message(channel="sms")).on("FROM crm.tenant_entitlement", False)
+    ctx = system_ctx(conn)
+    assert await TextSender(runtime(provider)).send(ctx, DISPATCH, "sms", MESSAGE) == "send_failed"
+    assert provider.sent == [] and conn.sql("SET status = 'failed'") == [(MESSAGE, "feature_not_allowed")]
+    assert conn.sql("FROM crm.messaging_connection c") == []  # nothing else read: no credential decrypted
+    assert [(e.action, e.outcome, e.reason) for e in ctx.audit_events] == [
+        ("message_send", "denied", "feature_not_allowed")
+    ]
