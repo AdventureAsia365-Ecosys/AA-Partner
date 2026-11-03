@@ -85,6 +85,7 @@ async def test_ready_when_db_answers_and_required_version_registered(created: li
         "schema_version": REQUIRED_SCHEMA_VERSION,
         "registered_keys": sorted(REQUIRED_SCHEMA_VERSIONS),
         "membership_feed": "not_configured",
+        "entitlement_feed": "not_configured",  # AA-1028
     }
 
 
@@ -120,7 +121,7 @@ async def test_the_membership_feed_shows_in_readiness_and_never_fails_it(
     created: list[dict[str, Any]], answers: dict[str, Any], row: Any, word: str
 ) -> None:
     """AA-978 review round 1: a stuck CIS feed shows on /crm/health/ready (one word), and readiness stays 200."""
-    answers[feed_state.LOAD_SQL] = row
+    answers[feed_state.LOAD_SQL.format(table=feed_state.MEMBERSHIP)] = row
     result = await Database(FEED_SETTINGS).readiness()
     assert result.ok
     assert result.body["membership_feed"] == word

@@ -41,10 +41,13 @@ async def _pool(_request: Any) -> object:
     return object()
 
 
-def _client(pools: LocalPools, monkeypatch: pytest.MonkeyPatch, role: str = "owner", provider: Any = None) -> Any:
+def _client(
+    pools: LocalPools, monkeypatch: pytest.MonkeyPatch, role: str = "owner", provider: Any = None, allowed: bool = True
+) -> Any:
     settings = pools.settings()
     app = create_app(settings, verifier=pools.verifier(settings), keys=object(), messaging_runtime=runtime(provider))
-    ctx = tenant_ctx(ScriptedConn(), role=role)
+    # AA-1028: the plan's whatsapp_sms feature (crm.tenant_entitlement.allowed_features) for the gated routes
+    ctx = tenant_ctx(ScriptedConn().on("FROM crm.tenant_entitlement", allowed), role=role)
     monkeypatch.setattr(router, "request_pool", _pool)
     monkeypatch.setattr(router, "tenant_tx", fake_tx(ctx))
     monkeypatch.setattr(router, "Vault", lambda keys, ctx: TextVault())
@@ -209,3 +212,45 @@ def test_webhooks_skip_the_per_address_public_limit(pools: LocalPools, monkeypat
         assert miss.status_code == 429 and miss.headers["Retry-After"] == "60"
         assert client.post(f"/crm/public/v1/hooks/twilio/{HOOK_ID}", content=b"a=b").status_code == 429
         assert len(handled) == before  # refused before any lookup
+
+
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        ("/crm/v1/messaging/connection", None),
+        ("/crm/v1/messaging/test", {"channel": "sms", "to": "+61491570110"}),
+        ("/crm/v1/messaging/messages", {"message_id": ID, "conversation_id": ID, "body": "Hi"}),
+    ],
+)
+def test_text_routes_need_the_whatsapp_sms_feature(
+    pools: LocalPools, monkeypatch: pytest.MonkeyPatch, path: str, body: dict[str, Any]
+) -> None:
+    """AA-1028 R1 slice 2: an agency whose plan lacks whatsapp_sms gets 403 feature_not_allowed before any provider
+    call or write (the projection of the tenant's CIS crm.whatsapp_sms entitlement)."""
+    provider = FakeTextProvider()
+    app, headers = _client(pools, monkeypatch, provider=provider, allowed=False)
+    calls: list[tuple[str, Any]] = []
+    monkeypatch.setattr(health, "test_connection", _stub(calls, "test_connection"))
+    monkeypatch.setattr(compose, "send", _stub(calls, "send"))
+    monkeypatch.setattr(connection, "connect", _stub(calls, "connect"))
+    with TestClient(app) as client:
+        if body is None:
+            resp = client.put(path, json=CONNECT, headers=headers)
+        else:
+            resp = client.post(path, json=body, headers=headers)
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["detail"] == "feature_not_allowed"
+    assert calls == []
+
+
+def test_status_and_disconnect_stay_open_without_the_feature(
+    pools: LocalPools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, headers = _client(pools, monkeypatch, allowed=False)
+    calls: list[tuple[str, Any]] = []
+    monkeypatch.setattr(connection, "view", _stub(calls, "view"))
+    monkeypatch.setattr(connection, "disconnect", _stub(calls, "disconnect"))
+    with TestClient(app) as client:
+        assert client.get("/crm/v1/messaging", headers=headers).status_code == 200
+        assert client.delete("/crm/v1/messaging/connection", headers=headers).status_code == 200
+    assert [c[0] for c in calls] == ["view", "disconnect"]

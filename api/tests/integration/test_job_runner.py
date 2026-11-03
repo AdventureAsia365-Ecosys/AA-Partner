@@ -23,6 +23,7 @@ from app.jobs.kinds import (
     DEPLOY_BLOCKING_KINDS,
     DEPLOY_GATE_EXEMPT,
     DISPATCH,
+    ENTITLEMENT_PULL,
     FX_FETCH,
     HEARTBEAT,
     JOB_RETENTION,
@@ -224,6 +225,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         (AUDIT_RETENTION, True),
         (BOOKING_SYNC, False),  # AA-947: Recurring every minute, its next slot queued ahead (exempt)
         (CATALOG_SYNC, True),  # AA-947: the hourly AA tour cache, due now
+        (ENTITLEMENT_PULL, True),  # AA-1028: the CIS account feed, one run per 2-minute slot, due now
         (FX_FETCH, True),  # AA-944: the daily FX rates, queued due now from 00:00 UTC
         (HEARTBEAT, False),
         (JOB_RETENTION, True),
@@ -252,6 +254,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         MESSAGING_HEALTH: 1,
         WORKFLOW_TICK: 1,
         PARTNER_ACCOUNTS: 1,
+        ENTITLEMENT_PULL: 1,
     }
     while await worker.run_once():
         pass

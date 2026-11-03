@@ -52,6 +52,7 @@ from app.jobs.kinds import (
     CLIENT_IMPORT,
     DATA_EXPORT,
     DISPATCH,
+    ENTITLEMENT_PULL,
     FX_FETCH,
     HEARTBEAT,
     INTAKE_PROCESS,
@@ -172,6 +173,7 @@ def build_handlers(
     studio_activation: ActivationConfig | None = None,
     messaging_runtime: MessagingRuntime | None = None,
     partner_account_cleanup_dry_run: bool = True,
+    entitlement_feed: FeedConfig | None = None,
 ) -> dict[str, Handler]:
     """Every kind the worker runs. ``keys``: the field-encryption provider the intake kind needs (AA-936); without
     it ``crm_intake_process`` jobs are retried until the provider is configured. ``audit_archive``: the two audit
@@ -189,11 +191,14 @@ def build_handlers(
     AA-979: ``studio_activation`` (``CIS_API_URL`` + the token: CIS activateInvitation; None = the job is retried).
     AA-958: ``messaging_runtime`` (the SMS / WhatsApp providers: the template sync and the daily connection check).
     S263 (AA-939 follow-up): ``partner_account_cleanup_dry_run`` (``PARTNER_ACCOUNT_CLEANUP_DRY_RUN``) for the
-    partner-account clean-up, which uses ``directory``."""
+    partner-account clean-up, which uses ``directory``.
+    AA-1028: ``entitlement_feed`` (CIS_API_URL + the M2M token, the same as the membership feed; None = the pull logs
+    not_configured)."""
     from app.audit_export import export as audit_export
     from app.audit_export import retention as audit_retention
     from app.booking.sync import BookingSync
     from app.catalog.sync import CatalogSync
+    from app.cis.entitlement_feed import EntitlementFeed
     from app.cis.membership_feed import MembershipFeed
     from app.dispatch import worker as dispatch_worker
     from app.fx import fetch as fx_fetch
@@ -248,6 +253,7 @@ def build_handlers(
         WORKFLOW_TICK: workflow_tick.build_handler(keys),
         TASK_DIGEST: task_digest.build_handler(mail_runtime),
         PARTNER_ACCOUNTS: partner_accounts.build_handler(directory, dry_run=partner_account_cleanup_dry_run),
+        ENTITLEMENT_PULL: EntitlementFeed(entitlement_feed),
     }
 
 
@@ -296,6 +302,7 @@ def build_hooks(
     from app.audit_export.export import HourlyAuditExportSchedule
     from app.audit_export.retention import DailyAuditRetentionSchedule
     from app.catalog.sync import HourlyCatalogSync
+    from app.cis.entitlement_feed import EntitlementPullSchedule
     from app.fx.fetch import DailyFxSchedule
     from app.lifecycle.job import DailyLifecycleSchedule
     from app.mail.health import DailyMailHealthSchedule
@@ -323,6 +330,7 @@ def build_hooks(
         DailyMessagingHealthSchedule(retention_utc_hour, clock),
         HourlyWorkflowTick(clock),
         DailyPartnerAccountSchedule(retention_utc_hour, clock),
+        EntitlementPullSchedule(clock),  # AA-1028: the CIS account feed, every 2 minutes
     )
 
 
@@ -351,6 +359,7 @@ SCHEDULED_KINDS: frozenset[str] = frozenset(
         MESSAGING_HEALTH,
         WORKFLOW_TICK,
         PARTNER_ACCOUNTS,  # S263: daily; a test agency's delete also queues one run for its accounts
+        ENTITLEMENT_PULL,  # AA-1028: every 2-minute slot, due now
     }
 )
 # Kinds queued by request code, one row per event (AA-936: each stored inquiry), never scheduled.

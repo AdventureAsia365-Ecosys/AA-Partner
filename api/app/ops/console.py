@@ -37,7 +37,7 @@ from typing import Any
 
 import asyncpg
 
-from app import agencies
+from app import agencies, entitlements
 from app.audit_export import registry
 from app.catalog import store as catalog_store
 from app.cis import feed_state
@@ -60,7 +60,7 @@ log = logging.getLogger(__name__)
 LOCKABLE = frozenset({"active", "locked"})
 RETRY_STATUSES = frozenset({"active", "offboarding"})
 LOCK_REASONS = ("owner_request", "payment", "abuse", "security", "test")
-FEATURES = ("ai_assist", "whatsapp_sms", "stripe_connect", "campaigns", "custom_domain", "insights_export")
+FEATURES = entitlements.FEATURES  # AA-1028: one list, app.entitlements
 DATA_REQUEST_PURPOSE = {"agency_export": "export_only", "agency_deletion": "offboard"}
 MAX_PAGE = 200
 
@@ -119,12 +119,8 @@ RETURNING purge_after
 # Any traveller row (trashed and archived ones too) or any stored inquiry (it becomes a traveller soon): a flag.
 HOLDS_TRAVELLERS_SQL = "SELECT EXISTS (SELECT 1 FROM crm.traveler) OR EXISTS (SELECT 1 FROM crm.form_submission)"
 ENTITLEMENT_SQL = """
-SELECT plan, member_limit, allowed_features, insights_opt_out FROM crm.tenant_entitlement WHERE deleted_at IS NULL
-"""
-ALLOW_FEATURES_SQL = """
-INSERT INTO crm.tenant_entitlement (allowed_features) VALUES ($1::text[])
-ON CONFLICT (tenant_id) DO UPDATE SET allowed_features = EXCLUDED.allowed_features
-RETURNING plan, member_limit, allowed_features, insights_opt_out
+SELECT plan, member_limit, allowed_features, insights_opt_out, projected_at
+  FROM crm.tenant_entitlement WHERE deleted_at IS NULL
 """
 OPT_OUT_SQL = """
 INSERT INTO crm.tenant_entitlement (insights_opt_out) VALUES ($1)
@@ -248,12 +244,15 @@ def _entitlements(row: asyncpg.Record | dict[str, Any] | None) -> dict[str, Any]
             "seats_allowed": team.DEFAULT_PLAN["member_limit"],
             "features_allowed": [],
             "insights_opt_out": False,
+            "managed_by": "ops",
         }
     return {
         "plan": row["plan"],
         "seats_allowed": int(row["member_limit"]),
         "features_allowed": sorted(row["allowed_features"] or []),
         "insights_opt_out": bool(row["insights_opt_out"]),
+        # AA-1028 (crm.ops.v1 1.11): cis once crm_entitlement_pull projected the tenant's CIS account (crm-043)
+        "managed_by": "cis" if row.get("projected_at") is not None else "ops",
     }
 
 
@@ -500,16 +499,14 @@ async def delete_test_agency(
 async def allow_features(
     pool: asyncpg.Pool, tenant_id: uuid.UUID, *, staff_sub: str, features: list[str], ticket_ref: str
 ) -> dict[str, Any]:
-    """AA allows features; the owner switches them on (this never writes ``crm.tenant_settings``)."""
-    if len(set(features)) != len(features) or not set(features) <= set(FEATURES):
-        raise Invalid("invalid_feature", f"unique codes from {', '.join(FEATURES)}")
-    async with platform_tx(pool, tenant_id, actor=platform_actor(staff_sub), statuses=LOCKABLE) as ctx:
-        row = await ctx.conn.fetchrow(ALLOW_FEATURES_SQL, sorted(features))
-        ctx.audit(
-            "entitlements_allow", "allowed", "tenant_entitlement", str(tenant_id), fields=("allowed_features",),
-            object_ids=ticket_ids(ticket_ref),
-        )  # fmt: skip
-        return _entitlements(row)
+    """AA-1028 R1 slice 2 (crm.ops.v1 1.11, root ADR 0019 d1): refused. The allowed features are the projection of
+    the tenant's CIS entitlements (``crm_entitlement_pull``); AA changes them in CIS (the tenant's CRM subscription or
+    an override), never here. 409 ``entitlements_managed_by_cis``, nothing read or written."""
+    del pool, tenant_id, staff_sub, features, ticket_ref
+    raise Conflict(
+        "entitlements_managed_by_cis",
+        "the allowed features follow the tenant's CRM subscription in CIS (Tenants); change them there",
+    )
 
 
 async def set_insights_opt_out(
