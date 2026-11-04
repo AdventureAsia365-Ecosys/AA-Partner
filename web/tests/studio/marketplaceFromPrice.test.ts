@@ -1,5 +1,5 @@
 // AA-1029 R4: the Content studio Marketplace shows AA-Booking's "from" price (contract price.from.v1, CIS pool
-// `from_price`) on the catalog card and in the detail drawer, "From US$X per person" with the TripPlanner caveat, and
+// `from_price`) on the catalog card and in the detail drawer, "From $X per person" with the TripPlanner caveat, and
 // nothing without one: never the source price text (`price_raw`). Invented tour names and places only.
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -34,9 +34,9 @@ function card(priceBlock: React.ReactNode) {
 }
 
 describe("from price line", () => {
-  it("reads From US$X per person with the caveat", () => {
+  it("reads From $X per person with the caveat", () => {
     const html = renderToStaticMarkup(createElement(FromPriceLine, { price: PRICE }));
-    expect(text(html)).toContain("From US$235 per person");
+    expect(text(html)).toContain("From $235 per person");
     expect(text(html)).toContain(NOTE);
   });
 
@@ -50,7 +50,7 @@ describe("from price line", () => {
 describe("catalog card", () => {
   it("shows the from price in place of the price column", () => {
     const html = card(createElement(FromPriceLine, { price: PRICE, compact: true }));
-    expect(text(html)).toContain("From US$235 per person");
+    expect(text(html)).toContain("From $235 per person");
     expect(text(html)).toContain(NOTE);
     expect(text(html)).not.toContain("On request");
   });
@@ -70,7 +70,7 @@ describe("detail drawer", () => {
   it("shows the from price and never the source price text", () => {
     const html = renderToStaticMarkup(createElement(TourDetail, { tour: tour(), status: null }));
     expect(html).toContain('data-testid="marketplace-drawer-price"');
-    expect(text(html)).toContain("From US$235 per person");
+    expect(text(html)).toContain("From $235 per person");
     expect(text(html)).toContain(NOTE);
     expect(text(html)).not.toContain("$999");
   });

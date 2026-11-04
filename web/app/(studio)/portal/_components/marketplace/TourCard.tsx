@@ -79,7 +79,7 @@ export function CoverImage({ src, large = null, sizes, alt, eager = false, radiu
   );
 }
 
-/** AA-1029 — "From US$235 per person" and the caveat line under it (the TripPlanner tour page's wording), from the
+/** AA-1029 — "From $235 per person" and the caveat line under it (the TripPlanner tour page's wording), from the
  *  tour's price.from.v1 row; nothing at all without a usable price (never the source price text). `compact` = the card
  *  footer (smaller type). */
 export function FromPriceLine({ price, compact = false, testId = "marketplace-from-price" }: {
