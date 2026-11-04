@@ -3,7 +3,13 @@
 // imports, so `node --test` runs lib/myContent.test.ts directly (the AA-761 pattern). Shapes follow GET
 // /v1/content-writing/reviews (CIS fetch_review_list: tenant-safe, no gate data); `published_at` / `published_url`
 // come from the request's live post (CIS AA-669: any piece of the request, so a rewrite of a published piece keeps
-// the row published) and are optional, so this works before that CIS change ships.
+// the row published) and are optional, so this works before that CIS change ships. AA-1036 (R3): the words take the UI
+// language (lib.messages.ts), English by default.
+
+import { translator, type Lang } from "@/app/_kit/core/i18n";
+import { MY_CONTENT_LIB_MESSAGES } from "./lib.messages";
+
+const tr = (lang: Lang) => translator(MY_CONTENT_LIB_MESSAGES, lang);
 
 /** The fields of a review item these rules read (a subset of reviewListApi.ReviewItem). */
 export interface ContentRow {
@@ -36,27 +42,34 @@ export interface AtomReplacement {
   itinerary_day: number | null;
 }
 
-export const ATOM_REPLACED_BLOCK = "Adventure Asia updated this part of the tour: start a new post from Social Posts";
+export const ATOM_REPLACED_BLOCK = MY_CONTENT_LIB_MESSAGES.en.atomReplacedBlock;
 
 /** AA-990 — the sentence shown on a request whose part of the tour was rewritten (Writer + My Content). */
-export function atomReplacedNote(replacement: AtomReplacement | null | undefined): string {
-  const base = "Adventure Asia has updated the part of the tour this post was planned from, so it can't be written "
-    + "from it any more. Start a new post from Social Posts";
+export function atomReplacedNote(replacement: AtomReplacement | null | undefined, lang: Lang = "en"): string {
+  const t = tr(lang);
+  const base = t("atomReplaced");
   const place = replacement?.place?.trim();
   if (!place) return `${base}.`;
-  const day = replacement?.itinerary_day != null ? ` (day ${replacement.itinerary_day})` : "";
-  return `${base}: the tour now covers ${place}${day}.`;
+  const day = replacement?.itinerary_day != null ? t("atomReplacedDay", replacement.itinerary_day) : "";
+  return `${base}${t("atomReplacedPlace", place)}${day}.`;
 }
 
 /** The table's status (the issue's ready / published / not ready, plus the in-flight write). */
 export type ContentStatus = "published" | "ready" | "writing" | "not_ready";
 
-export const CONTENT_STATUS_LABEL: Record<ContentStatus, string> = {
-  published: "Published",
-  ready: "Ready",
-  writing: "Writing",
-  not_ready: "Not ready",
-};
+const STATUS_KEY = {
+  published: "stPublished",
+  ready: "stReady",
+  writing: "stWriting",
+  not_ready: "stNotReady",
+} as const satisfies Record<ContentStatus, keyof typeof MY_CONTENT_LIB_MESSAGES.en>;
+
+export const CONTENT_STATUSES = Object.keys(STATUS_KEY) as ContentStatus[];
+
+/** A content status in words, in the UI language. */
+export function contentStatusLabel(s: ContentStatus, lang: Lang = "en"): string {
+  return tr(lang)(STATUS_KEY[s]);
+}
 
 export function contentStatus(r: Pick<ContentRow, "ready_state" | "published_at">): ContentStatus {
   if (r.published_at) return "published";
@@ -79,13 +92,13 @@ export function wordCount(text: string | null | undefined): number | null {
 /** The piece's own headline: its markdown H1 when the text has one, else the angle's name (the headline the tenant
  *  picked; a blog body starts at its first section, so its first `##` is a section heading, never the title: S251
  *  D5). One title everywhere: the list, the drawer, the export file name and the exported page's <title>. */
-export function pieceTitle(r: Pick<ContentRow, "content_text" | "angle">): string {
-  return headline(r) ?? "Untitled";
+export function pieceTitle(r: Pick<ContentRow, "content_text" | "angle">, lang: Lang = "en"): string {
+  return headline(r) ?? tr(lang)("untitled");
 }
 
 /** pieceTitle for a search result: a piece with no H1 and no angle (yet) shows its tour's name, not "Untitled". */
-export function pieceTitleOrTour(r: Pick<ContentRow, "content_text" | "angle" | "tour">): string {
-  return headline(r) ?? (r.tour?.name?.trim() || "Untitled piece");
+export function pieceTitleOrTour(r: Pick<ContentRow, "content_text" | "angle" | "tour">, lang: Lang = "en"): string {
+  return headline(r) ?? (r.tour?.name?.trim() || tr(lang)("untitledPiece"));
 }
 
 function headline(r: Pick<ContentRow, "content_text" | "angle">): string | null {
@@ -189,19 +202,20 @@ export function monthStart(now: Date): string {
 }
 
 /** The issue's two views plus "All content". */
-export function builtInViews(now: Date): ContentView[] {
+export function builtInViews(now: Date, lang: Lang = "en"): ContentView[] {
+  const t = tr(lang);
   return [
-    { id: "all", name: "All content", builtIn: true, filters: NO_FILTERS, sorting: [{ id: "created", desc: true }] },
+    { id: "all", name: t("viewAll"), builtIn: true, filters: NO_FILTERS, sorting: [{ id: "created", desc: true }] },
     {
       id: "ready-to-publish",
-      name: "Ready to publish",
+      name: t("viewReady"),
       builtIn: true,
       filters: { ...NO_FILTERS, status: "ready" },
       sorting: [{ id: "created", desc: true }],
     },
     {
       id: "published-this-month",
-      name: "Published this month",
+      name: t("viewPublished"),
       builtIn: true,
       filters: { ...NO_FILTERS, status: "published", dateField: "published", from: monthStart(now) },
       sorting: [{ id: "published", desc: true }],
@@ -281,14 +295,15 @@ export interface Connections {
 
 /** Why one row cannot be published from the table (null = it can). Held pieces are refused by the API itself
  *  (the tenant never sees why: AA-614), so the table does not try to tell them apart. */
-export function publishBlock(r: ContentRow, c: Connections): string | null {
+export function publishBlock(r: ContentRow, c: Connections, lang: Lang = "en"): string | null {
+  const t = tr(lang);
   const status = contentStatus(r);
-  if (status === "published") return "Already published";
-  if (status !== "ready") return "Not ready yet";
-  if (r.served_status === "retired" || r.served_status === "paused") return "Publishing closed for this tour";
+  if (status === "published") return t("alreadyPublished");
+  if (status !== "ready") return t("notReadyYet");
+  if (r.served_status === "retired" || r.served_status === "paused") return t("publishClosed");
   const needs = PUBLISH_CONNECTION[r.channel];
-  if (!needs) return "Export this channel and post it yourself";
-  if (!c[needs]) return needs === "wordpress" ? "Connect WordPress to publish" : "Connect Facebook to publish";
+  if (!needs) return t("exportYourself");
+  if (!c[needs]) return needs === "wordpress" ? t("connectWp") : t("connectFb");
   return null;
 }
 
@@ -308,11 +323,12 @@ export function exportFormat(r: Pick<ContentRow, "channel" | "content_text">): "
 /** Why a piece cannot be written again (null = it can). A published piece is refused: the rewrite would become the
  *  request's latest version while the old post stays live, and publishing it would put a second post up for the
  *  same request (review S251). The tenant unpublishes first (Publish > Published), then writes again. */
-export function regenerateBlock(r: ContentRow): string | null {
-  if (contentStatus(r) === "published") return "Unpublish the live post first to write a new version";
-  if (r.ready_state === "in_progress") return "Being written now";
-  if (r.served_status === "retired" || r.served_status === "paused") return "Closed for this tour";
-  if (r.atom_replaced) return ATOM_REPLACED_BLOCK;
+export function regenerateBlock(r: ContentRow, lang: Lang = "en"): string | null {
+  const t = tr(lang);
+  if (contentStatus(r) === "published") return t("unpublishFirst");
+  if (r.ready_state === "in_progress") return t("beingWritten");
+  if (r.served_status === "retired" || r.served_status === "paused") return t("closedForTour");
+  if (r.atom_replaced) return t("atomReplacedBlock");
   return null;
 }
 

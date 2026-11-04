@@ -22,7 +22,14 @@ import { useSearchParams } from "next/navigation";
 import { Download, ExternalLink, Eye, FileDown, RefreshCw, Save, Send, Trash2, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ServedBadge, plainError } from "./ServedBadge";
-import { AiNotice, Badge, ConfirmModal, type ColumnDef, DataTable, Drawer, formatDate, StatusBadge, ToastProvider, deleteView, listViews, saveView, useHydrated, useIsPhone, useToast, K, sans } from "@/app/_kit";
+import {
+  AiNotice, Badge, Button, ConfirmModal, type ColumnDef, DataTable, Drawer, IconButton, LinkButton, ListButton, StatusBadge,
+  ToastProvider, deleteView, listViews, saveView, useFormat, useHydrated, useIsPhone, useLang, useT, useToast, K, sans,
+  type Translator, type UiLang,
+} from "@/app/_kit";
+import { REVIEW_LIST_MESSAGES } from "./publish.messages";
+
+type ListT = Translator<typeof REVIEW_LIST_MESSAGES.en>;
 import { ReviewDrawer } from "./ReviewDrawer";
 import { channelName } from "./channelLabels";
 import { useWordPressStatus } from "./WordPressConnect";
@@ -40,8 +47,9 @@ import { activePollInterval, pieceWorkStatus } from "./workStatus";
 import {
   builtInViews,
   bulkPublishPlan,
-  CONTENT_STATUS_LABEL,
+  CONTENT_STATUSES,
   contentStatus,
+  contentStatusLabel,
   exportFormat,
   angleLabel,
   hasFilters,
@@ -74,6 +82,9 @@ type Confirm =
   | null;
 
 function ReviewListInner() {
+  const t = useT(REVIEW_LIST_MESSAGES);
+  const lang = useLang();
+  const { formatDate } = useFormat();
   const toast = useToast();
   const qc = useQueryClient();
   const searchParams = useSearchParams();
@@ -81,7 +92,7 @@ function ReviewListInner() {
   const { tenantName } = usePortalShell();
   const viewsUser = tenantName || "tenant";
 
-  const builtIns = useMemo(() => builtInViews(new Date()), []);
+  const builtIns = useMemo(() => builtInViews(new Date(), lang), [lang]);
   const initialView = builtIns.find((v) => v.id === searchParams.get("view")) ?? builtIns[0];
   const [viewId, setViewId] = useState<string>(initialView.id);
   const [filters, setFilters] = useState<ContentFilters>(initialView.filters);
@@ -123,10 +134,10 @@ function ReviewListInner() {
   const saveM = useMutation({
     mutationFn: (vars: { pieceId: string; text: string }) => savePieceText(vars.pieceId, vars.text),
     onSuccess: () => {
-      toast.success("Saved");
+      toast.success(t("saved"));
       invalidate();
     },
-    onError: () => toast.error("Couldn't save — try again."),
+    onError: () => toast.error(t("saveFailed")),
   });
 
   const channels = useMemo(() => [...new Set(items.map((i) => i.channel))].sort(), [items]);
@@ -154,12 +165,12 @@ function ReviewListInner() {
     setViewId("");
   }
   function saveCurrentView() {
-    const name = typeof window !== "undefined" ? window.prompt("Save this view as:")?.trim() : "";
+    const name = typeof window !== "undefined" ? window.prompt(t("saveViewPrompt"))?.trim() : "";
     if (!name) return;
     saveView(VIEWS_TABLE, viewsUser, name.slice(0, 60), { filters, sorting });
     setViewsRev((n) => n + 1);
     setViewId(`user:${name.slice(0, 60).toLowerCase().replace(/\s+/g, "-")}`);
-    toast.success(`View "${name}" saved`);
+    toast.success(t("viewSaved", name));
   }
   function deleteCurrentView() {
     if (!viewId.startsWith("user:")) return;
@@ -175,32 +186,32 @@ function ReviewListInner() {
   async function onExport(item: ReviewItem, format: "text" | "html", mode?: "document" | "fragment") {
     try {
       // S251 D5: name the file and the page <title> from the same title the list and the drawer show.
-      await exportPiece({ ...item, title: pieceTitle(item) }, format, mode);
+      await exportPiece({ ...item, title: pieceTitle(item, lang) }, format, mode);
     } catch {
-      toast.error("Export failed — try again.");
+      toast.error(t("exportFailed"));
     }
   }
 
   async function bulkExport(rows: ReviewItem[]) {
     const exportable = rows.filter((r) => exportFormat(r) !== null);
     if (exportable.length === 0) {
-      toast.info("Nothing to export yet in the selection.");
+      toast.info(t("nothingToExport"));
       return;
     }
     for (const r of exportable) {
       await onExport(r, exportFormat(r) ?? "text");
     }
-    toast.success(`Exported ${exportable.length} piece${exportable.length === 1 ? "" : "s"}`);
+    toast.success(t("exported", exportable.length));
   }
 
   function askBulkPublish(rows: ReviewItem[]) {
     if (!connections.wordpress) {
-      toast.info("Connect WordPress to publish blog posts from here (Account › Integrations).");
+      toast.info(t("connectWpFirst"));
       return;
     }
     const plan = bulkPublishPlan(rows, connections);
     if (plan.eligible.length === 0) {
-      toast.info("Only ready blog posts that are not published yet can be published together.");
+      toast.info(t("onlyReadyBlog"));
       return;
     }
     setConfirm({ kind: "publish", rows: plan.eligible as ReviewItem[], skipped: plan.skipped });
@@ -215,7 +226,7 @@ function ReviewListInner() {
           await publishPiece(r.piece_id);
           ok += 1;
         } catch (e) {
-          failures.push(`${pieceTitle(r)}: ${plainError(e, "failed")}`);
+          failures.push(`${pieceTitle(r, lang)}: ${plainError(e, t("failed"))}`);
         }
       }
       return { ok, failures };
@@ -223,9 +234,9 @@ function ReviewListInner() {
     onSuccess: ({ ok, failures }) => {
       invalidate();
       qc.invalidateQueries({ queryKey: ["publish-log"] });
-      if (ok > 0) toast.success(`Published ${ok} piece${ok === 1 ? "" : "s"}`);
+      if (ok > 0) toast.success(t("published", ok));
       if (failures.length === 1) toast.error(failures[0]);
-      else if (failures.length > 1) toast.error(`${failures.length} could not publish — ${failures[0]}`);
+      else if (failures.length > 1) toast.error(t("couldNotPublish", failures.length, failures[0]));
       setConfirm(null);
     },
   });
@@ -233,12 +244,12 @@ function ReviewListInner() {
   const regenerateM = useMutation({
     mutationFn: (row: ReviewItem) => regeneratePiece(row.request_id),
     onSuccess: () => {
-      toast.success("Writing a new version — it shows here as Writing, then Ready.");
+      toast.success(t("writingNew"));
       invalidate();
       setConfirm(null);
     },
     onError: (e) => {
-      toast.error(plainError(e, "Could not start the rewrite."));
+      toast.error(plainError(e, t("rewriteFailed")));
       setConfirm(null);
     },
   });
@@ -247,8 +258,8 @@ function ReviewListInner() {
     () => [
       {
         id: "title",
-        accessorFn: (r) => pieceTitle(r),
-        header: "Title",
+        accessorFn: (r) => pieceTitle(r, lang),
+        header: t("colTitle"),
         cell: (c) => {
           const it = c.row.original;
           const angle = angleLabel(it);
@@ -256,10 +267,10 @@ function ReviewListInner() {
           // shrink to ~68 px and broke words mid-letter).
           return (
             <div style={{ minWidth: 160, maxWidth: 300 }} data-testid="my-content-title">
-              <div style={{ fontWeight: 600, color: K.ink, overflowWrap: "break-word", lineHeight: 1.4 }}>{pieceTitle(it)}</div>
+              <div style={{ fontWeight: 600, color: K.ink, overflowWrap: "break-word", lineHeight: 1.4 }}>{pieceTitle(it, lang)}</div>
               {angle && (
                 <div style={{ marginTop: 2, color: K.muted, fontSize: 12, lineHeight: 1.4, overflowWrap: "break-word" }}>
-                  Angle: {angle}
+                  {t("angle", angle)}
                 </div>
               )}
               {/* AA-986 L3: persistent badge when AA no longer serves (or has paused) the tour */}
@@ -270,12 +281,12 @@ function ReviewListInner() {
       },
       {
         id: "channel",
-        accessorFn: (r) => channelName(r.channel),
-        header: "Channel",
+        accessorFn: (r) => channelName(r.channel, lang),
+        header: t("colChannel"),
         // AA-1040 — the "AI-assisted" label of every piece (kit AiNotice badge form), under the channel.
         cell: (c) => (
           <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
-            <Badge tone="neutral">{channelName(c.row.original.channel)}</Badge>
+            <Badge tone="neutral">{channelName(c.row.original.channel, lang)}</Badge>
             <AiNotice variant="publisher" form="badge" testId="my-content-ai-badge" />
           </span>
         ),
@@ -283,7 +294,7 @@ function ReviewListInner() {
       {
         id: "place",
         accessorFn: (r) => placeTopic(r) ?? "",
-        header: "Place / topic",
+        header: t("colPlace"),
         cell: (c) => (
           <span style={{ display: "inline-block", color: K.body, fontSize: 12.5, minWidth: 110, maxWidth: 220, lineHeight: 1.45 }}>
             {placeTopic(c.row.original) ?? "—"}
@@ -293,7 +304,7 @@ function ReviewListInner() {
       {
         id: "goal",
         accessorFn: (r) => r.goal?.label ?? "",
-        header: "Goal",
+        header: t("colGoal"),
         // AA-760: "Trust-building" broke at the hyphen, so each hyphenated word sits in a nowrap span (the text
         // people copy keeps its plain "-"). S251 D1: the label may wrap between words ("Introduction / Awareness"
         // on two lines) to keep the table inside the screen.
@@ -314,31 +325,31 @@ function ReviewListInner() {
       },
       {
         id: "status",
-        accessorFn: (r) => CONTENT_STATUS_LABEL[contentStatus(r)],
-        header: "Status",
+        accessorFn: (r) => contentStatusLabel(contentStatus(r), lang),
+        header: t("colStatus"),
         cell: (c) => {
           const s = contentStatus(c.row.original);
           // "writing" spins (StatusBadge running); the others are plain tones: published = gold, ready = green.
           return s === "writing"
-            ? <StatusBadge status="running" label={CONTENT_STATUS_LABEL[s]} />
-            : <Badge tone={STATUS_TONE[s]} dot>{CONTENT_STATUS_LABEL[s]}</Badge>;
+            ? <StatusBadge status="running" label={contentStatusLabel(s, lang)} />
+            : <Badge tone={STATUS_TONE[s]} dot>{contentStatusLabel(s, lang)}</Badge>;
         },
       },
       {
         id: "words",
         accessorFn: (r) => wordCount(r.content_text) ?? undefined,
-        header: "Words",
+        header: t("colWords"),
         sortUndefined: "last",
         meta: { align: "right" },
         cell: (c) => {
           const n = wordCount(c.row.original.content_text);
-          return <span style={{ color: K.muted, fontSize: 12 }}>{n == null ? "—" : n.toLocaleString("en")}</span>;
+          return <span style={{ color: K.muted, fontSize: 12 }}>{n == null ? "—" : n.toLocaleString(lang === "vi" ? "vi-VN" : "en")}</span>;
         },
       },
       {
         id: "created",
         accessorFn: (r) => r.created_at ?? "",
-        header: "Created",
+        header: t("colCreated"),
         cell: (c) => (
           <span style={{ color: K.muted, fontSize: 12, whiteSpace: "nowrap" }}>
             {formatDate(c.row.original.created_at)}
@@ -348,7 +359,7 @@ function ReviewListInner() {
       {
         id: "published",
         accessorFn: (r) => r.published_at ?? "",
-        header: "Published",
+        header: t("colPublished"),
         cell: (c) => {
           const it = c.row.original;
           if (!it.published_at) return <span style={{ color: K.muted2 }}>—</span>;
@@ -357,8 +368,8 @@ function ReviewListInner() {
               {formatDate(it.published_at)}
               {it.published_url && (
                 <a href={it.published_url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
-                   aria-label="Open the published post"
-                   title={liveIsEarlierVersion(it) ? "Open the published post (it shows an earlier version of this text)" : "Open the published post"}
+                   aria-label={t("openPublished")}
+                   title={liveIsEarlierVersion(it) ? t("openPublishedEarlier") : t("openPublished")}
                    style={{ color: K.accentDeep, display: "inline-flex" }}>
                   <ExternalLink size={12} />
                 </a>
@@ -378,7 +389,8 @@ function ReviewListInner() {
             item={c.row.original}
             menuOpen={menuFor === c.row.original.piece_id}
             onMenu={(open) => setMenuFor(open ? c.row.original.piece_id : null)}
-            publishReason={publishBlock(c.row.original, connections)}
+            publishReason={publishBlock(c.row.original, connections, lang)}
+            lang={lang}
             onView={() => setOpenPieceId(c.row.original.piece_id)}
             onExport={(format, mode) => { setMenuFor(null); void onExport(c.row.original, format, mode); }}
             onPublish={() => setConfirm({ kind: "publish", rows: [c.row.original], skipped: 0 })}
@@ -389,7 +401,7 @@ function ReviewListInner() {
     ],
     // onExport is stable in behaviour (reads nothing from render state but the toast).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [menuFor, connections],
+    [menuFor, connections, t, lang, formatDate],
   );
 
   const sel: React.CSSProperties = isPhone ? { ...selectStyle, flex: "1 1 140px", minWidth: 0 } : selectStyle;
@@ -403,10 +415,10 @@ function ReviewListInner() {
         tableId="my-content-pieces"
         getRowId={(r) => r.piece_id}
         loading={isLoading}
-        error={isError ? (error instanceof Error ? error.message : "Could not load your content") : null}
+        error={isError ? (error instanceof Error ? error.message : t("loadError")) : null}
         onRetry={() => refetch()}
         searchable
-        searchPlaceholder="Search title, place…"
+        searchPlaceholder={t("searchPlaceholder")}
         enableSelection
         enableCsv
         csvFilename="my-content"
@@ -415,56 +427,52 @@ function ReviewListInner() {
         compact
         sorting={sorting}
         onSortingChange={(next) => { setSorting(next); setViewId(""); }}
-        emptyTitle={filtered ? "Nothing matches these filters" : "Nothing written yet"}
-        emptyDescription={
-          filtered
-            ? "Clear the filters or pick another view."
-            : "Once you've written content from Social Posts or Articles, it'll show up here to review before publishing."
-        }
+        emptyTitle={filtered ? t("emptyFiltered") : t("empty")}
+        emptyDescription={filtered ? t("emptyFilteredSub") : t("emptySub")}
         emptyAction={filtered ? (
-          <button style={linkBtn} onClick={() => applyView("all")}>Show all content</button>
+          <LinkButton onClick={() => applyView("all")}>{t("showAll")}</LinkButton>
         ) : undefined}
         onRowClick={(r) => setOpenPieceId(r.piece_id)}
         toolbarExtra={
           // AA-836 / AA-760 — the controls wrap inside their own row on a phone and share it evenly.
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", maxWidth: "100%", minWidth: 0, ...(isPhone ? { flex: "1 1 100%" } : {}) }}>
-            <select value={viewId} onChange={(e) => applyView(e.target.value)} style={{ ...sel, fontWeight: 600 }} aria-label="View" data-testid="my-content-view">
-              {viewId === "" && <option value="">Custom view</option>}
+            <select value={viewId} onChange={(e) => applyView(e.target.value)} style={{ ...sel, fontWeight: 600 }} aria-label={t("view")} data-testid="my-content-view">
+              {viewId === "" && <option value="">{t("customView")}</option>}
               {builtIns.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
               {userViews.length > 0 && (
-                <optgroup label="Your views">
+                <optgroup label={t("yourViews")}>
                   {userViews.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
                 </optgroup>
               )}
             </select>
-            <button style={iconBtn} onClick={saveCurrentView} title="Save these filters and sort as a view" aria-label="Save view">
+            <IconButton size="sm" onClick={saveCurrentView} title={t("saveViewTitle")} label={t("saveView")}>
               <Save size={13} />
-            </button>
+            </IconButton>
             {viewId.startsWith("user:") && (
-              <button style={iconBtn} onClick={deleteCurrentView} title="Delete this saved view" aria-label="Delete view">
+              <IconButton size="sm" tone="danger" onClick={deleteCurrentView} title={t("deleteViewTitle")} label={t("deleteView")}>
                 <Trash2 size={13} />
-              </button>
+              </IconButton>
             )}
-            <select value={filters.channel} onChange={(e) => changeFilters({ channel: e.target.value })} style={sel} aria-label="Channel">
-              <option value="all">All channels</option>
-              {channels.map((c) => <option key={c} value={c}>{channelName(c)}</option>)}
+            <select value={filters.channel} onChange={(e) => changeFilters({ channel: e.target.value })} style={sel} aria-label={t("channel")}>
+              <option value="all">{t("allChannels")}</option>
+              {channels.map((c) => <option key={c} value={c}>{channelName(c, lang)}</option>)}
             </select>
-            <select value={filters.status} onChange={(e) => changeFilters({ status: e.target.value as ContentFilters["status"] })} style={sel} aria-label="Status">
-              <option value="all">All statuses</option>
-              {(Object.keys(CONTENT_STATUS_LABEL) as ContentStatus[]).map((s) => (
-                <option key={s} value={s}>{CONTENT_STATUS_LABEL[s]}</option>
+            <select value={filters.status} onChange={(e) => changeFilters({ status: e.target.value as ContentFilters["status"] })} style={sel} aria-label={t("status")}>
+              <option value="all">{t("allStatuses")}</option>
+              {CONTENT_STATUSES.map((s) => (
+                <option key={s} value={s}>{contentStatusLabel(s, lang)}</option>
               ))}
             </select>
             {/* AA-760 — always there (disabled until goals exist) so the toolbar does not shift on load. */}
-            <select value={filters.goal} onChange={(e) => changeFilters({ goal: e.target.value })} style={sel} disabled={goals.length === 0} aria-label="Goal">
-              <option value="all">All goals</option>
+            <select value={filters.goal} onChange={(e) => changeFilters({ goal: e.target.value })} style={sel} disabled={goals.length === 0} aria-label={t("goal")}>
+              <option value="all">{t("allGoals")}</option>
               {goals.map((g) => <option key={g} value={g}>{g}</option>)}
             </select>
             <input
               value={filters.place}
               onChange={(e) => changeFilters({ place: e.target.value.slice(0, 100) })}
-              placeholder="Place or topic"
-              aria-label="Place or topic"
+              placeholder={t("placeOrTopic")}
+              aria-label={t("placeOrTopic")}
               style={{ ...sel, cursor: "text", width: isPhone ? undefined : 150 }}
             />
             {/* S251 D6: on a phone the date field takes its own line and "from – to" share the next one evenly (the
@@ -475,35 +483,36 @@ function ReviewListInner() {
                 ? { display: "flex", flexWrap: "wrap", gap: 8, flex: "1 1 100%", minWidth: 0 }
                 : { display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "nowrap" }}
             >
-              <select value={filters.dateField} onChange={(e) => changeFilters({ dateField: e.target.value as ContentFilters["dateField"] })} style={isPhone ? { ...sel, flex: "1 1 100%" } : sel} aria-label="Date">
-                <option value="created">Created</option>
-                <option value="published">Published</option>
+              <select value={filters.dateField} onChange={(e) => changeFilters({ dateField: e.target.value as ContentFilters["dateField"] })} style={isPhone ? { ...sel, flex: "1 1 100%" } : sel} aria-label={t("date")}>
+                <option value="created">{t("created")}</option>
+                <option value="published">{t("publishedDate")}</option>
               </select>
               <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap", minWidth: 0, ...(isPhone ? { flex: "1 1 100%" } : {}) }}>
-                <input type="date" value={filters.from} max={filters.to || undefined} onChange={(e) => changeFilters({ from: e.target.value })} style={{ ...dateInput, ...(isPhone ? { flex: "1 1 0" } : {}) }} aria-label="From" />
-                <span style={{ color: K.muted, fontSize: 12, flexShrink: 0 }}>to</span>
-                <input type="date" value={filters.to} min={filters.from || undefined} onChange={(e) => changeFilters({ to: e.target.value })} style={{ ...dateInput, ...(isPhone ? { flex: "1 1 0" } : {}) }} aria-label="To" />
+                <input type="date" value={filters.from} max={filters.to || undefined} onChange={(e) => changeFilters({ from: e.target.value })} style={{ ...dateInput, ...(isPhone ? { flex: "1 1 0" } : {}) }} aria-label={t("from")} />
+                <span style={{ color: K.muted, fontSize: 12, flexShrink: 0 }}>{t("to")}</span>
+                <input type="date" value={filters.to} min={filters.from || undefined} onChange={(e) => changeFilters({ to: e.target.value })} style={{ ...dateInput, ...(isPhone ? { flex: "1 1 0" } : {}) }} aria-label={t("toAria")} />
               </div>
             </div>
             {filtered && (
-              <button style={linkBtn} onClick={() => { setFilters(NO_FILTERS); setViewId(""); }}>
-                <X size={12} /> Clear filters
-              </button>
+              <LinkButton onClick={() => { setFilters(NO_FILTERS); setViewId(""); }}>
+                <X size={12} /> {t("clearFilters")}
+              </LinkButton>
             )}
           </div>
         }
         bulkActions={({ selectedRows, clearSelection }) => (
           <>
-            <button style={bulkBtn} onClick={() => bulkExport(selectedRows)}>
-              <Download size={13} /> Export selected
-            </button>
-            <button
-              style={bulkBtn}
+            <Button size="sm" variant="secondary" onClick={() => bulkExport(selectedRows)}>
+              <Download size={13} /> {t("exportSelected")}
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
               onClick={() => { askBulkPublish(selectedRows); clearSelection(); }}
-              title={connections.wordpress ? "Publish the selected blog posts to WordPress" : "Connect WordPress to publish"}
+              title={connections.wordpress ? t("publishSelectedTitle") : t("connectWp")}
             >
-              <Send size={13} /> Publish selected
-            </button>
+              <Send size={13} /> {t("publishSelected")}
+            </Button>
           </>
         )}
       />
@@ -515,8 +524,8 @@ function ReviewListInner() {
         title={
           openItem ? (
             <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              {pieceTitle(openItem)}
-              <Badge tone="neutral">{channelName(openItem.channel)}</Badge>
+              {pieceTitle(openItem, lang)}
+              <Badge tone="neutral">{channelName(openItem.channel, lang)}</Badge>
               <AiNotice variant="publisher" form="badge" testId="review-drawer-ai-badge" />
             </span>
           ) : (
@@ -531,7 +540,7 @@ function ReviewListInner() {
             saving={saveM.isPending}
             onSave={(pieceId, text) => saveM.mutateAsync({ pieceId, text }).then(() => undefined)}
             onExport={onExport}
-            onCopyAttempt={() => toast.info("Use Export to download this content.")}
+            onCopyAttempt={() => toast.info(t("copyHint"))}
           />
         )}
       </Drawer>
@@ -541,17 +550,16 @@ function ReviewListInner() {
         onClose={() => !publishM.isPending && setConfirm(null)}
         onConfirm={() => confirm?.kind === "publish" && publishM.mutate(confirm.rows)}
         busy={publishM.isPending}
-        title={confirm?.kind === "publish" && confirm.rows.length > 1 ? `Publish ${confirm.rows.length} posts?` : "Publish this piece?"}
-        confirmLabel={publishM.isPending ? "Publishing…" : "Publish"}
+        title={confirm?.kind === "publish" && confirm.rows.length > 1 ? t("publishPosts", confirm.rows.length) : t("publishOne")}
+        confirmLabel={publishM.isPending ? t("publishing") : t("publish")}
         body={confirm?.kind === "publish" ? (
           <div style={{ fontSize: 13, color: K.body, lineHeight: 1.55 }}>
             {confirm.rows.length === 1
-              ? <>&ldquo;{pieceTitle(confirm.rows[0])}&rdquo; goes live on your {confirm.rows[0].channel === "blog" ? "WordPress site" : "Facebook Page"}.</>
-              : <>These {confirm.rows.length} blog posts go live on your WordPress site, one after the other.</>}
+              ? <>{confirm.rows[0].channel === "blog" ? t("goesLiveWp", pieceTitle(confirm.rows[0], lang)) : t("goesLiveFb", pieceTitle(confirm.rows[0], lang))}</>
+              : <>{t("goLiveMany", confirm.rows.length)}</>}
             {confirm.skipped > 0 && (
               <div style={{ marginTop: 8, color: K.muted }}>
-                {confirm.skipped} other selected piece{confirm.skipped === 1 ? " is" : "s are"} left out: only ready blog posts
-                that are not published yet go out together. Publish other channels one by one, or export them.
+                {t("leftOut", confirm.skipped)}
               </div>
             )}
           </div>
@@ -563,12 +571,11 @@ function ReviewListInner() {
         onClose={() => !regenerateM.isPending && setConfirm(null)}
         onConfirm={() => confirm?.kind === "regenerate" && regenerateM.mutate(confirm.row)}
         busy={regenerateM.isPending}
-        title="Write this piece again?"
-        confirmLabel={regenerateM.isPending ? "Starting…" : "Write again"}
+        title={t("writeAgainTitle")}
+        confirmLabel={regenerateM.isPending ? t("starting") : t("writeAgain")}
         body={confirm?.kind === "regenerate" ? (
           <div style={{ fontSize: 13, color: K.body, lineHeight: 1.55 }}>
-            A new version of &ldquo;{pieceTitle(confirm.row)}&rdquo; is written with the same angle and call to action. It
-            replaces this one in My Content; your edits to this version are not carried over.
+            {t("writeAgainBody", pieceTitle(confirm.row, lang))}
           </div>
         ) : null}
       />
@@ -587,9 +594,10 @@ function readUserViews(user: string): ContentView[] {
 
 /** One row's actions. Every control stops the click so the row does not also open the drawer. */
 function RowActions({
-  item, menuOpen, onMenu, publishReason, onView, onExport, onPublish, onRegenerate,
+  item, menuOpen, onMenu, publishReason, onView, onExport, onPublish, onRegenerate, lang,
 }: {
   item: ReviewItem;
+  lang: UiLang;
   menuOpen: boolean;
   onMenu: (open: boolean) => void;
   publishReason: string | null;
@@ -598,6 +606,7 @@ function RowActions({
   onPublish: () => void;
   onRegenerate: () => void;
 }) {
+  const t: ListT = useT(REVIEW_LIST_MESSAGES);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!menuOpen) return;
@@ -610,33 +619,33 @@ function RowActions({
   const canExport = exportFormat(item) !== null;
   const stop = (fn: () => void) => (e: React.MouseEvent) => { e.stopPropagation(); fn(); };
   const status = contentStatus(item);
-  const regenReason = regenerateBlock(item);
+  const regenReason = regenerateBlock(item, lang);
   return (
     <div ref={ref} style={{ display: "inline-flex", gap: 4, alignItems: "center", position: "relative" }} onClick={(e) => e.stopPropagation()}>
-      <button style={iconBtn} onClick={stop(onView)} title="View" aria-label="View"><Eye size={13} /></button>
-      <button style={{ ...iconBtn, opacity: canExport ? 1 : 0.4 }} disabled={!canExport} onClick={stop(() => onMenu(!menuOpen))}
-              title={canExport ? "Export" : "Nothing to export yet"} aria-label="Export" aria-haspopup="menu" aria-expanded={menuOpen}>
+      <IconButton size="sm" onClick={stop(onView)} title={t("view")} label={t("view")}><Eye size={13} /></IconButton>
+      <IconButton size="sm" disabled={!canExport} onClick={stop(() => onMenu(!menuOpen))}
+              title={canExport ? t("export") : t("nothingYet")} label={t("export")} aria-haspopup="menu" aria-expanded={menuOpen}>
         <FileDown size={13} />
-      </button>
+      </IconButton>
       {status !== "published" && (
-        <button style={{ ...iconBtn, opacity: publishReason ? 0.4 : 1 }} disabled={!!publishReason} onClick={stop(onPublish)}
-                title={publishReason ?? "Publish"} aria-label="Publish">
+        <IconButton size="sm" disabled={!!publishReason} onClick={stop(onPublish)}
+                title={publishReason ?? t("publish")} label={t("publish")}>
           <Send size={13} />
-        </button>
+        </IconButton>
       )}
-      <button style={{ ...iconBtn, opacity: regenReason ? 0.4 : 1 }} disabled={!!regenReason} onClick={stop(onRegenerate)}
-              title={regenReason ?? "Write again"} aria-label="Write again">
+      <IconButton size="sm" disabled={!!regenReason} onClick={stop(onRegenerate)}
+              title={regenReason ?? t("writeAgain")} label={t("writeAgain")}>
         <RefreshCw size={13} />
-      </button>
+      </IconButton>
       {menuOpen && canExport && (
         <div role="menu" style={menuStyle}>
           {item.channel === "blog" && (
             <>
-              <button role="menuitem" style={menuItem} onClick={stop(() => onExport("html", "document"))}>HTML page</button>
-              <button role="menuitem" style={menuItem} onClick={stop(() => onExport("html", "fragment"))}>HTML fragment (paste into a CMS)</button>
+              <ListButton role="menuitem" density="compact" onClick={stop(() => onExport("html", "document"))}>{t("htmlPage")}</ListButton>
+              <ListButton role="menuitem" density="compact" onClick={stop(() => onExport("html", "fragment"))}>{t("htmlFragment")}</ListButton>
             </>
           )}
-          <button role="menuitem" style={menuItem} onClick={stop(() => onExport("text"))}>Plain text</button>
+          <ListButton role="menuitem" density="compact" onClick={stop(() => onExport("text"))}>{t("plainText")}</ListButton>
         </div>
       )}
     </div>
@@ -660,34 +669,7 @@ const selectStyle: React.CSSProperties = {
 
 const dateInput: React.CSSProperties = { ...selectStyle, cursor: "text", minWidth: 0 };
 
-const iconBtn: React.CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: 28,
-  height: 28,
-  borderRadius: 8,
-  border: `1px solid ${K.line}`,
-  background: K.card,
-  color: K.body,
-  cursor: "pointer",
-  padding: 0,
-};
 
-const linkBtn: React.CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 4,
-  background: "none",
-  border: "none",
-  // S251 D7: link text in the accent-deep token (5.2:1 on the cream page, 11:1 in dark); the accent itself is 2.3:1.
-  color: K.accentDeep,
-  fontSize: 12.5,
-  fontWeight: 600,
-  cursor: "pointer",
-  fontFamily: sans,
-  padding: "4px 2px",
-};
 
 const menuStyle: React.CSSProperties = {
   position: "absolute",
@@ -704,32 +686,7 @@ const menuStyle: React.CSSProperties = {
   flexDirection: "column",
 };
 
-const menuItem: React.CSSProperties = {
-  textAlign: "left",
-  background: "none",
-  border: "none",
-  padding: "8px 10px",
-  borderRadius: 6,
-  color: K.body,
-  fontSize: 12.5,
-  cursor: "pointer",
-  fontFamily: sans,
-};
 
-const bulkBtn: React.CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 6,
-  padding: "7px 12px",
-  borderRadius: 999,
-  border: `1px solid ${K.accent}`,
-  background: K.accentTint,
-  color: K.accentDeep,
-  fontSize: 12,
-  fontWeight: 600,
-  cursor: "pointer",
-  fontFamily: sans,
-};
 
 export function ReviewList() {
   return (
