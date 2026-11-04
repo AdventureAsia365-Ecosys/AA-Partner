@@ -20,7 +20,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronsLeft, ChevronsRight, ExternalLink, Map as MapIcon, Plus, Users } from "lucide-react";
 import type { AppEntry } from "@/lib/apps";
 import {
-  NavGroup, alpha, navGroupId, sans, serif, useHydrated, useMediaQuery, useNavGroups, useSidebarCollapsed,
+  K, NavGroup, alpha, navGroupId, sans, serif, useHydrated, useMediaQuery, useNavGroups, useSidebarCollapsed,
 } from "@/app/_kit";
 import { LOGO_SRC } from "../../core/brand";
 import { NAV_GROUPS, ROUTES, navActive, type NavEntry } from "./portalNav";
@@ -100,7 +100,7 @@ export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate 
             <span style={{ display: "block", fontFamily: serif, fontSize: 14, fontWeight: 500, color: "var(--aa-side-title)", letterSpacing: "-0.01em", lineHeight: 1.2 }}>
               Adventure Asia
             </span>
-            <span style={{ display: "block", fontSize: 9.5, textTransform: "uppercase", letterSpacing: "0.18em", color: "var(--aa-accent)", fontWeight: 600, marginTop: 1 }}>
+            <span style={{ display: "block", fontSize: 9.5, textTransform: "uppercase", letterSpacing: "0.18em", color: K.accent, fontWeight: 600, marginTop: 1 }}>
               Partner Portal
             </span>
           </span>
@@ -233,21 +233,21 @@ function NavItem({ entry, active, count, onClick }: {
       style={{
         display: "flex", alignItems: "center", gap: 10, width: "100%",
         padding: "8px 10px", borderRadius: 7, textDecoration: "none",
-        background: active ? alpha("var(--aa-accent)", 12) : "transparent",
+        background: active ? alpha(K.accent, 12) : "transparent",
         color: active ? "var(--aa-on-solid)" : "var(--aa-side-text)",
         fontSize: 13, fontWeight: 500, fontFamily: sans, position: "relative",
         transition: "background .15s, color .15s",
       }}
     >
       {active && (
-        <span aria-hidden style={{ position: "absolute", left: 0, top: 8, bottom: 8, width: 2, background: "var(--aa-accent)", borderRadius: "0 2px 2px 0" }} />
+        <span aria-hidden style={{ position: "absolute", left: 0, top: 8, bottom: 8, width: 2, background: K.accent, borderRadius: "0 2px 2px 0" }} />
       )}
       <span aria-hidden style={{ flexShrink: 0, opacity: active ? 1 : 0.75, position: "relative", display: "flex" }}>
         {entry.icon}
         {showCount && (
           <span data-pshell-dot="true" style={{
             position: "absolute", top: -4, right: -6, width: 7, height: 7, borderRadius: 999,
-            background: "var(--aa-accent)",
+            background: K.accent,
           }} />
         )}
       </span>
@@ -256,7 +256,7 @@ function NavItem({ entry, active, count, onClick }: {
       </span>
       {showCount && (
         <span data-pshell-label="true" aria-label={`${count} ${entry.count === "pool" ? "tours available" : "tours"}`}
-          style={{ fontSize: 11, color: active ? "var(--aa-accent)" : "var(--aa-side-text2)", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
+          style={{ fontSize: 11, color: active ? K.accent : "var(--aa-side-text2)", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
           {shown}
         </span>
       )}

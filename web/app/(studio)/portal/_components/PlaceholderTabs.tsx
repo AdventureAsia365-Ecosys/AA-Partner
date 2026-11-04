@@ -9,6 +9,7 @@
 // data (/api/tenant/me, /v1/billing); account changes go through the Adventure Asia team, since
 // no tenant self-service endpoint exists for them.
 
+import Link from "next/link";
 import { useState } from "react";
 import { signOutEverywhere } from "@/lib/studio/signOut";
 import { useQuery } from "@tanstack/react-query";
@@ -318,7 +319,7 @@ export function SettingsTab() {
           <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted, marginBottom: 6 }}>Account</div>
           {signedIn && <div style={row} data-testid="settings-signed-in-as">{label("Signed in", signedIn)}</div>}
           <div style={row}>{label("Company", loadingMe ? skel(120) : tenantName)}</div>
-          <div style={row}>{label("Plan", loadingMe ? skel(70) : titleCase(planTier) || "No plan attached")}<a href="/portal/account/billing" style={{ fontSize: 12, color: T.ink3, fontWeight: 500, textDecoration: "none" }}>View billing →</a></div>
+          <div style={row}>{label("Plan", loadingMe ? skel(70) : titleCase(planTier) || "No plan attached")}<Link href="/portal/account/billing" style={{ fontSize: 12, color: T.ink3, fontWeight: 500, textDecoration: "none" }}>View billing →</Link></div>
           <div style={last}>
             {label("Need to change something?", "Company name, contacts or a new API key")}
             <Btn size="sm" onClick={() => setContact(true)} style={{ whiteSpace: "nowrap", flexShrink: 0 }}><Mail size={13} /> Contact us</Btn>
@@ -329,9 +330,9 @@ export function SettingsTab() {
           <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted, marginBottom: 6 }}>API access</div>
           <div style={last}>
             {label("API key", "Shown once when it was issued. Use it to call the Adventure Asia API.")}
-            <a href="/portal/account/api" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: T.ink3, fontWeight: 500, textDecoration: "none", whiteSpace: "nowrap" }}>
+            <Link href="/portal/account/api" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: T.ink3, fontWeight: 500, textDecoration: "none", whiteSpace: "nowrap" }}>
               <KeyRound size={13} /> API docs →
-            </a>
+            </Link>
           </div>
         </Card>
 

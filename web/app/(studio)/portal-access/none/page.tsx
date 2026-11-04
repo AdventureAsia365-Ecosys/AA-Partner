@@ -4,6 +4,7 @@
 // CRM home: for a person without a CRM agency the CRM sends them here again; signing out is the way on.
 // AA-1025 (S264): the CRM sign-in is shown (SignedInAs, live from the CRM web) and the support address is labelled as
 // a contact (SupportContact): a bare info@ link here read as the signed-in account's address.
+import Link from "next/link";
 import { AccessCard, linkStyle, SupportContact } from "../AccessCard";
 import { SignedInAs } from "../SignedInAs";
 import { SignOutButton } from "../SignOutButton";
@@ -24,9 +25,9 @@ export default async function NoAccessPage({ searchParams }: { searchParams: Pro
       </p>
       <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
         {unavailable && (
-          <a href="/portal/dashboard" style={linkStyle}>
+          <Link href="/portal/dashboard" style={linkStyle}>
             Try again
-          </a>
+          </Link>
         )}
         <SignOutButton />
       </div>

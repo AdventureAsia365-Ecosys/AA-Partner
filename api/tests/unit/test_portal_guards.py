@@ -556,12 +556,27 @@ def test_no_route_calls_the_vendored_cross_site_guard_directly() -> None:
     assert "cfg.publicOrigin || req.nextUrl.origin" in guard
 
 
-@pytest.mark.parametrize("name", ["session.ts", "seal.ts"])
-def test_the_studio_reads_the_crm_web_session_with_byte_copies(name: str) -> None:
-    """portal/lib/{session,seal}.ts are byte copies of web/lib/ (one sealed cookie format, read only by the studio)."""
-    assert (PORTAL / "lib" / name).read_bytes() == (REPO / "web" / "lib" / name).read_bytes(), (
-        f"portal/lib/{name} differs from web/lib/{name}: copy it byte for byte (cp)"
+def test_the_studio_reads_the_crm_web_session_with_byte_copies() -> None:
+    """portal/lib/seal.ts is a byte copy of web/lib/seal.ts (one sealed cookie format, read only by the studio).
+
+    AA-1036 (R3 slice 1): portal/ is frozen until the cut-over deletes it, and web/lib/session.ts gained the optional
+    ``em`` field (the person's own e-mail), which the frozen reader ignores. So session.ts is checked for the cookie
+    format the reader depends on, not byte for byte: the same cookie names, sealing purpose and fields it reads."""
+    assert (PORTAL / "lib" / "seal.ts").read_bytes() == (REPO / "web" / "lib" / "seal.ts").read_bytes(), (
+        "portal/lib/seal.ts differs from web/lib/seal.ts: copy it byte for byte (cp)"
     )
+    web, portal = _read("web/lib/session.ts"), _read("portal/lib/session.ts")
+    for line in (
+        '{ session: "__Host-aa_crm_s", refresh: "__Secure-aa_crm_r", tx: "__Secure-aa_crm_tx", ',
+        'const s = open<Session>(cfg.sessionSecret, "session", cookies.get(cookieNames(cfg).session)?.value, now);',
+        'return s && s.v === 1 && typeof s.at === "string" && typeof s.sub === "string" ? s : null;',
+        "return session !== null && session.atExp - ACCESS_SKEW_S > now;",
+        "export const ACCESS_SKEW_S = 60;",
+    ):
+        assert line in web and line in portal, line
+    fields = ("at: string;", "atExp: number;", "iss: string;", "sub: string;", "cid: string;", "tid: string | null;")
+    for field in fields:
+        assert field in web and field in portal, field
 
 
 def test_the_studio_never_writes_the_crm_session() -> None:

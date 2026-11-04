@@ -6,7 +6,7 @@ import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import {
-  BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_MONO, FONT_SANS, SkeletonBar, SkeletonStyle, formatDate, formatDateTime,
+  BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, K, FONT_MONO, FONT_SANS, SkeletonBar, SkeletonStyle, formatDate, formatDateTime,
 } from "@/app/_kit";
 
 // ─── Tokens ───────────────────────────────────────────────────────────────────
@@ -15,14 +15,15 @@ import {
 // same move AA-601 part B made for the admin `A`. One <html data-theme> switch recolours every
 // portal page. A `var()` cannot take a hex alpha suffix — use the kit `alpha(color, pct)`.
 // red = danger only (AA-605: #B14A3B -> brand #C20101, same value as admin's A.red).
+// AA-1036 (an AA-1007 step): the values the kit token object K already names come from K (same `var()` strings).
 export const T = {
-  gold: "var(--aa-accent)", goldDeep: "var(--aa-accent-deep)", goldSoft: "var(--aa-accent-soft)", goldTint: "var(--aa-accent-tint)",
-  ink: "var(--aa-ink)", ink2: "var(--aa-ink2)", ink3: "var(--aa-ink3)",
-  body: "var(--aa-body)", muted: "var(--aa-muted)", muted2: "var(--aa-muted2)",
-  bg: "var(--aa-bg)", card: "var(--aa-card)", line: "var(--aa-line)", line2: "var(--aa-line2)",
-  green: "var(--aa-green)", greenSoft: "var(--aa-green-soft)",
-  red: "var(--aa-red)", redSoft: "var(--aa-red-soft)", redBorder: "var(--aa-red-border)",
-  amber: "var(--aa-kit-amber)", amberSoft: "var(--aa-kit-amber-soft)",
+  gold: K.accent, goldDeep: K.accentDeep, goldSoft: K.accentSoft, goldTint: K.accentTint,
+  ink: K.ink, ink2: K.ink2, ink3: K.ink3,
+  body: K.body, muted: K.muted, muted2: K.muted2,
+  bg: K.bg, card: K.card, line: K.line, line2: K.line2,
+  green: K.success, greenSoft: K.successSoft,
+  red: K.danger, redSoft: K.dangerSoft, redBorder: K.dangerBorder,
+  amber: K.amber, amberSoft: K.amberSoft,
   /** White text/icon on a solid coloured surface, in both themes. */
   onSolid: "var(--aa-on-solid)",
   /** Text on the gold primary button (dark ink in both themes since AA-760: white on gold was 2.5:1). */
@@ -101,7 +102,7 @@ const BADGE_MAP: Record<BadgeVariant, { bg: string; color: string; dot: string }
   success: { bg: T.greenSoft, color: T.green, dot: T.green },
   warning: { bg: T.amberSoft, color: T.amber, dot: T.gold },
   error:   { bg: T.redSoft, color: T.red, dot: T.red },
-  info:    { bg: "var(--aa-info-soft)", color: "var(--aa-info)", dot: "var(--aa-blue)" },
+  info:    { bg: K.infoSoft, color: K.info, dot: "var(--aa-blue)" },
   gold:    { bg: T.goldTint, color: T.goldDeep, dot: T.gold },
   // AA-760 — ink3, not muted: muted on line2 was 4.0:1 in light (8.3:1 now; 7.7:1 in dark).
   default: { bg: T.line2, color: T.ink3, dot: T.muted2 },

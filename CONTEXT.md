@@ -7,7 +7,7 @@ status: active
 owner: nghiep
 audience: [engineer, agent]
 applies_to: [aa-crm-api, aa-crm-web, aa-crm-portal]
-last_reviewed: 2026-11-01
+last_reviewed: 2026-11-04
 review_every_days: 90
 related: [ARCH-01, ARCH-06-booking, docs/adr/README.md]
 ---
@@ -111,7 +111,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 | Edge | CloudFront `partner-dev.` -> VPC origin -> internal NLB -> ALB host + `X-AA-Origin` + `/crm/*` rule -> the service (AA-931 spike, ADR 0010 decision 2) |
 | Image | ECR `aa-crm-dev-api`, IMMUTABLE, tag = git SHA, built natively on an arm64 runner |
 | Web | `web/`: Next.js 16 standalone (React 19, TypeScript, vitest), the AA UI kit core vendored from AA-CIS-App (`web/app/_kit/core/`, root ADR 0016; inline styles from the kit tokens); ECS Fargate **ARM64** service `aa-crm-dev-web` (port 3000, `/healthz`), ECR `aa-crm-dev-web` (AA-CIS-Infra `crm_web.tf`) |
-| Portal | `portal/`: the tenant Content studio (Next.js 16, React 19, TypeScript), moved from AA-CIS-App with its history by CRM-P2a (AA-979). Fargate service `aa-crm-dev-portal` on the agency host `portal.lumiguides.it.com` (shared with the CRM web) since the P2b cutover; partner-pool sign-in only since the P2b clean-up; section "Tenant portal" below |
+| Portal | `portal/`: the tenant Content studio (Next.js 16, React 19, TypeScript), moved from AA-CIS-App with its history by CRM-P2a (AA-979). Fargate service `aa-crm-dev-portal` on the agency host `portal.lumiguides.it.com` (shared with the CRM web) since the P2b cutover; partner-pool sign-in only since the P2b clean-up; section "Tenant portal" below. **Frozen since AA-1036 R3 slice 1**: the studio now also lives inside `web/` (section "One agency app"); `portal/` is deleted with its service at the R3 slice 2 cut-over |
 | Edge for the web | the same CloudFront distribution: the ALB rule `crm_api` (`/crm`, `/crm/*`) stays above `crm_partner_default`, which forwards every other path of the partner host to the web target group |
 
 AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everything `aa-crm-<env>-*`, tag `App = crm`
@@ -130,7 +130,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `/crm/public/v1/traveller` | no token in the URL (AA-953, CRM-24a; §2.9 rule 1 for the portal): the web landing `/c/t/<token>` exchanges the link for the host-only cookie `aa_portal_link` (httpOnly, Secure, SameSite=Strict, Path `/crm/public/v1/traveller`) and redirects to `/c/t`; the session cookie `aa_portal_s` sits on the same path | `client_link_tx()` purpose `portal` (the cookie's token); the same home / code / session / Stage 3 / sign as the token routes, plus the "Who are you?" picker on `POST /session` (200 `pick` until a `traveler_id` is chosen; Fix E4), `POST /switch` (inside the address's group), `PUT /flights`, `POST /passport-scan` (write-only, 10 MiB body cap, five live scans), `GET /documents/{id}` (403 `document_write_only` / `document_not_shared` / `document_not_yours`), `POST /companions` (lead only); no cookie or a bad one: 404 `link_not_found`; the same two write buckets as the token routes |
 | `/crm/public/v1/proposal[/pick\|/hold\|/accept\|/change-request]` | no token in the URL (AA-950, Fix B11): the host-only cookie `aa_proposal_link` the web set when the client opened `/c/p/<token>` (httpOnly, Secure, SameSite=Strict, Path `/crm/public/v1/proposal`); served on the client host | `client_link_tx()` of purpose `proposal` (`app/proposals/public.py`); C-03 / C-04 / C-12 of a builder version (Keep / Swap, Choose later, the hold set, accept 409 `hold_expired`, Ask for a change); writes: Origin check, per-address limit, 32 KiB cap; no cookie or an unusable link: 404 `link_not_found` |
 | `/crm/public/v1/calendar/{token}.ics` | no token header (AA-961): the 43-character feed token in the path only (SHA-256 stored), fetched by the member's calendar app; served on the partner host | `calendar_feed_tx()` (`app/calendar/public.py`); `text/calendar`, no names, titles or money; 404 `feed_not_found` for an unknown, revoked or expired token, an inactive member or a locked agency (subscribed calendars stop updating); public rate limit |
-| `/crm/v1` | PARTNER x {AA-Partner web} only (the Dev EXTERNAL x {`cis-portal`} bridge was removed at AA-979 P2b: its tokens are 401) | `X-AA-Tenant-Id` + `tenant_tx(action=...)` (membership in `crm.member`, then the permission matrix); `GET /crm/v1/memberships` and `POST /crm/v1/invitations/accept` need no header |
+| `/crm/v1` | PARTNER x {AA-Partner web} only (AA-1036: `GET /me` also answers `crm_entitled` for the app switcher) (the Dev EXTERNAL x {`cis-portal`} bridge was removed at AA-979 P2b: its tokens are 401) | `X-AA-Tenant-Id` + `tenant_tx(action=...)` (membership in `crm.member`, then the permission matrix); `GET /crm/v1/memberships` and `POST /crm/v1/invitations/accept` need no header |
 | `/crm/ops/v1` | WORKFORCE x {`cis-admin`} | group `cis-admin` or `crm-platform-admin` reads, `crm-platform-admin` writes (AA-939: member deactivation, owner recovery; AA-941: the L1 console, section "L1 console" below). Every response passes the L1 key allow-list (`app/ops/serializer.py`). AA-979: `POST /tenants/{id}/studio-invitations` (the CIS staff relay of a Content studio invitation) takes any OPS caller, `cis-admin` included (section "Content studio invitations"). The Dev-only E2E CIS admin (root ADR 0006a A10b; a `cis-admin` token whose `email` claim is its address, `Caller.e2e_read_only`, `app/auth/e2e_staff.py`) is read-only: every `crm-platform-admin` write answers it 403 `e2e_read_only` |
 | `/crm/staff/v1` | WORKFORCE x {`crm-staff`} | group `crm-ops` or `crm-support`; AA-971 (CRM-13b): support needs the owner's live grant, break-glass group `crm-ops`; every agency read through `support_tx()` as `crm_support_reader` (section "AA support access" below). AA-1019: the Dev-only CRM staff E2E identity (root ADR 0006a A10c, `email` claim `e2e-crm-staff@`, `Caller.e2e_synthetic_only`) is refused outside dev / test / local (403 `e2e_read_only`) and reaches synthetic agencies only (`ops_tx` / `staff_tx` / `support_tx`: 403 `e2e_synthetic_only`; the lists skip others). The web console is section "AA staff console" below |
 
@@ -552,6 +552,49 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
   `ai: {ai_generated, generator, generated_at}` (null without model text; the model is on the ledger row
   `llm_call_id`) and the draft text element carries `data-ai-generated` / `data-ai-generated-at`. A message a member
   writes from a draft is their own (crm.message carries no mark).
+
+## One agency app (`web/`, AA-1036 R3 slice 1, root ADR 0019 d6 / d7)
+
+The Content studio is part of the agency app: one Next.js app, one partner-pool sign-in (MFA), one session. Slice 1
+copies the studio into `web/` and leaves `portal/` and its deploy untouched, so Dev keeps serving `portal./portal*`
+from `aa-crm-dev-portal` until the cut-over (R3 slice 2: the agency-host ALB rules `/portal*`, `/api/*`,
+`/tenant-login*`, `/terms`, `/privacy`, `/assets/*` move to the web target group, `WEB_CONTENT_HOME=true`, then the
+studio service and `portal/` are deleted). Implementation notes: `docs/implementation-notes/AA-1036.md`.
+
+- **Layout**: route group `app/(studio)/` (`/portal/*` with the same URLs, `/portal-access/*`, the draft legal pages
+  `/legal/partner-terms` and `/legal/privacy`), the studio BFF at `/api/*` (`app/api/tenant/[...path]`, `tenant/me`,
+  `auth/tenant-logout`, `auth/tenant-select`, `playground/proxy`, `healthz`, `studio/apps`), the shell under
+  `app/_kit/local/studio/`, helpers under `lib/studio/`. One kit copy (`web/app/_kit/core`). The studio stylesheet
+  (`app/(studio)/studio.css`: Tailwind 4 preflight with `source(none)`, no utility, plus the studio rules) loads only
+  under the group; links between the studio and the CRM are plain `<a>` (full page loads).
+- **Gate order** (`proxy.ts`): host -> `/staff` -> `/c` -> studio -> CRM. `/tenant-login*` answers 308 to
+  `/auth/refresh?next=/portal/dashboard` (no people-facing API-key sign-in, no `PORTAL_API_KEY_SIGNIN`); `/api/*`
+  passes (handlers answer 401 JSON); the studio legal pages are public; `/portal*` needs the session, then `studioGate`
+  makes sure a CIS studio token bound to this sign-in (`cis_partner_ref`) exists: CIS `POST /auth/tenant-session`
+  (server side, `CIS_API_URL`; at most 15 min, `amr=partner`), several studios -> `/portal-access/select`, none ->
+  `/portal-access/none`, CIS down or unset -> none (fail closed). Only `amr=partner` tokens are ever used. The studio
+  reads the app's own `lib/session.ts`: no byte copy of `session.ts` / `seal.ts`. `/terms`, `/privacy` and the old
+  T-number slugs answer 308 (`next.config.ts`).
+- **Content is home** (d7): with `WEB_CONTENT_HOME=true` the bare host "/" answers 307 to `/portal/dashboard`; the CRM
+  home is also `/home` (the sidebar's Home). Off until the cut-over (the separate studio's "Open CRM" links "/").
+- **App switcher** (`lib/apps.ts`): Content, CRM, Trip planner. An add-on the tenant holds opens; any other shows
+  "Request add-on" (a `mailto:` to the AA support address naming the add-on and the agency). The CRM entry comes from
+  `GET /crm/v1/me` for the studio's tenant (`crm_entitled`, `app.entitlements.crm_entitled`: false only when the CIS
+  projection put the agency on plan `free`); the Trip planner has no entitlement in this app yet (always a request).
+  Studio: `GET /api/studio/apps` (always 200) feeds the sidebar's "Apps" group; CRM: the former Content studio group
+  is "Apps" (the studio link when CIS lists the agency for the person, and the Trip planner request).
+- **Own e-mail** (an AA-1007 leftover): `/auth/callback` keeps the id token's `email` (same client and `sub`,
+  `lib/oauth.ts` `idTokenEmail`) in the sealed session (`em`, kept across refreshes); `/bff/identity` adds it to its
+  signed-in answers, and the studio shows "Signed in to AA Partner as <email> (<Role> of <agency>)". Never an e-mail
+  from an API answer.
+- **Health**: `/healthz` is the agency app's; `/api/healthz` answers `{ok, service: "aa-crm-web", studio: "merged",
+  version, sha}` (the `crm-portal.rows` verify reads the studio service until slice 2 switches the rows).
+- **Sentry**: `instrumentation*.ts` covers the whole app, inert until `SENTRY_DSN` / the `NEXT_PUBLIC_SENTRY_DSN` build
+  arg are set (slice 2).
+- **Guards**: `api/tests/unit/test_studio_guards.py` (the studio rules of `test_portal_guards.py` on the new paths),
+  `web/tests/studio/*` (vitest), the Web Build standalone smoke, and the suppressions growth check, whose base gets the
+  base branch's `portal/` entries under their new paths (`.github/scripts/studio_suppressions_base.py`) while the
+  move is in flight.
 
 ## Tenant portal (`portal/`, AA-979 CRM-P2a)
 

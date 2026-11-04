@@ -72,6 +72,175 @@
       "count": 1
     }
   },
+  "app/(studio)/_legal/LegalPage.tsx": {
+    "aa-kit/no-class-name": {
+      "count": 1
+    },
+    "aa-kit/no-raw-main": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal-access/AccessCard.tsx": {
+    "aa-kit/no-raw-main": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal-access/SignOutButton.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal-access/select/page.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/AccountActivity.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    }
+  },
+  "app/(studio)/portal/_components/AngleGateWizard.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    }
+  },
+  "app/(studio)/portal/_components/ApiPlayground.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/ApiTab.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 5
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 2
+    }
+  },
+  "app/(studio)/portal/_components/BrandTab.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 4
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 4
+    }
+  },
+  "app/(studio)/portal/_components/CatalogDrawer.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 5
+    }
+  },
+  "app/(studio)/portal/_components/DashboardTab.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 4
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 5
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 2
+    }
+  },
+  "app/(studio)/portal/_components/DisconnectConnection.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/GettingStarted.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/NotificationsBell.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/PlaceholderTabs.tsx": {
+    "aa-kit/no-hex-colour": {
+      "count": 4
+    }
+  },
+  "app/(studio)/portal/_components/PublishedList.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/ReviewList.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 13
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/SeeOriginalToggle.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/Skeleton.tsx": {
+    "aa-kit/no-class-name": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/SlateTab.tsx": {
+    "aa-kit/no-class-name": {
+      "count": 1
+    },
+    "aa-kit/no-hand-styled-button": {
+      "count": 3
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 2
+    }
+  },
+  "app/(studio)/portal/_components/api-playground/ApiKeyDisplay.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    }
+  },
+  "app/(studio)/portal/_components/api-playground/EndpointPanel.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 3
+    }
+  },
+  "app/(studio)/portal/_components/api-playground/ResponseViewer.tsx": {
+    "aa-kit/no-hex-colour": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/ui.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 5
+    }
+  },
+  "app/(studio)/portal/account/integrations/page.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 2
+    }
+  },
+  "app/(studio)/portal/content/page.tsx": {
+    "aa-kit/no-raw-aa-var": {
+      "count": 1
+    }
+  },
   "app/_kit/local/CrmShell.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 4
@@ -80,6 +249,43 @@
       "count": 5
     },
     "aa-kit/no-raw-main": {
+      "count": 1
+    }
+  },
+  "app/_kit/local/studio/PortalBottomNav.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    }
+  },
+  "app/_kit/local/studio/PortalCommandPalette.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    }
+  },
+  "app/_kit/local/studio/PortalShell.tsx": {
+    "aa-kit/no-raw-main": {
+      "count": 1
+    }
+  },
+  "app/_kit/local/studio/PortalSidebar.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
+      "count": 7
+    }
+  },
+  "app/_kit/local/studio/PortalTopbar.tsx": {
+    "aa-kit/no-hand-styled-button": {
+      "count": 6
+    },
+    "aa-kit/no-hex-colour": {
+      "count": 1
+    },
+    "aa-kit/no-raw-aa-var": {
       "count": 1
     }
   },

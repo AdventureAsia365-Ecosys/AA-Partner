@@ -554,6 +554,18 @@ jobs:
           curl -sf http://localhost:3005/bff/identity | jq -e '. == {"kind": "signed_out"}'
           [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3005/signed-out)" = "200" ]
           curl -sI http://localhost:3005/signed-out | grep -qi "^content-security-policy: frame-ancestors 'none'"
+          # AA-1036 (R3 slice 1): the Content studio inside this app. The retired API-key sign-in and the old legal
+          # paths answer 308; the studio's legal pages are public; a studio page without a session goes to the refresh;
+          # the studio BFF answers 401 JSON, the app switcher 200.
+          [ "$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' http://localhost:3005/tenant-login)" = "308 http://localhost:3005/auth/refresh?next=%2Fportal%2Fdashboard" ]
+          [ "$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' http://localhost:3005/terms)" = "308 http://localhost:3005/legal/partner-terms" ]
+          [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3005/legal/partner-terms)" = "200" ]
+          [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3005/legal/privacy)" = "200" ]
+          loc=$(curl -s -o /dev/null -w '%{redirect_url}' http://localhost:3005/portal/dashboard)
+          echo "$loc" | grep -q '^http://localhost:3005/auth/refresh?next=%2Fportal%2Fdashboard$'
+          [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3005/api/tenant/me)" = "401" ]
+          curl -sf http://localhost:3005/api/studio/apps | jq -e '.apps | map(.key) == ["content", "crm", "planner"]'
+          curl -sf http://localhost:3005/api/healthz | jq -e --arg sha "$GIT_SHA" '.ok == true and .studio == "merged" and .sha == $sha'
 
       # AA-994 S2b (root ADR 0016 decision 7, plan guards G1-G9, G11) — kit lint inside this job, so it gates with it.
       # Page code is linted with the kit preset (app/_kit/core/eslint-kit.mjs, `inline`) at `error`; violations that
@@ -609,7 +621,13 @@ jobs:
           fi
           BASE_LIST="$RUNNER_TEMP/base-web-files.txt"
           git ls-tree -r --name-only "$BASE_SHA" -- . > "$BASE_LIST"  # paths relative to web/ (the cwd)
-          node app/_kit/core/check-kit-copy.mjs --suppressions "$BASE_FILE" eslint-suppressions.json --base-files "$BASE_LIST"
+          # AA-1036 (R3 slice 1): the Content studio moves from portal/ into web/; its frozen entries count as the base
+          # of their new web paths (never for a path the base web tree has), so a moved file keeps and never grows its
+          # count. No portal file at the base (after R3 slice 2) = the base web file as it is.
+          BASE_PORTAL="$RUNNER_TEMP/base-portal-eslint-suppressions.json"
+          git show "$BASE_SHA:portal/eslint-suppressions.json" > "$BASE_PORTAL" 2>/dev/null || BASE_PORTAL="-"
+          python3 ../.github/scripts/studio_suppressions_base.py "$BASE_FILE" "$BASE_PORTAL" "$BASE_LIST" "$BASE_FILE.merged"
+          node app/_kit/core/check-kit-copy.mjs --suppressions "$BASE_FILE.merged" eslint-suppressions.json --base-files "$BASE_LIST"
 
       - name: No inline disable of a kit rule
         if: ${{ !cancelled() }}

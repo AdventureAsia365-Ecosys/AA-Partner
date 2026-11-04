@@ -2,6 +2,7 @@
 // AA-886 — shell of the portal's legal pages (/privacy, /terms). Public pages (proxy.ts matches only
 // /portal/* and /tenant-login), light theme like /tenant-login, and a draft banner that is ALWAYS shown
 // while counsel has not approved the text. Portal-owned (not a vendored kit file).
+import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 import { BRAND, FONT_DISPLAY, FONT_SANS, LOGO_SRC, SUPPORT_EMAIL } from "@/app/_kit/core/brand";
 import { PRIVACY_PATH, TERMS_PATH } from "@/lib/studio/legal";
@@ -90,7 +91,7 @@ export default function LegalPage({
         <nav aria-label="Legal" style={{ display: "flex", flexWrap: "wrap", gap: 16, fontSize: 12, marginTop: 28, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
           <a href={PRIVACY_PATH} style={{ color: BRAND.muted, textDecoration: "none" }}>Privacy notice</a>
           <a href={TERMS_PATH} style={{ color: BRAND.muted, textDecoration: "none" }}>Partner terms</a>
-          <a href="/portal/dashboard" style={{ color: BRAND.muted, textDecoration: "none" }}>Partner login</a>
+          <Link href="/portal/dashboard" style={{ color: BRAND.muted, textDecoration: "none" }}>Partner login</Link>
         </nav>
       </main>
     </div>

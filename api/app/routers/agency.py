@@ -6,8 +6,9 @@ per request with the ``X-AA-Tenant-Id`` header and every read goes through :func
 check, RLS context).
 
 Responses are ids, roles and the agency's own label/locale only (never an e-mail or a name from the token).
-AA-1036: ``/me`` also says whether the agency holds the CRM add-on (``crm_entitled``, :func:`app.entitlements.crm_entitled`,
-from the projection of tenant.entitlements.v1), for the agency app's app switcher; it refuses nothing.
+AA-1036: ``/me`` also says whether the agency holds the CRM add-on (``crm_entitled``,
+:func:`app.entitlements.crm_entitled`, from the projection of tenant.entitlements.v1), for the agency app's app
+switcher; it refuses nothing.
 Margin-bearing fields arrive with later cards behind the per-role serializer allow-list (design v3 §4.6).
 
 ``GET /crm/v1/memberships`` is the one route without ``X-AA-Tenant-Id``: it lists the agencies the caller belongs to
