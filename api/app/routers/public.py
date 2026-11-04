@@ -33,12 +33,13 @@ is decided by the form key inside :func:`app.tenancy.intake_tx`.
   under the per-address public limit: Twilio posts every agency's webhooks from one shared pool of addresses, and a
   429 would lose a client's message for good (Twilio does not retry an inbound webhook). The signature authenticates
   them; only unknown hook ids (404) are counted, per address (``HOOK_MISSES_PER_MINUTE``), and an address over that
-  ceiling is answered 429 before any work, so random-id floods stay cheap. AA-969 (review round 2): a refused
-  signature (403) on a real hook id is counted per **hook id** (``HOOK_REFUSALS_PER_MINUTE``), and a hook over that
-  ceiling is answered 429 before the database is reached, so whoever knows a hook id (the agency itself) cannot flood
-  it with unsigned requests; genuine signed callbacks never count. Refusals are not counted per address: a hook whose
-  agency let its Twilio Auth Token drift would otherwise use up Twilio's shared addresses for every agency. The
-  webhook transaction also takes a slot of the public share of the pool (:mod:`app.tenant_gate`).
+  ceiling is answered 429 before any work, so random-id floods stay cheap. AA-969 (review round 3): a refused
+  signature never locks a hook out (round 2's per-hook refusal ceiling let anyone who knew a hook id make every
+  genuine callback 429 for a minute). Instead a request without ``X-Twilio-Signature`` is refused 403 before the
+  database, and a hook id this task already resolved has its token cached (:class:`app.messaging.webhook.HookCache`):
+  a bad signature is refused 403 in process at no database cost, a good one goes on; such a known hook also skips the
+  misses check and takes its own slot key of the pool (:data:`app.tenant_gate.HOOK_KEY`), so neither a random-id
+  flood (:data:`app.tenant_gate.HOOK_UNKNOWN_KEY`) nor anonymous browsing queues ahead of it.
 
 Responses never carry an id, a name, or whether an e-mail is already known.
 """
@@ -54,7 +55,7 @@ from fastapi.responses import JSONResponse, Response
 
 from app.calendar import public as calendar_public
 from app.db import request_pool
-from app.errors import Forbidden, NotFound
+from app.errors import NotFound
 from app.intake import public as intake
 from app.intake import stage2_public
 from app.messaging import webhook as messaging_hooks
@@ -194,13 +195,12 @@ async def _hook(request: Request, hook_id: str, kind: str, signature: str | None
     if runtime is None:
         raise HTTPException(status_code=503, detail="messaging_not_configured")
     misses = request.app.state.hook_miss_limiter
-    refusals = request.app.state.hook_refusal_limiter
+    cache: messaging_hooks.HookCache | None = getattr(request.app.state, "hook_cache", None)
     address = client_address(request, request.app.state.settings.rate_limit_xff_hops)
-    for limiter, key in ((misses, address), (refusals, hook_id)):
-        if limiter.exhausted(key):
-            raise HTTPException(
-                status_code=429, detail="rate_limited", headers={"Retry-After": str(int(limiter.window_s))}
-            )
+    # A hook id this task knows is a real one: its callbacks never wait on the address's misses (Twilio's addresses
+    # are shared with whatever else Twilio posts here).
+    if not (cache is not None and cache.known(hook_id)) and misses.exhausted(address):
+        raise HTTPException(status_code=429, detail="rate_limited", headers={"Retry-After": str(int(misses.window_s))})
     try:
         body = await read_capped(request, MAX_HOOK_BYTES)
     except BodyTooLarge:
@@ -212,13 +212,13 @@ async def _hook(request: Request, hook_id: str, kind: str, signature: str | None
     pool = await request_pool(request)
     try:
         await messaging_hooks.handle(
-            pool, runtime, messaging_hooks.HookRequest(hook_id=hook_id, kind=kind, params=params, signature=signature)
+            pool,
+            runtime,
+            messaging_hooks.HookRequest(hook_id=hook_id, kind=kind, params=params, signature=signature),
+            cache=cache,
         )
     except NotFound:
         misses.allow(address)  # only a miss is counted: genuine (signed) callbacks never use the address's minute
-        raise
-    except Forbidden:
-        refusals.allow(hook_id)  # a refused signature on a real hook: counted per hook, never per (shared) address
         raise
     return Response(EMPTY_TWIML, media_type="text/xml", headers=NO_STORE)
 

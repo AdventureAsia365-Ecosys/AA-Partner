@@ -351,7 +351,8 @@ async def post_document(request: Request, caller: CallerDep, tenant_id: TenantDe
     keys = require_keys(request.app.state.keys)
     store = require_store(request.app.state.documents)
     content = documents.decode(body.content_b64)
-    async with tenant_tx(pool, caller, tenant_id, action=Action.DOCUMENT_UPLOAD) as ctx:
+    # A long slot (app.tenant_gate): the S3 put of up to ~7 MB runs while the slot is held (AA-969 round 3).
+    async with tenant_tx(pool, caller, tenant_id, action=Action.DOCUMENT_UPLOAD, long=True) as ctx:
         return await documents.upload(
             ctx,
             Vault(keys, ctx),
@@ -373,7 +374,7 @@ async def post_download(
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     store = require_store(request.app.state.documents)
-    async with tenant_tx(pool, caller, tenant_id, action=Action.DOCUMENT_DOWNLOAD) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.DOCUMENT_DOWNLOAD, long=True) as ctx:
         return await documents.download(ctx, Vault(keys, ctx), store, document_id, body.reason)
 
 

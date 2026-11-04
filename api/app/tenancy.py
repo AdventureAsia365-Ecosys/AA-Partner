@@ -405,6 +405,7 @@ async def tenant_tx(
     *,
     reader_role: str | None = None,
     action: Action | None = None,
+    long: bool = False,
 ) -> AsyncIterator[TenantContext]:
     if not isinstance(tenant_id, uuid.UUID):
         raise TypeError("tenant_id must be a UUID")
@@ -412,8 +413,10 @@ async def tenant_tx(
         raise ValueError(f"not a CRM reader role: {reader_role!r}")
     pending: Exception | None = None
     # AA-969 (F2): the agency's share of the pool first (app.tenant_gate), then a bounded wait for a connection.
+    # ``long``: the block holds its slot across a slow external call (a model call, an S3 put): one of the long slots,
+    # so such work never takes every request slot (review round 3).
     gate = tenant_gate.GATE
-    async with gate.slot(caller.iss, caller.sub, tenant_id), _acquire(pool) as conn, conn.transaction():
+    async with gate.slot(caller.iss, caller.sub, tenant_id, long=long), _acquire(pool) as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
         status = await conn.fetchval(TENANT_SQL, tenant_id)
         if status is None:
@@ -1057,17 +1060,24 @@ class MessagingHook:
 
 
 @asynccontextmanager
-async def messaging_hook_tx(pool: asyncpg.Pool, hook_id: str) -> AsyncIterator[tuple[SystemContext, MessagingHook]]:
+async def messaging_hook_tx(
+    pool: asyncpg.Pool, hook_id: str, *, known: bool = False
+) -> AsyncIterator[tuple[SystemContext, MessagingHook]]:
     """A Twilio webhook (AA-958, crm-036): the hook id in the URL finds the agency's live
     ``crm.messaging_connection`` through the SELECT-only policy ``messaging_connection_hook_lookup``
     (``app.messaging_hook_id``) before any agency is known; then ``app.tenant_id`` = its agency (which must be active)
     and ``app.actor`` = ``job:crm_messaging_hook``. An unknown, malformed or trashed hook id, or an agency that is not
     active: 404 ``hook_not_found``. The caller checks the request signature with the agency's token before it stores
-    anything. Audit semantics as :func:`system_tx`. Only ``app/messaging/webhook.py`` may open it."""
+    anything. Audit semantics as :func:`system_tx`. Only ``app/messaging/webhook.py`` may open it.
+
+    ``known`` (AA-969 round 3): this task resolved the hook id before (:class:`app.messaging.webhook.HookCache`): the
+    slot is taken under :data:`app.tenant_gate.HOOK_KEY`, else :data:`app.tenant_gate.HOOK_UNKNOWN_KEY`, so neither a
+    flood of random hook ids nor anonymous browsing (``PUBLIC_KEY``) queues ahead of a known hook's callbacks."""
     if not isinstance(hook_id, str) or not _HOOK_ID.match(hook_id):
         raise NotFound("hook_not_found")
     pending: Exception | None = None
-    async with _gated(pool, tenant_gate.PUBLIC_KEY, busy=tenant_gate.public_busy) as conn, conn.transaction():
+    key = tenant_gate.HOOK_KEY if known else tenant_gate.HOOK_UNKNOWN_KEY
+    async with _gated(pool, key, busy=tenant_gate.public_busy) as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.messaging_hook_id', $1, true)", hook_id)
         row = await conn.fetchrow(MESSAGING_HOOK_SQL, hook_id)
         await conn.execute("SELECT set_config('app.messaging_hook_id', '', true)")

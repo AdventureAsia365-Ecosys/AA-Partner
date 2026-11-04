@@ -220,8 +220,9 @@ async def _prove(pool: asyncpg.Pool, *agencies: tuple[object, str]) -> None:
 async def test_a_noisy_agency_cannot_hold_the_pool_from_a_calm_one(app_pool: asyncpg.Pool) -> None:
     """Twelve slow requests of one agency at once, then one quick request of another. The request path holds at most
     two of the three connections (the third stays free for the crm.job worker, checked here with a plain acquire),
-    and the calm request gets the next slot that frees up, ahead of the ten queued noisy requests (first come first
-    served would put it behind all of them: about 1.5 s here). The noisy surplus is 429 ``tenant_busy``."""
+    and since review round 3 one agency never holds both of them, even into an idle gate: the calm request gets the
+    free slot at once, without waiting for any noisy transaction (first come first served would put it behind all
+    twelve: about 1.5 s here; round 2 behind one, 0.25 s). The noisy surplus is 429 ``tenant_busy``."""
     noisy_tenant, noisy_sub = await _seed(app_pool)
     calm_tenant, calm_sub = await _seed(app_pool)
     before = tenant_gate.GATE
@@ -229,15 +230,15 @@ async def test_a_noisy_agency_cannot_hold_the_pool_from_a_calm_one(app_pool: asy
     try:
         await _prove(app_pool, (noisy_tenant, noisy_sub), (calm_tenant, calm_sub))
         noisy = await _flood(app_pool, noisy_tenant, noisy_sub, 12, 0.25)
-        await asyncio.sleep(0.05)  # the noisy burst holds the request share
-        assert tenant_gate.GATE.in_use() == 2
+        await asyncio.sleep(0.05)  # the noisy burst holds its share: one slot, never the last free one
+        assert tenant_gate.GATE.in_use() == 1 and tenant_gate.GATE.in_use(f"tenant:{noisy_tenant}") == 1
         async with app_pool.acquire(timeout=0.2) as worker_conn:  # the worker's connection is still there
             assert await worker_conn.fetchval("SELECT 1") == 1
         calm_latency = await _calm_latency(app_pool, calm_tenant, calm_sub)
         results = await asyncio.gather(*noisy)
     finally:
         tenant_gate.GATE = before
-    assert calm_latency < 0.45, calm_latency  # at most one noisy transaction, never the noisy queue
+    assert calm_latency < 0.2, calm_latency  # no noisy transaction (0.25 s each) to wait for, never the noisy queue
     assert results.count("ok") >= 2 and "tenant_busy" in results, results
 
 

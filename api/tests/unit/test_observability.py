@@ -390,6 +390,75 @@ def test_url_redaction_of_events_and_breadcrumbs() -> None:
     assert event["transaction"] == "/crm/public/v1/s/[token]"
 
 
+def test_unmatched_path_transaction_names_and_spans_are_redacted() -> None:
+    """Review round 3: with no route match the SDK names the transaction by the full URL (scheme, host, port)."""
+    token = "Ab3_" + "x" * 35 + "-Z9q"
+    event = sentry.before_send_transaction(
+        {
+            "type": "transaction",
+            "transaction": f"http://10.0.0.1:8000/crm/public/v1/p/{token}/",
+            "transaction_info": {"source": "url"},
+            "spans": [
+                {"op": "http.client", "description": f"GET https://h.example/crm/public/v1/s/{token}?a=1"},
+                {
+                    "op": "http.server",
+                    "description": f"/crm/public/v1/calendar/{token}",
+                    "data": {"url": f"/c/{token}"},
+                },
+                {"op": "db", "description": "SELECT 1 FROM crm.tenant WHERE tenant_id = $1"},
+                {"op": "http.client", "description": f"https://h.example/crm/public/v1/portal/{token}"},
+                "not-a-span",
+            ],
+        },
+        {},
+    )
+    assert event["transaction"] == "http://10.0.0.1:8000/crm/public/v1/p/[token]/"
+    assert token not in json.dumps(event)
+    assert event["spans"][0]["description"] == "GET https://h.example/crm/public/v1/s/[token]"
+    assert event["spans"][1]["data"]["url"] == "/c/[token]"
+    assert event["spans"][2]["description"] == "SELECT 1 FROM crm.tenant WHERE tenant_id = $1"
+    assert event["spans"][3]["description"] == "https://h.example/crm/public/v1/portal/[token]"
+    # A route template stays as it is.
+    assert (
+        sentry.before_send({"transaction": "/crm/public/v1/p/{token}"}, {})["transaction"] == "/crm/public/v1/p/{token}"
+    )
+
+
+class _CaptureAll(sentry_sdk.transport.Transport):
+    def __init__(self, options=None) -> None:
+        super().__init__(options)
+        self.items: list[dict] = []
+
+    def capture_envelope(self, envelope) -> None:
+        self.items.extend(item.payload.json for item in envelope.items if item.payload.json is not None)
+
+
+def test_real_sdk_transaction_of_an_unmatched_path_never_carries_the_link() -> None:
+    """Review round 3, end to end through the SDK: a trailing slash on a client link matches no route (redirect_slashes
+    answers 307 / 404), so the SDK names the transaction by the raw URL; every sampled transaction is redacted."""
+    transport = _CaptureAll()
+    s = Settings(database_url=None, environment="test", git_sha="cafe123", sentry_dsn="https://k@o1.ingest.example/1")
+    token = "Qw3_" + "y" * 35 + "-Z9q"
+    app = create_app(SETTINGS)
+    real_init = sentry_sdk.init
+    with (
+        patch.object(sentry, "TRACES_SAMPLE_RATE", 1.0),
+        patch("sentry_sdk.init", lambda **kw: real_init(**kw, transport=transport)),
+    ):
+        assert sentry.init_sentry(s) is True
+    try:
+        with TestClient(app, raise_server_exceptions=False, follow_redirects=False) as client:
+            for path in (f"/crm/public/v1/p/{token}/", f"/crm/public/v1/calendar/{token}", f"/nowhere/{token}"):
+                client.get(path)
+        sentry_sdk.flush(2)
+    finally:
+        sentry_sdk.get_client().close()
+        real_init()
+    transactions = [i for i in transport.items if i.get("type") == "transaction"]
+    assert transactions, "no transaction captured"
+    assert token not in json.dumps(transport.items)
+
+
 # --- settings: missing-DSN guard ----------------------------------------------------------------------------------
 
 

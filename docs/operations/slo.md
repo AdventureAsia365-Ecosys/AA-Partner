@@ -65,9 +65,13 @@ by every agency, the public routes and the job worker. Four mechanisms keep one 
    takes a slot before it asks for a connection. At most **2** slots in all per task, so the third connection always
    stays for the crm.job worker and the AA staff paths, whatever the request traffic does. At most
    `CRM_TENANT_MAX_CONCURRENCY` (default 2) per agency (or per caller before the membership is verified; one shared
-   key for all anonymous routes). A slot that frees up goes to the waiting agency that holds the fewest slots, then to
-   the one served least recently: a calm agency waits at most for **one** in-flight transaction of the busy ones,
-   never behind their queue, and two busy agencies share the request path one slot each. This is a bound on the
+   key for the anonymous routes, two for the Twilio webhooks: known hooks and unknown hook ids). One agency never
+   takes every slot, even when the gate is idle (its ordinary holds are capped at 1), and work that holds its slot
+   across a slow external call (the AI draft, the document upload and download) takes one of at most **1** long slot.
+   So one slot always serves short transactions. A slot that frees up goes to the waiting agency that holds the fewest
+   slots, then to the one served least recently: a calm agency waits at most for **one** in-flight short transaction
+   of the busy ones, never behind their queue nor behind a model call, and two busy agencies share the request path
+   one slot each. This is a bound on the
    wait, not a promise of zero wait: with more busy agencies than slots, a calm request waits for the next
    transaction that ends (typically milliseconds; up to the length of the slowest running report). A request that
    waits more than `CRM_TENANT_SLOT_WAIT_MS` (default 5 s) for its slot is answered **429 `tenant_busy`** with
@@ -77,7 +81,8 @@ by every agency, the public routes and the job worker. Four mechanisms keep one 
    `db_busy`** with `Retry-After: 2` (before, the wait was unbounded).
 3. **Member ceiling** (`app/auth/route_guard.py`): `RATE_LIMIT_MEMBER_PER_MINUTE` (default 600) requests per member
    per agency per minute on `/crm/v1`, then **429 `rate_limited`**. The agency is the canonical uuid of the header
-   (every spelling of one id shares one count; a header that is not a uuid shares one bucket).
+   once the member's membership of it was verified in this task (every spelling of one id shares one count); any other
+   header (another agency, a fresh random uuid, junk, none) shares one `unverified` bucket per member.
 4. **Fair job claim** (`app/jobs/queue.py`): the serial `crm.job` worker takes, among the due rows, the one whose
    agency was served least in the last 5 minutes (oldest first inside an agency), so an agency's import or message
    backlog does not hold every other agency's jobs behind it, however long that backlog is (every due row is ranked
@@ -86,9 +91,13 @@ by every agency, the public routes and the job worker. Four mechanisms keep one 
 And for every route, the **body ceiling** (`app/bodylimit.py`): 1 MiB per request (upload routes their own cap plus 64
 KiB), enforced before any route code, the class guard included; plus a process-wide budget of 32 MiB for body bytes
 in flight (bodies above 64 KiB, charged as the bytes arrive): a read past it is **503 `server_busy`** with
-`Retry-After: 2`, so concurrent large uploads cannot run the task out of memory. The document upload reads its body
-only after the class guard. The Twilio webhooks count refused signatures per hook id (60 per minute, then 429 before
-the database).
+`Retry-After: 2`, so concurrent large uploads cannot run the task out of memory. Only callers whose bearer token
+verifies draw on it (a larger body on `/crm/v1`, `/crm/ops/v1` or `/crm/staff/v1` without one is **401** at its 65th
+KiB), one identity at most one mail import at a time; the anonymous routes have their own 12 MiB budget, one passport
+scan per client address. A body above 64 KiB that falls below 16 KiB/s after 20 s is cut with **408
+`body_too_slow`** and its charge returned. The document upload reads its body only after the class guard. The Twilio
+webhooks refuse an unsigned request, and a bad signature on a hook the task already knows, before the database,
+without any lockout of the hook's genuine callbacks.
 
 
 ## When an SLO is missed

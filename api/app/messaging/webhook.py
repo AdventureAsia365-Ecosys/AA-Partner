@@ -28,19 +28,37 @@ form-encoded. :func:`handle`, in one :func:`app.tenancy.messaging_hook_tx`:
    21610 (the client replied STOP to Twilio) marks the conversation opted out.
 
 The answer is an empty TwiML ``<Response/>`` (no auto-reply). No number or text is logged.
+
+AA-969 review round 3 (:class:`HookCache`): a refused signature must never cost the database, and must never lock out
+genuine callbacks (Twilio does not retry an inbound webhook, so a refusal of a signed callback loses the message).
+
+- A request without ``X-Twilio-Signature`` is refused 403 before the database, and nothing is counted.
+- Each task keeps, per hook id it resolved to a live connection, that connection's Auth Token and Account SID (the
+  token is the HMAC key, so it is the one thing that can check a signature; in process memory only, at most
+  :data:`KNOWN_TTL_S`, never logged). A signature that does not verify against it is refused 403 **before** the
+  database, at no cost and without any lockout; a signature that does verify still goes through the database, which
+  loads the credential again and checks again (so a cached token can only refuse, never accept). Once per
+  :data:`RECHECK_S` per hook a refused signature goes to the database anyway: an agency that rotated its token gets
+  through within seconds, and an attacker can cost one lookup per hook per :data:`RECHECK_S`.
+- Hook ids this task knows take the gate key :data:`app.tenant_gate.HOOK_KEY`; the others (a random-id flood, the first
+  callback of a hook after a deploy) take :data:`app.tenant_gate.HOOK_UNKNOWN_KEY`, so a flood never queues ahead of
+  known hooks, nor of the anonymous public routes.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
+from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 import asyncpg
 
-from app.errors import Forbidden
+from app.errors import Forbidden, NotFound
 from app.messaging import events, signature, state
 from app.messaging.sender import RANKS, STATUS_OF, load_secret
 from app.tenancy import SystemContext, messaging_hook_tx
@@ -117,6 +135,86 @@ SELECT m.message_id, m.channel, m.conversation_id, c.traveler_id FROM crm.messag
 """
 
 
+# A hook id this task resolved stays known (and its token cached) this long after its last lookup.
+KNOWN_TTL_S = 900.0
+# At most one database re-check per hook in this window after a signature refused against the cached token.
+RECHECK_S = 5.0
+MAX_KNOWN_HOOKS = 10_000
+
+
+@dataclass
+class _Known:
+    auth_token: str
+    account_sid: str
+    loaded_at: float
+    rechecked_at: float
+
+
+class HookCache:
+    """Per task: hook id -> the Auth Token and Account SID of its live connection, from the last database lookup (see
+    the module docstring). Only real hook ids are ever stored (a lookup must have found a live connection), so a flood
+    of random ids cannot fill it; at most :data:`MAX_KNOWN_HOOKS` entries, the least recently loaded evicted first."""
+
+    def __init__(
+        self,
+        *,
+        ttl_s: float = KNOWN_TTL_S,
+        recheck_s: float = RECHECK_S,
+        max_entries: int = MAX_KNOWN_HOOKS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._ttl_s = ttl_s
+        self._recheck_s = recheck_s
+        self._max = max_entries
+        self._clock = clock
+        self._entries: OrderedDict[str, _Known] = OrderedDict()
+
+    def _entry(self, hook_id: str) -> _Known | None:
+        entry = self._entries.get(hook_id)
+        if entry is not None and self._clock() - entry.loaded_at >= self._ttl_s:
+            del self._entries[hook_id]
+            return None
+        return entry
+
+    def known(self, hook_id: str) -> bool:
+        return self._entry(hook_id) is not None
+
+    def remember(self, hook_id: str, auth_token: str, account_sid: str) -> None:
+        now = self._clock()
+        self._entries.pop(hook_id, None)
+        self._entries[hook_id] = _Known(auth_token, account_sid, now, now)
+        while len(self._entries) > self._max:
+            self._entries.popitem(last=False)
+
+    def forget(self, hook_id: str) -> None:
+        self._entries.pop(hook_id, None)
+
+    def precheck(self, request: HookRequest, url: str) -> bool | None:
+        """True: the signature verifies against the cached token; False: it does not and no re-check is due (refuse
+        it before the database); None: no entry, or a re-check is due (go to the database, which decides)."""
+        entry = self._entry(request.hook_id)
+        if entry is None:
+            return None
+        if _verifies(entry.auth_token, entry.account_sid, url, request):
+            return True
+        now = self._clock()
+        if now - entry.rechecked_at >= self._recheck_s:
+            entry.rechecked_at = now
+            return None
+        return False
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+
+def _verifies(auth_token: str, account_sid: str, url: str, request: HookRequest) -> bool:
+    return (
+        bool(url)
+        and signature.valid(auth_token, url, request.params, request.signature)
+        and _param(request.params, "AccountSid") == account_sid
+    )
+
+
 @dataclass(frozen=True)
 class HookRequest:
     hook_id: str
@@ -159,26 +257,40 @@ def opt_word(params: list[tuple[str, str]], text: str) -> bool | None:
     return None
 
 
-async def handle(pool: asyncpg.Pool, runtime: state.MessagingRuntime, request: HookRequest) -> str:
+async def handle(
+    pool: asyncpg.Pool, runtime: state.MessagingRuntime, request: HookRequest, cache: HookCache | None = None
+) -> str:
     """Verify, then process one webhook. Returns a code for the log (``stored``, ``duplicate``, ``status_applied``
-    ...). Raises :class:`Forbidden` (403) for a bad signature and :class:`NotFound` (404) for an unknown hook."""
-    async with messaging_hook_tx(pool, request.hook_id) as (ctx, hook):
-        conn = await state.connection(ctx)
-        if conn is None or runtime.keys is None or conn["messaging_connection_id"] != hook.messaging_connection_id:
-            raise Forbidden("invalid_signature")
-        vault = Vault(runtime.keys, ctx)
-        secret = await load_secret(vault, conn["credential_id"], conn["secret_enc"])
-        url = runtime.hook_url(request.hook_id) + ("/status" if request.kind == "status" else "")
-        if (
-            not url
-            or not signature.valid(str(secret.get("auth_token", "")), url, request.params, request.signature)
-            or _param(request.params, "AccountSid") != secret.get("account_sid")
-        ):
-            log.warning("messaging_hook_refused reason=invalid_signature")
-            raise Forbidden("invalid_signature")
-        if request.kind == "status":
-            return await status(ctx, conn, request.params)
-        return await inbound(ctx, vault, conn, request.params)
+    ...). Raises :class:`Forbidden` (403) for a bad signature and :class:`NotFound` (404) for an unknown hook.
+    ``cache``: the task's :class:`HookCache` (None = every request goes to the database, as before round 3)."""
+    url = runtime.hook_url(request.hook_id) + ("/status" if request.kind == "status" else "")
+    if not request.signature:
+        log.warning("messaging_hook_refused reason=no_signature")  # before the database, nothing counted
+        raise Forbidden("invalid_signature")
+    if cache is not None and cache.precheck(request, url) is False:
+        log.warning("messaging_hook_refused reason=invalid_signature cached=true")
+        raise Forbidden("invalid_signature")
+    known = cache is not None and cache.known(request.hook_id)
+    try:
+        async with messaging_hook_tx(pool, request.hook_id, known=known) as (ctx, hook):
+            conn = await state.connection(ctx)
+            if conn is None or runtime.keys is None or conn["messaging_connection_id"] != hook.messaging_connection_id:
+                raise Forbidden("invalid_signature")
+            vault = Vault(runtime.keys, ctx)
+            secret = await load_secret(vault, conn["credential_id"], conn["secret_enc"])
+            auth_token, account_sid = str(secret.get("auth_token") or ""), str(secret.get("account_sid") or "")
+            if cache is not None and auth_token:
+                cache.remember(request.hook_id, auth_token, account_sid)
+            if not _verifies(auth_token, account_sid, url, request):
+                log.warning("messaging_hook_refused reason=invalid_signature")
+                raise Forbidden("invalid_signature")
+            if request.kind == "status":
+                return await status(ctx, conn, request.params)
+            return await inbound(ctx, vault, conn, request.params)
+    except NotFound:
+        if cache is not None:
+            cache.forget(request.hook_id)  # deleted or locked since: no longer a known hook
+        raise
 
 
 async def _thread(

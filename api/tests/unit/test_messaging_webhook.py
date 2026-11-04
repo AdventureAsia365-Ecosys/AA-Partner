@@ -295,3 +295,133 @@ async def test_the_hook_context_finds_the_agency_by_hook_id() -> None:
     with pytest.raises(RuntimeError):
         async with messaging_hook_tx(conn, HOOK_ID):  # type: ignore[arg-type]
             raise RuntimeError("boom")
+
+
+# ── AA-969 review round 3: the task's hook cache ────────────────────────────────────────────────────────────────
+
+
+def _counting(monkeypatch: pytest.MonkeyPatch, conn: ScriptedConn) -> list[bool]:
+    """Replace the hook context with one that records each database lookup (and the gate key it would take)."""
+    from contextlib import asynccontextmanager
+
+    lookups: list[bool] = []
+    ctx = system_ctx(conn)
+    hook = MessagingHook(messaging_connection_id=CONNECTION, tenant_id=TENANT)
+
+    @asynccontextmanager
+    async def tx(_pool: Any, hook_id: str, *, known: bool = False) -> Any:
+        lookups.append(known)
+        if hook_id != HOOK_ID:
+            from app.errors import NotFound
+
+            raise NotFound("hook_not_found")
+        yield ctx, hook
+
+    monkeypatch.setattr(webhook, "messaging_hook_tx", tx)
+    monkeypatch.setattr(webhook, "Vault", lambda keys, ctx: TextVault())
+    return lookups
+
+
+@pytest.mark.asyncio
+async def test_an_unsigned_request_is_refused_before_the_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    lookups = _counting(monkeypatch, _conn())
+    for sig in (None, ""):
+        with pytest.raises(Forbidden):
+            await webhook.handle(object(), runtime(), _request(_params(), sig=sig), webhook.HookCache())  # type: ignore[arg-type]
+    assert lookups == []
+
+
+@pytest.mark.asyncio
+async def test_bad_signatures_on_a_known_hook_cost_no_lookup_and_never_lock_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = [0.0]
+    cache = webhook.HookCache(clock=lambda: now[0])
+    conn = _conn()
+    lookups = _counting(monkeypatch, conn)
+    assert await webhook.handle(object(), runtime(), _request(_params()), cache) == "stored"  # type: ignore[arg-type]
+    assert lookups == [False] and cache.known(HOOK_ID) and len(cache) == 1
+    for _ in range(50):
+        with pytest.raises(Forbidden):
+            await webhook.handle(object(), runtime(), _request(_params(), sig="bad"), cache)  # type: ignore[arg-type]
+        with pytest.raises(Forbidden):  # another account's token, or another account's SID
+            await webhook.handle(object(), runtime(), _request(_params(), token=OTHER_TOKEN), cache)  # type: ignore[arg-type]
+    assert lookups == [False]
+    # a genuine callback right in the flood: through the database again (a cached token only ever refuses)
+    duplicate = await webhook.handle(object(), runtime(), _request(_params()), cache)  # type: ignore[arg-type]
+    assert duplicate == "stored" and lookups == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_a_rotated_token_gets_through_within_the_recheck_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The agency rotated its Twilio Auth Token: the cached old one refuses the first new-token callback only until
+    a re-check is due (RECHECK_S), which goes to the database and loads the new token."""
+    now = [0.0]
+    cache = webhook.HookCache(clock=lambda: now[0], recheck_s=5.0)
+    cache.remember(HOOK_ID, OTHER_TOKEN, ACCOUNT_SID)  # the old token
+    lookups = _counting(monkeypatch, _conn())
+    with pytest.raises(Forbidden):
+        await webhook.handle(object(), runtime(), _request(_params()), cache)  # type: ignore[arg-type]
+    assert lookups == []
+    now[0] = 5.0
+    assert await webhook.handle(object(), runtime(), _request(_params()), cache) == "stored"  # type: ignore[arg-type]
+    assert lookups == [True]
+    # the database loaded the new token: the next genuine callback verifies against the cache at once
+    assert cache.precheck(_request(_params()), URL) is True
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_hook_is_forgotten_and_takes_the_unknown_gate_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.errors import NotFound
+
+    cache = webhook.HookCache()
+    lookups = _counting(monkeypatch, _conn())
+    stray = HookRequest(hook_id="f" * 32, kind="inbound", params=_params(), signature="x")
+    cache.remember(stray.hook_id, AUTH_TOKEN, ACCOUNT_SID)  # known once, deleted since
+    cache._entries[stray.hook_id].rechecked_at = -10.0  # noqa: SLF001 — a re-check is due
+    with pytest.raises(NotFound):
+        await webhook.handle(object(), runtime(), stray, cache)  # type: ignore[arg-type]
+    assert lookups == [True] and not cache.known(stray.hook_id)
+    with pytest.raises(NotFound):
+        await webhook.handle(object(), runtime(), stray, cache)  # type: ignore[arg-type]
+    assert lookups == [True, False]
+
+
+def test_the_hook_cache_expires_and_is_bounded() -> None:
+    now = [0.0]
+    cache = webhook.HookCache(clock=lambda: now[0], ttl_s=10.0, max_entries=2)
+    for hook in ("a" * 32, "b" * 32, "c" * 32):
+        cache.remember(hook, AUTH_TOKEN, ACCOUNT_SID)
+    assert len(cache) == 2 and not cache.known("a" * 32) and cache.known("c" * 32)
+    assert cache.precheck(HookRequest("d" * 32, "inbound", [], "x"), URL) is None
+    now[0] = 10.0
+    assert not cache.known("c" * 32) and len(cache) == 1
+    cache.forget("b" * 32)
+    assert len(cache) == 0
+
+
+@pytest.mark.asyncio
+async def test_known_hooks_take_their_own_gate_key() -> None:
+    from contextlib import asynccontextmanager
+
+    from app import tenant_gate
+    from app.tenancy import messaging_hook_tx
+
+    seen: list[tuple[int, int]] = []
+    gate = tenant_gate.TenantGate(2, 0.05)
+    found = {"messaging_connection_id": CONNECTION, "tenant_id": TENANT}
+
+    class Pool:
+        @asynccontextmanager
+        async def acquire(self, timeout: float | None = None) -> Any:  # noqa: ASYNC109
+            seen.append((gate.in_use(tenant_gate.HOOK_KEY), gate.in_use(tenant_gate.HOOK_UNKNOWN_KEY)))
+            conn = ScriptedConn().on("FROM crm.messaging_connection WHERE hook_id", found)
+            yield conn.on("SELECT status FROM crm.tenant", "active")
+
+    before = tenant_gate.GATE
+    tenant_gate.GATE = gate
+    try:
+        for known in (True, False):
+            async with messaging_hook_tx(Pool(), HOOK_ID, known=known):  # type: ignore[arg-type]
+                pass
+    finally:
+        tenant_gate.GATE = before
+    assert seen == [(1, 0), (0, 1)]

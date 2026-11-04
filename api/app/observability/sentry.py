@@ -12,6 +12,7 @@ Off unless ``SENTRY_DSN`` is set (the task definition maps it from Secrets Manag
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import sentry_sdk
@@ -75,6 +76,37 @@ def redact_url(url: str) -> str:
     return scrub(base)
 
 
+_METHOD = re.compile(r"^(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS) ")
+# Span data keys the SDK fills with a URL or a path (httpx / urllib / ASGI spans).
+_URL_KEYS = ("url", "http.url", "http.target", "path", "server.address.url", "url.full", "url.path")
+
+
+def _redact_described_url(text: str) -> str:
+    """A span description: ``GET https://host/path?q`` (HTTP client spans) or a bare URL / path."""
+    match = _METHOD.match(text)
+    if match:
+        return match.group(0) + redact_url(text[match.end() :])
+    if "/" in text and " " not in text:
+        return redact_url(text)
+    return scrub(text)
+
+
+def _scrub_spans(spans: Any) -> None:
+    """Every span of a transaction: URL-bearing descriptions and data keys redacted like the request URL."""
+    if not isinstance(spans, list):
+        return
+    for span in spans:
+        if not isinstance(span, dict):
+            continue
+        if isinstance(span.get("description"), str):
+            span["description"] = _redact_described_url(span["description"])
+        data = span.get("data")
+        if isinstance(data, dict):
+            for key in _URL_KEYS:
+                if isinstance(data.get(key), str):
+                    data[key] = redact_url(data[key])
+
+
 def _scrub_frames(holder: dict) -> None:
     for frame in (holder.get("stacktrace") or {}).get("frames") or []:
         frame.pop("vars", None)
@@ -89,9 +121,12 @@ def before_send(event: dict, hint: Any) -> dict:
     if isinstance(request, dict):
         _scrub_request(request)
     event.pop("user", None)
-    if isinstance(event.get("transaction"), str) and event["transaction"].startswith("/"):
-        # The route template normally (``/p/{token}``); a raw path when no route matched (a 404): redacted the same.
-        event["transaction"] = redact_path(event["transaction"])
+    if isinstance(event.get("transaction"), str):
+        # The route template normally (``/p/{token}``). When no route matched (a 404, a 307 for a trailing slash, a
+        # calendar fetch without ``.ics``) the SDK names the transaction by the full URL
+        # (``http://10.0.0.1:8000/crm/public/v1/p/<token>/``): redacted whatever its shape (review round 3).
+        event["transaction"] = redact_url(event["transaction"])
+    _scrub_spans(event.get("spans"))
     for exc in (event.get("exception") or {}).get("values") or []:
         if str(exc.get("module") or "").split(".")[0] in _VALUE_ECHOING_MODULES:
             exc["value"] = FILTERED

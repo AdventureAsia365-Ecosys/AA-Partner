@@ -231,17 +231,19 @@ async def test_the_request_path_never_holds_the_last_pool_connection() -> None:
 
 @pytest.mark.asyncio
 async def test_a_calm_agency_gets_the_next_free_slot_ahead_of_the_noisy_queue() -> None:
-    gate = tenant_gate.TenantGate(2, 5.0)
+    gate = tenant_gate.TenantGate(2, 5.0, total_slots=3)
     h = _Holders(gate)
-    noisy = [h.start("tenant:noisy") for _ in range(6)]  # two hold, four queue
+    noisy = [h.start("tenant:noisy") for _ in range(6)]  # two hold (short cap 3 - 1), four queue
+    other = h.start("tenant:other")  # the third slot
     await _settle()
     calm = h.start("tenant:calm")
     await _settle()
-    assert gate.in_use("tenant:noisy") == 2 and gate.waiting("tenant:noisy") == 4 and gate.waiting("tenant:calm") == 1
+    assert gate.in_use() == 3 and gate.in_use("tenant:noisy") == 2
+    assert gate.waiting("tenant:noisy") == 4 and gate.waiting("tenant:calm") == 1
     h.finish(noisy[0])
     await _settle()
     assert h.got[-1] == f"tenant:calm#{calm}"  # not behind the four queued noisy requests
-    for n in [*noisy[1:], calm]:
+    for n in [*noisy[1:], other, calm]:
         h.finish(n)
     await asyncio.gather(*h.tasks)
 
@@ -252,12 +254,13 @@ async def test_two_busy_agencies_share_one_slot_each_and_a_calm_one_still_gets_i
     h = _Holders(gate)
     a = [h.start("tenant:a") for _ in range(4)]
     await _settle()
+    assert gate.in_use("tenant:a") == 1 and gate.in_use() == 1  # alone, still never the last slot (round 3)
     b = [h.start("tenant:b") for _ in range(4)]
     await _settle()
-    assert gate.in_use("tenant:a") == 2  # alone at first: the whole request share
+    assert (gate.in_use("tenant:a"), gate.in_use("tenant:b")) == (1, 1)  # b gets the free slot at once
     h.finish(a[0])
     await _settle()
-    assert (gate.in_use("tenant:a"), gate.in_use("tenant:b")) == (1, 1)  # contention: the share shrinks to one each
+    assert (gate.in_use("tenant:a"), gate.in_use("tenant:b")) == (1, 1)  # contention: one each
     h.finish(a[1])
     await _settle()
     assert (gate.in_use("tenant:a"), gate.in_use("tenant:b")) == (1, 1)  # a's next one, not b's second
@@ -276,14 +279,14 @@ async def test_two_busy_agencies_share_one_slot_each_and_a_calm_one_still_gets_i
 async def test_the_public_routes_share_one_key_and_are_answered_503() -> None:
     gate = tenant_gate.TenantGate(2, 0.05)
     h = _Holders(gate)
-    first = [h.start(tenant_gate.PUBLIC_KEY, busy=tenant_gate.public_busy) for _ in range(2)]
+    first = h.start(tenant_gate.PUBLIC_KEY, busy=tenant_gate.public_busy)
     await _settle()
-    with pytest.raises(DatabaseBusy) as info:
+    with pytest.raises(DatabaseBusy) as info:  # the public key never takes the last slot
         async with gate.hold(tenant_gate.PUBLIC_KEY, busy=tenant_gate.public_busy):
             pass
     assert (info.value.status_code, info.value.code, info.value.retry_after_s) == (503, "db_busy", 2)
-    for n in first:
-        h.finish(n)
+    assert gate.in_use() == 1
+    h.finish(first)
     await asyncio.gather(*h.tasks)
 
 
@@ -343,7 +346,7 @@ async def test_a_grant_at_the_timeout_keeps_the_slot() -> None:
     gate = tenant_gate.TenantGate(1, 5.0, total_slots=1)
     waiter = tenant_gate._Waiter(1, asyncio.get_running_loop().create_future())  # noqa: SLF001
     waiter.future.set_result(None)
-    assert gate._withdraw("tenant:a", waiter) is False  # noqa: SLF001 — granted already: the caller keeps it
+    assert gate._withdraw(("tenant:a", False), waiter) is False  # noqa: SLF001 — granted already: the caller keeps it
 
 
 def test_unverified_caller_uses_its_own_key_never_the_agency() -> None:
@@ -456,8 +459,16 @@ def _bearer(token: str, tenant: uuid.UUID | None = None) -> dict[str, str]:
     return headers
 
 
+def _verified(sub: str, *agencies: uuid.UUID) -> None:
+    """As tenant_tx() does after the membership check: this task now knows ``sub`` belongs to ``agencies``."""
+    for agency in agencies:
+        tenant_gate.GATE.mark_member(PARTNER_ISSUER, sub, agency)
+
+
 def test_member_ceiling_is_per_member_and_agency(client: TestClient, pools: LocalPools) -> None:
     token = pools.partner_web(sub="noisy-member")
+    _verified("noisy-member", AGENCY_A, AGENCY_B)
+    _verified("calm-member", AGENCY_A)
     for _ in range(3):
         assert client.get("/crm/v1/memberships", headers=_bearer(token, AGENCY_A)).status_code == 503  # no DB here
     refused = client.get("/crm/v1/memberships", headers=_bearer(token, AGENCY_A))
@@ -546,6 +557,7 @@ def test_request_completed_line_never_holds_the_link(client: TestClient, caplog:
 def test_every_spelling_of_one_agency_shares_one_member_count(client: TestClient, pools: LocalPools) -> None:
     """uuid.UUID() accepts upper case, braces, urn:uuid: and the form without hyphens: one count for all of them."""
     token = pools.partner_web(sub="spelling-member")
+    _verified("spelling-member", AGENCY_A)
     spellings = [str(AGENCY_A).upper(), "{" + str(AGENCY_A) + "}", f"urn:uuid:{AGENCY_A}", AGENCY_A.hex]
     for spelling in spellings[:3]:
         headers = {"Authorization": f"Bearer {token}", "X-AA-Tenant-Id": spelling}
@@ -564,6 +576,38 @@ def test_junk_or_missing_tenant_headers_share_one_bucket(client: TestClient, poo
     refused = client.get("/crm/v1/memberships", headers={"Authorization": f"Bearer {token}", "X-AA-Tenant-Id": junk[3]})
     assert refused.status_code == 429
     assert client.get("/crm/v1/memberships", headers={"Authorization": f"Bearer {token}"}).status_code == 429
+
+
+def test_fresh_uuids_never_open_a_fresh_member_count(client: TestClient, pools: LocalPools) -> None:
+    """Round 3: a token holder sending a random uuid per request shares one ``unverified`` bucket with every agency
+    it is not known to belong to; its verified agency keeps its own count, and the limiter's table does not grow."""
+    token = pools.partner_web(sub="rotating-member")
+    _verified("rotating-member", AGENCY_A)
+    limiter = client.app.state.member_limiter
+    before = limiter.tracked()
+    for _ in range(3):
+        assert client.get("/crm/v1/memberships", headers=_bearer(token, uuid.uuid4())).status_code == 503
+    assert client.get("/crm/v1/memberships", headers=_bearer(token, uuid.uuid4())).status_code == 429
+    assert client.get("/crm/v1/memberships", headers=_bearer(token, AGENCY_B)).status_code == 429  # not verified
+    assert client.get("/crm/v1/memberships", headers=_bearer(token, AGENCY_A)).status_code == 503  # its own count
+    assert limiter.tracked() - before == 2  # unverified + agency A, whatever the number of uuids sent
+
+
+def test_the_member_bucket_follows_the_verified_membership() -> None:
+    from app.auth.route_guard import UNVERIFIED, _tenant_bucket
+
+    caller = Caller("agency", "partner", "partner-web", PARTNER_ISSUER, "bucket-member", ())
+    before = tenant_gate.GATE
+    tenant_gate.GATE = tenant_gate.TenantGate()
+    try:
+        assert _tenant_bucket(caller, str(AGENCY_A)) == UNVERIFIED
+        tenant_gate.GATE.mark_member(caller.iss, caller.sub, AGENCY_A)
+        assert _tenant_bucket(caller, AGENCY_A.hex.upper()) == str(AGENCY_A)
+        assert _tenant_bucket(caller, str(AGENCY_B)) == UNVERIFIED
+        assert _tenant_bucket(caller, "junk") == _tenant_bucket(caller, None) == UNVERIFIED
+        assert _tenant_bucket(caller, "y" * 500) == UNVERIFIED
+    finally:
+        tenant_gate.GATE = before
 
 
 @pytest.mark.asyncio
@@ -596,7 +640,7 @@ async def test_caller_memberships_takes_the_callers_slot_and_the_public_contexts
             async with gate.hold(tenant_gate.PUBLIC_KEY, busy=tenant_gate.public_busy):
                 await hold.wait()
 
-        flooding = [asyncio.create_task(flood()) for _ in range(2)]
+        flooding = [asyncio.create_task(flood())]  # the public key's whole share (never the last slot)
         await asyncio.sleep(0)
         with pytest.raises(DatabaseBusy):
             async with calendar_feed_tx(Pool(), "b" * 64):  # type: ignore[arg-type]
@@ -611,9 +655,43 @@ async def test_caller_memberships_takes_the_callers_slot_and_the_public_contexts
 # F1, round 2: the process-wide budget of body bytes in flight.
 
 
-def _scope(path: str = "/crm/v1/x", length: int | None = None) -> dict:
+class _Verifier:
+    """``app.state.verifier`` for the middleware: ``tok-<sub>`` verifies as that subject, ``down`` is unavailable."""
+
+    async def verify(self, token: str):  # noqa: ANN201
+        from types import SimpleNamespace
+
+        from app.auth.identity_verifier import AuthUnavailable, InvalidToken
+
+        if token == "down":
+            raise AuthUnavailable("jwks")
+        if not token.startswith("tok-"):
+            raise InvalidToken("bad")
+        return SimpleNamespace(iss="https://issuer.example", sub=token[4:])
+
+
+def _app_state(verifier: object | None = None) -> object:
+    from types import SimpleNamespace
+
+    settings = SimpleNamespace(rate_limit_xff_hops=1)
+    return SimpleNamespace(state=SimpleNamespace(verifier=verifier or _Verifier(), settings=settings))
+
+
+AGENT_TOKEN = "tok-a"  # noqa: S105 — the fake verifier's subject "a", not a credential
+
+
+def _scope(
+    path: str = "/crm/v1/x",
+    length: int | None = None,
+    *,
+    token: str | None = AGENT_TOKEN,
+    address: str = "198.51.100.7",
+) -> dict:
     headers = [] if length is None else [(b"content-length", str(length).encode())]
-    return {"type": "http", "path": path, "headers": headers}
+    if token is not None:
+        headers.append((b"authorization", f"Bearer {token}".encode()))
+    headers.append((b"cloudfront-viewer-address", f"{address}:443".encode()))
+    return {"type": "http", "path": path, "headers": headers, "app": _app_state()}
 
 
 def _chunks(*sizes: int) -> list[dict]:
@@ -652,7 +730,7 @@ async def test_large_bodies_in_flight_share_one_budget_and_the_overflow_is_503()
     await asyncio.sleep(0)
     assert budget.used == 200 * 1024  # charged as the bytes arrived, held while the request runs
     second = bodylimit.BodyLimitMiddleware(app_reading(False), budget)
-    await second(_scope(), receiver(_chunks(60 * 1024, 60 * 1024)), None)  # type: ignore[arg-type]
+    await second(_scope(token="tok-b"), receiver(_chunks(60 * 1024, 60 * 1024)), None)  # type: ignore[arg-type]
     assert statuses == [200, 503] and budget.used == 200 * 1024  # the refused one charged nothing
     small = bodylimit.BodyLimitMiddleware(app_reading(False), budget)
     for _ in range(3):  # small bodies are never charged, even with the budget nearly used
@@ -681,3 +759,291 @@ def test_an_anonymous_document_upload_is_401_before_its_body_is_read(client: Tes
     assert res.status_code == 401
     schema = client.app.openapi()["paths"]["/crm/v1/documents"]["post"]["requestBody"]["content"]["application/json"]
     assert "content_b64" in schema["schema"]["properties"]  # the documented body is unchanged
+
+
+# ── review round 3: one key never holds every request slot; long work has its own sub-share ─────────────────────
+
+
+@pytest.mark.asyncio
+async def test_two_long_held_slots_of_one_key_never_block_another_agency() -> None:
+    """Round 3, the reported sequence: agency A fires two requests at once into an idle gate and both would hold
+    their slot across a slow call (two tabs, an AI draft each). A gets one slot only; the second waits behind A's
+    first, so agency B's short transaction is granted at once instead of waiting wait_s and getting 429."""
+    gate = tenant_gate.TenantGate()  # the defaults: 2 request slots, 2 per key
+    h = _Holders(gate)
+    a1, a2 = h.start("tenant:a"), h.start("tenant:a")
+    await _settle()
+    assert gate.in_use("tenant:a") == 1 and gate.waiting("tenant:a") == 1 and gate.in_use() == 1
+    b = h.start("tenant:b")
+    await _settle()
+    assert h.got == ["tenant:a#0", f"tenant:b#{b}"]  # granted at once, not after A's long work
+    h.finish(b)
+    h.finish(a1)
+    await _settle()
+    assert h.got[-1] == f"tenant:a#{a2}"
+    h.finish(a2)
+    await asyncio.gather(*h.tasks)
+    assert gate.in_use() == 0 and gate.tracked() == 0
+
+
+@pytest.mark.asyncio
+async def test_long_work_gets_one_slot_and_short_transactions_keep_the_other() -> None:
+    """Two declared long requests (AI drafts of A and of C) never hold both slots: the second waits for the long
+    sub-share. A's own short requests still get the other slot while its draft runs, and agency B then waits for at
+    most that one short transaction."""
+    gate = tenant_gate.TenantGate(2, 0.05)
+    assert (gate.max_long, gate.short_cap, gate.long_wait_s) == (1, 1, 0.2)
+    h = _Holders(gate)
+
+    def start_long(key: str) -> int:
+        n = len(h.tasks)
+        event = h._events[n] = asyncio.Event()  # noqa: SLF001
+
+        async def run() -> None:
+            async with gate.hold(key, long=True):
+                h.got.append(f"{key}#{n}~long")
+                await event.wait()
+
+        h.tasks.append(asyncio.create_task(run()))
+        return n
+
+    draft_a = start_long("tenant:a")
+    await _settle()
+    assert gate.long_in_use() == 1
+    draft_c = start_long("tenant:c")  # waits for the long sub-share
+    short_a = h.start("tenant:a")  # A's ordinary request: the other slot
+    await _settle()
+    assert h.got == [f"tenant:a#{draft_a}~long", f"tenant:a#{short_a}"] and gate.waiting("tenant:c") == 1
+    short_b = h.start("tenant:b")
+    await _settle()
+    assert gate.waiting("tenant:b") == 1
+    h.finish(short_a)  # one short transaction later, B is in (C's long request still waits for the long share)
+    await _settle()
+    assert h.got[-1] == f"tenant:b#{short_b}" and gate.waiting("tenant:c") == 1
+    h.finish(short_b)
+    with pytest.raises(RateLimited):  # the long wait runs out while A's draft is still running
+        await h.tasks[draft_c]
+    h.finish(draft_a)
+    await asyncio.gather(*(t for i, t in enumerate(h.tasks) if i != draft_c))
+    assert gate.in_use() == 0 and gate.long_in_use() == 0 and gate.tracked() == 0
+
+
+@pytest.mark.asyncio
+async def test_a_long_request_waits_for_the_long_share_then_gets_it() -> None:
+    gate = tenant_gate.TenantGate(2, 1.0)
+    order: list[str] = []
+
+    async def draft(name: str, key: str) -> None:
+        async with gate.hold(key, long=True):
+            order.append(name)
+            await asyncio.sleep(0.01)
+
+    await asyncio.gather(draft("first", "tenant:a"), draft("second", "tenant:b"))
+    assert order == ["first", "second"] and gate.long_in_use() == 0
+
+
+@pytest.mark.asyncio
+async def test_a_one_slot_gate_still_serves_one_key() -> None:
+    gate = tenant_gate.TenantGate(1, 0.05, total_slots=1)
+    assert (gate.short_cap, gate.max_long) == (1, 1)
+    async with gate.hold("tenant:a", long=True):
+        assert gate.in_use() == 1
+    async with gate.hold("tenant:a"):
+        assert gate.in_use() == 1
+
+
+@pytest.mark.asyncio
+async def test_tenant_tx_long_takes_a_long_slot() -> None:
+    caller = Caller("agency", "partner", "partner-web", PARTNER_ISSUER, "sub-long", ())
+    before = tenant_gate.GATE
+    tenant_gate.GATE = tenant_gate.TenantGate(2, 1.0)
+    try:
+        async with tenant_tx(_conn(), caller, AGENCY_A, long=True):
+            assert tenant_gate.GATE.long_in_use() == 1
+        async with tenant_tx(_conn(), caller, AGENCY_A):
+            assert tenant_gate.GATE.long_in_use() == 0 and tenant_gate.GATE.in_use() == 1
+    finally:
+        tenant_gate.GATE = before
+
+
+def test_the_slow_routes_ask_for_a_long_slot() -> None:
+    import inspect
+
+    from app.routers import ai, travellers
+
+    assert "long=True" in inspect.getsource(ai.post_ai_draft)
+    assert "long=True" in inspect.getsource(travellers.post_document)
+    assert "long=True" in inspect.getsource(travellers.post_download)
+
+
+# F1, round 3: no pre-auth bytes on the agency budget, a cap per owner, a minimum body rate.
+
+
+class _Reader:
+    """An ASGI app that reads the whole body (as FastAPI does for a declared body) and records the outcome; with
+    ``hold`` it then waits (the request is still running, so its charge stays)."""
+
+    def __init__(self, hold: asyncio.Event | None = None) -> None:
+        self.hold = hold
+        self.outcomes: list[object] = []
+
+    async def __call__(self, scope, receive, send) -> None:  # noqa: ANN001
+        try:
+            while (await receive()).get("more_body"):
+                pass
+        except Exception as exc:  # noqa: BLE001 — the middleware's HTTPException
+            self.outcomes.append((exc.status_code, exc.detail))  # type: ignore[attr-defined]
+            return
+        self.outcomes.append(200)
+        if self.hold is not None:
+            await self.hold.wait()
+
+
+def _trickle(first: int, forever: asyncio.Event):  # noqa: ANN202
+    """A receive that sends ``first`` bytes at once, then never sends the rest (one byte every 90 s, in effect)."""
+    sent = [False]
+
+    async def receive() -> dict:
+        if not sent[0]:
+            sent[0] = True
+            return {"type": "http.request", "body": b"x" * first, "more_body": True}
+        await forever.wait()
+        return {"type": "http.request", "body": b"x", "more_body": True}  # pragma: no cover
+
+    return receive
+
+
+@pytest.mark.asyncio
+async def test_anonymous_bodies_never_draw_on_the_agency_budget() -> None:
+    """Round 3, the reported sequence: ~33+ connections with no token each send 1 MiB - 1 to a /crm/v1 write route,
+    then trickle. Round 2 charged each to the one shared budget, so every agency upload got 503 server_busy. Now each
+    is 401 at its 65th KiB, nothing is charged, and an agency's 9 MiB document upload still goes through."""
+    budget = bodylimit.BodyBudget(owner_cap=bodylimit.VERIFIED_OWNER_BYTES)
+    anonymous = bodylimit.BodyBudget(bodylimit.ANONYMOUS_BUDGET_BYTES, owner_cap=bodylimit.ANONYMOUS_OWNER_BYTES)
+    forever = asyncio.Event()
+    reader = _Reader()
+    mw = bodylimit.BodyLimitMiddleware(reader, budget, anonymous)
+    attackers = [
+        asyncio.create_task(
+            mw(_scope(token=token, address=f"203.0.113.{i}"), _trickle(bodylimit.MIB - 1, forever), None)  # type: ignore[arg-type]
+        )
+        for i, token in enumerate([None] * 30 + ["junk"] * 10)
+    ]
+    await asyncio.gather(*attackers)
+    assert reader.outcomes == [(401, "missing_bearer_token")] * 30 + [(401, "invalid_token")] * 10
+    assert budget.used == 0 and anonymous.used == 0
+    hold = asyncio.Event()
+    agency = _Reader(hold)
+    upload = bodylimit.BodyLimitMiddleware(agency, budget, anonymous)
+    doc = asyncio.create_task(
+        upload(_scope("/crm/v1/documents", token="tok-agent"), receiver_of(_chunks(*[bodylimit.MIB] * 9)), None)  # type: ignore[arg-type]
+    )
+    await _settle()
+    assert agency.outcomes == [200] and budget.held("id:https://issuer.example|agent") == 9 * bodylimit.MIB
+    hold.set()
+    await doc
+    assert budget.used == 0
+
+
+def receiver_of(messages: list[dict]):  # noqa: ANN201
+    async def receive() -> dict:
+        return messages.pop(0)
+
+    return receive
+
+
+@pytest.mark.asyncio
+async def test_unavailable_keys_on_a_class_route_are_503_and_charge_nothing() -> None:
+    budget = bodylimit.BodyBudget()
+    reader = _Reader()
+    mw = bodylimit.BodyLimitMiddleware(reader, budget)
+    await mw(_scope(token="down"), receiver_of(_chunks(100 * 1024)), None)  # type: ignore[arg-type]
+    no_verifier = {**_scope(), "app": _app_state(None)}
+    no_verifier["app"].state.verifier = None  # type: ignore[attr-defined]
+    await mw(no_verifier, receiver_of(_chunks(100 * 1024)), None)  # type: ignore[arg-type]
+    other_scheme = _scope(token=None)
+    other_scheme["headers"].append((b"authorization", b"Basic abc"))
+    await mw(other_scheme, receiver_of(_chunks(100 * 1024)), None)  # type: ignore[arg-type]
+    assert reader.outcomes == [(503, "auth_unavailable"), (401, "invalid_token"), (401, "missing_bearer_token")]
+    assert budget.used == 0
+    # A small body never asks for the token: the class guard answers it as before.
+    await mw(_scope(token=None), receiver_of(_chunks(bodylimit.SMALL_BODY_BYTES)), None)  # type: ignore[arg-type]
+    assert reader.outcomes[-1] == 200
+
+
+@pytest.mark.asyncio
+async def test_anonymous_bodies_have_their_own_budget_and_one_per_address() -> None:
+    """The anonymous passport-scan route: one address holds at most one large body; anonymous bodies fill only
+    their own budget, never the agencies'."""
+    budget = bodylimit.BodyBudget(owner_cap=bodylimit.VERIFIED_OWNER_BYTES)
+    anonymous = bodylimit.BodyBudget(bodylimit.ANONYMOUS_BUDGET_BYTES, owner_cap=bodylimit.ANONYMOUS_OWNER_BYTES)
+    scan = "/crm/public/v1/traveller/passport-scan"
+    hold = asyncio.Event()
+    first = _Reader(hold)
+    mw = bodylimit.BodyLimitMiddleware(first, budget, anonymous)
+    task = asyncio.create_task(mw(_scope(scan, token=None), receiver_of(_chunks(*[bodylimit.MIB] * 8)), None))  # type: ignore[arg-type]
+    await _settle()
+    assert first.outcomes == [200] and anonymous.held("addr:198.51.100.7") == 8 * bodylimit.MIB
+    second = _Reader()
+    same_address = bodylimit.BodyLimitMiddleware(second, budget, anonymous)
+    await same_address(_scope(scan, token=None), receiver_of(_chunks(*[bodylimit.MIB] * 4)), None)  # type: ignore[arg-type]
+    other_address = _scope(scan, token=None, address="192.0.2.9")
+    await same_address(other_address, receiver_of(_chunks(*[bodylimit.MIB] * 4)), None)  # type: ignore[arg-type]
+    assert second.outcomes == [(503, "server_busy"), 200]
+    assert budget.used == 0  # the agencies' budget untouched
+    hold.set()
+    await task
+    assert anonymous.used == 0
+
+
+@pytest.mark.asyncio
+async def test_a_trickled_body_is_cut_and_its_charge_returned() -> None:
+    """Round 3: a body that stops sending (one byte every 90 s keeps the ALB timer alive; uvicorn has no body-read
+    deadline) is cut with 408 body_too_slow once it falls below the minimum rate, and the budget is whole again."""
+    budget = bodylimit.BodyBudget()
+    forever = asyncio.Event()
+    reader = _Reader()
+    mw = bodylimit.BodyLimitMiddleware(reader, budget, grace_s=0.05, min_rate=10**12)
+    task = asyncio.create_task(mw(_scope(token="tok-slow"), _trickle(100 * 1024, forever), None))  # type: ignore[arg-type]
+    await _settle()
+    assert budget.used == 100 * 1024  # charged while it waits for the rest ...
+    await asyncio.wait_for(task, 2)
+    assert reader.outcomes == [(408, "body_too_slow")] and budget.used == 0  # ... and given back when cut
+
+
+@pytest.mark.asyncio
+async def test_a_body_past_its_deadline_is_cut_before_the_next_read() -> None:
+    now = [0.0]
+    reader = _Reader()
+    mw = bodylimit.BodyLimitMiddleware(
+        reader, bodylimit.BodyBudget(), grace_s=1.0, min_rate=1024**2, clock=lambda: now[0]
+    )
+    messages = _chunks(100 * 1024, 100 * 1024)
+
+    async def slow_receive() -> dict:
+        now[0] += 5.0  # each chunk arrives 5 s after the last
+        return messages.pop(0)
+
+    await mw(_scope(token="tok-late"), slow_receive, None)  # type: ignore[arg-type]
+    assert reader.outcomes == [(408, "body_too_slow")]
+
+
+def test_body_budget_caps_each_owner() -> None:
+    budget = bodylimit.BodyBudget(100, owner_cap=60)
+    assert budget.take(60, "a") and not budget.take(1, "a") and budget.take(40, "b") and not budget.take(1, "c")
+    budget.give_back(60, "a")
+    assert budget.held("a") == 0 and budget.used == 40 and budget.take(20, "c")
+    assert bodylimit.is_class_path("/crm/staff/v1/x") and not bodylimit.is_class_path("/crm/v1x")
+    assert bodylimit.VERIFIED_OWNER_BYTES >= bodylimit.max_body_bytes("/crm/v1/mail/imports")
+    assert bodylimit.ANONYMOUS_OWNER_BYTES >= bodylimit.max_body_bytes("/crm/public/v1/traveller/passport-scan")
+
+
+def test_an_anonymous_large_json_body_on_a_class_route_is_401_through_the_app(client: TestClient) -> None:
+    """End to end: a declared JSON body (FastAPI reads it before the class guard) over 64 KiB with no token is 401
+    from the middleware, never buffered whole."""
+    res = client.post(
+        "/crm/v1/messaging/messages",
+        content=b'{"body": "' + b"x" * (bodylimit.MIB - 64) + b'"}',
+        headers={"Content-Type": "application/json"},
+    )
+    assert res.status_code == 401 and res.json()["detail"] == "missing_bearer_token"
