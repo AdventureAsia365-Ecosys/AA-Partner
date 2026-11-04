@@ -83,6 +83,8 @@ const TEXT_ATTRS = new Set([
 const ALLOWED_TEXT = new Set([
   "Adventure Asia", "WordPress", "Facebook", "Instagram", "LinkedIn", "TikTok", "CRM", "SEO", "URL", "CTA", "AI",
   "Esc", "⌘K", "Ctrl K", "Ctrl", "OK", "ID", "USD", "H1", "H2", "PDF", "CSV", "HTML", "JSON", "API",
+  "adventure.asia", // the Adventure Asia site, as a link label
+  "xxxx xxxx xxxx xxxx xxxx xxxx", // the shape of a WordPress application password (an input placeholder)
 ]);
 
 /** English-looking: two letters in a row, and either a space or a capitalised word (a message key is camelCase). */
