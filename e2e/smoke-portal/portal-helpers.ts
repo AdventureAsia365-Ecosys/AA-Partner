@@ -12,14 +12,15 @@ export const PORTAL_RESULTS_DIR = 'results/smoke-portal';
 /**
  * AA-979 P2b — which studio the smoke checks: `fargate` (the agency host portal.: the studio behind CloudFront -> ALB,
  * sharing the host with the CRM web; PORTAL_TARGET=fargate, what CI always sets since the P2b clean-up) or a local
- * studio without the partner sign-in (default; started with PORTAL_API_KEY_SIGNIN=true). On the agency host a
+ * web on localhost (default; the studio is part of the web, partner sign-in only since AA-1036). On the agency host a
  * signed-out page goes to the CRM web's /auth/refresh (partner sign-in), and the paths the studio does not own belong
  * to the CRM web. AA-1036 (R3 slice 2): there the studio IS the agency web (one app): "/" lands on Content and the
  * studio's draft legal pages live at /legal/*.
  */
 export const FARGATE = process.env.PORTAL_TARGET === 'fargate';
 /** Where a signed-out /portal/* page is sent. */
-export const SIGNED_OUT_PATH = FARGATE ? '/auth/refresh' : '/tenant-login';
+// AA-1036 R3 slice 3: the API-key sign-in is gone everywhere; the web's /tenant-login is only a 308 to /auth/refresh.
+export const SIGNED_OUT_PATH = '/auth/refresh';
 
 export { TENANT_STATE };
 
@@ -32,11 +33,11 @@ export function partnerCredentials(): { email: string; password: string; totpSec
 }
 
 /**
- * True when the setup can sign a tenant in: on the agency host with the studio user's partner sign-in (AA-979 §4.5:
- * the API-key sign-in is off there); on a local studio with the tenant test key (E2E_TENANT_API_KEY).
+ * True when the setup can sign a tenant in: the studio user's partner sign-in (AA-979 §4.5). AA-1036 R3 slice 3: there
+ * is no tenant API key any more, so a local web needs the same three values.
  */
 export function hasTenantLogin(): boolean {
-  return FARGATE ? partnerCredentials() !== null : Boolean(process.env.E2E_TENANT_API_KEY);
+  return partnerCredentials() !== null;
 }
 
 /** True when the setup project wrote a tenant storage state in this run. */
@@ -44,9 +45,8 @@ export function hasTenantState(): boolean {
   return hasTenantLogin() && fs.existsSync(TENANT_STATE);
 }
 
-export const NO_LOGIN_REASON = FARGATE
-  ? 'No studio sign-in: set E2EPORTALEMAIL, E2EPORTALPASSWORD and E2EPORTALTOTP (the e2e studio user) to run the logged-in portal smoke.'
-  : 'No tenant test key: set E2E_TENANT_API_KEY (a local studio with PORTAL_API_KEY_SIGNIN=true) to run the logged-in portal smoke.';
+export const NO_LOGIN_REASON =
+  'No studio sign-in: set E2EPORTALEMAIL, E2EPORTALPASSWORD and E2EPORTALTOTP (the e2e studio user) to run the logged-in portal smoke.';
 
 export function ensurePortalResultsDir(): void {
   fs.mkdirSync(PORTAL_RESULTS_DIR, { recursive: true });

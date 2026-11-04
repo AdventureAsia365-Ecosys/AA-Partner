@@ -15,7 +15,7 @@
 //   (d) evidence screenshots, 1440 + 390, light + dark, into E2EP2OUT.
 //   (e) runbook §6a: the studio token (viewer / editor) with the Bearer, bearer and two-space header shapes -> 403
 //       studio_role_forbidden on a write that changes nothing even if the check were missing; 200 on a read.
-//   + optional E check (E2EP2TENANTKEY: the same tenant through an API-key session shows the same tenant and pool count)
+//   (AA-1036 R3 slice 3: the optional API-key "E check" went with the tenant API keys.)
 //   + sign-out from the studio ends the CRM session too.
 //
 // Never CI (no workflow sets E2EP2); retries 0 (a retry would ask for another one-time code); no trace, video or
@@ -158,7 +158,7 @@ test.describe("AA-979 P2b phase 2: re-enrolment and the studio on the agency hos
       const write =
         cfg.role === "viewer"
           ? { path: `/v1/tours/pool/${PROBE_TOUR}/rewrite`, data: {} } // viewer: any write
-          : { path: "/v1/account/api-key", data: {} }; // editor: account writes (no POST route exists: harmless)
+          : { path: "/v1/account/activity", data: {} }; // editor: account writes (no POST route exists: harmless)
       const results: Record<string, number> = {};
       for (const [shape, header] of [
         ["Bearer", `Bearer ${token}`],
@@ -174,38 +174,6 @@ test.describe("AA-979 P2b phase 2: re-enrolment and the studio on the agency hos
       record(cfg, { role_check: { role: cfg.role, write: `POST ${write.path}`, results, read_status: 200, pool_total: total } });
     } finally {
       await api.dispose();
-    }
-  });
-
-  test("E check: the same tenant through an API-key session (optional)", async ({ browser }) => {
-    test.skip(!cfg.tenantKey, "no E2EP2TENANTKEY");
-    if (!studio) throw new Error("step (c) did not run");
-    const ctx = await newPinnedContext(browser);
-    try {
-      const page = await ctx.newPage();
-      await page.goto(`${cfg.portal}/tenant-login`, { waitUntil: "load" });
-      const input = page.locator('input[type="password"]');
-      await expect(async () => {
-        await input.fill(cfg.tenantKey);
-        await page.waitForTimeout(250);
-        await expect(input).not.toHaveValue("");
-      }).toPass({ timeout: 15_000 });
-      await page.click('button:has-text("Access Portal")');
-      await page.waitForURL(/\/portal\//, { timeout: 20_000 });
-      const viaKey = (await sameOriginFetch(page, "GET", "/api/tenant/me")).json as Record<string, unknown>;
-      test.skip(viaKey.tenant_id !== cfg.tenant, "the API key belongs to another tenant: no comparison");
-      const viaPartner = (await sameOriginFetch(studio, "GET", "/api/tenant/me")).json as Record<string, unknown>;
-      const pool = async (p: Page) =>
-        ((await sameOriginFetch(p, "GET", "/api/tenant/v1/tours/pool?page_size=1")).json as { pagination?: { total?: number } })
-          ?.pagination?.total;
-      const [keyTotal, partnerTotal] = [await pool(page), await pool(studio)];
-      expect(viaKey.sign_in).toBe("api_key");
-      expect(viaPartner.tenant_name).toBe(viaKey.tenant_name);
-      expect(partnerTotal).toBe(keyTotal);
-      record(cfg, { e_check: { tenant_name_equal: true, pool_total: keyTotal } });
-      await shots(cfg, page, "p2-06-apikey-dashboard", ["light"]);
-    } finally {
-      await ctx.close();
     }
   });
 

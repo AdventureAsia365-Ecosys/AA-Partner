@@ -116,33 +116,6 @@
       "count": 1
     }
   },
-  "app/(studio)/portal/_components/ApiKeyCard.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/ApiPlayground.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/ApiTab.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 2
-    },
-    "aa-kit/no-hex-colour": {
-      "count": 5
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    },
-    "aa-kit/no-raw-aa-var": {
-      "count": 2
-    }
-  },
   "app/(studio)/portal/_components/BrandTab.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 4
@@ -321,33 +294,6 @@
     }
   },
   "app/(studio)/portal/_components/WriterPanel.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/api-playground/ApiKeyDisplay.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 2
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/api-playground/EndpointPanel.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 2
-    },
-    "aa-kit/no-hex-colour": {
-      "count": 3
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/api-playground/ResponseViewer.tsx": {
-    "aa-kit/no-hex-colour": {
-      "count": 1
-    },
     "aa-kit/no-legacy-kit": {
       "count": 1
     }

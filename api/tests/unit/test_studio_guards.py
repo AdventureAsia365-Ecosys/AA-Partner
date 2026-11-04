@@ -6,7 +6,8 @@ studio inside ``web/`` (``app/(studio)/``, ``app/api/``, ``app/_kit/local/studio
 - no admin secret or staff session code in the studio parts; one session: no byte copy of ``session.ts`` /
   ``seal.ts`` (the studio reads the app's own ``lib/session.ts``) and no studio code writes the session cookie;
 - no people-facing API-key sign-in: no ``/tenant-login`` page or BFF, ``/tenant-login*`` answers 308 in the gate,
-  only ``amr=partner`` tokens are used; the gate order host -> /staff -> /c -> /portal -> CRM;
+  only ``amr=partner`` tokens are used; the gate order host -> /staff -> /c -> /portal -> CRM; R3 slice 3: no tenant
+  API-key code at all (no CIS ``/auth/tenant-login`` call, no API key card, no API page);
 - the old T-number slugs and the old legal paths answer 308 (``next.config.ts``) to pages that exist;
 - the draft legal pages are noindex, render the draft shell, stay outside the session gate, and the AI section of the
   partner terms still names the register providers and links the policies;
@@ -44,7 +45,8 @@ OLD_PORTAL_SLUGS = {
     "/portal/activity": "/portal/account/activity",
     "/portal/billing": "/portal/account/billing",
     "/portal/settings": "/portal/account/settings",
-    "/portal/api": "/portal/account/api",
+    "/portal/api": "/portal/account/settings",
+    "/portal/account/api": "/portal/account/settings",  # AA-1036: the API page went with the tenant API keys
 }
 
 # AA-820 / S262 / S264: the AI section of the partner terms links the providers' policies and names the AI Use
@@ -140,6 +142,22 @@ def test_the_studio_holds_no_admin_secret_or_api_key_sign_in() -> None:
         hits += [f"{p.relative_to(REPO)}: {w}" for w in FORBIDDEN if w in text]
     assert hits == []
     assert not (WEB / "app" / "tenant-login").exists() and not (WEB / "app" / "api" / "auth" / "tenant-login").exists()
+
+
+# AA-1036 R3 slice 3 (root ADR 0019 d6): no tenant API keys. CIS answers POST /auth/tenant-login with 410 and has no
+# GET /v1/account/api-key; the studio must not call either, show a key card or document an X-API-Key header.
+RETIRED_KEY_PATHS = ["/auth/tenant-login", "/v1/account/api-key", "X-API-Key", "api-key-card", "ApiKeyCard"]
+
+
+def test_the_studio_has_no_tenant_api_key_code() -> None:
+    hits = []
+    for p in _studio_files():
+        text = _strip_comments(p.read_text(errors="ignore"))
+        hits += [f"{p.relative_to(REPO)}: {w}" for w in RETIRED_KEY_PATHS if w in text]
+    assert hits == []
+    assert not (WEB / "app" / "(studio)" / "portal" / "account" / "api").exists(), "the API page went with the keys"
+    nav = _strip_comments(_read("web/app/_kit/local/studio/portalNav.tsx"))
+    assert "/portal/account/api" not in nav
 
 
 def test_one_session_no_byte_copies() -> None:
@@ -250,7 +268,6 @@ def test_write_routes_found() -> None:
     rels = {str(p.relative_to(WEB)) for p in WRITE_ROUTES}
     assert {
         "app/api/tenant/[...path]/route.ts",
-        "app/api/playground/proxy/route.ts",
         "app/api/auth/tenant-logout/route.ts",
         "app/api/auth/tenant-select/route.ts",
     } <= rels

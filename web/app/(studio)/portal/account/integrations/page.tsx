@@ -7,12 +7,11 @@
 // /portal/content/publish. Shares the connect forms / status cards with that page.
 // AA-815: Facebook Page next to WordPress, and Disconnect (confirm step) on both cards.
 // AA-761: each channel's health next to its title (the last test's result) — the "Test connection" lives here now,
-// Publish only shows a summary that links back — and the API key (masked, last used, request a new one).
+// Publish only shows a summary that links back. AA-1036 R3 slice 3: the API key card went with the tenant API keys.
 import { useState } from "react";
 import { Badge, type Tone } from "@/app/_kit";
 import { HEALTH_LABEL, connectionHealth, type ConnectionHealth } from "@/lib/studio/account";
 import { T, sans, CardSkeleton, PageHeader } from "../../_components/ui";
-import { ApiKeyCard } from "../../_components/ApiKeyCard";
 import { useWordPressStatus, WordPressConnectForm, WordPressStatusCard } from "../../_components/WordPressConnect";
 import { useFacebookStatus, FacebookConnectForm, FacebookStatusCard } from "../../_components/FacebookConnect";
 
@@ -89,11 +88,6 @@ export default function T11PublishConnectionPage() {
           {!fbPending && (!fbConnected || changingFb) && (
             <FacebookConnectForm onConnected={() => { setChangingFb(false); fb.refresh(); }} />
           )}
-        </section>
-
-        <section style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <h2 style={sectionTitle}>API access</h2>
-          <ApiKeyCard />
         </section>
       </div>
     </div>

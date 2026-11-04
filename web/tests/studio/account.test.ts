@@ -11,7 +11,6 @@ import {
   fmtDay,
   fmtMonth,
   hasFilters,
-  keyUseText,
   NO_FILTERS,
   usageMeter,
   type Quota,
@@ -84,16 +83,11 @@ test("labels and health", () => {
   assert.equal(fmtDay(null), "—");
 });
 
-test("API key use: exact time, else the rolled-up month, else none", () => {
-  const at = (iso: string) => `AT ${iso}`;
+test("fmtMonth: a YYYY-MM (or a date) reads as the month, anything else as a dash", () => {
   assert.equal(fmtMonth("2026-05"), "May 2026");
   assert.equal(fmtMonth("2026-05-01"), "May 2026");
   assert.equal(fmtMonth(null), "—");
   assert.equal(fmtMonth("garbage"), "—");
-  assert.equal(keyUseText("2026-10-05T00:00:00+00:00", "2026-05", at, "Never"), "AT 2026-10-05T00:00:00+00:00");
-  assert.equal(keyUseText(null, "2026-05", at, "Never"), "In May 2026");
-  assert.equal(keyUseText(null, undefined, at, "None yet"), "None yet");
-  assert.equal(keyUseText(undefined, null, at, "Never"), "Never");
 });
 
 test("S251 D3: a download's format code reads as words; other details pass through", () => {

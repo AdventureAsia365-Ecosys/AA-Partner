@@ -562,10 +562,15 @@ studio rules. Deploy Web Dev verifies the studio paths and runs the studio smoke
 
 - **Layout**: route group `app/(studio)/` (`/portal/*` with the same URLs, `/portal-access/*`, the draft legal pages
   `/legal/partner-terms` and `/legal/privacy`), the studio BFF at `/api/*` (`app/api/tenant/[...path]`, `tenant/me`,
-  `auth/tenant-logout`, `auth/tenant-select`, `playground/proxy`, `healthz`, `studio/apps`), the shell under
+  `auth/tenant-logout`, `auth/tenant-select`, `healthz`, `studio/apps`), the shell under
   `app/_kit/local/studio/`, helpers under `lib/studio/`. One kit copy (`web/app/_kit/core`). The studio stylesheet
   (`app/(studio)/studio.css`: Tailwind 4 preflight with `source(none)`, no utility, plus the studio rules) loads only
   under the group; links between the studio and the CRM are plain `<a>` (full page loads).
+- **No tenant API keys (R3 slice 3)**: CIS answers `POST /auth/tenant-login` with 410 Gone and has no
+  `GET /v1/account/api-key`; the studio has no API page (`/portal/api` and `/portal/account/api` answer 308 to
+  `/portal/account/settings`), no API key card on Integrations, no API playground or its BFF, and the smoke signs in
+  with the partner pool everywhere (no `E2E_TENANT_API_KEY` path). `test_studio_guards.py` keeps the studio free of
+  `/auth/tenant-login`, `/v1/account/api-key`, `X-API-Key` and the key card. A machine API for agencies is R8.
 - **Gate order** (`proxy.ts`): host -> `/staff` -> `/c` -> studio -> CRM. `/tenant-login*` answers 308 to
   `/auth/refresh?next=/portal/dashboard` (no people-facing API-key sign-in, no `PORTAL_API_KEY_SIGNIN`); `/api/*`
   passes (handlers answer 401 JSON); the studio legal pages are public; `/portal*` needs the session, then `studioGate`
@@ -621,7 +626,7 @@ original CIS commit). P2a moves the code only:
   (P2b, below). The people-facing API-key sign-in (`/tenant-login`, BFF `portal/app/api/auth/tenant-login`, CIS
   `POST /auth/tenant-login` with `client: "portal"`, unmetered, AA-760) is OFF unless `PORTAL_API_KEY_SIGNIN=true`
   (a local studio only): `/tenant-login` answers 308 to the web's sign-in with `next=/portal/dashboard`, the BFF 404.
-  Tenant API keys are for machines. The studio token lives in the host-only cookie `cis_tenant_token`; the gate is
+  Tenant API keys were removed in AA-1036 R3 slice 3 (section "One agency app"). The studio token lives in the host-only cookie `cis_tenant_token`; the gate is
   `portal/proxy.ts` (tenant only).
 - **Business logic stays in the CIS API** (ADR 0010 §7): the portal is a client of CIS `/v1/*` and `/auth/*` through
   its BFF (`portal/app/api/tenant/[...path]`, cross-site writes refused first, AA-911). It never reads the `crm`
@@ -644,13 +649,12 @@ original CIS commit). P2a moves the code only:
   `E2EPORTALEMAIL` / `E2EPORTALPASSWORD` / `E2EPORTALTOTP`: a synthetic partner identity with a Content studio
   membership on the E2E tenant). `ui-smoke-portal.yml` always checks the Fargate studio and takes `resolve_via` and
   `require_tenant_login` on dispatch and on call; the Fargate deploy calls it with the sign-in required (AA-993 V3).
-  A local run against a studio without partner sign-in sets `PORTAL_TARGET` empty and uses `E2E_TENANT_API_KEY`.
+  A local run sets `PORTAL_TARGET` empty and signs in with the same partner-pool values (AA-1036: no API-key path).
 - **Account pages (AA-761)**: Billing = plan card, rewrite meter (used / quota and reset date from CIS `GET /v1/quota`,
   overage so far from `GET /v1/billing`) and an invoices empty state (CIS stores no invoices yet); Activity = kit
   DataTable with server paging over CIS `GET /v1/account/activity` (type and UTC-date filters) and a CSV export of the
   whole filtered set (`GET /v1/account/activity/export`); Integrations = each channel's health and test (Publish only
-  shows a summary that links here) and the API key (`GET /v1/account/api-key`: masked, issued, last used; a new key
-  by email to AA). Pure helpers in `portal/lib/account.ts`, tested by `npm test` (node --test, in Portal Build).
+  shows a summary that links here; the API key card went with the tenant API keys, AA-1036). Pure helpers in `portal/lib/account.ts`, tested by `npm test` (node --test, in Portal Build).
 - **Marketplace (AA-671)**: one page at `/portal/tours` for the tours a tenant can pick and the tours it picked (was
   two pages, Browse Tours and Tour overview). View "All tours" (default): CIS `GET /v1/tours/pool` as a card grid with
   server paging and filters (name, country, length; newest first, "New" for the last 14 days), the kit Drawer for one

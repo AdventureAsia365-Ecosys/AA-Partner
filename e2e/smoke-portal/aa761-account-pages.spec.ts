@@ -138,7 +138,8 @@ test.describe('UI smoke — portal Account pages (AA-761)', () => {
     }
   });
 
-  test('Integrations: channel health and the API key card', async ({ browser }) => {
+  // AA-1036 R3 slice 3: the API key card went with the tenant API keys; the page shows no API section.
+  test('Integrations: channel health, no API key card', async ({ browser }) => {
     const context = await browser.newContext({ baseURL: baseUrl(), storageState: TENANT_STATE,
       viewport: { width: 1440, height: 900 } });
     await installBypassRoute(context);
@@ -148,10 +149,8 @@ test.describe('UI smoke — portal Account pages (AA-761)', () => {
       await open(page, '/portal/account/integrations');
       await expect(page.getByTestId('wp-health')).toHaveAttribute('data-health',
         /^(not_connected|healthy|failing|untested)$/, { timeout: 15000 });
-      await expect(page.getByTestId('api-key-card')).toBeVisible({ timeout: 15000 });
-      await expect(page.getByTestId('api-key-masked')).toHaveText(/^cis_•+$/);
-      await expect(page.getByTestId('api-key-last-used')).not.toHaveText('Never');
-      await expect(page.getByTestId('api-key-rotate')).toHaveAttribute('href', /^mailto:/);
+      await expect(page.getByTestId('api-key-card')).toHaveCount(0);
+      await expect(page.getByRole('heading', { name: 'API access' })).toHaveCount(0);
       await page.screenshot({ path: `${PORTAL_RESULTS_DIR}/aa761-integrations-1440.png`, fullPage: true });
       await watcher.settle();
       expect(watcher.apiFailures, describeApiFailures(watcher.apiFailures)).toEqual([]);
