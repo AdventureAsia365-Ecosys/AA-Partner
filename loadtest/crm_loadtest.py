@@ -175,10 +175,26 @@ def parse_sample(message: str) -> dict[str, Any] | None:
 
 
 def _num(fields: dict[str, Any], key: str) -> float:
+    value = fields.get(key)
+    if value is None or value == "":
+        return float("inf")  # absent = not idle (fail closed)
     try:
-        return float(fields.get(key) or 0)
+        return float(value)
     except (TypeError, ValueError):
         return float("inf")  # unreadable = not idle (fail closed)
+
+
+# The fields each sampler line must carry for its guard to judge it. A line without them was written by a sampler
+# whose read failed (CIS writes ``jobs_error`` / ``ops_checks_error`` instead when the shared DB is under pressure,
+# exactly when this run must stop): missing = unreadable = fail closed, never "idle".
+CIS_REQUIRED = ("queued_due", "running", "oldest_queued_age_seconds")
+CIS_ERROR_FIELDS = ("jobs_error", "ops_checks_error")
+BOOKING_REQUIRED = ("due_queued_age_s", "overdue_running_jobs", "checks")
+CRM_REQUIRED = ("oldest_queued_age_s", "overdue_running_jobs", "checks")
+
+
+def _missing(fields: dict[str, Any], required: Sequence[str]) -> list[str]:
+    return [k for k in required if fields.get(k) in (None, "")]
 
 
 # Ops checks that stop the run: job queues and database capacity. Other checks (LLM stage coverage, spend, audit
@@ -207,6 +223,13 @@ def judge_cis(sample: tuple[dict[str, Any], int] | None, now_ms: int) -> list[st
     out = []
     if now_ms - ts > SAMPLE_MAX_AGE_S * 1000:
         out.append("shared.job: the newest CIS sampler line is older than 11 minutes")
+    errors = [k for k in CIS_ERROR_FIELDS if fields.get(k)]
+    if errors:
+        out.append(f"shared.job: the CIS sampler could not read its checks ({', '.join(errors)}; fail closed)")
+    missing = _missing(fields, CIS_REQUIRED)
+    if missing:
+        out.append(f"shared.job: the CIS sampler line lacks {', '.join(missing)} (fail closed)")
+        return out
     if _num(fields, "queued_due") > 0 or _num(fields, "running") > 0:
         out.append(f"shared.job not idle (queued_due={fields.get('queued_due')}, running={fields.get('running')})")
     if fields.get("starved"):
@@ -225,6 +248,10 @@ def judge_booking(sample: tuple[dict[str, Any], int] | None, now_ms: int) -> lis
     out = []
     if now_ms - ts > SAMPLE_MAX_AGE_S * 1000:
         out.append("booking.job: the newest Booking sampler line is older than 11 minutes")
+    missing = _missing(fields, BOOKING_REQUIRED)
+    if missing:
+        out.append(f"booking.job: the Booking sampler line lacks {', '.join(missing)} (fail closed)")
+        return out
     if _num(fields, "due_queued_age_s") > BOOKING_MAX_DUE_AGE_S:
         out.append(f"booking.job not idle (a due row waits {fields.get('due_queued_age_s')} s)")
     if _num(fields, "overdue_running_jobs") > 0:
@@ -241,6 +268,10 @@ def judge_crm(sample: tuple[dict[str, Any], int] | None, now_ms: int) -> list[st
     out = []
     if now_ms - ts > SAMPLE_MAX_AGE_S * 1000:
         out.append("crm.job: the newest CRM sampler line is older than 11 minutes")
+    missing = _missing(fields, CRM_REQUIRED)
+    if missing:
+        out.append(f"crm.job: the CRM sampler line lacks {', '.join(missing)} (fail closed)")
+        return out
     if _num(fields, "oldest_queued_age_s") >= CRM_MAX_LAG_S or _num(fields, "overdue_running_jobs") > 0:
         out.append("crm.job lag above its SLO page threshold")
     if _checks_raised(fields.get("checks")):
@@ -256,10 +287,24 @@ def judge_alarms(alarm_names: list[str], prefixes: Sequence[str]) -> list[str]:
 # ── AWS / HTTP reads (read-only) ──────────────────────────────────────────────────────────────────────────────────
 
 
+AWS_TIMEOUT_S = 60
+EXTRA_GUARD_TIMEOUT_S = 120
+
+
 def aws_runner(profile: str) -> Runner:
+    """Read-only ``aws`` calls. stdin is closed, so an expired MFA session fails at once instead of waiting for a code
+    on the terminal; a timeout or a missing CLI is a :class:`Refused` like a non-zero exit (the guard fails closed)."""
+
     def run(args: Sequence[str]) -> str:
         cmd = ["aws", *args, "--profile", profile, "--region", REGION, "--output", "json"]
-        done = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False)  # noqa: S603
+        try:
+            done = subprocess.run(  # noqa: S603
+                cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=AWS_TIMEOUT_S, check=False
+            )
+        except subprocess.TimeoutExpired:
+            raise Refused(f"aws {args[0]} {args[1]} timed out after {AWS_TIMEOUT_S} s") from None
+        except OSError as exc:
+            raise Refused(f"aws {args[0]} {args[1]} could not start ({type(exc).__name__})") from None
         if done.returncode != 0:
             raise Refused(f"aws {args[0]} {args[1]} failed (exit {done.returncode})")
         return done.stdout
@@ -329,14 +374,29 @@ def guard_pass(args: argparse.Namespace, run: Runner, now: float | None = None) 
         report.failures += judge_alarms(alarms_in_alarm(run), args.alarm_prefix or ALARM_PREFIXES)
     except Refused as exc:
         report.failures.append(str(exc))
-    except (ValueError, KeyError) as exc:
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
         report.failures.append(f"unreadable AWS answer ({type(exc).__name__})")
     if args.extra_guard:
-        done = subprocess.run(shlex.split(args.extra_guard), capture_output=True, timeout=120, check=False)  # noqa: S603
-        if done.returncode != 0:
-            report.failures.append(f"extra guard exited {done.returncode}")
+        report.failures += extra_guard(args.extra_guard)
     report.ok = not report.failures
     return report
+
+
+def extra_guard(command: str) -> list[str]:
+    """``--extra-guard``: must exit 0. A timeout, a command that cannot start or cannot be parsed is a failure."""
+    try:
+        done = subprocess.run(  # noqa: S603
+            shlex.split(command),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=EXTRA_GUARD_TIMEOUT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return [f"extra guard timed out after {EXTRA_GUARD_TIMEOUT_S} s"]
+    except (OSError, ValueError) as exc:
+        return [f"extra guard could not run ({type(exc).__name__})"]
+    return [f"extra guard exited {done.returncode}"] if done.returncode != 0 else []
 
 
 def precheck(args: argparse.Namespace, run: Runner, now: float | None = None) -> Report:
@@ -390,6 +450,8 @@ def run_load(args: argparse.Namespace, run: Runner) -> int:
     wall_s = args.duration_min * 60 + 120
     proc = subprocess.Popen([args.k6, "run", "--quiet", str(K6_SCRIPT)], env=env)  # noqa: S603
     aborted: list[str] = []
+    # Whatever happens from here on (a guard crashing, an interrupt, the runner itself failing), k6 never outlives the
+    # runner: the finally stops it, and a crash is an abort (exit 3), not a traceback with k6 still running unguarded.
     try:
         while proc.poll() is None:
             time.sleep(min(args.guard_every, max(1.0, wall_s - (time.monotonic() - started))))
@@ -406,7 +468,11 @@ def run_load(args: argparse.Namespace, run: Runner) -> int:
                 break
     except KeyboardInterrupt:
         aborted = ["stopped by hand"]
-        _stop(proc)
+    except Exception as exc:  # noqa: BLE001 — fail closed: any runner error stops the load
+        aborted = [f"the runner failed ({type(exc).__name__}); k6 stopped"]
+    finally:
+        if proc.poll() is None:
+            _stop(proc)
     code = proc.wait()
     if aborted:
         print(json.dumps({"step": "aborted", "reasons": aborted, "k6_exit": code}))
@@ -416,11 +482,14 @@ def run_load(args: argparse.Namespace, run: Runner) -> int:
 
 
 def _stop(proc: subprocess.Popen) -> None:
-    proc.send_signal(signal.SIGINT)
     try:
+        proc.send_signal(signal.SIGINT)
         proc.wait(timeout=30)
     except subprocess.TimeoutExpired:
         proc.kill()
+        proc.wait()
+    except ProcessLookupError:  # already gone
+        pass
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:

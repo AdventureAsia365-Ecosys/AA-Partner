@@ -23,8 +23,10 @@ SLO** (`docs/operations/slo.md`). Only the orchestrating agent or the tech lead 
 - **Hard stops** (checked before the start and every 30 s): `shared.job` not idle, `booking.job` backlog, the CIS
   job-lag signal (`jobs_starved` and friends: the in-app checks that replaced the CloudWatch job-lag alarm in the S263
   alert diet), a CRM `crm.job` lag, any CIS / Booking / CRM CloudWatch alarm in ALARM, the CRM not ready, an AWS read
-  that fails (fail closed), the calm agencies' error rate above 1 % (k6 `abortOnFail`), and a wall clock of the
-  duration + 2 minutes.
+  that fails or times out (an expired MFA session fails at once: stdin is closed), a sampler line that lacks its job
+  fields or carries `jobs_error` / `ops_checks_error` (all fail closed), the calm agencies' error rate above 1 % (k6
+  `abortOnFail`), and a wall clock of the duration + 2 minutes. If the runner itself fails mid-run, it stops k6
+  before it exits (exit 3): k6 never keeps running unguarded.
 
 ## One-time setup (orchestrator)
 

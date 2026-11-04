@@ -9,6 +9,7 @@ import base64
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -42,7 +43,13 @@ def _jwt(exp: float) -> str:
 
 
 def _cis(ts_ms: int = NOW_MS - 60_000, **fields: Any) -> dict:
-    base = {"event": "ops_metrics_sampled", "queued_due": 0, "running": 0, "starved": {}}
+    base = {
+        "event": "ops_metrics_sampled",
+        "queued_due": 0,
+        "running": 0,
+        "oldest_queued_age_seconds": 0.0,
+        "starved": {},
+    }
     return {"timestamp": ts_ms, "message": json.dumps({**base, **fields})}
 
 
@@ -172,17 +179,20 @@ def test_raised_checks_formats() -> None:
     assert lt.raised_checks({"jobs_starved": {"bell": True}}) == ["jobs_starved"]
 
 
+CIS_IDLE = {"queued_due": 0, "running": 0, "oldest_queued_age_seconds": 0.0}
+
+
 @pytest.mark.parametrize(
     ("sample", "reason"),
     [
         (None, "fail closed"),
-        ((dict(queued_due=0, running=0), NOW_MS - 12 * 60_000), "older than 11 minutes"),
-        ((dict(queued_due=3, running=0), NOW_MS), "shared.job not idle"),
-        ((dict(queued_due=0, running=1), NOW_MS), "shared.job not idle"),
-        ((dict(starved={"cis_kind": {"age_s": 950}}), NOW_MS), "starved"),
-        ((dict(oldest_queued_age_seconds=901), NOW_MS), ">= 900"),
-        ((dict(ops_checks={"jobs_starved": {"bell": True}}), NOW_MS), "job / database finding"),
-        ((dict(running="?"), NOW_MS), "not idle"),
+        (({**CIS_IDLE}, NOW_MS - 12 * 60_000), "older than 11 minutes"),
+        (({**CIS_IDLE, "queued_due": 3}, NOW_MS), "shared.job not idle"),
+        (({**CIS_IDLE, "running": 1}, NOW_MS), "shared.job not idle"),
+        (({**CIS_IDLE, "starved": {"cis_kind": {"age_s": 950}}}, NOW_MS), "starved"),
+        (({**CIS_IDLE, "oldest_queued_age_seconds": 901}, NOW_MS), ">= 900"),
+        (({**CIS_IDLE, "ops_checks": {"jobs_starved": {"bell": True}}}, NOW_MS), "job / database finding"),
+        (({**CIS_IDLE, "running": "?"}, NOW_MS), "not idle"),
     ],
 )
 def test_cis_guard(sample: Any, reason: str) -> None:
@@ -190,7 +200,37 @@ def test_cis_guard(sample: Any, reason: str) -> None:
 
 
 def test_cis_guard_ignores_unrelated_findings() -> None:
-    assert lt.judge_cis(({"ops_checks": {"stage_coverage": {"bell": False}}}, NOW_MS), NOW_MS) == []
+    sample = {**CIS_IDLE, "ops_checks": {"stage_coverage": {"bell": False}}}
+    assert lt.judge_cis((sample, NOW_MS), NOW_MS) == []
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"jobs_error": "TimeoutError"},  # the sampler's backlog read failed: no job fields at all
+        {**CIS_IDLE, "jobs_error": "TimeoutError"},
+        {**CIS_IDLE, "ops_checks_error": "TimeoutError"},
+        {"queued_due": 0, "running": 0},  # oldest_queued_age_seconds absent
+        {},
+    ],
+)
+def test_cis_guard_fails_closed_on_a_line_without_its_job_fields(fields: dict) -> None:
+    """Review finding: a missing field read as 0 (idle), so a sampler that could not read the queue (the shared DB
+    under pressure) let the run start or go on."""
+    reasons = lt.judge_cis((fields, NOW_MS), NOW_MS)
+    assert reasons and all("fail closed" in why for why in reasons), reasons
+
+
+def test_booking_and_crm_guards_fail_closed_on_missing_fields() -> None:
+    booking = lt.parse_sample(BOOKING_OK)
+    crm = lt.parse_sample(CRM_OK)
+    for key in lt.BOOKING_REQUIRED:
+        partial = {k: v for k, v in booking.items() if k != key}
+        assert any(key in why and "fail closed" in why for why in lt.judge_booking((partial, NOW_MS), NOW_MS))
+    for key in lt.CRM_REQUIRED:
+        partial = {k: v for k, v in crm.items() if k != key}
+        assert any(key in why and "fail closed" in why for why in lt.judge_crm((partial, NOW_MS), NOW_MS))
+    assert lt.judge_crm(({"event": "ops_metrics_sampled"}, NOW_MS), NOW_MS)
 
 
 def test_booking_guard_tolerates_its_always_queued_pull_but_not_a_backlog() -> None:
@@ -269,6 +309,45 @@ def test_guard_pass_runs_the_extra_guard(files: argparse.Namespace) -> None:
     assert lt.guard_pass(files, FakeAws(), NOW).ok
 
 
+def test_aws_runner_turns_a_hang_or_a_missing_cli_into_a_refusal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review finding: an expired MFA session made ``aws`` wait for a code on the inherited stdin until the 60 s
+    timeout, and the TimeoutExpired escaped the guard. stdin is closed now and both errors are a Refused."""
+    seen: dict[str, Any] = {}
+
+    def hangs(cmd: list[str], **kw: Any) -> Any:
+        seen.update(kw)
+        raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+
+    monkeypatch.setattr(lt.subprocess, "run", hangs)
+    with pytest.raises(lt.Refused, match="timed out"):
+        lt.aws_runner("p")(["logs", "filter-log-events"])
+    assert seen["stdin"] is subprocess.DEVNULL
+
+    def missing(cmd: list[str], **kw: Any) -> Any:
+        raise FileNotFoundError("aws")
+
+    monkeypatch.setattr(lt.subprocess, "run", missing)
+    with pytest.raises(lt.Refused, match="could not start"):
+        lt.aws_runner("p")(["sts", "get-caller-identity"])
+
+
+def test_extra_guard_fails_closed_when_it_cannot_run(
+    files: argparse.Namespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files.extra_guard = "/nonexistent/probe --check"
+    assert lt.guard_pass(files, FakeAws(), NOW).failures == ["extra guard could not run (FileNotFoundError)"]
+    files.extra_guard = "probe 'unclosed"
+    assert lt.guard_pass(files, FakeAws(), NOW).failures == ["extra guard could not run (ValueError)"]
+
+    def hangs(cmd: list[str], **kw: Any) -> Any:
+        assert kw["stdin"] is subprocess.DEVNULL
+        raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+
+    monkeypatch.setattr(lt.subprocess, "run", hangs)
+    files.extra_guard = "probe"
+    assert lt.guard_pass(files, FakeAws(), NOW).failures == ["extra guard timed out after 120 s"]
+
+
 def test_guard_pass_reports_an_unready_api(files: argparse.Namespace, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(lt, "ready", lambda base_url: ["CRM not ready (HTTP 503)"])
     assert lt.guard_pass(files, FakeAws(), NOW).failures == ["CRM not ready (HTTP 503)"]
@@ -328,6 +407,86 @@ def test_run_stops_k6_when_a_guard_fails(
     started = time.monotonic()
     assert lt.run_load(files, aws) == 3
     assert time.monotonic() - started < 30
+
+
+def _fake_k6(tmp_path: Path, files: argparse.Namespace) -> Path:
+    """A stand-in k6 that would run for a minute and records its pid, so a test can check it was stopped."""
+    pid_file = tmp_path / "k6.pid"
+    fake_k6 = tmp_path / "k6"
+    fake_k6.write_text(
+        f"#!{sys.executable}\nimport os, time\nopen({str(pid_file)!r}, 'w').write(str(os.getpid()))\ntime.sleep(60)\n"
+    )
+    os.chmod(fake_k6, 0o700)
+    files.k6, files.guard_every = str(fake_k6), 0.2
+    files.summary_file = str(tmp_path / "summary.json")
+    return pid_file
+
+
+def _gone(pid_file: Path) -> bool:
+    try:
+        os.kill(int(pid_file.read_text()), 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
+def test_run_stops_k6_when_an_aws_read_times_out_mid_run(
+    files: argparse.Namespace,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys,  # noqa: ANN001
+) -> None:
+    """Review finding: an AWS read that timed out mid-run (an expired MFA session) raised out of the runner and left
+    k6 running unguarded. Now it is a failed guard: k6 is stopped and the run exits 3."""
+    pid_file = _fake_k6(tmp_path, files)
+    monkeypatch.setattr(lt, "time", _Clock())
+    aws = FakeAws()
+    passes = {"n": 0}
+
+    def flaky(args: list[str]) -> str:
+        if args[:2] == ["logs", "filter-log-events"]:
+            passes["n"] += 1
+            if passes["n"] > 3:  # the precheck's guard pass reads three log groups; the next read times out
+                raise subprocess.TimeoutExpired(["aws", *args], 60)
+        return aws(args)
+
+    real_run = lt.subprocess.run
+
+    def run(cmd: list[str], **kw: Any) -> Any:
+        if cmd[0] == "aws":
+            return _Done(flaky(cmd[1 : cmd.index("--profile")]))
+        return real_run(cmd, **kw)
+
+    monkeypatch.setattr(lt.subprocess, "run", run)
+    started = time.monotonic()
+    assert lt.run_load(files, lt.aws_runner("p")) == 3
+    assert time.monotonic() - started < 30
+    assert _gone(pid_file)
+    out = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert out[-1]["step"] == "aborted" and any("timed out" in r for r in out[-1]["reasons"])
+
+
+def test_run_stops_k6_when_the_runner_itself_crashes(
+    files: argparse.Namespace, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pid_file = _fake_k6(tmp_path, files)
+    monkeypatch.setattr(lt, "time", _Clock())
+    calls = {"n": 0}
+
+    def guard(args: argparse.Namespace, run: Any, now: float | None = None) -> Any:
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise RuntimeError("guard bug")
+        return lt.Report()
+
+    monkeypatch.setattr(lt, "guard_pass", guard)
+    assert lt.run_load(files, FakeAws()) == 3
+    assert _gone(pid_file)
+
+
+class _Done:
+    def __init__(self, stdout: str) -> None:
+        self.returncode, self.stdout = 0, stdout
 
 
 class _Clock:
