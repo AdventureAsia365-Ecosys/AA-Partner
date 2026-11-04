@@ -71,7 +71,8 @@ by every agency and the job worker. Four mechanisms keep one agency's load from 
    per agency per minute on `/crm/v1`, then **429 `rate_limited`**.
 4. **Fair job claim** (`app/jobs/queue.py`): the serial `crm.job` worker takes, among the due rows, the one whose
    agency was served least in the last 5 minutes (oldest first inside an agency), so an agency's import or message
-   backlog does not hold every other agency's jobs behind it.
+   backlog does not hold every other agency's jobs behind it, however long that backlog is (every due row is ranked
+   inside its agency; there is no global oldest-N window that one agency's rows could fill).
 
 And for every route, the **body ceiling** (`app/bodylimit.py`): 1 MiB per request (upload routes their own cap plus 64
 KiB), enforced before any route code, the class guard included.

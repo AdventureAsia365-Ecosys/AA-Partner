@@ -80,6 +80,30 @@ async def test_a_backlog_of_one_agency_does_not_hold_back_the_others(app_pool: a
     assert order[6:] == noisy[2:]  # inside one agency the order stays oldest first
 
 
+async def test_a_backlog_longer_than_any_window_still_lets_the_calm_agency_through(app_pool: asyncpg.Pool) -> None:
+    """Review finding: an oldest-500 window held only the noisy agency's rows once its backlog was longer than 500, so
+    the calm agency's newer job waited behind it again. Every due row is ranked inside its agency now."""
+    await app_pool.execute(
+        """
+        INSERT INTO crm.job (kind, payload, run_after)
+        SELECT 'crm_probe', jsonb_build_object('tenant_id', $1::text), now() - make_interval(secs => 7200 - g)
+          FROM generate_series(1, 600) AS g
+        """,
+        NOISY,
+    )
+    (calm,) = await _enqueue(app_pool, CALM, 1, age_s=5)
+    claimed = await _claim_order(app_pool, 2)
+    assert calm in claimed, claimed
+
+
+async def test_a_held_head_row_does_not_leave_its_agency_without_a_candidate(app_pool: asyncpg.Pool) -> None:
+    noisy = await _enqueue(app_pool, NOISY, 3, age_s=100)
+    async with app_pool.acquire() as holder, holder.transaction():
+        await holder.execute("SELECT 1 FROM crm.job WHERE id = $1::uuid FOR UPDATE", noisy[0])
+        job = await queue.claim(app_pool, "w", ["crm_probe"], 60)
+    assert job is not None and job.id == noisy[1]
+
+
 async def test_rows_without_an_agency_never_queue_behind_each_other_by_agency(app_pool: asyncpg.Pool) -> None:
     system = await _enqueue(app_pool, None, 3, age_s=100)
     noisy = await _enqueue(app_pool, NOISY, 3, age_s=50)
