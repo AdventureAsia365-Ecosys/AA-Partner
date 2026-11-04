@@ -63,3 +63,8 @@ Follows `AA-1036.md` (slice 1, #210). Root ADR 0019 d6 / d7. Two PRs here, each 
 - After step B merges, the GitHub environment `dev` variables of the old deploy (`CRM_PORTAL_ENABLED`,
   `ECR_PORTAL_REPOSITORY`, `ECS_PORTAL_SERVICE`, `ECS_PORTAL_TASK_FAMILY`, `PORTAL_HOST`, `PORTAL_PUBLIC_SENTRY_DSN`)
   are unused and can be deleted.
+- Review fix (step B): `web/tests/studioAccess.test.ts` compared the web's `STUDIO_COOKIES` with a read of
+  `portal/lib/studioSession.ts`, which step B deletes (ENOENT, Web Build red). The test now checks the one source:
+  `web/lib/studio/studioSession.ts` re-exports `STUDIO_COOKIES` from `../studioCookies` (no own list) and the list
+  holds `cis_partner_ref` / `PARTNER_REF_COOKIE`. No other `web/tests` file reads a `portal/` path (`crmIdentity`
+  reads `web/app/(studio)/...`; `api/tests/unit/test_kit_provenance.py` builds `portal/` under `tmp_path`).
