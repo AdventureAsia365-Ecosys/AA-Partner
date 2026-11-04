@@ -6,6 +6,9 @@ per request with the ``X-AA-Tenant-Id`` header and every read goes through :func
 check, RLS context).
 
 Responses are ids, roles and the agency's own label/locale only (never an e-mail or a name from the token).
+AA-1036: ``/me`` also says whether the agency holds the CRM add-on (``crm_entitled``,
+:func:`app.entitlements.crm_entitled`, from the projection of tenant.entitlements.v1), for the agency app's app
+switcher; it refuses nothing.
 Margin-bearing fields arrive with later cards behind the per-role serializer allow-list (design v3 §4.6).
 
 ``GET /crm/v1/memberships`` is the one route without ``X-AA-Tenant-Id``: it lists the agencies the caller belongs to
@@ -19,6 +22,7 @@ from typing import Annotated, Any
 
 from fastapi import Depends, Header, HTTPException, Request
 
+from app import entitlements
 from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
 from app.db import request_pool
@@ -55,6 +59,7 @@ async def me(
             "member_role": ctx.member_role,
             "display_name": label["display_name"] if label else None,
             "default_locale": label["default_locale"] if label else None,
+            "crm_entitled": await entitlements.crm_entitled(ctx),
         }
 
 

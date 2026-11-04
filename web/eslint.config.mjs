@@ -2,7 +2,7 @@ import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 
-import { kitConfig } from "./app/_kit/core/eslint-kit.mjs";
+import { LEGACY_MODULES, kitConfig } from "./app/_kit/core/eslint-kit.mjs";
 
 // AA-994 S2b (root ADR 0016 decision 7) — the CRM web's first ESLint config: the Next rules plus the UI kit
 // conformance rules shipped with the vendored kit core (app/_kit/core/eslint-kit.mjs, byte-identical to AA-CIS-App
@@ -19,6 +19,16 @@ import { kitConfig } from "./app/_kit/core/eslint-kit.mjs";
 // fixing violations: npx eslint --prune-suppressions. Never run --suppress-all to hide a new violation, and never
 // switch a kit rule off inline (`eslint-disable… aa-kit/…` or a bare `eslint-disable`): CI fails on it
 // (check-kit-copy.mjs --no-kit-disable). Disables that name other rules (react-hooks/…) stay allowed.
+//
+// AA-1036 (R3 slice 1): the Content studio moved from portal/ into the route group app/(studio)/, so its legacy
+// primitive layer (the portal's ui.tsx) now resolves to app/(studio)/portal/_components/ui. The kit core's built-in
+// LEGACY_MODULES only knows the old portal path, and isModule() matches an exact path or a "/"-suffix, so
+// aa-kit/no-legacy-kit is given the moved path here (the core stays byte-identical to the CIS canonical copy).
+// The studio's existing imports of it are frozen in eslint-suppressions.json under their new paths; new ones fail.
+const STUDIO_LEGACY_MODULES = [
+  ...LEGACY_MODULES,
+  { path: "app/(studio)/portal/_components/ui", use: "the kit barrel (PageHeader, Button, Badge, DataTable…)" },
+];
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -33,6 +43,7 @@ const eslintConfig = defineConfig([
     preset: "inline",
     files: ["app/**/*.{ts,tsx,js,jsx,mjs}", "components/**/*.{ts,tsx,js,jsx,mjs}"],
     ignores: ["app/_kit/core/**"],
+    rules: { "aa-kit/no-legacy-kit": ["error", { modules: STUDIO_LEGACY_MODULES }] },
   }),
 ]);
 

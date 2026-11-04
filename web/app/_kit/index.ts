@@ -5,6 +5,8 @@
 //   - app/layout.tsx imports core/tokens.css (no PostCSS here), local/theme (the restore script) and
 //     local/ThemeKeeper (re-applies the stored theme when React rebuilds the document).
 //   - app/(crm)/layout.tsx imports local/CrmShell by path: the shell imports this barrel, so it is not re-exported.
+//   - AA-1036: the Content studio's shell (local/studio/: PortalShell, SessionWatch, portalNav, useShellData) is
+//     imported by path for the same reason; studio pages import ROUTES / useCatalog / MY_VERSIONS_KEY from there.
 //
 // AA-994 S2a (root ADR 0016): ./core is a byte copy of AA-CIS-App frontend/app/_kit/core (full profile), written by
 // the root tools/kit/kit-sync.sh and pinned by ../../kit.lock.json; Web Build checks it (integrity: core/check-kit-
@@ -36,9 +38,14 @@ export {
 // (it was left out in S2a because many CRM server components import this barrel and Turbopack refused the build).
 export { useMediaQuery, useIsPhone, PHONE_QUERY } from "./core/useMediaQuery";
 export { useSidebarCollapsed, useNavGroups } from "./core/useSidebar";
+// AA-1036: the Content studio's sidebar groups (moved in from the studio app's barrel).
+export { navGroupId } from "./core/sidebarStore";
 export { NavGroup } from "./core/NavGroup";
 export { useHydrated } from "./core/useHydrated";
 export type { ThemeChoice, ResolvedTheme } from "./core/theme";
 
 // ── CRM-local ────────────────────────────────────────────────────────────────────────────────────────────────
 export { useThemeChoice, useResolvedTheme, useChartColors } from "./local/useTheme";
+// AA-1036 (R3 slice 1): the Content studio's fetch helpers for its BFF (/api/tenant/*), moved in with the studio
+// (./local/studio/: its shell too, imported by path from app/(studio)/portal/layout.tsx: the shell imports this barrel).
+export * from "./local/studio/api";

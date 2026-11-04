@@ -2,7 +2,7 @@
 // the PKCE verifier, keep the tokens in sealed httpOnly cookies, go back to the page the person asked for. AA-935.
 import type { NextRequest } from "next/server";
 import { requestConfig } from "@/lib/config";
-import { accessClaims, exchangeCode, OAuthError } from "@/lib/oauth";
+import { accessClaims, exchangeCode, idTokenEmail, OAuthError } from "@/lib/oauth";
 import { redirectTo, withCookies } from "@/lib/respond";
 import { clearedCookies, cookieNames, readTx, refreshCookie, sessionCookie } from "@/lib/session";
 
@@ -30,6 +30,8 @@ export async function GET(request: NextRequest) {
         tid: null,
         // AA-940: a sign-in to record once an agency is picked (/auth/agency).
         si: 1,
+        // AA-1036: the person's own e-mail (id token), for the studio's "signed in as".
+        ...emailOf(cfg, tokens.idToken, claims.sub),
       }),
       // The attempt is used up: expire it.
       { ...clearedCookies(cfg).find((c) => c.name === cookieNames(cfg).tx)! },
@@ -43,4 +45,9 @@ export async function GET(request: NextRequest) {
     }
     throw err;
   }
+}
+
+function emailOf(cfg: Parameters<typeof idTokenEmail>[0], idToken: string | null, sub: string): { em?: string } {
+  const em = idTokenEmail(cfg, idToken, sub);
+  return em ? { em } : {};
 }

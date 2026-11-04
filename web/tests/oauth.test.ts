@@ -1,6 +1,7 @@
 // Cognito code + PKCE: authorize / logout URLs, token calls (Basic auth, no secret in the body), claim checks.
 import { describe, expect, it, vi } from "vitest";
 import {
+  idTokenEmail,
   accessClaims,
   authorizeUrl,
   exchangeCode,
@@ -43,7 +44,7 @@ describe("token calls", () => {
       Response.json({ access_token: "at", refresh_token: "rt", expires_in: 1800, id_token: "id" }),
     );
     const tokens = await exchangeCode(cfg, "code-1", "ver-1", fetchImpl as unknown as typeof fetch);
-    expect(tokens).toEqual({ accessToken: "at", refreshToken: "rt", expiresIn: 1800 });
+    expect(tokens).toEqual({ accessToken: "at", refreshToken: "rt", expiresIn: 1800, idToken: "id" });
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://auth.example.test/oauth2/token");
     const body = new URLSearchParams(String(init.body));
@@ -89,5 +90,27 @@ describe("access token claims", () => {
     expect(() => accessClaims(cfg, fakeAccessToken({ sub: 5 }))).toThrow("token_malformed");
     expect(() => accessClaims(cfg, "a.b")).toThrow("token_malformed");
     expect(() => accessClaims(cfg, "a.%%%.c")).toThrow("token_malformed");
+  });
+});
+
+// AA-1036 (an AA-1007 leftover): the person's own e-mail for the studio's "signed in as".
+describe("idTokenEmail", () => {
+  const id = (claims: Record<string, unknown>) =>
+    fakeAccessToken({ token_use: "id", aud: ENV.COGNITO_CLIENT_ID, email: "mira.solano@example.test", ...claims });
+
+  it("reads the e-mail of an id token for this client and the same person", () => {
+    expect(idTokenEmail(cfg, id({}), "sub-1")).toBe("mira.solano@example.test");
+    expect(idTokenEmail(cfg, id({ aud: [ENV.COGNITO_CLIENT_ID] }), "sub-1")).toBe("mira.solano@example.test");
+  });
+
+  it("refuses another person, another client, an access token, a bad address or no token", () => {
+    expect(idTokenEmail(cfg, id({}), "sub-2")).toBeNull();
+    expect(idTokenEmail(cfg, id({ aud: "other" }), "sub-1")).toBeNull();
+    expect(idTokenEmail(cfg, id({ token_use: "access" }), "sub-1")).toBeNull();
+    expect(idTokenEmail(cfg, id({ email: "not an address" }), "sub-1")).toBeNull();
+    expect(idTokenEmail(cfg, id({ email: `${"a".repeat(250)}@example.test` }), "sub-1")).toBeNull();
+    expect(idTokenEmail(cfg, null, "sub-1")).toBeNull();
+    expect(idTokenEmail(cfg, "a.b", "sub-1")).toBeNull();
+    expect(idTokenEmail(cfg, "a.%%%.c", "sub-1")).toBeNull();
   });
 });

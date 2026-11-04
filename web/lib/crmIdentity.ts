@@ -2,10 +2,11 @@
 // the CRM sign-in the Content studio shows on the same agency host (portal/lib/crmIdentity.ts reads it).
 
 /** Always answered with 200: the studio must never see a non-2xx (the browser logs it as a console error). */
+/** AA-1036 (an AA-1007 leftover): `email` is the person's own sign-in address from the session, never another's. */
 export type CrmIdentityAnswer =
   | { kind: "signed_out" }
-  | { kind: "no_agency" }
-  | { kind: "agency"; display_name: string | null; member_role: string | null }
+  | { kind: "no_agency"; email?: string | null }
+  | { kind: "agency"; display_name: string | null; member_role: string | null; email?: string | null }
   | { kind: "unknown" };
 
 const MAX_TEXT = 200;

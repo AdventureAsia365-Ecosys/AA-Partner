@@ -12,6 +12,8 @@ tenant.entitlements.v1 feed and snapshots.
   fails (counted with its own failure count, retried sooner, reset by a clean pass).
 - Adoption guard: an agency the L1 console set up (projected_at NULL) keeps its features while CIS has no crm
   subscription for it (``awaiting_cis``); once CIS attaches one, the projection takes over.
+- AA-1036: ``crm_entitled`` (the app switcher's CRM entry, ``/crm/v1/me``) is true before any projection and on a live
+  crm plan, false once CIS cancels the add-on (projected plan free).
 """
 
 from __future__ import annotations
@@ -246,3 +248,20 @@ async def test_an_agency_set_up_before_cis_keeps_its_features_until_cis_attaches
     assert (await _job(cis)(app_pool, JOB))["applied_count"] == 1
     ent = await _entitlement(app_pool, tenant)
     assert (ent["plan"], ent["seats_allowed"], ent["managed_by"]) == ("core", 3, "cis")
+
+
+async def test_crm_entitled_follows_the_projected_add_on(app_pool: asyncpg.Pool, cis: Cis) -> None:
+    tenant, people = await _agency(app_pool)
+    owner = people[0][0]
+    async with tenant_tx(app_pool, owner, tenant) as ctx:
+        assert await entitlements.crm_entitled(ctx) is True  # never projected: the CRM stays as today
+    cis.account(tenant)
+    assert (await _job(cis)(app_pool, JOB))["applied_count"] == 1
+    async with tenant_tx(app_pool, owner, tenant) as ctx:
+        assert await entitlements.crm_entitled(ctx) is True  # crm.core live in CIS
+    cis.account(tenant)
+    cis.accounts[str(tenant)]["subscriptions"][1]["status"] = "cancelled"  # the add-on is cancelled in CIS
+    assert (await _job(cis)(app_pool, JOB))["applied_count"] == 1
+    assert (await _entitlement(app_pool, tenant))["plan"] == "free"
+    async with tenant_tx(app_pool, owner, tenant) as ctx:
+        assert await entitlements.crm_entitled(ctx) is False

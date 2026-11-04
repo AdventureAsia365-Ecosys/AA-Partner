@@ -46,6 +46,11 @@ export const PUBLIC_PARTNER_PATHS = [
   "/join",
   "/join/invite",
   "/join/claim",
+  // AA-1036 (R3 slice 1): the Content studio's public parts in the one agency app: its draft legal pages (outside the
+  // gate, as in the studio app) and the brand logo they show (public/assets/).
+  "/legal/partner-terms",
+  "/legal/privacy",
+  "/assets/",
 ] as const;
 
 export function hostOnly(hostHeader: string | null): string {
@@ -106,3 +111,30 @@ export function hasRefreshMarker(path: string): boolean {
   if (q < 0) return false;
   return new URLSearchParams(path.slice(q + 1)).get(REFRESH_MARKER) === "1";
 }
+
+// ── AA-1036 (R3 slice 1, root ADR 0019 d6): the Content studio inside the one agency app ──────────────────────────────
+
+/** The studio's pages: /portal and below (the exchange of the partner session for a CIS studio token runs for these). */
+export function isStudioPage(pathname: string): boolean {
+  return pathname === "/portal" || pathname.startsWith("/portal/");
+}
+
+/** The studio's access pages (choose a studio / no studio): signed in, but outside the studio shell and its exchange. */
+export function isStudioAccessPage(pathname: string): boolean {
+  return pathname.startsWith("/portal-access/");
+}
+
+/** The studio's BFF (/api/*): route handlers answer for themselves (401 JSON, never a redirect). */
+export function isStudioBff(pathname: string): boolean {
+  return pathname.startsWith("/api/");
+}
+
+/** The retired people-facing API-key sign-in of the studio (root ADR 0019 d6): 308 to the partner sign-in. */
+export const API_KEY_SIGN_IN_PATH = "/tenant-login";
+
+export function isApiKeySignIn(pathname: string): boolean {
+  return pathname === API_KEY_SIGN_IN_PATH || pathname.startsWith(`${API_KEY_SIGN_IN_PATH}/`);
+}
+
+/** The studio home: where a tenant lands (root ADR 0019 d7) and where the retired API-key sign-in now leads. */
+export const STUDIO_HOME_PATH = "/portal/dashboard";

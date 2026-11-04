@@ -8,6 +8,7 @@
 //   {kind: "signed_out"}                              no session, or its access token expired
 //   {kind: "no_agency"}                               signed in, no agency picked in the session
 //   {kind: "agency", display_name, member_role}       the CRM API /me answer, only these two fields
+//   AA-1036: both signed-in answers add `email`, the person's OWN address from the sealed session, when it is known
 //   {kind: "unknown"}                                 the API failed, timed out or answered something unexpected
 // Same order as the catch-all: a Host other than the partner host -> 404 first (the proxy's check repeated); the token
 // and agency come only from the sealed session, never from a browser header. Other methods: a cross-site write -> 403
@@ -35,7 +36,9 @@ export async function GET(request: NextRequest) {
   const cfg = requestConfig(request);
   const session = cfg.authConfigured ? readSession(cfg, request.cookies) : null;
   if (!accessValid(session)) return json({ kind: "signed_out" } satisfies CrmIdentityAnswer);
-  if (!session.tid) return json({ kind: "no_agency" } satisfies CrmIdentityAnswer);
+  // AA-1036: the person's own e-mail from the sealed session (never an e-mail the API returned); left out when unknown.
+  const email = session.em ? { email: session.em } : {};
+  if (!session.tid) return json({ kind: "no_agency", ...email } satisfies CrmIdentityAnswer);
 
   // The allow-list entry of "me" decides the agency header and the timeout, as in the catch-all's forward.
   const route = matchBff("GET", "me");
@@ -49,7 +52,8 @@ export async function GET(request: NextRequest) {
       signal: AbortSignal.timeout(route.timeoutMs ?? UPSTREAM_TIMEOUT_MS),
     });
     if (upstream.status !== 200) return json({ kind: "unknown" } satisfies CrmIdentityAnswer);
-    return json(pickIdentity(await upstream.json()));
+    const picked = pickIdentity(await upstream.json());
+    return json(picked.kind === "agency" ? { ...picked, ...email } : picked);
   } catch {
     return json({ kind: "unknown" } satisfies CrmIdentityAnswer);
   }

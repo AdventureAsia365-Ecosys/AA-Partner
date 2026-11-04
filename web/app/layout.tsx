@@ -14,6 +14,8 @@ import { serverContext } from "@/lib/serverContext";
 import { themeStore } from "./_kit/local/theme";
 import { ThemeKeeper } from "./_kit/local/ThemeKeeper";
 
+const SIDEBAR_RESTORE = `(function(){try{var s=localStorage.getItem('cis_sidebar');document.documentElement.setAttribute('data-sidebar',s==='collapsed'?'collapsed':'expanded');}catch(e){document.documentElement.setAttribute('data-sidebar','expanded');}})();`;
+
 export const metadata: Metadata = {
   title: "Adventure Asia Partner",
   description: "Adventure Asia partner CRM",
@@ -28,6 +30,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang={lang} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeStore.restoreScript }} />
+        {/* AA-1036: the Content studio's sidebar rail (`cis_sidebar`, core/sidebarStore.ts) before paint, as in the
+            studio app's root layout; only the studio's CSS reads data-sidebar. */}
+        <script dangerouslySetInnerHTML={{ __html: SIDEBAR_RESTORE }} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link

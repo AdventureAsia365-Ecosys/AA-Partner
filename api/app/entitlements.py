@@ -8,6 +8,8 @@ feature has a switch (AI: ``crm.tenant_settings.ai_enabled``).
 - :data:`FEATURES`: the six codes the database CHECK ``tenant_entitlement_features_chk`` accepts.
 - :func:`feature_allowed`: one read on the context's connection (RLS: the context's agency); no row = nothing allowed.
 - :func:`require_feature`: 403 ``feature_not_allowed`` with a ``denied`` audit event unless the feature is allowed.
+- :func:`crm_entitled`: whether the agency holds the CRM add-on itself (``crm.core`` in CIS), for the agency app's app
+  switcher (AA-1036, root ADR 0019 d7: add-ons open per entitlement). Read-only: nothing here refuses a request.
 """
 
 from __future__ import annotations
@@ -28,6 +30,22 @@ LABELS = {
 ALLOWED_SQL = """
 SELECT coalesce((SELECT $1 = ANY (allowed_features) FROM crm.tenant_entitlement WHERE deleted_at IS NULL), false)
 """
+
+
+# AA-1036: the add-on is off only when the CIS projection says so: a projected row (projected_at set) on plan ``free``
+# (no live crm subscription in CIS: cancelled, offboarded). An agency never projected (set up on the L1 console, or
+# awaiting its CIS crm subscription, the adoption guard of :mod:`app.cis.entitlement_feed`) and an agency without a row
+# keep the CRM, as they do today.
+CRM_ENTITLED_SQL = """
+SELECT coalesce(
+  (SELECT NOT (projected_at IS NOT NULL AND plan = 'free') FROM crm.tenant_entitlement WHERE deleted_at IS NULL), true
+)
+"""
+
+
+async def crm_entitled(ctx: TenantContext | SystemContext) -> bool:
+    """True unless the CIS projection says the agency has no CRM add-on (see :data:`CRM_ENTITLED_SQL`)."""
+    return bool(await ctx.conn.fetchval(CRM_ENTITLED_SQL))
 
 
 async def feature_allowed(ctx: TenantContext | SystemContext, feature: str) -> bool:
