@@ -109,6 +109,9 @@ test("the access pages label the support address as a contact and show the CRM s
     assert.match(code, /<SignedInAs \/>/, `${rel}: CRM sign-in shown`);
     assert.doesNotMatch(code, /SUPPORT_EMAIL/, `${rel}: no bare support address`);
   }
+  // AA-1036 (R3): the label lives in the access pages' message catalogue (EN + VI); the card renders it.
   const card = fs.readFileSync(path.join(ROOT, "app/(studio)/portal-access/AccessCard.tsx"), "utf8");
-  assert.match(card, /Questions\? Contact Adventure Asia:/);
+  assert.match(card, /t\("support"\)/);
+  const messages = fs.readFileSync(path.join(ROOT, "app/(studio)/portal-access/access.messages.ts"), "utf8");
+  assert.match(messages, /Questions\? Contact Adventure Asia:/);
 });

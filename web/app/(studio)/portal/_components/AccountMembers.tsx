@@ -9,22 +9,26 @@
 import { useQuery } from "@tanstack/react-query";
 import { Mail } from "lucide-react";
 import { useMemo } from "react";
-import { apiGet, Badge, type ColumnDef, DataTable, formatDate, PageHeader, SUPPORT_EMAIL } from "@/app/_kit";
+import { apiGet, Badge, type ColumnDef, DataTable, PageHeader, SUPPORT_EMAIL, K, sans, useFormat, useLang, useT } from "@/app/_kit";
+import { MEMBERS_MESSAGES } from "./account.messages";
 import {
   memberLabel,
   missingOwner,
-  ROLE_HINT,
-  ROLE_LABEL,
-  STATUS_LABEL,
+  roleHint,
+  roleLabel,
+  statusLabel,
   summaryLine,
   type AccountMember,
   type AccountMembers as MembersBody,
 } from "@/lib/studio/members";
-import { T, sans } from "./ui";
+import { plainError } from "./studioError";
 
 export const ACCOUNT_MEMBERS_QUERY_KEY = ["account-members"] as const;
 
 export function AccountMembers() {
+  const t = useT(MEMBERS_MESSAGES);
+  const lang = useLang();
+  const { formatDate } = useFormat();
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ACCOUNT_MEMBERS_QUERY_KEY,
     queryFn: () => apiGet<MembersBody>("/api/tenant/v1/account/members"),
@@ -35,61 +39,61 @@ export function AccountMembers() {
     () => [
       {
         id: "member",
-        accessorFn: (m) => memberLabel(m),
-        header: "Member",
+        accessorFn: (m) => memberLabel(m, lang),
+        header: t("colMember"),
         cell: (c) => (
-          <span style={{ fontWeight: 600, color: T.ink, fontVariantNumeric: "tabular-nums" }}>
-            {memberLabel(c.row.original)}
+          <span style={{ fontWeight: 600, color: K.ink, fontVariantNumeric: "tabular-nums" }}>
+            {memberLabel(c.row.original, lang)}
           </span>
         ),
       },
       {
         id: "role",
-        accessorFn: (m) => ROLE_LABEL[m.role] ?? m.role,
-        header: "Role",
+        accessorFn: (m) => roleLabel(m.role, lang),
+        header: t("colRole"),
         cell: (c) => {
           const r = c.row.original.role;
           return (
-            <span title={ROLE_HINT[r]}>
-              <Badge tone={r === "owner" ? "accent" : "neutral"}>{ROLE_LABEL[r] ?? r}</Badge>
+            <span title={roleHint(r, lang)}>
+              <Badge tone={r === "owner" ? "accent" : "neutral"}>{roleLabel(r, lang)}</Badge>
             </span>
           );
         },
       },
       {
         id: "status",
-        accessorFn: (m) => STATUS_LABEL[m.status] ?? m.status,
-        header: "Status",
+        accessorFn: (m) => statusLabel(m.status, lang),
+        header: t("colStatus"),
         cell: (c) => {
           const s = c.row.original.status;
-          return <Badge tone={s === "active" ? "success" : "warning"} dot>{STATUS_LABEL[s] ?? s}</Badge>;
+          return <Badge tone={s === "active" ? "success" : "warning"} dot>{statusLabel(s, lang)}</Badge>;
         },
       },
       {
         id: "added",
         accessorFn: (m) => m.added_at,
-        header: "Added",
-        cell: (c) => <span style={{ color: T.muted, fontSize: 12, whiteSpace: "nowrap" }}>{formatDate(c.row.original.added_at)}</span>,
+        header: t("colAdded"),
+        cell: (c) => <span style={{ color: K.muted, fontSize: 12, whiteSpace: "nowrap" }}>{formatDate(c.row.original.added_at)}</span>,
       },
       {
         id: "updated",
         accessorFn: (m) => m.updated_at,
-        header: "Last change",
-        cell: (c) => <span style={{ color: T.muted, fontSize: 12, whiteSpace: "nowrap" }}>{formatDate(c.row.original.updated_at)}</span>,
+        header: t("colChanged"),
+        cell: (c) => <span style={{ color: K.muted, fontSize: 12, whiteSpace: "nowrap" }}>{formatDate(c.row.original.updated_at)}</span>,
       },
     ],
-    [],
+    [t, lang, formatDate],
   );
 
-  const subject = "Content Studio members: add, change or remove";
+  const subject = t("mailSubject");
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, fontFamily: sans }}>
       <PageHeader
-        title="Members"
+        title={t("title")}
         description={
           <>
-            Everyone in your Content Studio workspace and their role.{" "}
-            {data ? <strong style={{ color: T.ink }}>{summaryLine(data)}.</strong> : null}
+            {t("sub")}{" "}
+            {data ? <strong style={{ color: K.ink }}>{summaryLine(data, lang)}.</strong> : null}
           </>
         }
         actions={
@@ -98,25 +102,24 @@ export function AccountMembers() {
             data-testid="members-request-change"
             style={{
               display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 999,
-              border: `1px solid ${T.gold}`, color: T.goldDeep, fontSize: 12.5, fontWeight: 600, textDecoration: "none",
+              border: `1px solid ${K.accent}`, color: K.accentDeep, fontSize: 12.5, fontWeight: 600, textDecoration: "none",
             }}
           >
-            <Mail size={13} aria-hidden /> Request a change
+            <Mail size={13} aria-hidden /> {t("requestChange")}
           </a>
         }
       />
 
-      <div style={{ fontSize: 12.5, color: T.muted, lineHeight: 1.55, maxWidth: 760 }}>
-        Adventure Asia adds, changes and removes members for you for now: use Request a change. A member who is removed
-        is also signed out of the Partner CRM within a minute. Roles inside the Partner CRM are managed in the CRM.
+      <div style={{ fontSize: 12.5, color: K.muted, lineHeight: 1.55, maxWidth: 760 }}>
+        {t("howItWorks")}
       </div>
 
       {data && missingOwner(rows) && (
         <div role="status" style={{
-          padding: "10px 14px", borderRadius: 10, border: `1px solid ${T.line}`, background: T.goldTint,
-          color: T.ink, fontSize: 13,
+          padding: "10px 14px", borderRadius: 10, border: `1px solid ${K.line}`, background: K.accentTint,
+          color: K.ink, fontSize: 13,
         }}>
-          Your workspace has no active owner. Ask Adventure Asia to restore one before you make account changes.
+          {t("noOwner")}
         </div>
       )}
 
@@ -126,13 +129,13 @@ export function AccountMembers() {
         tableId="account-members"
         getRowId={(m) => m.membership_id}
         loading={isLoading}
-        error={isError ? (error instanceof Error ? error.message : "Could not load the members") : null}
+        error={isError ? plainError(error, t("loadError"), lang) : null}
         onRetry={() => refetch()}
         searchable={false}
         enableCsv={false}
         pageSize={25}
-        emptyTitle="No members yet"
-        emptyDescription="Members appear here once Adventure Asia adds your team to the workspace."
+        emptyTitle={t("emptyTitle")}
+        emptyDescription={t("emptySub")}
       />
     </div>
   );

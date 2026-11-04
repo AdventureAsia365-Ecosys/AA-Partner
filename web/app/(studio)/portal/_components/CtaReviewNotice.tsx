@@ -9,10 +9,8 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { TriangleAlert } from "lucide-react";
-import { K, sans, apiSend } from "@/app/_kit";
-
-export const CTA_REVIEW_NOTICE =
-  "Only mention reviews or ratings if they are real and you can show them publicly. AI-written copy never adds reviews for you.";
+import { K, sans, apiSend, useT } from "@/app/_kit";
+import { COMMON_MESSAGES } from "./common.messages";
 
 export type CtaWarning = { code: string; phrases: string[] } | null;
 
@@ -48,6 +46,7 @@ export function useCtaReviewCheck(cta: string, delayMs = 450): CtaWarning {
 }
 
 export function CtaReviewNotice({ warning, style }: { warning: CtaWarning; style?: React.CSSProperties }) {
+  const t = useT(COMMON_MESSAGES);
   if (!warning) return null;
   return (
     <div
@@ -70,9 +69,9 @@ export function CtaReviewNotice({ warning, style }: { warning: CtaWarning; style
     >
       <TriangleAlert size={14} aria-hidden style={{ flexShrink: 0, marginTop: 2, color: K.amber }} />
       <div style={{ minWidth: 0 }}>
-        <div>{CTA_REVIEW_NOTICE}</div>
+        <div>{t("ctaNotice")}</div>
         <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", color: K.muted }}>
-          <span>Mentions:</span>
+          <span>{t("ctaMentions")}</span>
           {warning.phrases.map(p => (
             <span key={p} style={{
               padding: "1px 8px", borderRadius: 999, background: K.card, border: `1px solid ${K.line}`,

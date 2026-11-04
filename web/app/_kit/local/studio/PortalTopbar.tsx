@@ -3,18 +3,27 @@
 // AA-759 — the portal topbar (56 px, every portal page). Left: ☰ (below 900 px) + breadcrumb
 // (<nav group> / <page>, kit Breadcrumb). Centre: the search pill that opens ⌘K (an icon below
 // 768 px — search is no longer hidden on phones). Right: theme switch (light → dark → system),
-// the notifications bell, the account menu (tenant, plan, settings, legal links, sign out).
+// the notifications bell, the account menu (tenant, plan, settings, language, legal links, sign out).
+// AA-1036 (R3): every label in the UI language (studio.messages.ts). The account menu carries the app's one language
+// switch (components/LocaleSwitch.tsx, the CRM's: cookie aa_crm_locale, the page reloads in the chosen language).
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronDown, LogOut, Menu, Monitor, Moon, Search, Settings, Sun, CreditCard } from "lucide-react";
 import { signOutEverywhere } from "@/lib/studio/signOut";
-import { Breadcrumb, K, SkeletonBar, SkeletonStyle, sans, serif, useThemeChoice, type ThemeChoice } from "@/app/_kit";
+import {
+  Breadcrumb, K, SkeletonBar, SkeletonStyle, sans, serif, useT, useThemeChoice, type ThemeChoice, type Translator,
+} from "@/app/_kit";
+import { LocaleSwitch } from "@/components/LocaleSwitch";
 import { PRIVACY_PATH, TERMS_PATH } from "@/lib/studio/legal";
 import NotificationsBell from "@/app/(studio)/portal/_components/NotificationsBell";
 import type { ShellActivityView } from "@/app/(studio)/portal/_components/PortalShellContext";
 import { ROUTES, pageGroup, pageTitle } from "./portalNav";
+import { STUDIO_MESSAGES, type StudioKey } from "./studio.messages";
+import { useStudioLocale } from "./StudioLang";
+
+type T = Translator<typeof STUDIO_MESSAGES.en>;
 
 export function PortalTopbar({ tenantName, planTier, activity, onOpenSearch, onOpenMenu }: {
   tenantName: string;
@@ -23,7 +32,9 @@ export function PortalTopbar({ tenantName, planTier, activity, onOpenSearch, onO
   onOpenSearch: () => void;
   onOpenMenu: () => void;
 }) {
+  const t = useT(STUDIO_MESSAGES);
   const pathname = usePathname();
+  const title = pageTitle(pathname);
   const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
   return (
@@ -35,16 +46,16 @@ export function PortalTopbar({ tenantName, planTier, activity, onOpenSearch, onO
         fontFamily: sans, minWidth: 0,
       }}
     >
-      <button data-pshell="menu-btn" onClick={onOpenMenu} aria-label="Open menu" style={iconBtn}>
+      <button data-pshell="menu-btn" onClick={onOpenMenu} aria-label={t("openMenu")} style={iconBtn}>
         <Menu size={18} />
       </button>
 
-      <Breadcrumb root={pageGroup(pathname)} title={pageTitle(pathname)} fontSize={12.5} />
+      <Breadcrumb root={t(pageGroup(pathname))} title={title ? t(title) : ""} fontSize={12.5} />
 
       <button
         data-pshell="search-pill"
         onClick={onOpenSearch}
-        aria-label="Search tours, content and pages"
+        aria-label={t("searchAria")}
         style={{
           display: "flex", alignItems: "center", gap: 8, maxWidth: 380, flex: 1, minWidth: 0,
           margin: "0 auto", padding: "7px 12px", borderRadius: 999, border: `1px solid ${K.line}`,
@@ -53,7 +64,7 @@ export function PortalTopbar({ tenantName, planTier, activity, onOpenSearch, onO
       >
         <Search size={15} style={{ flexShrink: 0 }} />
         <span style={{ flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          Search tours, content, pages…
+          {t("searchPill")}
         </span>
         <kbd style={{ fontSize: 11, color: K.muted, border: `1px solid ${K.line}`, borderRadius: 6, padding: "1px 6px", background: K.card, flexShrink: 0, fontFamily: sans }}>
           {isMac ? "⌘K" : "Ctrl K"}
@@ -63,12 +74,12 @@ export function PortalTopbar({ tenantName, planTier, activity, onOpenSearch, onO
       <span data-pshell="spacer" style={{ flex: 1 }} />
 
       <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-        <button data-pshell="search-icon" onClick={onOpenSearch} aria-label="Search" style={iconBtn}>
+        <button data-pshell="search-icon" onClick={onOpenSearch} aria-label={t("search")} style={iconBtn}>
           <Search size={18} />
         </button>
-        <ThemeToggle />
+        <ThemeToggle t={t} />
         <NotificationsBell activity={activity} />
-        <AccountMenu tenantName={tenantName} planTier={planTier} />
+        <AccountMenu t={t} tenantName={tenantName} planTier={planTier} />
       </div>
     </header>
   );
@@ -80,13 +91,13 @@ const iconBtn: React.CSSProperties = {
 };
 
 // ── Theme switch (same cycle as the admin topbar: light → dark → system) ─────
-const THEME_OPTIONS: { key: ThemeChoice; label: string; icon: React.ReactNode }[] = [
-  { key: "light", label: "Light", icon: <Sun size={16} /> },
-  { key: "dark", label: "Dark", icon: <Moon size={16} /> },
-  { key: "system", label: "System", icon: <Monitor size={16} /> },
+const THEME_OPTIONS: { key: ThemeChoice; label: StudioKey; icon: React.ReactNode }[] = [
+  { key: "light", label: "themeLight", icon: <Sun size={16} /> },
+  { key: "dark", label: "themeDark", icon: <Moon size={16} /> },
+  { key: "system", label: "themeSystem", icon: <Monitor size={16} /> },
 ];
 
-function ThemeToggle() {
+function ThemeToggle({ t }: { t: T }) {
   const [choice, setChoice] = useThemeChoice();
   const i = Math.max(0, THEME_OPTIONS.findIndex((o) => o.key === choice));
   const cur = THEME_OPTIONS[i];
@@ -95,8 +106,8 @@ function ThemeToggle() {
     <button
       onClick={() => setChoice(next.key)}
       data-testid="portal-theme-toggle"
-      title={`Theme: ${cur.label} — click for ${next.label}`}
-      aria-label={`Theme: ${cur.label}. Switch to ${next.label}`}
+      title={t("themeTitle", t(cur.label), t(next.label))}
+      aria-label={t("themeAria", t(cur.label), t(next.label))}
       style={{ ...iconBtn, display: "flex", color: choice === "system" ? K.muted : K.accent }}
     >
       {cur.icon}
@@ -105,13 +116,15 @@ function ThemeToggle() {
 }
 
 // ── Account menu ─────────────────────────────────────────────────────────────
-function AccountMenu({ tenantName, planTier }: { tenantName: string; planTier: string }) {
+function AccountMenu({ t, tenantName, planTier }: { t: T; tenantName: string; planTier: string }) {
   const [open, setOpen] = useState(false);
+  const pathname = usePathname();
+  const locale = useStudioLocale();
   const ref = useRef<HTMLDivElement>(null);
   // Initials from the words that start with a letter or digit ("Atlas & Hearth" → "AH", not "A&").
   const initials = tenantName.split(/\s+/).filter((w) => /^[\p{L}\p{N}]/u.test(w)).map((w) => w[0])
     .join("").slice(0, 2).toUpperCase() || "P";
-  const plan = planTier ? `${planTier.charAt(0).toUpperCase()}${planTier.slice(1)} plan` : "";
+  const plan = planTier ? t("plan", `${planTier.charAt(0).toUpperCase()}${planTier.slice(1)}`) : "";
 
   useEffect(() => {
     if (!open) return;
@@ -132,7 +145,7 @@ function AccountMenu({ tenantName, planTier }: { tenantName: string; planTier: s
     <div ref={ref} style={{ position: "relative" }}>
       <button
         onClick={() => setOpen((v) => !v)}
-        aria-label="Account menu"
+        aria-label={t("accountMenu")}
         aria-expanded={open}
         aria-haspopup="menu"
         style={{
@@ -162,7 +175,7 @@ function AccountMenu({ tenantName, planTier }: { tenantName: string; planTier: s
         <ChevronDown size={14} style={{ color: K.muted2 }} />
       </button>
       {open && (
-        <div role="menu" aria-label="Account" style={{
+        <div role="menu" aria-label={t("account")} style={{
           position: "absolute", top: "100%", right: 0, marginTop: 6, width: 220, zIndex: 100,
           background: K.card, border: `1px solid ${K.line}`, borderRadius: 10,
           boxShadow: "0 12px 32px rgba(0,0,0,0.18)", overflow: "hidden",
@@ -171,16 +184,19 @@ function AccountMenu({ tenantName, planTier }: { tenantName: string; planTier: s
             <div style={{ fontSize: 13, fontWeight: 600, color: K.ink, fontFamily: serif, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tenantName}</div>
             {plan && <div style={{ fontSize: 11, color: K.muted }}>{plan}</div>}
           </div>
-          <MenuLink href={ROUTES.settings} icon={<Settings size={15} />} label="Account settings" onClick={() => setOpen(false)} />
-          <MenuLink href={ROUTES.billing} icon={<CreditCard size={15} />} label="Billing" onClick={() => setOpen(false)} />
+          <MenuLink href={ROUTES.settings} icon={<Settings size={15} />} label={t("navSettings")} onClick={() => setOpen(false)} />
+          <MenuLink href={ROUTES.billing} icon={<CreditCard size={15} />} label={t("navBilling")} onClick={() => setOpen(false)} />
           <button role="menuitem" onClick={logout} style={menuRow}>
             <span style={{ color: K.muted2, display: "flex" }}><LogOut size={15} /></span>
-            Sign out
+            {t("signOut")}
           </button>
+          <div data-testid="portal-locale" style={{ padding: "8px 14px", borderTop: `1px solid ${K.line}` }}>
+            <LocaleSwitch locale={locale} label={t("language")} next={pathname} compact example={t("dateExample")} />
+          </div>
           {/* AA-885/AA-886 — the portal's draft legal pages (moved here from the old sidebar footer). */}
           <div data-testid="portal-legal-links" style={{ display: "flex", gap: 14, padding: "8px 14px 10px", borderTop: `1px solid ${K.line}`, fontSize: 11 }}>
-            <a href={PRIVACY_PATH} target="_blank" rel="noopener noreferrer" style={{ color: K.muted, textDecoration: "none" }}>Privacy</a>
-            <a href={TERMS_PATH} target="_blank" rel="noopener noreferrer" style={{ color: K.muted, textDecoration: "none" }}>Terms</a>
+            <a href={PRIVACY_PATH} target="_blank" rel="noopener noreferrer" style={{ color: K.muted, textDecoration: "none" }}>{t("privacy")}</a>
+            <a href={TERMS_PATH} target="_blank" rel="noopener noreferrer" style={{ color: K.muted, textDecoration: "none" }}>{t("terms")}</a>
           </div>
         </div>
       )}

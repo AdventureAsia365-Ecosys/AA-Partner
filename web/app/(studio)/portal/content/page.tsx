@@ -6,19 +6,21 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { Send } from "lucide-react";
-import { AiNotice, K, PageHeader, sans } from "@/app/_kit";
+import { AiNotice, K, PageHeader, sans, useT } from "@/app/_kit";
+import { PAGES_MESSAGES } from "./content.messages";
 import { ReviewList } from "../_components/ReviewList";
 import { ROUTES } from "@/app/_kit/local/studio/portalNav";
 
 export default function MyContentPage() {
+  const t = useT(PAGES_MESSAGES);
   return (
     // AA-524 — the header is deliberately NOT sticky: ReviewList's own StickyBar is the one sticky
     // point (a second sticky header would collide at the same offset inside <main>).
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <PageHeader
-        title="My Content"
+        title={t("myContentTitle")}
         description={<>
-          See everything you&rsquo;ve written — where it came from and whether it&rsquo;s ready — before you publish.
+          {t("myContentSub")}
           {/* AA-819 — AUP notice; covers the list's bulk export/publish too. */}
           <AiNotice variant="publisher" style={{ marginTop: 8 }} />
         </>}
@@ -28,7 +30,7 @@ export default function MyContentPage() {
             background: K.accent, color: "var(--aa-on-accent)", fontSize: 12.5, fontWeight: 600,
             textDecoration: "none", fontFamily: sans, textTransform: "uppercase", letterSpacing: "0.06em",
           }}>
-            <Send size={13} aria-hidden /> Publish
+            <Send size={13} aria-hidden /> {t("publish")}
           </Link>
         }
       />

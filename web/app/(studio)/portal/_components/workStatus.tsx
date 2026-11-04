@@ -15,18 +15,20 @@
 // (the AA-760 "Writing…" bug: Browse Tours read `already_rewritten` and showed "Writing…" forever
 // for a failed or truncated-list tour).
 
-import { SkeletonBar, SkeletonStyle, StatusBadge } from "@/app/_kit";
+import { SkeletonBar, SkeletonStyle, StatusBadge, useT } from "@/app/_kit";
+import { COMMON_MESSAGES } from "./common.messages";
 import { isAiWriting, isRewriteFailed, type Version } from "./catalogApi";
 
 export type WorkStatus = "queued" | "writing" | "checking" | "done" | "failed";
 
-export const WORK_STATUS_LABEL: Record<WorkStatus, string> = {
-  queued: "Queued",
-  writing: "Writing",
-  checking: "Checking",
-  done: "Ready",
-  failed: "Writing failed",
-};
+/** The label of each work state: a key of COMMON_MESSAGES (shown in the UI language). */
+export const WORK_STATUS_LABEL = {
+  queued: "wsQueued",
+  writing: "wsWriting",
+  checking: "wsChecking",
+  done: "wsDone",
+  failed: "wsFailed",
+} as const satisfies Record<WorkStatus, keyof typeof COMMON_MESSAGES.en>;
 
 /** Still moving: poll while any row is in one of these. */
 export function isActiveWork(s: WorkStatus): boolean {
@@ -68,7 +70,8 @@ const BADGE_STATUS: Record<WorkStatus, string> = {
 };
 
 export function WorkStatusBadge({ status, label }: { status: WorkStatus; label?: string }) {
-  return <StatusBadge status={BADGE_STATUS[status]} label={label ?? WORK_STATUS_LABEL[status]} />;
+  const t = useT(COMMON_MESSAGES);
+  return <StatusBadge status={BADGE_STATUS[status]} label={label ?? t(WORK_STATUS_LABEL[status])} />;
 }
 
 /** The latest version per published tour (one row per tour, highest version_number). */
@@ -94,13 +97,13 @@ export function activePollInterval(statuses: WorkStatus[], ms = 5000): number | 
 // row has no state (null) rather than a guessed "Writing".
 export type ActivityState = WorkStatus | "approved" | "rejected" | "edited";
 
-export const ACTIVITY_LABEL: Record<ActivityState, string> = {
+export const ACTIVITY_LABEL = {
   ...WORK_STATUS_LABEL,
-  done: "Ready to review",
-  approved: "Approved",
-  rejected: "Rejected",
-  edited: "Edited",
-};
+  done: "actReview",
+  approved: "actApproved",
+  rejected: "actRejected",
+  edited: "actEdited",
+} as const satisfies Record<ActivityState, keyof typeof COMMON_MESSAGES.en>;
 
 export function activityState(
   a: { id: string; status: string; edit_source: string },
@@ -124,15 +127,16 @@ const ACTIVITY_BADGE: Record<ActivityState, string> = {
 /** AA-760 — while the state is unknown (versions not loaded yet) a neutral placeholder pill, not
  *  nothing (a row without a badge next to an amber icon read as "still running"). */
 export function ActivityStateBadge({ state }: { state: ActivityState | null }) {
+  const t = useT(COMMON_MESSAGES);
   if (!state) {
     return (
-      <span aria-label="Loading status" style={{ display: "inline-flex" }}>
+      <span aria-label={t("loadingStatus")} style={{ display: "inline-flex" }}>
         <SkeletonStyle />
         <SkeletonBar w={88} h={20} r={999} />
       </span>
     );
   }
-  return <StatusBadge status={ACTIVITY_BADGE[state]} label={ACTIVITY_LABEL[state]} />;
+  return <StatusBadge status={ACTIVITY_BADGE[state]} label={t(ACTIVITY_LABEL[state])} />;
 }
 
 /** AA-760 — the state of an activity row whose version is not in the loaded ["my-versions"] list

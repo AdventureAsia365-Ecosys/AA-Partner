@@ -7,6 +7,9 @@
 //   - app/(crm)/layout.tsx imports local/CrmShell by path: the shell imports this barrel, so it is not re-exported.
 //   - AA-1036: the Content studio's shell (local/studio/: PortalShell, SessionWatch, portalNav, useShellData) is
 //     imported by path for the same reason; studio pages import ROUTES / useCatalog / MY_VERSIONS_KEY from there.
+//   - AA-1036 (R3, studio EN/VI): pure modules (lib/studio/*.ts, the *.messages.ts catalogues read by server pages,
+//     app/(studio)/_legal) import core/i18n.ts and core/tokens.ts by path: no React, safe on the server, and no
+//     "use client" module pulled in through this barrel.
 //
 // AA-994 S2a (root ADR 0016): ./core is a byte copy of AA-CIS-App frontend/app/_kit/core (full profile), written by
 // the root tools/kit/kit-sync.sh and pinned by ../../kit.lock.json; Web Build checks it (integrity: core/check-kit-
@@ -24,6 +27,8 @@ export * from "./core/Toast";
 export * from "./core/DataTable";
 // AA-966: the KPI tile (Reports and Home tiles).
 export { KpiTile } from "./core/KpiTile";
+// AA-1036 (R3): the kit card region, first used by the Content studio in place of its legacy Card.
+export { Section } from "./core/Section";
 // AA-952: the kit form controls (Field, Input, Select, Textarea, Checkbox, Radio) for new forms (lint no-raw-form-control).
 export * from "./core/FormControls";
 export * from "./core/csv";
@@ -42,6 +47,14 @@ export { useSidebarCollapsed, useNavGroups } from "./core/useSidebar";
 export { navGroupId } from "./core/sidebarStore";
 export { NavGroup } from "./core/NavGroup";
 export { useHydrated } from "./core/useHydrated";
+// AA-1036 (R3): the kit UI-language catalogue (core/i18n.ts) and its React bindings (core/useI18n.ts), first used by
+// the Content studio (message files `*.messages.ts` next to its components). The language itself is this app's one
+// setting (cookie aa_crm_locale, lib/i18n.ts); the studio's provider is local/studio/StudioLang.tsx.
+export {
+  defineMessages, translator, missingTranslations, localized, LANGS, DEFAULT_LANG,
+  type Lang as UiLang, type Messages, type Translator, type Catalog, type LangStore,
+} from "./core/i18n";
+export { I18nProvider, useT, useLang, useSetLang, useLocalized, useFormat } from "./core/useI18n";
 export type { ThemeChoice, ResolvedTheme } from "./core/theme";
 
 // ── CRM-local ────────────────────────────────────────────────────────────────────────────────────────────────

@@ -6,6 +6,7 @@
 import { apiGet } from "@/app/_kit";
 import type { ServedFields } from "./ServedBadge";
 import { exportFileStem, withDocumentTitle, type AtomReplacement } from "@/lib/studio/myContent";
+import { StudioError, detailOf } from "./studioError";
 
 export interface ReviewGoal { key: string; label: string }
 export interface ReviewAngle {
@@ -68,7 +69,7 @@ export async function savePieceText(pieceId: string, contentText: string): Promi
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content_text: contentText }),
   });
-  if (!r.ok) throw new Error(`Save failed (${r.status})`);
+  if (!r.ok) throw new StudioError("saveFailed", r.status);
   return r.json();
 }
 
@@ -90,11 +91,10 @@ export const PUBLISHABLE_CHANNELS: ReadonlySet<string> = new Set(["blog", "faceb
 export async function publishPiece(pieceId: string): Promise<PublishResult> {
   const r = await fetch(`/api/tenant/v1/publish-log/${pieceId}/publish`, { method: "POST" });
   if (!r.ok) {
-    const e = await r.json().catch(() => ({}));
-    throw new Error(e.detail || `Publish failed (${r.status})`);
+    throw new StudioError("publishFailed", r.status, detailOf(await r.json().catch(() => null)));
   }
   const d: PublishResult = await r.json();
-  if (d.success === false) throw new Error("The post didn't go through — try again in a moment.");
+  if (d.success === false) throw new StudioError("postNotThrough", r.status);
   return d;
 }
 
@@ -113,7 +113,7 @@ export async function exportPiece(
 ): Promise<void> {
   const qs = format === "html" ? `format=html&mode=${mode}` : "format=text";
   const r = await fetch(`/api/tenant/v1/content-writing/pieces/${item.piece_id}/export?${qs}`);
-  if (!r.ok) throw new Error(`Export failed (${r.status})`);
+  if (!r.ok) throw new StudioError("exportFailed", r.status);
   const title = (item.title || item.angle?.name || "").trim();
   let blob = await r.blob();
   if (format === "html" && mode === "document" && title) {
@@ -143,19 +143,8 @@ export async function regeneratePiece(requestId: string): Promise<{ piece_id: st
     body: JSON.stringify({}),
   });
   if (!r.ok) {
-    const e = await r.json().catch(() => ({}));
-    if (r.status === 422) throw new Error("Add a call to action first: open it from Create and write it there.");
-    throw new Error(typeof e.detail === "string" ? e.detail : `Could not start the rewrite (${r.status})`);
+    if (r.status === 422) throw new StudioError("ctaMissing", r.status);
+    throw new StudioError("rewriteStartFailed", r.status, detailOf(await r.json().catch(() => null)));
   }
   return r.json();
 }
-
-export function channelLabel(channel: string): string {
-  return channel.charAt(0).toUpperCase() + channel.slice(1);
-}
-
-export const READY_STATE_META: Record<ReadyState, { label: string; tone: string }> = {
-  ready: { label: "Ready", tone: "success" },
-  in_progress: { label: "Writing…", tone: "info" },
-  not_ready: { label: "Not Ready Yet", tone: "warning" },
-};

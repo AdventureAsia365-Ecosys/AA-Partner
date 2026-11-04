@@ -18,19 +18,15 @@ import Link from "next/link";
 import { Download } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
-import { T, sans, Btn, CtaLink, parseContent } from "./ui";
-import {
-  AiNotice,
-  type ColumnDef,
-  DataTable,
-  Drawer,
-  ToastProvider,
-  useToast,
-} from "@/app/_kit";
+import { CtaLink } from "./ui";
+import { parseContent } from "@/lib/studio/format";
+import { AiNotice, Button, type ColumnDef, DataTable, Drawer, ToastProvider, useToast, K, sans, useLang, useT } from "@/app/_kit";
+import { CATALOG_MESSAGES } from "./tours.messages";
 import { CatalogDrawer } from "./CatalogDrawer";
 import { TourRewritePanel, watchTourRewrite, type TourRewriteTarget } from "./TourRewritePanel";
 import { WorkStatusBadge, activePollInterval, latestVersionByTour, tourWorkStatus } from "./workStatus";
-import { ServedBadge, plainError } from "./ServedBadge";
+import { ServedBadge } from "./ServedBadge";
+import { plainError } from "./studioError";
 import { MasterNewerBadge } from "./MasterNewerNotice";
 import { showMasterNotice } from "@/lib/studio/masterNotice";
 import { useWriteWatcher } from "./WriterPanel";
@@ -80,6 +76,8 @@ function flattenVal(v: any): string {
 }
 
 function CatalogInner() {
+  const t = useT(CATALOG_MESSAGES);
+  const lang = useLang();
   const toast = useToast();
   const qc = useQueryClient();
   const searchParams = useSearchParams();
@@ -135,8 +133,8 @@ function CatalogInner() {
     if (!v.published_tour_id) return;
     unwatch(v.id);
     setOpenVersionId(null);
-    setRewrite({ versionId: v.id, publishedTourId: v.published_tour_id, title: v.aa_name || "Tour", language: v.rewrite_language || "en-US" });
-  }, [unwatch]);
+    setRewrite({ versionId: v.id, publishedTourId: v.published_tour_id, title: v.aa_name || t("tour"), language: v.rewrite_language || "en-US" });
+  }, [unwatch, t]);
 
   function openRow(v: Version) {
     if (isAiWriting(v) || isRewriteFailed(v)) openRewritePanel(v);
@@ -156,7 +154,7 @@ function CatalogInner() {
       setRetries((n) => n + 1);
       invalidate();
     },
-    onError: (e) => toast.error(plainError(e, "Retry failed")),
+    onError: (e) => toast.error(plainError(e, t("retryFailed"), lang)),
   });
 
   const saveM = useMutation({
@@ -169,9 +167,9 @@ function CatalogInner() {
       if (r.new_version_id) setOpenVersionId(r.new_version_id);
       setSaveOk(true);
       setDirty(false);
-      toast.success("Saved");
+      toast.success(t("saved"));
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Save failed"),
+    onError: (e) => toast.error(plainError(e, t("saveFailed"), lang)),
   });
 
   const rewriteM = useMutation({
@@ -185,7 +183,7 @@ function CatalogInner() {
       setRewrite({ versionId: r.version_id, publishedTourId: vars.publishedTourId, title: vars.title, language: vars.lang });
       invalidate();
     },
-    onError: (e) => toast.error(plainError(e, "Rewrite request failed")),
+    onError: (e) => toast.error(plainError(e, t("rewriteRequestFailed"), lang)),
   });
 
   // ── DOCX export (unchanged endpoint/trigger) ──
@@ -194,7 +192,7 @@ function CatalogInner() {
     try {
       const r = await fetch(`/api/tenant/v1/tours/versions/${versionId}/export-docx`);
       if (!r.ok) {
-        toast.error("DOCX export failed");
+        toast.error(t("docxFailed"));
         return;
       }
       const blob = await r.blob();
@@ -277,18 +275,18 @@ function CatalogInner() {
     () => [
       {
         accessorKey: "aa_name",
-        header: "Tour Name",
+        header: t("colName"),
         cell: (c) => {
           const v = c.row.original;
           return (
             <div>
-              <div style={{ fontWeight: 600, color: T.ink }}>{v.aa_name || "Tour"}</div>
+              <div style={{ fontWeight: 600, color: K.ink }}>{v.aa_name || t("tour")}</div>
               {/* AA-986 L3: persistent badge when AA no longer serves (or has paused) the tour */}
               {v.served_notice && <div style={{ marginTop: 4 }}><ServedBadge fields={v} /></div>}
               {/* AA-990: AA updated the tour after this version; the drawer says it in full, nothing is changed */}
               {showMasterNotice(v) && <div style={{ marginTop: 4 }}><MasterNewerBadge version={v} /></div>}
               {v.aa_subtitle && (
-                <div style={{ fontWeight: 400, fontSize: 11.5, color: T.muted, marginTop: 2 }}>{v.aa_subtitle}</div>
+                <div style={{ fontWeight: 400, fontSize: 11.5, color: K.muted, marginTop: 2 }}>{v.aa_subtitle}</div>
               )}
             </div>
           );
@@ -296,18 +294,18 @@ function CatalogInner() {
       },
       {
         accessorKey: "country",
-        header: "Country",
-        cell: (c) => <span style={{ color: T.body }}>{c.row.original.country || "—"}</span>,
+        header: t("colCountry"),
+        cell: (c) => <span style={{ color: K.body }}>{c.row.original.country || "—"}</span>,
       },
       {
         id: "state",
-        header: "Status",
+        header: t("colStatus"),
         enableSorting: false,
         cell: (c) => <WorkStatusBadge status={tourWorkStatus(c.row.original)} />,
       },
       {
         id: "actions",
-        header: "Actions",
+        header: t("colActions"),
         enableSorting: false,
         enableHiding: false,
         meta: { hideLabelOnCard: true }, // AA-760 — no "ACTIONS" label row on the phone card
@@ -316,24 +314,24 @@ function CatalogInner() {
           return (
             <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               {isRewriteFailed(v) ? (
-                <Btn variant="secondary" size="sm" disabled={retryM.isPending} onClick={() => retryM.mutate(v.id)}>
-                  {retryM.isPending ? "Retrying…" : "Retry"}
-                </Btn>
+                <Button variant="secondary" size="sm" disabled={retryM.isPending} onClick={() => retryM.mutate(v.id)}>
+                  {retryM.isPending ? t("retrying") : t("retry")}
+                </Button>
               ) : isAiWriting(v) ? (
-                <Btn variant="secondary" size="sm" onClick={() => openRewritePanel(v)}>
-                  View progress →
-                </Btn>
+                <Button variant="secondary" size="sm" onClick={() => openRewritePanel(v)}>
+                  {t("viewProgress")}
+                </Button>
               ) : (
-                <Btn variant="secondary" size="sm" onClick={() => setOpenVersionId(v.id)}>
-                  Open →
-                </Btn>
+                <Button variant="secondary" size="sm" onClick={() => setOpenVersionId(v.id)}>
+                  {t("open")}
+                </Button>
               )}
             </div>
           );
         },
       },
     ],
-    [retryM, openRewritePanel],
+    [retryM, openRewritePanel, t],
   );
 
   return (
@@ -348,27 +346,27 @@ function CatalogInner() {
             padding: "9px 14px",
             marginBottom: 12,
             borderRadius: 8,
-            background: T.goldTint,
-            border: `1px solid ${T.goldSoft}`,
+            background: K.accentTint,
+            border: `1px solid ${K.accentSoft}`,
             fontFamily: sans,
           }}
         >
-          <span style={{ fontSize: 12, color: T.amber }}>
-            Showing versions for: <strong>{visible[0]?.aa_name ?? "this tour"}</strong>
+          <span style={{ fontSize: 12, color: K.amber }}>
+            {t("showingFor")} <strong>{visible[0]?.aa_name ?? t("thisTour")}</strong>
           </span>
-          <Link href="/portal/tours/mine" style={{ fontSize: 12, color: T.amber, fontWeight: 600, textDecoration: "none" }}>
-            Clear filter ×
+          <Link href="/portal/tours/mine" style={{ fontSize: 12, color: K.amber, fontWeight: 600, textDecoration: "none" }}>
+            {t("clearFilter")}
           </Link>
         </div>
       )}
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-        <span style={{ fontSize: 15, fontWeight: 700, color: T.ink, fontFamily: sans }}>Your tours</span>
+        <span style={{ fontSize: 15, fontWeight: 700, color: K.ink, fontFamily: sans }}>{t("yourTours")}</span>
         {/* AA-760 — no count until the versions load ("0 tours" read as "you have no tours"). */}
         {/* AA-760 — and none when there is nothing yet (the empty state below says so). */}
         {!isLoading && grouped.length > 0 && (
-          <span style={{ fontSize: 12, color: T.muted2 }}>
-            {visible.length < grouped.length ? `${visible.length} of ${grouped.length}` : `${grouped.length}`} {grouped.length === 1 ? "tour" : "tours"}
+          <span style={{ fontSize: 12, color: K.muted2 }}>
+            {visible.length < grouped.length ? t("countOf", visible.length, grouped.length) : `${grouped.length}`} {t("tourWord", grouped.length)}
           </span>
         )}
       </div>
@@ -382,34 +380,34 @@ function CatalogInner() {
         getRowId={(r) => r.id}
         loading={isLoading}
         searchable
-        searchPlaceholder="Search name or country…"
+        searchPlaceholder={t("searchPlaceholder")}
         enableSelection
         enableSavedViews
         enableCsv
         csvFilename="my-catalog"
         pageSize={25}
-        emptyTitle="No rewrites yet"
-        emptyDescription="Browse tours and rewrite your first one in your brand voice"
-        emptyAction={grouped.length === 0 ? <CtaLink href="/portal/tours">Browse tours</CtaLink> : undefined}
+        emptyTitle={t("emptyTitle")}
+        emptyDescription={t("emptySub")}
+        emptyAction={grouped.length === 0 ? <CtaLink href="/portal/tours">{t("browseTours")}</CtaLink> : undefined}
         onRowClick={openRow}
         bulkActions={({ selectedRows, clearSelection }) => (
           <>
-            <Btn variant="secondary" size="sm" disabled={isExporting} onClick={() => exportSelected("csv", selectedRows)}>
-              <Download size={12} /> {isExporting ? "Fetching…" : `CSV (${selectedRows.length})`}
-            </Btn>
-            <Btn variant="primary" size="sm" disabled={isExporting} onClick={() => exportSelected("xls", selectedRows)}>
-              <Download size={12} /> {isExporting ? "Fetching…" : `XLSX (${selectedRows.length})`}
-            </Btn>
-            <Btn variant="ghost" size="sm" onClick={clearSelection}>
-              Clear
-            </Btn>
+            <Button variant="secondary" size="sm" disabled={isExporting} onClick={() => exportSelected("csv", selectedRows)}>
+              <Download size={12} /> {isExporting ? t("fetching") : `CSV (${selectedRows.length})`}
+            </Button>
+            <Button variant="primary" size="sm" disabled={isExporting} onClick={() => exportSelected("xls", selectedRows)}>
+              <Download size={12} /> {isExporting ? t("fetching") : `XLSX (${selectedRows.length})`}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={clearSelection}>
+              {t("clear")}
+            </Button>
           </>
         )}
       />
 
       {/* S241 UI verify — the tour name is the kit Drawer title (it stays visible while the body
           scrolls); CatalogDrawer's in-body header no longer repeats it. */}
-      <Drawer open={!!openGroup} onClose={() => setOpenVersionId(null)} title={openGroup?.aa_name || "Tour"} width={1000}>
+      <Drawer open={!!openGroup} onClose={() => setOpenVersionId(null)} title={openGroup?.aa_name || t("tour")} width={1000}>
         {openGroup && (
           <CatalogDrawer
             key={openGroup.id}
@@ -429,7 +427,7 @@ function CatalogInner() {
               rewriteM.mutate({
                 publishedTourId: openGroup.published_tour_id,
                 lang: openGroup.rewrite_language || "en-US",
-                title: openGroup.aa_name || "Tour",
+                title: openGroup.aa_name || t("tour"),
               })
             }
             onExportDocx={(id) => exportDocx(id)}
@@ -445,7 +443,7 @@ function CatalogInner() {
         retrying={retryM.isPending}
         exporting={!!rewrite && exportingDocxId === rewrite.versionId}
         onClose={(running) => {
-          if (rewrite && running) watch(watchTourRewrite(rewrite));
+          if (rewrite && running) watch(watchTourRewrite(rewrite, lang));
           setRewrite(null);
         }}
         onRetry={() => rewrite && retryM.mutate(rewrite.versionId)}

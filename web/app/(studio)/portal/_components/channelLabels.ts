@@ -3,14 +3,15 @@
 // tenant never sees a raw key such as "linkedin" (AA-668). Kept out of WriterPanel.tsx because
 // AngleGateWizard (which WriterPanel imports) needs it too.
 
-const CHANNEL_LABEL: Record<string, string> = {
-  blog: "Blog", linkedin: "LinkedIn", facebook: "Facebook", instagram: "Instagram",
-  tiktok: "TikTok", email: "Email", landing_page: "Landing Page", ads: "Ads",
-};
+import { translator, type UiLang } from "@/app/_kit";
+import { CHANNEL_MESSAGES } from "./writer.messages";
 
-/** "linkedin" → "LinkedIn"; an unknown key reads as words ("new_channel" → "New channel"). */
-export function channelName(channel: string): string {
-  return CHANNEL_LABEL[channel] ?? humanizeKey(channel);
+/** "linkedin" → "LinkedIn" (in the UI language: "landing_page" → "Trang đích"); an unknown key reads as words
+ *  ("new_channel" → "New channel"). AA-1036 (R3): the names are writer.messages.ts CHANNEL_MESSAGES. */
+export function channelName(channel: string, lang: UiLang = "en"): string {
+  return Object.hasOwn(CHANNEL_MESSAGES.en, channel)
+    ? translator(CHANNEL_MESSAGES, lang)(channel as keyof typeof CHANNEL_MESSAGES.en)
+    : humanizeKey(channel);
 }
 
 /** A snake_case key as words, for a key the UI has no label for yet. */

@@ -8,7 +8,7 @@
 // Hashtags (`#Bhutan`, no space after `#`) are text, not headings — same rule as the backend's
 // services/acp_content_writing/generate.py::strip_markdown.
 import { Fragment, type ReactNode } from "react";
-import { T, sans } from "./ui";
+import { K, sans } from "@/app/_kit";
 
 const HEADING_RE = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
 const BULLET_RE = /^\s*[-*+•]\s+(.*)$/;
@@ -227,7 +227,7 @@ export function MarkdownBody({ text }: { text: string | null | undefined }) {
         switch (b.kind) {
           case "heading":
             return (
-              <div key={key} role="heading" aria-level={b.level} style={{ fontSize: HEADING_SIZE[b.level], fontWeight: 700, color: T.ink, lineHeight: 1.35, margin: `${mt ?? 16}px 0 6px` }}>
+              <div key={key} role="heading" aria-level={b.level} style={{ fontSize: HEADING_SIZE[b.level], fontWeight: 700, color: K.ink, lineHeight: 1.35, margin: `${mt ?? 16}px 0 6px` }}>
                 {renderInline(b.text, key)}
               </div>
             );
@@ -244,12 +244,12 @@ export function MarkdownBody({ text }: { text: string | null | undefined }) {
           }
           case "quote":
             return (
-              <div key={key} style={{ margin: `${mt ?? 8}px 0 8px`, padding: "2px 0 2px 12px", borderLeft: `3px solid ${T.line}`, color: T.muted }}>
+              <div key={key} style={{ margin: `${mt ?? 8}px 0 8px`, padding: "2px 0 2px 12px", borderLeft: `3px solid ${K.line}`, color: K.muted }}>
                 {lines(b.lines, key)}
               </div>
             );
           case "rule":
-            return <hr key={key} style={{ border: "none", borderTop: `1px solid ${T.line}`, margin: "14px 0" }} />;
+            return <hr key={key} style={{ border: "none", borderTop: `1px solid ${K.line}`, margin: "14px 0" }} />;
           default:
             return (
               <p key={key} style={{ margin: `${mt ?? 8}px 0 8px` }}>

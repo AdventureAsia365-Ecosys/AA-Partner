@@ -7,7 +7,8 @@
 
 import { useState } from "react";
 import { Clock, Gauge, ImageOff, MapPin } from "lucide-react";
-import { Badge, K, SkeletonBar, SkeletonStyle, alpha, sans, serif } from "@/app/_kit";
+import { Badge, K, SkeletonBar, SkeletonStyle, alpha, sans, serif, useLang, useT } from "@/app/_kit";
+import { MARKET_MESSAGES } from "./marketplace.messages";
 import { coverSrcSet, fmtFromPrice, fromPriceNote, type FromPrice } from "@/lib/studio/tours";
 import { WorkStatusBadge, type WorkStatus } from "../workStatus";
 
@@ -23,8 +24,9 @@ export const GRID_STYLE: React.CSSProperties = {
 
 /** "In My Tours" for a finished rewrite; the shared work-status badge while one runs or after it failed. */
 export function CardStatusBadge({ status }: { status: CardStatus }) {
+  const t = useT(MARKET_MESSAGES);
   if (!status) return null;
-  if (status === "done") return <Badge tone="success">In My Tours</Badge>;
+  if (status === "done") return <Badge tone="success">{t("inMyTours")}</Badge>;
   return <WorkStatusBadge status={status} />;
 }
 
@@ -85,14 +87,16 @@ export function CoverImage({ src, large = null, sizes, alt, eager = false, radiu
 export function FromPriceLine({ price, compact = false, testId = "marketplace-from-price" }: {
   price: FromPrice | null | undefined; compact?: boolean; testId?: string;
 }) {
+  const t = useT(MARKET_MESSAGES);
+  const lang = useLang();
   const amount = fmtFromPrice(price);
   if (!amount || !price) return null;
   return (
     <div data-testid={testId} style={{ minWidth: 0, fontFamily: sans }}>
       <div style={{ fontSize: compact ? 13 : 14, color: K.ink3, overflowWrap: "anywhere" }}>
-        From <span style={{ fontSize: compact ? 14 : 17, fontWeight: 600, color: K.ink, fontVariantNumeric: "tabular-nums" }}>{amount}</span> per person
+        {t("from")} <span style={{ fontSize: compact ? 14 : 17, fontWeight: 600, color: K.ink, fontVariantNumeric: "tabular-nums" }}>{amount}</span> {t("perPerson")}
       </div>
-      <div style={{ fontSize: 11, color: K.muted, lineHeight: 1.45, marginTop: 2 }}>{fromPriceNote(price)}</div>
+      <div style={{ fontSize: 11, color: K.muted, lineHeight: 1.45, marginTop: 2 }}>{fromPriceNote(price, lang)}</div>
     </div>
   );
 }
@@ -136,6 +140,7 @@ export function TourCard({
   /** Replaces the default footer (price + status). */
   footer?: React.ReactNode;
 }) {
+  const t = useT(MARKET_MESSAGES);
   const border = selected ? K.accent : active ? alpha(K.accent, 45) : K.line;
   return (
     <div data-testid={testId} style={{
@@ -145,14 +150,14 @@ export function TourCard({
       fontFamily: sans,
     }}>
       {onSelectToggle && (
-        <label title={selected ? "Remove from selection" : "Select for a bulk rewrite"}
+        <label title={selected ? t("removeSelection") : t("selectBulk")}
           style={{ position: "absolute", top: 10, right: 10, display: "inline-flex", padding: 4, cursor: "pointer", zIndex: 1,
             background: K.card, borderRadius: 6, boxShadow: `0 1px 3px ${alpha(K.ink, 18)}` }}>
-          <input type="checkbox" checked={selected} onChange={onSelectToggle} aria-label={`Select ${name}`}
+          <input type="checkbox" checked={selected} onChange={onSelectToggle} aria-label={t("selectTour", name)}
             style={{ width: 16, height: 16, margin: 0, accentColor: K.accent, cursor: "pointer" }} />
         </label>
       )}
-      <div role="button" tabIndex={0} aria-label={`Open ${name}`}
+      <div role="button" tabIndex={0} aria-label={t("openTour", name)}
         onClick={onOpen}
         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}
         style={{ flex: 1, display: "flex", flexDirection: "column", cursor: "pointer", minWidth: 0, borderRadius: 12, outlineOffset: 2 }}>
@@ -163,7 +168,7 @@ export function TourCard({
             {country && <Chip icon={<MapPin size={11} aria-hidden />}>{country}</Chip>}
             {duration && <Chip icon={<Clock size={11} aria-hidden />}>{duration}</Chip>}
             {intensity && <Chip icon={<Gauge size={11} aria-hidden />}>{intensity}</Chip>}
-            {isNew && <Chip tone="accent">New</Chip>}
+            {isNew && <Chip tone="accent">{t("isNew")}</Chip>}
           </div>
           <div style={{ ...clamp(2), fontFamily: serif, fontSize: 15.5, fontWeight: 600, color: K.ink, lineHeight: 1.35, overflowWrap: "break-word" }}>
             {name}
@@ -173,7 +178,7 @@ export function TourCard({
           )}
           {tags.length > 0 && (
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", minWidth: 0 }}>
-              {tags.map((t) => <Chip key={t}>{t}</Chip>)}
+              {tags.map((tag) => <Chip key={tag}>{tag}</Chip>)}
             </div>
           )}
           <div style={{ flex: 1 }} />
@@ -181,8 +186,8 @@ export function TourCard({
             <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 10, flexWrap: "wrap", paddingTop: 8, borderTop: `1px solid ${K.line2}` }}>
               {priceBlock !== undefined ? (priceBlock ?? <span />) : (
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: K.muted }}>Price</div>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: K.ink, fontVariantNumeric: "tabular-nums", overflowWrap: "anywhere" }}>{price || "On request"}</div>
+                  <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: K.muted }}>{t("price")}</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: K.ink, fontVariantNumeric: "tabular-nums", overflowWrap: "anywhere" }}>{price || t("onRequest")}</div>
                   {priceSub && <div style={{ fontSize: 11, color: K.muted }}>{priceSub}</div>}
                 </div>
               )}

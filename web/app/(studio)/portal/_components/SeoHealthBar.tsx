@@ -1,6 +1,7 @@
 "use client";
 import { CheckCircle2, AlertTriangle, XCircle } from "lucide-react";
-import { T, sans } from "./ui";
+import { K, sans, useT } from "@/app/_kit";
+import { COMMON_MESSAGES } from "./common.messages";
 
 interface SeoCheck {
   status: "pass" | "warn" | "fail";
@@ -16,34 +17,35 @@ interface SeoHealthBarProps {
 }
 
 export function SeoHealthBar({ seoTitle, seoMeta, highlights, summary, rulesApplied }: SeoHealthBarProps) {
+  const t = useT(COMMON_MESSAGES);
   const checks: SeoCheck[] = [
     {
       status: !seoTitle ? "fail" : seoTitle.length > 60 ? "warn" : "pass",
       message: !seoTitle
-        ? "SEO title missing"
+        ? t("seoTitleMissing")
         : seoTitle.length > 60
-        ? `Title too long (${seoTitle.length}/60 chars)`
-        : `Title OK (${seoTitle.length}/60 chars)`,
+        ? t("seoTitleLong", seoTitle.length)
+        : t("seoTitleOk", seoTitle.length),
     },
     {
       status: !seoMeta ? "fail" : seoMeta.length > 160 ? "warn" : seoMeta.length < 80 ? "warn" : "pass",
       message: !seoMeta
-        ? "Meta description missing"
+        ? t("seoMetaMissing")
         : seoMeta.length > 160
-        ? `Description too long (${seoMeta.length}/160 chars)`
+        ? t("seoMetaLong", seoMeta.length)
         : seoMeta.length < 80
-        ? `Description too short — aim for 80–160 chars (${seoMeta.length})`
-        : `Description OK (${seoMeta.length}/160 chars)`,
+        ? t("seoMetaShort", seoMeta.length)
+        : t("seoMetaOk", seoMeta.length),
     },
     {
       status: highlights.length >= 3 ? "pass" : "fail",
       message: highlights.length >= 3
-        ? `${highlights.length} highlights ✓`
-        : `Need at least 3 highlights (have ${highlights.length})`,
+        ? t("seoHighlightsOk", highlights.length)
+        : t("seoHighlightsFew", highlights.length),
     },
     {
       status: summary && summary.length > 50 ? "pass" : "fail",
-      message: summary && summary.length > 50 ? "Summary complete" : "Summary too short or missing",
+      message: summary && summary.length > 50 ? t("seoSummaryOk") : t("seoSummaryShort"),
     },
   ];
 
@@ -52,17 +54,17 @@ export function SeoHealthBar({ seoTitle, seoMeta, highlights, summary, rulesAppl
   }
 
   const icon  = { pass: CheckCircle2, warn: AlertTriangle, fail: XCircle } as const;
-  const color = { pass: T.green, warn: T.amber, fail: T.red } as const;
+  const color = { pass: K.success, warn: K.amber, fail: K.danger } as const;
   const allPass = checks.every(c => c.status === "pass");
 
   return (
-    <div style={{ borderRadius: 8, border: `1px solid ${T.line}`, background: T.bg, padding: "12px 14px" }}>
+    <div style={{ borderRadius: 8, border: `1px solid ${K.line}`, background: K.bg, padding: "12px 14px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <span style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: T.muted }}>
-          SEO Health
+        <span style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: K.muted }}>
+          {t("seoHealth")}
         </span>
         {allPass && (
-          <span style={{ fontSize: 11, color: T.green, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}><CheckCircle2 size={12} /> Content ready to use</span>
+          <span style={{ fontSize: 11, color: K.success, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}><CheckCircle2 size={12} /> {t("seoReady")}</span>
         )}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>

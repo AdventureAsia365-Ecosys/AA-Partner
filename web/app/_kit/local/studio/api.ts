@@ -8,10 +8,14 @@
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  /** The API's own sentence (`detail` / `message` of the body); "" when it sent none. AA-1036: the studio shows it
+   *  as it is, and otherwise its own "Request failed (status)" in the UI language (studioError.ts plainError). */
+  detail: string;
+  constructor(message: string, status: number, detail = "") {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.detail = detail;
   }
 }
 
@@ -30,11 +34,12 @@ async function parseOrThrow<T>(res: Response): Promise<T> {
     let detail = "";
     try {
       const body = await res.json();
-      detail = body?.detail || body?.message || "";
+      const d = body?.detail || body?.message;
+      detail = typeof d === "string" ? d : "";
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(detail || `Request failed (${res.status})`, res.status);
+    throw new ApiError(detail || `HTTP ${res.status}`, res.status, detail);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;

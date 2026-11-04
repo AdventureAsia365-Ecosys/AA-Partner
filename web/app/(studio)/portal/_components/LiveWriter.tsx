@@ -8,7 +8,8 @@
 // "Starting…" state instead of an error.
 import { useEffect, useRef, useState } from "react";
 import { Check, X, Loader2 } from "lucide-react";
-import { T, sans } from "./ui";
+import { K, sans, useT } from "@/app/_kit";
+import { COMMON_MESSAGES } from "./common.messages";
 import { WorkStatusBadge, liveWorkStatus } from "./workStatus";
 
 type Step = { key: string; label: string; state: "pending" | "active" | "done" | "skipped" | "failed" };
@@ -54,7 +55,7 @@ function usePrefersReducedMotion(): boolean {
   return reduce;
 }
 
-export default function LiveWriter({ kind, jobId, active = true, title = "Writing", compact = false, untilInactive = false }: {
+export default function LiveWriter({ kind, jobId, active = true, title, compact = false, untilInactive = false }: {
   kind: "tour" | "piece"; jobId: string; active?: boolean; title?: string; compact?: boolean;
   /** AA-668 (S239): keep polling through a done/failed snapshot until `active` turns false — the
    *  owner's status decides. A retried tour job first reads the previous run's "failed" snapshot
@@ -64,6 +65,7 @@ export default function LiveWriter({ kind, jobId, active = true, title = "Writin
   untilInactive?: boolean;
 }) {
   // Lazy init (no effect): a remount starts from the snapshot this tab last showed for the job.
+  const t = useT(COMMON_MESSAGES);
   const [snap, setSnap] = useState<Snapshot | null>(() => seedSnapshot(kind, jobId, active, untilInactive));
   // Set once this mount has read a live (found, not failed) snapshot — from then on a "failed"
   // snapshot is the new run's own and shows as usual. The owner keys the view per run/retry.
@@ -159,15 +161,15 @@ export default function LiveWriter({ kind, jobId, active = true, title = "Writin
       {/* Steps */}
       <div aria-live="polite" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted }}>{title}</div>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: K.muted }}>{title ?? t("lwWriting")}</div>
           {/* AA-760 — the shared status (queued / writing / checking / done / failed) from the live steps. */}
           <span data-testid="live-writer-status"><WorkStatusBadge status={liveWorkStatus(snap)} /></span>
         </div>
         {steps.length === 0 ? (
-          <StepRow state="active" label="Starting…" />
+          <StepRow state="active" label={t("lwStarting")} />
         ) : steps.map(s => <StepRow key={s.key} state={s.state} label={s.label} />)}
         {snap?.status === "failed" && snap.message && (
-          <div style={{ fontSize: 12.5, color: T.red, marginTop: 2 }}>{snap.message}</div>
+          <div style={{ fontSize: 12.5, color: K.danger, marginTop: 2 }}>{snap.message}</div>
         )}
       </div>
 
@@ -177,7 +179,7 @@ export default function LiveWriter({ kind, jobId, active = true, title = "Writin
           const el = e.currentTarget;
           followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
         }} style={{
-          background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: compact ? "14px 16px" : "18px 22px",
+          background: K.card, border: `1px solid ${K.line}`, borderRadius: 12, padding: compact ? "14px 16px" : "18px 22px",
           maxHeight: compact ? 320 : 520, overflowY: "auto", display: "flex", flexDirection: "column", gap: 14,
         }}>
           {sections.map(s => {
@@ -186,18 +188,18 @@ export default function LiveWriter({ kind, jobId, active = true, title = "Writin
             return (
               <div key={s.key} style={{ minWidth: 0 }}>
                 {s.label && (
-                  <div style={{ fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.12em", color: T.muted2, marginBottom: 5 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.12em", color: K.muted2, marginBottom: 5 }}>
                     {s.label}
                   </div>
                 )}
                 <div style={{
                   fontSize: s.key === "name" ? 18 : 13.5, fontWeight: s.key === "name" ? 600 : 400,
-                  color: T.body, lineHeight: 1.65, whiteSpace: "pre-wrap", overflowWrap: "anywhere",
+                  color: K.body, lineHeight: 1.65, whiteSpace: "pre-wrap", overflowWrap: "anywhere",
                 }}>
                   {text}
                   {writing && s.key === lastKey && (
                     <span aria-hidden style={{
-                      display: "inline-block", width: 2, height: "1.05em", background: T.gold, marginLeft: 2,
+                      display: "inline-block", width: 2, height: "1.05em", background: K.accent, marginLeft: 2,
                       verticalAlign: "text-bottom", animation: reduce ? "none" : "lw-caret 1s steps(1) infinite",
                     }} />
                   )}
@@ -213,12 +215,12 @@ export default function LiveWriter({ kind, jobId, active = true, title = "Writin
 
 function StepRow({ state, label }: { state: Step["state"]; label: string }) {
   const icon =
-    state === "done"   ? <Check size={13} strokeWidth={2.6} color={T.green} /> :
-    state === "failed" ? <X size={13} strokeWidth={2.6} color={T.red} /> :
-    state === "active" ? <Loader2 size={13} color={T.gold} style={{ animation: "spin 1s linear infinite" }} /> :
-    <span style={{ width: 9, height: 9, borderRadius: "50%", border: `1.5px solid ${T.line}`, display: "block" }} />;
+    state === "done"   ? <Check size={13} strokeWidth={2.6} color={K.success} /> :
+    state === "failed" ? <X size={13} strokeWidth={2.6} color={K.danger} /> :
+    state === "active" ? <Loader2 size={13} color={K.accent} style={{ animation: "spin 1s linear infinite" }} /> :
+    <span style={{ width: 9, height: 9, borderRadius: "50%", border: `1.5px solid ${K.line}`, display: "block" }} />;
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 13, color: state === "pending" ? T.muted2 : T.ink, fontWeight: state === "active" ? 600 : 400 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 13, color: state === "pending" ? K.muted2 : K.ink, fontWeight: state === "active" ? 600 : 400 }}>
       <span style={{ width: 16, height: 16, display: "grid", placeItems: "center", flexShrink: 0 }}>{icon}</span>
       {label}
     </div>

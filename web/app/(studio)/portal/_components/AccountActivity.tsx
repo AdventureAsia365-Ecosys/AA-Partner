@@ -8,8 +8,11 @@
 // Was the five-row /v1/billing `activity` list (rewrites only); the dashboard feed and the bell still use that one.
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Download } from "lucide-react";
-import { useMemo, useState } from "react";
-import { Badge, type ColumnDef, DataTable, apiGet, downloadCsv, formatDateTime, type Tone } from "@/app/_kit";
+import { useCallback, useMemo, useState } from "react";
+import {
+  Badge, Button, type ColumnDef, DataTable, PageHeader, Section, apiGet, downloadCsv, type Tone, K, sans, useFormat, useLang, useT,
+} from "@/app/_kit";
+import { ACTIVITY_MESSAGES } from "./account.messages";
 import {
   ACTIVITY_DATE_MAX,
   ACTIVITY_DATE_MIN,
@@ -24,20 +27,15 @@ import {
   type ActivityItem,
   type ActivityPage,
 } from "@/lib/studio/account";
-import { T, sans, Card, PageHeader } from "./ui";
 import { usePortalShell } from "./PortalShellContext";
+import { plainError } from "./studioError";
 
 const CATEGORY_TONE: Record<string, Tone> = { content: "info", tours: "accent", account: "neutral" };
-const CATEGORY_LABEL: Record<string, string> = { content: "Content", tours: "Tours", account: "Account" };
+const CATEGORY_KEY = { content: "catContent", tours: "catTours", account: "catAccount" } as const;
 
 const control: React.CSSProperties = {
-  padding: "7px 10px", borderRadius: 999, border: `1px solid ${T.line}`, background: T.card, color: T.ink,
+  padding: "7px 10px", borderRadius: 999, border: `1px solid ${K.line}`, background: K.card, color: K.ink,
   fontSize: 12.5, fontFamily: sans, minWidth: 0, maxWidth: "100%", boxSizing: "border-box",
-};
-const btn: React.CSSProperties = {
-  display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 999,
-  border: `1px solid ${T.line}`, background: T.card, color: T.ink3, fontSize: 12, fontWeight: 600,
-  cursor: "pointer", fontFamily: sans, whiteSpace: "nowrap",
 };
 
 function todayUtc(): string {
@@ -45,6 +43,13 @@ function todayUtc(): string {
 }
 
 export default function AccountActivity() {
+  const t = useT(ACTIVITY_MESSAGES);
+  const lang = useLang();
+  const { formatDateTime } = useFormat();
+  const catLabel = useCallback(
+    (id: string) => (Object.hasOwn(CATEGORY_KEY, id) ? t(CATEGORY_KEY[id as keyof typeof CATEGORY_KEY]) : id),
+    [t],
+  );
   const { tenantName } = usePortalShell();
   const [filters, setFilters] = useState<ActivityFilters>(NO_FILTERS);
   const [pageIndex, setPageIndex] = useState(0);
@@ -60,7 +65,8 @@ export default function AccountActivity() {
   });
   const rows = data?.data ?? [];
   const total = data?.pagination.total ?? 0;
-  const categories = data?.categories ?? Object.entries(CATEGORY_LABEL).map(([id, label]) => ({ id, label }));
+  const categories = (data?.categories ?? Object.keys(CATEGORY_KEY).map((id) => ({ id, label: id })))
+    .map((c) => ({ id: c.id, label: Object.hasOwn(CATEGORY_KEY, c.id) ? catLabel(c.id) : c.label }));
 
   function setFilter(patch: Partial<ActivityFilters>) {
     setFilters((f) => ({ ...f, ...patch }));
@@ -72,10 +78,10 @@ export default function AccountActivity() {
     setExportError(null);
     try {
       const res = await fetch(`/api/tenant/v1/account/activity/export${activityQuery(filters)}`);
-      if (!res.ok) throw new Error(`Export failed (${res.status})`);
+      if (!res.ok) throw new Error(t("exportFailedStatus", res.status));
       downloadCsv(exportFilename(filters, todayUtc()), await res.text());
     } catch (e) {
-      setExportError(e instanceof Error ? e.message : "Export failed");
+      setExportError(plainError(e, t("exportFailed"), lang));
     } finally {
       setExporting(false);
     }
@@ -84,59 +90,58 @@ export default function AccountActivity() {
   const columns = useMemo<ColumnDef<ActivityItem, unknown>[]>(() => [
     {
       id: "at",
-      header: "When",
+      header: t("colWhen"),
       accessorFn: (r) => r.at ?? "",
       enableSorting: false,
-      cell: (c) => <span style={{ color: T.muted, fontSize: 12, whiteSpace: "nowrap" }}>{formatDateTime(c.row.original.at)}</span>,
+      cell: (c) => <span style={{ color: K.muted, fontSize: 12, whiteSpace: "nowrap" }}>{formatDateTime(c.row.original.at)}</span>,
     },
     {
       id: "label",
-      header: "Activity",
+      header: t("colActivity"),
       accessorFn: (r) => r.label,
       enableSorting: false,
       cell: (c) => {
         const r = c.row.original;
         return (
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>{r.label}</div>
-            {r.detail && <div style={{ fontSize: 11.5, color: T.muted, marginTop: 2 }}>{activityDetail(r.action, r.detail)}</div>}
+            <div style={{ fontSize: 13, fontWeight: 600, color: K.ink }}>{r.label}</div>
+            {r.detail && <div style={{ fontSize: 11.5, color: K.muted, marginTop: 2 }}>{activityDetail(r.action, r.detail, lang)}</div>}
           </div>
         );
       },
     },
     {
       id: "category",
-      header: "Type",
-      accessorFn: (r) => CATEGORY_LABEL[r.category] ?? r.category,
+      header: t("colType"),
+      accessorFn: (r) => catLabel(r.category),
       enableSorting: false,
       cell: (c) => {
         const cat = c.row.original.category;
-        return <Badge tone={CATEGORY_TONE[cat] ?? "neutral"}>{CATEGORY_LABEL[cat] ?? cat}</Badge>;
+        return <Badge tone={CATEGORY_TONE[cat] ?? "neutral"}>{catLabel(cat)}</Badge>;
       },
     },
     {
       id: "actor",
-      header: "By",
-      accessorFn: (r) => actorLabel(r.actor),
+      header: t("colBy"),
+      accessorFn: (r) => actorLabel(r.actor, lang),
       enableSorting: false,
-      cell: (c) => <span style={{ fontSize: 12.5, color: T.body }}>{actorLabel(c.row.original.actor)}</span>,
+      cell: (c) => <span style={{ fontSize: 12.5, color: K.body }}>{actorLabel(c.row.original.actor, lang)}</span>,
     },
-  ], []);
+  ], [t, lang, formatDateTime, catLabel]);
 
   const filtered = hasFilters(filters);
 
   return (
     <div style={{ maxWidth: 960 }}>
-      <PageHeader title="Activity Log"
-        sub={`Sign-ins, writing, publishing and account changes${tenantName ? ` for ${tenantName}` : ""}.`} />
-      <Card>
+      <PageHeader title={t("title")} description={t("sub", tenantName)} />
+      <Section>
         <DataTable<ActivityItem>
           data={rows}
           columns={columns}
           tableId="portal-account-activity"
           getRowId={(r) => r.id}
           loading={isLoading}
-          error={isError ? (error instanceof Error ? error.message : "Could not load your activity") : null}
+          error={isError ? plainError(error, t("loadError"), lang) : null}
           onRetry={() => refetch()}
           searchable={false}
           serverPagination={{
@@ -154,50 +159,47 @@ export default function AccountActivity() {
           }}
           pageSizeOptions={ACTIVITY_PAGE_SIZES}
           tableMinWidth={560}
-          emptyTitle={filtered ? "No activity matches these filters" : "No activity yet"}
-          emptyDescription={filtered
-            ? "Try another type or a wider date range."
-            : "Sign-ins, rewrites, posts and account changes show up here."}
+          emptyTitle={filtered ? t("emptyFiltered") : t("empty")}
+          emptyDescription={filtered ? t("emptyFilteredSub") : t("emptySub")}
           toolbarExtra={
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", minWidth: 0 }}
               data-testid="activity-filters">
-              <select aria-label="Type" value={filters.category} style={control}
+              <select aria-label={t("type")} value={filters.category} style={control}
                 onChange={(e) => setFilter({ category: e.target.value })}>
-                <option value="">All types</option>
+                <option value="">{t("allTypes")}</option>
                 {categories.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
               </select>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: T.muted }}>
-                From
-                <input type="date" aria-label="From date" value={filters.since}
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: K.muted }}>
+                {t("from")}
+                <input type="date" aria-label={t("fromDate")} value={filters.since}
                   min={ACTIVITY_DATE_MIN} max={filters.until || ACTIVITY_DATE_MAX}
                   style={control} onChange={(e) => setFilter({ since: e.target.value })} />
               </label>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: T.muted }}>
-                To
-                <input type="date" aria-label="To date" value={filters.until}
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: K.muted }}>
+                {t("to")}
+                <input type="date" aria-label={t("toDate")} value={filters.until}
                   min={filters.since || ACTIVITY_DATE_MIN} max={ACTIVITY_DATE_MAX}
                   style={control} onChange={(e) => setFilter({ until: e.target.value })} />
               </label>
               {filtered && (
-                <button type="button" style={btn} onClick={() => { setFilters(NO_FILTERS); setPageIndex(0); }}>
-                  Clear
-                </button>
+                <Button size="sm" variant="ghost" onClick={() => { setFilters(NO_FILTERS); setPageIndex(0); }}>
+                  {t("clear")}
+                </Button>
               )}
-              <button type="button" style={btn} onClick={exportCsv} disabled={exporting || total === 0}
-                data-testid="activity-export">
-                <Download size={13} /> {exporting ? "Exporting…" : "Export CSV"}
-              </button>
+              <Button size="sm" variant="secondary" onClick={exportCsv} disabled={exporting || total === 0}
+                testId="activity-export">
+                <Download size={13} /> {exporting ? t("exporting") : t("exportCsv")}
+              </Button>
             </div>
           }
         />
         {exportError && (
-          <p role="alert" style={{ margin: "10px 0 0", fontSize: 12, color: T.red }}>{exportError}. Please try again.</p>
+          <p role="alert" style={{ margin: "10px 0 0", fontSize: 12, color: K.danger }}>{t("tryAgain", exportError)}</p>
         )}
-        <p style={{ margin: "12px 0 0", fontSize: 11.5, color: T.muted, lineHeight: 1.5 }}>
-          Times are shown in your browser&rsquo;s time zone; the date filters use UTC days. The export holds every row
-          that matches the filters.
+        <p style={{ margin: "12px 0 0", fontSize: 11.5, color: K.muted, lineHeight: 1.5 }}>
+          {t("timesNote")}
         </p>
-      </Card>
+      </Section>
     </div>
   );
 }

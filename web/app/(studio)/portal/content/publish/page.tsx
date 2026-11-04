@@ -15,7 +15,9 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Settings2 } from "lucide-react";
-import { T, sans, CardSkeleton, PageHeader } from "../../_components/ui";
+import { K, PageHeader, sans, useT } from "@/app/_kit";
+import { SectionSkeleton } from "../../_components/SectionSkeleton";
+import { PAGES_MESSAGES } from "../content.messages";
 import { useWordPressStatus, WordPressConnectForm } from "../../_components/WordPressConnect";
 import { useFacebookStatus, FacebookConnectForm } from "../../_components/FacebookConnect";
 import { ConnectionSummary } from "../../_components/ConnectionSummary";
@@ -23,6 +25,7 @@ import { PublishPendingList } from "../../_components/PublishPendingList";
 import { PublishedList } from "../../_components/PublishedList";
 
 export default function T11PublishPage() {
+  const t = useT(PAGES_MESSAGES);
   const wp = useWordPressStatus();
   const fb = useFacebookStatus();
   const [pendingReload, setPendingReload] = useState(0);
@@ -40,14 +43,14 @@ export default function T11PublishPage() {
     // width. The H1 is not sticky; PublishPendingList's own StickyBar is the one sticky point.
     <div>
       <PageHeader
-        title="Publish"
-        sub="Publish your content to your WordPress blog and your Facebook Page, and unpublish it from here when you need to."
-        action={(wpConnected || fbConnected) ? (
+        title={t("publishTitle")}
+        description={t("publishSub")}
+        actions={(wpConnected || fbConnected) ? (
           <Link href="/portal/account/integrations" style={{
             display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5,
-            fontWeight: 600, color: T.ink3, textDecoration: "none", whiteSpace: "nowrap", fontFamily: sans,
+            fontWeight: 600, color: K.ink3, textDecoration: "none", whiteSpace: "nowrap", fontFamily: sans,
           }}>
-            <Settings2 size={13} /> Manage connections
+            <Settings2 size={13} /> {t("manageConnections")}
           </Link>
         ) : undefined}
       />
@@ -57,13 +60,13 @@ export default function T11PublishPage() {
           display: "grid", gap: 16, alignItems: "start",
           gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))",
         }}>
-          {wpPending ? <CardSkeleton label="Loading WordPress connection" />
+          {wpPending ? <SectionSkeleton label={t("loadingWp")} />
             : wpConnected && wp.status
-              ? <ConnectionSummary channel="WordPress" target={wp.status.site_url} status={wp.status} testId="publish-wp-summary" />
+              ? <ConnectionSummary channel={t("wordpress")} target={wp.status.site_url} status={wp.status} testId="publish-wp-summary" />
               : <WordPressConnectForm onConnected={wp.refresh} />}
-          {fbPending ? <CardSkeleton label="Loading Facebook connection" />
+          {fbPending ? <SectionSkeleton label={t("loadingFb")} />
             : fbConnected && fb.status
-              ? <ConnectionSummary channel="Facebook Page" target={fb.status.page_id ? `Page ${fb.status.page_id}` : null} status={fb.status} testId="publish-fb-summary" />
+              ? <ConnectionSummary channel={t("facebookPage")} target={fb.status.page_id ? t("fbPage", fb.status.page_id) : null} status={fb.status} testId="publish-fb-summary" />
               : <FacebookConnectForm onConnected={fb.refresh} />}
         </div>
 

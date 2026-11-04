@@ -3,7 +3,8 @@
 // sparkline with the latest day emphasised. Scale is 0..max of the series; the axis labels name
 // only values the series actually reaches (first/last day, peak).
 import { useId } from "react";
-import { T } from "./ui";
+import { K, useLang, useT } from "@/app/_kit";
+import { COMMON_MESSAGES } from "./common.messages";
 
 export type DailyPoint = { day: string; api_calls: number; rewrites: number };
 
@@ -11,6 +12,8 @@ export default function UsageSparkline({ data, metric, label }: {
   data: DailyPoint[]; metric: "api_calls" | "rewrites"; label: string;
 }) {
   const gid = useId().replace(/:/g, "");
+  const t = useT(COMMON_MESSAGES);
+  const loc = useLang() === "vi" ? "vi-VN" : "en-GB";
   if (!data || data.length < 2) return null;
   const W = 280, H = 56, PAD_T = 6, PAD_B = 4;
   const vals = data.map(d => Number(d[metric]) || 0);
@@ -21,29 +24,29 @@ export default function UsageSparkline({ data, metric, label }: {
   const line = vals.map((v, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
   const area = `${line} L${W},${H} L0,${H} Z`;
   const last = vals.length - 1;
-  const fmtDay = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+  const fmtDay = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString(loc, { day: "numeric", month: "short", timeZone: "UTC" });
 
   return (
-    <figure style={{ margin: 0 }} aria-label={`${label}: ${total.toLocaleString()} this month`}>
+    <figure style={{ margin: 0 }} aria-label={t("sparkAria", label, total.toLocaleString(loc))}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
-        <figcaption style={{ fontSize: 11, color: T.muted }}>{label} per day</figcaption>
-        <span style={{ fontSize: 11, color: T.muted2, fontVariantNumeric: "tabular-nums" }}>peak {max.toLocaleString()}</span>
+        <figcaption style={{ fontSize: 11, color: K.muted }}>{t("sparkPerDay", label)}</figcaption>
+        <span style={{ fontSize: 11, color: K.muted2, fontVariantNumeric: "tabular-nums" }}>{t("sparkPeak", max.toLocaleString(loc))}</span>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" role="img" style={{ display: "block", overflow: "visible" }}>
         <defs>
           <linearGradient id={`g${gid}`} x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor={T.gold} stopOpacity="0.28" />
-            <stop offset="100%" stopColor={T.gold} stopOpacity="0" />
+            <stop offset="0%" stopColor={K.accent} stopOpacity="0.28" />
+            <stop offset="100%" stopColor={K.accent} stopOpacity="0" />
           </linearGradient>
         </defs>
-        <line x1="0" x2={W} y1={H - PAD_B} y2={H - PAD_B} stroke={T.line2} strokeWidth="1" vectorEffect="non-scaling-stroke" />
+        <line x1="0" x2={W} y1={H - PAD_B} y2={H - PAD_B} stroke={K.line2} strokeWidth="1" vectorEffect="non-scaling-stroke" />
         <path d={area} fill={`url(#g${gid})`} stroke="none" />
-        <path d={line} fill="none" stroke={T.gold} strokeWidth="1.75" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-        <circle cx={x(last)} cy={y(vals[last])} r="3.2" fill={T.gold} stroke={T.card} strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+        <path d={line} fill="none" stroke={K.accent} strokeWidth="1.75" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+        <circle cx={x(last)} cy={y(vals[last])} r="3.2" fill={K.accent} stroke={K.card} strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
       </svg>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: T.muted2, marginTop: 4 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: K.muted2, marginTop: 4 }}>
         <span>{fmtDay(data[0].day)}</span>
-        <span>today · {vals[last].toLocaleString()}</span>
+        <span>{t("sparkToday", vals[last].toLocaleString(loc))}</span>
       </div>
     </figure>
   );

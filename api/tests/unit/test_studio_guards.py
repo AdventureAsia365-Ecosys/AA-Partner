@@ -240,19 +240,26 @@ def test_legal_pages_stay_outside_the_gate_and_the_top_bar_links_them() -> None:
 
 
 def _section(rel: str) -> str:
-    m = re.search(r'<LegalSection id="ai".*?</LegalSection>', _read(rel), re.S)
-    assert m, f'{rel}: section id="ai" not found'
+    """The English §AI of a legal document (AA-1036 R3: the text lives in <page>.messages.ts, English first)."""
+    src = _read(rel)
+    english = src[: src.index("const VI: LegalDoc")]
+    m = re.search(r'id: "ai".*?(?=\{ id: ")', english, re.S)
+    assert m, f'{rel}: section id: "ai" not found'
     return re.sub(r"\s+", " ", m.group(0))
 
 
+TERMS_TEXT = "web/app/(studio)/legal/partner-terms/terms.messages.ts"
+PRIVACY_TEXT = "web/app/(studio)/legal/privacy/privacy.messages.ts"
+
+
 def test_partner_terms_ai_section_keeps_the_schedule_and_the_providers() -> None:
-    ai = _section("web/app/(studio)/legal/partner-terms/page.tsx")
-    assert "AI_PROVIDER_POLICIES.map" in ai and "{AI_SCHEDULE_VERSION}" in ai
-    assert 'from "@/lib/aiTerms"' in _read("web/app/(studio)/legal/partner-terms/page.tsx")  # one copy (the CRM's)
+    ai = _section(TERMS_TEXT)
+    assert "policyList(" in ai and "${AI_SCHEDULE_VERSION}" in ai
+    assert 'from "@/lib/aiTerms"' in _read(TERMS_TEXT)  # one copy (the CRM's)
     assert re.findall(r'href: "([^"]+)"', _read("web/lib/aiTerms.ts")) == list(POLICY_HREFS)
     for phrase in (*PROVIDER_PHRASES, *WRITING_FALLBACK_PHRASES):
         assert phrase in ai, f"/legal/partner-terms §3 must name: {phrase}"
-    privacy = _section("web/app/(studio)/legal/privacy/page.tsx")
+    privacy = _section(PRIVACY_TEXT)
     for phrase in (*PROVIDER_PHRASES, "Jev"):
         assert phrase in privacy, f"/legal/privacy §5 must name: {phrase}"
 

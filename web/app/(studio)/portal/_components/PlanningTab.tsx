@@ -32,7 +32,8 @@
 // (<SlateTab/> itself calls GET /v1/slate + POST /v1/subjects/{id}/pick — see that file.)
 
 import { useState, useCallback } from "react";
-import { T, mono, Card, CardHead, Badge, Btn } from "./ui";
+import { Badge, Button, K, Section, mono, useT } from "@/app/_kit";
+import { PLANNING_MESSAGES } from "./writer.messages";
 // AA-511 — the Slate replaces SlotPickerPanel.tsx (Weekly Slots) on this render path. The old
 // component/file is deliberately left in place, unused, per the epic's own "giữ code cũ, chỉ
 // ngưng dùng, không xoá" rule — see docs/claude_audit/AA-511-step0-slate-investigation.md.
@@ -89,15 +90,14 @@ const DEFAULT_QUARTER = Math.floor(now.getMonth() / 3) + 1;
 // card — it is about the weekly social rhythm) and "article" (the blog Channel). The page title is
 // the route's kit PageHeader now, so this component no longer renders its own h2.
 export default function PlanningTab({ kind = "social" }: { kind?: "social" | "article" }) {
+  const t = useT(PLANNING_MESSAGES);
   const article = kind === "article";
   return (
     <div>
       <SlateTab
         channels={article ? ARTICLE_CHANNELS : SOCIAL_CHANNELS}
-        title={article ? "Article topics" : "Social topics"}
-        intro={article
-          ? "Blog topics people are searching for, best first. Pick one to start writing."
-          : "Topics from your tours that suit each social channel, best first. Pick one to start writing."}
+        title={article ? t("articleTopics") : t("socialTopics")}
+        intro={article ? t("articleIntro") : t("socialIntro")}
       />
 
       {!article && <ReallocationSection defaultYear={DEFAULT_YEAR} defaultQuarter={DEFAULT_QUARTER} />}
@@ -108,6 +108,7 @@ export default function PlanningTab({ kind = "social" }: { kind?: "social" | "ar
 function ReallocationSection({ defaultYear, defaultQuarter }: { defaultYear: number; defaultQuarter: number }) {
   const nextQuarter = defaultQuarter === 4 ? 1 : defaultQuarter + 1;
   const nextYear = defaultQuarter === 4 ? defaultYear + 1 : defaultYear;
+  const t = useT(PLANNING_MESSAGES);
   const [suggestion, setSuggestion] = useState<ReallocationSuggestion | null>(null);
   const [loading, setLoading] = useState(false);
   const [confirmStatus, setConfirmStatus] = useState<string | null>(null);
@@ -123,58 +124,58 @@ function ReallocationSection({ defaultYear, defaultQuarter }: { defaultYear: num
   }, [nextYear, nextQuarter]);
 
   const confirm = useCallback((accept: boolean) => {
-    setConfirmStatus(accept ? "Applying…" : "Recording…");
+    setConfirmStatus(accept ? t("applying") : t("recording"));
     fetch("/api/tenant/v1/planning/trip-reallocation/confirm", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ year: nextYear, quarter: nextQuarter, accept }),
     })
       .then(r => (r.ok ? r.json() : Promise.reject()))
-      .then(() => setConfirmStatus(accept ? "Applied — plan updated for next quarter." : "Rejected — no change made."))
-      .catch(() => setConfirmStatus("Couldn't record your decision — try again."));
-  }, [nextYear, nextQuarter]);
+      .then(() => setConfirmStatus(accept ? t("applied") : t("rejectedDone")))
+      .catch(() => setConfirmStatus(t("recordFailed")));
+  }, [nextYear, nextQuarter, t]);
 
   return (
-    <Card style={{ padding: "16px 18px" }}>
-      <CardHead title={`Reallocation suggestion — Q${nextQuarter} ${nextYear}`}
-        action={<Btn variant="secondary" size="sm" onClick={loadSuggestion} disabled={loading}>
-          {loading ? "Checking…" : "Check for a suggestion"}
-        </Btn>} />
-      <p style={{ fontSize: 12.5, color: T.muted, lineHeight: 1.6, margin: "0 0 14px" }}>
-        Based on real feedback so far, here&rsquo;s what would change if you re-planned next quarter now —
-        nothing changes until you approve it.
+    <Section
+      title={t("title", nextQuarter, nextYear)}
+      actions={<Button variant="secondary" size="sm" onClick={loadSuggestion} disabled={loading}>
+        {loading ? t("checking") : t("check")}
+      </Button>}
+    >
+      <p style={{ fontSize: 12.5, color: K.muted, lineHeight: 1.6, margin: "0 0 14px" }}>
+        {t("intro")}
       </p>
       {suggestion && (
         <div>
           {suggestion.added.length === 0 && suggestion.removed.length === 0 ? (
-            <div style={{ fontSize: 12.5, color: T.muted }}>No change suggested — the plan stays the same.</div>
+            <div style={{ fontSize: 12.5, color: K.muted }}>{t("noChange")}</div>
           ) : (
             <>
               {suggestion.added.length > 0 && (
                 <div style={{ marginBottom: 8, fontSize: 12.5 }}>
-                  <Badge variant="success">+{suggestion.added.length} add</Badge>
-                  <span style={{ marginLeft: 8, color: T.muted, fontFamily: mono, fontSize: 11 }}>
+                  <Badge tone="success">{t("add", suggestion.added.length)}</Badge>
+                  <span style={{ marginLeft: 8, color: K.muted, fontFamily: mono, fontSize: 11 }}>
                     {suggestion.added.join(", ")}
                   </span>
                 </div>
               )}
               {suggestion.removed.length > 0 && (
                 <div style={{ marginBottom: 12, fontSize: 12.5 }}>
-                  <Badge variant="error">−{suggestion.removed.length} remove</Badge>
-                  <span style={{ marginLeft: 8, color: T.muted, fontFamily: mono, fontSize: 11 }}>
+                  <Badge tone="danger">{t("remove", suggestion.removed.length)}</Badge>
+                  <span style={{ marginLeft: 8, color: K.muted, fontFamily: mono, fontSize: 11 }}>
                     {suggestion.removed.join(", ")}
                   </span>
                 </div>
               )}
               <div style={{ display: "flex", gap: 8 }}>
-                <Btn variant="primary" size="sm" onClick={() => confirm(true)}>Apply this</Btn>
-                <Btn variant="ghost" size="sm" onClick={() => confirm(false)}>Reject</Btn>
+                <Button variant="primary" size="sm" onClick={() => confirm(true)}>{t("apply")}</Button>
+                <Button variant="ghost" size="sm" onClick={() => confirm(false)}>{t("reject")}</Button>
               </div>
             </>
           )}
         </div>
       )}
-      {confirmStatus && <div style={{ marginTop: 10, fontSize: 12, color: T.muted }}>{confirmStatus}</div>}
-    </Card>
+      {confirmStatus && <div style={{ marginTop: 10, fontSize: 12, color: K.muted }}>{confirmStatus}</div>}
+    </Section>
   );
 }

@@ -6,6 +6,7 @@
 import { apiGet } from "@/app/_kit";
 
 import type { ServedFields } from "./ServedBadge";
+import { StudioError } from "./studioError";
 
 export interface Version extends ServedFields {
   id: string;
@@ -73,7 +74,7 @@ export function fetchVersionDetail(id: string): Promise<Version> {
 
 export async function retryRewrite(versionId: string): Promise<void> {
   const r = await fetch(`/api/tenant/v1/tours/versions/${versionId}/retry`, { method: "POST" });
-  if (!r.ok) throw new Error(`Retry failed (${r.status})`);
+  if (!r.ok) throw new StudioError("retryFailed", r.status);
 }
 
 export async function saveVersionEdit(
@@ -85,7 +86,7 @@ export async function saveVersionEdit(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "edit", edited_content: editedContent, edited_by: "tenant" }),
   });
-  if (!r.ok) throw new Error(`Save failed (${r.status})`);
+  if (!r.ok) throw new StudioError("saveFailed", r.status);
   return r.json();
 }
 
@@ -100,8 +101,8 @@ export async function requestRewrite(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ rewrite_language: rewriteLanguage || "en-US" }),
   });
-  if (r.status === 409) throw new Error("A rewrite of this tour is already in progress.");
-  if (!r.ok) throw new Error(`Rewrite request failed (${r.status})`);
+  if (r.status === 409) throw new StudioError("rewriteBusy", r.status);
+  if (!r.ok) throw new StudioError("rewriteRequestFailed", r.status);
   return r.json();
 }
 

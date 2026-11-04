@@ -12,10 +12,12 @@
 import { useMemo, useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Globe2, Search, X } from "lucide-react";
-import { Button, EmptyState, ErrorState, K, alpha, sans, useToast } from "@/app/_kit";
+import { Button, EmptyState, ErrorState, K, alpha, sans, useLang, useT, useToast } from "@/app/_kit";
+import { fmtCount } from "@/lib/studio/format";
+import { MARKET_MESSAGES } from "./marketplace.messages";
 import { MY_VERSIONS_KEY } from "@/app/_kit/local/studio/useShellData";
 import {
-  ACTIVITY_LABELS, ADDED_OPTIONS, CATALOG_PAGE_SIZE, DURATION_OPTIONS, INTENSITY_LABELS, NO_CATALOG_FILTERS,
+  ACTIVITY_LABELS, CATALOG_PAGE_SIZE, INTENSITY_LABELS, NO_CATALOG_FILTERS, addedOptions, durationOptions,
   activityLabel, cardTags, facetOptions, fmtDuration, hasCatalogFilters, intensityLabel, isRecentlyAdded, pageCount,
   poolQuery, rewriteQuotaNote, themeTags, type AddedFilter, type CatalogFilters, type DurationFilter, type QuotaNote,
 } from "@/lib/studio/tours";
@@ -37,6 +39,8 @@ const controlStyle: React.CSSProperties = {
 /** `externalSearch` (the topbar / ⌘K search) seeds the search box; the page remounts this view with
  *  `key={globalSearch}` when it changes, so no effect syncs it (React Compiler safe). */
 export function CatalogBrowse({ externalSearch = "", meter }: { externalSearch?: string; meter: UsageMeter | null }) {
+  const t = useT(MARKET_MESSAGES);
+  const lang = useLang();
   const qc = useQueryClient();
   const toast = useToast();
   const [filters, setFilters] = useState<CatalogFilters>({ ...NO_CATALOG_FILTERS, search: externalSearch });
@@ -55,8 +59,8 @@ export function CatalogBrowse({ externalSearch = "", meter }: { externalSearch?:
   const tours = useMemo(() => poolQ.data?.data ?? [], [poolQ.data]);
   const total = poolQ.data?.pagination?.total ?? 0;
   const countries = poolQ.data?.countries ?? [];
-  const activityOptions = facetOptions(poolQ.data?.facets?.activities, ACTIVITY_LABELS, activityLabel);
-  const intensityOptions = facetOptions(poolQ.data?.facets?.intensities, INTENSITY_LABELS, intensityLabel);
+  const activityOptions = facetOptions(poolQ.data?.facets?.activities, ACTIVITY_LABELS, (c) => activityLabel(c, lang));
+  const intensityOptions = facetOptions(poolQ.data?.facets?.intensities, INTENSITY_LABELS, (c) => intensityLabel(c, lang));
 
   const versionsQ = useQuery({
     queryKey: MY_VERSIONS_KEY,
@@ -64,15 +68,15 @@ export function CatalogBrowse({ externalSearch = "", meter }: { externalSearch?:
     refetchInterval: (q) => activePollInterval((q.state.data ?? []).map(tourWorkStatus)),
   });
   const latest = useMemo(() => latestVersionByTour(versionsQ.data ?? []), [versionsQ.data]);
-  const statusOf = (t: PoolTour): CardStatus => {
-    const v = latest.get(t.id);
+  const statusOf = (tour: PoolTour): CardStatus => {
+    const v = latest.get(tour.id);
     if (v) return tourWorkStatus(v);
-    return t.already_rewritten ? "done" : null;
+    return tour.already_rewritten ? "done" : null;
   };
 
   // The open tour stays readable while a filter / page change drops it from the list.
   const [openTour, setOpenTour] = useState<PoolTour | null>(null);
-  const open = openId ? (tours.find((t) => t.id === openId) ?? openTour) : null;
+  const open = openId ? (tours.find((tour) => tour.id === openId) ?? openTour) : null;
 
   function update(patch: Partial<CatalogFilters>) {
     setFilters((f) => ({ ...f, ...patch }));
@@ -90,22 +94,18 @@ export function CatalogBrowse({ externalSearch = "", meter }: { externalSearch?:
     if (ids.length === 0) return;
     setBusy(true);
     try {
-      const res = await startRewrites(ids);
+      const res = await startRewrites(ids, lang);
       qc.invalidateQueries({ queryKey: MY_VERSIONS_KEY });
       qc.invalidateQueries({ queryKey: [POOL_KEY] });
       qc.invalidateQueries({ queryKey: PICKED_KEY });
       qc.invalidateQueries({ queryKey: ["quota"] });
       qc.invalidateQueries({ queryKey: ["tenant-billing"] });
       if (res.started.length > 0) {
-        toast.success(res.started.length === 1
-          ? "Rewrite started. Follow it here or in My Tours."
-          : `${res.started.length} rewrites started. Follow them here or in My Tours.`);
+        toast.success(res.started.length === 1 ? t("rewriteStartedOne") : t("rewriteStartedMany", res.started.length));
       }
       if (res.failed.length > 0) {
         const first = res.failed[0].message;
-        toast.error(res.failed.length === 1
-          ? `Couldn't start the rewrite: ${first}`
-          : `${res.failed.length} rewrites couldn't start (${first}).`, 8000);
+        toast.error(res.failed.length === 1 ? t("rewriteFailedOne", first) : t("rewriteFailedMany", res.failed.length, first), 8000);
       }
       setChecked((prev) => {
         const s = new Set(prev);
@@ -123,7 +123,7 @@ export function CatalogBrowse({ externalSearch = "", meter }: { externalSearch?:
     const v = latest.get(id);
     return !(v && isActiveWork(tourWorkStatus(v)));
   });
-  const bulkNote: QuotaNote | null = rewriteQuotaNote(meter, Math.max(1, bulkIds.length));
+  const bulkNote: QuotaNote | null = rewriteQuotaNote(meter, Math.max(1, bulkIds.length), lang);
   const pages = pageCount(total);
   const filtered = hasCatalogFilters(filters);
 
@@ -134,30 +134,30 @@ export function CatalogBrowse({ externalSearch = "", meter }: { externalSearch?:
         <div style={{ position: "relative", flex: "1 1 240px", minWidth: 0 }}>
           <Search size={14} aria-hidden style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: K.muted2 }} />
           <input value={filters.search} onChange={(e) => update({ search: e.target.value })}
-            placeholder="Search tours by name…" aria-label="Search tours by name"
+            placeholder={t("searchPlaceholder")} aria-label={t("searchAria")}
             style={{ ...controlStyle, width: "100%", padding: "9px 12px 9px 32px", cursor: "text", boxSizing: "border-box", outline: "none" }} />
         </div>
-        <select value={filters.country} onChange={(e) => update({ country: e.target.value })} aria-label="Country" style={controlStyle}>
-          <option value="">All countries</option>
+        <select value={filters.country} onChange={(e) => update({ country: e.target.value })} aria-label={t("country")} style={controlStyle}>
+          <option value="">{t("allCountries")}</option>
           {countries.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
-        <select value={filters.duration} onChange={(e) => update({ duration: e.target.value as DurationFilter })} aria-label="Length" style={controlStyle}>
-          {DURATION_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        <select value={filters.duration} onChange={(e) => update({ duration: e.target.value as DurationFilter })} aria-label={t("length")} style={controlStyle}>
+          {durationOptions(lang).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
-        <select value={filters.activity} onChange={(e) => update({ activity: e.target.value })} aria-label="Activity" style={controlStyle}>
-          <option value="">All activities</option>
+        <select value={filters.activity} onChange={(e) => update({ activity: e.target.value })} aria-label={t("activity")} style={controlStyle}>
+          <option value="">{t("allActivities")}</option>
           {activityOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
-        <select value={filters.intensity} onChange={(e) => update({ intensity: e.target.value })} aria-label="Intensity" style={controlStyle}>
-          <option value="">Any intensity</option>
+        <select value={filters.intensity} onChange={(e) => update({ intensity: e.target.value })} aria-label={t("intensityLabel")} style={controlStyle}>
+          <option value="">{t("anyIntensity")}</option>
           {intensityOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
-        <select value={filters.added} onChange={(e) => update({ added: e.target.value as AddedFilter })} aria-label="Recently added" style={controlStyle}>
-          {ADDED_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        <select value={filters.added} onChange={(e) => update({ added: e.target.value as AddedFilter })} aria-label={t("recentlyAdded")} style={controlStyle}>
+          {addedOptions(lang).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
         {filtered && (
           <Button variant="ghost" size="sm" onClick={() => update(NO_CATALOG_FILTERS)}>
-            <X size={13} aria-hidden /> Clear filters
+            <X size={13} aria-hidden /> {t("clearFilters")}
           </Button>
         )}
       </div>
@@ -165,7 +165,7 @@ export function CatalogBrowse({ externalSearch = "", meter }: { externalSearch?:
       {/* Count + sort (the API lists newest first; there is no other order). */}
       {!poolQ.isPending && !poolQ.isError && (
         <div style={{ fontSize: 12.5, color: K.muted }} data-testid="marketplace-count">
-          {total.toLocaleString("en-US")} {total === 1 ? "tour" : "tours"}{filtered ? " match" : " available"} · newest first
+          {filtered ? t("countMatch", fmtCount(total, lang), total === 1) : t("countAvailable", fmtCount(total, lang), total === 1)}
         </div>
       )}
 
@@ -179,47 +179,47 @@ export function CatalogBrowse({ externalSearch = "", meter }: { externalSearch?:
           position: "sticky", top: 8, zIndex: 5, boxShadow: `0 4px 14px ${alpha(K.ink, 12)}`,
         }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: K.accentDeep }}>
-            {checked.size} selected{bulkIds.length < checked.size ? ` · ${checked.size - bulkIds.length} already being written` : ""}
+            {t("selected", checked.size)}{bulkIds.length < checked.size ? t("alreadyWriting", checked.size - bulkIds.length) : ""}
           </span>
           <Button variant="primary" size="sm" disabled={busy || bulkIds.length === 0} onClick={() => rewrite(bulkIds)}>
-            {busy ? "Starting…" : bulkIds.length === 1 ? "Rewrite 1 tour" : `Rewrite ${bulkIds.length} tours`}
+            {busy ? t("starting") : bulkIds.length === 1 ? t("rewriteOne") : t("rewriteMany", bulkIds.length)}
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => setChecked(new Set())}>Clear selection</Button>
+          <Button variant="ghost" size="sm" onClick={() => setChecked(new Set())}>{t("clearSelection")}</Button>
           <div style={{ flex: "1 1 220px", minWidth: 0 }}><QuotaLine note={bulkNote} /></div>
         </div>
       )}
 
       {/* Grid */}
       {poolQ.isPending ? (
-        <CardGridSkeleton label="Loading tours" withCover />
+        <CardGridSkeleton label={t("loadingTours")} withCover />
       ) : poolQ.isError && tours.length === 0 ? (
-        <ErrorState message="Couldn't load the tours. Something went wrong on our side." onRetry={() => poolQ.refetch()} />
+        <ErrorState message={t("loadError")} onRetry={() => poolQ.refetch()} />
       ) : tours.length === 0 ? (
-        <EmptyState icon={<Globe2 size={30} strokeWidth={1.5} />} title="No tours found"
-          description={filtered ? "Try another search or fewer filters." : "Adventure Asia has not published tours yet."}
-          action={filtered ? <Button variant="secondary" size="sm" onClick={() => update(NO_CATALOG_FILTERS)}>Clear filters</Button> : undefined} />
+        <EmptyState icon={<Globe2 size={30} strokeWidth={1.5} />} title={t("noTours")}
+          description={filtered ? t("noToursFiltered") : t("noToursYet")}
+          action={filtered ? <Button variant="secondary" size="sm" onClick={() => update(NO_CATALOG_FILTERS)}>{t("clearFilters")}</Button> : undefined} />
       ) : (
         <div style={GRID_STYLE} data-testid="marketplace-grid" aria-busy={poolQ.isFetching && poolQ.isPlaceholderData ? "true" : undefined}>
-          {tours.map((t) => (
-            <TourCard key={t.id}
-              name={t.aa_name}
-              subtitle={t.aa_subtitle}
-              country={t.country}
-              duration={fmtDuration(t.duration)}
-              intensity={t.intensity ? intensityLabel(t.intensity) : null}
-              isNew={isRecentlyAdded(t.published_at, now)}
-              tags={cardTags(t.activities, themeTags(t.seo_keywords_used, 3, [t.country]))}
-              cover={t.cover_image_url ?? null}
-              coverLarge={t.cover_image_large_url ?? null}
+          {tours.map((tour) => (
+            <TourCard key={tour.id}
+              name={tour.aa_name}
+              subtitle={tour.aa_subtitle}
+              country={tour.country}
+              duration={fmtDuration(tour.duration, lang)}
+              intensity={tour.intensity ? intensityLabel(tour.intensity, lang) : null}
+              isNew={isRecentlyAdded(tour.published_at, now)}
+              tags={cardTags(tour.activities, themeTags(tour.seo_keywords_used, 3, [tour.country]), 3, lang)}
+              cover={tour.cover_image_url ?? null}
+              coverLarge={tour.cover_image_large_url ?? null}
               // AA-1029: AA-Booking's "from" price (price.from.v1) or no price column; never the source price text.
-              priceBlock={t.from_price ? <FromPriceLine price={t.from_price} compact /> : null}
-              status={statusOf(t)}
+              priceBlock={tour.from_price ? <FromPriceLine price={tour.from_price} compact /> : null}
+              status={statusOf(tour)}
               // AA-986 L3: a tour AA paused or retired is refused (409): no select box, its badge says why.
-              extraBadge={t.served_notice ? <ServedBadge fields={t} /> : undefined}
-              selected={checked.has(t.id)}
-              onSelectToggle={workClosed(t) ? undefined : () => toggle(t.id)}
-              active={open?.id === t.id}
-              onOpen={() => { setOpenId(t.id); setOpenTour(t); }}
+              extraBadge={tour.served_notice ? <ServedBadge fields={tour} /> : undefined}
+              selected={checked.has(tour.id)}
+              onSelectToggle={workClosed(tour) ? undefined : () => toggle(tour.id)}
+              active={open?.id === tour.id}
+              onOpen={() => { setOpenId(tour.id); setOpenTour(tour); }}
             />
           ))}
         </div>
@@ -228,13 +228,13 @@ export function CatalogBrowse({ externalSearch = "", meter }: { externalSearch?:
       {/* Pagination (server side). */}
       {total > CATALOG_PAGE_SIZE && (
         <div style={{ display: "flex", gap: 8, justifyContent: "center", alignItems: "center" }}>
-          <Button variant="ghost" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>← Previous</Button>
-          <span style={{ fontSize: 12.5, color: K.muted, fontVariantNumeric: "tabular-nums" }}>Page {page} of {pages}</span>
-          <Button variant="ghost" size="sm" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>Next →</Button>
+          <Button variant="ghost" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>{t("previous")}</Button>
+          <span style={{ fontSize: 12.5, color: K.muted, fontVariantNumeric: "tabular-nums" }}>{t("pageOf", page, pages)}</span>
+          <Button variant="ghost" size="sm" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>{t("next")}</Button>
         </div>
       )}
 
-      <TourDrawer tour={open} status={open ? statusOf(open) : null} quota={rewriteQuotaNote(meter, 1)} busy={busy}
+      <TourDrawer tour={open} status={open ? statusOf(open) : null} quota={rewriteQuotaNote(meter, 1, lang)} busy={busy}
         onClose={() => setOpenId(null)} onRewrite={(t) => rewrite([t.id])} />
     </div>
   );

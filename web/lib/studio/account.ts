@@ -1,6 +1,9 @@
 // web/lib/studio/account.ts — AA-761: the pure half of the Account pages (Billing, Activity, Integrations). No React, no
-// imports, so `npm test` (node --test) runs it. Shapes follow the CIS API: GET /v1/quota and /v1/billing
-// (api/routers/v1_tours.py), GET /v1/account/activity (api/routers/v1_account.py).
+// React. Shapes follow the CIS API: GET /v1/quota and /v1/billing (api/routers/v1_tours.py), GET /v1/account/activity
+// (api/routers/v1_account.py). AA-1036 (R3): the words take the UI language (lib.messages.ts), English by default.
+
+import { translator, type Lang } from "@/app/_kit/core/i18n";
+import { ACCOUNT_LIB_MESSAGES } from "./lib.messages";
 
 export const ACTIVITY_PAGE_SIZES = [10, 25, 50, 100];
 
@@ -66,20 +69,20 @@ export function usageMeter(quota: Quota | null, billing: BillingFigures | null):
   return { ...base, state, quota: limit, pct, remaining: Math.max(0, limit - used), overTours };
 }
 
-/** "1 Nov 2026" from YYYY-MM-DD (UTC, English: the product UI opens in English). */
-export function fmtDay(ymd: string | null | undefined): string {
+/** "1 Nov 2026" from YYYY-MM-DD (UTC; English unless the person picked Vietnamese: "1 thg 11, 2026"). */
+export function fmtDay(ymd: string | null | undefined, lang: Lang = "en"): string {
   if (!ymd) return "—";
   const d = new Date(`${ymd.slice(0, 10)}T00:00:00Z`);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  return d.toLocaleDateString(lang === "vi" ? "vi-VN" : "en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 }
 
-/** "May 2026" from YYYY-MM (or YYYY-MM-DD), UTC, English. */
-export function fmtMonth(ym: string | null | undefined): string {
+/** "May 2026" from YYYY-MM (or YYYY-MM-DD), UTC ("tháng 5 năm 2026" in Vietnamese). */
+export function fmtMonth(ym: string | null | undefined, lang: Lang = "en"): string {
   if (!ym) return "—";
   const d = new Date(`${ym.slice(0, 7)}-01T00:00:00Z`);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+  return d.toLocaleDateString(lang === "vi" ? "vi-VN" : "en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
 }
 
 export function fmtUsd(n: number): string {
@@ -163,40 +166,46 @@ export function exportFilename(f: ActivityFilters, today: string): string {
   return `${parts.join("-")}.csv`;
 }
 
-export const ACTOR_LABEL: Record<ActivityActor, string> = {
-  you: "You",
-  adventure_asia: "Adventure Asia",
-  system: "Automatic",
+const ACTOR_KEY: Record<ActivityActor, "actorYou" | "actorAa" | "actorSystem"> = {
+  you: "actorYou",
+  adventure_asia: "actorAa",
+  system: "actorSystem",
 };
 
-export function actorLabel(a: string): string {
-  return ACTOR_LABEL[a as ActivityActor] ?? "Automatic";
+export function actorLabel(a: string, lang: Lang = "en"): string {
+  const key = Object.hasOwn(ACTOR_KEY, a) ? ACTOR_KEY[a as ActivityActor] : "actorSystem";
+  return translator(ACCOUNT_LIB_MESSAGES, lang)(key);
 }
 
 /** File format codes CIS writes into an export row's detail ("Blog · HTML", "LinkedIn · TEXT", "DOCX · v3"), in
  *  words a tenant reads (S251 D3). */
-export const FORMAT_LABEL: Record<string, string> = {
-  TEXT: "Plain text",
-  TXT: "Plain text",
-  HTML: "HTML file",
-  MARKDOWN: "Markdown",
-  MD: "Markdown",
-  DOCX: "Word document",
-  PDF: "PDF",
-  JSON: "JSON file",
-  CSV: "CSV file",
-  XLSX: "Excel file",
+type FormatKey = "fmtText" | "fmtHtml" | "fmtMarkdown" | "fmtDocx" | "fmtPdf" | "fmtJson" | "fmtCsv" | "fmtXlsx";
+const FORMAT_KEY: Record<string, FormatKey> = {
+  TEXT: "fmtText",
+  TXT: "fmtText",
+  HTML: "fmtHtml",
+  MARKDOWN: "fmtMarkdown",
+  MD: "fmtMarkdown",
+  DOCX: "fmtDocx",
+  PDF: "fmtPdf",
+  JSON: "fmtJson",
+  CSV: "fmtCsv",
+  XLSX: "fmtXlsx",
 };
 
 const EXPORT_ACTIONS = new Set(["content_piece.exported", "tenant_tour_version.exported"]);
 
 /** The detail line of an activity row as shown: on a download, each " · " part that is a bare format code becomes its
  *  label; every other row's detail passes through unchanged. */
-export function activityDetail(action: string, detail: string): string {
+export function activityDetail(action: string, detail: string, lang: Lang = "en"): string {
   if (!detail || !EXPORT_ACTIONS.has(action)) return detail;
+  const t = translator(ACCOUNT_LIB_MESSAGES, lang);
   return detail
     .split(" · ")
-    .map((part) => FORMAT_LABEL[part.trim().toUpperCase()] ?? part)
+    .map((part) => {
+      const key = FORMAT_KEY[part.trim().toUpperCase()];
+      return key ? t(key) : part;
+    })
     .join(" · ");
 }
 
@@ -217,11 +226,16 @@ export function connectionHealth(s: ConnectionFacts | null | undefined): Connect
   return s.last_verified_at ? "healthy" : "untested";
 }
 
-export const HEALTH_LABEL: Record<ConnectionHealth, string> = {
-  not_connected: "Not connected",
-  healthy: "Working",
-  failing: "Needs attention",
-  untested: "Not tested yet",
-};
+const HEALTH_KEY = {
+  not_connected: "healthNotConnected",
+  healthy: "healthHealthy",
+  failing: "healthFailing",
+  untested: "healthUntested",
+} as const satisfies Record<ConnectionHealth, string>;
+
+/** A channel's health in words, in the UI language. */
+export function healthLabel(h: ConnectionHealth, lang: Lang = "en"): string {
+  return translator(ACCOUNT_LIB_MESSAGES, lang)(HEALTH_KEY[h]);
+}
 
 // AA-1036 R3 slice 3: GET /v1/account/api-key (the API key facts) went with the tenant API keys.

@@ -85,41 +85,12 @@
       "count": 1
     }
   },
-  "app/(studio)/portal-access/SignOutButton.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal-access/select/page.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/AccountActivity.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 2
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/AccountMembers.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
   "app/(studio)/portal/_components/AngleGateWizard.tsx": {
     "aa-kit/no-hand-styled-button": {
-      "count": 2
-    },
-    "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },
   "app/(studio)/portal/_components/BrandTab.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 4
-    },
     "aa-kit/no-legacy-kit": {
       "count": 1
     },
@@ -127,27 +98,14 @@
       "count": 4
     }
   },
-  "app/(studio)/portal/_components/CatalogDrawer.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 5
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
   "app/(studio)/portal/_components/CatalogTab.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/ConnectionSummary.tsx": {
     "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },
   "app/(studio)/portal/_components/DashboardTab.tsx": {
     "aa-kit/no-hand-styled-button": {
-      "count": 4
+      "count": 3
     },
     "aa-kit/no-hex-colour": {
       "count": 5
@@ -157,19 +115,6 @@
     },
     "aa-kit/no-raw-aa-var": {
       "count": 2
-    }
-  },
-  "app/(studio)/portal/_components/DisconnectConnection.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/FacebookConnect.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
     }
   },
   "app/(studio)/portal/_components/GettingStarted.tsx": {
@@ -180,24 +125,11 @@
       "count": 1
     }
   },
-  "app/(studio)/portal/_components/LiveWriter.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/MasterNewerNotice.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
   "app/(studio)/portal/_components/NotificationsBell.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 1
     },
     "aa-kit/no-hex-colour": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },
@@ -209,63 +141,18 @@
       "count": 1
     }
   },
-  "app/(studio)/portal/_components/PlanningTab.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
   "app/(studio)/portal/_components/PublishPendingList.tsx": {
     "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },
-  "app/(studio)/portal/_components/PublishedList.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/ReviewDrawer.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
   "app/(studio)/portal/_components/ReviewList.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 13
-    },
     "aa-kit/no-hex-colour": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/SeeOriginalToggle.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/SeoHealthBar.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/ServedBadge.tsx": {
-    "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },
   "app/(studio)/portal/_components/Skeleton.tsx": {
     "aa-kit/no-class-name": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },
@@ -274,66 +161,25 @@
       "count": 1
     },
     "aa-kit/no-hand-styled-button": {
-      "count": 3
+      "count": 1
     },
     "aa-kit/no-hex-colour": {
       "count": 2
     },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/UsageSparkline.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/WordPressConnect.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/WriterPanel.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/markdownText.tsx": {
     "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },
   "app/(studio)/portal/_components/ui.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
     "aa-kit/no-hex-colour": {
       "count": 1
     },
     "aa-kit/no-raw-aa-var": {
-      "count": 5
-    }
-  },
-  "app/(studio)/portal/account/integrations/page.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 2
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
+      "count": 4
     }
   },
   "app/(studio)/portal/content/page.tsx": {
     "aa-kit/no-raw-aa-var": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/content/publish/page.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/help/facebook/page.tsx": {
-    "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },
@@ -382,11 +228,6 @@
       "count": 1
     },
     "aa-kit/no-raw-aa-var": {
-      "count": 1
-    }
-  },
-  "app/_kit/local/studio/useShellData.ts": {
-    "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },

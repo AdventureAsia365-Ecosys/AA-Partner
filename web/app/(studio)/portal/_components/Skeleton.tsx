@@ -2,11 +2,12 @@
 // AA-638 — skeleton placeholders shaped like the content they stand in for, so a page keeps its
 // layout while data loads instead of flashing a centred spinner. Shimmer respects
 // prefers-reduced-motion.
-import { T } from "./ui";
+import { K, useT } from "@/app/_kit";
+import { COMMON_MESSAGES } from "./common.messages";
 
 const CSS = `
 @keyframes sk-shimmer { 0% { background-position: -400px 0 } 100% { background-position: 400px 0 } }
-.sk { background: linear-gradient(90deg, ${T.line2} 0px, ${T.bg} 160px, ${T.line2} 320px); background-size: 800px 100%;
+.sk { background: linear-gradient(90deg, ${K.line2} 0px, ${K.bg} 160px, ${K.line2} 320px); background-size: 800px 100%;
       animation: sk-shimmer 1.3s linear infinite; border-radius: 6px; }
 @media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
 `;
@@ -22,7 +23,7 @@ export function Bar({ w = "100%", h = 12, r = 6, style = {} }: { w?: number | st
 function SkCard({ children, dark = false, minH }: { children: React.ReactNode; dark?: boolean; minH?: number }) {
   return (
     <div style={{
-      background: dark ? T.ink : T.card, border: `1px solid ${dark ? T.ink : T.line}`, borderRadius: 12,
+      background: dark ? K.ink : K.card, border: `1px solid ${dark ? K.ink : K.line}`, borderRadius: 12,
       padding: "22px 22px", display: "flex", flexDirection: "column", gap: 12, minHeight: minH,
     }}>{children}</div>
   );
@@ -30,8 +31,9 @@ function SkCard({ children, dark = false, minH }: { children: React.ReactNode; d
 
 // Dashboard: header + two card rows + quick actions — same grid as DashboardTab.
 export function DashboardSkeleton() {
+  const t = useT(COMMON_MESSAGES);
   return (
-    <div aria-busy="true" aria-label="Loading dashboard">
+    <div aria-busy="true" aria-label={t("loadingDashboard")}>
       <SkeletonStyle />
       <Bar w={280} h={26} style={{ marginBottom: 10 }} />
       <Bar w={220} h={12} style={{ marginBottom: 24 }} />
@@ -48,12 +50,13 @@ export function DashboardSkeleton() {
 }
 
 // A list of rows (tours, versions, posts).
-export function ListSkeleton({ rows = 6, label = "Loading" }: { rows?: number; label?: string }) {
+export function ListSkeleton({ rows = 6, label }: { rows?: number; label?: string }) {
+  const t = useT(COMMON_MESSAGES);
   return (
-    <div aria-busy="true" aria-label={label} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <div aria-busy="true" aria-label={label ?? t("loading")} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <SkeletonStyle />
       {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 10, padding: "14px 16px", display: "grid", gridTemplateColumns: "minmax(0,1fr) 80px", gap: 12, alignItems: "center" }}>
+        <div key={i} style={{ background: K.card, border: `1px solid ${K.line}`, borderRadius: 10, padding: "14px 16px", display: "grid", gridTemplateColumns: "minmax(0,1fr) 80px", gap: 12, alignItems: "center" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <Bar w={`${55 + ((i * 17) % 35)}%`} h={13} />
             <Bar w={`${30 + ((i * 11) % 25)}%`} h={10} />

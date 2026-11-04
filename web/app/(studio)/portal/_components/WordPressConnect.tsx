@@ -18,9 +18,9 @@
 import { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
-import { T, sans, Card, CardHead, Btn } from "./ui";
 import { DisconnectConnection } from "./DisconnectConnection";
-import { formatDateTime } from "@/app/_kit";
+import { Button, K, Section, sans, useFormat, useT } from "@/app/_kit";
+import { CONNECT_MESSAGES } from "./connect.messages";
 
 export interface WordPressStatus {
   connected: boolean;
@@ -43,25 +43,22 @@ export function useWordPressStatus() {
 }
 
 // AA-760 — the shared date-time format ("9 Oct 2026, 14:05"), was the browser locale.
-export function fmtDateTime(iso: string | null): string {
-  return formatDateTime(iso);
-}
-
 export const inputStyle: React.CSSProperties = {
-  width: "100%", padding: "9px 12px", background: T.bg, border: `1px solid ${T.line}`,
-  borderRadius: 8, color: T.body, fontSize: 13, outline: "none", fontFamily: sans,
+  width: "100%", padding: "9px 12px", background: K.bg, border: `1px solid ${K.line}`,
+  borderRadius: 8, color: K.body, fontSize: 13, outline: "none", fontFamily: sans,
   boxSizing: "border-box",
 };
 
 export const labelStyle: React.CSSProperties = {
   display: "block", fontSize: 11, fontWeight: 600, textTransform: "uppercase",
-  letterSpacing: "0.1em", color: T.muted, marginBottom: 6,
+  letterSpacing: "0.1em", color: K.muted, marginBottom: 6,
 };
 
 /** The connect / change-credentials form. Save then test run sequentially — a saved credential
  * the tenant never verifies is worse than no credential (silent future publish failures), so
  * "Test & Connect" always confirms it works before declaring success. */
 export function WordPressConnectForm({ onConnected }: { onConnected?: () => void }) {
+  const t = useT(CONNECT_MESSAGES);
   const [siteUrl, setSiteUrl] = useState("");
   const [username, setUsername] = useState("");
   const [appPassword, setAppPassword] = useState("");
@@ -75,7 +72,7 @@ export function WordPressConnectForm({ onConnected }: { onConnected?: () => void
     setSuccess(false);
 
     if (!siteUrl.trim() || !username.trim() || !appPassword.trim()) {
-      setError("All three fields are required.");
+      setError(t("wpAllRequired"));
       return;
     }
 
@@ -89,7 +86,7 @@ export function WordPressConnectForm({ onConnected }: { onConnected?: () => void
       });
       if (!saveRes.ok) {
         const body = await saveRes.json().catch(() => ({}));
-        setError(body.detail || "Could not save credentials.");
+        setError(body.detail || t("saveFailed"));
         return;
       }
 
@@ -101,10 +98,10 @@ export function WordPressConnectForm({ onConnected }: { onConnected?: () => void
         setAppPassword("");
         onConnected?.();
       } else {
-        setError(testBody.last_verify_error || testBody.detail || "Connection test failed.");
+        setError(testBody.last_verify_error || testBody.detail || t("testFailed"));
       }
     } catch {
-      setError("Network error — please try again.");
+      setError(t("network"));
     } finally {
       setBusy(false);
       setStep("idle");
@@ -112,28 +109,25 @@ export function WordPressConnectForm({ onConnected }: { onConnected?: () => void
   }
 
   return (
-    <Card>
-      <CardHead title="Connect WordPress" />
-      <p style={{ fontSize: 13, color: T.muted, marginTop: -8, marginBottom: 18, lineHeight: 1.5 }}>
-        Publishing writes directly to your own WordPress site. You&rsquo;ll need your site URL and
-        a WordPress <strong>Application Password</strong> — generate one under
-        Users&nbsp;→ Profile&nbsp;→ Application Passwords in your WordPress admin.
+    <Section title={t("wpConnectTitle")}>
+      <p style={{ fontSize: 13, color: K.muted, marginTop: 0, marginBottom: 18, lineHeight: 1.5 }}>
+        {t("wpIntro1")} <strong>{t("wpAppPassword")}</strong> {t("wpIntro2")}
       </p>
 
       <div style={{ marginBottom: 14 }}>
-        <label style={labelStyle}>Site URL</label>
-        <input style={inputStyle} type="text" placeholder="e.g. https://yourblog.com"
+        <label style={labelStyle}>{t("siteUrl")}</label>
+        <input style={inputStyle} type="text" placeholder={t("siteUrlPh")}
           value={siteUrl} onChange={e => setSiteUrl(e.target.value)} disabled={busy} />
       </div>
 
       <div style={{ marginBottom: 14 }}>
-        <label style={labelStyle}>Username</label>
-        <input style={inputStyle} type="text" placeholder="e.g. your WordPress username"
+        <label style={labelStyle}>{t("username")}</label>
+        <input style={inputStyle} type="text" placeholder={t("usernamePh")}
           value={username} onChange={e => setUsername(e.target.value)} disabled={busy} />
       </div>
 
       <div style={{ marginBottom: 18 }}>
-        <label style={labelStyle}>Application Password</label>
+        <label style={labelStyle}>{t("appPassword")}</label>
         <input style={inputStyle} type="password" placeholder="xxxx xxxx xxxx xxxx xxxx xxxx"
           value={appPassword} onChange={e => setAppPassword(e.target.value)} disabled={busy} />
       </div>
@@ -141,7 +135,7 @@ export function WordPressConnectForm({ onConnected }: { onConnected?: () => void
       {error && (
         <div style={{
           display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", marginBottom: 14,
-          borderRadius: 8, background: T.redSoft, color: T.red, fontSize: 12.5, lineHeight: 1.5,
+          borderRadius: 8, background: K.dangerSoft, color: K.danger, fontSize: 12.5, lineHeight: 1.5,
         }}>
           <XCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
           <span>{error}</span>
@@ -150,19 +144,19 @@ export function WordPressConnectForm({ onConnected }: { onConnected?: () => void
       {success && (
         <div style={{
           display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", marginBottom: 14,
-          borderRadius: 8, background: T.greenSoft, color: T.green, fontSize: 12.5,
+          borderRadius: 8, background: K.successSoft, color: K.success, fontSize: 12.5,
         }}>
-          <CheckCircle2 size={15} /> Connected — WordPress verified successfully.
+          <CheckCircle2 size={15} /> {t("wpConnected")}
         </div>
       )}
 
-      <Btn variant="primary" onClick={handleConnect} disabled={busy}>
+      <Button variant="primary" onClick={handleConnect} disabled={busy}>
         {busy ? (
           <><Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />
-            {step === "saving" ? "Saving…" : "Testing connection…"}</>
-        ) : "Test & Connect"}
-      </Btn>
-    </Card>
+            {step === "saving" ? t("saving") : t("testingConnection")}</>
+        ) : t("testConnect")}
+      </Button>
+    </Section>
   );
 }
 
@@ -173,6 +167,8 @@ export function WordPressStatusCard({ status, onRetest, onDisconnected }: {
   /** AA-815 — when given, the card shows a Disconnect action (confirm step) and calls this after. */
   onDisconnected?: () => void;
 }) {
+  const t = useT(CONNECT_MESSAGES);
+  const { formatDateTime } = useFormat();
   const [testing, setTesting] = useState(false);
 
   async function retest() {
@@ -188,26 +184,25 @@ export function WordPressStatusCard({ status, onRetest, onDisconnected }: {
   const verified = status.last_verified_at && !status.last_verify_error;
 
   return (
-    <Card>
-      <CardHead title="WordPress Connection" action={
-        <Btn size="sm" variant="secondary" onClick={retest} disabled={testing}>
-          {testing ? "Testing…" : "Test connection"}
-        </Btn>
-      } />
+    <Section title={t("wpConnectionTitle")} actions={
+      <Button size="sm" variant="secondary" onClick={retest} disabled={testing}>
+        {testing ? t("testing") : t("testConnection")}
+      </Button>
+    }>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-        {verified ? <CheckCircle2 size={16} color={T.green} /> : <XCircle size={16} color={T.amber} />}
-        <span style={{ fontSize: 14, fontWeight: 600, color: T.ink }}>
+        {verified ? <CheckCircle2 size={16} color={K.success} /> : <XCircle size={16} color={K.amber} />}
+        <span style={{ fontSize: 14, fontWeight: 600, color: K.ink }}>
           {status.site_url}
         </span>
       </div>
-      <div style={{ fontSize: 12.5, color: T.muted, lineHeight: 1.9 }}>
-        <div>Connected: {fmtDateTime(status.connected_at)}</div>
-        <div>Last verified: {fmtDateTime(status.last_verified_at)}</div>
+      <div style={{ fontSize: 12.5, color: K.muted, lineHeight: 1.9 }}>
+        <div>{t("connectedAt", formatDateTime(status.connected_at))}</div>
+        <div>{t("lastVerified", formatDateTime(status.last_verified_at))}</div>
       </div>
       {status.last_verify_error && (
         <div style={{
           display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", marginTop: 12,
-          borderRadius: 8, background: T.redSoft, color: T.red, fontSize: 12.5, lineHeight: 1.5,
+          borderRadius: 8, background: K.dangerSoft, color: K.danger, fontSize: 12.5, lineHeight: 1.5,
         }}>
           <XCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
           <span>{status.last_verify_error}</span>
@@ -218,6 +213,6 @@ export function WordPressStatusCard({ status, onRetest, onDisconnected }: {
           <DisconnectConnection integration="wordpress" label="WordPress" onDisconnected={onDisconnected} />
         </div>
       )}
-    </Card>
+    </Section>
   );
 }

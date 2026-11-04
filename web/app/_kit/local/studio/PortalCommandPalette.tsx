@@ -16,13 +16,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { BookOpen, CornerDownLeft, FileText, Globe2, Search } from "lucide-react";
-import { K, Modal, RADIUS, alpha, apiGet, sans } from "@/app/_kit";
+import { K, Modal, RADIUS, alpha, apiGet, sans, useLang, useT } from "@/app/_kit";
 import { fetchMyVersions } from "@/app/(studio)/portal/_components/catalogApi";
 import { fetchReviews } from "@/app/(studio)/portal/_components/reviewListApi";
 import { channelName } from "@/app/(studio)/portal/_components/channelLabels";
 import { pieceTitleOrTour } from "@/lib/studio/myContent";
 import { ROUTES, allEntries } from "./portalNav";
 import { MY_VERSIONS_KEY } from "./useShellData";
+import { STUDIO_MESSAGES } from "./studio.messages";
 
 interface PoolHit { id: string; aa_name: string; country: string | null; duration: string | null }
 
@@ -39,6 +40,8 @@ export function PortalCommandPalette({ open, onClose, onSearchTours }: {
 }
 
 function Palette({ onClose, onSearchTours }: { onClose: () => void; onSearchTours: (q: string) => void }) {
+  const t = useT(STUDIO_MESSAGES);
+  const lang = useLang();
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -74,18 +77,18 @@ function Palette({ onClose, onSearchTours }: { onClose: () => void; onSearchTour
   const groups = useMemo(() => {
     const pages: Row[] = allEntries()
       .filter((e) => !e.paletteHidden)
-      .filter((e) => !needle || e.label.toLowerCase().includes(needle) || (e.keywords ?? "").includes(needle))
-      .map((e) => ({ kind: "page", key: `page:${e.href}`, label: e.label, icon: e.icon, href: e.href }));
+      .filter((e) => !needle || t(e.label).toLowerCase().includes(needle) || (e.keywords ?? "").includes(needle))
+      .map((e) => ({ kind: "page", key: `page:${e.href}`, label: t(e.label), icon: e.icon, href: e.href }));
 
-    if (!enabled) return [{ title: "Pages", rows: pages }];
+    if (!enabled) return [{ title: t("palettePages"), rows: pages }];
 
-    const tours: Row[] = (pool?.data ?? []).map((t) => ({
-      kind: "search", key: `pool:${t.id}`, label: t.aa_name,
-      sub: [t.country, t.duration].filter(Boolean).join(" · ") || "Marketplace",
-      icon: <Globe2 size={16} />, q: t.aa_name,
+    const tours: Row[] = (pool?.data ?? []).map((hit) => ({
+      kind: "search", key: `pool:${hit.id}`, label: hit.aa_name,
+      sub: [hit.country, hit.duration].filter(Boolean).join(" · ") || t("navMarketplace"),
+      icon: <Globe2 size={16} />, q: hit.aa_name,
     }));
     tours.push({
-      kind: "search", key: "pool:all", label: `Search all tours for “${debounced}”`, sub: "Marketplace",
+      kind: "search", key: "pool:all", label: t("paletteSearchAll", debounced), sub: t("navMarketplace"),
       icon: <Search size={16} />, q: debounced,
     });
 
@@ -96,8 +99,8 @@ function Palette({ onClose, onSearchTours }: { onClose: () => void; onSearchTour
       if (!(v.aa_name ?? "").toLowerCase().includes(needle)) continue;
       seen.add(v.published_tour_id);
       mine.push({
-        kind: "link", key: `mine:${v.published_tour_id}`, label: v.aa_name || "Tour",
-        sub: [v.country, "My Tours"].filter(Boolean).join(" · "), icon: <BookOpen size={16} />,
+        kind: "link", key: `mine:${v.published_tour_id}`, label: v.aa_name || t("tour"),
+        sub: [v.country, t("navMyTours")].filter(Boolean).join(" · "), icon: <BookOpen size={16} />,
         href: v.tour_id ? `${ROUTES.myTours}?tour_id=${encodeURIComponent(v.tour_id)}` : ROUTES.myTours,
       });
       if (mine.length >= 5) break;
@@ -110,18 +113,18 @@ function Palette({ onClose, onSearchTours }: { onClose: () => void; onSearchTour
       .map((r) => ({
         // S251 D5: the same title as My Content (the H1, else the angle's name); a piece with neither keeps the
         // tour's name.
-        kind: "link", key: `piece:${r.piece_id}`, label: pieceTitleOrTour(r),
-        sub: [channelName(r.channel), r.tour?.name].filter(Boolean).join(" · "), icon: <FileText size={16} />,
+        kind: "link", key: `piece:${r.piece_id}`, label: pieceTitleOrTour(r, lang),
+        sub: [channelName(r.channel, lang), r.tour?.name].filter(Boolean).join(" · "), icon: <FileText size={16} />,
         href: `${ROUTES.content}?piece=${encodeURIComponent(r.piece_id)}`,
       }));
 
     return [
-      { title: "Pages", rows: pages },
-      { title: "My tours", rows: mine },
-      { title: "My content", rows: content },
-      { title: "Tours", rows: tours },
+      { title: t("palettePages"), rows: pages },
+      { title: t("paletteMyTours"), rows: mine },
+      { title: t("paletteMyContent"), rows: content },
+      { title: t("paletteTours"), rows: tours },
     ].filter((g) => g.rows.length > 0);
-  }, [needle, enabled, debounced, pool, versions, reviews]);
+  }, [needle, enabled, debounced, pool, versions, reviews, t, lang]);
 
   const flat = useMemo(() => groups.flatMap((g) => g.rows), [groups]);
   const safeSelected = flat.length === 0 ? 0 : Math.min(selected, flat.length - 1);
@@ -151,18 +154,18 @@ function Palette({ onClose, onSearchTours }: { onClose: () => void; onSearchTour
             value={query}
             onChange={(e) => { setQuery(e.target.value); setSelected(0); }}
             onKeyDown={onKey}
-            placeholder="Search tours, your content, or jump to a page…"
-            aria-label="Search tours, your content, or jump to a page"
+            placeholder={t("palettePlaceholder")}
+            aria-label={t("paletteAria")}
             aria-controls="portal-palette-results"
             style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: 15, color: K.ink, fontFamily: sans }}
           />
           <kbd style={{ fontSize: 11, color: K.muted, border: `1px solid ${K.line}`, borderRadius: 6, padding: "2px 6px", background: K.bg, fontFamily: sans }}>Esc</kbd>
         </div>
 
-        <div id="portal-palette-results" role="listbox" aria-label="Results" style={{ maxHeight: "min(440px, 60vh)", overflowY: "auto", padding: 6 }}>
+        <div id="portal-palette-results" role="listbox" aria-label={t("paletteResults")} style={{ maxHeight: "min(440px, 60vh)", overflowY: "auto", padding: 6 }}>
           {flat.length === 0 ? (
             <div style={{ padding: "22px 14px", fontSize: 13, color: K.muted, textAlign: "center" }}>
-              No results for “{debounced}”.
+              {t("paletteNoResults", debounced)}
             </div>
           ) : groups.map((g) => (
             <div key={g.title} role="group" aria-label={g.title} style={{ marginBottom: 4 }}>
@@ -200,14 +203,14 @@ function Palette({ onClose, onSearchTours }: { onClose: () => void; onSearchTour
             </div>
           ))}
           {enabled && !pool && (
-            <div role="status" style={{ padding: "6px 10px 10px", fontSize: 11.5, color: K.muted2 }}>Searching tours…</div>
+            <div role="status" style={{ padding: "6px 10px 10px", fontSize: 11.5, color: K.muted2 }}>{t("paletteSearching")}</div>
           )}
         </div>
 
         <div style={{ display: "flex", gap: 14, padding: "8px 14px", borderTop: `1px solid ${K.line}`, fontSize: 11, color: K.muted2 }}>
-          <span>↑ ↓ navigate</span>
-          <span>↵ open</span>
-          <span>esc close</span>
+          <span>{t("paletteNavigate")}</span>
+          <span>{t("paletteOpen")}</span>
+          <span>{t("paletteClose")}</span>
         </div>
       </div>
     </Modal>

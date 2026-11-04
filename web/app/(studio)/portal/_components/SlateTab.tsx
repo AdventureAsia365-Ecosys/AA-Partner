@@ -64,10 +64,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Calendar, ChevronRight, Sparkles, X, Zap, AlertTriangle, ClipboardList, CheckCircle2 } from "lucide-react";
-import { T, serif, sans, mono, Card, CardHead, Badge, Btn, CtaLink, EmptyState, StickyBar } from "./ui";
-import { ToastProvider } from "@/app/_kit";
+import { Card, CardHead, CtaLink, EmptyState, StickyBar } from "./ui";
+import { Badge, Button, LinkButton, ToastProvider, K, mono, sans, serif, useLang, useT, type Translator, type UiLang } from "@/app/_kit";
+import { badgeTone } from "@/lib/studio/format";
+import { SLATE_MESSAGES } from "./writer.messages";
+import { channelName } from "./channelLabels";
+
+type SlateT = Translator<typeof SLATE_MESSAGES.en>;
 import type { ContentPiece } from "./AngleGateWizard";
 import { WriterPanel, useWriteWatcher, watchPiece, type WriterTarget } from "./WriterPanel";
+import { plainError } from "./studioError";
 
 interface ClearedBarReason {
   channel: string;
@@ -115,15 +121,16 @@ const SLATE_KEY = ["tenant-slate"] as const;
 // Order: 5 weekly-rhythm tabs first, then the 3 on-demand ones — matches the build prompt's own
 // "5 tab nhịp tuần + 3 tab theo yêu cầu" grouping. `group` drives the tab-strip divider + icon
 // (FE audit #5) — the tab list itself is unchanged.
-const CHANNEL_TABS: { key: string; label: string; group: "weekly" | "on_demand" }[] = [
-  { key: "blog", label: "Blog", group: "weekly" },
-  { key: "linkedin", label: "LinkedIn", group: "weekly" },
-  { key: "facebook", label: "Facebook", group: "weekly" },
-  { key: "instagram", label: "Instagram", group: "weekly" },
-  { key: "tiktok", label: "TikTok", group: "weekly" },
-  { key: "email", label: "Email", group: "on_demand" },
-  { key: "landing_page", label: "Landing Page", group: "on_demand" },
-  { key: "ads", label: "Ads", group: "on_demand" },
+// AA-1036 (R3): a tab shows channelName(key, lang), the one catalogue of channel names (writer.messages.ts).
+const CHANNEL_TABS: { key: string; group: "weekly" | "on_demand" }[] = [
+  { key: "blog", group: "weekly" },
+  { key: "linkedin", group: "weekly" },
+  { key: "facebook", group: "weekly" },
+  { key: "instagram", group: "weekly" },
+  { key: "tiktok", group: "weekly" },
+  { key: "email", group: "on_demand" },
+  { key: "landing_page", group: "on_demand" },
+  { key: "ads", group: "on_demand" },
 ];
 
 // AA-668 — the Writer panel's state, shared by every row of every Channel tab: at most one panel
@@ -140,7 +147,7 @@ export const ARTICLE_CHANNELS: readonly string[] = ["blog"];
 export const SOCIAL_CHANNELS: readonly string[] = CHANNEL_TABS.map(c => c.key).filter(k => !ARTICLE_CHANNELS.includes(k));
 
 // The kit toast needs a provider; the Slate is the only toast user on this page.
-export default function SlateTab({ channels, title = "Social Content", intro = DEFAULT_INTRO }: {
+export default function SlateTab({ channels, title, intro }: {
   /** AA-759 — the Channel tabs to show (default: all 8). */
   channels?: readonly string[];
   title?: string;
@@ -155,36 +162,36 @@ export default function SlateTab({ channels, title = "Social Content", intro = D
 }
 
 // AA-760 — tenant copy only: no Channel "bar", demand thresholds or ranking terms (tenant sees content only).
-const DEFAULT_INTRO = "Topics from your tours that suit this channel, best first. Pick one to start writing.";
-
-function SlateTabInner({ channels, title, intro }: { channels?: readonly string[]; title: string; intro: string }) {
+function SlateTabInner({ channels, title, intro }: { channels?: readonly string[]; title?: string; intro?: string }) {
+  const t = useT(SLATE_MESSAGES);
+  const lang = useLang();
   const tabs = channels ? CHANNEL_TABS.filter(c => channels.includes(c.key)) : CHANNEL_TABS;
   const [activeChannel, setActiveChannel] = useState(() => tabs[0]?.key ?? "blog");
   const [panel, setPanel] = useState<WriterTarget | null>(null);
   const [known, setKnown] = useState<Record<string, WriterTarget>>({});
   const { watch, unwatch } = useWriteWatcher();
 
-  const openWriter = useCallback((t: WriterTarget) => {
-    unwatch(t.requestId);
-    setKnown(prev => ({ ...prev, [t.subjectId]: t }));
-    setPanel(t);
+  const openWriter = useCallback((target: WriterTarget) => {
+    unwatch(target.requestId);
+    setKnown(prev => ({ ...prev, [target.subjectId]: target }));
+    setPanel(target);
   }, [unwatch]);
 
   const closeWriter = useCallback((lastPiece: ContentPiece | null) => {
     if (panel && lastPiece?.ready_state === "in_progress") {
-      watch(watchPiece(lastPiece.piece_id, panel.requestId, panel.title));
+      watch(watchPiece(lastPiece.piece_id, panel.requestId, panel.title, lang));
     }
     setPanel(null);
-  }, [panel, watch]);
+  }, [panel, watch, lang]);
 
   // A write whose 202 arrived after the panel closed (closed in the click → write-call window).
   // Skipped when that request's panel is open again by then: the reopened wizard resumes it itself.
   const panelRef = useRef<WriterTarget | null>(null);
   useEffect(() => { panelRef.current = panel; }, [panel]);
-  const watchDetached = useCallback((p: ContentPiece, t: WriterTarget) => {
-    if (p.ready_state !== "in_progress" || panelRef.current?.requestId === t.requestId) return;
-    watch(watchPiece(p.piece_id, t.requestId, t.title));
-  }, [watch]);
+  const watchDetached = useCallback((p: ContentPiece, target: WriterTarget) => {
+    if (p.ready_state !== "in_progress" || panelRef.current?.requestId === target.requestId) return;
+    watch(watchPiece(p.piece_id, target.requestId, target.title, lang));
+  }, [watch, lang]);
 
   const writer: WriterControls = { openSubjectId: panel?.subjectId ?? null, known, open: openWriter };
 
@@ -199,7 +206,7 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
       const r = await fetch("/api/tenant/v1/slate");
       if (!r.ok) {
         const e = await r.json().catch(() => ({}));
-        throw new Error(e.detail ?? "Couldn't load the Slate — try again.");
+        throw new Error(e.detail ?? t("loadFailed"));
       }
       return r.json();
     },
@@ -207,7 +214,7 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
   });
   const data = slateQ.data ?? null;
   const loading = slateQ.isPending;
-  const error = slateQ.isError ? slateQ.error.message : null;
+  const error = slateQ.isError ? plainError(slateQ.error, t("loadFailed"), lang) : null;
   const load = useCallback(() => { qc.invalidateQueries({ queryKey: SLATE_KEY }); }, [qc]);
   const refreshing = !!data?.refresh?.refreshing;
 
@@ -218,8 +225,8 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
       .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
       .then((d: { refresh: SlateResponse["refresh"] }) =>
         qc.setQueryData<SlateResponse>(SLATE_KEY, prev => (prev ? { ...prev, refresh: d.refresh } : prev)))
-      .catch(e => setRefreshError(e.detail ?? "Couldn't start a refresh — try again."));
-  }, [qc]);
+      .catch(e => setRefreshError(e.detail ?? t("refreshFailed")));
+  }, [qc, t]);
 
   const active = data?.channels[activeChannel];
 
@@ -237,7 +244,7 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
           as one continuous bar rather than floating detached from the card's border once a
           Channel's Subject list scrolls underneath it. */}
       <StickyBar
-        background={T.card}
+        background={K.card}
         style={{
           marginTop: -16, marginLeft: -18, marginRight: -18,
           paddingTop: 16, paddingLeft: 18, paddingRight: 18,
@@ -247,29 +254,29 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
         {/* AA-564 4.1 — Tenant-facing label renamed "Slate" -> "Social Content"; the component/file
             name (SlateTab.tsx, internal-only) is unchanged, matching CONTEXT.md's own Subject/Slate
             terminology used everywhere else in the codebase. */}
-        <CardHead title={title} />
-        <p style={{ fontSize: 12.5, color: T.muted, lineHeight: 1.6, margin: "0 0 14px" }}>{intro}</p>
+        <CardHead title={title ?? t("defaultTitle")} />
+        <p style={{ fontSize: 12.5, color: K.muted, lineHeight: 1.6, margin: "0 0 14px" }}>{intro ?? t("defaultIntro")}</p>
 
         {/* AA-764 — proposal state: topics are re-ranked in the background, never on page load. */}
         {data && (
           <div style={{
             marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
-            fontSize: 12, color: T.muted,
+            fontSize: 12, color: K.muted,
           }}>
             {refreshing ? (
-              <span role="status">Updating topics in the background — new ones appear here when it finishes (a few minutes).</span>
+              <span role="status">{t("updatingBg")}</span>
             ) : (
               <span>
                 {data.refresh?.finished_at
-                  ? <>Topics last updated {new Date(data.refresh.finished_at).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}.</>
-                  : <>Topics haven&rsquo;t been prepared yet.</>}
-                {data.refresh?.status === "failed" && <> The last update didn&rsquo;t finish.</>}
+                  ? <>{t("lastUpdated", new Date(data.refresh.finished_at).toLocaleString(lang === "vi" ? "vi-VN" : "en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }))}</>
+                  : <>{t("notPrepared")}</>}
+                {data.refresh?.status === "failed" && <>{t("lastFailed")}</>}
               </span>
             )}
-            <Btn variant="secondary" disabled={refreshing} onClick={requestRefresh}>
-              {refreshing ? "Updating…" : "Update topics"}
-            </Btn>
-            {refreshError && <span style={{ color: T.red }}>{refreshError}</span>}
+            <Button variant="secondary" disabled={refreshing} onClick={requestRefresh}>
+              {refreshing ? t("updating") : t("update")}
+            </Button>
+            {refreshError && <span style={{ color: K.danger }}>{refreshError}</span>}
           </div>
         )}
 
@@ -277,17 +284,13 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
             tenant whose declared markets aren't supported yet. */}
         {data && data.unmatched_markets && data.unmatched_markets.length > 0 && (
           <div style={{
-            marginBottom: 14, padding: "10px 12px", background: T.goldTint,
-            border: `1px solid ${T.gold}`, borderRadius: 8,
-            fontSize: 12, color: T.ink, display: "flex", alignItems: "flex-start", gap: 8,
+            marginBottom: 14, padding: "10px 12px", background: K.accentTint,
+            border: `1px solid ${K.accent}`, borderRadius: 8,
+            fontSize: 12, color: K.ink, display: "flex", alignItems: "flex-start", gap: 8,
           }}>
             <span style={{ fontSize: 14, flexShrink: 0 }}>⚠</span>
             <span>
-              Your configured market{data.unmatched_markets.length > 1 ? "s" : ""} (
-              <strong>{data.unmatched_markets.join(", ")}</strong>) {data.unmatched_markets.length > 1 ? "aren't" : "isn't"} supported
-              for SEO research yet — the search data below is not specific to{" "}
-              {data.unmatched_markets.length > 1 ? "those markets" : "that market"}. We&rsquo;ve
-              recorded your request; reach out if you need this prioritized.
+              {t("marketsNotSupported", data.unmatched_markets.join(", "), data.unmatched_markets.length > 1)}
             </span>
           </div>
         )}
@@ -296,10 +299,10 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
             shows there are more Channels (the end padding lets the last tab clear the fade). */}
         <div className="aa511-slate-tabstrip" style={{
           display: "flex", gap: 4, alignItems: "center", overflowX: "auto", flexWrap: "nowrap",
-          borderBottom: `1px solid ${T.line2}`, paddingBottom: 2, paddingRight: tabs.length > 1 ? 28 : 0,
+          borderBottom: `1px solid ${K.line2}`, paddingBottom: 2, paddingRight: tabs.length > 1 ? 28 : 0,
           ...(tabs.length > 1 ? TABSTRIP_FADE : {}),
         }}>
-          {tabs.map(({ key, label, group }, i) => {
+          {tabs.map(({ key, group }, i) => {
             const showDivider = i > 0 && tabs[i - 1].group !== group;
             const count = data?.channels[key]?.eligible_count ?? null;
             const isActive = activeChannel === key;
@@ -307,22 +310,22 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
             return (
               <div key={key} style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
                 {showDivider && (
-                  <div aria-hidden style={{ width: 1, height: 20, background: T.line2, margin: "0 6px", flexShrink: 0 }} />
+                  <div aria-hidden style={{ width: 1, height: 20, background: K.line2, margin: "0 6px", flexShrink: 0 }} />
                 )}
                 <button
                   onClick={() => setActiveChannel(key)}
-                  title={group === "weekly" ? "Weekly rhythm" : "On-demand"}
+                  title={group === "weekly" ? t("weekly") : t("onDemand")}
                   style={{
                     display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap", flexShrink: 0,
                     padding: "7px 12px", borderRadius: "8px 8px 0 0", cursor: "pointer",
                     fontFamily: sans, fontSize: 12.5, fontWeight: isActive ? 700 : 500,
-                    color: isActive ? T.ink : T.muted,
-                    background: isActive ? T.bg : "transparent",
-                    border: "none", borderBottom: isActive ? `2px solid ${T.gold}` : "2px solid transparent",
+                    color: isActive ? K.ink : K.muted,
+                    background: isActive ? K.bg : "transparent",
+                    border: "none", borderBottom: isActive ? `2px solid ${K.accent}` : "2px solid transparent",
                   }}
                 >
                   <Icon size={11} style={{ opacity: 0.55, flexShrink: 0 }} />
-                  {label}{count != null && <span style={{ marginLeft: 2, fontFamily: mono, fontSize: 10.5, color: T.muted2 }}>{count}</span>}
+                  {channelName(key, lang)}{count != null && <span style={{ marginLeft: 2, fontFamily: mono, fontSize: 10.5, color: K.muted2 }}>{count}</span>}
                 </button>
               </div>
             );
@@ -334,8 +337,8 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
       {loading && <SkeletonPanel />}
 
       {error && !loading && (
-        <EmptyState icon={<AlertTriangle size={32} strokeWidth={1.5} color={T.gold} />} title={"Couldn’t load the topics"} sub={error}
-          action={<Btn variant="secondary" onClick={load}>Try again</Btn>} />
+        <EmptyState icon={<AlertTriangle size={32} strokeWidth={1.5} color={K.accent} />} title={t("loadTopicsFailed")} sub={error}
+          action={<Button variant="secondary" onClick={load}>{t("tryAgain")}</Button>} />
       )}
 
       {!loading && !error && active && (
@@ -363,7 +366,7 @@ function SkeletonBlock({ width, height = 12 }: { width: string; height?: number 
   return (
     <div style={{
       width, height, borderRadius: 5, flexShrink: 0,
-      background: `linear-gradient(90deg, ${T.line} 25%, ${T.line2} 50%, ${T.line} 75%)`,
+      background: `linear-gradient(90deg, ${K.line} 25%, ${K.line2} 50%, ${K.line} 75%)`,
       backgroundSize: "200% 100%", animation: "aa511SlateShimmer 1.5s infinite",
     }} />
   );
@@ -373,7 +376,7 @@ function SkeletonRow() {
   return (
     <div style={{
       display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-      padding: "12px 14px", borderRadius: 10, border: `1px solid ${T.line}`, background: T.card,
+      padding: "12px 14px", borderRadius: 10, border: `1px solid ${K.line}`, background: K.card,
     }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
         <SkeletonBlock width="55%" height={14} />
@@ -385,8 +388,9 @@ function SkeletonRow() {
 }
 
 function SkeletonPanel() {
+  const t = useT(SLATE_MESSAGES);
   return (
-    <div aria-busy="true" aria-label="Loading topics">
+    <div aria-busy="true" aria-label={t("loadingTopics")}>
       <SkeletonBlock width="220px" height={12} />
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14 }}>
         <SkeletonRow />
@@ -400,6 +404,7 @@ function SkeletonPanel() {
 function ChannelPanel({ channel, postsPerWeek, onPicked, writer }: {
   channel: ChannelSlate; postsPerWeek: number; onPicked: () => void; writer: WriterControls;
 }) {
+  const t = useT(SLATE_MESSAGES);
   const proposed = channel.subjects.filter(s => s.state === "proposed");
   const decided = channel.subjects.filter(s => s.state !== "proposed");
 
@@ -408,28 +413,28 @@ function ChannelPanel({ channel, postsPerWeek, onPicked, writer }: {
     <div>
       {/* AA-760 — a Channel that never had a topic shows the empty state alone (no "0 topics ready"). */}
       {!never && (
-        <div style={{ fontSize: 12, color: T.muted, marginBottom: 14 }}>
-          <strong style={{ color: T.ink, fontFamily: mono }}>{channel.eligible_count}</strong> topic{channel.eligible_count === 1 ? "" : "s"} ready
+        <div style={{ fontSize: 12, color: K.muted, marginBottom: 14 }}>
+          <strong style={{ color: K.ink, fontFamily: mono }}>{channel.eligible_count}</strong> {t("topicsReady", channel.eligible_count)}
           {!channel.on_demand && (
-            <> · plan: <strong style={{ color: T.ink, fontFamily: mono }}>{postsPerWeek}</strong> posts/week</>
+            <>{t("plan")} <strong style={{ color: K.ink, fontFamily: mono }}>{postsPerWeek}</strong> {t("postsPerWeek")}</>
           )}
-          {channel.on_demand && <> · written on demand</>}
+          {channel.on_demand && <>{t("writtenOnDemand")}</>}
         </div>
       )}
 
       {never ? (
         // Never had any Subject at all. AA-760 — tenant words: no "atomize / rank / bar" (steps the
         // tenant cannot run), and a way forward they can take (Update topics sits in the bar above).
-        <EmptyState icon={<ClipboardList size={32} strokeWidth={1.5} color={T.gold} />} title="Nothing here yet"
-          sub="We add topics here as your tours are written and updated. Rewrite a tour from the Marketplace, or press Update topics."
-          action={<CtaLink href="/portal/tours">Browse tours</CtaLink>} />
+        <EmptyState icon={<ClipboardList size={32} strokeWidth={1.5} color={K.accent} />} title={t("nothingYet")}
+          sub={t("nothingYetSub")}
+          action={<CtaLink href="/portal/tours">{t("browseTours")}</CtaLink>} />
       ) : proposed.length === 0 ? (
         // FE audit #3 — DIFFERENT message: this Channel has decided history, just nothing NEW
         // to pick right now. Conflating this with the "never had any Subject" case above was the
         // reported gap — a tenant seeing a bare gap above "Already decided" with no explanation.
         <>
-          <EmptyState icon={<CheckCircle2 size={32} strokeWidth={1.5} color={T.gold} />} title="No new topics right now"
-            sub="We add new ones as your tours are updated. Meanwhile, reuse a topic below or press Update topics." />
+          <EmptyState icon={<CheckCircle2 size={32} strokeWidth={1.5} color={K.accent} />} title={t("noNewTopics")}
+            sub={t("noNewTopicsSub")} />
           <DecidedList subjects={decided} onPicked={onPicked} writer={writer} />
         </>
       ) : (
@@ -447,10 +452,11 @@ function ChannelPanel({ channel, postsPerWeek, onPicked, writer }: {
 function DecidedList({ subjects, onPicked, writer }: {
   subjects: SlateSubject[]; onPicked: () => void; writer: WriterControls;
 }) {
+  const t = useT(SLATE_MESSAGES);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: T.muted2, margin: "10px 0 2px" }}>
-        Already decided
+      <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: K.muted2, margin: "10px 0 2px" }}>
+        {t("alreadyDecided")}
       </div>
       {subjects.map(s => (
         <SubjectRow key={s.subject_id} subject={s} onPicked={onPicked} writer={writer} />
@@ -462,9 +468,9 @@ function DecidedList({ subjects, onPicked, writer }: {
 // AA-760 — the row's second line in tenant words. The Bar check itself (thresholds, rank-sum score,
 // Segment/Route kind) is internal ranking data and is no longer shown (tenant sees content only);
 // only measured search demand is kept, as "~N searches a month", where the Channel uses it.
-function demandText(reason: ClearedBarReason): string | null {
+function demandText(reason: ClearedBarReason, t: SlateT, lang: UiLang): string | null {
   if (reason.on_demand || reason.needs_demand <= 0 || !reason.demand) return null;
-  return `~${reason.demand.toLocaleString("en-US")} searches a month`;
+  return t("searchesMonth", reason.demand.toLocaleString(lang === "vi" ? "vi-VN" : "en-US"));
 }
 
 /** First letter upper-case ("a local Buddhist monastery → …" → "A local …"). */
@@ -474,27 +480,29 @@ function capFirst(s: string): string {
 
 /** AA-760 — a Segment topic reads action-first ("Swim in the lower pools · Kuang Si Falls"), not the
  *  mechanical "place — action". The API has no written headline for a Subject yet. */
-export function subjectTitle(s: Pick<SlateSubject, "route_id" | "hub_name" | "place" | "action">): string {
-  if (s.route_id) return capFirst(s.hub_name ?? "") || "Untitled journey";
+export function subjectTitle(s: Pick<SlateSubject, "route_id" | "hub_name" | "place" | "action">, t: SlateT): string {
+  if (s.route_id) return capFirst(s.hub_name ?? "") || t("untitledJourney");
   if (s.action && s.place) return `${capFirst(s.action)} · ${s.place}`;
-  return capFirst(s.action ?? s.place ?? "") || "Untitled moment";
+  return capFirst(s.action ?? s.place ?? "") || t("untitledMoment");
 }
 
-/** Tenant wording for a decided topic. */
-const DECIDED_LABEL: Record<Exclude<SlateSubject["state"], "proposed">, string> = {
-  picked: "In progress", used: "Written", cut: "Skipped",
-};
+/** Tenant wording for a decided topic (a key of SLATE_MESSAGES). */
+const DECIDED_LABEL = {
+  picked: "stPicked", used: "stUsed", cut: "stCut",
+} as const satisfies Record<Exclude<SlateSubject["state"], "proposed">, keyof typeof SLATE_MESSAGES.en>;
 
 function SubjectRow({ subject, onPicked, writer }: {
   subject: SlateSubject; onPicked: () => void; writer: WriterControls;
 }) {
+  const t = useT(SLATE_MESSAGES);
+  const lang = useLang();
   const [picking, setPicking] = useState(false);
   const [pickError, setPickError] = useState<string | null>(null);
   const [cutting, setCutting] = useState(false);
   const [cutError, setCutError] = useState<string | null>(null);
 
-  const title = subjectTitle(subject);
-  const demand = demandText(subject.cleared_bar_reason);
+  const title = subjectTitle(subject, t);
+  const demand = demandText(subject.cleared_bar_reason, t, lang);
 
   const kindLabel = subject.route_id ? "Route" : "Segment";
   // AA-668 — kept the AA-556 name: "this row's writer is open".
@@ -531,16 +539,16 @@ function SubjectRow({ subject, onPicked, writer }: {
         // "picked" badge if the backend had actually succeeded before the client gave up waiting
         // on the response. Leaving the Slate untouched means the row keeps showing "Pick to write"
         // (its last KNOWN state) alongside the error — never a state the tenant never asked for.
-        setPickError(e?.detail ?? "Couldn't pick this topic — try again.");
+        setPickError(e?.detail ?? t("pickFailed"));
         setPicking(false);
       });
-  }, [subject.subject_id, subject.channel, title, kindLabel, onPicked, openWriter]);
+  }, [subject.subject_id, subject.channel, title, kindLabel, onPicked, openWriter, t]);
 
   // AA-556 — one-way action (no "un-cut"), so a confirm dialog gates every call. Disabled while
   // `picking` or `isExpanded` (see file header) — purely to avoid a same-row race that would just
   // 409 harmlessly, not a data-safety guard (the backend already re-checks live DB state).
   const cut = useCallback(() => {
-    if (!window.confirm("Skip this topic? It won't be suggested again.")) return;
+    if (!window.confirm(t("skipConfirm"))) return;
     setCutting(true);
     setCutError(null);
     fetch(`/api/tenant/v1/subjects/${subject.subject_id}/cut`, { method: "POST" })
@@ -554,10 +562,10 @@ function SubjectRow({ subject, onPicked, writer }: {
         onPicked();
       })
       .catch(e => {
-        setCutError(e?.detail ?? "Couldn't skip this topic — try again.");
+        setCutError(e?.detail ?? t("skipFailed"));
         setCutting(false);
       });
-  }, [subject.subject_id, onPicked]);
+  }, [subject.subject_id, onPicked, t]);
 
   const stateVariant = subject.state === "proposed" ? "gold"
     : subject.state === "picked" ? "info"
@@ -565,7 +573,7 @@ function SubjectRow({ subject, onPicked, writer }: {
 
   return (
     <div style={{
-      borderRadius: 10, border: `1px solid ${isExpanded ? T.gold : T.line}`, background: T.card,
+      borderRadius: 10, border: `1px solid ${isExpanded ? K.accent : K.line}`, background: K.card,
       overflow: "hidden",
     }}>
       {/* AA-760 — wraps: the title keeps at least 260 px, so on a phone the buttons drop to their own
@@ -576,64 +584,56 @@ function SubjectRow({ subject, onPicked, writer }: {
       }}>
         <div style={{ flex: "1 1 260px", minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: demand ? 4 : 0, flexWrap: "wrap" }}>
-            <span style={{ fontFamily: serif, fontSize: 14.5, fontWeight: 500, color: T.ink, overflowWrap: "anywhere", minWidth: 0 }}>{title}</span>
-            {subject.state !== "proposed" && <Badge variant={stateVariant}>{DECIDED_LABEL[subject.state]}</Badge>}
+            <span style={{ fontFamily: serif, fontSize: 14.5, fontWeight: 500, color: K.ink, overflowWrap: "anywhere", minWidth: 0 }}>{title}</span>
+            {subject.state !== "proposed" && <Badge tone={badgeTone(stateVariant)}>{t(DECIDED_LABEL[subject.state])}</Badge>}
           </div>
-          {demand && <div style={{ fontSize: 11.5, color: T.muted, lineHeight: 1.5 }}>{demand}</div>}
+          {demand && <div style={{ fontSize: 11.5, color: K.muted, lineHeight: 1.5 }}>{demand}</div>}
           {pickError && (
             <div style={{
-              marginTop: 6, padding: "6px 8px", background: T.redSoft, border: `1px solid ${T.redBorder}`,
-              borderRadius: 6, fontSize: 11, color: T.red, display: "flex", alignItems: "center", gap: 8,
+              marginTop: 6, padding: "6px 8px", background: K.dangerSoft, border: `1px solid ${K.dangerBorder}`,
+              borderRadius: 6, fontSize: 11, color: K.danger, display: "flex", alignItems: "center", gap: 8,
             }}>
               <span>{pickError}</span>
               {/* Manual, explicit refresh — never automatic (FE audit #2) — so the tenant can
                   check the real state on their own terms instead of an auto-refresh that could
                   have shown this same error next to a row that actually succeeded. */}
-              <button onClick={onPicked} style={{
-                background: "none", border: "none", padding: 0, cursor: "pointer",
-                color: T.red, fontFamily: sans, fontSize: 11, fontWeight: 700, textDecoration: "underline",
-                flexShrink: 0,
-              }}>
-                Refresh
-              </button>
+              <LinkButton tone="danger" size="sm" onClick={onPicked} style={{ textDecoration: "underline", flexShrink: 0 }}>
+                {t("refresh")}
+              </LinkButton>
             </div>
           )}
           {/* AA-556 — same shape as pickError above, own Refresh (cut() failing never calls
               onPicked() itself, same FE-audit-#2 "only a confirmed success refetches" rule). */}
           {cutError && (
             <div style={{
-              marginTop: 6, padding: "6px 8px", background: T.redSoft, border: `1px solid ${T.redBorder}`,
-              borderRadius: 6, fontSize: 11, color: T.red, display: "flex", alignItems: "center", gap: 8,
+              marginTop: 6, padding: "6px 8px", background: K.dangerSoft, border: `1px solid ${K.dangerBorder}`,
+              borderRadius: 6, fontSize: 11, color: K.danger, display: "flex", alignItems: "center", gap: 8,
             }}>
               <span>{cutError}</span>
-              <button onClick={onPicked} style={{
-                background: "none", border: "none", padding: 0, cursor: "pointer",
-                color: T.red, fontFamily: sans, fontSize: 11, fontWeight: 700, textDecoration: "underline",
-                flexShrink: 0,
-              }}>
-                Refresh
-              </button>
+              <LinkButton tone="danger" size="sm" onClick={onPicked} style={{ textDecoration: "underline", flexShrink: 0 }}>
+                {t("refresh")}
+              </LinkButton>
             </div>
           )}
         </div>
         {subject.state === "proposed" && (
           <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-            <Btn variant="primary" size="sm" disabled={picking} onClick={pick}>
-              {picking ? "Picking…" : <><Sparkles size={12} /> Pick to write <ChevronRight size={12} /></>}
-            </Btn>
+            <Button variant="primary" size="sm" disabled={picking} onClick={pick}>
+              {picking ? t("picking") : <><Sparkles size={12} /> {t("pickToWrite")} <ChevronRight size={12} /></>}
+            </Button>
             {/* AA-556 — disabled while picking/isExpanded/cutting: UX polish only (see file
                 header) — the backend already 409s a stale/racing cut safely on its own. */}
-            <Btn variant="ghost" size="sm" disabled={picking || isExpanded || cutting} onClick={cut}>
-              {cutting ? "Skipping…" : <><X size={12} /> Skip topic</>}
-            </Btn>
+            <Button variant="ghost" size="sm" disabled={picking || isExpanded || cutting} onClick={cut}>
+              {cutting ? t("skipping") : <><X size={12} /> {t("skipTopic")}</>}
+            </Button>
           </div>
         )}
         {/* AA-668 — a Subject picked earlier in this visit reopens its Writer panel. */}
         {subject.state !== "proposed" && knownTarget && (
           <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-            <Btn variant="secondary" size="sm" disabled={isExpanded} onClick={() => openWriter(knownTarget)}>
-              <Sparkles size={12} /> Continue <ChevronRight size={12} />
-            </Btn>
+            <Button variant="secondary" size="sm" disabled={isExpanded} onClick={() => openWriter(knownTarget)}>
+              <Sparkles size={12} /> {t("continue")} <ChevronRight size={12} />
+            </Button>
           </div>
         )}
       </div>
