@@ -103,11 +103,6 @@
       "count": 1
     }
   },
-  "app/(studio)/portal/_components/AccountMembers.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
   "app/(studio)/portal/_components/AngleGateWizard.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 2
@@ -162,9 +157,6 @@
   "app/(studio)/portal/_components/DisconnectConnection.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
     }
   },
   "app/(studio)/portal/_components/FacebookConnect.tsx": {
@@ -180,11 +172,6 @@
       "count": 1
     }
   },
-  "app/(studio)/portal/_components/LiveWriter.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
   "app/(studio)/portal/_components/MasterNewerNotice.tsx": {
     "aa-kit/no-legacy-kit": {
       "count": 1
@@ -195,9 +182,6 @@
       "count": 1
     },
     "aa-kit/no-hex-colour": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },
@@ -238,21 +222,10 @@
     },
     "aa-kit/no-hex-colour": {
       "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
     }
   },
   "app/(studio)/portal/_components/SeeOriginalToggle.tsx": {
     "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/SeoHealthBar.tsx": {
-    "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },
@@ -263,9 +236,6 @@
   },
   "app/(studio)/portal/_components/Skeleton.tsx": {
     "aa-kit/no-class-name": {
-      "count": 1
-    },
-    "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },
@@ -283,22 +253,7 @@
       "count": 1
     }
   },
-  "app/(studio)/portal/_components/UsageSparkline.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
   "app/(studio)/portal/_components/WordPressConnect.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/WriterPanel.tsx": {
-    "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/markdownText.tsx": {
     "aa-kit/no-legacy-kit": {
       "count": 1
     }
@@ -382,11 +337,6 @@
       "count": 1
     },
     "aa-kit/no-raw-aa-var": {
-      "count": 1
-    }
-  },
-  "app/_kit/local/studio/useShellData.ts": {
-    "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },

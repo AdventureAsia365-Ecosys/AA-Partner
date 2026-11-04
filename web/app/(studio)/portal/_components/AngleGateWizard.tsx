@@ -65,11 +65,11 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Modal } from "@/app/_kit";
+import { Modal, K, mono, sans, serif } from "@/app/_kit";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Sparkles, CheckCircle2, ChevronRight, RotateCcw, AlertTriangle, ExternalLink, Compass } from "lucide-react";
-import { T, serif, sans, mono, Card, CardHead, Badge, Btn, LoadingScreen, EmptyState, Spinner } from "./ui";
+import { Card, CardHead, Badge, Btn, LoadingScreen, EmptyState, Spinner } from "./ui";
 import LiveWriter from "./LiveWriter";
 import { CtaReviewNotice, ctaWarningFrom, useCtaReviewCheck, type CtaWarning } from "./CtaReviewNotice";
 import { channelName, humanizeKey } from "./channelLabels";
@@ -153,11 +153,11 @@ interface AngleGateRequest {
 function AtomReplacedNotice({ req, onNewPost }: { req: AngleGateRequest; onNewPost: () => void }) {
   return (
     <div role="status" data-testid="atom-replaced"
-      style={{ padding: "12px 14px", background: T.goldTint, border: `1px solid ${T.gold}`, borderRadius: 8, fontFamily: sans }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: T.ink, marginBottom: 4 }}>
-        <AlertTriangle size={13} color={T.goldDeep} aria-hidden /> This part of the tour was updated
+      style={{ padding: "12px 14px", background: K.accentTint, border: `1px solid ${K.accent}`, borderRadius: 8, fontFamily: sans }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: K.ink, marginBottom: 4 }}>
+        <AlertTriangle size={13} color={K.accentDeep} aria-hidden /> This part of the tour was updated
       </div>
-      <div style={{ fontSize: 12.5, color: T.body, lineHeight: 1.5, marginBottom: 10 }}>
+      <div style={{ fontSize: 12.5, color: K.body, lineHeight: 1.5, marginBottom: 10 }}>
         {atomReplacedNote(req.atom_replacement)}
       </div>
       <Btn variant="primary" size="sm" onClick={onNewPost}><Compass size={12} /> Go to Social Posts</Btn>
@@ -202,14 +202,14 @@ function SubjectHeader({ req }: { req: AngleGateRequest }) {
   const place = req.subject_place ?? req.subject_hub_name;
   const detail = req.subject_place && req.subject_action ? `${req.subject_place} — ${req.subject_action}` : place;
   return (
-    <div style={{ padding: "10px 14px", background: T.bg, border: `1px solid ${T.line2}`, borderRadius: 8, fontFamily: sans }}>
+    <div style={{ padding: "10px 14px", background: K.bg, border: `1px solid ${K.line2}`, borderRadius: 8, fontFamily: sans }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-        <span style={{ fontSize: 12.5, fontWeight: 700, color: T.ink }}>
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: K.ink }}>
           Writing for: {req.channel ? channelName(req.channel) : "—"}
         </span>
         {req.subject_score !== null && <Badge variant="default">Score {req.subject_score}</Badge>}
       </div>
-      {detail && <div style={{ fontSize: 12, color: T.muted, marginTop: 4 }}>{detail}</div>}
+      {detail && <div style={{ fontSize: 12, color: K.muted, marginTop: 4 }}>{detail}</div>}
     </div>
   );
 }
@@ -220,16 +220,16 @@ function AngleRankingBadges({ angle, paaTotal }: { angle: AngleOption; paaTotal:
   if (angle.answers === null || angle.violations === null) return null;
   const n = angle.violations.length;
   return (
-    <div style={{ display: "flex", gap: 8, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${T.line2}` }}>
+    <div style={{ display: "flex", gap: 8, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${K.line2}` }}>
       <span
         title={angle.answers.length ? angle.answers.join("; ") : "No PAA data for this request"}
-        style={{ fontSize: 11.5, color: T.muted, fontFamily: sans }}
+        style={{ fontSize: 11.5, color: K.muted, fontFamily: sans }}
       >
         {paaTotal > 0 ? `✓ answers ${angle.answers.length}/${paaTotal} PAA questions` : "no PAA data"}
       </span>
       <span
         title={angle.violations.join("; ") || "No avoid-list phrases matched"}
-        style={{ fontSize: 11.5, fontFamily: sans, color: n > 0 ? T.goldDeep : T.muted }}
+        style={{ fontSize: 11.5, fontFamily: sans, color: n > 0 ? K.accentDeep : K.muted }}
       >
         {n > 0 ? `⚠ ${n} avoid-list hit${n === 1 ? "" : "s"}` : "0 avoid-list violations"}
       </span>
@@ -252,13 +252,13 @@ function Stepper({ step, canChangeAngle, onChangeAngle }: {
         const clickable = n === ANGLE_STEP && step > ANGLE_STEP && canChangeAngle;
         const crumbStyle: React.CSSProperties = {
           display: "inline-flex", alignItems: "center", gap: 4, fontFamily: sans, fontSize: 12.5,
-          fontWeight: active ? 700 : 500, color: active ? T.ink : done ? T.muted : T.muted2,
+          fontWeight: active ? 700 : 500, color: active ? K.ink : done ? K.muted : K.muted2,
           background: "none", border: "none", padding: 0, cursor: clickable ? "pointer" : "default",
         };
-        const content = <>{done && <CheckCircle2 size={12} color={T.green} />} {n} · {label}</>;
+        const content = <>{done && <CheckCircle2 size={12} color={K.success} />} {n} · {label}</>;
         return (
           <span key={n} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            {i > 0 && <ChevronRight size={13} color={T.muted2} />}
+            {i > 0 && <ChevronRight size={13} color={K.muted2} />}
             {clickable
               ? <button onClick={onChangeAngle} style={crumbStyle} title="Change angle — picks from the same 3 already-generated options, no new content generated">{content}</button>
               : <span style={crumbStyle}>{content}</span>}
@@ -282,12 +282,12 @@ function WriteDonePopup({ onClose, onOpenInMyContent }: {
     <Modal open onClose={onClose} width={360}>
       <div style={{ textAlign: "center", fontFamily: sans, padding: "10px 6px 4px" }}>
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
-          <CheckCircle2 size={36} color={T.green} aria-hidden />
+          <CheckCircle2 size={36} color={K.success} aria-hidden />
         </div>
-        <div style={{ fontFamily: serif, fontSize: 17, fontWeight: 600, color: T.ink, marginBottom: 6 }}>
+        <div style={{ fontFamily: serif, fontSize: 17, fontWeight: 600, color: K.ink, marginBottom: 6 }}>
           Your content is ready
         </div>
-        <p style={{ fontSize: 12.5, color: T.muted, lineHeight: 1.5, margin: "0 0 20px" }}>
+        <p style={{ fontSize: 12.5, color: K.muted, lineHeight: 1.5, margin: "0 0 20px" }}>
           Review, edit, or export it any time from My Content.
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -619,7 +619,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
     // well past a comfortable reading width. 880 meaningfully closes the gap (~77% used) while
     // keeping line length reasonable.
     <div style={{ display: "flex", flexDirection: "column", gap: embedded ? 16 : 20, maxWidth: embedded ? undefined : 880 }}>
-      <p style={{ fontSize: 12, color: T.muted, margin: 0, lineHeight: 1.5 }}>
+      <p style={{ fontSize: 12, color: K.muted, margin: 0, lineHeight: 1.5 }}>
         Choose a content goal, then pick 1 of the 3 angles the system generates. You always
         choose — Adventure Asia never approves or blocks this for you.
       </p>
@@ -628,7 +628,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
       {req?.subject_id && !embedded && <SubjectHeader req={req} />}
 
       {req && (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", borderBottom: `1px solid ${T.line2}` }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", borderBottom: `1px solid ${K.line2}` }}>
           <Stepper step={step} canChangeAngle={req.status === "approved" && !replaced} onChangeAngle={changeAngle} />
           {!embedded && <Btn variant="ghost" size="sm" onClick={reset}><RotateCcw size={12} /> Start over</Btn>}
         </div>
@@ -639,7 +639,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
       )}
 
       {error && (
-        <div style={{ padding: "9px 12px", background: T.redSoft, border: `1px solid ${T.redBorder}`, borderRadius: 8, fontSize: 12, color: T.red }}>
+        <div style={{ padding: "9px 12px", background: K.dangerSoft, border: `1px solid ${K.dangerBorder}`, borderRadius: 8, fontSize: 12, color: K.danger }}>
           {error}
         </div>
       )}
@@ -648,7 +648,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
       {!req && (
         <Card>
           <CardHead title="Pick a Subject to start" />
-          <EmptyState icon={<Compass size={32} strokeWidth={1.5} color={T.gold} />} title="Nothing to write yet"
+          <EmptyState icon={<Compass size={32} strokeWidth={1.5} color={K.accent} />} title="Nothing to write yet"
             sub="Every new piece starts from a topic you pick in Social Posts or Articles." // AA-576 (was "Write Content always starts from there now" — stale after that nav item was removed)
             action={<Btn variant="primary" onClick={() => router.push("/portal/create/social")}>Go to Social Posts</Btn>} />
         </Card>
@@ -669,11 +669,11 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
                   onClick={() => setSelectedGoal(g.key)} style={{
                     textAlign: "left", padding: "10px 14px", borderRadius: 8,
                     cursor: generating ? "default" : "pointer", minWidth: 0,
-                    border: `1px solid ${on ? T.gold : T.line}`, borderWidth: on ? 2 : 1,
-                    background: on ? T.goldTint : T.card, fontFamily: sans,
+                    border: `1px solid ${on ? K.accent : K.line}`, borderWidth: on ? 2 : 1,
+                    background: on ? K.accentTint : K.card, fontFamily: sans,
                   }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: T.ink }}>{g.name}</div>
-                  <div style={{ fontSize: 11.5, color: T.muted, marginTop: 2, lineHeight: 1.45 }}>{g.description}</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: K.ink }}>{g.name}</div>
+                  <div style={{ fontSize: 11.5, color: K.muted, marginTop: 2, lineHeight: 1.45 }}>{g.description}</div>
                 </button>
               );
             })}
@@ -683,7 +683,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
               {generating ? <>Generating 3 angles…</> : <><Sparkles size={13} /> Generate 3 angles</>}
             </Btn>
             {generating && (
-              <span role="status" style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: T.muted }}>
+              <span role="status" style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: K.muted }}>
                 <Spinner size={14} /> Usually under a minute{embedded ? " — you can close this panel, the angles keep generating." : "."}
               </span>
             )}
@@ -697,7 +697,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
         // this angle" button — one click chooses it and the write starts (no confirm step).
         <Card style={cardStyle}>
           <CardHead title={`2 · ${req.status === "reusable" ? "Choose a Different Angle" : "Choose an Angle"}`} />
-          <p style={{ fontSize: 12.5, color: T.muted, margin: "0 0 14px", lineHeight: 1.5 }}>
+          <p style={{ fontSize: 12.5, color: K.muted, margin: "0 0 14px", lineHeight: 1.5 }}>
             {req.status === "reusable"
               ? "Pick a different one of the 3 angles below — writing starts as soon as you pick."
               : "Pick one of the 3 angles below — writing starts as soon as you pick."}
@@ -710,21 +710,21 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
                   style={{
                     textAlign: "left", width: "100%", boxSizing: "border-box",
                     padding: "14px 16px", borderRadius: 10, position: "relative", fontFamily: sans,
-                    border: `1px solid ${a.chosen ? T.green : a.recommended ? T.goldSoft : T.line}`,
-                    background: a.chosen ? T.greenSoft : a.recommended ? T.goldTint : T.card,
+                    border: `1px solid ${a.chosen ? K.success : a.recommended ? K.accentSoft : K.line}`,
+                    background: a.chosen ? K.successSoft : a.recommended ? K.accentTint : K.card,
                   }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
-                    <span style={{ fontFamily: serif, fontSize: 15, fontWeight: 600, color: T.ink }}>{a.name}</span>
+                    <span style={{ fontFamily: serif, fontSize: 15, fontWeight: 600, color: K.ink }}>{a.name}</span>
                     {a.recommended && <Badge variant="default">Recommended</Badge>}
                     {a.chosen && <Badge variant="default">Currently chosen</Badge>}
                   </div>
-                  <div style={{ fontSize: 12.5, color: T.body, marginBottom: 4 }}>
+                  <div style={{ fontSize: 12.5, color: K.body, marginBottom: 4 }}>
                     <strong>Why it works:</strong> {a.why_it_works}
                   </div>
-                  <div style={{ fontSize: 12.5, color: T.body, marginBottom: 4 }}>
+                  <div style={{ fontSize: 12.5, color: K.body, marginBottom: 4 }}>
                     <strong>Formula fit:</strong> <span style={{ fontFamily: mono }}>{a.formula_fit}</span>
                   </div>
-                  <div style={{ fontSize: 12.5, color: T.body }}>
+                  <div style={{ fontSize: 12.5, color: K.body }}>
                     <strong>Best final style:</strong> {a.best_final_style}
                   </div>
                   <AngleRankingBadges angle={a} paaTotal={req.dfs_paa_snapshot?.people_also_ask.length ?? 0} />
@@ -748,12 +748,12 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
           <CardHead title="3 · Write" />
 
           {chosenAngle && (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 14, padding: "10px 12px", background: T.bg, border: `1px solid ${T.line2}`, borderRadius: 8 }}>
-              <div style={{ fontSize: 12.5, color: T.body }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 14, padding: "10px 12px", background: K.bg, border: `1px solid ${K.line2}`, borderRadius: 8 }}>
+              <div style={{ fontSize: 12.5, color: K.body }}>
                 <strong>Angle:</strong> {chosenAngle.name}
-                <span style={{ color: T.muted2 }}> · </span>
+                <span style={{ color: K.muted2 }}> · </span>
                 <strong>Goal:</strong> {goalLabel(goals, req.goal)}
-                <span style={{ color: T.muted2 }}> · </span>
+                <span style={{ color: K.muted2 }}> · </span>
                 <strong>Channel:</strong> {req.channel ? channelName(req.channel) : "—"}
               </div>
               {!writing && !replaced && (
@@ -767,7 +767,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
           {!needsCtaInput && <CtaReviewNotice warning={writeCtaWarning} style={{ marginBottom: 10 }} />}
 
           {reopenError && (
-            <div style={{ padding: "9px 12px", background: T.redSoft, border: `1px solid ${T.redBorder}`, borderRadius: 8, fontSize: 12, color: T.red, marginBottom: 10 }}>
+            <div style={{ padding: "9px 12px", background: K.dangerSoft, border: `1px solid ${K.dangerBorder}`, borderRadius: 8, fontSize: 12, color: K.danger, marginBottom: 10 }}>
               {reopenError}
             </div>
           )}
@@ -779,13 +779,13 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
               <LiveWriter kind="piece" jobId={piece.piece_id} title="Writing your post" compact={embedded} />
             </div>
           ) : (
-            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 4px", color: T.muted, fontSize: 13 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 4px", color: K.muted, fontSize: 13 }}>
               <Spinner size={16} /> Writing and checking your content — one moment…
             </div>
           ))}
 
           {writingSlow && (
-            <div role="status" style={{ padding: "9px 12px", background: T.goldTint, border: `1px solid ${T.gold}`, borderRadius: 8, marginBottom: 10, fontSize: 12.5, color: T.body, lineHeight: 1.5 }}>
+            <div role="status" style={{ padding: "9px 12px", background: K.accentTint, border: `1px solid ${K.accent}`, borderRadius: 8, marginBottom: 10, fontSize: 12.5, color: K.body, lineHeight: 1.5 }}>
               Still writing — this one is taking longer than usual. It keeps running in the
               background{embedded ? "; you can close this panel" : ""} and lands in My Content when it is done.
             </div>
@@ -793,17 +793,17 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
 
           {needsCtaInput && !writing && !replaced && (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div style={{ fontSize: 12.5, color: T.body, lineHeight: 1.5 }}>
+              <div style={{ fontSize: 12.5, color: K.body, lineHeight: 1.5 }}>
                 This piece needs a call to action before it can be written — what should the
                 reader do next?{" "}
-                <Link href="/portal/brand" style={{ color: T.goldDeep, fontWeight: 600 }}>
+                <Link href="/portal/brand" style={{ color: K.accentDeep, fontWeight: 600 }}>
                   Set a default call to action in Brand Identity
                 </Link>{" "}
                 so you aren&rsquo;t asked again.
               </div>
               <input value={ctaInput} onChange={e => setCtaInput(e.target.value)}
                 placeholder="e.g. Book a consultation, Read the full guide…"
-                style={{ padding: "9px 12px", background: T.card, border: `1px solid ${T.line}`, borderRadius: 8, color: T.body, fontSize: 13, fontFamily: sans }} />
+                style={{ padding: "9px 12px", background: K.card, border: `1px solid ${K.line}`, borderRadius: 8, color: K.body, fontSize: 13, fontFamily: sans }} />
               <CtaReviewNotice warning={liveCtaWarning} />
               <div>
                 <Btn variant="primary" disabled={!ctaInput.trim()}
@@ -815,14 +815,14 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
           )}
 
           {writeError && !writing && (
-            <div style={{ padding: "9px 12px", background: T.redSoft, border: `1px solid ${T.redBorder}`, borderRadius: 8, fontSize: 12, color: T.red, marginBottom: 10 }}>
+            <div style={{ padding: "9px 12px", background: K.dangerSoft, border: `1px solid ${K.dangerBorder}`, borderRadius: 8, fontSize: 12, color: K.danger, marginBottom: 10 }}>
               {writeError}
             </div>
           )}
 
           {piece && !writing && piece.ready_state === "not_ready" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 700, color: T.red }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 700, color: K.danger }}>
                 <AlertTriangle size={13} /> Something went wrong while writing this content
               </div>
               <div>
@@ -841,12 +841,12 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
               or a resumed already-finished request) so the card never looks empty/broken. */}
           {/* AA-668 — the Writer panel shows the finished piece and its actions itself. */}
           {piece && !writing && piece.ready_state === "ready" && !embedded && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", background: T.greenSoft, border: `1px solid ${T.green}`, borderRadius: 8, fontSize: 12.5, color: T.body }}>
-              <CheckCircle2 size={14} color={T.green} />
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", background: K.successSoft, border: `1px solid ${K.success}`, borderRadius: 8, fontSize: 12.5, color: K.body }}>
+              <CheckCircle2 size={14} color={K.success} />
               Content ready.{" "}
               <a
                 onClick={() => router.push(`/portal/content?piece=${piece.piece_id}`)}
-                style={{ color: T.goldDeep, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}
+                style={{ color: K.accentDeep, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}
               >
                 View, edit, or export it in My Content
               </a>

@@ -64,8 +64,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Calendar, ChevronRight, Sparkles, X, Zap, AlertTriangle, ClipboardList, CheckCircle2 } from "lucide-react";
-import { T, serif, sans, mono, Card, CardHead, Badge, Btn, CtaLink, EmptyState, StickyBar } from "./ui";
-import { ToastProvider } from "@/app/_kit";
+import { Card, CardHead, Badge, Btn, CtaLink, EmptyState, StickyBar } from "./ui";
+import { ToastProvider, K, mono, sans, serif } from "@/app/_kit";
 import type { ContentPiece } from "./AngleGateWizard";
 import { WriterPanel, useWriteWatcher, watchPiece, type WriterTarget } from "./WriterPanel";
 
@@ -237,7 +237,7 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
           as one continuous bar rather than floating detached from the card's border once a
           Channel's Subject list scrolls underneath it. */}
       <StickyBar
-        background={T.card}
+        background={K.card}
         style={{
           marginTop: -16, marginLeft: -18, marginRight: -18,
           paddingTop: 16, paddingLeft: 18, paddingRight: 18,
@@ -248,13 +248,13 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
             name (SlateTab.tsx, internal-only) is unchanged, matching CONTEXT.md's own Subject/Slate
             terminology used everywhere else in the codebase. */}
         <CardHead title={title} />
-        <p style={{ fontSize: 12.5, color: T.muted, lineHeight: 1.6, margin: "0 0 14px" }}>{intro}</p>
+        <p style={{ fontSize: 12.5, color: K.muted, lineHeight: 1.6, margin: "0 0 14px" }}>{intro}</p>
 
         {/* AA-764 — proposal state: topics are re-ranked in the background, never on page load. */}
         {data && (
           <div style={{
             marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
-            fontSize: 12, color: T.muted,
+            fontSize: 12, color: K.muted,
           }}>
             {refreshing ? (
               <span role="status">Updating topics in the background — new ones appear here when it finishes (a few minutes).</span>
@@ -269,7 +269,7 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
             <Btn variant="secondary" disabled={refreshing} onClick={requestRefresh}>
               {refreshing ? "Updating…" : "Update topics"}
             </Btn>
-            {refreshError && <span style={{ color: T.red }}>{refreshError}</span>}
+            {refreshError && <span style={{ color: K.danger }}>{refreshError}</span>}
           </div>
         )}
 
@@ -277,9 +277,9 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
             tenant whose declared markets aren't supported yet. */}
         {data && data.unmatched_markets && data.unmatched_markets.length > 0 && (
           <div style={{
-            marginBottom: 14, padding: "10px 12px", background: T.goldTint,
-            border: `1px solid ${T.gold}`, borderRadius: 8,
-            fontSize: 12, color: T.ink, display: "flex", alignItems: "flex-start", gap: 8,
+            marginBottom: 14, padding: "10px 12px", background: K.accentTint,
+            border: `1px solid ${K.accent}`, borderRadius: 8,
+            fontSize: 12, color: K.ink, display: "flex", alignItems: "flex-start", gap: 8,
           }}>
             <span style={{ fontSize: 14, flexShrink: 0 }}>⚠</span>
             <span>
@@ -296,7 +296,7 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
             shows there are more Channels (the end padding lets the last tab clear the fade). */}
         <div className="aa511-slate-tabstrip" style={{
           display: "flex", gap: 4, alignItems: "center", overflowX: "auto", flexWrap: "nowrap",
-          borderBottom: `1px solid ${T.line2}`, paddingBottom: 2, paddingRight: tabs.length > 1 ? 28 : 0,
+          borderBottom: `1px solid ${K.line2}`, paddingBottom: 2, paddingRight: tabs.length > 1 ? 28 : 0,
           ...(tabs.length > 1 ? TABSTRIP_FADE : {}),
         }}>
           {tabs.map(({ key, label, group }, i) => {
@@ -307,7 +307,7 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
             return (
               <div key={key} style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
                 {showDivider && (
-                  <div aria-hidden style={{ width: 1, height: 20, background: T.line2, margin: "0 6px", flexShrink: 0 }} />
+                  <div aria-hidden style={{ width: 1, height: 20, background: K.line2, margin: "0 6px", flexShrink: 0 }} />
                 )}
                 <button
                   onClick={() => setActiveChannel(key)}
@@ -316,13 +316,13 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
                     display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap", flexShrink: 0,
                     padding: "7px 12px", borderRadius: "8px 8px 0 0", cursor: "pointer",
                     fontFamily: sans, fontSize: 12.5, fontWeight: isActive ? 700 : 500,
-                    color: isActive ? T.ink : T.muted,
-                    background: isActive ? T.bg : "transparent",
-                    border: "none", borderBottom: isActive ? `2px solid ${T.gold}` : "2px solid transparent",
+                    color: isActive ? K.ink : K.muted,
+                    background: isActive ? K.bg : "transparent",
+                    border: "none", borderBottom: isActive ? `2px solid ${K.accent}` : "2px solid transparent",
                   }}
                 >
                   <Icon size={11} style={{ opacity: 0.55, flexShrink: 0 }} />
-                  {label}{count != null && <span style={{ marginLeft: 2, fontFamily: mono, fontSize: 10.5, color: T.muted2 }}>{count}</span>}
+                  {label}{count != null && <span style={{ marginLeft: 2, fontFamily: mono, fontSize: 10.5, color: K.muted2 }}>{count}</span>}
                 </button>
               </div>
             );
@@ -334,7 +334,7 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
       {loading && <SkeletonPanel />}
 
       {error && !loading && (
-        <EmptyState icon={<AlertTriangle size={32} strokeWidth={1.5} color={T.gold} />} title={"Couldn’t load the topics"} sub={error}
+        <EmptyState icon={<AlertTriangle size={32} strokeWidth={1.5} color={K.accent} />} title={"Couldn’t load the topics"} sub={error}
           action={<Btn variant="secondary" onClick={load}>Try again</Btn>} />
       )}
 
@@ -363,7 +363,7 @@ function SkeletonBlock({ width, height = 12 }: { width: string; height?: number 
   return (
     <div style={{
       width, height, borderRadius: 5, flexShrink: 0,
-      background: `linear-gradient(90deg, ${T.line} 25%, ${T.line2} 50%, ${T.line} 75%)`,
+      background: `linear-gradient(90deg, ${K.line} 25%, ${K.line2} 50%, ${K.line} 75%)`,
       backgroundSize: "200% 100%", animation: "aa511SlateShimmer 1.5s infinite",
     }} />
   );
@@ -373,7 +373,7 @@ function SkeletonRow() {
   return (
     <div style={{
       display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-      padding: "12px 14px", borderRadius: 10, border: `1px solid ${T.line}`, background: T.card,
+      padding: "12px 14px", borderRadius: 10, border: `1px solid ${K.line}`, background: K.card,
     }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
         <SkeletonBlock width="55%" height={14} />
@@ -408,10 +408,10 @@ function ChannelPanel({ channel, postsPerWeek, onPicked, writer }: {
     <div>
       {/* AA-760 — a Channel that never had a topic shows the empty state alone (no "0 topics ready"). */}
       {!never && (
-        <div style={{ fontSize: 12, color: T.muted, marginBottom: 14 }}>
-          <strong style={{ color: T.ink, fontFamily: mono }}>{channel.eligible_count}</strong> topic{channel.eligible_count === 1 ? "" : "s"} ready
+        <div style={{ fontSize: 12, color: K.muted, marginBottom: 14 }}>
+          <strong style={{ color: K.ink, fontFamily: mono }}>{channel.eligible_count}</strong> topic{channel.eligible_count === 1 ? "" : "s"} ready
           {!channel.on_demand && (
-            <> · plan: <strong style={{ color: T.ink, fontFamily: mono }}>{postsPerWeek}</strong> posts/week</>
+            <> · plan: <strong style={{ color: K.ink, fontFamily: mono }}>{postsPerWeek}</strong> posts/week</>
           )}
           {channel.on_demand && <> · written on demand</>}
         </div>
@@ -420,7 +420,7 @@ function ChannelPanel({ channel, postsPerWeek, onPicked, writer }: {
       {never ? (
         // Never had any Subject at all. AA-760 — tenant words: no "atomize / rank / bar" (steps the
         // tenant cannot run), and a way forward they can take (Update topics sits in the bar above).
-        <EmptyState icon={<ClipboardList size={32} strokeWidth={1.5} color={T.gold} />} title="Nothing here yet"
+        <EmptyState icon={<ClipboardList size={32} strokeWidth={1.5} color={K.accent} />} title="Nothing here yet"
           sub="We add topics here as your tours are written and updated. Rewrite a tour from the Marketplace, or press Update topics."
           action={<CtaLink href="/portal/tours">Browse tours</CtaLink>} />
       ) : proposed.length === 0 ? (
@@ -428,7 +428,7 @@ function ChannelPanel({ channel, postsPerWeek, onPicked, writer }: {
         // to pick right now. Conflating this with the "never had any Subject" case above was the
         // reported gap — a tenant seeing a bare gap above "Already decided" with no explanation.
         <>
-          <EmptyState icon={<CheckCircle2 size={32} strokeWidth={1.5} color={T.gold} />} title="No new topics right now"
+          <EmptyState icon={<CheckCircle2 size={32} strokeWidth={1.5} color={K.accent} />} title="No new topics right now"
             sub="We add new ones as your tours are updated. Meanwhile, reuse a topic below or press Update topics." />
           <DecidedList subjects={decided} onPicked={onPicked} writer={writer} />
         </>
@@ -449,7 +449,7 @@ function DecidedList({ subjects, onPicked, writer }: {
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: T.muted2, margin: "10px 0 2px" }}>
+      <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: K.muted2, margin: "10px 0 2px" }}>
         Already decided
       </div>
       {subjects.map(s => (
@@ -565,7 +565,7 @@ function SubjectRow({ subject, onPicked, writer }: {
 
   return (
     <div style={{
-      borderRadius: 10, border: `1px solid ${isExpanded ? T.gold : T.line}`, background: T.card,
+      borderRadius: 10, border: `1px solid ${isExpanded ? K.accent : K.line}`, background: K.card,
       overflow: "hidden",
     }}>
       {/* AA-760 — wraps: the title keeps at least 260 px, so on a phone the buttons drop to their own
@@ -576,14 +576,14 @@ function SubjectRow({ subject, onPicked, writer }: {
       }}>
         <div style={{ flex: "1 1 260px", minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: demand ? 4 : 0, flexWrap: "wrap" }}>
-            <span style={{ fontFamily: serif, fontSize: 14.5, fontWeight: 500, color: T.ink, overflowWrap: "anywhere", minWidth: 0 }}>{title}</span>
+            <span style={{ fontFamily: serif, fontSize: 14.5, fontWeight: 500, color: K.ink, overflowWrap: "anywhere", minWidth: 0 }}>{title}</span>
             {subject.state !== "proposed" && <Badge variant={stateVariant}>{DECIDED_LABEL[subject.state]}</Badge>}
           </div>
-          {demand && <div style={{ fontSize: 11.5, color: T.muted, lineHeight: 1.5 }}>{demand}</div>}
+          {demand && <div style={{ fontSize: 11.5, color: K.muted, lineHeight: 1.5 }}>{demand}</div>}
           {pickError && (
             <div style={{
-              marginTop: 6, padding: "6px 8px", background: T.redSoft, border: `1px solid ${T.redBorder}`,
-              borderRadius: 6, fontSize: 11, color: T.red, display: "flex", alignItems: "center", gap: 8,
+              marginTop: 6, padding: "6px 8px", background: K.dangerSoft, border: `1px solid ${K.dangerBorder}`,
+              borderRadius: 6, fontSize: 11, color: K.danger, display: "flex", alignItems: "center", gap: 8,
             }}>
               <span>{pickError}</span>
               {/* Manual, explicit refresh — never automatic (FE audit #2) — so the tenant can
@@ -591,7 +591,7 @@ function SubjectRow({ subject, onPicked, writer }: {
                   have shown this same error next to a row that actually succeeded. */}
               <button onClick={onPicked} style={{
                 background: "none", border: "none", padding: 0, cursor: "pointer",
-                color: T.red, fontFamily: sans, fontSize: 11, fontWeight: 700, textDecoration: "underline",
+                color: K.danger, fontFamily: sans, fontSize: 11, fontWeight: 700, textDecoration: "underline",
                 flexShrink: 0,
               }}>
                 Refresh
@@ -602,13 +602,13 @@ function SubjectRow({ subject, onPicked, writer }: {
               onPicked() itself, same FE-audit-#2 "only a confirmed success refetches" rule). */}
           {cutError && (
             <div style={{
-              marginTop: 6, padding: "6px 8px", background: T.redSoft, border: `1px solid ${T.redBorder}`,
-              borderRadius: 6, fontSize: 11, color: T.red, display: "flex", alignItems: "center", gap: 8,
+              marginTop: 6, padding: "6px 8px", background: K.dangerSoft, border: `1px solid ${K.dangerBorder}`,
+              borderRadius: 6, fontSize: 11, color: K.danger, display: "flex", alignItems: "center", gap: 8,
             }}>
               <span>{cutError}</span>
               <button onClick={onPicked} style={{
                 background: "none", border: "none", padding: 0, cursor: "pointer",
-                color: T.red, fontFamily: sans, fontSize: 11, fontWeight: 700, textDecoration: "underline",
+                color: K.danger, fontFamily: sans, fontSize: 11, fontWeight: 700, textDecoration: "underline",
                 flexShrink: 0,
               }}>
                 Refresh

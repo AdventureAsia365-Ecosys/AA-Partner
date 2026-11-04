@@ -18,15 +18,9 @@ import Link from "next/link";
 import { Download } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
-import { T, sans, Btn, CtaLink, parseContent } from "./ui";
-import {
-  AiNotice,
-  type ColumnDef,
-  DataTable,
-  Drawer,
-  ToastProvider,
-  useToast,
-} from "@/app/_kit";
+import { Btn, CtaLink } from "./ui";
+import { parseContent } from "@/lib/studio/format";
+import { AiNotice, type ColumnDef, DataTable, Drawer, ToastProvider, useToast, K, sans } from "@/app/_kit";
 import { CatalogDrawer } from "./CatalogDrawer";
 import { TourRewritePanel, watchTourRewrite, type TourRewriteTarget } from "./TourRewritePanel";
 import { WorkStatusBadge, activePollInterval, latestVersionByTour, tourWorkStatus } from "./workStatus";
@@ -282,13 +276,13 @@ function CatalogInner() {
           const v = c.row.original;
           return (
             <div>
-              <div style={{ fontWeight: 600, color: T.ink }}>{v.aa_name || "Tour"}</div>
+              <div style={{ fontWeight: 600, color: K.ink }}>{v.aa_name || "Tour"}</div>
               {/* AA-986 L3: persistent badge when AA no longer serves (or has paused) the tour */}
               {v.served_notice && <div style={{ marginTop: 4 }}><ServedBadge fields={v} /></div>}
               {/* AA-990: AA updated the tour after this version; the drawer says it in full, nothing is changed */}
               {showMasterNotice(v) && <div style={{ marginTop: 4 }}><MasterNewerBadge version={v} /></div>}
               {v.aa_subtitle && (
-                <div style={{ fontWeight: 400, fontSize: 11.5, color: T.muted, marginTop: 2 }}>{v.aa_subtitle}</div>
+                <div style={{ fontWeight: 400, fontSize: 11.5, color: K.muted, marginTop: 2 }}>{v.aa_subtitle}</div>
               )}
             </div>
           );
@@ -297,7 +291,7 @@ function CatalogInner() {
       {
         accessorKey: "country",
         header: "Country",
-        cell: (c) => <span style={{ color: T.body }}>{c.row.original.country || "—"}</span>,
+        cell: (c) => <span style={{ color: K.body }}>{c.row.original.country || "—"}</span>,
       },
       {
         id: "state",
@@ -348,26 +342,26 @@ function CatalogInner() {
             padding: "9px 14px",
             marginBottom: 12,
             borderRadius: 8,
-            background: T.goldTint,
-            border: `1px solid ${T.goldSoft}`,
+            background: K.accentTint,
+            border: `1px solid ${K.accentSoft}`,
             fontFamily: sans,
           }}
         >
-          <span style={{ fontSize: 12, color: T.amber }}>
+          <span style={{ fontSize: 12, color: K.amber }}>
             Showing versions for: <strong>{visible[0]?.aa_name ?? "this tour"}</strong>
           </span>
-          <Link href="/portal/tours/mine" style={{ fontSize: 12, color: T.amber, fontWeight: 600, textDecoration: "none" }}>
+          <Link href="/portal/tours/mine" style={{ fontSize: 12, color: K.amber, fontWeight: 600, textDecoration: "none" }}>
             Clear filter ×
           </Link>
         </div>
       )}
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-        <span style={{ fontSize: 15, fontWeight: 700, color: T.ink, fontFamily: sans }}>Your tours</span>
+        <span style={{ fontSize: 15, fontWeight: 700, color: K.ink, fontFamily: sans }}>Your tours</span>
         {/* AA-760 — no count until the versions load ("0 tours" read as "you have no tours"). */}
         {/* AA-760 — and none when there is nothing yet (the empty state below says so). */}
         {!isLoading && grouped.length > 0 && (
-          <span style={{ fontSize: 12, color: T.muted2 }}>
+          <span style={{ fontSize: 12, color: K.muted2 }}>
             {visible.length < grouped.length ? `${visible.length} of ${grouped.length}` : `${grouped.length}`} {grouped.length === 1 ? "tour" : "tours"}
           </span>
         )}

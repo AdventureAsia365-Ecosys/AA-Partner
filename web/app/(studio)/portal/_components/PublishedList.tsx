@@ -12,21 +12,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Undo2 } from "lucide-react";
 import { useMemo, useState } from "react";
-import {
-  AiNotice,
-  ApiError,
-  Badge,
-  ConfirmModal,
-  type ColumnDef,
-  DataTable,
-  StatusBadge,
-  ToastProvider,
-  apiGet,
-  apiSend,
-  formatDate,
-  useToast,
-} from "@/app/_kit";
-import { T, sans, Card, CardHead } from "./ui";
+import { AiNotice, ApiError, Badge, ConfirmModal, type ColumnDef, DataTable, StatusBadge, ToastProvider, apiGet, apiSend, formatDate, useToast, K, sans } from "@/app/_kit";
+import { Card, CardHead } from "./ui";
 import { ServedBadge, afterUnpublishSentence, type ServedFields } from "./ServedBadge";
 
 export interface PublishedRow extends ServedFields {
@@ -95,10 +82,10 @@ function PublishedListInner({ onUnpublished }: { onUnpublished?: () => void }) {
           const r = c.row.original;
           return (
             <div>
-              <span style={{ fontWeight: 600, color: T.ink }}>{r.title}</span>
+              <span style={{ fontWeight: 600, color: K.ink }}>{r.title}</span>
               {r.served_notice && <div style={{ marginTop: 4 }}><ServedBadge fields={r} /></div>}
               {r.live_post_of_discontinued_tour && (
-                <div style={{ marginTop: 4, fontSize: 11.5, color: T.red, fontWeight: 600 }}>
+                <div style={{ marginTop: 4, fontSize: 11.5, color: K.danger, fontWeight: 600 }}>
                   Tour discontinued: remove or edit this post
                 </div>
               )}
@@ -131,7 +118,7 @@ function PublishedListInner({ onUnpublished }: { onUnpublished?: () => void }) {
         cell: (c) => {
           const r = c.row.original;
           return (
-            <span style={{ color: T.muted, fontSize: 12 }}>
+            <span style={{ color: K.muted, fontSize: 12 }}>
               {r.status === "unpublished" ? `Removed ${fmtDate(r.unpublished_at)}` : fmtDate(r.published_at)}
             </span>
           );
@@ -191,12 +178,12 @@ function PublishedListInner({ onUnpublished }: { onUnpublished?: () => void }) {
         title="Unpublish this post?"
         confirmLabel={unpublishM.isPending ? "Removing…" : "Unpublish"}
         body={confirmRow ? (
-          <div style={{ fontSize: 13, lineHeight: 1.6, color: T.body }}>
+          <div style={{ fontSize: 13, lineHeight: 1.6, color: K.body }}>
             <p style={{ margin: "0 0 10px" }}>
               <strong>{confirmRow.title}</strong> will be removed from {channelName(confirmRow.channel)}
               {confirmRow.channel === "blog" ? " (moved to your WordPress trash)" : ""}.
             </p>
-            <p style={{ margin: 0, color: T.muted }}>
+            <p style={{ margin: 0, color: K.muted }}>
               {afterUnpublishSentence(confirmRow)}
             </p>
           </div>
@@ -208,12 +195,12 @@ function PublishedListInner({ onUnpublished }: { onUnpublished?: () => void }) {
 
 const linkStyle: React.CSSProperties = {
   display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 600,
-  color: T.ink3, textDecoration: "none", fontFamily: sans, whiteSpace: "nowrap",
+  color: K.ink3, textDecoration: "none", fontFamily: sans, whiteSpace: "nowrap",
 };
 
 const unpublishBtn: React.CSSProperties = {
   display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 12px", borderRadius: 999,
-  border: `1px solid ${T.redBorder}`, background: T.redSoft, color: T.red, fontSize: 11,
+  border: `1px solid ${K.dangerBorder}`, background: K.dangerSoft, color: K.danger, fontSize: 11,
   fontWeight: 600, cursor: "pointer", fontFamily: sans, whiteSpace: "nowrap",
 };
 

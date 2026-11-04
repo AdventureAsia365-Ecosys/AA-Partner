@@ -21,7 +21,8 @@ import Link from "next/link";
 import { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, XCircle, Loader2, ArrowRight } from "lucide-react";
-import { T, Card, CardHead, Btn, mono } from "./ui";
+import { K, mono } from "@/app/_kit";
+import { Card, CardHead, Btn } from "./ui";
 import { fmtDateTime, inputStyle, labelStyle } from "./WordPressConnect";
 import { DisconnectConnection } from "./DisconnectConnection";
 
@@ -34,8 +35,8 @@ export const FACEBOOK_GUIDE_HREF = "/portal/help/facebook";
 export const FACEBOOK_PERMISSIONS = ["pages_show_list", "pages_read_engagement", "pages_manage_posts"] as const;
 
 const permStyle: React.CSSProperties = {
-  fontFamily: mono, fontSize: 11.5, color: T.ink3, background: T.bg,
-  border: `1px solid ${T.line}`, borderRadius: 4, padding: "0 5px", whiteSpace: "nowrap",
+  fontFamily: mono, fontSize: 11.5, color: K.ink3, background: K.bg,
+  border: `1px solid ${K.line}`, borderRadius: 4, padding: "0 5px", whiteSpace: "nowrap",
 };
 
 /** The three permission names as "a, b and c", one inline chip each. */
@@ -128,28 +129,28 @@ export function FacebookConnectForm({ onConnected }: { onConnected?: () => void 
       {/* AA-831 — all three permissions, the Live-mode requirement and where each value comes
           from. The names render as separate inline chips with explicit {" "}/{", "} separators:
           the old single <code> run read "pages_manage_postspermission" in the S237 UI check. */}
-      <div style={{ fontSize: 13, color: T.muted, marginTop: -8, marginBottom: 18, lineHeight: 1.6 }}>
+      <div style={{ fontSize: 13, color: K.muted, marginTop: -8, marginBottom: 18, lineHeight: 1.6 }}>
         <p style={{ margin: "0 0 8px" }}>
           Publish posts to your own Facebook Page. You need two things from Meta:
         </p>
         <ul style={{ margin: "0 0 8px", paddingLeft: 18 }}>
           <li style={{ marginBottom: 4 }}>
-            <strong style={{ color: T.ink3 }}>Page ID</strong>{" "}
+            <strong style={{ color: K.ink3 }}>Page ID</strong>{" "}
             — the number under your Page&rsquo;s About &rarr; Page transparency.
           </li>
           <li>
-            <strong style={{ color: T.ink3 }}>Page Access Token</strong>{" "}
+            <strong style={{ color: K.ink3 }}>Page Access Token</strong>{" "}
             — a long-lived Page token with the permissions{" "}
             <PermissionList />.
           </li>
         </ul>
         <p style={{ margin: "0 0 8px" }}>
-          Your Meta app must be in <strong style={{ color: T.ink3 }}>Live</strong> mode. While
+          Your Meta app must be in <strong style={{ color: K.ink3 }}>Live</strong> mode. While
           it is in Development mode, only you can see the posts.
         </p>
         <Link href={FACEBOOK_GUIDE_HREF} style={{
           display: "inline-flex", alignItems: "center", gap: 5, fontWeight: 600,
-          color: T.goldDeep, textDecoration: "none",
+          color: K.accentDeep, textDecoration: "none",
         }}>
           Step-by-step guide <ArrowRight size={13} />
         </Link>
@@ -170,7 +171,7 @@ export function FacebookConnectForm({ onConnected }: { onConnected?: () => void 
       {error && (
         <div style={{
           display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", marginBottom: 14,
-          borderRadius: 8, background: T.redSoft, color: T.red, fontSize: 12.5, lineHeight: 1.5,
+          borderRadius: 8, background: K.dangerSoft, color: K.danger, fontSize: 12.5, lineHeight: 1.5,
         }}>
           <XCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
           <span>{error}</span>
@@ -179,7 +180,7 @@ export function FacebookConnectForm({ onConnected }: { onConnected?: () => void 
       {success && (
         <div style={{
           display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", marginBottom: 14,
-          borderRadius: 8, background: T.greenSoft, color: T.green, fontSize: 12.5,
+          borderRadius: 8, background: K.successSoft, color: K.success, fontSize: 12.5,
         }}>
           <CheckCircle2 size={15} /> Connected — Facebook Page verified successfully.
         </div>
@@ -221,19 +222,19 @@ export function FacebookStatusCard({ status, onRetest, onDisconnected }: {
         </Btn>
       } />
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-        {verified ? <CheckCircle2 size={16} color={T.green} /> : <XCircle size={16} color={T.amber} />}
-        <span style={{ fontSize: 14, fontWeight: 600, color: T.ink }}>
+        {verified ? <CheckCircle2 size={16} color={K.success} /> : <XCircle size={16} color={K.amber} />}
+        <span style={{ fontSize: 14, fontWeight: 600, color: K.ink }}>
           Page {status.page_id}
         </span>
       </div>
-      <div style={{ fontSize: 12.5, color: T.muted, lineHeight: 1.9 }}>
+      <div style={{ fontSize: 12.5, color: K.muted, lineHeight: 1.9 }}>
         <div>Connected: {fmtDateTime(status.connected_at)}</div>
         <div>Last verified: {fmtDateTime(status.last_verified_at)}</div>
       </div>
       {status.last_verify_error && (
         <div style={{
           display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", marginTop: 12,
-          borderRadius: 8, background: T.redSoft, color: T.red, fontSize: 12.5, lineHeight: 1.5,
+          borderRadius: 8, background: K.dangerSoft, color: K.danger, fontSize: 12.5, lineHeight: 1.5,
         }}>
           <XCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
           <span>{status.last_verify_error}</span>

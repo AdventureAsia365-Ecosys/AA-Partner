@@ -6,8 +6,7 @@
 // the connection row and wipes the saved credentials. Published posts stay on the channel.
 
 import { useState } from "react";
-import { ConfirmModal } from "@/app/_kit";
-import { T, sans } from "./ui";
+import { ConfirmModal, K, sans } from "@/app/_kit";
 
 export function DisconnectConnection({ integration, label, onDisconnected }: {
   integration: "wordpress" | "facebook";
@@ -43,7 +42,7 @@ export function DisconnectConnection({ integration, label, onDisconnected }: {
         onClick={() => { setError(null); setOpen(true); }}
         style={{
           alignSelf: "flex-start", background: "none", border: "none", cursor: "pointer",
-          fontSize: 12.5, fontWeight: 600, color: T.red, textDecoration: "underline",
+          fontSize: 12.5, fontWeight: 600, color: K.danger, textDecoration: "underline",
           fontFamily: sans, padding: 0,
         }}
       >
@@ -58,15 +57,15 @@ export function DisconnectConnection({ integration, label, onDisconnected }: {
         title={`Disconnect ${label}?`}
         confirmLabel={busy ? "Disconnecting…" : "Disconnect"}
         body={
-          <div style={{ fontSize: 13, lineHeight: 1.6, color: T.body }}>
+          <div style={{ fontSize: 13, lineHeight: 1.6, color: K.body }}>
             <p style={{ margin: "0 0 10px" }}>
               Your saved {label} credentials will be removed. You won&rsquo;t be able to publish to
               or unpublish from {label} until you connect it again.
             </p>
-            <p style={{ margin: 0, color: T.muted }}>
+            <p style={{ margin: 0, color: K.muted }}>
               Posts already published stay live on {label}. Unpublish them first if you want them removed.
             </p>
-            {error && <p style={{ margin: "10px 0 0", color: T.red }}>{error}</p>}
+            {error && <p style={{ margin: "10px 0 0", color: K.danger }}>{error}</p>}
           </div>
         }
       />

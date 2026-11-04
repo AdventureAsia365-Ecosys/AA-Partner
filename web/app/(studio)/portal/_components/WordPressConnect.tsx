@@ -18,9 +18,9 @@
 import { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
-import { T, sans, Card, CardHead, Btn } from "./ui";
+import { Card, CardHead, Btn } from "./ui";
 import { DisconnectConnection } from "./DisconnectConnection";
-import { formatDateTime } from "@/app/_kit";
+import { formatDateTime, K, sans } from "@/app/_kit";
 
 export interface WordPressStatus {
   connected: boolean;
@@ -48,14 +48,14 @@ export function fmtDateTime(iso: string | null): string {
 }
 
 export const inputStyle: React.CSSProperties = {
-  width: "100%", padding: "9px 12px", background: T.bg, border: `1px solid ${T.line}`,
-  borderRadius: 8, color: T.body, fontSize: 13, outline: "none", fontFamily: sans,
+  width: "100%", padding: "9px 12px", background: K.bg, border: `1px solid ${K.line}`,
+  borderRadius: 8, color: K.body, fontSize: 13, outline: "none", fontFamily: sans,
   boxSizing: "border-box",
 };
 
 export const labelStyle: React.CSSProperties = {
   display: "block", fontSize: 11, fontWeight: 600, textTransform: "uppercase",
-  letterSpacing: "0.1em", color: T.muted, marginBottom: 6,
+  letterSpacing: "0.1em", color: K.muted, marginBottom: 6,
 };
 
 /** The connect / change-credentials form. Save then test run sequentially — a saved credential
@@ -114,7 +114,7 @@ export function WordPressConnectForm({ onConnected }: { onConnected?: () => void
   return (
     <Card>
       <CardHead title="Connect WordPress" />
-      <p style={{ fontSize: 13, color: T.muted, marginTop: -8, marginBottom: 18, lineHeight: 1.5 }}>
+      <p style={{ fontSize: 13, color: K.muted, marginTop: -8, marginBottom: 18, lineHeight: 1.5 }}>
         Publishing writes directly to your own WordPress site. You&rsquo;ll need your site URL and
         a WordPress <strong>Application Password</strong> — generate one under
         Users&nbsp;→ Profile&nbsp;→ Application Passwords in your WordPress admin.
@@ -141,7 +141,7 @@ export function WordPressConnectForm({ onConnected }: { onConnected?: () => void
       {error && (
         <div style={{
           display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", marginBottom: 14,
-          borderRadius: 8, background: T.redSoft, color: T.red, fontSize: 12.5, lineHeight: 1.5,
+          borderRadius: 8, background: K.dangerSoft, color: K.danger, fontSize: 12.5, lineHeight: 1.5,
         }}>
           <XCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
           <span>{error}</span>
@@ -150,7 +150,7 @@ export function WordPressConnectForm({ onConnected }: { onConnected?: () => void
       {success && (
         <div style={{
           display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", marginBottom: 14,
-          borderRadius: 8, background: T.greenSoft, color: T.green, fontSize: 12.5,
+          borderRadius: 8, background: K.successSoft, color: K.success, fontSize: 12.5,
         }}>
           <CheckCircle2 size={15} /> Connected — WordPress verified successfully.
         </div>
@@ -195,19 +195,19 @@ export function WordPressStatusCard({ status, onRetest, onDisconnected }: {
         </Btn>
       } />
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-        {verified ? <CheckCircle2 size={16} color={T.green} /> : <XCircle size={16} color={T.amber} />}
-        <span style={{ fontSize: 14, fontWeight: 600, color: T.ink }}>
+        {verified ? <CheckCircle2 size={16} color={K.success} /> : <XCircle size={16} color={K.amber} />}
+        <span style={{ fontSize: 14, fontWeight: 600, color: K.ink }}>
           {status.site_url}
         </span>
       </div>
-      <div style={{ fontSize: 12.5, color: T.muted, lineHeight: 1.9 }}>
+      <div style={{ fontSize: 12.5, color: K.muted, lineHeight: 1.9 }}>
         <div>Connected: {fmtDateTime(status.connected_at)}</div>
         <div>Last verified: {fmtDateTime(status.last_verified_at)}</div>
       </div>
       {status.last_verify_error && (
         <div style={{
           display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", marginTop: 12,
-          borderRadius: 8, background: T.redSoft, color: T.red, fontSize: 12.5, lineHeight: 1.5,
+          borderRadius: 8, background: K.dangerSoft, color: K.danger, fontSize: 12.5, lineHeight: 1.5,
         }}>
           <XCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
           <span>{status.last_verify_error}</span>

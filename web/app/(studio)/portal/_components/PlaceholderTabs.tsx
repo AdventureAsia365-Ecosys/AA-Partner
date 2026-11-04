@@ -14,10 +14,9 @@ import { useState } from "react";
 import { signOutEverywhere } from "@/lib/studio/signOut";
 import { useQuery } from "@tanstack/react-query";
 import { Check, Mail, ExternalLink, LogOut, AlertTriangle, FileText } from "lucide-react";
-import {
-  EmptyState as KitEmptyState, Modal, SkeletonBar, SkeletonStyle, SITE_URL, SUPPORT_EMAIL, apiGet,
-} from "@/app/_kit";
-import { T, sans, Card, CardSkeleton, PageHeader, Btn, ProgressBar, fmtBillingMonth } from "./ui";
+import { EmptyState as KitEmptyState, Modal, SkeletonBar, SkeletonStyle, SITE_URL, SUPPORT_EMAIL, apiGet, K, sans } from "@/app/_kit";
+import { T, Card, CardSkeleton, PageHeader, Btn, ProgressBar } from "./ui";
+import { fmtBillingMonth } from "@/lib/studio/format";
 import { usePortalShell, type ShellBilling } from "./PortalShellContext";
 import { fmtDay, fmtUsd, usageMeter, type Quota } from "@/lib/studio/account";
 import { signedInText } from "@/lib/studio/crmIdentity";
@@ -31,8 +30,8 @@ const titleCase = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s
 function LoadError({ what, onRetry }: { what: string; onRetry: () => void }) {
   return (
     <Card>
-      <div role="alert" style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", fontSize: 13, color: T.ink }}>
-        <AlertTriangle size={16} color={T.red} style={{ flexShrink: 0 }} />
+      <div role="alert" style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", fontSize: 13, color: K.ink }}>
+        <AlertTriangle size={16} color={K.danger} style={{ flexShrink: 0 }} />
         <span style={{ flex: 1, minWidth: 180 }}>Couldn&rsquo;t load {what}. Check your connection and try again.</span>
         <Btn size="sm" onClick={onRetry} style={{ whiteSpace: "nowrap" }}>Try again</Btn>
       </div>
@@ -49,19 +48,19 @@ function ContactModal({ heading, body, subject, onClose }: {
   return (
     <Modal open onClose={onClose} title={heading} width={460}
       footer={<Btn size="sm" variant="ghost" onClick={onClose}>Close</Btn>}>
-      <p style={{ fontSize: 13, color: T.muted, lineHeight: 1.6, margin: "0 0 18px" }}>{body}</p>
-      <div style={{ padding: "12px 14px", background: T.bg, border: `1px solid ${T.line}`, borderRadius: 10, marginBottom: 16 }}>
-        <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.12em", color: T.muted, fontWeight: 600, marginBottom: 4 }}>Contact Adventure Asia</div>
-        <div style={{ fontSize: 14, fontWeight: 600, color: T.ink, userSelect: "all" }}>{SUPPORT_EMAIL}</div>
-        <div style={{ fontSize: 11.5, color: T.muted2, marginTop: 4 }}>Subject: {subject}</div>
+      <p style={{ fontSize: 13, color: K.muted, lineHeight: 1.6, margin: "0 0 18px" }}>{body}</p>
+      <div style={{ padding: "12px 14px", background: K.bg, border: `1px solid ${K.line}`, borderRadius: 10, marginBottom: 16 }}>
+        <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.12em", color: K.muted, fontWeight: 600, marginBottom: 4 }}>Contact Adventure Asia</div>
+        <div style={{ fontSize: 14, fontWeight: 600, color: K.ink, userSelect: "all" }}>{SUPPORT_EMAIL}</div>
+        <div style={{ fontSize: 11.5, color: K.muted2, marginTop: 4 }}>Subject: {subject}</div>
       </div>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <a href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}`}
-          style={{ flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "11px 18px", background: T.gold, color: T.ink, borderRadius: 999, fontSize: 13, fontWeight: 700, textDecoration: "none", minWidth: 160 }}>
+          style={{ flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "11px 18px", background: K.accent, color: K.ink, borderRadius: 999, fontSize: 13, fontWeight: 700, textDecoration: "none", minWidth: 160 }}>
           <Mail size={15} /> Email us
         </a>
         <a href={SITE_URL} target="_blank" rel="noreferrer"
-          style={{ flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "10px 18px", background: T.card, border: `1px solid ${T.line}`, color: T.ink3, borderRadius: 999, fontSize: 13, fontWeight: 500, textDecoration: "none", minWidth: 160 }}>
+          style={{ flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "10px 18px", background: K.card, border: `1px solid ${K.line}`, color: K.ink3, borderRadius: 999, fontSize: 13, fontWeight: 500, textDecoration: "none", minWidth: 160 }}>
           adventure.asia <ExternalLink size={13} />
         </a>
       </div>
@@ -159,21 +158,21 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
 
       {/* This period */}
       <Card style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted, marginBottom: 16 }}>This period — {month}</div>
+        <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: K.muted, marginBottom: 16 }}>This period — {month}</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 16 }}>
           {[
             { l: "API calls",       v: `${apiUsed.toLocaleString()} / ${fmtQuota(apiTotal)}`,     sub: `${pct(apiUsed, apiTotal).toFixed(0)}% used` },
             { l: "Amount due so far", v: noPlan ? "—" : `$${(price + overage).toLocaleString(undefined, { maximumFractionDigits: 2 })}`, sub: noPlan ? "No plan attached" : overage > 0 ? `Includes $${overage.toLocaleString()} overage` : "Plan fee, no overage" },
           ].map(({ l, v, sub }) => (
-            <div key={l} style={{ padding: "14px 16px", background: T.bg, borderRadius: 8, border: `1px solid ${T.line}` }}>
-              <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.1em", color: T.muted, fontWeight: 600, marginBottom: 6 }}>{l}</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: T.ink, fontVariantNumeric: "tabular-nums" }}>{v}</div>
-              <div style={{ fontSize: 11, color: T.muted2, marginTop: 4 }}>{sub}</div>
+            <div key={l} style={{ padding: "14px 16px", background: K.bg, borderRadius: 8, border: `1px solid ${K.line}` }}>
+              <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.1em", color: K.muted, fontWeight: 600, marginBottom: 6 }}>{l}</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: K.ink, fontVariantNumeric: "tabular-nums" }}>{v}</div>
+              <div style={{ fontSize: 11, color: K.muted2, marginTop: 4 }}>{sub}</div>
             </div>
           ))}
         </div>
         {/* AA-760 — what "API calls" counts (api/middleware/rate_limit.py): a portal session is not metered. */}
-        <p data-testid="billing-api-calls-note" style={{ fontSize: 11.5, color: T.muted, lineHeight: 1.5, margin: "14px 0 0" }}>
+        <p data-testid="billing-api-calls-note" style={{ fontSize: 11.5, color: K.muted, lineHeight: 1.5, margin: "14px 0 0" }}>
           API calls are requests made outside the Content studio. Using the Content studio is not counted; it does
           share your rate limit.
         </p>
@@ -181,14 +180,14 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
 
       {/* AA-761 — AA-issued invoices. CIS stores none yet (the billing provider is still open): the empty state. */}
       <Card style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted, marginBottom: 4 }}>Invoices</div>
+        <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: K.muted, marginBottom: 4 }}>Invoices</div>
         <div data-testid="billing-invoices">
           <KitEmptyState
             icon={<FileText size={28} />}
             title="No invoices yet"
             description="Invoices Adventure Asia issues to you will be listed here. For a copy of an earlier invoice, email us."
             action={<a href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(`Invoice copy — ${tenantName}`)}`}
-              style={{ fontSize: 12.5, fontWeight: 600, color: T.ink3 }}>Email Adventure Asia at {SUPPORT_EMAIL}</a>}
+              style={{ fontSize: 12.5, fontWeight: 600, color: K.ink3 }}>Email Adventure Asia at {SUPPORT_EMAIL}</a>}
           />
         </div>
       </Card>
@@ -196,24 +195,24 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
       {/* Plan comparison — from shared.membership_plans via /v1/billing */}
       {plans.length > 0 && (
         <Card>
-          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted, marginBottom: 16 }}>Compare plans</div>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: K.muted, marginBottom: 16 }}>Compare plans</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
             {plans.map(p => {
               const active = p.plan_name === plan;
               return (
-                <div key={p.plan_name} style={{ padding: 14, borderRadius: 10, border: `${active ? 2 : 1}px solid ${active ? T.gold : T.line}`, background: active ? T.goldTint : T.bg, display: "flex", flexDirection: "column" }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: active ? T.amber : T.ink, marginBottom: 4 }}>{titleCase(p.plan_name)}</div>
-                  <div style={{ fontSize: 20, fontWeight: 600, color: T.ink, marginBottom: 10, fontVariantNumeric: "tabular-nums" }}>
-                    {p.price_usd_monthly != null ? <>${p.price_usd_monthly.toLocaleString()}<span style={{ fontSize: 11, color: T.muted, fontWeight: 400 }}>/mo</span></> : "Custom"}
+                <div key={p.plan_name} style={{ padding: 14, borderRadius: 10, border: `${active ? 2 : 1}px solid ${active ? K.accent : K.line}`, background: active ? K.accentTint : K.bg, display: "flex", flexDirection: "column" }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: active ? K.amber : K.ink, marginBottom: 4 }}>{titleCase(p.plan_name)}</div>
+                  <div style={{ fontSize: 20, fontWeight: 600, color: K.ink, marginBottom: 10, fontVariantNumeric: "tabular-nums" }}>
+                    {p.price_usd_monthly != null ? <>${p.price_usd_monthly.toLocaleString()}<span style={{ fontSize: 11, color: K.muted, fontWeight: 400 }}>/mo</span></> : "Custom"}
                   </div>
                   {[`${fmtQuota(p.tours_quota_monthly)} rewrites / month`, `${fmtQuota(p.api_calls_quota_monthly)} API calls`, p.rate_limit_rpm ? `${p.rate_limit_rpm.toLocaleString()} RPM` : "Custom rate limit"].map(feat => (
-                    <div key={feat} style={{ fontSize: 11.5, color: T.muted, marginBottom: 4, display: "flex", gap: 6, alignItems: "center" }}>
-                      <Check size={12} color={T.green} style={{ flexShrink: 0 }} />{feat}
+                    <div key={feat} style={{ fontSize: 11.5, color: K.muted, marginBottom: 4, display: "flex", gap: 6, alignItems: "center" }}>
+                      <Check size={12} color={K.success} style={{ flexShrink: 0 }} />{feat}
                     </div>
                   ))}
                   <div style={{ marginTop: "auto", paddingTop: 10 }}>
                     {active
-                      ? <div style={{ fontSize: 11, fontWeight: 700, color: T.green, textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}><Check size={12} /> Current plan</div>
+                      ? <div style={{ fontSize: 11, fontWeight: 700, color: K.success, textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}><Check size={12} /> Current plan</div>
                       : <Btn size="sm" onClick={() => setContactPlan(p.plan_name)} style={{ width: "100%" }}>Switch</Btn>}
                   </div>
                 </div>
@@ -236,17 +235,17 @@ function UsageMeterCard({ quota, billing, loading, failed, onRetry, month }: {
   }
   const m = usageMeter(quota, billing);
   const limitText = m.state === "unlimited" ? "Unlimited" : m.quota == null ? "—" : m.quota.toLocaleString();
-  const tone = m.state === "over" ? T.red : m.state === "near" ? T.amber : T.green;
+  const tone = m.state === "over" ? K.danger : m.state === "near" ? K.amber : K.success;
   return (
     <Card style={{ marginBottom: 16 }}>
       <div data-testid="billing-usage-meter" data-state={m.state}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted }}>Rewrites — {month}</div>
-          <div style={{ fontSize: 12, color: T.muted }}>Resets {fmtDay(m.resetsAt)}</div>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: K.muted }}>Rewrites — {month}</div>
+          <div style={{ fontSize: 12, color: K.muted }}>Resets {fmtDay(m.resetsAt)}</div>
         </div>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
-          <span style={{ fontSize: 28, fontWeight: 700, color: T.ink, fontVariantNumeric: "tabular-nums" }}>{m.used.toLocaleString()}</span>
-          <span style={{ fontSize: 14, color: T.muted, fontVariantNumeric: "tabular-nums" }}>of {limitText} rewrites</span>
+          <span style={{ fontSize: 28, fontWeight: 700, color: K.ink, fontVariantNumeric: "tabular-nums" }}>{m.used.toLocaleString()}</span>
+          <span style={{ fontSize: 14, color: K.muted, fontVariantNumeric: "tabular-nums" }}>of {limitText} rewrites</span>
         </div>
         {(m.state === "ok" || m.state === "near" || m.state === "over") && (
           <div role="meter" aria-label="Rewrites used this period" aria-valuemin={0} aria-valuemax={m.quota ?? 0}
@@ -254,7 +253,7 @@ function UsageMeterCard({ quota, billing, loading, failed, onRetry, month }: {
             <ProgressBar pct={m.pct} warn={m.state !== "ok"} />
           </div>
         )}
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, fontSize: 12.5, color: T.body, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, fontSize: 12.5, color: K.body, flexWrap: "wrap" }}>
           <span style={{ width: 8, height: 8, borderRadius: 999, background: tone, flexShrink: 0 }} aria-hidden />
           {m.state === "no_plan" && <span>No plan attached: rewrites are not billed yet.</span>}
           {m.state === "unlimited" && <span>Your plan has no rewrite limit.</span>}
@@ -284,13 +283,13 @@ export function SettingsTab() {
 
   const row: React.CSSProperties = {
     display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
-    padding: "13px 0", borderBottom: `1px solid ${T.line2}`,
+    padding: "13px 0", borderBottom: `1px solid ${K.line2}`,
   };
   const last: React.CSSProperties = { ...row, borderBottom: "none" };
   const label = (t: string, sub?: React.ReactNode) => (
     <div style={{ minWidth: 0 }}>
-      <div style={{ fontSize: 13, fontWeight: 500, color: T.ink }}>{t}</div>
-      {sub && <div style={{ fontSize: 11.5, color: T.muted2, marginTop: 2 }}>{sub}</div>}
+      <div style={{ fontSize: 13, fontWeight: 500, color: K.ink }}>{t}</div>
+      {sub && <div style={{ fontSize: 11.5, color: K.muted2, marginTop: 2 }}>{sub}</div>}
     </div>
   );
 
@@ -316,10 +315,10 @@ export function SettingsTab() {
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <Card>
-          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted, marginBottom: 6 }}>Account</div>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: K.muted, marginBottom: 6 }}>Account</div>
           {signedIn && <div style={row} data-testid="settings-signed-in-as">{label("Signed in", signedIn)}</div>}
           <div style={row}>{label("Company", loadingMe ? skel(120) : tenantName)}</div>
-          <div style={row}>{label("Plan", loadingMe ? skel(70) : titleCase(planTier) || "No plan attached")}<Link href="/portal/account/billing" style={{ fontSize: 12, color: T.ink3, fontWeight: 500, textDecoration: "none" }}>View billing →</Link></div>
+          <div style={row}>{label("Plan", loadingMe ? skel(70) : titleCase(planTier) || "No plan attached")}<Link href="/portal/account/billing" style={{ fontSize: 12, color: K.ink3, fontWeight: 500, textDecoration: "none" }}>View billing →</Link></div>
           <div style={last}>
             {label("Need to change something?", "Company name or contacts")}
             <Btn size="sm" onClick={() => setContact(true)} style={{ whiteSpace: "nowrap", flexShrink: 0 }}><Mail size={13} /> Contact us</Btn>
@@ -327,7 +326,7 @@ export function SettingsTab() {
         </Card>
 
         <Card>
-          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted, marginBottom: 6 }}>Session</div>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: K.muted, marginBottom: 6 }}>Session</div>
           <div style={last}>
             {label("Sign out", "Ends your session on this browser.")}
             <Btn size="sm" variant="danger" onClick={signOut}><LogOut size={13} /> Sign out</Btn>

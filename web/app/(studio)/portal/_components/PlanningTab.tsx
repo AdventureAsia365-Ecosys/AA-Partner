@@ -32,7 +32,8 @@
 // (<SlateTab/> itself calls GET /v1/slate + POST /v1/subjects/{id}/pick — see that file.)
 
 import { useState, useCallback } from "react";
-import { T, mono, Card, CardHead, Badge, Btn } from "./ui";
+import { K, mono } from "@/app/_kit";
+import { Card, CardHead, Badge, Btn } from "./ui";
 // AA-511 — the Slate replaces SlotPickerPanel.tsx (Weekly Slots) on this render path. The old
 // component/file is deliberately left in place, unused, per the epic's own "giữ code cũ, chỉ
 // ngưng dùng, không xoá" rule — see docs/claude_audit/AA-511-step0-slate-investigation.md.
@@ -140,20 +141,20 @@ function ReallocationSection({ defaultYear, defaultQuarter }: { defaultYear: num
         action={<Btn variant="secondary" size="sm" onClick={loadSuggestion} disabled={loading}>
           {loading ? "Checking…" : "Check for a suggestion"}
         </Btn>} />
-      <p style={{ fontSize: 12.5, color: T.muted, lineHeight: 1.6, margin: "0 0 14px" }}>
+      <p style={{ fontSize: 12.5, color: K.muted, lineHeight: 1.6, margin: "0 0 14px" }}>
         Based on real feedback so far, here&rsquo;s what would change if you re-planned next quarter now —
         nothing changes until you approve it.
       </p>
       {suggestion && (
         <div>
           {suggestion.added.length === 0 && suggestion.removed.length === 0 ? (
-            <div style={{ fontSize: 12.5, color: T.muted }}>No change suggested — the plan stays the same.</div>
+            <div style={{ fontSize: 12.5, color: K.muted }}>No change suggested — the plan stays the same.</div>
           ) : (
             <>
               {suggestion.added.length > 0 && (
                 <div style={{ marginBottom: 8, fontSize: 12.5 }}>
                   <Badge variant="success">+{suggestion.added.length} add</Badge>
-                  <span style={{ marginLeft: 8, color: T.muted, fontFamily: mono, fontSize: 11 }}>
+                  <span style={{ marginLeft: 8, color: K.muted, fontFamily: mono, fontSize: 11 }}>
                     {suggestion.added.join(", ")}
                   </span>
                 </div>
@@ -161,7 +162,7 @@ function ReallocationSection({ defaultYear, defaultQuarter }: { defaultYear: num
               {suggestion.removed.length > 0 && (
                 <div style={{ marginBottom: 12, fontSize: 12.5 }}>
                   <Badge variant="error">−{suggestion.removed.length} remove</Badge>
-                  <span style={{ marginLeft: 8, color: T.muted, fontFamily: mono, fontSize: 11 }}>
+                  <span style={{ marginLeft: 8, color: K.muted, fontFamily: mono, fontSize: 11 }}>
                     {suggestion.removed.join(", ")}
                   </span>
                 </div>
@@ -174,7 +175,7 @@ function ReallocationSection({ defaultYear, defaultQuarter }: { defaultYear: num
           )}
         </div>
       )}
-      {confirmStatus && <div style={{ marginTop: 10, fontSize: 12, color: T.muted }}>{confirmStatus}</div>}
+      {confirmStatus && <div style={{ marginTop: 10, fontSize: 12, color: K.muted }}>{confirmStatus}</div>}
     </Card>
   );
 }

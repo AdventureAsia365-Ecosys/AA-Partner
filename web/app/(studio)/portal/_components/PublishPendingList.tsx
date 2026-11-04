@@ -16,11 +16,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, XCircle, ExternalLink, Loader2, FileText, Milestone } from "lucide-react";
-import { T, sans, Card, CardHead, Btn, EmptyState, StickyBar } from "./ui";
+import { Card, CardHead, Btn, EmptyState, StickyBar } from "./ui";
 import { stripMarkdown } from "./markdownText";
 import { PUBLISH_LOG_QUERY_KEY, channelName } from "./PublishedList";
 import { channelName as channelLabel } from "./channelLabels";
-import { AiNotice, formatDate } from "@/app/_kit";
+import { AiNotice, formatDate, K, sans } from "@/app/_kit";
 import {
   ServedBadge, plainError, publishClosedLabel, servedTitle, workClosed, type ServedFields,
 } from "./ServedBadge";
@@ -107,7 +107,7 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
       {/* AA-524 — sticky, bleeding out to Card's own default padding (22px), same pattern as
           ReviewList.tsx's identical card-list layout. */}
       <StickyBar
-        background={T.card}
+        background={K.card}
         style={{
           marginTop: -22, marginLeft: -22, marginRight: -22,
           paddingTop: 22, paddingLeft: 22, paddingRight: 22, paddingBottom: 14,
@@ -119,10 +119,10 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
       {/* AA-819 — AUP notice above the Publish buttons; AA-760: only when there is something to review. */}
       {pieces !== null && pieces.length > 0 && <AiNotice variant="publisher" style={{ marginBottom: 14 }} />}
       {pieces === null ? (
-        <div aria-busy="true" style={{ padding: 24, textAlign: "center", color: T.muted, fontSize: 13 }}>Loading…</div>
+        <div aria-busy="true" style={{ padding: 24, textAlign: "center", color: K.muted, fontSize: 13 }}>Loading…</div>
       ) : pieces.length === 0 ? (
         <EmptyState
-          icon={<FileText size={28} color={T.muted2} />}
+          icon={<FileText size={28} color={K.muted2} />}
           title="Nothing to publish yet"
           sub="Blog and Facebook pieces show up here as soon as they're written."
         />
@@ -134,14 +134,14 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
             const channelConnected = !!connected[p.channel];
             return (
               <div key={p.piece_id} style={{
-                padding: "14px 16px", borderRadius: 10, border: `1px solid ${T.line}`,
+                padding: "14px 16px", borderRadius: 10, border: `1px solid ${K.line}`,
                 display: "flex", flexDirection: "column", gap: 10,
               }}>
                 {/* AA-836 (D2) — wraps: on a phone the button drops below the content, so the title
                     and preview use the full card width instead of a ~90px column beside it. */}
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                   <div style={{ minWidth: 0, flex: "1 1 320px" }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: T.ink, marginBottom: 3, overflowWrap: "anywhere" }}>{p.title}</div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: K.ink, marginBottom: 3, overflowWrap: "anywhere" }}>{p.title}</div>
                     {/* AA-1040 — the "AI-assisted" label of the piece (kit AiNotice badge form). */}
                     <div style={{ marginBottom: 5 }}><AiNotice variant="publisher" form="badge" testId="publish-pending-ai-badge" /></div>
                     {/* AA-986 L3: persistent badge; publishing is closed for a tour AA no longer serves */}
@@ -151,13 +151,13 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
                       const r = routeLabel(p.route_hub_name);
                       return (
                         <div style={{ marginBottom: 5 }}>
-                          <span title={r.title || undefined} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 600, padding: "2px 9px", borderRadius: 999, background: T.goldTint, color: T.goldDeep }}>
+                          <span title={r.title || undefined} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 600, padding: "2px 9px", borderRadius: 999, background: K.accentTint, color: K.accentDeep }}>
                             <Milestone size={11} aria-hidden /> {r.text}
                           </span>
                         </div>
                       );
                     })()}
-                    <div style={{ fontSize: 12, color: T.muted, lineHeight: 1.5, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                    <div style={{ fontSize: 12, color: K.muted, lineHeight: 1.5, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
                       {/* AA-836 (D6) — plain text, never raw markdown (`## Title`, `**bold**`). */}
                       {/* S241 — a separator between blocks so a heading never runs into the next
                           sentence. The card title is the ANGLE name (v1_publish.py), not the
@@ -165,14 +165,14 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
                           it stays in the preview unless it is the very same text as the card title. */}
                       {stripMarkdown(p.content_preview, { dropHeadingMatching: p.title, blockSeparator: " · " })}
                     </div>
-                    <div style={{ fontSize: 11, color: T.muted2, marginTop: 6, fontFamily: sans }}>
+                    <div style={{ fontSize: 11, color: K.muted2, marginTop: 6, fontFamily: sans }}>
                       {channelLabel(p.channel)} post · {fmtDate(p.created_at)}
                     </div>
                   </div>
                   {/* AA-760 — not connected: plain muted text at full opacity (a faded gold button was
                       white on gold at 50% opacity, well under 3:1). */}
                   {workClosed(p) ? (
-                    <span title={servedTitle(p)} style={{ flexShrink: 0, fontSize: 12, color: T.muted, alignSelf: "center", maxWidth: 220 }}>
+                    <span title={servedTitle(p)} style={{ flexShrink: 0, fontSize: 12, color: K.muted, alignSelf: "center", maxWidth: 220 }}>
                       {publishClosedLabel(p)}
                     </span>
                   ) : channelConnected ? (
@@ -185,24 +185,24 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
                       {busy ? <><Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> Publishing…</> : "Publish"}
                     </Btn>
                   ) : (
-                    <span style={{ flexShrink: 0, fontSize: 12, color: T.muted, alignSelf: "center" }}>
+                    <span style={{ flexShrink: 0, fontSize: 12, color: K.muted, alignSelf: "center" }}>
                       Connect {channelName(p.channel)} above to publish
                     </span>
                   )}
                 </div>
 
                 {result?.success && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8, background: T.greenSoft, color: T.green, fontSize: 12.5 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8, background: K.successSoft, color: K.success, fontSize: 12.5 }}>
                     <CheckCircle2 size={14} /> Published.{" "}
                     {result.external_url && (
-                      <a href={result.external_url} target="_blank" rel="noreferrer" style={{ color: T.green, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                      <a href={result.external_url} target="_blank" rel="noreferrer" style={{ color: K.success, display: "inline-flex", alignItems: "center", gap: 4 }}>
                         View post <ExternalLink size={11} />
                       </a>
                     )}
                   </div>
                 )}
                 {result && !result.success && (
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 12px", borderRadius: 8, background: T.redSoft, color: T.red, fontSize: 12.5, lineHeight: 1.5 }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 12px", borderRadius: 8, background: K.dangerSoft, color: K.danger, fontSize: 12.5, lineHeight: 1.5 }}>
                     <XCircle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
                     <span>{result.last_error}</span>
                   </div>

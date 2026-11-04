@@ -15,7 +15,8 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Settings2 } from "lucide-react";
-import { T, sans, CardSkeleton, PageHeader } from "../../_components/ui";
+import { K, sans } from "@/app/_kit";
+import { CardSkeleton, PageHeader } from "../../_components/ui";
 import { useWordPressStatus, WordPressConnectForm } from "../../_components/WordPressConnect";
 import { useFacebookStatus, FacebookConnectForm } from "../../_components/FacebookConnect";
 import { ConnectionSummary } from "../../_components/ConnectionSummary";
@@ -45,7 +46,7 @@ export default function T11PublishPage() {
         action={(wpConnected || fbConnected) ? (
           <Link href="/portal/account/integrations" style={{
             display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5,
-            fontWeight: 600, color: T.ink3, textDecoration: "none", whiteSpace: "nowrap", fontFamily: sans,
+            fontWeight: 600, color: K.ink3, textDecoration: "none", whiteSpace: "nowrap", fontFamily: sans,
           }}>
             <Settings2 size={13} /> Manage connections
           </Link>

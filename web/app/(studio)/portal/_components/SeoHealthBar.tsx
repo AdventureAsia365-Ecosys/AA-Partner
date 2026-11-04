@@ -1,6 +1,6 @@
 "use client";
 import { CheckCircle2, AlertTriangle, XCircle } from "lucide-react";
-import { T, sans } from "./ui";
+import { K, sans } from "@/app/_kit";
 
 interface SeoCheck {
   status: "pass" | "warn" | "fail";
@@ -52,17 +52,17 @@ export function SeoHealthBar({ seoTitle, seoMeta, highlights, summary, rulesAppl
   }
 
   const icon  = { pass: CheckCircle2, warn: AlertTriangle, fail: XCircle } as const;
-  const color = { pass: T.green, warn: T.amber, fail: T.red } as const;
+  const color = { pass: K.success, warn: K.amber, fail: K.danger } as const;
   const allPass = checks.every(c => c.status === "pass");
 
   return (
-    <div style={{ borderRadius: 8, border: `1px solid ${T.line}`, background: T.bg, padding: "12px 14px" }}>
+    <div style={{ borderRadius: 8, border: `1px solid ${K.line}`, background: K.bg, padding: "12px 14px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <span style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: T.muted }}>
+        <span style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: K.muted }}>
           SEO Health
         </span>
         {allPass && (
-          <span style={{ fontSize: 11, color: T.green, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}><CheckCircle2 size={12} /> Content ready to use</span>
+          <span style={{ fontSize: 11, color: K.success, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}><CheckCircle2 size={12} /> Content ready to use</span>
         )}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>

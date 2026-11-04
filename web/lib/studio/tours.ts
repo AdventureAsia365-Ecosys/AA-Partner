@@ -10,7 +10,7 @@ import type { UsageMeter } from "./account";
 
 /** AA-760 — a tour duration for people, one casing everywhere ("14 DAYS" / "7 days" → "14 days" / "7 days";
  *  "15 DAYS 14 NIGHTS" → "15 days"). A string with no leading number is only lower-cased. (Moved here from
- *  _components/ui.tsx by AA-671, which re-exports it.) */
+ *  _components/ui.tsx by AA-671; lib/studio/format.ts re-exports it.) */
 export function fmtDuration(raw: string | null | undefined): string {
   if (!raw) return "";
   const m = /(\d+)\s*(day|night)/i.exec(raw);

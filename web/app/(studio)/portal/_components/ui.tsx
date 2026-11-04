@@ -6,8 +6,12 @@ import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import {
-  BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, K, FONT_MONO, FONT_SANS, SkeletonBar, SkeletonStyle, formatDate, formatDateTime,
+  BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, K, FONT_MONO, FONT_SANS, SkeletonBar, SkeletonStyle,
 } from "@/app/_kit";
+// AA-1036: the pure helpers (JSON fields, formats, the tour-version status) moved to lib/studio/format.ts.
+import type { BadgeVariant } from "@/lib/studio/format";
+
+export type { BadgeVariant };
 
 // ─── Tokens ───────────────────────────────────────────────────────────────────
 // Key names unchanged (hundreds of call sites). AA-759: the values are the `--aa-*` CSS variables
@@ -37,67 +41,6 @@ export const serif = FONT_DISPLAY;
 export const mono  = FONT_MONO;
 export const sans  = FONT_SANS;
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-export function parseJSON(raw: unknown): unknown {
-  if (raw == null) return null;
-  try {
-    let v = typeof raw === "string" ? JSON.parse(raw) : raw;
-    if (typeof v === "string") v = JSON.parse(v);
-    return v;
-  } catch { return null; }
-}
-
-export function parseHighlights(raw: unknown): string[] {
-  const v = parseJSON(raw);
-  return Array.isArray(v) ? (v as string[]) : [];
-}
-
-export function parseContent(raw: unknown): Record<string, unknown> | null {
-  const v = parseJSON(raw);
-  if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
-  return null;
-}
-
-// AA-566 Phần A — GET /v1/tours/my-versions returns one row per VERSION
-// (gold_aa_internal.tenant_tour_versions), not one per tour. AA-565 made CatalogTab.tsx's own
-// heading count unique tours (1 row per tour, latest version only) but layout.tsx's Sidebar
-// badge still read the flat `pagination.total` from the same endpoint — the exact bug this
-// fixes: both must count the same thing (unique tours), from the same client-side dedup logic,
-// not two different numbers from two different readings of one endpoint.
-export function countUniqueTours(list: { published_tour_id?: string | null }[]): number {
-  return new Set(list.filter(v => v.published_tour_id).map(v => v.published_tour_id)).size;
-}
-
-// AA-759 — one date format with the admin (kit formatDate / formatDateTime: "9 Oct 2026",
-// "9 Oct 2026, 14:05"; was "09 Oct 2026" / "09 Oct, 14:05" here). Names kept for the call sites.
-export function fmtDate(iso: string | null | undefined): string {
-  return formatDate(iso);
-}
-
-export function fmtDateTime(iso: string | null | undefined): string {
-  return formatDateTime(iso);
-}
-
-/** AA-760 — a billing month key ("2026-10") for people: "October 2026". Anything else passes through. */
-export function fmtBillingMonth(month: string | null | undefined): string {
-  if (!month) return "—";
-  const m = /^(\d{4})-(\d{2})$/.exec(month);
-  if (!m) return month;
-  return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, 1))
-    .toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
-}
-
-// AA-760 — one duration format everywhere; AA-671 moved the rule to lib/tours.ts (the Marketplace uses it there).
-export { fmtDuration } from "@/lib/studio/tours";
-
-/** AA-760 — whole US dollars with a thousands separator ("$1,225"). */
-export function fmtUsd(n: number): string {
-  return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-}
-
-// ─── Status helpers ───────────────────────────────────────────────────────────
-export type BadgeVariant = "success" | "warning" | "error" | "info" | "gold" | "default";
-
 const BADGE_MAP: Record<BadgeVariant, { bg: string; color: string; dot: string }> = {
   success: { bg: T.greenSoft, color: T.green, dot: T.green },
   warning: { bg: T.amberSoft, color: T.amber, dot: T.gold },
@@ -107,28 +50,6 @@ const BADGE_MAP: Record<BadgeVariant, { bg: string; color: string; dot: string }
   // AA-760 — ink3, not muted: muted on line2 was 4.0:1 in light (8.3:1 now; 7.7:1 in dark).
   default: { bg: T.line2, color: T.ink3, dot: T.muted2 },
 };
-
-// AA-638 — tenant-facing label for a tour-version status (the raw values are internal enums,
-// e.g. "ai_generated" was rendered verbatim as "AI_GENERATED").
-export function statusLabel(s: string): string {
-  switch (s) {
-    case "approved": return "Approved";
-    case "rejected": return "Rejected";
-    // AA-796 — needs_review only means "T2 score < 7" (an admin signal). The API already maps it
-    // to ai_generated; this is defence in depth so a score-derived state never reaches a tenant.
-    case "ai_generated": case "needs_review": return "Ready to review";
-    case "pending": case "generating": return "Writing";
-    default: return s ? s.replace(/_/g, " ") : "—";
-  }
-}
-
-export function statusVariant(s: string): BadgeVariant {
-  if (s === "approved") return "success";
-  if (s === "rejected") return "error";
-  if (s === "pending") return "warning";
-  if (s === "ready" || s === "done") return "success"; // AA-760 — was grey on one page, green on another
-  return "default";
-}
 
 // ─── UI Components ────────────────────────────────────────────────────────────
 

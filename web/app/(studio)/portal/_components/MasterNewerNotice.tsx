@@ -9,7 +9,8 @@
 import { Info } from "lucide-react";
 import { K, sans } from "@/app/_kit";
 import { MASTER_NEWER_LABEL, masterNoticeText, showMasterNotice, type MasterFreshness } from "@/lib/studio/masterNotice";
-import { Badge, Btn, fmtDate } from "./ui";
+import { Badge, Btn } from "./ui";
+import { fmtDate } from "@/lib/studio/format";
 
 /** The list-row badge; its tooltip is the full sentence. */
 export function MasterNewerBadge({ version }: { version: MasterFreshness | null | undefined }) {

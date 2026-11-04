@@ -13,7 +13,7 @@ import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/app/_kit";
 import { fetchMyVersions, type Version } from "@/app/(studio)/portal/_components/catalogApi";
-import { countUniqueTours } from "@/app/(studio)/portal/_components/ui";
+import { countUniqueTours } from "@/lib/studio/format";
 import { activePollInterval, activityState, settledActivityState, tourWorkStatus } from "@/app/(studio)/portal/_components/workStatus";
 import type { ShellActivityView, ShellBilling } from "@/app/(studio)/portal/_components/PortalShellContext";
 

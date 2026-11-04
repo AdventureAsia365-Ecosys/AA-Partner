@@ -10,8 +10,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Download, Save, X } from "lucide-react";
 import { useMemo, useState } from "react";
-import { T, mono, sans, Btn, LoadingScreen, parseContent, parseHighlights, fmtDateTime } from "./ui";
-import { AiNotice } from "@/app/_kit";
+import { Btn, LoadingScreen } from "./ui";
+import { parseContent, parseHighlights, fmtDateTime } from "@/lib/studio/format";
+import { AiNotice, K, mono, sans } from "@/app/_kit";
 import { MasterNewerNotice } from "./MasterNewerNotice";
 import { SeeOriginalToggle } from "./SeeOriginalToggle";
 import { fetchVersionDetail, type Version } from "./catalogApi";
@@ -19,10 +20,10 @@ import { fetchVersionDetail, type Version } from "./catalogApi";
 function TripFact({ label, value }: { label: string; value: string }) {
   return (
     <div style={{ marginBottom: 10 }}>
-      <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.muted, marginBottom: 4 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: K.muted, marginBottom: 4 }}>
         {label}
       </div>
-      <div style={{ fontSize: 11.5, color: T.body, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{value}</div>
+      <div style={{ fontSize: 11.5, color: K.body, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{value}</div>
     </div>
   );
 }
@@ -32,7 +33,7 @@ function CompareRow({ label, yours, onEdit }: { label: string; yours: string; on
   const [val, setVal] = useState(yours);
   return (
     <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.muted, marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: K.muted, marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span>{label}</span>
         {!editing && (
           <button
@@ -40,7 +41,7 @@ function CompareRow({ label, yours, onEdit }: { label: string; yours: string; on
               setEditing(true);
               setVal(yours);
             }}
-            style={{ background: "none", border: "none", cursor: "pointer", color: T.goldDeep, fontSize: 10, fontFamily: sans }}
+            style={{ background: "none", border: "none", cursor: "pointer", color: K.accentDeep, fontSize: 10, fontFamily: sans }}
           >
             <span aria-hidden>✏</span> Edit
           </button>
@@ -52,7 +53,7 @@ function CompareRow({ label, yours, onEdit }: { label: string; yours: string; on
             value={val}
             onChange={(e) => setVal(e.target.value)}
             rows={3}
-            style={{ width: "100%", fontSize: 11.5, border: `1px solid ${T.gold}`, borderRadius: 6, padding: "8px 10px", resize: "vertical", fontFamily: sans, outline: "none", boxSizing: "border-box", color: T.body }}
+            style={{ width: "100%", fontSize: 11.5, border: `1px solid ${K.accent}`, borderRadius: 6, padding: "8px 10px", resize: "vertical", fontFamily: sans, outline: "none", boxSizing: "border-box", color: K.body }}
           />
           <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
             <Btn size="sm" variant="primary" onClick={() => { onEdit(val); setEditing(false); }}>
@@ -64,7 +65,7 @@ function CompareRow({ label, yours, onEdit }: { label: string; yours: string; on
           </div>
         </div>
       ) : (
-        <div style={{ fontSize: 11.5, color: T.body, lineHeight: 1.6, padding: "8px 10px", background: T.bg, border: `1px solid ${T.line}`, borderRadius: 6 }}>
+        <div style={{ fontSize: 11.5, color: K.body, lineHeight: 1.6, padding: "8px 10px", background: K.bg, border: `1px solid ${K.line}`, borderRadius: 6 }}>
           {yours || "—"}
         </div>
       )}
@@ -75,13 +76,13 @@ function CompareRow({ label, yours, onEdit }: { label: string; yours: string; on
 function HighlightsCompare({ yours, onChange }: { yours: string[]; onChange: (v: string[]) => void }) {
   return (
     <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.muted, marginBottom: 6 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: K.muted, marginBottom: 6 }}>
         Highlights
       </div>
-      <div style={{ padding: "8px 10px", background: T.bg, border: `1px solid ${T.line}`, borderRadius: 6 }}>
+      <div style={{ padding: "8px 10px", background: K.bg, border: `1px solid ${K.line}`, borderRadius: 6 }}>
         {yours.map((h, i) => (
           <div key={i} style={{ display: "flex", gap: 4, marginBottom: 4, alignItems: "flex-start" }}>
-            <span style={{ color: T.gold, fontWeight: 700, flexShrink: 0 }}>•</span>
+            <span style={{ color: K.accent, fontWeight: 700, flexShrink: 0 }}>•</span>
             <input
               value={h}
               onChange={(e) => {
@@ -90,13 +91,13 @@ function HighlightsCompare({ yours, onChange }: { yours: string[]; onChange: (v:
                 onChange(n);
               }}
               aria-label={`Highlight ${i + 1}`}
-              style={{ flex: 1, fontSize: 11, border: `1px solid ${T.line}`, borderRadius: 4, padding: "2px 6px", fontFamily: sans, outline: "none", background: "transparent" }}
+              style={{ flex: 1, fontSize: 11, border: `1px solid ${K.line}`, borderRadius: 4, padding: "2px 6px", fontFamily: sans, outline: "none", background: "transparent" }}
             />
             <button
               onClick={() => onChange(yours.filter((_, j) => j !== i))}
               aria-label={`Remove highlight ${i + 1}`}
               title="Remove"
-              style={{ background: "none", border: "none", cursor: "pointer", color: T.muted2, padding: 0, flexShrink: 0 }}
+              style={{ background: "none", border: "none", cursor: "pointer", color: K.muted2, padding: 0, flexShrink: 0 }}
             >
               <span aria-hidden>×</span>
             </button>
@@ -104,7 +105,7 @@ function HighlightsCompare({ yours, onChange }: { yours: string[]; onChange: (v:
         ))}
         <button
           onClick={() => onChange([...yours, ""])}
-          style={{ fontSize: 11, color: T.goldDeep, background: "none", border: "none", cursor: "pointer", fontFamily: sans }}
+          style={{ fontSize: 11, color: K.accentDeep, background: "none", border: "none", cursor: "pointer", fontFamily: sans }}
         >
           + Add
         </button>
@@ -117,15 +118,15 @@ function ItineraryCompare({ yours, expand, setExpand }: { yours: string; expand:
   return (
     <div style={{ marginBottom: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-        <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: T.muted }}>Itinerary</div>
+        <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: K.muted }}>Itinerary</div>
         <button
           onClick={() => setExpand(!expand)}
-          style={{ fontSize: 11, color: T.goldDeep, background: T.goldTint, border: `1px solid ${T.goldSoft}`, borderRadius: 4, padding: "2px 10px", cursor: "pointer", fontFamily: sans, fontWeight: 600 }}
+          style={{ fontSize: 11, color: K.accentDeep, background: K.accentTint, border: `1px solid ${K.accentSoft}`, borderRadius: 4, padding: "2px 10px", cursor: "pointer", fontFamily: sans, fontWeight: 600 }}
         >
           {expand ? "▲ Collapse" : "▼ Expand"}
         </button>
       </div>
-      <div style={{ fontSize: 11.5, color: T.body, lineHeight: 1.6, maxHeight: expand ? "none" : 100, overflow: expand ? "visible" : "hidden", whiteSpace: "pre-wrap", padding: "8px 10px", background: T.bg, border: `1px solid ${T.line}`, borderRadius: 6 }}>
+      <div style={{ fontSize: 11.5, color: K.body, lineHeight: 1.6, maxHeight: expand ? "none" : 100, overflow: expand ? "visible" : "hidden", whiteSpace: "pre-wrap", padding: "8px 10px", background: K.bg, border: `1px solid ${K.line}`, borderRadius: 6 }}>
         {yours || "—"}
       </div>
     </div>
@@ -206,15 +207,15 @@ export function CatalogDrawer(props: CatalogDrawerBody) {
   const header = (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
       {/* The tour name is the kit Drawer title (CatalogTab.tsx), so only the language stays here. */}
-      <div style={{ fontSize: 11.5, color: T.muted, fontFamily: mono }}>{group.rewrite_language}</div>
+      <div style={{ fontSize: 11.5, color: K.muted, fontFamily: mono }}>{group.rewrite_language}</div>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         {dirty && (
           <Btn variant="primary" size="sm" disabled={saving} onClick={doSave}>
             <Save size={12} /> {saving ? "Saving…" : "Save"}
           </Btn>
         )}
-        {saveOk && !dirty && <span style={{ fontSize: 12, color: T.green, fontWeight: 600 }}>✓ Saved</span>}
-        <button onClick={props.onClose} aria-label="Close" title="Close" style={{ background: "none", border: "none", cursor: "pointer", color: T.muted2 }}>
+        {saveOk && !dirty && <span style={{ fontSize: 12, color: K.success, fontWeight: 600 }}>✓ Saved</span>}
+        <button onClick={props.onClose} aria-label="Close" title="Close" style={{ background: "none", border: "none", cursor: "pointer", color: K.muted2 }}>
           <X size={16} aria-hidden />
         </button>
       </div>
@@ -237,7 +238,7 @@ export function CatalogDrawer(props: CatalogDrawerBody) {
     <>
       {header}
       <div style={{ marginTop: 16 }}>
-        <div style={{ display: "flex", gap: 8, marginBottom: 12, fontSize: 11, color: T.muted2, fontFamily: mono }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 12, fontSize: 11, color: K.muted2, fontFamily: mono }}>
           <span>Created: {fmtDateTime(detail.created_at)}</span>
           {detail.edited_at && <span>· Edited: {fmtDateTime(detail.edited_at)}</span>}
         </div>
@@ -263,8 +264,8 @@ export function CatalogDrawer(props: CatalogDrawerBody) {
         />
 
         {(detail.duration || detail.inclusions || detail.exclusions) && (
-          <div style={{ paddingTop: 14, marginTop: 14, borderTop: `1px solid ${T.line}` }}>
-            <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: T.muted, marginBottom: 10 }}>
+          <div style={{ paddingTop: 14, marginTop: 14, borderTop: `1px solid ${K.line}` }}>
+            <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: K.muted, marginBottom: 10 }}>
               Trip Details
             </div>
             {detail.duration && <TripFact label="Duration" value={detail.duration} />}
@@ -273,7 +274,7 @@ export function CatalogDrawer(props: CatalogDrawerBody) {
           </div>
         )}
 
-        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", flexWrap: "wrap", gap: 8, paddingTop: 14, marginTop: 14, borderTop: `1px solid ${T.line}` }}>
+        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", flexWrap: "wrap", gap: 8, paddingTop: 14, marginTop: 14, borderTop: `1px solid ${K.line}` }}>
           {/* AA-819 — AUP notice beside Export DOCX; takes the free space, wraps above the buttons on phones. */}
           <AiNotice variant="publisher" style={{ flex: "1 1 260px", minWidth: 0 }} />
           <Btn variant="ghost" disabled={exporting} onClick={() => props.onExportDocx(detail.id)}>

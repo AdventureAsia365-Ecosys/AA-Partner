@@ -9,21 +9,21 @@
 // AA-761: each channel's health next to its title (the last test's result) — the "Test connection" lives here now,
 // Publish only shows a summary that links back. AA-1036 R3 slice 3: the API key card went with the tenant API keys.
 import { useState } from "react";
-import { Badge, type Tone } from "@/app/_kit";
+import { Badge, type Tone, K, sans } from "@/app/_kit";
 import { HEALTH_LABEL, connectionHealth, type ConnectionHealth } from "@/lib/studio/account";
-import { T, sans, CardSkeleton, PageHeader } from "../../_components/ui";
+import { CardSkeleton, PageHeader } from "../../_components/ui";
 import { useWordPressStatus, WordPressConnectForm, WordPressStatusCard } from "../../_components/WordPressConnect";
 import { useFacebookStatus, FacebookConnectForm, FacebookStatusCard } from "../../_components/FacebookConnect";
 
 const changeLinkStyle: React.CSSProperties = {
   alignSelf: "flex-start", background: "none", border: "none", cursor: "pointer",
-  fontSize: 12.5, fontWeight: 600, color: T.muted, textDecoration: "underline",
+  fontSize: 12.5, fontWeight: 600, color: K.muted, textDecoration: "underline",
   fontFamily: sans, padding: 0,
 };
 
 const sectionTitle: React.CSSProperties = {
   fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em",
-  color: T.muted, margin: "0 0 2px",
+  color: K.muted, margin: "0 0 2px",
 };
 
 const HEALTH_TONE: Record<ConnectionHealth, Tone> = {

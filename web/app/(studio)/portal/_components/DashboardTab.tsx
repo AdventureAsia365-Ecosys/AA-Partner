@@ -8,14 +8,11 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, FileText, Code2, Globe2, BookOpen, Sparkles, Clock, AlertTriangle, Check, X, RefreshCw } from "lucide-react";
-import {
-  T, serif, mono, sans,
-  Card, CardHead, CtaLink, ProgressBar, PageHeader, TextLink,
-  fmtDateTime, fmtBillingMonth,
-} from "./ui";
+import { T, Card, CardHead, CtaLink, ProgressBar, PageHeader, TextLink } from "./ui";
+import { fmtDateTime, fmtBillingMonth } from "@/lib/studio/format";
 import { ActivityStateBadge } from "./workStatus";
 import { usePortalShell } from "./PortalShellContext";
-import { apiGet, useIsPhone } from "@/app/_kit";
+import { apiGet, useIsPhone, K, mono, sans, serif } from "@/app/_kit";
 import GettingStarted from "./GettingStarted";
 import UsageSparkline, { type DailyPoint } from "./UsageSparkline";
 import { DashboardSkeleton } from "./Skeleton";
@@ -55,9 +52,9 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
   if (billingQ.isPending) return <DashboardSkeleton />;
   if (billingQ.isError) {
     return (
-      <div role="alert" style={{ padding: "28px 20px", textAlign: "center", color: T.muted, fontSize: 13 }}>
+      <div role="alert" style={{ padding: "28px 20px", textAlign: "center", color: K.muted, fontSize: 13 }}>
         Couldn&rsquo;t load your dashboard.{" "}
-        <button onClick={() => billingQ.refetch()} style={{ background: "none", border: "none", color: T.goldDeep, fontWeight: 600, cursor: "pointer", fontFamily: sans, fontSize: 13 }}>
+        <button onClick={() => billingQ.refetch()} style={{ background: "none", border: "none", color: K.accentDeep, fontWeight: 600, cursor: "pointer", fontFamily: sans, fontSize: 13 }}>
           Try again
         </button>
       </div>
@@ -93,13 +90,13 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
 
       {/* Usage alert — AA-636: was "> 30%" with a hardcoded "Growth plan = 300 RPM" for every plan */}
       {!dismissAlert && (apiPct >= 80 || toursPct >= 80) && (
-        <div role="status" style={{ background: T.amberSoft, border: `1px solid ${T.goldSoft}`, borderLeft: `4px solid ${T.amber}`, borderRadius: "0 8px 8px 0", padding: "11px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12 }}>
-          <AlertTriangle size={16} color={T.amber} style={{ flexShrink: 0 }} />
+        <div role="status" style={{ background: K.amberSoft, border: `1px solid ${K.accentSoft}`, borderLeft: `4px solid ${K.amber}`, borderRadius: "0 8px 8px 0", padding: "11px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12 }}>
+          <AlertTriangle size={16} color={K.amber} style={{ flexShrink: 0 }} />
           <div style={{ flex: 1, fontSize: 13, color: "var(--aa-amber-deep)", lineHeight: 1.5 }}>
             <strong>You have used {Math.max(apiPct, toursPct).toFixed(0)}% of this month&rsquo;s {apiPct >= toursPct ? "API calls" : "tour rewrites"}.</strong>{" "}
             Usage resets in {resetDays} {resetDays === 1 ? "day" : "days"}. <TextLink href="/portal/account/billing">Compare plans →</TextLink>
           </div>
-          <button onClick={() => setDismissAlert(true)} aria-label="Dismiss" style={{ background: "none", border: "none", color: T.amber, cursor: "pointer", padding: 0, display: "flex" }}><X size={16} /></button>
+          <button onClick={() => setDismissAlert(true)} aria-label="Dismiss" style={{ background: "none", border: "none", color: K.amber, cursor: "pointer", padding: 0, display: "flex" }}><X size={16} /></button>
         </div>
       )}
 
@@ -109,14 +106,14 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
         {/* Membership — dark */}
         <Card dark>
           <CardHead title="Membership Status" light action={
-            <button onClick={() => onNavigate("/portal/account/billing")} style={{ background: T.gold, color: "var(--aa-side-bg)", border: 0, fontWeight: 700, fontSize: 12, padding: "7px 14px", borderRadius: 6, cursor: "pointer", fontFamily: sans }}>
+            <button onClick={() => onNavigate("/portal/account/billing")} style={{ background: K.accent, color: "var(--aa-side-bg)", border: 0, fontWeight: 700, fontSize: 12, padding: "7px 14px", borderRadius: 6, cursor: "pointer", fontFamily: sans }}>
               Upgrade →
             </button>
           } />
           {/* Active pill — in normal flow under the title (was position:absolute on top of it) */}
           <div style={{ marginTop: 2 }}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 9px", background: "rgba(219,150,40,0.15)", color: T.goldDeep, borderRadius: 999, fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase" }}>
-              <span style={{ width: 5, height: 5, background: T.gold, borderRadius: "50%", display: "block" }} />Active
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 9px", background: "rgba(219,150,40,0.15)", color: K.accentDeep, borderRadius: 999, fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+              <span style={{ width: 5, height: 5, background: K.accent, borderRadius: "50%", display: "block" }} />Active
             </span>
           </div>
           <div style={{ marginTop: 16 }}>
@@ -144,17 +141,17 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
           <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
             {/* AA-760 — the quota counts rewrites (versions), not tours: "Tours rewritten 12" next to
                 "My Tours 3" read as two answers to one question. */}
-            <QuotaRow icon={<FileText size={13} color={T.gold} />} label="Rewrites used" used={toursUsed} total={toursTotal} pct={toursPct} warn={toursPct >= 80}
+            <QuotaRow icon={<FileText size={13} color={K.accent} />} label="Rewrites used" used={toursUsed} total={toursTotal} pct={toursPct} warn={toursPct >= 80}
               note={catTotal > 0 ? `${catTotal.toLocaleString()} tour${catTotal === 1 ? "" : "s"} in My Tours` : undefined} />
-            <QuotaRow icon={<Code2 size={13} color={T.gold} />} label="API calls" used={apiUsed} total={apiTotal} pct={apiPct} warn={apiPct >= 80} />
+            <QuotaRow icon={<Code2 size={13} color={K.accent} />} label="API calls" used={apiUsed} total={apiTotal} pct={apiPct} warn={apiPct >= 80} />
           </div>
           {(b?.daily?.length ?? 0) >= 2 && (
             <div style={{ marginTop: 18 }}>
               <UsageSparkline data={b!.daily!} metric="api_calls" label="API calls" />
             </div>
           )}
-          <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px dashed ${T.line}`, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: T.muted }}>
-            <Clock size={13} color={T.muted2} /> Resets in <strong style={{ color: T.ink }}>{resetDays} {resetDays === 1 ? "day" : "days"}</strong> · {month}
+          <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px dashed ${K.line}`, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: K.muted }}>
+            <Clock size={13} color={K.muted2} /> Resets in <strong style={{ color: K.ink }}>{resetDays} {resetDays === 1 ? "day" : "days"}</strong> · {month}
           </div>
         </Card>
 
@@ -171,12 +168,12 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
           <CardHead title={`This Month · ${month}`} action={<TextLink href="/portal/account/billing">View billing →</TextLink>} />
           <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
             <div>
-              <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.12em", color: T.muted, marginBottom: 6, fontWeight: 600 }}>Amount due</div>
-              <div style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 36, fontWeight: 600, color: T.ink, letterSpacing: "-0.02em", lineHeight: 1 }}>
+              <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.12em", color: K.muted, marginBottom: 6, fontWeight: 600 }}>Amount due</div>
+              <div style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 36, fontWeight: 600, color: K.ink, letterSpacing: "-0.02em", lineHeight: 1 }}>
                 ${(price + overage).toLocaleString(undefined, { maximumFractionDigits: 2 })}
               </div>
             </div>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 600, color: overage > 0 ? T.amber : T.green, background: overage > 0 ? T.amberSoft : T.greenSoft, padding: "3px 8px", borderRadius: 5 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 600, color: overage > 0 ? K.amber : K.success, background: overage > 0 ? K.amberSoft : K.successSoft, padding: "3px 8px", borderRadius: 5 }}>
               {overage > 0 ? <AlertTriangle size={12} /> : <Check size={12} />}
               {overage > 0 ? "Includes overage" : "Within plan"}
             </span>
@@ -189,22 +186,22 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
         </Card>
 
         {/* Activity */}
-        <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: "22px 22px 8px" }}>
+        <div style={{ background: K.card, border: `1px solid ${K.line}`, borderRadius: 12, padding: "22px 22px 8px" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-            <span style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted }}>Recent Activity</span>
+            <span style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: K.muted }}>Recent Activity</span>
             <TextLink href="/portal/account/activity">View all →</TextLink>
           </div>
           {activity.length === 0 ? (
             // AA-760 — an empty feed offers its next step (was text only).
-            <div data-testid="dashboard-activity-empty" style={{ padding: "28px 0 24px", textAlign: "center", color: T.muted2, fontSize: 13, display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+            <div data-testid="dashboard-activity-empty" style={{ padding: "28px 0 24px", textAlign: "center", color: K.muted2, fontSize: 13, display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
               No activity yet — browse tours to rewrite your first one
               <CtaLink href="/portal/tours">Browse tours</CtaLink>
             </div>
           ) : activity.slice(0, 5).map((a, i) => {
             // AA-760 — state from the version's job (shell activity view), not the row status.
             const bad       = a.state === "rejected" || a.state === "failed";
-            const iconBg    = a.state === "approved" ? T.greenSoft : bad ? T.redSoft : T.goldTint;
-            const iconColor = a.state === "approved" ? T.green    : bad ? T.red     : T.amber;
+            const iconBg    = a.state === "approved" ? K.successSoft : bad ? K.dangerSoft : K.accentTint;
+            const iconColor = a.state === "approved" ? K.success    : bad ? K.danger     : K.amber;
             const Icon      = a.state === "approved" ? Check : bad ? X : RefreshCw;
             return (
               // AA-836 — title column can shrink (minmax(0, 1fr)) and the tour name is one line with
@@ -213,33 +210,33 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
               // S241 UI verify — on a phone the status badge (~140px) still left the name ~10
               // characters; it now moves to the meta line under the name, so the name gets the
               // whole row (grid is just icon + text) and stays one line with an ellipsis.
-              <div key={a.id} style={{ display: "grid", gridTemplateColumns: phone ? "36px minmax(0, 1fr)" : "36px minmax(0, 1fr) auto auto", alignItems: "center", gap: phone ? 10 : 12, padding: "13px 0", borderTop: i === 0 ? "none" : `1px solid ${T.line2}` }}>
+              <div key={a.id} style={{ display: "grid", gridTemplateColumns: phone ? "36px minmax(0, 1fr)" : "36px minmax(0, 1fr) auto auto", alignItems: "center", gap: phone ? 10 : 12, padding: "13px 0", borderTop: i === 0 ? "none" : `1px solid ${K.line2}` }}>
                 <div style={{ width: 36, height: 36, borderRadius: 8, background: iconBg, color: iconColor, display: "grid", placeItems: "center" }}>
                   <Icon size={15} strokeWidth={2.2} />
                 </div>
                 <div style={{ minWidth: 0 }}>
                   {/* AA-760 — on desktop the name may wrap to 2 lines (was cut at ~28 characters), and
                       the version number ("v3") tells repeat rows of one tour apart. */}
-                  <div style={{ display: "flex", alignItems: "baseline", minWidth: 0, fontSize: 13, fontWeight: 500, color: T.ink, lineHeight: 1.3 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", minWidth: 0, fontSize: 13, fontWeight: 500, color: K.ink, lineHeight: 1.3 }}>
                     <strong title={a.tour_name || "Tour"} style={phone ? ONE_LINE : TWO_LINES}>
                       {a.tour_name || "Tour"}
                     </strong>
-                    <span style={{ color: T.muted2, fontSize: 11, marginLeft: 6, fontWeight: 400, flexShrink: 0, whiteSpace: "nowrap" }}>
+                    <span style={{ color: K.muted2, fontSize: 11, marginLeft: 6, fontWeight: 400, flexShrink: 0, whiteSpace: "nowrap" }}>
                       · {a.version_number != null ? `v${a.version_number} · ` : ""}{a.edit_source === "ai_generated" ? "AI" : "Edited"}
                     </span>
                   </div>
                   {phone ? (
                     <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "4px 8px", marginTop: 4, minWidth: 0 }}>
-                      <span style={{ fontSize: 11, color: T.muted, whiteSpace: "nowrap" }}>{fmtDateTime(a.created_at)}</span>
+                      <span style={{ fontSize: 11, color: K.muted, whiteSpace: "nowrap" }}>{fmtDateTime(a.created_at)}</span>
                       <ActivityStateBadge state={a.state} />
                     </div>
                   ) : (
-                    <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>{fmtDateTime(a.created_at)}</div>
+                    <div style={{ fontSize: 11, color: K.muted, marginTop: 2 }}>{fmtDateTime(a.created_at)}</div>
                   )}
                 </div>
                 {!phone && <ActivityStateBadge state={a.state} />}
                 {!phone && (
-                  <div style={{ fontSize: 11, color: T.muted2, fontFamily: mono, whiteSpace: "nowrap" }}>
+                  <div style={{ fontSize: 11, color: K.muted2, fontFamily: mono, whiteSpace: "nowrap" }}>
                     {a.created_at ? new Date(a.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "—"}
                   </div>
                 )}
@@ -251,7 +248,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
 
       {/* Row 3: Quick Actions */}
       <div style={{ marginTop: 18 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted, marginBottom: 12 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: K.muted, marginBottom: 12 }}>
           Quick Actions
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
@@ -297,21 +294,21 @@ function QuotaRow({ icon, label, used, total, pct, warn = false, note }: {
   return (
     <div>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
-        <div style={{ fontSize: 13, color: T.ink, fontWeight: 500, display: "flex", alignItems: "center", gap: 7 }}>
+        <div style={{ fontSize: 13, color: K.ink, fontWeight: 500, display: "flex", alignItems: "center", gap: 7 }}>
           {icon} {label}
         </div>
-        <div style={{ fontFamily: mono, fontSize: 12, color: T.ink, fontVariantNumeric: "tabular-nums" }}>
-          {used.toLocaleString()} <span style={{ color: T.muted2 }}>/ {total == null ? "—" : total.toLocaleString()}</span>
+        <div style={{ fontFamily: mono, fontSize: 12, color: K.ink, fontVariantNumeric: "tabular-nums" }}>
+          {used.toLocaleString()} <span style={{ color: K.muted2 }}>/ {total == null ? "—" : total.toLocaleString()}</span>
         </div>
       </div>
       <ProgressBar pct={pct} warn={warn} />
-      <div style={{ fontSize: 11, color: warn ? T.amber : T.muted, marginTop: 6, display: "flex", justifyContent: "space-between" }}>
+      <div style={{ fontSize: 11, color: warn ? K.amber : K.muted, marginTop: 6, display: "flex", justifyContent: "space-between" }}>
         <span>{pct.toFixed(0)}% used</span>
         <span style={{ fontWeight: warn ? 600 : 400 }}>
           {warn ? "Approaching your limit" : total == null ? "No plan attached" : `${Math.max(total - used, 0).toLocaleString()} remaining`}
         </span>
       </div>
-      {note && <div style={{ fontSize: 11, color: T.muted, marginTop: 4 }}>{note}</div>}
+      {note && <div style={{ fontSize: 11, color: K.muted, marginTop: 4 }}>{note}</div>}
     </div>
   );
 }
@@ -320,10 +317,10 @@ function SpendTile({ label, value, sub, warn = false }: {
   label: string; value: string; sub?: string; warn?: boolean;
 }) {
   return (
-    <div style={{ background: warn ? T.amberSoft : T.bg, border: `1px solid ${warn ? T.goldSoft : T.line2}`, borderRadius: 8, padding: "12px 14px" }}>
-      <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.1em", color: T.muted, fontWeight: 600, marginBottom: 5 }}>{label}</div>
-      <div style={{ fontSize: 16, fontWeight: 600, color: T.ink, fontVariantNumeric: "tabular-nums" }}>{value}</div>
-      {sub && <div style={{ fontSize: 11, color: T.muted2, marginTop: 4 }}>{sub}</div>}
+    <div style={{ background: warn ? K.amberSoft : K.bg, border: `1px solid ${warn ? K.accentSoft : K.line2}`, borderRadius: 8, padding: "12px 14px" }}>
+      <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.1em", color: K.muted, fontWeight: 600, marginBottom: 5 }}>{label}</div>
+      <div style={{ fontSize: 16, fontWeight: 600, color: K.ink, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: K.muted2, marginTop: 4 }}>{sub}</div>}
     </div>
   );
 }
@@ -336,21 +333,21 @@ function ActionCard({ icon, title, sub, onClick }: {
     <button onClick={onClick}
       onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
       style={{
-        background: T.card, border: `1px solid ${hov ? T.gold : T.line}`, borderRadius: 12,
+        background: K.card, border: `1px solid ${hov ? K.accent : K.line}`, borderRadius: 12,
         padding: "18px 20px", display: "flex", alignItems: "center", gap: 14,
         cursor: "pointer", textAlign: "left", fontFamily: sans,
         transform: hov ? "translateY(-1px)" : "none",
         boxShadow: hov ? "0 4px 12px -6px rgba(219,150,40,0.35)" : "none",
         transition: "all .15s",
       }}>
-      <div style={{ width: 40, height: 40, borderRadius: 9, background: T.darkPanel, color: T.gold, display: "grid", placeItems: "center", flexShrink: 0 }}>
+      <div style={{ width: 40, height: 40, borderRadius: 9, background: T.darkPanel, color: K.accent, display: "grid", placeItems: "center", flexShrink: 0 }}>
         {icon}
       </div>
       <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: T.ink, lineHeight: 1.2 }}>{title}</div>
-        <div style={{ fontSize: 12, color: T.muted, marginTop: 3 }}>{sub}</div>
+        <div style={{ fontSize: 14, fontWeight: 600, color: K.ink, lineHeight: 1.2 }}>{title}</div>
+        <div style={{ fontSize: 12, color: K.muted, marginTop: 3 }}>{sub}</div>
       </div>
-      <ArrowRight size={15} color={T.muted2} />
+      <ArrowRight size={15} color={K.muted2} />
     </button>
   );
 }

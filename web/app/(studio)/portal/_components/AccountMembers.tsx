@@ -9,7 +9,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Mail } from "lucide-react";
 import { useMemo } from "react";
-import { apiGet, Badge, type ColumnDef, DataTable, formatDate, PageHeader, SUPPORT_EMAIL } from "@/app/_kit";
+import { apiGet, Badge, type ColumnDef, DataTable, formatDate, PageHeader, SUPPORT_EMAIL, K, sans } from "@/app/_kit";
 import {
   memberLabel,
   missingOwner,
@@ -20,7 +20,6 @@ import {
   type AccountMember,
   type AccountMembers as MembersBody,
 } from "@/lib/studio/members";
-import { T, sans } from "./ui";
 
 export const ACCOUNT_MEMBERS_QUERY_KEY = ["account-members"] as const;
 
@@ -38,7 +37,7 @@ export function AccountMembers() {
         accessorFn: (m) => memberLabel(m),
         header: "Member",
         cell: (c) => (
-          <span style={{ fontWeight: 600, color: T.ink, fontVariantNumeric: "tabular-nums" }}>
+          <span style={{ fontWeight: 600, color: K.ink, fontVariantNumeric: "tabular-nums" }}>
             {memberLabel(c.row.original)}
           </span>
         ),
@@ -69,13 +68,13 @@ export function AccountMembers() {
         id: "added",
         accessorFn: (m) => m.added_at,
         header: "Added",
-        cell: (c) => <span style={{ color: T.muted, fontSize: 12, whiteSpace: "nowrap" }}>{formatDate(c.row.original.added_at)}</span>,
+        cell: (c) => <span style={{ color: K.muted, fontSize: 12, whiteSpace: "nowrap" }}>{formatDate(c.row.original.added_at)}</span>,
       },
       {
         id: "updated",
         accessorFn: (m) => m.updated_at,
         header: "Last change",
-        cell: (c) => <span style={{ color: T.muted, fontSize: 12, whiteSpace: "nowrap" }}>{formatDate(c.row.original.updated_at)}</span>,
+        cell: (c) => <span style={{ color: K.muted, fontSize: 12, whiteSpace: "nowrap" }}>{formatDate(c.row.original.updated_at)}</span>,
       },
     ],
     [],
@@ -89,7 +88,7 @@ export function AccountMembers() {
         description={
           <>
             Everyone in your Content Studio workspace and their role.{" "}
-            {data ? <strong style={{ color: T.ink }}>{summaryLine(data)}.</strong> : null}
+            {data ? <strong style={{ color: K.ink }}>{summaryLine(data)}.</strong> : null}
           </>
         }
         actions={
@@ -98,7 +97,7 @@ export function AccountMembers() {
             data-testid="members-request-change"
             style={{
               display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 999,
-              border: `1px solid ${T.gold}`, color: T.goldDeep, fontSize: 12.5, fontWeight: 600, textDecoration: "none",
+              border: `1px solid ${K.accent}`, color: K.accentDeep, fontSize: 12.5, fontWeight: 600, textDecoration: "none",
             }}
           >
             <Mail size={13} aria-hidden /> Request a change
@@ -106,15 +105,15 @@ export function AccountMembers() {
         }
       />
 
-      <div style={{ fontSize: 12.5, color: T.muted, lineHeight: 1.55, maxWidth: 760 }}>
+      <div style={{ fontSize: 12.5, color: K.muted, lineHeight: 1.55, maxWidth: 760 }}>
         Adventure Asia adds, changes and removes members for you for now: use Request a change. A member who is removed
         is also signed out of the Partner CRM within a minute. Roles inside the Partner CRM are managed in the CRM.
       </div>
 
       {data && missingOwner(rows) && (
         <div role="status" style={{
-          padding: "10px 14px", borderRadius: 10, border: `1px solid ${T.line}`, background: T.goldTint,
-          color: T.ink, fontSize: 13,
+          padding: "10px 14px", borderRadius: 10, border: `1px solid ${K.line}`, background: K.accentTint,
+          color: K.ink, fontSize: 13,
         }}>
           Your workspace has no active owner. Ask Adventure Asia to restore one before you make account changes.
         </div>

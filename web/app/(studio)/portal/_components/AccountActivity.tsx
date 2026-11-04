@@ -9,7 +9,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Download } from "lucide-react";
 import { useMemo, useState } from "react";
-import { Badge, type ColumnDef, DataTable, apiGet, downloadCsv, formatDateTime, type Tone } from "@/app/_kit";
+import { Badge, type ColumnDef, DataTable, apiGet, downloadCsv, formatDateTime, type Tone, K, sans } from "@/app/_kit";
 import {
   ACTIVITY_DATE_MAX,
   ACTIVITY_DATE_MIN,
@@ -24,19 +24,19 @@ import {
   type ActivityItem,
   type ActivityPage,
 } from "@/lib/studio/account";
-import { T, sans, Card, PageHeader } from "./ui";
+import { Card, PageHeader } from "./ui";
 import { usePortalShell } from "./PortalShellContext";
 
 const CATEGORY_TONE: Record<string, Tone> = { content: "info", tours: "accent", account: "neutral" };
 const CATEGORY_LABEL: Record<string, string> = { content: "Content", tours: "Tours", account: "Account" };
 
 const control: React.CSSProperties = {
-  padding: "7px 10px", borderRadius: 999, border: `1px solid ${T.line}`, background: T.card, color: T.ink,
+  padding: "7px 10px", borderRadius: 999, border: `1px solid ${K.line}`, background: K.card, color: K.ink,
   fontSize: 12.5, fontFamily: sans, minWidth: 0, maxWidth: "100%", boxSizing: "border-box",
 };
 const btn: React.CSSProperties = {
   display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 999,
-  border: `1px solid ${T.line}`, background: T.card, color: T.ink3, fontSize: 12, fontWeight: 600,
+  border: `1px solid ${K.line}`, background: K.card, color: K.ink3, fontSize: 12, fontWeight: 600,
   cursor: "pointer", fontFamily: sans, whiteSpace: "nowrap",
 };
 
@@ -87,7 +87,7 @@ export default function AccountActivity() {
       header: "When",
       accessorFn: (r) => r.at ?? "",
       enableSorting: false,
-      cell: (c) => <span style={{ color: T.muted, fontSize: 12, whiteSpace: "nowrap" }}>{formatDateTime(c.row.original.at)}</span>,
+      cell: (c) => <span style={{ color: K.muted, fontSize: 12, whiteSpace: "nowrap" }}>{formatDateTime(c.row.original.at)}</span>,
     },
     {
       id: "label",
@@ -98,8 +98,8 @@ export default function AccountActivity() {
         const r = c.row.original;
         return (
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>{r.label}</div>
-            {r.detail && <div style={{ fontSize: 11.5, color: T.muted, marginTop: 2 }}>{activityDetail(r.action, r.detail)}</div>}
+            <div style={{ fontSize: 13, fontWeight: 600, color: K.ink }}>{r.label}</div>
+            {r.detail && <div style={{ fontSize: 11.5, color: K.muted, marginTop: 2 }}>{activityDetail(r.action, r.detail)}</div>}
           </div>
         );
       },
@@ -119,7 +119,7 @@ export default function AccountActivity() {
       header: "By",
       accessorFn: (r) => actorLabel(r.actor),
       enableSorting: false,
-      cell: (c) => <span style={{ fontSize: 12.5, color: T.body }}>{actorLabel(c.row.original.actor)}</span>,
+      cell: (c) => <span style={{ fontSize: 12.5, color: K.body }}>{actorLabel(c.row.original.actor)}</span>,
     },
   ], []);
 
@@ -166,13 +166,13 @@ export default function AccountActivity() {
                 <option value="">All types</option>
                 {categories.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
               </select>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: T.muted }}>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: K.muted }}>
                 From
                 <input type="date" aria-label="From date" value={filters.since}
                   min={ACTIVITY_DATE_MIN} max={filters.until || ACTIVITY_DATE_MAX}
                   style={control} onChange={(e) => setFilter({ since: e.target.value })} />
               </label>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: T.muted }}>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: K.muted }}>
                 To
                 <input type="date" aria-label="To date" value={filters.until}
                   min={filters.since || ACTIVITY_DATE_MIN} max={ACTIVITY_DATE_MAX}
@@ -191,9 +191,9 @@ export default function AccountActivity() {
           }
         />
         {exportError && (
-          <p role="alert" style={{ margin: "10px 0 0", fontSize: 12, color: T.red }}>{exportError}. Please try again.</p>
+          <p role="alert" style={{ margin: "10px 0 0", fontSize: 12, color: K.danger }}>{exportError}. Please try again.</p>
         )}
-        <p style={{ margin: "12px 0 0", fontSize: 11.5, color: T.muted, lineHeight: 1.5 }}>
+        <p style={{ margin: "12px 0 0", fontSize: 11.5, color: K.muted, lineHeight: 1.5 }}>
           Times are shown in your browser&rsquo;s time zone; the date filters use UTC days. The export holds every row
           that matches the filters.
         </p>

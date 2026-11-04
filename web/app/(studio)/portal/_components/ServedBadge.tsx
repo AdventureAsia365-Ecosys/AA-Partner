@@ -5,7 +5,8 @@
 //                    trashed). The tenant keeps everything it made; new work on it is refused with 409.
 //   "paused"       → "Paused" (AA paused the tour; it may come back). No notification is sent for a pause (Q1).
 //   null           → nothing (served, or a supersede waiting for its new version: invisible to the tenant, Q2).
-import { Badge, fmtDate } from "./ui";
+import { Badge } from "./ui";
+import { fmtDate } from "@/lib/studio/format";
 
 /** The served fields every tenant /v1 row about a tour carries (AA-986 L3). */
 export interface ServedFields {

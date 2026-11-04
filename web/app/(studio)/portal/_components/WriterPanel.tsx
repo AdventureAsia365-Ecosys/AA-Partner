@@ -27,9 +27,8 @@ import { CheckCircle2, Download, ExternalLink, Send } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AiNotice, Button, ConfirmModal, Drawer, K, useToast } from "@/app/_kit";
+import { AiNotice, Button, ConfirmModal, Drawer, K, useToast, sans } from "@/app/_kit";
 import { pieceWorkStatus } from "./workStatus";
-import { T, sans } from "./ui";
 import AngleGateWizard, { type ContentPiece } from "./AngleGateWizard";
 import { PUBLISHABLE_CHANNELS, exportPiece, publishPiece } from "./reviewListApi";
 import { channelName } from "./channelLabels";
@@ -143,9 +142,9 @@ function FinishedPiece({ piece }: { piece: ContentPiece }) {
   const hint = () => toast.info("Use Export to download this content.");
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10, fontFamily: sans }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: T.body }}>
-        <CheckCircle2 size={15} color={T.green} />
-        <span>Your post is ready and saved in <Link href={`/portal/content?piece=${piece.piece_id}`} style={{ color: T.goldDeep, fontWeight: 600 }}>My Content</Link>, where you can edit it.</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: K.body }}>
+        <CheckCircle2 size={15} color={K.success} />
+        <span>Your post is ready and saved in <Link href={`/portal/content?piece=${piece.piece_id}`} style={{ color: K.accentDeep, fontWeight: 600 }}>My Content</Link>, where you can edit it.</span>
       </div>
       <div
         data-testid="writer-panel-result"
@@ -153,8 +152,8 @@ function FinishedPiece({ piece }: { piece: ContentPiece }) {
         onCut={(e) => { e.preventDefault(); hint(); }}
         onContextMenu={(e) => { e.preventDefault(); hint(); }}
         style={{
-          padding: "14px 16px", borderRadius: 10, border: `1px solid ${T.line}`, background: T.card,
-          overflowWrap: "anywhere", fontSize: 13.5, lineHeight: 1.65, color: T.body,
+          padding: "14px 16px", borderRadius: 10, border: `1px solid ${K.line}`, background: K.card,
+          overflowWrap: "anywhere", fontSize: 13.5, lineHeight: 1.65, color: K.body,
           userSelect: "none", WebkitUserSelect: "none",
         }}
       >

@@ -18,7 +18,8 @@
 
 import Link from "next/link";
 import { ArrowLeft, ExternalLink, ShieldCheck } from "lucide-react";
-import { T, sans, mono, Card, CardHead, PageHeader } from "../../_components/ui";
+import { K, mono, sans } from "@/app/_kit";
+import { Card, CardHead, PageHeader } from "../../_components/ui";
 import { PermissionList } from "../../_components/FacebookConnect";
 
 const META = {
@@ -29,24 +30,24 @@ const META = {
   appModesDoc: "https://developers.facebook.com/docs/development/build-and-test/app-modes",
 };
 
-const text: React.CSSProperties = { fontSize: 13.5, color: T.body, lineHeight: 1.65, margin: "0 0 10px" };
+const text: React.CSSProperties = { fontSize: 13.5, color: K.body, lineHeight: 1.65, margin: "0 0 10px" };
 // Tailwind preflight sets `list-style: none` on ul/ol; the guide needs visible markers.
 const list: React.CSSProperties = { ...text, paddingLeft: 20 };
 const bullets: React.CSSProperties = { ...list, listStyleType: "disc" };
 const numbers: React.CSSProperties = { ...list, listStyleType: "decimal" };
 const codeStyle: React.CSSProperties = {
-  fontFamily: mono, fontSize: 12, color: T.ink3, background: T.bg, border: `1px solid ${T.line}`,
+  fontFamily: mono, fontSize: 12, color: K.ink3, background: K.bg, border: `1px solid ${K.line}`,
   borderRadius: 4, padding: "0 5px", overflowWrap: "anywhere",
 };
 const sectionTitle: React.CSSProperties = {
   fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em",
-  color: T.muted, margin: "8px 0 2px",
+  color: K.muted, margin: "8px 0 2px",
 };
 
 function Ext({ href, children }: { href: string; children: React.ReactNode }) {
   return (
     <a href={href} target="_blank" rel="noopener noreferrer" style={{
-      color: T.goldDeep, fontWeight: 600, textDecoration: "none", overflowWrap: "anywhere",
+      color: K.accentDeep, fontWeight: 600, textDecoration: "none", overflowWrap: "anywhere",
     }}>
       {children} <ExternalLink size={11} style={{ display: "inline", verticalAlign: "-1px" }} aria-hidden />
     </a>
@@ -60,7 +61,7 @@ function C({ children }: { children: React.ReactNode }) {
 function Note({ children }: { children: React.ReactNode }) {
   return (
     <div style={{
-      fontSize: 12.5, color: T.goldDeep, background: T.goldTint, border: `1px solid ${T.goldSoft}`,
+      fontSize: 12.5, color: K.accentDeep, background: K.accentTint, border: `1px solid ${K.accentSoft}`,
       borderRadius: 8, padding: "10px 12px", lineHeight: 1.55, marginTop: 4,
     }}>{children}</div>
   );
@@ -71,11 +72,11 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
     <Card style={{ padding: "20px 22px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
         <span style={{
-          width: 28, height: 28, borderRadius: "50%", background: T.goldTint, color: T.goldDeep,
-          border: `1px solid ${T.goldSoft}`, display: "grid", placeItems: "center",
+          width: 28, height: 28, borderRadius: "50%", background: K.accentTint, color: K.accentDeep,
+          border: `1px solid ${K.accentSoft}`, display: "grid", placeItems: "center",
           fontSize: 13, fontWeight: 700, flexShrink: 0, fontFamily: sans,
         }}>{n}</span>
-        <h2 style={{ margin: 0, fontSize: 15.5, fontWeight: 600, color: T.ink, fontFamily: sans }}>
+        <h2 style={{ margin: 0, fontSize: 15.5, fontWeight: 600, color: K.ink, fontFamily: sans }}>
           {title}
         </h2>
       </div>
@@ -128,7 +129,7 @@ export default function FacebookGuidePage() {
           (Publish is not a sidebar item, so "Back to Publish" named a place the tenant could not find). */}
       <Link href="/portal/account/integrations" style={{
         display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 600,
-        color: T.muted, textDecoration: "none", marginBottom: 16, fontFamily: sans,
+        color: K.muted, textDecoration: "none", marginBottom: 16, fontFamily: sans,
       }}>
         <ArrowLeft size={13} /> Back to Integrations
       </Link>
@@ -147,7 +148,7 @@ export default function FacebookGuidePage() {
               that Facebook account and accept the terms.</li>
             <li>The web address of your privacy policy (for example a page on your website).</li>
           </ul>
-          <p style={{ ...text, fontSize: 12.5, color: T.muted, marginBottom: 0 }}>
+          <p style={{ ...text, fontSize: 12.5, color: K.muted, marginBottom: 0 }}>
             Meta changes its screens from time to time. If a button has a slightly different name,
             look for the closest match.
           </p>
@@ -245,7 +246,7 @@ export default function FacebookGuidePage() {
 
         <Step n={7} title="Test & Connect in the portal">
           <p style={text}>
-            Go to <Link href="/portal/content/publish" style={{ color: T.goldDeep, fontWeight: 600, textDecoration: "none" }}>Publish</Link>.
+            Go to <Link href="/portal/content/publish" style={{ color: K.accentDeep, fontWeight: 600, textDecoration: "none" }}>Publish</Link>.
             In the <strong>Connect Facebook Page</strong> card, paste the Page ID and the Page
             Access Token, then click <strong>Test &amp; Connect</strong>.
           </p>
@@ -257,7 +258,7 @@ export default function FacebookGuidePage() {
         </Step>
 
         <Card style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-          <ShieldCheck size={18} color={T.green} style={{ flexShrink: 0, marginTop: 2 }} aria-hidden />
+          <ShieldCheck size={18} color={K.success} style={{ flexShrink: 0, marginTop: 2 }} aria-hidden />
           <p style={{ ...text, margin: 0 }}>
             <strong>Keep the Page Access Token private.</strong> Anyone who has it can post to
             your Page. Paste it only into the portal. The portal stores it securely and never
@@ -269,11 +270,11 @@ export default function FacebookGuidePage() {
 
         {PROBLEMS.map(p => (
           <Card key={p.title} style={{ padding: "18px 22px 12px" }}>
-            <h3 style={{ margin: "0 0 10px", fontSize: 14, fontWeight: 600, color: T.ink, fontFamily: sans }}>
+            <h3 style={{ margin: "0 0 10px", fontSize: 14, fontWeight: 600, color: K.ink, fontFamily: sans }}>
               {p.title}
             </h3>
-            <p style={text}><strong style={{ color: T.ink3 }}>Why:</strong> {p.cause}</p>
-            <p style={text}><strong style={{ color: T.ink3 }}>Fix:</strong> {p.fix}</p>
+            <p style={text}><strong style={{ color: K.ink3 }}>Why:</strong> {p.cause}</p>
+            <p style={text}><strong style={{ color: K.ink3 }}>Fix:</strong> {p.fix}</p>
           </Card>
         ))}
       </div>

@@ -21,25 +21,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { Download, ExternalLink, Eye, FileDown, RefreshCw, Save, Send, Trash2, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { T, sans } from "./ui";
 import { ServedBadge, plainError } from "./ServedBadge";
-import {
-  AiNotice,
-  Badge,
-  ConfirmModal,
-  type ColumnDef,
-  DataTable,
-  Drawer,
-  formatDate,
-  StatusBadge,
-  ToastProvider,
-  deleteView,
-  listViews,
-  saveView,
-  useHydrated,
-  useIsPhone,
-  useToast,
-} from "@/app/_kit";
+import { AiNotice, Badge, ConfirmModal, type ColumnDef, DataTable, Drawer, formatDate, StatusBadge, ToastProvider, deleteView, listViews, saveView, useHydrated, useIsPhone, useToast, K, sans } from "@/app/_kit";
 import { ReviewDrawer } from "./ReviewDrawer";
 import { channelName } from "./channelLabels";
 import { useWordPressStatus } from "./WordPressConnect";
@@ -273,9 +256,9 @@ function ReviewListInner() {
           // shrink to ~68 px and broke words mid-letter).
           return (
             <div style={{ minWidth: 160, maxWidth: 300 }} data-testid="my-content-title">
-              <div style={{ fontWeight: 600, color: T.ink, overflowWrap: "break-word", lineHeight: 1.4 }}>{pieceTitle(it)}</div>
+              <div style={{ fontWeight: 600, color: K.ink, overflowWrap: "break-word", lineHeight: 1.4 }}>{pieceTitle(it)}</div>
               {angle && (
-                <div style={{ marginTop: 2, color: T.muted, fontSize: 12, lineHeight: 1.4, overflowWrap: "break-word" }}>
+                <div style={{ marginTop: 2, color: K.muted, fontSize: 12, lineHeight: 1.4, overflowWrap: "break-word" }}>
                   Angle: {angle}
                 </div>
               )}
@@ -302,7 +285,7 @@ function ReviewListInner() {
         accessorFn: (r) => placeTopic(r) ?? "",
         header: "Place / topic",
         cell: (c) => (
-          <span style={{ display: "inline-block", color: T.body, fontSize: 12.5, minWidth: 110, maxWidth: 220, lineHeight: 1.45 }}>
+          <span style={{ display: "inline-block", color: K.body, fontSize: 12.5, minWidth: 110, maxWidth: 220, lineHeight: 1.45 }}>
             {placeTopic(c.row.original) ?? "—"}
           </span>
         ),
@@ -316,9 +299,9 @@ function ReviewListInner() {
         // on two lines) to keep the table inside the screen.
         cell: (c) => {
           const label = c.row.original.goal?.label;
-          if (!label) return <span style={{ color: T.body, lineHeight: 1.45 }}>—</span>;
+          if (!label) return <span style={{ color: K.body, lineHeight: 1.45 }}>—</span>;
           return (
-            <span style={{ color: T.body, lineHeight: 1.45 }}>
+            <span style={{ color: K.body, lineHeight: 1.45 }}>
               {label.split(" ").map((w, i) => (
                 <Fragment key={i}>
                   {i > 0 ? " " : null}
@@ -349,7 +332,7 @@ function ReviewListInner() {
         meta: { align: "right" },
         cell: (c) => {
           const n = wordCount(c.row.original.content_text);
-          return <span style={{ color: T.muted, fontSize: 12 }}>{n == null ? "—" : n.toLocaleString("en")}</span>;
+          return <span style={{ color: K.muted, fontSize: 12 }}>{n == null ? "—" : n.toLocaleString("en")}</span>;
         },
       },
       {
@@ -357,7 +340,7 @@ function ReviewListInner() {
         accessorFn: (r) => r.created_at ?? "",
         header: "Created",
         cell: (c) => (
-          <span style={{ color: T.muted, fontSize: 12, whiteSpace: "nowrap" }}>
+          <span style={{ color: K.muted, fontSize: 12, whiteSpace: "nowrap" }}>
             {formatDate(c.row.original.created_at)}
           </span>
         ),
@@ -368,15 +351,15 @@ function ReviewListInner() {
         header: "Published",
         cell: (c) => {
           const it = c.row.original;
-          if (!it.published_at) return <span style={{ color: T.muted2 }}>—</span>;
+          if (!it.published_at) return <span style={{ color: K.muted2 }}>—</span>;
           return (
-            <span style={{ color: T.muted, fontSize: 12, whiteSpace: "nowrap", display: "inline-flex", gap: 4, alignItems: "center" }}>
+            <span style={{ color: K.muted, fontSize: 12, whiteSpace: "nowrap", display: "inline-flex", gap: 4, alignItems: "center" }}>
               {formatDate(it.published_at)}
               {it.published_url && (
                 <a href={it.published_url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
                    aria-label="Open the published post"
                    title={liveIsEarlierVersion(it) ? "Open the published post (it shows an earlier version of this text)" : "Open the published post"}
-                   style={{ color: T.goldDeep, display: "inline-flex" }}>
+                   style={{ color: K.accentDeep, display: "inline-flex" }}>
                   <ExternalLink size={12} />
                 </a>
               )}
@@ -498,7 +481,7 @@ function ReviewListInner() {
               </select>
               <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap", minWidth: 0, ...(isPhone ? { flex: "1 1 100%" } : {}) }}>
                 <input type="date" value={filters.from} max={filters.to || undefined} onChange={(e) => changeFilters({ from: e.target.value })} style={{ ...dateInput, ...(isPhone ? { flex: "1 1 0" } : {}) }} aria-label="From" />
-                <span style={{ color: T.muted, fontSize: 12, flexShrink: 0 }}>to</span>
+                <span style={{ color: K.muted, fontSize: 12, flexShrink: 0 }}>to</span>
                 <input type="date" value={filters.to} min={filters.from || undefined} onChange={(e) => changeFilters({ to: e.target.value })} style={{ ...dateInput, ...(isPhone ? { flex: "1 1 0" } : {}) }} aria-label="To" />
               </div>
             </div>
@@ -561,12 +544,12 @@ function ReviewListInner() {
         title={confirm?.kind === "publish" && confirm.rows.length > 1 ? `Publish ${confirm.rows.length} posts?` : "Publish this piece?"}
         confirmLabel={publishM.isPending ? "Publishing…" : "Publish"}
         body={confirm?.kind === "publish" ? (
-          <div style={{ fontSize: 13, color: T.body, lineHeight: 1.55 }}>
+          <div style={{ fontSize: 13, color: K.body, lineHeight: 1.55 }}>
             {confirm.rows.length === 1
               ? <>&ldquo;{pieceTitle(confirm.rows[0])}&rdquo; goes live on your {confirm.rows[0].channel === "blog" ? "WordPress site" : "Facebook Page"}.</>
               : <>These {confirm.rows.length} blog posts go live on your WordPress site, one after the other.</>}
             {confirm.skipped > 0 && (
-              <div style={{ marginTop: 8, color: T.muted }}>
+              <div style={{ marginTop: 8, color: K.muted }}>
                 {confirm.skipped} other selected piece{confirm.skipped === 1 ? " is" : "s are"} left out: only ready blog posts
                 that are not published yet go out together. Publish other channels one by one, or export them.
               </div>
@@ -583,7 +566,7 @@ function ReviewListInner() {
         title="Write this piece again?"
         confirmLabel={regenerateM.isPending ? "Starting…" : "Write again"}
         body={confirm?.kind === "regenerate" ? (
-          <div style={{ fontSize: 13, color: T.body, lineHeight: 1.55 }}>
+          <div style={{ fontSize: 13, color: K.body, lineHeight: 1.55 }}>
             A new version of &ldquo;{pieceTitle(confirm.row)}&rdquo; is written with the same angle and call to action. It
             replaces this one in My Content; your edits to this version are not carried over.
           </div>
@@ -664,10 +647,10 @@ const selectStyle: React.CSSProperties = {
   maxWidth: "100%",
   minWidth: 0,
   padding: "7px 12px",
-  background: T.card,
-  border: `1px solid ${T.line}`,
+  background: K.card,
+  border: `1px solid ${K.line}`,
   borderRadius: 8,
-  color: T.body,
+  color: K.body,
   fontSize: 13,
   fontFamily: sans,
   cursor: "pointer",
@@ -684,9 +667,9 @@ const iconBtn: React.CSSProperties = {
   width: 28,
   height: 28,
   borderRadius: 8,
-  border: `1px solid ${T.line}`,
-  background: T.card,
-  color: T.body,
+  border: `1px solid ${K.line}`,
+  background: K.card,
+  color: K.body,
   cursor: "pointer",
   padding: 0,
 };
@@ -698,7 +681,7 @@ const linkBtn: React.CSSProperties = {
   background: "none",
   border: "none",
   // S251 D7: link text in the accent-deep token (5.2:1 on the cream page, 11:1 in dark); the accent itself is 2.3:1.
-  color: T.goldDeep,
+  color: K.accentDeep,
   fontSize: 12.5,
   fontWeight: 600,
   cursor: "pointer",
@@ -712,8 +695,8 @@ const menuStyle: React.CSSProperties = {
   right: 0,
   zIndex: 20,
   minWidth: 220,
-  background: T.card,
-  border: `1px solid ${T.line}`,
+  background: K.card,
+  border: `1px solid ${K.line}`,
   borderRadius: 10,
   boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
   padding: 4,
@@ -727,7 +710,7 @@ const menuItem: React.CSSProperties = {
   border: "none",
   padding: "8px 10px",
   borderRadius: 6,
-  color: T.body,
+  color: K.body,
   fontSize: 12.5,
   cursor: "pointer",
   fontFamily: sans,
@@ -739,9 +722,9 @@ const bulkBtn: React.CSSProperties = {
   gap: 6,
   padding: "7px 12px",
   borderRadius: 999,
-  border: `1px solid ${T.gold}`,
-  background: T.goldTint,
-  color: T.goldDeep,
+  border: `1px solid ${K.accent}`,
+  background: K.accentTint,
+  color: K.accentDeep,
   fontSize: 12,
   fontWeight: 600,
   cursor: "pointer",
