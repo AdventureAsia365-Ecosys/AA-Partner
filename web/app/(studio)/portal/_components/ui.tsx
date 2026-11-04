@@ -3,15 +3,12 @@
 // AA-605): Fahkwang display + Poppins UI + JetBrains Mono, gold accent, pill buttons.
 
 import Link from "next/link";
-import { Loader2 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import {
-  BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, K, FONT_MONO, FONT_SANS, SkeletonBar, SkeletonStyle,
+  BTN_PRIMARY_TEXT, BTN_RADIUS, K, FONT_SANS,
 } from "@/app/_kit";
-// AA-1036: the pure helpers (JSON fields, formats, the tour-version status) moved to lib/studio/format.ts.
-import type { BadgeVariant } from "@/lib/studio/format";
-
-export type { BadgeVariant };
+// AA-1036: the pure helpers (JSON fields, formats) moved to lib/studio/format.ts; the primitives the kit has (PageHeader,
+// Badge, Spinner, LoadingScreen, Btn) went: pages use the kit's. What is left has no kit twin yet (AA-1007 follow-up).
 
 // ─── Tokens ───────────────────────────────────────────────────────────────────
 // Key names unchanged (hundreds of call sites). AA-759: the values are the `--aa-*` CSS variables
@@ -36,20 +33,8 @@ export const T = {
   darkPanel: "var(--aa-side-bg)", darkPanel2: "var(--aa-side-panel)",
 } as const;
 
-// `serif` keeps its name; it is now the brand display face (titles only — numbers use `sans`).
-export const serif = FONT_DISPLAY;
-export const mono  = FONT_MONO;
-export const sans  = FONT_SANS;
+const sans = FONT_SANS;
 
-const BADGE_MAP: Record<BadgeVariant, { bg: string; color: string; dot: string }> = {
-  success: { bg: T.greenSoft, color: T.green, dot: T.green },
-  warning: { bg: T.amberSoft, color: T.amber, dot: T.gold },
-  error:   { bg: T.redSoft, color: T.red, dot: T.red },
-  info:    { bg: K.infoSoft, color: K.info, dot: "var(--aa-blue)" },
-  gold:    { bg: T.goldTint, color: T.goldDeep, dot: T.gold },
-  // AA-760 — ink3, not muted: muted on line2 was 4.0:1 in light (8.3:1 now; 7.7:1 in dark).
-  default: { bg: T.line2, color: T.ink3, dot: T.muted2 },
-};
 
 // ─── UI Components ────────────────────────────────────────────────────────────
 
@@ -151,23 +136,6 @@ export function StickyBar({ children, background = T.bg, style = {}, bleedTop = 
   );
 }
 
-// AA-636 — one page header for every portal page (title + one-line description + optional
-// action on the right), so pages stop each inventing their own h1/h2 styling.
-export function PageHeader({ title, sub, action }: {
-  title: React.ReactNode; sub?: React.ReactNode; action?: React.ReactNode;
-}) {
-  return (
-    <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 22 }}>
-      <div style={{ minWidth: 0 }}>
-        <h1 style={{ fontFamily: serif, fontSize: 24, fontWeight: 500, color: T.ink, margin: "0 0 6px", letterSpacing: "-0.01em", textWrap: "balance" as React.CSSProperties["textWrap"] }}>
-          {title}
-        </h1>
-        {sub && <p style={{ fontSize: 13, color: T.muted, margin: 0, lineHeight: 1.5, maxWidth: 640 }}>{sub}</p>}
-      </div>
-      {action}
-    </div>
-  );
-}
 
 // Small in-card link ("View all →"). Next <Link> so it is a real, keyboard-reachable link.
 export function TextLink({ href, children }: { href: string; children: React.ReactNode }) {
@@ -189,26 +157,6 @@ export function CardHead({ title, action, light = false }: {
   );
 }
 
-export function Badge({ children, variant = "default", icon }: {
-  children: React.ReactNode; variant?: BadgeVariant;
-  /** Leading icon (e.g. a lucide `<Milestone size={11} />`), drawn on the same line as the text. */
-  icon?: React.ReactNode;
-}) {
-  const s = BADGE_MAP[variant];
-  return (
-    // AA-836 — one line, always a pill: a long label (T11 "Route: <hub> · N Segments") used to wrap
-    // inside the 999px radius and render as a tall oval; now it ends in an ellipsis instead.
-    // S241 UI verify — an icon passed INSIDE the text span (global CSS makes `svg` display:block)
-    // rendered on its own line above the text (pill 33.5px tall instead of 22.5px). Icons now go
-    // through `icon`: their own non-shrinking flex item between the dot and the text, so dot, icon
-    // and text share one row; only the text span shrinks and ends in an ellipsis.
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, maxWidth: "100%", whiteSpace: "nowrap", fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 999, letterSpacing: "0.04em", textTransform: "uppercase", background: s.bg, color: s.color }}>
-      <span style={{ width: 5, height: 5, borderRadius: "50%", background: s.dot, display: "block", flexShrink: 0 }} />
-      {icon && <span aria-hidden style={{ display: "inline-flex", alignItems: "center", flexShrink: 0, lineHeight: 0 }}>{icon}</span>}
-      <span style={{ display: "block", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{children}</span>
-    </span>
-  );
-}
 
 export function ProgressBar({ pct, warn = false }: { pct: number; warn?: boolean }) {
   return (
@@ -218,31 +166,8 @@ export function ProgressBar({ pct, warn = false }: { pct: number; warn?: boolean
   );
 }
 
-export function Spinner({ size = 16 }: { size?: number }) {
-  return <Loader2 size={size} style={{ animation: "spin 1s linear infinite", color: T.gold }} />;
-}
 
-export function LoadingScreen({ message = "Loading..." }: { message?: string }) {
-  return (
-    <div role="status" aria-busy="true" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 400, gap: 12 }}>
-      <Spinner size={22} /><span style={{ fontSize: 13, color: T.muted }}>{message}</span>
-    </div>
-  );
-}
 
-/** AA-760 — a card-shaped placeholder while one section's data loads (a connection card, a plan
- *  card), so the page around it renders at once instead of behind a full-page spinner. */
-export function CardSkeleton({ lines = 3, label = "Loading" }: { lines?: number; label?: string }) {
-  return (
-    <Card>
-      <div aria-busy="true" aria-label={label} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <SkeletonStyle />
-        <SkeletonBar w={140} h={11} />
-        {Array.from({ length: lines }).map((_, i) => <SkeletonBar key={i} w={`${90 - i * 18}%`} h={13} />)}
-      </div>
-    </Card>
-  );
-}
 
 export function EmptyState({ icon, title, sub, action }: {
   icon: React.ReactNode; title: string; sub?: string; action?: React.ReactNode;
@@ -257,25 +182,7 @@ export function EmptyState({ icon, title, sub, action }: {
   );
 }
 
-type BtnVariant = "primary" | "secondary" | "ghost" | "danger";
-type BtnSize = "sm" | "md" | "lg";
 
-export function Btn({ children, onClick, variant = "secondary", size = "md", disabled = false, style = {} }: {
-  children: React.ReactNode; onClick?: () => void; variant?: BtnVariant;
-  size?: BtnSize; disabled?: boolean; style?: React.CSSProperties;
-}) {
-  const pad: Record<BtnSize, string> = { sm: "5px 12px", md: "8px 18px", lg: "11px 24px" };
-  const fz:  Record<BtnSize, number> = { sm: 11, md: 13, lg: 14 };
-  const base: Record<BtnVariant, React.CSSProperties> = {
-    primary:   { background: T.gold,    color: T.onAccent, border: `1px solid ${T.gold}` },
-    secondary: { background: T.card,    color: T.ink3, border: `1px solid ${T.line}` },
-    ghost:     { background: "transparent", color: T.muted, border: `1px solid ${T.line}` },
-    danger:    { background: T.redSoft, color: T.red,  border: `1px solid ${T.redBorder}` },
-  };
-  return (
-    <button onClick={onClick} disabled={disabled} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, padding: pad[size], borderRadius: BTN_RADIUS, fontSize: fz[size], fontWeight: 600, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1, transition: "all 0.15s", fontFamily: sans, ...base[variant], ...(variant === "primary" && size !== "sm" ? BTN_PRIMARY_TEXT : {}), ...style }}>{children}</button>
-  );
-}
 
 /** AA-760 — an empty state's way forward: a page link that looks like the primary `Btn` (md). */
 export function CtaLink({ href, children }: { href: string; children: React.ReactNode }) {

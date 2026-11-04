@@ -16,7 +16,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Settings2 } from "lucide-react";
 import { K, PageHeader, sans, useT } from "@/app/_kit";
-import { CardSkeleton } from "../../_components/ui";
+import { SectionSkeleton } from "../../_components/SectionSkeleton";
 import { PAGES_MESSAGES } from "../content.messages";
 import { useWordPressStatus, WordPressConnectForm } from "../../_components/WordPressConnect";
 import { useFacebookStatus, FacebookConnectForm } from "../../_components/FacebookConnect";
@@ -60,11 +60,11 @@ export default function T11PublishPage() {
           display: "grid", gap: 16, alignItems: "start",
           gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))",
         }}>
-          {wpPending ? <CardSkeleton label={t("loadingWp")} />
+          {wpPending ? <SectionSkeleton label={t("loadingWp")} />
             : wpConnected && wp.status
               ? <ConnectionSummary channel={t("wordpress")} target={wp.status.site_url} status={wp.status} testId="publish-wp-summary" />
               : <WordPressConnectForm onConnected={wp.refresh} />}
-          {fbPending ? <CardSkeleton label={t("loadingFb")} />
+          {fbPending ? <SectionSkeleton label={t("loadingFb")} />
             : fbConnected && fb.status
               ? <ConnectionSummary channel={t("facebookPage")} target={fb.status.page_id ? t("fbPage", fb.status.page_id) : null} status={fb.status} testId="publish-fb-summary" />
               : <FacebookConnectForm onConnected={fb.refresh} />}

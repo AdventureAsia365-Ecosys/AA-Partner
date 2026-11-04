@@ -18,7 +18,8 @@ import {
   Button, EmptyState as KitEmptyState, Modal, PageHeader, SkeletonBar, SkeletonStyle, SITE_URL, SUPPORT_EMAIL, apiGet, K, sans,
   useLang, useT, type UiLang,
 } from "@/app/_kit";
-import { T, Card, CardSkeleton, ProgressBar } from "./ui";
+import { T, Card, ProgressBar } from "./ui";
+import { SectionSkeleton } from "./SectionSkeleton";
 import { BILLING_MESSAGES, SETTINGS_MESSAGES } from "./account.messages";
 import { fmtBillingMonth } from "@/lib/studio/format";
 import { usePortalShell, type ShellBilling } from "./PortalShellContext";
@@ -106,8 +107,8 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
           ? <LoadError what={t("yourBilling")} onRetry={retryBilling} />
           : (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              <CardSkeleton lines={3} label={t("loadingPlan")} />
-              <CardSkeleton lines={2} label={t("loadingPeriod")} />
+              <SectionSkeleton lines={3} label={t("loadingPlan")} />
+              <SectionSkeleton lines={2} label={t("loadingPeriod")} />
             </div>
           )}
       </div>
@@ -245,7 +246,7 @@ function UsageMeterCard({ quota, billing, loading, failed, onRetry, month }: {
   const num = (n: number) => n.toLocaleString(lang === "vi" ? "vi-VN" : "en-US");
   if (failed) return <div style={{ marginBottom: 16 }}><LoadError what={t("yourUsage")} onRetry={onRetry} /></div>;
   if (loading || !quota) {
-    return <div style={{ marginBottom: 16 }}><CardSkeleton lines={2} label={t("loadingUsage")} /></div>;
+    return <div style={{ marginBottom: 16 }}><SectionSkeleton lines={2} label={t("loadingUsage")} /></div>;
   }
   const m = usageMeter(quota, billing);
   const limitText = m.state === "unlimited" ? t("unlimited") : m.quota == null ? "—" : num(m.quota);

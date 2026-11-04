@@ -65,12 +65,11 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Badge, Button, EmptyState, LinkButton, LoadingScreen, Modal, K, Spinner, mono, sans, serif, useLang, useT } from "@/app/_kit";
+import { Badge, Button, EmptyState, Eyebrow, LinkButton, LoadingScreen, Modal, K, Section, Spinner, mono, sans, serif, useLang, useT } from "@/app/_kit";
 import { ANGLE_MESSAGES } from "./writer.messages";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Sparkles, CheckCircle2, ChevronRight, RotateCcw, AlertTriangle, ExternalLink, Compass } from "lucide-react";
-import { Card, CardHead } from "./ui";
 import LiveWriter from "./LiveWriter";
 import { CtaReviewNotice, ctaWarningFrom, useCtaReviewCheck, type CtaWarning } from "./CtaReviewNotice";
 import { channelName, humanizeKey } from "./channelLabels";
@@ -617,9 +616,9 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
   const chosenAngle = req?.angles.find(a => a.chosen) ?? null;
   // AA-668 — inside the Writer panel the drawer is the frame, so the step cards drop their own
   // border/padding instead of nesting a card in a card.
-  const cardStyle: React.CSSProperties | undefined = embedded
-    ? { padding: 0, border: "none", background: "transparent" }
-    : undefined;
+  // Embedded in the writer panel: no card frame of its own (the panel is the frame).
+  const cardStyle: React.CSSProperties | undefined = embedded ? { border: "none", background: "transparent" } : undefined;
+  const cardBody: React.CSSProperties = embedded ? { padding: 0 } : { padding: "22px 22px 20px" };
 
   return (
     // AA-524 — was maxWidth:720, a real outlier vs t7/t10's full-width convention (measured live:
@@ -655,18 +654,18 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
 
       {/* AA-522 — no more raw atom picker: every request now starts from the Slate. */}
       {!req && (
-        <Card>
-          <CardHead title={t("pickSubject")} />
+        <Section bodyStyle={cardBody}>
+          <Eyebrow as="h3" style={{ marginBottom: 16 }}>{t("pickSubject")}</Eyebrow>
           {/* AA-576: every piece starts from a topic picked in Social Posts or Articles. */}
           <EmptyState icon={<Compass size={32} strokeWidth={1.5} color={K.accent} />} title={t("nothingToWrite")}
             description={t("nothingToWriteSub")}
             action={<Button variant="primary" onClick={() => router.push("/portal/create/social")}>{t("goToSocial")}</Button>} />
-        </Card>
+        </Section>
       )}
 
       {req && req.status === "pending_goal" && (
-        <Card style={cardStyle}>
-          <CardHead title={t("chooseGoal")} />
+        <Section style={cardStyle} bodyStyle={cardBody}>
+          <Eyebrow as="h3" style={{ marginBottom: 16 }}>{t("chooseGoal")}</Eyebrow>
           {/* AA-668 — goal cards in a grid (2 columns in the panel / on desktop, 1 on a phone) so
               all 8 fit without scrolling. Picking a goal only selects it; angles cost an LLM call,
               so they start from the button below. */}
@@ -698,15 +697,15 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
               </span>
             )}
           </div>
-        </Card>
+        </Section>
       )}
 
       {req && (req.status === "pending_choice" || req.status === "reusable") && (
         // This card ONLY shows while actively choosing (not once approved — see the Write card's
         // meta row below for the post-choice summary). AA-668: each card has its own "Write with
         // this angle" button — one click chooses it and the write starts (no confirm step).
-        <Card style={cardStyle}>
-          <CardHead title={req.status === "reusable" ? t("chooseDifferent") : t("chooseAngle")} />
+        <Section style={cardStyle} bodyStyle={cardBody}>
+          <Eyebrow as="h3" style={{ marginBottom: 16 }}>{req.status === "reusable" ? t("chooseDifferent") : t("chooseAngle")}</Eyebrow>
           <p style={{ fontSize: 12.5, color: K.muted, margin: "0 0 14px", lineHeight: 1.5 }}>
             {req.status === "reusable"
               ? t("pickDifferent")
@@ -750,12 +749,12 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
               );
             })}
           </div>
-        </Card>
+        </Section>
       )}
 
       {req && req.status === "approved" && (
-        <Card style={cardStyle}>
-          <CardHead title={t("write")} />
+        <Section style={cardStyle} bodyStyle={cardBody}>
+          <Eyebrow as="h3" style={{ marginBottom: 16 }}>{t("write")}</Eyebrow>
 
           {chosenAngle && (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 14, padding: "10px 12px", background: K.bg, border: `1px solid ${K.line2}`, borderRadius: 8 }}>
@@ -860,7 +859,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
               </a>
             </div>
           )}
-        </Card>
+        </Section>
       )}
 
       {showDonePopup && piece && (

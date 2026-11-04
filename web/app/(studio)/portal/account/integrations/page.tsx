@@ -11,7 +11,7 @@
 import { useState } from "react";
 import { Badge, LinkButton, PageHeader, type Tone, K, useLang, useT } from "@/app/_kit";
 import { connectionHealth, healthLabel, type ConnectionHealth } from "@/lib/studio/account";
-import { CardSkeleton } from "../../_components/ui";
+import { SectionSkeleton } from "../../_components/SectionSkeleton";
 import { INTEGRATIONS_MESSAGES } from "./integrations.messages";
 import { useWordPressStatus, WordPressConnectForm, WordPressStatusCard } from "../../_components/WordPressConnect";
 import { useFacebookStatus, FacebookConnectForm, FacebookStatusCard } from "../../_components/FacebookConnect";
@@ -60,7 +60,7 @@ export default function T11PublishConnectionPage() {
       <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
         <section style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <SectionTitle title={t("wordpress")} health={wpPending ? null : connectionHealth(wp.status)} testId="wp-health" />
-          {wpPending && <CardSkeleton label={t("loadingWp")} />}
+          {wpPending && <SectionSkeleton label={t("loadingWp")} />}
           {!wpPending && wpConnected && wp.status && !changingWp && (
             <>
               <WordPressStatusCard status={wp.status} onRetest={wp.refresh} onDisconnected={wp.refresh} />
@@ -74,7 +74,7 @@ export default function T11PublishConnectionPage() {
 
         <section style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <SectionTitle title={t("facebookPage")} health={fbPending ? null : connectionHealth(fb.status)} testId="fb-health" />
-          {fbPending && <CardSkeleton label={t("loadingFb")} />}
+          {fbPending && <SectionSkeleton label={t("loadingFb")} />}
           {!fbPending && fbConnected && fb.status && !changingFb && (
             <>
               <FacebookStatusCard status={fb.status} onRetest={fb.refresh} onDisconnected={fb.refresh} />
