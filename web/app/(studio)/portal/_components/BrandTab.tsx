@@ -30,8 +30,9 @@
 import { useState, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, History, Upload, Check, RotateCcw } from "lucide-react";
-import { apiGet, K, mono, sans, serif } from "@/app/_kit";
-import { Btn, Field, LoadingScreen, EmptyState } from "./ui";
+import { Button, EmptyState, IconButton, LinkButton, LoadingScreen, apiGet, K, mono, sans, serif, useLang, useT } from "@/app/_kit";
+import { Field } from "./ui";
+import { BRAND_MESSAGES } from "./brand.messages";
 import { fmtDate } from "@/lib/studio/format";
 import { CtaReviewNotice, ctaWarningFrom, useCtaReviewCheck, type CtaWarning } from "./CtaReviewNotice";
 
@@ -66,17 +67,18 @@ function TextField({ label, value, onChange, placeholder }: {
 function TagListField({ label, value, onChange, placeholder, hint }: {
   label: string; value: string; onChange: (v: string) => void; placeholder?: string; hint?: string;
 }) {
+  const t = useT(BRAND_MESSAGES);
   const tags = value.split(",").map(w => w.trim()).filter(Boolean);
   return (
     <div style={{ marginBottom: 16 }}>
       <label style={{ display: "block", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: K.muted, marginBottom: 6 }}>{label}</label>
       <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
         style={{ width: "100%", padding: "10px 12px", background: K.bg, border: `1px solid ${K.line}`, borderRadius: 8, color: K.body, fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: sans }} />
-      <div style={{ fontSize: 11, color: K.muted2, marginTop: 5 }}>{hint ?? "Comma-separated."}</div>
+      <div style={{ fontSize: 11, color: K.muted2, marginTop: 5 }}>{hint ?? t("commaSeparated")}</div>
       {tags.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
-          {tags.map(t => (
-            <span key={t} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: K.accentTint, color: K.amber }}>{t}</span>
+          {tags.map(tag => (
+            <span key={tag} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: K.accentTint, color: K.amber }}>{tag}</span>
           ))}
         </div>
       )}
@@ -105,6 +107,7 @@ function forbiddenList(raw: BrandData["forbidden_words"]): string[] {
 }
 
 export default function BrandTab() {
+  const t = useT(BRAND_MESSAGES);
   const q = useQuery({
     queryKey: BRAND_KEY,
     queryFn: () => apiGet<BrandData>("/api/tenant/admin/brand-identity"),
@@ -114,12 +117,12 @@ export default function BrandTab() {
   const [formKey, setFormKey] = useState(0);
   const [result, setResult] = useState<SaveResult | null>(null);
 
-  if (q.isPending) return <LoadingScreen message="Loading brand identity…" />;
+  if (q.isPending) return <LoadingScreen message={t("loading")} />;
   if (q.isError) {
     return (
-      <EmptyState icon={<AlertTriangle size={32} strokeWidth={1.5} color={K.accent} />} title="Couldn't load your brand identity"
-        sub="Something went wrong reaching your brand settings."
-        action={<Btn variant="secondary" onClick={() => { void q.refetch(); }}>Try again</Btn>} />
+      <EmptyState icon={<AlertTriangle size={32} strokeWidth={1.5} color={K.accent} />} title={t("loadFailed")}
+        description={t("loadFailedSub")}
+        action={<Button variant="secondary" onClick={() => { void q.refetch(); }}>{t("tryAgain")}</Button>} />
     );
   }
 
@@ -143,6 +146,8 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
   /** Start again from the saved record (drops unsaved edits). */
   onReset: () => void;
 }) {
+  const t = useT(BRAND_MESSAGES);
+  const lang = useLang();
   const [saving, setSaving]   = useState(false);
   const [dirty, setDirty]     = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -204,10 +209,10 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
         return;
       } else {
         // AA-741 (S229): was silently ignored — the tenant saw nothing when a save failed.
-        setSaveError(typeof body.detail === "string" ? body.detail : "Could not save. Please try again.");
+        setSaveError(typeof body.detail === "string" ? body.detail : t("saveFailed"));
       }
     } catch {
-      setSaveError("Could not save. Please check your connection and try again.");
+      setSaveError(t("saveOffline"));
     } finally { setSaving(false); }
   }
 
@@ -225,7 +230,7 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
     const isDocx = file.name.toLowerCase().endsWith(".docx");
     try {
       if (file.size > 5 * 1024 * 1024) {
-        setUploadStatus("error"); setBriefNotes(["The file is larger than 5 MB."]);
+        setUploadStatus("error"); setBriefNotes([t("tooLarge")]);
         return;
       }
       // Sent as base64 JSON, not multipart: the API Gateway in front of the API corrupts binary
@@ -249,7 +254,7 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
       const body = await r.json().catch(() => ({}));
       if (!r.ok) {
         setUploadStatus("error");
-        setBriefNotes([typeof body.detail === "string" ? body.detail : "Could not read this file."]);
+        setBriefNotes([typeof body.detail === "string" ? body.detail : t("readFailed")]);
         return;
       }
       const f = body.fields ?? {};
@@ -266,10 +271,9 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
       const notes: string[] = [...(body.warnings ?? [])];
       const m = body.markets;
       if (m?.unsupported?.length) {
-        notes.push(`Market research is not available yet for: ${m.unsupported.join(", ")}. Content `
-          + `for these is written with keywords from ${m.supported?.length ? m.supported.join(", ") : "the US"}.`);
+        notes.push(t("marketsUnsupported", m.unsupported.join(", "), m.supported?.length ? m.supported.join(", ") : t("theUs")));
       }
-      if (m?.unknown?.length) notes.push(`Not recognised as a market: ${m.unknown.join(", ")}.`);
+      if (m?.unknown?.length) notes.push(t("notMarket", m.unknown.join(", ")));
       setBriefNotes(notes);
       setUploadStatus("done");
       markDirty();
@@ -287,16 +291,16 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
         {/* Header — AA-760: wraps on a phone (the History button squeezed the subtitle to ~235 px). */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 22 }}>
           <div style={{ flex: "1 1 280px", minWidth: 0 }}>
-            <h2 style={{ fontFamily: serif, fontSize: 22, fontWeight: 500, color: K.ink, margin: "0 0 6px", letterSpacing: "-0.01em" }}>Brand Identity</h2>
+            <h2 style={{ fontFamily: serif, fontSize: 22, fontWeight: 500, color: K.ink, margin: "0 0 6px", letterSpacing: "-0.01em" }}>{t("title")}</h2>
             <p style={{ fontSize: 13, color: K.muted, lineHeight: 1.6, margin: 0 }}>
-              Tell us who you are and who you write for. Every piece we write for you follows this.
+              {t("sub")}
             </p>
           </div>
           {data?.version && (
-            <button onClick={() => setShowHistory(!showHistory)}
-              style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, fontSize: 12, border: `1px solid ${K.line}`, background: K.card, color: K.muted, cursor: "pointer", fontFamily: sans, fontWeight: 500, flexShrink: 0 }}>
-              <History size={13} /> History (v{data.version})
-            </button>
+            <Button variant="ghost" size="sm" onClick={() => setShowHistory(!showHistory)} aria-expanded={showHistory}
+              style={{ flexShrink: 0 }}>
+              <History size={13} /> {t("history", data.version)}
+            </Button>
           )}
         </div>
 
@@ -304,87 +308,87 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
         {data?.configured && data?.version && (
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", marginBottom: 22, background: "var(--aa-green-bg2)", border: "1px solid var(--aa-green-border)", borderRadius: 8 }}>
             <span style={{ width: 8, height: 8, borderRadius: "50%", background: K.success, flexShrink: 0 }} />
-            <span style={{ fontSize: 12.5, color: K.success, fontWeight: 600 }}>Active — Version {data.version}</span>
-            {data.updated_at && <span style={{ fontSize: 11, color: K.muted, marginLeft: "auto" }}>Last updated {fmtDate(data.updated_at)}</span>}
+            <span style={{ fontSize: 12.5, color: K.success, fontWeight: 600 }}>{t("activeVersion", data.version)}</span>
+            {data.updated_at && <span style={{ fontSize: 11, color: K.muted, marginLeft: "auto" }}>{t("lastUpdated", fmtDate(data.updated_at, lang))}</span>}
           </div>
         )}
 
         {/* Viewing old version banner */}
         {viewingV !== null && (
           <div style={{ padding: "10px 14px", marginBottom: 18, background: K.amberSoft, border: `1px solid ${K.accentSoft}`, borderRadius: 8, display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 13, color: K.amber }}>Viewing v{viewingV} — unsaved changes</span>
-            <button onClick={onReset} style={{ marginLeft: "auto", fontSize: 12, color: K.amber, background: "none", border: "none", cursor: "pointer", fontFamily: sans, fontWeight: 600 }}>← Back to active</button>
+            <span style={{ fontSize: 13, color: K.amber }}>{t("viewing", viewingV)}</span>
+            <LinkButton tone="inherit" size="sm" onClick={onReset} style={{ marginLeft: "auto", color: K.amber }}>{t("backToActive")}</LinkButton>
           </div>
         )}
 
         {/* Fields — AA-557 J.23: extended to match Admin's own /admin/brand page structure. */}
         <div style={{ background: K.card, border: `1px solid ${K.line}`, borderRadius: 12, padding: 22, marginBottom: 16 }}>
-          <TextField label="Brand Name" value={brandName} onChange={v => { setBrandName(v); markDirty(); }}
-            placeholder="e.g. WanderLux Travel" />
-          <TextField label="Brand Type" value={brandType} onChange={v => { setBrandType(v); markDirty(); }}
-            placeholder="e.g. Luxury private-travel operator" />
+          <TextField label={t("brandName")} value={brandName} onChange={v => { setBrandName(v); markDirty(); }}
+            placeholder={t("brandNamePh")} />
+          <TextField label={t("brandType")} value={brandType} onChange={v => { setBrandType(v); markDirty(); }}
+            placeholder={t("brandTypePh")} />
           <Field
-            autoGrow label="Core Idea" rows={2}
-            placeholder="The single idea every piece of content should reinforce."
+            autoGrow label={t("coreIdea")} rows={2}
+            placeholder={t("coreIdeaPh")}
             value={coreIdea} onChange={v => { setCoreIdea(v); markDirty(); }}
           />
-          <TagListField label="Target Markets" value={targetMarkets} onChange={v => { setTargetMarkets(v); markDirty(); }}
-            placeholder="US, UK, Europe" hint="Comma-separated countries or regions. Europe = UK, Germany, France, Netherlands. Sets the keywords and research your content is written for." />
+          <TagListField label={t("targetMarkets")} value={targetMarkets} onChange={v => { setTargetMarkets(v); markDirty(); }}
+            placeholder={t("targetMarketsPh")} hint={t("targetMarketsHint")} />
           <Field
-            autoGrow label="Customer Segment" rows={2}
-            placeholder="Who buys this — demographics, income, travel habits."
+            autoGrow label={t("segment")} rows={2}
+            placeholder={t("segmentPh")}
             value={customerSegment} onChange={v => { setCustomerSegment(v); markDirty(); }}
           />
           <Field
-            autoGrow label="Customer Mindset" rows={2}
-            placeholder="What they're thinking/feeling when they decide to book."
+            autoGrow label={t("mindset")} rows={2}
+            placeholder={t("mindsetPh")}
             value={customerMindset} onChange={v => { setCustomerMindset(v); markDirty(); }}
           />
-          <TagListField label="Tone of Voice" value={toneOfVoice} onChange={v => { setToneOfVoice(v); markDirty(); }}
-            placeholder="confident, warm, precise" />
+          <TagListField label={t("tone")} value={toneOfVoice} onChange={v => { setToneOfVoice(v); markDirty(); }}
+            placeholder={t("tonePh")} />
           <Field
-            autoGrow label="Writing Style" rows={4}
-            placeholder="e.g. Use active voice. Prefer concrete specifics over adjectives. Keep sentences under 25 words."
+            autoGrow label={t("style")} rows={4}
+            placeholder={t("stylePh")}
             value={sg} onChange={v => { setSg(v); markDirty(); }}
           />
           <Field
-            autoGrow label="Good Examples" rows={3}
-            placeholder="Paste 1-2 short passages that read exactly the way this brand should sound."
+            autoGrow label={t("examples")} rows={3}
+            placeholder={t("examplesPh")}
             value={goodExamples} onChange={v => { setGoodExamples(v); markDirty(); }}
           />
-          <TextField label="Default Call to Action" value={defaultCta}
+          <TextField label={t("cta")} value={defaultCta}
             onChange={v => { setDefaultCta(v); markDirty(); }}
-            placeholder="e.g. Ask us for the full itinerary and dates" />
+            placeholder={t("ctaPh")} />
           <CtaReviewNotice warning={liveCtaWarning ?? savedCtaWarning} style={{ marginTop: -6, marginBottom: 16 }} />
           <Field
-            autoGrow label="Brand context" rows={5}
-            placeholder="e.g. We are a luxury private-travel operator for US/UK professionals aged 40–60. Emphasise depth of experience, exclusivity, and cultural immersion."
+            autoGrow label={t("context")} rows={5}
+            placeholder={t("contextPh")}
             value={sp} onChange={v => { setSp(v); markDirty(); }}
             hint={`${sp.length}/2000`} hintColor={sp.length > 1800 ? K.danger : K.muted2}
           />
           <div style={{ marginBottom: 0 }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-              <label style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: K.muted }}>Forbidden Words</label>
-              <span style={{ fontSize: 11, color: K.muted2 }}>{wordCount} words</span>
+              <label style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: K.muted }}>{t("forbidden")}</label>
+              <span style={{ fontSize: 11, color: K.muted2 }}>{t("words", wordCount)}</span>
             </div>
             <input value={fw}
               onChange={e => { setFw(e.target.value); markDirty(); }}
-              placeholder="cheap, budget, bargain, amazing, incredible, stunning"
+              placeholder={t("forbiddenPh")}
               style={{ width: "100%", padding: "10px 12px", background: K.bg, border: `1px solid ${K.line}`, borderRadius: 8, color: K.body, fontSize: 13, fontFamily: sans, outline: "none", boxSizing: "border-box" }} />
-            <div style={{ fontSize: 11, color: K.muted2, marginTop: 5 }}>Comma-separated. We keep these words out of everything we write for you.</div>
+            <div style={{ fontSize: 11, color: K.muted2, marginTop: 5 }}>{t("forbiddenHint")}</div>
           </div>
         </div>
 
         {/* Preview */}
         {(sp || sg || fw) && (
           <div style={{ background: K.bg, border: `1px solid ${K.line}`, borderRadius: 10, padding: "14px 16px", marginBottom: 16 }}>
-            <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: K.muted, marginBottom: 10 }}>How we use this</div>
+            <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: K.muted, marginBottom: 10 }}>{t("howWeUse")}</div>
             <div style={{ fontSize: 12.5, color: K.muted, lineHeight: 1.7 }}>
-              {sp && <div style={{ marginBottom: 5 }}><strong style={{ color: K.ink }}>Brand context:</strong> {sp.slice(0, 120)}{sp.length > 120 ? "…" : ""}</div>}
-              {sg && <div style={{ marginBottom: 5 }}><strong style={{ color: K.ink }}>Style:</strong> {sg.slice(0, 80)}{sg.length > 80 ? "…" : ""}</div>}
+              {sp && <div style={{ marginBottom: 5 }}><strong style={{ color: K.ink }}>{t("contextLabel")}</strong> {sp.slice(0, 120)}{sp.length > 120 ? "…" : ""}</div>}
+              {sg && <div style={{ marginBottom: 5 }}><strong style={{ color: K.ink }}>{t("styleLabel")}</strong> {sg.slice(0, 80)}{sg.length > 80 ? "…" : ""}</div>}
               {fw && (
                 <div>
-                  <strong style={{ color: K.ink }}>Will avoid:</strong>{" "}
+                  <strong style={{ color: K.ink }}>{t("willAvoid")}</strong>{" "}
                   {fw.split(",").filter(Boolean).map(w => w.trim()).slice(0, 8).map(w => (
                     <span key={w} style={{ display: "inline-block", margin: "1px 3px", padding: "1px 7px", borderRadius: 20, fontSize: 11, background: K.dangerSoft, color: K.danger }}>{w}</span>
                   ))}
@@ -396,7 +400,7 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
 
         {/* Upload */}
         <div style={{ background: K.card, border: `1px solid ${K.line}`, borderRadius: 12, padding: 22, marginBottom: 22 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.12em", color: K.muted, marginBottom: 14 }}>Upload Brand Guide (Optional)</div>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.12em", color: K.muted, marginBottom: 14 }}>{t("upload")}</div>
           <input type="file" ref={fileRef} accept=".pdf,.docx" style={{ display: "none" }}
             onChange={e => { const f = e.target.files?.[0]; if (f) handleUpload(f); }} />
           <div onClick={() => fileRef.current?.click()}
@@ -405,19 +409,19 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
             style={{ border: `2px dashed ${K.accentSoft}`, borderRadius: 8, background: K.accentTint, padding: "28px 20px", textAlign: "center", cursor: "pointer" }}>
             <Upload size={24} color={K.accent} style={{ margin: "0 auto 10px" }} />
             <div style={{ fontSize: 13.5, color: K.ink, fontWeight: 500 }}>
-              {uploadStatus === "uploading" ? "Uploading…" :
-               uploadStatus === "done"      ? "Brief read — review the fields above, then save" :
-               uploadStatus === "stored"    ? "PDF stored — automatic reading works with .docx; fill in the fields above" :
-               uploadStatus === "error"     ? "⚠ Upload failed — try again" :
-               "Drag PDF or DOCX brand guide here"}
+              {uploadStatus === "uploading" ? t("uploading") :
+               uploadStatus === "done"      ? t("briefRead") :
+               uploadStatus === "stored"    ? t("pdfStored") :
+               uploadStatus === "error"     ? t("uploadFailed") :
+               t("drag")}
             </div>
-            <div style={{ fontSize: 11, color: K.muted2, fontFamily: mono, marginTop: 6 }}>DOCX is read automatically · PDF is stored only · Max 5MB</div>
+            <div style={{ fontSize: 11, color: K.muted2, fontFamily: mono, marginTop: 6 }}>{t("uploadHint")}</div>
           </div>
         </div>
 
         {briefNotes.length > 0 && (
           <div role="status" style={{ padding: "12px 14px", marginBottom: 16, background: K.amberSoft, border: `1px solid ${K.accentSoft}`, borderRadius: 8 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: K.amber, marginBottom: 6 }}>Check before saving</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: K.amber, marginBottom: 6 }}>{t("checkBefore")}</div>
             <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: K.body, lineHeight: 1.6 }}>
               {briefNotes.map(n => <li key={n}>{n}</li>)}
             </ul>
@@ -426,16 +430,16 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
 
         {/* Save row */}
         <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-          <Btn variant="primary" size="lg" disabled={saving || !dirty} onClick={save}>
-            {saving ? "Saving…" : "Save as New Version"}
-          </Btn>
-          {saved && <span style={{ fontSize: 13, color: K.success, fontWeight: 600 }}><Check size={14} style={{ display: "inline" }} /> Saved — used for everything we write from now on</span>}
-          {dirty && !saved && !saveError && <span style={{ fontSize: 13, color: K.amber }}>● Unsaved changes</span>}
+          <Button variant="primary" size="lg" disabled={saving || !dirty} onClick={save}>
+            {saving ? t("saving") : t("saveVersion")}
+          </Button>
+          {saved && <span style={{ fontSize: 13, color: K.success, fontWeight: 600 }}><Check size={14} style={{ display: "inline" }} /> {t("saved")}</span>}
+          {dirty && !saved && !saveError && <span style={{ fontSize: 13, color: K.amber }}>{t("unsaved")}</span>}
           {saveError && <span role="alert" style={{ fontSize: 13, color: K.danger }}>{saveError}</span>}
           {saved && marketNote && (
             <span style={{ fontSize: 12.5, color: K.muted, width: "100%" }}>
-              Markets in use: {marketNote.countries.filter(c => !marketNote.unsupported.includes(c)).join(", ") || "US (default)"}
-              {marketNote.unsupported.length > 0 && ` · research not available yet for ${marketNote.unsupported.join(", ")}`}
+              {t("marketsInUse", marketNote.countries.filter(c => !marketNote.unsupported.includes(c)).join(", ") || t("usDefault"))}
+              {marketNote.unsupported.length > 0 && t("researchNotYet", marketNote.unsupported.join(", "))}
             </span>
           )}
         </div>
@@ -445,8 +449,8 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
       {showHistory && data?.history && (
         <div style={{ background: K.card, border: `1px solid ${K.line}`, borderRadius: 12, overflow: "hidden", position: "sticky", top: 20 }}>
           <div style={{ padding: "14px 16px", borderBottom: `1px solid ${K.line}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: K.ink }}>Version History</div>
-            <button onClick={() => setShowHistory(false)} aria-label="Close version history" title="Close" style={{ background: "none", border: "none", cursor: "pointer", color: K.muted2, fontSize: 18 }}><span aria-hidden>×</span></button>
+            <div style={{ fontSize: 13, fontWeight: 600, color: K.ink }}>{t("versionHistory")}</div>
+            <IconButton variant="plain" size="sm" onClick={() => setShowHistory(false)} label={t("closeHistory")} title={t("close")}><span aria-hidden style={{ fontSize: 18 }}>×</span></IconButton>
           </div>
           <div style={{ padding: 14, maxHeight: "70vh", overflowY: "auto" }}>
             {data.history.map(h => (
@@ -454,24 +458,24 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
                 <div style={{ padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>
                     <span style={{ fontSize: 14, fontWeight: 700, color: h.is_active ? K.success : K.ink }}>v{h.version}</span>
-                    {h.is_active && <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 700, color: K.success, background: K.successSoft, padding: "1px 6px", borderRadius: 10 }}>ACTIVE</span>}
-                    <div style={{ fontSize: 10.5, color: K.muted2, marginTop: 3, fontFamily: mono }}>{fmtDate(h.updated_at)}</div>
+                    {h.is_active && <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 700, color: K.success, background: K.successSoft, padding: "1px 6px", borderRadius: 10 }}>{t("active")}</span>}
+                    <div style={{ fontSize: 10.5, color: K.muted2, marginTop: 3, fontFamily: mono }}>{fmtDate(h.updated_at, lang)}</div>
                   </div>
                   {!h.is_active && (
-                    <button onClick={() => restoreVersion(h)} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, border: `1px solid ${K.accentSoft}`, background: K.accentTint, color: K.amber, cursor: "pointer", fontFamily: sans, fontWeight: 600 }}>
-                      <RotateCcw size={10} style={{ display: "inline", marginRight: 3 }} />Restore
-                    </button>
+                    <Button size="sm" variant="secondary" onClick={() => restoreVersion(h)}>
+                      <RotateCcw size={10} /> {t("restore")}
+                    </Button>
                   )}
                 </div>
                 {h.system_prompt && (
                   <div style={{ padding: "0 12px 10px", borderTop: `1px solid ${K.line}`, paddingTop: 8 }}>
-                    <div style={{ fontSize: 10.5, color: K.muted2, marginBottom: 3 }}>Brand context</div>
+                    <div style={{ fontSize: 10.5, color: K.muted2, marginBottom: 3 }}>{t("context")}</div>
                     <div style={{ fontSize: 11.5, color: K.body, lineHeight: 1.5 }}>
                       {h.system_prompt.slice(0, 100)}{h.system_prompt.length > 100 ? "…" : ""}
                     </div>
                     {h.forbidden_words?.length > 0 && (
                       <div style={{ marginTop: 6 }}>
-                        <div style={{ fontSize: 10, color: K.muted2, marginBottom: 3 }}>Forbidden</div>
+                        <div style={{ fontSize: 10, color: K.muted2, marginBottom: 3 }}>{t("forbiddenShort")}</div>
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
                           {h.forbidden_words.slice(0, 5).map(w => (
                             <span key={w} style={{ fontSize: 10, padding: "1px 7px", background: K.dangerSoft, color: K.danger, borderRadius: 20 }}>{w}</span>
@@ -484,7 +488,7 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
               </div>
             ))}
             <div style={{ fontSize: 11, color: K.muted2, lineHeight: 1.5, padding: "0 4px", marginTop: 4 }}>
-              Click <strong>Restore</strong> to load a previous version into the editor, then save as a new version.
+              {t("restoreHelp1")} <strong>{t("restore")}</strong> {t("restoreHelp2")}
             </div>
           </div>
         </div>
