@@ -1,6 +1,7 @@
 """Provenance of the vendored UI kit core (AA-994 S2a, root ADR 0016 decision 5, plan guard G13).
 
-``portal/app/_kit/core/`` and ``web/app/_kit/core/`` are byte copies of AA-CIS-App ``frontend/app/_kit/core/``, written
+``web/app/_kit/core/`` (and ``portal/app/_kit/core/`` until AA-1036 retired it) is a byte copy of AA-CIS-App
+``frontend/app/_kit/core/``, written
 by the root ``tools/kit/kit-sync.sh``, which records the CIS commit in ``kit.lock.json`` (``ref``) together with the
 sha256 of the copied ``MANIFEST.json``. The integrity check (``core/check-kit-copy.mjs``, offline) proves that the copy
 matches its own manifest. This check proves where that manifest came from:
@@ -14,14 +15,14 @@ matches its own manifest. This check proves where that manifest came from:
 Together with integrity, every file of the copy equals CIS at a commit CIS has merged: an edited copy with a
 regenerated manifest fails (3), and a copy of an unmerged CIS branch fails (4).
 
-The check always runs (Portal Build, Web Build; no path filter, so it also reports on ``merge_group``) but only reads
+The check always runs (Web Build; no path filter, so it also reports on ``merge_group``) but only reads
 GitHub when the change touches the kit: with ``--base <sha>`` it diffs ``<sha>..HEAD`` over the lock and the core
 folder and passes at once when neither changed. A ref name (``--base origin/main``, for local runs) is resolved to its
 commit first. No base (or a base git cannot read) means a full check.
 
 Usage (any working directory; lock paths are relative to it)::
 
-    python3 api/scripts/check_kit_provenance.py portal/kit.lock.json [web/kit.lock.json] [--base <sha|ref>]
+    python3 api/scripts/check_kit_provenance.py web/kit.lock.json [more locks] [--base <sha|ref>]
 
 Reads AA-CIS-App through the GitHub REST API (public repo). ``GITHUB_TOKEN`` (or ``GH_TOKEN``) only lifts the rate
 limit; without it, or if GitHub refuses it, calls are anonymous. Network errors, rate limits and 5xx are retried, then

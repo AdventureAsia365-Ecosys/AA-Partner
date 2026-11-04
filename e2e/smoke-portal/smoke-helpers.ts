@@ -33,7 +33,7 @@ export type PageSpec = {
 };
 
 export function baseUrl(): string {
-  return process.env.BASE_URL || 'http://localhost:3004';
+  return process.env.BASE_URL || 'http://localhost:3005';
 }
 
 export function baseOrigin(): string {

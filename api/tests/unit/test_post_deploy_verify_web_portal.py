@@ -1,19 +1,17 @@
-"""AA-993 V3 (ADR 0016 D3) — the CRM web and Content studio post-deploy verify is red/green, and so are their deploys.
+"""AA-993 V3 (ADR 0016 D3) — the CRM web post-deploy verify (the Content studio inside it since AA-1036) is red/green,
+and so is its deploy.
 
-- ``post_deploy_verify.sh crm-web`` / ``crm-portal`` run for real with the real rows files against fixture JSON
-  (``curl`` and ``aws`` are PATH stubs from ``test_post_deploy_verify``): all good exits 0; a stale ``git_sha``/``sha``,
-  a wrong version, the API rule lost or the API not ready each exit 1.
+- ``post_deploy_verify.sh crm-web`` runs for real with the real rows file against fixture JSON (``curl`` and ``aws``
+  are PATH stubs from ``test_post_deploy_verify``): all good exits 0; a stale ``git_sha``/``sha``, a wrong version, the
+  API rule lost, the API not ready or ``/api/healthz`` not the merged studio each exit 1.
 - ``edge_verify.sh`` runs for real against a stub ``curl`` that also answers ``%{redirect_url}``: the signed-out
-  redirect, a public studio page and its ``/portal-assets`` asset, and the retired API-key sign-in URL (308, AA-979
-  §4.5) are each red when wrong.
-- The workflows are checked as text, like V2: ``deploy-web-dev.yml`` and ``deploy-portal-dev.yml`` call the verify after
-  ``deploy`` (no inline smoke left), ``config`` fails instead of skipping, ``result`` needs every job and is red on any
-  non-success; the web deploy calls ``ui-smoke-portal.yml`` with ``require_tenant_login`` and the e2e studio
-  user's three sign-in secrets, and the smoke step is red when one is missing.
-- AA-1036 (R3 slice 2, cut-over): the studio is part of the web, so the crm-web verify also reads the merged studio's
-  ``/api/healthz`` (``studio: "merged"``; the old service's ``aa-partner-portal`` is red) and checks the studio paths on
-  the agency host ("/" lands on Content, the signed-out studio redirect, ``/tenant-login`` 308, ``/terms`` 308 to
-  ``/legal/partner-terms``, that page and its ``/_next`` asset). Deploy Portal Dev is a dispatch-only rollback path.
+  redirects, "/" landing on Content, the retired API-key sign-in URL (308, AA-979 §4.5), the studio's old legal path
+  (308), a public studio page and its ``/_next`` asset are each red when wrong.
+- The workflow is checked as text, like V2: ``deploy-web-dev.yml`` calls the verify after ``deploy`` (no inline smoke
+  left), ``config`` fails instead of skipping, ``result`` needs every job and is red on any non-success; it calls
+  ``ui-smoke-portal.yml`` with ``require_tenant_login`` and the e2e studio user's three sign-in secrets, and the smoke
+  step is red when one is missing. AA-1036 R3 slice 2 retired the separate studio service: no ``crm-portal`` app, no
+  Deploy Portal Dev.
 """
 
 from __future__ import annotations
@@ -50,13 +48,11 @@ WORKFLOWS = REPO / ".github" / "workflows"
 EDGE = REPO / ".github" / "scripts" / "edge_verify.sh"
 VERIFY_WF = WORKFLOWS / "post-deploy-verify.yml"
 WEB_WF = WORKFLOWS / "deploy-web-dev.yml"
-PORTAL_WF = WORKFLOWS / "deploy-portal-dev.yml"
 SMOKE_WF = WORKFLOWS / "ui-smoke-portal.yml"
 BASE = "https://host.test"
 
 APPS = {
     "crm-web": {"svc": "aa-crm-dev-web", "rows": {"healthz", "api-health", "api-ready", "studio-healthz"}},
-    "crm-portal": {"svc": "aa-crm-dev-portal", "rows": {"studio-healthz", "api-health"}},
 }
 
 
@@ -68,38 +64,26 @@ def _good_http(app: str) -> dict:
         },  # the API runs an older commit: still green
         "/crm/health/ready": {"status": 200, "body": {"status": "ok", "db": "ok", "schema_version": "crm-019"}},
     }
-    if app == "crm-web":
-        own = {
-            "/healthz": {
-                "status": 200,
-                "body": {
-                    "status": "ok",
-                    "service": "aa-crm-web",
-                    "version": VERSION,
-                    "git_sha": SHA,
-                    "environment": "dev",
-                    "auth_configured": True,
-                    "staff_auth_configured": True,
-                },
+    assert app == "crm-web"
+    own = {
+        "/healthz": {
+            "status": 200,
+            "body": {
+                "status": "ok",
+                "service": "aa-crm-web",
+                "version": VERSION,
+                "git_sha": SHA,
+                "environment": "dev",
+                "auth_configured": True,
+                "staff_auth_configured": True,
             },
-            # AA-1036: the agency host sends /api/* to the web, whose studio BFF answers its liveness there.
-            "/api/healthz": {
-                "status": 200,
-                "body": {"ok": True, "service": "aa-crm-web", "studio": "merged", "version": VERSION, "sha": SHA},
-            },
-        }
-    else:
-        own = {
-            "/api/healthz": {
-                "status": 200,
-                "body": {"ok": True, "service": "aa-partner-portal", "version": VERSION, "sha": SHA},
-            },
-            # On the agency host /healthz is the CRM web's: the portal rows must not read it.
-            "/healthz": {
-                "status": 200,
-                "body": {"status": "ok", "service": "aa-crm-web", "version": VERSION, "git_sha": SHA},
-            },
-        }
+        },
+        # AA-1036: the agency host sends /api/* to the web, whose studio BFF answers its liveness there.
+        "/api/healthz": {
+            "status": 200,
+            "body": {"ok": True, "service": "aa-crm-web", "studio": "merged", "version": VERSION, "sha": SHA},
+        },
+    }
     return {**api, **own}
 
 
@@ -150,7 +134,7 @@ def run_rows(tmp_path: Path):
     return run
 
 
-# ── rows (post_deploy_verify.sh with the real crm-web.rows / crm-portal.rows) ──────────────────────────────────────
+# ── rows (post_deploy_verify.sh with the real crm-web.rows) ───────────────────────────────────────────────────────
 
 
 @needs_tools
@@ -195,11 +179,6 @@ def _status(path: str, code: int):
         ("crm-web", _set("/api/healthz", studio="separate"), {"studio-healthz"}),
         ("crm-web", _set("/api/healthz", sha=OLD_SHA), {"studio-healthz"}),
         ("crm-web", _status("/api/healthz", 404), {"studio-healthz"}),
-        ("crm-portal", _set("/api/healthz", sha=OLD_SHA), {"studio-healthz"}),
-        ("crm-portal", _set("/api/healthz", version="0.0.1"), {"studio-healthz"}),
-        # /api/* reaching the CRM web instead of the studio.
-        ("crm-portal", _status("/api/healthz", 404), {"studio-healthz"}),
-        ("crm-portal", _set("/crm/health", service="aa-crm-web"), {"api-health"}),
     ],
 )
 def test_rows_failures_are_red(run_rows, app: str, breaker, red: set[str]) -> None:
@@ -212,7 +191,7 @@ def test_rows_failures_are_red(run_rows, app: str, breaker, red: set[str]) -> No
 
 @needs_tools
 @pytest.mark.parametrize("app", sorted(APPS))
-def test_desired_zero_is_red_for_web_and_portal(run_rows, app: str) -> None:
+def test_desired_zero_is_red_for_the_web(run_rows, app: str) -> None:
     ecs = _ecs(app)
     svc = APPS[app]["svc"]
     ecs["services"][svc] = _service("td:7", desired=0, running=0) | {"serviceName": svc}
@@ -232,11 +211,8 @@ def test_rows_files_are_get_only_and_public(app: str) -> None:
         names.append(name)
     assert set(names) == APPS[app]["rows"] and len(names) == len(set(names))
     text = rows.read_text()
-    # The studio's commit is read where the agency host routes to the studio, never /healthz (the CRM web's there).
-    if app == "crm-portal":
-        assert "|GET /api/healthz|" in text and "|GET /healthz|" not in text
-    else:  # AA-1036: the web's own /healthz and the merged studio's /api/healthz
-        assert "|GET /healthz|" in text and '|GET /api/healthz|200|.ok == true and .service == "aa-crm-web"' in text
+    # AA-1036: the web's own /healthz and the merged studio's /api/healthz.
+    assert "|GET /healthz|" in text and '|GET /api/healthz|200|.ok == true and .service == "aa-crm-web"' in text
 
 
 def test_the_merged_web_serves_the_studio_health_body_under_api() -> None:
@@ -245,15 +221,6 @@ def test_the_merged_web_serves_the_studio_health_body_under_api() -> None:
     assert "sha: env.GIT_SHA" in lib and "version: env.APP_VERSION" in lib
     src = (REPO / "web" / "app" / "api" / "healthz" / "route.ts").read_text()
     assert "healthBody()" in src and "export function GET" in src and "fetch(" not in src
-
-
-def test_the_studio_serves_its_health_body_under_api() -> None:
-    lib = (REPO / "portal" / "lib" / "health.ts").read_text()
-    assert 'service: "aa-partner-portal"' in lib and "sha: env.GIT_SHA" in lib and "version: env.APP_VERSION" in lib
-    for route in ("portal/app/healthz/route.ts", "portal/app/api/healthz/route.ts"):
-        src = (REPO / route).read_text()
-        assert "healthBody()" in src and "export function GET" in src and "fetch(" not in src, route
-        assert '"Cache-Control": "no-store"' in src and 'dynamic = "force-dynamic"' in src, route
 
 
 # ── edge_verify.sh (redirects and assets) ──────────────────────────────────────────────────────────────────────────
@@ -286,7 +253,6 @@ if fmt:
     sys.stdout.write(fmt.replace("%{redirect_url}", route.get("location", "")))
 """
 
-ASSET = "/portal-assets/_next/static/chunks/main-abc123.js"
 WEB_ASSET = "/_next/static/chunks/main-def456.js"
 STUDIO_NEXT = f"{BASE}/auth/refresh?next=%2Fportal%2Fdashboard"
 
@@ -304,12 +270,7 @@ def _edge_good(app: str) -> dict:
             "/legal/partner-terms": {"status": 200, "body": f'<html><script src="{WEB_ASSET}" async></script></html>'},
             WEB_ASSET: {"status": 200, "body": "js"},
         }
-    return {
-        "/terms": {"status": 200, "body": f'<html><script src="{ASSET}" async></script></html>'},
-        ASSET: {"status": 200, "body": "js"},
-        "/tenant-login": {"status": 308, "location": f"{BASE}/auth/refresh?next=%2Fportal%2Fdashboard"},
-        "/portal/dashboard": {"status": 307, "location": f"{BASE}/auth/refresh?next=%2Fportal%2Fdashboard"},
-    }
+    raise AssertionError(app)
 
 
 @pytest.fixture
@@ -356,7 +317,7 @@ def test_edge_all_good_is_green(run_edge, app: str) -> None:
             "web-assets",
         }
         if app == "crm-web"
-        else {"studio-page", "studio-assets", "api-key-signin-off", "signin-redirect"}
+        else set()
     )
     assert {ln.split("|")[1].strip() for ln in summary.splitlines() if "| PASS |" in ln} == expected
 
@@ -404,40 +365,6 @@ def _edge_break(app: str, path: str, **route: Any) -> dict:
             _edge_break("crm-web", "/legal/partner-terms", status=200, body="<html>no assets</html>"),
             {"web-assets"},
         ),
-        # A signed-out studio page sent anywhere but the CRM web's refresh.
-        (
-            "crm-portal",
-            _edge_break("crm-portal", "/portal/dashboard", status=307, location=f"{BASE}/tenant-login"),
-            {"signin-redirect"},
-        ),
-        ("crm-portal", _edge_break("crm-portal", ASSET, status=404, body=""), {"studio-assets"}),
-        (
-            "crm-portal",
-            _edge_break("crm-portal", "/terms", status=200, body="<html>no assets</html>"),
-            {"studio-assets"},
-        ),
-        (
-            "crm-portal",
-            _edge_break("crm-portal", "/terms", status=502, body="bad gateway"),
-            {"studio-page", "studio-assets"},
-        ),
-        # AA-979 §4.5: the API-key sign-in page still served (PORTAL_API_KEY_SIGNIN on), or a temporary redirect, or
-        # one back to itself (a loop).
-        ("crm-portal", _edge_break("crm-portal", "/tenant-login", status=200, body="<html>"), {"api-key-signin-off"}),
-        (
-            "crm-portal",
-            _edge_break(
-                "crm-portal", "/tenant-login", status=307, location=f"{BASE}/auth/refresh?next=%2Fportal%2Fdashboard"
-            ),
-            {"api-key-signin-off"},
-        ),
-        (
-            "crm-portal",
-            _edge_break(
-                "crm-portal", "/tenant-login", status=308, location=f"{BASE}/auth/refresh?next=%2Ftenant-login"
-            ),
-            {"api-key-signin-off"},
-        ),
     ],
 )
 def test_edge_failures_are_red(run_edge, app: str, http: dict, red: set[str]) -> None:
@@ -455,8 +382,8 @@ def test_edge_bad_base_is_red(run_edge, base: str) -> None:
 
 
 @needs_tools
-@pytest.mark.parametrize("args", [(), ("crm",), ("../x",)])
-def test_edge_needs_a_web_or_portal_app(args: tuple[str, ...]) -> None:
+@pytest.mark.parametrize("args", [(), ("crm",), ("crm-portal",), ("../x",)])
+def test_edge_needs_the_web_app(args: tuple[str, ...]) -> None:
     proc = subprocess.run(  # noqa: S603
         [str(BASH), str(EDGE), *args], capture_output=True, text=True, timeout=30, env={"PATH": os.environ["PATH"]}
     )
@@ -472,7 +399,6 @@ def test_edge_needs_a_web_or_portal_app(args: tuple[str, ...]) -> None:
     [
         ("crm", "aa-crm-dev-api", "https://api.test", "false"),
         ("crm-web", "aa-crm-dev-web", "https://web.test", "true"),
-        ("crm-portal", "aa-crm-dev-portal", "https://portal.test", "true"),
     ],
 )
 def test_verify_resolves_each_app(tmp_path: Path, app: str, service: str, base: str, edge: str) -> None:
@@ -491,9 +417,6 @@ def test_verify_resolves_each_app(tmp_path: Path, app: str, service: str, base: 
         "WEB_REPO": "aa-crm-dev-web",
         "WEB_SERVICE": "aa-crm-dev-web",
         "WEB_BASE": "https://web.test",
-        "PORTAL_REPO": "aa-crm-dev-portal",
-        "PORTAL_SERVICE": "aa-crm-dev-portal",
-        "PORTAL_HOST": "portal.test",
     }
     proc = subprocess.run([str(BASH), "-c", script], env=env, capture_output=True, text=True, timeout=30)  # noqa: S603
     assert proc.returncode == 0, proc.stdout + proc.stderr
@@ -516,13 +439,13 @@ def test_verify_refuses_an_unknown_app(tmp_path: Path) -> None:
         "PATH": os.environ["PATH"],
         "GITHUB_ENV": str(tmp_path / "e"),
         "GITHUB_OUTPUT": str(tmp_path / "o"),
-        "VERIFY_APP": "crm-everything",
+        "VERIFY_APP": "crm-portal",  # AA-1036: retired with the separate studio service
     }
     proc = subprocess.run([str(BASH), "-c", script], env=env, capture_output=True, text=True, timeout=30)  # noqa: S603
-    assert proc.returncode == 1 and "::error::app must be crm, crm-web or crm-portal" in proc.stdout
+    assert proc.returncode == 1 and "::error::app must be crm or crm-web" in proc.stdout
 
 
-def test_verify_runs_the_edge_checks_for_web_and_portal_even_after_a_red_row() -> None:
+def test_verify_runs_the_edge_checks_for_the_web_even_after_a_red_row() -> None:
     text = VERIFY_WF.read_text()
     edge = text[text.index("      - name: Edge checks") :]
     assert "if: ${{ !cancelled() && steps.app.outputs.edge == 'true' }}" in edge
@@ -533,7 +456,6 @@ def test_verify_runs_the_edge_checks_for_web_and_portal_even_after_a_red_row() -
 
 DEPLOYS = {
     WEB_WF: {"jobs": ("config", "deploy", "verify", "smoke"), "app": "crm-web", "title": "Deploy Web Dev"},
-    PORTAL_WF: {"jobs": ("config", "deploy", "verify"), "app": "crm-portal", "title": "Deploy Portal Dev"},
 }
 
 
@@ -558,8 +480,7 @@ def test_deploy_calls_verify_after_deploy_and_result_needs_every_job(wf: Path) -
     # Public logs: task definitions as family:revision only.
     assert 'split("/") | last' in deploy and "${NEW_TD##*/}" in deploy
     # The deploy concurrency group is unchanged (one deploy per service at a time).
-    group = f"deploy-{'web' if wf is WEB_WF else 'portal'}-dev"
-    assert f"concurrency:\n  group: {group}\n  cancel-in-progress: false" in text
+    assert "concurrency:\n  group: deploy-web-dev\n  cancel-in-progress: false" in text
 
 
 @needs_tools
@@ -570,7 +491,7 @@ def test_deploy_calls_verify_after_deploy_and_result_needs_every_job(wf: Path) -
 def test_config_fails_instead_of_skipping(wf: Path, role: str, enabled: str, code: int) -> None:
     config = _block(_block(wf.read_text(), "jobs:", 0), "config:", 2)
     assert "GITHUB_OUTPUT" not in config and not re.search(r"^    outputs:", config, re.M)
-    flag = "WEB_ENABLED" if wf is WEB_WF else "PORTAL_ENABLED"
+    flag = "WEB_ENABLED"
     proc = subprocess.run(  # noqa: S603
         [str(BASH), "-c", _run_script(config)],
         env={"PATH": os.environ["PATH"], "ROLE_ARN": role, flag: enabled},
@@ -633,17 +554,6 @@ def test_web_deploy_smokes_the_studio_with_its_sign_in_required() -> None:
     assert "base_url: ${{ vars.CRM_WEB_BASE_URL || 'https://portal.lumiguides.it.com' }}" in deploy
 
 
-def test_portal_deploy_is_a_dispatch_only_rollback_path() -> None:
-    """AA-1036: no push deploys the retiring studio service, and its deploy no longer runs the studio smoke."""
-    text = PORTAL_WF.read_text()
-    on = _block(text, "on:", 0)
-    assert re.findall(r"^  ([a-z_]+):", on, re.M) == ["workflow_dispatch"]
-    jobs = _block(text, "jobs:", 0)
-    assert "ui-smoke-portal.yml" not in jobs
-    verify = _block(jobs, "verify:", 2)
-    assert "resolve_via: ${{ needs.deploy.outputs.resolve_via }}" in verify
-
-
 def test_ui_smoke_takes_resolve_via_and_the_login_requirement_when_called() -> None:
     on = _block(SMOKE_WF.read_text(), "on:", 0)
     call, dispatch = _block(on, "workflow_call:", 2), _block(on, "workflow_dispatch:", 2)
@@ -697,3 +607,11 @@ def test_smoke_step_is_red_without_the_studio_sign_in_only_when_required(
     assert marker.exists() is ran
     if code:
         assert f"::error::{missing} is not set" in proc.stdout
+
+
+def test_the_separate_studio_app_is_retired() -> None:
+    """AA-1036 R3 slice 2: no Deploy Portal Dev, no crm-portal rows; the web verify reads the merged studio."""
+    assert not (WORKFLOWS / "deploy-portal-dev.yml").exists()
+    assert not (REPO / ".github" / "verify" / "crm-portal.rows").exists()
+    assert "crm-portal" not in VERIFY_WF.read_text().split("\non:", 1)[1]
+    assert "crm-portal" not in EDGE.read_text()

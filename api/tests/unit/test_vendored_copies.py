@@ -79,7 +79,6 @@ def test_web_lib_copies_exist_and_main_checks_every_set() -> None:
     assert all((check.WEB_DIR / name).is_file() for name in check.WEB_COPIES)
     assert check.WEB_COPIES["lib/bffPath.ts"] == "frontend/lib/bffPath.ts"
     by_source = {src: (check.API_DIR / name).read_bytes() for name, src in check.COPIES.items()}
-    by_source |= {src: (check.PORTAL_DIR / name).read_bytes() for name, src in check.PORTAL_COPIES.items()}
     by_source |= {src: (check.WEB_DIR / name).read_bytes() for name, src in check.WEB_COPIES.items()}
     out = io.StringIO()
     assert check.main(by_source.get, out) == 0
@@ -94,11 +93,11 @@ def test_web_lib_copies_exist_and_main_checks_every_set() -> None:
 def test_the_ui_kit_is_left_to_the_kit_lock_checks() -> None:
     """AA-994 S2a (root ADR 0016 decision 5): no kit or brand file is live-compared with CIS main any more; the kit
     core copies are pinned by kit.lock.json and checked by check-kit-copy.mjs + check_kit_provenance.py instead."""
-    for copies in (check.WEB_COPIES, check.PORTAL_COPIES):
-        assert all(name.startswith("lib/") for name in copies), copies
-        assert not any("_kit" in src or "_brand" in src for src in copies.values())
-    assert set(check.PORTAL_COPIES) == set(check.WEB_COPIES)
-    for app in (check.PORTAL_DIR, check.WEB_DIR):
+    assert all(name.startswith("lib/") for name in check.WEB_COPIES), check.WEB_COPIES
+    assert not any("_kit" in src or "_brand" in src for src in check.WEB_COPIES.values())
+    # AA-1036: the separate studio app and its copies are gone.
+    assert not hasattr(check, "PORTAL_COPIES") and not (check.API_DIR.parent / "portal").exists()
+    for app in (check.WEB_DIR,):
         assert (app / "kit.lock.json").is_file()
         assert (app / "app" / "_kit" / "core" / "MANIFEST.json").is_file()
         assert not (app / "app" / "_brand").exists()

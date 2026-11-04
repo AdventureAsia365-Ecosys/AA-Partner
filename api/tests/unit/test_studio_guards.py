@@ -1,7 +1,7 @@
 """AA-1036 (R3 slice 1, root ADR 0019 d6): the Content studio's static guards on its new home, the one agency app.
 
-``test_portal_guards.py`` keeps guarding ``portal/`` until R3 slice 2 deletes it; these carry the same rules over to
-the studio inside ``web/`` (``app/(studio)/``, ``app/api/``, ``app/_kit/local/studio/``, ``lib/studio/``):
+These carry the rules of the former ``test_portal_guards.py`` (deleted with ``portal/`` in R3 slice 2) over to the
+studio inside ``web/`` (``app/(studio)/``, ``app/api/``, ``app/_kit/local/studio/``, ``lib/studio/``):
 
 - no admin secret or staff session code in the studio parts; one session: no byte copy of ``session.ts`` /
   ``seal.ts`` (the studio reads the app's own ``lib/session.ts``) and no studio code writes the session cookie;
@@ -12,7 +12,9 @@ the studio inside ``web/`` (``app/(studio)/``, ``app/api/``, ``app/_kit/local/st
   partner terms still names the register providers and links the policies;
 - every studio BFF write route refuses a cross-site request before it reads a cookie or a body;
 - studio cookies are bound to the live partner sign-in (``cis_partner_ref``), Sentry sends no personal data, and the
-  studio's links to the CRM are plain ``<a>`` (a full page load: the studio stylesheet never stays on a CRM page).
+  studio's links to the CRM are plain ``<a>`` (a full page load: the studio stylesheet never stays on a CRM page);
+- R3 slice 2: the studio smoke (after Deploy Web Dev) gets only the e2e studio user's sign-in and uploads no auth
+  state; the studio's text colours read at AA (kit tokens, the accent-deep link token, muted2 placeholders).
 """
 
 from __future__ import annotations
@@ -22,19 +24,86 @@ from pathlib import Path
 
 import pytest
 
-from tests.unit.test_portal_guards import (
-    FIRST_WORK,
-    OLD_PORTAL_SLUGS,
-    POLICY_HREFS,
-    PROVIDER_PHRASES,
-    WRITE_EXPORT,
-    WRITING_FALLBACK_PHRASES,
-    _strip_comments,
-    _write_handlers,
-)
-
 REPO = Path(__file__).resolve().parents[3]
 WEB = REPO / "web"
+WORKFLOWS = REPO / ".github" / "workflows"
+
+# AA-759: every old T-number (and flat utility) slug answers 308 to its new path.
+OLD_PORTAL_SLUGS = {
+    "/portal/t1-rewrite": "/portal/tours",
+    "/portal/t4-pool": "/portal/tours/mine",
+    # AA-671 — the Tour overview page is the Marketplace view ?view=mine (one page with the catalog).
+    "/portal/marketplace": "/portal/tours?view=mine",
+    "/portal/tours/marketplace": "/portal/tours?view=mine",
+    "/portal/t0-brand": "/portal/brand",
+    "/portal/t7-planning": "/portal/create/social",
+    "/portal/t8-angle-gate": "/portal/create/write",
+    "/portal/t10-review": "/portal/content",
+    "/portal/t11-publish": "/portal/content/publish",
+    "/portal/t11-publish/connection": "/portal/account/integrations",
+    "/portal/activity": "/portal/account/activity",
+    "/portal/billing": "/portal/account/billing",
+    "/portal/settings": "/portal/account/settings",
+    "/portal/api": "/portal/account/api",
+}
+
+# AA-820 / S262 / S264: the AI section of the partner terms links the providers' policies and names the AI Use
+# Register's providers and the writing fallback.
+POLICY_HREFS = (
+    "https://www.anthropic.com/legal/aup",
+    "https://openai.com/policies/usage-policies/",
+    "https://aws.amazon.com/aup/",
+)
+PROVIDER_PHRASES = (
+    "Claude",
+    "Amazon Bedrock",
+    "OpenAI models",
+    "Anthropic API",
+    "OpenAI API",
+    "may be used as a fallback",
+    "Amazon Nova",  # S263: the acc2 Bedrock fallback of the review / check steps (CIS migrations 331-333)
+    "Meta Llama",
+)
+WRITING_FALLBACK_PHRASES = (
+    "Claude through the Anthropic API",
+    "as a last resort",
+    "an OpenAI model through the OpenAI API",
+)
+
+# AA-911: write handlers and the work a handler must not do before the cross-site guard.
+WRITE_EXPORT = re.compile(r"export\s+(?:const\s+|(?:async\s+)?function\s+)(POST|PUT|PATCH|DELETE)\b")
+REEXPORT = re.compile(r"export\s*\{[^}]*\bas\s+(POST|PUT|PATCH|DELETE)\b")
+FIRST_WORK = re.compile(
+    r"requireAdmin\(|requireTenant\(|requireStudio\(|partnerSession\(|\.cookies\.get\(|"
+    r"req\.(?:text|json|arrayBuffer|formData)\(|handleRefreshKeepAlive\("
+)
+
+
+def _strip_comments(src: str) -> str:
+    src = re.sub(r"(?m)^\s*//.*$", "", src)
+    return re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+
+
+def _function_body(src: str, header: re.Match) -> str:
+    rest = src[header.end() :]
+    nxt = re.search(r"\n(?:export\s|async\s+function\s|function\s|const\s)", rest)
+    return rest[: nxt.start()] if nxt else rest
+
+
+def _write_handlers(src: str) -> list[tuple[str, str]]:
+    assert not REEXPORT.search(src), "write handler exported through `export { … as … }`: export it directly"
+    handlers = [
+        (m.group(1), _function_body(src, m))
+        for m in re.finditer(r"export\s+(?:async\s+)?function\s+(POST|PUT|PATCH|DELETE)\s*\(", src)
+    ]
+    aliased = {m.group(2) for m in re.finditer(r"export\s+const\s+(POST|PUT|PATCH|DELETE)\s*=\s*(\w+)\s*;", src)}
+    for name in sorted(aliased):
+        m = re.search(rf"async\s+function\s+{name}\s*\(", src)
+        assert m, f"handler {name} not found"
+        handlers.append((name, _function_body(src, m)))
+    return handlers
+
+
 STUDIO_DIRS = [
     WEB / "app" / "(studio)",
     WEB / "app" / "api",
@@ -217,3 +286,113 @@ def test_links_between_the_studio_and_the_crm_are_full_page_loads() -> None:
     css = _read("web/app/(studio)/studio.css")
     assert '@import "tailwindcss" source(none);' in css
     assert "studio.css" in _read("web/app/(studio)/layout.tsx") and "studio.css" not in _read("web/app/layout.tsx")
+
+
+# --- R3 slice 2: the studio smoke runs after Deploy Web Dev -----------------------------------------------------------
+
+
+def test_studio_smoke_gets_only_the_studio_sign_in() -> None:
+    """No `secrets: inherit`; the web deploy passes the e2e studio user's three values, on the smoke step only."""
+    deploy = (WORKFLOWS / "deploy-web-dev.yml").read_text()
+    assert "secrets: inherit" not in deploy
+    passed = re.search(r"^    secrets:\n((?:      \S.*\n)+)", deploy, re.M)
+    assert passed, "deploy-web-dev.yml: the smoke call must pass an explicit secrets block"
+    names = set(re.findall(r"^\s+(\w+):", passed.group(1), re.M))
+    assert names == {"E2EPORTALEMAIL", "E2EPORTALPASSWORD", "E2EPORTALTOTP"}, names
+    smoke = (WORKFLOWS / "ui-smoke-portal.yml").read_text()
+    job_env = smoke[smoke.index("    env:\n") : smoke.index("    steps:\n")]
+    assert "secrets." not in job_env, "ui-smoke-portal.yml: secrets belong on the smoke step, not the job env"
+    assert "PORTAL_TARGET: fargate" in smoke
+
+
+def test_studio_smoke_uploads_no_auth_state() -> None:
+    smoke = (WORKFLOWS / "ui-smoke-portal.yml").read_text()
+    upload = smoke[smoke.index("actions/upload-artifact") : smoke.index("if-no-files-found")]
+    paths = upload[upload.index("path: |") :]
+    assert ".auth" not in paths and "e2e/**" not in paths
+    assert "rm -rf .auth" in smoke
+
+
+def test_no_workflow_or_dependabot_entry_names_the_retired_studio_app() -> None:
+    """R3 slice 2: portal/ and its deploy are gone; nothing builds, deploys or updates them any more."""
+    assert not (REPO / "portal").exists()
+    assert not (WORKFLOWS / "deploy-portal-dev.yml").exists()
+    for wf in sorted(WORKFLOWS.glob("*.yml")):
+        text = wf.read_text()
+        assert "working-directory: portal" not in text and "aa-crm-dev-portal" not in text, wf.name
+    assert 'directory: "/portal"' not in (REPO / ".github" / "dependabot.yml").read_text()
+
+
+# --- S251 / AA-760: the studio's text reads at AA (kit tokens of the one agency app) ------------------------------
+
+
+def _theme_block(theme: str) -> str:
+    src = (WEB / "app" / "_kit" / "core" / "tokens.css").read_text(encoding="utf-8")
+    start = src.index(f'[data-theme="{theme}"] {{')
+    return src[start : src.index("\n}", start)]
+
+
+def _token(block: str, name: str) -> str:
+    m = re.search(rf"--aa-{re.escape(name)}:\s*(#[0-9A-Fa-f]{{6}})\b", block)
+    assert m, f"--aa-{name} not found as a #RRGGBB literal"
+    return m.group(1)
+
+
+def _luminance(hex_colour: str) -> float:
+    def channel(c: int) -> float:
+        v = c / 255
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (int(hex_colour[i : i + 2], 16) for i in (1, 3, 5))
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+
+
+def contrast(a: str, b: str) -> float:
+    hi, lo = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def test_contrast_helper_matches_known_values() -> None:
+    assert round(contrast("#000000", "#FFFFFF"), 1) == 21.0
+    assert round(contrast("#9099A6", "#FFFFFF"), 2) == 2.88
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("token", ["muted", "muted2"])
+@pytest.mark.parametrize("surface", ["card", "bg", "line2", "neutral-bg"])
+def test_muted_text_reads_at_aa_on_its_surfaces(theme: str, token: str, surface: str) -> None:
+    block = _theme_block(theme)
+    fg, bg = _token(block, token), _token(block, surface)
+    ratio = contrast(fg, bg)
+    assert ratio >= 4.5, f"{theme}: --aa-{token} {fg} on --aa-{surface} {bg} is {ratio:.2f}:1 (< 4.5:1)"
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("surface", ["card", "bg", "accent-tint"])
+def test_link_text_token_reads_at_aa(theme: str, surface: str) -> None:
+    block = _theme_block(theme)
+    fg, bg = _token(block, "accent-deep"), _token(block, surface)
+    ratio = contrast(fg, bg)
+    assert ratio >= 4.5, f"{theme}: --aa-accent-deep {fg} on --aa-{surface} {bg} is {ratio:.2f}:1 (< 4.5:1)"
+
+
+# Decorative or non-text uses of the accent colour that may stay: list bullets, the spinner icon and icons on the
+# dark panel (which is the same dark navy in both themes).
+_GOLD_OK = ("•", "Loader2", "T.darkPanel")
+
+
+def test_studio_text_never_uses_the_bare_accent_colour() -> None:
+    pattern = re.compile(r"color:\s*(?:[^,}]*\?\s*)?(?:T\.gold|K\.accent)\b(?!Deep|Tint|Soft|Border)")
+    offenders = []
+    for path in sorted((WEB / "app" / "(studio)").rglob("*.tsx")):
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if pattern.search(line) and not any(ok in line for ok in _GOLD_OK):
+                offenders.append(f"{path.relative_to(REPO)}:{n}: {line.strip()[:120]}")
+    assert not offenders, "use T.goldDeep / K.accentDeep for text (S251 D7):\n" + "\n".join(offenders)
+
+
+def test_studio_placeholders_use_muted2_in_both_themes() -> None:
+    css = (WEB / "app" / "(studio)" / "studio.css").read_text(encoding="utf-8")
+    m = re.search(r"(?m)^input::placeholder,\s*\ntextarea::placeholder,[^{]*\{([^}]*)\}", css)
+    assert m, "studio.css needs a theme-independent input/textarea ::placeholder rule"
+    assert "var(--aa-muted2)" in m.group(1) and "opacity: 1" in m.group(1)

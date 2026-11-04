@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# AA-993 V3 (ADR 0016 D3) — the post-deploy checks of the CRM web and the Content studio that a rows file cannot
+# AA-993 V3 (ADR 0016 D3) — the post-deploy checks of the CRM web (and, since AA-1036, the Content studio inside it) that a rows file cannot
 # express (post_deploy_verify.sh rows read a status code and a JSON body only): where a signed-out visitor is
 # redirected, and that the studio's Next assets are served. Run by .github/workflows/post-deploy-verify.yml after
-# post_deploy_verify.sh for the apps crm-web and crm-portal. Red/green, no warnings.
+# post_deploy_verify.sh for the app crm-web. Red/green, no warnings.
 #
-# Usage: edge_verify.sh <crm-web|crm-portal>
+# Usage: edge_verify.sh crm-web
 #
 # Checks (each gets VERIFY_TRIES tries, VERIFY_RETRY_DELAY seconds apart):
 #   crm-web     signin-redirect   GET /pipeline without a session -> 307 to <BASE>/auth/refresh?next=%2Fpipeline
@@ -18,14 +18,6 @@
 #               studio-legal      GET /terms -> 308 to <BASE>/legal/partner-terms (the studio's old legal path)
 #               studio-page       GET /legal/partner-terms -> 200 (a public studio page served by the web)
 #               web-assets        the first /_next/static/*.js of that page -> 200
-#   crm-portal  (the retiring studio service; only a rollback of the cut-over routes the agency host to it again)
-#               studio-page       GET /terms -> 200 (a public studio page: the draft terms)
-#               studio-assets     the first /portal-assets/_next/static/*.js of that page -> 200
-#               api-key-signin-off  GET /tenant-login -> 308 to <BASE>/auth/refresh?next=%2Fportal%2Fdashboard
-#                                 (AA-979 §4.5: PORTAL_API_KEY_SIGNIN off, API keys are for machines only)
-#               signin-redirect   GET /portal/dashboard without a session -> 307 to
-#                                 <BASE>/auth/refresh?next=%2Fportal%2Fdashboard (the studio sends a signed-out visitor
-#                                 to the CRM web's refresh)
 #
 # Env: BASE (https://<host>, no path); optional VERIFY_TRIES (3), VERIFY_RETRY_DELAY (10), GITHUB_STEP_SUMMARY.
 # Needs bash, curl.
@@ -34,8 +26,8 @@ set -uo pipefail
 
 APP="${1:-}"
 case "$APP" in
-  crm-web|crm-portal) ;;
-  *) echo "::error::usage: edge_verify.sh <crm-web|crm-portal> (got '${APP}')"; exit 2 ;;
+  crm-web) ;;
+  *) echo "::error::usage: edge_verify.sh crm-web (got '${APP}')"; exit 2 ;;
 esac
 TRIES="${VERIFY_TRIES:-3}"
 DELAY="${VERIFY_RETRY_DELAY:-10}"
@@ -138,15 +130,6 @@ else
       else
         record web-assets FAIL "not run: the studio page did not load"
       fi
-      ;;
-    crm-portal)
-      if retry studio-page check_page /terms; then
-        retry studio-assets check_asset /portal-assets
-      else
-        record studio-assets FAIL "not run: the studio page did not load"
-      fi
-      retry api-key-signin-off check_redirect /tenant-login "${BASE}/auth/refresh?next=%2Fportal%2Fdashboard" 308
-      retry signin-redirect check_redirect /portal/dashboard "${BASE}/auth/refresh?next=%2Fportal%2Fdashboard"
       ;;
   esac
 fi

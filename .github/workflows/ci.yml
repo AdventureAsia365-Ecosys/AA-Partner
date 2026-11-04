@@ -1,22 +1,21 @@
 name: CI
 
 # Required checks (branch protection on main; names like AA-Booking's and AA-CIS-App's so the rules read the same):
-#   Lint, Security Audit, Unit Tests, Integration Tests, Docker Build Check, Portal Build, Web Build (the last two since
-#   AA-994 hand step H1), plus Docs lint, PR title and gitleaks from their own workflows. "Integration Tests" is the
+#   Lint, Security Audit, Unit Tests, Integration Tests, Docker Build Check, Web Build (since AA-994 hand step H1; the
+#   "Portal Build" check went with portal/ in AA-1036 R3 slice 2), plus Docs lint, PR title and gitleaks from their own
+#   workflows. "Integration Tests" is the
 #   aggregate of the "Integration shard i/N" matrix jobs (AA-1032), which are not required themselves.
 # Non-required: "Vendored CIS copies" (byte copies of AA-CIS-App files: the job table template + comparator, ADR 0003a,
-# the multi-issuer verifier, ADR 0006 §8 rule 9, and the web's and portal's BFF helpers, AA-935 / AA-979).
+# the multi-issuer verifier, ADR 0006 §8 rule 9, and the web's BFF helpers, AA-935).
 # Non-required (AA-993 M4b): "Migration preflight" classifies a PR's new crm-NNN files (expand = auto-applied, else
 # a person applies them) and refuses what would leave Deploy Dev waiting on a manual apply (pull_request, merge_group).
-# UI kit core (AA-994 S2a, root ADR 0016): portal/app/_kit/core and web/app/_kit/core are checked inside Portal Build and
-# Web Build (integrity + provenance against kit.lock.json), not by "Vendored CIS copies".
+# UI kit core (AA-994 S2a, root ADR 0016): web/app/_kit/core is checked inside Web Build (integrity + provenance against
+# kit.lock.json), not by "Vendored CIS copies".
 # CRM web (web/, AA-935): "Web Build" (unit tests, next build with the type check, standalone smoke, kit lint) and "Web
 # Docker Build Check" (native arm64 image, container smoke, Trivy). Web Build is required; the image check is meant to join.
-# Tenant portal (portal/, AA-979 CRM-P2a, moved from AA-CIS-App with its history): "Portal Build" (npm ci, tsc, next
-# build, kit lint; required). AA-994 S2b: the old non-required "Portal Lint" job is gone; ESLint
-# with the kit preset at error and a suppressions file that only shrinks runs inside Portal Build and Web Build. AA-979 P2b:
-# "Portal Docker Build Check" (the Fargate image, container smoke, Trivy, SBOM; to join the required checks). The
-# portal deploys from deploy-portal-dev.yml (Fargate) only; its Vercel project and workflow went at the P2b clean-up.
+# Content studio: part of the web since AA-1036 (R3, root ADR 0019 d6); the separate portal/ app, its "Portal Build" and
+# "Portal Docker Build Check" jobs and its deploy were removed in R3 slice 2. ESLint with the kit preset at error and a
+# suppressions file that only shrinks runs inside Web Build (AA-994 S2b).
 #
 # ARM: the API runs on Fargate ARM64 (ADR 0010 decision 2), so the image is built and smoke-tested on a native arm64
 # runner (ubuntu-24.04-arm, free for public repositories); the Python jobs run on x64 (pure-Python code, the pinned
@@ -96,11 +95,6 @@ jobs:
       # AA-935: the CRM web's npm dependencies (runtime and dev), from the lockfile, failing on high or critical.
       - name: npm audit (web, failing on high)
         working-directory: web
-        run: npm audit --audit-level=high
-
-      # AA-979: the tenant portal's npm dependencies, from its lockfile, same rule as the web.
-      - name: npm audit (portal, failing on high)
-        working-directory: portal
         run: npm audit --audit-level=high
 
   test-unit:
@@ -307,7 +301,7 @@ jobs:
           artifact-name: sbom-${{ github.sha }}.cdx.json
 
   # Non-required: byte copies of AA-CIS-App files (api/tests/job_template/, api/app/auth/identity_verifier.py, the
-  # web's and portal's lib/ BFF helpers). Fails when a copy drifts from CIS main. Stdlib only; the repos are public,
+  # web's lib/ BFF helpers). Fails when a copy drifts from CIS main. Stdlib only; the repos are public,
   # github.token only lifts the API rate limit. The UI kit is not here since AA-994 S2a (kit.lock.json checks).
   vendored-copies:
     name: Vendored CIS copies
@@ -674,186 +668,3 @@ jobs:
           ignore-unfixed: true
           trivyignores: ".trivyignore"
           exit-code: "1"
-
-  # AA-979 (CRM-P2b) — the Content studio image for Fargate (portal/Dockerfile: standalone + /portal-assets prefix):
-  # native arm64 build, container smoke as the ALB and CloudFront will call it (health on any Host, the Host guard, the
-  # asset prefix, redirects and the write guard on the PUBLIC origin, never the bind address: critic C2), Trivy, SBOM.
-  portal-docker-build:
-    name: Portal Docker Build Check
-    runs-on: ubuntu-24.04-arm
-    defaults:
-      run:
-        working-directory: .
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Build image (linux/arm64, native)
-        run: |
-          docker build \
-            --build-arg GIT_SHA=${{ github.sha }} \
-            --build-arg APP_VERSION="$(jq -r '."."' .release-please-manifest.json)" \
-            --tag aa-crm-portal:ci-${{ github.sha }} \
-            portal
-          docker image inspect aa-crm-portal:ci-${{ github.sha }} --format '{{.Architecture}}' | grep -qx arm64
-
-      - name: Container smoke (health, Host guard, asset prefix, public-origin redirects and write guard)
-        run: |
-          set -euo pipefail
-          PUBLIC=https://portal.example.test
-          docker run -d --name crm-portal-ci -p 3000:3000 \
-            -e ENVIRONMENT=dev -e PORTAL_HOSTS=portal.example.test -e PORTAL_PUBLIC_ORIGIN="$PUBLIC" \
-            -e WEB_SESSION_SECRET=ci-only-session-secret-not-real-0123456789 -e API_URL=http://127.0.0.1:9 \
-            aa-crm-portal:ci-${{ github.sha }}
-          H=(-H "Host: portal.example.test")
-          for i in $(seq 1 30); do curl -sf http://localhost:3000/healthz -o /tmp/healthz.json && break; sleep 1; done
-          cat /tmp/healthz.json; echo
-          jq -e --arg sha "${{ github.sha }}" '.ok == true and .service == "aa-partner-portal" and .sha == $sha' /tmp/healthz.json
-          [ "$(docker inspect --format '{{.Config.User}}' crm-portal-ci)" = "10001" ]
-          # Host guard: any other Host is 404 (the health check above answered the task's own address).
-          [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example' http://localhost:3000/tenant-login)" = "404" ]
-          # AA-979 §4.5: the API-key sign-in page is off by default; the old URL answers 308 to the partner sign-in.
-          [ "$(curl -s -o /dev/null -w '%{http_code}' "${H[@]}" http://localhost:3000/tenant-login)" = "308" ]
-          LOC=$(curl -s -o /dev/null -w '%{redirect_url}' "${H[@]}" http://localhost:3000/tenant-login)
-          [ "$LOC" = "$PUBLIC/auth/refresh?next=%2Fportal%2Fdashboard" ] || { echo "::error::/tenant-login to '$LOC'"; exit 1; }
-          # A public studio page (the draft terms) and its assets under /portal-assets/.
-          [ "$(curl -s -o /tmp/terms.html -w '%{http_code}' "${H[@]}" http://localhost:3000/terms)" = "200" ]
-          ASSET=$(grep -o '/portal-assets/_next/static/[^"]*\.js' /tmp/terms.html | head -n1)
-          [ -n "$ASSET" ] || { echo "::error::no /portal-assets/_next/static asset in the page"; exit 1; }
-          [ "$(curl -s -o /dev/null -w '%{http_code}' "${H[@]}" "http://localhost:3000$ASSET")" = "200" ]
-          # No session: the page gate sends the browser to the CRM web's refresh on the PUBLIC origin.
-          LOC=$(curl -s -o /dev/null -w '%{redirect_url}' "${H[@]}" http://localhost:3000/portal/dashboard)
-          [ "$LOC" = "$PUBLIC/auth/refresh?next=%2Fportal%2Fdashboard" ] || { echo "::error::redirect to '$LOC'"; exit 1; }
-          # Write guard on the public origin: same origin passes (200), another origin is 403.
-          [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${H[@]}" -H "Origin: $PUBLIC" http://localhost:3000/api/auth/tenant-logout)" = "200" ]
-          [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "${H[@]}" -H 'Origin: https://evil.example' http://localhost:3000/api/auth/tenant-logout)" = "403" ]
-          docker rm -f crm-portal-ci
-
-      - name: Scan image for vulnerabilities (Trivy, failing on fixable CRITICAL/HIGH)
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: "aa-crm-portal:ci-${{ github.sha }}"
-          format: "table"
-          severity: "CRITICAL,HIGH"
-          ignore-unfixed: true
-          trivyignores: ".trivyignore"
-          exit-code: "1"
-
-      - name: Generate SBOM (syft, CycloneDX)
-        uses: anchore/sbom-action@v0.24.3
-        with:
-          image: "aa-crm-portal:ci-${{ github.sha }}"
-          format: cyclonedx-json
-          output-file: sbom-portal-${{ github.sha }}.cdx.json
-          artifact-name: sbom-portal-${{ github.sha }}.cdx.json
-
-  # AA-979 (CRM-P2a) — the tenant portal (portal/, Next.js, Fargate service aa-crm-dev-portal): type check and production
-  # build. It builds without any secret or env var (the app reads its API URL at runtime). No local `next build` on the
-  # agents' 7 GB machine: this job is the build check. NODE_OPTIONS caps the heap like the web build.
-  portal-build:
-    name: Portal Build
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: portal
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up Node 22
-        uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: portal/package-lock.json
-
-      # AA-994 S2a (root ADR 0016 decision 5) — the vendored UI kit core, before npm ci (dependency-free). Integrity:
-      # every file of app/_kit/core has the sha256 of its MANIFEST.json, no file is missing or extra, the manifest is the
-      # one kit.lock.json pins, and no CSS file outside core/tokens.css defines an --aa-* variable. Provenance: that
-      # manifest is AA-CIS-App's at the lock's ref and the ref is on CIS main (reads GitHub only when this change
-      # touches portal/kit.lock.json or portal/app/_kit/core; otherwise it passes at once).
-      - name: Kit core integrity (check-kit-copy.mjs)
-        run: |
-          node app/_kit/core/check-kit-copy.mjs
-          node app/_kit/core/check-kit-copy.mjs --css .
-
-      - name: Kit core provenance (kit.lock.json ref on AA-CIS-App main)
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || '' }}
-        run: python3 ../api/scripts/check_kit_provenance.py kit.lock.json --base "$BASE_SHA"
-
-      - name: Install (lockfile only)
-        id: install
-        run: npm ci --no-audit --no-fund
-
-      - name: Type-check (tsc --noEmit)
-        run: npx tsc --noEmit -p .
-
-      # AA-761 — the pure helpers under lib/ (node --test, no extra dependency; *.test.ts is outside tsconfig).
-      - name: Unit tests (node --test)
-        run: npm test
-
-      - name: Build (next build)
-        env:
-          NODE_OPTIONS: --max-old-space-size=1536
-          NEXT_TELEMETRY_DISABLED: "1"
-        run: npm run build
-
-      # AA-994 S2b (root ADR 0016 decision 7, plan guards G1-G9, G11) — kit lint inside this job, so it gates with it.
-      # Page code is linted with the kit preset (app/_kit/core/eslint-kit.mjs, `inline`) at `error`; violations that
-      # existed before S2b are frozen in portal/eslint-suppressions.json (ESLint bulk suppressions), which only shrinks:
-      #   1. `eslint --prune-suppressions` fails on any violation the file does not cover and rewrites the file;
-      #   2. the committed file must equal the pruned one (a fix that did not prune its entries fails);
-      #   3. no entry and no rule total may grow against the base branch's file (a `--suppress-all` that hides new
-      #      violations fails), a new entry may only carry a deleted/renamed file's violations into a file the base did
-      #      not have, and no entry may name a deleted file;
-      #   4. no inline `eslint-disable` of a kit rule (or bare `eslint-disable`) in page code.
-      # They run even when an earlier step failed (once npm ci succeeded), so one run shows every reason.
-      - name: ESLint (kit preset at error, suppressions pruned)
-        id: eslint
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: |
-          set +e
-          npx eslint --prune-suppressions 2>&1 | tee "$RUNNER_TEMP/lint-output.txt"
-          STATUS=${PIPESTATUS[0]}
-          SUMMARY_LINE=$(grep -E "problems? \(" "$RUNNER_TEMP/lint-output.txt" | tail -n1)
-          {
-            echo "### Portal ESLint"
-            echo ""
-            echo "${SUMMARY_LINE:-No unsuppressed problems.}"
-            echo ""
-            echo "_Kit rules at error (root ADR 0016 decision 7); pre-existing violations are frozen in portal/eslint-suppressions.json, which only shrinks._"
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit $STATUS
-
-      - name: Suppressions file is pruned
-        if: ${{ !cancelled() && steps.eslint.conclusion != 'skipped' }}
-        run: |
-          if ! git diff --exit-code -- eslint-suppressions.json; then
-            echo "::error file=portal/eslint-suppressions.json::Violations were fixed but their suppressions were not removed. Run 'npx eslint --prune-suppressions' in portal/ and commit eslint-suppressions.json (the diff above)."
-            exit 1
-          fi
-          git checkout -- eslint-suppressions.json
-
-      - name: Suppressions do not grow
-        if: ${{ !cancelled() && steps.eslint.conclusion != 'skipped' }}
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
-        run: |
-          case "$BASE_SHA" in
-            ""|0000000000000000000000000000000000000000)
-              echo "::notice::No base commit for this event: suppressions growth check skipped."
-              exit 0 ;;
-          esac
-          git fetch --no-tags --depth=1 origin "$BASE_SHA"
-          BASE_FILE="$RUNNER_TEMP/base-eslint-suppressions.json"
-          if ! git show "$BASE_SHA:portal/eslint-suppressions.json" > "$BASE_FILE" 2>/dev/null; then
-            echo "::notice::The base commit has no portal/eslint-suppressions.json (this change creates the baseline): growth check skipped."
-            exit 0
-          fi
-          BASE_LIST="$RUNNER_TEMP/base-portal-files.txt"
-          git ls-tree -r --name-only "$BASE_SHA" -- . > "$BASE_LIST"  # paths relative to portal/ (the cwd)
-          node app/_kit/core/check-kit-copy.mjs --suppressions "$BASE_FILE" eslint-suppressions.json --base-files "$BASE_LIST"
-
-      - name: No inline disable of a kit rule
-        if: ${{ !cancelled() }}
-        run: node app/_kit/core/check-kit-copy.mjs --no-kit-disable app --ignore _kit/core

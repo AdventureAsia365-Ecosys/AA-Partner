@@ -6,16 +6,14 @@
   rule 9: the multi-issuer verifier is copied byte-identical into each app repo);
 - the CRM web's BFF helpers (``web/``, AA-935): ``web/lib/{sameOrigin,crossSiteGuard,bffPath,
   proxyResponse,upstreamHeaders}.ts`` =
-  AA-CIS-App ``frontend/lib/*`` (the AA-911 cross-site rule and the AA-577 path rule of every BFF);
-- the tenant portal's (``portal/``, AA-979 CRM-P2a, moved from AA-CIS-App with AA-885's vendored list):
-  ``portal/lib/{sameOrigin,crossSiteGuard,bffPath,proxyResponse,upstreamHeaders}.ts`` = the same AA-CIS-App
-  ``frontend/lib`` files.
+  AA-CIS-App ``frontend/lib/*`` (the AA-911 cross-site rule and the AA-577 path rule of every BFF); the Content
+  studio's BFF uses the same copies since it moved into the web (AA-1036; the separate ``portal/`` copies went with it).
 
-The UI kit is not checked here any more (AA-994 S2a, root ADR 0016 decision 5): ``portal/app/_kit/core/`` and
-``web/app/_kit/core/`` are synced by the root ``tools/kit/kit-sync.sh`` and pinned to a CIS commit by
-``kit.lock.json``; Portal Build and Web Build check them offline (``core/check-kit-copy.mjs``, integrity) and against
-that commit (``scripts/check_kit_provenance.py``, provenance). A live compare with CIS main turned every Partner PR red
-whenever CIS merged a kit change, which is why this job could never be required.
+The UI kit is not checked here any more (AA-994 S2a, root ADR 0016 decision 5): ``web/app/_kit/core/`` is synced by
+the root ``tools/kit/kit-sync.sh`` and pinned to a CIS commit by ``kit.lock.json``; Web Build checks it offline
+(``core/check-kit-copy.mjs``, integrity) and against that commit (``scripts/check_kit_provenance.py``, provenance). A
+live compare with CIS main turned every Partner PR red whenever CIS merged a kit change, which is why this job could
+never be required.
 
 This check fails when a copy differs from the file on AA-CIS-App ``main`` by even one byte, or is not on main yet.
 Modelled on AA-CIS-Infra ``db/check_migration_copies.py``. CI job "Vendored CIS copies" (non-required).
@@ -46,7 +44,6 @@ REPO = "AA-CIS-App"
 BRANCH = "main"
 API_DIR = Path(__file__).resolve().parent.parent
 WEB_DIR = API_DIR.parent / "web"
-PORTAL_DIR = API_DIR.parent / "portal"
 # path under api/ -> path in AA-CIS-App
 COPIES: dict[str, str] = {
     "tests/job_template/job_table_template.sql": "shared/jobs/job_table_template.sql",
@@ -56,8 +53,6 @@ COPIES: dict[str, str] = {
 _WEB_LIB = ("sameOrigin.ts", "crossSiteGuard.ts", "bffPath.ts", "proxyResponse.ts", "upstreamHeaders.ts")
 # path under web/ -> path in AA-CIS-App (AA-935). The UI kit is checked by kit.lock.json since AA-994 S2a.
 WEB_COPIES: dict[str, str] = {f"lib/{name}": f"frontend/lib/{name}" for name in _WEB_LIB}
-# path under portal/ -> path in AA-CIS-App (AA-979). The UI kit is checked by kit.lock.json since AA-994 S2a.
-PORTAL_COPIES: dict[str, str] = {f"lib/{name}": f"frontend/lib/{name}" for name in _WEB_LIB}
 
 
 class FetchError(RuntimeError):
@@ -162,11 +157,10 @@ def run(
 
 
 def main(fetch: Fetcher = github_fetch, out: TextIO = sys.stdout) -> int:
-    """All three sets: the API's copies (under api/), the web's (under web/) and the portal's (under portal/)."""
+    """Both sets: the API's copies (under api/) and the web's (under web/)."""
     api = run(API_DIR, fetch, out)
     web = run(WEB_DIR, fetch, out, WEB_COPIES, "web")
-    portal = run(PORTAL_DIR, fetch, out, PORTAL_COPIES, "portal")
-    return 1 if (api or web or portal) else 0
+    return 1 if (api or web) else 0
 
 
 if __name__ == "__main__":

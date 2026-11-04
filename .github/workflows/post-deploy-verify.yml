@@ -1,23 +1,19 @@
 name: Post-deploy verify
-# AA-993 V2/V3 (ADR 0016 D3) — checks that Dev runs the commit that was just deployed, for one of three ECS services
+# AA-993 V2/V3 (ADR 0016 D3) — checks that Dev runs the commit that was just deployed, for one of two ECS services
 # (input `app`):
 #   crm         the CRM api (aa-crm-dev-api): rows .github/verify/crm.rows — /crm/health on that commit and version,
 #               /crm/health/ready on a schema at least the newest crm-NNN that commit needs. Called by deploy-dev.yml.
 #   crm-web     the CRM web (aa-crm-dev-web): rows crm-web.rows — /healthz on that commit and version, the host's /crm/*
 #               rule reaching a ready API, and (AA-1036) the merged Content studio's /api/healthz; plus the signed-out
 #               redirect and the studio paths on the agency host (edge_verify.sh). Called by deploy-web-dev.yml.
-#   crm-portal  the RETIRING Content studio service (aa-crm-dev-portal), only after a rollback of the AA-1036 cut-over:
-#               rows crm-portal.rows — /api/healthz on that
-#               commit and version, the API rule; plus a public studio page, its assets, the retired API-key
-#               sign-in URL (308) and the signed-out redirect (edge_verify.sh). Called by deploy-portal-dev.yml (the Playwright smoke runs after it).
+#   (crm-portal, the separate Content studio service, was retired in AA-1036 R3 slice 2: the studio is part of the web.)
 # Every app: ECS rollout COMPLETED with desired >= 1 on the built image (<registry>/<repo>:<sha>). Red/green only; the
 # tables go to the job summary. Script: .github/scripts/post_deploy_verify.sh (same file as AA-Booking).
 #
 # Also dispatchable (verify what Dev runs now, or prove that a stale expected_sha goes red). A dispatch never touches
-# the deploy concurrency groups (deploy-dev, deploy-web-dev, deploy-portal-dev).
+# the deploy concurrency groups (deploy-dev, deploy-web-dev).
 # Configuration: the `dev` environment variables the deploy workflows read (AWS_ROLE_ARN, AWS_REGION, ECS_CLUSTER;
-# ECR_REPOSITORY, ECS_SERVICE, CRM_API_BASE_URL; ECR_WEB_REPOSITORY, ECS_WEB_SERVICE, CRM_WEB_BASE_URL;
-# ECR_PORTAL_REPOSITORY, ECS_PORTAL_SERVICE, PORTAL_HOST); no secret. Desired count 0 is red: the verify never scales
+# ECR_REPOSITORY, ECS_SERVICE, CRM_API_BASE_URL; ECR_WEB_REPOSITORY, ECS_WEB_SERVICE, CRM_WEB_BASE_URL); no secret. Desired count 0 is red: the verify never scales
 # up.
 on:
   workflow_call:
@@ -32,7 +28,7 @@ on:
         type: boolean
         default: false
       app:
-        description: "crm (the api), crm-web (the CRM web) or crm-portal (the Content studio)."
+        description: "crm (the api) or crm-web (the CRM web with the Content studio)."
         required: false
         type: string
         default: crm
@@ -48,10 +44,10 @@ on:
         required: true
         type: string
       app:
-        description: "Which service: crm (the api), crm-web (the CRM web), crm-portal (the Content studio)"
+        description: "Which service: crm (the api), crm-web (the CRM web with the Content studio)"
         required: true
         type: choice
-        options: [crm, crm-web, crm-portal]
+        options: [crm, crm-web]
         default: crm
       resolve_via:
         description: "Optional: a *.cloudfront.net name the base URL's host is pinned to on the runner; empty = DNS"
@@ -74,7 +70,7 @@ jobs:
     # Dispatched runs share `post-deploy-verify-<app>` and queue there (never cancelled in progress). The call from a
     # deploy workflow gets a group of its own run: GitHub cancels the older PENDING job of a group when another one
     # queues, so a shared group would let a dispatch cancel a deploy's verify (and turn that run red). Deploy runs are
-    # already one at a time per service (groups deploy-dev, deploy-web-dev, deploy-portal-dev).
+    # already one at a time per service (groups deploy-dev, deploy-web-dev).
     concurrency:
       group: ${{ inputs.from_deploy && format('post-deploy-verify-{0}-deploy-{1}-{2}', inputs.app, github.run_id, github.run_attempt) || format('post-deploy-verify-{0}', inputs.app) }}
       cancel-in-progress: false
@@ -96,16 +92,12 @@ jobs:
           WEB_REPO: ${{ vars.ECR_WEB_REPOSITORY || 'aa-crm-dev-web' }}
           WEB_SERVICE: ${{ vars.ECS_WEB_SERVICE || 'aa-crm-dev-web' }}
           WEB_BASE: ${{ vars.CRM_WEB_BASE_URL || 'https://portal.lumiguides.it.com' }}
-          PORTAL_REPO: ${{ vars.ECR_PORTAL_REPOSITORY || 'aa-crm-dev-portal' }}
-          PORTAL_SERVICE: ${{ vars.ECS_PORTAL_SERVICE || 'aa-crm-dev-portal' }}
-          PORTAL_HOST: ${{ vars.PORTAL_HOST || 'portal.lumiguides.it.com' }}
         run: |
           set -euo pipefail
           case "$VERIFY_APP" in
             crm)        REPO="$API_REPO";    SERVICE="$API_SERVICE";    BASE="$API_BASE";               EDGE=false ;;
             crm-web)    REPO="$WEB_REPO";    SERVICE="$WEB_SERVICE";    BASE="$WEB_BASE";               EDGE=true ;;
-            crm-portal) REPO="$PORTAL_REPO"; SERVICE="$PORTAL_SERVICE"; BASE="https://${PORTAL_HOST}"; EDGE=true ;;
-            *) echo "::error::app must be crm, crm-web or crm-portal (got '${VERIFY_APP}')"; exit 1 ;;
+            *) echo "::error::app must be crm or crm-web (got '${VERIFY_APP}')"; exit 1 ;;
           esac
           {
             echo "VERIFY_APP=${VERIFY_APP}"
@@ -190,7 +182,7 @@ jobs:
           [ -z "$REGISTRY" ] || EXPECTED_IMAGE="${REGISTRY}/${ECR_REPOSITORY}:${EXPECTED_SHA}"
           bash .github/scripts/post_deploy_verify.sh "$VERIFY_APP"
 
-      # crm-web / crm-portal: what a row cannot express (a redirect's Location, an asset linked from a page). Runs
+      # crm-web: what a row cannot express (a redirect's Location, an asset linked from a page). Runs
       # even when the step above failed, so the summary shows every check; never after a cancel.
       - name: Edge checks (sign-in redirect, studio assets)
         if: ${{ !cancelled() && steps.app.outputs.edge == 'true' }}
