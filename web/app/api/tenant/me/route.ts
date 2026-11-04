@@ -3,6 +3,7 @@
 // reaches the response). The httpOnly studio cookies are invisible to page JavaScript, so the shell asks here.
 import { NextRequest, NextResponse } from "next/server";
 import { requireStudio, withRenewed } from "@/lib/studio/auth-server";
+import { studioClaims } from "@/lib/studio/studioSession";
 
 export async function GET(req: NextRequest) {
   const auth = await requireStudio(req);
@@ -15,6 +16,9 @@ export async function GET(req: NextRequest) {
       plan_tier: auth.planTier,
       // Root ADR 0019 d6: the partner sign-in is the only one (the API-key session is gone); kept for the shell.
       sign_in: "partner",
+      // AA-1036 (R3): the person's Content studio role from the verified token (csr), so a page can show what only the
+      // owner may do (the Add-ons request); CIS enforces the role on every write.
+      content_studio_role: studioClaims(auth.token).csr,
     }),
     auth.renewed,
     auth.cfg,

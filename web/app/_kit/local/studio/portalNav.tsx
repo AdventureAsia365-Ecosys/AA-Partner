@@ -9,7 +9,7 @@
 
 import {
   LayoutDashboard, BookOpen, Store, Sparkles, Share2, FileText, Eye, CreditCard,
-  Activity, Settings, Plug, Users, Quote,
+  Activity, Settings, Plug, Users, Quote, LayoutGrid,
 } from "lucide-react";
 import type { StudioKey } from "./studio.messages";
 
@@ -32,6 +32,8 @@ export const ROUTES = {
   activity: "/portal/account/activity",
   settings: "/portal/account/settings",
   members: "/portal/account/members",
+  // AA-1036 (R3) — the agency's add-ons and the owner's request (lib/apps.ts ADD_ONS_PATH).
+  addOns: "/portal/account/add-ons",
   integrations: "/portal/account/integrations",
   helpFacebook: "/portal/help/facebook",
 } as const;
@@ -85,6 +87,8 @@ export const NAV_GROUPS: NavGroup[] = [
     { href: ROUTES.settings, label: "navSettings", icon: <Settings size={16} />, keywords: "account team sign out profile" },
     // AA-978 follow-up — the workspace's members from the CIS directory (read only).
     { href: ROUTES.members, label: "navMembers", icon: <Users size={16} />, keywords: "team members users roles owner editor viewer invite" },
+    // AA-1036 (R3) — the CRM and Trip planner add-ons: state, and the owner's request to Adventure Asia.
+    { href: ROUTES.addOns, label: "navAddOns", icon: <LayoutGrid size={16} />, keywords: "add-ons apps crm trip planner request upgrade" },
     { href: ROUTES.integrations, label: "navIntegrations", icon: <Plug size={16} />, keywords: "wordpress facebook connect channel connection" },
   ] },
 ];

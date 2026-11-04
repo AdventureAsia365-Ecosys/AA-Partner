@@ -17,7 +17,7 @@ import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronsLeft, ChevronsRight, ExternalLink, Map as MapIcon, Plus, Users } from "lucide-react";
+import { Check, ChevronsLeft, ChevronsRight, Clock, ExternalLink, Map as MapIcon, Plus, Users } from "lucide-react";
 import type { AppEntry } from "@/lib/apps";
 import {
   K, NavGroup, alpha, navGroupId, sans, serif, useHydrated, useMediaQuery, useNavGroups, useSidebarCollapsed, useT,
@@ -31,7 +31,8 @@ type T = Translator<typeof STUDIO_MESSAGES.en>;
 
 // AA-1036 (R3 slice 1, root ADR 0019 d7): the app switcher replaces the old "Open CRM" cross-link. Content is where the
 // person is; an add-on the tenant holds opens (the CRM home, a full page load: plain <a>, so the studio's stylesheet
-// never stays on a CRM page); any other add-on shows "Request add-on" (a message to Adventure Asia). The entries come
+// never stays on a CRM page); any other add-on links to Account › Add-ons, labelled by its state (request, requested,
+// on; AA-1036 R3: the request is stored in CIS and decided by Adventure Asia staff, no longer an e-mail). The entries come
 // from /api/studio/apps (lib/apps.ts), which always answers 200. Outside NAV_GROUPS on purpose: other apps, so neither
 // the ⌘K palette nor the phone bottom bar routes to them. Until it answers, nothing shows.
 const APPS_KEY = ["studio-apps"] as const;
@@ -195,16 +196,18 @@ function StudioApps({ t, rail, open, onToggle }: { t: T; rail: boolean; open: bo
       headerProps={PSHELL_LABEL}
     >
       {addOns.map((app) => {
-        const request = app.state === "request";
+        const opens = app.state === "open";
         const name = appName(t, app);
+        const label = opens ? t("appOpen", name) : app.state === "requested" ? t("appRequested", name)
+          : app.state === "active" ? t("appActive", name) : t("appRequest", name);
         return (
           <a
             key={app.key}
             href={app.href}
             data-pshell-row="true"
-            data-testid={app.key === "crm" && !request ? "portal-crm-link" : `portal-app-${app.key}`}
+            data-testid={app.key === "crm" && opens ? "portal-crm-link" : `portal-app-${app.key}`}
             data-studio-app={app.state}
-            title={request ? t("appRequestTitle", name) : t("appOpen", name)}
+            title={app.state === "request" ? t("appRequestTitle", name) : label}
             style={{
               display: "flex", alignItems: "center", gap: 10, width: "100%",
               padding: "8px 10px", borderRadius: 7, textDecoration: "none",
@@ -213,10 +216,11 @@ function StudioApps({ t, rail, open, onToggle }: { t: T; rail: boolean; open: bo
           >
             <span aria-hidden style={{ flexShrink: 0, opacity: 0.75, display: "flex" }}>{APP_ICON[app.key]}</span>
             <span data-pshell-label="true" style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {request ? t("appRequest", name) : t("appOpen", name)}
+              {label}
             </span>
             <span data-pshell-label="true" aria-hidden style={{ display: "flex", opacity: 0.6 }}>
-              {request ? <Plus size={12} /> : <ExternalLink size={12} />}
+              {opens ? <ExternalLink size={12} /> : app.state === "request" ? <Plus size={12} />
+                : app.state === "requested" ? <Clock size={12} /> : <Check size={12} />}
             </span>
           </a>
         );

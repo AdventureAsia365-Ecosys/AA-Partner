@@ -1,20 +1,22 @@
 // web/lib/apps.ts
-// AA-1036 (R3 slice 1, root ADR 0019 d7) — the agency app's app switcher: Content (the base product, the tenant's home)
-// and the add-ons (CRM, Trip planner). An add-on the tenant holds opens; any other shows "Request add-on", a message to
-// Adventure Asia (add-ons open per entitlement or after a request to the account manager, never by a second invite).
+// AA-1036 (R3, root ADR 0019 d7) — the agency app's app switcher: Content (the base product, the tenant's home) and the
+// add-ons (CRM, Trip planner). An add-on the tenant holds opens; any other leads to the studio's Add-ons page
+// (Account › Add-ons, ADD_ONS_PATH), where the workspace owner sends a request that Adventure Asia staff approve or
+// decline in Tenant 360 (CIS GET /v1/account/add-ons, POST /v1/account/add-on-requests; add-ons open per entitlement
+// or after a request to the account manager, never by a second invite). Until R3 the request was a mailto: link.
 //
 // Where each entry's state comes from:
 //   Content       the person's Content studio access (CIS memberships: lib/studioAccess.ts in the CRM; inside the
 //                 studio the person is already in it)
 //   CRM           the CRM API's GET /crm/v1/me for the studio's tenant: 200 with crm_entitled (the projection of the
-//                 tenant's crm.core entitlement, tenant.entitlements.v1) -> open / request; 403 / 409 / 400 (the
-//                 person is no CRM member of that agency, or it has no CRM agency) -> request; anything else ->
-//                 unknown, and the entry stays a link (the CRM says what is wrong), as the studio link does
-//   Trip planner  no entitlement reaches this app yet (tp.* is not projected into the CRM): always "Request add-on"
-// Pure functions here; the fetch is crmAccess(). Links between apps are plain <a> (a full page load: the studio's
-// stylesheet never stays on a CRM page).
+//                 tenant's crm.core entitlement, tenant.entitlements.v1) -> open; 403 / 409 / 400 (the person is no
+//                 CRM member of that agency, or it has no CRM agency) or not entitled -> the CIS add-on state
+//                 (requested / active / request); anything else -> unknown, and the entry stays a link (the CRM says
+//                 what is wrong), as the studio link does
+//   Trip planner  the CIS add-on state only (no tp.* entitlement reaches this app): active / requested / request
+// Pure functions here; the fetches are crmAccess() and cisAddOns(). Links between apps are plain <a> (a full page load:
+// the studio's stylesheet never stays on a CRM page).
 
-import { SUPPORT_EMAIL } from "@/app/_kit/core/brand";
 import type { WebConfig } from "./config";
 import { fetchMe } from "./crmApi";
 import { CONTENT_STUDIO_PATH, CRM_HOME_PATH } from "./nav";
@@ -22,25 +24,24 @@ import type { Session } from "./session";
 
 export type AppKey = "content" | "crm" | "planner";
 export type CrmAccess = "entitled" | "not_entitled" | "not_member" | "unknown";
+/** The CIS add-on state of one product (GET /v1/account/add-ons), or unknown when CIS did not answer. */
+export type AddOnState = "active" | "requested" | "available" | "unknown";
+export interface AddOnStates { crm: AddOnState; planner: AddOnState }
+export const UNKNOWN_ADD_ONS: AddOnStates = { crm: "unknown", planner: "unknown" };
+
+/** The studio page where the owner asks for an add-on and everyone sees its state. */
+export const ADD_ONS_PATH = "/portal/account/add-ons";
 
 export interface AppEntry {
   key: AppKey;
   label: string;
-  /** open: a link to the app; request: the "Request add-on" action; current: the app the person is in. */
-  state: "open" | "request" | "current";
+  /** open: a link to the app; current: the app the person is in; request: not on yet (the Add-ons page asks for it);
+   *  requested: a request waits for Adventure Asia; active: on for the agency, nothing to open here (the Add-ons page). */
+  state: "open" | "request" | "requested" | "active" | "current";
   href: string;
 }
 
 export const APP_LABELS: Record<AppKey, string> = { content: "Content studio", crm: "CRM", planner: "Trip planner" };
-
-/** The "Request add-on" action: a message to Adventure Asia naming the add-on and, when known, the agency. */
-export function requestHref(app: AppKey, agencyName?: string | null): string {
-  const label = APP_LABELS[app];
-  const subject = `Add-on request: ${label}`;
-  const name = (agencyName ?? "").trim().slice(0, 120);
-  const body = name ? `Please add ${label} for ${name}.` : `Please add ${label} for our agency.`;
-  return `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-}
 
 /** The CRM entry's state from the API's answer to GET /crm/v1/me (status + body). */
 export function crmAccessFrom(status: number, body: { crm_entitled?: unknown } | null): CrmAccess {
@@ -49,23 +50,50 @@ export function crmAccessFrom(status: number, body: { crm_entitled?: unknown } |
   return "unknown";
 }
 
+/** The add-on states from CIS GET /v1/account/add-ons (status + body); anything unexpected is unknown. */
+export function addOnStatesFrom(status: number, body: unknown): AddOnStates {
+  if (status !== 200 || !body || typeof body !== "object") return UNKNOWN_ADD_ONS;
+  const list = (body as { add_ons?: unknown }).add_ons;
+  if (!Array.isArray(list)) return UNKNOWN_ADD_ONS;
+  const of = (product: string): AddOnState => {
+    const hit = list.find((a) => a && typeof a === "object" && (a as { product?: unknown }).product === product) as
+      | { state?: unknown }
+      | undefined;
+    const s = hit?.state;
+    return s === "active" || s === "requested" || s === "available" ? s : "unknown";
+  };
+  return { crm: of("crm"), planner: of("tripplanner") };
+}
+
+/** A not-open add-on's entry: active, requested, or "request" (available or unknown), always to the Add-ons page. */
+function addOnEntry(key: "crm" | "planner", state: AddOnState): AppEntry {
+  const shown = state === "active" ? "active" : state === "requested" ? "requested" : "request";
+  return { key, label: APP_LABELS[key], state: shown, href: ADD_ONS_PATH };
+}
+
 /** The switcher as the Content studio shows it (the person is in the studio). */
-export function studioApps(crm: CrmAccess, agencyName?: string | null): AppEntry[] {
+export function studioApps(crm: CrmAccess, addOns: AddOnStates = UNKNOWN_ADD_ONS): AppEntry[] {
   const crmOpen = crm === "entitled" || crm === "unknown";
   return [
     { key: "content", label: APP_LABELS.content, state: "current", href: CONTENT_STUDIO_PATH },
-    { key: "crm", label: APP_LABELS.crm, state: crmOpen ? "open" : "request", href: crmOpen ? CRM_HOME_PATH : requestHref("crm", agencyName) },
-    { key: "planner", label: APP_LABELS.planner, state: "request", href: requestHref("planner", agencyName) },
+    crmOpen ? { key: "crm", label: APP_LABELS.crm, state: "open", href: CRM_HOME_PATH } : addOnEntry("crm", addOns.crm),
+    addOnEntry("planner", addOns.planner),
   ];
 }
 
-/** The switcher as the CRM shows it: Content when the person may open it (null = no studio link), the CRM itself. */
-export function crmApps(contentHref: string | null, agencyName?: string | null): AppEntry[] {
+/** The switcher as the CRM shows it: Content when the person may open it (null = no studio link), the CRM itself, and
+ *  the Trip planner through the studio's Add-ons page (only with studio access: the request is the studio owner's). */
+export function crmApps(contentHref: string | null): AppEntry[] {
   const apps: AppEntry[] = [];
   if (contentHref) apps.push({ key: "content", label: APP_LABELS.content, state: "open", href: contentHref });
   apps.push({ key: "crm", label: APP_LABELS.crm, state: "current", href: CRM_HOME_PATH });
-  apps.push({ key: "planner", label: APP_LABELS.planner, state: "request", href: requestHref("planner", agencyName) });
+  if (contentHref) apps.push(addOnEntry("planner", "unknown"));
   return apps;
+}
+
+/** The CRM's link to the Trip planner entry: the studio's Add-ons page when the person may open the studio. */
+export function plannerHref(contentHref: string | null): string | null {
+  return contentHref ? ADD_ONS_PATH : null;
 }
 
 /** The CRM entry for one tenant (the studio's): GET /crm/v1/me with that tenant as the agency. Never throws. */
@@ -76,5 +104,20 @@ export async function crmAccess(cfg: WebConfig, session: Session, tenantId: stri
     return me.ok ? crmAccessFrom(200, me.data) : crmAccessFrom(me.status, null);
   } catch {
     return "unknown";
+  }
+}
+
+/** The add-on states of the studio's tenant: CIS GET /v1/account/add-ons with the verified studio token. Never throws. */
+export async function cisAddOns(cisApiUrl: string, token: string, fetchImpl: typeof fetch = fetch): Promise<AddOnStates> {
+  if (!cisApiUrl || !token) return UNKNOWN_ADD_ONS;
+  try {
+    const res = await fetchImpl(`${cisApiUrl}/v1/account/add-ons`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(3000),
+    });
+    return addOnStatesFrom(res.status, res.ok ? await res.json() : null);
+  } catch {
+    return UNKNOWN_ADD_ONS;
   }
 }

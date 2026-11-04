@@ -10,7 +10,9 @@ import { POST as logoutPost } from "@/app/api/auth/tenant-logout/route";
 import { POST as selectPost } from "@/app/api/auth/tenant-select/route";
 import { GET as tenantMeGet } from "@/app/api/tenant/me/route";
 import { GET as tenantProxyGet } from "@/app/api/tenant/[...path]/route";
-import { crmAccess, crmAccessFrom, crmApps, requestHref, studioApps } from "@/lib/apps";
+import {
+  ADD_ONS_PATH, addOnStatesFrom, cisAddOns, crmAccess, crmAccessFrom, crmApps, plannerHref, studioApps, UNKNOWN_ADD_ONS,
+} from "@/lib/apps";
 import { loadConfig } from "@/lib/config";
 import { isApiKeySignIn, isPublicPartnerPath, isStudioAccessPage, isStudioBff, isStudioPage, STUDIO_HOME_PATH } from "@/lib/hosts";
 import { activeSection, CRM_HOME_PATH } from "@/lib/nav";
@@ -241,7 +243,9 @@ describe("studio BFF session (requireStudio and the routes)", () => {
     vi.stubGlobal("fetch", cis);
     const res = await tenantMeGet(req("/api/tenant/me", { cookie: session() }));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ tenant_id: TENANT, tenant_name: "Harbour Lantern Tours", plan_tier: "growth", sign_in: "partner" });
+    expect(await res.json()).toEqual({
+      tenant_id: TENANT, tenant_name: "Harbour Lantern Tours", plan_tier: "growth", sign_in: "partner", content_studio_role: null,
+    });
     expect(cookieHeader(res)).toContain("cis_tenant_token=");
     vi.stubGlobal("fetch", fakeCis(EXCHANGED(studioToken({ sub: "refused" })), { status: 401, body: {} }));
     expect((await tenantMeGet(req("/api/tenant/me", { cookie: session() }))).status).toBe(401);
@@ -303,29 +307,54 @@ describe("app switcher (root ADR 0019 d7)", () => {
     for (const s of [0, 401, 500, 503]) expect(crmAccessFrom(s, null)).toBe("unknown");
   });
 
-  it("opens an entitled CRM and asks for the others", () => {
-    const open = studioApps("entitled", "Harbour Lantern Tours");
+  it("opens an entitled CRM; the others lead to the Add-ons page, labelled by their CIS state", () => {
+    const open = studioApps("entitled");
     expect(open.map((a) => [a.key, a.state])).toEqual([["content", "current"], ["crm", "open"], ["planner", "request"]]);
     expect(open[1].href).toBe(CRM_HOME_PATH);
-    const ask = studioApps("not_entitled", "Harbour Lantern Tours");
-    expect(ask[1].state).toBe("request");
-    expect(ask[1].href).toBe(requestHref("crm", "Harbour Lantern Tours"));
-    expect(studioApps("not_member")[1].state).toBe("request");
+    expect(open[2].href).toBe(ADD_ONS_PATH);
+    const ask = studioApps("not_entitled", { crm: "available", planner: "available" });
+    expect(ask[1]).toMatchObject({ state: "request", href: ADD_ONS_PATH });
+    expect(studioApps("not_member", { crm: "requested", planner: "requested" }).map((a) => a.state))
+      .toEqual(["current", "requested", "requested"]);
+    // the add-on is on for the agency but the person has no CRM role yet: "on", not a request
+    expect(studioApps("not_member", { crm: "active", planner: "active" }).map((a) => a.state))
+      .toEqual(["current", "active", "active"]);
     expect(studioApps("unknown")[1].state).toBe("open");
+    expect(studioApps("not_member", UNKNOWN_ADD_ONS)[1].state).toBe("request");
   });
 
-  it("the request is a message to Adventure Asia naming the add-on and the agency", () => {
-    const href = requestHref("planner", "Harbour Lantern Tours");
-    expect(href.startsWith("mailto:")).toBe(true);
-    const q = new URLSearchParams(href.split("?")[1]);
-    expect(q.get("subject")).toBe("Add-on request: Trip planner");
-    expect(q.get("body")).toBe("Please add Trip planner for Harbour Lantern Tours.");
-    expect(new URLSearchParams(requestHref("crm").split("?")[1]).get("body")).toBe("Please add CRM for our agency.");
+  it("no request is a mailto: link any more", () => {
+    for (const a of [...studioApps("not_member"), ...crmApps("/portal/dashboard")]) expect(a.href.startsWith("mailto:")).toBe(false);
   });
 
-  it("the CRM side lists the studio when allowed, itself, and the planner request", () => {
+  it("reads the CIS add-on states, and anything unexpected is unknown", () => {
+    const body = { in_service: true, add_ons: [{ product: "crm", state: "requested" }, { product: "tripplanner", state: "active" }] };
+    expect(addOnStatesFrom(200, body)).toEqual({ crm: "requested", planner: "active" });
+    expect(addOnStatesFrom(503, null)).toEqual(UNKNOWN_ADD_ONS);
+    expect(addOnStatesFrom(200, { add_ons: [{ product: "crm", state: "weird" }] })).toEqual(UNKNOWN_ADD_ONS);
+    expect(addOnStatesFrom(200, "nope")).toEqual(UNKNOWN_ADD_ONS);
+  });
+
+  it("cisAddOns sends the studio token to CIS and never throws", async () => {
+    const seen: string[] = [];
+    const ok = vi.fn(async (url: string, init?: RequestInit) => {
+      seen.push(`${url} ${new Headers(init?.headers).get("authorization")}`);
+      return Response.json({ add_ons: [{ product: "crm", state: "available" }, { product: "tripplanner", state: "requested" }] });
+    });
+    expect(await cisAddOns(CIS, "tok", ok as unknown as typeof fetch)).toEqual({ crm: "available", planner: "requested" });
+    expect(seen).toEqual([`${CIS}/v1/account/add-ons Bearer tok`]);
+    expect(await cisAddOns("", "tok", ok as unknown as typeof fetch)).toEqual(UNKNOWN_ADD_ONS);
+    const boom = vi.fn(async () => {
+      throw new Error("down");
+    });
+    expect(await cisAddOns(CIS, "tok", boom as unknown as typeof fetch)).toEqual(UNKNOWN_ADD_ONS);
+  });
+
+  it("the CRM side lists the studio when allowed, itself, and the planner through the studio", () => {
     expect(crmApps("/portal/dashboard").map((a) => [a.key, a.state])).toEqual([["content", "open"], ["crm", "current"], ["planner", "request"]]);
-    expect(crmApps(null).map((a) => a.key)).toEqual(["crm", "planner"]);
+    expect(crmApps(null).map((a) => a.key)).toEqual(["crm"]);
+    expect(plannerHref("/portal/dashboard")).toBe(ADD_ONS_PATH);
+    expect(plannerHref(null)).toBeNull();
   });
 
   it("crmAccess asks /crm/v1/me for the studio's tenant and never throws", async () => {
@@ -343,6 +372,33 @@ describe("app switcher (root ADR 0019 d7)", () => {
     });
     expect(await crmAccess(cfg, s, TENANT, boom as unknown as typeof fetch)).toBe("unknown");
     expect(await crmAccess(cfg, s, TENANT, (async () => Response.json({ detail: "not_a_member" }, { status: 403 })) as unknown as typeof fetch)).toBe("not_member");
+  });
+
+  it("the tenant /me names the person's studio role from the verified token (display only)", async () => {
+    vi.stubGlobal("fetch", fakeCis(EXCHANGED(studioToken({ sub: "role", csr: "editor" }))));
+    const res = await tenantMeGet(req("/api/tenant/me", { cookie: session() }));
+    expect((await res.json()).content_studio_role).toBe("editor");
+  });
+
+  it("an invited Content member with no CRM role sees the CRM as an add-on, and the request state from CIS", async () => {
+    // Done-when (root ADR 0019 d7): the invited person lands on Content and sees the CRM only with the entitlement.
+    const cis = fakeCis(EXCHANGED(studioToken({ sub: "invitee", csr: "editor" })));
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("/crm/v1/me")) return Response.json({ detail: "not_a_member" }, { status: 403 });
+      if (url.endsWith("/v1/account/add-ons")) {
+        return Response.json({ in_service: true, add_ons: [{ product: "crm", state: "requested" }, { product: "tripplanner", state: "available" }] });
+      }
+      return cis(url);
+    }));
+    const res = await appsGet(req("/api/studio/apps", { cookie: `${session()}; cis_tenant_id=${TENANT}` }));
+    expect(res.status).toBe(200);
+    const apps = (await res.json()).apps as { key: string; state: string; href: string }[];
+    expect(apps.map((a) => [a.key, a.state, a.href])).toEqual([
+      ["content", "current", "/portal/dashboard"],
+      ["crm", "requested", ADD_ONS_PATH],
+      ["planner", "request", ADD_ONS_PATH],
+    ]);
+    expect(cookieHeader(res)).toContain("cis_tenant_token="); // the renewed studio token is kept
   });
 
   it("GET /api/studio/apps always answers 200, signed in or not", async () => {

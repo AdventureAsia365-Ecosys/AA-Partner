@@ -15,6 +15,7 @@ vi.mock("@/components/LocaleSwitch", () => ({ LocaleSwitch: () => null }));
 
 import { CrmShell, type ShellProps } from "@/app/_kit/local/CrmShell";
 import { dictionary } from "@/lib/i18n";
+import { ADD_ONS_PATH, plannerHref } from "@/lib/apps";
 
 // The shell with `children` passed as the third createElement argument (react/no-children-prop).
 const Shell = CrmShell as unknown as React.FC<Omit<ShellProps, "children"> & { children?: React.ReactNode }>;
@@ -50,7 +51,7 @@ async function mount(contentStudioHref: string | null = "/studio") {
           agencyName: "Lantern Bay Travel",
           agencyCount: 1,
           contentStudioHref,
-          plannerRequestHref: "mailto:hello@example.test?subject=Add-on",
+          plannerHref: plannerHref(contentStudioHref),
           locale: "en-AU",
           syntheticBadge: false,
         },
@@ -110,15 +111,16 @@ describe("CRM app switcher", () => {
     const { q } = await mount();
     expect(q("[data-testid=crm-studio-link]")?.getAttribute("href")).toBe("/studio");
     const planner = q("[data-testid=crm-app-planner]");
-    expect(planner?.getAttribute("href")).toBe("mailto:hello@example.test?subject=Add-on");
+    expect(planner?.getAttribute("href")).toBe(ADD_ONS_PATH); // the studio's Add-ons page, no more mailto:
     expect(planner?.getAttribute("data-app-state")).toBe("request");
     expect(planner?.textContent).toContain("Trip planner: request add-on");
     expect(q("[data-testid=crm-nav-group-studio-toggle]")?.textContent).toContain("Apps");
   });
 
-  it("keeps the group when the person has no Content studio (the planner request stays)", async () => {
+  it("hides the group when the person has no Content studio (the request is the studio owner's)", async () => {
     const { q } = await mount(null);
     expect(q("[data-testid=crm-studio-link]")).toBeNull();
-    expect(q("[data-testid=crm-app-planner]")).not.toBeNull();
+    expect(q("[data-testid=crm-app-planner]")).toBeNull();
+    expect(q("[data-testid=crm-nav-group-studio-toggle]")).toBeNull();
   });
 });

@@ -63,8 +63,8 @@ test.describe('UI smoke — portal pages', () => {
 
   // AA-935 (CRM-07, design v3 Fix C10) — the sidebar links to the Partner CRM, and the CRM sidebar links back to the
   // Content studio. AA-1036 (root ADR 0019 d7): the "Apps" switcher of the one agency app replaced the cross-link; the
-  // CRM entry opens the CRM home /home when the tenant holds the add-on, else it is a "Request add-on" mail link. Only
-  // the link is checked here: the CRM pages have their own E2E.
+  // CRM entry opens the CRM home /home when the tenant holds the add-on, else it leads to Account › Add-ons (R3: the
+  // request is stored in CIS, no more mail link). Only the link is checked here: the CRM pages have their own E2E.
   test('portal: sidebar links to the Partner CRM', async ({ browser }) => {
     const context = await browser.newContext({ baseURL: baseUrl(), storageState: TENANT_STATE, viewport: { width: 1440, height: 900 } });
     await installBypassRoute(context);
@@ -84,7 +84,25 @@ test.describe('UI smoke — portal pages', () => {
       if ((await link.getAttribute('data-testid')) === 'portal-crm-link') {
         expect(await link.getAttribute('href')).toBe('/home');
       } else {
-        expect(await link.getAttribute('href')).toMatch(/^mailto:/);
+        expect(await link.getAttribute('href')).toBe('/portal/account/add-ons');
+      }
+    } finally {
+      await context.close();
+    }
+  });
+
+  // AA-1036 (R3, root ADR 0019 d7) — Account › Add-ons answers with both add-ons and their state (read only: the
+  // smoke never sends a request).
+  test('portal: Account › Add-ons lists the CRM and the Trip planner', async ({ browser }) => {
+    const context = await browser.newContext({ baseURL: baseUrl(), storageState: TENANT_STATE, viewport: { width: 1440, height: 900 } });
+    await installBypassRoute(context);
+    const page = await context.newPage();
+    try {
+      await page.goto('/portal/account/add-ons', { waitUntil: 'domcontentloaded' });
+      for (const product of ['crm', 'tripplanner']) {
+        const state = page.getByTestId(`add-on-state-${product}`);
+        await expect(state).toBeVisible({ timeout: 15000 });
+        expect(['active', 'requested', 'available']).toContain(await state.getAttribute('data-state'));
       }
     } finally {
       await context.close();

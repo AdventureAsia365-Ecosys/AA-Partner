@@ -26,12 +26,13 @@ test("claims and renewal: partner tokens renew a minute before they expire; unre
   const partner = jwt({ sub: "t1", amr: "partner", exp: NOW + 600 });
   assert.equal(isPartnerToken(partner), true);
   assert.equal(isPartnerToken(jwt({ sub: "t1", exp: NOW + 600 })), false); // an API-key session
-  assert.deepEqual(studioClaims(partner), { exp: NOW + 600, amr: "partner", sub: "t1" });
+  assert.deepEqual(studioClaims(partner), { exp: NOW + 600, amr: "partner", sub: "t1", csr: null });
+  assert.equal(studioClaims(jwt({ sub: "t1", amr: "partner", exp: NOW + 600, csr: "viewer" })).csr, "viewer");
   assert.equal(needsRenewal(partner, NOW), false);
   assert.equal(needsRenewal(jwt({ amr: "partner", exp: NOW + 30 }), NOW), true);
   assert.equal(needsRenewal("garbage", NOW), true);
   assert.equal(needsRenewal(undefined, NOW), true);
-  assert.deepEqual(studioClaims("a.###.c"), { exp: null, amr: null, sub: null });
+  assert.deepEqual(studioClaims("a.###.c"), { exp: null, amr: null, sub: null, csr: null });
 });
 
 test("the studio cookies live as long as the token and carry the partner reference", () => {

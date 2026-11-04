@@ -4,6 +4,8 @@
 // instead of the shell.
 // AA-1025 (S264): the "Open Content studio" link shows only when CIS lists the current agency among the person's studio
 // memberships (lib/studioAccess.ts; kept when CIS cannot answer).
+// AA-1036 (R3): the amber "AI paused" banner when Adventure Asia switched the CRM's AI off for the whole app (/me
+// ai_paused, from crm.llm_app_profile); the Trip planner entry opens the studio's Add-ons page (no more mailto:).
 import { ErrorState } from "@/app/_kit";
 import { MailboxBanner } from "@/components/mail/MailboxBanner";
 import { SupportBanner } from "@/components/support/SupportBanner";
@@ -18,7 +20,8 @@ import { disconnected, type MailboxView } from "@/lib/mail";
 import { bannerState, type SupportAccess } from "@/lib/supportAccess";
 import type { Recovery } from "@/lib/team";
 import { CrmShell } from "@/app/_kit/local/CrmShell";
-import { requestHref } from "@/lib/apps";
+import { plannerHref } from "@/lib/apps";
+import { AiPausedBanner } from "@/components/ai/AiPausedBanner";
 
 export const dynamic = "force-dynamic";
 
@@ -54,14 +57,15 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
   const banner = bannerState(supportView);
   const studioHref = contentStudioHref(ctx.cfg.contentStudioUrl, ctx.cfg.publicOrigin);
   const studio = studioHref && session ? await studioAccess(ctx.cfg.cisApiUrl, session) : "unknown";
+  const contentHref = studioLink(studioHref, studio);
   return (
     <CrmShell
       dict={dictionary(ctx.lang)}
       role={ctx.role}
       agencyName={ctx.me.display_name ?? ctx.me.tenant_id}
       agencyCount={active}
-      contentStudioHref={studioLink(studioHref, studio)}
-      plannerRequestHref={requestHref("planner", ctx.me.display_name)}
+      contentStudioHref={contentHref}
+      plannerHref={plannerHref(contentHref)}
       locale={ctx.locale}
       syntheticBadge={ctx.cfg.environment !== "prod"}
     >
@@ -70,6 +74,7 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
       )}
       {recovery && <RecoveryBanner recovery={recovery} lang={ctx.lang} locale={ctx.locale} />}
       {down.length > 0 && <MailboxBanner lang={ctx.lang} />}
+      {ctx.me.ai_paused === true && <AiPausedBanner lang={ctx.lang} />}
       {children}
     </CrmShell>
   );
