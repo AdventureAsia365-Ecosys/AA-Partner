@@ -10,7 +10,6 @@ const REFUSED = 'Cross-site request refused';
 const SIBLING = 'https://booking-preview.lumiguides.it.com';
 
 const WRITE_ROUTES: { method: 'POST' | 'PATCH' | 'DELETE'; path: string }[] = [
-  { method: 'POST', path: '/api/playground/proxy' },
   { method: 'POST', path: '/api/tenant/v1/webhooks' },
   { method: 'PATCH', path: '/api/tenant/v1/tenant/settings' },
   { method: 'DELETE', path: '/api/tenant/v1/webhooks/00000000-0000-0000-0000-000000000000' },

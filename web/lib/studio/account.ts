@@ -1,6 +1,6 @@
 // web/lib/studio/account.ts — AA-761: the pure half of the Account pages (Billing, Activity, Integrations). No React, no
 // imports, so `npm test` (node --test) runs it. Shapes follow the CIS API: GET /v1/quota and /v1/billing
-// (api/routers/v1_tours.py), GET /v1/account/activity and /v1/account/api-key (api/routers/v1_account.py).
+// (api/routers/v1_tours.py), GET /v1/account/activity (api/routers/v1_account.py).
 
 export const ACTIVITY_PAGE_SIZES = [10, 25, 50, 100];
 
@@ -80,15 +80,6 @@ export function fmtMonth(ym: string | null | undefined): string {
   const d = new Date(`${ym.slice(0, 7)}-01T00:00:00Z`);
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
-}
-
-/** An API key use: the exact time when CIS has it, else the month from the usage rollup (raw rows are kept 90
- *  days, AA-825), else `none`. `fmtAt` formats the exact timestamp (the kit's formatDateTime in the card). */
-export function keyUseText(at: string | null | undefined, month: string | null | undefined,
-  fmtAt: (iso: string) => string, none: string): string {
-  if (at) return fmtAt(at);
-  if (month) return `In ${fmtMonth(month)}`;
-  return none;
 }
 
 export function fmtUsd(n: number): string {
@@ -233,16 +224,4 @@ export const HEALTH_LABEL: Record<ConnectionHealth, string> = {
   untested: "Not tested yet",
 };
 
-/** GET /v1/account/api-key. */
-export interface ApiKeyFacts {
-  has_key: boolean;
-  masked: string | null;
-  issued_at: string | null;
-  last_sign_in_at: string | null;
-  last_api_call_at: string | null;
-  /** YYYY-MM: newest month with API calls, set only when no raw call is left (raw kept 90 days, AA-825). */
-  last_api_call_month?: string | null;
-  last_used_at: string | null;
-  /** YYYY-MM: set (and last_used_at null) when that month is newer than every exact use. */
-  last_used_month?: string | null;
-}
+// AA-1036 R3 slice 3: GET /v1/account/api-key (the API key facts) went with the tenant API keys.

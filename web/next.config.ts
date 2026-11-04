@@ -36,7 +36,9 @@ const STUDIO_REDIRECTS: { source: string; destination: string }[] = [
   { source: "/portal/activity", destination: "/portal/account/activity" },
   { source: "/portal/billing", destination: "/portal/account/billing" },
   { source: "/portal/settings", destination: "/portal/account/settings" },
-  { source: "/portal/api", destination: "/portal/account/api" },
+  // AA-1036 R3 slice 3 (root ADR 0019 d6): no tenant API keys, so no API page; a machine API for agencies is R8.
+  { source: "/portal/api", destination: "/portal/account/settings" },
+  { source: "/portal/account/api", destination: "/portal/account/settings" },
   // Keep in step with LEGACY_LEGAL_REDIRECTS in lib/studio/legal.ts (tests/studio/merge.test.ts compares them).
   { source: "/terms", destination: "/legal/partner-terms" },
   { source: "/privacy", destination: "/legal/privacy" },

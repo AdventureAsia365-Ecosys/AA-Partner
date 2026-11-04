@@ -13,7 +13,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { signOutEverywhere } from "@/lib/studio/signOut";
 import { useQuery } from "@tanstack/react-query";
-import { Check, Mail, ExternalLink, KeyRound, LogOut, AlertTriangle, FileText } from "lucide-react";
+import { Check, Mail, ExternalLink, LogOut, AlertTriangle, FileText } from "lucide-react";
 import {
   EmptyState as KitEmptyState, Modal, SkeletonBar, SkeletonStyle, SITE_URL, SUPPORT_EMAIL, apiGet,
 } from "@/app/_kit";
@@ -174,8 +174,8 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
         </div>
         {/* AA-760 — what "API calls" counts (api/middleware/rate_limit.py): a portal session is not metered. */}
         <p data-testid="billing-api-calls-note" style={{ fontSize: 11.5, color: T.muted, lineHeight: 1.5, margin: "14px 0 0" }}>
-          API calls are the requests your own systems send to the API with a token from your API key. Using this
-          portal, including the API playground, is not counted; it does share your rate limit.
+          API calls are requests made outside the Content studio. Using the Content studio is not counted; it does
+          share your rate limit.
         </p>
       </Card>
 
@@ -321,18 +321,8 @@ export function SettingsTab() {
           <div style={row}>{label("Company", loadingMe ? skel(120) : tenantName)}</div>
           <div style={row}>{label("Plan", loadingMe ? skel(70) : titleCase(planTier) || "No plan attached")}<Link href="/portal/account/billing" style={{ fontSize: 12, color: T.ink3, fontWeight: 500, textDecoration: "none" }}>View billing →</Link></div>
           <div style={last}>
-            {label("Need to change something?", "Company name, contacts or a new API key")}
+            {label("Need to change something?", "Company name or contacts")}
             <Btn size="sm" onClick={() => setContact(true)} style={{ whiteSpace: "nowrap", flexShrink: 0 }}><Mail size={13} /> Contact us</Btn>
-          </div>
-        </Card>
-
-        <Card>
-          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted, marginBottom: 6 }}>API access</div>
-          <div style={last}>
-            {label("API key", "Shown once when it was issued. Use it to call the Adventure Asia API.")}
-            <Link href="/portal/account/api" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: T.ink3, fontWeight: 500, textDecoration: "none", whiteSpace: "nowrap" }}>
-              <KeyRound size={13} /> API docs →
-            </Link>
           </div>
         </Card>
 

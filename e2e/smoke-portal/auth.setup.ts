@@ -7,12 +7,12 @@
 // in like a person: /portal/dashboard -> the CRM web's /auth/refresh -> partner-pool managed login (password + the
 // authenticator code) -> back on the agency host, where the studio exchanges the partner session for its own token.
 // The user is the e2e studio user (E2EPORTALEMAIL / E2EPORTALPASSWORD / E2EPORTALTOTP): a synthetic partner identity
-// with a Content studio membership on the E2E tenant. A local studio without the partner sign-in still uses the
-// tenant test key on /tenant-login (PORTAL_API_KEY_SIGNIN=true there).
+// with a Content studio membership on the E2E tenant. AA-1036 R3 slice 3: tenant API keys are gone (CIS
+// POST /auth/tenant-login is 410), so a local web signs in the same way (the studio is part of the web since R3).
 import { expect, test as setup, type Page } from '@playwright/test';
 import { signIn, skipPasskeyOffer } from '../helpers/signin';
 import { baseUrl, ensureAuthDir } from './smoke-helpers';
-import { FARGATE, NO_LOGIN_REASON, TENANT_STATE, hasTenantLogin, partnerCredentials } from './portal-helpers';
+import { NO_LOGIN_REASON, TENANT_STATE, hasTenantLogin, partnerCredentials } from './portal-helpers';
 
 /** Partner sign-in on the agency host; ends on the rendered studio dashboard. */
 async function partnerSignIn(page: Page): Promise<void> {
@@ -62,20 +62,6 @@ async function partnerSignIn(page: Page): Promise<void> {
   throw new Error('too many hops on the way to the studio');
 }
 
-/** A local studio with PORTAL_API_KEY_SIGNIN=true: the API-key form. */
-async function apiKeySignIn(page: Page): Promise<void> {
-  await page.goto('/tenant-login', { waitUntil: 'load' });
-  // AA-760 — a value typed before React hydrates the controlled input is reset to "": fill until it sticks.
-  const input = page.locator('input[type="password"]');
-  await expect(async () => {
-    await input.fill(process.env.E2E_TENANT_API_KEY!);
-    await page.waitForTimeout(250);
-    await expect(input).not.toHaveValue('');
-  }).toPass({ timeout: 15000 });
-  await page.click('button:has-text("Access Portal")');
-  await page.waitForURL(/\/portal\//, { timeout: 20000 });
-}
-
 setup('authenticate tenant', async ({ browser }) => {
   setup.skip(!hasTenantLogin(), NO_LOGIN_REASON);
   setup.setTimeout(180_000); // managed login + a possible wait for a fresh authenticator code (≤ 30 s)
@@ -83,8 +69,7 @@ setup('authenticate tenant', async ({ browser }) => {
   const context = await browser.newContext({ baseURL: baseUrl() });
   const page = await context.newPage();
   try {
-    if (FARGATE) await partnerSignIn(page);
-    else await apiKeySignIn(page);
+    await partnerSignIn(page);
     await context.storageState({ path: TENANT_STATE });
   } finally {
     await context.close();

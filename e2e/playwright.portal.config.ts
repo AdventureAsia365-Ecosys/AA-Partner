@@ -5,7 +5,7 @@
 // PORTAL_TARGET=fargate for the agency-host expectations). The default config (playwright.config.ts) is
 // the CRM E2E and never sees these specs (its testDir is ./tests).
 //   - "portal-setup": the tenant sign-in once, writing .auth/tenant-state.json (agency host: the e2e studio user's
-//     partner sign-in, AA-979 §4.5; local studio: the API key E2E_TENANT_API_KEY); skips without them.
+//     partner sign-in, AA-979 §4.5; a local web too since AA-1036 removed the tenant API keys); skips without them.
 //   - "portal": the specs; the logged-in ones skip without the state, the host checks always run.
 import { defineConfig, devices } from "@playwright/test";
 

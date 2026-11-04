@@ -45,7 +45,8 @@ const OLD_SLUGS: [string, string][] = [
   ['/portal/activity', '/portal/account/activity'],
   ['/portal/billing', '/portal/account/billing'],
   ['/portal/settings', '/portal/account/settings'],
-  ['/portal/api', '/portal/account/api'],
+  ['/portal/api', '/portal/account/settings'],
+  ['/portal/account/api', '/portal/account/settings'],  // AA-1036: no API page (no tenant API keys)
 ];
 
 // The studio's draft legal pages: the agency web serves them at /legal/* (the CRM owns /legal/terms, AA-1033), and the
@@ -123,10 +124,6 @@ test.describe('AA-885 — portal host', () => {
           const res = await ctx.get(p, { maxRedirects: 0, timeout: 15000 });
           expect(res.status(), `${label}: GET ${p}`).toBe(401);
         }
-        const play = await ctx.post('/api/playground/proxy', {
-          maxRedirects: 0, timeout: 15000, data: { endpoint: '/v1/tours/my-versions' },
-        });
-        expect(play.status(), `${label}: POST /api/playground/proxy`).toBe(401);
       } finally {
         await ctx.dispose();
       }
@@ -171,7 +168,7 @@ test.describe('AA-885 — portal host', () => {
   // AA-979 §4.5: the API-key sign-in page is gone on the agency host; old links land on the partner sign-in for good,
   // with the studio home as the destination (never next=/tenant-login, which would loop).
   test('/tenant-login answers 308 to the partner sign-in', async () => {
-    test.skip(!FARGATE, 'a local studio may still run the API-key sign-in (PORTAL_API_KEY_SIGNIN=true)');
+    // AA-1036 R3 slice 3: no API-key sign-in anywhere (local web included), so this holds on every target.
     const ctx = await apiContext();
     try {
       const res = await ctx.get('/tenant-login?x=1', { maxRedirects: 0, timeout: 15000 });

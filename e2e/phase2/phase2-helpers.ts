@@ -34,7 +34,6 @@ export interface Phase2Config {
   since: number; // staff mode none: epoch ms before the orchestrator's invitation call
   out: string; // evidence folder (absolute)
   reuse: boolean; // skip (a) and (b): sign in with the credentials saved by an earlier run
-  tenantKey: string; // optional: the tenant's API key, for the E check (same tenant, API-key session)
   readyMs: number; // how long "being set up" may last
 }
 
@@ -98,7 +97,6 @@ export function loadConfig(): Phase2Config {
     since,
     out: outDir(),
     reuse,
-    tenantKey: env("E2EP2TENANTKEY"),
     readyMs: (Number(env("E2EP2READYMIN")) || 5) * 60_000,
   };
 }
