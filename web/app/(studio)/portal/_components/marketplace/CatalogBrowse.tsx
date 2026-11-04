@@ -16,14 +16,14 @@ import { Button, EmptyState, ErrorState, K, alpha, sans, useToast } from "@/app/
 import { MY_VERSIONS_KEY } from "@/app/_kit/local/studio/useShellData";
 import {
   ACTIVITY_LABELS, ADDED_OPTIONS, CATALOG_PAGE_SIZE, DURATION_OPTIONS, INTENSITY_LABELS, NO_CATALOG_FILTERS,
-  activityLabel, cardTags, facetOptions, fmtDuration, fmtPriceRaw, hasCatalogFilters, intensityLabel, isRecentlyAdded, pageCount,
+  activityLabel, cardTags, facetOptions, fmtDuration, hasCatalogFilters, intensityLabel, isRecentlyAdded, pageCount,
   poolQuery, rewriteQuotaNote, themeTags, type AddedFilter, type CatalogFilters, type DurationFilter, type QuotaNote,
 } from "@/lib/studio/tours";
 import { fetchMyVersions } from "../catalogApi";
 import { ServedBadge, workClosed } from "../ServedBadge";
 import { activePollInterval, isActiveWork, latestVersionByTour, tourWorkStatus } from "../workStatus";
 import { POOL_KEY, PICKED_KEY, fetchPool, startRewrites, type PoolTour } from "./marketplaceApi";
-import { CardGridSkeleton, GRID_STYLE, TourCard, type CardStatus } from "./TourCard";
+import { CardGridSkeleton, FromPriceLine, GRID_STYLE, TourCard, type CardStatus } from "./TourCard";
 import { QuotaLine, TourDrawer } from "./TourDrawer";
 import type { UsageMeter } from "@/lib/studio/account";
 
@@ -211,7 +211,8 @@ export function CatalogBrowse({ externalSearch = "", meter }: { externalSearch?:
               tags={cardTags(t.activities, themeTags(t.seo_keywords_used, 3, [t.country]))}
               cover={t.cover_image_url ?? null}
               coverLarge={t.cover_image_large_url ?? null}
-              price={fmtPriceRaw(t.price_raw)}
+              // AA-1029: AA-Booking's "from" price (price.from.v1) or no price column; never the source price text.
+              priceBlock={t.from_price ? <FromPriceLine price={t.from_price} compact /> : null}
               status={statusOf(t)}
               // AA-986 L3: a tour AA paused or retired is refused (409): no select box, its badge says why.
               extraBadge={t.served_notice ? <ServedBadge fields={t} /> : undefined}
