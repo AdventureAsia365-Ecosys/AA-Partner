@@ -148,13 +148,19 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 
 ## Tenancy and data rules
 
-- **Fair share and body ceiling** (AA-969, CRM-37a security review; `docs/operations/slo.md`): every `tenant_tx()`
-  first takes one of its agency's slots (`app/tenant_gate.py`, `CRM_TENANT_MAX_CONCURRENCY` default 2 of the pool's 3
-  connections; keyed by the agency only once the caller's membership was verified in this task, else by the caller;
-  429 `tenant_busy` after `CRM_TENANT_SLOT_WAIT_MS`), then waits at most 10 s for a connection (503 `db_busy`). The
-  agency class guard adds a per-member-per-agency ceiling (`RATE_LIMIT_MEMBER_PER_MINUTE`, 429 `rate_limited`). An
-  ASGI middleware (`app/bodylimit.py`) caps every request body before any route code runs (FastAPI parses JSON before
-  the class guard): 1 MiB, the four upload routes their own cap + 64 KiB; 413 `body_too_large`.
+- **Fair share and body ceiling** (AA-969, CRM-37a security review; `docs/operations/slo.md`): every request-path
+  transaction first takes a slot of `app/tenant_gate.py`: at most 2 of the pool's 3 connections for the whole request
+  path (the third stays for the crm.job worker), at most `CRM_TENANT_MAX_CONCURRENCY` (default 2) per key, handed out
+  fairly (the waiting key holding the fewest slots first, so a calm agency gets the next free slot ahead of the busy
+  agencies' queues). Keys: `tenant_tx()` the agency once the caller's membership was verified in this task, else the
+  caller; `caller_memberships()` the caller; the anonymous contexts (intake, invitations, client links, calendar feed,
+  Twilio webhooks) one shared public key. 429 `tenant_busy` (503 `db_busy` for the public key) after
+  `CRM_TENANT_SLOT_WAIT_MS`, then at most 10 s for a connection (503 `db_busy`). The agency class guard adds a
+  per-member-per-agency ceiling keyed by the canonical agency uuid (`RATE_LIMIT_MEMBER_PER_MINUTE`, 429
+  `rate_limited`). An ASGI middleware (`app/bodylimit.py`) caps every request body before any route code runs (FastAPI
+  parses JSON before the class guard): 1 MiB, the four upload routes their own cap + 64 KiB; 413 `body_too_large`;
+  and a process-wide budget of 32 MiB for body bytes in flight above 64 KiB each (503 `server_busy`).
+  `POST /crm/v1/documents` reads its JSON body after the class guard.
 - **`tenant_tx(pool, caller, tenant_id, reader_role=None)`** (`app/tenancy.py`) is the only way request code reaches
   tenant data: one transaction; `SET LOCAL app.tenant_id`; the agency must exist and be `active`; the membership check
   by the token's `(iss, sub)` (never an e-mail lookup); `SET LOCAL app.member_role` and `app.actor`; optionally

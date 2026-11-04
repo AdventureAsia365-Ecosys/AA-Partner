@@ -14,8 +14,9 @@ The guard, in order:
 5. AA-1019 (root ADR 0006a A10c): the Dev-only CRM staff E2E identity outside ``dev`` / ``test`` / ``local`` ->
    **403** ``e2e_read_only`` (the token cannot exist elsewhere: this is the second lock);
 6. AA-969 (CRM-37a): on the agency class only, more than ``RATE_LIMIT_MEMBER_PER_MINUTE`` requests in a minute by
-   one member for one agency (``iss`` + ``sub`` + ``X-AA-Tenant-Id``, ``app.state.member_limiter``) -> **429**
-   ``rate_limited``. The header is part of the key, so a caller naming another agency only spends their own count.
+   one member for one agency (``iss`` + ``sub`` + the canonical ``X-AA-Tenant-Id`` uuid, ``app.state.member_limiter``)
+   -> **429** ``rate_limited``. The agency is part of the key, so a caller naming another agency only spends their own
+   count; any header that is not a uuid shares one bucket, so new spellings or junk values never open a fresh count.
 
 Then the route gets a :class:`Caller` (no e-mail or name: ids only, plus the ``e2e_read_only`` flag of the Dev-only
 E2E CIS admin, :mod:`app.auth.e2e_staff`). Tenant membership is not checked here: the agency
@@ -25,6 +26,7 @@ routes open :func:`app.tenancy.tenant_tx`, which checks it.
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Annotated, Any
@@ -39,6 +41,8 @@ from app.settings import DEV_ONLY_ENVIRONMENTS
 
 log = logging.getLogger(__name__)
 
+# The longest spelling uuid.UUID() accepts ("urn:uuid:" + 36) with room for braces; longer is never an agency id.
+MAX_TENANT_HEADER = 64
 bearer = HTTPBearer(auto_error=False, scheme_name="CognitoAccessToken", description="Cognito access token")
 
 
@@ -129,10 +133,23 @@ def _member_rate_limit(request: Request, caller: Caller) -> None:
     limiter = getattr(request.app.state, "member_limiter", None)
     if limiter is None:
         return
-    key = f"{caller.iss}|{caller.sub}|{request.headers.get('x-aa-tenant-id', '')[:64]}"
+    key = f"{caller.iss}|{caller.sub}|{_tenant_bucket(request.headers.get('x-aa-tenant-id'))}"
     if not limiter.allow(key):
         log.warning("route_guard_member_rate_limited class=%s", caller.route_class)
         raise HTTPException(status_code=429, detail="rate_limited", headers={"Retry-After": str(int(limiter.window_s))})
+
+
+def _tenant_bucket(header: str | None) -> str:
+    """The agency part of the member ceiling's key: the canonical id (``str(uuid.UUID(...))``), so every spelling
+    ``uuid.UUID`` accepts for one agency (upper case, braces, ``urn:uuid:``, no hyphens) shares one count; anything
+    else (absent, junk: routes that ignore the header take it) shares the one bucket ``none``. Review round 2: the raw
+    header text gave each spelling or junk value a fresh count."""
+    if header and len(header) <= MAX_TENANT_HEADER:
+        try:
+            return str(uuid.UUID(header))
+        except ValueError:
+            pass
+    return "none"
 
 
 def _environment(request: Request) -> str:

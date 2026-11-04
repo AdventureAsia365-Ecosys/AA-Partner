@@ -6,9 +6,10 @@
 //
 // Scenarios (one token: the load-test identity, an agent of the agencies lt-01..lt-50):
 //   calm   every agency but the first, round robin, a constant CALM_RPS for the whole run (the SLO is measured here);
-//   noisy  the first agency alone, NOISY_RPS from minute 2 to one minute before the end, with up to NOISY_MAX_VUS
-//          requests in flight (it should meet 429 tenant_busy / rate_limited, never push the calm agencies past
-//          their SLO).
+//   noisy  the first NOISY_AGENCIES agencies (default 2: two busy agencies at once fill the request share of the pool
+//          one slot each), alternating, NOISY_RPS in total from minute 2 to one minute before the end, with up to
+//          NOISY_MAX_VUS requests in flight (they should meet 429 tenant_busy / rate_limited, never push the calm
+//          agencies past their SLO).
 // Thresholds = the SLO of docs/operations/slo.md for the calm agencies (route groups session, agency-read, reports),
 // plus their error and refusal rates; the error rate aborts the run early (abortOnFail).
 import http from "k6/http";
@@ -27,6 +28,7 @@ const MINUTES = parseInt(__ENV.LT_DURATION_MIN || "8", 10);
 const CALM_RPS = parseInt(__ENV.LT_CALM_RPS || "6", 10);
 const NOISY_RPS = parseInt(__ENV.LT_NOISY_RPS || "12", 10);
 const NOISY_MAX_VUS = parseInt(__ENV.LT_NOISY_MAX_VUS || "12", 10);
+const NOISY_AGENCIES = parseInt(__ENV.LT_NOISY_AGENCIES || "2", 10);
 
 function refuse(why) {
   throw new Error(`crm_load.js refused: ${why}`);
@@ -36,9 +38,11 @@ if (!Array.isArray(TENANTS) || TENANTS.length < 2 || TENANTS.length > 50) refuse
 if (!(MINUTES >= MIN_MINUTES && MINUTES <= HARD_MAX_MINUTES)) refuse(`duration ${MIN_MINUTES}-${HARD_MAX_MINUTES} min`);
 if (!(CALM_RPS >= 1 && NOISY_RPS >= 0 && CALM_RPS + NOISY_RPS <= HARD_MAX_RPS)) refuse(`RPS above ${HARD_MAX_RPS}`);
 if (!(NOISY_MAX_VUS >= 1 && NOISY_MAX_VUS <= 30)) refuse("noisy VUs 1-30");
+if (!(NOISY_AGENCIES >= 1 && NOISY_AGENCIES <= 2)) refuse("noisy agencies 1-2");
+if (TENANTS.length <= NOISY_AGENCIES) refuse("at least one calm agency besides the noisy ones");
 
-const NOISY = TENANTS[0];
-const CALM = TENANTS.slice(1);
+const NOISY = TENANTS.slice(0, NOISY_AGENCIES);
+const CALM = TENANTS.slice(NOISY_AGENCIES);
 
 // Route groups of docs/operations/slo.md. Weights add up to 100 per scenario.
 const CALM_MIX = [
@@ -131,7 +135,7 @@ export function calm() {
 
 export function noisy() {
   const n = exec.scenario.iterationInTest;
-  const res = call(NOISY, pick(NOISY_MIX, n * 37), "noisy");
+  const res = call(NOISY[n % NOISY.length], pick(NOISY_MIX, Math.floor(n / NOISY.length) * 37 + n), "noisy");
   if (res.status === 429 || res.status === 503) noisyRefused.add(1);
 }
 

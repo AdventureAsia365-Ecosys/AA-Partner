@@ -33,7 +33,12 @@ is decided by the form key inside :func:`app.tenancy.intake_tx`.
   under the per-address public limit: Twilio posts every agency's webhooks from one shared pool of addresses, and a
   429 would lose a client's message for good (Twilio does not retry an inbound webhook). The signature authenticates
   them; only unknown hook ids (404) are counted, per address (``HOOK_MISSES_PER_MINUTE``), and an address over that
-  ceiling is answered 429 before any work, so random-id floods stay cheap.
+  ceiling is answered 429 before any work, so random-id floods stay cheap. AA-969 (review round 2): a refused
+  signature (403) on a real hook id is counted per **hook id** (``HOOK_REFUSALS_PER_MINUTE``), and a hook over that
+  ceiling is answered 429 before the database is reached, so whoever knows a hook id (the agency itself) cannot flood
+  it with unsigned requests; genuine signed callbacks never count. Refusals are not counted per address: a hook whose
+  agency let its Twilio Auth Token drift would otherwise use up Twilio's shared addresses for every agency. The
+  webhook transaction also takes a slot of the public share of the pool (:mod:`app.tenant_gate`).
 
 Responses never carry an id, a name, or whether an e-mail is already known.
 """
@@ -49,7 +54,7 @@ from fastapi.responses import JSONResponse, Response
 
 from app.calendar import public as calendar_public
 from app.db import request_pool
-from app.errors import NotFound
+from app.errors import Forbidden, NotFound
 from app.intake import public as intake
 from app.intake import stage2_public
 from app.messaging import webhook as messaging_hooks
@@ -189,9 +194,13 @@ async def _hook(request: Request, hook_id: str, kind: str, signature: str | None
     if runtime is None:
         raise HTTPException(status_code=503, detail="messaging_not_configured")
     misses = request.app.state.hook_miss_limiter
+    refusals = request.app.state.hook_refusal_limiter
     address = client_address(request, request.app.state.settings.rate_limit_xff_hops)
-    if misses.exhausted(address):
-        raise HTTPException(status_code=429, detail="rate_limited", headers={"Retry-After": str(int(misses.window_s))})
+    for limiter, key in ((misses, address), (refusals, hook_id)):
+        if limiter.exhausted(key):
+            raise HTTPException(
+                status_code=429, detail="rate_limited", headers={"Retry-After": str(int(limiter.window_s))}
+            )
     try:
         body = await read_capped(request, MAX_HOOK_BYTES)
     except BodyTooLarge:
@@ -207,6 +216,9 @@ async def _hook(request: Request, hook_id: str, kind: str, signature: str | None
         )
     except NotFound:
         misses.allow(address)  # only a miss is counted: genuine (signed) callbacks never use the address's minute
+        raise
+    except Forbidden:
+        refusals.allow(hook_id)  # a refused signature on a real hook: counted per hook, never per (shared) address
         raise
     return Response(EMPTY_TWIML, media_type="text/xml", headers=NO_STORE)
 

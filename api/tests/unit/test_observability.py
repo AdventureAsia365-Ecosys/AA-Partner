@@ -346,6 +346,50 @@ def test_real_sdk_event_from_a_request_carries_request_id_and_no_pii() -> None:
     assert "a@b.example" not in text and "abcdefghijkl" not in text and "s=1" not in text
 
 
+def test_real_sdk_event_never_carries_a_working_link_in_the_url() -> None:
+    """AA-969 review round 2 (F4): a client link token, a calendar feed token or a hook id in the path is a working
+    credential; the request URL of an error event (and of the 10 % transactions) keeps the path with ``[token]``."""
+    transport = _Capture()
+    s = Settings(database_url=None, environment="test", git_sha="cafe123", sentry_dsn="https://k@o1.ingest.example/1")
+    token = "Ab3_" + "x" * 35 + "-Z9q"
+    assert len(token) == 43
+    app = create_app(SETTINGS)
+    probe = APIRouter()
+
+    @probe.get("/crm/_probe_link/{link}")
+    async def _boom(link: str) -> dict:
+        raise RuntimeError("proposal page failed")
+
+    app.include_router(probe)
+    real_init = sentry_sdk.init
+    with patch("sentry_sdk.init", lambda **kw: real_init(**kw, transport=transport)):
+        assert sentry.init_sentry(s) is True
+    try:
+        with TestClient(app, raise_server_exceptions=False) as client:
+            r = client.get(f"/crm/_probe_link/{token}?utm=1")
+        sentry_sdk.flush(2)
+    finally:
+        sentry_sdk.get_client().close()
+        real_init()
+    assert r.status_code == 500 and transport.events
+    ev = transport.events[0]
+    assert token not in json.dumps(ev)
+    assert ev["request"]["url"].endswith("/crm/_probe_link/[token]")
+
+
+def test_url_redaction_of_events_and_breadcrumbs() -> None:
+    hook = "0123456789abcdef" * 2
+    assert sentry.redact_url(f"https://h.example/crm/public/v1/hooks/twilio/{hook}/status?x=1#f") == (
+        "https://h.example/crm/public/v1/hooks/twilio/[token]/status"
+    )
+    assert sentry.redact_url("/crm/public/v1/calendar/" + "k" * 43 + ".ics") == "/crm/public/v1/calendar/[token].ics"
+    assert sentry.redact_url("https://h.example") == "https://h.example"
+    crumb = sentry.before_breadcrumb({"type": "http", "data": {"url": f"https://h.example/s/{'t' * 43}"}}, None)
+    assert crumb["data"]["url"] == "https://h.example/s/[token]"
+    event = sentry.before_send({"transaction": f"/crm/public/v1/s/{'t' * 43}"}, {})
+    assert event["transaction"] == "/crm/public/v1/s/[token]"
+
+
 # --- settings: missing-DSN guard ----------------------------------------------------------------------------------
 
 

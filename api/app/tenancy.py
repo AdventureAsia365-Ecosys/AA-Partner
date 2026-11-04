@@ -93,7 +93,7 @@ import datetime as dt
 import logging
 import re
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
@@ -386,6 +386,18 @@ async def _acquire(pool: asyncpg.Pool) -> AsyncIterator[asyncpg.Connection]:
 
 
 @asynccontextmanager
+async def _gated(
+    pool: asyncpg.Pool, key: str, *, busy: Callable[[], Exception] = tenant_gate.tenant_busy
+) -> AsyncIterator[asyncpg.Connection]:
+    """AA-969 (review round 2): a request-path connection outside ``tenant_tx()`` (memberships, the anonymous
+    contexts, the Twilio webhooks) takes a slot of the fair share first (:mod:`app.tenant_gate`, ``key`` = the caller
+    or :data:`app.tenant_gate.PUBLIC_KEY`), then waits at most :data:`POOL_ACQUIRE_TIMEOUT_S` for the connection. So
+    these paths never queue in the pool ahead of an agency's ``tenant_tx()`` and never hold more than their share."""
+    async with tenant_gate.GATE.hold(key, busy=busy), _acquire(pool) as conn:
+        yield conn
+
+
+@asynccontextmanager
 async def tenant_tx(
     pool: asyncpg.Pool,
     caller: Caller,
@@ -627,7 +639,7 @@ async def intake_tx(pool: asyncpg.Pool, public_key: str) -> AsyncIterator[tuple[
     if not isinstance(public_key, str) or not 20 <= len(public_key) <= 64:
         raise NotFound("form_not_found")
     pending: Exception | None = None
-    async with pool.acquire() as conn, conn.transaction():
+    async with _gated(pool, tenant_gate.PUBLIC_KEY, busy=tenant_gate.public_busy) as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.intake_key', $1, true)", public_key)
         row = await conn.fetchrow(INTAKE_FORM_SQL, public_key)
         await conn.execute("SELECT set_config('app.intake_key', '', true)")
@@ -766,7 +778,7 @@ async def invitation_tx(pool: asyncpg.Pool, token_hash_hex: str) -> AsyncIterato
     if not isinstance(token_hash_hex, str) or len(token_hash_hex) != 64:
         raise NotFound("invitation_not_found")
     pending: Exception | None = None
-    async with pool.acquire() as conn, conn.transaction():
+    async with _gated(pool, tenant_gate.PUBLIC_KEY, busy=tenant_gate.public_busy) as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.invite_token_hash', $1, true)", token_hash_hex)
         row = await conn.fetchrow(INVITATION_SQL, token_hash_hex)
         await conn.execute("SELECT set_config('app.invite_token_hash', '', true)")
@@ -869,7 +881,7 @@ async def studio_invitation_tx(
     holder). Unknown token: 404 ``invitation_not_found``. Only ``app/members/studio.py`` may open it."""
     if not isinstance(token_hash_hex, str) or len(token_hash_hex) != 64:
         raise NotFound("invitation_not_found")
-    async with pool.acquire() as conn, conn.transaction():
+    async with _gated(pool, tenant_gate.PUBLIC_KEY, busy=tenant_gate.public_busy) as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.invite_token_hash', $1, true)", token_hash_hex)
         row = await conn.fetchrow(STUDIO_INVITATION_BY_LOOKUP_SQL, token_hash_hex)
         if row is None:
@@ -934,7 +946,7 @@ async def client_link_tx(
     if not isinstance(token_hash_hex, str) or len(token_hash_hex) != 64:
         raise NotFound("link_not_found")
     pending: Exception | None = None
-    async with pool.acquire() as conn, conn.transaction():
+    async with _gated(pool, tenant_gate.PUBLIC_KEY, busy=tenant_gate.public_busy) as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.client_link_hash', $1, true)", token_hash_hex)
         row = await conn.fetchrow(CLIENT_LINK_SQL, token_hash_hex)
         await conn.execute("SELECT set_config('app.client_link_hash', '', true)")
@@ -1055,7 +1067,7 @@ async def messaging_hook_tx(pool: asyncpg.Pool, hook_id: str) -> AsyncIterator[t
     if not isinstance(hook_id, str) or not _HOOK_ID.match(hook_id):
         raise NotFound("hook_not_found")
     pending: Exception | None = None
-    async with pool.acquire() as conn, conn.transaction():
+    async with _gated(pool, tenant_gate.PUBLIC_KEY, busy=tenant_gate.public_busy) as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.messaging_hook_id', $1, true)", hook_id)
         row = await conn.fetchrow(MESSAGING_HOOK_SQL, hook_id)
         await conn.execute("SELECT set_config('app.messaging_hook_id', '', true)")
@@ -1122,7 +1134,7 @@ async def calendar_feed_tx(
     if not isinstance(token_hash_hex, str) or len(token_hash_hex) != 64:
         raise NotFound("feed_not_found")
     pending: Exception | None = None
-    async with pool.acquire() as conn, conn.transaction():
+    async with _gated(pool, tenant_gate.PUBLIC_KEY, busy=tenant_gate.public_busy) as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.calendar_feed_hash', $1, true)", token_hash_hex)
         row = await conn.fetchrow(CALENDAR_FEED_SQL, token_hash_hex)
         await conn.execute("SELECT set_config('app.calendar_feed_hash', '', true)")
@@ -1544,7 +1556,7 @@ async def caller_memberships(pool: asyncpg.Pool, caller: Caller) -> list[Members
     """The caller's active memberships in agencies that are not trashed (locked ones included, with their status)."""
     if not caller.iss or not caller.sub:
         raise Forbidden("not_a_member")
-    async with pool.acquire() as conn, conn.transaction():
+    async with _gated(pool, tenant_gate.caller_key(caller.iss, caller.sub)) as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.caller_iss', $1, true)", caller.iss)
         await conn.execute("SELECT set_config('app.caller_sub', $1, true)", caller.sub)
         rows = await conn.fetch(MEMBERSHIPS_SQL, caller.iss, caller.sub, MAX_MEMBERSHIPS)

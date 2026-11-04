@@ -16,6 +16,7 @@ from typing import Any
 
 import sentry_sdk
 
+from app.observability.request_id import redact_path
 from app.observability.scrub import FILTERED, scrub
 from app.settings import SERVICE_NAME, Settings
 
@@ -57,7 +58,21 @@ def _scrub_request(request: dict) -> None:
     # only scheme, host and path.
     request.pop("query_string", None)
     if isinstance(request.get("url"), str):
-        request["url"] = scrub(request["url"].split("?", 1)[0].split("#", 1)[0])
+        request["url"] = redact_url(request["url"])
+
+
+def redact_url(url: str) -> str:
+    """``url`` without query or fragment, its bearer-like path segments (client link tokens, calendar feed tokens,
+    Twilio hook ids) replaced by ``[token]`` (:func:`app.observability.request_id.redact_path`, AA-969 F4), then the
+    PII scrub. A working link must never reach a third party: error events and the 10 % transactions carry this URL."""
+    base = url.split("?", 1)[0].split("#", 1)[0]
+    scheme, sep, rest = base.partition("://")
+    if sep:
+        host, slash, path = rest.partition("/")
+        base = f"{scheme}://{host}{slash}{redact_path(path) or ''}" if slash else base
+    else:
+        base = redact_path(base) or ""
+    return scrub(base)
 
 
 def _scrub_frames(holder: dict) -> None:
@@ -74,6 +89,9 @@ def before_send(event: dict, hint: Any) -> dict:
     if isinstance(request, dict):
         _scrub_request(request)
     event.pop("user", None)
+    if isinstance(event.get("transaction"), str) and event["transaction"].startswith("/"):
+        # The route template normally (``/p/{token}``); a raw path when no route matched (a 404): redacted the same.
+        event["transaction"] = redact_path(event["transaction"])
     for exc in (event.get("exception") or {}).get("values") or []:
         if str(exc.get("module") or "").split(".")[0] in _VALUE_ECHOING_MODULES:
             exc["value"] = FILTERED
@@ -108,6 +126,11 @@ def before_send_transaction(event: dict, hint: Any) -> dict:
 
 def before_breadcrumb(crumb: dict, hint: Any) -> dict:
     """Redact PII / secrets in a breadcrumb's message and data (log lines, HTTP URLs, SQL)."""
+    data = crumb.get("data")
+    if isinstance(data, dict):
+        for key in ("url", "http.url", "path"):
+            if isinstance(data.get(key), str):
+                data[key] = redact_url(data[key])
     for key in ("message", "data"):
         if key in crumb:
             crumb[key] = scrub(crumb[key])

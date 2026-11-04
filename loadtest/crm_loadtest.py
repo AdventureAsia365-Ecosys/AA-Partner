@@ -15,7 +15,8 @@ after 30 s) and the run exits 3. A wall clock of the duration + 2 minutes kills 
 Guards (the abort conditions of the README):
 
 1. the credentials are the Dev account (``--expect-account``);
-2. limits: duration <= 10 min, calm + noisy RPS <= 30, noisy VUs <= 30, 2..50 tenant ids (UUIDs, no duplicates);
+2. limits: duration <= 10 min, calm + noisy RPS <= 30, noisy VUs <= 30, 1..2 noisy agencies, 2..50 tenant ids (UUIDs,
+   no duplicates, at least one calm agency);
 3. the access token (a file of mode 0600, never printed) is valid for the whole run plus 5 minutes;
 4. the CRM API answers ``/crm/health/ready`` 200 ``status: ok``;
 5. ``shared.job`` idle: the newest CIS ``ops_metrics_sampled`` line (log group of the CIS API) shows no due queued
@@ -60,6 +61,7 @@ HARD_MAX_MINUTES = 10
 MIN_MINUTES = 4
 MAX_TENANTS = 50
 MAX_NOISY_VUS = 30
+MAX_NOISY_AGENCIES = 2
 TOKEN_MARGIN_S = 300
 SAMPLE_MAX_AGE_S = 11 * 60
 BOOKING_MAX_DUE_AGE_S = 120
@@ -83,6 +85,9 @@ class Limits:
     calm_rps: int = 6
     noisy_rps: int = 12
     noisy_max_vus: int = 12
+    # Review round 2: two noisy agencies by default (one busy agency per pool slot of the request path), so the run
+    # also shows that two busy agencies together cannot push the calm ones past their SLO.
+    noisy_agencies: int = 2
 
 
 @dataclass
@@ -107,6 +112,8 @@ def check_limits(limits: Limits) -> list[str]:
         out.append(f"calm + noisy RPS must be 1..{HARD_MAX_RPS}")
     if not 1 <= limits.noisy_max_vus <= MAX_NOISY_VUS:
         out.append(f"noisy VUs must be 1..{MAX_NOISY_VUS}")
+    if not 1 <= limits.noisy_agencies <= MAX_NOISY_AGENCIES:
+        out.append(f"noisy agencies must be 1..{MAX_NOISY_AGENCIES}")
     return out
 
 
@@ -402,12 +409,14 @@ def extra_guard(command: str) -> list[str]:
 def precheck(args: argparse.Namespace, run: Runner, now: float | None = None) -> Report:
     report = Report()
     now = time.time() if now is None else now
-    limits = Limits(args.duration_min, args.calm_rps, args.noisy_rps, args.noisy_max_vus)
+    limits = Limits(args.duration_min, args.calm_rps, args.noisy_rps, args.noisy_max_vus, args.noisy_agencies)
     for why in check_limits(limits) + check_base_url(args.base_url):
         report.fail(why)
     try:
         tenants = load_tenants(Path(args.tenants_file).read_text(encoding="utf-8"))
-        report.notes.append(f"{len(tenants)} agencies (noisy = the first)")
+        report.notes.append(f"{len(tenants)} agencies (noisy = the first {args.noisy_agencies})")
+        if len(tenants) <= args.noisy_agencies:
+            report.fail("at least one calm agency besides the noisy ones")
         left = token_seconds_left(read_token(Path(args.token_file)), now)
         if left < args.duration_min * 60 + TOKEN_MARGIN_S:
             report.fail("the access token expires before the run ends (+5 min): sign in again")
@@ -444,6 +453,7 @@ def run_load(args: argparse.Namespace, run: Runner) -> int:
         "LT_CALM_RPS": str(args.calm_rps),
         "LT_NOISY_RPS": str(args.noisy_rps),
         "LT_NOISY_MAX_VUS": str(args.noisy_max_vus),
+        "LT_NOISY_AGENCIES": str(args.noisy_agencies),
         "LT_SUMMARY_FILE": str(Path(args.summary_file).resolve()),
     }
     started = time.monotonic()
@@ -504,6 +514,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     p.add_argument("--calm-rps", type=int, default=Limits.calm_rps)
     p.add_argument("--noisy-rps", type=int, default=Limits.noisy_rps)
     p.add_argument("--noisy-max-vus", type=int, default=Limits.noisy_max_vus)
+    p.add_argument("--noisy-agencies", type=int, default=Limits.noisy_agencies)
     p.add_argument("--guard-every", type=float, default=30.0)
     p.add_argument("--alarm-prefix", action="append", default=[])
     p.add_argument("--extra-guard", default="")

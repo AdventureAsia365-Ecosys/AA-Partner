@@ -214,6 +214,43 @@ def test_webhooks_skip_the_per_address_public_limit(pools: LocalPools, monkeypat
         assert len(handled) == before  # refused before any lookup
 
 
+def test_refused_signatures_are_counted_per_hook_and_stop_before_the_database(
+    pools: LocalPools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AA-969 review round 2: whoever knows a real hook id cannot flood it with unsigned requests (each one used to
+    reach the database and the vault). Refusals count per hook id, never per address (Twilio's addresses are shared),
+    and signed callbacks of other hooks are untouched."""
+    settings = pools.settings()
+    app = create_app(settings, verifier=pools.verifier(settings), keys=object(), messaging_runtime=runtime())
+    monkeypatch.setattr(public_router, "request_pool", _pool)
+    handled: list[str] = []
+    other = "e" * 32
+
+    async def handle(_pool: Any, _runtime: Any, request: webhook.HookRequest) -> str:
+        handled.append(request.hook_id)
+        if request.signature != "good":
+            raise Forbidden("invalid_signature")
+        return "stored"
+
+    monkeypatch.setattr(webhook, "handle", handle)
+    with TestClient(app) as client:
+        app.state.hook_refusal_limiter = FixedWindowLimiter(2)
+        app.state.hook_miss_limiter = FixedWindowLimiter(2)
+        for _ in range(2):
+            refused = client.post(f"/crm/public/v1/hooks/twilio/{HOOK_ID}/status", content=b"a=b")
+            assert refused.status_code == 403
+        before = len(handled)
+        flooded = client.post(f"/crm/public/v1/hooks/twilio/{HOOK_ID}/status", content=b"a=b")
+        assert flooded.status_code == 429 and flooded.headers["Retry-After"] == "60"
+        assert len(handled) == before  # stopped before any lookup
+        # The same address keeps its misses budget and another agency's signed callbacks still go through.
+        for _ in range(3):
+            signed = client.post(
+                f"/crm/public/v1/hooks/twilio/{other}/status", content=b"a=b", headers={"X-Twilio-Signature": "good"}
+            )
+            assert signed.status_code == 200
+
+
 @pytest.mark.parametrize(
     ("path", "body"),
     [

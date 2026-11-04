@@ -45,6 +45,8 @@ WINDOW_S = 60.0
 MAX_TRACKED_KEYS = 10_000
 # AA-958: unknown-hook-id requests (404) per client address per minute on the Twilio webhook routes.
 HOOK_MISSES_PER_MINUTE = 600
+# AA-969 (review round 2): refused signatures (403) per hook id per minute; over it the hook answers 429 before the DB.
+HOOK_REFUSALS_PER_MINUTE = 60
 IPV6_PREFIX = 64
 VIEWER_ADDRESS_HEADER = "cloudfront-viewer-address"
 

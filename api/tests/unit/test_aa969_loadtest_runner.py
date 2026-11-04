@@ -124,6 +124,11 @@ def test_limits_hold_the_hard_ceilings() -> None:
     assert lt.check_limits(lt.Limits(calm_rps=0))
     assert lt.check_limits(lt.Limits(noisy_max_vus=31))
     assert lt.check_limits(lt.Limits(calm_rps=10, noisy_rps=20)) == []
+    # Review round 2: two noisy agencies by default, at most two (one per request slot of the pool).
+    assert lt.Limits().noisy_agencies == 2
+    assert lt.check_limits(lt.Limits(noisy_agencies=1)) == []
+    assert lt.check_limits(lt.Limits(noisy_agencies=0))
+    assert lt.check_limits(lt.Limits(noisy_agencies=3))
 
 
 def test_only_the_https_dev_partner_origin() -> None:
@@ -267,9 +272,19 @@ def test_precheck_passes_when_everything_is_quiet(files: argparse.Namespace) -> 
     aws = FakeAws()
     report = lt.precheck(files, aws, NOW)
     assert report.ok, report.failures
-    assert report.notes == ["50 agencies (noisy = the first)"]
+    assert report.notes == ["50 agencies (noisy = the first 2)"]
     used = {tuple(c[:2]) for c in aws.calls}
     assert used == {("sts", "get-caller-identity"), ("logs", "filter-log-events"), ("cloudwatch", "describe-alarms")}
+
+
+def test_precheck_needs_a_calm_agency_besides_the_noisy_ones(files: argparse.Namespace, tmp_path: Path) -> None:
+    two = tmp_path / "two.json"
+    two.write_text(json.dumps(TENANTS[:2]))
+    files.tenants_file = str(two)
+    report = lt.precheck(files, FakeAws(), NOW)
+    assert not report.ok and "at least one calm agency besides the noisy ones" in report.failures
+    files.noisy_agencies = 1
+    assert lt.precheck(files, FakeAws(), NOW).ok
 
 
 def test_precheck_refuses_another_account_and_a_short_token(files: argparse.Namespace) -> None:

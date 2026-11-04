@@ -108,8 +108,9 @@ Agency fair share (AA-969, CRM-37a; ``app.tenant_gate``, ``app.auth.route_guard`
 
 - ``RATE_LIMIT_MEMBER_PER_MINUTE``: ``/crm/v1`` requests per member per agency (token ``iss`` + ``sub`` + the
   ``X-AA-Tenant-Id`` header) per minute (default 600; 0 = off). 429 ``rate_limited`` above it.
-- ``CRM_TENANT_MAX_CONCURRENCY``: ``tenant_tx()`` blocks one agency may run at once in a task (default 2, 1 to 3: the
-  pool has 3 connections, so one agency never holds them all).
+- ``CRM_TENANT_MAX_CONCURRENCY``: request-path transactions one agency (or caller, or the public routes together)
+  may run at once in a task (default 2, 1 to 2: the request path shares 2 of the pool's 3 connections, the third
+  stays for the crm.job worker; under contention the fair hand-out of ``app.tenant_gate`` shrinks it to 1).
 - ``CRM_TENANT_SLOT_WAIT_MS``: how long a request waits for its agency's slot before 429 ``tenant_busy`` (default
   5000, 100 to 30000).
 
@@ -223,7 +224,7 @@ DEFAULT_CLAIM_PER_MINUTE = 10
 DEFAULT_PORTAL_WRITE_PER_MINUTE = 30
 DEFAULT_MEMBER_PER_MINUTE = 600
 DEFAULT_TENANT_MAX_CONCURRENCY = 2
-MAX_TENANT_CONCURRENCY = 3  # the pool's max_size (app.db)
+MAX_TENANT_CONCURRENCY = 2  # app.tenant_gate.REQUEST_SLOTS: the pool's max_size (app.db) minus the worker's one
 DEFAULT_TENANT_SLOT_WAIT_MS = 5000
 _POOL_ID = re.compile(r"^[a-z]{2}(-[a-z]+)+-[0-9]_[A-Za-z0-9]{1,55}$")
 _EMAIL = re.compile(r"^[^@\s]{1,64}@[a-z0-9.-]{1,189}\.[a-z]{2,}$")

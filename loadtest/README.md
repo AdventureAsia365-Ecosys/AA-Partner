@@ -6,7 +6,7 @@ SLO** (`docs/operations/slo.md`). Only the orchestrating agent or the tech lead 
 
 | File | What |
 |---|---|
-| `crm_load.js` | the k6 script: scenario `calm` (49 agencies, round robin, constant rate, the SLO thresholds) and `noisy` (the first agency, from minute 2 to one minute before the end) |
+| `crm_load.js` | the k6 script: scenario `calm` (48 agencies, round robin, constant rate, the SLO thresholds) and `noisy` (the first two agencies, alternating, from minute 2 to one minute before the end; `--noisy-agencies 1` for a single one) |
 | `crm_loadtest.py` | the runner: pre-checks, starts k6, re-checks the guards every 30 s, stops k6 on any abort condition |
 | `get_token.py` | signs the load-test identity in (password + authenticator) and writes its access token to a 0600 file |
 
@@ -86,7 +86,9 @@ The summary file is k6's JSON. The verdict for card R:
 
 - `http_req_duration{tenant_kind:calm,group:session|agency-read|reports}` p(95) under 300 / 800 / 1500 ms;
 - `calm_errors` rate < 1 %, `calm_refused` rate < 0.5 % (the fair share must not touch the calm agencies);
-- `noisy_refused` > 0 is expected: the noisy agency meets its share (429 `tenant_busy` / `rate_limited`).
+- `noisy_refused` > 0 is expected: the noisy agencies meet their share (429 `tenant_busy` / `rate_limited`). Two noisy
+  agencies are the default because two busy agencies together fill the request share of the pool (one slot each):
+  the run shows the calm agencies still get the next free slot.
 
 Compare the calm p95 of minutes 0-2 (no noisy load) with the rest using the saved Logs Insights query
 `aa-crm-dev/slo/p95-by-route-group` over the two windows, and `aa-crm-dev/slo/fair-share-refusals` for who was

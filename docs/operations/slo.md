@@ -58,24 +58,37 @@ The crm.job lag check runs in the API process (`app/observability/ops_alerts.py`
 ## Fair share: how one agency is kept from pushing another past the SLO
 
 The API task has 3 database connections (`crm_app` CONNECTION LIMIT 6 = 3 x 2 tasks during a rolling deploy), shared
-by every agency and the job worker. Four mechanisms keep one agency's load from reaching the others:
+by every agency, the public routes and the job worker. Four mechanisms keep one agency's load from reaching the others:
 
-1. **Agency slots** (`app/tenant_gate.py`): at most `CRM_TENANT_MAX_CONCURRENCY` (default 2) `tenant_tx()` blocks run
-   at once per agency per task; a request that waits more than `CRM_TENANT_SLOT_WAIT_MS` (default 5 s) for its slot is
-   answered **429 `tenant_busy`** with `Retry-After: 1`. The third connection always stays reachable by another agency.
-   The slot is keyed by the agency only once the caller's membership was verified, so naming another agency's id in
-   `X-AA-Tenant-Id` never uses that agency's slots.
+1. **Request slots** (`app/tenant_gate.py`): every request-path transaction (`tenant_tx()`, the agency picker's
+   memberships, and the anonymous contexts: inquiry form, invitations, client links, calendar feed, Twilio webhooks)
+   takes a slot before it asks for a connection. At most **2** slots in all per task, so the third connection always
+   stays for the crm.job worker and the AA staff paths, whatever the request traffic does. At most
+   `CRM_TENANT_MAX_CONCURRENCY` (default 2) per agency (or per caller before the membership is verified; one shared
+   key for all anonymous routes). A slot that frees up goes to the waiting agency that holds the fewest slots, then to
+   the one served least recently: a calm agency waits at most for **one** in-flight transaction of the busy ones,
+   never behind their queue, and two busy agencies share the request path one slot each. This is a bound on the
+   wait, not a promise of zero wait: with more busy agencies than slots, a calm request waits for the next
+   transaction that ends (typically milliseconds; up to the length of the slowest running report). A request that
+   waits more than `CRM_TENANT_SLOT_WAIT_MS` (default 5 s) for its slot is answered **429 `tenant_busy`** with
+   `Retry-After: 1` (anonymous routes: **503 `db_busy`**). The slot is keyed by the agency only once the caller's
+   membership was verified, so naming another agency's id in `X-AA-Tenant-Id` never uses that agency's slots.
 2. **Bounded pool wait** (`app/tenancy.py`): a request waits at most 10 s for a pooled connection, then **503
    `db_busy`** with `Retry-After: 2` (before, the wait was unbounded).
 3. **Member ceiling** (`app/auth/route_guard.py`): `RATE_LIMIT_MEMBER_PER_MINUTE` (default 600) requests per member
-   per agency per minute on `/crm/v1`, then **429 `rate_limited`**.
+   per agency per minute on `/crm/v1`, then **429 `rate_limited`**. The agency is the canonical uuid of the header
+   (every spelling of one id shares one count; a header that is not a uuid shares one bucket).
 4. **Fair job claim** (`app/jobs/queue.py`): the serial `crm.job` worker takes, among the due rows, the one whose
    agency was served least in the last 5 minutes (oldest first inside an agency), so an agency's import or message
    backlog does not hold every other agency's jobs behind it, however long that backlog is (every due row is ranked
    inside its agency; there is no global oldest-N window that one agency's rows could fill).
 
 And for every route, the **body ceiling** (`app/bodylimit.py`): 1 MiB per request (upload routes their own cap plus 64
-KiB), enforced before any route code, the class guard included.
+KiB), enforced before any route code, the class guard included; plus a process-wide budget of 32 MiB for body bytes
+in flight (bodies above 64 KiB, charged as the bytes arrive): a read past it is **503 `server_busy`** with
+`Retry-After: 2`, so concurrent large uploads cannot run the task out of memory. The document upload reads its body
+only after the class guard. The Twilio webhooks count refused signatures per hook id (60 per minute, then 429 before
+the database).
 
 
 ## When an SLO is missed

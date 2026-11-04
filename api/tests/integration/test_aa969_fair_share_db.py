@@ -190,36 +190,78 @@ async def test_repeated_interruptions_end_visibly_failed_never_silently_lost(app
 # ── card R on the request path: tenant_tx() on the 3-connection pool ────────────────────────────────────────────
 
 
+async def _flood(pool: asyncpg.Pool, tenant: object, sub: str, n: int, hold_s: float) -> list[asyncio.Task[str]]:
+    async def slow() -> str:
+        try:
+            async with tenant_tx(pool, caller(sub), tenant) as ctx:
+                await ctx.conn.execute("SELECT pg_sleep($1)", hold_s)
+            return "ok"
+        except RateLimited as exc:
+            return exc.code
+
+    return [asyncio.create_task(slow()) for _ in range(n)]
+
+
+async def _calm_latency(pool: asyncpg.Pool, tenant: object, sub: str) -> float:
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    async with tenant_tx(pool, caller(sub), tenant) as ctx:
+        assert await ctx.conn.fetchval("SELECT 1") == 1
+    return loop.time() - started
+
+
+async def _prove(pool: asyncpg.Pool, *agencies: tuple[object, str]) -> None:
+    # Each agency's first request proves the membership (the slots are then keyed by agency).
+    for tenant, sub in agencies:
+        async with tenant_tx(pool, caller(sub), tenant):
+            pass
+
+
 async def test_a_noisy_agency_cannot_hold_the_pool_from_a_calm_one(app_pool: asyncpg.Pool) -> None:
-    """Twelve slow requests of one agency at once, then one quick request of another: with the agency share (two
-    slots of three connections) the calm request gets the third connection at once; the noisy surplus is 429."""
+    """Twelve slow requests of one agency at once, then one quick request of another. The request path holds at most
+    two of the three connections (the third stays free for the crm.job worker, checked here with a plain acquire),
+    and the calm request gets the next slot that frees up, ahead of the ten queued noisy requests (first come first
+    served would put it behind all of them: about 1.5 s here). The noisy surplus is 429 ``tenant_busy``."""
     noisy_tenant, noisy_sub = await _seed(app_pool)
     calm_tenant, calm_sub = await _seed(app_pool)
     before = tenant_gate.GATE
-    tenant_gate.GATE = tenant_gate.TenantGate(2, 0.3)
+    tenant_gate.GATE = tenant_gate.TenantGate(2, 0.6)
     try:
-        # Each agency's first request proves the membership (the slots are then keyed by agency).
-        for tenant, sub in ((noisy_tenant, noisy_sub), (calm_tenant, calm_sub)):
-            async with tenant_tx(app_pool, caller(sub), tenant):
-                pass
-
-        async def slow_noisy() -> str:
-            try:
-                async with tenant_tx(app_pool, caller(noisy_sub), noisy_tenant) as ctx:
-                    await ctx.conn.execute("SELECT pg_sleep(1.0)")
-                return "ok"
-            except RateLimited as exc:
-                return exc.code
-
-        noisy = [asyncio.create_task(slow_noisy()) for _ in range(12)]
-        await asyncio.sleep(0.1)  # the noisy burst holds its share
-        loop = asyncio.get_running_loop()
-        started = loop.time()
-        async with tenant_tx(app_pool, caller(calm_sub), calm_tenant) as ctx:
-            assert await ctx.conn.fetchval("SELECT 1") == 1
-        calm_latency = loop.time() - started
+        await _prove(app_pool, (noisy_tenant, noisy_sub), (calm_tenant, calm_sub))
+        noisy = await _flood(app_pool, noisy_tenant, noisy_sub, 12, 0.25)
+        await asyncio.sleep(0.05)  # the noisy burst holds the request share
+        assert tenant_gate.GATE.in_use() == 2
+        async with app_pool.acquire(timeout=0.2) as worker_conn:  # the worker's connection is still there
+            assert await worker_conn.fetchval("SELECT 1") == 1
+        calm_latency = await _calm_latency(app_pool, calm_tenant, calm_sub)
         results = await asyncio.gather(*noisy)
     finally:
         tenant_gate.GATE = before
-    assert calm_latency < 0.5, calm_latency  # not queued behind a whole second of noisy work
-    assert results.count("ok") == 2 and results.count("tenant_busy") == 10
+    assert calm_latency < 0.45, calm_latency  # at most one noisy transaction, never the noisy queue
+    assert results.count("ok") >= 2 and "tenant_busy" in results, results
+
+
+async def test_two_noisy_agencies_cannot_hold_the_pool_from_a_calm_one(app_pool: asyncpg.Pool) -> None:
+    """Review round 2: two busy agencies (2 + 2 slots before) used to fill the pool; now they share the request share
+    one slot each, the worker connection stays free and a calm agency still gets the next slot that frees up."""
+    a_tenant, a_sub = await _seed(app_pool)
+    b_tenant, b_sub = await _seed(app_pool)
+    calm_tenant, calm_sub = await _seed(app_pool)
+    before = tenant_gate.GATE
+    tenant_gate.GATE = tenant_gate.TenantGate(2, 3.0)
+    try:
+        await _prove(app_pool, (a_tenant, a_sub), (b_tenant, b_sub), (calm_tenant, calm_sub))
+        noisy = await _flood(app_pool, a_tenant, a_sub, 8, 0.2)
+        await asyncio.sleep(0.02)
+        noisy += await _flood(app_pool, b_tenant, b_sub, 8, 0.2)
+        await asyncio.sleep(0.25)  # one round later: a and b hold one slot each
+        gate = tenant_gate.GATE
+        assert (gate.in_use(f"tenant:{a_tenant}"), gate.in_use(f"tenant:{b_tenant}")) == (1, 1)
+        async with app_pool.acquire(timeout=0.2) as worker_conn:
+            assert await worker_conn.fetchval("SELECT 1") == 1
+        calm_latency = await _calm_latency(app_pool, calm_tenant, calm_sub)
+        results = await asyncio.gather(*noisy)
+    finally:
+        tenant_gate.GATE = before
+    assert calm_latency < 0.4, calm_latency  # behind 14 queued noisy requests it would be about 1.4 s
+    assert results.count("ok") == 16  # the busy agencies are slowed down, not refused, within the slot wait

@@ -14,6 +14,16 @@ a byte ceiling from its path:
   the ceiling raises an ``HTTPException(413, "body_too_large")``, which FastAPI re-raises as it is (the route never
   sees a partial body).
 
+Review round 2: a ceiling per request does not bound how many large bodies are buffered **at once**, and it does not
+depend on authentication. So the middleware also keeps a **process-wide budget** of body bytes in flight
+(:data:`IN_FLIGHT_BUDGET_BYTES`). A body is charged once it passes :data:`SMALL_BODY_BYTES` (64 KiB; the usual JSON
+body never is), chunk by chunk as the bytes really arrive (a client that only declares a length reserves nothing),
+and the charge is returned when the request's response is done. The read that would take the budget past its size
+raises an ``HTTPException(503, "server_busy")`` with ``Retry-After``: large uploads wait, the small requests of every
+agency go on, and the task stays far from its memory limit (a buffered body costs about three times its size while
+it is joined and parsed). The upload route ``POST /crm/v1/documents`` also reads its body only after the class guard
+(:mod:`app.routers.travellers`), so an anonymous caller never gets its 9.4 MiB ceiling.
+
 The ceiling is :data:`DEFAULT_MAX_BYTES` (1 MiB: the largest JSON body of a normal route is a 100 000-character
 message) except for the few upload routes in :data:`LARGE_BODY_ROUTES`, each a little above the route's own cap, so
 the route keeps answering its own code (``import_too_large``, ``body_too_large``) for a body just over that cap.
@@ -47,6 +57,13 @@ LARGE_BODY_ROUTES: tuple[tuple[str, bool, int], ...] = (
     ("/crm/public/v1/traveller/passport-scan", True, PASSPORT_SCAN_BODY_BYTES),
 )
 TOO_LARGE = "body_too_large"
+TOO_BUSY = "server_busy"
+# Bodies up to this size are never charged to the budget (a normal JSON body; bounded per request by the ceiling).
+SMALL_BODY_BYTES = 64 * 1024
+# Body bytes buffered at once by this process above SMALL_BODY_BYTES each. ~3x in memory while joined and parsed:
+# about 100 MB at the peak, well inside the 512 MB task, and still room for three document uploads at once.
+IN_FLIGHT_BUDGET_BYTES = 32 * MIB
+RETRY_AFTER_BUSY_S = 2
 _CONTENT_LENGTH = b"content-length"
 
 
@@ -66,9 +83,28 @@ def _declared_length(scope: Scope) -> int | None:
     return None
 
 
+class BodyBudget:
+    """Body bytes buffered at once in this process (one per app; ``app.state`` is not reachable from an ASGI
+    middleware's constructor, so the middleware owns it)."""
+
+    def __init__(self, size: int = IN_FLIGHT_BUDGET_BYTES) -> None:
+        self.size = size
+        self.used = 0
+
+    def take(self, n: int) -> bool:
+        if self.used + n > self.size:
+            return False
+        self.used += n
+        return True
+
+    def give_back(self, n: int) -> None:
+        self.used = max(0, self.used - n)
+
+
 class BodyLimitMiddleware:
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, budget: BodyBudget | None = None) -> None:
         self.app = app
+        self.budget = budget if budget is not None else BodyBudget()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -80,17 +116,30 @@ class BodyLimitMiddleware:
             await _refuse(send)
             return
         received = 0
+        charged = 0
+        budget = self.budget
 
         async def capped_receive() -> Message:
-            nonlocal received
+            nonlocal received, charged
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
                 if received > limit:
                     raise HTTPException(status_code=413, detail=TOO_LARGE)
+                if received > SMALL_BODY_BYTES:
+                    due = received - charged
+                    if not budget.take(due):
+                        raise HTTPException(
+                            status_code=503, detail=TOO_BUSY, headers={"Retry-After": str(RETRY_AFTER_BUSY_S)}
+                        )
+                    charged = received
             return message
 
-        await self.app(scope, capped_receive, send)
+        try:
+            await self.app(scope, capped_receive, send)
+        finally:
+            if charged:
+                budget.give_back(charged)
 
 
 async def _refuse(send: Send) -> None:
