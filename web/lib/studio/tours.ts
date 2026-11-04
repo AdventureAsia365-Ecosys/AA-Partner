@@ -82,15 +82,19 @@ export interface FromPrice {
   valid_to: string | null;
 }
 
-/** "US$235" (whole units: Booking rounds the price up; a thousands separator); another currency by its code
- *  ("EUR 1,200"). Null for a missing or unusable price (no amount, not positive, not an ISO code). */
+/** "$235" / "€1,200": Intl en-US currency in whole units, exactly as the TripPlanner tour page formats it
+ *  (frontend/lib/fromPrice.ts there), so a tour reads the same price on both. Null for a missing or unusable price
+ *  (no amount, not positive, not an ISO code). */
 export function fmtFromPrice(p: FromPrice | null | undefined): string | null {
   if (!p) return null;
   const n = Number(p.amount);
   const code = typeof p.currency === "string" ? p.currency.trim() : "";
   if (!Number.isFinite(n) || n <= 0 || !/^[A-Z]{3}$/.test(code)) return null;
-  const whole = Math.ceil(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
-  return code === "USD" ? `US$${whole}` : `${code} ${whole}`;
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: code, maximumFractionDigits: 0 }).format(n);
+  } catch {
+    return null;
+  }
 }
 
 /** The caveat under every "from" price, the TripPlanner tour page's sentence (party size from the contract row). */

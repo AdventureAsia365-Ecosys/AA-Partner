@@ -129,11 +129,11 @@ test("quota note: left, near, crossing the quota, over, no plan, unlimited", () 
 test("from price: whole units, US$ for USD, the code otherwise, null for an unusable row", () => {
   const p = (amount: string, currency = "USD", pax = 2) =>
     ({ amount, currency, basis: "per_person", pax, season: "Low", valid_to: "9999-12-31" });
-  assert.equal(fmtFromPrice(p("235.00")), "US$235");
-  assert.equal(fmtFromPrice(p("1225.00")), "US$1,225");
-  assert.equal(fmtFromPrice(p("410.50")), "US$411");            // rounded up: never below Booking's price
-  assert.equal(fmtFromPrice(p("1200.00", "EUR")), "EUR 1,200");
-  assert.equal(fmtFromPrice(p("235.00", "USD ")), "US$235");    // a padded CHAR(3) code
+  assert.equal(fmtFromPrice(p("235.00")), "$235");
+  assert.equal(fmtFromPrice(p("1225.00")), "$1,225");
+  assert.equal(fmtFromPrice(p("410.50")), "$411");               // whole units, as the TripPlanner tour page
+  assert.equal(fmtFromPrice(p("1200.00", "EUR")), "€1,200");
+  assert.equal(fmtFromPrice(p("235.00", "USD ")), "$235");    // a padded CHAR(3) code
   for (const bad of [null, undefined, p("0"), p("-5"), p("abc"), p("235", "usd"), p("235", "")]) {
     assert.equal(fmtFromPrice(bad), null);
   }
