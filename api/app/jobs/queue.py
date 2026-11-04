@@ -105,29 +105,60 @@ async def forget_alert(conn: asyncpg.Connection | asyncpg.Pool, job_id: str) -> 
     await conn.execute("DELETE FROM crm.job WHERE id = $1::uuid AND status = 'succeeded'", job_id)
 
 
-async def claim(pool: asyncpg.Pool, worker_id: str, kinds: list[str], lease_seconds: int) -> Job | None:
-    """Claim the next due job of one of ``kinds`` (oldest ``run_after`` first), never one with a cancel request.
-    ``started_at`` keeps the first attempt's time; ``progress.attempt_started_at`` is this attempt's (F18)."""
-    row = await pool.fetchrow(
-        """
-        UPDATE crm.job SET status = 'running', attempt = attempt + 1,
-               locked_by = $1, locked_until = now() + make_interval(secs => $3),
-               started_at = coalesce(started_at, now()),
-               progress = progress || jsonb_build_object('attempt_started_at', now())
-        WHERE id = (
-            SELECT id FROM crm.job
-            WHERE status = 'queued' AND run_after <= now() AND NOT cancel_requested
-              AND kind = ANY($2::text[])
-            ORDER BY run_after, created_at
-            LIMIT 1
-            FOR UPDATE SKIP LOCKED
-        )
-        RETURNING id::text, kind, payload, attempt, max_attempts
-        """,
-        worker_id,
-        kinds,
-        lease_seconds,
+# AA-969 (CRM-37a, card R "a noisy tenant cannot push another tenant past the SLO"): the worker is serial, so a plain
+# oldest-first claim lets one agency that queued many jobs (a client import in batches, a mail history import, a burst
+# of messages) hold every other agency's jobs behind its whole backlog. The claim is therefore **fair per agency**
+# (``payload->>'tenant_id'``): a due row's turn is its rank inside its agency (oldest = 1) plus the number of the
+# agency's jobs running or finished in the last FAIR_RECENT_S seconds, and the lowest turn goes first (then the
+# oldest). An agency that was just served waits for the others' turn; inside one agency the order stays oldest first.
+# A row without an agency (recurring kinds, platform jobs) is its own group (``id``) with no history, so it is never
+# queued behind an agency's backlog. At most FAIR_WINDOW due rows (oldest first) are ranked per claim, which bounds the
+# cost when the queue is long; the recent count reads the finished_at index (crm-001 job_finished_idx).
+FAIR_WINDOW = 500
+FAIR_RECENT_S = 300
+
+CLAIM_SQL = """
+UPDATE crm.job SET status = 'running', attempt = attempt + 1,
+       locked_by = $1, locked_until = now() + make_interval(secs => $3),
+       started_at = coalesce(started_at, now()),
+       progress = progress || jsonb_build_object('attempt_started_at', now())
+WHERE id = (
+    WITH due AS (
+        SELECT id, run_after, created_at, coalesce(payload->>'tenant_id', id::text) AS grp
+          FROM crm.job
+         WHERE status = 'queued' AND run_after <= now() AND NOT cancel_requested
+           AND kind = ANY($2::text[])
+         ORDER BY run_after, created_at
+         LIMIT $4
+    ), served AS (
+        SELECT payload->>'tenant_id' AS grp, count(*) AS n
+          FROM crm.job
+         WHERE (status = 'running' OR finished_at > now() - make_interval(secs => $5))
+           AND payload ? 'tenant_id'
+         GROUP BY 1
+    ), ranked AS (
+        SELECT due.id, due.run_after, due.created_at,
+               row_number() OVER (PARTITION BY due.grp ORDER BY due.run_after, due.created_at)
+                   + coalesce(served.n, 0) AS turn
+          FROM due LEFT JOIN served ON served.grp = due.grp
     )
+    SELECT j.id
+      FROM crm.job j
+      JOIN ranked ON ranked.id = j.id
+     WHERE j.status = 'queued' AND NOT j.cancel_requested
+     ORDER BY ranked.turn, ranked.run_after, ranked.created_at
+     LIMIT 1
+     FOR UPDATE OF j SKIP LOCKED
+)
+RETURNING id::text, kind, payload, attempt, max_attempts
+"""
+
+
+async def claim(pool: asyncpg.Pool, worker_id: str, kinds: list[str], lease_seconds: int) -> Job | None:
+    """Claim the next due job of one of ``kinds``, never one with a cancel request: fair per agency, oldest first
+    inside an agency (:data:`CLAIM_SQL`). ``started_at`` keeps the first attempt's time;
+    ``progress.attempt_started_at`` is this attempt's (F18)."""
+    row = await pool.fetchrow(CLAIM_SQL, worker_id, kinds, lease_seconds, FAIR_WINDOW, FAIR_RECENT_S)
     if row is None:
         return None
     return Job(row["id"], row["kind"], _payload(row["payload"]), row["attempt"], row["max_attempts"])
