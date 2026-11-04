@@ -10,7 +10,16 @@
 #   crm-web     signin-redirect   GET /pipeline without a session -> 307 to <BASE>/auth/refresh?next=%2Fpipeline
 #               crm-terms         GET /legal/terms without a session -> 307 to <BASE>/auth/refresh?next=%2Flegal%2Fterms
 #                                 (AA-1033: the CRM terms reach the CRM web on the agency host; /terms is the studio's)
-#   crm-portal  studio-page       GET /terms -> 200 (a public studio page: the draft terms)
+#               AA-1036 (R3 slice 2): the Content studio is part of the web and the agency host's studio paths reach it
+#               content-home      GET / -> 307 to <BASE>/portal/dashboard (WEB_CONTENT_HOME, root ADR 0019 d7)
+#               studio-signin     GET /portal/dashboard without a session -> 307 to
+#                                 <BASE>/auth/refresh?next=%2Fportal%2Fdashboard
+#               api-key-signin-off  GET /tenant-login -> 308 to <BASE>/auth/refresh?next=%2Fportal%2Fdashboard
+#               studio-legal      GET /terms -> 308 to <BASE>/legal/partner-terms (the studio's old legal path)
+#               studio-page       GET /legal/partner-terms -> 200 (a public studio page served by the web)
+#               web-assets        the first /_next/static/*.js of that page -> 200
+#   crm-portal  (the retiring studio service; only a rollback of the cut-over routes the agency host to it again)
+#               studio-page       GET /terms -> 200 (a public studio page: the draft terms)
 #               studio-assets     the first /portal-assets/_next/static/*.js of that page -> 200
 #               api-key-signin-off  GET /tenant-login -> 308 to <BASE>/auth/refresh?next=%2Fportal%2Fdashboard
 #                                 (AA-979 §4.5: PORTAL_API_KEY_SIGNIN off, API keys are for machines only)
@@ -83,10 +92,10 @@ check_page() {  # path -> $WORK/page.html
   [ "$code" = "200" ] || { DETAIL="$DETAIL, expected 200"; return 1; }
 }
 
-check_asset() {  # the first studio Next asset linked from $WORK/page.html
-  local asset code
-  asset=$(grep -o '/portal-assets/_next/static/[^"]*\.js' "$WORK/page.html" 2>/dev/null | head -n 1)
-  if [ -z "$asset" ]; then DETAIL="no /portal-assets/_next/static/*.js link in the studio page"; return 1; fi
+check_asset() {  # prefix: the first Next asset under <prefix>/_next/static/ linked from $WORK/page.html
+  local prefix="$1" asset code
+  asset=$(grep -o "${prefix}/_next/static/[^\"]*\\.js" "$WORK/page.html" 2>/dev/null | head -n 1)
+  if [ -z "$asset" ]; then DETAIL="no ${prefix}/_next/static/*.js link in the studio page"; return 1; fi
   code=$(curl -s --max-time 20 -o /dev/null -w '%{http_code}' "${BASE}${asset}" 2>/dev/null || true)
   DETAIL="GET $asset -> HTTP ${code:-none}"
   [ "$code" = "200" ] || { DETAIL="$DETAIL, expected 200"; return 1; }
@@ -120,10 +129,19 @@ else
     crm-web)
       retry signin-redirect check_redirect /pipeline "${BASE}/auth/refresh?next=%2Fpipeline"
       retry crm-terms check_redirect /legal/terms "${BASE}/auth/refresh?next=%2Flegal%2Fterms"
+      retry content-home check_redirect / "${BASE}/portal/dashboard"
+      retry studio-signin check_redirect /portal/dashboard "${BASE}/auth/refresh?next=%2Fportal%2Fdashboard"
+      retry api-key-signin-off check_redirect /tenant-login "${BASE}/auth/refresh?next=%2Fportal%2Fdashboard" 308
+      retry studio-legal check_redirect /terms "${BASE}/legal/partner-terms" 308
+      if retry studio-page check_page /legal/partner-terms; then
+        retry web-assets check_asset ""
+      else
+        record web-assets FAIL "not run: the studio page did not load"
+      fi
       ;;
     crm-portal)
       if retry studio-page check_page /terms; then
-        retry studio-assets check_asset
+        retry studio-assets check_asset /portal-assets
       else
         record studio-assets FAIL "not run: the studio page did not load"
       fi

@@ -8,8 +8,12 @@
   §4.5) are each red when wrong.
 - The workflows are checked as text, like V2: ``deploy-web-dev.yml`` and ``deploy-portal-dev.yml`` call the verify after
   ``deploy`` (no inline smoke left), ``config`` fails instead of skipping, ``result`` needs every job and is red on any
-  non-success; the portal deploy calls ``ui-smoke-portal.yml`` with ``require_tenant_login`` and the e2e studio
+  non-success; the web deploy calls ``ui-smoke-portal.yml`` with ``require_tenant_login`` and the e2e studio
   user's three sign-in secrets, and the smoke step is red when one is missing.
+- AA-1036 (R3 slice 2, cut-over): the studio is part of the web, so the crm-web verify also reads the merged studio's
+  ``/api/healthz`` (``studio: "merged"``; the old service's ``aa-partner-portal`` is red) and checks the studio paths on
+  the agency host ("/" lands on Content, the signed-out studio redirect, ``/tenant-login`` 308, ``/terms`` 308 to
+  ``/legal/partner-terms``, that page and its ``/_next`` asset). Deploy Portal Dev is a dispatch-only rollback path.
 """
 
 from __future__ import annotations
@@ -51,7 +55,7 @@ SMOKE_WF = WORKFLOWS / "ui-smoke-portal.yml"
 BASE = "https://host.test"
 
 APPS = {
-    "crm-web": {"svc": "aa-crm-dev-web", "rows": {"healthz", "api-health", "api-ready"}},
+    "crm-web": {"svc": "aa-crm-dev-web", "rows": {"healthz", "api-health", "api-ready", "studio-healthz"}},
     "crm-portal": {"svc": "aa-crm-dev-portal", "rows": {"studio-healthz", "api-health"}},
 }
 
@@ -77,7 +81,12 @@ def _good_http(app: str) -> dict:
                     "auth_configured": True,
                     "staff_auth_configured": True,
                 },
-            }
+            },
+            # AA-1036: the agency host sends /api/* to the web, whose studio BFF answers its liveness there.
+            "/api/healthz": {
+                "status": 200,
+                "body": {"ok": True, "service": "aa-crm-web", "studio": "merged", "version": VERSION, "sha": SHA},
+            },
         }
     else:
         own = {
@@ -180,6 +189,12 @@ def _status(path: str, code: int):
         ("crm-web", _set("/crm/health", service="aa-crm-web"), {"api-health"}),
         ("crm-web", _status("/crm/health", 503), {"api-health"}),
         ("crm-web", _status("/crm/health/ready", 503), {"api-ready"}),
+        # AA-1036: /api/* still reaching the old studio service (a crm_agency_studio rule not cut over), the studio not
+        # merged, or an older web commit.
+        ("crm-web", _set("/api/healthz", service="aa-partner-portal"), {"studio-healthz"}),
+        ("crm-web", _set("/api/healthz", studio="separate"), {"studio-healthz"}),
+        ("crm-web", _set("/api/healthz", sha=OLD_SHA), {"studio-healthz"}),
+        ("crm-web", _status("/api/healthz", 404), {"studio-healthz"}),
         ("crm-portal", _set("/api/healthz", sha=OLD_SHA), {"studio-healthz"}),
         ("crm-portal", _set("/api/healthz", version="0.0.1"), {"studio-healthz"}),
         # /api/* reaching the CRM web instead of the studio.
@@ -220,6 +235,16 @@ def test_rows_files_are_get_only_and_public(app: str) -> None:
     # The studio's commit is read where the agency host routes to the studio, never /healthz (the CRM web's there).
     if app == "crm-portal":
         assert "|GET /api/healthz|" in text and "|GET /healthz|" not in text
+    else:  # AA-1036: the web's own /healthz and the merged studio's /api/healthz
+        assert "|GET /healthz|" in text and '|GET /api/healthz|200|.ok == true and .service == "aa-crm-web"' in text
+
+
+def test_the_merged_web_serves_the_studio_health_body_under_api() -> None:
+    lib = (REPO / "web" / "lib" / "studio" / "health.ts").read_text()
+    assert 'service: "aa-crm-web"' in lib and 'studio: "merged"' in lib
+    assert "sha: env.GIT_SHA" in lib and "version: env.APP_VERSION" in lib
+    src = (REPO / "web" / "app" / "api" / "healthz" / "route.ts").read_text()
+    assert "healthBody()" in src and "export function GET" in src and "fetch(" not in src
 
 
 def test_the_studio_serves_its_health_body_under_api() -> None:
@@ -262,6 +287,8 @@ if fmt:
 """
 
 ASSET = "/portal-assets/_next/static/chunks/main-abc123.js"
+WEB_ASSET = "/_next/static/chunks/main-def456.js"
+STUDIO_NEXT = f"{BASE}/auth/refresh?next=%2Fportal%2Fdashboard"
 
 
 def _edge_good(app: str) -> dict:
@@ -269,6 +296,13 @@ def _edge_good(app: str) -> dict:
         return {
             "/pipeline": {"status": 307, "location": f"{BASE}/auth/refresh?next=%2Fpipeline"},
             "/legal/terms": {"status": 307, "location": f"{BASE}/auth/refresh?next=%2Flegal%2Fterms"},
+            # AA-1036: the studio inside the web on the agency host.
+            "/": {"status": 307, "location": f"{BASE}/portal/dashboard"},
+            "/portal/dashboard": {"status": 307, "location": STUDIO_NEXT},
+            "/tenant-login": {"status": 308, "location": STUDIO_NEXT},
+            "/terms": {"status": 308, "location": f"{BASE}/legal/partner-terms"},
+            "/legal/partner-terms": {"status": 200, "body": f'<html><script src="{WEB_ASSET}" async></script></html>'},
+            WEB_ASSET: {"status": 200, "body": "js"},
         }
     return {
         "/terms": {"status": 200, "body": f'<html><script src="{ASSET}" async></script></html>'},
@@ -311,7 +345,16 @@ def test_edge_all_good_is_green(run_edge, app: str) -> None:
     assert r.returncode == 0, r.stdout + r.stderr
     assert f"### {app} edge checks: PASS" in summary and "**FAIL**" not in summary
     expected = (
-        {"signin-redirect", "crm-terms"}
+        {
+            "signin-redirect",
+            "crm-terms",
+            "content-home",
+            "studio-signin",
+            "api-key-signin-off",
+            "studio-legal",
+            "studio-page",
+            "web-assets",
+        }
         if app == "crm-web"
         else {"studio-page", "studio-assets", "api-key-signin-off", "signin-redirect"}
     )
@@ -339,6 +382,28 @@ def _edge_break(app: str, path: str, **route: Any) -> dict:
         ("crm-web", _edge_break("crm-web", "/pipeline", status=307, location=f"{BASE}/login"), {"signin-redirect"}),
         # AA-1033: the CRM terms answered by another service (the studio's own page) instead of the CRM web's gate.
         ("crm-web", _edge_break("crm-web", "/legal/terms", status=200, body="<html>"), {"crm-terms"}),
+        # AA-1036: WEB_CONTENT_HOME off ("/" is still the CRM home behind the sign-in).
+        (
+            "crm-web",
+            _edge_break("crm-web", "/", status=307, location=f"{BASE}/auth/refresh?next=%2F"),
+            {"content-home"},
+        ),
+        # A studio rule still forwarding to the old studio service: its /terms page instead of the web's 308.
+        ("crm-web", _edge_break("crm-web", "/terms", status=200, body="<html>"), {"studio-legal"}),
+        ("crm-web", _edge_break("crm-web", "/tenant-login", status=200, body="<html>"), {"api-key-signin-off"}),
+        (
+            "crm-web",
+            _edge_break("crm-web", "/portal/dashboard", status=307, location=f"{BASE}/tenant-login"),
+            {"studio-signin"},
+        ),
+        ("crm-web", _edge_break("crm-web", "/legal/partner-terms", status=404, body=""), {"studio-page", "web-assets"}),
+        ("crm-web", _edge_break("crm-web", WEB_ASSET, status=404, body=""), {"web-assets"}),
+        # The old studio's asset prefix is not the web's: a page linking only /portal-assets is red.
+        (
+            "crm-web",
+            _edge_break("crm-web", "/legal/partner-terms", status=200, body="<html>no assets</html>"),
+            {"web-assets"},
+        ),
         # A signed-out studio page sent anywhere but the CRM web's refresh.
         (
             "crm-portal",
@@ -467,8 +532,8 @@ def test_verify_runs_the_edge_checks_for_web_and_portal_even_after_a_red_row() -
 # ── deploy workflows (text + their config/result scripts) ──────────────────────────────────────────────────────────
 
 DEPLOYS = {
-    WEB_WF: {"jobs": ("config", "deploy", "verify"), "app": "crm-web", "title": "Deploy Web Dev"},
-    PORTAL_WF: {"jobs": ("config", "deploy", "verify", "smoke"), "app": "crm-portal", "title": "Deploy Portal Dev"},
+    WEB_WF: {"jobs": ("config", "deploy", "verify", "smoke"), "app": "crm-web", "title": "Deploy Web Dev"},
+    PORTAL_WF: {"jobs": ("config", "deploy", "verify"), "app": "crm-portal", "title": "Deploy Portal Dev"},
 }
 
 
@@ -544,15 +609,15 @@ def test_result_is_green_only_when_every_job_succeeded(wf: Path) -> None:
     assert _result(wf, missing).returncode == 1
 
 
-def test_portal_deploy_smokes_fargate_with_the_studio_sign_in_required() -> None:
-    jobs = _block(PORTAL_WF.read_text(), "jobs:", 0)
+def test_web_deploy_smokes_the_studio_with_its_sign_in_required() -> None:
+    """AA-1036: the studio's Playwright smoke runs after the web deploy (the studio is part of the web)."""
+    jobs = _block(WEB_WF.read_text(), "jobs:", 0)
     smoke = _block(jobs, "smoke:", 2)
     assert "    needs: [deploy, verify]" in smoke
     assert "    uses: ./.github/workflows/ui-smoke-portal.yml" in smoke
     for line in (
         "base_url: ${{ needs.deploy.outputs.base_url }}",
         "sha: ${{ github.sha }}",
-        "resolve_via: ${{ needs.deploy.outputs.resolve_via }}",
         "require_tenant_login: true",
         "pull-requests: write",
     ):
@@ -565,7 +630,16 @@ def test_portal_deploy_smokes_fargate_with_the_studio_sign_in_required() -> None
         "E2EPORTALTOTP",
     }
     deploy = _block(jobs, "deploy:", 2)
-    assert "resolve_via: ${{ vars.CRM_AGENCY_CF_DOMAIN }}" in deploy and "base_url: ${{ format('https://{0}'" in deploy
+    assert "base_url: ${{ vars.CRM_WEB_BASE_URL || 'https://portal.lumiguides.it.com' }}" in deploy
+
+
+def test_portal_deploy_is_a_dispatch_only_rollback_path() -> None:
+    """AA-1036: no push deploys the retiring studio service, and its deploy no longer runs the studio smoke."""
+    text = PORTAL_WF.read_text()
+    on = _block(text, "on:", 0)
+    assert re.findall(r"^  ([a-z_]+):", on, re.M) == ["workflow_dispatch"]
+    jobs = _block(text, "jobs:", 0)
+    assert "ui-smoke-portal.yml" not in jobs
     verify = _block(jobs, "verify:", 2)
     assert "resolve_via: ${{ needs.deploy.outputs.resolve_via }}" in verify
 

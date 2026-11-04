@@ -442,7 +442,8 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
   `AWS_ROLE_ARN` unset (the `config` job fails). The **Deploy Dev result** job is red when any job did not succeed.
 - Post-deploy verify of the CRM web and the Content studio (AA-993 V3): the same workflow with input `app`
   (`crm` default, `crm-web`, `crm-portal`; optional `resolve_via` pins the host to a CloudFront name), called by
-  `deploy-web-dev.yml` and `deploy-portal-dev.yml` after `deploy`. Rows `.github/verify/crm-web.rows` (`/healthz`
+  `deploy-web-dev.yml` and `deploy-portal-dev.yml` after `deploy` (AA-1036 slice 2: the studio paths are checked by
+  the crm-web verify and the studio smoke runs after Deploy Web Dev; `crm-portal` only after a rollback). Rows `.github/verify/crm-web.rows` (`/healthz`
   `git_sha`/`version`/`auth_configured`; `/crm/health` + `/crm/health/ready` reaching a ready API through the host's
   API rule, without comparing the API's commit: a web deploy does not deploy the API) and `crm-portal.rows` (the
   studio's `/api/healthz` `sha`/`version`: on the agency host `/healthz` is the CRM web's; the API rule), plus
@@ -553,13 +554,14 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
   `llm_call_id`) and the draft text element carries `data-ai-generated` / `data-ai-generated-at`. A message a member
   writes from a draft is their own (crm.message carries no mark).
 
-## One agency app (`web/`, AA-1036 R3 slice 1, root ADR 0019 d6 / d7)
+## One agency app (`web/`, AA-1036 R3, root ADR 0019 d6 / d7)
 
 The Content studio is part of the agency app: one Next.js app, one partner-pool sign-in (MFA), one session. Slice 1
-copies the studio into `web/` and leaves `portal/` and its deploy untouched, so Dev keeps serving `portal./portal*`
-from `aa-crm-dev-portal` until the cut-over (R3 slice 2: the agency-host ALB rules `/portal*`, `/api/*`,
-`/tenant-login*`, `/terms`, `/privacy`, `/assets/*` move to the web target group, `WEB_CONTENT_HOME=true`, then the
-studio service and `portal/` are deleted). Implementation notes: `docs/implementation-notes/AA-1036.md`.
+copied the studio into `web/` and left `portal/` and its deploy untouched. Slice 2 cut over: the agency-host ALB rules
+`/portal*`, `/api/*`, `/tenant-login*`, `/terms`, `/privacy`, `/assets/*` forward to the web target group and the web
+task has `WEB_CONTENT_HOME=true` (AA-CIS-Infra `crm_agency_edge.tf`, `crm_web.tf`); Deploy Web Dev verifies the studio
+paths and runs the studio smoke; `deploy-portal-dev.yml` is a dispatch-only rollback path until the retire step
+deletes the studio service and `portal/`. Implementation notes: `docs/implementation-notes/AA-1036.md`.
 
 - **Layout**: route group `app/(studio)/` (`/portal/*` with the same URLs, `/portal-access/*`, the draft legal pages
   `/legal/partner-terms` and `/legal/privacy`), the studio BFF at `/api/*` (`app/api/tenant/[...path]`, `tenant/me`,
@@ -576,7 +578,7 @@ studio service and `portal/` are deleted). Implementation notes: `docs/implement
   reads the app's own `lib/session.ts`: no byte copy of `session.ts` / `seal.ts`. `/terms`, `/privacy` and the old
   T-number slugs answer 308 (`next.config.ts`).
 - **Content is home** (d7): with `WEB_CONTENT_HOME=true` the bare host "/" answers 307 to `/portal/dashboard`; the CRM
-  home is also `/home` (the sidebar's Home). Off until the cut-over (the separate studio's "Open CRM" links "/").
+  home is also `/home` (the sidebar's Home). On since the slice 2 cut-over; the studio's CRM entry links `/home`.
 - **App switcher** (`lib/apps.ts`): Content, CRM, Trip planner. An add-on the tenant holds opens; any other shows
   "Request add-on" (a `mailto:` to the AA support address naming the add-on and the agency). The CRM entry comes from
   `GET /crm/v1/me` for the studio's tenant (`crm_entitled`, `app.entitlements.crm_entitled`: false only when the CIS
@@ -587,10 +589,13 @@ studio service and `portal/` are deleted). Implementation notes: `docs/implement
   `lib/oauth.ts` `idTokenEmail`) in the sealed session (`em`, kept across refreshes); `/bff/identity` adds it to its
   signed-in answers, and the studio shows "Signed in to AA Partner as <email> (<Role> of <agency>)". Never an e-mail
   from an API answer.
-- **Health**: `/healthz` is the agency app's; `/api/healthz` answers `{ok, service: "aa-crm-web", studio: "merged",
-  version, sha}` (the `crm-portal.rows` verify reads the studio service until slice 2 switches the rows).
-- **Sentry**: `instrumentation*.ts` covers the whole app, inert until `SENTRY_DSN` / the `NEXT_PUBLIC_SENTRY_DSN` build
-  arg are set (slice 2).
+- **Health and verify**: `/healthz` is the agency app's; `/api/healthz` answers `{ok, service: "aa-crm-web", studio:
+  "merged", version, sha}`. Since slice 2 the crm-web verify reads it (`crm-web.rows` `studio-healthz`; the old
+  service's `aa-partner-portal` is red) and `edge_verify.sh crm-web` checks "/" -> `/portal/dashboard`, the signed-out
+  studio redirect, `/tenant-login` 308, `/terms` 308 -> `/legal/partner-terms`, that page and its `/_next` asset.
+- **Sentry**: `instrumentation*.ts` covers the whole app. The browser DSN is the `NEXT_PUBLIC_SENTRY_DSN` build arg
+  (Deploy Web Dev passes the `dev` variable `WEB_PUBLIC_SENTRY_DSN`, empty = off); the server `SENTRY_DSN` waits for a
+  web DSN secret in AA-CIS-Infra (follow-up).
 - **Guards**: `api/tests/unit/test_studio_guards.py` (the studio rules of `test_portal_guards.py` on the new paths),
   `web/tests/studio/*` (vitest), the Web Build standalone smoke, and the suppressions growth check, whose base gets the
   base branch's `portal/` entries under their new paths (`.github/scripts/studio_suppressions_base.py`) while the

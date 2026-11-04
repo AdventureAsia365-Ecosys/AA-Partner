@@ -1,10 +1,16 @@
 name: Deploy Portal Dev
 
+# AA-1036 (R3 slice 2) — ROLLBACK ONLY. The Content studio is part of the AA-Partner web (web/app/(studio)) and the
+# agency host's studio rules forward to the web since the cut-over (AA-CIS-Infra crm_agency_edge.tf), so this
+# workflow no longer runs on push; Deploy Web Dev verifies and smoke-tests the studio. Dispatch it only after a
+# rollback of the cut-over (the two studio rules pointed back at the portal target group). Its Playwright smoke moved
+# to Deploy Web Dev (the specs now expect the merged app). Deleted with portal/ in the retire step.
+
 # AA-979 (CRM-P2b) — the Content studio (portal/, Next.js standalone) to ECS Dev: the Fargate service
 # aa-crm-dev-portal behind the agency host portal.<zone> (AA-CIS-Infra accounts/aa365/crm_portal.tf +
 # crm_agency_edge.tf). Same model as Deploy Web Dev: build on a native arm64 runner -> push to ECR with the immutable
 # git-SHA tag -> new task definition revision copied from the family's LATEST revision with only the image swapped ->
-# update the service -> wait stable -> post-deploy verify -> Playwright UI smoke. Same OIDC deploy role
+# update the service -> wait stable -> post-deploy verify. Same OIDC deploy role
 # (aa-crm-dev-app-deploy; crm_app.tf extends it to the portal repository, family and service).
 #
 # No job guard: the studio runs no crm.job worker. Nothing here touches DNS. Since the S253 cutover portal.<zone>
@@ -16,9 +22,8 @@ name: Deploy Portal Dev
 # ECS rollout COMPLETED with desired >= 1 on the built image, /api/healthz on this commit and version (on the agency
 # host /healthz is the CRM web's), a public studio page and its /portal-assets, /tenant-login 308 to the partner
 # sign-in (API-key sign-in off, AA-979 §4.5), the signed-out redirect to the CRM web's /auth/refresh, and the API rule.
-# Then `smoke` runs ui-smoke-portal.yml with target fargate; there a missing studio sign-in (repository secrets
-# E2EPORTALEMAIL / E2EPORTALPASSWORD / E2EPORTALTOTP) is red, never a skip. The `result` job ("Deploy Portal Dev
-# result") is red when any job did not succeed, skipped included: read that one. Desired count 0 is red.
+# The `result` job ("Deploy Portal Dev result") is red when any job did not succeed, skipped included: read that one.
+# Desired count 0 is red.
 #
 # Configuration (GitHub environment `dev`, VARIABLES, none secret):
 #   AWS_ROLE_ARN              the deploy role (shared with Deploy Dev)
@@ -30,18 +35,12 @@ name: Deploy Portal Dev
 #   ECS_PORTAL_TASK_FAMILY    default aa-crm-dev-portal
 #   PORTAL_HOST               default portal.lumiguides.it.com
 #   CRM_AGENCY_CF_DOMAIN      the crm_agency distribution's *.cloudfront.net name (Terraform output crm_agency_edge);
-#                             the verify and the smoke pin the host to it; empty = DNS
+#                             the verify pins the host to it; empty = DNS
 #   PORTAL_PUBLIC_SENTRY_DSN  the browser Sentry DSN (public by design), baked in at build time; empty = off
 #
 # Pushes that only change the portal's unit tests do not deploy. Never changes the desired count.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "portal/**"
-      - "!portal/lib/*.test.ts"
-      - ".github/workflows/deploy-portal-dev.yml"
   workflow_dispatch:
 
 permissions:
@@ -74,9 +73,8 @@ jobs:
     needs: config
     runs-on: ubuntu-24.04-arm
     environment: dev
-    # The `dev` environment variables the smoke call needs (a job that calls a reusable workflow cannot read them).
+    # The `dev` environment variable the verify call needs (a job that calls a reusable workflow cannot read it).
     outputs:
-      base_url: ${{ format('https://{0}', vars.PORTAL_HOST || 'portal.lumiguides.it.com') }}
       resolve_via: ${{ vars.CRM_AGENCY_CF_DOMAIN }}
     env:
       AWS_REGION: ${{ vars.AWS_REGION || 'us-west-1' }}
@@ -153,26 +151,6 @@ jobs:
       app: crm-portal
       resolve_via: ${{ needs.deploy.outputs.resolve_via }}
 
-  # The Playwright smoke of the studio on the agency host, logged-in pages included: require_tenant_login turns a
-  # missing studio sign-in red here. AA-979 §4.5: the smoke signs in like a person (partner pool + authenticator code,
-  # the e2e studio user's three secrets), not with an API key any more. Only those three are passed, never `inherit`.
-  smoke:
-    name: UI smoke (Fargate)
-    needs: [deploy, verify]
-    permissions:
-      contents: read
-      pull-requests: write
-    uses: ./.github/workflows/ui-smoke-portal.yml
-    with:
-      base_url: ${{ needs.deploy.outputs.base_url }}
-      sha: ${{ github.sha }}
-      resolve_via: ${{ needs.deploy.outputs.resolve_via }}
-      require_tenant_login: true
-    secrets:
-      E2EPORTALEMAIL: ${{ secrets.E2EPORTALEMAIL }}
-      E2EPORTALPASSWORD: ${{ secrets.E2EPORTALPASSWORD }}
-      E2EPORTALTOTP: ${{ secrets.E2EPORTALTOTP }}
-
   # AA-993 — the run's verdict. GitHub shows a skipped job grey, not red, so without this a failed config/deploy/verify
   # (the jobs after it then skip) could look like "nothing to verify". Every job here must succeed; skipped, failed or
   # cancelled is red on every event (no job in this workflow is conditional).
@@ -180,7 +158,7 @@ jobs:
     name: Deploy Portal Dev result
     runs-on: ubuntu-latest
     if: always()
-    needs: [config, deploy, verify, smoke]
+    needs: [config, deploy, verify]
     steps:
       - name: Every job succeeded
         env:
@@ -190,8 +168,8 @@ jobs:
           set -uo pipefail
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
           BAD=$(echo "$NEEDS" | jq -r '[to_entries[] | select(.value.result != "success") | "\(.key)=\(.value.result)"] | join(", ")')
-          if [ -n "$BAD" ] || [ "$(echo "$NEEDS" | jq 'length')" -lt 4 ]; then
+          if [ -n "$BAD" ] || [ "$(echo "$NEEDS" | jq 'length')" -lt 3 ]; then
             echo "::error::Deploy Portal Dev ($EVENT) is not verified: ${BAD:-a job result is missing}"
             exit 1
           fi
-          echo "Deploy Portal Dev ($EVENT): deployed, verified and smoke-tested."
+          echo "Deploy Portal Dev ($EVENT): deployed and verified."

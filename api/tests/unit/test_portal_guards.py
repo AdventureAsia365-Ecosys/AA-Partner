@@ -158,12 +158,13 @@ def test_the_vercel_copy_is_gone() -> None:
         assert "portal/" not in (WORKFLOWS / name).read_text(), f"{name} must not watch portal/"
 
 
-def test_portal_deploy_hands_the_smoke_only_the_studio_sign_in() -> None:
-    """No `secrets: inherit`; the deploy passes the e2e studio user's three values, on the smoke step only."""
-    deploy = (WORKFLOWS / "deploy-portal-dev.yml").read_text()
+def test_studio_smoke_gets_only_the_studio_sign_in() -> None:
+    """No `secrets: inherit`; the deploy passes the e2e studio user's three values, on the smoke step only. AA-1036:
+    the studio smoke runs after Deploy Web Dev (the studio is part of the web)."""
+    deploy = (WORKFLOWS / "deploy-web-dev.yml").read_text()
     assert "secrets: inherit" not in deploy
     passed = re.search(r"^    secrets:\n((?:      \S.*\n)+)", deploy, re.M)
-    assert passed, "deploy-portal-dev.yml: the smoke call must pass an explicit secrets block"
+    assert passed, "deploy-web-dev.yml: the smoke call must pass an explicit secrets block"
     names = set(re.findall(r"^\s+(\w+):", passed.group(1), re.M))
     assert names == {"E2EPORTALEMAIL", "E2EPORTALPASSWORD", "E2EPORTALTOTP"}, names
     smoke = (WORKFLOWS / "ui-smoke-portal.yml").read_text()
@@ -634,15 +635,18 @@ def test_the_gate_keeps_api_key_sessions_before_the_partner_path() -> None:
     assert "publicUrl(" in gate and "request.url)" in gate and "new URL(LOGIN_PATH, request.url)" not in gate
 
 
-def test_portal_fargate_deploy_watches_the_portal_only() -> None:
+def test_portal_fargate_deploy_is_a_rollback_path_only() -> None:
+    """AA-1036 (R3 slice 2): the agency host's studio paths reach the web, so no push deploys the old studio service;
+    a dispatch (after a rollback of the cut-over) still verifies it as crm-portal. The studio smoke runs after the web
+    deploy."""
     deploy = (WORKFLOWS / "deploy-portal-dev.yml").read_text()
-    assert '"portal/**"' in deploy and '"web/**"' not in deploy and '"api/**"' not in deploy
+    assert "\n  push:" not in deploy and "\n  workflow_dispatch:" in deploy
     assert "CRM_PORTAL_ENABLED" in deploy and "aa-crm-dev-portal" in deploy
-    # AA-993 V3: the checks moved to post-deploy-verify.yml (app crm-portal) and ui-smoke-portal.yml (always the
-    # Fargate studio since §4.5); both still pin the agency host to CRM_AGENCY_CF_DOMAIN when it is set.
-    assert "app: crm-portal" in deploy and "uses: ./.github/workflows/ui-smoke-portal.yml" in deploy
-    assert "PORTAL_TARGET: fargate" in (WORKFLOWS / "ui-smoke-portal.yml").read_text()
+    assert "app: crm-portal" in deploy and "ui-smoke-portal.yml" not in deploy
     assert "resolve_via: ${{ vars.CRM_AGENCY_CF_DOMAIN }}" in deploy
+    web = (WORKFLOWS / "deploy-web-dev.yml").read_text()
+    assert "uses: ./.github/workflows/ui-smoke-portal.yml" in web and "require_tenant_login: true" in web
+    assert "PORTAL_TARGET: fargate" in (WORKFLOWS / "ui-smoke-portal.yml").read_text()
     ci = (WORKFLOWS / "ci.yml").read_text()
     assert "name: Portal Docker Build Check" in ci and "/portal-assets/_next/static/" in ci
 

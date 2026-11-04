@@ -7,7 +7,10 @@
 //   • a forged tenant/staff cookie is refused by pages (→ the sign-in) and by the BFF (401);
 //   • no admin page, admin BFF or staff login exists here (404);
 //   • every response carries the security headers;
-//   • /privacy and /terms are draft pages (AA-886: 200, draft banner, noindex);
+//   • the draft legal pages (AA-886: 200, draft banner, noindex): /legal/privacy and /legal/partner-terms on the agency
+//     host, where the studio is part of the agency web since AA-1036 (/privacy and /terms answer 308 there); /privacy
+//     and /terms on a local studio app;
+//   • AA-1036 (root ADR 0019 d7): on the agency host "/" lands on Content (/portal/dashboard);
 //   • after the tenant login, cis_tenant_token is host-only (no parent Domain), httpOnly and Secure.
 import { test, expect, request as pwRequest, type APIRequestContext } from '@playwright/test';
 import fs from 'fs';
@@ -45,6 +48,14 @@ const OLD_SLUGS: [string, string][] = [
   ['/portal/api', '/portal/account/api'],
 ];
 
+// The studio's draft legal pages: the agency web serves them at /legal/* (the CRM owns /legal/terms, AA-1033), and the
+// old paths answer 308 there (AA-1036); a local studio app still serves the old paths.
+const LEGAL_PAGES: string[] = FARGATE ? ['/legal/privacy', '/legal/partner-terms'] : ['/privacy', '/terms'];
+const LEGAL_MOVES: [string, string][] = [
+  ['/privacy', '/legal/privacy'],
+  ['/terms', '/legal/partner-terms'],
+];
+
 const FORGED: Record<string, string> = {
   'role cookie only (tenant)': 'cis_role=tenant',
   'garbage tenant token': 'cis_role=tenant; cis_tenant_token=not-a-jwt',
@@ -67,13 +78,14 @@ test.describe('AA-885 — portal host', () => {
     }
   });
 
-  test(FARGATE ? '/ is the CRM home (signed out: the partner sign-in)' : '/ redirects into /portal/dashboard', async () => {
+  // AA-1036 (root ADR 0019 d7): a tenant lands on Content on the agency host too (WEB_CONTENT_HOME); the CRM home is /home.
+  test('/ redirects into /portal/dashboard', async () => {
     const ctx = await apiContext();
     try {
       const res = await ctx.get('/', { maxRedirects: 0, timeout: 15000 });
       expect(res.status()).toBeGreaterThanOrEqual(300);
       expect(res.status()).toBeLessThan(400);
-      expect(pathOf(res.headers()['location'] ?? '')).toBe(FARGATE ? '/auth/refresh' : '/portal/dashboard');
+      expect(pathOf(res.headers()['location'] ?? '')).toBe('/portal/dashboard');
     } finally {
       await ctx.dispose();
     }
@@ -140,7 +152,7 @@ test.describe('AA-885 — portal host', () => {
   test('security headers on the portal pages', async () => {
     const ctx = await apiContext();
     try {
-      for (const p of ['/terms', '/privacy']) {
+      for (const p of LEGAL_PAGES) {
         const res = await ctx.get(p, { maxRedirects: 0, timeout: 15000 });
         expect(res.status(), `GET ${p}`).toBe(200);
         const h = res.headers();
@@ -173,11 +185,26 @@ test.describe('AA-885 — portal host', () => {
     }
   });
 
-  // AA-886: both are portal pages now (no redirect), marked as drafts and kept out of search engines.
-  test('/privacy and /terms are draft pages (200, banner, noindex)', async () => {
+  // AA-1036: on the agency host the studio's old legal paths answer 308 to the agency web's /legal/* pages.
+  test('/privacy and /terms move to /legal/* on the agency host', async () => {
+    test.skip(!FARGATE, 'a local studio app serves the old legal paths itself');
     const ctx = await apiContext();
     try {
-      for (const p of ['/privacy', '/terms']) {
+      for (const [from, to] of LEGAL_MOVES) {
+        const res = await ctx.get(from, { maxRedirects: 0, timeout: 15000 });
+        expect(res.status(), `GET ${from}`).toBe(308);
+        expect(pathOf(res.headers()['location'] ?? ''), `GET ${from}`).toBe(to);
+      }
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  // AA-886: both are studio pages (no redirect), marked as drafts and kept out of search engines.
+  test('the legal pages are drafts (200, banner, noindex)', async () => {
+    const ctx = await apiContext();
+    try {
+      for (const p of LEGAL_PAGES) {
         const res = await ctx.get(p, { maxRedirects: 0, timeout: 15000 });
         expect(res.status(), `GET ${p}`).toBe(200);
         const html = await res.text();

@@ -1,6 +1,7 @@
 // AA-1033 (S264 fix F1): the CRM terms of use must sit on a path the CRM web serves on the agency host. The ALB sends
-// /terms, /privacy and /assets/* (and /portal*, /api/*, /tenant-login*, /crm*) elsewhere before the CRM web's default
-// rule, so a CRM page or link there opens another service's page (the studio's partner terms for /terms).
+// /crm* to the API before the CRM web's default rule; until the AA-1036 cut-over it also sent /terms, /privacy,
+// /assets/*, /portal*, /api/* and /tenant-login* to the separate studio service. The studio is part of this app now,
+// and its /terms is a 308 to its own draft terms, so the CRM terms stay at /legal/terms.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { NextRequest } from "next/server";
@@ -39,14 +40,16 @@ describe("ALB path-pattern matching", () => {
   });
 
   it("names the rule that takes a path away from the CRM web, ignoring the query and the fragment", () => {
-    expect(agencyHostRuleFor("/terms#ai")).toBe("/terms");
-    expect(agencyHostRuleFor("/privacy?x=1")).toBe("/privacy");
-    expect(agencyHostRuleFor("/tenant-login")).toBe("/tenant-login*");
+    expect(agencyHostRuleFor("/crm/v1/me?x=1")).toBe("/crm/*");
+    expect(agencyHostRuleFor("/crm#top")).toBe("/crm");
     expect(agencyHostRuleFor("/pipeline")).toBeNull();
   });
 
-  it("keeps the studio's /terms, /privacy and /assets/* in the list (crm_agency_studio_x)", () => {
-    for (const p of ["/terms", "/privacy", "/assets/*"]) expect(AGENCY_HOST_ROUTED_ELSEWHERE).toContain(p);
+  it("AA-1036 cut-over: only the API rule takes paths away; the studio paths reach this app", () => {
+    expect(AGENCY_HOST_ROUTED_ELSEWHERE).toEqual(["/crm", "/crm/*"]);
+    for (const p of ["/terms", "/privacy?x=1", "/tenant-login", "/portal/dashboard", "/api/healthz", "/assets/a.png"]) {
+      expect(agencyHostRuleFor(p)).toBeNull();
+    }
   });
 });
 

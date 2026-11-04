@@ -1,6 +1,7 @@
 // web/instrumentation-client.ts
 // AA-979 P2b — Sentry in the browser (moved with the Content studio, AA-1036). The DSN is a public build-time value
-// (NEXT_PUBLIC_SENTRY_DSN, a Docker build arg; empty = off, which is what Deploy Web Dev builds until the cut-over).
+// (NEXT_PUBLIC_SENTRY_DSN, a Docker build arg from the `dev` variable WEB_PUBLIC_SENTRY_DSN in Deploy Web Dev; empty =
+// off).
 // Same rules as the server: no PII, no tracing, no replay.
 import * as Sentry from "@sentry/nextjs";
 import { scrubEvent } from "./lib/sentryScrub";
