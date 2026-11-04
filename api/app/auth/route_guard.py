@@ -12,7 +12,14 @@ The guard, in order:
    (a ``cis-admin`` or ``breakglass`` token on ``/crm/v1``, a partner token on ``/crm/ops/v1``, ...);
 4. the class needs a group and the token holds none of them -> **403** ``missing_group``;
 5. AA-1019 (root ADR 0006a A10c): the Dev-only CRM staff E2E identity outside ``dev`` / ``test`` / ``local`` ->
-   **403** ``e2e_read_only`` (the token cannot exist elsewhere: this is the second lock).
+   **403** ``e2e_read_only`` (the token cannot exist elsewhere: this is the second lock);
+6. AA-969 (CRM-37a): on the agency class only, more than ``RATE_LIMIT_MEMBER_PER_MINUTE`` requests in a minute by
+   one member for one agency (``iss`` + ``sub`` + the canonical ``X-AA-Tenant-Id`` uuid, ``app.state.member_limiter``)
+   -> **429** ``rate_limited``. The agency is part of the key only once this task verified the caller's membership of
+   it (:meth:`app.tenant_gate.TenantGate.is_member`, set by ``tenant_tx()``); every other header value (an agency the
+   caller is not, or not yet, known to belong to, a fresh random uuid, junk, none) shares the caller's one
+   ``unverified`` bucket (review round 3: a fresh uuid per request opened a fresh count and could evict every real
+   member's counter from the limiter's table). So one identity has at most (its agencies + 1) counts.
 
 Then the route gets a :class:`Caller` (no e-mail or name: ids only, plus the ``e2e_read_only`` flag of the Dev-only
 E2E CIS admin, :mod:`app.auth.e2e_staff`). Tenant membership is not checked here: the agency
@@ -22,6 +29,7 @@ routes open :func:`app.tenancy.tenant_tx`, which checks it.
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Annotated, Any
@@ -29,6 +37,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app import tenant_gate
 from app.auth import e2e_staff
 from app.auth.identity_config import WORKFORCE, Identity, RouteClass
 from app.auth.identity_verifier import AuthUnavailable, InvalidToken, MultiIssuerVerifier
@@ -36,6 +45,10 @@ from app.settings import DEV_ONLY_ENVIRONMENTS
 
 log = logging.getLogger(__name__)
 
+# The longest spelling uuid.UUID() accepts ("urn:uuid:" + 36) with room for braces; longer is never an agency id.
+MAX_TENANT_HEADER = 64
+# The member ceiling's bucket for every X-AA-Tenant-Id this task has not seen the caller verified for.
+UNVERIFIED = "unverified"
 bearer = HTTPBearer(auto_error=False, scheme_name="CognitoAccessToken", description="Cognito access token")
 
 
@@ -112,11 +125,44 @@ def guard_for(route_class: RouteClass) -> Callable[..., Awaitable[Caller]]:
             e2e_read_only=issuer_kind == WORKFORCE and e2e_staff.is_e2e_cis_admin(principal.email),
             e2e_synthetic_only=e2e_crm_staff,
         )
+        if route_class.name == "agency":
+            _member_rate_limit(request, caller)
         request.state.caller = caller
         return caller
 
     guard.route_class = route_class  # type: ignore[attr-defined] — read by the route-coverage test
     return guard
+
+
+def _member_rate_limit(request: Request, caller: Caller) -> None:
+    """AA-969: one member's requests for one agency per minute (``app.state.member_limiter``; absent = off)."""
+    limiter = getattr(request.app.state, "member_limiter", None)
+    if limiter is None:
+        return
+    bucket = _tenant_bucket(caller, request.headers.get("x-aa-tenant-id"))
+    key = f"{caller.iss}|{caller.sub}|{bucket}"
+    if not limiter.allow(key):
+        log.warning("route_guard_member_rate_limited class=%s", caller.route_class)
+        raise HTTPException(status_code=429, detail="rate_limited", headers={"Retry-After": str(int(limiter.window_s))})
+
+
+def _tenant_bucket(caller: Caller, header: str | None) -> str:
+    """The agency part of the member ceiling's key: the canonical id (``str(uuid.UUID(...))``, so every spelling
+    ``uuid.UUID`` accepts shares one count) **only** when this task already verified the caller's membership of that
+    agency (:meth:`app.tenant_gate.TenantGate.is_member`); anything else shares the bucket :data:`UNVERIFIED`.
+
+    Review round 2 keyed every valid uuid, so a token holder sending a fresh random uuid per request was never limited
+    (each request still cost a gate slot and two queries before 403 ``not_a_member``), and more than 10 000 of them a
+    minute evicted every real member's counter. The membership mark decides no access (``tenant_tx()`` checks the
+    membership on every request); it only picks the bucket."""
+    if header and len(header) <= MAX_TENANT_HEADER:
+        try:
+            tenant_id = uuid.UUID(header)
+        except ValueError:
+            return UNVERIFIED
+        if tenant_gate.GATE.is_member(caller.iss, caller.sub, tenant_id):
+            return str(tenant_id)
+    return UNVERIFIED
 
 
 def _environment(request: Request) -> str:

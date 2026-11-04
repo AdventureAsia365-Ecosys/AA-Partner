@@ -61,6 +61,15 @@ class RateLimited(ServiceError):
         self.retry_after_s = retry_after_s
 
 
+class DatabaseBusy(RateLimited):
+    """503 with ``Retry-After`` (AA-969): no pooled connection came free in time (app.tenancy)."""
+
+    status_code = 503
+
+
+RETRY_AFTER_DB_BUSY_S = 2
+
+
 async def service_error_handler(_: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, ServiceError)  # noqa: S101 — registered for ServiceError only
     headers = {"Retry-After": str(exc.retry_after_s)} if isinstance(exc, RateLimited) else None

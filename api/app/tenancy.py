@@ -93,16 +93,17 @@ import datetime as dt
 import logging
 import re
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
 import asyncpg
 
+from app import tenant_gate
 from app.audit import INSERT_SQL, AuditEvent, current_request_id
 from app.auth import e2e_staff
 from app.auth.route_guard import Caller
-from app.errors import Conflict, Forbidden, NotFound
+from app.errors import RETRY_AFTER_DB_BUSY_S, Conflict, DatabaseBusy, Forbidden, NotFound
 from app.margin import current_member_role
 from app.observability import reveal_meter
 from app.permissions import Action, may
@@ -361,6 +362,41 @@ class IntakeForm:
     privacy_notice_url: str | None
 
 
+# AA-969 (F2): how long a request waits for one of the task's pooled connections before 503 ``db_busy`` (the pool
+# queue is otherwise unbounded). Above the gate's slot wait: a request that got its agency slot should normally get a
+# connection too.
+POOL_ACQUIRE_TIMEOUT_S = 10.0
+
+
+@asynccontextmanager
+async def _acquire(pool: asyncpg.Pool) -> AsyncIterator[asyncpg.Connection]:
+    """``pool.acquire()`` with :data:`POOL_ACQUIRE_TIMEOUT_S`; 503 ``db_busy`` (``Retry-After``) when it runs out."""
+    try:
+        cm = pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT_S)
+        conn = await cm.__aenter__()
+    except TimeoutError:
+        raise DatabaseBusy("db_busy", RETRY_AFTER_DB_BUSY_S, "every database connection is busy") from None
+    try:
+        yield conn
+    except BaseException as exc:
+        if not await cm.__aexit__(type(exc), exc, exc.__traceback__):
+            raise
+    else:
+        await cm.__aexit__(None, None, None)
+
+
+@asynccontextmanager
+async def _gated(
+    pool: asyncpg.Pool, key: str, *, busy: Callable[[], Exception] = tenant_gate.tenant_busy
+) -> AsyncIterator[asyncpg.Connection]:
+    """AA-969 (review round 2): a request-path connection outside ``tenant_tx()`` (memberships, the anonymous
+    contexts, the Twilio webhooks) takes a slot of the fair share first (:mod:`app.tenant_gate`, ``key`` = the caller
+    or :data:`app.tenant_gate.PUBLIC_KEY`), then waits at most :data:`POOL_ACQUIRE_TIMEOUT_S` for the connection. So
+    these paths never queue in the pool ahead of an agency's ``tenant_tx()`` and never hold more than their share."""
+    async with tenant_gate.GATE.hold(key, busy=busy), _acquire(pool) as conn:
+        yield conn
+
+
 @asynccontextmanager
 async def tenant_tx(
     pool: asyncpg.Pool,
@@ -369,13 +405,18 @@ async def tenant_tx(
     *,
     reader_role: str | None = None,
     action: Action | None = None,
+    long: bool = False,
 ) -> AsyncIterator[TenantContext]:
     if not isinstance(tenant_id, uuid.UUID):
         raise TypeError("tenant_id must be a UUID")
     if reader_role is not None and reader_role not in READER_ROLES:
         raise ValueError(f"not a CRM reader role: {reader_role!r}")
     pending: Exception | None = None
-    async with pool.acquire() as conn, conn.transaction():
+    # AA-969 (F2): the agency's share of the pool first (app.tenant_gate), then a bounded wait for a connection.
+    # ``long``: the block holds its slot across a slow external call (a model call, an S3 put): one of the long slots,
+    # so such work never takes every request slot (review round 3).
+    gate = tenant_gate.GATE
+    async with gate.slot(caller.iss, caller.sub, tenant_id, long=long), _acquire(pool) as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
         status = await conn.fetchval(TENANT_SQL, tenant_id)
         if status is None:
@@ -389,6 +430,7 @@ async def tenant_tx(
         role = member["role"]
         if role not in MEMBER_ROLES:  # the CHECK makes this impossible; refuse rather than trust it
             raise Forbidden("not_a_member")
+        gate.mark_member(caller.iss, caller.sub, tenant_id)
         await conn.execute("SELECT set_config('app.member_role', $1, true)", role)
         await conn.execute("SELECT set_config('app.actor', $1, true)", f"member:{member['member_id']}")
         if reader_role is not None:
@@ -600,7 +642,7 @@ async def intake_tx(pool: asyncpg.Pool, public_key: str) -> AsyncIterator[tuple[
     if not isinstance(public_key, str) or not 20 <= len(public_key) <= 64:
         raise NotFound("form_not_found")
     pending: Exception | None = None
-    async with pool.acquire() as conn, conn.transaction():
+    async with _gated(pool, tenant_gate.PUBLIC_KEY, busy=tenant_gate.public_busy) as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.intake_key', $1, true)", public_key)
         row = await conn.fetchrow(INTAKE_FORM_SQL, public_key)
         await conn.execute("SELECT set_config('app.intake_key', '', true)")
@@ -739,7 +781,7 @@ async def invitation_tx(pool: asyncpg.Pool, token_hash_hex: str) -> AsyncIterato
     if not isinstance(token_hash_hex, str) or len(token_hash_hex) != 64:
         raise NotFound("invitation_not_found")
     pending: Exception | None = None
-    async with pool.acquire() as conn, conn.transaction():
+    async with _gated(pool, tenant_gate.PUBLIC_KEY, busy=tenant_gate.public_busy) as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.invite_token_hash', $1, true)", token_hash_hex)
         row = await conn.fetchrow(INVITATION_SQL, token_hash_hex)
         await conn.execute("SELECT set_config('app.invite_token_hash', '', true)")
@@ -842,7 +884,7 @@ async def studio_invitation_tx(
     holder). Unknown token: 404 ``invitation_not_found``. Only ``app/members/studio.py`` may open it."""
     if not isinstance(token_hash_hex, str) or len(token_hash_hex) != 64:
         raise NotFound("invitation_not_found")
-    async with pool.acquire() as conn, conn.transaction():
+    async with _gated(pool, tenant_gate.PUBLIC_KEY, busy=tenant_gate.public_busy) as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.invite_token_hash', $1, true)", token_hash_hex)
         row = await conn.fetchrow(STUDIO_INVITATION_BY_LOOKUP_SQL, token_hash_hex)
         if row is None:
@@ -907,7 +949,7 @@ async def client_link_tx(
     if not isinstance(token_hash_hex, str) or len(token_hash_hex) != 64:
         raise NotFound("link_not_found")
     pending: Exception | None = None
-    async with pool.acquire() as conn, conn.transaction():
+    async with _gated(pool, tenant_gate.PUBLIC_KEY, busy=tenant_gate.public_busy) as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.client_link_hash', $1, true)", token_hash_hex)
         row = await conn.fetchrow(CLIENT_LINK_SQL, token_hash_hex)
         await conn.execute("SELECT set_config('app.client_link_hash', '', true)")
@@ -1018,17 +1060,24 @@ class MessagingHook:
 
 
 @asynccontextmanager
-async def messaging_hook_tx(pool: asyncpg.Pool, hook_id: str) -> AsyncIterator[tuple[SystemContext, MessagingHook]]:
+async def messaging_hook_tx(
+    pool: asyncpg.Pool, hook_id: str, *, known: bool = False
+) -> AsyncIterator[tuple[SystemContext, MessagingHook]]:
     """A Twilio webhook (AA-958, crm-036): the hook id in the URL finds the agency's live
     ``crm.messaging_connection`` through the SELECT-only policy ``messaging_connection_hook_lookup``
     (``app.messaging_hook_id``) before any agency is known; then ``app.tenant_id`` = its agency (which must be active)
     and ``app.actor`` = ``job:crm_messaging_hook``. An unknown, malformed or trashed hook id, or an agency that is not
     active: 404 ``hook_not_found``. The caller checks the request signature with the agency's token before it stores
-    anything. Audit semantics as :func:`system_tx`. Only ``app/messaging/webhook.py`` may open it."""
+    anything. Audit semantics as :func:`system_tx`. Only ``app/messaging/webhook.py`` may open it.
+
+    ``known`` (AA-969 round 3): this task resolved the hook id before (:class:`app.messaging.webhook.HookCache`): the
+    slot is taken under :data:`app.tenant_gate.HOOK_KEY`, else :data:`app.tenant_gate.HOOK_UNKNOWN_KEY`, so neither a
+    flood of random hook ids nor anonymous browsing (``PUBLIC_KEY``) queues ahead of a known hook's callbacks."""
     if not isinstance(hook_id, str) or not _HOOK_ID.match(hook_id):
         raise NotFound("hook_not_found")
     pending: Exception | None = None
-    async with pool.acquire() as conn, conn.transaction():
+    key = tenant_gate.HOOK_KEY if known else tenant_gate.HOOK_UNKNOWN_KEY
+    async with _gated(pool, key, busy=tenant_gate.public_busy) as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.messaging_hook_id', $1, true)", hook_id)
         row = await conn.fetchrow(MESSAGING_HOOK_SQL, hook_id)
         await conn.execute("SELECT set_config('app.messaging_hook_id', '', true)")
@@ -1095,7 +1144,7 @@ async def calendar_feed_tx(
     if not isinstance(token_hash_hex, str) or len(token_hash_hex) != 64:
         raise NotFound("feed_not_found")
     pending: Exception | None = None
-    async with pool.acquire() as conn, conn.transaction():
+    async with _gated(pool, tenant_gate.PUBLIC_KEY, busy=tenant_gate.public_busy) as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.calendar_feed_hash', $1, true)", token_hash_hex)
         row = await conn.fetchrow(CALENDAR_FEED_SQL, token_hash_hex)
         await conn.execute("SELECT set_config('app.calendar_feed_hash', '', true)")
@@ -1517,7 +1566,7 @@ async def caller_memberships(pool: asyncpg.Pool, caller: Caller) -> list[Members
     """The caller's active memberships in agencies that are not trashed (locked ones included, with their status)."""
     if not caller.iss or not caller.sub:
         raise Forbidden("not_a_member")
-    async with pool.acquire() as conn, conn.transaction():
+    async with _gated(pool, tenant_gate.caller_key(caller.iss, caller.sub)) as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.caller_iss', $1, true)", caller.iss)
         await conn.execute("SELECT set_config('app.caller_sub', $1, true)", caller.sub)
         rows = await conn.fetch(MEMBERSHIPS_SQL, caller.iss, caller.sub, MAX_MEMBERSHIPS)

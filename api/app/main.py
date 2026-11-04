@@ -26,10 +26,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app import tenant_gate
 from app.audit_export.archive import AuditArchive, build_audit_archive
 from app.auth import identity_config
 from app.auth.ci import GithubDeployVerifier
 from app.auth.identity_verifier import MultiIssuerVerifier
+from app.bodylimit import BodyLimitMiddleware
 from app.booking.checker import BookingChecker
 from app.booking.client import BookingClient, BookingConfig
 from app.booking.products import ProductCache
@@ -54,6 +56,7 @@ from app.members.mail import Mailer, MemoryMailer, SesMailer
 from app.messaging.providers import build_providers as build_text_providers
 from app.messaging.sender import ChannelSender, TextSender
 from app.messaging.state import MessagingRuntime
+from app.messaging.webhook import HookCache
 from app.observability import setup as setup_observability
 from app.observability.request_id import RequestIdMiddleware, unhandled_error_handler
 from app.ratelimit import HOOK_MISSES_PER_MINUTE, FixedWindowLimiter
@@ -244,6 +247,10 @@ def create_app(
     app.state.directory = directory
     app.state.mailer = mailer
     app.state.claim_limiter = FixedWindowLimiter(settings.rate_limit_claim_per_minute)
+    # AA-969 (CRM-37a): the agency fair share. Requests per member per agency per minute (app.auth.route_guard) and
+    # the per-agency share of the pool every tenant_tx() takes (app.tenant_gate).
+    app.state.member_limiter = FixedWindowLimiter(settings.rate_limit_member_per_minute)
+    tenant_gate.configure(settings.tenant_max_concurrency, settings.tenant_slot_wait_ms / 1000)
     # AA-942: the Booking line re-check a trip restore needs (CRM-19 plugs the B2B client in). AA-945 (CRM-17): the
     # e-mail sender behind the dispatcher gate (the agency's own mailbox; never AA's SES), the mail runtime (send-as
     # providers, system mailer for the mailbox alert, directory) and the ingest bucket (forward-in + history import).
@@ -267,6 +274,9 @@ def create_app(
     app.state.public_limiter = FixedWindowLimiter(settings.rate_limit_public_per_minute)
     # AA-958: the Twilio webhooks count only unknown hook ids per address (app.routers.public), never genuine callbacks.
     app.state.hook_miss_limiter = FixedWindowLimiter(HOOK_MISSES_PER_MINUTE)
+    # AA-969 round 3: hook id -> its connection's Twilio token, so a refused signature costs no database work and no
+    # lockout, and known hooks get their own gate key (app.messaging.webhook.HookCache).
+    app.state.hook_cache = HookCache()
     # AA-964 (CRM-33a): the one LLM gateway of the process (stub provider unless CRM_LLM_PROVIDER=bedrock).
     app.state.llm_gateway = build_gateway(settings, keys)
     # AA-936: inquiry-form submissions, per client address per minute and per form per hour.
@@ -280,6 +290,9 @@ def create_app(
     app.state.portal_unproven_limiter = FixedWindowLimiter(settings.rate_limit_intake_per_minute)
     app.add_exception_handler(ServiceError, service_error_handler)
     app.add_exception_handler(Exception, unhandled_error_handler)
+    # AA-969 (F1): the body ceiling runs before any route reads a body (FastAPI parses JSON before the class guard).
+    # Added first, so the request id middleware (added next) is the outer one and logs its 413 too.
+    app.add_middleware(BodyLimitMiddleware)
     app.add_middleware(RequestIdMiddleware)
     app.include_router(health.router)
     app.include_router(ci.router)

@@ -97,7 +97,8 @@ async def post_ai_draft(
 ) -> dict[str, Any]:
     keys = require_keys(request.app.state.keys)
     pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id, action=Action.AI_USE) as ctx:
+    # A long slot (app.tenant_gate): the scrub and the model call run while the slot is held (AA-969 round 3).
+    async with tenant_tx(pool, caller, tenant_id, action=Action.AI_USE, long=True) as ctx:
         return await agency_ai.draft(
             ctx,
             request.app.state.llm_gateway,

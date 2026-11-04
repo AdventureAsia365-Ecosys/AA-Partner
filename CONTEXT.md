@@ -7,7 +7,7 @@ status: active
 owner: nghiep
 audience: [engineer, agent]
 applies_to: [aa-crm-api, aa-crm-web]
-last_reviewed: 2026-11-04
+last_reviewed: 2026-11-05
 review_every_days: 90
 related: [ARCH-01, ARCH-06-booking, docs/adr/README.md]
 ---
@@ -148,6 +148,26 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 
 ## Tenancy and data rules
 
+- **Fair share and body ceiling** (AA-969, CRM-37a security review; `docs/operations/slo.md`): every request-path
+  transaction first takes a slot of `app/tenant_gate.py`: at most 2 of the pool's 3 connections for the whole request
+  path (the third stays for the crm.job worker), at most `CRM_TENANT_MAX_CONCURRENCY` (default 2) per key and never
+  every request slot to one key (ordinary holds capped at total - 1 = 1), handed out fairly (the waiting key holding
+  the fewest slots first, so a calm agency gets the next free slot ahead of the busy agencies' queues). Work that
+  holds its slot across a slow external call asks for a **long** slot (`tenant_tx(..., long=True)`: the AI draft, the
+  document upload and download); at most total - 1 = 1 long slot is held at once, so one slot always serves short
+  transactions. Keys: `tenant_tx()` the agency once the caller's membership was verified in this task, else the
+  caller; `caller_memberships()` the caller; the anonymous contexts (intake, invitations, client links, calendar feed)
+  one shared public key; Twilio webhooks `class:hook` for a hook id this task already resolved, else
+  `class:hook-unknown`. 429 `tenant_busy` (503 `db_busy` for the anonymous keys) after `CRM_TENANT_SLOT_WAIT_MS` (4x for
+  a long slot), then at most 10 s for a connection (503 `db_busy`). The agency class guard adds a
+  per-member-per-agency ceiling (`RATE_LIMIT_MEMBER_PER_MINUTE`, 429 `rate_limited`) keyed by the canonical agency
+  uuid only once the membership was verified in this task, else one `unverified` bucket per caller. An ASGI
+  middleware (`app/bodylimit.py`) caps every request body before any route code runs (FastAPI parses JSON before the
+  class guard): 1 MiB, the four upload routes their own cap + 64 KiB; 413 `body_too_large`. A body past 64 KiB on a
+  class route is read only once its bearer token verifies (else 401 before more is buffered) and is charged to the
+  verified budget (32 MiB, one identity at most one mail import); anonymous routes have their own 12 MiB budget, one
+  passport scan per client address (503 `server_busy` when full); and a body past 64 KiB must keep 16 KiB/s after 20 s
+  of grace, else 408 `body_too_slow`. `POST /crm/v1/documents` reads its JSON body after the class guard.
 - **`tenant_tx(pool, caller, tenant_id, reader_role=None)`** (`app/tenancy.py`) is the only way request code reaches
   tenant data: one transaction; `SET LOCAL app.tenant_id`; the agency must exist and be `active`; the membership check
   by the token's `(iss, sub)` (never an e-mail lookup); `SET LOCAL app.member_role` and `app.actor`; optionally
@@ -335,7 +355,10 @@ push to `main` that touches `api/migrations/`, so the byte copy opens at once.
 
 ## Job runner (`crm.job`, ADR 0003a)
 
-Ported from AA-Booking (AA-751 rules): `FOR UPDATE SKIP LOCKED` claims, guarded state changes, lease + heartbeat,
+Ported from AA-Booking (AA-751 rules): `FOR UPDATE SKIP LOCKED` claims (AA-969: **fair per agency**, not oldest
+first: the due row whose agency (`payload->>'tenant_id'`) was served least in the last 5 minutes goes first, oldest
+first inside an agency, a row without an agency is its own group; `app/jobs/queue.py` `CLAIM_SQL`), guarded state
+changes, lease + heartbeat,
 reaper (a stopped worker's job is re-claimed), release on graceful shutdown, `cancel_requested`, backoff, the backlog
 sampler (S263 alert diet, AA-1025: no CloudWatch metric; it runs the in-app ops checks of
 `app/observability/ops_alerts.py`, see "Ops checks" below). CRM differences: the job row keeps the **error class only** (crm-001 column
@@ -991,7 +1014,10 @@ already sends `/crm/public/*` to the API).
 - **Webhooks**: `POST /crm/public/v1/hooks/twilio/{hook_id}` (inbound) and `.../{hook_id}/status`, form-encoded,
   64 KiB. Not under the per-address public limit (Twilio posts every agency's callbacks from one shared address pool,
   and a 429 loses an inbound message for good): only unknown hook ids (404) are counted per address
-  (`HOOK_MISSES_PER_MINUTE` 600), and an address over that is 429 before any work. `X-Twilio-Signature` is checked with the agency's own Auth Token over the URL the CRM
+  (`HOOK_MISSES_PER_MINUTE` 120; a hook id this task already resolved skips that check), and an address over that is
+  429 before any work. No `X-Twilio-Signature`: 403 before the database. Each task caches a resolved hook's Auth Token
+  (`app.messaging.webhook.HookCache`, 15 min): a bad signature is 403 without the database and never locks the hook
+  out; a good one is checked again against the database. `X-Twilio-Signature` is checked with the agency's own Auth Token over the URL the CRM
   printed (never the Host header) and the `AccountSid` must match, before anything is stored: **403
   `invalid_signature`**. Inbound: deduplicated by `MessageSid`; threaded by the sender's phone blind index (one client
   -> their latest conversation on the channel or their latest open trip, else a conversation of the client with no

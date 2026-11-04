@@ -19,6 +19,9 @@ Exec on ``aa-crm-dev-api``::
   (``app.seed.travellers``) as Stage 1 inquiries through the same path as the public form
   (``app.intake.public.store_submission``: encrypted submission + ``crm_intake_process`` job, idempotent per
   traveller), so they reach ``crm.traveler`` only through the vault. Needs the key provider (KMS on Dev).
+- AA-969 (CRM-37a): ``--load-test N --load-test-sub SUB`` selects the load-test agencies ``lt-01`` .. ``lt-NN``
+  (``app.seed.catalogue.load_test_agencies``, N <= 50) instead of the named ones, with the load-test identity ``SUB``
+  as an ``agent`` of each (AA-Partner ``loadtest/README.md``). ``--member`` and ``--agency`` do not mix with it.
 - Output is one JSON object per agency plus a summary line: ids, labels, counts, never a traveller's data.
 """
 
@@ -41,7 +44,7 @@ from app.errors import ServiceError
 from app.intake import forms as intake_forms
 from app.intake import stage1
 from app.intake.public import store_submission
-from app.seed.catalogue import AGENCIES, BY_KEY, SyntheticAgency
+from app.seed.catalogue import AGENCIES, BY_KEY, MAX_LOAD_TEST_AGENCIES, SyntheticAgency, load_test_agencies
 from app.seed.travellers import inquiry_for, nfc, travellers_for
 from app.settings import Settings, SettingsError, load_settings
 from app.tenancy import provisioning_tx, system_tx
@@ -90,9 +93,15 @@ def build_plan(argv: Sequence[str], settings: Settings) -> Plan:
     parser.add_argument("--member", action="append", default=[], help="KEY:ROLE:SUB (repeatable)")
     parser.add_argument("--issuer", default="", help="token issuer of the --member subjects")
     parser.add_argument("--travellers", action="store_true", help="with --apply: store the synthetic inquiries")
+    parser.add_argument(
+        "--load-test", type=int, default=0, help=f"the load-test agencies lt-01..lt-NN (N <= {MAX_LOAD_TEST_AGENCIES})"
+    )
+    parser.add_argument("--load-test-sub", default="", help="with --load-test: the load-test identity, agent of each")
     args = parser.parse_args(list(argv))
     if settings.environment not in SYNTHETIC_ONLY_ENVIRONMENTS:
         raise SeedRefused(f"the seeder runs on {sorted(SYNTHETIC_ONLY_ENVIRONMENTS)} only, not {settings.environment}")
+    if args.load_test or args.load_test_sub:
+        return _load_test_plan(args, settings)
     unknown = [k for k in args.agency if k not in BY_KEY]
     if unknown:
         raise SeedRefused(f"unknown agency key(s) {unknown} (known: {', '.join(BY_KEY)})")
@@ -107,6 +116,28 @@ def build_plan(argv: Sequence[str], settings: Settings) -> Plan:
     if args.travellers and not args.apply:
         raise SeedRefused("--travellers writes: use it with --apply")
     return Plan(agencies, {k: tuple(v) for k, v in members.items()}, args.apply, issuer, args.travellers)
+
+
+def _load_test_plan(args: argparse.Namespace, settings: Settings) -> Plan:
+    """AA-969: the ``lt-NN`` agencies, the load-test identity an agent of each."""
+    if args.member or args.agency:
+        raise SeedRefused("--load-test does not mix with --member / --agency")
+    if not 1 <= args.load_test <= MAX_LOAD_TEST_AGENCIES:
+        raise SeedRefused(f"--load-test must be between 1 and {MAX_LOAD_TEST_AGENCIES}")
+    if args.travellers and not args.apply:
+        raise SeedRefused("--travellers writes: use it with --apply")
+    issuer = args.issuer or settings.cognito_partner_issuer
+    agencies = load_test_agencies(args.load_test)
+    members: dict[str, tuple[MemberSpec, ...]] = {}
+    if args.load_test_sub:
+        if not issuer:
+            raise SeedRefused("--load-test-sub needs an issuer: set COGNITO_PARTNER_ISSUER or --issuer")
+        try:
+            member = validate_member(MemberSpec(cognito_iss=issuer, cognito_sub=args.load_test_sub, role="agent"))
+        except ServiceError as exc:
+            raise SeedRefused(f"--load-test-sub: {exc.code}") from None
+        members = {a.key: (member,) for a in agencies}
+    return Plan(agencies, members, args.apply, issuer, args.travellers)
 
 
 def traveller_summary(agency: SyntheticAgency) -> dict[str, Any]:

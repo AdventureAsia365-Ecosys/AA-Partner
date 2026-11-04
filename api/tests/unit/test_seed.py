@@ -205,3 +205,63 @@ async def test_apply_fails_when_the_stored_name_differs() -> None:
     plan = seed.build_plan(["--apply", "--agency", "sen-vang"], settings())
     assert await seed.run_plan(plan, db.conn, "dev", out) == 1
     assert lines(out)[-1] == {"summary": "failed", "reason": "name round trip"}
+
+
+# ── AA-969 (CRM-37a): the load-test agencies ────────────────────────────────────────────────────────────────────
+
+
+def test_load_test_agencies_are_fixed_invented_and_apart_from_the_e2e_ones() -> None:
+    from app.seed.catalogue import MAX_LOAD_TEST_AGENCIES, load_test_agencies
+
+    fifty = load_test_agencies(MAX_LOAD_TEST_AGENCIES)
+    assert [a.key for a in fifty[:2]] == ["lt-01", "lt-02"] and fifty[-1].key == "lt-50"
+    assert len({a.tenant_id for a in fifty}) == 50
+    assert not {a.tenant_id for a in fifty} & {a.tenant_id for a in AGENCIES}
+    assert fifty[0].tenant_id == agency_id("lt-01")  # same id on every run
+    for bad in (0, 51):
+        with pytest.raises(ValueError):
+            load_test_agencies(bad)
+
+
+def test_load_test_plan_makes_the_identity_an_agent_of_each() -> None:
+    plan = seed.build_plan(["--apply", "--load-test", "3", "--load-test-sub", "sub-load"], settings())
+    assert [a.key for a in plan.agencies] == ["lt-01", "lt-02", "lt-03"]
+    assert {k: [(m.cognito_iss, m.cognito_sub, m.role) for m in v] for k, v in plan.members.items()} == {
+        k: [(PARTNER_ISSUER, "sub-load", "agent")] for k in ("lt-01", "lt-02", "lt-03")
+    }
+    dry = seed.build_plan(["--load-test", "2"], settings())
+    assert (dry.apply, dry.members, len(dry.agencies)) == (False, {}, 2)
+
+
+@pytest.mark.parametrize(
+    ("argv", "kw", "reason"),
+    [
+        (["--load-test", "51"], {}, "between 1 and 50"),
+        (["--load-test", "0", "--load-test-sub", "s"], {}, "between 1 and 50"),
+        (["--load-test", "2", "--member", "sen-vang:owner:s1"], {}, "does not mix"),
+        (["--load-test", "2", "--agency", "sen-vang"], {}, "does not mix"),
+        (["--load-test", "2", "--travellers"], {}, "use it with --apply"),
+        (["--load-test", "2", "--load-test-sub", "s"], {"cognito_partner_issuer": ""}, "needs an issuer"),
+        (["--load-test", "2", "--load-test-sub", "s"], {"environment": "prod", "db_ssl": "require"}, "runs on"),
+    ],
+)
+def test_load_test_refusals(argv: list[str], kw: dict, reason: str) -> None:
+    with pytest.raises(seed.SeedRefused, match=reason):
+        seed.build_plan(argv, settings(**kw))
+
+
+def test_load_test_sub_is_validated_like_a_member() -> None:
+    with pytest.raises(seed.SeedRefused, match="--load-test-sub"):
+        seed.build_plan(["--load-test", "1", "--load-test-sub", "x" * 300], settings())
+
+
+@pytest.mark.asyncio
+async def test_load_test_apply_creates_synthetic_agencies_with_the_member() -> None:
+    db = SeedDb({})
+    plan = seed.build_plan(["--apply", "--load-test", "2", "--load-test-sub", "sub-load"], settings())
+    out = io.StringIO()
+    assert await seed.run_plan(plan, db.conn, "dev", out) == 0
+    rows = lines(out)
+    assert [r["agency"] for r in rows[:-1]] == ["lt-01", "lt-02"]
+    assert rows[-1]["created"] == 2 and rows[-1]["members_added"] == 2
+    assert all(args[3] is True for args in db.conn.sql("INSERT INTO crm.tenant"))

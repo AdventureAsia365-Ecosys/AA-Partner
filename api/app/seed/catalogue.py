@@ -67,6 +67,29 @@ AGENCIES: tuple[SyntheticAgency, ...] = (
 
 BY_KEY: dict[str, SyntheticAgency] = {a.key: a for a in AGENCIES}
 
+# AA-969 (CRM-37a): the agencies of the bounded load test (AA-Partner loadtest/, 50 tenants on Dev). Invented names, a
+# key of their own (``lt-NN``), never the e2e users' agencies: the load-test identity is a member of every one of them,
+# and the e2e agency picker must not change. Small traveller sets (``--travellers``) so each has data to read.
+MAX_LOAD_TEST_AGENCIES = 50
+LOAD_TEST_PREFIX = "lt-"
+
+
+def load_test_agencies(count: int) -> tuple[SyntheticAgency, ...]:
+    """The first ``count`` (1..50) load-test agencies, ``lt-01`` .. ``lt-50``."""
+    if not 1 <= count <= MAX_LOAD_TEST_AGENCIES:
+        raise ValueError(f"count must be between 1 and {MAX_LOAD_TEST_AGENCIES}")
+    return tuple(
+        SyntheticAgency(
+            key=f"{LOAD_TEST_PREFIX}{n:02d}",
+            display_name=f"Load Test Agency {n:02d}",
+            default_locale="en-AU" if n % 2 else "vi-VN",
+            traveller_locales=("en_AU", "vi_VN"),
+            traveller_count=6,
+            roles=("agent",),
+        )
+        for n in range(1, count + 1)
+    )
+
 
 def e2e_username(agency_key: str, role: str) -> str:
     """The Cognito username of an agency's e2e test user (matches the Infra script)."""

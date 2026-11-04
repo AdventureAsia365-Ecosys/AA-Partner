@@ -27,8 +27,9 @@ A caller can take a slot and give it back (:meth:`FixedWindowLimiter.release`): 
 before the first refusal is counted.
 
 A caller can also look before it charges (:meth:`FixedWindowLimiter.exhausted`): the Twilio webhooks (AA-958,
-``app.routers.public``) are refused only once an address has run out of *misses* (unknown hook ids), so the shared
-Twilio egress addresses that carry every agency's genuine callbacks are never counted.
+``app.routers.public``) of a hook id the task does not know are refused only once an address has run out of *misses*
+(unknown hook ids), so the shared Twilio egress addresses that carry every agency's genuine callbacks are never
+counted.
 """
 
 from __future__ import annotations
@@ -43,8 +44,10 @@ from fastapi import Depends, HTTPException, Request
 
 WINDOW_S = 60.0
 MAX_TRACKED_KEYS = 10_000
-# AA-958: unknown-hook-id requests (404) per client address per minute on the Twilio webhook routes.
-HOOK_MISSES_PER_MINUTE = 600
+# AA-958: unknown-hook-id requests (404) per client address per minute on the Twilio webhook routes. AA-969 round 3:
+# 600 -> 120, now that a hook id this task knows skips this check (app.routers.public), so a Twilio address that also
+# carries misses (a deleted connection Twilio still calls) never stops known hooks' callbacks.
+HOOK_MISSES_PER_MINUTE = 120
 IPV6_PREFIX = 64
 VIEWER_ADDRESS_HEADER = "cloudfront-viewer-address"
 

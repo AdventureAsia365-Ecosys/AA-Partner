@@ -151,7 +151,7 @@ def test_public_webhook_routes(pools: LocalPools, monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(public_router, "request_pool", _pool)
     seen: list[Any] = []
 
-    async def handle(_pool: Any, _runtime: Any, request: webhook.HookRequest) -> str:
+    async def handle(_pool: Any, _runtime: Any, request: webhook.HookRequest, cache: Any = None) -> str:
         seen.append(request)
         if request.signature == "bad":
             raise Forbidden("invalid_signature")
@@ -193,7 +193,7 @@ def test_webhooks_skip_the_per_address_public_limit(pools: LocalPools, monkeypat
     monkeypatch.setattr(public_router, "request_pool", _pool)
     handled: list[str] = []
 
-    async def handle(_pool: Any, _runtime: Any, request: webhook.HookRequest) -> str:
+    async def handle(_pool: Any, _runtime: Any, request: webhook.HookRequest, cache: Any = None) -> str:
         handled.append(request.hook_id)
         if request.hook_id == "f" * 32:
             raise NotFound("hook_not_found")
@@ -212,6 +212,68 @@ def test_webhooks_skip_the_per_address_public_limit(pools: LocalPools, monkeypat
         assert miss.status_code == 429 and miss.headers["Retry-After"] == "60"
         assert client.post(f"/crm/public/v1/hooks/twilio/{HOOK_ID}", content=b"a=b").status_code == 429
         assert len(handled) == before  # refused before any lookup
+
+
+def test_a_refusal_flood_never_locks_out_genuine_callbacks(pools: LocalPools, monkeypatch: pytest.MonkeyPatch) -> None:
+    """AA-969 review round 3, the reported sequence: someone who knows a hook id posts 60+ unsigned or badly signed
+    requests a minute. Round 2 then answered every genuine signed callback of that hook 429 (lost for good: Twilio
+    does not retry). Now unsigned requests are refused before the database, bad signatures are refused against the
+    cached token without the database (one re-check per RECHECK_S), nothing locks the hook, and the genuine callback
+    in the middle of the flood is stored."""
+    from app.messaging import signature
+    from app.tenancy import MessagingHook
+    from tests.unit.messaging_fakes import CONNECTION, HOOKS_ORIGIN, connection_row
+    from tests.unit.slice_fakes import system_ctx
+
+    settings = pools.settings()
+    app = create_app(settings, verifier=pools.verifier(settings), keys=object(), messaging_runtime=runtime())
+    monkeypatch.setattr(public_router, "request_pool", _pool)
+    lookups: list[bool] = []
+    conn = ScriptedConn()
+    conn.on("FROM crm.messaging_connection c", connection_row())
+    ctx = system_ctx(conn)
+
+    @asynccontextmanager
+    async def hook_tx(_pool: Any, hook_id: str, *, known: bool = False) -> Any:
+        lookups.append(known)
+        if hook_id != HOOK_ID:
+            raise NotFound("hook_not_found")
+        yield ctx, MessagingHook(messaging_connection_id=CONNECTION, tenant_id=TENANT)
+
+    stored: list[str] = []
+
+    async def status(_ctx: Any, _conn: Any, params: list[tuple[str, str]]) -> str:
+        stored.append(dict(params)["MessageSid"])
+        return "status_applied"
+
+    monkeypatch.setattr(webhook, "messaging_hook_tx", hook_tx)
+    monkeypatch.setattr(webhook, "Vault", lambda keys, ctx: TextVault())
+    monkeypatch.setattr(webhook, "status", status)
+    url = f"{HOOKS_ORIGIN}/crm/public/v1/hooks/twilio/{HOOK_ID}/status"
+    params = [("AccountSid", ACCOUNT_SID), ("MessageSid", "SM" + "1" * 32), ("MessageStatus", "delivered")]
+    body = "&".join(f"{k}={v}" for k, v in params).encode()
+    form = {"Content-Type": "application/x-www-form-urlencoded"}
+    genuine = form | {"X-Twilio-Signature": signature.sign(AUTH_TOKEN, url, params)}
+    path = f"/crm/public/v1/hooks/twilio/{HOOK_ID}/status"
+    with TestClient(app) as client:
+        assert client.post(path, content=body, headers=genuine).status_code == 200  # warms the task's hook cache
+        assert lookups == [False]
+        for _ in range(100):
+            assert client.post(path, content=body, headers=form).status_code == 403  # unsigned: before the DB
+        for _ in range(100):
+            forged = form | {"X-Twilio-Signature": "forged"}
+            assert client.post(path, content=body, headers=forged).status_code == 403  # cached token: no DB
+        assert lookups == [False]
+        assert client.post(path, content=body, headers=genuine).status_code == 200  # never locked out
+        assert lookups == [False, True]  # the known hook's own gate key
+        assert len(stored) == 2
+        # An unknown hook id is still a counted miss of the address; a known hook skips that check.
+        app.state.hook_miss_limiter = FixedWindowLimiter(1)
+        unknown = f"/crm/public/v1/hooks/twilio/{'f' * 32}"
+        assert client.post(unknown, content=b"a=b", headers=genuine).status_code == 404
+        assert client.post(unknown, content=b"a=b", headers=genuine).status_code == 429
+        assert client.post(path, content=body, headers=genuine).status_code == 200
+        assert len(stored) == 3
 
 
 @pytest.mark.parametrize(

@@ -38,7 +38,8 @@ import uuid
 from typing import Annotated, Any, Literal
 
 from fastapi import Depends, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
@@ -325,13 +326,33 @@ async def get_trip_documents(
         return await documents.trip_documents(ctx, Vault(keys, ctx), trip_id)
 
 
-@router.post("/documents", status_code=201)
-async def post_document(request: Request, caller: CallerDep, tenant_id: TenantDep, body: DocumentIn) -> dict[str, Any]:
+async def _document_body(request: Request) -> DocumentIn:
+    """AA-969 (review round 2): the upload body is read and parsed here, after the class guard and the tenant header
+    (a declared body parameter would be read and parsed by FastAPI **before** the guard, so an anonymous caller would
+    get the route's 9.4 MiB ceiling). Same JSON, same 422 shape as a declared ``DocumentIn``."""
+    raw = await request.body()
+    try:
+        return DocumentIn.model_validate_json(raw)
+    except ValidationError as exc:
+        errors = exc.errors(include_url=False, include_context=False, include_input=False)
+        raise RequestValidationError([{**e, "loc": ("body", *e["loc"])} for e in errors]) from None
+
+
+@router.post(
+    "/documents",
+    status_code=201,
+    openapi_extra={
+        "requestBody": {"required": True, "content": {"application/json": {"schema": DocumentIn.model_json_schema()}}}
+    },
+)
+async def post_document(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
+    body = await _document_body(request)
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     store = require_store(request.app.state.documents)
     content = documents.decode(body.content_b64)
-    async with tenant_tx(pool, caller, tenant_id, action=Action.DOCUMENT_UPLOAD) as ctx:
+    # A long slot (app.tenant_gate): the S3 put of up to ~7 MB runs while the slot is held (AA-969 round 3).
+    async with tenant_tx(pool, caller, tenant_id, action=Action.DOCUMENT_UPLOAD, long=True) as ctx:
         return await documents.upload(
             ctx,
             Vault(keys, ctx),
@@ -353,7 +374,7 @@ async def post_download(
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     store = require_store(request.app.state.documents)
-    async with tenant_tx(pool, caller, tenant_id, action=Action.DOCUMENT_DOWNLOAD) as ctx:
+    async with tenant_tx(pool, caller, tenant_id, action=Action.DOCUMENT_DOWNLOAD, long=True) as ctx:
         return await documents.download(ctx, Vault(keys, ctx), store, document_id, body.reason)
 
 
