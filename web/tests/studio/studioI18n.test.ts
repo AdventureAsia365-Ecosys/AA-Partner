@@ -5,6 +5,8 @@
 //      aria-label, label…) given as a string literal, or an English-looking string literal inside a JSX expression.
 //      Proper names that read the same in both languages are listed in ALLOWED_TEXT.
 //   3. The studio's language store: one setting for the whole app (the CRM's cookie and form), English by default.
+//   4. The draft legal documents (legal/*/<name>.messages.ts, structured text): the Vietnamese document has the same
+//      sections and blocks as the English one, and no English placeholder left in it.
 // The scanner parses with the TypeScript compiler, so comments are never scanned. Run: npm test (from web/).
 import fs from "node:fs";
 import path from "node:path";
@@ -13,10 +15,13 @@ import ts from "typescript";
 import { describe, expect, test } from "vitest";
 import { missingTranslations, translator, type Messages } from "@/app/_kit/core/i18n";
 import { localeForLang, studioLangStore } from "@/lib/studio/lang";
+import { docShape, docText, type LegalDoc } from "@/app/(studio)/_legal/legalDoc";
 import { LOCALE_COOKIE } from "@/lib/i18n";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const STUDIO_DIRS = ["app/(studio)", "app/_kit/local/studio"];
+/** Catalogues outside the studio folders that studio pages render (lib helpers' words). */
+const LIB_DIRS = ["lib/studio"];
 
 function walk(rel: string): string[] {
   const abs = path.join(ROOT, rel);
@@ -31,13 +36,19 @@ function walk(rel: string): string[] {
 }
 
 const FILES = STUDIO_DIRS.flatMap(walk);
-const CATALOGUES = FILES.filter((f) => /\.messages\.ts$/.test(f));
+const CATALOGUES = [...FILES, ...LIB_DIRS.flatMap(walk)].filter((f) => /\.messages\.ts$/.test(f));
 const COMPONENTS = FILES.filter((f) => f.endsWith(".tsx"));
 
 // ── 1. catalogues ──────────────────────────────────────────────────────────────────────────────────────────────
 
 function isMessages(v: unknown): v is Messages<Record<string, string | ((...a: never[]) => string)>> {
-  return !!v && typeof v === "object" && "en" in v && "vi" in v;
+  if (!v || typeof v !== "object" || !("en" in v) || !("vi" in v)) return false;
+  const en = (v as { en: unknown }).en;
+  return !!en && typeof en === "object" && Object.values(en).every((m) => typeof m === "string" || typeof m === "function");
+}
+
+function isLegalDocs(v: unknown): v is Record<"en" | "vi", LegalDoc> {
+  return !!v && typeof v === "object" && "en" in v && "vi" in v && Array.isArray((v as { en: LegalDoc }).en?.sections);
 }
 
 /** Sample arguments for a message function: numbers and words, enough to render every message. */
@@ -55,7 +66,16 @@ describe("studio message catalogues", () => {
   test.each(CATALOGUES)("%s: every English key has a Vietnamese message", async (file) => {
     const mod = (await import(pathToFileURL(path.join(ROOT, file)).href)) as Record<string, unknown>;
     const catalogues = Object.entries(mod).filter(([, v]) => isMessages(v));
-    expect(catalogues.length, `${file} exports no defineMessages() catalogue`).toBeGreaterThan(0);
+    const docs = Object.entries(mod).filter(([, v]) => isLegalDocs(v));
+    expect(catalogues.length + docs.length, `${file} exports no defineMessages() catalogue`).toBeGreaterThan(0);
+    for (const [name, d] of docs) {
+      if (!isLegalDocs(d)) continue;
+      expect(docShape(d.vi), `${file} ${name}: the Vietnamese document's sections and blocks`).toEqual(docShape(d.en));
+      expect(d.vi.title.trim()).not.toBe("");
+      const vi = docText(d.vi);
+      expect(vi, `${file} ${name}: an English placeholder in the Vietnamese text`).not.toMatch(/to be confirmed/);
+      expect(`${docText(d.en)} ${vi}`, `${file} ${name}: an issue ID in UI text`).not.toMatch(/\bAA-\d+\b/);
+    }
     for (const [name, m] of catalogues) {
       if (!isMessages(m)) continue;
       expect(missingTranslations(m), `${file} ${name}: keys without a Vietnamese message`).toEqual([]);
