@@ -3,19 +3,32 @@
 // shapes are CIS /v1/facts (api/routers/v1_facts.py): the agency's own Facts Entries (also expired ones, flagged) and
 // the Adventure Asia facts that are still valid, each with `overridden_by` when an own fact replaces it. The writer
 // keeps an own fact over an Adventure Asia fact on the same subject: the same kind, subject (title) and country,
-// compared without case or extra spaces (services/acp_shared/facts_store.subject_key).
+// compared without case or extra spaces (services/acp_shared/facts_store.subject_key). AA-1036 (R3): the words take
+// the UI language (lib.messages.ts), English by default.
+
+import { translator, type Lang } from "@/app/_kit/core/i18n";
+import { FACTS_LIB_MESSAGES } from "./lib.messages";
 
 export const FACT_KINDS = ["price", "season", "visa_entry", "transfer_time", "booking_terms", "other"] as const;
 export type FactKind = (typeof FACT_KINDS)[number];
 
-export const KIND_LABEL: Record<FactKind, string> = {
-  price: "Price",
-  season: "Season",
-  visa_entry: "Visa & entry",
-  transfer_time: "Transfer time",
-  booking_terms: "Booking terms",
-  other: "Other",
-};
+const KIND_KEY = {
+  price: "kindPrice",
+  season: "kindSeason",
+  visa_entry: "kindVisa",
+  transfer_time: "kindTransfer",
+  booking_terms: "kindBooking",
+  other: "kindOther",
+} as const satisfies Record<FactKind, keyof typeof FACTS_LIB_MESSAGES.en>;
+
+export const KIND_LABEL: Record<FactKind, string> = Object.fromEntries(
+  Object.entries(KIND_KEY).map(([k, key]) => [k, FACTS_LIB_MESSAGES.en[key]]),
+) as Record<FactKind, string>;
+
+/** A fact kind in words, in the UI language (an unknown kind passes through). */
+export function kindLabel(kind: string, lang: Lang = "en"): string {
+  return Object.hasOwn(KIND_KEY, kind) ? translator(FACTS_LIB_MESSAGES, lang)(KIND_KEY[kind as FactKind]) : kind;
+}
 
 // Field limits (CIS services/acp_shared/facts_store.py).
 export const MAX_TITLE = 200;
@@ -103,9 +116,14 @@ export function formProblem(form: FactForm): FormProblem {
 }
 
 export const PROBLEM_TEXT: Record<"required" | "dates", string> = {
-  required: "Subject, fact and source are required.",
-  dates: "Valid until cannot be before the stated-on date.",
+  required: FACTS_LIB_MESSAGES.en.required,
+  dates: FACTS_LIB_MESSAGES.en.dates,
 };
+
+/** A form problem in words, in the UI language. */
+export function problemText(p: "required" | "dates", lang: Lang = "en"): string {
+  return translator(FACTS_LIB_MESSAGES, lang)(p);
+}
 
 /** The subject key the writer compares (kind, title, country; case and spacing ignored). */
 export function subjectKey(f: { kind: string; title: string; country?: string | null }): string {
@@ -119,10 +137,11 @@ export function ownOnSubject(own: TenantFact[], form: FactForm, exceptId?: strin
 }
 
 /** A readable line for an API refusal: the role refusal, a stale edit, a validation list, or the API's own text. */
-export function errorText(status: number, detail: unknown): string {
-  if (status === 403) return "Your role can read facts but not change them. Ask the workspace owner.";
-  if (status === 409) return "This fact changed since you opened it. Close it and open it again.";
-  if (status === 404) return "This fact no longer exists. Refresh the list.";
+export function errorText(status: number, detail: unknown, lang: Lang = "en"): string {
+  const t = translator(FACTS_LIB_MESSAGES, lang);
+  if (status === 403) return t("forbidden");
+  if (status === 409) return t("conflict");
+  if (status === 404) return t("gone");
   if (typeof detail === "string" && detail) return detail.charAt(0).toUpperCase() + detail.slice(1);
   if (Array.isArray(detail)) {
     const parts = detail.map((d) => {
@@ -131,12 +150,12 @@ export function errorText(status: number, detail: unknown): string {
     }).filter(Boolean);
     if (parts.length) return parts.join("; ");
   }
-  return status ? `Request failed (${status})` : "Network error";
+  return status ? t("failed", status) : t("network");
 }
 
 export type CallResult<T> = { ok: true; body: T } | { ok: false; status: number; message: string };
 
-export async function factCall<T>(method: string, path: string, body?: unknown): Promise<CallResult<T>> {
+export async function factCall<T>(method: string, path: string, body?: unknown, lang: Lang = "en"): Promise<CallResult<T>> {
   let res: Response;
   try {
     res = await fetch(`${FACTS_API}${path}`, {
@@ -145,10 +164,10 @@ export async function factCall<T>(method: string, path: string, body?: unknown):
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
-    return { ok: false, status: 0, message: errorText(0, null) };
+    return { ok: false, status: 0, message: errorText(0, null, lang) };
   }
   let json: unknown = null;
   try { json = await res.json(); } catch { /* empty body */ }
-  if (!res.ok) return { ok: false, status: res.status, message: errorText(res.status, (json as { detail?: unknown } | null)?.detail) };
+  if (!res.ok) return { ok: false, status: res.status, message: errorText(res.status, (json as { detail?: unknown } | null)?.detail, lang) };
   return { ok: true, body: json as T };
 }

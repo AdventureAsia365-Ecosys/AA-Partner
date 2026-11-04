@@ -159,3 +159,37 @@ export const TOURS_LIB_MESSAGES = defineMessages(
     quotaLeft: (left: number) => `Còn ${left} lượt viết lại trong kỳ này.`,
   },
 );
+
+/** lib/studio/facts.ts */
+export const FACTS_LIB_MESSAGES = defineMessages(
+  {
+    kindPrice: "Price",
+    kindSeason: "Season",
+    kindVisa: "Visa & entry",
+    kindTransfer: "Transfer time",
+    kindBooking: "Booking terms",
+    kindOther: "Other",
+    required: "Subject, fact and source are required.",
+    dates: "Valid until cannot be before the stated-on date.",
+    forbidden: "Your role can read facts but not change them. Ask the workspace owner.",
+    conflict: "This fact changed since you opened it. Close it and open it again.",
+    gone: "This fact no longer exists. Refresh the list.",
+    failed: (status: number) => `Request failed (${status})`,
+    network: "Network error",
+  },
+  {
+    kindPrice: "Giá",
+    kindSeason: "Mùa",
+    kindVisa: "Visa & nhập cảnh",
+    kindTransfer: "Thời gian di chuyển",
+    kindBooking: "Điều khoản đặt chỗ",
+    kindOther: "Khác",
+    required: "Cần điền chủ đề, dữ kiện và nguồn.",
+    dates: "Ngày hết hiệu lực không được trước ngày công bố.",
+    forbidden: "Vai trò của bạn chỉ được xem dữ kiện, không được thay đổi. Hãy nhờ chủ sở hữu không gian làm việc.",
+    conflict: "Dữ kiện này đã thay đổi từ khi bạn mở. Hãy đóng lại rồi mở lại.",
+    gone: "Dữ kiện này không còn tồn tại. Hãy tải lại danh sách.",
+    failed: (status: number) => `Yêu cầu không thành công (${status})`,
+    network: "Lỗi mạng",
+  },
+);
