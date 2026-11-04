@@ -587,6 +587,17 @@ studio rules. Deploy Web Dev verifies the studio paths and runs the studio smoke
   projection put the agency on plan `free`); the Trip planner has no entitlement in this app yet (always a request).
   Studio: `GET /api/studio/apps` (always 200) feeds the sidebar's "Apps" group; CRM: the former Content studio group
   is "Apps" (the studio link when CIS lists the agency for the person, and the Trip planner request).
+- **EN/VI** (AA-1036 R3): the studio speaks English and Vietnamese with the kit i18n (`app/_kit/core/i18n.ts` +
+  `useI18n.ts`; message files `*.messages.ts` next to the code, `defineMessages(en, vi)`). The language is the app's
+  one setting (cookie `aa_crm_locale`, section "EN/VI and dates"; English by default): `app/(studio)/layout.tsx`
+  resolves it per request and hands it to `app/_kit/local/studio/StudioLang.tsx` (a fixed kit `LangStore`,
+  `lib/studio/lang.ts`: the cookie is httpOnly). The switch is the CRM's `LocaleSwitch` in the studio's account menu
+  (the page reloads in the chosen language). Pure helpers take the language (`lib/studio/*.ts`, words in
+  `lib/studio/lib.messages.ts`). The draft legal pages and the Facebook guide are structured per-language documents
+  (`legal/*/<name>.messages.ts`, `help/facebook/facebookGuide.messages.ts`); the English legal text applies, the
+  Vietnamese page says it is a translation. Text from APIs (goal names, notification titles, live-writer step labels,
+  activity labels, generated content) is shown as the API sends it. `web/tests/studio/studioI18n.test.ts` keeps every
+  English key paired with Vietnamese and fails on hard-coded English in studio components.
 - **Own e-mail** (an AA-1007 leftover): `/auth/callback` keeps the id token's `email` (same client and `sub`,
   `lib/oauth.ts` `idTokenEmail`) in the sealed session (`em`, kept across refreshes); `/bff/identity` adds it to its
   signed-in answers, and the studio shows "Signed in to AA Partner as <email> (<Role> of <agency>)". Never an e-mail
