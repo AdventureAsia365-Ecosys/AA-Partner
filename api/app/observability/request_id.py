@@ -8,7 +8,9 @@ Each HTTP request gets one id:
 The id is bound to :mod:`structlog.contextvars` for the request (so every log line written while serving it carries
 ``request_id``), set as the Sentry tag ``request_id``, stored in ``request.state.request_id`` and returned as
 ``X-Request-ID`` on the response. One ``request_completed`` line per request records method, path, route template,
-status and duration (no query string: it can hold search text).
+status and duration (no query string: it can hold search text). AA-969 (security review F4): the path's
+bearer-like segments (a signed client link, a calendar feed token, a webhook id: 32+ characters of ``[A-Za-z0-9_-]``
+that are not a UUID) are logged as ``[token]`` (:func:`redact_path`), so the logs never hold a working link.
 
 Pure ASGI (not ``BaseHTTPMiddleware``): no extra task, no body buffering, and the contextvars are visible to the
 endpoint.
@@ -33,6 +35,25 @@ _HEADER_RAW = HEADER.lower().encode("latin-1")
 _VALID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 log = logging.getLogger("app.request")
+
+
+_TOKEN_SEGMENT = re.compile(r"^[A-Za-z0-9_-]{32,}$")
+_UUID_SEGMENT = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+REDACTED_SEGMENT = "[token]"
+
+
+def redact_path(path: str | None) -> str | None:
+    """``path`` with every bearer-like segment (32+ URL-safe characters, not a UUID; a ``.ics`` suffix kept) replaced
+    by ``[token]``. Ids (UUIDs) and short segments stay, so the line is still useful for debugging."""
+    if not path:
+        return path
+    out = []
+    for segment in path.split("/"):
+        stem, dot, suffix = segment.partition(".")
+        if _TOKEN_SEGMENT.match(stem) and not _UUID_SEGMENT.match(stem):
+            segment = REDACTED_SEGMENT + (dot + suffix if dot else "")
+        out.append(segment)
+    return "/".join(out)
 
 
 def new_request_id() -> str:
@@ -88,7 +109,7 @@ class RequestIdMiddleware:
                     "request_completed",
                     extra={
                         "method": scope.get("method"),
-                        "path": scope.get("path"),
+                        "path": redact_path(scope.get("path")),
                         "route": getattr(route, "path", None),
                         "status": status,
                         "duration_ms": round((time.perf_counter() - started) * 1000, 1),

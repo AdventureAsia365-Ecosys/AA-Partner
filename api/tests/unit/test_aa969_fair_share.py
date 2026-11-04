@@ -344,3 +344,29 @@ def test_create_app_configures_the_process_gate(pools: LocalPools) -> None:
         assert (tenant_gate.GATE.max_concurrency, tenant_gate.GATE.wait_s) == (1, 0.25)
     finally:
         tenant_gate.GATE = before
+
+
+# ── F4: no working link in the request log ──────────────────────────────────────────────────────────────────────
+
+
+def test_bearer_like_path_segments_are_redacted() -> None:
+    from app.observability.request_id import redact_path
+
+    token = "Ab" * 21 + "c"  # 43 URL-safe characters, the shape of a signed client link
+    assert redact_path(f"/crm/public/v1/s/{token}") == "/crm/public/v1/s/[token]"
+    assert redact_path(f"/crm/public/v1/portal/{token}/home") == "/crm/public/v1/portal/[token]/home"
+    assert redact_path(f"/crm/public/v1/calendar/{token}.ics") == "/crm/public/v1/calendar/[token].ics"
+    assert redact_path("/crm/public/v1/hooks/" + "a" * 32 + "/inbound") == "/crm/public/v1/hooks/[token]/inbound"
+    uid = str(uuid.UUID(int=7))
+    assert redact_path(f"/crm/v1/trips/{uid}/documents") == f"/crm/v1/trips/{uid}/documents"
+    assert redact_path("/crm/public/v1/forms/" + "k" * 24) == "/crm/public/v1/forms/" + "k" * 24
+    assert redact_path("") == "" and redact_path(None) is None
+
+
+def test_request_completed_line_never_holds_the_link(client: TestClient, caplog: pytest.LogCaptureFixture) -> None:
+    token = "Zx" * 21 + "q"
+    with caplog.at_level("INFO", logger="app.request"):
+        client.get(f"/crm/public/v1/s/{token}")
+    lines = [r for r in caplog.records if r.getMessage() == "request_completed"]
+    assert lines and all(token not in str(r.__dict__) for r in lines)
+    assert lines[-1].__dict__["path"] == "/crm/public/v1/s/[token]"
