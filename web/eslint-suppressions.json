@@ -98,15 +98,34 @@
   "app/(studio)/portal/_components/AccountActivity.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 2
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/AccountMembers.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
     }
   },
   "app/(studio)/portal/_components/AngleGateWizard.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 2
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/ApiKeyCard.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
     }
   },
   "app/(studio)/portal/_components/ApiPlayground.tsx": {
     "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },
@@ -117,6 +136,9 @@
     "aa-kit/no-hex-colour": {
       "count": 5
     },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
     "aa-kit/no-raw-aa-var": {
       "count": 2
     }
@@ -125,6 +147,9 @@
     "aa-kit/no-hand-styled-button": {
       "count": 4
     },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
     "aa-kit/no-raw-aa-var": {
       "count": 4
     }
@@ -132,6 +157,19 @@
   "app/(studio)/portal/_components/CatalogDrawer.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 5
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/CatalogTab.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/ConnectionSummary.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
     }
   },
   "app/(studio)/portal/_components/DashboardTab.tsx": {
@@ -141,6 +179,9 @@
     "aa-kit/no-hex-colour": {
       "count": 5
     },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    },
     "aa-kit/no-raw-aa-var": {
       "count": 2
     }
@@ -148,10 +189,31 @@
   "app/(studio)/portal/_components/DisconnectConnection.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/FacebookConnect.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
     }
   },
   "app/(studio)/portal/_components/GettingStarted.tsx": {
     "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/LiveWriter.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/MasterNewerNotice.tsx": {
+    "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },
@@ -161,15 +223,39 @@
     },
     "aa-kit/no-hex-colour": {
       "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
     }
   },
   "app/(studio)/portal/_components/PlaceholderTabs.tsx": {
     "aa-kit/no-hex-colour": {
       "count": 4
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/PlanningTab.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/PublishPendingList.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
     }
   },
   "app/(studio)/portal/_components/PublishedList.tsx": {
     "aa-kit/no-hand-styled-button": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/ReviewDrawer.tsx": {
+    "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },
@@ -179,15 +265,34 @@
     },
     "aa-kit/no-hex-colour": {
       "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
     }
   },
   "app/(studio)/portal/_components/SeeOriginalToggle.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/SeoHealthBar.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/ServedBadge.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
     }
   },
   "app/(studio)/portal/_components/Skeleton.tsx": {
     "aa-kit/no-class-name": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },
@@ -200,11 +305,32 @@
     },
     "aa-kit/no-hex-colour": {
       "count": 2
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/UsageSparkline.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/WordPressConnect.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/WriterPanel.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
     }
   },
   "app/(studio)/portal/_components/api-playground/ApiKeyDisplay.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 2
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
     }
   },
   "app/(studio)/portal/_components/api-playground/EndpointPanel.tsx": {
@@ -213,10 +339,21 @@
     },
     "aa-kit/no-hex-colour": {
       "count": 3
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
     }
   },
   "app/(studio)/portal/_components/api-playground/ResponseViewer.tsx": {
     "aa-kit/no-hex-colour": {
+      "count": 1
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/_components/markdownText.tsx": {
+    "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },
@@ -234,10 +371,23 @@
   "app/(studio)/portal/account/integrations/page.tsx": {
     "aa-kit/no-hand-styled-button": {
       "count": 2
+    },
+    "aa-kit/no-legacy-kit": {
+      "count": 1
     }
   },
   "app/(studio)/portal/content/page.tsx": {
     "aa-kit/no-raw-aa-var": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/content/publish/page.tsx": {
+    "aa-kit/no-legacy-kit": {
+      "count": 1
+    }
+  },
+  "app/(studio)/portal/help/facebook/page.tsx": {
+    "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },
@@ -286,6 +436,11 @@
       "count": 1
     },
     "aa-kit/no-raw-aa-var": {
+      "count": 1
+    }
+  },
+  "app/_kit/local/studio/useShellData.ts": {
+    "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },
