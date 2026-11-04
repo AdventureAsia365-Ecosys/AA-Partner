@@ -9,7 +9,7 @@ audience: [engineer, agent]
 applies_to: [aa-crm-api, aa-crm-web]
 last_reviewed: 2026-11-05
 review_every_days: 90
-related: [ARCH-06-partner, OPS-02-crm-loadtest]
+related: [ARCH-06-partner]
 ---
 
 # AA-Partner service level objectives

@@ -58,7 +58,7 @@ CRM_OK = (
 
 
 class FakeAws:
-    def __init__(self, account: str = "111122223333", alarms: list[str] | None = None, **groups: list[dict]) -> None:
+    def __init__(self, account: str = "acc-dev-test", alarms: list[str] | None = None, **groups: list[dict]) -> None:
         self.account = account
         self.alarms = alarms or []
         self.groups = {
@@ -96,7 +96,7 @@ def files(tmp_path: Path) -> argparse.Namespace:
             "--token-file",
             str(token),
             "--expect-account",
-            "111122223333",
+            "acc-dev-test",
         ]
     )
 
@@ -234,7 +234,7 @@ def test_precheck_passes_when_everything_is_quiet(files: argparse.Namespace) -> 
 
 def test_precheck_refuses_another_account_and_a_short_token(files: argparse.Namespace) -> None:
     Path(files.token_file).write_text(_jwt(NOW + 600))
-    report = lt.precheck(files, FakeAws(account="999988887777"), NOW)
+    report = lt.precheck(files, FakeAws(account="acc-other-test"), NOW)
     assert not report.ok
     assert any("expected Dev account" in f for f in report.failures)
     assert any("expires before the run ends" in f for f in report.failures)
