@@ -7,6 +7,9 @@
 //   - app/(crm)/layout.tsx imports local/CrmShell by path: the shell imports this barrel, so it is not re-exported.
 //   - AA-1036: the Content studio's shell (local/studio/: PortalShell, SessionWatch, portalNav, useShellData) is
 //     imported by path for the same reason; studio pages import ROUTES / useCatalog / MY_VERSIONS_KEY from there.
+//   - AA-1036 (R3, studio EN/VI): pure modules (lib/studio/*.ts, the *.messages.ts catalogues read by server pages,
+//     app/(studio)/_legal) import core/i18n.ts and core/tokens.ts by path: no React, safe on the server, and no
+//     "use client" module pulled in through this barrel.
 //
 // AA-994 S2a (root ADR 0016): ./core is a byte copy of AA-CIS-App frontend/app/_kit/core (full profile), written by
 // the root tools/kit/kit-sync.sh and pinned by ../../kit.lock.json; Web Build checks it (integrity: core/check-kit-
