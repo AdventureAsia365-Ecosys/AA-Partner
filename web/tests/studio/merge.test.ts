@@ -11,7 +11,8 @@ import { POST as selectPost } from "@/app/api/auth/tenant-select/route";
 import { GET as tenantMeGet } from "@/app/api/tenant/me/route";
 import { GET as tenantProxyGet } from "@/app/api/tenant/[...path]/route";
 import {
-  ADD_ONS_PATH, addOnStatesFrom, cisAddOns, crmAccess, crmAccessFrom, crmApps, plannerHref, studioApps, UNKNOWN_ADD_ONS,
+  ADD_ONS_PATH, addOnStatesFrom, cisAddOns, crmAccess, crmAccessFrom, crmApps, crmMember, plannerHref, studioApps,
+  UNKNOWN_ADD_ONS,
 } from "@/lib/apps";
 import { loadConfig } from "@/lib/config";
 import { isApiKeySignIn, isPublicPartnerPath, isStudioAccessPage, isStudioBff, isStudioPage, STUDIO_HOME_PATH } from "@/lib/hosts";
@@ -357,6 +358,22 @@ describe("app switcher (root ADR 0019 d7)", () => {
     expect(plannerHref(null)).toBeNull();
   });
 
+  it("the planner link is absolute on the studio's host when the studio link is (review AA-1036)", () => {
+    const studio = "https://portal.example.test/portal/dashboard";
+    expect(plannerHref(studio)).toBe(`https://portal.example.test${ADD_ONS_PATH}`);
+    expect(plannerHref("http://localhost:3001/portal")).toBe(`http://localhost:3001${ADD_ONS_PATH}`);
+    const planner = crmApps(studio).find((a) => a.key === "planner");
+    expect(planner?.href).toBe(`https://portal.example.test${ADD_ONS_PATH}`);
+    expect(crmApps("/portal/dashboard").find((a) => a.key === "planner")?.href).toBe(ADD_ONS_PATH);
+  });
+
+  it("a CRM member is a person /crm/v1/me answered 200 for, entitled or not", () => {
+    expect(crmMember("entitled")).toBe(true);
+    expect(crmMember("not_entitled")).toBe(true);
+    expect(crmMember("not_member")).toBe(false);
+    expect(crmMember("unknown")).toBe(false);
+  });
+
   it("crmAccess asks /crm/v1/me for the studio's tenant and never throws", async () => {
     const seen: string[] = [];
     const ok = vi.fn(async (_url: string, init?: RequestInit) => {
@@ -392,7 +409,9 @@ describe("app switcher (root ADR 0019 d7)", () => {
     }));
     const res = await appsGet(req("/api/studio/apps", { cookie: `${session()}; cis_tenant_id=${TENANT}` }));
     expect(res.status).toBe(200);
-    const apps = (await res.json()).apps as { key: string; state: string; href: string }[];
+    const body = await res.json();
+    expect(body.crm_member).toBe(false); // no CRM role: the Add-ons page offers no "Open CRM" link
+    const apps = body.apps as { key: string; state: string; href: string }[];
     expect(apps.map((a) => [a.key, a.state, a.href])).toEqual([
       ["content", "current", "/portal/dashboard"],
       ["crm", "requested", ADD_ONS_PATH],
@@ -405,10 +424,14 @@ describe("app switcher (root ADR 0019 d7)", () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ crm_entitled: true })));
     const signed = await appsGet(req("/api/studio/apps", { cookie: `${session()}; cis_tenant_id=${TENANT}; cis_tenant_name=Harbour%20Lantern%20Tours` }));
     expect(signed.status).toBe(200);
-    expect((await signed.json()).apps.map((a: { key: string; state: string }) => a.state)).toEqual(["current", "open", "request"]);
+    const signedBody = await signed.json();
+    expect(signedBody.apps.map((a: { key: string; state: string }) => a.state)).toEqual(["current", "open", "request"]);
+    expect(signedBody.crm_member).toBe(true); // /crm/v1/me answered 200: the Add-ons page may show "Open CRM"
     const anon = await appsGet(req("/api/studio/apps"));
     expect(anon.status).toBe(200);
-    expect((await anon.json()).apps[1].state).toBe("open"); // unknown keeps the link (the CRM says what is wrong)
+    const anonBody = await anon.json();
+    expect(anonBody.apps[1].state).toBe("open"); // unknown keeps the link (the CRM says what is wrong)
+    expect(anonBody.crm_member).toBe(false);
   });
 });
 

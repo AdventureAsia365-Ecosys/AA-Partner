@@ -33,6 +33,19 @@ Root ADR 0019 d7, clarifications TL-7. CIS side (table 374, routes, Tenant 360 s
   then true once CIS projects `crm.core`. The web half: `web/tests/studio/merge.test.ts` (the BFF switcher for an
   invited editor with no CRM role and a pending CRM request) plus the existing "/" -> `/portal/dashboard` tests.
 
+- **Review fixes (S268):**
+  - Refusals read CIS's stable code, not only the status: `ApiError` now carries `code` (`detail.detail` of CIS's
+    structured refusal; the `X-Error-Code` header when present, which the tenant BFF does not forward today). 409 `tenant_not_in_service` has its own
+    sentence (EN + VI); `already_subscribed` keeps "already on"; another 409 is the generic "could not be sent".
+  - "Open CRM" only for a person who holds a CRM role: `GET /api/studio/apps` answers `crm_member` (`/crm/v1/me` answered
+    200, entitled or not); otherwise the active CRM card says "Ask your owner for CRM access." One fetch and key for
+    the sidebar and the page (`_kit/local/studio/studioApps.ts`).
+  - `plannerHref` is absolute on the studio's origin when the studio link is absolute (the studio on another host);
+    relative when it shares the origin. `crmApps` uses the same link.
+  - An approval shows its setup from CIS (`setup`: "Adventure Asia is switching it on" / "the setup did not finish").
+  - The portal smoke "Account › Add-ons" skips with a clear reason while CIS answers the list 503 (CIS 374 not applied);
+    any other non-200 still fails.
+
 ## Changed (vs. the lane brief)
 
 - No in-app notification to the tenant on a decision (the Add-ons page shows it); staff get the CIS bell row.
@@ -42,13 +55,14 @@ Root ADR 0019 d7, clarifications TL-7. CIS side (table 374, routes, Tenant 360 s
 
 - `GET /api/studio/apps` now also verifies the studio token at CIS (cached 20 s per token) and reads the add-ons on
   every sidebar load (stale time 5 min on the client). Cheap, and it keeps the switcher's labels true.
-- The page reads CIS errors by status (403 / 409 / 429), because the studio's `ApiError` does not carry CIS's
-  structured `detail` object.
+- The page reads CIS errors by status (403 / 429) and, for 409, by CIS's error code (`ApiError.code`, review fix):
+  409 has two causes (account not in service, add-on already on).
 
 ## Should know
 
 - Ship after the CIS code PR is deployed (the page and the switcher read the new CIS routes; before that CIS answers
   404/503 and the switcher falls back to "request", the page shows its load error). The portal smoke now opens
-  `/portal/account/add-ons` and expects both add-on states, so the Partner deploy must follow the CIS deploy.
+  `/portal/account/add-ons` and expects both add-on states, so the Partner deploy must follow the CIS deploy (it
+  skips, not fails, while CIS answers 503 because 374 is not applied yet).
 - New UI copy is English with Vietnamese in the same catalogues (`account.messages.ts` ADDONS_MESSAGES,
   `studio.messages.ts`, `lib/i18n.ts` `ai.pausedBanner`); `studioI18n.test.ts` passes.

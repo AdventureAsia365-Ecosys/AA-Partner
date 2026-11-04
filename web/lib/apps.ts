@@ -43,6 +43,12 @@ export interface AppEntry {
 
 export const APP_LABELS: Record<AppKey, string> = { content: "Content studio", crm: "CRM", planner: "Trip planner" };
 
+/** Does the person hold a CRM membership (a crm.member role) in the studio's agency? GET /crm/v1/me answered 200
+ *  (entitled or not); not_member and unknown say no (the Add-ons page then offers no "Open CRM" link). */
+export function crmMember(access: CrmAccess): boolean {
+  return access === "entitled" || access === "not_entitled";
+}
+
 /** The CRM entry's state from the API's answer to GET /crm/v1/me (status + body). */
 export function crmAccessFrom(status: number, body: { crm_entitled?: unknown } | null): CrmAccess {
   if (status === 200) return body && body.crm_entitled === false ? "not_entitled" : "entitled";
@@ -87,13 +93,22 @@ export function crmApps(contentHref: string | null): AppEntry[] {
   const apps: AppEntry[] = [];
   if (contentHref) apps.push({ key: "content", label: APP_LABELS.content, state: "open", href: contentHref });
   apps.push({ key: "crm", label: APP_LABELS.crm, state: "current", href: CRM_HOME_PATH });
-  if (contentHref) apps.push(addOnEntry("planner", "unknown"));
+  const planner = plannerHref(contentHref);
+  if (planner) apps.push({ ...addOnEntry("planner", "unknown"), href: planner });
   return apps;
 }
 
-/** The CRM's link to the Trip planner entry: the studio's Add-ons page when the person may open the studio. */
+/** The CRM's link to the Trip planner entry: the studio's Add-ons page when the person may open the studio. On the
+ *  studio's own origin when the studio link is absolute (the studio on another host: a relative path would land on the
+ *  CRM's host); a relative path when the studio shares this origin. */
 export function plannerHref(contentHref: string | null): string | null {
-  return contentHref ? ADD_ONS_PATH : null;
+  if (!contentHref) return null;
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(contentHref)) return ADD_ONS_PATH;
+  try {
+    return new URL(ADD_ONS_PATH, contentHref).toString();
+  } catch {
+    return null;
+  }
 }
 
 /** The CRM entry for one tenant (the studio's): GET /crm/v1/me with that tenant as the agency. Never throws. */

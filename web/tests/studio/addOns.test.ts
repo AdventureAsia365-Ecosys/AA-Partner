@@ -35,7 +35,7 @@ const req = (over: Record<string, unknown> = {}) => ({
 });
 const available = (product: string): AddOn => ({ product, state: "available", subscription_status: null, request: null, last_decision: null });
 
-function stubApi(addOns: AddOn[], role: string, post?: (body: unknown) => Response) {
+function stubApi(addOns: AddOn[], role: string, post?: (body: unknown) => Response, crmMember = false) {
   const calls: { url: string; method: string; body: unknown }[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
@@ -43,6 +43,7 @@ function stubApi(addOns: AddOn[], role: string, post?: (body: unknown) => Respon
     calls.push({ url, method, body });
     if (url === "/api/tenant/me") return Response.json({ tenant_name: "Lantern Bay Travel", content_studio_role: role });
     if (url === "/api/tenant/v1/account/add-ons") return Response.json({ in_service: true, add_ons: addOns });
+    if (url === "/api/studio/apps") return Response.json({ apps: [], crm_member: crmMember });
     if (url === "/api/tenant/v1/account/add-on-requests" && post) return post(body);
     return Response.json({}, { status: 404 });
   }));
@@ -90,6 +91,19 @@ describe("Account › Add-ons", () => {
     expect(text()).not.toContain("mailto:");
   });
 
+  it("CIS's 409 tenant_not_in_service reads as its own sentence, not 'already on' (review AA-1036)", async () => {
+    stubApi([available("crm"), available("tripplanner")], "owner",
+      () => Response.json({ detail: { detail: "tenant_not_in_service", message: "this account cannot request add-ons now" } },
+                          { status: 409 }));
+    const { q } = await mount();
+    await act(async () => {
+      (q("[data-testid=add-on-request-crm] button") as HTMLButtonElement).click();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    const t = translator(ADDONS_MESSAGES, "en");
+    expect(q("[data-testid=add-on-crm] [role=alert]")?.textContent).toBe(t("errNotInService"));
+  });
+
   it("an editor sees who may ask instead of the form", async () => {
     stubApi([available("crm"), available("tripplanner")], "editor");
     const { q, text } = await mount();
@@ -100,13 +114,14 @@ describe("Account › Add-ons", () => {
   it("shows a pending request, a decline with its reason, and an active CRM with its link", async () => {
     stubApi([
       { product: "crm", state: "active", subscription_status: "active", request: null,
-        last_decision: req({ status: "approved", decided_at: "2026-11-05T09:00:00Z" }) },
+        last_decision: req({ status: "approved", decided_at: "2026-11-05T09:00:00Z", setup: "done" }) },
       { product: "tripplanner", state: "requested", subscription_status: null,
         request: req({ product: "tripplanner", note: "For our new website" }), last_decision: null },
-    ], "owner");
+    ], "owner", undefined, true);
     const { q, text } = await mount();
     expect(q("[data-testid=add-on-state-crm]")?.getAttribute("data-state")).toBe("active");
     expect(q(`[data-testid=add-on-crm] a[href="${CRM_HOME_PATH}"]`)).not.toBeNull();
+    expect(q("[data-testid=add-on-ask-crm-access]")).toBeNull();
     expect(q("[data-testid=add-on-state-tripplanner]")?.textContent).toContain("Requested");
     expect(text()).toContain("For our new website");
     expect(q("[data-testid=add-on-request-tripplanner]")).toBeNull();
@@ -121,10 +136,34 @@ describe("Account › Add-ons", () => {
     expect(q("[data-testid=add-on-request-crm] button")).not.toBeNull();
   });
 
+  it("an active CRM offers no CRM link to a person without a CRM role (review AA-1036)", async () => {
+    stubApi([{ product: "crm", state: "active", subscription_status: "active", request: null, last_decision: null },
+             available("tripplanner")], "editor", undefined, false);
+    const { q, text } = await mount();
+    expect(q(`[data-testid=add-on-crm] a[href="${CRM_HOME_PATH}"]`)).toBeNull();
+    expect(q("[data-testid=add-on-ask-crm-access]")).not.toBeNull();
+    expect(text()).toContain("Ask your owner for CRM access.");
+  });
+
+  it("an approval whose setup failed or still runs says so, never a bare 'Approved' (review AA-1036)", async () => {
+    stubApi([{ ...available("crm"), last_decision: req({ status: "approved", decided_at: "2026-11-05T09:00:00Z",
+                                                          setup: "failed" }) },
+             { ...available("tripplanner"), last_decision: req({ product: "tripplanner", status: "approved",
+                                                                 decided_at: "2026-11-05T09:00:00Z", setup: "in_progress" }) }],
+            "owner");
+    const { q } = await mount();
+    expect(q("[data-testid=add-on-decision-crm]")?.textContent).toContain("the setup did not finish");
+    expect(q("[data-testid=add-on-decision-tripplanner]")?.textContent).toContain("is switching it on");
+  });
+
   it("maps the refusals to plain sentences", () => {
     const t = translator(ADDONS_MESSAGES, "en");
     expect(refusalText(t, new ApiError("x", 403))).toBe(t("errOwnerOnly"));
-    expect(refusalText(t, new ApiError("x", 409))).toBe(t("errAlreadyOn"));
+    expect(refusalText(t, new ApiError("x", 409, "", "already_subscribed"))).toBe(t("errAlreadyOn"));
+    // review AA-1036: 409 has two causes; an account out of service is not "already on"
+    expect(refusalText(t, new ApiError("x", 409, "", "tenant_not_in_service"))).toBe(t("errNotInService"));
+    expect(refusalText(t, new ApiError("x", 409))).toBe(t("errSend"));
+    expect(translator(ADDONS_MESSAGES, "vi")("errNotInService")).not.toBe(t("errNotInService"));
     expect(refusalText(t, new ApiError("x", 429))).toBe(t("errTooMany"));
     expect(refusalText(t, new Error("down"))).toBe(t("errSend"));
   });

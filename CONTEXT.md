@@ -609,15 +609,19 @@ studio rules. Deploy Web Dev verifies the studio paths and runs the studio smoke
   The CRM entry comes from `GET /crm/v1/me` for the studio's tenant (`crm_entitled`, `app.entitlements.crm_entitled`:
   false only when the CIS projection put the agency on plan `free`), then the CIS add-on state; the Trip planner from
   CIS only (`GET /v1/account/add-ons` with the verified studio token). Studio: `GET /api/studio/apps` (always 200)
-  feeds the sidebar's "Apps" group; CRM: the former Content studio group is "Apps" (the studio link when CIS lists the
-  agency for the person, and the Trip planner entry to the studio's Add-ons page; the group is hidden without studio
-  access).
+  feeds the sidebar's "Apps" group and says `crm_member` (the person holds a CRM role: `/crm/v1/me` answered 200);
+  CRM: the former Content studio group is "Apps" (the studio link when CIS lists the agency for the person, and the
+  Trip planner entry to the studio's Add-ons page, absolute on the studio's origin when the studio link is absolute;
+  the group is hidden without studio access).
 - **Add-on requests** (AA-1036 R3, root ADR 0019 d7): the Add-ons page shows each add-on's state, the pending request
   and the last decision (a decline with its reason), and lets the Content studio **owner** send a request with an
   optional note (`POST /api/tenant/v1/account/add-on-requests` → CIS; CIS refuses editors and viewers, and the page
   shows them why: `/api/tenant/me` names the role from the verified token, display only). The request is stored in CIS
   (`shared.tenant_addon_request`), rings the AA staff bell and is approved (the plan attached through the CIS
-  `tenant_provision` saga) or declined in CIS Tenant 360 › Subscription. No mail, no vendor.
+  `tenant_provision` saga) or declined in CIS Tenant 360 › Subscription by an admin or the account manager. No mail, no
+  vendor. An active CRM shows "Open CRM" only to a person with a CRM role (`crm_member`), else "Ask your owner for CRM
+  access"; an approval whose setup still runs or failed says so (CIS `setup`); a refusal reads CIS's error code
+  (`ApiError.code`: 409 `tenant_not_in_service` vs `already_subscribed`).
 - **AI paused banner** (AA-1036 R3): `GET /crm/v1/me` answers `ai_paused` (true while `crm.llm_app_profile.ai_enabled`
   is false: AA switched the CRM's AI off for the whole app from the CIS admin's App profiles; never the staff reason);
   the CRM layout shows the amber `components/ai/AiPausedBanner.tsx` on every page while it is.

@@ -26,6 +26,7 @@ import {
 import { LOGO_SRC } from "../../core/brand";
 import { NAV_GROUPS, ROUTES, navActive, type NavEntry } from "./portalNav";
 import { STUDIO_MESSAGES } from "./studio.messages";
+import { STUDIO_APPS_KEY, fetchStudioApps } from "./studioApps";
 
 type T = Translator<typeof STUDIO_MESSAGES.en>;
 
@@ -34,15 +35,8 @@ type T = Translator<typeof STUDIO_MESSAGES.en>;
 // never stays on a CRM page); any other add-on links to Account › Add-ons, labelled by its state (request, requested,
 // on; AA-1036 R3: the request is stored in CIS and decided by Adventure Asia staff, no longer an e-mail). The entries come
 // from /api/studio/apps (lib/apps.ts), which always answers 200. Outside NAV_GROUPS on purpose: other apps, so neither
-// the ⌘K palette nor the phone bottom bar routes to them. Until it answers, nothing shows.
-const APPS_KEY = ["studio-apps"] as const;
-
-async function fetchApps(): Promise<AppEntry[]> {
-  const res = await fetch("/api/studio/apps", { cache: "no-store", headers: { Accept: "application/json" } });
-  if (!res.ok) return [];
-  const body = (await res.json()) as { apps?: AppEntry[] };
-  return Array.isArray(body.apps) ? body.apps : [];
-}
+// the ⌘K palette nor the phone bottom bar routes to them. Until it answers, nothing shows. The fetch and its key are
+// shared with Account › Add-ons (studioApps.ts).
 
 export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate }: {
   drawerOpen: boolean;
@@ -181,8 +175,8 @@ function appName(t: T, app: AppEntry): string {
 
 /** The add-ons of the app switcher (Content, the current app, is the rest of this sidebar). */
 function StudioApps({ t, rail, open, onToggle }: { t: T; rail: boolean; open: boolean; onToggle: () => void }) {
-  const { data } = useQuery({ queryKey: APPS_KEY, queryFn: fetchApps, staleTime: 5 * 60_000, retry: false });
-  const addOns = (data ?? []).filter((a) => a.key !== "content");
+  const { data } = useQuery({ queryKey: STUDIO_APPS_KEY, queryFn: fetchStudioApps, staleTime: 5 * 60_000, retry: false });
+  const addOns = (data?.apps ?? []).filter((a) => a.key !== "content");
   if (addOns.length === 0) return null;
   return (
     <NavGroup
