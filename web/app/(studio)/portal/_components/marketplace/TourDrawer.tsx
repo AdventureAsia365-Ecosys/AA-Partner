@@ -12,13 +12,13 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Clock, Gauge, MapPin, Wallet } from "lucide-react";
+import { Clock, Gauge, MapPin } from "lucide-react";
 import { Button, Drawer, K, formatDate, sans } from "@/app/_kit";
 import { ROUTES } from "@/app/_kit/local/studio/portalNav";
-import { activityLabel, fmtDuration, fmtPriceRaw, intensityLabel, parseStringList, type QuotaNote } from "@/lib/studio/tours";
+import { activityLabel, fmtDuration, intensityLabel, parseStringList, type QuotaNote } from "@/lib/studio/tours";
 import { servedTitle, workClosed } from "../ServedBadge";
 import { isActiveWork } from "../workStatus";
-import { CardStatusBadge, Chip, CoverImage, type CardStatus } from "./TourCard";
+import { CardStatusBadge, Chip, CoverImage, FromPriceLine, type CardStatus } from "./TourCard";
 import type { PoolTour } from "./marketplaceApi";
 
 export function myToursHref(tourId: string | null | undefined): string {
@@ -124,11 +124,10 @@ function closedSentence(tour: PoolTour): string {
 
 const ITINERARY_PREVIEW_PX = 168;
 
-function TourDetail({ tour, status }: { tour: PoolTour; status: CardStatus }) {
+export function TourDetail({ tour, status }: { tour: PoolTour; status: CardStatus }) {
   const [fullItinerary, setFullItinerary] = useState(false);
   const highlights = parseStringList(tour.aa_highlights);
   const duration = fmtDuration(tour.duration);
-  const price = fmtPriceRaw(tour.price_raw);
   const activities = (tour.activities ?? []).filter((a) => typeof a === "string" && a.trim() !== "");
   const coverSmall = tour.cover_image_url ?? null;
   const coverLarge = tour.cover_image_large_url ?? null;
@@ -145,8 +144,9 @@ function TourDetail({ tour, status }: { tour: PoolTour; status: CardStatus }) {
           {tour.country && <Chip icon={<MapPin size={11} aria-hidden />}>{tour.country}</Chip>}
           {duration && <Chip icon={<Clock size={11} aria-hidden />}>{duration}</Chip>}
           {tour.intensity && <Chip icon={<Gauge size={11} aria-hidden />}>Intensity: {intensityLabel(tour.intensity)}</Chip>}
-          {price && <Chip icon={<Wallet size={11} aria-hidden />} wrap testId="marketplace-drawer-price">{price}</Chip>}
         </div>
+        {/* AA-1029: AA-Booking's "from" price (price.from.v1); nothing without one. */}
+        <FromPriceLine price={tour.from_price} testId="marketplace-drawer-price" />
         {activities.length > 0 && (
           <div data-testid="marketplace-drawer-activities" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {activities.map((a) => <Chip key={a} tone="accent">{activityLabel(a)}</Chip>)}

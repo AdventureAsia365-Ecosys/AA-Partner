@@ -1,13 +1,14 @@
 "use client";
 // web/app/(studio)/portal/_components/marketplace/TourCard.tsx
 // AA-671 — the one tour card of the Marketplace grid (both views): cover photo (catalog view), chips (country, duration,
-// intensity, New), name, subtitle, activity or theme tags, price and the tour's status. The card body is one keyboard-reachable button-like region; the optional
+// intensity, New), name, subtitle, activity or theme tags, price and the tour's status. AA-1029: the catalog view's price
+// is the price.from.v1 "from" price (FromPriceLine), nothing without one. The card body is one keyboard-reachable button-like region; the optional
 // select checkbox sits outside it (no control inside a control).
 
 import { useState } from "react";
 import { Clock, Gauge, ImageOff, MapPin } from "lucide-react";
 import { Badge, K, SkeletonBar, SkeletonStyle, alpha, sans, serif } from "@/app/_kit";
-import { coverSrcSet } from "@/lib/studio/tours";
+import { coverSrcSet, fmtFromPrice, fromPriceNote, type FromPrice } from "@/lib/studio/tours";
 import { WorkStatusBadge, type WorkStatus } from "../workStatus";
 
 /** The tour's place in the tenant's work: null = never rewritten. */
@@ -78,6 +79,24 @@ export function CoverImage({ src, large = null, sizes, alt, eager = false, radiu
   );
 }
 
+/** AA-1029 — "From $235 per person" and the caveat line under it (the TripPlanner tour page's wording), from the
+ *  tour's price.from.v1 row; nothing at all without a usable price (never the source price text). `compact` = the card
+ *  footer (smaller type). */
+export function FromPriceLine({ price, compact = false, testId = "marketplace-from-price" }: {
+  price: FromPrice | null | undefined; compact?: boolean; testId?: string;
+}) {
+  const amount = fmtFromPrice(price);
+  if (!amount || !price) return null;
+  return (
+    <div data-testid={testId} style={{ minWidth: 0, fontFamily: sans }}>
+      <div style={{ fontSize: compact ? 13 : 14, color: K.ink3, overflowWrap: "anywhere" }}>
+        From <span style={{ fontSize: compact ? 14 : 17, fontWeight: 600, color: K.ink, fontVariantNumeric: "tabular-nums" }}>{amount}</span> per person
+      </div>
+      <div style={{ fontSize: 11, color: K.muted, lineHeight: 1.45, marginTop: 2 }}>{fromPriceNote(price)}</div>
+    </div>
+  );
+}
+
 /** `sizes` of a grid card cover: the full content width on a phone (one column), else about one grid column. */
 export const CARD_COVER_SIZES = "(max-width: 640px) calc(100vw - 32px), 340px";
 
@@ -86,7 +105,7 @@ const clamp = (lines: number): React.CSSProperties => ({
 });
 
 export function TourCard({
-  name, subtitle, country, duration, intensity, isNew = false, tags = [], cover, coverLarge = null, price, priceSub, status, extraBadge,
+  name, subtitle, country, duration, intensity, isNew = false, tags = [], cover, coverLarge = null, price, priceSub, priceBlock, status, extraBadge,
   selected = false, onSelectToggle, active = false, onOpen, testId = "marketplace-card", footer,
 }: {
   name: string;
@@ -101,8 +120,11 @@ export function TourCard({
   duration?: string;
   isNew?: boolean;
   tags?: string[];
+  /** The price text; null = "On request". */
   price?: string | null;
   priceSub?: string;
+  /** Replaces the price column of the footer (the Marketplace's "from" price); `null` = no price column at all. */
+  priceBlock?: React.ReactNode;
   status: CardStatus;
   extraBadge?: React.ReactNode;
   /** With `onSelectToggle`, the card shows a select checkbox (bulk rewrite). */
@@ -157,11 +179,13 @@ export function TourCard({
           <div style={{ flex: 1 }} />
           {footer ?? (
             <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 10, flexWrap: "wrap", paddingTop: 8, borderTop: `1px solid ${K.line2}` }}>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: K.muted }}>Price</div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: K.ink, fontVariantNumeric: "tabular-nums", overflowWrap: "anywhere" }}>{price || "On request"}</div>
-                {priceSub && <div style={{ fontSize: 11, color: K.muted }}>{priceSub}</div>}
-              </div>
+              {priceBlock !== undefined ? (priceBlock ?? <span />) : (
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: K.muted }}>Price</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: K.ink, fontVariantNumeric: "tabular-nums", overflowWrap: "anywhere" }}>{price || "On request"}</div>
+                  {priceSub && <div style={{ fontSize: 11, color: K.muted }}>{priceSub}</div>}
+                </div>
+              )}
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
                 {extraBadge}
                 <CardStatusBadge status={status} />

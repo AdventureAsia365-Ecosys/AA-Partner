@@ -64,17 +64,43 @@ export function themeTags(seoKeywords: unknown, max = 3, exclude: (string | null
   return out;
 }
 
-/** The source price text (raw_tours.price_raw) on one line. A multi-tier price is one line per tier in the source
- *  ("2-5 Traveller : $178\n6-9 Traveller : $100"); HTML collapses the newlines into spaces, so the tiers ran together
- *  ("$178 6-9 Traveller"). Each non-empty line, without a leading bullet and with its spaces collapsed, is joined with
- *  " · " — a separator only between two present parts, never leading, trailing or doubled. Null when nothing is left. */
-export function fmtPriceRaw(raw: string | null | undefined): string | null {
-  if (typeof raw !== "string") return null;
-  const parts = raw
-    .split(/\r?\n|\r/)
-    .map((line) => line.replace(/^[\s·•\-*]+/, "").replace(/\s+/g, " ").trim())
-    .filter((line) => line !== "");
-  return parts.length ? parts.join(" · ") : null;
+// ── From price (AA-1029, contract price.from.v1) ───────────────────────────────────────────────────
+
+/** The public "from" price of an AA tour: AA-Booking's suggested retail price per person (contract price.from.v1, read
+ *  by CIS GET /v1/tours/pool as `from_price`). The studio never computes a price and never shows the source text
+ *  (`price_raw`) as one: no price from Booking = nothing is shown. Same shape as the TripPlanner tour page reads. */
+export interface FromPrice {
+  /** Decimal as text ("235.00"). */
+  amount: string;
+  /** ISO 4217 ("USD"). */
+  currency: string;
+  basis: string;
+  /** The party size the price is for (2 in v1). */
+  pax: number;
+  season: string | null;
+  /** Last valid day (ISO date); "9999-12-31" = open-ended. */
+  valid_to: string | null;
+}
+
+/** "$235" / "€1,200": Intl en-US currency in whole units, exactly as the TripPlanner tour page formats it
+ *  (frontend/lib/fromPrice.ts there), so a tour reads the same price on both. Null for a missing or unusable price
+ *  (no amount, not positive, not an ISO code). */
+export function fmtFromPrice(p: FromPrice | null | undefined): string | null {
+  if (!p) return null;
+  const n = Number(p.amount);
+  const code = typeof p.currency === "string" ? p.currency.trim() : "";
+  if (!Number.isFinite(n) || n <= 0 || !/^[A-Z]{3}$/.test(code)) return null;
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: code, maximumFractionDigits: 0 }).format(n);
+  } catch {
+    return null;
+  }
+}
+
+/** The caveat under every "from" price, the TripPlanner tour page's sentence (party size from the contract row). */
+export function fromPriceNote(p: FromPrice): string {
+  const pax = Number.isInteger(p.pax) && p.pax > 0 ? p.pax : 2;
+  return `Suggested price for ${pax} traveller${pax === 1 ? "" : "s"}. Your advisor confirms the final price.`;
 }
 
 /** Whole US dollars with a thousands separator ("$1,225"). */

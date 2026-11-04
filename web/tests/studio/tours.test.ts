@@ -7,7 +7,8 @@ import {
   coverSrcSet,
   facetOptions,
   fmtDuration,
-  fmtPriceRaw,
+  fmtFromPrice,
+  fromPriceNote,
   INTENSITY_LABELS,
   intensityLabel,
   hasCatalogFilters,
@@ -125,14 +126,22 @@ test("quota note: left, near, crossing the quota, over, no plan, unlimited", () 
   assert.equal(rewriteQuotaNote(usageMeter(Q(1, 999_999), billing))?.text, "Your plan has no rewrite limit.");
 });
 
-test("price text: tiers on one line, a separator only between present parts", () => {
-  assert.equal(fmtPriceRaw("2-5 Traveller : $178\n6-9 Traveller : $100\n10 + Traveller : $80"),
-    "2-5 Traveller : $178 · 6-9 Traveller : $100 · 10 + Traveller : $80");
-  // blank lines, CRLF, leading bullets and runs of spaces never leave a leading, trailing or doubled separator
-  assert.equal(fmtPriceRaw("\n· 2-5 Traveller :  $178\r\n\r\n• 6-9 Traveller : $100\n  \n"),
-    "2-5 Traveller : $178 · 6-9 Traveller : $100");
-  assert.equal(fmtPriceRaw("- $3,550"), "$3,550");
-  assert.equal(fmtPriceRaw("$3,550"), "$3,550");
-  assert.equal(fmtPriceRaw("USD 1,200 - 1,500"), "USD 1,200 - 1,500");   // a dash inside the text stays
-  for (const empty of [null, undefined, "", "  ", "\n·\n", " • "]) assert.equal(fmtPriceRaw(empty), null);
+test("from price: whole units, US$ for USD, the code otherwise, null for an unusable row", () => {
+  const p = (amount: string, currency = "USD", pax = 2) =>
+    ({ amount, currency, basis: "per_person", pax, season: "Low", valid_to: "9999-12-31" });
+  assert.equal(fmtFromPrice(p("235.00")), "$235");
+  assert.equal(fmtFromPrice(p("1225.00")), "$1,225");
+  assert.equal(fmtFromPrice(p("410.50")), "$411");               // whole units, as the TripPlanner tour page
+  assert.equal(fmtFromPrice(p("1200.00", "EUR")), "€1,200");
+  assert.equal(fmtFromPrice(p("235.00", "USD ")), "$235");    // a padded CHAR(3) code
+  for (const bad of [null, undefined, p("0"), p("-5"), p("abc"), p("235", "usd"), p("235", "")]) {
+    assert.equal(fmtFromPrice(bad), null);
+  }
+});
+
+test("from price note: the TripPlanner caveat with the contract's party size", () => {
+  const p = (pax: number) => ({ amount: "1", currency: "USD", basis: "per_person", pax, season: null, valid_to: null });
+  assert.equal(fromPriceNote(p(2)), "Suggested price for 2 travellers. Your advisor confirms the final price.");
+  assert.equal(fromPriceNote(p(1)), "Suggested price for 1 traveller. Your advisor confirms the final price.");
+  assert.equal(fromPriceNote(p(0)), "Suggested price for 2 travellers. Your advisor confirms the final price.");
 });

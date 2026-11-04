@@ -6,6 +6,7 @@
 
 import { apiGet, apiSend } from "@/app/_kit";
 import { plainError, type ServedFields } from "../ServedBadge";
+import type { FromPrice } from "@/lib/studio/tours";
 
 /** One Adventure Asia tour of the catalog (GET /v1/tours/pool row). */
 export interface PoolTour extends ServedFields {
@@ -22,7 +23,11 @@ export interface PoolTour extends ServedFields {
   published_at: string | null;
   country: string | null;
   duration: string | null;
+  /** The source price text: a reference for AA staff only, never shown as a price (root ADR 0005 d7). */
   price_raw: string | null;
+  /** AA-1029: AA-Booking's public "from" price (contract price.from.v1), or null when Booking has none. Optional: an
+   *  older CIS answer has no such field. */
+  from_price?: FromPrice | null;
   already_rewritten: boolean;
   /** CIS graph activity codes of the tour's places (trekking, culinary, …); [] when the tour has none yet. Optional:
    *  an older CIS answer has no facet fields. */

@@ -660,6 +660,9 @@ original CIS commit). P2a moves the code only:
   server paging and filters (name, country, length; newest first, "New" for the last 14 days), the kit Drawer for one
   tour and the (bulk) rewrite with the Billing quota note (`lib/tours.ts` `rewriteQuotaNote` over `usageMeter`). View
   "In my catalog" (`?view=mine`): CIS `GET /v1/marketplace` (price, status, version); a card opens the tour in My Tours.
+  AA-1029: the "All tours" card and drawer show AA-Booking's "from" price (contract `price.from.v1`, the pool row's
+  `from_price`, read by CIS) as "From US$X per person" with the TripPlanner caveat, and no price without one; the
+  source price text `price_raw` is never shown as a price (root ADR 0005 d7). AA-Partner reads no `booking.*` itself.
   `/portal/tours/marketplace` and `/portal/marketplace` answer 308 to `?view=mine`. Activity / intensity filters wait
   for the CIS pool API to expose them (implementation notes AA-671).
 - **The AA-CIS-App copy** of `portal/` was deleted at the P2b clean-up (a CIS guard keeps it gone). Portal changes are
