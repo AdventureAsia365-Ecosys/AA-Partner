@@ -31,6 +31,8 @@ export interface TokenSet {
   accessToken: string;
   refreshToken: string | null;
   expiresIn: number;
+  /** AA-1036: the OIDC id token (scope openid), read only for the person's own e-mail (idTokenEmail). */
+  idToken: string | null;
 }
 
 export interface AccessClaims {
@@ -109,7 +111,7 @@ async function tokenCall(cfg: OAuthClient, body: URLSearchParams, fetchImpl: Fet
     // Cognito answers 400 invalid_grant for a used / expired code or a revoked refresh token.
     throw new OAuthError(res.status === 400 ? "invalid_grant" : "token_endpoint_error", res.status);
   }
-  const json = (await res.json()) as { access_token?: unknown; refresh_token?: unknown; expires_in?: unknown };
+  const json = (await res.json()) as { access_token?: unknown; refresh_token?: unknown; expires_in?: unknown; id_token?: unknown };
   if (typeof json.access_token !== "string" || typeof json.expires_in !== "number") {
     throw new OAuthError("token_response_invalid", res.status);
   }
@@ -117,6 +119,7 @@ async function tokenCall(cfg: OAuthClient, body: URLSearchParams, fetchImpl: Fet
     accessToken: json.access_token,
     refreshToken: typeof json.refresh_token === "string" ? json.refresh_token : null,
     expiresIn: json.expires_in,
+    idToken: typeof json.id_token === "string" ? json.id_token : null,
   };
 }
 
@@ -174,4 +177,30 @@ export function accessClaims(cfg: OAuthClient, token: string): AccessClaims {
   const raw = payload["cognito:groups"];
   const groups = Array.isArray(raw) ? raw.filter((g): g is string => typeof g === "string") : [];
   return { sub, iss, clientId, exp, groups };
+}
+
+const MAX_EMAIL = 254;
+
+/**
+ * AA-1036 (an AA-1007 leftover): the signed-in person's own e-mail from the id token the token endpoint returned with
+ * the access token, or null. Same trust as {@link accessClaims}: the token comes straight from Cognito over TLS on the
+ * back channel, so the signature is not checked, but it must be an id token for THIS client and the SAME person as the
+ * access token (`sub`). The address is kept only inside the sealed session cookie and shown to that person alone.
+ */
+export function idTokenEmail(cfg: OAuthClient, idToken: string | null | undefined, sub: string): string | null {
+  if (!idToken) return null;
+  const parts = idToken.split(".");
+  if (parts.length !== 3) return null;
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const aud = payload.aud;
+  const forClient = aud === cfg.cognitoClientId || (Array.isArray(aud) && aud.includes(cfg.cognitoClientId));
+  if (payload.token_use !== "id" || !forClient || payload.sub !== sub) return null;
+  const email = typeof payload.email === "string" ? payload.email.trim() : "";
+  if (!email || email.length > MAX_EMAIL || !/^[^\s@]+@[^\s@]+$/.test(email)) return null;
+  return email;
 }

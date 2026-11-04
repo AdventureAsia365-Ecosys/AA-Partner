@@ -3,7 +3,7 @@
 import type { NextRequest } from "next/server";
 import { requestConfig } from "@/lib/config";
 import { safeNext } from "@/lib/hosts";
-import { accessClaims, OAuthError, refreshTokens } from "@/lib/oauth";
+import { accessClaims, idTokenEmail, OAuthError, refreshTokens } from "@/lib/oauth";
 import { redirectTo, withCookies } from "@/lib/respond";
 import { clearedCookies, readRefresh, readSession, refreshCookie, sessionCookie } from "@/lib/session";
 
@@ -30,6 +30,8 @@ export async function GET(request: NextRequest) {
         sub: claims.sub,
         cid: claims.clientId,
         tid: session?.tid ?? null,
+        // AA-1036: a new id token's e-mail, else the one the session already had for this person.
+        ...keptEmail(idTokenEmail(cfg, tokens.idToken, claims.sub) ?? (session?.sub === claims.sub ? session.em : undefined)),
       }),
       // Refresh-token rotation (identity.tf) returns a new refresh token; keep the old one when it does not.
       refreshCookie(cfg, tokens.refreshToken ?? refresh.rt, claims.sub),
@@ -42,4 +44,8 @@ export async function GET(request: NextRequest) {
     }
     throw err;
   }
+}
+
+function keptEmail(em: string | null | undefined): { em?: string } {
+  return em ? { em } : {};
 }

@@ -18,6 +18,7 @@ import { disconnected, type MailboxView } from "@/lib/mail";
 import { bannerState, type SupportAccess } from "@/lib/supportAccess";
 import type { Recovery } from "@/lib/team";
 import { CrmShell } from "@/app/_kit/local/CrmShell";
+import { requestHref } from "@/lib/apps";
 
 export const dynamic = "force-dynamic";
 
@@ -60,6 +61,7 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
       agencyName={ctx.me.display_name ?? ctx.me.tenant_id}
       agencyCount={active}
       contentStudioHref={studioLink(studioHref, studio)}
+      plannerRequestHref={requestHref("planner", ctx.me.display_name)}
       locale={ctx.locale}
       syntheticBadge={ctx.cfg.environment !== "prod"}
     >

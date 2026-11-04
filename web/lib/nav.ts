@@ -44,7 +44,7 @@ const ALL: readonly Role[] = ["owner", "agent", "assistant"];
 const NO_ASSISTANT: readonly Role[] = ["owner", "agent"];
 
 export const SECTIONS: readonly Section[] = [
-  { key: "home", path: "/", group: "home", label: "nav.home", icon: "home", roles: ALL }, // AA-935
+  { key: "home", path: "/home", group: "home", label: "nav.home", icon: "home", roles: ALL }, // AA-935; AA-1036 "/home"
   { key: "pipeline", path: "/pipeline", group: "crm", label: "nav.pipeline", icon: "kanban", roles: ALL, empty: { title: "section.pipeline.title", body: "section.pipeline.body" } }, // AA-936
   { key: "clients", path: "/clients", group: "crm", label: "nav.clients", icon: "users", roles: ALL, empty: { title: "section.clients.title", body: "section.clients.body" } }, // AA-937
   { key: "inbox", path: "/inbox", group: "crm", label: "nav.inbox", icon: "inbox", roles: ALL, empty: { title: "section.inbox.title", body: "section.inbox.body" } }, // AA-945
@@ -85,8 +85,14 @@ export function sectionByKey(key: string): Section | null {
   return SECTIONS.find((s) => s.key === key && s.key !== "home") ?? null;
 }
 
+/**
+ * AA-1036 (R3 slice 1, root ADR 0019 d7: a tenant always lands on Content) — the CRM home's own path. "/" serves the
+ * same page until WEB_CONTENT_HOME sends the bare host to the Content studio (lib/config.ts, proxy.ts).
+ */
+export const CRM_HOME_PATH = "/home";
+
 export function activeSection(pathname: string): Section | null {
-  if (pathname === "/") return SECTIONS[0];
+  if (pathname === "/" || pathname === CRM_HOME_PATH) return SECTIONS[0];
   const first = pathname.split("/")[1] ?? "";
   return sectionByKey(first);
 }

@@ -71,7 +71,8 @@ describe("CRM terms of use path", () => {
     const files = [...sources(join(WEB, "app")), ...sources(join(WEB, "components")), ...sources(join(WEB, "lib"))];
     expect(files.length).toBeGreaterThan(50); // the scan sees the code
     const hits = files
-      .filter((abs) => relative(WEB, abs) !== "lib/legal.ts") // the rule list itself
+      // the rule list itself, and (AA-1036) the studio's map of its old legal paths to /legal/* (308 sources)
+      .filter((abs) => !["lib/legal.ts", "lib/studio/legal.ts"].includes(relative(WEB, abs)))
       .map((abs) => ({ path: relative(WEB, abs), text: readFileSync(abs, "utf8") }))
       .filter((f) => /["'`]\/(terms|privacy)(?=["'`#?])/.test(f.text))
       .map((f) => f.path);

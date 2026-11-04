@@ -35,7 +35,7 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-async function mount() {
+async function mount(contentStudioHref: string | null = "/studio") {
   const container = document.createElement("div");
   document.body.appendChild(container);
   await act(async () => {
@@ -49,7 +49,8 @@ async function mount() {
           role: "owner",
           agencyName: "Lantern Bay Travel",
           agencyCount: 1,
-          contentStudioHref: "/studio",
+          contentStudioHref,
+          plannerRequestHref: "mailto:hello@example.test?subject=Add-on",
           locale: "en-AU",
           syntheticBadge: false,
         },
@@ -100,5 +101,24 @@ describe("CRM sidebar groups", () => {
     expect(region(q, "money")?.hidden).toBe(true);
     expect(toggle(q, "money")?.getAttribute("data-active")).toBe("true");
     expect(window.localStorage.getItem("aa_nav_groups:crm-web")).toBe("crm=open,money=closed");
+  });
+});
+
+// AA-1036 (root ADR 0019 d7): the Content studio group is the app switcher.
+describe("CRM app switcher", () => {
+  it("lists the Content studio and the Trip planner as an add-on to request", async () => {
+    const { q } = await mount();
+    expect(q("[data-testid=crm-studio-link]")?.getAttribute("href")).toBe("/studio");
+    const planner = q("[data-testid=crm-app-planner]");
+    expect(planner?.getAttribute("href")).toBe("mailto:hello@example.test?subject=Add-on");
+    expect(planner?.getAttribute("data-app-state")).toBe("request");
+    expect(planner?.textContent).toContain("Trip planner: request add-on");
+    expect(q("[data-testid=crm-nav-group-studio-toggle]")?.textContent).toContain("Apps");
+  });
+
+  it("keeps the group when the person has no Content studio (the planner request stays)", async () => {
+    const { q } = await mount(null);
+    expect(q("[data-testid=crm-studio-link]")).toBeNull();
+    expect(q("[data-testid=crm-app-planner]")).not.toBeNull();
   });
 });

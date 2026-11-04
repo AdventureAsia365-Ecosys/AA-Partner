@@ -16,12 +16,41 @@ const SECURITY_HEADERS = [
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
 ];
 
+// AA-1036 (R3 slice 1, root ADR 0019 d6) — the Content studio moved into this app (app/(studio)). Its old links keep
+// working: the T-number slugs of AA-759 (the map mirrors ROUTES in app/_kit/local/studio/portalNav.tsx, guarded by
+// api/tests/unit/test_studio_guards.py) and its draft legal pages, which move from /terms and /privacy to /legal/*
+// (lib/studio/legal.ts: the CRM already owns /legal/terms). All 308; Next passes the query string through, so
+// ?piece= / ?tour_id= / ?resume_request_id= deep links keep working. Redirects run before proxy.ts.
+const STUDIO_REDIRECTS: { source: string; destination: string }[] = [
+  { source: "/portal/t1-rewrite", destination: "/portal/tours" },
+  { source: "/portal/t4-pool", destination: "/portal/tours/mine" },
+  // AA-671 — the Tour overview page became the Marketplace view ?view=mine (Next appends the request's query).
+  { source: "/portal/marketplace", destination: "/portal/tours?view=mine" },
+  { source: "/portal/tours/marketplace", destination: "/portal/tours?view=mine" },
+  { source: "/portal/t0-brand", destination: "/portal/brand" },
+  { source: "/portal/t7-planning", destination: "/portal/create/social" },
+  { source: "/portal/t8-angle-gate", destination: "/portal/create/write" },
+  { source: "/portal/t10-review", destination: "/portal/content" },
+  { source: "/portal/t11-publish", destination: "/portal/content/publish" },
+  { source: "/portal/t11-publish/connection", destination: "/portal/account/integrations" },
+  { source: "/portal/activity", destination: "/portal/account/activity" },
+  { source: "/portal/billing", destination: "/portal/account/billing" },
+  { source: "/portal/settings", destination: "/portal/account/settings" },
+  { source: "/portal/api", destination: "/portal/account/api" },
+  // Keep in step with LEGACY_LEGAL_REDIRECTS in lib/studio/legal.ts (tests/studio/merge.test.ts compares them).
+  { source: "/terms", destination: "/legal/partner-terms" },
+  { source: "/privacy", destination: "/legal/privacy" },
+];
+
 const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
   reactStrictMode: true,
   turbopack: { root: path.resolve(__dirname) },
   outputFileTracingRoot: path.resolve(__dirname),
+  async redirects() {
+    return STUDIO_REDIRECTS.map((r) => ({ ...r, permanent: true }));
+  },
   async headers() {
     return [
       { source: "/(.*)", headers: SECURITY_HEADERS },

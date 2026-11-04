@@ -36,6 +36,9 @@ export interface Session {
    *  sign-in for the agency picked. A later GET /auth/agency (which a sibling *.lumiguides.it.com page can trigger
    *  with the Lax cookie) finds no flag and records nothing. */
   si?: 1;
+  /** AA-1036 (an AA-1007 leftover): the person's own e-mail from the id token (lib/oauth.ts idTokenEmail), shown only
+   *  to that person (the studio's Account settings and access pages, through /bff/identity). Sealed like the rest. */
+  em?: string;
   exp: number;
 }
 

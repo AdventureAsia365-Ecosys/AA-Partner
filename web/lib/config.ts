@@ -29,6 +29,10 @@
 //                                the agency session key (shared with the Content studio) can never open one
 //                                Any staff value missing = the staff console is off (its pages say so); the agency
 //                                app is unaffected.
+//   WEB_CONTENT_HOME       "true" = the bare host "/" lands on the Content studio (/portal/dashboard), the CRM home
+//                          stays at /home (AA-1036, root ADR 0019 d7: a tenant always lands on Content). Anything else =
+//                          "/" is the CRM home, as before. Off until the cut-over sends /portal* to this app (R3 slice
+//                          2): until then the separate studio service links its "Open CRM" to "/".
 //   ENVIRONMENT            dev | stg | prod | test | local
 //   APP_VERSION, GIT_SHA   baked into the image, echoed by /healthz
 
@@ -45,8 +49,11 @@ export interface WebConfig {
   cognitoClientSecret: string;
   sessionSecret: string;
   contentStudioUrl: string;
-  /** AA-979 P2b: the CIS API origin of the client-host trip page; "" = not configured. */
+  /** AA-979 P2b: the CIS API origin of the client-host trip page; "" = not configured. AA-1036: also the CIS API the
+   *  merged Content studio exchanges tokens with and proxies to (empty = the studio says it is unavailable). */
   cisApiUrl: string;
+  /** AA-1036: "/" lands on the Content studio (WEB_CONTENT_HOME). */
+  contentHome: boolean;
   version: string;
   gitSha: string;
   /** Every identity value is present and valid: sign-in can run. */
@@ -150,6 +157,7 @@ export function loadConfig(env: Env = process.env): WebConfig {
     sessionSecret,
     contentStudioUrl,
     cisApiUrl,
+    contentHome: text(env, "WEB_CONTENT_HOME").toLowerCase() === "true",
     version: text(env, "APP_VERSION") || "unknown",
     gitSha: text(env, "GIT_SHA") || "unknown",
     authConfigured: problems.length === 0,

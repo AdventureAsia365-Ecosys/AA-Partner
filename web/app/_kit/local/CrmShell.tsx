@@ -7,6 +7,9 @@
 // S264: the titled groups (CRM, Money, Grow, Content studio) fold through the kit NavGroup + useNavGroups (core,
 // scope "crm-web"): folded unless the user opened them, the group of the current page open on arrival. Home and
 // Settings have no title and stay open. The CRM sidebar has no icon rail (only the phone drawer), so `rail` is unset.
+// AA-1036 (R3 slice 1, root ADR 0019 d7): the Content studio group is the app switcher ("Apps"): the Content studio
+// when the person may open it, and the add-ons the CRM cannot open yet with "Request add-on" (lib/apps.ts). Links
+// between apps stay plain <a> (a full page load).
 
 import {
   BookOpen,
@@ -19,12 +22,14 @@ import {
   Inbox,
   Kanban,
   LogOut,
+  Map as MapIcon,
   Megaphone,
   Menu,
   Moon,
   Palette,
   Percent,
   Plane,
+  Plus,
   Search,
   Settings,
   Sun,
@@ -76,6 +81,8 @@ export interface ShellProps {
   agencyName: string;
   agencyCount: number;
   contentStudioHref: string | null;
+  /** AA-1036: the "Request add-on" link of the Trip planner (lib/apps.ts requestHref). */
+  plannerRequestHref: string;
   locale: DateLocale;
   /** Dev / test: every agency is synthetic (ADR 0010 decision 3), so the agency card says so. */
   syntheticBadge: boolean;
@@ -83,7 +90,9 @@ export interface ShellProps {
 }
 
 function isActive(section: Section, pathname: string): boolean {
-  return section.path === "/" ? pathname === "/" : pathname === section.path || pathname.startsWith(`${section.path}/`);
+  // AA-1036: the CRM home is /home, and "/" too while it still serves the CRM home (WEB_CONTENT_HOME off).
+  if (section.key === "home") return pathname === "/" || pathname === section.path;
+  return pathname === section.path || pathname.startsWith(`${section.path}/`);
 }
 
 function NavLink({ section, dict, pathname, onNavigate }: { section: Section; dict: Dict; pathname: string; onNavigate: () => void }) {
@@ -141,6 +150,7 @@ export function CrmShell({
   agencyName,
   agencyCount,
   contentStudioHref,
+  plannerRequestHref,
   locale,
   syntheticBadge,
   children,
@@ -205,7 +215,6 @@ export function CrmShell({
 
           {GROUP_ORDER.map((group) => {
             if (group === "studio") {
-              if (!contentStudioHref) return null;
               return (
                 <NavGroup
                   key={group}
@@ -218,10 +227,17 @@ export function CrmShell({
                   headerStyle={groupHeaderStyle}
                   itemsStyle={{ gap: 0 }}
                 >
-                  <a href={contentStudioHref} data-crm="nav-item" data-testid="crm-studio-link">
-                    <Palette size={16} aria-hidden />
-                    <span>{dict["nav.studio"]}</span>
-                    <ExternalLink size={12} aria-hidden style={{ marginLeft: "auto", opacity: 0.7 }} />
+                  {contentStudioHref && (
+                    <a href={contentStudioHref} data-crm="nav-item" data-testid="crm-studio-link">
+                      <Palette size={16} aria-hidden />
+                      <span>{dict["nav.studio"]}</span>
+                      <ExternalLink size={12} aria-hidden style={{ marginLeft: "auto", opacity: 0.7 }} />
+                    </a>
+                  )}
+                  <a href={plannerRequestHref} data-crm="nav-item" data-testid="crm-app-planner" data-app-state="request">
+                    <MapIcon size={16} aria-hidden />
+                    <span>{dict["nav.planner.request"]}</span>
+                    <Plus size={12} aria-hidden style={{ marginLeft: "auto", opacity: 0.7 }} />
                   </a>
                 </NavGroup>
               );

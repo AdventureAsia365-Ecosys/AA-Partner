@@ -28,9 +28,9 @@ function request(path: string, init: { method?: string; cookie?: string; host?: 
   return new NextRequest(`${ORIGIN}${path}`, { method: init.method ?? "GET", headers });
 }
 
-function signedIn(tid: string | null = AGENCY, atExpIn = 1200): string {
+function signedIn(tid: string | null = AGENCY, atExpIn = 1200, em?: string): string {
   const now = Math.floor(Date.now() / 1000);
-  const s = sessionCookie(cfg, { at: fakeAccessToken(), atExp: now + atExpIn, iss: "i", sub: "sub-1", cid: "c", tid });
+  const s = sessionCookie(cfg, { at: fakeAccessToken(), atExp: now + atExpIn, iss: "i", sub: "sub-1", cid: "c", tid, ...(em ? { em } : {}) });
   const r = refreshCookie(cfg, "rt-1", "sub-1");
   return `${s.name}=${s.value}; ${r.name}=${r.value}`;
 }
@@ -70,6 +70,14 @@ describe("GET /bff/identity", () => {
     expect(Object.keys(body).sort()).toEqual(["display_name", "kind", "member_role"]);
     expect(JSON.stringify(body)).not.toContain(AGENCY);
     expect(JSON.stringify(body)).not.toContain("kim@example.test");
+  });
+
+  it("adds the person's own e-mail from the session (AA-1036), never the one the API answers", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...ME, email: "kim@example.test" })));
+    const body = await (await identityGet(request("/bff/identity", { cookie: signedIn(AGENCY, 1200, "mira.solano@example.test") }))).json();
+    expect(body).toEqual({ kind: "agency", display_name: "Lantern Bay Trips", member_role: "agent", email: "mira.solano@example.test" });
+    const none = await (await identityGet(request("/bff/identity", { cookie: signedIn(null, 1200, "mira.solano@example.test") }))).json();
+    expect(none).toEqual({ kind: "no_agency", email: "mira.solano@example.test" });
   });
 
   it("no session, or an expired access token: 200 signed_out, the API is not called", async () => {

@@ -30,6 +30,8 @@ export interface Me {
   member_role: Role;
   display_name: string | null;
   default_locale: DateLocale | null;
+  /** AA-1036: the agency holds the CRM add-on (the API's projection of tenant.entitlements.v1); absent on an older API. */
+  crm_entitled?: boolean;
 }
 
 export async function crmCall<T>(

@@ -93,11 +93,14 @@ class FakeDatabase(Database):
         return self.conn
 
 
-def test_me_route_goes_through_tenant_tx() -> None:
+@pytest.mark.parametrize("entitled", [True, False])
+def test_me_route_goes_through_tenant_tx(entitled: bool) -> None:
     pools = LocalPools()
     settings = pools.settings()
     conn = _conn(member={"member_id": MEMBER, "role": "owner"})
     conn.on("SELECT display_name, default_locale", {"display_name": "Lữ hành Sen Vàng", "default_locale": "vi-VN"})
+    # AA-1036: the app switcher's answer, read from the CIS projection (app.entitlements.crm_entitled).
+    conn.on("FROM crm.tenant_entitlement", entitled)
     app = create_app(settings, FakeDatabase(conn, settings), pools.verifier(settings))
     headers = {"Authorization": f"Bearer {pools.partner_web()}"}
     with TestClient(app) as c:
@@ -111,7 +114,9 @@ def test_me_route_goes_through_tenant_tx() -> None:
         "member_role": "owner",
         "display_name": "Lữ hành Sen Vàng",
         "default_locale": "vi-VN",
+        "crm_entitled": entitled,
     }
+    assert conn.sql("projected_at IS NOT NULL AND plan = 'free'") == [()]
 
 
 def test_me_for_a_non_member_is_403() -> None:

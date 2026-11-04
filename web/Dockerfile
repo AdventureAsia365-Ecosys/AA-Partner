@@ -9,6 +9,13 @@ COPY package.json package-lock.json .npmrc ./
 RUN npm ci --no-audit --no-fund
 COPY . .
 # The build never needs a secret: every runtime value is read from the environment of the task (lib/config.ts).
+# AA-1036 (the Content studio moved in): public build-time values only (inlined into the browser bundle): the Sentry
+# DSN of the browser SDK is public by design (empty = off). xlsx installs from cdn.sheetjs.com (package.json), so the
+# build needs that egress (the SBOM lists it).
+ARG NEXT_PUBLIC_SENTRY_DSN=""
+ARG GIT_SHA=unknown
+ENV NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN} \
+    NEXT_PUBLIC_GIT_SHA=${GIT_SHA}
 RUN NODE_OPTIONS=--max-old-space-size=1536 npm run build
 
 FROM node:22-alpine AS runtime
