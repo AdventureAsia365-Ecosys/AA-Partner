@@ -60,5 +60,5 @@ class ScriptedConn:
 
     # Pool interface: the same object hands itself out.
     @asynccontextmanager
-    async def acquire(self):
+    async def acquire(self, timeout: float | None = None):  # noqa: ASYNC109 — asyncpg Pool.acquire signature
         yield self

@@ -26,10 +26,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app import tenant_gate
 from app.audit_export.archive import AuditArchive, build_audit_archive
 from app.auth import identity_config
 from app.auth.ci import GithubDeployVerifier
 from app.auth.identity_verifier import MultiIssuerVerifier
+from app.bodylimit import BodyLimitMiddleware
 from app.booking.checker import BookingChecker
 from app.booking.client import BookingClient, BookingConfig
 from app.booking.products import ProductCache
@@ -244,6 +246,10 @@ def create_app(
     app.state.directory = directory
     app.state.mailer = mailer
     app.state.claim_limiter = FixedWindowLimiter(settings.rate_limit_claim_per_minute)
+    # AA-969 (CRM-37a): the agency fair share. Requests per member per agency per minute (app.auth.route_guard) and
+    # the per-agency share of the pool every tenant_tx() takes (app.tenant_gate).
+    app.state.member_limiter = FixedWindowLimiter(settings.rate_limit_member_per_minute)
+    tenant_gate.configure(settings.tenant_max_concurrency, settings.tenant_slot_wait_ms / 1000)
     # AA-942: the Booking line re-check a trip restore needs (CRM-19 plugs the B2B client in). AA-945 (CRM-17): the
     # e-mail sender behind the dispatcher gate (the agency's own mailbox; never AA's SES), the mail runtime (send-as
     # providers, system mailer for the mailbox alert, directory) and the ingest bucket (forward-in + history import).
@@ -280,6 +286,9 @@ def create_app(
     app.state.portal_unproven_limiter = FixedWindowLimiter(settings.rate_limit_intake_per_minute)
     app.add_exception_handler(ServiceError, service_error_handler)
     app.add_exception_handler(Exception, unhandled_error_handler)
+    # AA-969 (F1): the body ceiling runs before any route reads a body (FastAPI parses JSON before the class guard).
+    # Added first, so the request id middleware (added next) is the outer one and logs its 413 too.
+    app.add_middleware(BodyLimitMiddleware)
     app.add_middleware(RequestIdMiddleware)
     app.include_router(health.router)
     app.include_router(ci.router)

@@ -12,7 +12,10 @@ The guard, in order:
    (a ``cis-admin`` or ``breakglass`` token on ``/crm/v1``, a partner token on ``/crm/ops/v1``, ...);
 4. the class needs a group and the token holds none of them -> **403** ``missing_group``;
 5. AA-1019 (root ADR 0006a A10c): the Dev-only CRM staff E2E identity outside ``dev`` / ``test`` / ``local`` ->
-   **403** ``e2e_read_only`` (the token cannot exist elsewhere: this is the second lock).
+   **403** ``e2e_read_only`` (the token cannot exist elsewhere: this is the second lock);
+6. AA-969 (CRM-37a): on the agency class only, more than ``RATE_LIMIT_MEMBER_PER_MINUTE`` requests in a minute by
+   one member for one agency (``iss`` + ``sub`` + ``X-AA-Tenant-Id``, ``app.state.member_limiter``) -> **429**
+   ``rate_limited``. The header is part of the key, so a caller naming another agency only spends their own count.
 
 Then the route gets a :class:`Caller` (no e-mail or name: ids only, plus the ``e2e_read_only`` flag of the Dev-only
 E2E CIS admin, :mod:`app.auth.e2e_staff`). Tenant membership is not checked here: the agency
@@ -112,11 +115,24 @@ def guard_for(route_class: RouteClass) -> Callable[..., Awaitable[Caller]]:
             e2e_read_only=issuer_kind == WORKFORCE and e2e_staff.is_e2e_cis_admin(principal.email),
             e2e_synthetic_only=e2e_crm_staff,
         )
+        if route_class.name == "agency":
+            _member_rate_limit(request, caller)
         request.state.caller = caller
         return caller
 
     guard.route_class = route_class  # type: ignore[attr-defined] — read by the route-coverage test
     return guard
+
+
+def _member_rate_limit(request: Request, caller: Caller) -> None:
+    """AA-969: one member's requests for one agency per minute (``app.state.member_limiter``; absent = off)."""
+    limiter = getattr(request.app.state, "member_limiter", None)
+    if limiter is None:
+        return
+    key = f"{caller.iss}|{caller.sub}|{request.headers.get('x-aa-tenant-id', '')[:64]}"
+    if not limiter.allow(key):
+        log.warning("route_guard_member_rate_limited class=%s", caller.route_class)
+        raise HTTPException(status_code=429, detail="rate_limited", headers={"Retry-After": str(int(limiter.window_s))})
 
 
 def _environment(request: Request) -> str:

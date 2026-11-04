@@ -99,10 +99,11 @@ from dataclasses import dataclass, field
 
 import asyncpg
 
+from app import tenant_gate
 from app.audit import INSERT_SQL, AuditEvent, current_request_id
 from app.auth import e2e_staff
 from app.auth.route_guard import Caller
-from app.errors import Conflict, Forbidden, NotFound
+from app.errors import RETRY_AFTER_DB_BUSY_S, Conflict, DatabaseBusy, Forbidden, NotFound
 from app.margin import current_member_role
 from app.observability import reveal_meter
 from app.permissions import Action, may
@@ -361,6 +362,29 @@ class IntakeForm:
     privacy_notice_url: str | None
 
 
+# AA-969 (F2): how long a request waits for one of the task's pooled connections before 503 ``db_busy`` (the pool
+# queue is otherwise unbounded). Above the gate's slot wait: a request that got its agency slot should normally get a
+# connection too.
+POOL_ACQUIRE_TIMEOUT_S = 10.0
+
+
+@asynccontextmanager
+async def _acquire(pool: asyncpg.Pool) -> AsyncIterator[asyncpg.Connection]:
+    """``pool.acquire()`` with :data:`POOL_ACQUIRE_TIMEOUT_S`; 503 ``db_busy`` (``Retry-After``) when it runs out."""
+    try:
+        cm = pool.acquire(timeout=POOL_ACQUIRE_TIMEOUT_S)
+        conn = await cm.__aenter__()
+    except TimeoutError:
+        raise DatabaseBusy("db_busy", RETRY_AFTER_DB_BUSY_S, "every database connection is busy") from None
+    try:
+        yield conn
+    except BaseException as exc:
+        if not await cm.__aexit__(type(exc), exc, exc.__traceback__):
+            raise
+    else:
+        await cm.__aexit__(None, None, None)
+
+
 @asynccontextmanager
 async def tenant_tx(
     pool: asyncpg.Pool,
@@ -375,7 +399,9 @@ async def tenant_tx(
     if reader_role is not None and reader_role not in READER_ROLES:
         raise ValueError(f"not a CRM reader role: {reader_role!r}")
     pending: Exception | None = None
-    async with pool.acquire() as conn, conn.transaction():
+    # AA-969 (F2): the agency's share of the pool first (app.tenant_gate), then a bounded wait for a connection.
+    gate = tenant_gate.GATE
+    async with gate.slot(caller.iss, caller.sub, tenant_id), _acquire(pool) as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
         status = await conn.fetchval(TENANT_SQL, tenant_id)
         if status is None:
@@ -389,6 +415,7 @@ async def tenant_tx(
         role = member["role"]
         if role not in MEMBER_ROLES:  # the CHECK makes this impossible; refuse rather than trust it
             raise Forbidden("not_a_member")
+        gate.mark_member(caller.iss, caller.sub, tenant_id)
         await conn.execute("SELECT set_config('app.member_role', $1, true)", role)
         await conn.execute("SELECT set_config('app.actor', $1, true)", f"member:{member['member_id']}")
         if reader_role is not None:
