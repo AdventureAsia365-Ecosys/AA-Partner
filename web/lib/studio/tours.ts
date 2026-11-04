@@ -5,19 +5,22 @@
 // (AA-CIS-App api/routers/v1_tours.py, v1_marketplace.py).
 
 import type { UsageMeter } from "./account";
+import { translator, type Lang } from "@/app/_kit/core/i18n";
+import { TOURS_LIB_MESSAGES } from "./lib.messages";
+
+const tr = (lang: Lang) => translator(TOURS_LIB_MESSAGES, lang);
 
 // ── Formatting ──────────────────────────────────────────────────────────────────────────────────
 
 /** AA-760 — a tour duration for people, one casing everywhere ("14 DAYS" / "7 days" → "14 days" / "7 days";
  *  "15 DAYS 14 NIGHTS" → "15 days"). A string with no leading number is only lower-cased. (Moved here from
  *  _components/ui.tsx by AA-671; lib/studio/format.ts re-exports it.) */
-export function fmtDuration(raw: string | null | undefined): string {
+export function fmtDuration(raw: string | null | undefined, lang: Lang = "en"): string {
   if (!raw) return "";
   const m = /(\d+)\s*(day|night)/i.exec(raw);
   if (!m) return raw.trim().toLowerCase();
   const n = Number(m[1]);
-  const unit = m[2].toLowerCase();
-  return `${n} ${unit}${n === 1 ? "" : "s"}`;
+  return m[2].toLowerCase() === "night" ? tr(lang)("nights", n) : tr(lang)("days", n);
 }
 
 /** A JSON value the API may store as a JSON string, or as a JSON string of a JSON string; null when unreadable. */
@@ -98,9 +101,9 @@ export function fmtFromPrice(p: FromPrice | null | undefined): string | null {
 }
 
 /** The caveat under every "from" price, the TripPlanner tour page's sentence (party size from the contract row). */
-export function fromPriceNote(p: FromPrice): string {
+export function fromPriceNote(p: FromPrice, lang: Lang = "en"): string {
   const pax = Number.isInteger(p.pax) && p.pax > 0 ? p.pax : 2;
-  return `Suggested price for ${pax} traveller${pax === 1 ? "" : "s"}. Your advisor confirms the final price.`;
+  return tr(lang)("priceNote", pax);
 }
 
 /** Whole US dollars with a thousands separator ("$1,225"). */
@@ -125,47 +128,57 @@ export function isRecentlyAdded(publishedAt: string | null | undefined, now: Dat
 
 export type DurationFilter = "all" | "1-3" | "4-7" | "8+";
 
-export const DURATION_OPTIONS: { value: DurationFilter; label: string }[] = [
-  { value: "all", label: "Any length" },
-  { value: "1-3", label: "1–3 days" },
-  { value: "4-7", label: "4–7 days" },
-  { value: "8+", label: "8+ days" },
-];
+const DURATION_KEYS = [
+  { value: "all", key: "durAll" },
+  { value: "1-3", key: "dur13" },
+  { value: "4-7", key: "dur47" },
+  { value: "8+", key: "dur8" },
+] as const;
+
+/** The duration filter's options in the UI language. */
+export function durationOptions(lang: Lang = "en"): { value: DurationFilter; label: string }[] {
+  return DURATION_KEYS.map((o) => ({ value: o.value, label: tr(lang)(o.key) }));
+}
+
+export const DURATION_OPTIONS = durationOptions("en");
 
 // ── Activity / intensity facets (CIS GET /v1/tours/pool `activities`, `intensity`, `facets`) ──────────────────────
 
 /** English names of the CIS graph activity codes (geo.tour_place activity vocabulary). An unknown code (CIS added
  *  one) still reads: underscores become spaces, first letter upper case. */
-export const ACTIVITY_LABELS: Record<string, string> = {
-  adventure_sport: "Adventure sports",
-  cultural_heritage: "Culture & heritage",
-  culinary: "Food & cooking",
-  local_immersion: "Local life",
-  trekking: "Trekking & hiking",
-  water_activities: "On the water",
-  wellness_relaxation: "Wellness & relaxation",
-  wildlife_nature: "Wildlife & nature",
-};
+const ACTIVITY_KEYS = {
+  adventure_sport: "actAdventure",
+  cultural_heritage: "actCulture",
+  culinary: "actFood",
+  local_immersion: "actLocal",
+  trekking: "actTrekking",
+  water_activities: "actWater",
+  wellness_relaxation: "actWellness",
+  wildlife_nature: "actWildlife",
+} as const;
+
+export const ACTIVITY_LABELS: Record<string, string> = Object.fromEntries(
+  Object.entries(ACTIVITY_KEYS).map(([code, key]) => [code, TOURS_LIB_MESSAGES.en[key]]),
+);
 
 /** The tenant intensity names CIS answers (the hardest part of the tour), easiest first. */
-export const INTENSITY_LABELS: Record<string, string> = {
-  easy: "Easy",
-  moderate: "Moderate",
-  challenging: "Challenging",
-  strenuous: "Strenuous",
-};
+const INTENSITY_KEYS = { easy: "intEasy", moderate: "intModerate", challenging: "intChallenging", strenuous: "intStrenuous" } as const;
+
+export const INTENSITY_LABELS: Record<string, string> = Object.fromEntries(
+  Object.entries(INTENSITY_KEYS).map(([code, key]) => [code, TOURS_LIB_MESSAGES.en[key]]),
+);
 
 function humanize(code: string): string {
   const s = code.replace(/_/g, " ").trim();
   return s ? s[0].toUpperCase() + s.slice(1) : s;
 }
 
-export function activityLabel(code: string): string {
-  return ACTIVITY_LABELS[code] ?? humanize(code);
+export function activityLabel(code: string, lang: Lang = "en"): string {
+  return Object.hasOwn(ACTIVITY_KEYS, code) ? tr(lang)(ACTIVITY_KEYS[code as keyof typeof ACTIVITY_KEYS]) : humanize(code);
 }
 
-export function intensityLabel(code: string): string {
-  return INTENSITY_LABELS[code] ?? humanize(code);
+export function intensityLabel(code: string, lang: Lang = "en"): string {
+  return Object.hasOwn(INTENSITY_KEYS, code) ? tr(lang)(INTENSITY_KEYS[code as keyof typeof INTENSITY_KEYS]) : humanize(code);
 }
 
 /** The select options for a facet: the values the API lists (`facets`), else the known ones; labels sorted by the
@@ -193,12 +206,19 @@ export function coverSrcSet(small: string | null | undefined, large: string | nu
 /** "Recently added" filter: published in the last N days (`added_within_days`), or any time. */
 export type AddedFilter = "all" | "14" | "30" | "90";
 
-export const ADDED_OPTIONS: { value: AddedFilter; label: string }[] = [
-  { value: "all", label: "Added any time" },
-  { value: "14", label: "Added in the last 14 days" },
-  { value: "30", label: "Added in the last 30 days" },
-  { value: "90", label: "Added in the last 90 days" },
-];
+const ADDED_KEYS = [
+  { value: "all", key: "addedAll" },
+  { value: "14", key: "added14" },
+  { value: "30", key: "added30" },
+  { value: "90", key: "added90" },
+] as const;
+
+/** The "recently added" filter's options in the UI language. */
+export function addedOptions(lang: Lang = "en"): { value: AddedFilter; label: string }[] {
+  return ADDED_KEYS.map((o) => ({ value: o.value, label: tr(lang)(o.key) }));
+}
+
+export const ADDED_OPTIONS = addedOptions("en");
 
 export interface CatalogFilters {
   search: string;
@@ -244,8 +264,8 @@ export function poolQuery(f: CatalogFilters, page: number, pageSize = CATALOG_PA
 }
 
 /** The card tags: the tour's activities (CIS graph) when it has any, else its theme tags (SEO keywords). */
-export function cardTags(activities: string[] | null | undefined, themes: string[], max = 3): string[] {
-  const acts = (activities ?? []).filter((a) => typeof a === "string" && a.trim() !== "").map(activityLabel);
+export function cardTags(activities: string[] | null | undefined, themes: string[], max = 3, lang: Lang = "en"): string[] {
+  const acts = (activities ?? []).filter((a) => typeof a === "string" && a.trim() !== "").map((a) => activityLabel(a, lang));
   return (acts.length > 0 ? acts : themes).slice(0, max);
 }
 
@@ -271,20 +291,20 @@ export interface QuotaNote {
 
 /** What starting `count` rewrites means for the plan, in words, from the Billing meter (lib/account usageMeter).
  *  Only what CIS does (AA-640): a rewrite past the quota still runs and is billed as overage; no plan = not billed. */
-export function rewriteQuotaNote(m: UsageMeter | null, count = 1): QuotaNote | null {
+export function rewriteQuotaNote(m: UsageMeter | null, count = 1, lang: Lang = "en"): QuotaNote | null {
   if (!m) return null;
+  const t = tr(lang);
   const n = Math.max(1, Math.floor(count));
-  const rate = m.ratePerTour ? ` at ${fmtUsdWhole(m.ratePerTour)} each` : "";
-  if (m.state === "no_plan") return { tone: "neutral", text: "No plan attached yet: rewrites are not billed." };
-  if (m.state === "unlimited") return { tone: "neutral", text: "Your plan has no rewrite limit." };
+  const rate = m.ratePerTour ? t("rate", fmtUsdWhole(m.ratePerTour)) : "";
+  if (m.state === "no_plan") return { tone: "neutral", text: t("quotaNoPlan") };
+  if (m.state === "unlimited") return { tone: "neutral", text: t("quotaUnlimited") };
   const left = m.remaining ?? 0;
   if (m.state === "over" || left === 0) {
-    return { tone: "danger", text: `Your plan's rewrites are used up: ${n === 1 ? "this rewrite is" : `these ${n} rewrites are`} billed as overage${rate}.` };
+    return { tone: "danger", text: n === 1 ? t("quotaUsedUpOne", rate) : t("quotaUsedUpMany", n, rate) };
   }
   if (n > left) {
-    const extra = n - left;
-    return { tone: "warning", text: `${left} rewrite${left === 1 ? "" : "s"} left this period: ${extra} of these ${n} ${extra === 1 ? "is" : "are"} billed as overage${rate}.` };
+    return { tone: "warning", text: t("quotaPartly", left, n - left, n, rate) };
   }
   const tone = m.state === "near" ? "warning" : "neutral";
-  return { tone, text: `${left} rewrite${left === 1 ? "" : "s"} left this period.` };
+  return { tone, text: t("quotaLeft", left) };
 }

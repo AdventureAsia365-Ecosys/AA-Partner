@@ -13,7 +13,8 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Clock, Gauge, MapPin } from "lucide-react";
-import { Button, Drawer, K, formatDate, sans } from "@/app/_kit";
+import { Button, Drawer, K, sans, useFormat, useLang, useT, type Translator, type UiLang } from "@/app/_kit";
+import { MARKET_MESSAGES } from "./marketplace.messages";
 import { ROUTES } from "@/app/_kit/local/studio/portalNav";
 import { activityLabel, fmtDuration, intensityLabel, parseStringList, type QuotaNote } from "@/lib/studio/tours";
 import { servedTitle, workClosed } from "../ServedBadge";
@@ -71,6 +72,8 @@ export function TourDrawer({ tour, status, quota, busy, onClose, onRewrite }: {
 function DrawerActions({ tour, status, quota, busy, onRewrite }: {
   tour: PoolTour; status: CardStatus; quota: QuotaNote | null; busy: boolean; onRewrite: (t: PoolTour) => void;
 }) {
+  const t = useT(MARKET_MESSAGES);
+  const lang = useLang();
   const router = useRouter();
   const href = myToursHref(tour.tour_id);
   const go = () => router.push(href);
@@ -79,26 +82,26 @@ function DrawerActions({ tour, status, quota, busy, onRewrite }: {
   let actions: React.ReactNode;
   // A failed rewrite of a closed tour cannot be retried either (POST /retry answers the same 409): no "Retry" offer.
   if (closed && (status === null || !isActiveWork(status))) {
-    actions = status !== null ? <Button variant="primary" onClick={go}>Open in My Tours</Button> : null;
+    actions = status !== null ? <Button variant="primary" onClick={go}>{t("openInMyTours")}</Button> : null;
   } else if (status === null) {
     actions = (
       <Button variant="primary" disabled={busy} onClick={() => onRewrite(tour)}>
-        {busy ? "Starting rewrite…" : "Rewrite this tour"}
+        {busy ? t("startingRewrite") : t("rewriteThis")}
       </Button>
     );
   } else if (status === "done") {
     actions = (
       <>
         <Button variant="secondary" disabled={busy} onClick={() => onRewrite(tour)}>
-          {busy ? "Starting…" : "Rewrite again"}
+          {busy ? t("starting") : t("rewriteAgain")}
         </Button>
-        <Button variant="primary" onClick={go}>Open in My Tours</Button>
+        <Button variant="primary" onClick={go}>{t("openInMyTours")}</Button>
       </>
     );
   } else if (isActiveWork(status)) {
-    actions = <Button variant="secondary" onClick={go}>Follow it in My Tours</Button>;
+    actions = <Button variant="secondary" onClick={go}>{t("followInMyTours")}</Button>;
   } else {
-    actions = <Button variant="primary" onClick={go}>Retry in My Tours</Button>;
+    actions = <Button variant="primary" onClick={go}>{t("retryInMyTours")}</Button>;
   }
   // Quota note only where a rewrite can start from here.
   const showQuota = !closed && (status === null || status === "done");
@@ -106,7 +109,7 @@ function DrawerActions({ tour, status, quota, busy, onRewrite }: {
     <div data-testid="marketplace-drawer-actions" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", width: "100%" }}>
       <div style={{ flex: "1 1 200px", minWidth: 0 }}>
         {showQuota && <QuotaLine note={quota} />}
-        {closed && <div data-testid="marketplace-served-note" style={{ fontSize: 12, color: K.amber, lineHeight: 1.45, fontFamily: sans }}>{closedSentence(tour)}</div>}
+        {closed && <div data-testid="marketplace-served-note" style={{ fontSize: 12, color: K.amber, lineHeight: 1.45, fontFamily: sans }}>{closedSentence(tour, t, lang)}</div>}
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>{actions}</div>
     </div>
@@ -115,19 +118,20 @@ function DrawerActions({ tour, status, quota, busy, onRewrite }: {
 
 /** Why a new rewrite is closed: the served notice's sentence; a supersede waiting for its new version has no notice
  *  (invisible to the tenant, ADR 0015 Q2), so it reads neutral. */
-function closedSentence(tour: PoolTour): string {
-  return servedTitle(tour)
-    ?? (tour.served_reason === "superseded_pending"
-      ? "A new version of this tour is on the way: you can rewrite it once it is out."
-      : "New rewrites of this tour are closed for now.");
+function closedSentence(tour: PoolTour, t: Translator<typeof MARKET_MESSAGES.en>, lang: UiLang): string {
+  return servedTitle(tour, lang)
+    ?? (tour.served_reason === "superseded_pending" ? t("closedSuperseded") : t("closedForNow"));
 }
 
 const ITINERARY_PREVIEW_PX = 168;
 
 export function TourDetail({ tour, status }: { tour: PoolTour; status: CardStatus }) {
+  const t = useT(MARKET_MESSAGES);
+  const lang = useLang();
+  const { formatDate } = useFormat();
   const [fullItinerary, setFullItinerary] = useState(false);
   const highlights = parseStringList(tour.aa_highlights);
-  const duration = fmtDuration(tour.duration);
+  const duration = fmtDuration(tour.duration, lang);
   const activities = (tour.activities ?? []).filter((a) => typeof a === "string" && a.trim() !== "");
   const coverSmall = tour.cover_image_url ?? null;
   const coverLarge = tour.cover_image_large_url ?? null;
@@ -143,13 +147,13 @@ export function TourDetail({ tour, status }: { tour: PoolTour; status: CardStatu
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {tour.country && <Chip icon={<MapPin size={11} aria-hidden />}>{tour.country}</Chip>}
           {duration && <Chip icon={<Clock size={11} aria-hidden />}>{duration}</Chip>}
-          {tour.intensity && <Chip icon={<Gauge size={11} aria-hidden />}>Intensity: {intensityLabel(tour.intensity)}</Chip>}
+          {tour.intensity && <Chip icon={<Gauge size={11} aria-hidden />}>{t("intensity", intensityLabel(tour.intensity, lang))}</Chip>}
         </div>
         {/* AA-1029: AA-Booking's "from" price (price.from.v1); nothing without one. */}
         <FromPriceLine price={tour.from_price} testId="marketplace-drawer-price" />
         {activities.length > 0 && (
           <div data-testid="marketplace-drawer-activities" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {activities.map((a) => <Chip key={a} tone="accent">{activityLabel(a)}</Chip>)}
+            {activities.map((a) => <Chip key={a} tone="accent">{activityLabel(a, lang)}</Chip>)}
           </div>
         )}
         {tour.aa_subtitle && <div style={{ fontSize: 13.5, color: K.ink3, lineHeight: 1.5 }}>{tour.aa_subtitle}</div>}
@@ -157,13 +161,13 @@ export function TourDetail({ tour, status }: { tour: PoolTour; status: CardStatu
       </div>
 
       {tour.aa_summary && (
-        <Section label="Summary">
+        <Section label={t("summary")}>
           <p style={{ margin: 0, fontSize: 13.5, color: K.body, lineHeight: 1.65 }}>{tour.aa_summary}</p>
         </Section>
       )}
 
       {highlights.length > 0 && (
-        <Section label="Highlights">
+        <Section label={t("highlights")}>
           <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 6 }}>
             {highlights.map((h, i) => (
               <li key={i} style={{ display: "flex", gap: 8, fontSize: 13, color: K.body, lineHeight: 1.5 }}>
@@ -175,7 +179,7 @@ export function TourDetail({ tour, status }: { tour: PoolTour; status: CardStatu
       )}
 
       {tour.aa_itineraries && (
-        <Section label="Itinerary">
+        <Section label={t("itinerary")}>
           <div style={{
             fontSize: 13, color: K.body, lineHeight: 1.7, whiteSpace: "pre-wrap", overflowWrap: "break-word",
             maxHeight: fullItinerary ? "none" : ITINERARY_PREVIEW_PX, overflow: "hidden",
@@ -186,14 +190,14 @@ export function TourDetail({ tour, status }: { tour: PoolTour; status: CardStatu
           </div>
           <div style={{ marginTop: 8 }}>
             <Button variant="ghost" size="sm" onClick={() => setFullItinerary((v) => !v)}>
-              {fullItinerary ? "Show less" : "Show full itinerary"}
+              {fullItinerary ? t("showLess") : t("showFullItinerary")}
             </Button>
           </div>
         </Section>
       )}
 
       {(tour.seo_title || tour.seo_meta) && (
-        <Section label="Search snippet">
+        <Section label={t("searchSnippet")}>
           <div style={{ background: K.bg, border: `1px solid ${K.line2}`, borderRadius: 8, padding: "10px 14px", display: "flex", flexDirection: "column", gap: 4 }}>
             {tour.seo_title && <div style={{ fontSize: 13.5, fontWeight: 600, color: K.ink, lineHeight: 1.4 }}>{tour.seo_title}</div>}
             {tour.seo_meta && <div style={{ fontSize: 12.5, color: K.muted, lineHeight: 1.5 }}>{tour.seo_meta}</div>}
@@ -202,7 +206,7 @@ export function TourDetail({ tour, status }: { tour: PoolTour; status: CardStatu
       )}
 
       {tour.published_at && (
-        <div style={{ fontSize: 12, color: K.muted }}>Published by Adventure Asia on {formatDate(tour.published_at)}</div>
+        <div style={{ fontSize: 12, color: K.muted }}>{t("publishedOn", formatDate(tour.published_at))}</div>
       )}
     </div>
   );

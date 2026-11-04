@@ -13,7 +13,9 @@ import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { FolderOpen } from "lucide-react";
-import { Badge, EmptyState, ErrorState, K, sans } from "@/app/_kit";
+import { Badge, EmptyState, ErrorState, K, sans, useLang, useT } from "@/app/_kit";
+import { fmtCount } from "@/lib/studio/format";
+import { MARKET_MESSAGES } from "./marketplace.messages";
 import { useCatalog } from "@/app/_kit/local/studio/useShellData";
 import { fmtDuration, fmtUsdWhole } from "@/lib/studio/tours";
 import { WorkStatusBadge, tourWorkStatus, type WorkStatus } from "../workStatus";
@@ -29,46 +31,48 @@ function fromRollupState(s: string): WorkStatus {
 }
 
 export function MyCatalog() {
+  const t = useT(MARKET_MESSAGES);
+  const lang = useLang();
   const router = useRouter();
   const { data, isPending, isError, refetch } = useQuery({ queryKey: PICKED_KEY, queryFn: fetchPicked });
   const { versions } = useCatalog();
   const byVersion = useMemo(() => new Map((versions ?? []).map((v) => [v.id, v])), [versions]);
 
-  if (isPending) return <CardGridSkeleton count={4} label="Loading your tours" />;
+  if (isPending) return <CardGridSkeleton count={4} label={t("loadingYourTours")} />;
   if (isError || !data) {
-    return <ErrorState message="Couldn't load your tours. Something went wrong reaching your tour data." onRetry={() => refetch()} />;
+    return <ErrorState message={t("loadYoursError")} onRetry={() => refetch()} />;
   }
   if (data.tours.length === 0) {
     // AA-760 — an empty view is the empty state alone, with its next step (no "0 tours" next to it).
     return (
-      <EmptyState icon={<FolderOpen size={30} strokeWidth={1.5} />} title="Nothing here yet"
-        description="Once you rewrite your first tour, it shows up here with its price and status."
-        action={<LinkButton href="/portal/tours" testId="empty-state-cta">Browse tours</LinkButton>} />
+      <EmptyState icon={<FolderOpen size={30} strokeWidth={1.5} />} title={t("nothingYet")}
+        description={t("nothingYetSub")}
+        action={<LinkButton href="/portal/tours" testId="empty-state-cta">{t("browseTours")}</LinkButton>} />
     );
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, fontFamily: sans }}>
       <div style={{ display: "flex", gap: 28, flexWrap: "wrap" }} data-testid="marketplace-mine-stats">
-        <Stat label="Tours in your catalog" value={data.total_tours} />
-        {data.posts_per_week != null && data.posts_per_week > 0 && <Stat label="Posts planned / week" value={data.posts_per_week} />}
+        <Stat label={t("statTours")} value={fmtCount(data.total_tours, lang)} />
+        {data.posts_per_week != null && data.posts_per_week > 0 && <Stat label={t("statPosts")} value={fmtCount(data.posts_per_week, lang)} />}
       </div>
       <div style={GRID_STYLE} data-testid="marketplace-mine-grid">
-        {data.tours.map((t) => {
-          const v = byVersion.get(t.version_id);
-          const status = v ? tourWorkStatus(v) : fromRollupState(t.status);
-          const priced = t.price_available && t.price_usd != null;
+        {data.tours.map((tour) => {
+          const v = byVersion.get(tour.version_id);
+          const status = v ? tourWorkStatus(v) : fromRollupState(tour.status);
+          const priced = tour.price_available && tour.price_usd != null;
           return (
-            <TourCard key={t.published_tour_id} testId="marketplace-mine-card"
-              name={t.name}
-              country={t.country}
-              duration={fmtDuration(t.duration)}
-              price={priced ? fmtUsdWhole(t.price_usd as number) : null}
-              priceSub={priced ? "estimated" : undefined}
+            <TourCard key={tour.published_tour_id} testId="marketplace-mine-card"
+              name={tour.name}
+              country={tour.country}
+              duration={fmtDuration(tour.duration, lang)}
+              price={priced ? fmtUsdWhole(tour.price_usd as number) : null}
+              priceSub={priced ? t("estimated") : undefined}
               // Every tour here is in My Tours: show the work status itself ("Ready", "Writing"), not "In My Tours".
               status={null}
-              extraBadge={<><Badge tone="info" dot={false}>v{t.version_number}</Badge><WorkStatusBadge status={status} /></>}
-              onOpen={() => router.push(myToursHref(t.tour_id))}
+              extraBadge={<><Badge tone="info" dot={false}>v{tour.version_number}</Badge><WorkStatusBadge status={status} /></>}
+              onOpen={() => router.push(myToursHref(tour.tour_id))}
             />
           );
         })}
@@ -77,11 +81,11 @@ export function MyCatalog() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <div style={{ fontSize: 11, fontWeight: 600, color: K.muted, textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 4 }}>{label}</div>
-      <div style={{ fontSize: 22, fontWeight: 600, color: K.ink, fontVariantNumeric: "tabular-nums" }}>{value.toLocaleString("en-US")}</div>
+      <div style={{ fontSize: 22, fontWeight: 600, color: K.ink, fontVariantNumeric: "tabular-nums" }}>{value}</div>
     </div>
   );
 }

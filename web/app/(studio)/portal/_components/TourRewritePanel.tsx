@@ -16,7 +16,8 @@
 // already refetches every 5 s while any version is being written, and hands the row in (`version`).
 
 import { CheckCircle2, Download, ExternalLink, RotateCcw } from "lucide-react";
-import { AiNotice, Button, K } from "@/app/_kit";
+import { AiNotice, Button, K, translator, useT, type UiLang } from "@/app/_kit";
+import { REWRITE_MESSAGES } from "./tours.messages";
 import LiveWriter from "./LiveWriter";
 import { WriterDrawer, type WatchItem, type WatchOutcome } from "./WriterPanel";
 import { fetchVersionDetail, type Version } from "./catalogApi";
@@ -31,7 +32,6 @@ export interface TourRewriteTarget {
 }
 
 /** The channel a T2 rewrite writes for: the tenant's own tour catalog. */
-export const TOUR_REWRITE_CHANNEL = "Tour catalog";
 
 export type RewriteState = "starting" | "writing" | "failed" | "ready";
 
@@ -43,16 +43,17 @@ export function rewriteState(version: Pick<Version, "status" | "edit_source" | "
 }
 
 /** The watch item for a tour rewrite closed mid-write (useWriteWatcher in WriterPanel.tsx). */
-export function watchTourRewrite(t: TourRewriteTarget): WatchItem {
+export function watchTourRewrite(t: TourRewriteTarget, lang: UiLang = "en"): WatchItem {
+  const m = translator(REWRITE_MESSAGES, lang);
   return {
     id: t.versionId, group: t.versionId, title: t.title,
     check: () => fetchVersionDetail(t.versionId).then((v): WatchOutcome => {
       const s = rewriteState(v);
       return s === "ready" ? "ready" : s === "failed" ? "failed" : "running";
     }),
-    readyText: `"${t.title}" is ready — find it in My Tours.`,
-    failedText: `Rewriting "${t.title}" didn't finish — open it in My Tours to retry.`,
-    slowText: `"${t.title}" is still being written — it will show up in My Tours.`,
+    readyText: m("readyText", t.title),
+    failedText: m("failedText", t.title),
+    slowText: m("slowText", t.title),
   };
 }
 
@@ -72,6 +73,7 @@ export function TourRewritePanel({
   onOpenResult: () => void;
   onExportDocx: () => void;
 }) {
+  const t = useT(REWRITE_MESSAGES);
   const state = rewriteState(version);
   const running = state === "starting" || state === "writing";
   const ready = state === "ready";
@@ -82,18 +84,18 @@ export function TourRewritePanel({
       onClose={() => onClose(running)}
       title={target?.title ?? ""}
       context={target ? [
-        { label: "Rewriting in", value: target.language },
-        { label: "for", value: TOUR_REWRITE_CHANNEL },
+        { label: t("rewritingIn"), value: target.language },
+        { label: t("for"), value: t("channel") },
       ] : []}
       footer={ready && target ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%", minWidth: 0 }}>
           <AiNotice variant="publisher" />
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
             <Button size="sm" variant="secondary" disabled={exporting} onClick={onExportDocx}>
-              <Download size={12} /> {exporting ? "Exporting…" : "Export DOCX"}
+              <Download size={12} /> {exporting ? t("exporting") : t("exportDocx")}
             </Button>
             <Button size="sm" variant="primary" onClick={onOpenResult}>
-              <ExternalLink size={12} /> Open in My Tours
+              <ExternalLink size={12} /> {t("openInMyTours")}
             </Button>
           </div>
         </div>
@@ -101,19 +103,19 @@ export function TourRewritePanel({
     >
       {target && state === "failed" && (
         <div data-testid="tour-rewrite-failed" style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-start" }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: K.ink }}>Writing didn&apos;t finish</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: K.ink }}>{t("didntFinish")}</div>
           <div style={{ fontSize: 12.5, color: K.muted }}>
-            Something went wrong while writing this tour. Retrying does not use another rewrite from your plan.
+            {t("didntFinishSub")}
           </div>
           <Button size="sm" variant="primary" disabled={retrying} onClick={onRetry}>
-            <RotateCcw size={12} /> {retrying ? "Retrying…" : "Retry writing"}
+            <RotateCcw size={12} /> {retrying ? t("retrying") : t("retryWriting")}
           </Button>
         </div>
       )}
       {target && ready && (
         <div data-testid="tour-rewrite-ready" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: K.body }}>
           <CheckCircle2 size={15} color={K.success} />
-          <span>Your new version is ready and saved in My Tours, where you can edit and export it.</span>
+          <span>{t("readyLine")}</span>
         </div>
       )}
       {target && state !== "failed" && (
@@ -122,11 +124,10 @@ export function TourRewritePanel({
               retried job starts from a fresh view. Once ready it keeps the last snapshot (the
               finished text). */}
           <LiveWriter key={`${target.versionId}:${retries}`} kind="tour" jobId={target.versionId}
-            title="Writing your tour" compact active={running} untilInactive />
+            title={t("writingYourTour")} compact active={running} untilInactive />
           {running && (
             <div style={{ fontSize: 12, color: K.muted }}>
-              Usually a few minutes — longer when the checks ask for a revision. You can close this panel;
-              the rewrite keeps going and you will get a notice when it is ready.
+              {t("runningNote")}
             </div>
           )}
         </>
