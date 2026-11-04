@@ -1,5 +1,6 @@
-"""AA-969 (CRM-37a) on PostgreSQL 15: the fair claim per agency (card R "a noisy tenant cannot push another tenant past
-the SLO", for crm.job) and card E "a Spot interruption loses no jobs".
+"""AA-969 (CRM-37a) on PostgreSQL 15: card R "a noisy tenant cannot push another tenant past the SLO" (the agency
+share of the pool on the request path, the fair crm.job claim per agency) and card E "a Spot interruption loses no
+jobs".
 
 A Fargate Spot interruption is a SIGTERM (two minutes' notice; ECS stops the task after ``stopTimeout`` 30 s):
 uvicorn runs the lifespan shutdown, the worker gets ``WORKER_STOP_TIMEOUT_S`` and is then cancelled, and the
@@ -17,9 +18,13 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
+from app import tenant_gate
+from app.errors import RateLimited
 from app.jobs import queue
 from app.jobs.queue import Job
 from app.jobs.worker import Worker
+from app.tenancy import tenant_tx
+from tests.integration.test_crm002_tenancy import _seed, caller
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -69,8 +74,7 @@ async def test_a_backlog_of_one_agency_does_not_hold_back_the_others(app_pool: a
     system = await _enqueue(app_pool, None, 1, age_s=10)
     order = await _claim_order(app_pool, 34)
     # Turn 1 of every group first (oldest first), then turn 2 (an agency just served counts it), ...: the calm agencies
-    # and the platform job are done
-    # within the first four claims instead of after the noisy agency's 30.
+    # and the platform job are done within the first four claims instead of after the noisy agency's 30.
     assert order[:4] == [noisy[0], calm[0], other[0], system[0]]
     assert order[4:6] == [noisy[1], calm[1]]
     assert order[6:] == noisy[2:]  # inside one agency the order stays oldest first
@@ -157,3 +161,41 @@ async def test_repeated_interruptions_end_visibly_failed_never_silently_lost(app
         statuses.append(await queue.release(app_pool, job_id, f"spot-{n}"))
     assert statuses == ["queued"] * (queue.MAX_RELEASES - 1) + ["failed"]
     assert await app_pool.fetchval("SELECT count(*) FROM crm.job WHERE id = $1::uuid", job_id) == 1
+
+
+# ── card R on the request path: tenant_tx() on the 3-connection pool ────────────────────────────────────────────
+
+
+async def test_a_noisy_agency_cannot_hold_the_pool_from_a_calm_one(app_pool: asyncpg.Pool) -> None:
+    """Twelve slow requests of one agency at once, then one quick request of another: with the agency share (two
+    slots of three connections) the calm request gets the third connection at once; the noisy surplus is 429."""
+    noisy_tenant, noisy_sub = await _seed(app_pool)
+    calm_tenant, calm_sub = await _seed(app_pool)
+    before = tenant_gate.GATE
+    tenant_gate.GATE = tenant_gate.TenantGate(2, 0.3)
+    try:
+        # Each agency's first request proves the membership (the slots are then keyed by agency).
+        for tenant, sub in ((noisy_tenant, noisy_sub), (calm_tenant, calm_sub)):
+            async with tenant_tx(app_pool, caller(sub), tenant):
+                pass
+
+        async def slow_noisy() -> str:
+            try:
+                async with tenant_tx(app_pool, caller(noisy_sub), noisy_tenant) as ctx:
+                    await ctx.conn.execute("SELECT pg_sleep(1.0)")
+                return "ok"
+            except RateLimited as exc:
+                return exc.code
+
+        noisy = [asyncio.create_task(slow_noisy()) for _ in range(12)]
+        await asyncio.sleep(0.1)  # the noisy burst holds its share
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        async with tenant_tx(app_pool, caller(calm_sub), calm_tenant) as ctx:
+            assert await ctx.conn.fetchval("SELECT 1") == 1
+        calm_latency = loop.time() - started
+        results = await asyncio.gather(*noisy)
+    finally:
+        tenant_gate.GATE = before
+    assert calm_latency < 0.5, calm_latency  # not queued behind a whole second of noisy work
+    assert results.count("ok") == 2 and results.count("tenant_busy") == 10
