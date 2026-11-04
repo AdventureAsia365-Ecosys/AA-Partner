@@ -1,7 +1,8 @@
 // e2e/playwright.portal.config.ts — AA-979 (CRM-P2a): the tenant portal UI smoke (e2e/smoke-portal/), ported from the
 // smoke-portal-setup and smoke-portal projects of AA-CIS-App playwright.config.ts (AA-885). Run by
-// .github/workflows/ui-smoke-portal.yml against the studio on the agency host (BASE_URL
-// https://portal.lumiguides.it.com), or by hand against a local studio. The default config (playwright.config.ts) is
+// .github/workflows/ui-smoke-portal.yml (after Deploy Web Dev: the studio is part of the web since AA-1036) against the
+// agency host (BASE_URL https://portal.lumiguides.it.com), or by hand against a local web (port 3005; set
+// PORTAL_TARGET=fargate for the agency-host expectations). The default config (playwright.config.ts) is
 // the CRM E2E and never sees these specs (its testDir is ./tests).
 //   - "portal-setup": the tenant sign-in once, writing .auth/tenant-state.json (agency host: the e2e studio user's
 //     partner sign-in, AA-979 §4.5; local studio: the API key E2E_TENANT_API_KEY); skips without them.
@@ -14,7 +15,7 @@ export default defineConfig({
   retries: 1,
   workers: 1,
   use: {
-    baseURL: process.env.BASE_URL || "http://localhost:3004",
+    baseURL: process.env.BASE_URL || "http://localhost:3005",
     headless: true,
     screenshot: "only-on-failure",
     video: "off",

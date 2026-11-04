@@ -30,6 +30,19 @@ Follows `AA-1036.md` (slice 1, #210). Root ADR 0019 d6 / d7. Two PRs here, each 
   `NEXT_PUBLIC_SENTRY_DSN` build arg (empty = off, same as today). The server `SENTRY_DSN` needs a web DSN secret in
   Infra: follow-up.
 
+- **Step B (retire)** deletes `portal/`, `deploy-portal-dev.yml`, `crm-portal.rows`, the `crm-portal` app of the
+  verify workflow and of `edge_verify.sh`, the CI jobs "Portal Build" and "Portal Docker Build Check" and the portal
+  `npm audit` step, the dependabot `/portal` entry, the portal lines of CODEOWNERS (the studio's BFF, helpers, 308 map
+  and guards in `web/` get owners instead), the portal parts of the pre-push hook, the `PORTAL_COPIES` vendored set and
+  the portal kit lock check. `test_portal_guards.py` goes with `portal/`: the rules that still apply moved into
+  `test_studio_guards.py` (its shared constants and helpers, the studio smoke secrets / no auth state upload, the
+  kit-token contrast checks, the bare-accent and placeholder rules on `web/app/(studio)`), plus a guard that nothing
+  builds, deploys or updates `portal/` any more.
+- **Kept on purpose**: `ui-smoke-portal.yml`, `e2e/smoke-portal/` and `playwright.portal.config.ts` (the studio smoke,
+  now run by Deploy Web Dev; the local default port is the web's 3005), the secrets `E2EPORTAL*`, and
+  `studio_suppressions_base.py` (with no `portal/eslint-suppressions.json` at the base it adds nothing; removing it is
+  a follow-up once no open PR has a base with `portal/`).
+
 ## Changed (vs. the lane brief)
 
 - "deploy workflow smoke URLs": the smoke URL itself does not change (the agency host); the smoke moved from the portal
@@ -47,3 +60,6 @@ Follows `AA-1036.md` (slice 1, #210). Root ADR 0019 d6 / d7. Two PRs here, each 
   `WEB_CONTENT_HOME`; the deploy copies the latest revision, so the apply must come first).
 - Step B: "Portal Build" is a required status check on `main` (branch protection); it must be removed from the
   required list before step B can merge, since the job is deleted.
+- After step B merges, the GitHub environment `dev` variables of the old deploy (`CRM_PORTAL_ENABLED`,
+  `ECR_PORTAL_REPOSITORY`, `ECS_PORTAL_SERVICE`, `ECS_PORTAL_TASK_FAMILY`, `PORTAL_HOST`, `PORTAL_PUBLIC_SENTRY_DSN`)
+  are unused and can be deleted.

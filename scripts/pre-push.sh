@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # AA-Partner pre-push checks (AA-993 H1, root ADR 0016 draft D5): run the CI Lint / Security Audit / Unit / Web /
-# Portal / docs checks locally before a push, with the same commands and pinned tool versions as
+# docs checks locally before a push, with the same commands and pinned tool versions as
 # .github/workflows/ci.yml and docs-lint.yml.
 #
 # Usage (from anywhere inside the repo):
@@ -18,7 +18,7 @@
 # Not run locally (CI only): Integration Tests (needs PostgreSQL), the three Docker Build Checks / Trivy / SBOM and
 # the standalone smoke (heavy), Vendored CIS copies (network), the kit provenance check (network), gitleaks, PR title.
 # Never `next build`: the web's type check runs as `tsc --noEmit`. The kit lint (AA-994 S2b: ESLint with the kit
-# preset at error + bulk suppressions, inside Portal Build / Web Build in CI) blocks the push like the other checks.
+# preset at error + bulk suppressions, inside Web Build in CI) blocks the push like the other checks.
 set -uo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "pre-push: not inside a git repo" >&2; exit 2; }
@@ -41,11 +41,9 @@ classify_file() {
     api/*.md) ;;
     # Migrations, the table templates, the Dockerfile: read by unit tests by file name (select_unit_tests).
     api/*) groups+=" unit" ;;
-    # The portal guard tests walk portal/; other tests read web/ and portal/ files by name.
+    # Tests read web/ files by name (the Content studio is part of the web since AA-1036).
     web/package.json | web/package-lock.json) groups+=" web web_deps unit" ;;
     web/*) groups+=" web unit" ;;
-    portal/package.json | portal/package-lock.json) groups+=" portal portal_deps unit" ;;
-    portal/*) groups+=" portal unit" ;;
     e2e/*) groups+=" e2e" ;;
     .trivyignore | .github/scripts/check_trivyignore.py) groups+=" trivyignore" ;;
     tools/docs/*) groups+=" docs docs_tools" ;;
@@ -73,7 +71,7 @@ plan_checks() {
   local mode="$1"; shift
   local g all=" " f
   if [[ "$mode" != "fast" ]]; then
-    all=" hook py deps unit_full trivyignore docs docs_tools web web_deps portal portal_deps "
+    all=" hook py deps unit_full trivyignore docs docs_tools web web_deps "
   else
     for f in "$@"; do
       [[ -z "$f" ]] && continue
@@ -98,8 +96,6 @@ plan_checks() {
   fi
   if [[ "$all" == *" web "* ]]; then echo "web-kit"; echo "web-typecheck"; echo "web-test"; echo "web-lint"; fi
   [[ "$all" == *" web_deps "* ]] && echo "web-audit"
-  if [[ "$all" == *" portal "* ]]; then echo "portal-kit"; echo "portal-typecheck"; echo "portal-test"; echo "portal-lint"; fi
-  [[ "$all" == *" portal_deps "* ]] && echo "portal-audit"
   [[ "$all" == *" e2e "* ]] && echo "e2e-typecheck"
   return 0
 }
@@ -127,10 +123,9 @@ deletes_or_renames() {
 
 # select_unit_tests <api dir> [files...] -> test files under tests/unit (relative to api/), one per line.
 # Changed test files; tests/unit/test_<stem>.py and test_<stem>_*.py of a changed module; the tests importing it;
-# the tests whose text names a changed file (workflows, .github scripts, migrations, web/portal files, scripts loaded
+# the tests whose text names a changed file (workflows, .github scripts, migrations, web files, scripts loaded
 # by path); the code-rule guards that walk app/ (a line with APP and rglob) and test_route_guard.py when any api/app
-# file changed; the portal guards (a line with PORTAL and rglob) when any portal/ file changed; the tests that name
-# the contracts folder when any docs/contracts/ file changed (they read the samples by directory, not by name).
+# file changed; the tests that name the contracts folder when any docs/contracts/ file changed (they read the samples by directory, not by name).
 select_unit_tests() {
   local adir="$1"; shift
   local f rel stem mod pkg leaf t base
@@ -146,8 +141,6 @@ select_unit_tests() {
         api/app/*)
           grep -lE 'APP.*rglob' "$adir"/tests/unit/test_*.py 2>/dev/null | sed "s#^$adir/##"
           [[ -f "$adir/tests/unit/test_route_guard.py" ]] && echo "tests/unit/test_route_guard.py" ;;
-        portal/*)
-          grep -lE 'PORTAL.*rglob' "$adir"/tests/unit/test_*.py 2>/dev/null | sed "s#^$adir/##" ;;
         docs/contracts/*)
           grep -lE '"contracts"|docs/contracts' "$adir"/tests/unit/test_*.py 2>/dev/null | sed "s#^$adir/##" ;;
       esac
@@ -170,7 +163,7 @@ select_unit_tests() {
   } | sort -u
 }
 
-# eslint_targets <app> [files...] -> what fast mode lints in <app>/ (portal | web), relative to <app>/, one per line:
+# eslint_targets <app> [files...] -> what fast mode lints in <app>/ (web), relative to <app>/, one per line:
 # the changed files ESLint reads, or "." (the whole app) when a change can move results in files that did not change
 # (the lint config, the kit rules, the suppressions file, the package set, tsconfig). The caller drops deleted files.
 eslint_targets() {
@@ -192,7 +185,6 @@ eslint_targets() {
 # vendored core (same as ci.yml "No inline disable of a kit rule"), one invocation per line.
 kit_disable_dirs() {
   case "$1" in
-    portal) echo "app --ignore _kit/core" ;;
     web) echo "app --ignore _kit/core"; echo "components" ;;
   esac
 }
@@ -211,8 +203,8 @@ self_test() {
     if [[ "$got" == "$want" ]]; then echo "ok   $name"; else echo "FAIL $name"; echo "     want: $want"; echo "     got:  $got"; fails=$((fails + 1)); fi
   }
   local DOCS="docs-frontmatter docs-adr docs-aws-multiline docs-links"
-  local WEB="web-kit web-typecheck web-test web-lint" PORTAL="portal-kit portal-typecheck portal-test portal-lint"
-  local ALL="resource-ids hook-self-test trivyignore ruff-check ruff-format pip-audit unit-full docs-tools-tests $DOCS $WEB web-audit $PORTAL portal-audit"
+  local WEB="web-kit web-typecheck web-test web-lint"
+  local ALL="resource-ids hook-self-test trivyignore ruff-check ruff-format pip-audit unit-full docs-tools-tests $DOCS $WEB web-audit"
   expect "empty diff: resource IDs only" "resource-ids" fast
   expect "app module" "resource-ids ruff-check ruff-format unit-changed" fast api/app/routers/pipeline.py
   expect "test file" "resource-ids ruff-check ruff-format unit-changed" fast api/tests/unit/test_health.py
@@ -226,8 +218,6 @@ self_test() {
   expect "api README -> docs only" "resource-ids $DOCS" fast api/README.md
   expect "web -> kit checks + tsc + vitest + lint, never build" "resource-ids unit-changed $WEB" fast web/app/pipeline/page.tsx
   expect "web lockfile -> npm audit too" "resource-ids unit-changed $WEB web-audit" fast web/package-lock.json
-  expect "portal -> kit checks + tsc + node tests + lint, never build" "resource-ids unit-changed $PORTAL" fast portal/proxy.ts
-  expect "portal manifest -> npm audit too" "resource-ids unit-changed $PORTAL portal-audit" fast portal/package.json
   expect "e2e -> its tsc only" "resource-ids e2e-typecheck" fast e2e/tests/slice1.spec.ts
   expect "markdown -> docs lint" "resource-ids $DOCS" fast CONTEXT.md
   expect "markdown with a space in the name" "resource-ids $DOCS" fast "docs/a b.md"
@@ -242,8 +232,8 @@ self_test() {
   expect ".vercelignore -> unit tests" "resource-ids unit-changed" fast .vercelignore
   expect "hook files -> hook self-test" "resource-ids hook-self-test" fast scripts/pre-push.sh .githooks/pre-push
   expect "delete or rename -> link check" "resource-ids docs-links" fast :deleted-or-renamed
-  expect "mixed diff" "resource-ids ruff-check ruff-format unit-changed $DOCS $WEB $PORTAL" fast \
-    api/app/db.py docs/implementation-notes/AA-993.md web/lib/pipeline.ts portal/lib/config.ts api/migrations/031_x.sql
+  expect "mixed diff" "resource-ids ruff-check ruff-format unit-changed $DOCS $WEB" fast \
+    api/app/db.py docs/implementation-notes/AA-993.md web/lib/pipeline.ts web/lib/config.ts api/migrations/031_x.sql
   expect "--full ignores the diff" "$ALL" full
   expect "--ci never skips by diff" "$ALL" ci README.md
 
@@ -260,15 +250,15 @@ self_test() {
     if [[ "$got" == "$want" ]]; then echo "ok   $name"
     else echo "FAIL $name"; echo "     want: $want"; echo "     got:  $got"; fails=$((fails + 1)); fi
   }
-  check_targets "eslint targets: changed portal code files only" "proxy.ts app/x/page.tsx" \
-    portal portal/proxy.ts portal/app/x/page.tsx portal/README.md portal/app/globals.css web/a.ts
+  check_targets "eslint targets: changed web code files only" "proxy.ts app/x/page.tsx" \
+    web web/proxy.ts web/app/x/page.tsx web/README.md web/app/globals.css e2e/a.ts
   check_targets "eslint targets: web code files (app and components)" "app/(crm)/page.tsx components/A.tsx" \
-    web "web/app/(crm)/page.tsx" web/components/A.tsx portal/b.ts web/README.md
-  check_targets "eslint targets: lint config -> the whole app" "." portal portal/app/x.tsx portal/eslint.config.mjs
+    web "web/app/(crm)/page.tsx" web/components/A.tsx e2e/b.ts web/README.md
+  check_targets "eslint targets: lint config -> the whole app" "." web web/app/x.tsx web/eslint.config.mjs
   check_targets "eslint targets: suppressions file -> the whole app" "." web web/eslint-suppressions.json
   check_targets "eslint targets: kit rules -> the whole app" "." web web/app/_kit/core/eslint-kit.mjs
-  check_targets "eslint targets: lockfile -> the whole app" "." portal portal/package-lock.json
-  check_targets "eslint targets: another app's config is not this app's" "" portal web/eslint.config.mjs
+  check_targets "eslint targets: lockfile -> the whole app" "." web web/package-lock.json
+  check_targets "eslint targets: another folder's config is not this app's" "" web e2e/eslint.config.mjs
   got="$(kit_disable_dirs web | tr '\n' ';')"
   n=$((n + 1))
   if [[ "$got" == "app --ignore _kit/core;components;" ]]; then echo "ok   kit disable dirs"
@@ -282,7 +272,7 @@ self_test() {
   echo "from app.vault import cipher" >"$tmp/tests/unit/test_vault_other.py"
   echo "import app.vault.cipherx" >"$tmp/tests/unit/test_not_this.py"
   echo 'for p in sorted(APP.rglob("*.py")):' >"$tmp/tests/unit/test_code_rules.py"
-  printf '%s\n' 'for p in PORTAL.rglob("*"):' 'lines = _read(".vercelignore").splitlines()' >"$tmp/tests/unit/test_portal_guards.py"
+  echo 'lines = _read(".vercelignore").splitlines()' >"$tmp/tests/unit/test_vercel_ignore.py"
   echo 'DOCS = Path(__file__).resolve().parents[3] / "docs" / "contracts"' >"$tmp/tests/unit/test_cis_contract.py"
   echo 'SAMPLES = ROOT / "docs" / "contracts" / "samples" / "tenant.membership.v1"' >"$tmp/tests/unit/test_ops_e2e_staff.py"
   echo 'WORKFLOW = ROOT / ".github/workflows/deploy-dev.yml"' >"$tmp/tests/unit/test_deploy_wf.py"
@@ -309,8 +299,7 @@ self_test() {
   check_sel "select: shared helper by import, not its sibling" "tests/unit/test_health.py" api/tests/unit/fakes.py
   check_sel "select: workflow named in a test" "tests/unit/test_deploy_wf.py" .github/workflows/deploy-dev.yml
   check_sel "select: web file read by name" "tests/unit/test_lost_codes.py" web/lib/pipeline.ts
-  check_sel "select: any portal file -> portal guards" "tests/unit/test_portal_guards.py" portal/app/x/page.tsx
-  check_sel "select: root .vercelignore read by name" "tests/unit/test_portal_guards.py" .vercelignore
+  check_sel "select: root .vercelignore read by name" "tests/unit/test_vercel_ignore.py" .vercelignore
   check_sel "select: a contract sample -> the tests reading the contracts folder" \
     "tests/unit/test_cis_contract.py tests/unit/test_ops_e2e_staff.py" \
     docs/contracts/samples/tenant.membership.v1/activation-valid.json
@@ -647,19 +636,8 @@ run_check() {
       run_step "$id" web "ci.yml / Web Build / Unit tests" "npm test" -- npm test --silent ;;
     web-kit) kit_check "$id" web "Web Build" ;;
     web-lint) kit_lint "$id" web "Web Build" ;;
-    portal-kit) kit_check "$id" portal "Portal Build" ;;
     web-audit)
       run_step "$id" web "ci.yml / Security Audit / npm audit (web, failing on high)" \
-        "npm audit --audit-level=high" -- npm audit --audit-level=high ;;
-    portal-typecheck)
-      need_node_modules "$id" portal "ci.yml / Portal Build" "npm ci --no-audit --no-fund" || return
-      run_step "$id" portal "ci.yml / Portal Build / Type-check (tsc --noEmit)" "npx tsc --noEmit -p ." -- npx tsc --noEmit -p . ;;
-    portal-test)
-      need_node_modules "$id" portal "ci.yml / Portal Build" "npm ci --no-audit --no-fund" || return
-      run_step "$id" portal "ci.yml / Portal Build / Unit tests (node --test)" "npm test" -- npm test --silent ;;
-    portal-lint) kit_lint "$id" portal "Portal Build" ;;
-    portal-audit)
-      run_step "$id" portal "ci.yml / Security Audit / npm audit (portal, failing on high)" \
         "npm audit --audit-level=high" -- npm audit --audit-level=high ;;
     e2e-typecheck)
       need_node_modules "$id" e2e "ui-smoke-portal.yml (tsc)" "npm install --no-audit --no-fund --ignore-scripts" || return

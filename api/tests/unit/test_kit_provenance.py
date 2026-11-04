@@ -196,7 +196,7 @@ def test_main_reports_each_failure_and_annotates_on_actions(tmp_path: Path, monk
 
 
 def test_the_repo_locks_are_full_profile_copies_of_cis_core() -> None:
-    for app in ("portal", "web"):
+    for app in ("web",):  # portal/ went with AA-1036 R3 slice 2
         lock = json.loads((prov.REPO_ROOT / app / "kit.lock.json").read_text())
         assert lock["canonical"] == {"repo": prov.CANONICAL_REPO, "path": prov.CANONICAL_PATH}
         assert lock["profile"] == "full" and lock["dest"] == f"{app}/app/_kit/core"

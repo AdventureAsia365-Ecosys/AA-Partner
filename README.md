@@ -19,10 +19,9 @@ agency feature yet. Start with [CONTEXT.md](CONTEXT.md).
 | `api/` | FastAPI + asyncpg API with the in-process `crm.job` worker (Python 3.12, ARM64 image) |
 | `api/migrations/` | `crm-NNN` migrations (byte copies in AA-CIS-Infra `db/migrations/crm/`, applied by DB Migrate) |
 | `api/db/templates/` | The base table template every tenant table copies |
-| `web/` | CRM UI and the client host (Next.js 16 standalone, ARM64 image; AA-935) |
+| `web/` | The agency app: CRM UI, the tenant Content studio (`app/(studio)`, AA-1036; the separate `portal/` app is retired) and the client host (Next.js 16 standalone, ARM64 image; AA-935) |
 | `api/app/seed/` | Dev seeder of the synthetic agencies (`python -m app.seed`, DRY RUN by default; AA-935) |
-| `portal/` | Tenant Content studio (Next.js, Fargate `aa-crm-dev-portal` on the agency host `portal.`), moved from AA-CIS-App with its history by CRM-P2a (AA-979); CONTEXT.md "Tenant portal" |
-| `e2e/` | Playwright: the CRM Dev E2E (`playwright.config.ts`) and the portal UI smoke (`playwright.portal.config.ts`) |
+| `e2e/` | Playwright: the CRM Dev E2E (`playwright.config.ts`) and the Content studio UI smoke (`playwright.portal.config.ts`) |
 | `docs/` | Repo ADRs, implementation notes |
 | `tools/docs/` | Docs lint tools (byte copies of the root repo's) |
 
@@ -57,7 +56,7 @@ export CRM_TEST_ADMIN_DSN="postgresql://aa_cis_admin:<pw>@localhost:5432/crm_tes
 
 Pre-push hook (AA-993): `scripts/install-hooks.sh` once per clone (sets `core.hooksPath .githooks`). Each push then
 runs `scripts/pre-push.sh`: the CI checks the diff against `origin/main` needs (resource IDs, ruff with the pinned
-version, unit tests of the changed modules, docs lint; `tsc` + unit tests for `web/` / `portal/` when they changed,
+version, unit tests of the changed modules, docs lint; `tsc` + unit tests for `web/` when it changed,
 never `next build`). `AA_PREPUSH=full` runs the CI unit command with coverage; `scripts/pre-push.sh --plan` lists the
 checks; skip once with `git push --no-verify`. From the hook, tracked files that differ from `HEAD` stop
 the push before any check (the checks read the working tree, the push sends `HEAD`): commit or `git stash` first.

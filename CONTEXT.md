@@ -6,7 +6,7 @@ type: explanation
 status: active
 owner: nghiep
 audience: [engineer, agent]
-applies_to: [aa-crm-api, aa-crm-web, aa-crm-portal]
+applies_to: [aa-crm-api, aa-crm-web]
 last_reviewed: 2026-11-04
 review_every_days: 90
 related: [ARCH-01, ARCH-06-booking, docs/adr/README.md]
@@ -111,7 +111,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 | Edge | CloudFront `partner-dev.` -> VPC origin -> internal NLB -> ALB host + `X-AA-Origin` + `/crm/*` rule -> the service (AA-931 spike, ADR 0010 decision 2) |
 | Image | ECR `aa-crm-dev-api`, IMMUTABLE, tag = git SHA, built natively on an arm64 runner |
 | Web | `web/`: Next.js 16 standalone (React 19, TypeScript, vitest), the AA UI kit core vendored from AA-CIS-App (`web/app/_kit/core/`, root ADR 0016; inline styles from the kit tokens); ECS Fargate **ARM64** service `aa-crm-dev-web` (port 3000, `/healthz`), ECR `aa-crm-dev-web` (AA-CIS-Infra `crm_web.tf`) |
-| Portal | `portal/`: the tenant Content studio (Next.js 16, React 19, TypeScript), moved from AA-CIS-App with its history by CRM-P2a (AA-979). Fargate service `aa-crm-dev-portal` on the agency host `portal.lumiguides.it.com` (shared with the CRM web) since the P2b cutover; partner-pool sign-in only since the P2b clean-up; section "Tenant portal" below. **Frozen since AA-1036 R3 slice 1**: the studio now also lives inside `web/` (section "One agency app"); `portal/` is deleted with its service at the R3 slice 2 cut-over |
+| Portal | retired (AA-1036 R3 slice 2): the tenant Content studio is part of `web/` (`web/app/(studio)`, section "One agency app"); the separate `portal/` app, its Fargate service `aa-crm-dev-portal` and its deploy were deleted after the cut-over. Section "Tenant portal" below is its history |
 | Edge for the web | the same CloudFront distribution: the ALB rule `crm_api` (`/crm`, `/crm/*`) stays above `crm_partner_default`, which forwards every other path of the partner host to the web target group |
 
 AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everything `aa-crm-<env>-*`, tag `App = crm`
@@ -397,11 +397,10 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
 ## CI and release
 
 - Web checks (AA-935): **Web Build** (kit core integrity + provenance, vitest, `next build` with the type check,
-  standalone smoke, kit lint) and **Web Docker Build Check** (native arm64 image, container smoke, Trivy); Security Audit also runs `npm audit` for `web/` and `portal/`.
-- Portal checks (AA-979): **Portal Build** (kit core integrity + provenance, `npm ci`, `tsc --noEmit`, `next build`, kit
-  lint). The portal deploys from `deploy-portal-dev.yml` (Fargate) only, never from `ci.yml` (its Vercel project and
-  workflow went at the P2b clean-up, AA-979 §4.5).
-- **Kit lint** (AA-994 S2b, root ADR 0016 decision 7): `portal/` and `web/` each run ESLint 9 with the Next rules plus
+  standalone smoke, kit lint) and **Web Docker Build Check** (native arm64 image, container smoke, Trivy); Security Audit also runs `npm audit` for `web/`.
+- Portal checks: retired with `portal/` (AA-1036 R3 slice 2): "Portal Build", "Portal Docker Build Check" and
+  `deploy-portal-dev.yml` are gone; the studio is built, linted and smoke-tested as part of the web.
+- **Kit lint** (AA-994 S2b, root ADR 0016 decision 7): `web/` (and `portal/` until AA-1036) runs ESLint 9 with the Next rules plus
   the kit preset `inline` from the vendored `app/_kit/core/eslint-kit.mjs` at `error` (`eslint.config.mjs`; portal:
   `app/**`, web: `app/**` + `components/**`, the vendored core exempt). Violations that existed before S2b are frozen
   in each app's `eslint-suppressions.json` (ESLint bulk suppressions), which only shrinks: the job runs
@@ -440,20 +439,18 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
   (no automatic scale-up), a running image other than `<registry>/<repo>:<sha>`, `/crm/health` `git_sha`/`version` off,
   `/crm/health/ready` not 200 or below the newest `REQUIRED_SCHEMA_VERSIONS` key of the deployed commit, or
   `AWS_ROLE_ARN` unset (the `config` job fails). The **Deploy Dev result** job is red when any job did not succeed.
-- Post-deploy verify of the CRM web and the Content studio (AA-993 V3): the same workflow with input `app`
-  (`crm` default, `crm-web`, `crm-portal`; optional `resolve_via` pins the host to a CloudFront name), called by
-  `deploy-web-dev.yml` and `deploy-portal-dev.yml` after `deploy` (AA-1036 slice 2: the studio paths are checked by
-  the crm-web verify and the studio smoke runs after Deploy Web Dev; `crm-portal` only after a rollback). Rows `.github/verify/crm-web.rows` (`/healthz`
-  `git_sha`/`version`/`auth_configured`; `/crm/health` + `/crm/health/ready` reaching a ready API through the host's
-  API rule, without comparing the API's commit: a web deploy does not deploy the API) and `crm-portal.rows` (the
-  studio's `/api/healthz` `sha`/`version`: on the agency host `/healthz` is the CRM web's; the API rule), plus
-  `.github/scripts/edge_verify.sh` (signed-out redirects to the web's `/auth/refresh`, for the web also `/legal/terms`, which proves the agency host
-  routes the CRM terms to the CRM web (AA-1033); for the studio a public page
-  (`/terms`) and its `/portal-assets`, and `/tenant-login` 308 to the partner sign-in). Same red rules (desired 0, rollout, image). `CRM_WEB_ENABLED` / `CRM_PORTAL_ENABLED` unset is red
-  (`config` fails). The portal deploy then runs the Playwright smoke (`ui-smoke-portal.yml`, always the Fargate studio,
+- Post-deploy verify of the CRM web with the Content studio (AA-993 V3, AA-1036): the same workflow with input `app`
+  (`crm` default or `crm-web`; optional `resolve_via` pins the host to a CloudFront name), called by
+  `deploy-web-dev.yml` after `deploy`. Rows `.github/verify/crm-web.rows` (`/healthz` `git_sha`/`version`/
+  `auth_configured`; `/crm/health` + `/crm/health/ready` reaching a ready API through the host's API rule, without
+  comparing the API's commit: a web deploy does not deploy the API; the merged studio's `/api/healthz`
+  `service: "aa-crm-web"`, `studio: "merged"`, `sha`/`version`), plus `.github/scripts/edge_verify.sh crm-web`
+  (signed-out redirects to the web's `/auth/refresh`, `/legal/terms` reaching the CRM web (AA-1033), "/" ->
+  `/portal/dashboard`, `/tenant-login` 308 to the partner sign-in, `/terms` 308 to `/legal/partner-terms`, that page
+  and its `/_next` asset). Same red rules (desired 0, rollout, image). `CRM_WEB_ENABLED` unset is red (`config` fails).
+  The web deploy then runs the studio's Playwright smoke (`ui-smoke-portal.yml` on the agency host,
   `require_tenant_login: true`: a missing e2e studio sign-in secret `E2EPORTALEMAIL` / `E2EPORTALPASSWORD` /
-  `E2EPORTALTOTP` is red). Read **Deploy Web Dev result** / **Deploy
-  Portal Dev result**.
+  `E2EPORTALTOTP` is red). Read **Deploy Web Dev result**. The `crm-portal` app went with the studio service (AA-1036).
 - release-please (manifest mode) keeps one release PR; the version is baked into the image and returned by
   `/crm/health`.
 
@@ -557,11 +554,11 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
 ## One agency app (`web/`, AA-1036 R3, root ADR 0019 d6 / d7)
 
 The Content studio is part of the agency app: one Next.js app, one partner-pool sign-in (MFA), one session. Slice 1
-copied the studio into `web/` and left `portal/` and its deploy untouched. Slice 2 cut over: the agency-host ALB rules
-`/portal*`, `/api/*`, `/tenant-login*`, `/terms`, `/privacy`, `/assets/*` forward to the web target group and the web
-task has `WEB_CONTENT_HOME=true` (AA-CIS-Infra `crm_agency_edge.tf`, `crm_web.tf`); Deploy Web Dev verifies the studio
-paths and runs the studio smoke; `deploy-portal-dev.yml` is a dispatch-only rollback path until the retire step
-deletes the studio service and `portal/`. Implementation notes: `docs/implementation-notes/AA-1036.md`.
+copied the studio into `web/` and left `portal/` and its deploy untouched. Slice 2 cut over (the agency-host studio
+paths `/portal*`, `/api/*`, `/tenant-login*`, `/terms`, `/privacy`, `/assets/*` reach the web; the web task has
+`WEB_CONTENT_HOME=true`; AA-CIS-Infra `crm_agency_edge.tf`, `crm_web.tf`), then retired the separate studio: `portal/`,
+its CI jobs and deploy, and in AA-CIS-Infra its ECS service, task definition, target group, ECR repository, roles and
+studio rules. Deploy Web Dev verifies the studio paths and runs the studio smoke. Implementation notes: `docs/implementation-notes/AA-1036.md`.
 
 - **Layout**: route group `app/(studio)/` (`/portal/*` with the same URLs, `/portal-access/*`, the draft legal pages
   `/legal/partner-terms` and `/legal/privacy`), the studio BFF at `/api/*` (`app/api/tenant/[...path]`, `tenant/me`,
@@ -601,7 +598,14 @@ deletes the studio service and `portal/`. Implementation notes: `docs/implementa
   base branch's `portal/` entries under their new paths (`.github/scripts/studio_suppressions_base.py`) while the
   move is in flight.
 
-## Tenant portal (`portal/`, AA-979 CRM-P2a)
+## Tenant portal (`portal/`, AA-979 CRM-P2a) — history
+
+**Retired in AA-1036 R3 slice 2.** The studio code lives in `web/` since slice 1 (section "One agency app"): the
+`portal/app/portal/**` pages are `web/app/(studio)/portal/**`, `portal/app/_kit/local/` is
+`web/app/_kit/local/studio/`, the BFF keeps its `/api/*` paths under `web/app/api/`, the studio helpers are in
+`web/lib/studio/`, the draft legal pages are `/legal/partner-terms` and `/legal/privacy`. `portal/`, its CI jobs, its
+deploy and the Fargate service `aa-crm-dev-portal` are deleted. The text below describes the separate app as it was;
+read its `portal/...` paths through that map.
 
 The Content studio of the tenant agencies, moved here from AA-CIS-App (`portal/`, AA-885) with its history (root ADR
 0010 §6, stage P2a: `git log --follow` reaches the pre-split CIS commits; the trailer `Imported-from:` names each

@@ -1,6 +1,6 @@
 // e2e/smoke-portal/portal-helpers.ts
 // AA-885 — helpers for the tenant portal smoke (project `smoke-portal`, BASE_URL = a portal host:
-// https://portal.lumiguides.it.com, or http://localhost:3004). The generic page
+// https://portal.lumiguides.it.com, or http://localhost:3005, the local web). The generic page
 // check, bypass route and watcher come from ./smoke-helpers.ts.
 import { expect, type Page } from '@playwright/test';
 import fs from 'fs';
