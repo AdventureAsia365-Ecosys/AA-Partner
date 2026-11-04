@@ -47,6 +47,16 @@ function isMessages(v: unknown): v is Messages<Record<string, string | ((...a: n
   return !!en && typeof en === "object" && Object.values(en).every((m) => typeof m === "string" || typeof m === "function");
 }
 
+/** Structured per-language content (a guide, a legal document): `{ en, vi }` of the same shape. */
+function isStructured(v: unknown): v is Record<"en" | "vi", unknown> {
+  return !!v && typeof v === "object" && "en" in v && "vi" in v && !isMessages(v);
+}
+
+/** The shape of structured content: every string becomes "s" (link targets and anchors are kept, they must match). */
+function shapeOf(v: unknown): string {
+  return JSON.stringify(v, (k, x) => (typeof x === "string" && k !== "href" && k !== "id" ? "s" : x));
+}
+
 function isLegalDocs(v: unknown): v is Record<"en" | "vi", LegalDoc> {
   return !!v && typeof v === "object" && "en" in v && "vi" in v && Array.isArray((v as { en: LegalDoc }).en?.sections);
 }
@@ -67,7 +77,12 @@ describe("studio message catalogues", () => {
     const mod = (await import(pathToFileURL(path.join(ROOT, file)).href)) as Record<string, unknown>;
     const catalogues = Object.entries(mod).filter(([, v]) => isMessages(v));
     const docs = Object.entries(mod).filter(([, v]) => isLegalDocs(v));
-    expect(catalogues.length + docs.length, `${file} exports no defineMessages() catalogue`).toBeGreaterThan(0);
+    const structured = Object.entries(mod).filter(([, v]) => isStructured(v));
+    expect(catalogues.length + structured.length, `${file} exports no defineMessages() catalogue`).toBeGreaterThan(0);
+    for (const [name, s] of structured) {
+      if (!isStructured(s)) continue;
+      expect(shapeOf(s.vi), `${file} ${name}: the Vietnamese content's structure`).toBe(shapeOf(s.en));
+    }
     for (const [name, d] of docs) {
       if (!isLegalDocs(d)) continue;
       expect(docShape(d.vi), `${file} ${name}: the Vietnamese document's sections and blocks`).toEqual(docShape(d.en));
