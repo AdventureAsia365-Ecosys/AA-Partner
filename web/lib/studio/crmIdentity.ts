@@ -14,6 +14,9 @@
 // AA-1036 (an AA-1007 leftover): the person's OWN sign-in address is shown ("Signed in as …"): the answer's `email`
 // comes from the agency app's sealed session (the id token at sign-in), never from another member's record.
 
+import { translator, type Lang } from "@/app/_kit/core/i18n";
+import { IDENTITY_MESSAGES } from "./crmIdentity.messages";
+
 export const CRM_IDENTITY_PATH = "/bff/identity";
 
 export type CrmRole = "owner" | "agent" | "assistant";
@@ -24,7 +27,9 @@ export type CrmIdentity =
   | { kind: "no_agency"; email: string | null }
   | null;
 
-const ROLE_LABEL: Record<CrmRole, string> = { owner: "Owner", agent: "Agent", assistant: "Assistant" };
+const ROLE_KEY: Record<CrmRole, "roleOwner" | "roleAgent" | "roleAssistant"> = {
+  owner: "roleOwner", agent: "roleAgent", assistant: "roleAssistant",
+};
 const MAX_NAME = 120;
 const MAX_EMAIL = 254;
 
@@ -43,23 +48,20 @@ export function readCrmIdentity(status: number, body: unknown): CrmIdentity {
   if (me.kind !== "agency") return null;
   const name = typeof me.display_name === "string" ? me.display_name.trim().slice(0, MAX_NAME) : "";
   if (!name) return null; // never fall back to the agency id: an id says nothing to the person
-  const role = typeof me.member_role === "string" && Object.hasOwn(ROLE_LABEL, me.member_role) ? (me.member_role as CrmRole) : null;
+  const role = typeof me.member_role === "string" && Object.hasOwn(ROLE_KEY, me.member_role) ? (me.member_role as CrmRole) : null;
   return { kind: "agency", agencyName: name, role, email: emailOf(me.email) };
 }
 
-/** The sentence shown to the person, or null when nothing is known. */
-export function signedInText(identity: CrmIdentity): string | null {
+/** The sentence shown to the person, in the UI language, or null when nothing is known. */
+export function signedInText(identity: CrmIdentity, lang: Lang = "en"): string | null {
   if (identity === null) return null;
-  const who = identity.email ? ` as ${identity.email}` : "";
-  if (identity.kind === "no_agency") return `Signed in to AA Partner${who}, with no agency selected.`;
+  const t = translator(IDENTITY_MESSAGES, lang);
+  if (identity.kind === "no_agency") return identity.email ? t("noAgencyAs", identity.email) : t("noAgency");
+  const role = identity.role ? t(ROLE_KEY[identity.role]) : null;
   if (identity.email) {
-    return identity.role
-      ? `Signed in to AA Partner as ${identity.email} (${ROLE_LABEL[identity.role]} of ${identity.agencyName}).`
-      : `Signed in to AA Partner as ${identity.email}, for ${identity.agencyName}.`;
+    return role ? t("emailRole", identity.email, role, identity.agencyName) : t("emailFor", identity.email, identity.agencyName);
   }
-  return identity.role
-    ? `Signed in to AA Partner as ${ROLE_LABEL[identity.role]} of ${identity.agencyName}.`
-    : `Signed in to AA Partner for ${identity.agencyName}.`;
+  return role ? t("role", role, identity.agencyName) : t("for", identity.agencyName);
 }
 
 /** Asks the CRM web on this origin who is signed in. Never throws; null when it cannot tell. */

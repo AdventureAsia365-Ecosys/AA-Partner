@@ -12,7 +12,8 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Bell, Check, X, RefreshCw, RotateCcw } from "lucide-react";
-import { apiGet, apiSend, K, sans } from "@/app/_kit";
+import { apiGet, apiSend, K, sans, useLang, useT, type Translator } from "@/app/_kit";
+import { BELL_MESSAGES } from "./account.messages";
 import { fmtDateTime } from "@/lib/studio/format";
 import type { ShellActivityView } from "./PortalShellContext";
 
@@ -44,19 +45,21 @@ function writeSeen(ts: number) {
 }
 
 // AA-760 — the sentence follows the job state the shell joined in, never the row flags alone.
-const describe = (a: Activity) => {
+const describe = (a: Activity, t: Translator<typeof BELL_MESSAGES.en>) => {
   switch (a.state) {
-    case "approved": return "was approved";
-    case "rejected": return "was rejected";
-    case "failed": return "rewrite didn't finish — retry it in My Tours";
-    case "queued": case "writing": case "checking": return "is being rewritten";
-    case "done": return "rewrite is ready to review";
-    case "edited": return "was edited";
-    default: return "was updated";
+    case "approved": return t("approved");
+    case "rejected": return t("rejected");
+    case "failed": return t("failed");
+    case "queued": case "writing": case "checking": return t("writing");
+    case "done": return t("done");
+    case "edited": return t("edited");
+    default: return t("updated");
   }
 };
 
 export default function NotificationsBell({ activity }: { activity: Activity[] }) {
+  const t = useT(BELL_MESSAGES);
+  const lang = useLang();
   const [open, setOpen] = useState(false);
   const [seenAt, setSeenAt] = useState<number>(() => (typeof window === "undefined" ? 0 : readSeen()));
   const ref = useRef<HTMLDivElement>(null);
@@ -96,7 +99,7 @@ export default function NotificationsBell({ activity }: { activity: Activity[] }
 
   return (
     <div ref={ref} style={{ position: "relative" }}>
-      <button onClick={toggle} aria-label={unread ? `Notifications, ${unread} new` : "Notifications"} aria-expanded={open}
+      <button onClick={toggle} aria-label={unread ? t("ariaNew", unread) : t("title")} aria-expanded={open}
         style={{ width: 36, height: 36, borderRadius: 8, background: open ? K.accentTint : "transparent", border: "none", display: "grid", placeItems: "center", cursor: "pointer", color: K.ink3, position: "relative" }}>
         <Bell size={15} />
         {unread > 0 && (
@@ -104,13 +107,13 @@ export default function NotificationsBell({ activity }: { activity: Activity[] }
         )}
       </button>
       {open && (
-        <div role="region" aria-label="Notifications" style={{
+        <div role="region" aria-label={t("title")} style={{
           position: "absolute", right: 0, top: 44, width: "min(360px, calc(100vw - 32px))", background: K.card,
           border: `1px solid ${K.line}`, borderRadius: 12, boxShadow: "0 12px 40px -8px rgba(31,41,51,0.25)", zIndex: 50, overflow: "hidden", fontFamily: sans,
         }}>
           <div style={{ padding: "12px 16px", borderBottom: `1px solid ${K.line2}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: K.ink }}>Notifications</span>
-            <Link href="/portal/account/activity" onClick={() => setOpen(false)} style={{ fontSize: 12, color: K.ink3, textDecoration: "none" }}>View all →</Link>
+            <span style={{ fontSize: 13, fontWeight: 600, color: K.ink }}>{t("title")}</span>
+            <Link href="/portal/account/activity" onClick={() => setOpen(false)} style={{ fontSize: 12, color: K.ink3, textDecoration: "none" }}>{t("viewAll")}</Link>
           </div>
           {tourNotes.slice(0, 5).map(n => {
             const gone = n.event_type === "tour.discontinued";
@@ -129,13 +132,13 @@ export default function NotificationsBell({ activity }: { activity: Activity[] }
                   <span style={{ display: "block", fontSize: 12.5, color: K.ink, lineHeight: 1.4 }}>
                     <strong style={{ fontWeight: 600 }}>{n.title}</strong> · {n.message}
                   </span>
-                  <span style={{ display: "block", fontSize: 11, color: K.muted2, marginTop: 2 }}>{fmtDateTime(n.created_at)}</span>
+                  <span style={{ display: "block", fontSize: 11, color: K.muted2, marginTop: 2 }}>{fmtDateTime(n.created_at, lang)}</span>
                 </span>
               </Link>
             );
           })}
           {activity.length === 0 && tourNotes.length === 0 ? (
-            <div style={{ padding: "28px 16px", textAlign: "center", fontSize: 13, color: K.muted2 }}>You&rsquo;re all caught up.</div>
+            <div style={{ padding: "28px 16px", textAlign: "center", fontSize: 13, color: K.muted2 }}>{t("caughtUp")}</div>
           ) : activity.slice(0, 6).map(a => {
             const bad = a.state === "rejected" || a.state === "failed";
             const Icon = a.state === "approved" ? Check : bad ? X : RefreshCw;
@@ -149,9 +152,9 @@ export default function NotificationsBell({ activity }: { activity: Activity[] }
                 <span style={{ width: 30, height: 30, borderRadius: 8, background: bg, color, display: "grid", placeItems: "center" }}><Icon size={14} strokeWidth={2.2} /></span>
                 <span style={{ minWidth: 0 }}>
                   <span style={{ display: "block", fontSize: 12.5, color: K.ink, lineHeight: 1.4 }}>
-                    <strong style={{ fontWeight: 600 }}>{a.tour_name || "A tour"}</strong> {describe(a)}
+                    <strong style={{ fontWeight: 600 }}>{a.tour_name || t("aTour")}</strong> {describe(a, t)}
                   </span>
-                  <span style={{ display: "block", fontSize: 11, color: K.muted2, marginTop: 2 }}>{fmtDateTime(a.created_at)}</span>
+                  <span style={{ display: "block", fontSize: 11, color: K.muted2, marginTop: 2 }}>{fmtDateTime(a.created_at, lang)}</span>
                 </span>
               </Link>
             );

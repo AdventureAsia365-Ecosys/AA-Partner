@@ -3,7 +3,8 @@
 // sparkline with the latest day emphasised. Scale is 0..max of the series; the axis labels name
 // only values the series actually reaches (first/last day, peak).
 import { useId } from "react";
-import { K } from "@/app/_kit";
+import { K, useLang, useT } from "@/app/_kit";
+import { COMMON_MESSAGES } from "./common.messages";
 
 export type DailyPoint = { day: string; api_calls: number; rewrites: number };
 
@@ -11,6 +12,8 @@ export default function UsageSparkline({ data, metric, label }: {
   data: DailyPoint[]; metric: "api_calls" | "rewrites"; label: string;
 }) {
   const gid = useId().replace(/:/g, "");
+  const t = useT(COMMON_MESSAGES);
+  const loc = useLang() === "vi" ? "vi-VN" : "en-GB";
   if (!data || data.length < 2) return null;
   const W = 280, H = 56, PAD_T = 6, PAD_B = 4;
   const vals = data.map(d => Number(d[metric]) || 0);
@@ -21,13 +24,13 @@ export default function UsageSparkline({ data, metric, label }: {
   const line = vals.map((v, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
   const area = `${line} L${W},${H} L0,${H} Z`;
   const last = vals.length - 1;
-  const fmtDay = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+  const fmtDay = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString(loc, { day: "numeric", month: "short", timeZone: "UTC" });
 
   return (
-    <figure style={{ margin: 0 }} aria-label={`${label}: ${total.toLocaleString()} this month`}>
+    <figure style={{ margin: 0 }} aria-label={t("sparkAria", label, total.toLocaleString(loc))}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
-        <figcaption style={{ fontSize: 11, color: K.muted }}>{label} per day</figcaption>
-        <span style={{ fontSize: 11, color: K.muted2, fontVariantNumeric: "tabular-nums" }}>peak {max.toLocaleString()}</span>
+        <figcaption style={{ fontSize: 11, color: K.muted }}>{t("sparkPerDay", label)}</figcaption>
+        <span style={{ fontSize: 11, color: K.muted2, fontVariantNumeric: "tabular-nums" }}>{t("sparkPeak", max.toLocaleString(loc))}</span>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" role="img" style={{ display: "block", overflow: "visible" }}>
         <defs>
@@ -43,7 +46,7 @@ export default function UsageSparkline({ data, metric, label }: {
       </svg>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: K.muted2, marginTop: 4 }}>
         <span>{fmtDay(data[0].day)}</span>
-        <span>today · {vals[last].toLocaleString()}</span>
+        <span>{t("sparkToday", vals[last].toLocaleString(loc))}</span>
       </div>
     </figure>
   );

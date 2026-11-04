@@ -9,24 +9,26 @@ import { AccessCard, linkStyle, SupportContact } from "../AccessCard";
 import { SignedInAs } from "../SignedInAs";
 import { SignOutButton } from "../SignOutButton";
 import { BRAND } from "@/app/_kit/core/brand";
+import { translator } from "@/app/_kit";
+import { serverContext } from "@/lib/serverContext";
+import { ACCESS_MESSAGES } from "../access.messages";
 
 export const dynamic = "force-dynamic";
 
 export default async function NoAccessPage({ searchParams }: { searchParams: Promise<{ reason?: string; next?: string }> }) {
   const { reason } = await searchParams;
   const unavailable = reason === "unavailable";
+  const t = translator(ACCESS_MESSAGES, (await serverContext()).lang);
   return (
-    <AccessCard title={unavailable ? "Content studio unavailable" : "No Content studio access"} testId="portal-no-access">
+    <AccessCard title={unavailable ? t("unavailableTitle") : t("noAccessTitle")} testId="portal-no-access">
       <SignedInAs />
       <p style={{ margin: 0, fontSize: 13.5, color: BRAND.muted }}>
-        {unavailable
-          ? "The Content studio could not check your access right now. Try again in a minute."
-          : "This account has no access to a Content studio yet. If you expected one, ask Adventure Asia for an invitation, then sign in to AA Partner with the e-mail address the invitation was sent to."}
+        {unavailable ? t("unavailableBody") : t("noAccessBody")}
       </p>
       <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
         {unavailable && (
           <Link href="/portal/dashboard" style={linkStyle}>
-            Try again
+            {t("tryAgain")}
           </Link>
         )}
         <SignOutButton />

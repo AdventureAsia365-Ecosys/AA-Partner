@@ -9,16 +9,24 @@ import { config } from "@/lib/config";
 import { memberships, partnerSession, safeStudioNext } from "@/lib/studio/tenantSession";
 import { BRAND } from "@/app/_kit/core/brand";
 import { CRM_HOME_PATH } from "@/lib/nav";
-import { AccessCard, buttonStyle, linkStyle, SupportContact } from "../AccessCard";
+import { Button, translator } from "@/app/_kit";
+import { serverContext } from "@/lib/serverContext";
+import { AccessCard, linkStyle, SupportContact } from "../AccessCard";
+import { ACCESS_MESSAGES } from "../access.messages";
 import { SignedInAs } from "../SignedInAs";
 import { SignOutButton } from "../SignOutButton";
 
 export const dynamic = "force-dynamic";
 
-const ROLE: Record<string, string> = { owner: "Owner", editor: "Editor", viewer: "Viewer" };
+const ROLE = { owner: "roleOwner", editor: "roleEditor", viewer: "roleViewer" } as const;
+
+function roleKey(role: string): (typeof ROLE)[keyof typeof ROLE] | null {
+  return Object.hasOwn(ROLE, role) ? ROLE[role as keyof typeof ROLE] : null;
+}
 
 export default async function SelectTenantPage({ searchParams }: { searchParams: Promise<{ next?: string; error?: string }> }) {
   const params = await searchParams;
+  const t = translator(ACCESS_MESSAGES, (await serverContext()).lang);
   const next = safeStudioNext(params.next);
   const cfg = config();
   const partner = partnerSession(cfg, await cookies());
@@ -26,16 +34,16 @@ export default async function SelectTenantPage({ searchParams }: { searchParams:
   const list = cfg.cisApiUrl ? await memberships(cfg.cisApiUrl, partner.at) : null;
   if (list !== null && list.length === 0) redirect("/portal-access/none");
   return (
-    <AccessCard title="Choose a Content studio" testId="portal-select-tenant">
+    <AccessCard title={t("chooseTitle")} testId="portal-select-tenant">
       <SignedInAs />
       {params.error && (
         <p role="alert" style={{ margin: 0, fontSize: 13.5, color: BRAND.danger }}>
-          That agency could not be opened. Choose again.
+          {t("chooseError")}
         </p>
       )}
       {list === null ? (
         <p role="alert" style={{ margin: 0, fontSize: 13.5, color: BRAND.danger }}>
-          The Content studio is not reachable right now. Try again in a minute.
+          {t("unreachable")}
         </p>
       ) : (
         <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8 }}>
@@ -47,14 +55,14 @@ export default async function SelectTenantPage({ searchParams }: { searchParams:
             >
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 600, color: BRAND.ink, overflowWrap: "anywhere" }}>{m.tenant_name}</div>
-                <div style={{ fontSize: 12, color: BRAND.muted }}>{ROLE[m.content_studio_role] ?? m.content_studio_role}</div>
+                <div style={{ fontSize: 12, color: BRAND.muted }}>{(() => { const k = roleKey(m.content_studio_role); return k ? t(k) : m.content_studio_role; })()}</div>
               </div>
               <form method="post" action="/api/auth/tenant-select">
                 <input type="hidden" name="tenant_id" value={m.tenant_id} />
                 <input type="hidden" name="next" value={next} />
-                <button type="submit" style={buttonStyle}>
-                  Open
-                </button>
+                <Button type="submit" size="sm">
+                  {t("open")}
+                </Button>
               </form>
             </li>
           ))}
@@ -62,7 +70,7 @@ export default async function SelectTenantPage({ searchParams }: { searchParams:
       )}
       <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
         <a href={CRM_HOME_PATH} style={linkStyle}>
-          Go to AA Partner
+          {t("goToPartner")}
         </a>
         <SignOutButton />
       </div>

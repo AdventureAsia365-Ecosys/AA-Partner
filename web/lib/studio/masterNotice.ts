@@ -6,6 +6,9 @@
 // `node --test` runs lib/masterNotice.test.ts directly (the AA-761 pattern). Both fields are optional: before the
 // CIS change is deployed they are absent and nothing is shown.
 
+import { translator, type Lang } from "@/app/_kit/core/i18n";
+import { MASTER_MESSAGES } from "./lib.messages";
+
 /** The fields of a version (catalogApi.Version) these rules read. */
 export interface MasterFreshness {
   master_newer?: boolean | null;
@@ -14,7 +17,12 @@ export interface MasterFreshness {
 }
 
 /** Short label for the list row (the full sentence is its tooltip and the drawer's notice). */
-export const MASTER_NEWER_LABEL = "Updated by Adventure Asia";
+export const MASTER_NEWER_LABEL = MASTER_MESSAGES.en.label;
+
+/** The row label in the UI language. */
+export function masterNewerLabel(lang: Lang = "en"): string {
+  return translator(MASTER_MESSAGES, lang)("label");
+}
 
 /** True when the notice applies: AA updated the tour after this version, and new work on the tour is open (a paused
  *  or retired tour shows its own served badge instead, and a rewrite would be refused there). */
@@ -28,10 +36,9 @@ export function showMasterNotice(v: MasterFreshness | null | undefined): boolean
 export function masterNoticeText(
   v: MasterFreshness | null | undefined,
   fmtDate: (iso: string) => string,
+  lang: Lang = "en",
 ): string | null {
   if (!showMasterNotice(v)) return null;
   const when = v?.master_updated_at ? fmtDate(v.master_updated_at).trim() : "";
-  const on = when && when !== "—" ? ` on ${when}` : "";
-  return `Adventure Asia updated this tour${on}, after your version. Your text was not changed. `
-    + "Rewrite it if you want the new details.";
+  return translator(MASTER_MESSAGES, lang)("notice", when && when !== "—" ? when : "");
 }

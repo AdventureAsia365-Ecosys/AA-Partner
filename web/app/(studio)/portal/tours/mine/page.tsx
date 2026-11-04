@@ -4,14 +4,15 @@
 // CatalogTab reads useSearchParams() (?tour_id=, also the ⌘K "My tours" target), so it needs a
 // Suspense boundary or `next build` fails prerendering this route.
 import { Suspense } from "react";
-import { PageHeader } from "@/app/_kit";
+import { PageHeader, useT } from "@/app/_kit";
+import { PAGES_MESSAGES } from "../../content/content.messages";
 import CatalogTab from "../../_components/CatalogTab";
 
 export default function MyToursPage() {
+  const t = useT(PAGES_MESSAGES);
   return (
     <>
-      <PageHeader title="My Tours"
-        description="Your rewritten tours. Review, edit and export them from here." />
+      <PageHeader title={t("myToursTitle")} description={t("myToursSub")} />
       <Suspense>
         <CatalogTab />
       </Suspense>

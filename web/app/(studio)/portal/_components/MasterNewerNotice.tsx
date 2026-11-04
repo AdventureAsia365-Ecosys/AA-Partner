@@ -7,21 +7,22 @@
 // talks about the tour text, never about checks, gates or flags.
 
 import { Info } from "lucide-react";
-import { K, sans } from "@/app/_kit";
-import { MASTER_NEWER_LABEL, masterNoticeText, showMasterNotice, type MasterFreshness } from "@/lib/studio/masterNotice";
-import { Badge, Btn } from "./ui";
+import { Badge, Button, K, sans, useLang, useT } from "@/app/_kit";
+import { masterNewerLabel, masterNoticeText, showMasterNotice, type MasterFreshness } from "@/lib/studio/masterNotice";
 import { fmtDate } from "@/lib/studio/format";
+import { COMMON_MESSAGES } from "./common.messages";
 
 /** The list-row badge; its tooltip is the full sentence. */
 export function MasterNewerBadge({ version }: { version: MasterFreshness | null | undefined }) {
+  const lang = useLang();
   if (!showMasterNotice(version)) return null;
   return (
     <span
-      title={masterNoticeText(version, fmtDate) ?? undefined}
+      title={masterNoticeText(version, (iso) => fmtDate(iso, lang), lang) ?? undefined}
       data-testid="master-newer-badge"
       style={{ display: "inline-flex", maxWidth: "100%" }}
     >
-      <Badge variant="info">{MASTER_NEWER_LABEL}</Badge>
+      <Badge tone="info">{masterNewerLabel(lang)}</Badge>
     </span>
   );
 }
@@ -38,7 +39,9 @@ export function MasterNewerNotice({
   rewriting?: boolean;
   style?: React.CSSProperties;
 }) {
-  const text = masterNoticeText(version, fmtDate);
+  const t = useT(COMMON_MESSAGES);
+  const lang = useLang();
+  const text = masterNoticeText(version, (iso) => fmtDate(iso, lang), lang);
   if (!text) return null;
   return (
     <div
@@ -65,9 +68,9 @@ export function MasterNewerNotice({
         <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{text}</span>
       </div>
       {onRewrite && (
-        <Btn variant="secondary" size="sm" disabled={rewriting} onClick={onRewrite}>
-          {rewriting ? "Starting…" : "Rewrite"}
-        </Btn>
+        <Button variant="secondary" size="sm" disabled={rewriting} onClick={onRewrite}>
+          {rewriting ? t("starting") : t("rewrite")}
+        </Button>
       )}
     </div>
   );

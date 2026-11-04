@@ -8,7 +8,8 @@
 // "Starting…" state instead of an error.
 import { useEffect, useRef, useState } from "react";
 import { Check, X, Loader2 } from "lucide-react";
-import { K, sans } from "@/app/_kit";
+import { K, sans, useT } from "@/app/_kit";
+import { COMMON_MESSAGES } from "./common.messages";
 import { WorkStatusBadge, liveWorkStatus } from "./workStatus";
 
 type Step = { key: string; label: string; state: "pending" | "active" | "done" | "skipped" | "failed" };
@@ -54,7 +55,7 @@ function usePrefersReducedMotion(): boolean {
   return reduce;
 }
 
-export default function LiveWriter({ kind, jobId, active = true, title = "Writing", compact = false, untilInactive = false }: {
+export default function LiveWriter({ kind, jobId, active = true, title, compact = false, untilInactive = false }: {
   kind: "tour" | "piece"; jobId: string; active?: boolean; title?: string; compact?: boolean;
   /** AA-668 (S239): keep polling through a done/failed snapshot until `active` turns false — the
    *  owner's status decides. A retried tour job first reads the previous run's "failed" snapshot
@@ -64,6 +65,7 @@ export default function LiveWriter({ kind, jobId, active = true, title = "Writin
   untilInactive?: boolean;
 }) {
   // Lazy init (no effect): a remount starts from the snapshot this tab last showed for the job.
+  const t = useT(COMMON_MESSAGES);
   const [snap, setSnap] = useState<Snapshot | null>(() => seedSnapshot(kind, jobId, active, untilInactive));
   // Set once this mount has read a live (found, not failed) snapshot — from then on a "failed"
   // snapshot is the new run's own and shows as usual. The owner keys the view per run/retry.
@@ -159,12 +161,12 @@ export default function LiveWriter({ kind, jobId, active = true, title = "Writin
       {/* Steps */}
       <div aria-live="polite" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: K.muted }}>{title}</div>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: K.muted }}>{title ?? t("lwWriting")}</div>
           {/* AA-760 — the shared status (queued / writing / checking / done / failed) from the live steps. */}
           <span data-testid="live-writer-status"><WorkStatusBadge status={liveWorkStatus(snap)} /></span>
         </div>
         {steps.length === 0 ? (
-          <StepRow state="active" label="Starting…" />
+          <StepRow state="active" label={t("lwStarting")} />
         ) : steps.map(s => <StepRow key={s.key} state={s.state} label={s.label} />)}
         {snap?.status === "failed" && snap.message && (
           <div style={{ fontSize: 12.5, color: K.danger, marginTop: 2 }}>{snap.message}</div>

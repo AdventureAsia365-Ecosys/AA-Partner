@@ -9,17 +9,14 @@
 // AA-761: each channel's health next to its title (the last test's result) — the "Test connection" lives here now,
 // Publish only shows a summary that links back. AA-1036 R3 slice 3: the API key card went with the tenant API keys.
 import { useState } from "react";
-import { Badge, type Tone, K, sans } from "@/app/_kit";
-import { HEALTH_LABEL, connectionHealth, type ConnectionHealth } from "@/lib/studio/account";
-import { CardSkeleton, PageHeader } from "../../_components/ui";
+import { Badge, LinkButton, PageHeader, type Tone, K, useLang, useT } from "@/app/_kit";
+import { connectionHealth, healthLabel, type ConnectionHealth } from "@/lib/studio/account";
+import { CardSkeleton } from "../../_components/ui";
+import { INTEGRATIONS_MESSAGES } from "./integrations.messages";
 import { useWordPressStatus, WordPressConnectForm, WordPressStatusCard } from "../../_components/WordPressConnect";
 import { useFacebookStatus, FacebookConnectForm, FacebookStatusCard } from "../../_components/FacebookConnect";
 
-const changeLinkStyle: React.CSSProperties = {
-  alignSelf: "flex-start", background: "none", border: "none", cursor: "pointer",
-  fontSize: 12.5, fontWeight: 600, color: K.muted, textDecoration: "underline",
-  fontFamily: sans, padding: 0,
-};
+const changeLinkStyle: React.CSSProperties = { alignSelf: "flex-start", textDecoration: "underline" };
 
 const sectionTitle: React.CSSProperties = {
   fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em",
@@ -31,15 +28,17 @@ const HEALTH_TONE: Record<ConnectionHealth, Tone> = {
 };
 
 function SectionTitle({ title, health, testId }: { title: string; health: ConnectionHealth | null; testId: string }) {
+  const lang = useLang();
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
       <h2 style={sectionTitle}>{title}</h2>
-      {health && <span data-testid={testId} data-health={health}><Badge tone={HEALTH_TONE[health]}>{HEALTH_LABEL[health]}</Badge></span>}
+      {health && <span data-testid={testId} data-health={health}><Badge tone={HEALTH_TONE[health]}>{healthLabel(health, lang)}</Badge></span>}
     </div>
   );
 }
 
 export default function T11PublishConnectionPage() {
+  const t = useT(INTEGRATIONS_MESSAGES);
   const wp = useWordPressStatus();
   const fb = useFacebookStatus();
   const [changingWp, setChangingWp] = useState(false);
@@ -56,19 +55,16 @@ export default function T11PublishConnectionPage() {
     <div style={{ maxWidth: 640 }}>
       {/* AA-760 — no "Back to Publish" link: this page is an Account item in the sidebar, and Publish
           is not a sidebar item, so the link named a place the tenant could not find. */}
-      <PageHeader
-        title="Integrations"
-        sub="Your publishing channels and your API key: check that each connection works, test it again, or change it."
-      />
+      <PageHeader title={t("title")} description={t("sub")} />
 
       <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
         <section style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <SectionTitle title="WordPress" health={wpPending ? null : connectionHealth(wp.status)} testId="wp-health" />
-          {wpPending && <CardSkeleton label="Loading WordPress connection" />}
+          <SectionTitle title={t("wordpress")} health={wpPending ? null : connectionHealth(wp.status)} testId="wp-health" />
+          {wpPending && <CardSkeleton label={t("loadingWp")} />}
           {!wpPending && wpConnected && wp.status && !changingWp && (
             <>
               <WordPressStatusCard status={wp.status} onRetest={wp.refresh} onDisconnected={wp.refresh} />
-              <button onClick={() => setChangingWp(true)} style={changeLinkStyle}>Change credentials</button>
+              <LinkButton tone="muted" size="sm" onClick={() => setChangingWp(true)} style={changeLinkStyle}>{t("changeCredentials")}</LinkButton>
             </>
           )}
           {!wpPending && (!wpConnected || changingWp) && (
@@ -77,12 +73,12 @@ export default function T11PublishConnectionPage() {
         </section>
 
         <section style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <SectionTitle title="Facebook Page" health={fbPending ? null : connectionHealth(fb.status)} testId="fb-health" />
-          {fbPending && <CardSkeleton label="Loading Facebook connection" />}
+          <SectionTitle title={t("facebookPage")} health={fbPending ? null : connectionHealth(fb.status)} testId="fb-health" />
+          {fbPending && <CardSkeleton label={t("loadingFb")} />}
           {!fbPending && fbConnected && fb.status && !changingFb && (
             <>
               <FacebookStatusCard status={fb.status} onRetest={fb.refresh} onDisconnected={fb.refresh} />
-              <button onClick={() => setChangingFb(true)} style={changeLinkStyle}>Change Page or token</button>
+              <LinkButton tone="muted" size="sm" onClick={() => setChangingFb(true)} style={changeLinkStyle}>{t("changePage")}</LinkButton>
             </>
           )}
           {!fbPending && (!fbConnected || changingFb) && (

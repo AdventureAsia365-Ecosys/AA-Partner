@@ -8,7 +8,9 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { PageHeader, Tabs, apiGet } from "@/app/_kit";
+import { PageHeader, Tabs, apiGet, useLang, useT } from "@/app/_kit";
+import { fmtCount } from "@/lib/studio/format";
+import { PAGES_MESSAGES } from "../../content/content.messages";
 import { usageMeter, type BillingFigures, type Quota } from "@/lib/studio/account";
 import { marketplaceView, type MarketplaceView } from "@/lib/studio/tours";
 import { usePortalShell } from "../PortalShellContext";
@@ -16,6 +18,8 @@ import { CatalogBrowse } from "./CatalogBrowse";
 import { MyCatalog } from "./MyCatalog";
 
 export function MarketplacePage() {
+  const t = useT(PAGES_MESSAGES);
+  const lang = useLang();
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
@@ -31,15 +35,12 @@ export function MarketplacePage() {
     router.push(next === "mine" ? `${pathname}?view=mine` : pathname, { scroll: false });
   }
 
-  const allLabel = poolTotal ? `All tours · ${poolTotal.toLocaleString("en-US")}` : "All tours";
-  const mineLabel = catTotal > 0 ? `In my catalog · ${catTotal.toLocaleString("en-US")}` : "In my catalog";
+  const allLabel = poolTotal ? t("allToursN", fmtCount(poolTotal, lang)) : t("allTours");
+  const mineLabel = catTotal > 0 ? t("inCatalogN", fmtCount(catTotal, lang)) : t("inCatalog");
 
   return (
     <>
-      <PageHeader title="Marketplace"
-        description={view === "mine"
-          ? "The tours you picked, with their price and status. Open one to review, edit or export it in My Tours."
-          : "Adventure Asia's published tours. Pick one and rewrite it in your brand voice; it lands in My Tours."} />
+      <PageHeader title={t("marketTitle")} description={view === "mine" ? t("marketSubMine") : t("marketSubAll")} />
       <div style={{ marginBottom: 18 }} data-testid="marketplace-views">
         <Tabs tabs={[{ key: "all", label: allLabel }, { key: "mine", label: mineLabel }]} active={view} onChange={setView} />
       </div>

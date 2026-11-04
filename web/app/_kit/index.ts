@@ -24,6 +24,8 @@ export * from "./core/Toast";
 export * from "./core/DataTable";
 // AA-966: the KPI tile (Reports and Home tiles).
 export { KpiTile } from "./core/KpiTile";
+// AA-1036 (R3): the kit card region, first used by the Content studio in place of its legacy Card.
+export { Section } from "./core/Section";
 // AA-952: the kit form controls (Field, Input, Select, Textarea, Checkbox, Radio) for new forms (lint no-raw-form-control).
 export * from "./core/FormControls";
 export * from "./core/csv";

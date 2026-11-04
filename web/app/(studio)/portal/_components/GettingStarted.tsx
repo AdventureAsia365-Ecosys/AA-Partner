@@ -5,10 +5,19 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Check, ArrowRight, X } from "lucide-react";
-import { K } from "@/app/_kit";
+import { K, useT } from "@/app/_kit";
+import { COMMON_MESSAGES } from "./common.messages";
 import { T, Card, CardHead } from "./ui";
 
-type Item = { key: string; title: string; sub: string; href: string; cta: string; done: boolean };
+type ItemKey = "brand" | "tour" | "post" | "wp";
+type Item = { key: ItemKey; href: string; done: boolean };
+
+const TEXT = {
+  brand: ["gsBrandTitle", "gsBrandSub", "gsBrandCta"],
+  tour: ["gsTourTitle", "gsTourSub", "gsTourCta"],
+  post: ["gsPostTitle", "gsPostSub", "gsPostCta"],
+  wp: ["gsWpTitle", "gsWpSub", "gsWpCta"],
+} as const;
 
 const DISMISS_KEY = "cis_portal_getting_started_dismissed";
 
@@ -19,6 +28,7 @@ async function json(url: string): Promise<Json> {
 }
 
 export default function GettingStarted({ catalogCount }: { catalogCount: number }) {
+  const t = useT(COMMON_MESSAGES);
   const [items, setItems] = useState<Item[] | null>(null);
   const [dismissed, setDismissed] = useState<boolean>(() => {
     try { return typeof window !== "undefined" && localStorage.getItem(DISMISS_KEY) === "1"; } catch { return false; }
@@ -34,10 +44,10 @@ export default function GettingStarted({ catalogCount }: { catalogCount: number 
       const reviewList = reviews?.data;
       const postsDone = Array.isArray(reviewList) && reviewList.length > 0;
       setItems([
-        { key: "brand", title: "Set up your brand voice", sub: "Tell us how you sound so every rewrite matches it.", href: "/portal/brand", cta: "Open Brand Identity", done: brandDone },
-        { key: "tour", title: "Rewrite your first tour", sub: "Pick a published tour and make it yours.", href: "/portal/tours", cta: "Browse tours", done: catalogCount > 0 },
-        { key: "post", title: "Write your first social post", sub: "Turn a tour into a ready-to-publish post.", href: "/portal/create/social", cta: "Open Social Content", done: postsDone },
-        { key: "wp", title: "Connect WordPress", sub: "Publish blog posts to your site in one click.", href: "/portal/content/publish", cta: "Connect", done: !!wp?.connected },
+        { key: "brand", href: "/portal/brand", done: brandDone },
+        { key: "tour", href: "/portal/tours", done: catalogCount > 0 },
+        { key: "post", href: "/portal/create/social", done: postsDone },
+        { key: "wp", href: "/portal/content/publish", done: !!wp?.connected },
       ]);
     });
   }, [catalogCount]);
@@ -54,8 +64,8 @@ export default function GettingStarted({ catalogCount }: { catalogCount: number 
 
   return (
     <Card>
-      <CardHead title={`Get started · ${doneCount} of ${items.length}`} action={
-        <button onClick={dismiss} aria-label="Hide getting started" style={{ background: "none", border: "none", cursor: "pointer", color: K.muted2, display: "flex", padding: 0 }}>
+      <CardHead title={t("gsTitle", doneCount, items.length)} action={
+        <button onClick={dismiss} aria-label={t("gsHide")} style={{ background: "none", border: "none", cursor: "pointer", color: K.muted2, display: "flex", padding: 0 }}>
           <X size={15} />
         </button>
       } />
@@ -78,12 +88,12 @@ export default function GettingStarted({ catalogCount }: { catalogCount: number 
                 {i.done && <Check size={12} color={T.onSolid} strokeWidth={3} />}
               </span>
               <span style={{ minWidth: 0 }}>
-                <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: i.done ? K.muted : K.ink, textDecoration: i.done ? "line-through" : "none" }}>{i.title}</span>
-                {!i.done && <span style={{ display: "block", fontSize: 11.5, color: K.muted, marginTop: 1 }}>{i.sub}</span>}
+                <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: i.done ? K.muted : K.ink, textDecoration: i.done ? "line-through" : "none" }}>{t(TEXT[i.key][0])}</span>
+                {!i.done && <span style={{ display: "block", fontSize: 11.5, color: K.muted, marginTop: 1 }}>{t(TEXT[i.key][1])}</span>}
               </span>
               {!i.done && isNext && (
                 <span style={{ fontSize: 12, fontWeight: 600, color: K.accentDeep, display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
-                  {i.cta} <ArrowRight size={13} />
+                  {t(TEXT[i.key][2])} <ArrowRight size={13} />
                 </span>
               )}
             </Link>

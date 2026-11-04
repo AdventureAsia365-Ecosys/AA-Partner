@@ -2,7 +2,8 @@
 // AA-638 — skeleton placeholders shaped like the content they stand in for, so a page keeps its
 // layout while data loads instead of flashing a centred spinner. Shimmer respects
 // prefers-reduced-motion.
-import { K } from "@/app/_kit";
+import { K, useT } from "@/app/_kit";
+import { COMMON_MESSAGES } from "./common.messages";
 
 const CSS = `
 @keyframes sk-shimmer { 0% { background-position: -400px 0 } 100% { background-position: 400px 0 } }
@@ -30,8 +31,9 @@ function SkCard({ children, dark = false, minH }: { children: React.ReactNode; d
 
 // Dashboard: header + two card rows + quick actions — same grid as DashboardTab.
 export function DashboardSkeleton() {
+  const t = useT(COMMON_MESSAGES);
   return (
-    <div aria-busy="true" aria-label="Loading dashboard">
+    <div aria-busy="true" aria-label={t("loadingDashboard")}>
       <SkeletonStyle />
       <Bar w={280} h={26} style={{ marginBottom: 10 }} />
       <Bar w={220} h={12} style={{ marginBottom: 24 }} />
@@ -48,9 +50,10 @@ export function DashboardSkeleton() {
 }
 
 // A list of rows (tours, versions, posts).
-export function ListSkeleton({ rows = 6, label = "Loading" }: { rows?: number; label?: string }) {
+export function ListSkeleton({ rows = 6, label }: { rows?: number; label?: string }) {
+  const t = useT(COMMON_MESSAGES);
   return (
-    <div aria-busy="true" aria-label={label} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <div aria-busy="true" aria-label={label ?? t("loading")} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <SkeletonStyle />
       {Array.from({ length: rows }).map((_, i) => (
         <div key={i} style={{ background: K.card, border: `1px solid ${K.line}`, borderRadius: 10, padding: "14px 16px", display: "grid", gridTemplateColumns: "minmax(0,1fr) 80px", gap: 12, alignItems: "center" }}>
