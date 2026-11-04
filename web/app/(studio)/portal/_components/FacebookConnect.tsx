@@ -21,9 +21,9 @@ import Link from "next/link";
 import { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, XCircle, Loader2, ArrowRight } from "lucide-react";
-import { K, mono } from "@/app/_kit";
-import { Card, CardHead, Btn } from "./ui";
-import { fmtDateTime, inputStyle, labelStyle } from "./WordPressConnect";
+import { Button, K, Section, mono, useFormat, useT } from "@/app/_kit";
+import { inputStyle, labelStyle } from "./WordPressConnect";
+import { CONNECT_MESSAGES } from "./connect.messages";
 import { DisconnectConnection } from "./DisconnectConnection";
 
 /** AA-831 — the tenant guide for getting a Page ID + long-lived Page Access Token. */
@@ -41,11 +41,12 @@ const permStyle: React.CSSProperties = {
 
 /** The three permission names as "a, b and c", one inline chip each. */
 export function PermissionList() {
+  const t = useT(CONNECT_MESSAGES);
   return (
     <>
       {FACEBOOK_PERMISSIONS.map((name, i) => (
         <span key={name}>
-          {i > 0 && (i === FACEBOOK_PERMISSIONS.length - 1 ? " and " : ", ")}
+          {i > 0 && (i === FACEBOOK_PERMISSIONS.length - 1 ? t("and") : ", ")}
           <code style={permStyle}>{name}</code>
         </span>
       ))}
@@ -76,6 +77,7 @@ export function useFacebookStatus() {
 /** Connect / change-credentials form. Save, then test — a token that was never verified would
  * only fail later at publish time, so "Test & Connect" confirms it works first. */
 export function FacebookConnectForm({ onConnected }: { onConnected?: () => void }) {
+  const t = useT(CONNECT_MESSAGES);
   const [pageId, setPageId] = useState("");
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
@@ -87,7 +89,7 @@ export function FacebookConnectForm({ onConnected }: { onConnected?: () => void 
     setError(null);
     setSuccess(false);
     if (!pageId.trim() || !token.trim()) {
-      setError("Page ID and Page Access Token are both required.");
+      setError(t("fbBothRequired"));
       return;
     }
 
@@ -101,7 +103,7 @@ export function FacebookConnectForm({ onConnected }: { onConnected?: () => void 
       });
       if (!saveRes.ok) {
         const body = await saveRes.json().catch(() => ({}));
-        setError(body.detail || "Could not save credentials.");
+        setError(body.detail || t("saveFailed"));
         return;
       }
 
@@ -113,10 +115,10 @@ export function FacebookConnectForm({ onConnected }: { onConnected?: () => void 
         setToken("");
         onConnected?.();
       } else {
-        setError(testBody.last_verify_error || testBody.detail || "Connection test failed.");
+        setError(testBody.last_verify_error || testBody.detail || t("testFailed"));
       }
     } catch {
-      setError("Network error — please try again.");
+      setError(t("network"));
     } finally {
       setBusy(false);
       setStep("idle");
@@ -124,47 +126,45 @@ export function FacebookConnectForm({ onConnected }: { onConnected?: () => void 
   }
 
   return (
-    <Card>
-      <CardHead title="Connect Facebook Page" />
+    <Section title={t("fbConnectTitle")}>
       {/* AA-831 — all three permissions, the Live-mode requirement and where each value comes
           from. The names render as separate inline chips with explicit {" "}/{", "} separators:
           the old single <code> run read "pages_manage_postspermission" in the S237 UI check. */}
-      <div style={{ fontSize: 13, color: K.muted, marginTop: -8, marginBottom: 18, lineHeight: 1.6 }}>
+      <div style={{ fontSize: 13, color: K.muted, marginTop: 0, marginBottom: 18, lineHeight: 1.6 }}>
         <p style={{ margin: "0 0 8px" }}>
-          Publish posts to your own Facebook Page. You need two things from Meta:
+          {t("fbIntro")}
         </p>
         <ul style={{ margin: "0 0 8px", paddingLeft: 18 }}>
           <li style={{ marginBottom: 4 }}>
-            <strong style={{ color: K.ink3 }}>Page ID</strong>{" "}
-            — the number under your Page&rsquo;s About &rarr; Page transparency.
+            <strong style={{ color: K.ink3 }}>{t("pageId")}</strong>{" "}
+            {t("pageIdHow")}
           </li>
           <li>
-            <strong style={{ color: K.ink3 }}>Page Access Token</strong>{" "}
-            — a long-lived Page token with the permissions{" "}
+            <strong style={{ color: K.ink3 }}>{t("pageToken")}</strong>{" "}
+            {t("pageTokenHow")}{" "}
             <PermissionList />.
           </li>
         </ul>
         <p style={{ margin: "0 0 8px" }}>
-          Your Meta app must be in <strong style={{ color: K.ink3 }}>Live</strong> mode. While
-          it is in Development mode, only you can see the posts.
+          {t("liveMode1")} <strong style={{ color: K.ink3 }}>{t("live")}</strong> {t("liveMode2")}
         </p>
         <Link href={FACEBOOK_GUIDE_HREF} style={{
           display: "inline-flex", alignItems: "center", gap: 5, fontWeight: 600,
           color: K.accentDeep, textDecoration: "none",
         }}>
-          Step-by-step guide <ArrowRight size={13} />
+          {t("guide")} <ArrowRight size={13} />
         </Link>
       </div>
 
       <div style={{ marginBottom: 14 }}>
-        <label style={labelStyle}>Page ID</label>
-        <input style={inputStyle} type="text" inputMode="numeric" placeholder="e.g. 104123456789012"
+        <label style={labelStyle}>{t("pageId")}</label>
+        <input style={inputStyle} type="text" inputMode="numeric" placeholder={t("pageIdPh")}
           value={pageId} onChange={e => setPageId(e.target.value)} disabled={busy} />
       </div>
 
       <div style={{ marginBottom: 18 }}>
-        <label style={labelStyle}>Page Access Token</label>
-        <input style={inputStyle} type="password" placeholder="e.g. EAAB…" autoComplete="off"
+        <label style={labelStyle}>{t("pageToken")}</label>
+        <input style={inputStyle} type="password" placeholder={t("tokenPh")} autoComplete="off"
           value={token} onChange={e => setToken(e.target.value)} disabled={busy} />
       </div>
 
@@ -182,17 +182,17 @@ export function FacebookConnectForm({ onConnected }: { onConnected?: () => void 
           display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", marginBottom: 14,
           borderRadius: 8, background: K.successSoft, color: K.success, fontSize: 12.5,
         }}>
-          <CheckCircle2 size={15} /> Connected — Facebook Page verified successfully.
+          <CheckCircle2 size={15} /> {t("fbConnected")}
         </div>
       )}
 
-      <Btn variant="primary" onClick={handleConnect} disabled={busy}>
+      <Button variant="primary" onClick={handleConnect} disabled={busy}>
         {busy ? (
           <><Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />
-            {step === "saving" ? "Saving…" : "Testing connection…"}</>
-        ) : "Test & Connect"}
-      </Btn>
-    </Card>
+            {step === "saving" ? t("saving") : t("testingConnection")}</>
+        ) : t("testConnect")}
+      </Button>
+    </Section>
   );
 }
 
@@ -200,6 +200,8 @@ export function FacebookConnectForm({ onConnected }: { onConnected?: () => void 
 export function FacebookStatusCard({ status, onRetest, onDisconnected }: {
   status: FacebookStatus; onRetest: () => void; onDisconnected?: () => void;
 }) {
+  const t = useT(CONNECT_MESSAGES);
+  const { formatDateTime } = useFormat();
   const [testing, setTesting] = useState(false);
 
   async function retest() {
@@ -215,21 +217,20 @@ export function FacebookStatusCard({ status, onRetest, onDisconnected }: {
   const verified = status.last_verified_at && !status.last_verify_error;
 
   return (
-    <Card>
-      <CardHead title="Facebook Page" action={
-        <Btn size="sm" variant="secondary" onClick={retest} disabled={testing}>
-          {testing ? "Testing…" : "Test connection"}
-        </Btn>
-      } />
+    <Section title={t("fbPageTitle")} actions={
+      <Button size="sm" variant="secondary" onClick={retest} disabled={testing}>
+        {testing ? t("testing") : t("testConnection")}
+      </Button>
+    }>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
         {verified ? <CheckCircle2 size={16} color={K.success} /> : <XCircle size={16} color={K.amber} />}
         <span style={{ fontSize: 14, fontWeight: 600, color: K.ink }}>
-          Page {status.page_id}
+          {t("page", status.page_id ?? "")}
         </span>
       </div>
       <div style={{ fontSize: 12.5, color: K.muted, lineHeight: 1.9 }}>
-        <div>Connected: {fmtDateTime(status.connected_at)}</div>
-        <div>Last verified: {fmtDateTime(status.last_verified_at)}</div>
+        <div>{t("connectedAt", formatDateTime(status.connected_at))}</div>
+        <div>{t("lastVerified", formatDateTime(status.last_verified_at))}</div>
       </div>
       {status.last_verify_error && (
         <div style={{
@@ -245,6 +246,6 @@ export function FacebookStatusCard({ status, onRetest, onDisconnected }: {
           <DisconnectConnection integration="facebook" label="Facebook" onDisconnected={onDisconnected} />
         </div>
       )}
-    </Card>
+    </Section>
   );
 }

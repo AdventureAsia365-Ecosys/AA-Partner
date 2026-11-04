@@ -89,7 +89,22 @@ const ALLOWED_TEXT = new Set([
 function looksEnglish(text: string): boolean {
   const s = text.replace(/\s+/g, " ").trim();
   if (!/[A-Za-z]{2,}/.test(s) || ALLOWED_TEXT.has(s)) return false;
+  // Only acronyms and format names ("CSV (", "XLSX"): the same in both languages.
+  if ((s.match(/[A-Za-z]{2,}/g) ?? []).every((w) => /^[A-Z0-9]+$/.test(w))) return false;
   return /\s/.test(s) || /^[A-Z][a-z]/.test(s);
+}
+
+/** A literal compared with === / !== (a value check, not text), or the CSS inside a <style> element. */
+function notText(node: ts.Node): boolean {
+  const p = node.parent;
+  if (p && ts.isBinaryExpression(p) && [
+    ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken,
+    ts.SyntaxKind.EqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsToken,
+  ].includes(p.operatorToken.kind)) return true;
+  for (let q: ts.Node | undefined = node.parent; q; q = q.parent) {
+    if (ts.isJsxElement(q)) return q.openingElement.tagName.getText() === "style";
+  }
+  return false;
 }
 
 /** Calls whose string arguments are not UI text (class names, URLs, keys, logs, errors meant for developers). */
@@ -159,7 +174,9 @@ export function hardCodedStrings(rel: string, code: string): { line: number; tex
     ) {
       const text = node.text;
       const attr = enclosingAttr(node);
-      if (attr && TEXT_ATTRS.has(attrName(attr)) && looksEnglish(text) && !insideNonUiCall(node)) hit(node, text);
+      if (notText(node)) {
+        // a value check or CSS
+      } else if (attr && TEXT_ATTRS.has(attrName(attr)) && looksEnglish(text) && !insideNonUiCall(node)) hit(node, text);
       else if (!attr && insideJsxChild(node) && looksEnglish(text) && !insideNonUiCall(node)) hit(node, text);
     }
     ts.forEachChild(node, visit);
