@@ -65,11 +65,12 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Modal, K, mono, sans, serif } from "@/app/_kit";
+import { Badge, Button, EmptyState, LinkButton, LoadingScreen, Modal, K, Spinner, mono, sans, serif, useLang, useT } from "@/app/_kit";
+import { ANGLE_MESSAGES } from "./writer.messages";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Sparkles, CheckCircle2, ChevronRight, RotateCcw, AlertTriangle, ExternalLink, Compass } from "lucide-react";
-import { Card, CardHead, Badge, Btn, LoadingScreen, EmptyState, Spinner } from "./ui";
+import { Card, CardHead } from "./ui";
 import LiveWriter from "./LiveWriter";
 import { CtaReviewNotice, ctaWarningFrom, useCtaReviewCheck, type CtaWarning } from "./CtaReviewNotice";
 import { channelName, humanizeKey } from "./channelLabels";
@@ -151,16 +152,18 @@ interface AngleGateRequest {
 
 // AA-990 — the replaced-request card: one clear state instead of a 409 after a click.
 function AtomReplacedNotice({ req, onNewPost }: { req: AngleGateRequest; onNewPost: () => void }) {
+  const t = useT(ANGLE_MESSAGES);
+  const lang = useLang();
   return (
     <div role="status" data-testid="atom-replaced"
       style={{ padding: "12px 14px", background: K.accentTint, border: `1px solid ${K.accent}`, borderRadius: 8, fontFamily: sans }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: K.ink, marginBottom: 4 }}>
-        <AlertTriangle size={13} color={K.accentDeep} aria-hidden /> This part of the tour was updated
+        <AlertTriangle size={13} color={K.accentDeep} aria-hidden /> {t("tourUpdated")}
       </div>
       <div style={{ fontSize: 12.5, color: K.body, lineHeight: 1.5, marginBottom: 10 }}>
-        {atomReplacedNote(req.atom_replacement)}
+        {atomReplacedNote(req.atom_replacement, lang)}
       </div>
-      <Btn variant="primary" size="sm" onClick={onNewPost}><Compass size={12} /> Go to Social Posts</Btn>
+      <Button variant="primary" size="sm" onClick={onNewPost}><Compass size={12} /> {t("goToSocial")}</Button>
     </div>
   );
 }
@@ -185,7 +188,7 @@ export interface ContentPiece {
 
 // AA-522 — 3 steps only now (Atom and Channel are gone with Luồng B).
 type Step = 1 | 2 | 3;
-const STEP_LABELS: [Step, string][] = [[1, "Goal"], [2, "Angle"], [3, "Write"]];
+const STEP_LABELS: [Step, "stepGoal" | "stepAngle" | "stepWrite"][] = [[1, "stepGoal"], [2, "stepAngle"], [3, "stepWrite"]];
 const ANGLE_STEP: Step = 2;
 
 function currentStep(req: AngleGateRequest | null): Step {
@@ -199,15 +202,17 @@ function currentStep(req: AngleGateRequest | null): Step {
 // Subject + Channel đã chọn, không sửa được ở đây"). Renders nothing for a legacy pre-AA-522 row
 // with no subject_id.
 function SubjectHeader({ req }: { req: AngleGateRequest }) {
+  const t = useT(ANGLE_MESSAGES);
+  const lang = useLang();
   const place = req.subject_place ?? req.subject_hub_name;
   const detail = req.subject_place && req.subject_action ? `${req.subject_place} — ${req.subject_action}` : place;
   return (
     <div style={{ padding: "10px 14px", background: K.bg, border: `1px solid ${K.line2}`, borderRadius: 8, fontFamily: sans }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         <span style={{ fontSize: 12.5, fontWeight: 700, color: K.ink }}>
-          Writing for: {req.channel ? channelName(req.channel) : "—"}
+          {t("writingFor", req.channel ? channelName(req.channel, lang) : "—")}
         </span>
-        {req.subject_score !== null && <Badge variant="default">Score {req.subject_score}</Badge>}
+        {req.subject_score !== null && <Badge>{t("score", req.subject_score)}</Badge>}
       </div>
       {detail && <div style={{ fontSize: 12, color: K.muted, marginTop: 4 }}>{detail}</div>}
     </div>
@@ -217,21 +222,22 @@ function SubjectHeader({ req }: { req: AngleGateRequest }) {
 // AA-512 — the 2 measurable badges on an angle card. Omitted entirely when this angle was never
 // ranked (answers/violations both null — a pre-AA-512 legacy row).
 function AngleRankingBadges({ angle, paaTotal }: { angle: AngleOption; paaTotal: number }) {
+  const t = useT(ANGLE_MESSAGES);
   if (angle.answers === null || angle.violations === null) return null;
   const n = angle.violations.length;
   return (
     <div style={{ display: "flex", gap: 8, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${K.line2}` }}>
       <span
-        title={angle.answers.length ? angle.answers.join("; ") : "No PAA data for this request"}
+        title={angle.answers.length ? angle.answers.join("; ") : t("noPaa")}
         style={{ fontSize: 11.5, color: K.muted, fontFamily: sans }}
       >
-        {paaTotal > 0 ? `✓ answers ${angle.answers.length}/${paaTotal} PAA questions` : "no PAA data"}
+        {paaTotal > 0 ? t("answersPaa", angle.answers.length, paaTotal) : t("noPaaShort")}
       </span>
       <span
-        title={angle.violations.join("; ") || "No avoid-list phrases matched"}
+        title={angle.violations.join("; ") || t("noAvoid")}
         style={{ fontSize: 11.5, fontFamily: sans, color: n > 0 ? K.accentDeep : K.muted }}
       >
-        {n > 0 ? `⚠ ${n} avoid-list hit${n === 1 ? "" : "s"}` : "0 avoid-list violations"}
+        {n > 0 ? t("avoidHits", n) : t("zeroAvoid")}
       </span>
     </div>
   );
@@ -244,6 +250,7 @@ function AngleRankingBadges({ angle, paaTotal }: { angle: AngleOption; paaTotal:
 function Stepper({ step, canChangeAngle, onChangeAngle }: {
   step: Step; canChangeAngle: boolean; onChangeAngle: () => void;
 }) {
+  const t = useT(ANGLE_MESSAGES);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", padding: "8px 0" }}>
       {STEP_LABELS.map(([n, label], i) => {
@@ -255,12 +262,12 @@ function Stepper({ step, canChangeAngle, onChangeAngle }: {
           fontWeight: active ? 700 : 500, color: active ? K.ink : done ? K.muted : K.muted2,
           background: "none", border: "none", padding: 0, cursor: clickable ? "pointer" : "default",
         };
-        const content = <>{done && <CheckCircle2 size={12} color={K.success} />} {n} · {label}</>;
+        const content = <>{done && <CheckCircle2 size={12} color={K.success} />} {n} · {t(label)}</>;
         return (
           <span key={n} style={{ display: "flex", alignItems: "center", gap: 6 }}>
             {i > 0 && <ChevronRight size={13} color={K.muted2} />}
             {clickable
-              ? <button onClick={onChangeAngle} style={crumbStyle} title="Change angle — picks from the same 3 already-generated options, no new content generated">{content}</button>
+              ? <LinkButton tone="inherit" size="inherit" onClick={onChangeAngle} style={crumbStyle} title={t("changeAngleTitle")}>{content}</LinkButton>
               : <span style={crumbStyle}>{content}</span>}
           </span>
         );
@@ -277,6 +284,7 @@ function Stepper({ step, canChangeAngle, onChangeAngle }: {
 function WriteDonePopup({ onClose, onOpenInMyContent }: {
   onClose: () => void; onOpenInMyContent: () => void;
 }) {
+  const t = useT(ANGLE_MESSAGES);
   // AA-760 audit — on the kit Modal (was a hand-rolled overlay: no Escape, no aria-modal).
   return (
     <Modal open onClose={onClose} width={360}>
@@ -285,14 +293,14 @@ function WriteDonePopup({ onClose, onOpenInMyContent }: {
           <CheckCircle2 size={36} color={K.success} aria-hidden />
         </div>
         <div style={{ fontFamily: serif, fontSize: 17, fontWeight: 600, color: K.ink, marginBottom: 6 }}>
-          Your content is ready
+          {t("contentReady")}
         </div>
         <p style={{ fontSize: 12.5, color: K.muted, lineHeight: 1.5, margin: "0 0 20px" }}>
-          Review, edit, or export it any time from My Content.
+          {t("contentReadySub")}
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <Btn variant="primary" onClick={onOpenInMyContent}><ExternalLink size={13} /> Open in My Content</Btn>
-          <Btn variant="ghost" onClick={onClose}>Stay here</Btn>
+          <Button variant="primary" onClick={onOpenInMyContent}><ExternalLink size={13} /> {t("openInMyContent")}</Button>
+          <Button variant="ghost" onClick={onClose}>{t("stayHere")}</Button>
         </div>
       </div>
     </Modal>
@@ -313,6 +321,8 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
   onDetachedPiece?: (piece: ContentPiece) => void;
 }) {
   const router = useRouter();
+  const t = useT(ANGLE_MESSAGES);
+  const lang = useLang();
 
   const [goals, setGoals] = useState<Goal[]>([]);
   // AA-522 — only gates the initial paint while a requestId is actually being resolved; with
@@ -381,9 +391,9 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
     setReq(d);
     if (d.generating) return false;
     setGenerating(false);
-    if (d.generation_failed) setError("Couldn't generate angles — please choose a goal and try again.");
+    if (d.generation_failed) setError(t("anglesFailed"));
     return true;
-  }, []);
+  }, [t]);
   const pollAngles = useCallback((requestId: string) => {
     if (!aliveRef.current) return; // unmounted — the t8_angles job finishes server-side anyway
     setGenerating(true);
@@ -421,9 +431,9 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
         // AA-764 — resumed while the angle job is still running: keep showing progress.
         if (d.generating) { if (d.goal) setSelectedGoal(d.goal); pollAngles(d.request_id); }
       })
-      .catch(e => setError(e.detail ?? "Couldn't load that request — try again from Social Posts."))
+      .catch(e => setError(e.detail ?? t("loadFailed")))
       .finally(() => setInitialLoading(false));
-  }, [requestId, pollAngles]);
+  }, [requestId, pollAngles, t]);
 
   const submitGoal = useCallback(() => {
     if (!req || !selectedGoal) return;
@@ -434,8 +444,8 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
     })
       .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
       .then((d: AngleGateRequest) => { if (!settleAngles(d)) pollAngles(d.request_id); })
-      .catch(e => { setGenerating(false); setError(e.detail ?? "Couldn't generate angles — try again."); });
-  }, [req, selectedGoal, settleAngles, pollAngles]);
+      .catch(e => { setGenerating(false); setError(e.detail ?? t("anglesRetry")); });
+  }, [req, selectedGoal, settleAngles, pollAngles, t]);
 
   const stopPolling = useCallback(() => setPollPieceId(null), []);
 
@@ -497,7 +507,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
         }
         if (!r.ok) {
           const err = await r.json().catch(() => ({}));
-          throw new Error(err.detail ?? "Couldn't write content — try again.");
+          throw new Error(err.detail ?? t("writeFailed"));
         }
         return r.json();
       })
@@ -510,9 +520,9 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
       })
       .catch(e => {
         setWriting(false);
-        setWriteError(e instanceof Error ? e.message : "Couldn't write content — try again.");
+        setWriteError(e instanceof Error ? e.message : t("writeFailed"));
       });
-  }, [pollPiece, onDetachedPiece]);
+  }, [pollPiece, onDetachedPiece, t]);
 
   // AA-522 — the ONE place that decides what the write step should show, whether arrived at via
   // a fresh choose(), a reload/resume, or a "Change angle" re-choice: ask the server for the
@@ -564,9 +574,9 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
     })
       .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
       .then(d => setReq(d)) // AA-522 — the write-step effect above now owns firing the write call
-      .catch(e => setError(e.detail ?? "Couldn't save your choice — try again."))
+      .catch(e => setError(e.detail ?? t("chooseFailed")))
       .finally(() => setChoosing(null));
-  }, [req]);
+  }, [req, t]);
 
   // AA-497 — "Change angle" (available from step 3, status 'approved'): reopens THIS SAME
   // request (approved -> reusable, no new LLM call) and rewinds the UI to the angle-choice card.
@@ -582,25 +592,25 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
         setShowDonePopup(false); setWriteCtaWarning(null);
         resolvedWriteStepFor.current = null; // AA-522 — force a fresh latest-piece check on re-choice
       })
-      .catch(e => setReopenError(e.detail ?? "Couldn't reopen — try again."))
+      .catch(e => setReopenError(e.detail ?? t("reopenFailed")))
       .finally(() => setReopening(false));
-  }, [req, stopPolling]);
+  }, [req, stopPolling, t]);
 
   // "Start over" (standalone page only) — returns to the empty state (the tenant picks a new
   // Subject from the Slate to start again). The Writer panel (embedded, AA-668) has no such
   // button: closing the panel is the way out. Confirms before wiping real progress (a goal
   // already submitted means at least one real LLM call happened).
   const reset = useCallback(() => {
-    if (req && !window.confirm("Start over? This clears your current goal, angle, and write progress.")) return;
+    if (req && !window.confirm(t("startOverConfirm"))) return;
     stopPolling();
     setReq(null); setSelectedGoal(""); setError(null);
     setPiece(null); setWriteError(null); setNeedsCtaInput(false); setCtaInput("");
     setReopenError(null); setShowDonePopup(false); setWriteCtaWarning(null);
     resolvedWriteStepFor.current = null;
     router.push("/portal/create/write");
-  }, [req, stopPolling, router]);
+  }, [req, stopPolling, router, t]);
 
-  if (initialLoading) return <LoadingScreen message="Loading…" />;
+  if (initialLoading) return <LoadingScreen message={t("loading")} />;
 
   const step = currentStep(req);
   const replaced = !!req?.atom_replaced; // AA-990: every generate / choose / write action is off
@@ -620,8 +630,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
     // keeping line length reasonable.
     <div style={{ display: "flex", flexDirection: "column", gap: embedded ? 16 : 20, maxWidth: embedded ? undefined : 880 }}>
       <p style={{ fontSize: 12, color: K.muted, margin: 0, lineHeight: 1.5 }}>
-        Choose a content goal, then pick 1 of the 3 angles the system generates. You always
-        choose — Adventure Asia never approves or blocks this for you.
+        {t("intro")}
       </p>
 
       {/* AA-668 — the Writer panel's own header already names the Subject and Channel. */}
@@ -630,7 +639,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
       {req && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", borderBottom: `1px solid ${K.line2}` }}>
           <Stepper step={step} canChangeAngle={req.status === "approved" && !replaced} onChangeAngle={changeAngle} />
-          {!embedded && <Btn variant="ghost" size="sm" onClick={reset}><RotateCcw size={12} /> Start over</Btn>}
+          {!embedded && <Button variant="ghost" size="sm" onClick={reset}><RotateCcw size={12} /> {t("startOver")}</Button>}
         </div>
       )}
 
@@ -647,20 +656,21 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
       {/* AA-522 — no more raw atom picker: every request now starts from the Slate. */}
       {!req && (
         <Card>
-          <CardHead title="Pick a Subject to start" />
-          <EmptyState icon={<Compass size={32} strokeWidth={1.5} color={K.accent} />} title="Nothing to write yet"
-            sub="Every new piece starts from a topic you pick in Social Posts or Articles." // AA-576 (was "Write Content always starts from there now" — stale after that nav item was removed)
-            action={<Btn variant="primary" onClick={() => router.push("/portal/create/social")}>Go to Social Posts</Btn>} />
+          <CardHead title={t("pickSubject")} />
+          {/* AA-576: every piece starts from a topic picked in Social Posts or Articles. */}
+          <EmptyState icon={<Compass size={32} strokeWidth={1.5} color={K.accent} />} title={t("nothingToWrite")}
+            description={t("nothingToWriteSub")}
+            action={<Button variant="primary" onClick={() => router.push("/portal/create/social")}>{t("goToSocial")}</Button>} />
         </Card>
       )}
 
       {req && req.status === "pending_goal" && (
         <Card style={cardStyle}>
-          <CardHead title="1 · Choose a Goal" />
+          <CardHead title={t("chooseGoal")} />
           {/* AA-668 — goal cards in a grid (2 columns in the panel / on desktop, 1 on a phone) so
               all 8 fit without scrolling. Picking a goal only selects it; angles cost an LLM call,
               so they start from the button below. */}
-          <div role="radiogroup" aria-label="Content goal" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 230px), 1fr))", gap: 8 }}>
+          <div role="radiogroup" aria-label={t("contentGoal")} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 230px), 1fr))", gap: 8 }}>
             {goals.map(g => {
               const on = selectedGoal === g.key;
               return (
@@ -679,12 +689,12 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
             })}
           </div>
           <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <Btn variant="primary" disabled={!selectedGoal || generating || replaced} onClick={submitGoal}>
-              {generating ? <>Generating 3 angles…</> : <><Sparkles size={13} /> Generate 3 angles</>}
-            </Btn>
+            <Button variant="primary" disabled={!selectedGoal || generating || replaced} onClick={submitGoal}>
+              {generating ? <>{t("generating")}</> : <><Sparkles size={13} /> {t("generate")}</>}
+            </Button>
             {generating && (
               <span role="status" style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: K.muted }}>
-                <Spinner size={14} /> Usually under a minute{embedded ? " — you can close this panel, the angles keep generating." : "."}
+                <Spinner size={14} /> {embedded ? t("underMinutePanel") : t("underMinute")}
               </span>
             )}
           </div>
@@ -696,11 +706,11 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
         // meta row below for the post-choice summary). AA-668: each card has its own "Write with
         // this angle" button — one click chooses it and the write starts (no confirm step).
         <Card style={cardStyle}>
-          <CardHead title={`2 · ${req.status === "reusable" ? "Choose a Different Angle" : "Choose an Angle"}`} />
+          <CardHead title={req.status === "reusable" ? t("chooseDifferent") : t("chooseAngle")} />
           <p style={{ fontSize: 12.5, color: K.muted, margin: "0 0 14px", lineHeight: 1.5 }}>
             {req.status === "reusable"
-              ? "Pick a different one of the 3 angles below — writing starts as soon as you pick."
-              : "Pick one of the 3 angles below — writing starts as soon as you pick."}
+              ? t("pickDifferent")
+              : t("pickOne")}
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {req.angles.map(a => {
@@ -715,25 +725,25 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
                   }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
                     <span style={{ fontFamily: serif, fontSize: 15, fontWeight: 600, color: K.ink }}>{a.name}</span>
-                    {a.recommended && <Badge variant="default">Recommended</Badge>}
-                    {a.chosen && <Badge variant="default">Currently chosen</Badge>}
+                    {a.recommended && <Badge>{t("recommended")}</Badge>}
+                    {a.chosen && <Badge>{t("currentlyChosen")}</Badge>}
                   </div>
                   <div style={{ fontSize: 12.5, color: K.body, marginBottom: 4 }}>
-                    <strong>Why it works:</strong> {a.why_it_works}
+                    <strong>{t("whyItWorks")}</strong> {a.why_it_works}
                   </div>
                   <div style={{ fontSize: 12.5, color: K.body, marginBottom: 4 }}>
-                    <strong>Formula fit:</strong> <span style={{ fontFamily: mono }}>{a.formula_fit}</span>
+                    <strong>{t("formulaFit")}</strong> <span style={{ fontFamily: mono }}>{a.formula_fit}</span>
                   </div>
                   <div style={{ fontSize: 12.5, color: K.body }}>
-                    <strong>Best final style:</strong> {a.best_final_style}
+                    <strong>{t("bestStyle")}</strong> {a.best_final_style}
                   </div>
                   <AngleRankingBadges angle={a} paaTotal={req.dfs_paa_snapshot?.people_also_ask.length ?? 0} />
                   {!a.chosen && (
                     <div style={{ marginTop: 10 }}>
-                      <Btn variant={a.recommended ? "primary" : "secondary"} size="sm"
+                      <Button variant={a.recommended ? "primary" : "secondary"} size="sm"
                         disabled={choosing !== null || replaced} onClick={() => choose(a.idx)}>
-                        {busy ? "Starting…" : <><Sparkles size={12} /> Write with this angle</>}
-                      </Btn>
+                        {busy ? t("starting") : <><Sparkles size={12} /> {t("writeWithAngle")}</>}
+                      </Button>
                     </div>
                   )}
                 </div>
@@ -745,21 +755,21 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
 
       {req && req.status === "approved" && (
         <Card style={cardStyle}>
-          <CardHead title="3 · Write" />
+          <CardHead title={t("write")} />
 
           {chosenAngle && (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 14, padding: "10px 12px", background: K.bg, border: `1px solid ${K.line2}`, borderRadius: 8 }}>
               <div style={{ fontSize: 12.5, color: K.body }}>
-                <strong>Angle:</strong> {chosenAngle.name}
+                <strong>{t("angleLabel")}</strong> {chosenAngle.name}
                 <span style={{ color: K.muted2 }}> · </span>
-                <strong>Goal:</strong> {goalLabel(goals, req.goal)}
+                <strong>{t("goalLabel")}</strong> {goalLabel(goals, req.goal)}
                 <span style={{ color: K.muted2 }}> · </span>
-                <strong>Channel:</strong> {req.channel ? channelName(req.channel) : "—"}
+                <strong>{t("channelLabel")}</strong> {req.channel ? channelName(req.channel, lang) : "—"}
               </div>
               {!writing && !replaced && (
-                <Btn size="sm" variant="secondary" disabled={reopening} onClick={changeAngle}>
-                  {reopening ? "Reopening…" : "Change angle"}
-                </Btn>
+                <Button size="sm" variant="secondary" disabled={reopening} onClick={changeAngle}>
+                  {reopening ? t("reopening") : t("changeAngle")}
+                </Button>
               )}
             </div>
           )}
@@ -776,40 +786,38 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
               placeholder piece id is known. */}
           {writing && (piece?.piece_id ? (
             <div style={{ marginBottom: 12 }}>
-              <LiveWriter kind="piece" jobId={piece.piece_id} title="Writing your post" compact={embedded} />
+              <LiveWriter kind="piece" jobId={piece.piece_id} title={t("writingYourPost")} compact={embedded} />
             </div>
           ) : (
             <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 4px", color: K.muted, fontSize: 13 }}>
-              <Spinner size={16} /> Writing and checking your content — one moment…
+              <Spinner size={16} /> {t("writingChecking")}
             </div>
           ))}
 
           {writingSlow && (
             <div role="status" style={{ padding: "9px 12px", background: K.accentTint, border: `1px solid ${K.accent}`, borderRadius: 8, marginBottom: 10, fontSize: 12.5, color: K.body, lineHeight: 1.5 }}>
-              Still writing — this one is taking longer than usual. It keeps running in the
-              background{embedded ? "; you can close this panel" : ""} and lands in My Content when it is done.
+              {embedded ? t("slowPanel") : t("slow")}
             </div>
           )}
 
           {needsCtaInput && !writing && !replaced && (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ fontSize: 12.5, color: K.body, lineHeight: 1.5 }}>
-                This piece needs a call to action before it can be written — what should the
-                reader do next?{" "}
+                {t("needsCta")}{" "}
                 <Link href="/portal/brand" style={{ color: K.accentDeep, fontWeight: 600 }}>
-                  Set a default call to action in Brand Identity
+                  {t("setDefaultCta")}
                 </Link>{" "}
-                so you aren&rsquo;t asked again.
+                {t("notAskedAgain")}
               </div>
               <input value={ctaInput} onChange={e => setCtaInput(e.target.value)}
-                placeholder="e.g. Book a consultation, Read the full guide…"
+                placeholder={t("ctaPlaceholder")}
                 style={{ padding: "9px 12px", background: K.card, border: `1px solid ${K.line}`, borderRadius: 8, color: K.body, fontSize: 13, fontFamily: sans }} />
               <CtaReviewNotice warning={liveCtaWarning} />
               <div>
-                <Btn variant="primary" disabled={!ctaInput.trim()}
+                <Button variant="primary" disabled={!ctaInput.trim()}
                   onClick={() => writeContent(req.request_id, ctaInput.trim())}>
-                  <Sparkles size={13} /> Write content
-                </Btn>
+                  <Sparkles size={13} /> {t("writeContent")}
+                </Button>
               </div>
             </div>
           )}
@@ -823,12 +831,12 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
           {piece && !writing && piece.ready_state === "not_ready" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 700, color: K.danger }}>
-                <AlertTriangle size={13} /> Something went wrong while writing this content
+                <AlertTriangle size={13} /> {t("wentWrong")}
               </div>
               <div>
-                <Btn size="sm" variant="primary" disabled={replaced} onClick={() => writeContent(req.request_id)}>
-                  <Sparkles size={13} /> Retry
-                </Btn>
+                <Button size="sm" variant="primary" disabled={replaced} onClick={() => writeContent(req.request_id)}>
+                  <Sparkles size={13} /> {t("retry")}
+                </Button>
               </div>
             </div>
           )}
@@ -843,12 +851,12 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
           {piece && !writing && piece.ready_state === "ready" && !embedded && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", background: K.successSoft, border: `1px solid ${K.success}`, borderRadius: 8, fontSize: 12.5, color: K.body }}>
               <CheckCircle2 size={14} color={K.success} />
-              Content ready.{" "}
+              {t("ready")}{" "}
               <a
                 onClick={() => router.push(`/portal/content?piece=${piece.piece_id}`)}
                 style={{ color: K.accentDeep, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}
               >
-                View, edit, or export it in My Content
+                {t("viewInMyContent")}
               </a>
             </div>
           )}
