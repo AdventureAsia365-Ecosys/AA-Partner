@@ -1,5 +1,5 @@
 // AA-1025 (S264): the "Open Content studio" link shows only for an agency that is one of the person's studios
-// (lib/studioAccess.ts), and the studio's cookie list stays the same in the web (sign-out) and the portal.
+// (lib/studioAccess.ts), and the studio's cookie list is the one sign-out clears (lib/studioCookies.ts).
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -97,11 +97,15 @@ describe("wiring", () => {
     expect(layout).toContain("contentStudioHref={studioLink(studioHref, studio)}");
   });
 
-  it("the web's sign-out clears exactly the portal's studio cookies", () => {
-    const portal = readFileSync(path.join(root, "portal/lib/studioSession.ts"), "utf8");
-    const block = portal.slice(portal.indexOf("export const STUDIO_COOKIES"), portal.indexOf("] as const"));
-    const names = [...block.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
-    expect([...STUDIO_COOKIES].sort()).toEqual(names.sort());
+  // AA-1036 (R3): the separate studio app is gone, so the studio's session helpers re-export the one cookie list
+  // (lib/studioCookies.ts) instead of keeping a copy; sign-out and the studio can no longer drift apart.
+  it("the studio session uses the one studio cookie list that sign-out clears", async () => {
+    const studio = readFileSync(path.join(root, "web/lib/studio/studioSession.ts"), "utf8");
+    expect(studio).toContain('export { STUDIO_COOKIES } from "../studioCookies";');
+    expect(studio).not.toMatch(/export const STUDIO_COOKIES\b/);
+    const reexported = await import("@/lib/studio/studioSession");
+    expect(reexported.STUDIO_COOKIES).toBe(STUDIO_COOKIES);
     expect(STUDIO_COOKIES).toContain("cis_partner_ref");
+    expect(STUDIO_COOKIES).toContain(reexported.PARTNER_REF_COOKIE);
   });
 });

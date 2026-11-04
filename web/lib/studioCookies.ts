@@ -1,9 +1,9 @@
 // web/lib/studioCookies.ts
-// AA-979 P2b — the Content studio's (portal/) host-only cookies on the same agency host (portal.). The portal
-// sets them (Path=/, httpOnly, SameSite=Lax; names unchanged since AA-427); the web clears them at sign-out so one
-// sign-out ends both sessions. Kept out of lib/session.ts on purpose: the portal holds a byte copy of that file.
-// AA-1025 (S264): + cis_partner_ref, the partner sign-in the studio cookies belong to (portal/lib/studioSession.ts);
-// keep this list equal to the portal's STUDIO_COOKIES (tests/studioAccess.test.ts compares them).
+// AA-979 P2b — the Content studio's host-only cookies on the agency host (portal.). The studio sets them (Path=/,
+// httpOnly, SameSite=Lax; names unchanged since AA-427); sign-out clears them so one sign-out ends both sessions.
+// AA-1025 (S264): + cis_partner_ref, the partner sign-in the studio cookies belong to.
+// AA-1036 (R3): the studio now lives in this app; lib/studio/studioSession.ts re-exports this list (the one source,
+// tests/studioAccess.test.ts checks the wiring).
 
 import type { WebConfig } from "./config";
 import type { CookieSpec } from "./session";
