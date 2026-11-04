@@ -18,6 +18,7 @@ import {
 } from "@/app/_kit";
 import { PUBLISH_MESSAGES } from "./publish.messages";
 import { ServedBadge, afterUnpublishSentence, type ServedFields } from "./ServedBadge";
+import { plainError } from "./studioError";
 
 export interface PublishedRow extends ServedFields {
   publish_id: string;
@@ -66,7 +67,7 @@ function PublishedListInner({ onUnpublished }: { onUnpublished?: () => void }) {
     },
     onError: (e, row) => {
       // 404 = already unpublished elsewhere (refresh shows it); anything else = still live.
-      const msg = e instanceof Error ? e.message : t("unpublishFailed");
+      const msg = plainError(e, t("unpublishFailed"), lang);
       toast.error(e instanceof ApiError && e.status === 404
         ? t("alreadyUnpublished")
         : t("stillPublished", channelName(row.channel), msg), 8000);
@@ -161,7 +162,7 @@ function PublishedListInner({ onUnpublished }: { onUnpublished?: () => void }) {
         tableId="portal-published-posts"
         getRowId={(r) => r.publish_id}
         loading={isLoading}
-        error={isError ? (error instanceof Error ? error.message : t("loadError")) : null}
+        error={isError ? plainError(error, t("loadError"), lang) : null}
         onRetry={() => refetch()}
         searchable
         searchPlaceholder={t("searchTitle")}

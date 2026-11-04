@@ -21,6 +21,7 @@ import {
   type AccountMember,
   type AccountMembers as MembersBody,
 } from "@/lib/studio/members";
+import { plainError } from "./studioError";
 
 export const ACCOUNT_MEMBERS_QUERY_KEY = ["account-members"] as const;
 
@@ -128,7 +129,7 @@ export function AccountMembers() {
         tableId="account-members"
         getRowId={(m) => m.membership_id}
         loading={isLoading}
-        error={isError ? (error instanceof Error ? error.message : t("loadError")) : null}
+        error={isError ? plainError(error, t("loadError"), lang) : null}
         onRetry={() => refetch()}
         searchable={false}
         enableCsv={false}

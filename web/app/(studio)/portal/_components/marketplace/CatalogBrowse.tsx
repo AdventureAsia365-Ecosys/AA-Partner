@@ -94,7 +94,7 @@ export function CatalogBrowse({ externalSearch = "", meter }: { externalSearch?:
     if (ids.length === 0) return;
     setBusy(true);
     try {
-      const res = await startRewrites(ids);
+      const res = await startRewrites(ids, lang);
       qc.invalidateQueries({ queryKey: MY_VERSIONS_KEY });
       qc.invalidateQueries({ queryKey: [POOL_KEY] });
       qc.invalidateQueries({ queryKey: PICKED_KEY });

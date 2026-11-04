@@ -26,6 +26,7 @@ import {
   changedFields, createBody, factCall, formOf, formProblem, overrideForm, ownOnSubject,
   type FactForm, type FactKind, type TenantFact, type TenantFactList,
 } from "@/lib/studio/facts";
+import { plainError } from "./studioError";
 
 export const BRAND_FACTS_QUERY_KEY = ["brand-facts"] as const;
 
@@ -91,7 +92,7 @@ export function BrandFacts() {
   const [editing, setEditing] = useState<TenantFact | null>(null);
   const [creating, setCreating] = useState<FactForm | null>(null);
   const refresh = () => { void qc.invalidateQueries({ queryKey: BRAND_FACTS_QUERY_KEY }); };
-  const errorMessage = isError ? (error instanceof Error ? error.message : t("loadError")) : null;
+  const errorMessage = isError ? plainError(error, t("loadError"), lang) : null;
 
   const ownColumns = useMemo<ColumnDef<TenantFact, unknown>[]>(() => [
     { id: "subject", accessorFn: (f) => f.title, header: t("colSubject"), cell: (c) => subjectCell(c.row.original, t) },

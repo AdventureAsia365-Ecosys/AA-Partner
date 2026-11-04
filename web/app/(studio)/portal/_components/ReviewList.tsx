@@ -21,7 +21,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { Download, ExternalLink, Eye, FileDown, RefreshCw, Save, Send, Trash2, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { ServedBadge, plainError } from "./ServedBadge";
+import { ServedBadge } from "./ServedBadge";
+import { plainError } from "./studioError";
 import {
   AiNotice, Badge, Button, ConfirmModal, type ColumnDef, DataTable, Drawer, IconButton, LinkButton, ListButton, StatusBadge,
   ToastProvider, deleteView, listViews, saveView, useFormat, useHydrated, useIsPhone, useLang, useT, useToast, K, sans,
@@ -226,7 +227,7 @@ function ReviewListInner() {
           await publishPiece(r.piece_id);
           ok += 1;
         } catch (e) {
-          failures.push(`${pieceTitle(r, lang)}: ${plainError(e, t("failed"))}`);
+          failures.push(`${pieceTitle(r, lang)}: ${plainError(e, t("failed"), lang)}`);
         }
       }
       return { ok, failures };
@@ -249,7 +250,7 @@ function ReviewListInner() {
       setConfirm(null);
     },
     onError: (e) => {
-      toast.error(plainError(e, t("rewriteFailed")));
+      toast.error(plainError(e, t("rewriteFailed"), lang));
       setConfirm(null);
     },
   });
@@ -415,7 +416,7 @@ function ReviewListInner() {
         tableId="my-content-pieces"
         getRowId={(r) => r.piece_id}
         loading={isLoading}
-        error={isError ? (error instanceof Error ? error.message : t("loadError")) : null}
+        error={isError ? plainError(error, t("loadError"), lang) : null}
         onRetry={() => refetch()}
         searchable
         searchPlaceholder={t("searchPlaceholder")}

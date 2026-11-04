@@ -4,6 +4,8 @@
 //   2. No studio component keeps a hard-coded English UI string: JSX text, a text attribute (title, placeholder,
 //      aria-label, label…) given as a string literal, or an English-looking string literal inside a JSX expression.
 //      Proper names that read the same in both languages are listed in ALLOWED_TEXT.
+//   2b. The studio's helper modules (.ts) never throw an English sentence (they throw a StudioError with a message
+//      key, studioError.ts) and no studio object literal keeps an English UI label ({ label: "Landing Page" }).
 //   3. The studio's language store: one setting for the whole app (the CRM's cookie and form), English by default.
 //   4. The draft legal documents (legal/*/<name>.messages.ts, structured text): the Vietnamese document has the same
 //      sections and blocks as the English one, and no English placeholder left in it.
@@ -246,6 +248,102 @@ describe("no hard-coded English in studio components", () => {
       }
     }
     expect(hits, "move the text into the area's *.messages.ts (EN + VI) and render it with useT / translator").toEqual([]);
+  });
+});
+
+// ── 2b. helpers and object literals ────────────────────────────────────────────────────────────────────────────
+
+/** Studio code outside the catalogues and the components' JSX: helper modules, and object literals anywhere.
+ *  A server module (`*-server.ts`) answers the BFF, not a person: not scanned. */
+const SOURCES = [...FILES, ...LIB_DIRS.flatMap(walk)].filter(
+  (f) => /\.tsx?$/.test(f) && !/\.messages\.ts$/.test(f) && !/-server\.ts$/.test(f),
+);
+
+/** Calls whose arguments reach the tenant as an error sentence. */
+const ERROR_CALLS = new Set(["Error", "ApiError", "StudioError", "plainError"]);
+
+function insideErrorText(node: ts.Node): boolean {
+  for (let p: ts.Node | undefined = node.parent; p; p = p.parent) {
+    if (ts.isThrowStatement(p)) return true;
+    if ((ts.isCallExpression(p) || ts.isNewExpression(p)) && ERROR_CALLS.has(callName(p))) return true;
+    if (ts.isBlock(p) || ts.isSourceFile(p) || ts.isArrowFunction(p) || ts.isFunctionExpression(p)) return false;
+  }
+  return false;
+}
+
+/** English sentences a helper throws (.ts files only: a component's errors already come from its catalogue), and
+ *  English values of a text property (`label`, `title`…) in an object literal (any studio file). */
+export function englishOutsideJsx(rel: string, code: string): { line: number; text: string }[] {
+  const sf = ts.createSourceFile(rel, code, ts.ScriptTarget.Latest, true, rel.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const helper = rel.endsWith(".ts");
+  const hits: { line: number; text: string }[] = [];
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateHead(node) ||
+      ts.isTemplateMiddle(node) || ts.isTemplateTail(node)
+    ) {
+      const p = node.parent;
+      const textProp = ts.isPropertyAssignment(p) && p.initializer === node && TEXT_ATTRS.has(p.name.getText(sf));
+      if (looksEnglish(node.text) && !notText(node) && (textProp || (helper && insideErrorText(node)))) {
+        hits.push({ line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1, text: node.text.trim().slice(0, 100) });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return hits;
+}
+
+describe("no hard-coded English in studio helpers and object literals", () => {
+  test("the scanner sees thrown sentences and text properties, not keys, codes or developer logs", () => {
+    const sample = [
+      "if (!r.ok) throw new Error(`Save failed (${r.status})`);",
+      "if (r.status === 409) throw new Error(\"A rewrite is already running.\");",
+      "const x = plainError(e, \"Request failed\", lang);",
+      "throw new StudioError(\"rewriteBusy\", r.status);",
+      "const TABS = [{ key: \"landing_page\", label: \"Landing Page\" }, { key: \"blog\", label: \"navBlog\" }];",
+      "console.warn(\"Something went wrong here\");",
+      "if (mode === \"Not a sentence check\") {}",
+    ].join("\n");
+    expect(englishOutsideJsx("sample.ts", sample).map((h) => h.text)).toEqual([
+      "Save failed (", "A rewrite is already running.", "Request failed", "Landing Page",
+    ]);
+    // In a component only the object literal counts (its thrown errors are checked by the JSX rule's t() use).
+    expect(englishOutsideJsx("sample.tsx", sample).map((h) => h.text)).toEqual(["Landing Page"]);
+  });
+
+  test("every studio helper and object literal takes its UI text from a message catalogue", () => {
+    expect(SOURCES.filter((f) => f.endsWith(".ts")).length, "expected the studio helper modules").toBeGreaterThan(10);
+    const hits: string[] = [];
+    for (const file of SOURCES) {
+      for (const h of englishOutsideJsx(file, fs.readFileSync(path.join(ROOT, file), "utf8"))) {
+        hits.push(`${file}:${h.line}: ${JSON.stringify(h.text)}`);
+      }
+    }
+    expect(hits, "throw a StudioError with a key of errors.messages.ts, or take the label from a catalogue").toEqual([]);
+  });
+
+  test("a studio error reads in the UI language; the API's own sentence passes through", async () => {
+    const { StudioError, plainError } = await import("@/app/(studio)/portal/_components/studioError");
+    const { ApiError } = await import("@/app/_kit/local/studio/api");
+    expect(plainError(new StudioError("rewriteBusy", 409), "x", "en")).toBe("A rewrite of this tour is already in progress.");
+    expect(plainError(new StudioError("rewriteBusy", 409), "x", "vi")).toBe("Tour này đang được viết lại.");
+    expect(plainError(new StudioError("saveFailed", 500), "x", "vi")).toBe("Không lưu được (500)");
+    expect(plainError(new StudioError("publishFailed", 409, "tour_paused: Paused by the operator."), "x", "vi"))
+      .toBe("Paused by the operator.");
+    expect(plainError(new ApiError("HTTP 502", 502), "x", "vi")).toBe("Yêu cầu không thành công (502)");
+    expect(plainError(new ApiError("Quota reached.", 429, "Quota reached."), "x", "vi")).toBe("Quota reached.");
+    expect(plainError(new TypeError("Failed to fetch"), "Lỗi mạng", "vi")).toBe("Lỗi mạng");
+    expect(plainError(new Error("Đã viết sẵn"), "x", "vi")).toBe("Đã viết sẵn");
+    expect(plainError(null, "Dự phòng", "vi")).toBe("Dự phòng");
+  });
+
+  test("the Slate tabs and the channel names share one catalogue", async () => {
+    const { channelName } = await import("@/app/(studio)/portal/_components/channelLabels");
+    expect(channelName("landing_page", "vi")).toBe("Trang đích");
+    expect(channelName("ads", "vi")).toBe("Quảng cáo");
+    const slate = fs.readFileSync(path.join(ROOT, "app/(studio)/portal/_components/SlateTab.tsx"), "utf8");
+    expect(slate).toContain("channelName(key, lang)");
   });
 });
 

@@ -35,6 +35,7 @@ import { PUBLISHABLE_CHANNELS, exportPiece, publishPiece } from "./reviewListApi
 import { channelName } from "./channelLabels";
 import { MarkdownBody } from "./markdownText";
 import { pieceTitle } from "@/lib/studio/myContent";
+import { plainError } from "./studioError";
 
 /** What the Slate hands the panel when a Subject is picked (or reopened this session). */
 export interface WriterTarget {
@@ -180,7 +181,7 @@ function ResultActions({ piece, target, confirmPublish, setConfirmPublish }: {
   const channel = piece.channel ?? target.channel;
   // S251 D5: the piece's H1 when it has one (pieceTitle), else the subject's title.
   const exportable = {
-    piece_id: piece.piece_id, channel, title: pieceTitle({ content_text: piece.content_text, angle: { name: target.title } }),
+    piece_id: piece.piece_id, channel, title: pieceTitle({ content_text: piece.content_text, angle: { name: target.title } }, lang),
   };
 
   async function doExport(format: "text" | "html") {
@@ -197,7 +198,7 @@ function ResultActions({ piece, target, confirmPublish, setConfirmPublish }: {
       const res = await publishPiece(piece.piece_id);
       toast.success(res.replayed ? t("alreadyPublished") : t("publishedTo", channelName(channel, lang)));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : t("publishFailed"));
+      toast.error(plainError(e, t("publishFailed"), lang));
     } finally {
       setPublishing(false);
       setConfirmPublish(false);

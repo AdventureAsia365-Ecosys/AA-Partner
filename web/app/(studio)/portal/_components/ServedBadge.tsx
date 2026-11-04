@@ -65,9 +65,5 @@ export function ServedBadge({ fields }: { fields: ServedFields | null | undefine
   );
 }
 
-/** The tenant sentence of an API error: drops the machine code the 409s of AA-986 start with
- *  ("tour_discontinued: …", "tour_paused: …"), keeps any other message as it is. */
-export function plainError(e: unknown, fallback: string): string {
-  const msg = e instanceof Error ? e.message : typeof e === "string" ? e : "";
-  return (msg || fallback).replace(/^(tour_discontinued|tour_paused):\s*/, "");
-}
+// plainError moved to studioError.ts (AA-1036: it translates the studio helpers' errors); re-exported here.
+export { plainError } from "./studioError";

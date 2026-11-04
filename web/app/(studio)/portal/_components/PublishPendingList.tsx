@@ -92,7 +92,7 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
           ...prev,
           // AA-986 L3: a 409 tour_discontinued / tour_paused reads as its plain sentence
           [pieceId]: { success: false, external_url: null,
-                       last_error: body.last_error || plainError(body.detail, t("publishFailed")) },
+                       last_error: body.last_error || plainError(body.detail, t("publishFailed"), lang) },
         }));
       }
     } catch {

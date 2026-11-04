@@ -68,10 +68,12 @@ import { Card, CardHead, CtaLink, EmptyState, StickyBar } from "./ui";
 import { Badge, Button, LinkButton, ToastProvider, K, mono, sans, serif, useLang, useT, type Translator, type UiLang } from "@/app/_kit";
 import { badgeTone } from "@/lib/studio/format";
 import { SLATE_MESSAGES } from "./writer.messages";
+import { channelName } from "./channelLabels";
 
 type SlateT = Translator<typeof SLATE_MESSAGES.en>;
 import type { ContentPiece } from "./AngleGateWizard";
 import { WriterPanel, useWriteWatcher, watchPiece, type WriterTarget } from "./WriterPanel";
+import { plainError } from "./studioError";
 
 interface ClearedBarReason {
   channel: string;
@@ -119,15 +121,16 @@ const SLATE_KEY = ["tenant-slate"] as const;
 // Order: 5 weekly-rhythm tabs first, then the 3 on-demand ones — matches the build prompt's own
 // "5 tab nhịp tuần + 3 tab theo yêu cầu" grouping. `group` drives the tab-strip divider + icon
 // (FE audit #5) — the tab list itself is unchanged.
-const CHANNEL_TABS: { key: string; label: string; group: "weekly" | "on_demand" }[] = [
-  { key: "blog", label: "Blog", group: "weekly" },
-  { key: "linkedin", label: "LinkedIn", group: "weekly" },
-  { key: "facebook", label: "Facebook", group: "weekly" },
-  { key: "instagram", label: "Instagram", group: "weekly" },
-  { key: "tiktok", label: "TikTok", group: "weekly" },
-  { key: "email", label: "Email", group: "on_demand" },
-  { key: "landing_page", label: "Landing Page", group: "on_demand" },
-  { key: "ads", label: "Ads", group: "on_demand" },
+// AA-1036 (R3): a tab shows channelName(key, lang), the one catalogue of channel names (writer.messages.ts).
+const CHANNEL_TABS: { key: string; group: "weekly" | "on_demand" }[] = [
+  { key: "blog", group: "weekly" },
+  { key: "linkedin", group: "weekly" },
+  { key: "facebook", group: "weekly" },
+  { key: "instagram", group: "weekly" },
+  { key: "tiktok", group: "weekly" },
+  { key: "email", group: "on_demand" },
+  { key: "landing_page", group: "on_demand" },
+  { key: "ads", group: "on_demand" },
 ];
 
 // AA-668 — the Writer panel's state, shared by every row of every Channel tab: at most one panel
@@ -211,7 +214,7 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
   });
   const data = slateQ.data ?? null;
   const loading = slateQ.isPending;
-  const error = slateQ.isError ? slateQ.error.message : null;
+  const error = slateQ.isError ? plainError(slateQ.error, t("loadFailed"), lang) : null;
   const load = useCallback(() => { qc.invalidateQueries({ queryKey: SLATE_KEY }); }, [qc]);
   const refreshing = !!data?.refresh?.refreshing;
 
@@ -299,7 +302,7 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
           borderBottom: `1px solid ${K.line2}`, paddingBottom: 2, paddingRight: tabs.length > 1 ? 28 : 0,
           ...(tabs.length > 1 ? TABSTRIP_FADE : {}),
         }}>
-          {tabs.map(({ key, label, group }, i) => {
+          {tabs.map(({ key, group }, i) => {
             const showDivider = i > 0 && tabs[i - 1].group !== group;
             const count = data?.channels[key]?.eligible_count ?? null;
             const isActive = activeChannel === key;
@@ -322,7 +325,7 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
                   }}
                 >
                   <Icon size={11} style={{ opacity: 0.55, flexShrink: 0 }} />
-                  {label}{count != null && <span style={{ marginLeft: 2, fontFamily: mono, fontSize: 10.5, color: K.muted2 }}>{count}</span>}
+                  {channelName(key, lang)}{count != null && <span style={{ marginLeft: 2, fontFamily: mono, fontSize: 10.5, color: K.muted2 }}>{count}</span>}
                 </button>
               </div>
             );

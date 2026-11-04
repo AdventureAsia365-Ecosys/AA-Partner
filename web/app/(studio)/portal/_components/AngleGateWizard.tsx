@@ -74,6 +74,7 @@ import LiveWriter from "./LiveWriter";
 import { CtaReviewNotice, ctaWarningFrom, useCtaReviewCheck, type CtaWarning } from "./CtaReviewNotice";
 import { channelName, humanizeKey } from "./channelLabels";
 import { atomReplacedNote, type AtomReplacement } from "@/lib/studio/myContent";
+import { plainError } from "./studioError";
 
 /** AA-668 — the goal's name from the 8-value list (`GET /v1/angle-gate/goals`), never its key:
  *  "introduction_awareness" → "Introduction / Awareness". Before the list loads, the key as words. */
@@ -519,9 +520,9 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
       })
       .catch(e => {
         setWriting(false);
-        setWriteError(e instanceof Error ? e.message : t("writeFailed"));
+        setWriteError(plainError(e, t("writeFailed"), lang));
       });
-  }, [pollPiece, onDetachedPiece, t]);
+  }, [pollPiece, onDetachedPiece, t, lang]);
 
   // AA-522 — the ONE place that decides what the write step should show, whether arrived at via
   // a fresh choose(), a reload/resume, or a "Change angle" re-choice: ask the server for the

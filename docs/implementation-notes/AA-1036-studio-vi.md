@@ -39,6 +39,17 @@ Follows `AA-1036.md` (slice 1) and `AA-1036-r3-cutover.md` (slice 2). Root ADR 0
   `IconButton`, `ListButton`, `Badge`, `EmptyState`, `LoadingScreen`, `Spinner`, `Eyebrow`; a kit-built
   `SectionSkeleton` replaces `CardSkeleton`. `ui.tsx` keeps only what has no kit twin yet (see Should know). The kit
   barrel (`app/_kit/index.ts`, app-local) now also exports `Section` and the i18n API. No kit core file changed.
+- **Errors of the studio's own helpers (review fix pass)**: `reviewListApi.ts`, `catalogApi.ts` and
+  `marketplaceApi.ts` no longer throw English sentences. They throw a `StudioError` (`_components/studioError.ts`)
+  with a key of `errors.messages.ts` and the HTTP status, plus the API's `detail` when it sent a sentence. The kit's
+  `ApiError` (`app/_kit/local/studio/api.ts`, portal-owned) now carries `detail` separately; its message is
+  `HTTP <status>` when the API sent none. Components show every error through `plainError(e, fallback, lang)`
+  (moved from `ServedBadge.tsx`, re-exported there): a key in the UI language, the API's sentence unchanged, a
+  browser `TypeError` ("Failed to fetch") as the component's fallback. `startRewrites(ids, lang)` takes the language
+  like the `lib/studio` helpers. The unused English `READY_STATE_META` and `channelLabel` were deleted.
+- **One catalogue of channel names**: the Slate tab strip renders `channelName(key, lang)`; `CHANNEL_TABS` keeps
+  only key and group. The command palette passes `lang` to `channelName` / `pieceTitleOrTour` too, and the writer
+  panel's export title to `pieceTitle`.
 
 ## Changed (vs. the lane brief)
 
@@ -79,3 +90,8 @@ Follows `AA-1036.md` (slice 1) and `AA-1036-r3-cutover.md` (slice 2). Root ADR 0
   `/portal/account/billing`, `/portal/account/settings`, `/portal/account/members`, `/portal/account/activity`,
   `/portal/account/integrations`, `/portal/help/facebook`, `/legal/privacy`, `/legal/partner-terms` (switch: account
   menu > "Language and dates" > Tiếng Việt; back to English the same way).
+- Guard 2b (`tests/studio/studioI18n.test.ts`): `.ts` helper modules under the studio folders and `lib/studio` may
+  not throw (or pass to `Error` / `ApiError` / `StudioError` / `plainError`) an English-looking literal, and no
+  studio file may give a text property (`label`, `title`, `message`…) an English-looking literal in an object
+  literal. `*-server.ts` modules answer the BFF, not a person, and are not scanned. Run against the pre-fix files it
+  reports every string the reviewers listed.

@@ -16,7 +16,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { BookOpen, CornerDownLeft, FileText, Globe2, Search } from "lucide-react";
-import { K, Modal, RADIUS, alpha, apiGet, sans, useT } from "@/app/_kit";
+import { K, Modal, RADIUS, alpha, apiGet, sans, useLang, useT } from "@/app/_kit";
 import { fetchMyVersions } from "@/app/(studio)/portal/_components/catalogApi";
 import { fetchReviews } from "@/app/(studio)/portal/_components/reviewListApi";
 import { channelName } from "@/app/(studio)/portal/_components/channelLabels";
@@ -41,6 +41,7 @@ export function PortalCommandPalette({ open, onClose, onSearchTours }: {
 
 function Palette({ onClose, onSearchTours }: { onClose: () => void; onSearchTours: (q: string) => void }) {
   const t = useT(STUDIO_MESSAGES);
+  const lang = useLang();
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -112,8 +113,8 @@ function Palette({ onClose, onSearchTours }: { onClose: () => void; onSearchTour
       .map((r) => ({
         // S251 D5: the same title as My Content (the H1, else the angle's name); a piece with neither keeps the
         // tour's name.
-        kind: "link", key: `piece:${r.piece_id}`, label: pieceTitleOrTour(r),
-        sub: [channelName(r.channel), r.tour?.name].filter(Boolean).join(" · "), icon: <FileText size={16} />,
+        kind: "link", key: `piece:${r.piece_id}`, label: pieceTitleOrTour(r, lang),
+        sub: [channelName(r.channel, lang), r.tour?.name].filter(Boolean).join(" · "), icon: <FileText size={16} />,
         href: `${ROUTES.content}?piece=${encodeURIComponent(r.piece_id)}`,
       }));
 
@@ -123,7 +124,7 @@ function Palette({ onClose, onSearchTours }: { onClose: () => void; onSearchTour
       { title: t("paletteMyContent"), rows: content },
       { title: t("paletteTours"), rows: tours },
     ].filter((g) => g.rows.length > 0);
-  }, [needle, enabled, debounced, pool, versions, reviews, t]);
+  }, [needle, enabled, debounced, pool, versions, reviews, t, lang]);
 
   const flat = useMemo(() => groups.flatMap((g) => g.rows), [groups]);
   const safeSelected = flat.length === 0 ? 0 : Math.min(selected, flat.length - 1);

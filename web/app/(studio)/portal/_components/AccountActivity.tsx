@@ -28,6 +28,7 @@ import {
   type ActivityPage,
 } from "@/lib/studio/account";
 import { usePortalShell } from "./PortalShellContext";
+import { plainError } from "./studioError";
 
 const CATEGORY_TONE: Record<string, Tone> = { content: "info", tours: "accent", account: "neutral" };
 const CATEGORY_KEY = { content: "catContent", tours: "catTours", account: "catAccount" } as const;
@@ -80,7 +81,7 @@ export default function AccountActivity() {
       if (!res.ok) throw new Error(t("exportFailedStatus", res.status));
       downloadCsv(exportFilename(filters, todayUtc()), await res.text());
     } catch (e) {
-      setExportError(e instanceof Error ? e.message : t("exportFailed"));
+      setExportError(plainError(e, t("exportFailed"), lang));
     } finally {
       setExporting(false);
     }
@@ -140,7 +141,7 @@ export default function AccountActivity() {
           tableId="portal-account-activity"
           getRowId={(r) => r.id}
           loading={isLoading}
-          error={isError ? (error instanceof Error ? error.message : t("loadError")) : null}
+          error={isError ? plainError(error, t("loadError"), lang) : null}
           onRetry={() => refetch()}
           searchable={false}
           serverPagination={{

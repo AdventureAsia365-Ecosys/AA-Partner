@@ -25,7 +25,8 @@ import { CATALOG_MESSAGES } from "./tours.messages";
 import { CatalogDrawer } from "./CatalogDrawer";
 import { TourRewritePanel, watchTourRewrite, type TourRewriteTarget } from "./TourRewritePanel";
 import { WorkStatusBadge, activePollInterval, latestVersionByTour, tourWorkStatus } from "./workStatus";
-import { ServedBadge, plainError } from "./ServedBadge";
+import { ServedBadge } from "./ServedBadge";
+import { plainError } from "./studioError";
 import { MasterNewerBadge } from "./MasterNewerNotice";
 import { showMasterNotice } from "@/lib/studio/masterNotice";
 import { useWriteWatcher } from "./WriterPanel";
@@ -153,7 +154,7 @@ function CatalogInner() {
       setRetries((n) => n + 1);
       invalidate();
     },
-    onError: (e) => toast.error(plainError(e, t("retryFailed"))),
+    onError: (e) => toast.error(plainError(e, t("retryFailed"), lang)),
   });
 
   const saveM = useMutation({
@@ -168,7 +169,7 @@ function CatalogInner() {
       setDirty(false);
       toast.success(t("saved"));
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : t("saveFailed")),
+    onError: (e) => toast.error(plainError(e, t("saveFailed"), lang)),
   });
 
   const rewriteM = useMutation({
@@ -182,7 +183,7 @@ function CatalogInner() {
       setRewrite({ versionId: r.version_id, publishedTourId: vars.publishedTourId, title: vars.title, language: vars.lang });
       invalidate();
     },
-    onError: (e) => toast.error(plainError(e, t("rewriteRequestFailed"))),
+    onError: (e) => toast.error(plainError(e, t("rewriteRequestFailed"), lang)),
   });
 
   // ── DOCX export (unchanged endpoint/trigger) ──
