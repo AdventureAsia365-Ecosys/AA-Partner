@@ -11,7 +11,8 @@
 
 import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { apiGet } from "@/app/_kit";
+import { apiGet, useT } from "@/app/_kit";
+import { STUDIO_MESSAGES } from "./studio.messages";
 import { fetchMyVersions, type Version } from "@/app/(studio)/portal/_components/catalogApi";
 import { countUniqueTours } from "@/lib/studio/format";
 import { activePollInterval, activityState, settledActivityState, tourWorkStatus } from "@/app/(studio)/portal/_components/workStatus";
@@ -27,13 +28,14 @@ export type LoadStatus = "pending" | "error" | "success";
 /** AA-760 — the tenant name is "" while /api/tenant/me is loading (the shell shows a skeleton, not a
  *  generic name); the "Partner" fallback is used only once the call has answered without a name. */
 export function useTenantMe(): { tenantName: string; planTier: string; status: LoadStatus } {
+  const t = useT(STUDIO_MESSAGES);
   const { data, status } = useQuery({
     queryKey: ["tenant-me"],
     queryFn: () => apiGet<TenantMe>("/api/tenant/me"),
     staleTime: 5 * 60_000,
   });
   return {
-    tenantName: data?.tenant_name || (status === "pending" ? "" : "Partner"),
+    tenantName: data?.tenant_name || (status === "pending" ? "" : t("partnerFallback")),
     planTier: data?.plan_tier || "",
     status,
   };

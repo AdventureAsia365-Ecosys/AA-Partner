@@ -42,6 +42,14 @@ export { useSidebarCollapsed, useNavGroups } from "./core/useSidebar";
 export { navGroupId } from "./core/sidebarStore";
 export { NavGroup } from "./core/NavGroup";
 export { useHydrated } from "./core/useHydrated";
+// AA-1036 (R3): the kit UI-language catalogue (core/i18n.ts) and its React bindings (core/useI18n.ts), first used by
+// the Content studio (message files `*.messages.ts` next to its components). The language itself is this app's one
+// setting (cookie aa_crm_locale, lib/i18n.ts); the studio's provider is local/studio/StudioLang.tsx.
+export {
+  defineMessages, translator, missingTranslations, localized, LANGS, DEFAULT_LANG,
+  type Lang as UiLang, type Messages, type Translator, type Catalog, type LangStore,
+} from "./core/i18n";
+export { I18nProvider, useT, useLang, useSetLang, useLocalized, useFormat } from "./core/useI18n";
 export type { ThemeChoice, ResolvedTheme } from "./core/theme";
 
 // ── CRM-local ────────────────────────────────────────────────────────────────────────────────────────────────

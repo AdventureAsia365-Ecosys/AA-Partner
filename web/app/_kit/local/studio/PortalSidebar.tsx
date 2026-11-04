@@ -20,10 +20,14 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronsLeft, ChevronsRight, ExternalLink, Map as MapIcon, Plus, Users } from "lucide-react";
 import type { AppEntry } from "@/lib/apps";
 import {
-  K, NavGroup, alpha, navGroupId, sans, serif, useHydrated, useMediaQuery, useNavGroups, useSidebarCollapsed,
+  K, NavGroup, alpha, navGroupId, sans, serif, useHydrated, useMediaQuery, useNavGroups, useSidebarCollapsed, useT,
+  type Translator,
 } from "@/app/_kit";
 import { LOGO_SRC } from "../../core/brand";
 import { NAV_GROUPS, ROUTES, navActive, type NavEntry } from "./portalNav";
+import { STUDIO_MESSAGES } from "./studio.messages";
+
+type T = Translator<typeof STUDIO_MESSAGES.en>;
 
 // AA-1036 (R3 slice 1, root ADR 0019 d7): the app switcher replaces the old "Open CRM" cross-link. Content is where the
 // person is; an add-on the tenant holds opens (the CRM home, a full page load: plain <a>, so the studio's stylesheet
@@ -45,6 +49,7 @@ export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate 
   catalogCount: number;
   onNavigate: () => void;
 }) {
+  const t = useT(STUDIO_MESSAGES);
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useSidebarCollapsed();
   const hydrated = useHydrated();
@@ -52,7 +57,7 @@ export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate 
   const desktop = useMediaQuery("(min-width: 900px)");
   const rail = collapsed && desktop;
   const activeGroup = NAV_GROUPS.find((g) => g.items.some((e) => navActive(e, pathname)));
-  const navGroups = useNavGroups("portal", activeGroup ? navGroupId(activeGroup.label) : null, pathname);
+  const navGroups = useNavGroups("portal", activeGroup ? navGroupId(activeGroup.id) : null, pathname);
 
   // `[` toggles the rail, ignored while typing (input / textarea / select / contenteditable).
   useEffect(() => {
@@ -76,7 +81,7 @@ export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate 
       data-testid="portal-sidebar"
       data-open={drawerOpen ? "true" : "false"}
       data-hydrated={hydrated ? "true" : undefined}
-      aria-label="Portal navigation"
+      aria-label={t("sidebarAria")}
       style={{
         flexShrink: 0, background: "var(--aa-side-bg)", color: "var(--aa-side-text)",
         display: "flex", flexDirection: "column", gap: 22,
@@ -89,8 +94,8 @@ export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate 
           href={ROUTES.dashboard}
           onClick={onNavigate}
           data-pshell-row="true"
-          aria-label="Adventure Asia Partner Portal — go to Dashboard"
-          title="Adventure Asia — Dashboard"
+          aria-label={t("brandHomeAria")}
+          title={t("brandHomeTitle")}
           style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none" }}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -98,28 +103,28 @@ export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate 
             style={{ width: 38, height: "auto", flexShrink: 0, display: "block" }} />
           <span data-pshell-label="true" style={{ minWidth: 0 }}>
             <span style={{ display: "block", fontFamily: serif, fontSize: 14, fontWeight: 500, color: "var(--aa-side-title)", letterSpacing: "-0.01em", lineHeight: 1.2 }}>
-              Adventure Asia
+              {t("brandName")}
             </span>
             <span style={{ display: "block", fontSize: 9.5, textTransform: "uppercase", letterSpacing: "0.18em", color: K.accent, fontWeight: 600, marginTop: 1 }}>
-              Partner Portal
+              {t("brandProduct")}
             </span>
           </span>
         </Link>
       </div>
 
-      <nav aria-label="Primary" style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
+      <nav aria-label={t("navPrimary")} style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
         {NAV_GROUPS.map((group) => {
-          const id = navGroupId(group.label);
+          const id = navGroupId(group.id);
           return (
             <NavGroup
-              key={group.label}
+              key={group.id}
               id={id}
-              label={group.label !== "Overview" ? group.label : null}
+              label={group.id !== "Overview" ? t(group.label) : null}
               open={navGroups.isOpen(id)}
               onToggle={() => navGroups.toggle(id)}
               rail={rail}
               active={group.items.some((e) => navActive(e, pathname))}
-              testId={`portal-nav-group-${group.label.toLowerCase()}`}
+              testId={`portal-nav-group-${group.id.toLowerCase()}`}
               headerStyle={groupTitleStyle}
               headerProps={PSHELL_LABEL}
             >
@@ -130,12 +135,13 @@ export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate 
                   active={navActive(entry, pathname)}
                   count={entry.count ? (counts[entry.count] ?? undefined) : undefined}
                   onClick={onNavigate}
+                  t={t}
                 />
               ))}
             </NavGroup>
           );
         })}
-        <StudioApps rail={rail} open={navGroups.isOpen("apps")} onToggle={() => navGroups.toggle("apps")} />
+        <StudioApps t={t} rail={rail} open={navGroups.isOpen("apps")} onToggle={() => navGroups.toggle("apps")} />
       </nav>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -144,8 +150,8 @@ export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate 
           data-pshell-row="true"
           onClick={() => setCollapsed(!collapsed)}
           data-testid="portal-sidebar-collapse"
-          title={collapsed ? "Expand sidebar ([)" : "Collapse sidebar ([)"}
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          title={collapsed ? t("expandSidebarKey") : t("collapseSidebarKey")}
+          aria-label={collapsed ? t("expandSidebar") : t("collapseSidebar")}
           style={{
             display: "flex", alignItems: "center", gap: 10, width: "100%",
             padding: "8px 10px", borderRadius: 7, border: "none",
@@ -154,7 +160,7 @@ export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate 
           }}
         >
           {collapsed ? <ChevronsRight size={16} /> : <ChevronsLeft size={16} />}
-          <span data-pshell-label="true">Collapse</span>
+          <span data-pshell-label="true">{t("collapse")}</span>
         </button>
       </div>
     </aside>
@@ -167,15 +173,20 @@ const APP_ICON: Record<AppEntry["key"], React.ReactNode> = {
   planner: <MapIcon size={16} />,
 };
 
+/** The app's name in the UI language (lib/apps.ts labels are English). */
+function appName(t: T, app: AppEntry): string {
+  return app.key === "crm" ? t("appCrm") : app.key === "planner" ? t("appPlanner") : t("appContent");
+}
+
 /** The add-ons of the app switcher (Content, the current app, is the rest of this sidebar). */
-function StudioApps({ rail, open, onToggle }: { rail: boolean; open: boolean; onToggle: () => void }) {
+function StudioApps({ t, rail, open, onToggle }: { t: T; rail: boolean; open: boolean; onToggle: () => void }) {
   const { data } = useQuery({ queryKey: APPS_KEY, queryFn: fetchApps, staleTime: 5 * 60_000, retry: false });
   const addOns = (data ?? []).filter((a) => a.key !== "content");
   if (addOns.length === 0) return null;
   return (
     <NavGroup
       id="apps"
-      label="Apps"
+      label={t("groupApps")}
       open={open}
       onToggle={onToggle}
       rail={rail}
@@ -185,6 +196,7 @@ function StudioApps({ rail, open, onToggle }: { rail: boolean; open: boolean; on
     >
       {addOns.map((app) => {
         const request = app.state === "request";
+        const name = appName(t, app);
         return (
           <a
             key={app.key}
@@ -192,7 +204,7 @@ function StudioApps({ rail, open, onToggle }: { rail: boolean; open: boolean; on
             data-pshell-row="true"
             data-testid={app.key === "crm" && !request ? "portal-crm-link" : `portal-app-${app.key}`}
             data-studio-app={app.state}
-            title={request ? `Request ${app.label} from Adventure Asia` : `Open ${app.label}`}
+            title={request ? t("appRequestTitle", name) : t("appOpen", name)}
             style={{
               display: "flex", alignItems: "center", gap: 10, width: "100%",
               padding: "8px 10px", borderRadius: 7, textDecoration: "none",
@@ -201,7 +213,7 @@ function StudioApps({ rail, open, onToggle }: { rail: boolean; open: boolean; on
           >
             <span aria-hidden style={{ flexShrink: 0, opacity: 0.75, display: "flex" }}>{APP_ICON[app.key]}</span>
             <span data-pshell-label="true" style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {request ? `${app.label}: request add-on` : `Open ${app.label}`}
+              {request ? t("appRequest", name) : t("appOpen", name)}
             </span>
             <span data-pshell-label="true" aria-hidden style={{ display: "flex", opacity: 0.6 }}>
               {request ? <Plus size={12} /> : <ExternalLink size={12} />}
@@ -218,9 +230,10 @@ function StudioApps({ rail, open, onToggle }: { rail: boolean; open: boolean; on
 const groupTitleStyle: React.CSSProperties = { padding: "0 10px 6px" };
 const PSHELL_LABEL = { "data-pshell-label": "true" };
 
-function NavItem({ entry, active, count, onClick }: {
-  entry: NavEntry; active: boolean; count?: number; onClick: () => void;
+function NavItem({ entry, active, count, onClick, t }: {
+  entry: NavEntry; active: boolean; count?: number; onClick: () => void; t: T;
 }) {
+  const label = t(entry.label);
   const showCount = count != null && count > 0;
   const shown = showCount ? (count > 999 ? "999+" : count.toLocaleString()) : "";
   return (
@@ -229,7 +242,7 @@ function NavItem({ entry, active, count, onClick }: {
       onClick={onClick}
       data-pshell-row="true"
       aria-current={active ? "page" : undefined}
-      title={entry.label}
+      title={label}
       style={{
         display: "flex", alignItems: "center", gap: 10, width: "100%",
         padding: "8px 10px", borderRadius: 7, textDecoration: "none",
@@ -252,10 +265,10 @@ function NavItem({ entry, active, count, onClick }: {
         )}
       </span>
       <span data-pshell-label="true" style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-        {entry.label}
+        {label}
       </span>
       {showCount && (
-        <span data-pshell-label="true" aria-label={`${count} ${entry.count === "pool" ? "tours available" : "tours"}`}
+        <span data-pshell-label="true" aria-label={entry.count === "pool" ? t("toursAvailable", count) : t("toursCount", count)}
           style={{ fontSize: 11, color: active ? K.accent : "var(--aa-side-text2)", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
           {shown}
         </span>

@@ -7,25 +7,27 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
-import { K, sans } from "@/app/_kit";
+import { K, sans, useT } from "@/app/_kit";
 import { BOTTOM_ITEMS, navActive } from "./portalNav";
+import { STUDIO_MESSAGES } from "./studio.messages";
 
 export function PortalBottomNav({ onOpenMore }: { onOpenMore: () => void }) {
+  const t = useT(STUDIO_MESSAGES);
   const pathname = usePathname();
   return (
-    <nav data-pshell="bottom-nav" data-testid="portal-bottom-nav" aria-label="Primary (mobile)">
+    <nav data-pshell="bottom-nav" data-testid="portal-bottom-nav" aria-label={t("navPrimaryMobile")}>
       {BOTTOM_ITEMS.map((it) => {
         const active = navActive(it, pathname);
         return (
           <Link key={it.href} href={it.href} aria-current={active ? "page" : undefined} style={btn(active)}>
             <span aria-hidden style={{ display: "flex" }}>{it.icon}</span>
-            <span style={{ fontSize: 10.5, fontWeight: active ? 600 : 500 }}>{it.label}</span>
+            <span style={{ fontSize: 10.5, fontWeight: active ? 600 : 500 }}>{t(it.label)}</span>
           </Link>
         );
       })}
-      <button onClick={onOpenMore} aria-label="More navigation" style={btn(false)}>
+      <button onClick={onOpenMore} aria-label={t("navMoreAria")} style={btn(false)}>
         <Menu size={18} aria-hidden />
-        <span style={{ fontSize: 10.5, fontWeight: 500 }}>More</span>
+        <span style={{ fontSize: 10.5, fontWeight: 500 }}>{t("navMore")}</span>
       </button>
     </nav>
   );

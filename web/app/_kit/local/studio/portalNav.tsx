@@ -4,11 +4,14 @@
 // the old slugs answer 308 in next.config.ts (OLD_SLUG_REDIRECTS there mirrors ROUTES here).
 //
 // Groups follow the tenant's workflow: Tours → Brand → Create → Content → Account.
+// AA-1036 (R3): labels are keys of the studio messages (studio.messages.ts), shown in the UI language; `id` is the
+// group's stable English name (the persisted fold state and the test ids use it).
 
 import {
   LayoutDashboard, BookOpen, Store, Sparkles, Share2, FileText, Eye, CreditCard,
   Activity, Settings, Plug, Users, Quote,
 } from "lucide-react";
+import type { StudioKey } from "./studio.messages";
 
 /** Every portal page path, in one place (links in components use these, not string literals). */
 export const ROUTES = {
@@ -35,7 +38,8 @@ export const ROUTES = {
 
 export interface NavEntry {
   href: string;
-  label: string;
+  /** The label: a key of STUDIO_MESSAGES. */
+  label: StudioKey;
   icon: React.ReactNode;
   /** Extra words the ⌘K palette matches on. */
   keywords?: string;
@@ -48,46 +52,48 @@ export interface NavEntry {
 }
 
 export interface NavGroup {
-  label: string;
+  /** Stable English name (fold state, test ids). */
+  id: string;
+  label: StudioKey;
   items: NavEntry[];
 }
 
 export const NAV_GROUPS: NavGroup[] = [
-  { label: "Overview", items: [
-    { href: ROUTES.dashboard, label: "Dashboard", icon: <LayoutDashboard size={16} />, keywords: "home overview usage quota" },
+  { id: "Overview", label: "groupOverview", items: [
+    { href: ROUTES.dashboard, label: "navDashboard", icon: <LayoutDashboard size={16} />, keywords: "home overview usage quota" },
   ] },
-  { label: "Tours", items: [
+  { id: "Tours", label: "groupTours", items: [
     // AA-671 — one Marketplace page: the catalog (Browse Tours until AA-671) and, as a view, the tenant's picked tours
     // with price and status (the "Tour overview" page until AA-671). My Tours stays the work page.
-    { href: ROUTES.tours, label: "Marketplace", icon: <Store size={16} />, keywords: "browse tours pool rewrite published search catalog overview portfolio price", count: "pool" },
-    { href: ROUTES.myTours, label: "My Tours", icon: <BookOpen size={16} />, keywords: "catalog versions rewritten export", count: "catalog" },
+    { href: ROUTES.tours, label: "navMarketplace", icon: <Store size={16} />, keywords: "browse tours pool rewrite published search catalog overview portfolio price", count: "pool" },
+    { href: ROUTES.myTours, label: "navMyTours", icon: <BookOpen size={16} />, keywords: "catalog versions rewritten export", count: "catalog" },
   ] },
-  { label: "Brand", items: [
-    { href: ROUTES.brand, label: "Brand Identity", icon: <Sparkles size={16} />, keywords: "brand voice tone cta rules" },
-    { href: ROUTES.facts, label: "Facts", icon: <Quote size={16} />, keywords: "facts price season visa transfer booking terms source writer cite" },
+  { id: "Brand", label: "groupBrand", items: [
+    { href: ROUTES.brand, label: "navBrand", icon: <Sparkles size={16} />, keywords: "brand voice tone cta rules" },
+    { href: ROUTES.facts, label: "navFacts", icon: <Quote size={16} />, keywords: "facts price season visa transfer booking terms source writer cite" },
   ] },
-  { label: "Create", items: [
-    { href: ROUTES.createSocial, label: "Social Posts", icon: <Share2 size={16} />, keywords: "social slate linkedin facebook instagram tiktok email ads write", also: [ROUTES.createWrite] },
-    { href: ROUTES.createArticle, label: "Articles", icon: <FileText size={16} />, keywords: "blog article write seo" },
+  { id: "Create", label: "groupCreate", items: [
+    { href: ROUTES.createSocial, label: "navSocial", icon: <Share2 size={16} />, keywords: "social slate linkedin facebook instagram tiktok email ads write", also: [ROUTES.createWrite] },
+    { href: ROUTES.createArticle, label: "navArticles", icon: <FileText size={16} />, keywords: "blog article write seo" },
   ] },
-  { label: "Content", items: [
-    { href: ROUTES.content, label: "My Content", icon: <Eye size={16} />, keywords: "written posts review publish wordpress", also: [ROUTES.publish] },
+  { id: "Content", label: "groupContent", items: [
+    { href: ROUTES.content, label: "navMyContent", icon: <Eye size={16} />, keywords: "written posts review publish wordpress", also: [ROUTES.publish] },
   ] },
-  { label: "Account", items: [
-    { href: ROUTES.billing, label: "Billing", icon: <CreditCard size={16} />, keywords: "plan invoice upgrade quota" },
-    { href: ROUTES.activity, label: "Activity", icon: <Activity size={16} />, keywords: "history log" },
-    { href: ROUTES.settings, label: "Account settings", icon: <Settings size={16} />, keywords: "account team sign out profile" },
+  { id: "Account", label: "groupAccount", items: [
+    { href: ROUTES.billing, label: "navBilling", icon: <CreditCard size={16} />, keywords: "plan invoice upgrade quota" },
+    { href: ROUTES.activity, label: "navActivity", icon: <Activity size={16} />, keywords: "history log" },
+    { href: ROUTES.settings, label: "navSettings", icon: <Settings size={16} />, keywords: "account team sign out profile" },
     // AA-978 follow-up — the workspace's members from the CIS directory (read only).
-    { href: ROUTES.members, label: "Members", icon: <Users size={16} />, keywords: "team members users roles owner editor viewer invite" },
-    { href: ROUTES.integrations, label: "Integrations", icon: <Plug size={16} />, keywords: "wordpress facebook connect channel connection" },
+    { href: ROUTES.members, label: "navMembers", icon: <Users size={16} />, keywords: "team members users roles owner editor viewer invite" },
+    { href: ROUTES.integrations, label: "navIntegrations", icon: <Plug size={16} />, keywords: "wordpress facebook connect channel connection" },
   ] },
 ];
 
 /** Pages reachable by link only (not in the sidebar) — still titled and searchable. */
 const EXTRA_PAGES: NavEntry[] = [
-  { href: ROUTES.publish, label: "Publish", icon: <Eye size={16} />, keywords: "publish wordpress facebook unpublish" },
-  { href: ROUTES.createWrite, label: "Write Content", icon: <Share2 size={16} />, paletteHidden: true },
-  { href: ROUTES.helpFacebook, label: "Connect your Facebook Page", icon: <Plug size={16} />, keywords: "help facebook guide token" },
+  { href: ROUTES.publish, label: "navPublish", icon: <Eye size={16} />, keywords: "publish wordpress facebook unpublish" },
+  { href: ROUTES.createWrite, label: "navWrite", icon: <Share2 size={16} />, paletteHidden: true },
+  { href: ROUTES.helpFacebook, label: "navHelpFacebook", icon: <Plug size={16} />, keywords: "help facebook guide token" },
 ];
 
 export function allEntries(): NavEntry[] {
@@ -100,26 +106,27 @@ export function navActive(entry: Pick<NavEntry, "href" | "also">, pathname: stri
   return targets.some((t) => pathname === t || (t !== ROUTES.tours && pathname.startsWith(t + "/")));
 }
 
-/** Topbar title for a path: the most specific entry wins (Publish over My Content). */
-export function pageTitle(pathname: string): string {
+/** Topbar title for a path (a message key, null outside the nav): the most specific entry wins (Publish over My
+ *  Content). */
+export function pageTitle(pathname: string): StudioKey | null {
   const exact = allEntries().find((e) => e.href === pathname);
   if (exact) return exact.label;
   const owner = NAV_GROUPS.flatMap((g) => g.items).find((e) => navActive(e, pathname));
-  return owner?.label ?? "";
+  return owner?.label ?? null;
 }
 
 /** Topbar crumb root: the nav group of the page ("Help" for the help pages, "Workspace" otherwise
  *  outside the nav). */
-export function pageGroup(pathname: string): string {
+export function pageGroup(pathname: string): StudioKey {
   const g = NAV_GROUPS.find((grp) => grp.items.some((e) => navActive(e, pathname)));
-  if (g && g.label !== "Overview") return g.label;
-  return pathname.startsWith("/portal/help/") ? "Help" : "Workspace";
+  if (g && g.id !== "Overview") return g.label;
+  return pathname.startsWith("/portal/help/") ? "groupHelp" : "groupWorkspace";
 }
 
 /** Phone bottom bar: the 4 daily destinations; "More" opens the drawer with everything. */
 export const BOTTOM_ITEMS: NavEntry[] = [
   NAV_GROUPS[0].items[0],
-  { ...NAV_GROUPS[1].items[0], label: "Tours", also: [ROUTES.myTours] },
-  { ...NAV_GROUPS[3].items[0], label: "Create", also: [ROUTES.createArticle, ROUTES.createWrite] },
-  { ...NAV_GROUPS[4].items[0], label: "Content" },
+  { ...NAV_GROUPS[1].items[0], label: "navBottomTours", also: [ROUTES.myTours] },
+  { ...NAV_GROUPS[3].items[0], label: "navBottomCreate", also: [ROUTES.createArticle, ROUTES.createWrite] },
+  { ...NAV_GROUPS[4].items[0], label: "navBottomContent" },
 ];
