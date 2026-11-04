@@ -16,11 +16,12 @@
 import { useState, useEffect, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, XCircle, ExternalLink, Loader2, FileText, Milestone } from "lucide-react";
-import { Card, CardHead, Btn, EmptyState, StickyBar } from "./ui";
+import { Card, CardHead, StickyBar } from "./ui";
 import { stripMarkdown } from "./markdownText";
 import { PUBLISH_LOG_QUERY_KEY, channelName } from "./PublishedList";
 import { channelName as channelLabel } from "./channelLabels";
-import { AiNotice, formatDate, K, sans } from "@/app/_kit";
+import { AiNotice, Button, EmptyState, K, sans, useFormat, useLang, useT, type Translator } from "@/app/_kit";
+import { PUBLISH_MESSAGES } from "./publish.messages";
 import {
   ServedBadge, plainError, publishClosedLabel, servedTitle, workClosed, type ServedFields,
 } from "./ServedBadge";
@@ -43,16 +44,12 @@ interface PublishResult {
 }
 
 // AA-760 — the shared date format ("9 Oct 2026"), was the browser locale ("10/20/2026").
-function fmtDate(iso: string | null): string {
-  return formatDate(iso);
-}
-
 /** AA-760 — "Route · 4 stops" (was "ROUTE: A → B → C → D · 8 SEGMENTS": all caps, and "segments"
  *  is pipeline vocabulary). The stop names stay in the tooltip. */
-function routeLabel(hub: string | null): { text: string; title: string } {
+function routeLabel(hub: string | null, t: Translator<typeof PUBLISH_MESSAGES.en>): { text: string; title: string } {
   const stops = (hub ?? "").split("→").map(x => x.trim()).filter(Boolean);
   const title = stops.map(x => x.charAt(0).toUpperCase() + x.slice(1)).join(" → ");
-  return { text: stops.length > 1 ? `Route · ${stops.length} stops` : "Route", title };
+  return { text: stops.length > 1 ? t("routeStops", stops.length) : t("route"), title };
 }
 
 export function PublishPendingList({ connected, reloadSignal = 0 }: {
@@ -61,6 +58,9 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
   /** Bump to re-fetch (e.g. after an Unpublish puts a piece back in this list). */
   reloadSignal?: number;
 }) {
+  const t = useT(PUBLISH_MESSAGES);
+  const lang = useLang();
+  const { formatDate: fmtDate } = useFormat();
   const qc = useQueryClient();
   const [pieces, setPieces] = useState<PendingPiece[] | null>(null);
   const [publishingId, setPublishingId] = useState<string | null>(null);
@@ -92,11 +92,11 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
           ...prev,
           // AA-986 L3: a 409 tour_discontinued / tour_paused reads as its plain sentence
           [pieceId]: { success: false, external_url: null,
-                       last_error: body.last_error || plainError(body.detail, "Publish failed.") },
+                       last_error: body.last_error || plainError(body.detail, t("publishFailed")) },
         }));
       }
     } catch {
-      setResults(prev => ({ ...prev, [pieceId]: { success: false, external_url: null, last_error: "Network error — please try again." } }));
+      setResults(prev => ({ ...prev, [pieceId]: { success: false, external_url: null, last_error: t("network") } }));
     } finally {
       setPublishingId(null);
     }
@@ -114,17 +114,17 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
           borderRadius: "12px 12px 0 0",
         }}
       >
-        <CardHead title="Ready to Publish" />
+        <CardHead title={t("readyToPublish")} />
       </StickyBar>
       {/* AA-819 — AUP notice above the Publish buttons; AA-760: only when there is something to review. */}
       {pieces !== null && pieces.length > 0 && <AiNotice variant="publisher" style={{ marginBottom: 14 }} />}
       {pieces === null ? (
-        <div aria-busy="true" style={{ padding: 24, textAlign: "center", color: K.muted, fontSize: 13 }}>Loading…</div>
+        <div aria-busy="true" style={{ padding: 24, textAlign: "center", color: K.muted, fontSize: 13 }}>{t("loading")}</div>
       ) : pieces.length === 0 ? (
         <EmptyState
           icon={<FileText size={28} color={K.muted2} />}
-          title="Nothing to publish yet"
-          sub="Blog and Facebook pieces show up here as soon as they're written."
+          title={t("nothingTitle")}
+          description={t("nothingSub")}
         />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -148,7 +148,7 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
                     {p.served_notice && <div style={{ marginBottom: 5 }}><ServedBadge fields={p} /></div>}
                     {/* AA-519 Việc 4 — Route-aware piece, distinct from a plain single-atom one. */}
                     {p.route_segment_count != null && (() => {
-                      const r = routeLabel(p.route_hub_name);
+                      const r = routeLabel(p.route_hub_name, t);
                       return (
                         <div style={{ marginBottom: 5 }}>
                           <span title={r.title || undefined} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 600, padding: "2px 9px", borderRadius: 999, background: K.accentTint, color: K.accentDeep }}>
@@ -166,37 +166,37 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
                       {stripMarkdown(p.content_preview, { dropHeadingMatching: p.title, blockSeparator: " · " })}
                     </div>
                     <div style={{ fontSize: 11, color: K.muted2, marginTop: 6, fontFamily: sans }}>
-                      {channelLabel(p.channel)} post · {fmtDate(p.created_at)}
+                      {t("postMeta", channelLabel(p.channel, lang), fmtDate(p.created_at))}
                     </div>
                   </div>
                   {/* AA-760 — not connected: plain muted text at full opacity (a faded gold button was
                       white on gold at 50% opacity, well under 3:1). */}
                   {workClosed(p) ? (
-                    <span title={servedTitle(p)} style={{ flexShrink: 0, fontSize: 12, color: K.muted, alignSelf: "center", maxWidth: 220 }}>
-                      {publishClosedLabel(p)}
+                    <span title={servedTitle(p, lang)} style={{ flexShrink: 0, fontSize: 12, color: K.muted, alignSelf: "center", maxWidth: 220 }}>
+                      {publishClosedLabel(p, lang)}
                     </span>
                   ) : channelConnected ? (
-                    <Btn
+                    <Button
                       size="sm" variant="primary"
                       onClick={() => handlePublish(p.piece_id)}
                       disabled={busy}
                       style={{ flexShrink: 0 }}
                     >
-                      {busy ? <><Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> Publishing…</> : "Publish"}
-                    </Btn>
+                      {busy ? <><Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> {t("publishing")}</> : t("publish")}
+                    </Button>
                   ) : (
                     <span style={{ flexShrink: 0, fontSize: 12, color: K.muted, alignSelf: "center" }}>
-                      Connect {channelName(p.channel)} above to publish
+                      {t("connectFirst", channelName(p.channel))}
                     </span>
                   )}
                 </div>
 
                 {result?.success && (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8, background: K.successSoft, color: K.success, fontSize: 12.5 }}>
-                    <CheckCircle2 size={14} /> Published.{" "}
+                    <CheckCircle2 size={14} /> {t("published")}{" "}
                     {result.external_url && (
                       <a href={result.external_url} target="_blank" rel="noreferrer" style={{ color: K.success, display: "inline-flex", alignItems: "center", gap: 4 }}>
-                        View post <ExternalLink size={11} />
+                        {t("viewPost")} <ExternalLink size={11} />
                       </a>
                     )}
                   </div>

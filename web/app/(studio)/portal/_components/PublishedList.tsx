@@ -12,8 +12,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Undo2 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { AiNotice, ApiError, Badge, ConfirmModal, type ColumnDef, DataTable, StatusBadge, ToastProvider, apiGet, apiSend, formatDate, useToast, K, sans } from "@/app/_kit";
-import { Card, CardHead } from "./ui";
+import {
+  AiNotice, ApiError, Badge, Button, ConfirmModal, type ColumnDef, DataTable, Section, StatusBadge, ToastProvider, apiGet,
+  apiSend, useFormat, useLang, useT, useToast, K, sans,
+} from "@/app/_kit";
+import { PUBLISH_MESSAGES } from "./publish.messages";
 import { ServedBadge, afterUnpublishSentence, type ServedFields } from "./ServedBadge";
 
 export interface PublishedRow extends ServedFields {
@@ -39,11 +42,10 @@ export function channelName(channel: string): string {
 }
 
 // AA-760 — the shared date format ("9 Oct 2026"), was the browser locale ("10/20/2026").
-function fmtDate(iso: string | null): string {
-  return formatDate(iso);
-}
-
 function PublishedListInner({ onUnpublished }: { onUnpublished?: () => void }) {
+  const t = useT(PUBLISH_MESSAGES);
+  const lang = useLang();
+  const { formatDate: fmtDate } = useFormat();
   const toast = useToast();
   const qc = useQueryClient();
   const [confirmRow, setConfirmRow] = useState<PublishedRow | null>(null);
@@ -57,17 +59,17 @@ function PublishedListInner({ onUnpublished }: { onUnpublished?: () => void }) {
     mutationFn: (row: PublishedRow) =>
       apiSend<{ status: string }>(`/api/tenant/v1/publish-log/${row.publish_id}`, { method: "DELETE" }),
     onSuccess: (_d, row) => {
-      toast.success(`Removed from ${channelName(row.channel)}.`);
+      toast.success(t("removedFrom", channelName(row.channel)));
       setConfirmRow(null);
       qc.invalidateQueries({ queryKey: PUBLISH_LOG_QUERY_KEY });
       onUnpublished?.();
     },
     onError: (e, row) => {
       // 404 = already unpublished elsewhere (refresh shows it); anything else = still live.
-      const msg = e instanceof Error ? e.message : "Unpublish failed.";
+      const msg = e instanceof Error ? e.message : t("unpublishFailed");
       toast.error(e instanceof ApiError && e.status === 404
-        ? "This post was already unpublished."
-        : `Still published on ${channelName(row.channel)} — ${msg}`, 8000);
+        ? t("alreadyUnpublished")
+        : t("stillPublished", channelName(row.channel), msg), 8000);
       setConfirmRow(null);
       qc.invalidateQueries({ queryKey: PUBLISH_LOG_QUERY_KEY });
     },
@@ -77,7 +79,7 @@ function PublishedListInner({ onUnpublished }: { onUnpublished?: () => void }) {
     () => [
       {
         accessorKey: "title",
-        header: "Title",
+        header: t("colTitle"),
         cell: (c) => {
           const r = c.row.original;
           return (
@@ -86,7 +88,7 @@ function PublishedListInner({ onUnpublished }: { onUnpublished?: () => void }) {
               {r.served_notice && <div style={{ marginTop: 4 }}><ServedBadge fields={r} /></div>}
               {r.live_post_of_discontinued_tour && (
                 <div style={{ marginTop: 4, fontSize: 11.5, color: K.danger, fontWeight: 600 }}>
-                  Tour discontinued: remove or edit this post
+                  {t("discontinued")}
                 </div>
               )}
             </div>
@@ -95,7 +97,7 @@ function PublishedListInner({ onUnpublished }: { onUnpublished?: () => void }) {
       },
       {
         accessorKey: "channel",
-        header: "Channel",
+        header: t("colChannel"),
         // AA-1040 — the "AI-assisted" label of every piece (kit AiNotice badge form), under the channel.
         cell: (c) => (
           <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
@@ -106,20 +108,20 @@ function PublishedListInner({ onUnpublished }: { onUnpublished?: () => void }) {
       },
       {
         accessorKey: "status",
-        header: "Status",
+        header: t("colStatus"),
         cell: (c) => c.row.original.status === "published"
-          ? <StatusBadge status="approved" label="Published" />
-          : <StatusBadge status="pending" label="Unpublished" />,
+          ? <StatusBadge status="approved" label={t("statusPublished")} />
+          : <StatusBadge status="pending" label={t("statusUnpublished")} />,
       },
       {
         id: "date",
         accessorFn: (r) => new Date(r.unpublished_at ?? r.published_at ?? 0).getTime(),
-        header: "Date",
+        header: t("colDate"),
         cell: (c) => {
           const r = c.row.original;
           return (
             <span style={{ color: K.muted, fontSize: 12 }}>
-              {r.status === "unpublished" ? `Removed ${fmtDate(r.unpublished_at)}` : fmtDate(r.published_at)}
+              {r.status === "unpublished" ? t("removedOn", fmtDate(r.unpublished_at)) : fmtDate(r.published_at)}
             </span>
           );
         },
@@ -135,39 +137,38 @@ function PublishedListInner({ onUnpublished }: { onUnpublished?: () => void }) {
               onClick={(e) => e.stopPropagation()}>
               {r.status === "published" && r.external_url && (
                 <a href={r.external_url} target="_blank" rel="noreferrer" style={linkStyle}>
-                  View <ExternalLink size={11} />
+                  {t("view")} <ExternalLink size={11} />
                 </a>
               )}
               {r.status === "published" && (
-                <button style={unpublishBtn} onClick={() => setConfirmRow(r)}>
-                  <Undo2 size={12} /> {r.live_post_of_discontinued_tour ? "Remove post" : "Unpublish"}
-                </button>
+                <Button variant="danger" size="sm" onClick={() => setConfirmRow(r)} style={{ whiteSpace: "nowrap" }}>
+                  <Undo2 size={12} /> {r.live_post_of_discontinued_tour ? t("removePost") : t("unpublish")}
+                </Button>
               )}
             </div>
           );
         },
       },
     ],
-    [],
+    [t, fmtDate],
   );
 
   return (
-    <Card>
-      <CardHead title="Published" />
+    <Section title={t("publishedTitle")} bodyStyle={{ padding: "14px 20px 20px" }}>
       <DataTable<PublishedRow>
         data={rows}
         columns={columns}
         tableId="portal-published-posts"
         getRowId={(r) => r.publish_id}
         loading={isLoading}
-        error={isError ? (error instanceof Error ? error.message : "Could not load published posts") : null}
+        error={isError ? (error instanceof Error ? error.message : t("loadError")) : null}
         onRetry={() => refetch()}
         searchable
-        searchPlaceholder="Search title…"
+        searchPlaceholder={t("searchTitle")}
         pageSize={10}
         tableMinWidth={560}
-        emptyTitle="Nothing published yet"
-        emptyDescription="Posts you publish to WordPress or Facebook show up here, where you can also unpublish them."
+        emptyTitle={t("emptyTitle")}
+        emptyDescription={t("emptySub")}
       />
       <ConfirmModal
         open={!!confirmRow}
@@ -175,33 +176,27 @@ function PublishedListInner({ onUnpublished }: { onUnpublished?: () => void }) {
         onConfirm={() => { if (confirmRow) unpublishM.mutate(confirmRow); }}
         destructive
         busy={unpublishM.isPending}
-        title="Unpublish this post?"
-        confirmLabel={unpublishM.isPending ? "Removing…" : "Unpublish"}
+        title={t("confirmTitle")}
+        confirmLabel={unpublishM.isPending ? t("removing") : t("unpublish")}
         body={confirmRow ? (
           <div style={{ fontSize: 13, lineHeight: 1.6, color: K.body }}>
             <p style={{ margin: "0 0 10px" }}>
-              <strong>{confirmRow.title}</strong> will be removed from {channelName(confirmRow.channel)}
-              {confirmRow.channel === "blog" ? " (moved to your WordPress trash)" : ""}.
+              <strong>{confirmRow.title}</strong> {t("willBeRemoved", channelName(confirmRow.channel))}
+              {confirmRow.channel === "blog" ? t("wpTrash") : ""}.
             </p>
             <p style={{ margin: 0, color: K.muted }}>
-              {afterUnpublishSentence(confirmRow)}
+              {afterUnpublishSentence(confirmRow, lang)}
             </p>
           </div>
         ) : null}
       />
-    </Card>
+    </Section>
   );
 }
 
 const linkStyle: React.CSSProperties = {
   display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 600,
   color: K.ink3, textDecoration: "none", fontFamily: sans, whiteSpace: "nowrap",
-};
-
-const unpublishBtn: React.CSSProperties = {
-  display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 12px", borderRadius: 999,
-  border: `1px solid ${K.dangerBorder}`, background: K.dangerSoft, color: K.danger, fontSize: 11,
-  fontWeight: 600, cursor: "pointer", fontFamily: sans, whiteSpace: "nowrap",
 };
 
 export function PublishedList({ onUnpublished }: { onUnpublished?: () => void }) {

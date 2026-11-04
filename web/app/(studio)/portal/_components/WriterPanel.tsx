@@ -27,7 +27,8 @@ import { CheckCircle2, Download, ExternalLink, Send } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AiNotice, Button, ConfirmModal, Drawer, K, useToast, sans } from "@/app/_kit";
+import { AiNotice, Button, ConfirmModal, Drawer, K, useToast, sans, translator, useLang, useT, type UiLang } from "@/app/_kit";
+import { WRITER_MESSAGES } from "./writer.messages";
 import { pieceWorkStatus } from "./workStatus";
 import AngleGateWizard, { type ContentPiece } from "./AngleGateWizard";
 import { PUBLISHABLE_CHANNELS, exportPiece, publishPiece } from "./reviewListApi";
@@ -104,6 +105,8 @@ export function WriterPanel({ target, onClose, onBackgroundPiece }: {
 }) {
   // The wizard reports its current piece through this (stable) setter. The Slate remounts the
   // panel per request (key), so a previous request's piece never shows here.
+  const t = useT(WRITER_MESSAGES);
+  const lang = useLang();
   const [piece, setPiece] = useState<ContentPiece | null>(null);
   // The publish confirm is lifted here so Escape (which both kit Drawer and Modal listen for on
   // window) closes only the confirm, not the whole panel behind it.
@@ -120,7 +123,7 @@ export function WriterPanel({ target, onClose, onBackgroundPiece }: {
       open={target !== null}
       onClose={close}
       title={target?.title ?? ""}
-      context={target ? [{ label: "Writing for", value: channelName(target.channel) }, { value: target.kind === "Route" ? "Route" : "Moment" }] : []}
+      context={target ? [{ label: t("writingFor"), value: channelName(target.channel, lang) }, { value: target.kind === "Route" ? t("route") : t("moment") }] : []}
       footer={ready && target
         ? <ResultActions piece={piece} target={target} confirmPublish={confirmPublish} setConfirmPublish={setConfirmPublish} />
         : undefined}
@@ -138,13 +141,14 @@ export function WriterPanel({ target, onClose, onBackgroundPiece }: {
 
 // The finished piece, copy-locked like My Content (ReviewDrawer.tsx): export is the way out.
 function FinishedPiece({ piece }: { piece: ContentPiece }) {
+  const t = useT(WRITER_MESSAGES);
   const toast = useToast();
-  const hint = () => toast.info("Use Export to download this content.");
+  const hint = () => toast.info(t("exportHint"));
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10, fontFamily: sans }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: K.body }}>
         <CheckCircle2 size={15} color={K.success} />
-        <span>Your post is ready and saved in <Link href={`/portal/content?piece=${piece.piece_id}`} style={{ color: K.accentDeep, fontWeight: 600 }}>My Content</Link>, where you can edit it.</span>
+        <span>{t("postReady")} <Link href={`/portal/content?piece=${piece.piece_id}`} style={{ color: K.accentDeep, fontWeight: 600 }}>{t("postReadyLink")}</Link>{t("postReadyEnd")}</span>
       </div>
       <div
         data-testid="writer-panel-result"
@@ -168,6 +172,8 @@ function ResultActions({ piece, target, confirmPublish, setConfirmPublish }: {
   piece: ContentPiece; target: WriterTarget;
   confirmPublish: boolean; setConfirmPublish: (open: boolean) => void;
 }) {
+  const t = useT(WRITER_MESSAGES);
+  const lang = useLang();
   const toast = useToast();
   const router = useRouter();
   const [publishing, setPublishing] = useState(false);
@@ -181,7 +187,7 @@ function ResultActions({ piece, target, confirmPublish, setConfirmPublish }: {
     try {
       await exportPiece(exportable, format);
     } catch {
-      toast.error("Export failed — try again.");
+      toast.error(t("exportFailed"));
     }
   }
 
@@ -189,9 +195,9 @@ function ResultActions({ piece, target, confirmPublish, setConfirmPublish }: {
     setPublishing(true);
     try {
       const res = await publishPiece(piece.piece_id);
-      toast.success(res.replayed ? "Already published." : `Published to ${channelName(channel)}.`);
+      toast.success(res.replayed ? t("alreadyPublished") : t("publishedTo", channelName(channel, lang)));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Couldn't publish — try again.");
+      toast.error(e instanceof Error ? e.message : t("publishFailed"));
     } finally {
       setPublishing(false);
       setConfirmPublish(false);
@@ -204,19 +210,19 @@ function ResultActions({ piece, target, confirmPublish, setConfirmPublish }: {
       <AiNotice variant="publisher" />
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
         <Button size="sm" variant="secondary" onClick={() => doExport("text")}>
-          <Download size={12} /> Export text
+          <Download size={12} /> {t("exportText")}
         </Button>
         {channel === "blog" && (
           <Button size="sm" variant="secondary" onClick={() => doExport("html")}>
-            <Download size={12} /> Export HTML
+            <Download size={12} /> {t("exportHtml")}
           </Button>
         )}
         <Button size="sm" variant="secondary" onClick={() => router.push(`/portal/content?piece=${piece.piece_id}`)}>
-          <ExternalLink size={12} /> Open in My Content
+          <ExternalLink size={12} /> {t("openInMyContent")}
         </Button>
         {PUBLISHABLE_CHANNELS.has(channel) && (
           <Button size="sm" variant="primary" disabled={publishing} onClick={() => setConfirmPublish(true)}>
-            <Send size={12} /> Publish
+            <Send size={12} /> {t("publish")}
           </Button>
         )}
       </div>
@@ -225,9 +231,9 @@ function ResultActions({ piece, target, confirmPublish, setConfirmPublish }: {
         onClose={() => !publishing && setConfirmPublish(false)}
         onConfirm={doPublish}
         busy={publishing}
-        title={`Publish to ${channelName(channel)}?`}
-        body={<>This posts the content to your connected {channelName(channel)} account now. <AiNotice variant="publisher" style={{ marginTop: 10 }} /></>}
-        confirmLabel="Publish now"
+        title={t("publishTo", channelName(channel, lang))}
+        body={<>{t("publishBody", channelName(channel, lang))} <AiNotice variant="publisher" style={{ marginTop: 10 }} /></>}
+        confirmLabel={t("publishNow")}
       />
     </div>
   );
@@ -260,7 +266,8 @@ const WATCH_POLL_MS = 4000;
 const WATCH_CEILING_MS = 10 * 60_000;
 
 /** The watch item for a T9 piece closed while `ready_state === "in_progress"`. */
-export function watchPiece(pieceId: string, requestId: string, title: string): WatchItem {
+export function watchPiece(pieceId: string, requestId: string, title: string, lang: UiLang = "en"): WatchItem {
+  const m = translator(WRITER_MESSAGES, lang);
   return {
     id: pieceId, group: requestId, title,
     check: () => fetch(`/api/tenant/v1/content-writing/pieces/${pieceId}`, { cache: "no-store" })
@@ -270,9 +277,9 @@ export function watchPiece(pieceId: string, requestId: string, title: string): W
         const s = pieceWorkStatus(p); // AA-760 — shared work-status model
         return s === "done" ? "ready" : s === "failed" ? "failed" : "running";
       }),
-    readyText: `"${title}" is ready — find it in My Content.`,
-    failedText: `Writing "${title}" didn't finish — open it again to retry.`,
-    slowText: `"${title}" is still being written — it will show up in My Content.`,
+    readyText: m("readyText", title),
+    failedText: m("failedText", title),
+    slowText: m("slowText", title),
   };
 }
 
