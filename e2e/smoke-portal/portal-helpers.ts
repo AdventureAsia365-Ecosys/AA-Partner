@@ -13,8 +13,9 @@ export const PORTAL_RESULTS_DIR = 'results/smoke-portal';
  * AA-979 P2b — which studio the smoke checks: `fargate` (the agency host portal.: the studio behind CloudFront -> ALB,
  * sharing the host with the CRM web; PORTAL_TARGET=fargate, what CI always sets since the P2b clean-up) or a local
  * studio without the partner sign-in (default; started with PORTAL_API_KEY_SIGNIN=true). On the agency host a
- * signed-out page goes to the CRM web's /auth/refresh (partner sign-in), "/" is the CRM home, and the paths the studio
- * does not own belong to the CRM web.
+ * signed-out page goes to the CRM web's /auth/refresh (partner sign-in), and the paths the studio does not own belong
+ * to the CRM web. AA-1036 (R3 slice 2): there the studio IS the agency web (one app): "/" lands on Content and the
+ * studio's draft legal pages live at /legal/*.
  */
 export const FARGATE = process.env.PORTAL_TARGET === 'fargate';
 /** Where a signed-out /portal/* page is sent. */

@@ -4,8 +4,10 @@ name: Post-deploy verify
 #   crm         the CRM api (aa-crm-dev-api): rows .github/verify/crm.rows — /crm/health on that commit and version,
 #               /crm/health/ready on a schema at least the newest crm-NNN that commit needs. Called by deploy-dev.yml.
 #   crm-web     the CRM web (aa-crm-dev-web): rows crm-web.rows — /healthz on that commit and version, the host's /crm/*
-#               rule reaching a ready API; plus the signed-out redirect (edge_verify.sh). Called by deploy-web-dev.yml.
-#   crm-portal  the Content studio (aa-crm-dev-portal) on the agency host: rows crm-portal.rows — /api/healthz on that
+#               rule reaching a ready API, and (AA-1036) the merged Content studio's /api/healthz; plus the signed-out
+#               redirect and the studio paths on the agency host (edge_verify.sh). Called by deploy-web-dev.yml.
+#   crm-portal  the RETIRING Content studio service (aa-crm-dev-portal), only after a rollback of the AA-1036 cut-over:
+#               rows crm-portal.rows — /api/healthz on that
 #               commit and version, the API rule; plus a public studio page, its assets, the retired API-key
 #               sign-in URL (308) and the signed-out redirect (edge_verify.sh). Called by deploy-portal-dev.yml (the Playwright smoke runs after it).
 # Every app: ECS rollout COMPLETED with desired >= 1 on the built image (<registry>/<repo>:<sha>). Red/green only; the

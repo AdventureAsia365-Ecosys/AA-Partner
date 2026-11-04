@@ -18,7 +18,10 @@ name: Deploy Web Dev
 #   ECS_WEB_SERVICE       default aa-crm-dev-web
 #   ECS_WEB_TASK_FAMILY   default aa-crm-dev-web
 #   CRM_WEB_BASE_URL      default https://portal.lumiguides.it.com (the agency host: CloudFront -> ALB agency default
-#                         rule -> web; AA-979 §4.5: partner-dev. answers 301 there except /crm/*; read by the verify)
+#                         rule -> web; AA-979 §4.5: partner-dev. answers 301 there except /crm/*; read by the verify
+#                         and the studio smoke)
+#   WEB_PUBLIC_SENTRY_DSN the browser Sentry DSN (public by design, AA-1036: the studio's browser Sentry moved here),
+#                         baked in at build time; empty = off
 #
 # Pushes that only change web/tests/** do not deploy. This workflow never changes the desired count.
 #
@@ -28,6 +31,12 @@ name: Deploy Web Dev
 # signed-out redirect to /auth/refresh, and /crm/health + /crm/health/ready reaching a ready API through the host's
 # API rule. The `result` job ("Deploy Web Dev result") is red when any job did not succeed, skipped included: read
 # that one. Desired count 0 is red (scaling Dev up is a separate step).
+#
+# AA-1036 (R3 slice 2, root ADR 0019 d6): the Content studio is part of this app and the agency host's studio paths
+# (/portal*, /api/*, /tenant-login*, /terms, /privacy, /assets/*) reach it, so the verify also checks the studio
+# (crm-web.rows studio-healthz; edge_verify.sh content-home, studio-signin, api-key-signin-off, studio-legal,
+# studio-page, web-assets) and `smoke` runs the studio's Playwright smoke (ui-smoke-portal.yml) on the agency host
+# with the e2e studio user's sign-in required, as the retired Deploy Portal Dev did.
 
 on:
   push:
@@ -68,12 +77,16 @@ jobs:
     needs: config
     runs-on: ubuntu-24.04-arm
     environment: dev
+    # The `dev` environment variable the smoke call needs (a job that calls a reusable workflow cannot read it).
+    outputs:
+      base_url: ${{ vars.CRM_WEB_BASE_URL || 'https://portal.lumiguides.it.com' }}
     env:
       AWS_REGION: ${{ vars.AWS_REGION || 'us-west-1' }}
       ECR_REPOSITORY: ${{ vars.ECR_WEB_REPOSITORY || 'aa-crm-dev-web' }}
       ECS_CLUSTER: ${{ vars.ECS_CLUSTER || 'aa-cis-dev-cluster' }}
       ECS_SERVICE: ${{ vars.ECS_WEB_SERVICE || 'aa-crm-dev-web' }}
       ECS_TASK_FAMILY: ${{ vars.ECS_WEB_TASK_FAMILY || 'aa-crm-dev-web' }}
+      PUBLIC_SENTRY_DSN: ${{ vars.WEB_PUBLIC_SENTRY_DSN }}
     steps:
       - uses: actions/checkout@v7
 
@@ -99,7 +112,8 @@ jobs:
           if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
             echo "image for ${GITHUB_SHA} already in ECR: reusing it (no build, no push)"
           else
-            docker build --build-arg GIT_SHA="${GITHUB_SHA}" --build-arg APP_VERSION="${APP_VERSION}" -t "$IMAGE" web
+            docker build --build-arg GIT_SHA="${GITHUB_SHA}" --build-arg APP_VERSION="${APP_VERSION}" \
+              --build-arg NEXT_PUBLIC_SENTRY_DSN="${PUBLIC_SENTRY_DSN}" -t "$IMAGE" web
             docker image inspect "$IMAGE" --format '{{.Architecture}}' | grep -qx arm64
             docker push "$IMAGE"
           fi
@@ -140,6 +154,25 @@ jobs:
       from_deploy: true
       app: crm-web
 
+  # AA-1036: the Playwright smoke of the Content studio (now served by this app) on the agency host, logged-in pages
+  # included: require_tenant_login turns a missing studio sign-in red. Only the e2e studio user's three secrets are
+  # passed, never `inherit`.
+  smoke:
+    name: Studio UI smoke
+    needs: [deploy, verify]
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/ui-smoke-portal.yml
+    with:
+      base_url: ${{ needs.deploy.outputs.base_url }}
+      sha: ${{ github.sha }}
+      require_tenant_login: true
+    secrets:
+      E2EPORTALEMAIL: ${{ secrets.E2EPORTALEMAIL }}
+      E2EPORTALPASSWORD: ${{ secrets.E2EPORTALPASSWORD }}
+      E2EPORTALTOTP: ${{ secrets.E2EPORTALTOTP }}
+
   # AA-993 — the run's verdict. GitHub shows a skipped job grey, not red, so without this a failed config/deploy
   # (verify then skips) could look like "nothing to verify". Every job here must succeed; skipped, failed or
   # cancelled is red on every event (no job in this workflow is conditional).
@@ -147,7 +180,7 @@ jobs:
     name: Deploy Web Dev result
     runs-on: ubuntu-latest
     if: always()
-    needs: [config, deploy, verify]
+    needs: [config, deploy, verify, smoke]
     steps:
       - name: Every job succeeded
         env:
@@ -157,8 +190,8 @@ jobs:
           set -uo pipefail
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
           BAD=$(echo "$NEEDS" | jq -r '[to_entries[] | select(.value.result != "success") | "\(.key)=\(.value.result)"] | join(", ")')
-          if [ -n "$BAD" ] || [ "$(echo "$NEEDS" | jq 'length')" -lt 3 ]; then
+          if [ -n "$BAD" ] || [ "$(echo "$NEEDS" | jq 'length')" -lt 4 ]; then
             echo "::error::Deploy Web Dev ($EVENT) is not verified: ${BAD:-a job result is missing}"
             exit 1
           fi
-          echo "Deploy Web Dev ($EVENT): deployed and verified."
+          echo "Deploy Web Dev ($EVENT): deployed, verified and smoke-tested."

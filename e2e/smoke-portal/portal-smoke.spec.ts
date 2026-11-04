@@ -62,25 +62,31 @@ test.describe('UI smoke — portal pages', () => {
     });
   }
 
-  // AA-935 (CRM-07, design v3 Fix C10) — the sidebar links to the Partner CRM (another app, its own sign-in until
-  // AA-979), and the CRM sidebar links back to the Content studio. Only the link is checked here: the CRM host has
-  // its own smoke in AA-Partner.
+  // AA-935 (CRM-07, design v3 Fix C10) — the sidebar links to the Partner CRM, and the CRM sidebar links back to the
+  // Content studio. AA-1036 (root ADR 0019 d7): the "Apps" switcher of the one agency app replaced the cross-link; the
+  // CRM entry opens the CRM home /home when the tenant holds the add-on, else it is a "Request add-on" mail link. Only
+  // the link is checked here: the CRM pages have their own E2E.
   test('portal: sidebar links to the Partner CRM', async ({ browser }) => {
     const context = await browser.newContext({ baseURL: baseUrl(), storageState: TENANT_STATE, viewport: { width: 1440, height: 900 } });
     await installBypassRoute(context);
     const page = await context.newPage();
     try {
       await page.goto('/portal/dashboard', { waitUntil: 'domcontentloaded' });
-      // S264: the sidebar groups fold (kit NavGroup); Partner CRM is folded unless this browser opened it.
-      const crmToggle = page.getByTestId('portal-nav-group-crm-toggle');
+      // S264: the sidebar groups fold (kit NavGroup); Apps is folded unless this browser opened it.
+      const crmToggle = page.getByTestId('portal-nav-group-apps-toggle');
       await expect(crmToggle).toBeVisible({ timeout: 15000 });
       await expect(page.getByTestId('portal-sidebar')).toHaveAttribute('data-hydrated', 'true', { timeout: 15000 });
       if ((await crmToggle.getAttribute('aria-expanded')) === 'false') await crmToggle.click();
       await expect(crmToggle).toHaveAttribute('aria-expanded', 'true', { timeout: 5000 });
-      const link = page.getByTestId('portal-crm-link');
+      const link = page.locator('[data-testid="portal-crm-link"], [data-testid="portal-app-crm"]');
+      await expect(link).toHaveCount(1, { timeout: 15000 });
       await expect(link).toBeVisible({ timeout: 15000 });
-      // AA-979 §4.5: one agency host for both apps, so the link is the same-origin CRM home.
-      expect(await link.getAttribute('href')).toBe('/');
+      // One agency host for both apps: the CRM home is a same-origin path ("/" lands on Content since AA-1036).
+      if ((await link.getAttribute('data-testid')) === 'portal-crm-link') {
+        expect(await link.getAttribute('href')).toBe('/home');
+      } else {
+        expect(await link.getAttribute('href')).toMatch(/^mailto:/);
+      }
     } finally {
       await context.close();
     }

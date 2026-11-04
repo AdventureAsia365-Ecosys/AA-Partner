@@ -31,8 +31,8 @@
 //                                app is unaffected.
 //   WEB_CONTENT_HOME       "true" = the bare host "/" lands on the Content studio (/portal/dashboard), the CRM home
 //                          stays at /home (AA-1036, root ADR 0019 d7: a tenant always lands on Content). Anything else =
-//                          "/" is the CRM home, as before. Off until the cut-over sends /portal* to this app (R3 slice
-//                          2): until then the separate studio service links its "Open CRM" to "/".
+//                          "/" is the CRM home, as before. On since the R3 slice 2 cut-over (AA-CIS-Infra crm_web.tf),
+//                          which sends the agency host's studio paths (/portal*, /api/*, ...) to this app.
 //   ENVIRONMENT            dev | stg | prod | test | local
 //   APP_VERSION, GIT_SHA   baked into the image, echoed by /healthz
 

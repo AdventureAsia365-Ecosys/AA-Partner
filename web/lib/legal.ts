@@ -4,6 +4,8 @@
 // studio owns /terms, /privacy and /assets/* (its own draft terms), so a CRM page at /terms was never served there and
 // every CRM link to it opened the studio's partner terms. The CRM terms therefore live at /legal/terms, a path no
 // agency-host rule routes elsewhere; every CRM link uses the constants below (guard: tests/crmTermsPath.test.ts).
+// AA-1036 (R3 slice 2): the studio is part of this app and its paths reach it, so /terms and /privacy answer the
+// studio's 308 to /legal/partner-terms and /legal/privacy here; the CRM terms stay at /legal/terms.
 
 /** The signed-in CRM terms of use page (web/app/(crm)/legal/terms). */
 export const CRM_TERMS_PATH = "/legal/terms";
@@ -13,19 +15,11 @@ export const CRM_TERMS_AI_HREF = `${CRM_TERMS_PATH}#ai`;
 
 /**
  * The ALB path patterns of the agency-host rules that send a request somewhere other than the CRM web, in rule order
- * (crm_agency_edge.tf): crm_agency_api (the CRM API), crm_agency_studio and crm_agency_studio_x (the Content studio).
+ * (crm_agency_edge.tf): crm_agency_api (the CRM API). Since the AA-1036 cut-over the studio rules crm_agency_studio
+ * (/portal*, /api/*, /tenant-login*) and crm_agency_studio_x (/terms, /privacy, /assets/*) forward to this app.
  * Keep in step with that file when a rule changes.
  */
-export const AGENCY_HOST_ROUTED_ELSEWHERE: readonly string[] = [
-  "/crm",
-  "/crm/*",
-  "/portal*",
-  "/api/*",
-  "/tenant-login*",
-  "/terms",
-  "/privacy",
-  "/assets/*",
-];
+export const AGENCY_HOST_ROUTED_ELSEWHERE: readonly string[] = ["/crm", "/crm/*"];
 
 /** ALB path-pattern matching: case-sensitive, `*` matches any run of characters (`/` included), `?` exactly one. */
 export function albPathMatches(pattern: string, path: string): boolean {

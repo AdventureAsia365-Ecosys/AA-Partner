@@ -1,14 +1,16 @@
 name: UI Smoke (portal)
 
-# AA-979 (CRM-P2a) — the Playwright smoke of the tenant portal (portal/), against the studio on the agency host. Port of
-# AA-CIS-App's ui-smoke-portal.yml (AA-885). Called by deploy-portal-dev.yml after the Fargate deploy and its verify
+# AA-979 (CRM-P2a) — the Playwright smoke of the tenant portal (Content studio), against the studio on the agency host.
+# AA-1036 (R3 slice 2): the studio is part of the AA-Partner web, so deploy-web-dev.yml calls this after its verify (the
+# specs expect the merged app: "/" lands on Content, the draft legal pages live at /legal/*). Port of
+# AA-CIS-App's ui-smoke-portal.yml (AA-885). Was called by deploy-portal-dev.yml after the Fargate deploy and its verify
 # (AA-993 V3), or run by hand (workflow_dispatch, e.g. against https://portal.lumiguides.it.com). Specs:
 # e2e/smoke-portal/, config e2e/playwright.portal.config.ts. Since the P2b clean-up (runbook §4.5) there is no Vercel
-# copy and no preview: the target is always the Fargate studio (PORTAL_TARGET=fargate).
+# copy and no preview: the target is always the agency host on ECS (PORTAL_TARGET=fargate).
 # Secrets: the e2e studio user's partner-pool sign-in (E2EPORTALEMAIL, E2EPORTALPASSWORD, E2EPORTALTOTP: a synthetic
 # partner identity with a Content studio membership on the E2E tenant; the setup signs in through managed login with
 # the authenticator code, like a person). Without them the logged-in tests SKIP, unless the caller sets
-# require_tenant_login (deploy-portal-dev.yml does): then a missing value is red before any test runs.
+# require_tenant_login (deploy-web-dev.yml does): then a missing value is red before any test runs.
 on:
   workflow_call:
     inputs:
