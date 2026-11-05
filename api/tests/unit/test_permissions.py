@@ -77,6 +77,7 @@ DESIGN: dict[str, tuple[str, str, str]] = {
     "client_merge": (Y, N, N),  # AA-962 (R6): one client of the pair goes to the trash, like a client delete — owner
     "onboarding_manage": (Y, N, N),  # AA-962 (Fix E2): "Later" / done marks on the agency's checklist — owner
     "ai_settings": (Y, N, N),  # AA-964 (A-18 AI): AI on / off and the monthly AI budget — owner
+    "addon_request": (Y, N, N),  # AA-1036 (R3): ask Adventure Asia for an add-on (relayed to CIS) — owner
 }
 WORD = {Rule.ALLOW: Y, Rule.DENY: N, Rule.OWN: OWN, Rule.ASSIGNED: ASG, Rule.THRESHOLD: THR}
 

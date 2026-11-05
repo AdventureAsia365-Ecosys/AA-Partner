@@ -14,9 +14,12 @@
 //                 (requested / active / request); anything else -> unknown, and the entry stays a link (the CRM says
 //                 what is wrong), as the studio link does
 //   Trip planner  the CIS add-on state only (no tp.* entitlement reaches this app): active / requested / request
+// Inside the CRM the Trip planner entry is the CRM's own Settings > Add-ons page (lib/addOns.ts, owner only): a CRM-only
+// owner has no studio to ask from (S269).
 // Pure functions here; the fetches are crmAccess() and cisAddOns(). Links between apps are plain <a> (a full page load:
 // the studio's stylesheet never stays on a CRM page).
 
+import { CRM_ADD_ONS_PATH } from "./addOns";
 import type { WebConfig } from "./config";
 import { fetchMe } from "./crmApi";
 import { CONTENT_STUDIO_PATH, CRM_HOME_PATH } from "./nav";
@@ -88,27 +91,21 @@ export function studioApps(crm: CrmAccess, addOns: AddOnStates = UNKNOWN_ADD_ONS
 }
 
 /** The switcher as the CRM shows it: Content when the person may open it (null = no studio link), the CRM itself, and
- *  the Trip planner through the studio's Add-ons page (only with studio access: the request is the studio owner's). */
-export function crmApps(contentHref: string | null): AppEntry[] {
+ *  for the agency owner the Trip planner through the CRM's own Settings > Add-ons page (plannerHref). */
+export function crmApps(contentHref: string | null, role?: string | null): AppEntry[] {
   const apps: AppEntry[] = [];
   if (contentHref) apps.push({ key: "content", label: APP_LABELS.content, state: "open", href: contentHref });
   apps.push({ key: "crm", label: APP_LABELS.crm, state: "current", href: CRM_HOME_PATH });
-  const planner = plannerHref(contentHref);
+  const planner = plannerHref(role);
   if (planner) apps.push({ ...addOnEntry("planner", "unknown"), href: planner });
   return apps;
 }
 
-/** The CRM's link to the Trip planner entry: the studio's Add-ons page when the person may open the studio. On the
- *  studio's own origin when the studio link is absolute (the studio on another host: a relative path would land on the
- *  CRM's host); a relative path when the studio shares this origin. */
-export function plannerHref(contentHref: string | null): string | null {
-  if (!contentHref) return null;
-  if (!/^[a-z][a-z0-9+.-]*:/i.test(contentHref)) return ADD_ONS_PATH;
-  try {
-    return new URL(ADD_ONS_PATH, contentHref).toString();
-  } catch {
-    return null;
-  }
+/** The CRM's link to the Trip planner entry: the CRM's own Add-ons page (CRM_ADD_ONS_PATH), for the agency owner only
+ *  (the one who may ask; the API refuses the others). Until S269 it led to the studio's Add-ons page, which a CRM-only
+ *  owner (no Content studio membership) cannot open: they landed on "No Content studio access". null = no entry. */
+export function plannerHref(role: string | null | undefined): string | null {
+  return role === "owner" ? CRM_ADD_ONS_PATH : null;
 }
 
 /** The CRM entry for one tenant (the studio's): GET /crm/v1/me with that tenant as the agency. Never throws. */
