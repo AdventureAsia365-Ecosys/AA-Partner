@@ -40,10 +40,17 @@ NEVER_EXPORT_TABLES = frozenset(
 NEVER_EXPORT_COLUMNS = frozenset(
     {"profile_token_enc", "token_hash", "link_sha256", "code_enc", "secret_enc", "map_enc", "wrapped_dek"}
 )
-# The DEK purpose of each encrypted column: the vault DEK unless named here (mail content: app.mail, CRM-17; the
-# sealed signing envelope: crm-025, the docs DEK).
-MAIL_TABLES = frozenset({"message", "channel_account", "saved_reply", "message_template", "ingest_address"})
-COLUMN_PURPOSES: dict[tuple[str, str], str] = {("signature_event", "envelope_enc"): "docs"}
+# The DEK purpose of each encrypted column: the vault DEK unless named here (mail content: app.mail, CRM-17, and the
+# text-template values of app.messaging / app.workflows on ``message_delivery``; the sealed signing envelope: crm-025,
+# the docs DEK; the AA ops release document: app.ops_release, its own DEK). tests/unit/test_portability.py scans every
+# writer's ``purpose=`` so a new one cannot drift (S269: a missing entry fails every agency export ``decrypt_denied``).
+MAIL_TABLES = frozenset(
+    {"message", "message_delivery", "channel_account", "saved_reply", "message_template", "ingest_address"}
+)
+COLUMN_PURPOSES: dict[tuple[str, str], str] = {
+    ("signature_event", "envelope_enc"): "docs",
+    ("ops_release", "payload_enc"): "ops_release",
+}
 # The AAD column name a writer seals a value under when it is not the database column (app.esign.events seals the
 # envelope as ``signature_event.envelope``); every other ``*_enc`` value is sealed under its own column name.
 # tests/unit/test_portability.py scans the writers so a new one cannot drift.
