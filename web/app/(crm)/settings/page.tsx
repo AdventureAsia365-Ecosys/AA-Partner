@@ -1,12 +1,14 @@
 // web/app/(crm)/settings/page.tsx — Settings (A-18). AA-935: agency and role, language and dates (R32) with a
 // live date reading; the other sections (team, channels, payments, forms, AI, data and privacy) arrive with their
 // cards. AA-939: Team & roles (owner). AA-945: Mailbox and Saved replies. AA-964: AI assistant. AA-958: SMS and
-// WhatsApp. AA-1036 (R3): Add-ons (owner; the CRM owner's add-on request).
+// WhatsApp. AA-1036 (R3): Add-ons (owner; the CRM owner's add-on request). AA-1030: AA prices (owner, agent: /me
+// permissions.aa_tariff_view; nothing shown to the assistant).
 import Link from "next/link";
 import { DateInput } from "@/components/DateInput";
 import { LocaleSwitch } from "@/components/LocaleSwitch";
 import { Panel, PageTitle } from "@/components/PageTitle";
 import { K } from "@/app/_kit";
+import { AA_TARIFF_PATH, seesAaTariff } from "@/lib/aaTariff";
 import { CRM_ADD_ONS_PATH } from "@/lib/addOns";
 import { crmContext } from "@/lib/crmContext";
 import { t, type MessageKey } from "@/lib/i18n";
@@ -89,6 +91,14 @@ export default async function SettingsPage() {
           {t(lang, ctx.role === "owner" ? "payments.link" : "payments.ownerOnly")}
         </Link>
       </Panel>
+      {seesAaTariff(ctx.me) && (
+        <Panel title={t(lang, "tariff.title")} testId="settings-aa-tariff">
+          <p style={{ margin: "0 0 8px", fontSize: 13, color: K.muted }}>{t(lang, "tariff.settings.help")}</p>
+          <Link href={AA_TARIFF_PATH} style={{ fontSize: 13.5 }} data-testid="settings-aa-tariff-link">
+            {t(lang, "tariff.link")}
+          </Link>
+        </Panel>
+      )}
       <Panel title={t(lang, "addons.title")} testId="settings-add-ons">
         {ctx.role === "owner" ? (
           <Link href={CRM_ADD_ONS_PATH} style={{ fontSize: 13.5 }} data-testid="settings-add-ons-link">

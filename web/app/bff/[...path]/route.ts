@@ -5,7 +5,8 @@
 //   3. not on the allow-list (lib/bff.ts) -> 404;
 //   4. no session or an expired access token -> 401 session_expired (the page reloads through /auth/refresh);
 //   5. forwarded to /crm/v1/<path> with the session's token and agency; only Content-Type comes back
-//      (lib/proxyResponse.ts), never a Set-Cookie of the API.
+//      (lib/proxyResponse.ts), never a Set-Cookie of the API; a `download` route also gets the API's file name
+//      (Content-Disposition, AA-1030).
 // AA-945: a raw route (the mail history upload) is read as bytes, capped while it streams in (413 before the API is
 // called), and refused if fewer bytes arrived than Content-Length said or the upload broke off (400, never a cut-short
 // file to the API). At most MAX_RAW_IN_FLIGHT raw uploads run at once per web task (503 `upload_busy` before the body
@@ -13,7 +14,7 @@
 // proxy's host check is repeated here, for every /bff path (an encoded or look-alike path is covered too).
 import { randomUUID } from "node:crypto";
 import type { NextRequest } from "next/server";
-import { matchBff, MAX_RAW_IN_FLIGHT, upstreamHeaders, type BffRoute } from "@/lib/bff";
+import { attachmentName, matchBff, MAX_RAW_IN_FLIGHT, upstreamHeaders, type BffRoute } from "@/lib/bff";
 import { readCapped } from "@/lib/bffBody";
 import { proxyPath } from "@/lib/bffPath";
 import { requestConfig } from "@/lib/config";
@@ -100,6 +101,9 @@ async function forward(
     });
     const res = streamUpstream(upstream);
     res.headers.set("Cache-Control", "no-store");
+    // AA-1030: a download route passes the API's file name on (a plain CSV name only, rebuilt, never copied as is).
+    const name = route.download ? attachmentName(upstream.headers.get("content-disposition")) : null;
+    if (name) res.headers.set("Content-Disposition", `attachment; filename="${name}"`);
     return res;
   } catch (err) {
     const timedOut = err instanceof DOMException && err.name === "TimeoutError";

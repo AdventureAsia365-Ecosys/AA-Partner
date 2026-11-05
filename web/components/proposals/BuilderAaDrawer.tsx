@@ -4,9 +4,12 @@
 // is added: Net, sell, margin and availability) or an agency item (typed, optionally from the agency's Suppliers).
 // The sell is a money field (owner / agent); the assistant adds items without one. When AA cannot be reached the
 // drawer says so and AA adds stay disabled (WF-4). Sold-out items cannot be added (the API answers 409).
+// AA-1030: owner and agent get a link to the agency's AA prices (opens in a new tab, the draft stays as it is).
+import Link from "next/link";
 import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
 import { type AaProduct, type CatalogTour } from "@/lib/aa";
+import { AA_TARIFF_PATH } from "@/lib/aaTariff";
 import { bffSend } from "@/lib/bffClient";
 import { builderErrorKey, moneyInput, TIERS, type BuilderView, type Tier } from "@/lib/builder";
 import { fmt, plural, t, type Lang, type MessageKey } from "@/lib/i18n";
@@ -36,6 +39,7 @@ export function BuilderAaDrawer({
   view,
   blockId,
   canMoney,
+  canTariff = false,
   suppliers,
   lang,
   locale,
@@ -45,6 +49,8 @@ export function BuilderAaDrawer({
   view: BuilderView;
   blockId: string;
   canMoney: boolean;
+  /** AA-1030: the member may open the agency's AA prices (/me permissions.aa_tariff_view): the drawer links to them. */
+  canTariff?: boolean;
   suppliers: Supplier[];
   lang: Lang;
   locale: string;
@@ -189,6 +195,13 @@ export function BuilderAaDrawer({
               {tr("aa.add.find")}
             </Button>
           </div>
+          {canTariff && (
+            <p style={{ margin: 0, fontSize: 12.5 }}>
+              <Link href={AA_TARIFF_PATH} target="_blank" rel="noopener" data-testid="builder-aa-tariff-link">
+                {tr("tariff.drawerLink")}
+              </Link>
+            </p>
+          )}
           {tours && tours.length === 0 && <p style={{ margin: 0, fontSize: 12.5 }}>{tr("aa.add.noTours")}</p>}
           {tours && tours.length > 0 && (
             <label style={label}>

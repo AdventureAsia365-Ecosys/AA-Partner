@@ -81,3 +81,13 @@ a { color: inherit; }
 @media (max-width: 767px) {
   [data-crm-toast-room] { padding-bottom: 96px; }
 }
+
+/* AA-1030: Print of a page (AA prices): only the page itself; the shell, its bars and the page's own controls
+   (data-print="hide") are left out, and a table prints whole (no clipped scroll area). */
+@media print {
+  [data-crm="sidebar"], [data-crm="topbar"], [data-crm="footer"], [data-kit-shell="sidebar"],
+  [data-kit-shell="backdrop"], [data-print="hide"] { display: none !important; }
+  [data-print="sheet"] * { overflow: visible !important; max-height: none !important; }
+  [data-print="sheet"] div:has(> input) { display: none !important; }
+  [data-print="sheet"] tr { break-inside: avoid; }
+}

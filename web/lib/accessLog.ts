@@ -40,6 +40,8 @@ export const ACTIONS = [
   "audit_export",
   "self_view",
   "report_export",
+  // AA-1030: the agency's AA prices opened or downloaded (owner / agent).
+  "aa_tariff_view",
   // AA-971: AA support (L2) and emergency (L3) access.
   "support_grant",
   "support_revoke",

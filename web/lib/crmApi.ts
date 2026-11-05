@@ -34,6 +34,8 @@ export interface Me {
   crm_entitled?: boolean;
   /** AA-1036 (R3): Adventure Asia paused AI in the CRM for the whole app (crm.llm_app_profile); absent on an older API. */
   ai_paused?: boolean;
+  /** AA-1030: the permission matrix's answers the web hides links by (absent on an older API). */
+  permissions?: { aa_tariff_view?: boolean };
 }
 
 export async function crmCall<T>(
@@ -41,7 +43,7 @@ export async function crmCall<T>(
   session: Session,
   method: Method,
   subPath: string,
-  opts: { body?: unknown; fetchImpl?: typeof fetch; requestId?: string; query?: URLSearchParams } = {},
+  opts: { body?: unknown; fetchImpl?: typeof fetch; requestId?: string; query?: URLSearchParams; timeoutMs?: number } = {},
 ): Promise<ApiResult<T>> {
   const route = matchBff(method, subPath, SERVER_ROUTES);
   if (!route) throw new Error(`not on the BFF allow-list: ${method} ${subPath}`);
@@ -60,7 +62,8 @@ export async function crmCall<T>(
       headers,
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
       cache: "no-store",
-      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+      // AA-1030: a page may wait longer for a read that is one whole list (the AA prices: up to 25 s at Booking).
+      signal: AbortSignal.timeout(opts.timeoutMs ?? API_TIMEOUT_MS),
     });
   } catch {
     return { ok: false, status: 0, detail: "api_unreachable" };

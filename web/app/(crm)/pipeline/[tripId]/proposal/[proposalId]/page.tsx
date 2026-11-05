@@ -6,6 +6,7 @@
 import { notFound } from "next/navigation";
 import { ErrorState } from "@/app/_kit";
 import { BuilderPage } from "@/components/proposals/BuilderPage";
+import { seesAaTariff } from "@/lib/aaTariff";
 import type { BuilderView } from "@/lib/builder";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
@@ -40,6 +41,7 @@ export default async function BuilderRoute({ params }: { params: Promise<{ tripI
     <BuilderPage
       initial={view.data}
       role={ctx.role}
+      canTariff={seesAaTariff(ctx.me)}
       lang={ctx.lang}
       locale={ctx.locale}
       terms={agreements.ok ? agreements.data.agreements.filter((d) => d.kind === "booking_terms") : []}

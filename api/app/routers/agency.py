@@ -11,7 +11,8 @@ AA-1036: ``/me`` also says whether the agency holds the CRM add-on (``crm_entitl
 switcher; it refuses nothing. AA-1036 (R3): ``ai_paused`` is true while AA has switched the CRM's AI off for the whole
 app (``crm.llm_app_profile.ai_enabled`` false, :func:`app.llm.app_profile.for_call`: no row, a missing table or an
 unreadable row = AI on), so the agency app shows one banner instead of a failure per draft. The staff reason
-(``disabled_reason``) is never sent.
+(``disabled_reason``) is never sent. AA-1030: ``permissions`` carries the matrix answers the web hides links by
+(``aa_tariff_view``: the AA prices page); the API still refuses on its own.
 Margin-bearing fields arrive with later cards behind the per-role serializer allow-list (design v3 §4.6).
 
 ``GET /crm/v1/memberships`` is the one route without ``X-AA-Tenant-Id``: it lists the agencies the caller belongs to
@@ -30,7 +31,7 @@ from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
 from app.db import request_pool
 from app.llm import app_profile
-from app.permissions import Action
+from app.permissions import Action, may
 from app.tenancy import caller_memberships, tenant_tx
 
 router = class_router(AGENCY, tags=["agency"])
@@ -65,6 +66,8 @@ async def me(
             "default_locale": label["default_locale"] if label else None,
             "crm_entitled": await entitlements.crm_entitled(ctx),
             "ai_paused": not (await app_profile.for_call(ctx.conn)).ai_enabled,
+            # AA-1030: what the web shows or hides by the permission matrix (one source for both sides).
+            "permissions": {"aa_tariff_view": may(ctx.member_role, Action.AA_TARIFF_VIEW)},
         }
 
 

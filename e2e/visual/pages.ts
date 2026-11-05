@@ -53,6 +53,7 @@ export const PAGES: VisualPage[] = [
   crm("clients", "/clients"),
   crm("clients-duplicates", "/clients/duplicates"),
   crm("bookings", "/bookings"),
+  crm("aa-tariff", "/aa-tariff"),
   crm("payments", "/payments"),
   crm("commissions", "/commissions"),
   crm("suppliers", "/suppliers"),

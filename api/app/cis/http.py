@@ -6,6 +6,8 @@ minute, so a thread per call is cheap and no new runtime dependency is needed. R
 - **No redirects.** A 3xx is returned as it is, never followed: a redirect must not carry a bearer token or the client
   secret to another host.
 - **Bounded.** A timeout per call and a response body capped at :data:`MAX_BODY_BYTES` (a larger body is an error).
+  :func:`bulk_urllib_transport` (AA-1030) is the same transport with :data:`BULK_MAX_BODY_BYTES`, for a read whose
+  answer is a whole list by design (the agency's AA tariff, up to Booking's 6000 rows as JSON).
 - **Errors as values.** Any HTTP status comes back as an :class:`HttpResponse`; only a transport failure (DNS,
   connect, TLS, timeout, an oversized or truncated body) raises :class:`HttpError`, with its class name only (no URL,
   no body).
@@ -21,6 +23,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 
 MAX_BODY_BYTES = 2 * 1024 * 1024
+BULK_MAX_BODY_BYTES = 8 * 1024 * 1024
 DEFAULT_TIMEOUT_S = 10.0
 
 
@@ -63,16 +66,23 @@ def _read(stream, limit: int) -> bytes:  # a urllib response or HTTPError
     return body
 
 
-def _call(method: str, url: str, headers: Mapping[str, str], body: bytes | None, timeout: float) -> HttpResponse:
+def _call(
+    method: str,
+    url: str,
+    headers: Mapping[str, str],
+    body: bytes | None,
+    timeout: float,
+    limit: int = MAX_BODY_BYTES,
+) -> HttpResponse:
     if not url.startswith(("https://", "http://")):
         raise HttpError("bad_url")
     request = urllib.request.Request(url, data=body, headers=dict(headers), method=method)  # noqa: S310 — scheme checked
     try:
         with _OPENER.open(request, timeout=timeout) as resp:
-            return HttpResponse(resp.status, _read(resp, MAX_BODY_BYTES), dict(resp.headers.items()))
+            return HttpResponse(resp.status, _read(resp, limit), dict(resp.headers.items()))
     except urllib.error.HTTPError as exc:
         with exc:
-            return HttpResponse(exc.code, _read(exc, MAX_BODY_BYTES), dict(exc.headers.items()) if exc.headers else {})
+            return HttpResponse(exc.code, _read(exc, limit), dict(exc.headers.items()) if exc.headers else {})
     except HttpError:
         raise
     except TimeoutError:
@@ -86,3 +96,10 @@ async def urllib_transport(
     method: str, url: str, headers: Mapping[str, str], body: bytes | None, timeout_s: float
 ) -> HttpResponse:
     return await asyncio.to_thread(_call, method, url, headers, body, timeout_s)
+
+
+async def bulk_urllib_transport(
+    method: str, url: str, headers: Mapping[str, str], body: bytes | None, timeout_s: float
+) -> HttpResponse:
+    """:func:`urllib_transport` with the body capped at :data:`BULK_MAX_BODY_BYTES` instead (AA-1030)."""
+    return await asyncio.to_thread(_call, method, url, headers, body, timeout_s, BULK_MAX_BODY_BYTES)

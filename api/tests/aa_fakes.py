@@ -102,6 +102,10 @@ class FakeBooking:
     cancel_refusal: str | None = None
     cancellations: dict[str, dict[str, Any]] = field(default_factory=dict)
     cancel_keys: list[str] = field(default_factory=list)
+    # AA-1030 (contract 1.4): ``GET /tariff`` answers :func:`tariff_body` (or ``format=csv`` a two-line file) unless
+    # ``tariff_refusal`` names a contract error to answer instead (``unknown_partner``: no partner row or suspended).
+    tariff_refusal: str | None = None
+    tier_code: str = "silver"
     calls: Counter[str] = field(default_factory=Counter)
     holds: dict[str, dict[str, Any]] = field(default_factory=dict)
     hold_keys: dict[str, str] = field(default_factory=dict)
@@ -198,6 +202,17 @@ class FakeBooking:
                 "x_future_field": True,
             }  # fmt: skip
             return _resp(201, answer)
+        if method == "GET" and path == "/tariff":
+            if self.tariff_refusal:
+                status = {"unknown_partner": 403, "forbidden": 403, "invalid": 422}.get(self.tariff_refusal, 409)
+                return _resp(status, {"error": self.tariff_refusal, "message": "booking-side detail"})
+            currency = query.get("currency", "USD")
+            if query.get("format") == "csv":
+                name = f"aa-tariff-invented-agency-{currency.lower()}-2031-01-05.csv"
+                return HttpResponse(200, tariff_csv(currency),
+                                    {"content-type": "text/csv; charset=utf-8",
+                                     "content-disposition": f'attachment; filename="{name}"'})  # fmt: skip
+            return _resp(200, tariff_body(currency, tier=self.tier_code, source_id=query.get("source_id")))
         if method == "GET" and path == "/price-parity":
             amount = {"amount": self.from_price, "currency": query["currency"]} if self.from_price else None
             return _resp(200, {"tour": {"source_system": "cis", "source_id": query["source_id"]},
@@ -429,6 +444,63 @@ class FakeCis:
 
 def tokens(transport: Any) -> TokenProvider:
     return TokenProvider(M2mCredentials("crmclient1", "secret", TOKEN_URL), transport=transport)
+
+
+TARIFF_TOUR = "e1000000-0000-4000-8000-0000000c1030"
+
+
+def tariff_item(**over: Any) -> dict[str, Any]:
+    """One ``TariffItem`` of an invented tour (contract 1.4)."""
+    item = {
+        "tour": {"source_system": "cis", "source_id": TARIFF_TOUR},
+        "title": "Invented River Ramble", "country": "Invented Land", "duration_days": 3, "season": "Dry",
+        "valid_from": "2031-01-05", "valid_to": "2031-03-31", "pax_min": 2, "pax_max": 4, "priced_for_pax": 2,
+        "priced_for_date": "2031-01-05", "price": {"amount": "776.00", "currency": "USD"},
+        "price_per_person": {"amount": "388.00", "currency": "USD"}, "agency_discount_pct": "0.0300",
+        "rrp_per_person": {"amount": "500.00", "currency": "USD"},
+    }  # fmt: skip
+    item.update(over)
+    return item
+
+
+def tariff_body(currency: str = "USD", *, tier: str = "silver", source_id: str | None = None) -> dict[str, Any]:
+    """A ``Tariff`` answer: two pax bands of one window (the open band without an RRP), in ``currency``."""
+
+    def money(amount: str) -> dict[str, str]:
+        return {"amount": amount, "currency": currency}
+
+    items = [
+        tariff_item(price=money("776.00"), price_per_person=money("388.00")),
+        tariff_item(
+            pax_min=5,
+            pax_max=None,
+            priced_for_pax=5,
+            price=money("1550.00"),
+            price_per_person=money("310.00"),
+            rrp_per_person=None,
+        ),  # fmt: skip
+    ]
+    if source_id and source_id != TARIFF_TOUR:
+        items = []
+    return {
+        "currency": currency, "priced_on": "2031-01-05", "basis": "per_person_band_min_twin_share", "tier_code": tier,
+        "fx": {"base_currency": "USD", "quote_currency": currency, "rate_per_usd": "1", "rate_date": "2031-01-05",
+               "source": "test"},
+        "items": items, "truncated": False, "x_future_field": True,
+    }  # fmt: skip
+
+
+def tariff_csv(currency: str = "USD") -> bytes:
+    """Booking's CSV of :func:`tariff_body` (its columns, two rows)."""
+    head = ("tour_key,title,country,duration_days,season,valid_from,valid_to,pax_min,pax_max,priced_for_pax,currency,"
+            "price_per_person,price_for_party,agency_discount_pct,rrp_per_person,rrp_currency")  # fmt: skip
+    rows = [
+        f"{TARIFF_TOUR},Invented River Ramble,Invented Land,3,Dry,2031-01-05,2031-03-31,2,4,2,{currency},388.00,"
+        f"776.00,0.0300,500.00,USD",
+        f"{TARIFF_TOUR},Invented River Ramble,Invented Land,3,Dry,2031-01-05,2031-03-31,5,,5,{currency},310.00,"
+        f"1550.00,0.0300,,",
+    ]
+    return ("\r\n".join([head, *rows]) + "\r\n").encode()
 
 
 def booking_client(fake: FakeBooking) -> BookingClient:
