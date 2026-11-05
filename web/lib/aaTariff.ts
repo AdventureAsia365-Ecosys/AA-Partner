@@ -91,8 +91,12 @@ export function discountText(pct: string): string {
 }
 
 /** The error message key of a failed tariff read (the API's detail). */
-export function tariffErrorKey(detail: string): "tariff.err.notLinked" | "tariff.err.unavailable" | "tariff.err.generic" {
+export function tariffErrorKey(
+  detail: string,
+): "tariff.err.notLinked" | "tariff.err.unavailable" | "tariff.err.busy" | "tariff.err.generic" {
   if (detail === "aa_partner_not_active") return "tariff.err.notLinked";
+  // The API reads at most one tariff per agency at a time (429 aa_tariff_busy, Retry-After a few seconds).
+  if (detail === "aa_tariff_busy") return "tariff.err.busy";
   if (detail === "booking_unavailable" || detail === "booking_not_configured" || detail === "api_timeout" || detail === "api_unreachable") {
     return "tariff.err.unavailable";
   }

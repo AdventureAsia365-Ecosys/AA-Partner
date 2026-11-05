@@ -1539,7 +1539,10 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
   `Cache-Control: no-store`. Errors: `unknown_partner` / `forbidden` -> 409 `aa_partner_not_active`; `invalid` -> 422
   `aa_tariff_invalid`; another refusal -> 422 `aa_tariff_refused`; Booking down, throttled or a contract break -> 503
   `booking_unavailable` + `Retry-After`. Both tariff calls are bulk reads (8 MiB body cap, 25 s; every other Booking
-  call 2 MiB / 10 s). `/me` answers `permissions.aa_tariff_view`, which hides the page's links
+  call 2 MiB / 10 s), and the route reaches Booking only through `TariffReader`: at most 2 tariff reads in flight per
+  API task and 1 per agency (else 429 `aa_tariff_busy`, `Retry-After: 5`, Booking not asked), the same ask in flight
+  joined, a finished answer kept 60 s as its bytes (24 MiB in all; the browser still gets `no-store`). `/me` answers
+  `permissions.aa_tariff_view`, which hides the page's links
   (Settings, the builder's AA drawer) from the assistant. The page: table, currency select, Download CSV (BFF route
   marked `download`: the API's file name passes on), Print (print CSS); prices are indicative, a quote is binding.
 - **AA-aware Lost**: `GET /trips/{id}/lines` answers `lost_reason_hint` (declined -> `aa_on_request_declined`, or

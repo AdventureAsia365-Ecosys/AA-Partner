@@ -31,7 +31,10 @@ export function AaTariffToolbar({ currency, lang }: { currency: string; lang: La
     setError(null);
     try {
       const res = await bffDownload(tariffPath(currency, "csv"), { filename: tariffFilename(currency) });
-      if (!res.ok && !res.redirecting) setError(tr("tariff.downloadError"));
+      if (!res.ok && !res.redirecting) {
+        // A read already running for the agency (429 aa_tariff_busy) says "try again in a few seconds".
+        setError(tr(res.detail === "aa_tariff_busy" ? "tariff.err.busy" : "tariff.downloadError"));
+      }
     } finally {
       setBusy(false);
     }

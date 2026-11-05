@@ -103,6 +103,7 @@ describe("helpers", () => {
     expect(discountText("x")).toBe("—");
     expect(tariffErrorKey("aa_partner_not_active")).toBe("tariff.err.notLinked");
     expect(tariffErrorKey("booking_unavailable")).toBe("tariff.err.unavailable");
+    expect(tariffErrorKey("aa_tariff_busy")).toBe("tariff.err.busy");
     expect(tariffErrorKey("aa_tariff_invalid")).toBe("tariff.err.generic");
   });
 

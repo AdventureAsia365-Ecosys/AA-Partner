@@ -523,3 +523,54 @@ def test_a_source_id_that_is_not_an_audit_id_is_left_out_of_the_event(
 def test_the_currencies_the_web_offers_are_booking_s_quote_currencies() -> None:
     assert aa_tariff.CURRENCIES == ("USD", "EUR", "GBP", "AUD", "SGD", "VND")
     assert uuid.UUID(TARIFF_TOUR)  # the invented tour key is a catalog-shaped id
+
+
+# ── the route's bounded reads (S270 review) ─────────────────────────────────────────────────────
+
+
+def test_repeated_reads_of_one_ask_reach_booking_once_but_each_is_audited(
+    pools: LocalPools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeBooking()
+    client, headers, ctx, _ = _route_client(pools, monkeypatch, "owner", booking=booking_client(fake))
+    for path in ("/crm/v1/aa/tariff?currency=EUR",) * 3 + ("/crm/v1/aa/tariff?currency=EUR&format=csv",) * 2:
+        r = client.get(path, headers=headers)
+        assert r.status_code == 200 and r.headers["cache-control"] == "no-store"
+    assert fake.calls["GET tariff"] == 2  # one JSON read and one CSV read; the rest came from the short cache
+    assert r.headers["content-disposition"] == 'attachment; filename="aa-tariff-invented-agency-eur-2031-01-05.csv"'
+    assert [e.reason for e in ctx.audit_events] == ["format_json"] * 3 + ["format_csv"] * 2
+
+
+class _BusyReader:
+    async def get(self, *_a: Any, **_kw: Any) -> Any:
+        raise aa_tariff.tariff_busy()
+
+
+@pytest.mark.parametrize("fmt", ["json", "csv"])
+def test_a_busy_agency_gets_429_with_retry_after(pools: LocalPools, monkeypatch: pytest.MonkeyPatch, fmt: str) -> None:
+    fake = FakeBooking()
+    client, headers, _, _ = _route_client(pools, monkeypatch, "agent", booking=booking_client(fake))
+    client.app.state.aa_tariff = _BusyReader()  # type: ignore[attr-defined]
+    r = client.get(f"/crm/v1/aa/tariff?format={fmt}", headers=headers)
+    assert (r.status_code, r.json()["detail"], r.headers["retry-after"]) == (429, "aa_tariff_busy", "5")
+    assert fake.calls["GET tariff"] == 0
+
+
+def test_the_cached_json_bytes_still_pass_the_margin_serializer(
+    pools: LocalPools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Defence in depth: were the action ever widened, the encoded answer would still lose its b2b_* keys.
+    client, headers, _, _ = _route_client(pools, monkeypatch, "owner", booking=booking_client(FakeBooking()))
+    real_tx = router.tenant_tx
+
+    def tx(*a: Any, **kw: Any) -> Any:
+        out = real_tx(*a, **kw)
+        margin.current_member_role.set("assistant")
+        return out
+
+    monkeypatch.setattr(router, "tenant_tx", tx)
+    r = client.get("/crm/v1/aa/tariff", headers=headers)
+    assert r.status_code == 200
+    items = r.json()["items"]
+    assert items and all(not {"b2b_price", "b2b_price_per_person"} & set(i) for i in items)
+    assert items[0]["agency_discount_pct"] == "0.0300"

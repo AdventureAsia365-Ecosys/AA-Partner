@@ -22,7 +22,8 @@ look-up calls Booking live after the membership check, outside the database tran
 AA-1030: ``GET /aa/tariff?currency=&format=json|csv&source_id=`` (booking.b2b.v1 1.4, :mod:`app.booking.tariff`) needs
 ``aa_tariff_view`` (owner, agent; the assistant 403 ``role_forbidden``), writes one ``aa_tariff_view`` audit event
 (the currency, the format and the tour asked for, never an amount) and answers ``Cache-Control: no-store``; the CSV
-is Booking's file, with its file name.
+is Booking's file, with its file name. Booking is read through :class:`app.booking.tariff.TariffReader` (at most two
+reads in flight per process and one per agency, else 429 ``aa_tariff_busy``; a finished answer kept 60 s).
 """
 
 from __future__ import annotations
@@ -154,25 +155,24 @@ async def post_aa_action(
         return await aa_lines.ask(ctx, line_id, action, body.model_dump() if body is not None else None)
 
 
-def _booking_client(request: Request) -> Any:
-    client = getattr(request.app.state, "booking_client", None)
-    if client is None:
+def _tariff_reader(request: Request) -> aa_tariff.TariffReader:
+    reader = getattr(request.app.state, "aa_tariff", None)
+    if reader is None:
         raise Unavailable("booking_not_configured", "AA products are not connected on this environment")
-    return client
+    return reader
 
 
 @router.get("/aa/tariff")
 async def get_tariff(
     request: Request,
-    response: Response,
     caller: CallerDep,
     tenant_id: TenantDep,
     currency: Annotated[str, Query(pattern=r"^[A-Z]{3}$")] = "USD",
     fmt: Annotated[Literal["json", "csv"], Query(alias="format")] = "json",
     source_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
-) -> Any:
+) -> Response:
     """AA-1030: the agency's own AA price per tour, season and pax band (B2B prices: owner and agent only)."""
-    client = _booking_client(request)
+    reader = _tariff_reader(request)
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.AA_TARIFF_VIEW) as ctx:
         # The currency as the object, the tour (when asked for one) as its id, the format as the reason: no amount.
@@ -180,14 +180,11 @@ async def get_tariff(
         ctx.audit(
             Action.AA_TARIFF_VIEW.value, "allowed", "aa_tariff", currency, reason=f"format_{fmt}", object_ids=tours
         )
-    # Booking is called after the membership check, outside the transaction (no connection held while it answers).
-    if fmt == "csv":
-        today = dt.datetime.now(dt.UTC).date()
-        body, name = await aa_tariff.csv_file(client, tenant_id, currency=currency, source_id=source_id, today=today)
-        return Response(
-            content=body,
-            media_type="text/csv; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": NO_STORE},
-        )
-    response.headers["Cache-Control"] = NO_STORE
-    return await aa_tariff.read(client, tenant_id, currency=currency, source_id=source_id)
+    # Booking is called after the membership check, outside the transaction (no connection held while it answers),
+    # through the bounded reader: 429 aa_tariff_busy instead of a third read in flight or a second for this agency.
+    today = dt.datetime.now(dt.UTC).date()
+    found = await reader.get(tenant_id, currency=currency, fmt=fmt, source_id=source_id, today=today)
+    headers = {"Cache-Control": NO_STORE}
+    if found.filename is not None:
+        headers["Content-Disposition"] = f'attachment; filename="{found.filename}"'
+    return Response(content=found.body, media_type=found.media_type, headers=headers)

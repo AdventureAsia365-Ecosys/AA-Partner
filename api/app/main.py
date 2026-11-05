@@ -35,6 +35,7 @@ from app.bodylimit import BodyLimitMiddleware
 from app.booking.checker import BookingChecker
 from app.booking.client import BookingClient, BookingConfig
 from app.booking.products import ProductCache
+from app.booking.tariff import TariffReader
 from app.catalog.client import CatalogConfig
 from app.cis.activation import ActivationConfig
 from app.cis.m2m import TokenProvider
@@ -258,6 +259,8 @@ def create_app(
     app.state.booking_client = booking_client  # AA-947 (CRM-19): booking.b2b.v1, None without BOOKING_API_URL
     app.state.booking_checker = BookingChecker(booking_client) if isinstance(booking_client, BookingClient) else None
     app.state.aa_products = ProductCache(booking_client) if isinstance(booking_client, BookingClient) else None
+    # AA-1030: the agency's AA tariff, bounded bulk reads with a short cache (app.booking.tariff.TariffReader).
+    app.state.aa_tariff = TariffReader(booking_client) if isinstance(booking_client, BookingClient) else None
     app.state.mail_runtime = mail_runtime
     # AA-979 P2b: CIS activateInvitation for accepted Content studio invitations (None without CIS_API_URL /
     # M2M_CLIENT: the accept answers "accepted" and the crm_studio_activation job waits).
