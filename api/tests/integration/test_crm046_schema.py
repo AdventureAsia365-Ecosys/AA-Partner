@@ -1,19 +1,16 @@
 """crm-046 (AA-1030, a contract file) on PostgreSQL with the RDS role shape: ``crm.tenant_settings.retail_markup_pct``
 (default ``{}``), its shape rule ``crm.retail_markup_ok`` (known product types, 0-300 %, at most 2 decimals), the
-grants (``crm_app`` writes it, ``crm_support_reader`` does not read it), and :mod:`app.proposals.retail` reading and
-merging it through a real tenant transaction as ``crm_app``.
+grants (``crm_app`` writes it, ``crm_support_reader`` does not read it), and ``crm_app`` writing it through a real
+tenant transaction (the CHECK refuses a bad shape). The service reading it (:mod:`app.proposals.retail`) is tested by
+``test_aa1030_retail_markup_db.py`` in the code PR.
 """
 
 from __future__ import annotations
 
 import uuid
-from decimal import Decimal
 
 import asyncpg
 import pytest
-
-from app.proposals import retail
-from app.tenancy import TenantContext
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -55,7 +52,7 @@ async def test_grants(admin: asyncpg.Connection) -> None:
     )
 
 
-async def test_crm_app_reads_and_merges_through_a_tenant(app_pool: asyncpg.Pool) -> None:
+async def test_crm_app_writes_it_through_a_tenant(app_pool: asyncpg.Pool) -> None:
     tenant_id = uuid.uuid4()
     async with app_pool.acquire() as conn:
         tx = conn.transaction()
@@ -64,12 +61,13 @@ async def test_crm_app_reads_and_merges_through_a_tenant(app_pool: asyncpg.Pool)
             await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
             await conn.execute("SELECT set_config('app.actor', 'seed:test', true)")
             await conn.execute("INSERT INTO crm.tenant (tenant_id) VALUES ($1)", tenant_id)
-            ctx = TenantContext(conn=conn, tenant_id=tenant_id, member_id=uuid.uuid4(), member_role="owner")
-            assert await retail.read(ctx) == {"retail_markup_pct": {}, "kinds": list(retail.KINDS)}
-            await retail.update(ctx, {"trip_plan": Decimal("20"), "hotel_room": Decimal("12.50")})
-            await retail.update(ctx, {"hotel_room": None, "meal": Decimal("7.25")})
-            assert (await retail.read(ctx))["retail_markup_pct"] == {"trip_plan": "20", "meal": "7.25"}
-            assert await retail.markups(ctx) == {"trip_plan": Decimal("20"), "meal": Decimal("7.25")}
+            await conn.execute(
+                "INSERT INTO crm.tenant_settings (retail_markup_pct) VALUES ($1::jsonb)"
+                " ON CONFLICT (tenant_id) DO UPDATE SET retail_markup_pct = EXCLUDED.retail_markup_pct",
+                '{"trip_plan": 20, "meal": 7.25}',
+            )
+            stored = await conn.fetchval("SELECT retail_markup_pct::text AS markup FROM crm.tenant_settings")
+            assert stored == '{"meal": 7.25, "trip_plan": 20}'
             with pytest.raises(asyncpg.CheckViolationError):
                 async with conn.transaction():
                     await conn.execute(
