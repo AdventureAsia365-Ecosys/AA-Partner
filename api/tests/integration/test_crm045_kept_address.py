@@ -2,7 +2,7 @@
 
 - Four nullable columns, all or none (studio_invitation_kept_chk); crm_app may write them.
 - Only a platform actor sets the kept address (issue, re-issue); the token holder may only clear it (the claim does);
-  the activation job never touches it (CRM37). Every crm-020 rule still holds.
+  the activation job never touches it; a revoke clears it (CRM37). Every crm-020 rule still holds.
 """
 
 from __future__ import annotations
@@ -165,3 +165,51 @@ async def test_the_crm020_rules_still_hold(app_pool: asyncpg.Pool) -> None:
             row_id,
             ISS,
         )
+
+
+async def test_a_revoke_clears_it(app_pool: asyncpg.Pool) -> None:
+    """AA-1035 review: a revoked invitation is never sent again, so it keeps no address."""
+    row_id, _ = await _issue(app_pool)
+    with pytest.raises(asyncpg.PostgresError) as exc:
+        await _update(
+            app_pool,
+            PLATFORM,
+            "UPDATE crm.studio_invitation SET status = 'revoked' WHERE studio_invitation_id = $1",
+            row_id,
+        )
+    assert exc.value.sqlstate == "CRM37"
+    assert await _kept(app_pool, row_id) == KEPT
+    await _update(
+        app_pool,
+        PLATFORM,
+        "UPDATE crm.studio_invitation SET status = 'revoked', email_kept = NULL, email_kept_dek = NULL, "
+        "email_kept_kek_provider = NULL, email_kept_kek_id = NULL WHERE studio_invitation_id = $1",
+        row_id,
+    )
+    assert await _kept(app_pool, row_id) == (None, None, None, None)
+    bare_id, _ = await _issue(app_pool, kept=None)  # a row that kept none revokes as in crm-020
+    revoke = "UPDATE crm.studio_invitation SET status = 'revoked' WHERE studio_invitation_id = $1"
+    await _update(app_pool, PLATFORM, revoke, bare_id)
+
+
+async def test_an_expiry_keeps_it_for_the_send_again(app_pool: asyncpg.Pool) -> None:
+    """An expired invitation is re-issued (crm-020): the usual send again, so the expiry keeps the address, and the
+    platform re-issues with it."""
+    row_id, token_hash = await _issue(app_pool)
+    await _update(
+        app_pool,
+        f"invitation:{row_id}",
+        "UPDATE crm.studio_invitation SET status = 'expired'",
+        token_hash=token_hash,
+    )
+    assert await _kept(app_pool, row_id) == KEPT
+    await _update(
+        app_pool,
+        PLATFORM,
+        "UPDATE crm.studio_invitation SET status = 'pending', token_hash = $2, email_enc = $3, issued_at = now(), "
+        "expires_at = now() + interval '7 days' WHERE studio_invitation_id = $1",
+        row_id,
+        _hash(),
+        os.urandom(64),
+    )
+    assert await _kept(app_pool, row_id) == KEPT
