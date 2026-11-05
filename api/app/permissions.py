@@ -126,6 +126,10 @@ class Action(StrEnum):
     # AA-964 (CRM-33a, A-18 AI): switch AI on / off and set the agency's monthly AI budget (owner, like the other
     # Settings sections that bind the agency).
     AI_SETTINGS = "ai_settings"
+    # AA-1036 (R3, root ADR 0019 d7): ask Adventure Asia for an add-on (CRM, Trip planner) for the agency, relayed to
+    # CIS tenant.addons.v1 (one store of requests in CIS). The owner, like the studio, where only the workspace owner
+    # asks; reading the add-ons is PLAN_VIEW (owner).
+    ADDON_REQUEST = "addon_request"
 
 
 A, D = Rule.ALLOW, Rule.DENY
@@ -189,6 +193,7 @@ _TABLE: dict[Action, tuple[Rule, Rule, Rule]] = {
     Action.CLIENT_MERGE: (A, D, D),
     Action.ONBOARDING_MANAGE: (A, D, D),
     Action.AI_SETTINGS: (A, D, D),
+    Action.ADDON_REQUEST: (A, D, D),
 }
 
 MATRIX: dict[str, dict[Action, Rule]] = {

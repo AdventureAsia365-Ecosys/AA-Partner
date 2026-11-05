@@ -62,6 +62,7 @@ from app.observability.request_id import RequestIdMiddleware, unhandled_error_ha
 from app.ratelimit import HOOK_MISSES_PER_MINUTE, FixedWindowLimiter
 from app.routers import (
     aa,
+    addons,
     agency,
     ai,
     audit,
@@ -299,6 +300,7 @@ def create_app(
     app.include_router(public.router)
     app.include_router(client_pages.router)
     app.include_router(agency.router)
+    app.include_router(addons.router)  # AA-1036 (R3): the agency's add-ons, owner's request relayed to CIS
     app.include_router(pipeline.router)
     app.include_router(travellers.router)
     app.include_router(onboarding.router)

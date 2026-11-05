@@ -1,0 +1,19 @@
+{
+  "contract": "tenant.addons.v1",
+  "schema": "AddOnRequestCreated",
+  "expect": "valid",
+  "why": "A new pending request",
+  "payload": {
+    "created": true,
+    "request": {
+      "request_id": "8a5b6c7d-9e0f-4a1b-82c3-4d5e6f708193",
+      "product": "tripplanner",
+      "status": "pending",
+      "note": null,
+      "requested_at": "2026-11-21T10:00:00.000000Z",
+      "decided_at": null,
+      "decision_note": null,
+      "setup": null
+    }
+  }
+}

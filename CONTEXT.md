@@ -84,7 +84,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   CRM roles (owner / agent / assistant) and the agency audit (ADR 0010 decision 5). The agency is the controller, AA
   the processor (ADR 0008a decision 1).
 - **Consumes** only through versioned HTTP contracts (root `docs/contracts/`): `booking.b2b.v1` (AA-Booking),
-  `catalog.http.v1`, `tenant.membership.v1` (AA-CIS-App). Service calls use the M2M pool (ADR 0006b decision 7):
+  `catalog.http.v1`, `tenant.membership.v1`, `tenant.addons.v1` (AA-CIS-App; AA-1036 R3: the CRM owner's add-on
+  request, `app/cis/addons.py`, scope `cis.tenant/addons`). Service calls use the M2M pool (ADR 0006b decision 7):
   `app/cis/m2m.py` asks the aa-m2m pool for one scope per call (AA-978). `tenant.membership.v1` is pulled by
   `crm_membership_pull` (section "CIS membership feed" below); CIS is a revocation and lifecycle source there, never a
   positive gate and never a source of CRM roles.
@@ -130,7 +131,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `/crm/public/v1/traveller` | no token in the URL (AA-953, CRM-24a; §2.9 rule 1 for the portal): the web landing `/c/t/<token>` exchanges the link for the host-only cookie `aa_portal_link` (httpOnly, Secure, SameSite=Strict, Path `/crm/public/v1/traveller`) and redirects to `/c/t`; the session cookie `aa_portal_s` sits on the same path | `client_link_tx()` purpose `portal` (the cookie's token); the same home / code / session / Stage 3 / sign as the token routes, plus the "Who are you?" picker on `POST /session` (200 `pick` until a `traveler_id` is chosen; Fix E4), `POST /switch` (inside the address's group), `PUT /flights`, `POST /passport-scan` (write-only, 10 MiB body cap, five live scans), `GET /documents/{id}` (403 `document_write_only` / `document_not_shared` / `document_not_yours`), `POST /companions` (lead only); no cookie or a bad one: 404 `link_not_found`; the same two write buckets as the token routes |
 | `/crm/public/v1/proposal[/pick\|/hold\|/accept\|/change-request]` | no token in the URL (AA-950, Fix B11): the host-only cookie `aa_proposal_link` the web set when the client opened `/c/p/<token>` (httpOnly, Secure, SameSite=Strict, Path `/crm/public/v1/proposal`); served on the client host | `client_link_tx()` of purpose `proposal` (`app/proposals/public.py`); C-03 / C-04 / C-12 of a builder version (Keep / Swap, Choose later, the hold set, accept 409 `hold_expired`, Ask for a change); writes: Origin check, per-address limit, 32 KiB cap; no cookie or an unusable link: 404 `link_not_found` |
 | `/crm/public/v1/calendar/{token}.ics` | no token header (AA-961): the 43-character feed token in the path only (SHA-256 stored), fetched by the member's calendar app; served on the partner host | `calendar_feed_tx()` (`app/calendar/public.py`); `text/calendar`, no names, titles or money; 404 `feed_not_found` for an unknown, revoked or expired token, an inactive member or a locked agency (subscribed calendars stop updating); public rate limit |
-| `/crm/v1` | PARTNER x {AA-Partner web} only (AA-1036: `GET /me` also answers `crm_entitled` for the app switcher and `ai_paused` for the CRM banner) (the Dev EXTERNAL x {`cis-portal`} bridge was removed at AA-979 P2b: its tokens are 401) | `X-AA-Tenant-Id` + `tenant_tx(action=...)` (membership in `crm.member`, then the permission matrix); `GET /crm/v1/memberships` and `POST /crm/v1/invitations/accept` need no header |
+| `/crm/v1` | PARTNER x {AA-Partner web} only (AA-1036: `GET /me` also answers `crm_entitled` for the app switcher and `ai_paused` for the CRM banner; R3: `GET /add-ons` and `POST /add-on-requests`, owner only, relayed to CIS `tenant.addons.v1`) (the Dev EXTERNAL x {`cis-portal`} bridge was removed at AA-979 P2b: its tokens are 401) | `X-AA-Tenant-Id` + `tenant_tx(action=...)` (membership in `crm.member`, then the permission matrix); `GET /crm/v1/memberships` and `POST /crm/v1/invitations/accept` need no header |
 | `/crm/ops/v1` | WORKFORCE x {`cis-admin`} | group `cis-admin` or `crm-platform-admin` reads, `crm-platform-admin` writes (AA-939: member deactivation, owner recovery; AA-941: the L1 console, section "L1 console" below). Every response passes the L1 key allow-list (`app/ops/serializer.py`). AA-979: `POST /tenants/{id}/studio-invitations` (the CIS staff relay of a Content studio invitation) takes any OPS caller, `cis-admin` included (section "Content studio invitations"). The Dev-only E2E CIS admin (root ADR 0006a A10b; a `cis-admin` token whose `email` claim is its address, `Caller.e2e_read_only`, `app/auth/e2e_staff.py`) is read-only: every `crm-platform-admin` write answers it 403 `e2e_read_only` |
 | `/crm/staff/v1` | WORKFORCE x {`crm-staff`} | group `crm-ops` or `crm-support`; AA-971 (CRM-13b): support needs the owner's live grant, break-glass group `crm-ops`; every agency read through `support_tx()` as `crm_support_reader` (section "AA support access" below). AA-1019: the Dev-only CRM staff E2E identity (root ADR 0006a A10c, `email` claim `e2e-crm-staff@`, `Caller.e2e_synthetic_only`) is refused outside dev / test / local (403 `e2e_read_only`) and reaches synthetic agencies only (`ops_tx` / `staff_tx` / `support_tx`: 403 `e2e_synthetic_only`; the lists skip others). The web console is section "AA staff console" below |
 
@@ -610,9 +611,10 @@ studio rules. Deploy Web Dev verifies the studio paths and runs the studio smoke
   false only when the CIS projection put the agency on plan `free`), then the CIS add-on state; the Trip planner from
   CIS only (`GET /v1/account/add-ons` with the verified studio token). Studio: `GET /api/studio/apps` (always 200)
   feeds the sidebar's "Apps" group and says `crm_member` (the person holds a CRM role: `/crm/v1/me` answered 200);
-  CRM: the former Content studio group is "Apps" (the studio link when CIS lists the agency for the person, and the
-  Trip planner entry to the studio's Add-ons page, absolute on the studio's origin when the studio link is absolute;
-  the group is hidden without studio access).
+  CRM: the former Content studio group is "Apps" (the studio link when CIS lists the agency for the person, and for
+  the agency **owner** the Trip planner entry to the CRM's own **Settings › Add-ons** (`/settings/add-ons`); the group
+  is hidden for a non-owner without studio access). Until S269 the entry led to the studio's Add-ons page, which a
+  CRM-only owner cannot open ("No Content studio access").
 - **Add-on requests** (AA-1036 R3, root ADR 0019 d7): the Add-ons page shows each add-on's state, the pending request
   and the last decision (a decline with its reason), and lets the Content studio **owner** send a request with an
   optional note (`POST /api/tenant/v1/account/add-on-requests` → CIS; CIS refuses editors and viewers, and the page
@@ -622,6 +624,16 @@ studio rules. Deploy Web Dev verifies the studio paths and runs the studio smoke
   vendor. An active CRM shows "Open CRM" only to a person with a CRM role (`crm_member`), else "Ask your owner for CRM
   access"; an approval whose setup still runs or failed says so (CIS `setup`); a refusal reads CIS's error code
   (`ApiError.code`: 409 `tenant_not_in_service` vs `already_subscribed`).
+- **CRM add-on requests** (AA-1036 R3, S269 live gap): an agency whose owner works in the CRM without a Content studio
+  membership asks from the CRM's **Settings › Add-ons** (`web/app/(crm)/settings/add-ons`, kit Section / Badge / Field /
+  Textarea / Button). The CRM API (`app/routers/addons.py`, owner only: `PLAN_VIEW` to read, `ADDON_REQUEST` to ask)
+  relays to CIS `tenant.addons.v1` (`app/cis/addons.py`, M2M scope `cis.tenant/addons`, the CRM's CIS client config
+  `app.state.studio_activation`): the same list and the same request as the studio's, so the requests keep one store
+  in CIS and one staff decision path; CIS records the requester as `crm-member:<member id>`. No connection is held
+  across the CIS call (role check in one `tenant_tx()`, CIS call, outcome in a second short `tenant_tx()`); the agency
+  audit has `addon_request` allowed (object = the CIS request id, reason `<product>_created` / `<product>_open`) or
+  denied (reason `cis_<CIS reason>`). CIS unreachable, not serving the contract yet or the scope not granted: 503
+  `addons_unavailable`; no CIS account: 404 `addons_no_account`. The CRM stores nothing of the request.
 - **AI paused banner** (AA-1036 R3): `GET /crm/v1/me` answers `ai_paused` (true while `crm.llm_app_profile.ai_enabled`
   is false: AA switched the CRM's AI off for the whole app from the CIS admin's App profiles; never the staff reason);
   the CRM layout shows the amber `components/ai/AiPausedBanner.tsx` on every page while it is.

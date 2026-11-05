@@ -226,6 +226,83 @@ def test_cis_guard_fails_closed_on_a_line_without_its_job_fields(fields: dict) -
     assert reasons and all("fail closed" in why for why in reasons), reasons
 
 
+# ── S269: a momentary CIS condition must hold on two sampler lines in a row ─────────────────────────────────────
+
+
+PERIODIC_TICK = {**CIS_IDLE, "queued_due": 2, "running": 0, "starved": {"llm_route_watch": {"age_s": 3}}}
+
+
+def test_newest_samples_are_newest_first_and_one_per_instant() -> None:
+    events = [_cis(NOW_MS - 600_000, running=1), _cis(NOW_MS - 1000), _cis(NOW_MS - 1000, running=9), _line("x")]
+    got = lt.newest_samples(events, 2)
+    assert [ts for _, ts in got] == [NOW_MS - 1000, NOW_MS - 600_000]
+    assert lt.newest_sample(events) == got[0]
+    assert lt.newest_samples([], 2) == [] and lt.newest_sample([]) is None
+
+
+def test_a_periodic_tick_on_the_newest_line_only_does_not_stop_the_run() -> None:
+    """S269 Dev run: the CIS scheduler queued ai_usage_rollup / llm_route_watch (every 15 min, seconds long) at the
+    instant the sampler ticked; one line said queued_due=2 + starved and the runner aborted a healthy run at 112 s."""
+    newest, previous = (PERIODIC_TICK, NOW_MS - 30_000), ({**CIS_IDLE}, NOW_MS - 330_000)
+    assert lt.judge_cis(newest, NOW_MS, previous) == []
+    notes = lt.unconfirmed_cis(newest, previous)
+    assert len(notes) == 2 and all("newest CIS line only" in n for n in notes)
+
+
+def test_a_condition_on_two_lines_in_a_row_stops_the_run() -> None:
+    newest, previous = (PERIODIC_TICK, NOW_MS - 30_000), (PERIODIC_TICK, NOW_MS - 330_000)
+    reasons = lt.judge_cis(newest, NOW_MS, previous)
+    assert any("shared.job not idle" in r and "two sampler lines in a row" in r for r in reasons)
+    assert any("starved kinds" in r for r in reasons)
+    assert lt.unconfirmed_cis(newest, previous) == []
+
+
+def test_each_momentary_condition_is_confirmed_on_its_own() -> None:
+    busy_only = ({**CIS_IDLE, "running": 1}, NOW_MS - 330_000)
+    starved_only = ({**CIS_IDLE, "starved": {"cis_kind": {"age_s": 40}}}, NOW_MS - 30_000)
+    assert lt.judge_cis(starved_only, NOW_MS, busy_only) == []
+    assert lt.judge_cis(busy_only, NOW_MS, starved_only) == []
+
+
+def test_a_previous_line_without_its_counts_confirms_busy() -> None:
+    """Fail closed: a previous tick whose backlog read failed (no counts) is not evidence of an idle queue."""
+    previous = ({"jobs_error": "TimeoutError"}, NOW_MS - 330_000)
+    assert any("not idle" in r for r in lt.judge_cis((PERIODIC_TICK, NOW_MS - 30_000), NOW_MS, previous))
+
+
+@pytest.mark.parametrize(
+    ("fields", "reason"),
+    [
+        ({**CIS_IDLE, "oldest_queued_age_seconds": 901}, ">= 900"),
+        ({**CIS_IDLE, "ops_checks": {"jobs_starved": {"bell": True}}}, "job / database finding"),
+        ({**CIS_IDLE, "jobs_error": "TimeoutError"}, "fail closed"),
+        ({"queued_due": 1}, "fail closed"),
+    ],
+)
+def test_every_other_cis_condition_still_stops_at_once(fields: dict, reason: str) -> None:
+    previous = ({**CIS_IDLE}, NOW_MS - 330_000)
+    assert any(reason in r for r in lt.judge_cis((fields, NOW_MS - 30_000), NOW_MS, previous))
+    stale = lt.judge_cis(({**CIS_IDLE}, NOW_MS - 12 * 60_000), NOW_MS, previous)
+    assert any("older than 11 minutes" in r for r in stale)
+
+
+def test_guard_pass_waits_for_the_next_cis_line(files: argparse.Namespace) -> None:
+    tick = [_cis(NOW_MS - 30_000, queued_due=2, starved={"ai_usage_rollup": {"age_s": 2}}), _cis(NOW_MS - 330_000)]
+    report = lt.guard_pass(files, FakeAws(cis=tick), NOW)
+    assert report.ok, report.failures
+    assert any("waiting for the next one" in n for n in report.notes)
+    pre = lt.precheck(files, FakeAws(cis=tick), NOW)
+    assert pre.ok and any("waiting for the next one" in n for n in pre.notes)
+    twice = [_cis(NOW_MS - 30_000, queued_due=2), _cis(NOW_MS - 330_000, running=1)]
+    report = lt.guard_pass(files, FakeAws(cis=twice), NOW)
+    assert not report.ok and any("two sampler lines in a row" in f for f in report.failures)
+
+
+def test_guard_pass_with_one_busy_cis_line_and_no_previous_one_fails_closed(files: argparse.Namespace) -> None:
+    report = lt.guard_pass(files, FakeAws(cis=[_cis(NOW_MS - 30_000, running=1)]), NOW)
+    assert not report.ok and any("shared.job not idle" in f for f in report.failures)
+
+
 def test_booking_and_crm_guards_fail_closed_on_missing_fields() -> None:
     booking = lt.parse_sample(BOOKING_OK)
     crm = lt.parse_sample(CRM_OK)
