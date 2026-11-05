@@ -61,10 +61,16 @@ class FakeCis:
         self.calls: list[dict[str, str]] = []
         self.raise_error: HttpError | None = None
         self.body: bytes | None = None
+        # getTenantMembers (the desk invitation check): the invited editor membership of REQ on TENANT
+        self.members: dict[uuid.UUID, list[dict[str, Any]]] = {TENANT: [_member(TENANT, REQ, "editor")]}
+        self.member_calls: list[str] = []
+        self.members_error: HttpError | None = None
 
     async def transport(self, method: str, url: str, headers: Any, body: Any, _timeout_s: float) -> HttpResponse:
-        assert method == "GET" and url.startswith(f"{CIS}{staff_scope.PATH}?")
         assert headers["Authorization"] == "Bearer m2m-test-token"
+        if not url.startswith(f"{CIS}{staff_scope.PATH}?"):
+            return self._members(method, url)
+        assert method == "GET"
         query = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))
         self.calls.append(query)
         if self.raise_error:
@@ -77,6 +83,30 @@ class FakeCis:
             "as_of": "2026-11-05T00:00:00Z",
         }
         return HttpResponse(self.status, self.body if self.body is not None else json.dumps(payload).encode(), {})
+
+    def _members(self, method: str, url: str) -> HttpResponse:
+        assert method == "GET"
+        path = urllib.parse.urlsplit(url).path
+        prefix, suffix = "/tenant/membership/v1/tenants/", "/members"
+        assert path.startswith(prefix) and path.endswith(suffix), url
+        tenant = uuid.UUID(path[len(prefix) : -len(suffix)])
+        self.member_calls.append(str(tenant))
+        if self.members_error:
+            raise self.members_error
+        if tenant not in self.members:
+            return HttpResponse(404, b"{}", {})
+        payload = {"tenant_id": str(tenant), "is_synthetic": False, "members": self.members[tenant]}
+        return HttpResponse(200, json.dumps(payload).encode(), {})
+
+
+def _member(tenant: uuid.UUID, invitation: uuid.UUID, role: str, status: str = "invited") -> dict[str, Any]:
+    return {
+        "tenant_id": str(tenant),
+        "invitation_id": str(invitation),
+        "membership_id": str(uuid.uuid4()),
+        "content_studio_role": role,
+        "status": status,
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -274,6 +304,81 @@ def test_the_studio_relay_is_scoped_and_support_keeps_the_address(desk_app: Any,
     state["conn"] = base_conn()
     r = _invite(client, pools, "cis-support", keep_address=True)
     assert (r.status_code, r.json()["detail"]) == (409, studio.NOT_KEPT)
+
+
+def _no_invitation_written(conn: Any) -> bool:
+    return conn.sql("INSERT INTO crm.studio_invitation") == [] and conn.sql("UPDATE crm.studio_invitation") == []
+
+
+@pytest.mark.parametrize(
+    ("group", "body"),
+    [
+        # customer_success redirecting an owner invitation to an address of its choosing (the owner seat)
+        ("cis-customer_success", {"email": "desk.member@agency.example"}),
+        ("cis-customer_success", {"keep_address": True}),
+        # support sending an owner invitation again to the kept address (CIS refuses it: tenant.write only)
+        ("cis-support", {"keep_address": True}),
+    ],
+)
+def test_a_desk_caller_never_delivers_an_owner_invitation(
+    desk_app: Any, pools: LocalPools, group: str, body: dict
+) -> None:
+    """The desk caller holds the token CIS relays, so it can call the CRM without CIS's owner-tier check: the CRM asks
+    CIS for the invitation's role itself and refuses the owner seat."""
+    client, state, cis = desk_app
+    cis.members[TENANT] = [_member(TENANT, REQ, "owner")]
+    state["conn"] = conn = base_conn()
+    r = _invite(client, pools, group, **body)
+    assert (r.status_code, r.json()["detail"]) == (403, studio.OWNER_NOT_ALLOWED)
+    assert cis.member_calls == [str(TENANT)]
+    assert _no_invitation_written(conn)
+
+
+def test_a_desk_caller_delivers_only_an_invitation_cis_holds_open_on_this_tenant(
+    desk_app: Any, pools: LocalPools
+) -> None:
+    client, state, cis = desk_app
+    # an invitation of a tenant outside the scope, sent under an in-scope tenant: not on this tenant's member list
+    cis.members = {TENANT: [], OTHER: [_member(OTHER, REQ, "editor")]}
+    state["conn"] = conn = base_conn()
+    r = _invite(client, pools, "cis-customer_success", email="desk.member@agency.example")
+    assert (r.status_code, r.json()["detail"]) == (403, studio.NOT_INVITED)
+    assert _no_invitation_written(conn)
+    # a membership already active (or removed) has no invitation to send
+    cis.members = {TENANT: [_member(TENANT, REQ, "viewer", status="active")]}
+    state["conn"] = conn = base_conn()
+    r = _invite(client, pools, "cis-customer_success", email="desk.member@agency.example")
+    assert (r.status_code, r.json()["detail"]) == (403, studio.NOT_INVITED)
+    assert _no_invitation_written(conn)
+    # CIS has no such tenant at all
+    cis.members = {}
+    state["conn"] = base_conn()
+    r = _invite(client, pools, "cis-customer_success", email="desk.member@agency.example")
+    assert (r.status_code, r.json()["detail"]) == (403, studio.NOT_INVITED)
+
+
+def test_the_desk_invitation_check_fails_closed(desk_app: Any, pools: LocalPools) -> None:
+    client, state, cis = desk_app
+    cis.members_error = HttpError("timeout")
+    state["conn"] = conn = base_conn()
+    r = _invite(client, pools, "cis-customer_success", email="desk.member@agency.example")
+    assert (r.status_code, r.json()["detail"]) == (503, staff_scope.UNAVAILABLE)
+    assert _no_invitation_written(conn)
+
+
+def test_an_administrator_still_sends_an_owner_invitation_without_the_desk_check(
+    desk_app: Any, pools: LocalPools
+) -> None:
+    client, state, cis = desk_app
+    cis.members[TENANT] = [_member(TENANT, REQ, "owner")]
+    state["conn"] = base_conn()
+    r = client.post(
+        f"{T}/studio-invitations",
+        json={"cis_invitation_id": str(REQ), "email": "owner@agency.example"},
+        headers={"Authorization": f"Bearer {pools.cis_admin()}"},
+    )
+    assert r.status_code == 202, r.text
+    assert cis.member_calls == [] and cis.calls == []
 
 
 @pytest.mark.parametrize(

@@ -274,6 +274,50 @@ async def check_e2e_invitation(
         raise _refuse_e2e(cis_tenant_id, "role")
 
 
+def _desk_refused(cis_tenant_id: uuid.UUID, desk_role: str, reason: str) -> None:
+    log.warning(
+        "crm_studio_invitation_desk_refused cis_tenant_id=%s role=%s reason=%s", cis_tenant_id, desk_role, reason
+    )
+
+
+# AA-1035 (crm.ops.v1 1.12): what a desk caller (cis-customer_success / cis-support) may deliver.
+DESK_INVITE_ROLES = frozenset({"viewer", "editor"})
+OWNER_NOT_ALLOWED = "owner_invitation_not_allowed"
+NOT_INVITED = "invitation_not_invited"
+
+
+async def check_desk_invitation(
+    *,
+    cis_tenant_id: uuid.UUID,
+    cis_invitation_id: uuid.UUID,
+    desk_role: str,
+    cis: ActivationConfig | None,
+) -> None:
+    """The terms on which a desk caller (``app.ops.staff_scope.desk_role`` not None) may issue or re-issue a studio
+    invitation, checked here because the desk caller holds the WORKFORCE token CIS relays and can call the CRM
+    without CIS (CIS refuses the same before it relays: ``admin_tenant360._require_owner_tier``).
+
+    CIS (``tenant.membership.v1`` getTenantMembers of THIS tenant, M2M) must report an ``invited`` membership with this
+    invitation id (so an invitation of another tenant is never delivered under this one) and the role ``viewer`` or
+    ``editor``: the owner seat is sent only by cis-admin / crm-platform-admin (tenant.write), never redirected to an
+    address a desk caller names or re-sent by one. The role and the status come from CIS, never from the body.
+
+    403 ``invitation_not_invited`` (CIS has no invited membership with this id on this tenant), 403
+    ``owner_invitation_not_allowed`` (any other role); 503 ``cis_unavailable`` when CIS cannot answer (fail closed)."""
+    if cis is None:
+        raise Unavailable("cis_unavailable", "CIS is not configured; the invitation cannot be checked")
+    found = await invitation_lookup.invitation(cis, cis_tenant_id, cis_invitation_id)
+    if found.kind == "error":
+        log.warning("crm_studio_invitation_desk_lookup_failed cis_tenant_id=%s code=%s", cis_tenant_id, found.code)
+        raise Unavailable("cis_unavailable", "CIS did not answer; try again in a minute")
+    if found.kind == "missing" or found.status != "invited":
+        _desk_refused(cis_tenant_id, desk_role, "status")
+        raise Forbidden(NOT_INVITED, "CIS holds no open invitation with this id for this tenant")
+    if found.role not in DESK_INVITE_ROLES:
+        _desk_refused(cis_tenant_id, desk_role, "role")
+        raise Forbidden(OWNER_NOT_ALLOWED, "an owner invitation is sent by an administrator only")
+
+
 # ── 1. issue / re-issue (AA staff through the CIS relay) ─────────────────────────────────────────────────────────
 
 

@@ -703,10 +703,21 @@ async def studio_invitation(request: Request, tenant_id: uuid.UUID, body: Studio
     tenant synthetic), and always with an address it names (never the kept one).
 
     AA-1035 (1.12): a desk caller only for a tenant of its scope (403 ``tenant_outside_scope``); support never names
-    an address (403 ``readdress_not_allowed``: it sends again to the kept address only)."""
+    an address (403 ``readdress_not_allowed``: it sends again to the kept address only); and only an invitation CIS
+    reports as an invited viewer / editor membership of this tenant (:func:`studio.check_desk_invitation`: 403
+    ``owner_invitation_not_allowed`` / ``invitation_not_invited``), since the desk caller can reach this route without
+    CIS's owner-tier check."""
     await staff_scope.require_tenant(request, caller, tenant_id)
     if body.email is not None and not staff_scope.may_readdress(caller):
         raise HTTPException(status_code=403, detail=staff_scope.READDRESS)
+    desk_role = staff_scope.desk_role(caller)
+    if desk_role is not None:
+        await studio.check_desk_invitation(
+            cis_tenant_id=tenant_id,
+            cis_invitation_id=body.cis_invitation_id,
+            desk_role=desk_role,
+            cis=getattr(request.app.state, "studio_activation", None),
+        )
     pool = await request_pool(request)
     settings = request.app.state.settings
     if caller.e2e_read_only and body.email is None:
