@@ -106,6 +106,8 @@ class FakeBooking:
     # ``tariff_refusal`` names a contract error to answer instead (``unknown_partner``: no partner row or suspended).
     tariff_refusal: str | None = None
     tier_code: str = "silver"
+    # S270: ``GET /fx-rates`` answers an approved rate for each of ``fx_currencies`` (no AUD, like Dev on 05/11/2026).
+    fx_currencies: tuple[str, ...] = ("EUR", "GBP", "SGD", "VND", "THB")
     calls: Counter[str] = field(default_factory=Counter)
     holds: dict[str, dict[str, Any]] = field(default_factory=dict)
     hold_keys: dict[str, str] = field(default_factory=dict)
@@ -213,6 +215,10 @@ class FakeBooking:
                                     {"content-type": "text/csv; charset=utf-8",
                                      "content-disposition": f'attachment; filename="{name}"'})  # fmt: skip
             return _resp(200, tariff_body(currency, tier=self.tier_code, source_id=query.get("source_id")))
+        if method == "GET" and path == "/fx-rates":
+            rates = [{"currency": c, "rate_per_usd": "1.5", "as_of": "2031-01-01", "source": "invented"}
+                     for c in self.fx_currencies]  # fmt: skip
+            return _resp(200, {"date": query["date"], "base_currency": "USD", "rates": rates})
         if method == "GET" and path == "/price-parity":
             amount = {"amount": self.from_price, "currency": query["currency"]} if self.from_price else None
             return _resp(200, {"tour": {"source_system": "cis", "source_id": query["source_id"]},

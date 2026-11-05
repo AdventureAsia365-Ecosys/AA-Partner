@@ -1,5 +1,5 @@
 """Reading ``booking.b2b.v1`` answers (root contract, minor 1.1; 1.2 for :func:`held_set`; 1.4 for :func:`tariff`) into
-small typed values (AA-947, AA-952, AA-1030).
+small typed values (AA-947, AA-952, AA-1030; :func:`fx_rates`, 1.0 ``GET /fx-rates``, for the S270 tariff currencies).
 
 A **tolerant reader**: the fields the CRM uses are checked (type, pattern, enum); fields it does not use are ignored,
 so an additive minor (contracts README rule 2) never breaks the CRM. A missing or malformed field the CRM needs raises
@@ -612,3 +612,33 @@ def tariff(data: Any, currency: str | None = None) -> Tariff:
         truncated=truncated,
         items=tuple(_tariff_item(x, tariff_currency) for x in items),
     )
+
+
+# ── S270 (AA-1029 / AA-1030 follow-up): GET /fx-rates (contract 1.0) ───────────────────────────────────────────────
+@dataclass(frozen=True)
+class FxRates:
+    """The FX rates Booking has approved and in force on ``on`` (``FxRates``): the currencies that have one (USD, the
+    base, is never listed)."""
+
+    on: dt.date
+    currencies: frozenset[str]
+
+
+def fx_rates(data: Any, on: dt.date) -> FxRates:
+    """A ``FxRates`` answer for the day asked (``on``). Only what the CRM uses is checked: the day, the base currency
+    and each rate's currency and positive ``rate_per_usd``; ``as_of`` and ``source`` are not read."""
+    body = _obj(data, "fx rates")
+    if _day(body.get("date"), "date") != on:
+        raise ContractError("the rates are not for the asked day")
+    if body.get("base_currency") != "USD":
+        raise ContractError("base_currency is not USD")
+    rates = body.get("rates")
+    if not isinstance(rates, list):
+        raise ContractError("rates is not a list")
+    currencies: set[str] = set()
+    for value in rates:
+        rate = _obj(value, "rate")
+        if _decimal(rate.get("rate_per_usd"), _RATE, "rate_per_usd") <= 0:
+            raise ContractError("rate_per_usd is not positive")
+        currencies.add(_str(rate, "currency", _CURRENCY))
+    return FxRates(on=on, currencies=frozenset(currencies - {"USD"}))

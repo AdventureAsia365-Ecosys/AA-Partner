@@ -23,6 +23,12 @@ tour, season and pax band, with its tier or contract rate card discount, read li
   encoded, CSV as Booking's file), bounded by :data:`CACHE_MAX_BYTES` in all, so page reloads, a currency switched back
   and forth or a repeated Download CSV do not ask Booking for the whole tariff again. The browser still gets
   ``Cache-Control: no-store``. Process memory, like :mod:`app.booking.products`: each task counts on its own.
+- **Currencies offered** (:class:`TariffCurrencies`, S270 AA-1029 / AA-1030 follow-up): the page's currency select is
+  USD plus each :data:`CURRENCIES` entry Booking has an approved FX rate for today (``GET /fx-rates``), so an agency is
+  not offered AUD before AA prices in AUD (Booking answers that ask 422 ``invalid``, shown as "pick another
+  currency"). FX rates are global, so one answer per process serves every agency for :data:`CURRENCIES_TTL_S`. When
+  Booking cannot answer, the static list is offered with ``checked: false`` (kept :data:`CURRENCIES_RETRY_S` before
+  asking again; an agency Booking refuses is not cached for the others): this read never fails with a 5xx.
 """
 
 from __future__ import annotations
@@ -30,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import json
+import logging
 import time
 import uuid
 from collections import OrderedDict
@@ -53,6 +60,12 @@ BUSY = "aa_tariff_busy"
 JSON_MEDIA = "application/json"
 CSV_MEDIA = "text/csv; charset=utf-8"
 CURRENCIES = ("USD", "EUR", "GBP", "AUD", "SGD", "VND")  # booking.b2b.v1 1.4: the quote currencies (the web's select)
+# S270: how long the currencies Booking has an FX rate for are kept (FX rows are global, approved by AA staff), and
+# how long the static list is kept after Booking could not answer before it is asked again.
+CURRENCIES_TTL_S = 600.0
+CURRENCIES_RETRY_S = 60.0
+
+log = logging.getLogger(__name__)
 
 
 def booking_error(exc: Exception) -> ServiceError:
@@ -264,3 +277,59 @@ class TariffReader:
         entry = self._cache.pop(key, None)
         if entry is not None:
             self._bytes -= len(entry[1].body)
+
+
+def static_currencies() -> dict[str, Any]:
+    """The answer when Booking was not asked or could not answer: every quote currency, unchecked."""
+    return {"currencies": list(CURRENCIES), "rate_date": None, "checked": False}
+
+
+class TariffCurrencies:
+    """The quote currencies AA prices the agency tariff in today (see the module docstring, "Currencies offered")."""
+
+    def __init__(
+        self,
+        client: BookingClient,
+        *,
+        ttl_s: float = CURRENCIES_TTL_S,
+        retry_s: float = CURRENCIES_RETRY_S,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._client = client
+        self._ttl_s = ttl_s
+        self._retry_s = retry_s
+        self._clock = clock
+        self._lock = asyncio.Lock()
+        self._entry: tuple[float, dt.date, dict[str, Any]] | None = None
+
+    def _fresh(self, today: dt.date) -> dict[str, Any] | None:
+        entry = self._entry
+        if entry is None or entry[1] != today or self._clock() >= entry[0]:
+            return None
+        return {**entry[2], "currencies": list(entry[2]["currencies"])}
+
+    async def get(self, tenant_id: uuid.UUID, today: dt.date) -> dict[str, Any]:
+        """``{currencies, rate_date, checked}``: from the process cache, else one Booking read (asks waiting on the
+        same miss share it). Never raises for a Booking failure (the static list, ``checked: false``)."""
+        hit = self._fresh(today)
+        if hit is not None:
+            return hit
+        async with self._lock:
+            hit = self._fresh(today)
+            if hit is not None:
+                return hit
+            try:
+                rates = contract.fx_rates(await self._client.fx_rates(tenant_id, today), today)
+            except BookingRefusal as exc:
+                # This agency is not (or no longer) a B2B partner: its own answer, not cached for the others.
+                log.warning("crm_aa_tariff_currencies_refused code=%s", exc.code)
+                return static_currencies()
+            except Exception as exc:  # noqa: BLE001 — Booking down or a broken answer: offer the static list
+                log.warning("crm_aa_tariff_currencies_unavailable error=%s", type(exc).__name__)
+                answer = static_currencies()
+                self._entry = (self._clock() + self._retry_s, today, answer)
+                return {**answer, "currencies": list(answer["currencies"])}
+            offered = [c for c in CURRENCIES if c == "USD" or c in rates.currencies]
+            answer = {"currencies": offered, "rate_date": today.isoformat(), "checked": True}
+            self._entry = (self._clock() + self._ttl_s, today, answer)
+            return {**answer, "currencies": list(offered)}

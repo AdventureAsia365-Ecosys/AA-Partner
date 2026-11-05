@@ -6,7 +6,8 @@
 //   4. no session or an expired access token -> 401 session_expired (the page reloads through /auth/refresh);
 //   5. forwarded to /crm/v1/<path> with the session's token and agency; only Content-Type comes back
 //      (lib/proxyResponse.ts), never a Set-Cookie of the API; a `download` route also gets the API's file name
-//      (Content-Disposition, AA-1030).
+//      (Content-Disposition, AA-1030), and a 429 or 503 its Retry-After when it is 1 to 4 digits (S270; anything
+//      else is dropped).
 // AA-945: a raw route (the mail history upload) is read as bytes, capped while it streams in (413 before the API is
 // called), and refused if fewer bytes arrived than Content-Length said or the upload broke off (400, never a cut-short
 // file to the API). At most MAX_RAW_IN_FLIGHT raw uploads run at once per web task (503 `upload_busy` before the body
@@ -21,6 +22,7 @@ import { requestConfig } from "@/lib/config";
 import { classifyHost } from "@/lib/hosts";
 import { streamUpstream } from "@/lib/proxyResponse";
 import { json } from "@/lib/respond";
+import { passedRetryAfter } from "@/lib/retryAfter";
 import { accessValid, readSession } from "@/lib/session";
 import { refuseForeignWrite } from "@/lib/writeGuard";
 
@@ -104,6 +106,8 @@ async function forward(
     // AA-1030: a download route passes the API's file name on (a plain CSV name only, rebuilt, never copied as is).
     const name = route.download ? attachmentName(upstream.headers.get("content-disposition")) : null;
     if (name) res.headers.set("Content-Disposition", `attachment; filename="${name}"`);
+    const after = passedRetryAfter(upstream);
+    if (after) res.headers.set("Retry-After", after);
     return res;
   } catch (err) {
     const timedOut = err instanceof DOMException && err.name === "TimeoutError";

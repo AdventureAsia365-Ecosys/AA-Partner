@@ -26,6 +26,7 @@ The transport is :mod:`app.cis.http` (no redirects, bounded body, a timeout per 
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import re
 import urllib.parse
@@ -225,6 +226,11 @@ class BookingClient:
     async def price_parity(self, tenant_id: uuid.UUID, source_id: str, currency: str) -> dict[str, Any]:
         query = {"source_system": "cis", "source_id": source_id, "currency": currency}
         return await self._call("GET", "/price-parity", READ, tenant_id, query=query)
+
+    async def fx_rates(self, tenant_id: uuid.UUID, on: dt.date) -> dict[str, Any]:
+        """S270 (contract 1.0 ``GET /fx-rates``): the FX rates Booking has approved in force on ``on`` (read with
+        :func:`app.booking.contract.fx_rates`); the AA prices page offers only the currencies that have one."""
+        return await self._call("GET", "/fx-rates", READ, tenant_id, query={"date": on.isoformat()})
 
     async def tariff(self, tenant_id: uuid.UUID, *, currency: str, source_id: str | None = None) -> dict[str, Any]:
         """AA-1030 (contract 1.4): the agency's own tariff as JSON (read with :func:`app.booking.contract.tariff`)."""

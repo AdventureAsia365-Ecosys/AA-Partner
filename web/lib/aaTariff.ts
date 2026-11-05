@@ -9,6 +9,7 @@ import type { Lang } from "./i18n";
 import { fmt, t } from "./i18n";
 
 export const AA_TARIFF_PATH = "/aa-tariff";
+export const TARIFF_CURRENCIES_PATH = "aa/tariff/currencies";
 /** The whole tariff is one answer: the API waits up to 25 s for AA (api/app/booking/client.py BULK_TIMEOUT_S). */
 export const TARIFF_TIMEOUT_MS = 30_000;
 /** The quote currencies AA prices in (booking.b2b.v1 1.4; api/app/booking/tariff.py CURRENCIES). */
@@ -61,6 +62,34 @@ export function tariffCurrency(raw: string | string[] | undefined): TariffCurren
   return (TARIFF_CURRENCIES as readonly string[]).includes(v) ? (v as TariffCurrency) : "USD";
 }
 
+/** S270: GET /crm/v1/aa/tariff/currencies — USD plus the quote currencies AA has an approved FX rate for today
+ * (`checked: false`: AA could not be asked, every quote currency is offered). */
+export interface TariffCurrencies {
+  currencies: string[];
+  rate_date: string | null;
+  checked: boolean;
+}
+
+/** The currencies the select offers, in the order of TARIFF_CURRENCIES, USD always first: the API's answer, else
+ * (the read failed or answered nothing usable) every quote currency. A currency the web does not know is dropped. */
+export function offeredCurrencies(answer: { ok: true; data: TariffCurrencies } | { ok: false } | null): TariffCurrency[] {
+  const listed = answer?.ok && Array.isArray(answer.data?.currencies) ? new Set(answer.data.currencies) : null;
+  if (!listed) return [...TARIFF_CURRENCIES];
+  return TARIFF_CURRENCIES.filter((c) => c === "USD" || listed.has(c));
+}
+
+/** The currency the page shows: the one asked for when it is offered, else USD. `fellBack` names the asked currency
+ * when it was not offered (the page says so in a role=status notice); a missing `?currency=` is plain USD. */
+export function pickCurrency(
+  raw: string | string[] | undefined,
+  offered: readonly string[],
+): { currency: TariffCurrency; fellBack: string | null } {
+  const v = typeof raw === "string" ? raw.toUpperCase() : "";
+  if (v && offered.includes(v)) return { currency: tariffCurrency(v), fellBack: null };
+  // Only a plain three-letter code is echoed in the notice; anything else is just USD.
+  return { currency: "USD", fellBack: /^[A-Z]{3}$/.test(v) && v !== "USD" ? v : null };
+}
+
 /** "aa/tariff?currency=EUR&format=csv" for the BFF (lib/bff.ts allow-list). */
 export function tariffPath(currency: string, format: "json" | "csv" = "json"): string {
   const q = new URLSearchParams({ currency });
@@ -93,8 +122,11 @@ export function discountText(pct: string): string {
 /** The error message key of a failed tariff read (the API's detail). */
 export function tariffErrorKey(
   detail: string,
-): "tariff.err.notLinked" | "tariff.err.unavailable" | "tariff.err.busy" | "tariff.err.generic" {
+): "tariff.err.notLinked" | "tariff.err.unavailable" | "tariff.err.busy" | "tariff.err.currency" | "tariff.err.generic" {
   if (detail === "aa_partner_not_active") return "tariff.err.notLinked";
+  // S270: AA has no approved FX rate for the asked currency today (Booking 422 invalid): the agency's choice, not
+  // an outage.
+  if (detail === "aa_tariff_invalid") return "tariff.err.currency";
   // The API reads at most one tariff per agency at a time (429 aa_tariff_busy, Retry-After a few seconds).
   if (detail === "aa_tariff_busy") return "tariff.err.busy";
   if (detail === "booking_unavailable" || detail === "booking_not_configured" || detail === "api_timeout" || detail === "api_unreachable") {

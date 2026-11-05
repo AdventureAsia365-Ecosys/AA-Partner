@@ -1,6 +1,7 @@
 "use client";
 // web/components/aaTariff/AaTariffView.tsx — AA-1030: the agency's AA prices (lib/aaTariff.ts). The toolbar (currency,
-// Download CSV through the BFF with AA's own file name, Print) and the table on the kit DataTable (a card per row on a
+// Download CSV through the BFF with AA's own file name, Print; S270: the currencies AA prices in today, and a busy
+// download names the seconds of the BFF's Retry-After) and the table on the kit DataTable (a card per row on a
 // phone, every row on one page so Print prints them all; its search box narrows the rows, and Print then prints those,
 // the box itself hidden by the print rules). The prices are AA's B2B price for this agency; the page and
 // the API serve them to the owner and the agent only.
@@ -8,7 +9,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button, DataTable, K, Select } from "@/app/_kit";
-import { AA_TARIFF_PATH, discountText, paxBand, TARIFF_CURRENCIES, tariffFilename, tariffPath, type TariffItem } from "@/lib/aaTariff";
+import { AA_TARIFF_PATH, discountText, paxBand, tariffFilename, tariffPath, type TariffItem } from "@/lib/aaTariff";
 import { bffDownload } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, plural, t, type Lang, type MessageKey } from "@/lib/i18n";
@@ -20,7 +21,13 @@ export const TARIFF_TABLE_MIN_WIDTH = 680;
 
 const small: React.CSSProperties = { display: "block", fontSize: 12, color: K.muted, overflowWrap: "anywhere" };
 
-export function AaTariffToolbar({ currency, lang }: { currency: string; lang: Lang }) {
+/** The download's error text: a busy agency read (429 aa_tariff_busy) with the BFF's Retry-After seconds when given. */
+export function downloadErrorText(lang: Lang, detail: string, retryAfter?: number): string {
+  if (detail !== "aa_tariff_busy") return t(lang, "tariff.downloadError");
+  return retryAfter ? fmt(t(lang, "tariff.err.busyIn"), { seconds: retryAfter }) : t(lang, "tariff.err.busy");
+}
+
+export function AaTariffToolbar({ currency, currencies, lang }: { currency: string; currencies: readonly string[]; lang: Lang }) {
   const router = useRouter();
   const tr = (key: string) => t(lang, key as MessageKey);
   const [busy, setBusy] = useState(false);
@@ -32,8 +39,8 @@ export function AaTariffToolbar({ currency, lang }: { currency: string; lang: La
     try {
       const res = await bffDownload(tariffPath(currency, "csv"), { filename: tariffFilename(currency) });
       if (!res.ok && !res.redirecting) {
-        // A read already running for the agency (429 aa_tariff_busy) says "try again in a few seconds".
-        setError(tr(res.detail === "aa_tariff_busy" ? "tariff.err.busy" : "tariff.downloadError"));
+        // A read already running for the agency (429 aa_tariff_busy) says when to try again (its Retry-After).
+        setError(downloadErrorText(lang, res.detail, res.retryAfter));
       }
     } finally {
       setBusy(false);
@@ -48,7 +55,7 @@ export function AaTariffToolbar({ currency, lang }: { currency: string; lang: La
         value={currency}
         data-testid="tariff-currency"
         onChange={(e) => router.push(`${AA_TARIFF_PATH}?currency=${encodeURIComponent(e.target.value)}`)}
-        options={TARIFF_CURRENCIES.map((c) => ({ value: c, label: c }))}
+        options={currencies.map((c) => ({ value: c, label: c }))}
       />
       <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={download} testId="tariff-download">
         {busy ? tr("tariff.downloading") : tr("tariff.download")}
