@@ -9,12 +9,17 @@ encryption: the pilot agency's protections.
   leaves it out; a second night while one is still being built is ``busy``.
 - The restore drill opens that export, restores every table into temporary tables and finds restored = manifest for
   each, with the live counts and primary keys reported; a stored object that no longer matches its digest fails it.
+- S269: an agency with a sent text template (``message_delivery.variables_enc``, the ``mail`` DEK) and an AA ops
+  release (``ops_release.payload_enc``, its own DEK) backs up and restores; a value that no longer opens fails the
+  backup naming its table and column, and raises the ``pilot_backup_failed`` ops alert.
 """
 
 from __future__ import annotations
 
+import io
 import json
 import uuid
+import zipfile
 from typing import Any
 
 import asyncpg
@@ -24,12 +29,18 @@ from app.cis import entitlement_feed as feed
 from app.documents.store import MemoryDocumentStore
 from app.errors import Forbidden
 from app.jobs.queue import Job
+from app.jobs.worker import PermanentError
 from app.lifecycle import job as lifecycle_job
 from app.lifecycle import pilot
+from app.messaging import health
+from app.observability import ops_alerts
 from app.ops import console
 from app.portability import exports
 from app.portability import restore_drill as rd
-from app.tenancy import tenant_tx
+from app.tenancy import lifecycle_tx, tenant_tx
+from app.vault import Vault
+from tests.integration import test_messaging_db as texts
+from tests.integration import test_ops_release_api as releases
 from tests.integration.test_crm005_intake import _keys, _owner_fetch
 from tests.integration.test_crm010_lifecycle import _done, _inquiry, _jobs, _raises
 
@@ -185,3 +196,85 @@ async def test_the_owner_export_takes_over_an_open_nightly_backup(
         await _done(app_pool, backup_job)
     finally:
         await _mark(app_pool, a["tenant"], False)
+
+
+async def _zip_table(app_pool: asyncpg.Pool, keys: Any, store: MemoryDocumentStore, tenant: uuid.UUID,
+                     export_id: uuid.UUID, table: str) -> list[dict[str, Any]]:  # fmt: skip
+    async with lifecycle_tx(app_pool, tenant, actor=rd.ACTOR) as ctx:
+        [row] = await ctx.conn.fetch("SELECT object_key FROM crm.export_job WHERE export_job_id = $1", export_id)
+        content = await Vault(keys, ctx).decrypt_bytes(
+            "export_job", "object", export_id, await store.get(row["object_key"]), purpose="export"
+        )
+    return json.loads(zipfile.ZipFile(io.BytesIO(content)).read(f"json/{table}.json"))
+
+
+async def test_a_backup_with_text_template_values_and_an_ops_release_restores(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection
+) -> None:
+    """S269 (live): the pilot agency's backup failed ``decrypt_denied`` for good once it had sent a text template, as
+    the export opened ``message_delivery.variables_enc`` under the vault DEK instead of the mail DEK; the AA ops
+    release had the same hole. Both are written here by their real writers, then backed up and restored."""
+    d = await texts._setup(app_pool)
+    keys, tenant = d["keys"], d["tenant"]
+    store = MemoryDocumentStore()
+    # A sent text template: the approved templates of the sandbox account, then one with its values (sealed, mail DEK).
+    sync = Job("j", "crm_messaging_templates", {"tenant_id": str(tenant)}, 1, 3)
+    assert (await health.build_templates_handler(d["runtime"])(app_pool, sync))["approved_count"] >= 1
+    [template] = await texts._sql(app_pool, tenant, "SELECT content_sid FROM crm.channel_template "
+                                  "WHERE approval = 'approved' AND language = 'en' LIMIT 1")  # fmt: skip
+    values = {"1": "Lumi", "2": "Riverbend"}
+    sent = await texts._send(app_pool, d, body=None, content_sid=template["content_sid"], variables=values)
+    # An AA ops release of the trip (sealed, ops_release DEK): an AA line Booking confirms, then the release job.
+    owner = d["owner"]
+    async with tenant_tx(app_pool, owner, tenant) as ctx:
+        today = await releases.service.today(ctx)
+    start, end = today + 40 * releases.DAY, today + 45 * releases.DAY
+    line = await releases._aa_line(app_pool, tenant, d["trip"], start, end)
+    assert await releases._feed(app_pool, tenant, "line.confirmed", line) == ("applied", "line_confirmed")
+    assert (await releases._sync(app_pool, keys, tenant, d["trip"]))["created"] == 1
+
+    await _mark(app_pool, tenant, True)
+    try:
+        export_id = await _backup(app_pool, keys, store, tenant)
+        report = await rd.drill(app_pool, keys, store, tenant, export_id)
+        assert report["ok"] is True and report["mismatched_tables"] == [], report
+        by_table = {t["table"]: t for t in report["tables"]}
+        for table in ("message_delivery", "ops_release"):
+            assert by_table[table]["restored_rows"] == by_table[table]["manifest_rows"] == 1, table
+            assert by_table[table]["live_pk_matched"] == 1, table
+        [delivery] = await _zip_table(app_pool, keys, store, tenant, export_id, "message_delivery")
+        assert delivery["message_id"] == sent["message_id"] and json.loads(delivery["variables"]) == values
+        [release] = await _zip_table(app_pool, keys, store, tenant, export_id, "ops_release")
+        assert isinstance(release["payload"], str) and release["payload"] and "payload_enc" not in release
+
+        # A value that no longer opens (sealed under another DEK): the backup fails, fail-closed, naming the table
+        # and column (codes only), and AA ops are alerted once for that export.
+        async with tenant_tx(app_pool, owner, tenant) as ctx:
+            blob = await Vault(keys, ctx).encrypt(
+                "message_delivery", "variables_enc", uuid.UUID(sent["message_id"]), json.dumps(values)
+            )
+            await ctx.conn.execute(
+                "UPDATE crm.message_delivery SET variables_enc = $2 WHERE message_id = $1",
+                uuid.UUID(sent["message_id"]),
+                blob,
+            )
+        ops_alerts.PENDING.drain()
+        assert (await pilot.build_handler()(app_pool, BACKUP_JOB))["queued_count"] == 1
+        [job] = await _jobs(app_pool, "crm_data_export", tenant)
+        with pytest.raises(PermanentError, match="decrypt_denied"):
+            await exports.build_handler(keys=keys, store=store)(app_pool, job)
+        await _done(app_pool, job)
+        failed_id = uuid.UUID(job.payload["export_id"])
+        [row] = await _owner_fetch(
+            admin, tenant, "SELECT status, failure_class FROM crm.export_job WHERE export_job_id = $1", failed_id
+        )
+        assert dict(row) == {"status": "failed", "failure_class": "decrypt_denied:message_delivery:variables_enc"}
+        alerts = [f for f in ops_alerts.PENDING.drain() if f.check == "pilot_backup_failed"]
+        assert [(f.scope, f.details["failure"]) for f in alerts] == [
+            (str(failed_id), "decrypt_denied:message_delivery:variables_enc")
+        ]
+        assert "Lumi" not in repr(alerts)
+        # The restore drill still finds the last good night.
+        assert (await rd.drill(app_pool, keys, store, tenant))["export_id"] == str(export_id)
+    finally:
+        await _mark(app_pool, tenant, False)

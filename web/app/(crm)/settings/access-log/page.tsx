@@ -3,6 +3,7 @@
 // owner yes, agent trip Activity only, assistant no"). Owner only: other roles see why, and the page does not call
 // the API for them (the API refuses too and logs the refusal). The first page is a server render; filters live in
 // the URL; older entries and the download go through the BFF (lib/bff.ts).
+import Link from "next/link";
 import { EmptyState, ErrorState } from "@/app/_kit";
 import { PageTitle } from "@/components/PageTitle";
 import { AccessLogView } from "@/components/settings/AccessLogView";
@@ -19,9 +20,9 @@ export default async function AccessLogPage({ searchParams }: { searchParams: Pr
   if (ctx.apiDown) return null;
   const filter = cleanFilter(await searchParams);
   const back = (
-    <a href="/settings" style={{ fontSize: 13 }}>
+    <Link href="/settings" style={{ fontSize: 13 }}>
       ← {t(ctx.lang, "settings.title")}
-    </a>
+    </Link>
   );
   if (ctx.role !== "owner") {
     return (

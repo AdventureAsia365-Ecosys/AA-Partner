@@ -42,7 +42,9 @@ export function LocaleSwitch({
   example?: string;
 }) {
   return (
-    <form action="/prefs/locale" method="post" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+    // AA-1008 (the visual run at 390 px): the label and the select wrap and the select shrinks to the card, so the
+    // signed-out card never pushes the page sideways on a phone.
+    <form action="/prefs/locale" method="post" style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 6, maxWidth: "100%", minWidth: 0 }}>
       <input type="hidden" name="next" value={next} />
       <label style={compact ? { position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" } : { fontSize: 13, color: K.body }} htmlFor={`locale-${compact ? "c" : "f"}`}>
         {label}
@@ -60,7 +62,8 @@ export function LocaleSwitch({
           background: K.card,
           color: K.ink3,
           fontSize: 12.5,
-          maxWidth: compact ? 130 : 280,
+          maxWidth: compact ? 130 : "min(280px, 100%)",
+          minWidth: 0,
         }}
       >
         {DATE_LOCALES.map((l) => (

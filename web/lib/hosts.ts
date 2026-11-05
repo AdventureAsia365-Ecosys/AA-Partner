@@ -51,6 +51,9 @@ export const PUBLIC_PARTNER_PATHS = [
   "/legal/partner-terms",
   "/legal/privacy",
   "/assets/",
+  // AA-1008 (root ADR 0016 decision 9): the kit gallery of the per-PR visual run (no session there). It renders only on a
+  // server started with KIT_GALLERY=1; a deployed build answers 404, so this opens nothing on Dev or production.
+  "/kit-gallery",
 ] as const;
 
 export function hostOnly(hostHeader: string | null): string {

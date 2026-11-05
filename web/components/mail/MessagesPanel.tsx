@@ -4,8 +4,8 @@
 // composer with saved replies, a draft saved 3 s after typing stops (PUT messages/drafts/{id}, idempotent), Send with
 // a 10-second Undo, and a held message's "On hold: reconnect the mailbox" chip with "Edit and send again".
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, K, useHydrated } from "@/app/_kit";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Button, K, useHydrated, LinkButton } from "@/app/_kit";
 import { useTripClosed } from "@/components/pipeline/TripClosed";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
@@ -77,12 +77,12 @@ function MessageItem({
       <div style={{ whiteSpace: "pre-wrap", fontSize: 13, overflowWrap: "anywhere" }}>{m.text}</div>
       {m.html && (
         <div>
-          <button type="button" onClick={() => setFormatted(!formatted)} style={{ fontSize: 12, background: "none", border: "none", color: K.accent, cursor: "pointer", padding: 0 }}>
+          <LinkButton size="sm" weight="regular" onClick={() => setFormatted(!formatted)} style={{ justifySelf: "start" }}>
             {tr("messages.showFormatted")}
-          </button>
+          </LinkButton>
           {formatted && (
             // Empty sandbox: opaque origin, no script, no forms, no popups, no cookies (design S10).
-            <iframe {...htmlFrame(m.html)} style={{ width: "100%", minHeight: 240, border: `1px solid ${K.line2}`, borderRadius: 8, background: "#fff" }} />
+            <iframe {...htmlFrame(m.html)} style={{ width: "100%", minHeight: 240, border: `1px solid ${K.line2}`, borderRadius: 8, background: "white" /* the sender's HTML is written for a white page, in both themes */ }} />
           )}
         </div>
       )}
@@ -135,11 +135,16 @@ export function MessagesPanel({
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [undo, setUndo] = useState<{ messageId: string; until: number } | null>(null);
+  // The latest draft fields for the autosave timer and the undo timer: written after each commit (react-hooks/refs:
+  // never during render), read only by timers and event handlers.
   const latest = useRef({ subject, body, draftId, selected });
-  latest.current = { subject, body, draftId, selected };
+  useLayoutEffect(() => {
+    latest.current = { subject, body, draftId, selected };
+  });
 
-  async function load(conversationId: string) {
-    const res = await bffSend<Thread>("GET", `conversations/${conversationId}/messages`);
+  const fetchThread = (conversationId: string) => bffSend<Thread>("GET", `conversations/${conversationId}/messages`);
+
+  function applyThread(res: Awaited<ReturnType<typeof fetchThread>>) {
     if (!res.ok) {
       setNotice({ ok: false, text: tr(mailErrorKey(res.detail)) });
       return;
@@ -153,8 +158,20 @@ export function MessagesPanel({
     }
   }
 
+  async function load(conversationId: string) {
+    applyThread(await fetchThread(conversationId));
+  }
+
+  // The selected conversation's thread; the answer of a conversation no longer selected is dropped.
   useEffect(() => {
-    if (selected) void load(selected);
+    if (!selected) return;
+    let live = true;
+    void fetchThread(selected).then((res) => {
+      if (live) applyThread(res);
+    });
+    return () => {
+      live = false;
+    };
   }, [selected]);
 
   const target = () => {
@@ -162,20 +179,24 @@ export function MessagesPanel({
     return now.selected ? { conversation_id: now.selected } : { trip_id: tripId };
   };
 
-  const autosave = useMemo(
-    () =>
-      createAutosave(async () => {
-        const now = latest.current;
-        if (!now.subject && !now.body) return;
-        setSaveState("saving");
-        const res = await bffSend("PUT", `messages/drafts/${now.draftId}`, { ...target(), subject: now.subject, body: now.body });
-        setSaveState(res.ok ? "saved" : "idle");
-        if (!res.ok) setNotice({ ok: false, text: tr(mailErrorKey(res.detail)) });
-      }),
-    [],
-  );
-
-  useEffect(() => () => autosave.cancel(), [autosave]);
+  // The draft autosave (debounced PUT), created after mount so its callback, which reads `latest`, is never part of a
+  // render (react-hooks/refs); the handlers reach it through the ref.
+  const autosave = useRef<ReturnType<typeof createAutosave> | null>(null);
+  useEffect(() => {
+    const saver = createAutosave(async () => {
+      const now = latest.current;
+      if (!now.subject && !now.body) return;
+      setSaveState("saving");
+      const res = await bffSend("PUT", `messages/drafts/${now.draftId}`, { ...target(), subject: now.subject, body: now.body });
+      setSaveState(res.ok ? "saved" : "idle");
+      if (!res.ok) setNotice({ ok: false, text: tr(mailErrorKey(res.detail)) });
+    });
+    autosave.current = saver;
+    return () => {
+      saver.cancel();
+      autosave.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (!undo) return;
@@ -192,7 +213,7 @@ export function MessagesPanel({
   }, [undo]);
 
   async function send() {
-    autosave.cancel();
+    autosave.current?.cancel();
     setNotice(null);
     const res = await bffSend<{ conversation_id: string }>("POST", "messages", {
       message_id: draftId,
@@ -217,7 +238,7 @@ export function MessagesPanel({
   }
 
   async function discard() {
-    autosave.cancel();
+    autosave.current?.cancel();
     await bffSend("DELETE", `messages/drafts/${draftId}`);
     setDraftId(newDraftId());
     setSubject("");
@@ -280,7 +301,7 @@ export function MessagesPanel({
                 const reply = savedReplies.find((r) => r.saved_reply_id === e.target.value);
                 if (reply) {
                   setBody((b) => (b ? `${b}\n\n${reply.body}` : reply.body));
-                  autosave.schedule();
+                  autosave.current?.schedule();
                 }
               }}
             >
@@ -300,7 +321,7 @@ export function MessagesPanel({
             maxLength={300}
             onChange={(e) => {
               setSubject(e.target.value);
-              autosave.schedule();
+              autosave.current?.schedule();
             }}
           />
           <textarea
@@ -310,7 +331,7 @@ export function MessagesPanel({
             value={body}
             onChange={(e) => {
               setBody(e.target.value);
-              autosave.schedule();
+              autosave.current?.schedule();
             }}
           />
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>

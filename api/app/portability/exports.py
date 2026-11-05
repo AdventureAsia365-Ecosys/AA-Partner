@@ -11,8 +11,11 @@ Owner steps (``/crm/v1/data/exports``, :mod:`app.routers.data`):
    :mod:`app.portability.builder`, sealed under the agency ``export`` DEK, stored at
    ``exports/tenants/<tenant>/portability/<export>.zip.enc`` (the 7-day ``exports/`` bucket rule) -> ``ready`` with the
    object's and the ZIP's SHA-256, the size, the row counts and ``expires_at`` (7 days). Audit ``export_create``. A
-   coded refusal (a value that does not open, no bucket) fails the row at once (``failed`` + the code); any other error
-   is retried, and the last attempt fails the row (``export_error``).
+   coded refusal (a value that does not open, no bucket) fails the row at once (``failed`` + the code; a value that
+   does not open is named ``decrypt_denied:<table>:<column>``, S269); any other error is retried, and the last attempt
+   fails the row (``export_error``). The export is fail-closed: it never skips a value it could not open. A failed
+   nightly pilot backup (``requested_by`` :data:`PILOT_BACKUP_ACTOR`) also raises the ops alert
+   ``pilot_backup_failed`` (:mod:`app.observability.ops_alerts`), so a backup that stops working is never silent.
 3. **Link** (owner): ``POST .../link`` makes a random token (shown once; only its SHA-256 is stored) valid
    :data:`LINK_MINUTES` minutes. Audit ``export_link``.
 4. **Download** (owner, with the token): the object's digest is checked, opened, the ZIP's digest checked, the link
@@ -46,6 +49,7 @@ from app.jobs.queue import Job
 from app.jobs.worker import Handler, PermanentError
 from app.lifecycle import erase
 from app.lifecycle.rules import EXPORT_FILE_DAYS
+from app.observability import ops_alerts
 from app.portability import builder
 from app.tenancy import AnyContext, TenantContext, lifecycle_tx
 from app.vault import Vault
@@ -99,6 +103,7 @@ UPDATE crm.export_job
 FAILED_SQL = """
 UPDATE crm.export_job SET status = 'failed', failure_class = $2
  WHERE export_job_id = $1 AND status IN ('queued', 'building')
+RETURNING requested_by
 """
 LINK_SQL = "UPDATE crm.export_job SET link_sha256 = $2, link_expires_at = $3 WHERE export_job_id = $1"
 DOWNLOADED_SQL = """
@@ -332,10 +337,19 @@ async def withdraw(
 
 
 # ── The job ───────────────────────────────────────────────────────────────────────────────────────
+def failure_class(exc: ServiceError) -> str:
+    """What a failed row keeps: the refusal's code, or where a value did not open (:class:`builder.ValueDenied`)."""
+    return exc.failure_class if isinstance(exc, builder.ValueDenied) else exc.code
+
+
 async def _fail(pool: asyncpg.Pool, tenant_id: uuid.UUID, export_id: uuid.UUID, code: str) -> None:
     async with lifecycle_tx(pool, tenant_id, actor=ACTOR) as ctx:
-        await ctx.conn.execute(FAILED_SQL, export_id, code)
-        ctx.audit("export_create", "denied", "export_job", str(export_id), reason=code)
+        requested_by = await ctx.conn.fetchval(FAILED_SQL, export_id, code)
+        ctx.audit("export_create", "denied", "export_job", str(export_id), reason=code.split(":", 1)[0])
+    log.warning("portability_export_failed tenant_id=%s export_id=%s failure=%s", tenant_id, export_id, code)
+    if requested_by == PILOT_BACKUP_ACTOR:
+        # AA's restore copy of the pilot agency (root ADR 0019 d16): a night without one must reach AA ops.
+        ops_alerts.emit("pilot_backup_failed", export_id, tenant_id=tenant_id, export_id=export_id, failure=code)
 
 
 async def _run(
@@ -405,7 +419,7 @@ def build_handler(*, keys: KeyProvider | None, store: DocumentStore | None) -> H
                 raise PermanentError(exc.code) from None  # the agency is offboarding / gone: its erase withdraws it
             if exc.status_code >= 500 and job.attempt < job.max_attempts:
                 raise  # an outage (bucket, KMS): the worker retries with backoff
-            await _fail(pool, tenant_id, export_id, exc.code)
+            await _fail(pool, tenant_id, export_id, failure_class(exc))
             raise PermanentError(exc.code) from None
         except Exception:
             if job.attempt >= job.max_attempts:

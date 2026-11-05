@@ -27,7 +27,7 @@ export default function MyContentPage() {
         actions={
           <Link href={ROUTES.publish} data-testid="my-content-publish" style={{
             display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 999,
-            background: K.accent, color: "var(--aa-on-accent)", fontSize: 12.5, fontWeight: 600,
+            background: K.accent, color: K.onAccent, fontSize: 12.5, fontWeight: 600,
             textDecoration: "none", fontFamily: sans, textTransform: "uppercase", letterSpacing: "0.06em",
           }}>
             <Send size={13} aria-hidden /> {t("publish")}

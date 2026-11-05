@@ -10,7 +10,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Badge, Button, K, useHydrated } from "@/app/_kit";
+import { Badge, Button, K, useHydrated, LinkButton, Pressable } from "@/app/_kit";
 import { DateInput } from "@/components/DateInput";
 import { Panel } from "@/components/PageTitle";
 import { BeforeYouGoPanel } from "@/components/proposals/BeforeYouGoPanel";
@@ -424,17 +424,17 @@ export function BuilderPage({
           <ol style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 4 }}>
             {view.days.map((d) => (
               <li key={d.proposal_day_id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <button
-                  type="button"
+                {/* A day row of the list (bordered like its neighbours): the kit Pressable with the row style. */}
+                <Pressable
                   onClick={() => setDayId(d.proposal_day_id)}
                   data-testid="builder-day"
                   data-day-no={d.day_no}
                   aria-current={d.proposal_day_id === day?.proposal_day_id ? "true" : undefined}
-                  style={{ flex: 1, textAlign: "left", font: "inherit", fontSize: 13, padding: "6px 8px", borderRadius: 8, border: `1px solid ${d.proposal_day_id === day?.proposal_day_id ? K.accent : K.line}`, background: K.card, color: K.ink, cursor: "pointer", minWidth: 0 }}
+                  style={{ flex: 1, textAlign: "left", fontSize: 13, padding: "6px 8px", borderRadius: 8, border: `1px solid ${d.proposal_day_id === day?.proposal_day_id ? K.accent : K.line}`, background: K.card, color: K.ink, minWidth: 0, width: "auto" }}
                 >
                   {d.before_you_go ? tr("builder.beforeYouGo") : `${fmt(tr("builder.dayN"), { n: d.day_no })}${d.title ? ` · ${d.title}` : ""}`}
                   {d.date && <span style={{ color: K.muted }}> · {formatDate(d.date, locale)}</span>}
-                </button>
+                </Pressable>
                 {draft && d.day_no >= 1 && (
                   <>
                     <Button size="sm" variant="ghost" ariaLabel={tr("builder.moveUp")} disabled={!hydrated || busy || d.day_no === 1} onClick={() => moveDay(d.proposal_day_id, -1)}>
@@ -694,9 +694,9 @@ export function BuilderPage({
       </Panel>
 
       <Panel testId="builder-advanced">
-        <button type="button" onClick={() => setAdvanced(!advanced)} aria-expanded={advanced} style={{ font: "inherit", fontSize: 13, fontWeight: 600, background: "none", border: 0, padding: 0, color: K.ink, cursor: "pointer" }}>
+        <LinkButton tone="inherit" onClick={() => setAdvanced(!advanced)} aria-expanded={advanced} style={{ color: K.ink, justifySelf: "start" }}>
           {advanced ? "▾" : "▸"} {tr("builder.advanced")}
-        </button>
+        </LinkButton>
         {advanced && (
           <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
             <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{tr("builder.advanced.hint")}</p>

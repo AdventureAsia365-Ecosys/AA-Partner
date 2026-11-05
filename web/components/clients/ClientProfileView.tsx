@@ -4,6 +4,7 @@
 // consent, the F2 profile (bands and codes), health codes (with the traveller's consent), relationships (the API
 // writes the inverse, R7), trips with the age band at departure (R32) and documents. Archive, merge, export and delete
 // arrive with CRM-14 / CRM-31 / CRM-35.
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, K } from "@/app/_kit";
@@ -102,9 +103,9 @@ export function ClientProfileView({ view, members, role, lang, locale }: { view:
   const owner = members.find((m) => m.member_id === traveler.owner_member_id);
   return (
     <div data-testid="crm-client" style={{ display: "grid", gap: 14, maxWidth: 1080, minWidth: 0 }}>
-      <a href="/clients" style={{ fontSize: 13, color: K.accentDeep }}>
+      <Link href="/clients" style={{ fontSize: 13, color: K.accentDeep }}>
         ← {t(lang, "clients.back")}
-      </a>
+      </Link>
       <header style={{ display: "grid", gap: 6 }}>
         <h1 data-testid="client-name" style={{ margin: 0, fontFamily: "'Fahkwang', 'Poppins', Georgia, serif", fontSize: 24, fontWeight: 500, color: K.ink, overflowWrap: "anywhere" }}>
           {traveler.display_name}

@@ -1,4 +1,5 @@
 // web/app/(crm)/settings/saved-replies/page.tsx — Settings > Saved replies (AA-945, card CRM-17).
+import Link from "next/link";
 import { ErrorState } from "@/app/_kit";
 import { PageTitle } from "@/components/PageTitle";
 import { SavedReplies } from "@/components/mail/SavedReplies";
@@ -18,9 +19,9 @@ export default async function SavedRepliesPage() {
   const list = await crmCall<{ saved_replies: SavedReply[] }>(ctx.cfg, session, "GET", "saved-replies");
   return (
     <div data-testid="crm-saved-replies" style={{ display: "grid", gap: 14, maxWidth: 820 }}>
-      <a href="/settings" style={{ fontSize: 13 }}>
+      <Link href="/settings" style={{ fontSize: 13 }}>
         ← {t(ctx.lang, "settings.title")}
-      </a>
+      </Link>
       <PageTitle title={t(ctx.lang, "replies.title")} subtitle={t(ctx.lang, "replies.subtitle")} />
       {!list.ok ? (
         <ErrorState message={t(ctx.lang, "error.api")} />

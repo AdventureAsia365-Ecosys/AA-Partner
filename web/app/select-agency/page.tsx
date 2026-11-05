@@ -2,8 +2,8 @@
 // /crm/v1/memberships, crm-004 lookup); each is a same-origin POST to /auth/agency, which checks the id against the
 // same list before it goes into the session. One active agency and no ?manual -> picked automatically.
 import { redirect } from "next/navigation";
-import { CenteredCard, linkButton } from "@/components/CenteredCard";
-import { EmptyState, ErrorState, K } from "@/app/_kit";
+import { CenteredCard } from "@/components/CenteredCard";
+import { EmptyState, ErrorState, K, Button } from "@/app/_kit";
 import { fetchMemberships, lockedNotice } from "@/lib/crmApi";
 import { CONTENT_STUDIO_PATH, contentStudioHref } from "@/lib/nav";
 import { safeNext, withRefreshMarker } from "@/lib/hosts";
@@ -39,9 +39,9 @@ export default async function SelectAgencyPage({
   if (active.length === 1 && !params.manual) redirect(`/auth/agency?next=${encodeURIComponent(next)}`);
   const signOut = (
     <form action="/auth/sign-out" method="post">
-      <button type="submit" style={{ ...linkButton, background: "transparent", color: K.accentDeep }}>
+      <Button type="submit" variant="ghost">
         {t(lang, "shell.signOut")}
-      </button>
+      </Button>
     </form>
   );
   if (found.data.length === 0) {
@@ -93,9 +93,9 @@ export default async function SelectAgencyPage({
               <form action="/auth/agency" method="post">
                 <input type="hidden" name="tenant_id" value={m.tenant_id} />
                 <input type="hidden" name="next" value={next} />
-                <button type="submit" style={linkButton}>
+                <Button type="submit" variant="primary">
                   {t(lang, "select.open")}
-                </button>
+                </Button>
               </form>
             ) : (
               <span style={{ fontSize: 12, color: K.danger, fontWeight: 600 }}>{t(lang, "select.locked")}</span>

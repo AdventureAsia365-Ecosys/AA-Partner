@@ -42,7 +42,7 @@ from app.documents.store import DocumentStore
 from app.errors import Unavailable
 from app.portability import tables as T
 from app.tenancy import LifecycleContext
-from app.vault import Vault
+from app.vault import DecryptionDenied, Vault
 
 SCHEMA_VERSION = 1
 FORMAT = "aa-partner-crm-export"
@@ -51,6 +51,24 @@ ZIP_DATE = (2026, 1, 1, 0, 0, 0)
 VERSIONS_SQL = "SELECT coalesce(array_agg(version ORDER BY version), '{}') FROM crm.v_schema_versions"
 
 Progress = Callable[[int, int], Awaitable[None]]
+
+
+class ValueDenied(DecryptionDenied):
+    """A stored value of the export did not open (S269, AA-969): the export fails (fail-closed: never a ZIP that leaves
+    out what it could not read), naming the table and column so the failed row says where to look. Codes only: never
+    the value or its row id."""
+
+    def __init__(self, table: str, column: str, reason: str) -> None:
+        super().__init__(reason)
+        self.table, self.column = table, column
+        self.extra |= {"table": table, "column": column}
+
+    @property
+    def failure_class(self) -> str:
+        """``decrypt_denied:<table>:<column>``, fitting ``crm.export_job.failure_class`` (an identifier with colons,
+        64 characters at most)."""
+        text = re.sub(r"[^A-Za-z0-9_:]", "_", f"{self.code}:{self.table}:{self.column}")
+        return text[:64]
 
 
 @dataclass
@@ -109,6 +127,11 @@ class _Zip:
         self.sums[path] = digest
         return digest
 
+    def discard(self) -> None:
+        """Drop a half-built ZIP (a value did not open): the archive first, then its buffer."""
+        self.zf.close()
+        self.buf.close()
+
     def close(self) -> bytes:
         lines = "".join(f"{d}  {p}\n" for p, d in sorted(self.sums.items()))
         info = zipfile.ZipInfo("SHA256SUMS", date_time=ZIP_DATE)
@@ -151,9 +174,12 @@ async def table_rows(
             value = r[column]
             if column.endswith("_enc"):
                 if value is not None and table.row_key:
-                    value = await vault.decrypt(
-                        table.name, table.aad_column(column), r[table.row_key], value, purpose=table.purpose(column)
-                    )
+                    try:
+                        value = await vault.decrypt(
+                            table.name, table.aad_column(column), r[table.row_key], value, purpose=table.purpose(column)
+                        )
+                    except DecryptionDenied as exc:
+                        raise ValueDenied(table.name, column, exc.reason) from None
                 elif value is not None:
                     value = None  # no single-column key = no AAD row id: never guessed
             elif column in table.json_columns:
@@ -195,120 +221,127 @@ async def build(
             plan.append((table, where, subject_id, T.client_columns(table)))
 
     zipped = _Zip()
-    counts: dict[str, int] = {}
-    files: list[dict[str, Any]] = []
-    documents: list[dict[str, Any]] = []
-    total = len(plan)
-    done = 0
-    for table, where, arg, columns in plan:
-        rows = await table_rows(ctx, vault, table, where, arg, columns)
-        counts[table.name] = len(rows)
-        header = [table.out_name(c) for c in columns]
-        j = zipped.add(f"json/{table.name}.json", json.dumps(rows, ensure_ascii=False, indent=1).encode("utf-8"))
-        c = zipped.add(f"csv/{table.name}.csv", to_csv(rows, header))
-        files.append(
-            {
-                "table": table.name,
-                "rows": len(rows),
-                "json": f"json/{table.name}.json",
-                "json_sha256": j,
-                "csv": f"csv/{table.name}.csv",
-                "csv_sha256": c,
-            }
-        )
-        if table.name == "document":
-            documents = rows
-        done += 1
-        if progress is not None:
-            await progress(done, total + len(documents))
-    total += len(documents)
-
-    included = skipped = 0
-    budget = documents_max_bytes
-    doc_lines: list[dict[str, Any]] = []
-    raw_keys: dict[uuid.UUID, tuple[str, bytes | None]] = {}
-    if documents:
-        ids = [uuid.UUID(d["document_id"]) for d in documents]
-        raw_keys = {
-            r["document_id"]: (r["s3_key"], bytes(r["sha256"]) if r["sha256"] is not None else None)
-            for r in await ctx.conn.fetch(
-                "SELECT document_id, s3_key, sha256 FROM crm.document WHERE document_id = ANY($1::uuid[])", ids
+    try:
+        counts: dict[str, int] = {}
+        files: list[dict[str, Any]] = []
+        documents: list[dict[str, Any]] = []
+        total = len(plan)
+        done = 0
+        for table, where, arg, columns in plan:
+            rows = await table_rows(ctx, vault, table, where, arg, columns)
+            counts[table.name] = len(rows)
+            header = [table.out_name(c) for c in columns]
+            j = zipped.add(f"json/{table.name}.json", json.dumps(rows, ensure_ascii=False, indent=1).encode("utf-8"))
+            c = zipped.add(f"csv/{table.name}.csv", to_csv(rows, header))
+            files.append(
+                {
+                    "table": table.name,
+                    "rows": len(rows),
+                    "json": f"json/{table.name}.json",
+                    "json_sha256": j,
+                    "csv": f"csv/{table.name}.csv",
+                    "csv_sha256": c,
+                }
             )
-        }
-    for d in documents:
-        doc_id = uuid.UUID(d["document_id"])
-        name = str(d.get("filename") or "file")
-        line = {
-            "document_id": str(doc_id),
-            "trip_id": d.get("trip_id"),
-            "traveler_id": d.get("traveler_id"),
-            "kind": d.get("kind"),
-            "file_name": name,
-            "content_type": d.get("content_type"),
-            "size_bytes": d.get("size_bytes"),
-            "content_sha256": None,
-            "included": False,
-            "path": None,
-            "skipped_reason": None,
-        }
-        s3_key, digest = raw_keys.get(doc_id, (None, None))
-        size = int(d.get("size_bytes") or 0)
-        if store is None or s3_key is None:
-            line["skipped_reason"] = "documents_not_configured" if store is None else "no_object"
-        elif size > budget:
-            line["skipped_reason"] = "skipped_size_cap"
-        else:
-            try:
-                sealed = await store.get(s3_key)
-            except Unavailable:
-                sealed = None
-            if sealed is None:
-                line["skipped_reason"] = "object_missing"
-            elif digest is not None and hashlib.sha256(sealed).digest() != digest:
-                line["skipped_reason"] = "skipped_integrity"
-            else:
-                content = await vault.decrypt_bytes("document", "content", doc_id, sealed, purpose="docs")
-                path = f"documents/files/{doc_id}/{_safe_name(name)}"
-                line |= {"content_sha256": zipped.add(path, content), "included": True, "path": path}
-                budget -= len(content)
-        if line["included"]:
-            included += 1
-        else:
-            skipped += 1
-        doc_lines.append(line)
-        done += 1
-        if progress is not None and (done % 10 == 0 or done == total):
-            await progress(done, total)
-    doc_header = list(doc_lines[0].keys()) if doc_lines else ["document_id", "file_name", "included", "path"]
-    zipped.add("documents/manifest.csv", to_csv(doc_lines, doc_header))
+            if table.name == "document":
+                documents = rows
+            done += 1
+            if progress is not None:
+                await progress(done, total + len(documents))
+        total += len(documents)
 
-    manifest = {
-        "format": FORMAT,
-        "schema_version": SCHEMA_VERSION,
-        "scope": scope,
-        "subject_id": str(subject_id),
-        "tenant_id": str(ctx.tenant_id),
-        "export_id": str(export_id),
-        "created_at": dt.datetime.now(dt.UTC).isoformat(),
-        "crm_schema_versions": list(await ctx.conn.fetchval(VERSIONS_SQL)),
-        "tables": files,
-        "documents": {
-            "manifest": "documents/manifest.csv",
-            "included": included,
-            "skipped": skipped,
-            "max_bytes": documents_max_bytes,
-        },
-        "checksums": "SHA256SUMS",
-        "notes": [
-            "personal_fields_decrypted",
-            "index_and_token_columns_left_out",
-            "audit_log_downloaded_separately",
-            "vendor_secrets_never_exported",
-            f"documents_capped_at_{documents_max_bytes // (1024 * 1024)}_mib_rest_listed_skipped_size_cap",
-        ],
-    }
-    zipped.add("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=1, sort_keys=True).encode("utf-8"))
-    content = zipped.close()
+        included = skipped = 0
+        budget = documents_max_bytes
+        doc_lines: list[dict[str, Any]] = []
+        raw_keys: dict[uuid.UUID, tuple[str, bytes | None]] = {}
+        if documents:
+            ids = [uuid.UUID(d["document_id"]) for d in documents]
+            raw_keys = {
+                r["document_id"]: (r["s3_key"], bytes(r["sha256"]) if r["sha256"] is not None else None)
+                for r in await ctx.conn.fetch(
+                    "SELECT document_id, s3_key, sha256 FROM crm.document WHERE document_id = ANY($1::uuid[])", ids
+                )
+            }
+        for d in documents:
+            doc_id = uuid.UUID(d["document_id"])
+            name = str(d.get("filename") or "file")
+            line = {
+                "document_id": str(doc_id),
+                "trip_id": d.get("trip_id"),
+                "traveler_id": d.get("traveler_id"),
+                "kind": d.get("kind"),
+                "file_name": name,
+                "content_type": d.get("content_type"),
+                "size_bytes": d.get("size_bytes"),
+                "content_sha256": None,
+                "included": False,
+                "path": None,
+                "skipped_reason": None,
+            }
+            s3_key, digest = raw_keys.get(doc_id, (None, None))
+            size = int(d.get("size_bytes") or 0)
+            if store is None or s3_key is None:
+                line["skipped_reason"] = "documents_not_configured" if store is None else "no_object"
+            elif size > budget:
+                line["skipped_reason"] = "skipped_size_cap"
+            else:
+                try:
+                    sealed = await store.get(s3_key)
+                except Unavailable:
+                    sealed = None
+                if sealed is None:
+                    line["skipped_reason"] = "object_missing"
+                elif digest is not None and hashlib.sha256(sealed).digest() != digest:
+                    line["skipped_reason"] = "skipped_integrity"
+                else:
+                    try:
+                        content = await vault.decrypt_bytes("document", "content", doc_id, sealed, purpose="docs")
+                    except DecryptionDenied as exc:
+                        raise ValueDenied("document", "content", exc.reason) from None
+                    path = f"documents/files/{doc_id}/{_safe_name(name)}"
+                    line |= {"content_sha256": zipped.add(path, content), "included": True, "path": path}
+                    budget -= len(content)
+            if line["included"]:
+                included += 1
+            else:
+                skipped += 1
+            doc_lines.append(line)
+            done += 1
+            if progress is not None and (done % 10 == 0 or done == total):
+                await progress(done, total)
+        doc_header = list(doc_lines[0].keys()) if doc_lines else ["document_id", "file_name", "included", "path"]
+        zipped.add("documents/manifest.csv", to_csv(doc_lines, doc_header))
+
+        manifest = {
+            "format": FORMAT,
+            "schema_version": SCHEMA_VERSION,
+            "scope": scope,
+            "subject_id": str(subject_id),
+            "tenant_id": str(ctx.tenant_id),
+            "export_id": str(export_id),
+            "created_at": dt.datetime.now(dt.UTC).isoformat(),
+            "crm_schema_versions": list(await ctx.conn.fetchval(VERSIONS_SQL)),
+            "tables": files,
+            "documents": {
+                "manifest": "documents/manifest.csv",
+                "included": included,
+                "skipped": skipped,
+                "max_bytes": documents_max_bytes,
+            },
+            "checksums": "SHA256SUMS",
+            "notes": [
+                "personal_fields_decrypted",
+                "index_and_token_columns_left_out",
+                "audit_log_downloaded_separately",
+                "vendor_secrets_never_exported",
+                f"documents_capped_at_{documents_max_bytes // (1024 * 1024)}_mib_rest_listed_skipped_size_cap",
+            ],
+        }
+        zipped.add("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=1, sort_keys=True).encode("utf-8"))
+        content = zipped.close()
+    except BaseException:
+        zipped.discard()  # memory and no half-open archive left to the garbage collector
+        raise
     return Built(
         content=content,
         sha256=hashlib.sha256(content).hexdigest(),

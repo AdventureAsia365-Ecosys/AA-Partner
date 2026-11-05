@@ -416,7 +416,7 @@ diet.md`). The job sampler (`app/jobs/metrics.py`, every 5 minutes, API process)
 `app_profile.read_day_spend`, only when the app profile sets a daily budget), and drains the **events** the code raises with `ops_alerts.emit(check, scope, **ids)` next to the
 log lines it already wrote: `breakglass_opened`, `breakglass_owner_not_mailed` (per session), `ops_release_incomplete_t21`,
 `ops_release_withdrawn` (per release), `membership_apply_refused` (per event), `membership_feed_stuck` (per day),
-`bulk_reveal` (per member and hour). Each finding is e-mailed once on the platform alerts SNS topic (env
+`bulk_reveal` (per member and hour), `pilot_backup_failed` (per export: a failed nightly `crm_pilot_backup` export, S269). Each finding is e-mailed once on the platform alerts SNS topic (env
 `ALERTS_TOPIC_ARN`, task role `sns:Publish`, both AA-CIS-Infra), deduped by a ledger row in `crm.job` (kind
 `crm_ops_alert`, status `succeeded`, idempotency key `crm_ops_alert:<check>:<scope or UTC day>`, payload ids only;
 `queue.record_alert` / `queue.forget_alert`). The ledger rows are never claimed and are not busy work for the deploy
@@ -438,6 +438,19 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
   `npx eslint --prune-suppressions` in the app folder and commit the file; never `--suppress-all` to hide a new one.
   The steps are inside **Portal Build** / **Web Build** (required checks), so they gate the merge; the pre-push hook
   runs the dependency-free kit checks and ESLint on the changed files (`scripts/pre-push.sh`).
+  AA-1008 (S6f): `web/eslint-suppressions.json` is empty (`{}`): the studio's legacy layer (`portal/_components/ui.tsx`)
+  is gone (kit twins where the kit has one, the rest in `web/app/_kit/local/studio/StudioCard.tsx`), raw tables are
+  the kit `DataTable` (`rowTestId` keeps row test ids), the stage-engine dialog is the kit `Modal` (`pinFooter`), and no
+  effect sets state synchronously. New code adds no entry.
+- **Visual run** (AA-1008, root ADR 0016 decision 9; `.github/workflows/visual.yml`, `e2e/visual/`,
+  `e2e/playwright.visual.config.ts`; report-only until hand step H3): per PR, the web is built and started in the
+  runner (`KIT_GALLERY=1`, the Web Build smoke's fake configuration) and every changed public page plus the gated kit
+  gallery (`/kit-gallery`, 404 on every deployed build) is captured at 1440 / 390, light / dark: no horizontal overflow
+  of the document or a kit frame, 0 console errors, no failed same-origin request; a planted-overflow self-test must
+  fail first. After a green **Deploy Web Dev** on main (`workflow_run`) the changed pages are captured on the agency host,
+  CRM and studio pages signed in as the e2e studio user (a page that session is sent away from is reported skipped).
+  `web/tests/visualPages.test.ts` (G16) fails when a route is neither listed in `e2e/visual/pages.ts` nor excluded with a
+  reason. Screenshots and `report.json` are the run's artifact.
 - Required checks: **Lint**, **Security Audit** (DM-6.10 resource-ID scan, pip-audit), **Unit Tests** (coverage >= 90 %),
   **Integration Tests** (PostgreSQL 15, no skips), **Docker Build Check** (native arm64 build, container smoke, Trivy,
   SBOM); plus **Docs lint**, **PR title**, **gitleaks**, and **Portal Build** + **Web Build** (AA-994 hand step H1, on

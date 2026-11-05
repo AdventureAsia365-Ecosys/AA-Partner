@@ -4,6 +4,7 @@
 // portability exports and the data-request log (owner); AA-971: AA support access (every role sees it, the owner
 // allows or ends it). Every role
 // sees the rules; the owner sees and changes the rest (the API decides; other roles get the rules only).
+import Link from "next/link";
 import { ErrorState } from "@/app/_kit";
 import { PageTitle } from "@/components/PageTitle";
 import { DataLifecycleView } from "@/components/settings/DataLifecycleView";
@@ -41,9 +42,9 @@ export default async function DataSettingsPage() {
       : [null, null];
   return (
     <div data-testid="crm-data-settings" style={{ display: "grid", gap: 14, maxWidth: 980 }}>
-      <a href="/settings" style={{ fontSize: 13 }}>
+      <Link href="/settings" style={{ fontSize: 13 }}>
         ← {t(ctx.lang, "settings.title")}
-      </a>
+      </Link>
       <PageTitle title={t(ctx.lang, "data.title")} subtitle={t(ctx.lang, "data.subtitle")} />
       {!view || !view.ok ? (
         <ErrorState message={t(ctx.lang, "data.error")} />

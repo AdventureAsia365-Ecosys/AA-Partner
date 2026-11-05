@@ -5,9 +5,9 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Check, ArrowRight, X } from "lucide-react";
-import { K, useT } from "@/app/_kit";
+import { K, useT, IconButton } from "@/app/_kit";
 import { COMMON_MESSAGES } from "./common.messages";
-import { T, Card, CardHead } from "./ui";
+import { Card, CardHead } from "@/app/_kit/local/studio/StudioCard";
 
 type ItemKey = "brand" | "tour" | "post" | "wp";
 type Item = { key: ItemKey; href: string; done: boolean };
@@ -65,9 +65,9 @@ export default function GettingStarted({ catalogCount }: { catalogCount: number 
   return (
     <Card>
       <CardHead title={t("gsTitle", doneCount, items.length)} action={
-        <button onClick={dismiss} aria-label={t("gsHide")} style={{ background: "none", border: "none", cursor: "pointer", color: K.muted2, display: "flex", padding: 0 }}>
+        <IconButton variant="plain" size="sm" label={t("gsHide")} title="" onClick={dismiss} style={{ color: K.muted2 }}>
           <X size={15} />
-        </button>
+        </IconButton>
       } />
       <div style={{ height: 6, borderRadius: 999, background: K.line2, overflow: "hidden", marginBottom: 14 }}>
         <div style={{ width: `${(doneCount / items.length) * 100}%`, height: "100%", background: K.accent, borderRadius: 999, transition: "width .4s ease" }} />
@@ -85,7 +85,7 @@ export default function GettingStarted({ catalogCount }: { catalogCount: number 
                 width: 20, height: 20, borderRadius: "50%", display: "grid", placeItems: "center",
                 background: i.done ? K.success : "transparent", border: i.done ? "none" : `1.5px solid ${isNext ? K.accent : K.line}`,
               }}>
-                {i.done && <Check size={12} color={T.onSolid} strokeWidth={3} />}
+                {i.done && <Check size={12} color={K.onSolid} strokeWidth={3} />}
               </span>
               <span style={{ minWidth: 0 }}>
                 <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: i.done ? K.muted : K.ink, textDecoration: i.done ? "line-through" : "none" }}>{t(TEXT[i.key][0])}</span>

@@ -6,7 +6,7 @@
 // through the BFF allow-list (lib/bff.ts), which refuses cross-site writes first.
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Badge, Button, K } from "@/app/_kit";
+import { Badge, Button, DataTable, K } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
 import { bffDownload, bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
@@ -20,6 +20,7 @@ import {
   totalCount,
   type Hold,
   type LifecycleView,
+  type Rule,
   type TrashItem,
 } from "@/lib/lifecycle";
 
@@ -33,7 +34,6 @@ const field: React.CSSProperties = {
   color: K.ink,
   boxSizing: "border-box",
 };
-const cell: React.CSSProperties = { padding: "8px 10px", borderTop: `1px solid ${K.line}`, verticalAlign: "top", fontSize: 13 };
 
 export function DataLifecycleView({
   view,
@@ -94,26 +94,21 @@ export function DataLifecycleView({
       )}
 
       <Panel title={t(lang, "data.rules")} testId="data-rules">
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead>
-              <tr style={{ textAlign: "left", fontSize: 12, color: K.muted }}>
-                <th style={{ padding: "6px 10px" }}>{t(lang, "data.col.data")}</th>
-                <th style={{ padding: "6px 10px" }}>{t(lang, "data.col.kept")}</th>
-                <th style={{ padding: "6px 10px" }}>{t(lang, "data.col.how")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {view.rules.map((r) => (
-                <tr key={r.code} data-testid="data-rule">
-                  <td style={{ ...cell, color: K.ink }}>{tr(`data.rule.${r.code}`)}</td>
-                  <td style={cell}>{ruleWindow(r, view.settings, lang)}</td>
-                  <td style={{ ...cell, color: K.muted }}>{tr(`data.how.${r.mechanism}`)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        {/* AA-1008 (S6f): the kit DataTable (no raw <table> in page code). */}
+        <DataTable<Rule>
+          data={view.rules}
+          columns={[
+            { id: "data", header: t(lang, "data.col.data"), accessorFn: (r) => tr(`data.rule.${r.code}`), cell: ({ getValue }) => <span style={{ color: K.ink }}>{String(getValue())}</span> },
+            { id: "kept", header: t(lang, "data.col.kept"), enableSorting: false, cell: ({ row }) => ruleWindow(row.original, view.settings, lang) },
+            { id: "how", header: t(lang, "data.col.how"), accessorFn: (r) => tr(`data.how.${r.mechanism}`), cell: ({ getValue }) => <span style={{ color: K.muted }}>{String(getValue())}</span> },
+          ]}
+          tableId="crm-data-rules"
+          getRowId={(r) => r.code}
+          rowTestId={() => "data-rule"}
+          searchable={false}
+          paginate={false}
+          compact
+        />
       </Panel>
 
       <Panel title={t(lang, "data.settings")} testId="data-settings">

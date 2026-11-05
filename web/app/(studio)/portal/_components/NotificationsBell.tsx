@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Bell, Check, X, RefreshCw, RotateCcw } from "lucide-react";
-import { apiGet, apiSend, K, sans, useLang, useT, type Translator } from "@/app/_kit";
+import { IconButton, apiGet, apiSend, K, sans, useLang, useT, type Translator } from "@/app/_kit";
 import { BELL_MESSAGES } from "./account.messages";
 import { fmtDateTime } from "@/lib/studio/format";
 import type { ShellActivityView } from "./PortalShellContext";
@@ -99,17 +99,17 @@ export default function NotificationsBell({ activity }: { activity: Activity[] }
 
   return (
     <div ref={ref} style={{ position: "relative" }}>
-      <button onClick={toggle} aria-label={unread ? t("ariaNew", unread) : t("title")} aria-expanded={open}
-        style={{ width: 36, height: 36, borderRadius: 8, background: open ? K.accentTint : "transparent", border: "none", display: "grid", placeItems: "center", cursor: "pointer", color: K.ink3, position: "relative" }}>
+      <IconButton variant="plain" size="lg" onClick={toggle} label={unread ? t("ariaNew", unread) : t("title")} title=""
+        aria-expanded={open} style={{ background: open ? K.accentTint : "transparent", position: "relative" }}>
         <Bell size={15} />
         {unread > 0 && (
           <span style={{ position: "absolute", top: 6, right: 7, width: 8, height: 8, borderRadius: "50%", background: K.accent, boxShadow: `0 0 0 2px ${K.card}` }} />
         )}
-      </button>
+      </IconButton>
       {open && (
         <div role="region" aria-label={t("title")} style={{
           position: "absolute", right: 0, top: 44, width: "min(360px, calc(100vw - 32px))", background: K.card,
-          border: `1px solid ${K.line}`, borderRadius: 12, boxShadow: "0 12px 40px -8px rgba(31,41,51,0.25)", zIndex: 50, overflow: "hidden", fontFamily: sans,
+          border: `1px solid ${K.line}`, borderRadius: 12, boxShadow: K.shadowLg, zIndex: 50, overflow: "hidden", fontFamily: sans,
         }}>
           <div style={{ padding: "12px 16px", borderBottom: `1px solid ${K.line2}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: K.ink }}>{t("title")}</span>

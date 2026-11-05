@@ -4,16 +4,16 @@
 // AA-752): [sidebar | topbar over <main>], a ⌘K / Ctrl K command palette, a phone bottom bar, the
 // kit toast. app/portal/layout.tsx renders it once around every portal page.
 //
-// Responsive behaviour is CSS (portal/app/globals.css, the `data-pshell` hooks): below 900 px the
-// sidebar is an off-canvas drawer opened from the topbar ☰ or the bottom bar "More"; below 768 px
-// the bottom bar shows and the search pill becomes an icon. No JS media query, so the server HTML is
-// already right on a phone. The shell owns three bits of interaction state: palette, drawer, and
-// the topbar search text the Marketplace catalog reads (`globalSearch`).
+// Responsive behaviour is CSS: below 900 px the sidebar is an off-canvas drawer opened from the topbar ☰ or the bottom
+// bar "More" (the kit core ShellFrame: drawer, backdrop, Esc, the palette's ⌘K / Ctrl K, the <main>; AA-1008 S6e);
+// below 768 px the bottom bar shows and the search pill becomes an icon (studio.css, the `data-pshell` hooks). No JS
+// media query, so the server HTML is already right on a phone. This file is the studio's configuration of the
+// ShellFrame: its slots, the shell data and the topbar search text the Marketplace catalog reads (`globalSearch`).
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { K, ToastProvider, useToast } from "@/app/_kit";
+import { ShellFrame, ToastProvider, useToast } from "@/app/_kit";
 import { PortalShellContext, type PortalShellValue } from "@/app/(studio)/portal/_components/PortalShellContext";
 import { PortalSidebar } from "./PortalSidebar";
 import { PortalTopbar } from "./PortalTopbar";
@@ -25,19 +25,17 @@ import { MY_VERSIONS_KEY, useActivityView, useBilling, useCatalog, usePoolTotal,
 export function PortalShell({ children }: { children: React.ReactNode }) {
   return (
     <ToastProvider>
-      <ShellFrame>{children}</ShellFrame>
+      <StudioShell>{children}</StudioShell>
     </ToastProvider>
   );
 }
 
-function ShellFrame({ children }: { children: React.ReactNode }) {
+function StudioShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const qc = useQueryClient();
   const toast = useToast();
 
-  const [paletteOpen, setPaletteOpen] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
 
   const { tenantName, planTier, status: tenantStatus } = useTenantMe();
@@ -45,26 +43,6 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
   const { versions, count: catTotal, failed: versionsFailed } = useCatalog();
   const { billing, status: billingStatus, retry: retryBilling } = useBilling();
   const activity = useActivityView(billing, versions, versionsFailed);
-
-  // ⌘K / Ctrl K toggles the palette (modifier-gated, so typing in a field never triggers it).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setPaletteOpen((v) => !v);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  // Esc closes the drawer.
-  useEffect(() => {
-    if (!drawerOpen) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setDrawerOpen(false); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [drawerOpen]);
 
   const searchTours = useCallback((q: string) => {
     setGlobalSearch(q);
@@ -86,39 +64,36 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
 
   return (
     <PortalShellContext.Provider value={value}>
-      <div data-pshell="frame" style={{ display: "flex", minHeight: "100vh", background: K.bg, color: K.body }}>
-        <PortalSidebar
-          drawerOpen={drawerOpen}
-          poolCount={poolTotal}
-          catalogCount={catTotal}
-          onNavigate={() => { setDrawerOpen(false); setGlobalSearch(""); }}
-        />
-
-        {drawerOpen && (
-          <div data-pshell="backdrop" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
+      <ShellFrame
+        drawerBelow={900}
+        sidebarId="portal-sidebar"
+        mainId="main"
+        frameProps={{ "data-pshell": "frame" }}
+        mainProps={{ "data-pshell": "main" }}
+        sidebar={(c) => (
+          <PortalSidebar
+            drawerOpen={c.drawerOpen}
+            poolCount={poolTotal}
+            catalogCount={catTotal}
+            onNavigate={() => { c.closeDrawer(); setGlobalSearch(""); }}
+          />
         )}
-
-        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: "100vh" }}>
+        topbar={(c) => (
           <PortalTopbar
             tenantName={tenantName}
             planTier={planTier}
             activity={activity}
-            onOpenSearch={() => setPaletteOpen(true)}
-            onOpenMenu={() => setDrawerOpen(true)}
+            onOpenSearch={c.openPalette}
+            onOpenMenu={c.openDrawer}
+            menuControls={c.sidebarId}
+            menuExpanded={c.drawerOpen}
           />
-          <main data-pshell="main" style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
-            {children}
-          </main>
-        </div>
-
-        <PortalBottomNav onOpenMore={() => setDrawerOpen(true)} />
-
-        <PortalCommandPalette
-          open={paletteOpen}
-          onClose={() => setPaletteOpen(false)}
-          onSearchTours={searchTours}
-        />
-      </div>
+        )}
+        bottomNav={(c) => <PortalBottomNav onOpenMore={c.openDrawer} />}
+        palette={(c) => <PortalCommandPalette open={c.paletteOpen} onClose={c.closePalette} onSearchTours={searchTours} />}
+      >
+        {children}
+      </ShellFrame>
     </PortalShellContext.Provider>
   );
 }

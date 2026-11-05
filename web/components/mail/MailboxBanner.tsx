@@ -1,5 +1,6 @@
 // web/components/mail/MailboxBanner.tsx — the red "mailbox disconnected" banner (AA-945, R24: client messages are held
 // until the mailbox is connected again; the owner also gets the AA system mail alert).
+import Link from "next/link";
 import { K } from "@/app/_kit";
 import { t, type Lang } from "@/lib/i18n";
 
@@ -23,9 +24,9 @@ export function MailboxBanner({ lang }: { lang: Lang }) {
       }}
     >
       <span>{t(lang, "mail.banner")}</span>
-      <a href="/settings/mailbox" style={{ fontWeight: 600 }}>
+      <Link href="/settings/mailbox" style={{ fontWeight: 600 }}>
         {t(lang, "mail.bannerLink")}
-      </a>
+      </Link>
     </div>
   );
 }

@@ -163,10 +163,12 @@ export function BuilderAaDrawer({
   );
 
   return (
-    <div role="dialog" aria-label={tr("builder.add")} data-testid="builder-drawer" style={{ display: "grid", gap: 8, padding: 12, borderRadius: 8, border: `1px solid ${K.line2}`, background: K.bg }}>
-      <div role="tablist" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+    // AA-1008 (S6f): an inline panel under the block (it never overlays the page or traps focus), so a labelled group,
+    // not a dialog (aa-kit/no-raw-dialog); the two sources are toggle buttons (aria-pressed), not a half-built tab list.
+    <div role="group" aria-label={tr("builder.add")} data-testid="builder-drawer" style={{ display: "grid", gap: 8, padding: 12, borderRadius: 8, border: `1px solid ${K.line2}`, background: K.bg }}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         {(["aa", "agency"] as const).map((x) => (
-          <Button key={x} size="sm" variant={tab === x ? "primary" : "ghost"} onClick={() => setTab(x)}>
+          <Button key={x} size="sm" variant={tab === x ? "primary" : "ghost"} aria-pressed={tab === x} onClick={() => setTab(x)}>
             {tr(`builder.drawer.${x}`)}
           </Button>
         ))}

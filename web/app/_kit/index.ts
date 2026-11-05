@@ -46,6 +46,9 @@ export { useSidebarCollapsed, useNavGroups } from "./core/useSidebar";
 // AA-1036: the Content studio's sidebar groups (moved in from the studio app's barrel).
 export { navGroupId } from "./core/sidebarStore";
 export { NavGroup } from "./core/NavGroup";
+// AA-1008 (S6e): the kit shell frame; the CRM shell (local/CrmShell.tsx) and the studio shell (local/studio/PortalShell.tsx)
+// are configurations of it.
+export { ShellFrame, useShell, type ShellControls } from "./core/ShellFrame";
 export { useHydrated } from "./core/useHydrated";
 // AA-1036 (R3): the kit UI-language catalogue (core/i18n.ts) and its React bindings (core/useI18n.ts), first used by
 // the Content studio (message files `*.messages.ts` next to its components). The language itself is this app's one

@@ -65,7 +65,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Badge, Button, EmptyState, Eyebrow, LinkButton, LoadingScreen, Modal, K, Section, Spinner, mono, sans, serif, useLang, useT } from "@/app/_kit";
+import { Badge, Button, EmptyState, Eyebrow, LinkButton, LoadingScreen, Modal, K, Section, Spinner, mono, sans, serif, useLang, useT, Pressable } from "@/app/_kit";
 import { ANGLE_MESSAGES } from "./writer.messages";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -674,7 +674,8 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
             {goals.map(g => {
               const on = selectedGoal === g.key;
               return (
-                <button key={g.key} role="radio" aria-checked={on} disabled={generating || replaced}
+                // A choice card of the goal radio group: the kit Pressable (no look of its own) with the card style.
+                <Pressable key={g.key} role="radio" aria-checked={on} disabled={generating || replaced}
                   data-testid={`goal-${g.key}`}
                   onClick={() => setSelectedGoal(g.key)} style={{
                     textAlign: "left", padding: "10px 14px", borderRadius: 8,
@@ -684,7 +685,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
                   }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: K.ink }}>{g.name}</div>
                   <div style={{ fontSize: 11.5, color: K.muted, marginTop: 2, lineHeight: 1.45 }}>{g.description}</div>
-                </button>
+                </Pressable>
               );
             })}
           </div>

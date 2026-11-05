@@ -681,7 +681,7 @@ const menuStyle: React.CSSProperties = {
   background: K.card,
   border: `1px solid ${K.line}`,
   borderRadius: 10,
-  boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+  boxShadow: K.shadowMd,
   padding: 4,
   display: "flex",
   flexDirection: "column",

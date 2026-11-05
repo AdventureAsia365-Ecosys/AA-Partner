@@ -64,8 +64,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Calendar, ChevronRight, Sparkles, X, Zap, AlertTriangle, ClipboardList, CheckCircle2 } from "lucide-react";
-import { Card, CardHead, CtaLink, EmptyState, StickyBar } from "./ui";
-import { Badge, Button, LinkButton, ToastProvider, K, mono, sans, serif, useLang, useT, type Translator, type UiLang } from "@/app/_kit";
+import { Card, CardHead, CtaLink, StickyBar } from "@/app/_kit/local/studio/StudioCard";
+import { Badge, Button, EmptyState, LinkButton, ToastProvider, K, mono, sans, serif, useLang, useT, Pressable, type Translator, type UiLang } from "@/app/_kit";
 import { badgeTone } from "@/lib/studio/format";
 import { SLATE_MESSAGES } from "./writer.messages";
 import { channelName } from "./channelLabels";
@@ -232,12 +232,10 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
 
   return (
     <Card style={{ padding: "16px 18px", marginBottom: 18 }}>
-      {/* Shimmer keyframes (FE audit #1) + hidden-scrollbar class for the tab strip (#6) — same
-          plain-<style>-tag pattern CatalogTab.tsx already uses in this same portal. */}
+      {/* Shimmer keyframes (FE audit #1) — same plain-<style>-tag pattern CatalogTab.tsx uses. The tab strip's hidden
+          scrollbar (#6) is its inline `scrollbarWidth: "none"` (AA-1008: no class name in page code). */}
       <style>{`
         @keyframes aa511SlateShimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-        .aa511-slate-tabstrip { scrollbar-width: none; -ms-overflow-style: none; }
-        .aa511-slate-tabstrip::-webkit-scrollbar { display: none; }
       `}</style>
 
       {/* AA-524 — sticky, bleeding out to this Card's own custom padding (16px/18px) so it reads
@@ -297,8 +295,8 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
 
         {/* AA-760 — on a phone the strip scrolls sideways with its scrollbar hidden; a right-edge fade
             shows there are more Channels (the end padding lets the last tab clear the fade). */}
-        <div className="aa511-slate-tabstrip" style={{
-          display: "flex", gap: 4, alignItems: "center", overflowX: "auto", flexWrap: "nowrap",
+        <div data-testid="slate-tabstrip" style={{
+          display: "flex", gap: 4, alignItems: "center", overflowX: "auto", flexWrap: "nowrap", scrollbarWidth: "none",
           borderBottom: `1px solid ${K.line2}`, paddingBottom: 2, paddingRight: tabs.length > 1 ? 28 : 0,
           ...(tabs.length > 1 ? TABSTRIP_FADE : {}),
         }}>
@@ -312,12 +310,14 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
                 {showDivider && (
                   <div aria-hidden style={{ width: 1, height: 20, background: K.line2, margin: "0 6px", flexShrink: 0 }} />
                 )}
-                <button
+                <Pressable
+                  display="inline"
+                  aria-pressed={isActive}
                   onClick={() => setActiveChannel(key)}
                   title={group === "weekly" ? t("weekly") : t("onDemand")}
                   style={{
                     display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap", flexShrink: 0,
-                    padding: "7px 12px", borderRadius: "8px 8px 0 0", cursor: "pointer",
+                    padding: "7px 12px", borderRadius: "8px 8px 0 0",
                     fontFamily: sans, fontSize: 12.5, fontWeight: isActive ? 700 : 500,
                     color: isActive ? K.ink : K.muted,
                     background: isActive ? K.bg : "transparent",
@@ -326,7 +326,7 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
                 >
                   <Icon size={11} style={{ opacity: 0.55, flexShrink: 0 }} />
                   {channelName(key, lang)}{count != null && <span style={{ marginLeft: 2, fontFamily: mono, fontSize: 10.5, color: K.muted2 }}>{count}</span>}
-                </button>
+                </Pressable>
               </div>
             );
           })}
@@ -337,7 +337,7 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
       {loading && <SkeletonPanel />}
 
       {error && !loading && (
-        <EmptyState icon={<AlertTriangle size={32} strokeWidth={1.5} color={K.accent} />} title={t("loadTopicsFailed")} sub={error}
+        <EmptyState icon={<AlertTriangle size={32} strokeWidth={1.5} color={K.accent} />} title={t("loadTopicsFailed")} description={error}
           action={<Button variant="secondary" onClick={load}>{t("tryAgain")}</Button>} />
       )}
 
@@ -354,8 +354,8 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
 }
 
 const TABSTRIP_FADE: React.CSSProperties = {
-  maskImage: "linear-gradient(to right, #000 calc(100% - 28px), transparent)",
-  WebkitMaskImage: "linear-gradient(to right, #000 calc(100% - 28px), transparent)",
+  maskImage: "linear-gradient(to right, black calc(100% - 28px), transparent)", // a mask: black = shown, not a colour
+  WebkitMaskImage: "linear-gradient(to right, black calc(100% - 28px), transparent)",
 };
 
 // ── Skeleton (FE audit #1) ──────────────────────────────────────────────────
@@ -426,7 +426,7 @@ function ChannelPanel({ channel, postsPerWeek, onPicked, writer }: {
         // Never had any Subject at all. AA-760 — tenant words: no "atomize / rank / bar" (steps the
         // tenant cannot run), and a way forward they can take (Update topics sits in the bar above).
         <EmptyState icon={<ClipboardList size={32} strokeWidth={1.5} color={K.accent} />} title={t("nothingYet")}
-          sub={t("nothingYetSub")}
+          description={t("nothingYetSub")}
           action={<CtaLink href="/portal/tours">{t("browseTours")}</CtaLink>} />
       ) : proposed.length === 0 ? (
         // FE audit #3 — DIFFERENT message: this Channel has decided history, just nothing NEW
@@ -434,7 +434,7 @@ function ChannelPanel({ channel, postsPerWeek, onPicked, writer }: {
         // reported gap — a tenant seeing a bare gap above "Already decided" with no explanation.
         <>
           <EmptyState icon={<CheckCircle2 size={32} strokeWidth={1.5} color={K.accent} />} title={t("noNewTopics")}
-            sub={t("noNewTopicsSub")} />
+            description={t("noNewTopicsSub")} />
           <DecidedList subjects={decided} onPicked={onPicked} writer={writer} />
         </>
       ) : (
