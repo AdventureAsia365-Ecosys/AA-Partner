@@ -115,8 +115,32 @@ def test_me_route_goes_through_tenant_tx(entitled: bool) -> None:
         "display_name": "Lữ hành Sen Vàng",
         "default_locale": "vi-VN",
         "crm_entitled": entitled,
+        "ai_paused": False,  # no crm.llm_app_profile row: AI on
     }
     assert conn.sql("projected_at IS NOT NULL AND plan = 'free'") == [()]
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_me_says_when_aa_paused_ai_for_the_whole_crm(enabled: bool) -> None:
+    """AA-1036 (R3): /me answers ai_paused from crm.llm_app_profile, and never the staff reason."""
+    pools = LocalPools()
+    settings = pools.settings()
+    conn = _conn(member={"member_id": MEMBER, "role": "owner"})
+    conn.on("SELECT display_name, default_locale", {"display_name": "Lữ hành Sen Vàng", "default_locale": "vi-VN"})
+    conn.on("FROM crm.tenant_entitlement", True)
+    conn.on(
+        "FROM crm.llm_app_profile WHERE app = 'crm'",
+        {"ai_enabled": enabled, "bulk_paused": False, "default_daily_budget_usd": None,
+         "degrade_mode": "manual_reply_needed", "disabled_reason": "provider outage (staff note)",
+         "updated_at": None, "updated_by": "admin:x"},
+    )  # fmt: skip
+    app = create_app(settings, FakeDatabase(conn, settings), pools.verifier(settings))
+    headers = {"Authorization": f"Bearer {pools.partner_web()}", "X-AA-Tenant-Id": str(TENANT)}
+    with TestClient(app) as c:
+        r = c.get("/crm/v1/me", headers=headers)
+    assert r.status_code == 200
+    assert r.json()["ai_paused"] is (not enabled)
+    assert "staff note" not in r.text
 
 
 def test_me_for_a_non_member_is_403() -> None:

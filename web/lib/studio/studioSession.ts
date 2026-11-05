@@ -18,12 +18,14 @@ export interface StudioClaims {
   exp: number | null;
   amr: string | null;
   sub: string | null;
+  /** AA-1036: the Content studio role (csr: owner | editor | viewer), for display only (CIS enforces it). */
+  csr: string | null;
 }
 
 /** The claims of a CIS tenant JWT WITHOUT checking the signature: only to decide whether to renew it or which kind of
  * session it is. CIS verifies every use. */
 export function studioClaims(token: string | undefined | null): StudioClaims {
-  const empty = { exp: null, amr: null, sub: null };
+  const empty = { exp: null, amr: null, sub: null, csr: null };
   if (!token) return empty;
   try {
     const part = token.split(".")[1];
@@ -34,6 +36,7 @@ export function studioClaims(token: string | undefined | null): StudioClaims {
       exp: typeof data.exp === "number" ? data.exp : null,
       amr: typeof data.amr === "string" ? data.amr : null,
       sub: typeof data.sub === "string" ? data.sub : null,
+      csr: typeof data.csr === "string" ? data.csr : null,
     };
   } catch {
     return empty;

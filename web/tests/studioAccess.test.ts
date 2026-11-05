@@ -94,7 +94,9 @@ describe("wiring", () => {
   it("the CRM layout renders the studio link through studioAccess", () => {
     const layout = readFileSync(path.join(root, "web/app/(crm)/layout.tsx"), "utf8");
     expect(layout).toContain("studioAccess(ctx.cfg.cisApiUrl, session)");
-    expect(layout).toContain("contentStudioHref={studioLink(studioHref, studio)}");
+    expect(layout).toContain("const contentHref = studioLink(studioHref, studio);");
+    expect(layout).toContain("contentStudioHref={contentHref}");
+    expect(layout).toContain("plannerHref={plannerHref(contentHref)}"); // AA-1036 (R3): planner through the studio
   });
 
   // AA-1036 (R3): the separate studio app is gone, so the studio's session helpers re-export the one cookie list

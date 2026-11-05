@@ -32,6 +32,8 @@ export interface Me {
   default_locale: DateLocale | null;
   /** AA-1036: the agency holds the CRM add-on (the API's projection of tenant.entitlements.v1); absent on an older API. */
   crm_entitled?: boolean;
+  /** AA-1036 (R3): Adventure Asia paused AI in the CRM for the whole app (crm.llm_app_profile); absent on an older API. */
+  ai_paused?: boolean;
 }
 
 export async function crmCall<T>(

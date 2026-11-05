@@ -81,8 +81,9 @@ export interface ShellProps {
   agencyName: string;
   agencyCount: number;
   contentStudioHref: string | null;
-  /** AA-1036: the "Request add-on" link of the Trip planner (lib/apps.ts requestHref). */
-  plannerRequestHref: string;
+  /** AA-1036: the Trip planner entry, the studio's Add-ons page (lib/apps.ts plannerHref); null = no entry (the person
+   *  has no studio access, and the request is the studio owner's). */
+  plannerHref: string | null;
   locale: DateLocale;
   /** Dev / test: every agency is synthetic (ADR 0010 decision 3), so the agency card says so. */
   syntheticBadge: boolean;
@@ -150,7 +151,7 @@ export function CrmShell({
   agencyName,
   agencyCount,
   contentStudioHref,
-  plannerRequestHref,
+  plannerHref,
   locale,
   syntheticBadge,
   children,
@@ -215,6 +216,7 @@ export function CrmShell({
 
           {GROUP_ORDER.map((group) => {
             if (group === "studio") {
+              if (!contentStudioHref) return null; // AA-1036 (R3): both entries need studio access
               return (
                 <NavGroup
                   key={group}
@@ -234,11 +236,13 @@ export function CrmShell({
                       <ExternalLink size={12} aria-hidden style={{ marginLeft: "auto", opacity: 0.7 }} />
                     </a>
                   )}
-                  <a href={plannerRequestHref} data-crm="nav-item" data-testid="crm-app-planner" data-app-state="request">
-                    <MapIcon size={16} aria-hidden />
-                    <span>{dict["nav.planner.request"]}</span>
-                    <Plus size={12} aria-hidden style={{ marginLeft: "auto", opacity: 0.7 }} />
-                  </a>
+                  {plannerHref && (
+                    <a href={plannerHref} data-crm="nav-item" data-testid="crm-app-planner" data-app-state="request">
+                      <MapIcon size={16} aria-hidden />
+                      <span>{dict["nav.planner.request"]}</span>
+                      <Plus size={12} aria-hidden style={{ marginLeft: "auto", opacity: 0.7 }} />
+                    </a>
+                  )}
                 </NavGroup>
               );
             }

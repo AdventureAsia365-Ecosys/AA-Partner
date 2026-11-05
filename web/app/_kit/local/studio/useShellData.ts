@@ -20,10 +20,22 @@ import type { ShellActivityView, ShellBilling } from "@/app/(studio)/portal/_com
 
 export const MY_VERSIONS_KEY = ["my-versions"] as const;
 
-interface TenantMe { tenant_name?: string; plan_tier?: string }
+interface TenantMe { tenant_name?: string; plan_tier?: string; content_studio_role?: string | null }
 
 /** react-query's own status words: "pending" (no answer yet) | "error" | "success". */
 export type LoadStatus = "pending" | "error" | "success";
+
+/** AA-1036 (R3) — the person's Content studio role (owner | editor | viewer), null until /api/tenant/me answers or when
+ *  it has none. Display only: the Add-ons page shows the request form to the owner (CIS enforces it). Same query key as
+ *  useTenantMe, so one call serves both. */
+export function useStudioRole(): string | null {
+  const { data } = useQuery({
+    queryKey: ["tenant-me"],
+    queryFn: () => apiGet<TenantMe>("/api/tenant/me"),
+    staleTime: 5 * 60_000,
+  });
+  return data?.content_studio_role ?? null;
+}
 
 /** AA-760 — the tenant name is "" while /api/tenant/me is loading (the shell shows a skeleton, not a
  *  generic name); the "Partner" fallback is used only once the call has answered without a name. */
