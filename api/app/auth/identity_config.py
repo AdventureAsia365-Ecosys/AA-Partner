@@ -8,7 +8,10 @@ Route class        Accepts                                                    Au
 ``/crm/v1``        PARTNER x {AA-Partner web}                                 CRM membership + role from
                                                                               ``crm.member`` (``tenant_tx()``)
 ``/crm/ops/v1``    WORKFORCE x {cis-admin} (the CIS admin BFF forwards it)    group ``cis-admin`` reads,
-                                                                              ``crm-platform-admin`` writes
+                                                                              ``crm-platform-admin`` writes; the
+                                                                              desk groups ``cis-customer_success`` /
+                                                                              ``cis-support`` read their scope only
+                                                                              (AA-1035, :mod:`app.ops.staff_scope`)
 ``/crm/staff/v1``  WORKFORCE x {crm-staff}                                    group ``crm-ops`` or ``crm-support``
 =================  =========================================================  ===============================
 
@@ -55,6 +58,10 @@ GROUP_CIS_ADMIN = "cis-admin"
 GROUP_CRM_PLATFORM_ADMIN = "crm-platform-admin"
 GROUP_CRM_OPS = "crm-ops"
 GROUP_CRM_SUPPORT = "crm-support"
+# AA-1035 R2 close-out (root ADR 0019 d3 / d4): the CIS desk roles. They reach /crm/ops/v1 only for the tenants CIS
+# reports in their scope (app.ops.staff_scope); never a platform-wide read, never a write.
+GROUP_CIS_CUSTOMER_SUCCESS = "cis-customer_success"
+GROUP_CIS_SUPPORT = "cis-support"
 
 
 @dataclass(frozen=True)
@@ -77,7 +84,7 @@ OPS = RouteClass(
     name="ops",
     prefix="/crm/ops/v1",
     accepts=frozenset({(WORKFORCE, CIS_ADMIN)}),
-    groups_any=frozenset({GROUP_CIS_ADMIN, GROUP_CRM_PLATFORM_ADMIN}),
+    groups_any=frozenset({GROUP_CIS_ADMIN, GROUP_CRM_PLATFORM_ADMIN, GROUP_CIS_CUSTOMER_SUCCESS, GROUP_CIS_SUPPORT}),
 )
 STAFF = RouteClass(
     name="staff",

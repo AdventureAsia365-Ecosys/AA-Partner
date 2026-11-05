@@ -22,9 +22,10 @@ from app.cis import contract
 DOCS = Path(__file__).resolve().parents[3] / "docs" / "contracts"
 SPEC = DOCS / "tenant.membership.v1.openapi.yaml"
 SAMPLES = DOCS / "samples" / "tenant.membership.v1"
-# sha256 of the root file docs/contracts/tenant.membership.v1.openapi.yaml: 1.2 (AA-979, S252:
-# TenantMembers.is_synthetic, required by the A10b check in app.members.studio). 1.1 added activateInvitation.
-ROOT_CONTRACT_SHA256 = "1a2d5fc97bfae930fc92ff6e2fa44ae921a396b18325458aeaef9b9fd9807145"
+# sha256 of the root file docs/contracts/tenant.membership.v1.openapi.yaml: 1.3 (AA-1035: getStaffTenantScope, read by
+# app.ops.staff_scope). 1.2 (AA-979, S252: TenantMembers.is_synthetic, required by the A10b check in
+# app.members.studio). 1.1 added activateInvitation.
+ROOT_CONTRACT_SHA256 = "608035012e2c1a9e02bca13184dafb0c4e38ac5b4a8691669a6703a7cf1c38ba"
 
 TENANT = "0b9d6c7e-3f43-4c1e-9a52-6d0c3b8f1a01"
 

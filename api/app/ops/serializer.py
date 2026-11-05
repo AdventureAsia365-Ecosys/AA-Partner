@@ -47,6 +47,7 @@ OPS_ALLOWED_KEYS: frozenset[str] = frozenset(
         "member_limit",
         # console
         "can_write",
+        "scope",  # 1.12 (AA-1035): all | book | book_pool | none (the caller's tenant scope)
         # agency list / summary (TenantPage, TenantSummary)
         "items",
         "next_cursor",

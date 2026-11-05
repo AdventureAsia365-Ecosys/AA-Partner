@@ -73,7 +73,7 @@ from decimal import Decimal
 from typing import Annotated, Literal
 
 from fastapi import Depends, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.auth.identity_config import GROUP_CRM_PLATFORM_ADMIN, OPS
 from app.auth.route_guard import Caller, class_router, current_caller, require_group
@@ -83,7 +83,7 @@ from app.llm import app_profile
 from app.llm.usage import MAX_DAYS, llm_usage
 from app.members import recovery, studio
 from app.members.mail import require_mailer
-from app.ops import console
+from app.ops import console, staff_scope
 from app.reports import insights
 from app.vault.provider import require_keys
 
@@ -94,6 +94,25 @@ LlmStatus = Literal["ok", "refused", "error", "billed_unusable", "truncated"]
 
 PlatformAdmin = Annotated[Caller, Depends(require_group(GROUP_CRM_PLATFORM_ADMIN))]
 Reader = Annotated[Caller, Depends(current_caller)]
+
+
+def _full_reader(caller: Annotated[Caller, Depends(current_caller)]) -> Caller:
+    """AA-1035: a platform-wide read (every agency at once): never a desk caller (403 ``missing_group``)."""
+    staff_scope.require_full(caller)
+    return caller
+
+
+async def _tenant_reader(
+    request: Request, tenant_id: uuid.UUID, caller: Annotated[Caller, Depends(current_caller)]
+) -> Caller:
+    """AA-1035: a read of one agency: a desk caller only within the scope CIS reports for it (403
+    ``tenant_outside_scope``; 503 ``cis_unavailable`` when CIS cannot answer)."""
+    await staff_scope.require_tenant(request, caller, tenant_id)
+    return caller
+
+
+FullReader = Annotated[Caller, Depends(_full_reader)]
+TenantReader = Annotated[Caller, Depends(_tenant_reader)]
 # A support ticket or Linear id ("AA-941", "SUP-1234"): it goes into the agency audit as the object id ticket:<REF>.
 TICKET_PATTERN = r"^[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,10}$"
 TicketRef = Annotated[str, Field(pattern=TICKET_PATTERN)]
@@ -110,6 +129,8 @@ class _Out(BaseModel):
 # ── Response models (crm.ops.v1) ─────────────────────────────────────────────────────────────────
 class ConsoleOut(_Out):
     can_write: bool
+    # 1.12 (AA-1035): the caller's tenant scope (all: cis-admin / crm-platform-admin; a desk caller its CIS scope)
+    scope: Literal["all", "book", "book_pool", "none"]
 
 
 TenantState = Literal["active", "locked", "offboarding", "offboarded"]
@@ -481,7 +502,7 @@ class RecoveryIn(_In):
 
 # ── AA-936: what CIS #975 reads ──────────────────────────────────────────────────────────────────
 @router.get("/jobs/summary", response_model=JobSummary)
-async def jobs_summary(request: Request) -> dict:
+async def jobs_summary(request: Request, caller: FullReader) -> dict:
     pool = await request_pool(request)
     return {"generated_at": datetime.now(UTC).isoformat(), "kinds": await queue.kind_summary(pool)}
 
@@ -489,6 +510,7 @@ async def jobs_summary(request: Request) -> dict:
 @router.get("/llm/usage", response_model=LlmUsage)
 async def get_llm_usage(
     request: Request,
+    caller: FullReader,
     from_: Annotated[date, Query(alias="from")],
     to: Annotated[date, Query()],
 ) -> dict:
@@ -500,7 +522,7 @@ async def get_llm_usage(
 
 # ── AA-1025 H1c: the CRM app profile (crm.ops.v1 1.10) ─────────────────────────────────────────────────────────
 @router.get("/llm/app-profile", response_model=AppProfileOut)
-async def get_llm_app_profile(request: Request, caller: Reader) -> dict:
+async def get_llm_app_profile(request: Request, caller: FullReader) -> dict:
     pool = await request_pool(request)
     try:
         return _profile_out(await app_profile.read(pool))
@@ -524,7 +546,7 @@ async def put_llm_app_profile(request: Request, body: AppProfileIn, caller: Plat
 @router.get("/llm/calls", response_model=LlmCalls, response_model_by_alias=True)
 async def get_llm_calls(
     request: Request,
-    caller: Reader,
+    caller: FullReader,
     from_: Annotated[date, Query(alias="from")],
     to: Annotated[date, Query()],
     tenant_id: Annotated[uuid.UUID | None, Query()] = None,
@@ -549,7 +571,7 @@ async def get_llm_calls(
 
 # ── AA-992: what the CIS admin page /admin/data-coverage reads (crm.ops.v1 1.4) ───────────────────────────────
 @router.get("/data-coverage", response_model=DataCoverage)
-async def data_coverage(request: Request, caller: Reader) -> dict:
+async def data_coverage(request: Request, caller: FullReader) -> dict:
     pool = await request_pool(request)
     return await console.platform_coverage(pool, staff_sub=caller.sub)
 
@@ -561,7 +583,7 @@ InsightDimension = Literal["destination", "budget_band", "age_band", "party_size
 @router.get("/insights", response_model=Insights, response_model_by_alias=True)
 async def get_insights(
     request: Request,
-    caller: Reader,
+    caller: FullReader,
     dimension: InsightDimension,
     quarter: Annotated[str, Query(max_length=7)],
 ) -> dict:
@@ -587,10 +609,12 @@ async def get_insights(
 
 # ── AA-941: the console ──────────────────────────────────────────────────────────────────────────
 @router.get("/console", response_model=ConsoleOut)
-async def get_console(caller: Reader) -> dict:
+async def get_console(request: Request, caller: Reader) -> dict:
     """What the S-01 page may offer: write buttons only for ``crm-platform-admin`` (never the read-only Dev E2E CIS
-    admin, root ADR 0006a A10b). No database access."""
-    return {"can_write": caller.in_group(GROUP_CRM_PLATFORM_ADMIN) and not caller.e2e_read_only}
+    admin, root ADR 0006a A10b), and (1.12) the caller's tenant scope. No database access (a desk caller's scope is
+    one cached CIS call)."""
+    scope = await staff_scope.scope_of(request, caller)
+    return {"can_write": caller.in_group(GROUP_CRM_PLATFORM_ADMIN) and not caller.e2e_read_only, "scope": scope.kind}
 
 
 @router.get("/tenants", response_model=TenantPage)
@@ -600,8 +624,11 @@ async def list_tenants(
     cursor: Annotated[uuid.UUID | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=console.MAX_PAGE)] = 50,
 ) -> dict:
+    scope = await staff_scope.scope_of(request, caller)  # AA-1035: a desk caller pages through its scope only
     pool = await request_pool(request)
-    return await console.list_agencies(pool, staff_sub=caller.sub, cursor=cursor, limit=limit)
+    return await console.list_agencies(
+        pool, staff_sub=caller.sub, cursor=cursor, limit=limit, allowed=None if scope.all else scope.tenants
+    )
 
 
 @router.post("/tenants", response_model=TenantSummary, status_code=201)
@@ -620,13 +647,13 @@ async def create_tenant(request: Request, body: TenantCreate, caller: PlatformAd
 
 
 @router.get("/tenants/{tenant_id}", response_model=TenantSummary)
-async def get_tenant(request: Request, tenant_id: uuid.UUID, caller: Reader) -> dict:
+async def get_tenant(request: Request, tenant_id: uuid.UUID, caller: TenantReader) -> dict:
     pool = await request_pool(request)
     return await console.agency_summary(pool, tenant_id, staff_sub=caller.sub)
 
 
 @router.get("/tenants/{tenant_id}/usage", response_model=UsageMeters)
-async def get_usage(request: Request, tenant_id: uuid.UUID, caller: Reader) -> dict:
+async def get_usage(request: Request, tenant_id: uuid.UUID, caller: TenantReader) -> dict:
     pool = await request_pool(request)
     return await console.agency_usage(pool, tenant_id, staff_sub=caller.sub)
 
@@ -646,9 +673,17 @@ async def unlock_tenant(request: Request, tenant_id: uuid.UUID, body: TicketIn, 
 
 
 class StudioInvitationIn(_In):
-    email: str = Field(min_length=3, max_length=254)
+    # 1.12 (AA-1035): an address, or keep_address true (send again to the address the CRM kept); exactly one
+    email: str | None = Field(None, min_length=3, max_length=254)
     cis_invitation_id: uuid.UUID
     locale: Literal["en", "vi"] = "en"
+    keep_address: bool = False
+
+    @model_validator(mode="after")
+    def _one_address(self) -> StudioInvitationIn:
+        if (self.email is None) != self.keep_address:
+            raise ValueError("send either an email or keep_address true")
+        return self
 
 
 class StudioInvitationAccepted(_Out):
@@ -665,9 +700,17 @@ async def studio_invitation(request: Request, tenant_id: uuid.UUID, body: Studio
 
     The Dev-only E2E CIS admin (root ADR 0006a A10b-1) only on the terms of :func:`studio.check_e2e_invitation`
     (synthetic CRM agency, E2E mailbox address, an invited viewer / editor membership at CIS, which also marks the
-    tenant synthetic)."""
+    tenant synthetic), and always with an address it names (never the kept one).
+
+    AA-1035 (1.12): a desk caller only for a tenant of its scope (403 ``tenant_outside_scope``); support never names
+    an address (403 ``readdress_not_allowed``: it sends again to the kept address only)."""
+    await staff_scope.require_tenant(request, caller, tenant_id)
+    if body.email is not None and not staff_scope.may_readdress(caller):
+        raise HTTPException(status_code=403, detail=staff_scope.READDRESS)
     pool = await request_pool(request)
     settings = request.app.state.settings
+    if caller.e2e_read_only and body.email is None:
+        raise HTTPException(status_code=403, detail="e2e_read_only")
     if caller.e2e_read_only:
         await studio.check_e2e_invitation(
             pool,
@@ -687,6 +730,7 @@ async def studio_invitation(request: Request, tenant_id: uuid.UUID, body: Studio
         mailer=require_mailer(request.app.state.mailer),
         web_origin=settings.invitation_origin,
         ttl_hours=settings.invitation_ttl_hours,
+        keys=getattr(request.app.state, "keys", None),
     )
 
 
@@ -732,7 +776,7 @@ async def delete_test_agency(
 
 
 @router.get("/tenants/{tenant_id}/entitlements", response_model=Entitlements)
-async def get_entitlements(request: Request, tenant_id: uuid.UUID, caller: Reader) -> dict:
+async def get_entitlements(request: Request, tenant_id: uuid.UUID, caller: TenantReader) -> dict:
     pool = await request_pool(request)
     return await console.agency_entitlements(pool, tenant_id, staff_sub=caller.sub)
 
@@ -758,7 +802,7 @@ async def put_insights_opt_out(
 
 
 @router.get("/tenants/{tenant_id}/data-requests", response_model=DataRequestList)
-async def get_data_requests(request: Request, tenant_id: uuid.UUID, caller: Reader) -> dict:
+async def get_data_requests(request: Request, tenant_id: uuid.UUID, caller: TenantReader) -> dict:
     pool = await request_pool(request)
     return await console.agency_data_requests(pool, tenant_id, staff_sub=caller.sub)
 
@@ -779,7 +823,7 @@ async def post_data_request(request: Request, tenant_id: uuid.UUID, body: DataRe
 
 
 @router.get("/tenants/{tenant_id}/jobs", response_model=FailedJobList)
-async def get_jobs(request: Request, tenant_id: uuid.UUID, caller: Reader) -> dict:
+async def get_jobs(request: Request, tenant_id: uuid.UUID, caller: TenantReader) -> dict:
     pool = await request_pool(request)
     return await console.agency_failed_jobs(pool, tenant_id, staff_sub=caller.sub)
 
@@ -794,7 +838,7 @@ async def retry_job(
 
 # ── AA-939: members and owner recovery (Q1 6.3) ──────────────────────────────────────────────────
 @router.get("/tenants/{tenant_id}/members", response_model=MemberList)
-async def tenant_members(request: Request, tenant_id: uuid.UUID, caller: Reader) -> dict:
+async def tenant_members(request: Request, tenant_id: uuid.UUID, caller: TenantReader) -> dict:
     pool = await request_pool(request)
     return await recovery.members(pool, tenant_id, staff_sub=caller.sub)
 

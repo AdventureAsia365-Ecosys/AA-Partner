@@ -194,11 +194,24 @@ def _read(ctx: SystemContext, reason: str, object_kind: str = "tenant") -> None:
 
 
 # ── Reads ────────────────────────────────────────────────────────────────────────────────────────
-async def list_agencies(pool: asyncpg.Pool, *, staff_sub: str, cursor: uuid.UUID | None, limit: int) -> dict[str, Any]:
+async def list_agencies(
+    pool: asyncpg.Pool,
+    *,
+    staff_sub: str,
+    cursor: uuid.UUID | None,
+    limit: int,
+    allowed: frozenset[uuid.UUID] | None = None,
+) -> dict[str, Any]:
     """Agencies in tenant id order (keyset on the id). The ids come from the crm-007 registry (the only cross-agency
-    read: ``crm.tenant`` is FORCE RLS), then one platform context per agency (one ``ops_read`` event each)."""
+    read: ``crm.tenant`` is FORCE RLS), then one platform context per agency (one ``ops_read`` event each).
+    AA-1035: ``allowed`` (a desk caller's scope, :mod:`app.ops.staff_scope`) keeps only those ids, before any agency
+    is opened: an agency outside the scope is never read, so it gets no ``ops_read`` event either."""
     limit = max(1, min(limit, MAX_PAGE))
-    ids = sorted(a.tenant_id for a in await registry.agencies(pool) if cursor is None or a.tenant_id > cursor)
+    ids = sorted(
+        a.tenant_id
+        for a in await registry.agencies(pool)
+        if (cursor is None or a.tenant_id > cursor) and (allowed is None or a.tenant_id in allowed)
+    )
     page, more = ids[:limit], len(ids) > limit
     items: list[dict[str, Any]] = []
     for tenant_id in page:

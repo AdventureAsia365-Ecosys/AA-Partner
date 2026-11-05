@@ -30,6 +30,7 @@ from app.members import studio
 from app.members.mail import MemoryMailer
 from app.ops import console
 from app.routers import ops as ops_router
+from app.vault.wrapping import LocalKeyWrapper
 from tests.tokens import LocalPools
 from tests.unit.fakes import ScriptedConn
 from tests.unit.slice_fakes import FakeVault
@@ -78,6 +79,16 @@ def member(role: str = "viewer", status: str = "invited", invitation: uuid.UUID 
 OMIT = object()
 
 
+class _Keys:
+    """AA-1035: the studio invitation keeps its address under a local wrapper (the provider the routes see)."""
+
+    active_provider = "local"
+    _local = LocalKeyWrapper.ephemeral()
+
+    def wrapper(self, provider: str) -> LocalKeyWrapper:
+        return self._local
+
+
 def snapshot(*members: dict[str, Any], synthetic: Any = True) -> dict[str, Any]:
     """A getTenantMembers 200 body; ``synthetic`` is the 1.2 ``is_synthetic`` (``OMIT`` = a 1.1 body without it)."""
     body = {"tenant_id": str(TENANT), "tenant_state": "active", "members": list(members), "as_of": NOW.isoformat()}
@@ -118,7 +129,7 @@ def pools() -> LocalPools:
 @pytest.fixture
 def env(pools: LocalPools, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     settings = pools.settings()  # environment "test": a synthetic-only environment, like dev
-    app = create_app(settings, verifier=pools.verifier(settings), keys=object(), mailer=MemoryMailer())
+    app = create_app(settings, verifier=pools.verifier(settings), keys=_Keys(), mailer=MemoryMailer())
     state: dict[str, Any] = {"conn": conn(), "cis": FakeCis(body=snapshot(member()))}
     state["tokens"] = FakeTokens()
 
@@ -166,9 +177,9 @@ def test_a_real_cis_admin_is_unchanged(env: dict[str, Any], claim: str | None) -
     assert r.status_code == 202, r.json()
     assert env["conn"].sql("INSERT INTO crm.studio_invitation")
     assert env["cis"].calls == [] and env["conn"].sql(SYNTHETIC_SQL) == []  # no lookup, no synthetic read
-    assert env["client"].get(f"{PREFIX}/console", headers=headers).json() == {"can_write": False}
+    assert env["client"].get(f"{PREFIX}/console", headers=headers).json() == {"can_write": False, "scope": "all"}
     admin = bearer(pools.cis_admin(groups=["crm-platform-admin"], email="staff@aa.example"))
-    assert env["client"].get(f"{PREFIX}/console", headers=admin).json() == {"can_write": True}
+    assert env["client"].get(f"{PREFIX}/console", headers=admin).json() == {"can_write": True, "scope": "all"}
 
 
 # ── the A10b identity: allowed path ─────────────────────────────────────────────────────────────────────────────────
@@ -311,7 +322,7 @@ def test_a10b_is_read_only_on_every_platform_admin_write(env: dict[str, Any]) ->
         headers = a10b(env["pools"], groups=groups)
         for method, path in writes:
             assert refused(client.request(method, path, headers=headers)), (method, path)
-        assert client.get(f"{PREFIX}/console", headers=headers).json() == {"can_write": False}
+        assert client.get(f"{PREFIX}/console", headers=headers).json() == {"can_write": False, "scope": "all"}
     assert client.get(f"{PREFIX}/jobs/summary", headers=a10b(env["pools"])).status_code == 200
 
 

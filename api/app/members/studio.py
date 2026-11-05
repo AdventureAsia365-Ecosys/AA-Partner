@@ -20,6 +20,12 @@ accounts (root ADR 0006b decision 5). The flow, end to end:
    (``app.cis.activation``); success -> ``activated``; a CIS outage -> the job retries with its backoff; a CIS refusal
    (another identity, a removed membership) -> the code is kept and the job fails permanently (the L1 console shows it).
 
+AA-1035 R2 close-out (crm.ops.v1 1.12, crm-045): the address is ALSO kept sealed under a data key of the CRM
+(:func:`keep_address`: a fresh AES-256 key from the KMS data key, context ``{tenant_id: the CIS tenant, purpose:
+mail}``, stored wrapped next to the blob), so a send again with ``keep_address`` re-issues to the same address
+without anybody typing it (support may only do that). The claim clears it. A row issued before crm-045 or without a
+key provider keeps none: 409 ``address_not_kept``.
+
 6. **Clean-up read** (:func:`account_links`, S263): the partner-account clean-up (:mod:`app.members.accounts`) reads
    every row bound to an identity, as ``job:crm_partner_accounts`` (crm-039, read only), so it never deletes an account
    a studio invitation still uses.
@@ -34,10 +40,11 @@ import datetime as dt
 import logging
 import os
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import asyncpg
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
@@ -65,6 +72,8 @@ from app.tenancy import (
     studio_platform_tx,
     synthetic_agency,
 )
+from app.vault.errors import UnwrapDenied
+from app.vault.provider import KeyProvider
 
 log = logging.getLogger(__name__)
 
@@ -74,23 +83,29 @@ LOCALES = ("en", "vi")
 ACTIVATION_MAX_ATTEMPTS = 12
 
 FIND_SQL = """
-SELECT studio_invitation_id, cis_tenant_id, status FROM crm.studio_invitation WHERE cis_invitation_id = $1 FOR UPDATE
+SELECT studio_invitation_id, cis_tenant_id, status, email_kept, email_kept_dek, email_kept_kek_provider,
+       email_kept_kek_id
+  FROM crm.studio_invitation WHERE cis_invitation_id = $1 FOR UPDATE
 """
 INSERT_SQL = """
-INSERT INTO crm.studio_invitation (cis_tenant_id, cis_invitation_id, email_enc, token_hash, locale, expires_at)
-VALUES ($1, $2, $3, $4, $5, now() + make_interval(hours => $6))
+INSERT INTO crm.studio_invitation (cis_tenant_id, cis_invitation_id, email_enc, token_hash, locale, expires_at,
+                                   email_kept, email_kept_dek, email_kept_kek_provider, email_kept_kek_id)
+VALUES ($1, $2, $3, $4, $5, now() + make_interval(hours => $6), $7, $8, $9, $10)
 RETURNING studio_invitation_id, expires_at
 """
 REISSUE_SQL = """
 UPDATE crm.studio_invitation
    SET status = 'pending', email_enc = $2, token_hash = $3, locale = $4, issued_at = now(),
-       expires_at = now() + make_interval(hours => $5)
+       expires_at = now() + make_interval(hours => $5),
+       email_kept = $6, email_kept_dek = $7, email_kept_kek_provider = $8, email_kept_kek_id = $9
  WHERE studio_invitation_id = $1
 RETURNING studio_invitation_id, expires_at
 """
 EXPIRE_SQL = "UPDATE crm.studio_invitation SET status = 'expired' WHERE studio_invitation_id = $1"
+# AA-1035 (crm-045): the claim clears the kept address (the invitation is never sent again once opened).
 CLAIM_SQL = """
-UPDATE crm.studio_invitation SET status = 'claimed', cognito_iss = $2, cognito_sub = $3, claimed_at = now()
+UPDATE crm.studio_invitation SET status = 'claimed', cognito_iss = $2, cognito_sub = $3, claimed_at = now(),
+       email_kept = NULL, email_kept_dek = NULL, email_kept_kek_provider = NULL, email_kept_kek_id = NULL
  WHERE studio_invitation_id = $1 AND status = 'pending'
 """
 ACCEPT_SQL = """
@@ -114,6 +129,71 @@ UPDATE crm.studio_invitation
 
 
 # ── the sealed address ────────────────────────────────────────────────────────────────────────────────────────────
+
+KEPT_VERSION = 1
+# The KMS encryption-context purpose of the kept address: the key policy allows a fixed list (AA-CIS-Infra
+# crm_dek_purposes); "mail" is the purpose of outbound mail data, which the kept address is (it only ever addresses the
+# invitation mail). tenant_id is the CIS tenant (a studio-only tenant has no crm.tenant row, so no vault DEK either).
+KEPT_PURPOSE = "mail"
+NOT_KEPT = "address_not_kept"
+
+
+@dataclass(frozen=True)
+class KeptAddress:
+    """The address sealed under a one-off data key (``blob``: version ‖ nonce ‖ ciphertext ‖ tag, AAD = the CIS
+    invitation id) and that key wrapped by the CRM KEK (``dek``), with the wrapper and key id that unwrap it."""
+
+    blob: bytes = field(repr=False)
+    dek: bytes = field(repr=False)
+    provider: str
+    kek_id: str
+
+    def columns(self) -> tuple[bytes, bytes, str, str]:
+        return self.blob, self.dek, self.provider, self.kek_id
+
+
+NO_KEPT: tuple[None, None, None, None] = (None, None, None, None)
+
+
+def _kept_context(cis_tenant_id: uuid.UUID) -> dict[str, str]:
+    return {"tenant_id": str(cis_tenant_id), "purpose": KEPT_PURPOSE}
+
+
+async def keep_address(
+    keys: KeyProvider | None, cis_tenant_id: uuid.UUID, cis_invitation_id: uuid.UUID, address: str
+) -> KeptAddress | None:
+    """Seal ``address`` under a fresh data key of the CRM KEK; None without a key provider (the invitation then cannot
+    be sent again to the same address: a typed one is needed). A KMS failure raises KeyUnavailable (503): the mail is
+    not sent, so no invitation is issued that the CRM could not keep."""
+    if keys is None:
+        return None
+    wrapper = keys.wrapper(keys.active_provider)
+    plaintext, wrapped, kek_id = await wrapper.generate(_kept_context(cis_tenant_id))
+    nonce = os.urandom(12)
+    sealed = AESGCM(plaintext).encrypt(nonce, address.encode("utf-8"), cis_invitation_id.bytes)
+    return KeptAddress(bytes([KEPT_VERSION]) + nonce + sealed, wrapped, wrapper.provider, kek_id)
+
+
+async def open_kept(keys: KeyProvider | None, row: Any, cis_tenant_id: uuid.UUID, cis_invitation_id: uuid.UUID) -> str:
+    """The address a row kept, or 409 ``address_not_kept`` (no kept address, or one that does not open: a changed
+    row). No key provider: 503 (KeyProviderNotConfigured, through require_keys)."""
+    if row is None or row["email_kept"] is None:
+        raise Conflict(NOT_KEPT, "this invitation kept no address; send it to a typed address")
+    from app.vault.provider import require_keys  # noqa: PLC0415 — the vault stays optional for this module's tests
+
+    provider = require_keys(keys)
+    blob = bytes(row["email_kept"])
+    if len(blob) < 1 + 12 + 16 or blob[0] != KEPT_VERSION:
+        raise Conflict(NOT_KEPT, "the kept address cannot be opened; send it to a typed address")
+    try:
+        dek = await provider.wrapper(row["email_kept_kek_provider"]).unwrap(
+            bytes(row["email_kept_dek"]), _kept_context(cis_tenant_id), row["email_kept_kek_id"]
+        )
+        plain = AESGCM(dek).decrypt(blob[1:13], blob[13:], cis_invitation_id.bytes)
+    except (UnwrapDenied, InvalidTag):
+        log.warning("crm_studio_invitation_kept_denied cis_invitation_id=%s", cis_invitation_id)
+        raise Conflict(NOT_KEPT, "the kept address cannot be opened; send it to a typed address") from None
+    return plain.decode("utf-8")
 
 
 def _key(token: str, cis_invitation_id: uuid.UUID) -> bytes:
@@ -209,30 +289,30 @@ async def issue(
     *,
     cis_tenant_id: uuid.UUID,
     cis_invitation_id: uuid.UUID,
-    email: str,
+    email: str | None,
     locale: str,
     staff_sub: str,
     mailer: Mailer,
     web_origin: str,
     ttl_hours: int,
+    keys: KeyProvider | None = None,
 ) -> dict[str, Any]:
     """Create or re-issue the studio invitation of one CIS invitation and send the AA system mail inside the
-    transaction (a mail failure rolls the row back: no invitation without its mail)."""
-    address = normalise_email(email)
+    transaction (a mail failure rolls the row back: no invitation without its mail).
+
+    AA-1035 (crm.ops.v1 1.12): ``email`` None = send again to the address the row kept (409 ``address_not_kept``
+    when it kept none: a row issued before crm-045, without a key provider, or never issued). Every issue with an
+    address keeps it (``keys``; without a provider nothing is kept)."""
     if locale not in LOCALES:
         raise Invalid("invalid_locale", "en or vi")
     if not web_origin:
         raise ServiceError("invitation_origin_not_configured", "PARTNER_WEB_ORIGIN is not set")
+    address = normalise_email(email) if email is not None else None
+    kept = await keep_address(keys, cis_tenant_id, cis_invitation_id, address) if address is not None else None
     token, token_hash = new_token()
-    sealed = seal_email(token, cis_invitation_id, address)
     async with studio_platform_tx(pool, actor=platform_actor(staff_sub)) as ctx:
         row = await ctx.conn.fetchrow(FIND_SQL, cis_invitation_id)
-        if row is None:
-            made = await ctx.conn.fetchrow(
-                INSERT_SQL, cis_tenant_id, cis_invitation_id, sealed, token_hash, locale, ttl_hours
-            )
-            reissued = False
-        else:
+        if row is not None:
             if row["cis_tenant_id"] != cis_tenant_id:
                 raise Conflict("invitation_tenant_mismatch", "this CIS invitation belongs to another tenant")
             if row["status"] == "claimed":
@@ -241,18 +321,37 @@ async def issue(
                 raise Conflict("invitation_accepted", "the person already accepted this invitation")
             if row["status"] == "revoked":
                 raise Gone("invitation_revoked", "this invitation was revoked; CIS creates a new one")
+        if address is None:
+            address = await open_kept(keys, row, cis_tenant_id, cis_invitation_id)
+            kept_columns: tuple[Any, ...] = (
+                row["email_kept"],
+                row["email_kept_dek"],
+                row["email_kept_kek_provider"],
+                row["email_kept_kek_id"],
+            )
+        else:
+            kept_columns = kept.columns() if kept is not None else NO_KEPT
+        sealed = seal_email(token, cis_invitation_id, address)
+        if row is None:
             made = await ctx.conn.fetchrow(
-                REISSUE_SQL, row["studio_invitation_id"], sealed, token_hash, locale, ttl_hours
+                INSERT_SQL, cis_tenant_id, cis_invitation_id, sealed, token_hash, locale, ttl_hours, *kept_columns
+            )
+            reissued = False
+        else:
+            made = await ctx.conn.fetchrow(
+                REISSUE_SQL, row["studio_invitation_id"], sealed, token_hash, locale, ttl_hours, *kept_columns
             )
             reissued = True
         await mailer.send(
             studio_invitation_message(address, link=f"{web_origin}/join?t={token}", expires_at=made["expires_at"])
         )
     log.info(
-        "crm_studio_invitation_issued studio_invitation_id=%s cis_tenant_id=%s reissued=%s",
+        "crm_studio_invitation_issued studio_invitation_id=%s cis_tenant_id=%s reissued=%s kept=%s to_kept=%s",
         made["studio_invitation_id"],
         cis_tenant_id,
         reissued,
+        kept_columns[0] is not None,
+        email is None,
     )
     return {
         "invitation_id": str(cis_invitation_id),
