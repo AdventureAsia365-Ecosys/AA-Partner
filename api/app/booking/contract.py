@@ -1,5 +1,5 @@
-"""Reading ``booking.b2b.v1`` answers (root contract, minor 1.1; 1.2 for :func:`held_set`) into small typed values
-(AA-947, AA-952).
+"""Reading ``booking.b2b.v1`` answers (root contract, minor 1.1; 1.2 for :func:`held_set`; 1.4 for :func:`tariff`) into
+small typed values (AA-947, AA-952, AA-1030).
 
 A **tolerant reader**: the fields the CRM uses are checked (type, pattern, enum); fields it does not use are ignored,
 so an additive minor (contracts README rule 2) never breaks the CRM. A missing or malformed field the CRM needs raises
@@ -462,4 +462,153 @@ def cancellation(data: Any) -> Cancellation:
         fee_pct=pct,
         days_before_departure=days,
         cancelled_at=None if raw_at is None else _datetime(raw_at, "cancelled_at"),
+    )
+
+
+# ── AA-1030 (contract 1.4): GET /tariff ─────────────────────────────────────────────────────────────────────────
+_DISCOUNT = re.compile(r"^\d+(\.\d{1,4})?$")
+_ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_TIER = re.compile(r"^[a-z][a-z0-9_]{1,31}$")  # booking.partner_tiers.code
+_SOURCE_ID = re.compile(r"^.{1,128}$")
+TARIFF_BASES = frozenset({"per_person_band_min_twin_share"})
+MAX_TARIFF_TEXT = 500
+
+
+def _count(data: dict[str, Any], key: str, minimum: int = 1) -> int:
+    value = data.get(key)
+    if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+        raise ContractError(f"{key} is missing or malformed")
+    return value
+
+
+def _count_or_none(data: dict[str, Any], key: str, minimum: int = 1) -> int | None:
+    return None if data.get(key) is None else _count(data, key, minimum)
+
+
+def _text(data: dict[str, Any], key: str) -> str | None:
+    """An optional display text (title, country, season): None, or a string of at most 500 characters."""
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or len(value) > MAX_TARIFF_TEXT:
+        raise ContractError(f"{key} is malformed")
+    return value
+
+
+def _day(value: Any, name: str) -> dt.date:
+    if not isinstance(value, str) or not _ISO_DAY.match(value):
+        raise ContractError(f"{name} is not a date")
+    return _date(value, name)
+
+
+@dataclass(frozen=True)
+class TariffItem:
+    """One window x pax band of a tour (``TariffItem``): every departure date from ``valid_from`` to ``valid_to``
+    prices the same. ``price`` is the whole line for ``priced_for_pax`` travellers, in the tariff currency."""
+
+    source_id: str
+    title: str | None
+    country: str | None
+    duration_days: int | None
+    season: str | None
+    valid_from: dt.date
+    valid_to: dt.date
+    pax_min: int
+    pax_max: int | None
+    priced_for_pax: int
+    priced_for_date: dt.date
+    price: Decimal
+    price_per_person: Decimal
+    agency_discount_pct: Decimal
+    rrp_per_person: Decimal | None
+    rrp_currency: str | None
+
+
+@dataclass(frozen=True)
+class Tariff:
+    currency: str
+    priced_on: dt.date
+    basis: str
+    tier_code: str
+    rate_per_usd: Decimal
+    rate_date: dt.date
+    truncated: bool
+    items: tuple[TariffItem, ...]
+
+
+def _tariff_item(value: Any, currency: str) -> TariffItem:
+    item = _obj(value, "tariff item")
+    tour = _obj(item.get("tour"), "tour")
+    price, price_currency = money(item.get("price"), "price")
+    per_person, per_person_currency = money(item.get("price_per_person"), "price_per_person")
+    if price_currency != currency or per_person_currency != currency or price < 0 or per_person < 0:
+        raise ContractError("price / price_per_person are not in the tariff currency")
+    rrp_amount: Decimal | None = None
+    rrp_currency: str | None = None
+    if item.get("rrp_per_person") is not None:  # AA's public price (price.from.v1): its own currency, may differ
+        rrp_amount, rrp_currency = money(item.get("rrp_per_person"), "rrp_per_person")
+        if rrp_amount < 0:
+            raise ContractError("rrp_per_person is negative")
+    pax_min = _count(item, "pax_min")
+    pax_max = _count_or_none(item, "pax_max")
+    if pax_max is not None and pax_max < pax_min:
+        raise ContractError("pax_max is below pax_min")
+    valid_from = _day(item.get("valid_from"), "valid_from")
+    valid_to = _day(item.get("valid_to"), "valid_to")
+    if valid_to < valid_from:
+        raise ContractError("valid_to is before valid_from")
+    discount = _decimal(item.get("agency_discount_pct"), _DISCOUNT, "agency_discount_pct")
+    if discount >= 1:
+        raise ContractError("agency_discount_pct is not a fraction below 1")
+    return TariffItem(
+        source_id=_str(tour, "source_id", _SOURCE_ID),
+        title=_text(item, "title"),
+        country=_text(item, "country"),
+        duration_days=_count_or_none(item, "duration_days", minimum=0),
+        season=_text(item, "season"),
+        valid_from=valid_from,
+        valid_to=valid_to,
+        pax_min=pax_min,
+        pax_max=pax_max,
+        priced_for_pax=_count(item, "priced_for_pax"),
+        priced_for_date=_day(item.get("priced_for_date"), "priced_for_date"),
+        price=price,
+        price_per_person=per_person,
+        agency_discount_pct=discount,
+        rrp_per_person=rrp_amount,
+        rrp_currency=rrp_currency,
+    )
+
+
+def tariff(data: Any, currency: str | None = None) -> Tariff:
+    """A 1.4 ``Tariff`` answer (the calling agency's own price per tour, season and pax band). Every row must read:
+    a half-read tariff is never shown (the route answers 503, as a quote that breaks the contract). ``currency``: the
+    one asked for; an answer in another currency is a :class:`ContractError`."""
+    body = _obj(data, "tariff")
+    tariff_currency = _str(body, "currency", _CURRENCY)
+    if currency is not None and tariff_currency != currency:
+        raise ContractError("the tariff is not in the asked currency")
+    basis = _str(body, "basis")
+    if basis not in TARIFF_BASES:
+        raise ContractError("basis is unknown")
+    tier = _str(body, "tier_code", _TIER)
+    fx = _obj(body.get("fx"), "fx")
+    rate = _decimal(fx.get("rate_per_usd"), _RATE, "fx.rate_per_usd")
+    if rate <= 0:
+        raise ContractError("fx.rate_per_usd is not positive")
+    truncated = body.get("truncated")
+    if not isinstance(truncated, bool):
+        raise ContractError("truncated is not a boolean")
+    items = body.get("items")
+    if not isinstance(items, list):
+        raise ContractError("items is not a list")
+    return Tariff(
+        currency=tariff_currency,
+        priced_on=_day(body.get("priced_on"), "priced_on"),
+        basis=basis,
+        tier_code=tier,
+        rate_per_usd=rate,
+        rate_date=_date(fx.get("rate_date"), "fx.rate_date"),
+        truncated=truncated,
+        items=tuple(_tariff_item(x, tariff_currency) for x in items),
     )

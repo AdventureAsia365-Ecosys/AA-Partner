@@ -47,6 +47,7 @@ DESIGN: dict[str, tuple[str, str, str]] = {
     "view_margin": (Y, Y, N),
     "money_fields_edit": (Y, Y, N),
     "aa_confirm": (Y, Y, N),  # AA-947 (S251 decision): confirming an AA hold books with AA; not the assistant
+    "aa_tariff_view": (Y, Y, N),  # AA-1030: the AA tariff (B2B prices, JSON and CSV), the same roles as view_margin
     "proposal_publish": (Y, Y, N),
     "message_send": (Y, Y, ASG),
     "ai_draft_approve": (Y, Y, ASG),
@@ -96,6 +97,17 @@ def test_the_matrix_has_exactly_three_roles_and_every_action_per_role() -> None:
     assert set(MATRIX) == {"owner", "agent", "assistant"}
     for role in ROLES:
         assert set(MATRIX[role]) == set(Action)
+
+
+def test_the_aa_tariff_is_never_wider_than_view_margin() -> None:
+    """AA-1030: the tariff carries B2B prices and its CSV bypasses the margin serializer, so a role that may read it
+    must also see margin. The default (S270) is the VIEW_MARGIN row itself; owner only would also pass the subset."""
+    assert MATRIX["owner"][Action.AA_TARIFF_VIEW] is Rule.ALLOW
+    for role in ROLES:
+        if may(role, Action.AA_TARIFF_VIEW):
+            assert may(role, Action.VIEW_MARGIN), role
+    tariff = tuple(rule_for(r, Action.AA_TARIFF_VIEW) for r in ROLES)
+    assert tariff == tuple(rule_for(r, Action.VIEW_MARGIN) for r in ROLES)  # S270 default: owner and agent
 
 
 def test_the_owner_may_do_everything_and_the_assistant_never_sees_margin() -> None:

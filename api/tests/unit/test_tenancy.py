@@ -116,6 +116,7 @@ def test_me_route_goes_through_tenant_tx(entitled: bool) -> None:
         "default_locale": "vi-VN",
         "crm_entitled": entitled,
         "ai_paused": False,  # no crm.llm_app_profile row: AI on
+        "permissions": {"aa_tariff_view": True},  # AA-1030: the owner sees the AA prices page
     }
     assert conn.sql("projected_at IS NOT NULL AND plan = 'free'") == [()]
 
@@ -141,6 +142,21 @@ def test_me_says_when_aa_paused_ai_for_the_whole_crm(enabled: bool) -> None:
     assert r.status_code == 200
     assert r.json()["ai_paused"] is (not enabled)
     assert "staff note" not in r.text
+
+
+@pytest.mark.parametrize(("role", "tariff"), [("owner", True), ("agent", True), ("assistant", False)])
+def test_me_says_which_roles_see_the_aa_tariff(role: str, tariff: bool) -> None:
+    """AA-1030: the web hides the AA prices links by /me permissions, the matrix's aa_tariff_view answer."""
+    pools = LocalPools()
+    settings = pools.settings()
+    conn = _conn(member={"member_id": MEMBER, "role": role})
+    conn.on("SELECT display_name, default_locale", {"display_name": "Invented Lotus Travel", "default_locale": "en-AU"})
+    conn.on("FROM crm.tenant_entitlement", True)
+    app = create_app(settings, FakeDatabase(conn, settings), pools.verifier(settings))
+    headers = {"Authorization": f"Bearer {pools.partner_web()}", "X-AA-Tenant-Id": str(TENANT)}
+    with TestClient(app) as c:
+        r = c.get("/crm/v1/me", headers=headers)
+    assert r.status_code == 200 and r.json()["permissions"] == {"aa_tariff_view": tariff}
 
 
 def test_me_for_a_non_member_is_403() -> None:

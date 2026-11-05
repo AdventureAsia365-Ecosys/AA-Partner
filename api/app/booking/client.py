@@ -16,6 +16,10 @@ Two kinds of failure, both codes only (never a body, a token or a URL in a messa
   ``unknown_partner``, ``forbidden``, ``not_found``; ``code`` is the contract's ``error`` and ``problem`` the parsed
   body (``price_hash``, ``tour_state``, ``retry_after_s``, ...).
 
+AA-1030 (contract 1.4): :meth:`BookingClient.tariff` / :meth:`BookingClient.tariff_csv` read the agency's own tariff;
+the CSV variant goes through the same :meth:`BookingClient._send` (token, 401, 5xx / 408, 429, refusals) and returns
+Booking's file bytes unchanged.
+
 The transport is :mod:`app.cis.http` (no redirects, bounded body, a timeout per call).
 """
 
@@ -28,7 +32,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from app.cis.http import DEFAULT_TIMEOUT_S, HttpError, Transport, urllib_transport
+from app.cis.http import DEFAULT_TIMEOUT_S, HttpError, HttpResponse, Transport, urllib_transport
 from app.cis.m2m import TokenError, TokenProvider
 
 PREFIX = "/booking/b2b/v1"
@@ -83,11 +87,35 @@ def _path_id(value: str) -> str:
     return urllib.parse.quote(value, safe=":_.-")
 
 
+def _tariff_query(currency: str, source_id: str | None, fmt: str) -> dict[str, str]:
+    query = {"currency": currency, "format": fmt}
+    if source_id:
+        query["source_id"] = source_id
+    return query
+
+
+def _header(resp: HttpResponse, name: str) -> str:
+    for key, value in resp.headers.items():
+        if key.lower() == name:
+            return value
+    return ""
+
+
+_ATTACHMENT_NAME = re.compile(r'filename="?([A-Za-z0-9][A-Za-z0-9._-]{0,150}\.csv)"?(;|$)')
+
+
+def _attachment_name(disposition: str) -> str | None:
+    """The plain ``filename`` of a ``Content-Disposition`` (letters, digits, ``.``, ``_``, ``-``, ending ``.csv``), so
+    it can be sent on as it is; anything else is None (the CRM then names the file itself)."""
+    match = _ATTACHMENT_NAME.search(disposition.strip())
+    return match.group(1) if match else None
+
+
 class BookingClient:
     def __init__(self, config: BookingConfig) -> None:
         self._config = config
 
-    async def _call(
+    async def _send(
         self,
         method: str,
         path: str,
@@ -97,7 +125,10 @@ class BookingClient:
         body: dict[str, Any] | None = None,
         query: dict[str, str] | None = None,
         idempotency_key: str | None = None,
-    ) -> dict[str, Any]:
+        accept: str = "application/json",
+    ) -> HttpResponse:
+        """One Booking call: the scope's token, the agency header, and every non-2xx answer mapped to
+        :class:`BookingUnavailable` / :class:`BookingRefusal`. A 2xx response comes back as it is."""
         config = self._config
         try:
             token = await config.tokens.token(scope)
@@ -105,7 +136,7 @@ class BookingClient:
             raise BookingUnavailable(exc.error_class) from None
         headers = {
             "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
+            "Accept": accept,
             "X-AA-Tenant-Id": str(tenant_id),
         }
         raw = None
@@ -128,18 +159,32 @@ class BookingClient:
         if status >= 500 or status == 408:
             raise BookingUnavailable("booking_unavailable")
         if 200 <= status < 300:
-            if status == 204 or not resp.body:
-                return {}
-            data = _problem(resp.body)
-            if not data:
-                raise BookingUnavailable("booking_contract")
-            return data
+            return resp
         problem = _problem(resp.body)
         code = problem.get("error")
         code = code if isinstance(code, str) and _CODE.match(code) else f"http_{status}"
         if status == 429 and code != "rehold_limit":
             raise BookingUnavailable("booking_throttled")
         raise BookingRefusal(status, code, problem)
+
+    async def _call(
+        self,
+        method: str,
+        path: str,
+        scope: str,
+        tenant_id: uuid.UUID,
+        *,
+        body: dict[str, Any] | None = None,
+        query: dict[str, str] | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        resp = await self._send(method, path, scope, tenant_id, body=body, query=query, idempotency_key=idempotency_key)
+        if resp.status == 204 or not resp.body:
+            return {}
+        data = _problem(resp.body)
+        if not data:
+            raise BookingUnavailable("booking_contract")
+        return data
 
     # ── reads ────────────────────────────────────────────────────────────────────────────────────
 
@@ -160,6 +205,22 @@ class BookingClient:
     async def price_parity(self, tenant_id: uuid.UUID, source_id: str, currency: str) -> dict[str, Any]:
         query = {"source_system": "cis", "source_id": source_id, "currency": currency}
         return await self._call("GET", "/price-parity", READ, tenant_id, query=query)
+
+    async def tariff(self, tenant_id: uuid.UUID, *, currency: str, source_id: str | None = None) -> dict[str, Any]:
+        """AA-1030 (contract 1.4): the agency's own tariff as JSON (read with :func:`app.booking.contract.tariff`)."""
+        return await self._call("GET", "/tariff", READ, tenant_id, query=_tariff_query(currency, source_id, "json"))
+
+    async def tariff_csv(
+        self, tenant_id: uuid.UUID, *, currency: str, source_id: str | None = None
+    ) -> tuple[bytes, str | None]:
+        """AA-1030: the same tariff as Booking's CSV file (its columns, ``tariff.CSV_COLUMNS``; the CRM never builds the
+        file again) and the file name of its ``Content-Disposition`` (None when absent or not a plain file name). The
+        failures are those of every call; a 2xx that is not a CSV file is ``booking_contract``."""
+        query = _tariff_query(currency, source_id, "csv")
+        resp = await self._send("GET", "/tariff", READ, tenant_id, query=query, accept="text/csv")
+        if "text/csv" not in _header(resp, "content-type").lower():
+            raise BookingUnavailable("booking_contract")
+        return resp.body, _attachment_name(_header(resp, "content-disposition"))
 
     async def get_hold(self, tenant_id: uuid.UUID, hold_id: str) -> dict[str, Any]:
         return await self._call("GET", f"/holds/{_path_id(hold_id)}", READ, tenant_id)

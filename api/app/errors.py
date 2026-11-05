@@ -67,6 +67,12 @@ class DatabaseBusy(RateLimited):
     status_code = 503
 
 
+class UnavailableRetry(RateLimited):
+    """503 with ``Retry-After`` (AA-1030): a service the route needs (Booking) did not answer; try again later."""
+
+    status_code = 503
+
+
 RETRY_AFTER_DB_BUSY_S = 2
 
 

@@ -90,6 +90,10 @@ class Action(StrEnum):
     VIEW_MARGIN = "view_margin"  # B2B price ("net"), cost, margin, commission
     MONEY_FIELDS_EDIT = "money_fields_edit"
     AA_CONFIRM = "aa_confirm"  # AA-947: confirm a held AA line, which creates a real AA booking (S251)
+    # AA-1030: read and download the agency's AA tariff (AA's B2B price per tour, season and pax band, booking.b2b.v1
+    # 1.4). Owner and agent, like VIEW_MARGIN (the tariff is the B2B price): the margin serializer does not cover the
+    # CSV bytes, so this gate is the guard. Owner only = change the assistant-and-agent cells of this one row.
+    AA_TARIFF_VIEW = "aa_tariff_view"
     PROPOSAL_PUBLISH = "proposal_publish"
     MESSAGE_SEND = "message_send"
     AI_DRAFT_APPROVE = "ai_draft_approve"
@@ -163,6 +167,7 @@ _TABLE: dict[Action, tuple[Rule, Rule, Rule]] = {
     Action.VIEW_MARGIN: (A, A, D),
     Action.MONEY_FIELDS_EDIT: (A, A, D),
     Action.AA_CONFIRM: (A, A, D),
+    Action.AA_TARIFF_VIEW: (A, A, D),
     Action.PROPOSAL_PUBLISH: (A, A, D),
     Action.MESSAGE_SEND: (A, A, Rule.ASSIGNED),
     Action.AI_DRAFT_APPROVE: (A, A, Rule.ASSIGNED),
