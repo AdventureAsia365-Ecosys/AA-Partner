@@ -12,7 +12,8 @@ The guard, in order:
    (a ``cis-admin`` or ``breakglass`` token on ``/crm/v1``, a partner token on ``/crm/ops/v1``, ...);
 4. the class needs a group and the token holds none of them -> **403** ``missing_group``;
 5. AA-1019 (root ADR 0006a A10c): the Dev-only CRM staff E2E identity outside ``dev`` / ``test`` / ``local`` ->
-   **403** ``e2e_read_only`` (the token cannot exist elsewhere: this is the second lock);
+   **403** ``e2e_read_only`` (the token cannot exist elsewhere: this is the second lock); AA-1035 (A10d) the Dev-only
+   CIS customer_success E2E identity likewise;
 6. AA-969 (CRM-37a): on the agency class only, more than ``RATE_LIMIT_MEMBER_PER_MINUTE`` requests in a minute by
    one member for one agency (``iss`` + ``sub`` + the canonical ``X-AA-Tenant-Id`` uuid, ``app.state.member_limiter``)
    -> **429** ``rate_limited``. The agency is part of the key only once this task verified the caller's membership of
@@ -68,6 +69,10 @@ class Caller:
     # AA-1019 (A10c; :mod:`app.auth.e2e_staff`): the Dev-only CRM staff E2E identity. Every staff context refuses an
     # agency that is not synthetic for it (403 ``e2e_synthetic_only``, :mod:`app.tenancy`).
     e2e_synthetic_only: bool = False
+    # AA-1035 (A10d; :mod:`app.auth.e2e_staff`): the Dev-only CIS customer_success E2E identity. No write at all:
+    # require_group and the studio invitation relay refuse it (403 ``e2e_read_only``). Deliberately not
+    # ``e2e_read_only``, which opens the A10b-1 invitation path (:func:`app.members.studio.check_e2e_invitation`).
+    e2e_no_write: bool = False
 
     def in_group(self, group: str) -> bool:
         return group in self.groups
@@ -115,6 +120,10 @@ def guard_for(route_class: RouteClass) -> Callable[..., Awaitable[Caller]]:
         if e2e_crm_staff and _environment(request) not in DEV_ONLY_ENVIRONMENTS:
             log.warning("route_guard_e2e_crm_staff_refused class=%s", route_class.name)
             raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
+        e2e_cis_cs = issuer_kind == WORKFORCE and e2e_staff.is_e2e_cis_cs(principal.email)
+        if e2e_cis_cs and _environment(request) not in DEV_ONLY_ENVIRONMENTS:
+            log.warning("route_guard_e2e_cis_cs_refused class=%s", route_class.name)
+            raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
         caller = Caller(
             route_class=route_class.name,
             issuer_kind=issuer_kind,
@@ -124,6 +133,7 @@ def guard_for(route_class: RouteClass) -> Callable[..., Awaitable[Caller]]:
             groups=principal.groups,
             e2e_read_only=issuer_kind == WORKFORCE and e2e_staff.is_e2e_cis_admin(principal.email),
             e2e_synthetic_only=e2e_crm_staff,
+            e2e_no_write=e2e_cis_cs,
         )
         if route_class.name == "agency":
             _member_rate_limit(request, caller)
@@ -201,10 +211,11 @@ def require_group(group: str) -> Callable[[Caller], Caller]:
     """A route-level dependency for a write that needs one specific group (e.g. ``crm-platform-admin`` on ops).
 
     The Dev-only E2E CIS admin is refused with 403 ``e2e_read_only`` whatever groups its token holds (root ADR 0006a
-    A10b: read-only; the trigger never issues it a write group, this is the second lock)."""
+    A10b: read-only; the trigger never issues it a write group, this is the second lock), and so is the Dev-only CIS
+    customer_success E2E identity (A10d, ``e2e_no_write``)."""
 
     def dependency(caller: Annotated[Caller, Depends(current_caller)]) -> Caller:
-        if caller.e2e_read_only:
+        if caller.e2e_read_only or caller.e2e_no_write:
             log.warning("route_guard_e2e_read_only class=%s group=%s", caller.route_class, group)
             raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
         if not caller.in_group(group):
