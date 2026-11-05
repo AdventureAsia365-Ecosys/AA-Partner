@@ -324,6 +324,9 @@ export const SERVER_ONLY_ROUTES: readonly BffRoute[] = [
   // AA-940: the sign-in event, sent by /auth/agency after a real sign-in or a chooser pick (a browser route would let
   // any member add sign-in events at will).
   { method: "POST", pattern: /^audit\/sign-in$/, tenant: true, card: "AA-940" },
+  // S270: the currencies the AA prices page offers (owner / agent, API Action.AA_TARIFF_VIEW); the page reads it on the
+  // server before the tariff, the browser never asks for it.
+  { method: "GET", pattern: /^aa\/tariff\/currencies$/, tenant: true, card: "AA-1029/AA-1030" },
 ];
 
 export function matchBff(method: string, subPath: string, routes: readonly BffRoute[] = BFF_ROUTES): BffRoute | null {

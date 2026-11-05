@@ -2,10 +2,22 @@
 // tour, season and group size, with its tier or contract discount; GET /crm/v1/aa/tariff, live from AA). Owner and
 // agent (/me permissions.aa_tariff_view; the API refuses the assistant too). Currency select, Download CSV (AA's file,
 // through the BFF) and Print (app/globals.css print rules). Indicative: a quote is the binding price.
+// S270: the currency select offers USD plus the currencies AA has an approved FX rate for today (GET
+// /crm/v1/aa/tariff/currencies, read first: the API caches it); a ?currency= that is not offered shows USD with a
+// role=status notice, and a 422 aa_tariff_invalid says "pick another currency", never "AA cannot be reached".
 import { EmptyState, ErrorState, K } from "@/app/_kit";
 import { AaTariffTable, AaTariffToolbar } from "@/components/aaTariff/AaTariffView";
 import { PageTitle } from "@/components/PageTitle";
-import { seesAaTariff, TARIFF_TIMEOUT_MS, tariffCurrency, tariffErrorKey, type TariffView } from "@/lib/aaTariff";
+import {
+  offeredCurrencies,
+  pickCurrency,
+  seesAaTariff,
+  TARIFF_CURRENCIES_PATH,
+  TARIFF_TIMEOUT_MS,
+  tariffErrorKey,
+  type TariffCurrencies,
+  type TariffView,
+} from "@/lib/aaTariff";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { formatDate } from "@/lib/dates";
@@ -32,7 +44,8 @@ export default async function AaTariffPage({ searchParams }: { searchParams: Pro
   }
   const { session } = await serverContext();
   if (!session) return null;
-  const currency = tariffCurrency((await searchParams).currency);
+  const offered = offeredCurrencies(await crmCall<TariffCurrencies>(ctx.cfg, session, "GET", TARIFF_CURRENCIES_PATH));
+  const { currency, fellBack } = pickCurrency((await searchParams).currency, offered);
   const view = await crmCall<TariffView>(ctx.cfg, session, "GET", "aa/tariff", {
     query: new URLSearchParams({ currency }),
     timeoutMs: TARIFF_TIMEOUT_MS,
@@ -44,7 +57,12 @@ export default async function AaTariffPage({ searchParams }: { searchParams: Pro
       <p data-testid="tariff-indicative" style={{ margin: 0, fontSize: 13, color: K.ink, fontWeight: 600 }}>
         {tr("tariff.indicative")}
       </p>
-      <AaTariffToolbar currency={currency} lang={ctx.lang} />
+      <AaTariffToolbar currency={currency} currencies={offered} lang={ctx.lang} />
+      {fellBack && (
+        <p role="status" style={{ margin: 0, fontSize: 12.5, color: K.amberDeep }} data-testid="tariff-currency-fallback">
+          {fmt(tr("tariff.currencyFallback"), { currency: fellBack })}
+        </p>
+      )}
       {!view.ok ? (
         <div data-testid="tariff-error" data-detail={view.detail}>
           <ErrorState message={tr(tariffErrorKey(view.detail))} />

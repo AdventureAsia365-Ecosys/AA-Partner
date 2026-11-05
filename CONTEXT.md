@@ -1545,6 +1545,15 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
   `permissions.aa_tariff_view`, which hides the page's links
   (Settings, the builder's AA drawer) from the assistant. The page: table, currency select, Download CSV (BFF route
   marked `download`: the API's file name passes on), Print (print CSS); prices are indicative, a quote is binding.
+  S270 (AA-1029): the select offers USD plus the quote currencies AA has an approved FX rate for today:
+  `GET /crm/v1/aa/tariff/currencies` (same `aa_tariff_view` gate, no audit event: no price; a server-only web route)
+  answers `{currencies, rate_date, checked}` from Booking `GET /fx-rates` (`BookingClient.fx_rates`,
+  `contract.fx_rates`), one answer per API process for 10 min (`TariffCurrencies`; FX rows are global); Booking down,
+  refusing or not connected -> every quote currency with `checked: false`, never a 5xx. A `?currency=` not offered
+  shows USD with a `role=status` notice; Booking's 422 `invalid` for a currency without a rate (the tariff read)
+  is `aa_tariff_invalid` -> "AA does not price in this currency today. Pick another currency." The BFF passes the
+  API's `Retry-After` on for a 429 or 503 only when it is 1 to 4 digits (`lib/retryAfter.ts`; `lib/proxyResponse.ts`
+  still forwards Content-Type only), and the download's busy message names those seconds.
 - **AA-aware Lost**: `GET /trips/{id}/lines` answers `lost_reason_hint` (declined -> `aa_on_request_declined`, or
   `aa_sold_out` when Booking said sold out); the Lost picker pre-selects it. Lost (and cancel) holds the waiting
   quote / requote / hold / refresh requests back by the Undo window and queues a release of every line AA has not

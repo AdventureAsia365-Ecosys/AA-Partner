@@ -11,6 +11,7 @@ Route                                          What                             
                                                                                               sell: owner, agent;
                                                                                               confirm: owner, agent)
 ``GET  /aa/tariff``                            the agency's AA tariff (JSON or Booking's CSV)  owner, agent
+``GET  /aa/tariff/currencies``                 the currencies AA prices the tariff in today    owner, agent
 =============================================  =============================================  ======================
 
 Every ask is queued in ``crm.aa_request`` and sent by ``crm_booking_sync`` (:mod:`app.booking.sync`); the answer is
@@ -24,6 +25,9 @@ AA-1030: ``GET /aa/tariff?currency=&format=json|csv&source_id=`` (booking.b2b.v1
 (the currency, the format and the tour asked for, never an amount) and answers ``Cache-Control: no-store``; the CSV
 is Booking's file, with its file name. Booking is read through :class:`app.booking.tariff.TariffReader` (at most two
 reads in flight per process and one per agency, else 429 ``aa_tariff_busy``; a finished answer kept 60 s).
+S270: ``GET /aa/tariff/currencies`` (same gate, no audit event: no price) answers ``{currencies, rate_date, checked}``,
+USD plus the quote currencies Booking has an approved FX rate for today (:class:`app.booking.tariff.TariffCurrencies`,
+10 min per process); Booking down or not connected -> every quote currency with ``checked: false``, never a 5xx.
 """
 
 from __future__ import annotations
@@ -188,3 +192,16 @@ async def get_tariff(
     if found.filename is not None:
         headers["Content-Disposition"] = f'attachment; filename="{found.filename}"'
     return Response(content=found.body, media_type=found.media_type, headers=headers)
+
+
+@router.get("/aa/tariff/currencies")
+async def get_tariff_currencies(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
+    """S270: the currencies the AA prices page offers (USD + those AA has an approved FX rate for today)."""
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.AA_TARIFF_VIEW):
+        pass  # the membership and the role; nothing is read here
+    offer = getattr(request.app.state, "aa_tariff_currencies", None)
+    if offer is None:
+        return aa_tariff.static_currencies()
+    # Booking is asked after the membership check, outside the transaction (no connection held while it answers).
+    return await offer.get(tenant_id, dt.datetime.now(dt.UTC).date())
