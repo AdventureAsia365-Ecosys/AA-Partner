@@ -74,6 +74,7 @@ REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = (
     # crm.tenant_entitlement.projected_at (contract: MIG-4, applied before this code; needs crm-042 in number order).
     "crm-042",
     "crm-043",
+    "crm-044",  # AA-969 d16: crm.tenant.is_pilot, the CIS pilot marker (contract: MIG-4, applied before this code)
 )
 REQUIRED_SCHEMA_VERSION = max(REQUIRED_SCHEMA_VERSIONS)
 
