@@ -7,10 +7,12 @@ Card R: an AA staff token on the download route is 403 (route class AGENCY); an 
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import csv
 import datetime as dt
 import hashlib
+import importlib
 import io
 import json
 import re
@@ -777,3 +779,86 @@ def test_every_sealed_column_opens_under_the_name_its_writer_used() -> None:
     assert odd == set(), f"sealed under a name that is not its column: map it in tables.COLUMN_AAD: {odd}"
     assert T.Table("signature_event", ("event_id",), ()).aad_column("envelope_enc") == "envelope"
     assert T.Table("traveler", ("traveler_id",), ()).aad_column("email_enc") == "email_enc"
+
+
+def _constants(tree: ast.Module) -> dict[str, Any]:
+    """The module-level string constants of a module, and the names it imports (resolved by importing them)."""
+    found: dict[str, Any] = {}
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Constant)
+        ):
+            found[node.targets[0].id] = node.value.value
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            for alias in node.names:
+                value = getattr(importlib.import_module(node.module), alias.name, None)
+                if isinstance(value, str):
+                    found[alias.asname or alias.name] = value
+    return found
+
+
+UNRESOLVED = object()
+
+
+def _seal_calls() -> list[tuple[str, str, Any, Any]]:
+    """Every vault seal in app/ (``.encrypt`` / ``.encrypt_bytes`` with the four positional arguments table, column,
+    row id, value): (where, table, column or UNRESOLVED, purpose or UNRESOLVED; no ``purpose=`` = ``vault``)."""
+    app = Path(__file__).resolve().parents[2] / "app"
+    out: list[tuple[str, str, Any, Any]] = []
+    for path in sorted(app.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        consts = _constants(tree)
+
+        def value(node: ast.expr | None, consts: dict[str, Any] = consts) -> Any:
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                return node.value
+            if isinstance(node, ast.Name) and isinstance(consts.get(node.id), str):
+                return consts[node.id]
+            return UNRESOLVED
+
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in ("encrypt", "encrypt_bytes")
+                and len(node.args) >= 4  # the AES-GCM primitives take (nonce, data, aad): not a vault seal
+            ):
+                continue
+            table = value(node.args[0])
+            assert table is not UNRESOLVED, f"{path.name}:{node.lineno}: seal a column under a literal table name"
+            purpose_kw = next((k.value for k in node.keywords if k.arg == "purpose"), None)
+            purpose = "vault" if purpose_kw is None else value(purpose_kw)
+            out.append((f"{path.relative_to(app)}:{node.lineno}", table, value(node.args[1]), purpose))
+    return out
+
+
+def test_every_sealed_column_opens_under_the_purpose_its_writer_used() -> None:
+    """S269 (live, AA-969 restore drill): ``message_delivery.variables_enc`` is sealed under the ``mail`` DEK
+    (app.messaging.compose, app.workflows.engine) but the export opened it under ``vault``, so every agency export with a
+    sent text template failed ``decrypt_denied`` for good (and with it the pilot's nightly backup);
+    ``ops_release.payload_enc`` (the ``ops_release`` DEK) had the same hole. Every writer in app/ must seal a column
+    under the purpose :meth:`T.Table.purpose` opens it with (``T.MAIL_TABLES`` / ``T.COLUMN_PURPOSES``)."""
+    by_aad = {(t, aad): column for (t, column), aad in T.COLUMN_AAD.items()}
+    calls = _seal_calls()
+    seen = {(t, c, p) for _, t, c, p in calls}
+    assert ("message_delivery", "variables_enc", "mail") in seen and ("ops_release", "payload_enc", "ops_release") in seen
+    assert ("traveler", "display_name_enc", "vault") in seen and ("signature_event", "envelope", "docs") in seen
+    wrong: list[str] = []
+    for where, table, column, purpose in calls:
+        if table in T.NEVER_EXPORT_TABLES or (table, column) in SEALED_OBJECTS or column in T.NEVER_EXPORT_COLUMNS:
+            continue
+        if purpose is UNRESOLVED:
+            wrong.append(f"{where}: pass purpose= as a literal or a module constant")
+            continue
+        # A column chosen at run time (``f"{field}_enc"``): the table's default purpose must hold for it.
+        db_column = "__any_enc" if column is UNRESOLVED else by_aad.get((table, column), column)
+        opened = T.Table(table, ("id",), ()).purpose(db_column)
+        if opened != purpose:
+            wrong.append(f"{where}: {table}.{db_column} sealed under {purpose!r}, the export opens it under {opened!r}")
+    assert wrong == [], "map the purpose in tables.MAIL_TABLES / COLUMN_PURPOSES:\n" + "\n".join(wrong)
+    assert T.Table("message_delivery", ("message_id",), ()).purpose("variables_enc") == "mail"
+    assert T.Table("ops_release", ("ops_release_id",), ()).purpose("payload_enc") == "ops_release"
+    assert T.Table("ops_release", ("ops_release_id",), ()).purpose("other_enc") == "vault"
