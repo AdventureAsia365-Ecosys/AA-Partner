@@ -1282,7 +1282,11 @@ async def ops_tx(pool: asyncpg.Pool, caller: Caller, tenant_id: uuid.UUID) -> As
 
 # crm-010: SQLSTATE of the hold rule (erase_subject, the hold guard triggers).
 LEGAL_HOLD_SQLSTATE = "CRM10"
-LIFECYCLE_ACTORS = frozenset({"job:crm_lifecycle", "job:crm_offboard", "job:crm_data_export"})  # + AA-967
+# + AA-967; AA-969 d16: the pilot agency's nightly backup and its restore drill (app.lifecycle.pilot,
+# app.portability.restore_drill).
+LIFECYCLE_ACTORS = frozenset(
+    {"job:crm_lifecycle", "job:crm_offboard", "job:crm_data_export", "job:crm_pilot_backup", "job:crm_restore_drill"}
+)
 TENANT_STATUS_SQL = "SELECT status FROM crm.tenant WHERE tenant_id = $1"
 ERASER_ROLE = "crm_eraser"
 INSIGHTS_ROLE = "crm_insights"  # AA-966: the module 17 fact reader (as_insights_reader)

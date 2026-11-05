@@ -27,6 +27,18 @@ SLO** (`docs/operations/slo.md`). Only the orchestrating agent or the tech lead 
   fields or carries `jobs_error` / `ops_checks_error` (all fail closed), the calm agencies' error rate above 1 % (k6
   `abortOnFail`), and a wall clock of the duration + 2 minutes. If the runner itself fails mid-run, it stops k6
   before it exits (exit 3): k6 never keeps running unguarded.
+- **Momentary CIS conditions need two sampler lines** (S269): the CIS scheduler queues its fast periodic kinds
+  (`ai_usage_rollup`, `llm_route_watch`) every 15 minutes (xx:02, :17, :32, :47 UTC) and they finish in seconds, so a
+  CIS sampler tick that lands on that instant shows `queued_due` / `running` above 0 and a "starved" kind for a few
+  seconds. On S269 one such line aborted a healthy run at 112 s. "`shared.job` not idle" and "starved kinds" now stop
+  the run only when the previous CIS sampler line (the tick 5 minutes before) shows the same condition; the guard line
+  reports the unconfirmed one as a note ("... on the newest CIS line only: waiting for the next one"). Without a
+  previous line in the 11-minute window it stops at once (fail closed), and a previous line that lacks its counts
+  counts as busy. Every other condition (oldest queued age >= 900 s, a raised job / database check, a stale or
+  unreadable line, Booking, CRM, alarms) still stops the run at once. There is no exempt list to reuse: the Infra idle
+  gate exempts no `shared.job` kind (`db/owners.yaml` `idle_exempt_kinds: []`), and the sampler line carries counts,
+  not kinds. A real backlog that starts mid-run is therefore caught at the second tick, at most about 10 minutes
+  later, while the oldest-age and `jobs_starved` checks still stop it at once.
 
 ## One-time setup (orchestrator)
 
@@ -65,7 +77,8 @@ Pre-checks (all must hold; the runner checks 4-7 itself and refuses with exit 2)
 4. The AWS session is the Dev account (`--expect-account`, not written in this public repo).
 5. `/crm/health/ready` is `ok`.
 6. The newest CIS, Booking and CRM `ops_metrics_sampled` lines (at most 11 minutes old) show the queues idle and no
-   job / database check raised.
+   job / database check raised (a CIS due / running row or starved kind counts only when the CIS line before shows it
+   too, see "Momentary CIS conditions" above).
 7. No CIS / Booking / CRM CloudWatch alarm in ALARM.
 
 Run (k6 v0.57 or newer on the PATH, or `--k6 <path>`):

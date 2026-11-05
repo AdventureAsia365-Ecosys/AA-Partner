@@ -15,7 +15,8 @@ vi.mock("@/components/LocaleSwitch", () => ({ LocaleSwitch: () => null }));
 
 import { CrmShell, type ShellProps } from "@/app/_kit/local/CrmShell";
 import { dictionary } from "@/lib/i18n";
-import { ADD_ONS_PATH, plannerHref } from "@/lib/apps";
+import { plannerHref } from "@/lib/apps";
+import { CRM_ADD_ONS_PATH } from "@/lib/addOns";
 
 // The shell with `children` passed as the third createElement argument (react/no-children-prop).
 const Shell = CrmShell as unknown as React.FC<Omit<ShellProps, "children"> & { children?: React.ReactNode }>;
@@ -36,7 +37,7 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-async function mount(contentStudioHref: string | null = "/studio") {
+async function mount(contentStudioHref: string | null = "/studio", role: "owner" | "agent" = "owner") {
   const container = document.createElement("div");
   document.body.appendChild(container);
   await act(async () => {
@@ -47,11 +48,11 @@ async function mount(contentStudioHref: string | null = "/studio") {
         Shell,
         {
           dict: dictionary("en"),
-          role: "owner",
+          role,
           agencyName: "Lantern Bay Travel",
           agencyCount: 1,
           contentStudioHref,
-          plannerHref: plannerHref(contentStudioHref),
+          plannerHref: plannerHref(role),
           locale: "en-AU",
           syntheticBadge: false,
         },
@@ -111,16 +112,29 @@ describe("CRM app switcher", () => {
     const { q } = await mount();
     expect(q("[data-testid=crm-studio-link]")?.getAttribute("href")).toBe("/studio");
     const planner = q("[data-testid=crm-app-planner]");
-    expect(planner?.getAttribute("href")).toBe(ADD_ONS_PATH); // the studio's Add-ons page, no more mailto:
+    expect(planner?.getAttribute("href")).toBe(CRM_ADD_ONS_PATH); // the CRM's own Add-ons page (S269)
     expect(planner?.getAttribute("data-app-state")).toBe("request");
     expect(planner?.textContent).toContain("Trip planner: request add-on");
     expect(q("[data-testid=crm-nav-group-studio-toggle]")?.textContent).toContain("Apps");
   });
 
-  it("hides the group when the person has no Content studio (the request is the studio owner's)", async () => {
+  it("keeps the Trip planner for a CRM-only owner: the CRM's own Add-ons page (S269 live gap)", async () => {
     const { q } = await mount(null);
+    expect(q("[data-testid=crm-studio-link]")).toBeNull();
+    expect(q("[data-testid=crm-app-planner]")?.getAttribute("href")).toBe(CRM_ADD_ONS_PATH); // never the studio
+    expect(q("[data-testid=crm-nav-group-studio-toggle]")?.textContent).toContain("Apps");
+  });
+
+  it("hides the group for a member who is not the owner and has no Content studio", async () => {
+    const { q } = await mount(null, "agent");
     expect(q("[data-testid=crm-studio-link]")).toBeNull();
     expect(q("[data-testid=crm-app-planner]")).toBeNull();
     expect(q("[data-testid=crm-nav-group-studio-toggle]")).toBeNull();
+  });
+
+  it("an agent with the studio sees the studio link only", async () => {
+    const { q } = await mount("/studio", "agent");
+    expect(q("[data-testid=crm-studio-link]")?.getAttribute("href")).toBe("/studio");
+    expect(q("[data-testid=crm-app-planner]")).toBeNull();
   });
 });

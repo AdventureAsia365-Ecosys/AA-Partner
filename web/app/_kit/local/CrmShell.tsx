@@ -84,8 +84,8 @@ export interface ShellProps {
   agencyName: string;
   agencyCount: number;
   contentStudioHref: string | null;
-  /** AA-1036: the Trip planner entry, the studio's Add-ons page (lib/apps.ts plannerHref); null = no entry (the person
-   *  has no studio access, and the request is the studio owner's). */
+  /** AA-1036: the Trip planner entry, the CRM's own Settings > Add-ons page (lib/apps.ts plannerHref, S269: a CRM-only
+   *  owner has no studio); null = no entry (not the owner, who alone may ask). */
   plannerHref: string | null;
   locale: DateLocale;
   /** Dev / test: every agency is synthetic (ADR 0010 decision 3), so the agency card says so. */
@@ -181,7 +181,7 @@ function CrmSidebar({
 
       {GROUP_ORDER.map((group) => {
         if (group === "studio") {
-          if (!contentStudioHref) return null; // AA-1036 (R3): both entries need studio access
+          if (!contentStudioHref && !plannerHref) return null; // AA-1036 (R3): no studio access and not the owner
           return (
             <NavGroup
               key={group}

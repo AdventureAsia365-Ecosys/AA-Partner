@@ -1,12 +1,13 @@
 // web/app/(crm)/settings/page.tsx — Settings (A-18). AA-935: agency and role, language and dates (R32) with a
 // live date reading; the other sections (team, channels, payments, forms, AI, data and privacy) arrive with their
 // cards. AA-939: Team & roles (owner). AA-945: Mailbox and Saved replies. AA-964: AI assistant. AA-958: SMS and
-// WhatsApp.
+// WhatsApp. AA-1036 (R3): Add-ons (owner; the CRM owner's add-on request).
 import Link from "next/link";
 import { DateInput } from "@/components/DateInput";
 import { LocaleSwitch } from "@/components/LocaleSwitch";
 import { Panel, PageTitle } from "@/components/PageTitle";
 import { K } from "@/app/_kit";
+import { CRM_ADD_ONS_PATH } from "@/lib/addOns";
 import { crmContext } from "@/lib/crmContext";
 import { t, type MessageKey } from "@/lib/i18n";
 
@@ -87,6 +88,15 @@ export default async function SettingsPage() {
         <Link href="/settings/payments" style={{ fontSize: 13.5 }} data-testid="settings-payments-link">
           {t(lang, ctx.role === "owner" ? "payments.link" : "payments.ownerOnly")}
         </Link>
+      </Panel>
+      <Panel title={t(lang, "addons.title")} testId="settings-add-ons">
+        {ctx.role === "owner" ? (
+          <Link href={CRM_ADD_ONS_PATH} style={{ fontSize: 13.5 }} data-testid="settings-add-ons-link">
+            {t(lang, "addons.link")}
+          </Link>
+        ) : (
+          <p style={{ margin: 0, fontSize: 13 }}>{t(lang, "addons.ownerOnly")}</p>
+        )}
       </Panel>
       <Panel title={t(lang, "ai.title")} testId="settings-ai">
         <Link href="/settings/ai" style={{ fontSize: 13.5 }} data-testid="settings-ai-link">

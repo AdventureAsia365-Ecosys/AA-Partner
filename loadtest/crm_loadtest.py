@@ -21,7 +21,13 @@ Guards (the abort conditions of the README):
 4. the CRM API answers ``/crm/health/ready`` 200 ``status: ok``;
 5. ``shared.job`` idle: the newest CIS ``ops_metrics_sampled`` line (log group of the CIS API) shows no due queued
    row, nothing running, nothing starved and no ops check raised, and is at most 11 minutes old (the sampler runs
-   every 5 minutes); a missing or stale line is a failure (fail closed);
+   every 5 minutes); a missing or stale line is a failure (fail closed). S269: "a due row or a running row" and
+   "starved kinds" are momentary (:data:`CIS_TRANSIENT`): the CIS scheduler queues its fast periodic kinds every
+   15 minutes and they finish in seconds, so one line taken at that instant says nothing. Each stops the run only when
+   the line before the newest one (the previous sampler tick) shows it too; with no previous line in the window it
+   stops the run at once (fail closed). Every other condition stops at once, as before. The Infra idle gate exempts
+   no ``shared.job`` kind (``db/owners.yaml`` ``idle_exempt_kinds: []``), so there is no exempt list to reuse, and the
+   line carries counts, not kinds;
 6. ``booking.job`` idle enough: the newest Booking ``ops_metrics_sampled`` line shows no due row older than 120 s, no
    overdue running job and ``checks=ok`` (its always-queued ``bk_inquiry_pull`` runs every minute, so a running row is
    not by itself a failure; the exact idle check is the Infra idle gate run before, README step 3);
@@ -147,15 +153,22 @@ def token_seconds_left(token: str, now: float) -> float:
         raise Refused("the token file does not hold a JWT") from None
 
 
-def newest_sample(events: list[dict[str, Any]]) -> tuple[dict[str, Any], int] | None:
-    """The newest ``ops_metrics_sampled`` event of a ``filter-log-events`` answer: (fields, timestamp ms)."""
-    best: tuple[dict[str, Any], int] | None = None
+def newest_samples(events: list[dict[str, Any]], n: int = 2) -> list[tuple[dict[str, Any], int]]:
+    """The ``n`` newest ``ops_metrics_sampled`` events of a ``filter-log-events`` answer, newest first: (fields,
+    timestamp ms). Two lines of one instant (a duplicate delivery) count once."""
+    found: dict[int, dict[str, Any]] = {}
     for e in events:
         ts = int(e.get("timestamp", 0))
         fields = parse_sample(str(e.get("message", "")))
-        if fields is not None and (best is None or ts > best[1]):
-            best = (fields, ts)
-    return best
+        if fields is not None and ts not in found:
+            found[ts] = fields
+    return [(found[ts], ts) for ts in sorted(found, reverse=True)[:n]]
+
+
+def newest_sample(events: list[dict[str, Any]]) -> tuple[dict[str, Any], int] | None:
+    """The newest ``ops_metrics_sampled`` event of a ``filter-log-events`` answer: (fields, timestamp ms)."""
+    newest = newest_samples(events, 1)
+    return newest[0] if newest else None
 
 
 _KV = re.compile(r"([a-z_]+)=([^\s]+)")
@@ -223,7 +236,47 @@ def _checks_raised(value: Any) -> bool:
     return any(name.startswith(GUARD_CHECK_PREFIXES) for name in raised_checks(value))
 
 
-def judge_cis(sample: tuple[dict[str, Any], int] | None, now_ms: int) -> list[str]:
+# S269 (AA-969 follow-up): the CIS conditions that are momentary by nature. The CIS scheduler queues its fast periodic
+# kinds (ai_usage_rollup, llm_route_watch: every 15 minutes, done in seconds), so a sampler tick that lands on that
+# instant sees a due row, a running row and a kind "starved" for a few seconds. Each of these stops the run only when
+# the previous sampler line shows it too (:func:`cis_transient`); every other CIS condition stops it at once.
+CIS_TRANSIENT = ("busy", "starved")
+
+
+def cis_transient(fields: dict[str, Any]) -> dict[str, str]:
+    """The momentary conditions one CIS line shows: ``busy`` (a due queued or a running ``shared.job`` row) and
+    ``starved`` (a starved kind), each with its reason. A missing or unreadable count is busy (fail closed)."""
+    out = {}
+    if _num(fields, "queued_due") > 0 or _num(fields, "running") > 0:
+        out["busy"] = f"shared.job not idle (queued_due={fields.get('queued_due')}, running={fields.get('running')})"
+    if fields.get("starved"):
+        out["starved"] = "CIS job lag: starved kinds"
+    return out
+
+
+def unconfirmed_cis(
+    sample: tuple[dict[str, Any], int] | None, previous: tuple[dict[str, Any], int] | None
+) -> list[str]:
+    """The momentary conditions the newest CIS line shows but the previous line does not: reported, not acted on
+    (the next sampler tick confirms or clears them)."""
+    if sample is None or previous is None:
+        return []
+    before = cis_transient(previous[0])
+    return [
+        f"{why} on the newest CIS line only: waiting for the next one"
+        for key, why in cis_transient(sample[0]).items()
+        if key not in before
+    ]
+
+
+def judge_cis(
+    sample: tuple[dict[str, Any], int] | None,
+    now_ms: int,
+    previous: tuple[dict[str, Any], int] | None = None,
+) -> list[str]:
+    """The CIS guard's failures from the newest sampler line and the one before it (``previous``). A momentary
+    condition (:data:`CIS_TRANSIENT`) fails only when ``previous`` shows it too, or when there is no previous line
+    (fail closed)."""
     if sample is None:
         return ["shared.job: no CIS sampler line in the last 11 minutes (fail closed)"]
     fields, ts = sample
@@ -237,10 +290,12 @@ def judge_cis(sample: tuple[dict[str, Any], int] | None, now_ms: int) -> list[st
     if missing:
         out.append(f"shared.job: the CIS sampler line lacks {', '.join(missing)} (fail closed)")
         return out
-    if _num(fields, "queued_due") > 0 or _num(fields, "running") > 0:
-        out.append(f"shared.job not idle (queued_due={fields.get('queued_due')}, running={fields.get('running')})")
-    if fields.get("starved"):
-        out.append("CIS job lag: starved kinds")
+    before = cis_transient(previous[0]) if previous is not None else None
+    for key, why in cis_transient(fields).items():
+        if before is None:
+            out.append(why)
+        elif key in before:
+            out.append(f"{why} on two sampler lines in a row")
     if _num(fields, "oldest_queued_age_seconds") >= CRM_MAX_LAG_S:
         out.append("CIS job lag: oldest queued job >= 900 s")
     if _checks_raised(fields.get("ops_checks")):
@@ -324,6 +379,13 @@ def account_of(run: Runner) -> str:
 
 
 def samples(run: Runner, log_group: str, now_ms: int) -> tuple[dict[str, Any], int] | None:
+    """The newest sampler line of one log group in the last 11 minutes."""
+    recent = recent_samples(run, log_group, now_ms, 1)
+    return recent[0] if recent else None
+
+
+def recent_samples(run: Runner, log_group: str, now_ms: int, n: int = 2) -> list[tuple[dict[str, Any], int]]:
+    """The ``n`` newest sampler lines of one log group in the last 11 minutes, newest first."""
     out = run(
         [
             "logs",
@@ -338,7 +400,7 @@ def samples(run: Runner, log_group: str, now_ms: int) -> tuple[dict[str, Any], i
             "200",
         ]
     )
-    return newest_sample(json.loads(out or "{}").get("events", []))
+    return newest_samples(json.loads(out or "{}").get("events", []), n)
 
 
 def alarms_in_alarm(run: Runner) -> list[str]:
@@ -375,7 +437,11 @@ def guard_pass(args: argparse.Namespace, run: Runner, now: float | None = None) 
     for why in ready(args.base_url):
         report.fail(why)
     try:
-        report.failures += judge_cis(samples(run, LOG_GROUPS["cis"], now_ms), now_ms)
+        cis = recent_samples(run, LOG_GROUPS["cis"], now_ms, 2)
+        newest = cis[0] if cis else None
+        previous = cis[1] if len(cis) > 1 else None
+        report.failures += judge_cis(newest, now_ms, previous)
+        report.notes += unconfirmed_cis(newest, previous)
         report.failures += judge_booking(samples(run, LOG_GROUPS["booking"], now_ms), now_ms)
         report.failures += judge_crm(samples(run, LOG_GROUPS["crm"], now_ms), now_ms)
         report.failures += judge_alarms(alarms_in_alarm(run), args.alarm_prefix or ALARM_PREFIXES)
@@ -431,6 +497,7 @@ def precheck(args: argparse.Namespace, run: Runner, now: float | None = None) ->
     if report.ok:
         guards = guard_pass(args, run, now)
         report.failures += guards.failures
+        report.notes += guards.notes
     report.ok = not report.failures
     return report
 

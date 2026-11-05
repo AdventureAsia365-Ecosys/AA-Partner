@@ -74,6 +74,11 @@ REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = (
     # crm.tenant_entitlement.projected_at (contract: MIG-4, applied before this code; needs crm-042 in number order).
     "crm-042",
     "crm-043",
+    "crm-044",  # AA-969 d16: crm.tenant.is_pilot, the CIS pilot marker (contract: MIG-4, applied before this code)
+    # crm-045: AA-1035 R2 close-out, the kept address of crm.studio_invitation (app.members.studio reads and writes it;
+    # contract: MIG-4, applied before this code). Deploy Dev schema-gate also requires every migration file below it
+    # (crm-044 of another lane of the wave, when it is on main).
+    "crm-045",
 )
 REQUIRED_SCHEMA_VERSION = max(REQUIRED_SCHEMA_VERSIONS)
 
