@@ -1,0 +1,312 @@
+name: Visual
+
+# AA-1008 (S1d/S2c; root ADR 0016 decision 9, re-scoped by ADR 0019 d23: no preview hosts, so the per-PR run builds the
+# app in the runner) — the visual run of the agency app (web/: the CRM and the Content studio) from GitHub's network,
+# never the agent machine's IP. Every changed page (e2e/visual/changed-pages.mjs over the diff; a kit / shell / lib
+# change = every page) at 1440 x 900 and 390 x 844, light and dark, asserting: no page-level horizontal overflow (the
+# document AND the kit frames, which scroll on their own), 0 console errors, no failed same-origin request, a kit frame
+# present, the theme applied. Screenshots + report.json are the artifact `visual-partner-<target>-<run id>` (14 days);
+# the job summary and one PR comment carry the page x 4 table. Report-only: no required check (H3, the tech lead's
+# branch-protection step, makes it required later).
+#
+# Jobs:
+#   pr        pull_request (web / visual files) and dispatch without base_url: `next build` and the standalone server
+#             in the runner with KIT_GALLERY=1 and the fake configuration the Web Build smoke uses (ENVIRONMENT=test,
+#             no API, no sign-in): the public pages that changed + the gated kit gallery (every core component, the
+#             ShellFrame demo included). It first runs the SELF-TEST: the gallery with a planted overflow (document and
+#             frame) must make the run fail, and summary.mjs --selftest checks that each planted capture was caught; a
+#             self-test that passes is red.
+#   deployed  workflow_run after a green Deploy Web Dev on main (after its studio smoke: one sign-in at a time, the same
+#             authenticator), and dispatch from main with base_url: the changed pages (the deployed commit against its
+#             parent: main is squash-merged, one commit a PR; or `pages`) on the agency host:
+#             public pages without a session, the CRM and studio pages signed in as the e2e studio user (the studio
+#             smoke's partner sign-in). A page that session is sent away from is reported as skipped. Only PNGs and
+#             report.json are uploaded, never the auth state.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "!web/tests/**"
+      - "e2e/visual/**"
+      - "e2e/playwright.visual.config.ts"
+      - ".github/workflows/visual.yml"
+  # After every Dev deploy of the web (the whole Deploy Web Dev run green: deployed, verified, studio smoke passed), so the
+  # deploy workflow keeps its fixed job list (api/tests/unit/test_post_deploy_verify_web_portal.py) and the visual run
+  # signs in only after the smoke's sign-in is done (the same authenticator).
+  workflow_run:
+    workflows: ["Deploy Web Dev"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Deployed agency host (dispatch from main); empty = the build-in-the-runner run"
+        required: false
+        type: string
+        default: ""
+      pages:
+        description: "Comma list of page slugs (e2e/visual/pages.ts) or all"
+        required: false
+        type: string
+        default: "all"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: visual-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.base_url || github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  pr:
+    name: Visual (built in the runner, public pages + kit gallery)
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.base_url == '')
+    # Pinned (S252): ubuntu-latest moved to 26.04 and Playwright does not support Chromium there yet.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      BASE_URL: http://localhost:3005
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Changed pages
+        id: pages
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          PAGES: ${{ inputs.pages }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            SLUGS=$(node --experimental-strip-types --no-warnings e2e/visual/changed-pages.mjs "origin/$BASE_REF" HEAD)
+          else
+            SLUGS=${PAGES:-all}
+          fi
+          echo "slugs=$SLUGS" >> "$GITHUB_OUTPUT"
+          echo "Changed pages: ${SLUGS:-none}"
+
+      - name: Build the web (next build, standalone)
+        working-directory: web
+        env:
+          NODE_OPTIONS: --max-old-space-size=1536
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          cp -r .next/static .next/standalone/.next/static
+          cp -r public .next/standalone/public
+
+      # The fake configuration of the Web Build smoke (ci.yml): no API, no sign-in, localhost is the partner host.
+      - name: Start the standalone server with the kit gallery (KIT_GALLERY=1)
+        working-directory: web
+        env:
+          KIT_GALLERY: "1"
+          ENVIRONMENT: test
+          PORT: "3005"
+          HOSTNAME: 127.0.0.1
+          WEB_PUBLIC_ORIGIN: http://localhost:3005
+          WEB_PARTNER_HOSTS: localhost:3005
+          CRM_API_ORIGIN: http://127.0.0.1:9
+          COGNITO_DOMAIN: https://auth.example.test
+          COGNITO_CLIENT_ID: ciclient
+          COGNITO_CLIENT_SECRET: x
+          WEB_SESSION_SECRET: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          nohup node .next/standalone/server.js > "$RUNNER_TEMP/web.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -sf -o /dev/null http://localhost:3005/kit-gallery && exit 0
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/web.log"
+          echo "::error::the standalone server did not answer /kit-gallery"
+          exit 1
+
+      # Exact versions in e2e/package.json; no lockfile on purpose (this folder never ships), no install scripts.
+      - name: Install Playwright (e2e/)
+        working-directory: e2e
+        run: |
+          npm install --no-audit --no-fund --ignore-scripts
+          npx playwright install --with-deps chromium
+
+      # The planted overflow (document and frame) must be caught: the Playwright run must fail and every planted
+      # capture must show its overflow in the report. A green self-test means the assertion is broken.
+      - name: Self-test (a planted overflow must fail the run)
+        working-directory: e2e
+        env:
+          VISUAL_SELFTEST: "1"
+        run: |
+          if npx playwright test -c playwright.visual.config.ts --project=visual-1440 --project=visual-390 --reporter=line; then
+            echo "::error::the planted-overflow pages passed the visual checks: the overflow assertion is broken"
+            exit 1
+          fi
+          node visual/summary.mjs --selftest
+          rm -rf visual/results
+
+      - name: Capture and check
+        working-directory: e2e
+        env:
+          VISUAL_AUTH: public
+          VISUAL_GALLERY: "1"
+          VISUAL_SLUGS: ${{ steps.pages.outputs.slugs }}
+        run: npx playwright test -c playwright.visual.config.ts --project=visual-1440 --project=visual-390 --reporter=list
+
+      - name: Summary
+        if: always()
+        working-directory: e2e
+        env:
+          SLUGS: ${{ steps.pages.outputs.slugs }}
+        run: |
+          mkdir -p visual/results
+          {
+            echo "### Visual — built in the runner (public pages + kit gallery)"
+            echo ""
+            node visual/summary.mjs
+            echo ""
+            echo "Changed pages: \`${SLUGS:-none}\`. Signed-in pages (CRM, studio) are captured after the Dev deploy."
+          } | tee visual/results/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload screenshots and report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: visual-partner-pr-${{ github.run_id }}
+          path: |
+            e2e/visual/results/shots/*.png
+            e2e/visual/results/report.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      # One comment per PR (marker), edited in place. All values reach `run:` through env.
+      - name: Comment the summary on the PR
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          MARKER="<!-- visual-run -->"
+          BODY=$(printf '%s\n%s\n\n[Run and screenshots](%s)\n' "$MARKER" "$(cat e2e/visual/results/summary.md)" "$RUN_URL")
+          EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                       --jq ".[] | select(.body | contains(\"$MARKER\")) | .id" 2>/dev/null | head -n1 || true)
+          if [ -n "$EXISTING" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$EXISTING" -f body="$BODY" >/dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -f body="$BODY" >/dev/null
+          fi
+
+  deployed:
+    name: Visual (agency host, signed in)
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event != 'pull_request') ||
+      (github.event_name == 'workflow_dispatch' && inputs.base_url != '' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: e2e
+    env:
+      BASE_URL: ${{ inputs.base_url || vars.CRM_WEB_BASE_URL || 'https://portal.lumiguides.it.com' }}
+      PORTAL_TARGET: fargate
+    steps:
+      # Main as it is now (the default ref of workflow_run and of a dispatch from main), never a ref taken from the
+      # triggering run: the deployed commit is only a diff end below. No npm cache (cache-poisoning path).
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      - name: Changed pages
+        id: pages
+        working-directory: .
+        env:
+          EVENT: ${{ github.event_name }}
+          PAGES: ${{ inputs.pages }}
+          DEPLOYED: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            SLUGS=${PAGES:-all}
+          elif [[ "$DEPLOYED" =~ ^[0-9a-f]{40}$ ]] && git cat-file -e "$DEPLOYED^" 2>/dev/null; then
+            # main is squash-merged: the deployed commit against its parent is the PR's change.
+            SLUGS=$(node --experimental-strip-types --no-warnings e2e/visual/changed-pages.mjs "$DEPLOYED^" "$DEPLOYED")
+          else
+            SLUGS=all
+          fi
+          echo "slugs=$SLUGS" >> "$GITHUB_OUTPUT"
+          echo "Changed pages: ${SLUGS:-none}"
+
+      - name: Install Playwright (e2e/)
+        if: steps.pages.outputs.slugs != ''
+        run: |
+          npm install --no-audit --no-fund --ignore-scripts
+          npx playwright install --with-deps chromium
+
+      - name: Capture the public pages
+        if: steps.pages.outputs.slugs != ''
+        env:
+          VISUAL_AUTH: public
+          VISUAL_SLUGS: ${{ steps.pages.outputs.slugs }}
+        run: npx playwright test -c playwright.visual.config.ts --project=visual-1440 --project=visual-390 --reporter=list --pass-with-no-tests
+
+      # The secrets live on this step only. visual-signed-* depend on visual-setup: one partner sign-in, then every
+      # signed-in page from that storage state. Without the secrets the signed-in pages skip (named in the summary).
+      - name: Capture the CRM and studio pages (signed in)
+        if: always() && steps.pages.outputs.slugs != ''
+        env:
+          VISUAL_AUTH: signed
+          VISUAL_SLUGS: ${{ steps.pages.outputs.slugs }}
+          E2EPORTALEMAIL: ${{ secrets.E2EPORTALEMAIL }}
+          E2EPORTALPASSWORD: ${{ secrets.E2EPORTALPASSWORD }}
+          E2EPORTALTOTP: ${{ secrets.E2EPORTALTOTP }}
+        run: npx playwright test -c playwright.visual.config.ts --project=visual-signed-1440 --project=visual-signed-390 --reporter=list --pass-with-no-tests
+
+      - name: Summary
+        if: always() && steps.pages.outputs.slugs != ''
+        env:
+          SLUGS: ${{ steps.pages.outputs.slugs }}
+        run: |
+          mkdir -p visual/results
+          {
+            echo "### Visual — $BASE_URL (signed in as the e2e studio user)"
+            echo ""
+            node visual/summary.mjs
+            echo ""
+            echo "Pages: \`$SLUGS\`. A page the e2e user's session is sent away from is skipped (named in its cell)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # PNGs and the JSON report only: never the auth state.
+      - name: Upload screenshots and report
+        if: always() && steps.pages.outputs.slugs != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: visual-partner-dev-${{ github.run_id }}
+          path: |
+            e2e/visual/results/shots/*.png
+            e2e/visual/results/report.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Delete auth state
+        if: always()
+        run: rm -rf .auth
