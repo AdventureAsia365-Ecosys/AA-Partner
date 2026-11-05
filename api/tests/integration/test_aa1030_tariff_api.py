@@ -72,7 +72,9 @@ async def test_the_aa_tariff_route_by_role_with_its_audit(app_pool: asyncpg.Pool
             for fmt in ("json", "csv"):
                 r = await client.get(f"/crm/v1/aa/tariff?format={fmt}", headers=headers("assistant"))
                 assert (r.status_code, r.json()["detail"]) == (403, "role_forbidden")
-            assert fake.calls["GET tariff"] == asked == 3  # the assistant's calls never reached Booking
+            # The agent's EUR read was the owner's answer from the agency's 60 s cache (TariffReader), still audited;
+            # the assistant's calls never reached Booking.
+            assert fake.calls["GET tariff"] == asked == 2
             me = await client.get("/crm/v1/me", headers=headers("assistant"))
             assert me.status_code == 200 and me.json()["permissions"] == {"aa_tariff_view": False}
 
