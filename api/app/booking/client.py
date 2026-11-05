@@ -18,7 +18,8 @@ Two kinds of failure, both codes only (never a body, a token or a URL in a messa
 
 AA-1030 (contract 1.4): :meth:`BookingClient.tariff` / :meth:`BookingClient.tariff_csv` read the agency's own tariff;
 the CSV variant goes through the same :meth:`BookingClient._send` (token, 401, 5xx / 408, 429, refusals) and returns
-Booking's file bytes unchanged.
+Booking's file bytes unchanged. Both are ``bulk`` calls: the whole tariff is one answer (up to Booking's 6000 rows),
+so they allow :data:`app.cis.http.BULK_MAX_BODY_BYTES` and at least :data:`BULK_TIMEOUT_S`.
 
 The transport is :mod:`app.cis.http` (no redirects, bounded body, a timeout per call).
 """
@@ -32,10 +33,18 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from app.cis.http import DEFAULT_TIMEOUT_S, HttpError, HttpResponse, Transport, urllib_transport
+from app.cis.http import (
+    DEFAULT_TIMEOUT_S,
+    HttpError,
+    HttpResponse,
+    Transport,
+    bulk_urllib_transport,
+    urllib_transport,
+)
 from app.cis.m2m import TokenError, TokenProvider
 
 PREFIX = "/booking/b2b/v1"
+BULK_TIMEOUT_S = 25.0  # AA-1030: a whole tariff; under the 29 s API Gateway limit in front of Booking
 CONTRACT = "booking.b2b.v1"
 READ = "booking.b2b/read"
 QUOTE = "booking.b2b/quote"
@@ -126,10 +135,18 @@ class BookingClient:
         query: dict[str, str] | None = None,
         idempotency_key: str | None = None,
         accept: str = "application/json",
+        bulk: bool = False,
     ) -> HttpResponse:
         """One Booking call: the scope's token, the agency header, and every non-2xx answer mapped to
-        :class:`BookingUnavailable` / :class:`BookingRefusal`. A 2xx response comes back as it is."""
+        :class:`BookingUnavailable` / :class:`BookingRefusal`. A 2xx response comes back as it is. ``bulk``: a whole
+        list in one answer (the tariff): the bigger body cap of the default transport and at least
+        :data:`BULK_TIMEOUT_S` (a transport passed in by a test is used as it is)."""
         config = self._config
+        transport, timeout_s = config.transport, config.timeout_s
+        if bulk:
+            timeout_s = max(timeout_s, BULK_TIMEOUT_S)
+            if transport is urllib_transport:
+                transport = bulk_urllib_transport
         try:
             token = await config.tokens.token(scope)
         except TokenError as exc:
@@ -149,7 +166,7 @@ class BookingClient:
         if query:
             url = f"{url}?{urllib.parse.urlencode(query)}"
         try:
-            resp = await config.transport(method, url, headers, raw, config.timeout_s)
+            resp = await transport(method, url, headers, raw, timeout_s)
         except HttpError as exc:
             raise BookingUnavailable(f"booking_{exc.error_class}") from None
         status = resp.status
@@ -177,8 +194,11 @@ class BookingClient:
         body: dict[str, Any] | None = None,
         query: dict[str, str] | None = None,
         idempotency_key: str | None = None,
+        bulk: bool = False,
     ) -> dict[str, Any]:
-        resp = await self._send(method, path, scope, tenant_id, body=body, query=query, idempotency_key=idempotency_key)
+        resp = await self._send(
+            method, path, scope, tenant_id, body=body, query=query, idempotency_key=idempotency_key, bulk=bulk
+        )
         if resp.status == 204 or not resp.body:
             return {}
         data = _problem(resp.body)
@@ -208,7 +228,8 @@ class BookingClient:
 
     async def tariff(self, tenant_id: uuid.UUID, *, currency: str, source_id: str | None = None) -> dict[str, Any]:
         """AA-1030 (contract 1.4): the agency's own tariff as JSON (read with :func:`app.booking.contract.tariff`)."""
-        return await self._call("GET", "/tariff", READ, tenant_id, query=_tariff_query(currency, source_id, "json"))
+        query = _tariff_query(currency, source_id, "json")
+        return await self._call("GET", "/tariff", READ, tenant_id, query=query, bulk=True)
 
     async def tariff_csv(
         self, tenant_id: uuid.UUID, *, currency: str, source_id: str | None = None
@@ -217,7 +238,7 @@ class BookingClient:
         file again) and the file name of its ``Content-Disposition`` (None when absent or not a plain file name). The
         failures are those of every call; a 2xx that is not a CSV file is ``booking_contract``."""
         query = _tariff_query(currency, source_id, "csv")
-        resp = await self._send("GET", "/tariff", READ, tenant_id, query=query, accept="text/csv")
+        resp = await self._send("GET", "/tariff", READ, tenant_id, query=query, accept="text/csv", bulk=True)
         if "text/csv" not in _header(resp, "content-type").lower():
             raise BookingUnavailable("booking_contract")
         return resp.body, _attachment_name(_header(resp, "content-disposition"))

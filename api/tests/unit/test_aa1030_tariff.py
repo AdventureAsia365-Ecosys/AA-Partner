@@ -6,6 +6,7 @@ mapping and the route (owner / agent 200, assistant 403, no-store, Booking's CSV
 from __future__ import annotations
 
 import datetime as dt
+import io
 import json
 import uuid
 from decimal import Decimal
@@ -15,9 +16,18 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import margin
+from app.booking import client as booking_client_module
 from app.booking import contract
 from app.booking import tariff as aa_tariff
-from app.booking.client import BookingClient, BookingConfig, BookingRefusal, BookingUnavailable, _attachment_name
+from app.booking.client import (
+    BULK_TIMEOUT_S,
+    BookingClient,
+    BookingConfig,
+    BookingRefusal,
+    BookingUnavailable,
+    _attachment_name,
+)
+from app.cis import http
 from app.cis.http import HttpError, HttpResponse
 from app.cis.m2m import M2mCredentials, TokenProvider
 from app.errors import Conflict, Invalid, UnavailableRetry
@@ -126,6 +136,7 @@ class Raw:
     def __init__(self, *answers: Any) -> None:
         self.answers = list(answers)
         self.seen: list[tuple[str, str, dict[str, str]]] = []
+        self.timeouts: list[float] = []
         self.token_calls = 0
 
     async def __call__(self, method: str, url: str, headers: Any, body: bytes | None, timeout_s: float) -> HttpResponse:
@@ -133,6 +144,7 @@ class Raw:
             self.token_calls += 1
             return HttpResponse(200, json.dumps({"access_token": "t", "expires_in": 3600}).encode())
         self.seen.append((method, url, dict(headers)))
+        self.timeouts.append(timeout_s)
         answer = self.answers.pop(0)
         if isinstance(answer, Exception):
             raise answer
@@ -234,6 +246,53 @@ async def test_a_json_call_answered_with_no_object_breaks_the_contract() -> None
     with pytest.raises(BookingUnavailable) as err:
         await c.tariff(TENANT, currency="USD")
     assert err.value.error_class == "booking_contract"
+
+
+@pytest.mark.asyncio
+async def test_both_tariff_calls_are_bulk_reads_and_other_calls_keep_their_bounds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The whole tariff is one answer (up to Booking's 6000 rows, more than 2 MiB as JSON): the tariff calls wait at
+    least BULK_TIMEOUT_S and the default transport becomes the bulk one (8 MiB); every other call keeps 10 s / 2 MiB."""
+    t = Raw((200, tariff_body(), {}), (200, tariff_csv(), CSV_HEADERS), (200, {"from_price": None}, {}))
+    c = _client(t)
+    await c.tariff(TENANT, currency="USD")
+    await c.tariff_csv(TENANT, currency="USD")
+    await c.price_parity(TENANT, TARIFF_TOUR, "USD")
+    assert t.timeouts == [BULK_TIMEOUT_S, BULK_TIMEOUT_S, http.DEFAULT_TIMEOUT_S]
+    assert BULK_TIMEOUT_S < 29  # under the API Gateway limit in front of Booking
+
+    bulk = Raw((200, tariff_body(), {}), (200, tariff_csv(), CSV_HEADERS))
+    plain = Raw((200, {"from_price": None}, {}))
+    monkeypatch.setattr(booking_client_module, "bulk_urllib_transport", bulk)
+    monkeypatch.setattr(booking_client_module, "urllib_transport", plain)
+    tokens = TokenProvider(M2mCredentials("crmclient1", "s", TOKEN_URL), transport=bulk)
+    default = BookingClient(BookingConfig(base_url=BOOKING_URL, tokens=tokens, transport=plain))
+    await default.tariff(TENANT, currency="USD")
+    await default.tariff_csv(TENANT, currency="USD")
+    await default.price_parity(TENANT, TARIFF_TOUR, "USD")
+    assert len(bulk.seen) == 2 and len(plain.seen) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_bulk_transport_reads_up_to_its_own_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[int] = []
+
+    def fake_call(method: str, url: str, headers: Any, body: bytes | None, timeout: float, limit: int) -> HttpResponse:
+        seen.append(limit)
+        return HttpResponse(200, b"{}")
+
+    monkeypatch.setattr(http, "_call", fake_call)
+    assert (await http.bulk_urllib_transport("GET", "https://b.example.invalid/x", {}, None, 25)).status == 200
+    assert seen == [http.BULK_MAX_BODY_BYTES] and http.BULK_MAX_BODY_BYTES > 3 * http.MAX_BODY_BYTES
+
+    class Stream(io.BytesIO):
+        headers: dict[str, str] = {}
+
+    big = b"x" * (http.MAX_BODY_BYTES + 1)
+    assert http._read(Stream(big), http.BULK_MAX_BODY_BYTES) == big
+    with pytest.raises(HttpError, match="response_too_large"):
+        http._read(Stream(big), http.MAX_BODY_BYTES)
 
 
 @pytest.mark.parametrize(

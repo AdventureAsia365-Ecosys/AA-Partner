@@ -1,7 +1,8 @@
 "use client";
 // web/components/aaTariff/AaTariffView.tsx — AA-1030: the agency's AA prices (lib/aaTariff.ts). The toolbar (currency,
 // Download CSV through the BFF with AA's own file name, Print) and the table on the kit DataTable (a card per row on a
-// phone, every row on one page so Print prints them all). The prices are AA's B2B price for this agency; the page and
+// phone, every row on one page so Print prints them all; its search box narrows the rows, and Print then prints those,
+// the box itself hidden by the print rules). The prices are AA's B2B price for this agency; the page and
 // the API serve them to the owner and the agent only.
 import type { ColumnDef } from "@tanstack/react-table";
 import { useRouter } from "next/navigation";
@@ -68,7 +69,8 @@ export function AaTariffTable({ items, lang, locale }: { items: TariffItem[]; la
     {
       id: "tour",
       header: tr("tariff.col.tour"),
-      accessorFn: (i) => i.title ?? i.source_id,
+      // Title then country: what the search box matches and the order of a sort by tour.
+      accessorFn: (i) => [i.title ?? i.source_id, i.country].filter(Boolean).join(" "),
       cell: ({ row }) => (
         <span data-testid="tariff-row" style={{ display: "block", minWidth: 0, overflowWrap: "anywhere" }}>
           <strong>{row.original.title ?? row.original.source_id}</strong>
@@ -123,7 +125,7 @@ export function AaTariffTable({ items, lang, locale }: { items: TariffItem[]; la
         columns={columns}
         tableId="crm-aa-tariff"
         getRowId={(i) => `${i.source_id}:${i.valid_from}:${i.pax_min}`}
-        searchable={false}
+        searchPlaceholder={tr("tariff.search")}
         paginate={false}
         compact
         tableMinWidth={TARIFF_TABLE_MIN_WIDTH}

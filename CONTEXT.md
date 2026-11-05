@@ -1538,7 +1538,8 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
   file shape. One `aa_tariff_view` audit event per read (currency, format, tour asked; no amount);
   `Cache-Control: no-store`. Errors: `unknown_partner` / `forbidden` -> 409 `aa_partner_not_active`; `invalid` -> 422
   `aa_tariff_invalid`; another refusal -> 422 `aa_tariff_refused`; Booking down, throttled or a contract break -> 503
-  `booking_unavailable` + `Retry-After`. `/me` answers `permissions.aa_tariff_view`, which hides the page's links
+  `booking_unavailable` + `Retry-After`. Both tariff calls are bulk reads (8 MiB body cap, 25 s; every other Booking
+  call 2 MiB / 10 s). `/me` answers `permissions.aa_tariff_view`, which hides the page's links
   (Settings, the builder's AA drawer) from the assistant. The page: table, currency select, Download CSV (BFF route
   marked `download`: the API's file name passes on), Print (print CSS); prices are indicative, a quote is binding.
 - **AA-aware Lost**: `GET /trips/{id}/lines` answers `lost_reason_hint` (declined -> `aa_on_request_declined`, or

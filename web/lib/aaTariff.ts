@@ -9,6 +9,8 @@ import type { Lang } from "./i18n";
 import { fmt, t } from "./i18n";
 
 export const AA_TARIFF_PATH = "/aa-tariff";
+/** The whole tariff is one answer: the API waits up to 25 s for AA (api/app/booking/client.py BULK_TIMEOUT_S). */
+export const TARIFF_TIMEOUT_MS = 30_000;
 /** The quote currencies AA prices in (booking.b2b.v1 1.4; api/app/booking/tariff.py CURRENCIES). */
 export const TARIFF_CURRENCIES = ["USD", "EUR", "GBP", "AUD", "SGD", "VND"] as const;
 export type TariffCurrency = (typeof TARIFF_CURRENCIES)[number];

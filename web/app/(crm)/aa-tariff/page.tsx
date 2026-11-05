@@ -5,7 +5,7 @@
 import { EmptyState, ErrorState, K } from "@/app/_kit";
 import { AaTariffTable, AaTariffToolbar } from "@/components/aaTariff/AaTariffView";
 import { PageTitle } from "@/components/PageTitle";
-import { seesAaTariff, tariffCurrency, tariffErrorKey, type TariffView } from "@/lib/aaTariff";
+import { seesAaTariff, TARIFF_TIMEOUT_MS, tariffCurrency, tariffErrorKey, type TariffView } from "@/lib/aaTariff";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { formatDate } from "@/lib/dates";
@@ -33,7 +33,10 @@ export default async function AaTariffPage({ searchParams }: { searchParams: Pro
   const { session } = await serverContext();
   if (!session) return null;
   const currency = tariffCurrency((await searchParams).currency);
-  const view = await crmCall<TariffView>(ctx.cfg, session, "GET", "aa/tariff", { query: new URLSearchParams({ currency }) });
+  const view = await crmCall<TariffView>(ctx.cfg, session, "GET", "aa/tariff", {
+    query: new URLSearchParams({ currency }),
+    timeoutMs: TARIFF_TIMEOUT_MS,
+  });
   return (
     // minmax(0, 1fr): the table's min width never stretches the page's grid (S254 lesson).
     <div data-testid="crm-aa-tariff" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12, maxWidth: 1200 }}>

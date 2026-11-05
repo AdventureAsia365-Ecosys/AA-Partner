@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { attachmentName, matchBff } from "@/lib/bff";
 import {
   AA_TARIFF_PATH,
+  TARIFF_TIMEOUT_MS,
   discountText,
   paxBand,
   seesAaTariff,
@@ -29,7 +30,7 @@ const state: {
   role: Role;
   permissions: { aa_tariff_view?: boolean } | undefined;
   answer: { ok: true; status: number; data: TariffView } | { ok: false; status: number; detail: string };
-  calls: Array<{ path: string; query?: string }>;
+  calls: Array<{ path: string; query?: string; timeoutMs?: number }>;
 } = { role: "owner", permissions: { aa_tariff_view: true }, answer: { ok: true, status: 200, data: tariffView() }, calls: [] };
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => {}, push: () => {} }), redirect: () => {}, notFound: () => {} }));
@@ -45,8 +46,8 @@ vi.mock("@/lib/crmContext", () => ({
 }));
 vi.mock("@/lib/serverContext", () => ({ serverContext: async () => ({ session: { at: "x", tid: "t" } }) }));
 vi.mock("@/lib/crmApi", () => ({
-  crmCall: async (_cfg: unknown, _s: unknown, _m: string, path: string, opts?: { query?: URLSearchParams }) => {
-    state.calls.push({ path, query: opts?.query?.toString() });
+  crmCall: async (_cfg: unknown, _s: unknown, _m: string, path: string, opts?: { query?: URLSearchParams; timeoutMs?: number }) => {
+    state.calls.push({ path, query: opts?.query?.toString(), timeoutMs: opts?.timeoutMs });
     return state.answer;
   },
 }));
@@ -86,6 +87,7 @@ describe("helpers", () => {
     expect(tariffPath("EUR")).toBe("aa/tariff?currency=EUR");
     expect(tariffPath("VND", "csv")).toBe("aa/tariff?currency=VND&format=csv");
     expect(matchBff("GET", "aa/tariff")?.download).toBe(true);
+    expect(matchBff("GET", "aa/tariff")?.timeoutMs).toBe(TARIFF_TIMEOUT_MS);
     expect(matchBff("POST", "aa/tariff")).toBeNull();
     expect(tariffFilename("GBP", new Date("2031-02-03T10:00:00Z"))).toBe("aa-tariff-gbp-2031-02-03.csv");
   });
@@ -119,7 +121,9 @@ describe("helpers", () => {
 describe("the AA prices page (layout fixture)", () => {
   it("shows every row with its price, band, discount and RRP, the indicative note and the toolbar", async () => {
     const html = await page("EUR");
-    expect(state.calls).toEqual([{ path: "aa/tariff", query: "currency=EUR" }]);
+    // The whole tariff is one answer: the page waits longer than a plain read (the API allows AA 25 s).
+    expect(state.calls).toEqual([{ path: "aa/tariff", query: "currency=EUR", timeoutMs: TARIFF_TIMEOUT_MS }]);
+    expect(TARIFF_TIMEOUT_MS).toBeGreaterThan(25_000);
     expect(html).toContain('data-testid="crm-aa-tariff"');
     expect(html).toContain("Indicative: a quote is the binding price.");
     expect(html.match(/data-testid="tariff-row"/g)).toHaveLength(3);
@@ -133,6 +137,7 @@ describe("the AA prices page (layout fixture)", () => {
     for (const id of ["tariff-currency", "tariff-download", "tariff-print"]) expect(html).toContain(`data-testid="${id}"`);
     expect(html).toContain('data-print="hide"');
     expect(html).toContain('data-print="sheet"');
+    expect(html).toContain('placeholder="Search tour, country or season"'); // a long list is searched, not paged
   });
 
   it("lets long cells wrap inside a grid that never stretches, and prints every row on one page", async () => {

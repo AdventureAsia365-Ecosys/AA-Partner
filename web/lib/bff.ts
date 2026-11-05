@@ -270,7 +270,7 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "GET", pattern: /^settings\/retail-markup$/, tenant: true, card: "AA-1030" },
   { method: "PUT", pattern: /^settings\/retail-markup$/, tenant: true, card: "AA-1030" },
   // AA-1030: the agency's AA prices (owner / agent, API Action.AA_TARIFF_VIEW), JSON or AA's CSV with its file name.
-  { method: "GET", pattern: /^aa\/tariff$/, tenant: true, card: "AA-1030", download: true },
+  { method: "GET", pattern: /^aa\/tariff$/, tenant: true, card: "AA-1030", download: true, timeoutMs: 30_000 },
   { method: "POST", pattern: new RegExp(`^settings/payment-methods/${UUID}/disconnect$`), tenant: true, card: "AA-952" },
   { method: "POST", pattern: new RegExp(`^trips/${UUID}/portal-access$`), tenant: true, card: "AA-946" },
   { method: "POST", pattern: new RegExp(`^portal-access/${UUID}/revoke$`), tenant: true, card: "AA-946" },

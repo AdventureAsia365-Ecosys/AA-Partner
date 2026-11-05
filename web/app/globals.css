@@ -88,5 +88,6 @@ a { color: inherit; }
   [data-crm="sidebar"], [data-crm="topbar"], [data-crm="footer"], [data-kit-shell="sidebar"],
   [data-kit-shell="backdrop"], [data-print="hide"] { display: none !important; }
   [data-print="sheet"] * { overflow: visible !important; max-height: none !important; }
+  [data-print="sheet"] div:has(> input) { display: none !important; }
   [data-print="sheet"] tr { break-inside: avoid; }
 }
