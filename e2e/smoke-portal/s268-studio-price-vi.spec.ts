@@ -50,7 +50,7 @@ async function assertClean(watcher: PageWatcher): Promise<void> {
 // ── AA-1029: the from price ────────────────────────────────────────────────────────────────────────
 
 /** The live Dev tour with a Booking price.from.v1 row, and what that row says. */
-const PRICED_TOUR = 'Discover Okinawa';
+const PRICED_TOUR = 'Okinawa from Naha';
 const EXPECTED_PRICE = { amount: 235, currency: 'USD', pax: 2 };
 /** FromPriceLine's text for that row (TourCard.tsx; marketplace.messages.ts + lib.messages.ts priceNote, English). */
 const PRICE_LINE = 'From $235 per person';
