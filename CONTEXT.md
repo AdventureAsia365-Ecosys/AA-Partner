@@ -92,6 +92,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   AA-947: `booking.b2b.v1` (quotes, holds, confirms, the `/events` feed) through `app/booking/` and `catalog.http.v1`
   (the AA tour cache) through `app/catalog/`, with the same M2M client (section "CRM-19" below). AA-951: `catalog.http.v1`
   1.2 `/aa-content` (AA prep packs and starter templates, AA-977) into `crm.aa_content` (section "CRM-22" below).
+  AA-1030: `booking.b2b.v1` is consumed up to **1.4** (`GET /tariff`, the agency's AA tariff; section "CRM-19",
+  "AA prices").
 - **Publishes** `crm.ops.v1` under `/crm/ops/v1` to the CIS admin (L1 platform console); since 1.5 (AA-966) it also
   carries the AA insights read `GET /insights` (spec module 17, design S-03), instead of a separate `crm.insights.v1`;
   since 1.6 (AA-964) the CRM ledger rows `GET /llm/calls` for the CIS Calls tab (section "CRM-33a" below).
@@ -1491,7 +1493,7 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
 (`client.py`, `contract.py`, `aa_lines.py`, `sync.py`, `views.py`, `products.py`, `checker.py`) and `app/catalog/`
 (`client.py`, `store.py`, `sync.py`), routes in `app/routers/aa.py`; decisions in `docs/implementation-notes/AA-947.md`.
 
-- **M2M client**: `booking.b2b.v1` 1.1 and `catalog.http.v1` 1.2 over the aa-m2m pool with one `TokenProvider` for the
+- **M2M client**: `booking.b2b.v1` 1.1 (1.2 `GET /holds/{id}`, 1.4 `GET /tariff`) and `catalog.http.v1` 1.2 over the aa-m2m pool with one `TokenProvider` for the
   process (one cached token per scope; the scope each call needs only). Booking calls carry `X-AA-Tenant-Id` (Booking
   checks its `b2b_partners` row; an agency AA has not activated is 409 `aa_partner_not_active` / a failed request
   `unknown_partner`). Answers are read tolerantly (unknown fields and event types never stop the CRM).
@@ -1526,6 +1528,19 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
   suggestion is derived from the B2B price, so only owner / agent see it. An owner or agent who adds an AA option
   without a sell gets the suggestion as the sell (an assistant's option still waits at 0); "Use" on the option sets
   it later. The below-"from" warning applies to it like any sell.
+- **AA prices** (AA-1030, `booking.b2b.v1` 1.4 `GET /tariff`; `app/booking/tariff.py`, web `/aa-tariff`): the
+  agency's own AA tariff, AA's B2B price per tour, season (departure window) and pax band with its tier or contract
+  rate card discount and AA's RRP per person, read live from Booking. `GET /crm/v1/aa/tariff?currency=&format=json|csv
+  &source_id=` needs `aa_tariff_view` (owner, agent; the assistant 403 `role_forbidden`): the margin serializer does
+  not cover the CSV bytes, so the action is the guard. JSON renames Booking's `price` / `price_per_person` to
+  `b2b_price` / `b2b_price_per_person` so the serializer would strip them too (defence in depth); `format=csv` passes
+  Booking's own file on (its `tariff.CSV_COLUMNS`, its file name when it is a plain `.csv` name), never a second CRM
+  file shape. One `aa_tariff_view` audit event per read (currency, format, tour asked; no amount);
+  `Cache-Control: no-store`. Errors: `unknown_partner` / `forbidden` -> 409 `aa_partner_not_active`; `invalid` -> 422
+  `aa_tariff_invalid`; another refusal -> 422 `aa_tariff_refused`; Booking down, throttled or a contract break -> 503
+  `booking_unavailable` + `Retry-After`. `/me` answers `permissions.aa_tariff_view`, which hides the page's links
+  (Settings, the builder's AA drawer) from the assistant. The page: table, currency select, Download CSV (BFF route
+  marked `download`: the API's file name passes on), Print (print CSS); prices are indicative, a quote is binding.
 - **AA-aware Lost**: `GET /trips/{id}/lines` answers `lost_reason_hint` (declined -> `aa_on_request_declined`, or
   `aa_sold_out` when Booking said sold out); the Lost picker pre-selects it. Lost (and cancel) holds the waiting
   quote / requote / hold / refresh requests back by the Undo window and queues a release of every line AA has not
@@ -1899,7 +1914,9 @@ Design v3 §6.3 CRM-22 (M4, R38, R9; F4 / WF-5 A-05; Q1 2.3); migration crm-022;
 - **Permission matrix** (`app/permissions.py`, design v3 §4.6): every agency action x owner / agent / assistant with
   rules ALLOW, DENY, OWN, ASSIGNED, THRESHOLD (refund threshold from `tenant_settings`); one table, pinned cell by cell
   in `tests/unit/test_permissions.py`. Doors: `tenant_tx(action=)` (role level) and `permissions.require()` (object
-  facts). Membership writes are also refused by the database for anyone but an owner (crm-008).
+  facts). Rows added after the design: `aa_confirm` (AA-947) and `aa_tariff_view` (AA-1030, the AA prices page and
+  CSV: owner, agent, like `view_margin`; owner only = one row change, never wider than `view_margin`, a unit test).
+  `/me` carries `permissions` (today `aa_tariff_view`) so the web hides what the API would refuse. Membership writes are also refused by the database for anyone but an owner (crm-008).
 - **Margin serializer** (`app/margin.py`): `class_router(AGENCY)` builds every agency router with
   `MarginFilteredRoute`; JSON responses lose every key named like net / b2b / cost / margin / commission unless the
   role holds `view_margin` (owner, agent). Unknown role = filtered. Contract test over every `/crm/v1` route:
