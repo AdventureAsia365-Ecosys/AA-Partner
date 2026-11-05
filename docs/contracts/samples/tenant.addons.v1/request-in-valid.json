@@ -1,0 +1,11 @@
+{
+  "contract": "tenant.addons.v1",
+  "schema": "AddOnRequestIn",
+  "expect": "valid",
+  "why": "The CRM relays its owner's request: the product, an optional note and the CRM member id only",
+  "payload": {
+    "product": "tripplanner",
+    "note": "For our river cruise season.",
+    "crm_member_id": "7f4a5b6c-8d9e-4fa0-b1c2-3d4e5f607182"
+  }
+}
