@@ -137,7 +137,13 @@ CALENDAR_FEED_MODULES = frozenset({"app/calendar/public.py"})
 MESSAGING_HOOK_MODULES = frozenset({"app/messaging/webhook.py"})
 # AA-942: the lifecycle jobs' context (the daily run, the offboarding steps).
 LIFECYCLE_MODULES = frozenset(
-    {"app/lifecycle/job.py", "app/lifecycle/offboarding.py", "app/portability/exports.py"}  # + AA-967 export job
+    {
+        "app/lifecycle/job.py",
+        "app/lifecycle/offboarding.py",
+        "app/portability/exports.py",  # + AA-967 export job
+        "app/lifecycle/pilot.py",  # + AA-969 d16: the pilot marker read and the nightly pilot backup
+        "app/portability/restore_drill.py",  # + AA-969 d16: the one-agency restore drill
+    }
 )
 # AA-978: one CIS membership event in one agency (actor platform:feed-tenant-membership, any agency status).
 MEMBERSHIP_FEED_MODULES = frozenset({"app/cis/membership_feed.py"})

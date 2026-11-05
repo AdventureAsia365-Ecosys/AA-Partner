@@ -96,7 +96,7 @@ describe("wiring", () => {
     expect(layout).toContain("studioAccess(ctx.cfg.cisApiUrl, session)");
     expect(layout).toContain("const contentHref = studioLink(studioHref, studio);");
     expect(layout).toContain("contentStudioHref={contentHref}");
-    expect(layout).toContain("plannerHref={plannerHref(contentHref)}"); // AA-1036 (R3): planner through the studio
+    expect(layout).toContain("plannerHref={plannerHref(ctx.role)}"); // AA-1036 (R3, S269): the CRM's own Add-ons page
   });
 
   // AA-1036 (R3): the separate studio app is gone, so the studio's session helpers re-export the one cookie list

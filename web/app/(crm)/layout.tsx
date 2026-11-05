@@ -5,7 +5,8 @@
 // AA-1025 (S264): the "Open Content studio" link shows only when CIS lists the current agency among the person's studio
 // memberships (lib/studioAccess.ts; kept when CIS cannot answer).
 // AA-1036 (R3): the amber "AI paused" banner when Adventure Asia switched the CRM's AI off for the whole app (/me
-// ai_paused, from crm.llm_app_profile); the Trip planner entry opens the studio's Add-ons page (no more mailto:).
+// ai_paused, from crm.llm_app_profile); the Trip planner entry opens the CRM's own Settings > Add-ons page for the
+// owner (S269: a CRM-only owner has no studio; lib/addOns.ts).
 import { ErrorState } from "@/app/_kit";
 import { MailboxBanner } from "@/components/mail/MailboxBanner";
 import { SupportBanner } from "@/components/support/SupportBanner";
@@ -65,7 +66,7 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
       agencyName={ctx.me.display_name ?? ctx.me.tenant_id}
       agencyCount={active}
       contentStudioHref={contentHref}
-      plannerHref={plannerHref(contentHref)}
+      plannerHref={plannerHref(ctx.role)}
       locale={ctx.locale}
       syntheticBadge={ctx.cfg.environment !== "prod"}
     >

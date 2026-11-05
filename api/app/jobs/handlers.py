@@ -67,6 +67,7 @@ from app.jobs.kinds import (
     OFFBOARD,
     OPS_RELEASE_SYNC,
     PARTNER_ACCOUNTS,
+    PILOT_BACKUP,
     PLACEHOLDER_PURGE,
     STAGE_DATE_RULE,
     STUDIO_ACTIVATION,
@@ -206,6 +207,7 @@ def build_handlers(
     from app.intake.process import build_handler as build_intake_handler
     from app.lifecycle import job as lifecycle_job
     from app.lifecycle import offboarding
+    from app.lifecycle import pilot as pilot_backup
     from app.mail import health as mail_health
     from app.mail import history_import
     from app.mail import ingest as mail_ingest
@@ -254,6 +256,7 @@ def build_handlers(
         TASK_DIGEST: task_digest.build_handler(mail_runtime),
         PARTNER_ACCOUNTS: partner_accounts.build_handler(directory, dry_run=partner_account_cleanup_dry_run),
         ENTITLEMENT_PULL: EntitlementFeed(entitlement_feed),
+        PILOT_BACKUP: pilot_backup.build_handler(),
     }
 
 
@@ -305,6 +308,7 @@ def build_hooks(
     from app.cis.entitlement_feed import EntitlementPullSchedule
     from app.fx.fetch import DailyFxSchedule
     from app.lifecycle.job import DailyLifecycleSchedule
+    from app.lifecycle.pilot import DailyPilotBackupSchedule
     from app.mail.health import DailyMailHealthSchedule
     from app.mail.ingest import MailIngestScan
     from app.members.accounts import DailyPartnerAccountSchedule
@@ -331,6 +335,7 @@ def build_hooks(
         HourlyWorkflowTick(clock),
         DailyPartnerAccountSchedule(retention_utc_hour, clock),
         EntitlementPullSchedule(clock),  # AA-1028: the CIS account feed, every 2 minutes
+        DailyPilotBackupSchedule(retention_utc_hour, clock),  # AA-969 d16: the pilot agency's nightly export
     )
 
 
@@ -360,6 +365,7 @@ SCHEDULED_KINDS: frozenset[str] = frozenset(
         WORKFLOW_TICK,
         PARTNER_ACCOUNTS,  # S263: daily; a test agency's delete also queues one run for its accounts
         ENTITLEMENT_PULL,  # AA-1028: every 2-minute slot, due now
+        PILOT_BACKUP,  # AA-969 d16: daily, due now
     }
 )
 # Kinds queued by request code, one row per event (AA-936: each stored inquiry), never scheduled.

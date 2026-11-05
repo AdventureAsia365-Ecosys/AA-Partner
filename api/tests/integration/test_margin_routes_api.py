@@ -48,6 +48,7 @@ from app.margin import MARGIN_KEY
 from app.tenancy import tenant_tx
 from app.vault import Vault
 from tests.aa_fakes import FakeBooking, booking_client
+from tests.integration.test_aa1036_crm_addons import FakeCis, _Tokens
 from tests.integration.test_aa_lines_api import _sync
 from tests.integration.test_builder_api import _aa, _block, _catalog_tour, _create, _option, _pid
 from tests.integration.test_builder_api import _setup as _builder_setup
@@ -225,6 +226,8 @@ async def test_card_r_the_assistant_never_receives_margin_on_any_route_with_real
         keys=s["keys"],
         booking_client=booking_client(s["fake"]),
     )
+    # AA-1036: /crm/v1/add-ons relays to CIS tenant.addons.v1; a fake CIS answers it (no money behind add-ons).
+    app.state.studio_activation = FakeCis().config(_Tokens())
     async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
         lead = str(await ctx.conn.fetchval("SELECT traveler_id FROM crm.trip_traveler WHERE trip_id = $1", s["trip"]))
     params = _params(s, lead)
