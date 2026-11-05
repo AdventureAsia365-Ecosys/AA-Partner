@@ -34,6 +34,8 @@ export interface Me {
   crm_entitled?: boolean;
   /** AA-1036 (R3): Adventure Asia paused AI in the CRM for the whole app (crm.llm_app_profile); absent on an older API. */
   ai_paused?: boolean;
+  /** AA-1030: the permission matrix's answers the web hides links by (absent on an older API). */
+  permissions?: { aa_tariff_view?: boolean };
 }
 
 export async function crmCall<T>(

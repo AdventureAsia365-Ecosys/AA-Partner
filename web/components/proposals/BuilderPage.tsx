@@ -68,6 +68,7 @@ export function BuilderPage({
   locale,
   terms,
   suppliers,
+  canTariff = false,
 }: {
   initial: BuilderView;
   role: string;
@@ -77,6 +78,8 @@ export function BuilderPage({
    *  one this version still names (S262 round 3). */
   terms: Agreement[];
   suppliers: Supplier[];
+  /** AA-1030: /me permissions.aa_tariff_view (the drawer links to the agency's AA prices). */
+  canTariff?: boolean;
 }) {
   const router = useRouter();
   const hydrated = useHydrated();
@@ -552,7 +555,7 @@ export function BuilderPage({
                     </div>
                   )}
                   {draft && drawer === block.option_block_id && (
-                    <BuilderAaDrawer view={view} blockId={block.option_block_id} canMoney={canMoney} suppliers={suppliers} lang={lang} locale={locale} write={write} onClose={() => setDrawer(null)} />
+                    <BuilderAaDrawer view={view} blockId={block.option_block_id} canMoney={canMoney} canTariff={canTariff} suppliers={suppliers} lang={lang} locale={locale} write={write} onClose={() => setDrawer(null)} />
                   )}
                 </section>
               ))}

@@ -6,6 +6,8 @@
 // "manual" keeps the browser on the page but still stores the cookie) and tries once more; only a second 401 reloads
 // through /auth/refresh. A result with `redirecting: true` means that reload has started: the caller shows no error.
 
+import { attachmentName } from "./attachmentName";
+
 export type BffResult<T> =
   | { ok: true; data: T }
   | { ok: false; status: number; detail: string; body?: unknown; redirecting?: true };
@@ -90,18 +92,22 @@ export async function bffFetch(path: string, init: RequestInit = {}): Promise<Re
 }
 
 /**
- * Download /bff/<path> and hand it to the browser as `filename` (a blob link, so the BFF's cookie auth applies).
+ * Download /bff/<path> and hand it to the browser as `filename` (a blob link, so the BFF's cookie auth applies), or
+ * under the API's own file name when the BFF passed one on (AA-1030).
  * Never throws: a failed fetch is `network`, a refusal carries the API's `detail`, a browser that cannot save the blob
  * is `save_failed`, and a second 401 is `redirecting` (the page is on its way to sign in again).
  */
 export async function bffDownload(path: string, opts: { filename: string }): Promise<BffResult<null>> {
   let res: Response;
   let blob: Blob;
+  let filename = opts.filename;
   try {
     res = await bffFetch(path);
     if (res.status === 401 && typeof window !== "undefined") return SESSION_EXPIRED;
     if (!res.ok) return failure(res.status, await res.json().catch(() => null));
     blob = await res.blob();
+    // AA-1030: a download route of the BFF passes the API's own file name on (lib/attachmentName.ts).
+    filename = attachmentName(res.headers.get("content-disposition")) ?? opts.filename;
   } catch {
     return { ok: false, status: 0, detail: "network" };
   }
@@ -109,7 +115,7 @@ export async function bffDownload(path: string, opts: { filename: string }): Pro
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = opts.filename;
+    a.download = filename;
     document.body.appendChild(a);
     try {
       a.click();

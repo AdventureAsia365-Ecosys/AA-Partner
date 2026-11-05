@@ -23,6 +23,9 @@ export interface BffRoute {
   raw?: true;
   /** Upstream timeout for this route (default 15 s, app/bff/[...path]/route.ts). */
   timeoutMs?: number;
+  /** AA-1030: a file download; the API's Content-Disposition (a plain file name only, lib/attachmentName.ts) is
+   * passed on, so the browser saves the file under the name the API gave. */
+  download?: true;
 }
 
 /** AA-937: a document upload is base64 JSON of at most 7 MiB (~9.4 MiB), under the proxy's 10 MiB body clone limit. */
@@ -266,6 +269,8 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   // AA-1030: the agency default retail markup per AA product type (owner only, API Action.PAYMENT_SETTINGS).
   { method: "GET", pattern: /^settings\/retail-markup$/, tenant: true, card: "AA-1030" },
   { method: "PUT", pattern: /^settings\/retail-markup$/, tenant: true, card: "AA-1030" },
+  // AA-1030: the agency's AA prices (owner / agent, API Action.AA_TARIFF_VIEW), JSON or AA's CSV with its file name.
+  { method: "GET", pattern: /^aa\/tariff$/, tenant: true, card: "AA-1030", download: true },
   { method: "POST", pattern: new RegExp(`^settings/payment-methods/${UUID}/disconnect$`), tenant: true, card: "AA-952" },
   { method: "POST", pattern: new RegExp(`^trips/${UUID}/portal-access$`), tenant: true, card: "AA-946" },
   { method: "POST", pattern: new RegExp(`^portal-access/${UUID}/revoke$`), tenant: true, card: "AA-946" },
@@ -343,3 +348,6 @@ export function upstreamHeaders(
   else if (contentType && contentType.toLowerCase().startsWith("application/json")) h.set("Content-Type", "application/json");
   return h;
 }
+
+// AA-1030: a download route's file name (its own small module, so the browser bundle does not carry this allow-list).
+export { attachmentName } from "./attachmentName";
