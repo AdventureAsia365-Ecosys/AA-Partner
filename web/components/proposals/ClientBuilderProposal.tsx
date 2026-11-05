@@ -16,7 +16,7 @@
 // Every call goes to /crm/public/v1/proposal on this origin with the host-only link cookie (same-origin credentials);
 // every hold answer carries the fresh page (a sold-out option has already fallen back to the included one, card E).
 import { useState } from "react";
-import { K } from "@/app/_kit";
+import { K, Button } from "@/app/_kit";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, langOf, type MessageKey } from "@/lib/i18n";
 import {
@@ -51,25 +51,9 @@ const input: React.CSSProperties = {
   width: "100%",
   boxSizing: "border-box",
 };
-const bigButton: React.CSSProperties = {
-  padding: "12px 16px",
-  minHeight: 44,
-  borderRadius: 999,
-  border: "none",
-  background: K.accent,
-  color: "var(--aa-on-accent)",
-  fontSize: 15,
-  fontWeight: 600,
-  cursor: "pointer",
-  width: "100%",
-};
-const quietButton: React.CSSProperties = {
-  ...bigButton,
-  background: "transparent",
-  color: K.accent,
-  border: `1px solid ${K.accent}`,
-  fontWeight: 500,
-};
+// The traveller's big touch targets (AA-1008 S6f: kit Buttons; primary = the main step, secondary = the quiet one):
+// full width, 44 px tall, pill shaped, 15 px text.
+const big: React.CSSProperties = { width: "100%", minHeight: 44, borderRadius: 999, fontSize: 15, padding: "12px 16px" };
 const card: React.CSSProperties = { display: "grid", gap: 8, padding: 12, borderRadius: 12, border: `1px solid ${K.line}`, background: K.card, minWidth: 0 };
 
 type Answer = { status: number; body: Record<string, unknown> };
@@ -288,18 +272,18 @@ export function ClientBuilderProposal({ initial, dict, locale }: { initial: Clie
                     </span>
                     {blockedText && !o.chosen && <span style={{ fontSize: 12.5, color: K.danger }}>{blockedText}</span>}
                     {!accepted && block.client_may_swap && !o.chosen && !o.blocked && (
-                      <button type="button" data-testid="client-swap" disabled={busy} onClick={() => void pick(block, o)} style={o.is_default ? quietButton : bigButton}>
+                      <Button testId="client-swap" disabled={busy} onClick={() => void pick(block, o)} variant={o.is_default ? "secondary" : "primary"} style={big}>
                         {o.is_default ? t("client.keepIncluded") : t("client.swap")}
-                      </button>
+                      </Button>
                     )}
                     {o.chosen && <span style={{ fontSize: 13, color: K.success }}>{t("client.yourChoice")}</span>}
                   </div>
                 );
               })}
               {!accepted && block.choose_later_allowed && !block.choose_later && (
-                <button type="button" data-testid="client-later" disabled={busy} onClick={() => void later(block)} style={quietButton}>
+                <Button testId="client-later" disabled={busy} onClick={() => void later(block)} style={big}>
                   {t("client.later.button")}
-                </button>
+                </Button>
               )}
             </div>
           ))}
@@ -361,9 +345,9 @@ export function ClientBuilderProposal({ initial, dict, locale }: { initial: Clie
                 </option>
               ))}
             </select>
-            <button type="button" disabled={busy} onClick={() => void askChange()} style={quietButton} data-testid="client-change-send">
+            <Button disabled={busy} onClick={() => void askChange()} style={big} testId="client-change-send">
               {t("client.change.send")}
-            </button>
+            </Button>
           </section>
 
           <section data-testid="client-hold" data-status={page.hold.status} style={card}>
@@ -372,20 +356,20 @@ export function ClientBuilderProposal({ initial, dict, locale }: { initial: Clie
               {fmt(t(holdKey(page.hold)), { time: when(page.hold.expires_at, locale), left: page.hold.rechecks_left })}
             </span>
             {action === "hold" && (
-              <button type="button" data-testid="client-hold-button" disabled={busy} onClick={() => void hold()} style={bigButton}>
+              <Button variant="primary" testId="client-hold-button" disabled={busy} onClick={() => void hold()} style={big}>
                 {t("client.hold.button")}
-              </button>
+              </Button>
             )}
             {action === "recheck" && (
-              <button type="button" data-testid="client-recheck" disabled={busy} onClick={() => void hold()} style={bigButton}>
+              <Button variant="primary" testId="client-recheck" disabled={busy} onClick={() => void hold()} style={big}>
                 {fmt(t("client.hold.recheck"), { left: page.hold.rechecks_left })}
-              </button>
+              </Button>
             )}
             {action === "ask_agent" && <span data-testid="client-ask-agent" style={{ fontSize: 13.5, color: K.body }}>{t("client.hold.askAgentHint")}</span>}
             {action === "none" && step === "choose" && (
-              <button type="button" data-testid="client-continue" disabled={busy} onClick={() => setStep("accept")} style={bigButton}>
+              <Button variant="primary" testId="client-continue" disabled={busy} onClick={() => setStep("accept")} style={big}>
                 {t("client.continue")}
-              </button>
+              </Button>
             )}
           </section>
 
@@ -438,9 +422,9 @@ export function ClientBuilderProposal({ initial, dict, locale }: { initial: Clie
                   {fmt(t("client.hold.activeUntil"), { time: when(page.hold.expires_at, locale) })}
                 </span>
               )}
-              <button type="submit" disabled={!canAccept} data-testid="client-accept" style={{ ...bigButton, opacity: canAccept ? 1 : 0.5 }}>
+              <Button type="submit" variant="primary" disabled={!canAccept} testId="client-accept" style={big}>
                 {t("client.accept")}
-              </button>
+              </Button>
             </form>
           )}
         </>

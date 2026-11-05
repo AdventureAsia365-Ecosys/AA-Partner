@@ -401,8 +401,8 @@ def test_link_text_token_reads_at_aa(theme: str, surface: str) -> None:
 
 
 # Decorative or non-text uses of the accent colour that may stay: list bullets, the spinner icon and icons on the
-# dark panel (which is the same dark navy in both themes).
-_GOLD_OK = ("•", "Loader2", "T.darkPanel")
+# dark panel (which is the same dark navy in both themes; K.sideBg since AA-1008 retired the studio's T alias object).
+_GOLD_OK = ("•", "Loader2", "K.sideBg")
 
 
 def test_studio_text_never_uses_the_bare_accent_colour() -> None:

@@ -14,6 +14,7 @@
 // panel (completeness, planning form, fill in from call); the timeline names override, date-rule and undo reasons.
 // AA-957 S262 round 3 (C12 §2.7): the cancel run marks every card of the page closed at once (TripClosed); a closed
 // trip offers no date change and no delete while AA has not confirmed the cancellation (the API answers 409 too).
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
@@ -172,9 +173,9 @@ export function TripPanel({
   const canTake = !trip.owner_member_id && role !== "owner" && me;
   return (
     <div data-testid="crm-trip" data-hydrated={hydrated ? "true" : undefined} style={{ display: "grid", gap: 14, maxWidth: 1080, minWidth: 0 }}>
-      <a href="/pipeline" style={{ fontSize: 13, color: K.accentDeep }}>
+      <Link href="/pipeline" style={{ fontSize: 13, color: K.accentDeep }}>
         ← {t(lang, "trip.back")}
-      </a>
+      </Link>
       <header style={{ display: "grid", gap: 8 }}>
         <h1 style={{ margin: 0, fontFamily: "'Fahkwang', 'Poppins', Georgia, serif", fontSize: 24, fontWeight: 500, color: K.ink, overflowWrap: "anywhere" }} data-testid="trip-title">
           {trip.title}

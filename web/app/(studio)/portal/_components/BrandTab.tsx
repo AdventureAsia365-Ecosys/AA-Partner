@@ -30,8 +30,9 @@
 import { useState, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, History, Upload, Check, RotateCcw } from "lucide-react";
-import { Button, EmptyState, IconButton, LinkButton, LoadingScreen, apiGet, K, mono, sans, serif, useLang, useT } from "@/app/_kit";
-import { Field } from "./ui";
+import {
+  Button, EmptyState, Field, IconButton, Input, LinkButton, LoadingScreen, Textarea, apiGet, K, mono, sans, serif, useLang, useT,
+} from "@/app/_kit";
 import { BRAND_MESSAGES } from "./brand.messages";
 import { fmtDate } from "@/lib/studio/format";
 import { CtaReviewNotice, ctaWarningFrom, useCtaReviewCheck, type CtaWarning } from "./CtaReviewNotice";
@@ -49,40 +50,56 @@ interface BrandData {
   default_cta?: string;
 }
 
-// Single-line text input, same visual language as Field (textarea) above.
+// AA-1008 (S6f): the brand form's fields are the kit Field + Input / Textarea (the studio's own textarea Field of the
+// retired ui.tsx is gone). A long answer grows with its text (CSS `field-sizing: content`, and enough `rows` where that
+// is not supported), so a saved answer is never cut mid-line; `rows` stays the minimum (capped at 16).
+const FIELD_GAP = { marginBottom: 16 } as const;
+
+/** Rows a text needs at ~44 characters a line (a phone-width textarea), plus its own line breaks. */
+function rowsFor(text: string): number {
+  return text.split("\n").reduce((n, line) => n + Math.max(1, Math.ceil(line.length / 44)), 0);
+}
+
+function AreaField({ label, value, onChange, rows = 3, placeholder, hint }: {
+  label: string; value: string; onChange: (v: string) => void; rows?: number; placeholder?: string; hint?: React.ReactNode;
+}) {
+  return (
+    <Field label={label} hint={hint} style={FIELD_GAP}>
+      <Textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        rows={Math.min(16, Math.max(rows, rowsFor(value)))}
+        style={{ fieldSizing: "content", minHeight: `calc(${rows} * 1.5em + 18px)`, maxHeight: "60vh" } as React.CSSProperties} />
+    </Field>
+  );
+}
+
 function TextField({ label, value, onChange, placeholder }: {
   label: string; value: string; onChange: (v: string) => void; placeholder?: string;
 }) {
   return (
-    <div style={{ marginBottom: 16 }}>
-      <label style={{ display: "block", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: K.muted, marginBottom: 6 }}>{label}</label>
-      <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-        style={{ width: "100%", padding: "10px 12px", background: K.bg, border: `1px solid ${K.line}`, borderRadius: 8, color: K.body, fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: sans }} />
-    </div>
+    <Field label={label} style={FIELD_GAP}>
+      <Input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} />
+    </Field>
   );
 }
 
-// Comma-separated multi-value field (same convention the pre-existing Forbidden Words field
-// below already uses) — for Target Markets / Tone of Voice.
+// Comma-separated multi-value field (same convention the Forbidden Words field below uses) — for Target Markets /
+// Tone of Voice.
 function TagListField({ label, value, onChange, placeholder, hint }: {
   label: string; value: string; onChange: (v: string) => void; placeholder?: string; hint?: string;
 }) {
   const t = useT(BRAND_MESSAGES);
   const tags = value.split(",").map(w => w.trim()).filter(Boolean);
   return (
-    <div style={{ marginBottom: 16 }}>
-      <label style={{ display: "block", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: K.muted, marginBottom: 6 }}>{label}</label>
-      <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-        style={{ width: "100%", padding: "10px 12px", background: K.bg, border: `1px solid ${K.line}`, borderRadius: 8, color: K.body, fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: sans }} />
-      <div style={{ fontSize: 11, color: K.muted2, marginTop: 5 }}>{hint ?? t("commaSeparated")}</div>
+    <Field label={label} hint={hint ?? t("commaSeparated")} style={FIELD_GAP}>
+      <Input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} />
       {tags.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
           {tags.map(tag => (
             <span key={tag} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: K.accentTint, color: K.amber }}>{tag}</span>
           ))}
         </div>
       )}
-    </div>
+    </Field>
   );
 }
 
@@ -306,7 +323,7 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
 
         {/* Active version indicator */}
         {data?.configured && data?.version && (
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", marginBottom: 22, background: "var(--aa-green-bg2)", border: "1px solid var(--aa-green-border)", borderRadius: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", marginBottom: 22, background: K.successBg2, border: `1px solid ${K.successBorder}`, borderRadius: 8 }}>
             <span style={{ width: 8, height: 8, borderRadius: "50%", background: K.success, flexShrink: 0 }} />
             <span style={{ fontSize: 12.5, color: K.success, fontWeight: 600 }}>{t("activeVersion", data.version)}</span>
             {data.updated_at && <span style={{ fontSize: 11, color: K.muted, marginLeft: "auto" }}>{t("lastUpdated", fmtDate(data.updated_at, lang))}</span>}
@@ -327,32 +344,32 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
             placeholder={t("brandNamePh")} />
           <TextField label={t("brandType")} value={brandType} onChange={v => { setBrandType(v); markDirty(); }}
             placeholder={t("brandTypePh")} />
-          <Field
-            autoGrow label={t("coreIdea")} rows={2}
+          <AreaField
+            label={t("coreIdea")} rows={2}
             placeholder={t("coreIdeaPh")}
             value={coreIdea} onChange={v => { setCoreIdea(v); markDirty(); }}
           />
           <TagListField label={t("targetMarkets")} value={targetMarkets} onChange={v => { setTargetMarkets(v); markDirty(); }}
             placeholder={t("targetMarketsPh")} hint={t("targetMarketsHint")} />
-          <Field
-            autoGrow label={t("segment")} rows={2}
+          <AreaField
+            label={t("segment")} rows={2}
             placeholder={t("segmentPh")}
             value={customerSegment} onChange={v => { setCustomerSegment(v); markDirty(); }}
           />
-          <Field
-            autoGrow label={t("mindset")} rows={2}
+          <AreaField
+            label={t("mindset")} rows={2}
             placeholder={t("mindsetPh")}
             value={customerMindset} onChange={v => { setCustomerMindset(v); markDirty(); }}
           />
           <TagListField label={t("tone")} value={toneOfVoice} onChange={v => { setToneOfVoice(v); markDirty(); }}
             placeholder={t("tonePh")} />
-          <Field
-            autoGrow label={t("style")} rows={4}
+          <AreaField
+            label={t("style")} rows={4}
             placeholder={t("stylePh")}
             value={sg} onChange={v => { setSg(v); markDirty(); }}
           />
-          <Field
-            autoGrow label={t("examples")} rows={3}
+          <AreaField
+            label={t("examples")} rows={3}
             placeholder={t("examplesPh")}
             value={goodExamples} onChange={v => { setGoodExamples(v); markDirty(); }}
           />
@@ -360,23 +377,18 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
             onChange={v => { setDefaultCta(v); markDirty(); }}
             placeholder={t("ctaPh")} />
           <CtaReviewNotice warning={liveCtaWarning ?? savedCtaWarning} style={{ marginTop: -6, marginBottom: 16 }} />
-          <Field
-            autoGrow label={t("context")} rows={5}
+          <AreaField
+            label={t("context")} rows={5}
             placeholder={t("contextPh")}
             value={sp} onChange={v => { setSp(v); markDirty(); }}
-            hint={`${sp.length}/2000`} hintColor={sp.length > 1800 ? K.danger : K.muted2}
+            hint={<span style={{ color: sp.length > 1800 ? K.danger : undefined }}>{`${sp.length}/2000`}</span>}
           />
-          <div style={{ marginBottom: 0 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-              <label style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: K.muted }}>{t("forbidden")}</label>
-              <span style={{ fontSize: 11, color: K.muted2 }}>{t("words", wordCount)}</span>
-            </div>
-            <input value={fw}
-              onChange={e => { setFw(e.target.value); markDirty(); }}
-              placeholder={t("forbiddenPh")}
-              style={{ width: "100%", padding: "10px 12px", background: K.bg, border: `1px solid ${K.line}`, borderRadius: 8, color: K.body, fontSize: 13, fontFamily: sans, outline: "none", boxSizing: "border-box" }} />
-            <div style={{ fontSize: 11, color: K.muted2, marginTop: 5 }}>{t("forbiddenHint")}</div>
-          </div>
+          <Field
+            label={<span style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><span>{t("forbidden")}</span><span style={{ fontWeight: 400, color: K.muted2 }}>{t("words", wordCount)}</span></span>}
+            hint={t("forbiddenHint")}
+          >
+            <Input value={fw} onChange={e => { setFw(e.target.value); markDirty(); }} placeholder={t("forbiddenPh")} />
+          </Field>
         </div>
 
         {/* Preview */}
@@ -454,7 +466,7 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
           </div>
           <div style={{ padding: 14, maxHeight: "70vh", overflowY: "auto" }}>
             {data.history.map(h => (
-              <div key={h.version} style={{ borderRadius: 8, marginBottom: 10, background: h.is_active ? "var(--aa-green-bg2)" : K.bg, border: `1px solid ${h.is_active ? "var(--aa-green-border)" : K.line}`, overflow: "hidden" }}>
+              <div key={h.version} style={{ borderRadius: 8, marginBottom: 10, background: h.is_active ? K.successBg2 : K.bg, border: `1px solid ${h.is_active ? K.successBorder : K.line}`, overflow: "hidden" }}>
                 <div style={{ padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>
                     <span style={{ fontSize: 14, fontWeight: 700, color: h.is_active ? K.success : K.ink }}>v{h.version}</span>

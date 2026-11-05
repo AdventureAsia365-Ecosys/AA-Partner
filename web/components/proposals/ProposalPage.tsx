@@ -10,7 +10,7 @@
 // terms shows TermsReaccept (re-accept before the deposit). AA-952 slice 4: an accepted page shows ClientPayBox (the
 // issued invoices, the agency's bank details while the window is open, "I have paid").
 import { useEffect, useState } from "react";
-import { K } from "@/app/_kit";
+import { K, Button } from "@/app/_kit";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, type MessageKey } from "@/lib/i18n";
 import { isBuilderPage, PROPOSAL_API, type AnyClientPage } from "@/lib/clientProposal";
@@ -161,14 +161,15 @@ export function ProposalPage({ dict, locale }: { dict: Partial<Record<MessageKey
               {error}
             </p>
           )}
-          <button
+          <Button
             type="submit"
+            variant="primary"
             disabled={busy || !agree || !name.trim()}
-            data-testid="client-accept"
-            style={{ padding: "12px 16px", borderRadius: 999, border: "none", background: K.accent, color: "var(--aa-on-accent)", fontSize: 15, fontWeight: 600, cursor: "pointer", opacity: busy || !agree || !name.trim() ? 0.5 : 1 }}
+            testId="client-accept"
+            style={{ padding: "12px 16px", borderRadius: 999, fontSize: 15 }}
           >
             {t("client.accept")}
-          </button>
+          </Button>
         </form>
       )}
     </div>

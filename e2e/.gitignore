@@ -4,3 +4,5 @@
 /test-results
 /playwright-report
 /.auth
+# AA-1008 visual run output (screenshots, report)
+/visual/results

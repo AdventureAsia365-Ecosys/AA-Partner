@@ -2,22 +2,14 @@
 // AA-638 — skeleton placeholders shaped like the content they stand in for, so a page keeps its
 // layout while data loads instead of flashing a centred spinner. Shimmer respects
 // prefers-reduced-motion.
-import { K, useT } from "@/app/_kit";
+// AA-1008 (S6f): the shimmer bar is the kit SkeletonBar (no class name in page code); `Bar` keeps its call sites.
+import { K, SkeletonBar, SkeletonStyle, useT } from "@/app/_kit";
 import { COMMON_MESSAGES } from "./common.messages";
 
-const CSS = `
-@keyframes sk-shimmer { 0% { background-position: -400px 0 } 100% { background-position: 400px 0 } }
-.sk { background: linear-gradient(90deg, ${K.line2} 0px, ${K.bg} 160px, ${K.line2} 320px); background-size: 800px 100%;
-      animation: sk-shimmer 1.3s linear infinite; border-radius: 6px; }
-@media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
-`;
-
-export function SkeletonStyle() {
-  return <style>{CSS}</style>;
-}
+export { SkeletonStyle };
 
 export function Bar({ w = "100%", h = 12, r = 6, style = {} }: { w?: number | string; h?: number; r?: number; style?: React.CSSProperties }) {
-  return <div className="sk" aria-hidden style={{ width: w, height: h, borderRadius: r, ...style }} />;
+  return <SkeletonBar w={w} h={h} r={r} style={style} />;
 }
 
 function SkCard({ children, dark = false, minH }: { children: React.ReactNode; dark?: boolean; minH?: number }) {

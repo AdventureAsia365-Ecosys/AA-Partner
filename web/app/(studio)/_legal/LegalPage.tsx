@@ -10,6 +10,7 @@ import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 import { BRAND, FONT_DISPLAY, FONT_SANS, LOGO_SRC, SUPPORT_EMAIL } from "@/app/_kit/core/brand";
 import { translator, type Lang } from "@/app/_kit/core/i18n";
+import { PageFrame } from "@/app/_kit/core/PageFrame";
 import { PRIVACY_PATH, TERMS_PATH } from "@/lib/studio/legal";
 import type { Block, Inline, LegalDoc, ListItem } from "./legalDoc";
 import { LEGAL_MESSAGES } from "./legal.messages";
@@ -87,7 +88,7 @@ export function LegalSection({ id, title, children }: { id: string; title: strin
       <h2 id={`${id}-title`} style={{ fontFamily: FONT_DISPLAY, fontWeight: 600, fontSize: 17, color: BRAND.ink, margin: "0 0 8px" }}>
         {title}
       </h2>
-      <div className="aa-legal-body" style={{ fontSize: 14, lineHeight: 1.65, color: BRAND.body }}>
+      <div data-legal-body="" style={{ fontSize: 14, lineHeight: 1.65, color: BRAND.body }}>
         {children}
       </div>
     </section>
@@ -97,10 +98,13 @@ export function LegalSection({ id, title, children }: { id: string; title: strin
 export default function LegalPage({ doc, lang }: { doc: LegalDoc; lang: Lang }) {
   const t = translator(LEGAL_MESSAGES, lang);
   return (
-    <div lang={lang} data-theme="light" style={{ minHeight: "100vh", background: "var(--bg-primary)", fontFamily: FONT_SANS, padding: "32px 16px", boxSizing: "border-box" }}>
+    // The page frame is the kit PageFrame (the one <main>, AA-1008 S6f), restyled as the light page ground; the card is
+    // the article inside it.
+    <PageFrame style={{ minHeight: "100vh", background: "var(--bg-primary)", fontFamily: FONT_SANS, padding: "32px 16px", boxSizing: "border-box", overflowY: "visible" }}>
+      <div lang={lang} data-theme="light">
       {/* Paragraph and list rhythm for the body text (inline styles cannot target descendants). */}
-      <style>{`.aa-legal-body p{margin:0 0 10px}.aa-legal-body ul{list-style:disc;margin:0 0 10px;padding-left:20px}.aa-legal-body li{margin:0 0 6px}.aa-legal-body li ul{list-style:circle;margin:6px 0 0}`}</style>
-      <main style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 16, padding: "28px 24px", width: "100%", maxWidth: 760, margin: "0 auto", boxSizing: "border-box" }}>
+      <style>{`[data-legal-body] p{margin:0 0 10px}[data-legal-body] ul{list-style:disc;margin:0 0 10px;padding-left:20px}[data-legal-body] li{margin:0 0 6px}[data-legal-body] li ul{list-style:circle;margin:6px 0 0}`}</style>
+      <article style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 16, padding: "28px 24px", width: "100%", maxWidth: 760, margin: "0 auto", boxSizing: "border-box" }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={LOGO_SRC} alt={t("logoAlt")} width={52} height={33} style={{ width: 52, height: "auto", display: "block", marginBottom: 16 }} />
         <h1 style={{ fontFamily: FONT_DISPLAY, fontWeight: 600, fontSize: 24, color: BRAND.ink, margin: "0 0 4px" }}>{doc.title}</h1>
@@ -121,7 +125,8 @@ export default function LegalPage({ doc, lang }: { doc: LegalDoc; lang: Lang }) 
           <a href={TERMS_PATH} style={{ color: BRAND.muted, textDecoration: "none" }}>{t("terms")}</a>
           <Link href="/portal/dashboard" style={{ color: BRAND.muted, textDecoration: "none" }}>{t("login")}</Link>
         </nav>
-      </main>
-    </div>
+      </article>
+      </div>
+    </PageFrame>
   );
 }

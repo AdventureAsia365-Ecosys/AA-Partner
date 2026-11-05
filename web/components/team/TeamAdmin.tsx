@@ -6,13 +6,14 @@
 // allow-list; the API checks the permission matrix and keeps the last owner (409 last_owner).
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Badge, Button, EmptyState, K, useHydrated } from "@/app/_kit";
+import type { ColumnDef } from "@tanstack/react-table";
+import { Badge, Button, DataTable, EmptyState, K, useHydrated } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { type Lang, type MessageKey, t } from "@/lib/i18n";
 import type { Role } from "@/lib/nav";
-import { memberLabel, reassignTargets, seatsLeft, teamError, type ReassignQueue, type TeamPage } from "@/lib/team";
+import { memberLabel, reassignTargets, seatsLeft, teamError, type ReassignQueue, type TeamInvitation, type TeamMember, type TeamPage } from "@/lib/team";
 
 const ROLES: Role[] = ["owner", "agent", "assistant"];
 
@@ -26,8 +27,6 @@ const field: React.CSSProperties = {
   color: K.ink,
   boxSizing: "border-box",
 };
-const cell: React.CSSProperties = { padding: "8px 8px", borderBottom: `1px solid ${K.line}`, fontSize: 13, verticalAlign: "middle" };
-const head: React.CSSProperties = { ...cell, color: K.muted, fontWeight: 600, fontSize: 11.5, textAlign: "left", letterSpacing: "0.04em" };
 
 export function TeamAdmin({ page, queue, lang, locale }: { page: TeamPage; queue: ReassignQueue | null; lang: Lang; locale: DateLocale }) {
   const router = useRouter();
@@ -60,6 +59,75 @@ export function TeamAdmin({ page, queue, lang, locale }: { page: TeamPage; queue
   const left = seatsLeft(page.plan);
   const fromMembers = Array.from(new Set(queue?.trips.map((tr) => tr.from_member_id) ?? []));
   const byId = new Map(page.members.map((m) => [m.member_id, m]));
+
+  const memberColumns: ColumnDef<TeamMember, unknown>[] = [
+    {
+      id: "member",
+      header: t(lang, "team.member"),
+      accessorFn: (m) => memberLabel(m),
+      cell: ({ row }) => (
+        <span style={{ overflowWrap: "anywhere", maxWidth: 280, display: "inline-block" }}>
+          {memberLabel(row.original)}
+          {row.original.is_me && <span style={{ color: K.muted }}> · {t(lang, "team.you")}</span>}
+        </span>
+      ),
+    },
+    {
+      id: "role",
+      header: t(lang, "team.role"),
+      accessorFn: (m) => m.role,
+      cell: ({ row }) => {
+        const m = row.original;
+        return m.status === "disabled" ? (
+          t(lang, `role.${m.role}` as MessageKey)
+        ) : (
+          <select
+            aria-label={t(lang, "team.role")}
+            value={m.role}
+            disabled={busy || !hydrated}
+            onChange={(e) => void send("PATCH", `team/members/${m.member_id}`, { role: e.target.value }, "team.roleChanged")}
+            style={field}
+          >
+            {ROLES.map((r) => (
+              <option key={r} value={r}>
+                {t(lang, `role.${r}` as MessageKey)}
+              </option>
+            ))}
+          </select>
+        );
+      },
+    },
+    {
+      id: "status",
+      header: t(lang, "team.status"),
+      accessorFn: (m) => m.status,
+      cell: ({ row }) => (
+        <Badge tone={row.original.status === "active" ? "success" : row.original.status === "invited" ? "info" : "neutral"}>
+          {t(lang, `team.status.${row.original.status}` as MessageKey)}
+        </Badge>
+      ),
+    },
+    { id: "trips", header: t(lang, "team.openTrips"), accessorFn: (m) => m.open_trips, meta: { align: "right" } },
+    {
+      id: "actions",
+      header: "",
+      enableSorting: false,
+      meta: { align: "right", hideLabelOnCard: true },
+      cell: ({ row }) =>
+        row.original.status !== "disabled" && (
+          <Button
+            size="sm"
+            variant="danger"
+            disabled={busy || !hydrated}
+            onClick={() => {
+              if (window.confirm(t(lang, "team.removeConfirm"))) void send("POST", `team/members/${row.original.member_id}/remove`, undefined, "team.removed");
+            }}
+          >
+            {t(lang, "team.remove")}
+          </Button>
+        ),
+    },
+  ];
 
   return (
     <div style={{ display: "grid", gap: 14 }} data-testid="team-admin" data-hydrated={hydrated ? "true" : undefined}>
@@ -116,39 +184,45 @@ export function TeamAdmin({ page, queue, lang, locale }: { page: TeamPage; queue
 
       {page.invitations.length > 0 && (
         <Panel title={t(lang, "team.pending")} testId="team-invitations">
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  <th style={head}>{t(lang, "team.email")}</th>
-                  <th style={head}>{t(lang, "team.role")}</th>
-                  <th style={head}>{t(lang, "team.expires")}</th>
-                  <th style={head} />
-                </tr>
-              </thead>
-              <tbody>
-                {page.invitations.map((i) => (
-                  <tr key={i.invitation_id}>
-                    <td style={{ ...cell, overflowWrap: "anywhere" }}>{i.email_masked}</td>
-                    <td style={cell}>{t(lang, `role.${i.role}` as MessageKey)}</td>
-                    <td style={{ ...cell, whiteSpace: "nowrap" }}>
-                      {formatDate(i.expires_at, locale)}
-                      {i.status === "claimed" && (
-                        <span style={{ marginLeft: 6 }}>
-                          <Badge tone="info">{t(lang, "team.opened")}</Badge>
-                        </span>
-                      )}
-                    </td>
-                    <td style={{ ...cell, textAlign: "right" }}>
-                      <Button size="sm" variant="ghost" disabled={busy || !hydrated} onClick={() => void send("DELETE", `team/invitations/${i.invitation_id}`, undefined, "team.revoked")}>
-                        {t(lang, "team.revoke")}
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {/* AA-1008 (S6f): the kit DataTable (no raw <table> in page code). */}
+          <DataTable<TeamInvitation>
+            data={page.invitations}
+            columns={[
+              { id: "email", header: t(lang, "team.email"), accessorFn: (i) => i.email_masked, cell: ({ row }) => <span style={{ overflowWrap: "anywhere" }}>{row.original.email_masked}</span> },
+              { id: "role", header: t(lang, "team.role"), accessorFn: (i) => t(lang, `role.${i.role}` as MessageKey) },
+              {
+                id: "expires",
+                header: t(lang, "team.expires"),
+                accessorFn: (i) => i.expires_at,
+                cell: ({ row }) => (
+                  <span style={{ whiteSpace: "nowrap" }}>
+                    {formatDate(row.original.expires_at, locale)}
+                    {row.original.status === "claimed" && (
+                      <span style={{ marginLeft: 6 }}>
+                        <Badge tone="info">{t(lang, "team.opened")}</Badge>
+                      </span>
+                    )}
+                  </span>
+                ),
+              },
+              {
+                id: "actions",
+                header: "",
+                enableSorting: false,
+                meta: { align: "right", hideLabelOnCard: true },
+                cell: ({ row }) => (
+                  <Button size="sm" variant="ghost" disabled={busy || !hydrated} onClick={() => void send("DELETE", `team/invitations/${row.original.invitation_id}`, undefined, "team.revoked")}>
+                    {t(lang, "team.revoke")}
+                  </Button>
+                ),
+              },
+            ]}
+            tableId="crm-team-invitations"
+            getRowId={(i) => i.invitation_id}
+            searchable={false}
+            paginate={false}
+            compact
+          />
         </Panel>
       )}
 
@@ -156,68 +230,16 @@ export function TeamAdmin({ page, queue, lang, locale }: { page: TeamPage; queue
         {page.members.length === 0 ? (
           <EmptyState title={t(lang, "team.members")} description={t(lang, "team.noMembers")} />
         ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  <th style={head}>{t(lang, "team.member")}</th>
-                  <th style={head}>{t(lang, "team.role")}</th>
-                  <th style={head}>{t(lang, "team.status")}</th>
-                  <th style={head}>{t(lang, "team.openTrips")}</th>
-                  <th style={head} />
-                </tr>
-              </thead>
-              <tbody>
-                {page.members.map((m) => (
-                  <tr key={m.member_id} data-testid="team-member-row">
-                    <td style={{ ...cell, overflowWrap: "anywhere", maxWidth: 280 }}>
-                      {memberLabel(m)}
-                      {m.is_me && <span style={{ color: K.muted }}> · {t(lang, "team.you")}</span>}
-                    </td>
-                    <td style={cell}>
-                      {m.status === "disabled" ? (
-                        t(lang, `role.${m.role}` as MessageKey)
-                      ) : (
-                        <select
-                          aria-label={t(lang, "team.role")}
-                          value={m.role}
-                          disabled={busy || !hydrated}
-                          onChange={(e) => void send("PATCH", `team/members/${m.member_id}`, { role: e.target.value }, "team.roleChanged")}
-                          style={field}
-                        >
-                          {ROLES.map((r) => (
-                            <option key={r} value={r}>
-                              {t(lang, `role.${r}` as MessageKey)}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                    </td>
-                    <td style={cell}>
-                      <Badge tone={m.status === "active" ? "success" : m.status === "invited" ? "info" : "neutral"}>
-                        {t(lang, `team.status.${m.status}` as MessageKey)}
-                      </Badge>
-                    </td>
-                    <td style={cell}>{m.open_trips}</td>
-                    <td style={{ ...cell, textAlign: "right" }}>
-                      {m.status !== "disabled" && (
-                        <Button
-                          size="sm"
-                          variant="danger"
-                          disabled={busy || !hydrated}
-                          onClick={() => {
-                            if (window.confirm(t(lang, "team.removeConfirm"))) void send("POST", `team/members/${m.member_id}/remove`, undefined, "team.removed");
-                          }}
-                        >
-                          {t(lang, "team.remove")}
-                        </Button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable<TeamMember>
+            data={page.members}
+            columns={memberColumns}
+            tableId="crm-team-members"
+            getRowId={(m) => m.member_id}
+            rowTestId={() => "team-member-row"}
+            searchable={false}
+            paginate={false}
+            compact
+          />
         )}
       </Panel>
 

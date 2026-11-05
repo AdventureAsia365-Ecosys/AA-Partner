@@ -40,6 +40,9 @@ describe("host classification", () => {
     expect(isPublicPartnerPath("/healthz")).toBe(true);
     expect(isPublicPartnerPath("/healthzz")).toBe(false);
     expect(isPublicPartnerPath("/pipeline")).toBe(false);
+    // AA-1008: the visual run's gated kit gallery (a deployed build answers 404 there); nothing under it.
+    expect(isPublicPartnerPath("/kit-gallery")).toBe(true);
+    expect(isPublicPartnerPath("/kit-gallery/x")).toBe(false);
   });
 });
 

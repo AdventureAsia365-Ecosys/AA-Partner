@@ -106,10 +106,9 @@ type EmptyPage = {
   extra?: (page: Page) => Promise<void>;
 };
 
-// The kit empty state (My Tours' DataTable, the Marketplace's "In my catalog" view) and the portal's own EmptyState
-// (ui.tsx: the Slate).
+// The kit empty state (My Tours' DataTable, the Marketplace's "In my catalog" view and, since AA-1008 retired the
+// studio's own EmptyState, the Slate).
 const KIT_EMPTY = '[data-testid="kit-empty-state"]';
-const PORTAL_EMPTY = '[data-testid="portal-empty-state"]';
 
 const EMPTY_PAGES: EmptyPage[] = [
   {
@@ -131,14 +130,14 @@ const EMPTY_PAGES: EmptyPage[] = [
   },
   {
     id: 'create-social', label: 'Social Posts (Slate)', path: '/portal/create/social',
-    copy: 'We add topics here as your tours are written and updated.', scope: PORTAL_EMPTY,
+    copy: 'We add topics here as your tours are written and updated.', scope: KIT_EMPTY,
     extra: async (page) => {
       await expect(page.getByRole('button', { name: 'Update topics' })).toBeVisible({ timeout: 15000 });
     },
   },
   {
     id: 'create-article', label: 'Articles (Slate)', path: '/portal/create/article',
-    copy: 'We add topics here as your tours are written and updated.', scope: PORTAL_EMPTY,
+    copy: 'We add topics here as your tours are written and updated.', scope: KIT_EMPTY,
     extra: async (page) => {
       await expect(page.getByRole('button', { name: 'Update topics' })).toBeVisible({ timeout: 15000 });
     },

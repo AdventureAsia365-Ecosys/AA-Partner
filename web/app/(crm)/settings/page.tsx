@@ -50,23 +50,23 @@ export default async function SettingsPage() {
         </p>
       </Panel>
       <Panel title={t(lang, "team.title")} testId="settings-team">
-        <a href="/settings/team" style={{ fontSize: 13.5 }} data-testid="settings-team-link">
+        <Link href="/settings/team" style={{ fontSize: 13.5 }} data-testid="settings-team-link">
           {t(lang, ctx.role === "owner" ? "settings.team" : "settings.teamView")}
-        </a>
+        </Link>
       </Panel>
       <Panel title={t(lang, "mail.title")} testId="settings-mailbox">
         <p style={{ margin: "0 0 8px", fontSize: 13 }}>
-          <a href="/settings/mailbox" data-testid="settings-mailbox-link">
+          <Link href="/settings/mailbox" data-testid="settings-mailbox-link">
             {t(lang, "mail.link")}
-          </a>
+          </Link>
         </p>
-        <a href="/settings/saved-replies" style={{ fontSize: 13.5 }} data-testid="settings-replies-link">
+        <Link href="/settings/saved-replies" style={{ fontSize: 13.5 }} data-testid="settings-replies-link">
           {t(lang, "replies.link")}
-        </a>
+        </Link>
         <p style={{ margin: "8px 0 0", fontSize: 13.5 }}>
-          <a href="/settings/templates" data-testid="settings-templates-link">
+          <Link href="/settings/templates" data-testid="settings-templates-link">
             {t(lang, "templates.link")}
-          </a>
+          </Link>
         </p>
         <p style={{ margin: "8px 0 0", fontSize: 13.5 }}>
           <Link href="/settings/channels" data-testid="settings-channels-link">
@@ -75,19 +75,19 @@ export default async function SettingsPage() {
         </p>
       </Panel>
       <Panel title={t(lang, "forms.title")} testId="settings-forms">
-        <a href="/settings/forms" style={{ fontSize: 13.5 }} data-testid="settings-forms-link">
+        <Link href="/settings/forms" style={{ fontSize: 13.5 }} data-testid="settings-forms-link">
           {t(lang, "settings.forms")}
-        </a>
+        </Link>
       </Panel>
       <Panel title={t(lang, "agreements.title")} testId="settings-agreements">
-        <a href="/settings/agreements" style={{ fontSize: 13.5 }} data-testid="settings-agreements-link">
+        <Link href="/settings/agreements" style={{ fontSize: 13.5 }} data-testid="settings-agreements-link">
           {t(lang, "agreements.link")}
-        </a>
+        </Link>
       </Panel>
       <Panel title={t(lang, "payments.title")} testId="settings-payments">
-        <a href="/settings/payments" style={{ fontSize: 13.5 }} data-testid="settings-payments-link">
+        <Link href="/settings/payments" style={{ fontSize: 13.5 }} data-testid="settings-payments-link">
           {t(lang, ctx.role === "owner" ? "payments.link" : "payments.ownerOnly")}
-        </a>
+        </Link>
       </Panel>
       <Panel title={t(lang, "addons.title")} testId="settings-add-ons">
         {ctx.role === "owner" ? (
@@ -105,15 +105,15 @@ export default async function SettingsPage() {
       </Panel>
       <Panel title={t(lang, "settings.privacy")} testId="settings-privacy">
         <p style={{ margin: "0 0 8px", fontSize: 13 }}>
-          <a href="/settings/data" data-testid="settings-data-link">
+          <Link href="/settings/data" data-testid="settings-data-link">
             {t(lang, "data.link")}
-          </a>
+          </Link>
         </p>
         <p style={{ margin: "0 0 8px", fontSize: 13, color: K.muted }}>{t(lang, "settings.accessLogHelp")}</p>
         {ctx.role === "owner" ? (
-          <a href="/settings/access-log" style={{ fontSize: 13.5 }} data-testid="settings-access-log-link">
+          <Link href="/settings/access-log" style={{ fontSize: 13.5 }} data-testid="settings-access-log-link">
             {t(lang, "settings.accessLog")}
-          </a>
+          </Link>
         ) : (
           <p style={{ margin: 0, fontSize: 13 }}>{t(lang, "settings.accessLogOwnerOnly")}</p>
         )}

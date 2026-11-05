@@ -14,7 +14,7 @@
 // AA-962 (errata S247 CRM-31 controller settings): the contact box shows the agency's own consent wording when it set
 // one, the privacy link falls back to the agency's (the API resolves it) and the agency's data-request contact shows.
 import { useMemo, useRef, useState } from "react";
-import { Button, K, useHydrated } from "@/app/_kit";
+import { Button, K, useHydrated, ChipButton } from "@/app/_kit";
 import type { Lang, MessageKey } from "@/lib/i18n";
 import { fmt } from "@/lib/i18n";
 import { consentLabel, dataRequestHref, firstBadField, parseAges, slotOptions, type PublicForm } from "@/lib/intakeForms";
@@ -158,25 +158,15 @@ export function InquiryForm({ publicKey, form, lang, dict }: { publicKey: string
             {options(form, "destinations").map((d) => {
               const on = destinations.includes(d);
               return (
-                <button
+                <ChipButton
                   key={d}
                   type="button"
-                  aria-pressed={on}
+                  selected={on}
                   data-testid={`intake-dest-${d}`}
                   onClick={() => setDestinations(on ? destinations.filter((x) => x !== d) : [...destinations, d])}
-                  style={{
-                    font: "inherit",
-                    fontSize: 13,
-                    padding: "6px 12px",
-                    borderRadius: 999,
-                    cursor: "pointer",
-                    border: `1px solid ${on ? K.accent : K.line2}`,
-                    background: on ? K.accentTint : K.card,
-                    color: on ? K.accentDeep : K.ink2,
-                  }}
                 >
                   {code("dest", d)}
-                </button>
+                </ChipButton>
               );
             })}
           </div>

@@ -4,9 +4,9 @@
 // workflow (portalNav.tsx NAV_GROUPS), a collapse rail (chevron button or the `[` key, ignored while
 // typing; state in the vendored sidebarStore, restored before paint by the root layout script).
 //
-// Presentation is CSS-driven (globals.css `data-pshell` rules): the width, the collapsed rail
-// (labels and group titles hidden, a dot instead of the count pill) and the phone drawer (fixed,
-// off-canvas, `data-open`). Nothing here sets width or position inline, so the CSS always wins.
+// Presentation is CSS-driven (studio.css `data-pshell` rules): the width and the collapsed rail (labels and group titles
+// hidden, a dot instead of the count pill). The phone drawer (fixed, off-canvas) is the kit ShellFrame's wrapper around
+// this sidebar (AA-1008 S6e). Nothing here sets width or position inline, so the CSS always wins.
 //
 // S264 — the titled groups (Tours, Brand, Create, Content, Account, Partner CRM) fold through the kit NavGroup +
 // useNavGroups (core, scope "portal"): folded unless the user opened them, the group of the current page open on
@@ -20,8 +20,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronsLeft, ChevronsRight, Clock, ExternalLink, Map as MapIcon, Plus, Users } from "lucide-react";
 import type { AppEntry } from "@/lib/apps";
 import {
-  K, NavGroup, alpha, navGroupId, sans, serif, useHydrated, useMediaQuery, useNavGroups, useSidebarCollapsed, useT,
-  type Translator,
+  K, NavGroup, Pressable, alpha, navGroupId, sans, serif, useHydrated, useMediaQuery, useNavGroups, useSidebarCollapsed,
+  useT, type Translator,
 } from "@/app/_kit";
 import { LOGO_SRC } from "../../core/brand";
 import { NAV_GROUPS, ROUTES, navActive, type NavEntry } from "./portalNav";
@@ -78,13 +78,13 @@ export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate 
       data-hydrated={hydrated ? "true" : undefined}
       aria-label={t("sidebarAria")}
       style={{
-        flexShrink: 0, background: "var(--aa-side-bg)", color: "var(--aa-side-text)",
+        flexShrink: 0, background: K.sideBg, color: K.sideText,
         display: "flex", flexDirection: "column", gap: 22,
         overflowY: "auto", overflowX: "hidden", fontFamily: sans,
       }}
     >
       {/* Brand → Dashboard */}
-      <div style={{ paddingBottom: 16, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+      <div style={{ paddingBottom: 16, borderBottom: `1px solid ${alpha(K.sideText, 10)}` }}>
         <Link
           href={ROUTES.dashboard}
           onClick={onNavigate}
@@ -97,7 +97,7 @@ export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate 
           <img src={LOGO_SRC} alt="" width={38} height={24}
             style={{ width: 38, height: "auto", flexShrink: 0, display: "block" }} />
           <span data-pshell-label="true" style={{ minWidth: 0 }}>
-            <span style={{ display: "block", fontFamily: serif, fontSize: 14, fontWeight: 500, color: "var(--aa-side-title)", letterSpacing: "-0.01em", lineHeight: 1.2 }}>
+            <span style={{ display: "block", fontFamily: serif, fontSize: 14, fontWeight: 500, color: K.sideTitle, letterSpacing: "-0.01em", lineHeight: 1.2 }}>
               {t("brandName")}
             </span>
             <span style={{ display: "block", fontSize: 9.5, textTransform: "uppercase", letterSpacing: "0.18em", color: K.accent, fontWeight: 600, marginTop: 1 }}>
@@ -140,23 +140,22 @@ export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate 
       </nav>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <button
+        {/* A sidebar row (the kit Pressable: no look of its own, the kit focus ring); studio.css hides it below 900 px. */}
+        <Pressable
           data-pshell="collapse-btn"
           data-pshell-row="true"
           onClick={() => setCollapsed(!collapsed)}
-          data-testid="portal-sidebar-collapse"
+          testId="portal-sidebar-collapse"
           title={collapsed ? t("expandSidebarKey") : t("collapseSidebarKey")}
           aria-label={collapsed ? t("expandSidebar") : t("collapseSidebar")}
           style={{
-            display: "flex", alignItems: "center", gap: 10, width: "100%",
-            padding: "8px 10px", borderRadius: 7, border: "none",
-            background: "transparent", color: "var(--aa-side-text2)", cursor: "pointer",
-            fontSize: 12, fontFamily: sans,
+            display: "flex", alignItems: "center", gap: 10,
+            padding: "8px 10px", borderRadius: 7, color: K.sideText2, fontSize: 12, fontFamily: sans,
           }}
         >
           {collapsed ? <ChevronsRight size={16} /> : <ChevronsLeft size={16} />}
           <span data-pshell-label="true">{t("collapse")}</span>
-        </button>
+        </Pressable>
       </div>
     </aside>
   );
@@ -245,7 +244,7 @@ function NavItem({ entry, active, count, onClick, t }: {
         display: "flex", alignItems: "center", gap: 10, width: "100%",
         padding: "8px 10px", borderRadius: 7, textDecoration: "none",
         background: active ? alpha(K.accent, 12) : "transparent",
-        color: active ? "var(--aa-on-solid)" : "var(--aa-side-text)",
+        color: active ? K.onSolid : K.sideText,
         fontSize: 13, fontWeight: 500, fontFamily: sans, position: "relative",
         transition: "background .15s, color .15s",
       }}
@@ -267,7 +266,7 @@ function NavItem({ entry, active, count, onClick, t }: {
       </span>
       {showCount && (
         <span data-pshell-label="true" aria-label={entry.count === "pool" ? t("toursAvailable", count) : t("toursCount", count)}
-          style={{ fontSize: 11, color: active ? K.accent : "var(--aa-side-text2)", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
+          style={{ fontSize: 11, color: active ? K.accent : K.sideText2, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
           {shown}
         </span>
       )}

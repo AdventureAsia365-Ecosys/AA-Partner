@@ -10,7 +10,7 @@
 import type { Metadata } from "next";
 import { notFound, permanentRedirect } from "next/navigation";
 import { cache } from "react";
-import { AiNotice, K, sans, serif } from "@/app/_kit";
+import { AiNotice, K, PageFrame, sans, serif } from "@/app/_kit";
 import { SUPPORT_EMAIL } from "@/app/_kit/core/brand";
 import { config } from "@/lib/config";
 import { itineraryParagraphs, loadTrip, TOUR_ID, type TripLookup } from "@/lib/tripPage";
@@ -48,7 +48,8 @@ export default async function TripPage({ params }: { params: Promise<{ tourId: s
   const { trip } = found;
 
   return (
-    <main lang="en" data-testid="trip-page" style={{ background: K.bg, minHeight: "100vh", color: K.ink }}>
+    <PageFrame testId="trip-page" style={{ background: K.bg, minHeight: "100vh", color: K.ink, padding: 0, overflowY: "visible" }}>
+      <div lang="en">
       <TripHeader />
 
       <section style={{ maxWidth: 760, margin: "0 auto", padding: "56px 16px 80px" }}>
@@ -127,7 +128,7 @@ export default async function TripPage({ params }: { params: Promise<{ tourId: s
             style={{
               display: "inline-block",
               background: K.accent,
-              color: "#fff",
+              color: K.onAccent,
               fontFamily: sans,
               fontWeight: 700,
               fontSize: 14,
@@ -141,6 +142,7 @@ export default async function TripPage({ params }: { params: Promise<{ tourId: s
           </a>
         </div>
       </section>
-    </main>
+      </div>
+    </PageFrame>
   );
 }

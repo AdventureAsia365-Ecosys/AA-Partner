@@ -9,7 +9,7 @@
 // (completed / lost / cancelled) sits under the board.
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Badge, K } from "@/app/_kit";
+import { Badge, K, ListButton } from "@/app/_kit";
 import { BulkDialog, GateDialog, type BulkTarget } from "@/components/pipeline/StageDialogs";
 import { toast, UndoToast, type ToastState } from "@/components/pipeline/UndoToast";
 import { bffSend } from "@/lib/bffClient";
@@ -52,7 +52,13 @@ export function BoardView({ board, lang, locale }: { board: Board; lang: Lang; l
   const drag = useRef<{ tripId: string; from: BoardStage } | null>(null);
   const filtered = !!board.filter.waiting_on || board.filter.owner === "me";
 
-  useEffect(() => setStages(board.stages), [board]);
+  // A new board from the server (router.refresh) replaces the local columns: compared during render (React's "adjust
+  // state when a prop changes" pattern), not with an effect's setState after the render.
+  const [boardSeen, setBoardSeen] = useState(board);
+  if (board !== boardSeen) {
+    setBoardSeen(board);
+    setStages(board.stages);
+  }
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(id);
@@ -223,21 +229,21 @@ function ColumnMenu({ lang, stage, targets, onPick }: { lang: Lang; stage: Board
       <summary aria-label={t(lang, "pipeline.bulkMenu")} title={t(lang, "pipeline.bulkMenu")} style={{ listStyle: "none", cursor: "pointer", color: K.muted, fontSize: 14, padding: "0 4px", lineHeight: 1 }}>
         ⋯
       </summary>
-      <div role="menu" style={{ position: "absolute", right: 0, top: "100%", zIndex: 10, background: K.card, border: `1px solid ${K.line}`, borderRadius: 8, padding: 4, display: "grid", minWidth: 180, boxShadow: "0 8px 24px rgba(31,41,51,0.12)" }}>
+      <div role="menu" style={{ position: "absolute", right: 0, top: "100%", zIndex: 10, background: K.card, border: `1px solid ${K.line}`, borderRadius: 8, padding: 4, display: "grid", minWidth: 180, boxShadow: K.shadowMd }}>
         {targets.map((to) => (
-          <button
+          <ListButton
             key={to}
-            type="button"
             role="menuitem"
+            density="compact"
             data-testid={`bulk-to-${to}`}
             onClick={() => {
               if (ref.current) ref.current.open = false;
               onPick(to);
             }}
-            style={{ font: "inherit", fontSize: 12.5, textAlign: "left", background: "transparent", border: 0, padding: "6px 8px", borderRadius: 6, color: K.ink, cursor: "pointer" }}
+            style={{ fontSize: 12.5 }}
           >
             {fmt(t(lang, "pipeline.bulkTo"), { stage: stageLabel(lang, to) })}
-          </button>
+          </ListButton>
         ))}
       </div>
     </details>
