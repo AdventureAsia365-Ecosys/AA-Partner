@@ -64,6 +64,7 @@ export const PAGES: VisualPage[] = [
   crm("legal-terms", "/legal/terms"),
   crm("settings", "/settings"),
   crm("settings-access-log", "/settings/access-log"),
+  crm("settings-add-ons", "/settings/add-ons"),
   crm("settings-agreements", "/settings/agreements"),
   crm("settings-ai", "/settings/ai"),
   crm("settings-channels", "/settings/channels"),
