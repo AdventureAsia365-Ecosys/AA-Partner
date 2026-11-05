@@ -41,7 +41,8 @@ The projection (:func:`projection`, one :func:`app.tenancy.entitlement_feed_tx` 
   ``lock_source = cis_tenant``; ``in_service`` true lifts a lock whose source is ``cis_tenant`` (an AA lock or a
   last-owner lock stays), as the membership feed does for tenant.locked / tenant.unlocked;
 - the pilot marker (AA-969, root ADR 0019 d16, crm-044): ``crm.tenant.is_pilot`` follows the snapshot's ``is_pilot``
-  (absent = false: a CIS before contract 1.0's field), also under the adoption guard (it is the tenant's, not the
+  (absent = no write, the agency keeps its current marker: a CIS before contract 1.0's field, or a partial snapshot,
+  must never clear the pilot's protections), also under the adoption guard (it is the tenant's, not the
   plan's). Only this actor may write it (``crm.guard_pilot_marker``, CRM04). The clean-up paths skip the marked agency
   and ``crm_pilot_backup`` exports it every night (``app.lifecycle.pilot``).
 
@@ -125,7 +126,7 @@ class Projection:
     features: tuple[str, ...]
     in_service: bool
     crm_subscribed: bool = True  # the CIS account has a crm subscription in any status (the adoption guard)
-    is_pilot: bool = False  # AA-969 d16: the CIS pilot marker (crm-044)
+    is_pilot: bool | None = None  # AA-969 d16: the CIS pilot marker (crm-044); None = absent, keep the current one
 
 
 @dataclass
@@ -196,8 +197,8 @@ def parse_account(body: Any, tenant_id: uuid.UUID) -> dict[str, Any]:
         raise AccountError("account_tenant")
     if not isinstance(body.get("in_service"), bool):
         raise AccountError("account_in_service")
-    is_pilot = body.get("is_pilot", False)
-    if not isinstance(is_pilot, bool):
+    is_pilot = body.get("is_pilot")  # absent: None (the feed keeps the agency's current marker)
+    if is_pilot is not None and not isinstance(is_pilot, bool):
         raise AccountError("account_is_pilot")
     subs, ents = body.get("subscriptions"), body.get("entitlements")
     if not isinstance(subs, list) or not isinstance(ents, list):
@@ -234,7 +235,7 @@ def projection(account: dict[str, Any]) -> Projection:
     seats = ents.get(SEATS_KEY)
     member_limit = None if seats is None else max(1, min(int(seats), MEMBER_LIMIT_MAX))
     return Projection(
-        plan, member_limit, features, bool(account["in_service"]), crm is not None, bool(account.get("is_pilot"))
+        plan, member_limit, features, bool(account["in_service"]), crm is not None, account.get("is_pilot")
     )
 
 
@@ -329,7 +330,7 @@ async def _apply_in(ctx: SystemContext, wanted: Projection, counts: RunCounts) -
         await ctx.conn.execute(UNLOCK_SQL, ctx.tenant_id)
         ctx.audit("tenant_unlock", "allowed", "tenant", str(ctx.tenant_id), fields=("status",), reason="cis_account")
         counts.unlocked += 1
-    pilot = bool(tenant["is_pilot"]) != wanted.is_pilot
+    pilot = wanted.is_pilot is not None and bool(tenant["is_pilot"]) != wanted.is_pilot
     if pilot:
         await ctx.conn.execute(SET_PILOT_SQL, ctx.tenant_id, wanted.is_pilot)
         ctx.audit(

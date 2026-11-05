@@ -283,3 +283,18 @@ async def test_pilot_tenant_needs_a_marked_agency(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(rd.pilot, "pilot_agencies", one)
     assert await rd.pilot_tenant(object()) == TENANT  # type: ignore[arg-type]
+
+
+def test_a_failed_drill_reports_the_error_class_and_sqlstate_only() -> None:
+    """A database error text can quote a row value: the drill prints its class and SQLSTATE, never its message."""
+    exc = asyncpg.InvalidTextRepresentationError('invalid input syntax for type integer: "invented@example.test"')
+    out = rd.failure(exc)
+    assert out == {
+        "ok": False, "error": "unexpected", "error_class": "InvalidTextRepresentationError", "sqlstate": "22P02",
+    }  # fmt: skip
+    assert "invented@example.test" not in json.dumps(out)
+    assert rd.failure(OSError("connection refused to db.example.test")) == {
+        "ok": False, "error": "unexpected", "error_class": "OSError",
+    }  # fmt: skip
+    assert rd.failure(rd.DrillError("no_pilot_agency")) == {"ok": False, "error": "no_pilot_agency"}
+    assert rd.failure(Unavailable("export_object_gone")) == {"ok": False, "error": "export_object_gone"}

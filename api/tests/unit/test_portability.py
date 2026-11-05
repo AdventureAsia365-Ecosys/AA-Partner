@@ -250,6 +250,39 @@ def test_request_is_owner_only_checks_the_subject_and_queues_one_job() -> None:
     busy = ScriptedConn().on("INSERT INTO crm.export_job", asyncpg.UniqueViolationError("open"))
     with codes(Conflict, "export_running"):
         run(exports.request(tenant_ctx(busy), "tenant", None))
+    assert busy.sql("requested_by = 'job:crm_pilot_backup'")  # it looked for a backup to take over; none
+
+
+def test_the_owner_agency_export_takes_the_slot_of_an_open_pilot_backup() -> None:
+    """AA-969 d16: AA's hidden nightly backup never blocks the owner's own export request."""
+    inserts = iter([asyncpg.UniqueViolationError("open"), EXPORT])
+    conn = (
+        ScriptedConn()
+        .on("INSERT INTO crm.export_job", lambda *_: next(inserts))
+        .on("requested_by = 'job:crm_pilot_backup'", [{"export_job_id": REQ_ID}])
+        .on("FROM crm.export_job WHERE", _row(status="queued"))
+        .on("INSERT INTO crm.job", "job-1")
+    )
+    got = run(exports.request(tenant_ctx(conn), "tenant", None))
+    assert got["status"] == "queued"
+    assert len(conn.sql("INSERT INTO crm.export_job")) == 2 and conn.sql("SET status = 'cancelled'")
+    assert conn.sql("INSERT INTO crm.job")
+    # a client export never takes over (the backup is an agency export), and a lost race is still export_running
+    client = (
+        ScriptedConn()
+        .on("FROM crm.traveler WHERE", 1)
+        .on("INSERT INTO crm.export_job", asyncpg.UniqueViolationError("open"))
+    )
+    with codes(Conflict, "export_running"):
+        run(exports.request(tenant_ctx(client), "traveler", CLIENT))
+    assert not client.sql("requested_by = 'job:crm_pilot_backup'")
+    race = (
+        ScriptedConn()
+        .on("INSERT INTO crm.export_job", asyncpg.UniqueViolationError("open"))
+        .on("requested_by = 'job:crm_pilot_backup'", [{"export_job_id": REQ_ID}])
+    )
+    with codes(Conflict, "export_running"):
+        run(exports.request(tenant_ctx(race), "tenant", None))
 
 
 def test_the_link_is_single_use_owner_only_and_checks_both_digests() -> None:

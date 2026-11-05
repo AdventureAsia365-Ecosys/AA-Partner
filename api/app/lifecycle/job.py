@@ -18,11 +18,14 @@ ahead: the deploy gate and the DB Migrate idle check count a queued row as busy)
    reason ``auto_inactive``; the owner then decides on Settings > Data and privacy whether to delete it.
 5. One ``crm.lifecycle_run`` row and one ``lifecycle_run`` audit event per agency (counts only).
 
-**The pilot agency is skipped** (AA-969, root ADR 0019 d16): an agency whose ``crm.tenant.is_pilot`` is set (the CIS
-pilot marker, crm-044) is left out of every step and counted ``pilot_skipped`` (no ``lifecycle_run`` row): clean-up
-jobs never touch the one real agency on Dev (:mod:`app.lifecycle.pilot`). Its windows (90 / 180 days) are longer than
-the pilot (at most 8 weeks), so the skip changes nothing for data written during the pilot; once CIS clears the marker
-the next daily run treats the agency like any other.
+**The pilot agency: only its own deletions run** (AA-969, root ADR 0019 d16): for an agency whose
+``crm.tenant.is_pilot`` is set (the CIS pilot marker, crm-044), the AA-initiated clean-up is skipped (steps 1, 2 and
+4: redaction, the LLM call / inbox purge, auto-archive) and the agency is counted ``pilot_skipped``; step 3 still runs,
+because the trash purge carries out the agency's own deletions on the agency's own window (``trash_days``, 1 to 30
+days, shorter than the pilot). Its ``lifecycle_run`` row and audit event are written as for any agency. The skipped
+windows (90 / 180 days, months of inactivity) are longer than the pilot (at most 8 weeks), so the skip changes nothing
+for data written during the pilot; once CIS clears the marker the next daily run treats the agency like any other
+(:mod:`app.lifecycle.pilot`).
 
 **DRY RUN** while ``LIFECYCLE_DRY_RUN`` is on (the default): every step counts and nothing changes. Logs carry counts
 and codes only; the job result is counts (ids-only payload guard).
@@ -115,23 +118,30 @@ RUN_SQL = "INSERT INTO crm.lifecycle_run (kind, dry_run, counts) VALUES ($1, $2,
 
 
 async def run_agency(
-    ctx: LifecycleContext, *, dry_run: bool, keys: KeyProvider | None, store: DocumentStore | None
+    ctx: LifecycleContext,
+    *,
+    dry_run: bool,
+    keys: KeyProvider | None,
+    store: DocumentStore | None,
+    pilot: bool = False,
 ) -> dict[str, int]:
-    """The five steps for one agency (inside its :func:`app.tenancy.lifecycle_tx`). Returns the counts."""
+    """The five steps for one agency (inside its :func:`app.tenancy.lifecycle_tx`). Returns the counts. ``pilot``
+    (AA-969 d16): only the agency's own deletions (the trash purge, step 3) and the run record (step 5) run."""
     counts: Counter[str] = Counter()
 
-    due = await ctx.conn.fetch(REDACT_DUE_SQL, BATCH)
-    free = [r["submission_id"] for r in due if not r["held"]]
-    counts["submission_held"] = len(due) - len(free)
-    if free and not dry_run:
-        await ctx.conn.execute(REDACT_SQL, free)
-    counts["submission_redacted"] = len(free)
+    if not pilot:
+        due = await ctx.conn.fetch(REDACT_DUE_SQL, BATCH)
+        free = [r["submission_id"] for r in due if not r["held"]]
+        counts["submission_held"] = len(due) - len(free)
+        if free and not dry_run:
+            await ctx.conn.execute(REDACT_SQL, free)
+        counts["submission_redacted"] = len(free)
 
-    purged = await erase.purge_expired(ctx, dry_run=dry_run)
-    counts["llm_call_purged"] = purged.get("llm_call", 0)
-    counts["llm_call_held"] = purged.get("held", 0)
-    counts["placeholder_map_purged"] = purged.get("placeholder_map", 0)
-    counts["membership_inbox_purged"] = purged.get("membership_inbox", 0)  # crm-018; absent (0) before it is applied
+        purged = await erase.purge_expired(ctx, dry_run=dry_run)
+        counts["llm_call_purged"] = purged.get("llm_call", 0)
+        counts["llm_call_held"] = purged.get("held", 0)
+        counts["placeholder_map_purged"] = purged.get("placeholder_map", 0)
+        counts["membership_inbox_purged"] = purged.get("membership_inbox", 0)  # crm-018; 0 before it is applied
 
     vault = Vault(keys, ctx) if keys is not None else None
     for kind in TRASH_ORDER:
@@ -147,11 +157,13 @@ async def run_agency(
                 continue
             counts[f"trash_{kind}_purged"] += 1
 
-    months = await ctx.conn.fetchval(ARCHIVE_MONTHS_SQL, ctx.tenant_id) or DEFAULT_AUTO_ARCHIVE_MONTHS
-    inactive = [r["traveler_id"] for r in await ctx.conn.fetch(INACTIVE_SQL, int(months), list(OPEN_STAGES), BATCH)]
-    if inactive and not dry_run:
-        await ctx.conn.execute(AUTO_ARCHIVE_SQL, inactive, ACTOR)
-    counts["traveler_auto_archived"] = len(inactive)
+    if not pilot:
+        months = await ctx.conn.fetchval(ARCHIVE_MONTHS_SQL, ctx.tenant_id) or DEFAULT_AUTO_ARCHIVE_MONTHS
+        rows = await ctx.conn.fetch(INACTIVE_SQL, int(months), list(OPEN_STAGES), BATCH)
+        inactive = [r["traveler_id"] for r in rows]
+        if inactive and not dry_run:
+            await ctx.conn.execute(AUTO_ARCHIVE_SQL, inactive, ACTOR)
+        counts["traveler_auto_archived"] = len(inactive)
 
     result = {k: int(v) for k, v in sorted(counts.items())}
     await ctx.conn.execute(RUN_SQL, LIFECYCLE, dry_run, json.dumps(result))
@@ -166,10 +178,8 @@ def build_handler(*, dry_run: bool, keys: KeyProvider | None = None, store: Docu
         for agency in await registry.agencies(pool):
             try:
                 async with lifecycle_tx(pool, agency.tenant_id, actor=ACTOR) as ctx:
-                    if await is_pilot(ctx):
-                        counts = None  # AA-969 d16: no clean-up of the pilot agency
-                    else:
-                        counts = await run_agency(ctx, dry_run=dry_run, keys=keys, store=store)
+                    pilot = await is_pilot(ctx)  # AA-969 d16: only the pilot agency's own deletions run
+                    counts = await run_agency(ctx, dry_run=dry_run, keys=keys, store=store, pilot=pilot)
             except (Forbidden, NotFound):
                 skipped += 1  # offboarding / offboarded: the offboarding job owns it
                 continue
@@ -181,10 +191,9 @@ def build_handler(*, dry_run: bool, keys: KeyProvider | None = None, store: Docu
                 failed += 1
                 log.error("lifecycle_failed tenant_id=%s error_class=%s", agency.tenant_id, type(exc).__name__)
                 continue
-            if counts is None:
+            if pilot:
                 pilot_skipped += 1
-                log.info("lifecycle_pilot_skipped tenant_id=%s", agency.tenant_id)
-                continue
+                log.info("lifecycle_pilot_aa_steps_skipped tenant_id=%s", agency.tenant_id)
             done += 1
             totals.update(counts)
             log.info(

@@ -2,7 +2,8 @@
 encryption: the pilot agency's protections.
 
 - The CIS account feed projects the pilot marker onto ``crm.tenant.is_pilot`` (and clears it).
-- The daily ``crm_lifecycle`` run leaves the pilot agency out (no ``lifecycle_run`` row, counted ``pilot_skipped``)
+- The daily ``crm_lifecycle`` run skips the AA-initiated clean-up of the pilot agency (counted ``pilot_skipped``) and
+  still runs its own deletions (the trash purge): its ``lifecycle_run`` row holds trash counts only
   while another agency runs as before; the L1 test-agency delete refuses the pilot (403 ``pilot_agency``).
 - ``crm_pilot_backup`` queues one export of the pilot agency only; the export job seals it; the owner's export list
   leaves it out; a second night while one is still being built is ``busy``.
@@ -12,6 +13,7 @@ encryption: the pilot agency's protections.
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
 
@@ -76,7 +78,14 @@ async def test_clean_up_skips_the_pilot_agency(app_pool: asyncpg.Pool, admin: as
     try:
         result = await lifecycle_job.build_handler(dry_run=True, keys=keys)(app_pool, LIFECYCLE_JOB)
         assert result["pilot_skipped_count"] == 1
-        assert await _runs(admin, pilot_agency["tenant"]) == 0 and await _runs(admin, other["tenant"]) == 1
+        assert await _runs(admin, pilot_agency["tenant"]) == 1 and await _runs(admin, other["tenant"]) == 1
+        [run] = await _owner_fetch(admin, pilot_agency["tenant"], "SELECT counts FROM crm.lifecycle_run")
+        [other_run] = await _owner_fetch(admin, other["tenant"], "SELECT counts FROM crm.lifecycle_run")
+        aa_steps = {"submission_redacted", "llm_call_purged", "membership_inbox_purged", "traveler_auto_archived"}
+        assert not aa_steps & set(json.loads(run["counts"]) if isinstance(run["counts"], str) else run["counts"])
+        assert aa_steps <= set(
+            json.loads(other_run["counts"]) if isinstance(other_run["counts"], str) else other_run["counts"]
+        )
         # the E2E / L1 test-agency delete refuses the pilot agency whatever its synthetic flag
         with _raises(Forbidden, "pilot_agency"):
             await console.delete_test_agency(
@@ -144,5 +153,35 @@ async def test_the_nightly_backup_restores_with_equal_counts(app_pool: asyncpg.P
             "queued_count": 0,
             "busy_count": 1,
         }
+    finally:
+        await _mark(app_pool, a["tenant"], False)
+
+
+async def test_the_owner_export_takes_over_an_open_nightly_backup(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection
+) -> None:
+    """AA's hidden nightly backup never blocks the owner's own agency export: the open backup is cancelled."""
+    keys = _keys()
+    store = MemoryDocumentStore()
+    a = await _inquiry(app_pool, keys, "owner")
+    await _mark(app_pool, a["tenant"], True)
+    try:
+        assert await pilot.build_handler()(app_pool, BACKUP_JOB) == {
+            "pilot_count": 1,
+            "queued_count": 1,
+            "busy_count": 0,
+        }
+        [backup_job] = await _jobs(app_pool, "crm_data_export", a["tenant"])
+        async with tenant_tx(app_pool, a["owner"], a["tenant"]) as ctx:
+            mine = await exports.request(ctx, "tenant", None)
+        assert mine["status"] == "queued"
+        rows = await _owner_fetch(admin, a["tenant"], "SELECT export_job_id, requested_by, status FROM crm.export_job")
+        by_id = {str(r["export_job_id"]): r for r in rows}
+        assert by_id[backup_job.payload["export_id"]]["status"] == "cancelled"
+        assert by_id[mine["export_id"]]["status"] == "queued"
+        assert by_id[mine["export_id"]]["requested_by"] != "job:crm_pilot_backup"
+        # the cancelled backup's job builds nothing
+        assert (await exports.build_handler(keys=keys, store=store)(app_pool, backup_job))["status"] == "skipped"
+        await _done(app_pool, backup_job)
     finally:
         await _mark(app_pool, a["tenant"], False)

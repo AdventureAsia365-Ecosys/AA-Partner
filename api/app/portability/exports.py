@@ -73,6 +73,13 @@ LIST_SQL = f"""
 SELECT * FROM crm.export_job WHERE requested_by <> '{PILOT_BACKUP_ACTOR}'
  ORDER BY created_at DESC, export_job_id LIMIT $1
 """  # noqa: S608 — a fixed constant
+# The owner's own agency export takes the slot of an open nightly pilot backup (one open export per subject): the backup
+# is cancelled (its job then skips it, or drops what it built) and the next night tries again.
+SUPERSEDE_BACKUP_SQL = f"""
+UPDATE crm.export_job SET status = 'cancelled'
+ WHERE scope = 'tenant' AND status IN ('queued', 'building') AND requested_by = '{PILOT_BACKUP_ACTOR}'
+RETURNING export_job_id
+"""  # noqa: S608 — a fixed constant
 TRAVELER_SQL = "SELECT 1 FROM crm.traveler WHERE traveler_id = $1"
 DATA_REQUEST_SQL = "SELECT 1 FROM crm.data_request WHERE data_request_id = $1"
 START_SQL = """
@@ -198,7 +205,9 @@ async def request(
         async with ctx.conn.transaction():
             export_id = await ctx.conn.fetchval(INSERT_SQL, scope, subject, data_request_id, builder.SCHEMA_VERSION)
     except asyncpg.UniqueViolationError:
-        raise Conflict("export_running", "an export of this data is already being built") from None
+        export_id = await _over_pilot_backup(ctx, scope, subject, data_request_id)
+        if export_id is None:
+            raise Conflict("export_running", "an export of this data is already being built") from None
     await jobs.enqueue(
         ctx.conn,
         DATA_EXPORT,
@@ -209,6 +218,25 @@ async def request(
     )
     ctx.audit("export_request", "allowed", "export_job", str(export_id), reason=scope)
     return view(await ctx.conn.fetchrow(ROW_SQL, export_id))
+
+
+async def _over_pilot_backup(
+    ctx: TenantContext, scope: str, subject: uuid.UUID, data_request_id: uuid.UUID | None
+) -> uuid.UUID | None:
+    """AA-969 d16: the owner's agency export when the open export is AA's nightly pilot backup: the backup is
+    cancelled and the owner's row takes its place. None when the open export is anyone else's (or a race refills it)."""
+    if scope != "tenant":
+        return None
+    try:
+        async with ctx.conn.transaction():
+            cancelled = await ctx.conn.fetch(SUPERSEDE_BACKUP_SQL)
+            if not cancelled:
+                return None
+            export_id = await ctx.conn.fetchval(INSERT_SQL, scope, subject, data_request_id, builder.SCHEMA_VERSION)
+    except asyncpg.UniqueViolationError:
+        return None
+    log.info("portability_export tenant_id=%s pilot_backup_superseded=%d", ctx.tenant_id, len(cancelled))
+    return export_id
 
 
 async def _ready_row(ctx: TenantContext, export_id: uuid.UUID, store: DocumentStore | None) -> Any:

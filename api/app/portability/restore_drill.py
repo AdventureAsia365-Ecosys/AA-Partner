@@ -312,6 +312,18 @@ async def pilot_tenant(pool: asyncpg.Pool) -> uuid.UUID:
     return found[0]
 
 
+def failure(exc: BaseException) -> dict[str, Any]:
+    """The report line of a failed drill: the error code of a known refusal; for anything else (a database error, a
+    connection error) only its class and SQLSTATE, never its message (a database error text can quote a row value)."""
+    if isinstance(exc, DrillError | NotFound | Unavailable):
+        return {"ok": False, "error": exc.code}
+    out: dict[str, Any] = {"ok": False, "error": "unexpected", "error_class": type(exc).__name__}
+    state = getattr(exc, "sqlstate", None)
+    if isinstance(state, str) and state:
+        out["sqlstate"] = state
+    return out
+
+
 async def _main(argv: list[str]) -> int:  # pragma: no cover — the container entry point; drill() is tested
     from app.main import build_document_store
     from app.settings import load_settings
@@ -328,25 +340,24 @@ async def _main(argv: list[str]) -> int:  # pragma: no cover — the container e
     if keys is None or store is None or settings.database_url is None:
         print(json.dumps({"ok": False, "error": "not_configured"}))
         return 2
-    pool = await asyncpg.create_pool(
-        dsn=settings.database_url,
-        ssl=settings.db_ssl,
-        min_size=1,
-        max_size=2,
-        command_timeout=300,
-        server_settings={"application_name": "crm-restore-drill"},
-    )
+    pool = None
     try:
+        pool = await asyncpg.create_pool(
+            dsn=settings.database_url,
+            ssl=settings.db_ssl,
+            min_size=1,
+            max_size=2,
+            command_timeout=300,
+            server_settings={"application_name": "crm-restore-drill"},
+        )
         tenant = args.tenant or await pilot_tenant(pool)
         report = await drill(pool, keys, store, tenant, args.export)
-    except DrillError as exc:
-        print(json.dumps({"ok": False, "error": exc.code}))
-        return 1
-    except (NotFound, Unavailable) as exc:
-        print(json.dumps({"ok": False, "error": exc.code}))
+    except Exception as exc:  # noqa: BLE001 — every error is reported by class and SQLSTATE only (no values)
+        print(json.dumps(failure(exc)))
         return 1
     finally:
-        await pool.close()
+        if pool is not None:
+            await pool.close()
     print(json.dumps(report, sort_keys=True))
     return exit_code(report)
 

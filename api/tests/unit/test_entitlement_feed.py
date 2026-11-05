@@ -158,13 +158,15 @@ def _proj(**kw: Any) -> feed.Projection:
 
 
 def test_projection_rules() -> None:
-    assert _proj() == feed.Projection("core", 10, ("ai_assist",), True)
+    assert _proj() == feed.Projection("core", 10, ("ai_assist",), True, is_pilot=False)
     pro = {f"crm.{c}": None for c in entitlements.FEATURES} | {"crm.seats": "600.00"}
-    assert _proj(crm=("crm.pro", "trialing"), ents=pro) == feed.Projection("pro", 500, entitlements.FEATURES, True)
+    assert _proj(crm=("crm.pro", "trialing"), ents=pro) == feed.Projection(
+        "pro", 500, entitlements.FEATURES, True, is_pilot=False
+    )
     assert _proj(crm=("crm.enterprise", "past_due")).plan == "core"  # another live plan
-    assert _proj(crm=("crm.pro", "canceled"), ents={}) == feed.Projection("free", None, (), True)
+    assert _proj(crm=("crm.pro", "canceled"), ents={}) == feed.Projection("free", None, (), True, is_pilot=False)
     assert _proj(crm=("crm.pro", "canceled"), ents={}).crm_subscribed is True  # a crm row in any status
-    assert _proj(crm=None, ents={"content.rewrite": "50.00"}) == feed.Projection("free", None, (), True, False)
+    assert _proj(crm=None, ents={"content.rewrite": "50.00"}) == feed.Projection("free", None, (), True, False, False)
     assert _proj(in_service=False).in_service is False
     assert _proj(ents={"crm.seats": "0.00"}).member_limit == 1
 
@@ -173,8 +175,9 @@ def test_projection_reads_the_pilot_marker() -> None:
     assert _proj().is_pilot is False
     assert feed.projection(feed.parse_account(account() | {"is_pilot": True}, A)).is_pilot is True
     older = account()
-    del older["is_pilot"]  # a CIS answer without the field: not the pilot
-    assert feed.parse_account(older, A)["is_pilot"] is False
+    del older["is_pilot"]  # a CIS answer without the field: unknown, the agency keeps its current marker
+    assert feed.parse_account(older, A)["is_pilot"] is None
+    assert feed.projection(feed.parse_account(older, A)).is_pilot is None
 
 
 @pytest.mark.parametrize(
@@ -238,6 +241,14 @@ async def test_apply_writes_the_pilot_marker_when_cis_changes_it() -> None:
     gone = feed.Projection("core", 5, ("ai_assist",), True, True, False)
     assert await feed.apply(conn, A, gone, feed.RunCounts()) == "applied"  # type: ignore[arg-type]
     assert conn.sql("SET is_pilot") == [(A, False)]
+    # the snapshot has no is_pilot (None): the marker stays as it is, set or not
+    for current in (True, False):
+        conn = pool(
+            statuses={A: "active"}, entitlement=row, lock={"status": "active", "lock_source": None, "is_pilot": current}
+        )
+        absent = feed.Projection("core", 5, ("ai_assist",), True, True, None)
+        assert await feed.apply(conn, A, absent, feed.RunCounts()) == "unchanged"  # type: ignore[arg-type]
+        assert conn.sql("SET is_pilot") == []
 
 
 @pytest.mark.asyncio

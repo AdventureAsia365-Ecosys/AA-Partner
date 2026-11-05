@@ -5,12 +5,13 @@ ADR 0019 d16 lets one real agency (the pilot) use Dev for at most 8 weeks. The C
 ``crm.tenant.is_pilot`` (crm-044; only that actor may write it, ``crm.guard_pilot_marker`` CRM04). Two rules use it
 here:
 
-1. **Clean-up skips the pilot.** :func:`is_pilot` is read inside the agency's own transaction (FORCE RLS) by every path
-   that deletes, redacts, archives or rewrites agency data on a schedule or for tests: the daily ``crm_lifecycle`` run
-   (:mod:`app.lifecycle.job`: retention purges, the trash purge, the auto-archive) leaves the pilot agency out (counted
-   ``pilot_skipped``), and the L1 console's test-agency delete (:func:`app.ops.console.delete_test_agency`, the E2E
-   clean-up) refuses it (403 ``pilot_agency``). What the agency's own people ask for (an owner's erasure, offboarding,
-   exports, imports) is theirs and is never skipped.
+1. **AA-initiated clean-up skips the pilot.** :func:`is_pilot` is read inside the agency's own transaction (FORCE
+   RLS) by every path that deletes, redacts, archives or rewrites agency data on AA's schedule or for tests: the daily
+   ``crm_lifecycle`` run (:mod:`app.lifecycle.job`) skips the pilot's redaction, LLM call / inbox purge and auto-archive
+   (counted ``pilot_skipped``), and the L1 console's test-agency delete (:func:`app.ops.console.delete_test_agency`,
+   the E2E clean-up) refuses it (403 ``pilot_agency``). What the agency's own people asked for is theirs and is never
+   skipped: an owner's erasure, offboarding, exports, imports, and the trash purge of what they deleted (on their own
+   ``trash_days`` window).
 2. **A nightly export of the pilot alone** (``crm_pilot_backup``): once per UTC day, from ``JOB_RETENTION_UTC_HOUR``
    (:class:`DailyPilotBackupSchedule`, due now, never queued ahead), the job looks for the marked agency and queues one
    portability export of it: a ``crm.export_job`` row (scope ``tenant``, ``requested_by`` = :data:`ACTOR`) and its
@@ -18,8 +19,9 @@ here:
    tenant table as JSON + CSV, sealed under the agency ``export`` DEK at
    ``exports/tenants/<tenant>/portability/<export>.zip.enc`` in the documents bucket. The ``exports/`` bucket rule
    deletes the object after 7 days (root data standards DM-7.1, the ``crm.export_job`` row), so the last 7 nights are
-   kept. An export of the agency already being built is not doubled (``busy``, the next night tries again). These rows
-   are left out of the owner's export list (they are AA's restore copies, not the owner's downloads); an erasure
+   kept. An export of the agency already being built is not doubled (``busy``, the next night tries again); an owner's
+   own agency export takes the slot of an open backup (the backup is cancelled, :mod:`app.portability.exports`). These
+   rows are left out of the owner's export list (they are AA's restore copies, not the owner's downloads); an erasure
    withdraws them like any other export. ``app.portability.restore_drill`` restores one of them into a throwaway schema
    and compares row counts (root ``docs/ops/runbooks/pilot-tenant-restore-drill.md``).
 
