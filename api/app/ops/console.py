@@ -102,7 +102,9 @@ SELECT invitation_id FROM crm.member_invitation
 """
 # S263: what keeps a synthetic agency from being deleted by AA: a member who is (or is about to be) inside it.
 LIVE_MEMBERS_SQL = "SELECT 1 FROM crm.member WHERE status IN ('active', 'invited') AND deleted_at IS NULL LIMIT 1"
-DELETE_TENANT_LOCK_SQL = "SELECT status, is_synthetic, display_name FROM crm.tenant WHERE tenant_id = $1 FOR UPDATE"
+DELETE_TENANT_LOCK_SQL = (
+    "SELECT status, is_synthetic, is_pilot, display_name FROM crm.tenant WHERE tenant_id = $1 FOR UPDATE"
+)
 DELETE_STATUSES = frozenset({"active", "locked", "offboarded"})
 LIVE_INVITES_SQL = """
 SELECT invitation_id FROM crm.member_invitation WHERE status IN ('pending', 'claimed') AND deleted_at IS NULL
@@ -457,20 +459,24 @@ async def delete_test_agency(
 ) -> dict[str, Any]:
     """S263: AA deletes a **synthetic** (test) agency it created. Refused unless the agency is synthetic (403
     ``not_synthetic``: a real agency is deleted only through its owner's confirmed offboarding), the typed name is the
-    agency's name exactly (422 ``agency_name_mismatch``), no member is active or invited (409 ``has_members``), it
-    holds no traveller or inquiry (409 ``has_travellers``), no legal hold is active (409 ``legal_hold``) and it is not
-    being erased (409 ``tenant_status``). Then, in one transaction: every live invitation is revoked, the agency's
-    keys are crypto-shredded (:meth:`KeyProvider.destroy`: anything encrypted under them, such as invited addresses,
-    is unreadable for good) and the agency row goes to the trash (``deleted_at``; no context opens it any more and the
-    L1 list leaves it out). Audited in the agency's own log: ``agency_delete`` with ``ticket:<REF>`` (plus the
-    ``key_destroy`` event). The rows stay as the trash keeps them (DM-7.1); nothing can read their personal data.
-    In the same transaction a ``crm_partner_accounts`` job is queued for the agency (:mod:`app.members.accounts`): the
+    agency's name exactly (422 ``agency_name_mismatch``), no member is active or invited (409 ``has_members``), it holds
+    no traveller or inquiry (409 ``has_travellers``), no legal hold is active (409 ``legal_hold``) and it is not being
+    erased (409 ``tenant_status``). AA-969 (root ADR 0019 d16): the pilot agency (``crm.tenant.is_pilot``) is refused
+    too (403 ``pilot_agency``), whatever its synthetic flag. Then, in one transaction: every live invitation is revoked,
+    the agency's keys are crypto-shredded (:meth:`KeyProvider.destroy`: anything encrypted under them, such as invited
+    addresses, is unreadable for good) and the agency row goes to the trash (``deleted_at``; no context opens it any
+    more and the L1 list leaves it out). Audited in the agency's own log: ``agency_delete`` with ``ticket:<REF>`` (plus
+    the ``key_destroy`` event). The rows stay as the trash keeps them (DM-7.1); nothing can read their personal data. In
+    the same transaction a ``crm_partner_accounts`` job is queued for the agency (:mod:`app.members.accounts`): the
     partner-pool accounts its invitation claims created and that never signed in, and that no other agency or Content
     studio invitation needs, are deleted (``partner_account_delete`` events in this agency's log)."""
     async with platform_tx(pool, tenant_id, actor=platform_actor(staff_sub), statuses=DELETE_STATUSES) as ctx:
         row = await ctx.conn.fetchrow(DELETE_TENANT_LOCK_SQL, tenant_id)
         if row is None:  # trashed between the context check and the row lock
             raise NotFound("tenant_not_found", "no agency with this id")
+        if row["is_pilot"]:  # AA-969 d16: the pilot agency is never a clean-up target, even if marked synthetic
+            ctx.audit("agency_delete", "denied", "tenant", str(tenant_id), reason="pilot_agency")
+            raise Forbidden("pilot_agency", "the pilot agency is never deleted here; it leaves through offboarding")
         if not row["is_synthetic"]:
             ctx.audit("agency_delete", "denied", "tenant", str(tenant_id), reason="not_synthetic")
             raise Forbidden(

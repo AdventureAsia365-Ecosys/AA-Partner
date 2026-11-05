@@ -100,6 +100,9 @@ PARTNER_ACCOUNTS = "crm_partner_accounts"
 # features and CIS lock (app.cis.entitlement_feed), queued due-now once per 2-minute slot by a maintenance hook. Not
 # deploy-gate or DB Migrate exempt: a row exists only while due or running (seconds).
 ENTITLEMENT_PULL = "crm_entitlement_pull"
+# AA-969 part 2 (root ADR 0019 d16): the nightly export of the pilot agency alone (app.lifecycle.pilot), queued due-now
+# once per UTC day; it only queues one crm_data_export row (seconds). Not deploy-gate exempt.
+PILOT_BACKUP = "crm_pilot_backup"
 
 DEFAULT_EXPECTED_SECONDS = 300
 OVERDUE_FACTOR = 2
@@ -147,6 +150,7 @@ EXPECTED_SECONDS: dict[str, int] = {
     TASK_DIGEST: 120,
     PARTNER_ACCOUNTS: 300,
     ENTITLEMENT_PULL: 60,
+    PILOT_BACKUP: 60,
 }
 
 

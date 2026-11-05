@@ -626,6 +626,18 @@ async def test_the_daily_handler_and_its_schedule(monkeypatch: pytest.MonkeyPatc
         return {"trash_trip_purged": 2}
 
     agencies.extend(type("A", (), {"tenant_id": uuid.uuid4()})() for _ in range(2))
+    pilot = uuid.UUID("00000000-0000-4000-8000-00000000f11e")
+    agencies.insert(1, type("A", (), {"tenant_id": pilot})())  # AA-969 d16: the pilot agency is skipped
+
+    @asynccontextmanager
+    async def tx_named(pool: Any, tenant_id: uuid.UUID, **_: Any):  # noqa: ANN202
+        if tenant_id == ID:
+            raise Forbidden("tenant_status")
+        yield LifecycleContext(conn=ScriptedConn(), tenant_id=tenant_id, actor="job:crm_lifecycle", status="active")
+
+    async def pilot_marker(ctx: Any) -> bool:
+        return ctx.tenant_id == pilot
+
     # TENANT ok, ID skipped (tx), REQ a service error, then an unexpected DB error that must not stop the run
     # (review S249), then one more agency that still runs.
     outcomes = iter(
@@ -644,7 +656,8 @@ async def test_the_daily_handler_and_its_schedule(monkeypatch: pytest.MonkeyPatc
         return outcome
 
     monkeypatch.setattr(lifecycle_job.registry, "agencies", list_agencies)
-    monkeypatch.setattr(lifecycle_job, "lifecycle_tx", tx)
+    monkeypatch.setattr(lifecycle_job, "lifecycle_tx", tx_named)
+    monkeypatch.setattr(lifecycle_job, "is_pilot", pilot_marker)
     monkeypatch.setattr(lifecycle_job, "run_agency", run_once)
     result = await lifecycle_job.build_handler(dry_run=True)(object(), Job("j", "crm_lifecycle", {}, 1, 3))  # type: ignore[arg-type]
     assert result == {
@@ -652,10 +665,11 @@ async def test_the_daily_handler_and_its_schedule(monkeypatch: pytest.MonkeyPatc
         "agency_count": 2,
         "skipped_count": 1,
         "failed_count": 2,
+        "pilot_skipped_count": 1,
         "trash_trip_purged_count": 3,
     }
     check_payload(result, what="result")
-    assert run  # (kept for readability of the branches above)
+    assert run and tx  # (kept for readability of the branches above)
 
     clock = [dt.datetime(2026, 10, 24, 5, 0, tzinfo=dt.UTC)]
     schedule = lifecycle_job.DailyLifecycleSchedule(19, lambda: clock[0])

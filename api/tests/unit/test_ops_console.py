@@ -641,8 +641,10 @@ class _Keys:
 
 def _delete_conn(status: str = "active", **over: Any) -> ScriptedConn:
     conn = agency_conn(status)
-    row = {"status": status, "is_synthetic": True, "display_name": "Lữ hành Sen Vàng"} | over.pop("row", {})
-    conn.on("SELECT status, is_synthetic, display_name FROM crm.tenant", row)
+    row = {"status": status, "is_synthetic": True, "is_pilot": False, "display_name": "Lữ hành Sen Vàng"} | over.pop(
+        "row", {}
+    )
+    conn.on("SELECT status, is_synthetic, is_pilot, display_name FROM crm.tenant", row)
     conn.on("UPDATE crm.tenant SET deleted_at", NOW + dt.timedelta(days=30))
     conn.on("SELECT invitation_id FROM crm.member_invitation WHERE status IN", [{"invitation_id": INV_A}])
     for fragment, answer in over.items():
@@ -690,6 +692,7 @@ async def test_delete_test_agency_revokes_shreds_and_trashes_in_that_order(statu
     ("over", "cls", "code"),
     [
         ({"row": {"is_synthetic": False}}, Forbidden, "not_synthetic"),
+        ({"row": {"is_pilot": True}}, Forbidden, "pilot_agency"),  # AA-969 d16: even when marked synthetic
         ({"FROM crm.member WHERE status IN ('active', 'invited')": 1}, Conflict, "has_members"),
         ({"SELECT EXISTS (SELECT 1 FROM crm.traveler) OR EXISTS": True}, Conflict, "has_travellers"),
         ({"crm.legal_hold_blocks('tenant', NULL)": True}, Conflict, "legal_hold"),
@@ -705,7 +708,7 @@ async def test_delete_test_agency_refusals_change_nothing(over: dict[str, Any], 
     assert not conn.sql("SET status = 'revoked'") and not conn.sql("INSERT INTO crm.job")
     denied = [(e["action"], e["outcome"], e["reason"]) for e in audits(conn)]
     # A real agency's refusal is on record (an attempt to delete client data); the others write nothing.
-    assert denied == ([("agency_delete", "denied", "not_synthetic")] if code == "not_synthetic" else [])
+    assert denied == ([("agency_delete", "denied", code)] if code in ("not_synthetic", "pilot_agency") else [])
 
 
 @pytest.mark.asyncio
@@ -718,7 +721,7 @@ async def test_delete_test_agency_needs_the_exact_name_and_a_deletable_status() 
     with raises(Conflict, "tenant_status"):
         await _delete(_delete_conn("offboarding"), keys)
     gone = _delete_conn()
-    gone.on("SELECT status, is_synthetic, display_name FROM crm.tenant", None)
+    gone.on("SELECT status, is_synthetic, is_pilot, display_name FROM crm.tenant", None)
     with raises(NotFound, "tenant_not_found"):
         await _delete(gone, keys)
     raced = _delete_conn()

@@ -18,6 +18,12 @@ ahead: the deploy gate and the DB Migrate idle check count a queued row as busy)
    reason ``auto_inactive``; the owner then decides on Settings > Data and privacy whether to delete it.
 5. One ``crm.lifecycle_run`` row and one ``lifecycle_run`` audit event per agency (counts only).
 
+**The pilot agency is skipped** (AA-969, root ADR 0019 d16): an agency whose ``crm.tenant.is_pilot`` is set (the CIS
+pilot marker, crm-044) is left out of every step and counted ``pilot_skipped`` (no ``lifecycle_run`` row): clean-up
+jobs never touch the one real agency on Dev (:mod:`app.lifecycle.pilot`). Its windows (90 / 180 days) are longer than
+the pilot (at most 8 weeks), so the skip changes nothing for data written during the pilot; once CIS clears the marker
+the next daily run treats the agency like any other.
+
 **DRY RUN** while ``LIFECYCLE_DRY_RUN`` is on (the default): every step counts and nothing changes. Logs carry counts
 and codes only; the job result is counts (ids-only payload guard).
 """
@@ -41,6 +47,7 @@ from app.jobs.kinds import LIFECYCLE
 from app.jobs.queue import Job
 from app.jobs.worker import Handler
 from app.lifecycle import erase
+from app.lifecycle.pilot import is_pilot
 from app.lifecycle.rules import DEFAULT_AUTO_ARCHIVE_MONTHS
 from app.tenancy import LifecycleContext, lifecycle_tx
 from app.vault import Vault
@@ -155,11 +162,14 @@ async def run_agency(
 def build_handler(*, dry_run: bool, keys: KeyProvider | None = None, store: DocumentStore | None = None) -> Handler:
     async def lifecycle(pool: asyncpg.Pool, _job: Job) -> dict[str, Any]:
         totals: Counter[str] = Counter()
-        done = skipped = failed = 0
+        done = skipped = failed = pilot_skipped = 0
         for agency in await registry.agencies(pool):
             try:
                 async with lifecycle_tx(pool, agency.tenant_id, actor=ACTOR) as ctx:
-                    counts = await run_agency(ctx, dry_run=dry_run, keys=keys, store=store)
+                    if await is_pilot(ctx):
+                        counts = None  # AA-969 d16: no clean-up of the pilot agency
+                    else:
+                        counts = await run_agency(ctx, dry_run=dry_run, keys=keys, store=store)
             except (Forbidden, NotFound):
                 skipped += 1  # offboarding / offboarded: the offboarding job owns it
                 continue
@@ -170,6 +180,10 @@ def build_handler(*, dry_run: bool, keys: KeyProvider | None = None, store: Docu
             except Exception as exc:  # noqa: BLE001 — one agency's unexpected error must not skip every later agency
                 failed += 1
                 log.error("lifecycle_failed tenant_id=%s error_class=%s", agency.tenant_id, type(exc).__name__)
+                continue
+            if counts is None:
+                pilot_skipped += 1
+                log.info("lifecycle_pilot_skipped tenant_id=%s", agency.tenant_id)
                 continue
             done += 1
             totals.update(counts)
@@ -184,6 +198,7 @@ def build_handler(*, dry_run: bool, keys: KeyProvider | None = None, store: Docu
             "agency_count": done,
             "skipped_count": skipped,
             "failed_count": failed,
+            "pilot_skipped_count": pilot_skipped,
             **{f"{k}_count": int(v) for k, v in sorted(totals.items())},
         }
 

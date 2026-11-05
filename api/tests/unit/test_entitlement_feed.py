@@ -113,7 +113,7 @@ def pool(*, statuses: dict[uuid.UUID, str | None] | None = None, cursor: str | N
     conn.on("set_config('app.tenant_id'", lambda tid: state.update(tenant=uuid.UUID(tid)))
     conn.on("AND deleted_at IS NULL", lambda *_: statuses.get(state["tenant"]))
     conn.on("FROM crm.tenant_entitlement WHERE deleted_at IS NULL", entitlement)
-    conn.on("FOR UPDATE", lock or {"status": "active", "lock_source": None})
+    conn.on("FOR UPDATE", {"is_pilot": False} | (lock or {"status": "active", "lock_source": None}))
     return conn
 
 
@@ -137,6 +137,7 @@ def test_parse_account_reads_what_the_projection_needs() -> None:
         ([], "account_shape"),
         (account(B), "account_tenant"),
         (account() | {"in_service": "yes"}, "account_in_service"),
+        (account() | {"is_pilot": "yes"}, "account_is_pilot"),
         (account() | {"entitlements": {}}, "account_lists"),
         (account() | {"subscriptions": [{"product": "crm"}]}, "subscription_shape"),
         (account() | {"subscriptions": [{"product": "crm", "status": "active", "plan_key": 3}]}, "subscription_shape"),
@@ -166,6 +167,14 @@ def test_projection_rules() -> None:
     assert _proj(crm=None, ents={"content.rewrite": "50.00"}) == feed.Projection("free", None, (), True, False)
     assert _proj(in_service=False).in_service is False
     assert _proj(ents={"crm.seats": "0.00"}).member_limit == 1
+
+
+def test_projection_reads_the_pilot_marker() -> None:
+    assert _proj().is_pilot is False
+    assert feed.projection(feed.parse_account(account() | {"is_pilot": True}, A)).is_pilot is True
+    older = account()
+    del older["is_pilot"]  # a CIS answer without the field: not the pilot
+    assert feed.parse_account(older, A)["is_pilot"] is False
 
 
 @pytest.mark.parametrize(
@@ -203,6 +212,32 @@ async def test_apply_writes_a_new_projection_and_audits() -> None:
     audit = [a for a in conn.sql("INSERT INTO crm.audit_event")]
     assert audit and audit[0][2] == "entitlements_projected" and audit[0][7] == "cis_account"
     assert counts.applied == 1
+
+
+@pytest.mark.asyncio
+async def test_apply_writes_the_pilot_marker_when_cis_changes_it() -> None:
+    row = {"plan": "core", "member_limit": 5, "allowed_features": ["ai_assist"], "projected_at": NOW}
+    wanted = feed.Projection("core", 5, ("ai_assist",), True, True, True)
+    conn = pool(statuses={A: "active"}, entitlement=row)
+    counts = feed.RunCounts()
+    assert await feed.apply(conn, A, wanted, counts) == "applied"  # type: ignore[arg-type]
+    assert conn.sql("SET is_pilot") == [(A, True)] and counts.pilot_changed == 1
+    audit = conn.sql("INSERT INTO crm.audit_event")
+    assert audit and audit[0][2] == "tenant_pilot_marker" and audit[0][7] == "cis_account"
+    assert counts.result("ok")["pilot_changed_count"] == 1
+    # already marked: nothing written
+    conn = pool(
+        statuses={A: "active"}, entitlement=row, lock={"status": "active", "lock_source": None, "is_pilot": True}
+    )
+    assert await feed.apply(conn, A, wanted, feed.RunCounts()) == "unchanged"  # type: ignore[arg-type]
+    assert conn.sql("SET is_pilot") == []
+    # CIS cleared it: cleared here too
+    conn = pool(
+        statuses={A: "active"}, entitlement=row, lock={"status": "active", "lock_source": None, "is_pilot": True}
+    )
+    gone = feed.Projection("core", 5, ("ai_assist",), True, True, False)
+    assert await feed.apply(conn, A, gone, feed.RunCounts()) == "applied"  # type: ignore[arg-type]
+    assert conn.sql("SET is_pilot") == [(A, False)]
 
 
 @pytest.mark.asyncio

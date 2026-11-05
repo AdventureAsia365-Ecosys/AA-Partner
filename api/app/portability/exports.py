@@ -67,7 +67,12 @@ VALUES ($1, $2, $3, $4) RETURNING export_job_id
 """
 ROW_SQL = "SELECT * FROM crm.export_job WHERE export_job_id = $1"
 LOCK_SQL = "SELECT * FROM crm.export_job WHERE export_job_id = $1 FOR UPDATE"
-LIST_SQL = "SELECT * FROM crm.export_job ORDER BY created_at DESC, export_job_id LIMIT $1"
+# AA-969 d16: the pilot agency's nightly backups (app.lifecycle.pilot) are AA's restore copies, not the owner's.
+PILOT_BACKUP_ACTOR = "job:crm_pilot_backup"
+LIST_SQL = f"""
+SELECT * FROM crm.export_job WHERE requested_by <> '{PILOT_BACKUP_ACTOR}'
+ ORDER BY created_at DESC, export_job_id LIMIT $1
+"""  # noqa: S608 — a fixed constant
 TRAVELER_SQL = "SELECT 1 FROM crm.traveler WHERE traveler_id = $1"
 DATA_REQUEST_SQL = "SELECT 1 FROM crm.data_request WHERE data_request_id = $1"
 START_SQL = """

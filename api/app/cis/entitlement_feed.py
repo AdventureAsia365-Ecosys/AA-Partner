@@ -39,11 +39,16 @@ The projection (:func:`projection`, one :func:`app.tenancy.entitlement_feed_tx` 
   them. Once CIS holds a crm row (any status) the projection follows it, a cancel or an offboard included;
 - status: ``in_service`` false (suspended, offboarding, closed, lead, applied) locks an active agency with
   ``lock_source = cis_tenant``; ``in_service`` true lifts a lock whose source is ``cis_tenant`` (an AA lock or a
-  last-owner lock stays), as the membership feed does for tenant.locked / tenant.unlocked.
+  last-owner lock stays), as the membership feed does for tenant.locked / tenant.unlocked;
+- the pilot marker (AA-969, root ADR 0019 d16, crm-044): ``crm.tenant.is_pilot`` follows the snapshot's ``is_pilot``
+  (absent = false: a CIS before contract 1.0's field), also under the adoption guard (it is the tenant's, not the
+  plan's). Only this actor may write it (``crm.guard_pilot_marker``, CRM04). The clean-up paths skip the marked agency
+  and ``crm_pilot_backup`` exports it every night (``app.lifecycle.pilot``).
 
-Each applied change writes the agency's audit (``entitlements_projected`` / ``tenant_lock`` / ``tenant_unlock``,
-reason ``cis_account``). A database refusal of one agency (CRMxx, an integrity error) is counted as rejected and the
-run goes on; any other database error stops the run before the cursor moves. Payloads and results are counts only.
+Each applied change writes the agency's audit (``entitlements_projected`` / ``tenant_lock`` / ``tenant_unlock`` /
+``tenant_pilot_marker``, reason ``cis_account``). A database refusal of one agency (CRMxx, an integrity error) is
+counted as rejected and the run goes on; any other database error stops the run before the cursor moves. Payloads and
+results are counts only.
 """
 
 from __future__ import annotations
@@ -102,7 +107,8 @@ ON CONFLICT (tenant_id) DO UPDATE
    SET plan = EXCLUDED.plan, member_limit = EXCLUDED.member_limit, allowed_features = EXCLUDED.allowed_features,
        projected_at = EXCLUDED.projected_at
 """
-TENANT_LOCK_SQL = "SELECT status, lock_source FROM crm.tenant WHERE tenant_id = $1 FOR UPDATE"
+TENANT_LOCK_SQL = "SELECT status, lock_source, is_pilot FROM crm.tenant WHERE tenant_id = $1 FOR UPDATE"
+SET_PILOT_SQL = "UPDATE crm.tenant SET is_pilot = $2 WHERE tenant_id = $1"
 SET_LOCK_SQL = "UPDATE crm.tenant SET status = 'locked', lock_source = 'cis_tenant' WHERE tenant_id = $1"
 UNLOCK_SQL = "UPDATE crm.tenant SET status = 'active' WHERE tenant_id = $1"
 DEFAULT_MEMBER_LIMIT = 10
@@ -119,6 +125,7 @@ class Projection:
     features: tuple[str, ...]
     in_service: bool
     crm_subscribed: bool = True  # the CIS account has a crm subscription in any status (the adoption guard)
+    is_pilot: bool = False  # AA-969 d16: the CIS pilot marker (crm-044)
 
 
 @dataclass
@@ -132,6 +139,7 @@ class RunCounts:
     pages: int = 0
     locked: int = 0
     unlocked: int = 0
+    pilot_changed: int = 0
     reconciled: bool = False
     reconcile_failed: int = 0
 
@@ -147,6 +155,7 @@ class RunCounts:
             "page_count": self.pages,
             "locked_count": self.locked,
             "unlocked_count": self.unlocked,
+            "pilot_changed_count": self.pilot_changed,
             "reconciled_count": int(self.reconciled),
             "reconcile_failed_count": self.reconcile_failed,
         }
@@ -179,13 +188,17 @@ def _limit(value: Any) -> Decimal | None:
 
 
 def parse_account(body: Any, tenant_id: uuid.UUID) -> dict[str, Any]:
-    """The snapshot's ``in_service``, ``subscriptions`` and ``entitlements`` (feature key -> limit), checked."""
+    """The snapshot's ``in_service``, ``is_pilot``, ``subscriptions`` and ``entitlements`` (feature key -> limit),
+    checked."""
     if not isinstance(body, dict):
         raise AccountError("account_shape")
     if str(body.get("tenant_id", "")).lower() != str(tenant_id):
         raise AccountError("account_tenant")
     if not isinstance(body.get("in_service"), bool):
         raise AccountError("account_in_service")
+    is_pilot = body.get("is_pilot", False)
+    if not isinstance(is_pilot, bool):
+        raise AccountError("account_is_pilot")
     subs, ents = body.get("subscriptions"), body.get("entitlements")
     if not isinstance(subs, list) or not isinstance(ents, list):
         raise AccountError("account_lists")
@@ -201,7 +214,12 @@ def parse_account(body: Any, tenant_id: uuid.UUID) -> dict[str, Any]:
         if not isinstance(e, dict) or not isinstance(e.get("feature_key"), str):
             raise AccountError("entitlement_shape")
         entitlements[e["feature_key"]] = _limit(e.get("limit"))
-    return {"in_service": body["in_service"], "subscriptions": subscriptions, "entitlements": entitlements}
+    return {
+        "in_service": body["in_service"],
+        "is_pilot": is_pilot,
+        "subscriptions": subscriptions,
+        "entitlements": entitlements,
+    }
 
 
 def projection(account: dict[str, Any]) -> Projection:
@@ -215,7 +233,9 @@ def projection(account: dict[str, Any]) -> Projection:
     features = tuple(code for code in FEATURES if f"crm.{code}" in ents)
     seats = ents.get(SEATS_KEY)
     member_limit = None if seats is None else max(1, min(int(seats), MEMBER_LIMIT_MAX))
-    return Projection(plan, member_limit, features, bool(account["in_service"]), crm is not None)
+    return Projection(
+        plan, member_limit, features, bool(account["in_service"]), crm is not None, bool(account.get("is_pilot"))
+    )
 
 
 def status_change(in_service: bool, status: str, lock_source: str | None) -> str | None:
@@ -309,7 +329,14 @@ async def _apply_in(ctx: SystemContext, wanted: Projection, counts: RunCounts) -
         await ctx.conn.execute(UNLOCK_SQL, ctx.tenant_id)
         ctx.audit("tenant_unlock", "allowed", "tenant", str(ctx.tenant_id), fields=("status",), reason="cis_account")
         counts.unlocked += 1
-    if changed or change:
+    pilot = bool(tenant["is_pilot"]) != wanted.is_pilot
+    if pilot:
+        await ctx.conn.execute(SET_PILOT_SQL, ctx.tenant_id, wanted.is_pilot)
+        ctx.audit(
+            "tenant_pilot_marker", "allowed", "tenant", str(ctx.tenant_id), fields=("is_pilot",), reason="cis_account"
+        )
+        counts.pilot_changed += 1
+    if changed or change or pilot:
         return "applied"
     return "awaiting_cis" if awaiting else "unchanged"
 
