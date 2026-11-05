@@ -6,11 +6,20 @@ name: Visual
 # change = every page) at 1440 x 900 and 390 x 844, light and dark, asserting: no page-level horizontal overflow (the
 # document AND the kit frames, which scroll on their own), 0 console errors, no failed same-origin request, a kit frame
 # present, the theme applied. Screenshots + report.json are the artifact `visual-partner-<target>-<run id>` (14 days);
-# the job summary and one PR comment carry the page x 4 table. Report-only: no required check (H3, the tech lead's
-# branch-protection step, makes it required later).
+# the job summary and one PR comment carry the page x 4 table.
+#
+# Required check (AA-1008 H3): the job `pr` reports on EVERY pull request and on the merge queue (merge_group), so it
+# can be a required status check; its name "Visual (built in the runner, public pages + kit gallery)" is the required
+# context (the tech lead's branch-protection script and verify-h3.sh pin it: never rename it). There is no `paths:`
+# filter (a required check must report on every PR, and merge_group ignores path filters): the job's first step after
+# the checkout, Scope, diffs the PR (or the queue group) against its base and matches the old filter's path list,
+# web/tests/** excluded; no match = "no frontend change" in the summary, every later step skipped, the job green. The
+# skip is step-level on purpose: a separate scope job with a job-level if/needs reports "skipped", which GitHub counts
+# as passed even when the scope job itself failed. The workflow_run runs below leave a skipped same-named check on main
+# commits: harmless (not a PR or queue head), and not evidence.
 #
 # Jobs:
-#   pr        pull_request (web / visual files) and dispatch without base_url: `next build` and the standalone server
+#   pr        pull_request and merge_group (web / visual files, decided by the Scope step) and dispatch without base_url: `next build` and the standalone server
 #             in the runner with KIT_GALLERY=1 and the fake configuration the Web Build smoke uses (ENVIRONMENT=test,
 #             no API, no sign-in): the public pages that changed + the gated kit gallery (every core component, the
 #             ShellFrame demo included). It first runs the SELF-TEST: the gallery with a planted overflow (document and
@@ -24,14 +33,12 @@ name: Visual
 #             report.json are uploaded, never the auth state.
 
 on:
+  # No `paths:` (AA-1008 H3): the Scope step of job `pr` matches the path list, so the check reports on every PR.
   pull_request:
     branches: [main]
-    paths:
-      - "web/**"
-      - "!web/tests/**"
-      - "e2e/visual/**"
-      - "e2e/playwright.visual.config.ts"
-      - ".github/workflows/visual.yml"
+  # The merge queue (AA-889) tests each group on a gh-readonly-queue/main/* commit and waits for every required check.
+  merge_group:
+    types: [checks_requested]
   # After every Dev deploy of the web (the whole Deploy Web Dev run green: deployed, verified, studio smoke passed), so the
   # deploy workflow keeps its fixed job list (api/tests/unit/test_post_deploy_verify_web_portal.py) and the visual run
   # signs in only after the smoke's sign-in is done (the same authenticator).
@@ -55,14 +62,19 @@ permissions:
   contents: read
   pull-requests: write
 
+# A PR's newer push cancels its older run. A merge_group run keys on its run_id: with the github.event_name fallback
+# every queue group shared "visual-merge_group" and cancelled the one before it (AA-1008 H3). workflow_run runs keep
+# the shared group (a newer deploy's visual run replaces an older one).
 concurrency:
-  group: visual-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.base_url || github.event_name }}
+  group: visual-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event_name == 'merge_group' && github.run_id || inputs.base_url || github.event_name }}
   cancel-in-progress: true
 
 jobs:
   pr:
     name: Visual (built in the runner, public pages + kit gallery)
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.base_url == '')
+    if: >-
+      github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.base_url == '') ||
+      github.event_name == 'merge_group'
     # Pinned (S252): ubuntu-latest moved to 26.04 and Playwright does not support Chromium there yet.
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -75,22 +87,61 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # AA-1008 H3: the old pull_request `paths:` list, matched here: web/** except web/tests/** (a web/tests-only change
+      # skips), e2e/visual/**, e2e/playwright.visual.config.ts, this workflow. Renames count by both names. A dispatch
+      # runs every step. A diff that cannot be computed runs the full check (never a silent skip).
+      - name: Scope
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+        run: |
+          case "$EVENT" in
+            pull_request) BASE=${BASE_REF:+origin/$BASE_REF} ;;
+            merge_group) BASE=$GROUP_BASE ;;
+            *) echo "run=true" >> "$GITHUB_OUTPUT"; echo "Scope: $EVENT runs every step"; exit 0 ;;
+          esac
+          if [ -z "$BASE" ] || ! FILES=$(git diff --name-only --no-renames "$BASE...HEAD"); then
+            echo "::warning::no base commit, or git diff ${BASE:-(none)}...HEAD failed: running the full visual check"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          MATCHED=$(printf '%s\n' "$FILES" \
+            | grep -E '^(web/|e2e/visual/|e2e/playwright\.visual\.config\.ts$|\.github/workflows/visual\.yml$)' \
+            | grep -Ev '^web/tests/' \
+            || true)
+          if [ -n "$MATCHED" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Scope: $(printf '%s\n' "$MATCHED" | wc -l) web / visual file(s) changed"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "### Visual — no frontend change (nothing to capture)" >> "$GITHUB_STEP_SUMMARY"
+            echo "Scope: no frontend change; every later step is skipped and the check is green"
+          fi
+
       - name: Set up Node 22
+        if: steps.scope.outputs.run == 'true'
         uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: web/package-lock.json
 
+      # merge_group has no github.base_ref: the queue group is diffed against its base commit.
       - name: Changed pages
         id: pages
+        if: steps.scope.outputs.run == 'true'
         env:
           EVENT: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
+          MERGE_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           PAGES: ${{ inputs.pages }}
         run: |
           if [ "$EVENT" = "pull_request" ]; then
             SLUGS=$(node --experimental-strip-types --no-warnings e2e/visual/changed-pages.mjs "origin/$BASE_REF" HEAD)
+          elif [ "$EVENT" = "merge_group" ]; then
+            SLUGS=$(node --experimental-strip-types --no-warnings e2e/visual/changed-pages.mjs "$MERGE_BASE_SHA" HEAD)
           else
             SLUGS=${PAGES:-all}
           fi
@@ -98,6 +149,7 @@ jobs:
           echo "Changed pages: ${SLUGS:-none}"
 
       - name: Build the web (next build, standalone)
+        if: steps.scope.outputs.run == 'true'
         working-directory: web
         env:
           NODE_OPTIONS: --max-old-space-size=1536
@@ -109,6 +161,7 @@ jobs:
 
       # The fake configuration of the Web Build smoke (ci.yml): no API, no sign-in, localhost is the partner host.
       - name: Start the standalone server with the kit gallery (KIT_GALLERY=1)
+        if: steps.scope.outputs.run == 'true'
         working-directory: web
         env:
           KIT_GALLERY: "1"
@@ -135,6 +188,7 @@ jobs:
 
       # Exact versions in e2e/package.json; no lockfile on purpose (this folder never ships), no install scripts.
       - name: Install Playwright (e2e/)
+        if: steps.scope.outputs.run == 'true'
         working-directory: e2e
         run: |
           npm install --no-audit --no-fund --ignore-scripts
@@ -143,6 +197,7 @@ jobs:
       # The planted overflow (document and frame) must be caught: the Playwright run must fail and every planted
       # capture must show its overflow in the report. A green self-test means the assertion is broken.
       - name: Self-test (a planted overflow must fail the run)
+        if: steps.scope.outputs.run == 'true'
         working-directory: e2e
         env:
           VISUAL_SELFTEST: "1"
@@ -155,6 +210,7 @@ jobs:
           rm -rf visual/results
 
       - name: Capture and check
+        if: steps.scope.outputs.run == 'true'
         working-directory: e2e
         env:
           VISUAL_AUTH: public
@@ -163,7 +219,7 @@ jobs:
         run: npx playwright test -c playwright.visual.config.ts --project=visual-1440 --project=visual-390 --reporter=list
 
       - name: Summary
-        if: always()
+        if: always() && steps.scope.outputs.run == 'true'
         working-directory: e2e
         env:
           SLUGS: ${{ steps.pages.outputs.slugs }}
@@ -178,7 +234,7 @@ jobs:
           } | tee visual/results/summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload screenshots and report
-        if: always()
+        if: always() && steps.scope.outputs.run == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: visual-partner-pr-${{ github.run_id }}
@@ -188,9 +244,9 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      # One comment per PR (marker), edited in place. All values reach `run:` through env.
+      # One comment per PR (marker), edited in place. All values reach `run:` through env. Never on merge_group.
       - name: Comment the summary on the PR
-        if: always() && github.event_name == 'pull_request'
+        if: always() && steps.scope.outputs.run == 'true' && github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
