@@ -44,6 +44,9 @@ export interface BuilderOption {
     from_price: string | null;
     below_from_price: boolean | null;
     no_longer_offered: boolean;
+    /** AA-1030: the suggested sell (the agency markup on the B2B price, else AA's suggested retail price x party). */
+    suggested_sell?: string | null;
+    suggested_basis?: "agency_markup" | "aa_rrp" | null;
   };
 }
 

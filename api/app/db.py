@@ -79,6 +79,7 @@ REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = (
     # contract: MIG-4, applied before this code). Deploy Dev schema-gate also requires every migration file below it
     # (crm-044 of another lane of the wave, when it is on main).
     "crm-045",
+    "crm-046",  # AA-1030: crm.tenant_settings.retail_markup_pct (contract: MIG-4, applied before this code)
 )
 REQUIRED_SCHEMA_VERSION = max(REQUIRED_SCHEMA_VERSIONS)
 

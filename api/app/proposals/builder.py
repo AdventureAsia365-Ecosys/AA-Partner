@@ -53,7 +53,7 @@ from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.esign import terms as esign_terms
 from app.intake import completeness, stage2
 from app.margin import sees_margin
-from app.proposals import prep_packs, rules
+from app.proposals import prep_packs, retail, rules
 from app.proposals.service import (
     ACCEPTED_EXISTS_SQL,
     DRAFTABLE_STAGES,
@@ -388,6 +388,9 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
     defaults = _defaults(s)
     by_block: dict[str, list[dict[str, Any]]] = {}
     now = dt.datetime.now(dt.UTC)
+    # AA-1030: the suggested sell of each AA option (the agency markup, else AA's RRP for a tour).
+    markups = await retail.markups(ctx) if any(o["source"] == "aa" for o in s["options"]) else {}
+    party = _party(row)
     for o in s["options"]:
         default_id = defaults.get(str(o["option_block_id"]))
         default = next((x for x in s["options"] if str(x["option_id"]) == default_id), None)
@@ -419,6 +422,16 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
                 "from_price": _amount(o["aa_from_price"]),
                 "below_from_price": o["below_from_price"],
                 "no_longer_offered": o["aa_served_state"] == "retired",
+                **retail.suggestion_out(
+                    retail.suggest(
+                        o["aa_component_kind"],
+                        b2b_price=Decimal(o["net_amount"]) if o["net_amount"] is not None else None,
+                        from_price=Decimal(o["aa_from_price"]) if o["aa_from_price"] is not None else None,
+                        party=party,
+                        agency_markups=markups,
+                    ),
+                    sees_margin=margin,
+                ),
             }
         if margin:
             item["net_amount"] = _amount(o["net_amount"])
@@ -1183,7 +1196,8 @@ async def add_aa_option(
     """Step 2, in a new transaction: the option with the live quote (net = b2b price, availability). A sold-out
     answer adds nothing (409 ``aa_sold_out``: "Sold out (cannot add)", WF-4). Without a sell in the request the sell
     stays 0 (never the b2b price: the assistant reads the sell, §4.6) and Publish waits for an owner / agent to set it
-    (``aa_item_unpriced``)."""
+    (``aa_item_unpriced``). AA-1030: an owner or agent who sends no sell gets the suggested retail price
+    (:mod:`app.proposals.retail`: the agency markup on the B2B price, else AA's RRP for a tour), when there is one."""
     proposal_id = uuid.UUID(plan["proposal_id"])
     block_id = uuid.UUID(plan["block_id"])
     row = await _lock(ctx, proposal_id, int(plan["seq"]))
@@ -1192,6 +1206,16 @@ async def add_aa_option(
     s = await _structure(ctx, proposal_id)
     in_block = [o for o in s["options"] if o["option_block_id"] == _block(s, block_id)["option_block_id"]]
     sell = _money_in(body.get("sell_amount"), "sell_amount") or Decimal("0.00")
+    if body.get("sell_amount") is None and sees_margin(ctx.member_role) and quote.b2b_price is not None:
+        suggested = retail.suggest(
+            plan["component_kind"],
+            b2b_price=rules.money(quote.b2b_price),
+            from_price=rules.money(quote.from_price) if quote.from_price is not None else None,
+            party=plan["party"],
+            agency_markups=await retail.markups(ctx),
+        )
+        if suggested is not None:
+            sell = suggested[0]
     below = None
     if quote.from_price is not None and plan["component_kind"] == "trip_plan" and plan["party"] >= 1 and sell > 0:
         below = sell / plan["party"] < quote.from_price

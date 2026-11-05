@@ -346,6 +346,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-042` | `api/migrations/042_crm_draft_route_acc2_nova_lite.sql` | AA-1027 F4 interim path (**contract**: an UPDATE and an INSERT of configuration rows in `crm.llm_stage_route`, so MIG-4; no code depends on it): `crm_draft_reply` routes to Amazon Nova Lite on acc2 (position 2, `us.amazon.nova-lite-v1:0`, family `amazon`, 0.0770 / 0.3080 USD per million tokens = the CIS catalogue row `nova-lite`); the crm-037 Claude Haiku / Sonnet entries are kept but `is_enabled = false` (acc3 refuses every model, acc2 cannot run Claude); the acc3 return is a forward file that switches them back on |
 | `crm-044` | `api/migrations/044_crm_tenant_pilot_marker.sql` | AA-969 part 2 (root ADR 0019 d16; **contract**: ALTER of `crm.tenant` + triggers, MIG-4): `crm.tenant.is_pilot` (boolean, default false), the CIS pilot marker projected by `crm_entitlement_pull`; `tenant_one_pilot_uq` (at most one pilot); `crm.guard_pilot_marker()` + triggers `tenant_pilot_marker_ins` / `_upd`: only the account feed actor `platform:feed-tenant-account` (or an unscoped owner session) sets or changes it, anyone else CRM04 `platform_only` |
 | `crm-045` | `api/migrations/045_crm_studio_invitation_kept_address.sql` | AA-1035 R2 close-out (**contract**, MIG-4; crm.ops.v1 1.12): `crm.studio_invitation` also keeps the invited address sealed under a one-off data key of the CRM KMS key (`email_kept`, `email_kept_dek`, `email_kept_kek_provider`, `email_kept_kek_id`, all or none), so a send again with `keep_address` goes to the same address; the guard (CRM37) lets only a platform actor set it, the token holder may only clear it (the claim does), a revoke clears it, the job never touches it; an expiry keeps it (an expired invitation is re-issued) |
+| `crm-046` | `api/migrations/046_crm_retail_markup.sql` | AA-1030 (**contract**: ALTER + CHECK on `crm.tenant_settings`, so MIG-4): `tenant_settings.retail_markup_pct` (JSONB, default `{}`: the owner's default retail markup in percent per AA product type, `trip_plan` / `hotel_room` / `transfer` / `guide` / `activity` / `entrance` / `meal`, 0..300 with 2 decimals), shape rule `crm.retail_markup_ok(jsonb)` (EXECUTE to crm_app, the writer) and `tenant_settings_retail_markup_chk`; no reader grant |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -1504,6 +1505,14 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
 - **"From"-price warning**: `GET /price-parity` in the quote currency for a whole-tour line; `below_from_price` = sell
   per person (adults + children) below it. Warns, never blocks (ADR 0005a decision 1); the add form warns before
   asking too (`GET /crm/v1/aa/products/{source_id}?currency=`).
+- **Suggested retail price** (AA-1030, crm-046; root ADR 0019 b15): Booking's quote already carries the agency's tier
+  or contract rate card (the `b2b_price`). The builder suggests a sell for every AA option (`aa.suggested_sell`,
+  `aa.suggested_basis`, `app/proposals/retail.py`): the owner's markup for the product type
+  (`tenant_settings.retail_markup_pct`, Settings > Payments, `GET` / `PUT /crm/v1/settings/retail-markup`, owner only)
+  on the B2B price, rounded up to the cent; else, for a tour, AA's RRP ("from" price) x party; else none. A markup-based
+  suggestion is derived from the B2B price, so only owner / agent see it. An owner or agent who adds an AA option
+  without a sell gets the suggestion as the sell (an assistant's option still waits at 0); "Use" on the option sets
+  it later. The below-"from" warning applies to it like any sell.
 - **AA-aware Lost**: `GET /trips/{id}/lines` answers `lost_reason_hint` (declined -> `aa_on_request_declined`, or
   `aa_sold_out` when Booking said sold out); the Lost picker pre-selects it. Lost (and cancel) holds the waiting
   quote / requote / hold / refresh requests back by the Undo window and queues a release of every line AA has not

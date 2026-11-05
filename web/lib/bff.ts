@@ -263,6 +263,9 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "POST", pattern: new RegExp(`^refund-requests/${UUID}/(approve|reject|execute)$`), tenant: true, card: "AA-952" },
   { method: "GET", pattern: /^settings\/payment-methods$/, tenant: true, card: "AA-952" },
   { method: "PUT", pattern: /^settings\/payment-methods\/manual$/, tenant: true, card: "AA-952" },
+  // AA-1030: the agency default retail markup per AA product type (owner only, API Action.PAYMENT_SETTINGS).
+  { method: "GET", pattern: /^settings\/retail-markup$/, tenant: true, card: "AA-1030" },
+  { method: "PUT", pattern: /^settings\/retail-markup$/, tenant: true, card: "AA-1030" },
   { method: "POST", pattern: new RegExp(`^settings/payment-methods/${UUID}/disconnect$`), tenant: true, card: "AA-952" },
   { method: "POST", pattern: new RegExp(`^trips/${UUID}/portal-access$`), tenant: true, card: "AA-946" },
   { method: "POST", pattern: new RegExp(`^portal-access/${UUID}/revoke$`), tenant: true, card: "AA-946" },
