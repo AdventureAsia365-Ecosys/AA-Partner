@@ -224,6 +224,22 @@ jobs:
       BASE_URL: ${{ inputs.base_url || vars.CRM_WEB_BASE_URL || 'https://portal.lumiguides.it.com' }}
       PORTAL_TARGET: fargate
     steps:
+      # A dispatch takes base_url as typed, and the signed-in step sends the e2e studio user's password and a live TOTP
+      # code to that host's sign-in page: refuse any host but the agency host before a secret is in reach (like the
+      # CIS and Booking visual runs). The workspace exists before the checkout; e2e/ does not, hence ".".
+      - name: Only the agency hosts
+        working-directory: .
+        env:
+          CRM_HOST: ${{ vars.CRM_WEB_BASE_URL }}
+        run: |
+          URL="${BASE_URL%/}"
+          if [ "$URL" = "https://portal.lumiguides.it.com" ] || { [ -n "$CRM_HOST" ] && [ "$URL" = "${CRM_HOST%/}" ]; }; then
+            echo "Visual run on $URL"
+          else
+            echo "::error::base_url must be the agency host (https://portal.lumiguides.it.com or vars.CRM_WEB_BASE_URL), got $BASE_URL"
+            exit 1
+          fi
+
       # Main as it is now (the default ref of workflow_run and of a dispatch from main), never a ref taken from the
       # triggering run: the deployed commit is only a diff end below. No npm cache (cache-poisoning path).
       - name: Checkout main
