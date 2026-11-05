@@ -6,7 +6,7 @@
 // client-side form.
 import { cookies } from "next/headers";
 import Link from "next/link";
-import { EmptyState, ErrorState, K } from "@/app/_kit";
+import { EmptyState, ErrorState, K, Button } from "@/app/_kit";
 import { NewClientForm } from "@/components/clients/NewClientForm";
 import { PageTitle } from "@/components/PageTitle";
 import { directoryHref, leadSourceLabel, parseDirectory, SEARCH_MAX, tripsCount, type Directory } from "@/lib/clients";
@@ -63,9 +63,9 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
         />
         {f.archived && <input type="hidden" name="archived" value="true" />}
         {f.owner === "me" && <input type="hidden" name="owner" value="me" />}
-        <button type="submit" style={{ ...chip(true), cursor: "pointer", font: "inherit", fontSize: 13 }}>
+        <Button type="submit" variant="primary" size="sm">
           {t(lang, "clients.searchButton")}
-        </button>
+        </Button>
         {search && (
           <a href={directoryHref({ archived: f.archived, owner: f.owner })} style={chip(false)}>
             {t(lang, "clients.clear")}

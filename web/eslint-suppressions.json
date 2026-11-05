@@ -4,40 +4,9 @@
       "count": 1
     }
   },
-  "app/(crm)/clients/page.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    }
-  },
-  "app/(crm)/layout.tsx": {
-    "aa-kit/no-raw-main": {
-      "count": 1
-    }
-  },
-  "app/(studio)/_legal/LegalPage.tsx": {
-    "aa-kit/no-class-name": {
-      "count": 1
-    },
-    "aa-kit/no-raw-main": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal-access/AccessCard.tsx": {
-    "aa-kit/no-raw-main": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/AngleGateWizard.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    }
-  },
   "app/(studio)/portal/_components/BrandTab.tsx": {
     "aa-kit/no-legacy-kit": {
       "count": 1
-    },
-    "aa-kit/no-raw-aa-var": {
-      "count": 4
     }
   },
   "app/(studio)/portal/_components/CatalogTab.tsx": {
@@ -46,50 +15,22 @@
     }
   },
   "app/(studio)/portal/_components/DashboardTab.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 3
-    },
-    "aa-kit/no-hex-colour": {
-      "count": 5
-    },
     "aa-kit/no-legacy-kit": {
       "count": 1
-    },
-    "aa-kit/no-raw-aa-var": {
-      "count": 2
     }
   },
   "app/(studio)/portal/_components/GettingStarted.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
     "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/NotificationsBell.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-hex-colour": {
       "count": 1
     }
   },
   "app/(studio)/portal/_components/PlaceholderTabs.tsx": {
-    "aa-kit/no-hex-colour": {
-      "count": 4
-    },
     "aa-kit/no-legacy-kit": {
       "count": 1
     }
   },
   "app/(studio)/portal/_components/PublishPendingList.tsx": {
     "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/ReviewList.tsx": {
-    "aa-kit/no-hex-colour": {
       "count": 1
     }
   },
@@ -102,26 +43,7 @@
     "aa-kit/no-class-name": {
       "count": 1
     },
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-hex-colour": {
-      "count": 2
-    },
     "aa-kit/no-legacy-kit": {
-      "count": 1
-    }
-  },
-  "app/(studio)/portal/_components/ui.tsx": {
-    "aa-kit/no-hex-colour": {
-      "count": 1
-    },
-    "aa-kit/no-raw-aa-var": {
-      "count": 4
-    }
-  },
-  "app/(studio)/portal/content/page.tsx": {
-    "aa-kit/no-raw-aa-var": {
       "count": 1
     }
   },
@@ -130,52 +52,7 @@
       "count": 1
     }
   },
-  "app/join/accept/page.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    }
-  },
-  "app/select-agency/page.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 2
-    }
-  },
-  "app/trip/[tourId]/not-found.tsx": {
-    "aa-kit/no-raw-main": {
-      "count": 1
-    }
-  },
-  "app/trip/[tourId]/page.tsx": {
-    "aa-kit/no-hex-colour": {
-      "count": 1
-    },
-    "aa-kit/no-raw-main": {
-      "count": 1
-    }
-  },
-  "components/BellMenu.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 2
-    },
-    "aa-kit/no-hex-colour": {
-      "count": 2
-    },
-    "aa-kit/no-raw-dialog": {
-      "count": 1
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
-  "components/intake/InquiryForm.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    }
-  },
   "components/intake/PlanningForm.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
     "react-hooks/set-state-in-effect": {
       "count": 1
     }
@@ -204,12 +81,6 @@
     }
   },
   "components/mail/MessagesPanel.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-hex-colour": {
-      "count": 1
-    },
     "react-hooks/refs": {
       "count": 2
     },
@@ -218,9 +89,6 @@
     }
   },
   "components/pipeline/BoardView.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
     "aa-kit/no-hex-colour": {
       "count": 1
     },
@@ -240,9 +108,6 @@
     }
   },
   "components/pipeline/UndoToast.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
     "react-hooks/set-state-in-effect": {
       "count": 1
     }
@@ -250,32 +115,6 @@
   "components/proposals/BuilderAaDrawer.tsx": {
     "aa-kit/no-raw-dialog": {
       "count": 1
-    }
-  },
-  "components/proposals/BuilderPage.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 2
-    }
-  },
-  "components/proposals/ClientBuilderProposal.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 7
-    },
-    "aa-kit/no-raw-aa-var": {
-      "count": 1
-    }
-  },
-  "components/proposals/ProposalPage.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 1
-    },
-    "aa-kit/no-raw-aa-var": {
-      "count": 1
-    }
-  },
-  "components/settings/AccessLogView.tsx": {
-    "aa-kit/no-hand-styled-button": {
-      "count": 2
     }
   },
   "components/settings/DataLifecycleView.tsx": {

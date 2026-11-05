@@ -3,16 +3,16 @@
 // /portal shell (which needs a studio session these pages do not have yet).
 // AA-1036 (R3): text in the UI language (access.messages.ts; server components: translator with the request language).
 import { BRAND, FONT_DISPLAY, FONT_SANS, LOGO_SRC, SUPPORT_EMAIL } from "@/app/_kit/core/brand";
-import { translator } from "@/app/_kit";
+import { PageFrame, translator } from "@/app/_kit";
 import { serverContext } from "@/lib/serverContext";
 import { ACCESS_MESSAGES } from "./access.messages";
 
 export async function AccessCard({ title, testId, children }: { title: string; testId: string; children: React.ReactNode }) {
   const t = translator(ACCESS_MESSAGES, (await serverContext()).lang);
   return (
-    <main
-      data-testid={testId}
-      style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: BRAND.bg, padding: 16, fontFamily: FONT_SANS }}
+    <PageFrame
+      testId={testId}
+      style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: BRAND.bg, padding: 16, fontFamily: FONT_SANS, overflowY: "visible" }}
     >
       <div
         style={{
@@ -31,7 +31,7 @@ export async function AccessCard({ title, testId, children }: { title: string; t
         <h1 style={{ margin: 0, fontFamily: FONT_DISPLAY, fontSize: 20, color: BRAND.ink }}>{title}</h1>
         {children}
       </div>
-    </main>
+    </PageFrame>
   );
 }
 

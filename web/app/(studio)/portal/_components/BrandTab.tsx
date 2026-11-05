@@ -306,7 +306,7 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
 
         {/* Active version indicator */}
         {data?.configured && data?.version && (
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", marginBottom: 22, background: "var(--aa-green-bg2)", border: "1px solid var(--aa-green-border)", borderRadius: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", marginBottom: 22, background: K.successBg2, border: `1px solid ${K.successBorder}`, borderRadius: 8 }}>
             <span style={{ width: 8, height: 8, borderRadius: "50%", background: K.success, flexShrink: 0 }} />
             <span style={{ fontSize: 12.5, color: K.success, fontWeight: 600 }}>{t("activeVersion", data.version)}</span>
             {data.updated_at && <span style={{ fontSize: 11, color: K.muted, marginLeft: "auto" }}>{t("lastUpdated", fmtDate(data.updated_at, lang))}</span>}
@@ -454,7 +454,7 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
           </div>
           <div style={{ padding: 14, maxHeight: "70vh", overflowY: "auto" }}>
             {data.history.map(h => (
-              <div key={h.version} style={{ borderRadius: 8, marginBottom: 10, background: h.is_active ? "var(--aa-green-bg2)" : K.bg, border: `1px solid ${h.is_active ? "var(--aa-green-border)" : K.line}`, overflow: "hidden" }}>
+              <div key={h.version} style={{ borderRadius: 8, marginBottom: 10, background: h.is_active ? K.successBg2 : K.bg, border: `1px solid ${h.is_active ? K.successBorder : K.line}`, overflow: "hidden" }}>
                 <div style={{ padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>
                     <span style={{ fontSize: 14, fontWeight: 700, color: h.is_active ? K.success : K.ink }}>v{h.version}</span>

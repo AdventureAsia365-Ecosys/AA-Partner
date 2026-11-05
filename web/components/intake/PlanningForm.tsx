@@ -10,7 +10,7 @@
 // page (mode "agent": the consent is recorded as given on the call). Server-rendered on the client page: the buttons
 // stay disabled until hydration and the form says `data-hydrated="true"` once its handlers are attached (AA-936).
 import { useEffect, useMemo, useState } from "react";
-import { Button, K, useHydrated } from "@/app/_kit";
+import { Button, K, useHydrated, ChipButton } from "@/app/_kit";
 import type { MessageKey } from "@/lib/i18n";
 import { fmt } from "@/lib/i18n";
 import {
@@ -242,25 +242,15 @@ function FieldInput({
           {(field.options ?? []).map((o) => {
             const on = chosen.includes(o);
             return (
-              <button
+              <ChipButton
                 key={o}
                 type="button"
-                aria-pressed={on}
+                selected={on}
                 data-testid={`${id}-${o}`}
                 onClick={() => set(field.name, toggleCode(chosen, o, field.max_items))}
-                style={{
-                  font: "inherit",
-                  fontSize: 13,
-                  padding: "6px 12px",
-                  borderRadius: 999,
-                  cursor: "pointer",
-                  border: `1px solid ${on ? K.accent : K.line2}`,
-                  background: on ? K.accentTint : K.card,
-                  color: on ? K.accentDeep : K.ink2,
-                }}
               >
                 {code(prefix, o)}
-              </button>
+              </ChipButton>
             );
           })}
         </div>

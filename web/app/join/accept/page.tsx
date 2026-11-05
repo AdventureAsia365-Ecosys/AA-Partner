@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { CenteredCard, linkButton } from "@/components/CenteredCard";
-import { K } from "@/app/_kit";
+import { K, Button } from "@/app/_kit";
 import { t, type MessageKey } from "@/lib/i18n";
 import { inviteCookieNames, joinError, openInvite } from "@/lib/invite";
 import { contentStudioHref } from "@/lib/nav";
@@ -54,9 +54,9 @@ export default async function JoinAcceptPage({
         ) : (
           <form method="post" action="/join/confirm" style={{ display: "grid", gap: 10 }}>
             <p style={{ margin: 0, fontSize: 13.5, color: K.muted }}>{t(lang, "join.acceptHelp")}</p>
-            <button type="submit" style={linkButton} data-testid="join-accept">
+            <Button type="submit" variant="primary" testId="join-accept">
               {t(lang, "join.accept")}
-            </button>
+            </Button>
           </form>
         )}
       </div>

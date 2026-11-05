@@ -129,20 +129,6 @@ function ThemeButton({ label }: { label: string }) {
   );
 }
 
-// The bell's trigger keeps the look of the kit IconButton "outline" at its md size (the bell renders its own button:
-// it carries the unseen count badge).
-const bellButton: React.CSSProperties = {
-  alignItems: "center",
-  justifyContent: "center",
-  width: 32,
-  height: 32,
-  borderRadius: 8,
-  border: `1px solid ${K.line}`,
-  background: K.card,
-  color: K.ink3,
-  cursor: "pointer",
-};
-
 function CrmSidebar({
   dict,
   role,
@@ -297,7 +283,7 @@ export function CrmShell({ children, locale, ...props }: ShellProps) {
             <div data-crm="hide-phone">
               <LocaleSwitch locale={locale} label={dict["shell.language"]} next={pathname} compact />
             </div>
-            <BellMenu dict={dict} buttonStyle={bellButton} />
+            <BellMenu dict={dict} />
             <ThemeButton label={dict["shell.theme"]} />
             <form action="/auth/sign-out" method="post">
               <IconButton type="submit" label={dict["shell.signOut"]} title={dict["shell.signOut"]}>

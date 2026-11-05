@@ -5,7 +5,7 @@
 // Download fetches the same filtered rows as CSV / JSON lines through the BFF and saves them as a file.
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Badge, Button, EmptyState, K } from "@/app/_kit";
+import { Badge, Button, EmptyState, K, ChipButton } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
 import { bffDownload, bffFetch } from "@/lib/bffClient";
 import {
@@ -38,19 +38,6 @@ const field: React.CSSProperties = {
   color: K.ink,
   minWidth: 0,
 };
-
-function chip(active: boolean): React.CSSProperties {
-  return {
-    font: "inherit",
-    fontSize: 12.5,
-    padding: "5px 11px",
-    borderRadius: 999,
-    border: `1px solid ${active ? K.accent : K.line2}`,
-    background: active ? K.accentTint : K.card,
-    color: active ? K.accentDeep : K.body,
-    cursor: "pointer",
-  };
-}
 
 export function AccessLogView({
   initial,
@@ -108,20 +95,18 @@ export function AccessLogView({
     <div style={{ display: "grid", gap: 14 }}>
       <Panel testId="access-log-filters">
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }} role="group" aria-label={t(lang, "log.who")}>
-          <button type="button" style={chip(!filter.actor)} onClick={() => go({ ...filter, actor: undefined })} data-testid="log-actor-all">
+          <ChipButton selected={!filter.actor} onClick={() => go({ ...filter, actor: undefined })} data-testid="log-actor-all">
             {t(lang, "log.allActors")}
-          </button>
+          </ChipButton>
           {ACTOR_GROUPS.map((g) => (
-            <button
+            <ChipButton
               key={g}
-              type="button"
-              style={chip(filter.actor === g)}
-              aria-pressed={filter.actor === g}
+              selected={filter.actor === g}
               onClick={() => go({ ...filter, actor: g })}
               data-testid={`log-actor-${g}`}
             >
               {codeLabel(lang, "log.actor", g)}
-            </button>
+            </ChipButton>
           ))}
         </div>
         <form

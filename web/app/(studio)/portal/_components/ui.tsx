@@ -5,7 +5,7 @@
 import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 import {
-  BTN_PRIMARY_TEXT, BTN_RADIUS, K, FONT_SANS,
+  BTN_PRIMARY_TEXT, BTN_RADIUS, K, FONT_SANS, alpha,
 } from "@/app/_kit";
 // AA-1036: the pure helpers (JSON fields, formats) moved to lib/studio/format.ts; the primitives the kit has (PageHeader,
 // Badge, Spinner, LoadingScreen, Btn) went: pages use the kit's. What is left has no kit twin yet (AA-1007 follow-up).
@@ -26,11 +26,11 @@ export const T = {
   red: K.danger, redSoft: K.dangerSoft, redBorder: K.dangerBorder,
   amber: K.amber, amberSoft: K.amberSoft,
   /** White text/icon on a solid coloured surface, in both themes. */
-  onSolid: "var(--aa-on-solid)",
+  onSolid: K.onSolid,
   /** Text on the gold primary button (dark ink in both themes since AA-760: white on gold was 2.5:1). */
-  onAccent: "var(--aa-on-accent)",
+  onAccent: K.onAccent,
   /** A surface that stays dark in both themes (the sidebar navy) — for the `dark` Card. */
-  darkPanel: "var(--aa-side-bg)", darkPanel2: "var(--aa-side-panel)",
+  darkPanel: K.sideBg, darkPanel2: K.sidePanel,
 } as const;
 
 const sans = FONT_SANS;
@@ -151,7 +151,7 @@ export function CardHead({ title, action, light = false }: {
 }) {
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-      <span style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: light ? "rgba(255,255,255,0.5)" : T.muted }}>{title}</span>
+      <span style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: light ? alpha(K.sideTitle, 50) : T.muted }}>{title}</span>
       {action && <div style={{ fontSize: 12, color: T.ink3 }}>{action}</div>}
     </div>
   );

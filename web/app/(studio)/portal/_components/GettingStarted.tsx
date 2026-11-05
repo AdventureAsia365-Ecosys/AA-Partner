@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Check, ArrowRight, X } from "lucide-react";
-import { K, useT } from "@/app/_kit";
+import { K, useT, IconButton } from "@/app/_kit";
 import { COMMON_MESSAGES } from "./common.messages";
 import { T, Card, CardHead } from "./ui";
 
@@ -65,9 +65,9 @@ export default function GettingStarted({ catalogCount }: { catalogCount: number 
   return (
     <Card>
       <CardHead title={t("gsTitle", doneCount, items.length)} action={
-        <button onClick={dismiss} aria-label={t("gsHide")} style={{ background: "none", border: "none", cursor: "pointer", color: K.muted2, display: "flex", padding: 0 }}>
+        <IconButton variant="plain" size="sm" label={t("gsHide")} title="" onClick={dismiss} style={{ color: K.muted2 }}>
           <X size={15} />
-        </button>
+        </IconButton>
       } />
       <div style={{ height: 6, borderRadius: 999, background: K.line2, overflow: "hidden", marginBottom: 14 }}>
         <div style={{ width: `${(doneCount / items.length) * 100}%`, height: "100%", background: K.accent, borderRadius: 999, transition: "width .4s ease" }} />

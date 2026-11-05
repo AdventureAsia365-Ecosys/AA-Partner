@@ -5,7 +5,7 @@
 // a 10-second Undo, and a held message's "On hold: reconnect the mailbox" chip with "Edit and send again".
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, K, useHydrated } from "@/app/_kit";
+import { Button, K, useHydrated, LinkButton } from "@/app/_kit";
 import { useTripClosed } from "@/components/pipeline/TripClosed";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
@@ -77,12 +77,12 @@ function MessageItem({
       <div style={{ whiteSpace: "pre-wrap", fontSize: 13, overflowWrap: "anywhere" }}>{m.text}</div>
       {m.html && (
         <div>
-          <button type="button" onClick={() => setFormatted(!formatted)} style={{ fontSize: 12, background: "none", border: "none", color: K.accent, cursor: "pointer", padding: 0 }}>
+          <LinkButton size="sm" weight="regular" onClick={() => setFormatted(!formatted)} style={{ justifySelf: "start" }}>
             {tr("messages.showFormatted")}
-          </button>
+          </LinkButton>
           {formatted && (
             // Empty sandbox: opaque origin, no script, no forms, no popups, no cookies (design S10).
-            <iframe {...htmlFrame(m.html)} style={{ width: "100%", minHeight: 240, border: `1px solid ${K.line2}`, borderRadius: 8, background: "#fff" }} />
+            <iframe {...htmlFrame(m.html)} style={{ width: "100%", minHeight: 240, border: `1px solid ${K.line2}`, borderRadius: 8, background: "white" /* the sender's HTML is written for a white page, in both themes */ }} />
           )}
         </div>
       )}

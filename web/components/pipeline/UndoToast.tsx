@@ -4,7 +4,7 @@
 // after 10 s (the API's window; the database allows 15 s, so a click in the last second still lands). A toast without
 // an undo (a refusal, "Move undone") closes after the same time. One toast at a time: a new one replaces the last.
 import { useEffect, useState } from "react";
-import { K } from "@/app/_kit";
+import { K, LinkButton } from "@/app/_kit";
 import { fmt, type Lang, t } from "@/lib/i18n";
 import { UNDO_MS } from "@/lib/pipeline";
 
@@ -71,18 +71,18 @@ export function UndoToast({ state, lang, onClose, testId = "undo-toast" }: { sta
       <span style={{ overflowWrap: "anywhere" }}>{state.message}</span>
       {state.undo && (
         <>
-          <button
-            type="button"
-            data-testid={`${testId}-undo`}
+          <LinkButton
+            tone="inherit"
+            testId={`${testId}-undo`}
             disabled={busy}
             onClick={async () => {
               setBusy(true);
               await state.undo?.();
             }}
-            style={{ font: "inherit", background: "transparent", border: 0, color: K.accentSoft, cursor: busy ? "wait" : "pointer", fontWeight: 600, padding: 0 }}
+            style={{ color: K.accentSoft, cursor: busy ? "wait" : "pointer" }}
           >
             {t(lang, "pipeline.undo")}
-          </button>
+          </LinkButton>
           <span aria-hidden="true" style={{ opacity: 0.7, fontVariantNumeric: "tabular-nums" }}>
             {fmt(t(lang, "undo.countdown"), { n: left })}
           </span>

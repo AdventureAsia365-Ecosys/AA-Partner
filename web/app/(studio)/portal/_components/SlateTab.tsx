@@ -65,7 +65,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Calendar, ChevronRight, Sparkles, X, Zap, AlertTriangle, ClipboardList, CheckCircle2 } from "lucide-react";
 import { Card, CardHead, CtaLink, EmptyState, StickyBar } from "./ui";
-import { Badge, Button, LinkButton, ToastProvider, K, mono, sans, serif, useLang, useT, type Translator, type UiLang } from "@/app/_kit";
+import { Badge, Button, LinkButton, ToastProvider, K, mono, sans, serif, useLang, useT, Pressable, type Translator, type UiLang } from "@/app/_kit";
 import { badgeTone } from "@/lib/studio/format";
 import { SLATE_MESSAGES } from "./writer.messages";
 import { channelName } from "./channelLabels";
@@ -312,12 +312,14 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
                 {showDivider && (
                   <div aria-hidden style={{ width: 1, height: 20, background: K.line2, margin: "0 6px", flexShrink: 0 }} />
                 )}
-                <button
+                <Pressable
+                  display="inline"
+                  aria-pressed={isActive}
                   onClick={() => setActiveChannel(key)}
                   title={group === "weekly" ? t("weekly") : t("onDemand")}
                   style={{
                     display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap", flexShrink: 0,
-                    padding: "7px 12px", borderRadius: "8px 8px 0 0", cursor: "pointer",
+                    padding: "7px 12px", borderRadius: "8px 8px 0 0",
                     fontFamily: sans, fontSize: 12.5, fontWeight: isActive ? 700 : 500,
                     color: isActive ? K.ink : K.muted,
                     background: isActive ? K.bg : "transparent",
@@ -326,7 +328,7 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
                 >
                   <Icon size={11} style={{ opacity: 0.55, flexShrink: 0 }} />
                   {channelName(key, lang)}{count != null && <span style={{ marginLeft: 2, fontFamily: mono, fontSize: 10.5, color: K.muted2 }}>{count}</span>}
-                </button>
+                </Pressable>
               </div>
             );
           })}
@@ -354,8 +356,8 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
 }
 
 const TABSTRIP_FADE: React.CSSProperties = {
-  maskImage: "linear-gradient(to right, #000 calc(100% - 28px), transparent)",
-  WebkitMaskImage: "linear-gradient(to right, #000 calc(100% - 28px), transparent)",
+  maskImage: "linear-gradient(to right, black calc(100% - 28px), transparent)", // a mask: black = shown, not a colour
+  WebkitMaskImage: "linear-gradient(to right, black calc(100% - 28px), transparent)",
 };
 
 // ── Skeleton (FE audit #1) ──────────────────────────────────────────────────

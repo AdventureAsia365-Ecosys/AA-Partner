@@ -9,7 +9,7 @@
 // (completed / lost / cancelled) sits under the board.
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Badge, K } from "@/app/_kit";
+import { Badge, K, ListButton } from "@/app/_kit";
 import { BulkDialog, GateDialog, type BulkTarget } from "@/components/pipeline/StageDialogs";
 import { toast, UndoToast, type ToastState } from "@/components/pipeline/UndoToast";
 import { bffSend } from "@/lib/bffClient";
@@ -225,19 +225,19 @@ function ColumnMenu({ lang, stage, targets, onPick }: { lang: Lang; stage: Board
       </summary>
       <div role="menu" style={{ position: "absolute", right: 0, top: "100%", zIndex: 10, background: K.card, border: `1px solid ${K.line}`, borderRadius: 8, padding: 4, display: "grid", minWidth: 180, boxShadow: "0 8px 24px rgba(31,41,51,0.12)" }}>
         {targets.map((to) => (
-          <button
+          <ListButton
             key={to}
-            type="button"
             role="menuitem"
+            density="compact"
             data-testid={`bulk-to-${to}`}
             onClick={() => {
               if (ref.current) ref.current.open = false;
               onPick(to);
             }}
-            style={{ font: "inherit", fontSize: 12.5, textAlign: "left", background: "transparent", border: 0, padding: "6px 8px", borderRadius: 6, color: K.ink, cursor: "pointer" }}
+            style={{ fontSize: 12.5 }}
           >
             {fmt(t(lang, "pipeline.bulkTo"), { stage: stageLabel(lang, to) })}
-          </button>
+          </ListButton>
         ))}
       </div>
     </details>

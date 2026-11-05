@@ -12,7 +12,7 @@ import { T, Card, CardHead, CtaLink, ProgressBar, TextLink } from "./ui";
 import { fmtDateTime, fmtBillingMonth } from "@/lib/studio/format";
 import { ActivityStateBadge } from "./workStatus";
 import { usePortalShell } from "./PortalShellContext";
-import { LinkButton, PageHeader, apiGet, useIsPhone, K, mono, sans, serif, useLang, useT, type Translator } from "@/app/_kit";
+import { Button, IconButton, LinkButton, PageHeader, Pressable, alpha, apiGet, useIsPhone, K, mono, sans, serif, useLang, useT, type Translator } from "@/app/_kit";
 import { STUDIO_MESSAGES } from "@/app/_kit/local/studio/studio.messages";
 import { fmtCount } from "@/lib/studio/format";
 import { DASHBOARD_MESSAGES } from "./dashboard.messages";
@@ -101,11 +101,11 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
       {!dismissAlert && (apiPct >= 80 || toursPct >= 80) && (
         <div role="status" style={{ background: K.amberSoft, border: `1px solid ${K.accentSoft}`, borderLeft: `4px solid ${K.amber}`, borderRadius: "0 8px 8px 0", padding: "11px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12 }}>
           <AlertTriangle size={16} color={K.amber} style={{ flexShrink: 0 }} />
-          <div style={{ flex: 1, fontSize: 13, color: "var(--aa-amber-deep)", lineHeight: 1.5 }}>
+          <div style={{ flex: 1, fontSize: 13, color: K.amberDeep, lineHeight: 1.5 }}>
             <strong>{apiPct >= toursPct ? t("usedApi", Math.max(apiPct, toursPct).toFixed(0)) : t("usedRewrites", Math.max(apiPct, toursPct).toFixed(0))}</strong>{" "}
             {t("resetsIn", resetDays)} <TextLink href="/portal/account/billing">{t("comparePlans")}</TextLink>
           </div>
-          <button onClick={() => setDismissAlert(true)} aria-label={t("dismiss")} style={{ background: "none", border: "none", color: K.amber, cursor: "pointer", padding: 0, display: "flex" }}><X size={16} /></button>
+          <IconButton variant="plain" size="sm" label={t("dismiss")} title="" onClick={() => setDismissAlert(true)} style={{ color: K.amber }}><X size={16} /></IconButton>
         </div>
       )}
 
@@ -115,13 +115,13 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
         {/* Membership — dark */}
         <Card dark>
           <CardHead title={t("membership")} light action={
-            <button onClick={() => onNavigate("/portal/account/billing")} style={{ background: K.accent, color: "var(--aa-side-bg)", border: 0, fontWeight: 700, fontSize: 12, padding: "7px 14px", borderRadius: 6, cursor: "pointer", fontFamily: sans }}>
+            <Button size="sm" variant="primary" onClick={() => onNavigate("/portal/account/billing")}>
               {t("upgrade")}
-            </button>
+            </Button>
           } />
           {/* Active pill — in normal flow under the title (was position:absolute on top of it) */}
           <div style={{ marginTop: 2 }}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 9px", background: "rgba(219,150,40,0.15)", color: K.accentDeep, borderRadius: 999, fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 9px", background: alpha(K.accent, 15), color: K.accentDeep, borderRadius: 999, fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase" }}>
               <span style={{ width: 5, height: 5, background: K.accent, borderRadius: "50%", display: "block" }} />{t("active")}
             </span>
           </div>
@@ -129,15 +129,15 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
             <div style={{ fontFamily: serif, fontSize: 36, fontWeight: 500, letterSpacing: "-0.02em", color: T.onSolid, lineHeight: 1 }}>
               {planLabel}
             </div>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginTop: 8, color: "rgba(255,255,255,0.65)" }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginTop: 8, color: alpha(K.sideTitle, 65) }}>
               <span style={{ fontSize: 22, fontWeight: 600, color: T.onSolid, letterSpacing: "-0.01em" }}>${n(price)}</span>
               <span style={{ fontSize: 12 }}>{t("perMonth")}</span>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 22, marginTop: 22, paddingTop: 18, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+          <div style={{ display: "flex", gap: 22, marginTop: 22, paddingTop: 18, borderTop: `1px solid ${alpha(K.sideTitle, 8)}` }}>
             {[[t("rewritesMo"), fmtTotal(toursTotal)], [t("apiCalls"), fmtTotal(apiTotal)], [t("rateLimit"), rpm ? t("rpm", n(rpm)) : "—"]].map(([l, v]) => (
               <div key={l}>
-                <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.12em", color: "rgba(255,255,255,0.45)", marginBottom: 4 }}>{l}</div>
+                <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.12em", color: alpha(K.sideTitle, 45), marginBottom: 4 }}>{l}</div>
                 <div style={{ fontSize: 12.5, fontWeight: 600, color: T.onSolid, fontVariantNumeric: "tabular-nums" }}>{v}</div>
               </div>
             ))}
@@ -340,14 +340,15 @@ function ActionCard({ icon, title, sub, onClick }: {
 }) {
   const [hov, setHov] = useState(false);
   return (
-    <button onClick={onClick}
+    // A whole card that acts as one button: the kit Pressable (no look of its own) with the card style.
+    <Pressable onClick={onClick}
       onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
       style={{
         background: K.card, border: `1px solid ${hov ? K.accent : K.line}`, borderRadius: 12,
         padding: "18px 20px", display: "flex", alignItems: "center", gap: 14,
         cursor: "pointer", textAlign: "left", fontFamily: sans,
         transform: hov ? "translateY(-1px)" : "none",
-        boxShadow: hov ? "0 4px 12px -6px rgba(219,150,40,0.35)" : "none",
+        boxShadow: hov ? `0 4px 12px -6px ${alpha(K.accent, 35)}` : "none",
         transition: "all .15s",
       }}>
       <div style={{ width: 40, height: 40, borderRadius: 9, background: T.darkPanel, color: K.accent, display: "grid", placeItems: "center", flexShrink: 0 }}>
@@ -358,6 +359,6 @@ function ActionCard({ icon, title, sub, onClick }: {
         <div style={{ fontSize: 12, color: K.muted, marginTop: 3 }}>{sub}</div>
       </div>
       <ArrowRight size={15} color={K.muted2} />
-    </button>
+    </Pressable>
   );
 }

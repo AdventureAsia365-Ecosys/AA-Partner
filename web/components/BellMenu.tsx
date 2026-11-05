@@ -6,12 +6,12 @@
 import { Bell } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { K } from "@/app/_kit";
+import { IconButton, K, LinkButton } from "@/app/_kit";
 import { bffSend } from "@/lib/bffClient";
 import { bellLine, type BellView } from "@/lib/bell";
 import { fmt, type MessageKey } from "@/lib/i18n";
 
-export function BellMenu({ dict, buttonStyle }: { dict: Record<MessageKey, string>; buttonStyle: React.CSSProperties }) {
+export function BellMenu({ dict }: { dict: Record<MessageKey, string> }) {
   const [view, setView] = useState<BellView | null>(null);
   const [open, setOpen] = useState(false);
 
@@ -20,8 +20,15 @@ export function BellMenu({ dict, buttonStyle }: { dict: Record<MessageKey, strin
     if (res.ok) setView(res.data);
   }
 
+  // The first read when the shell mounts; the answer is applied only while the bell is still mounted.
   useEffect(() => {
-    void load();
+    let live = true;
+    void bffSend<BellView>("GET", "bell").then((res) => {
+      if (live && res.ok) setView(res.data);
+    });
+    return () => {
+      live = false;
+    };
   }, []);
 
   async function seen() {
@@ -32,33 +39,33 @@ export function BellMenu({ dict, buttonStyle }: { dict: Record<MessageKey, strin
   const unseen = view?.unseen ?? 0;
   return (
     <div data-testid="crm-bell" data-unseen={unseen} style={{ position: "relative" }}>
-      <button
-        type="button"
+      <IconButton
         title={dict["bell.title"]}
-        aria-label={unseen ? `${dict["bell.title"]} (${unseen})` : dict["bell.title"]}
+        label={unseen ? `${dict["bell.title"]} (${unseen})` : dict["bell.title"]}
         aria-expanded={open}
         onClick={() => {
           setOpen(!open);
           if (!open) void load();
         }}
-        style={{ ...buttonStyle, display: "inline-flex", position: "relative" }}
+        style={{ position: "relative" }}
       >
         <Bell size={16} />
         {unseen > 0 && (
           <span
             aria-hidden
-            style={{ position: "absolute", top: -4, right: -4, minWidth: 16, height: 16, borderRadius: 8, padding: "0 4px", background: K.danger, color: "#fff", fontSize: 10, lineHeight: "16px", textAlign: "center" }}
+            style={{ position: "absolute", top: -4, right: -4, minWidth: 16, height: 16, borderRadius: 8, padding: "0 4px", background: K.danger, color: K.onSolid, fontSize: 10, lineHeight: "16px", textAlign: "center" }}
           >
             {unseen > 99 ? "99+" : unseen}
           </span>
         )}
-      </button>
+      </IconButton>
       {open && (
+        // A disclosure (the bell's aria-expanded controls it), not a modal dialog: the page stays usable around it.
         <div
-          role="dialog"
+          role="region"
           aria-label={dict["bell.title"]}
           data-testid="crm-bell-list"
-          style={{ position: "absolute", right: 0, top: 40, zIndex: 30, width: "min(340px, calc(100vw - 32px))", maxHeight: 420, overflowY: "auto", display: "grid", gap: 6, padding: 10, borderRadius: 10, border: `1px solid ${K.line}`, background: K.card, boxShadow: "0 8px 24px rgba(0,0,0,0.12)" }}
+          style={{ position: "absolute", right: 0, top: 40, zIndex: 30, width: "min(340px, calc(100vw - 32px))", maxHeight: 420, overflowY: "auto", display: "grid", gap: 6, padding: 10, borderRadius: 10, border: `1px solid ${K.line}`, background: K.card, boxShadow: K.shadowMd }}
         >
           <strong style={{ fontSize: 13, color: K.ink }}>{dict["bell.title"]}</strong>
           {(view?.items.length ?? 0) === 0 && <span style={{ fontSize: 12.5, color: K.muted }}>{dict["bell.empty"]}</span>}
@@ -76,9 +83,11 @@ export function BellMenu({ dict, buttonStyle }: { dict: Record<MessageKey, strin
             );
           })}
           {(view?.items.length ?? 0) > 0 && (
-            <button type="button" data-testid="crm-bell-seen" onClick={() => void seen()} style={{ font: "inherit", fontSize: 12.5, border: "none", background: "transparent", color: K.accent, cursor: "pointer", justifySelf: "start", padding: 0 }}>
-              {dict["bell.markSeen"]}
-            </button>
+            <span data-testid="crm-bell-seen" style={{ justifySelf: "start" }}>
+              <LinkButton onClick={() => void seen()} size="sm" weight="regular">
+                {dict["bell.markSeen"]}
+              </LinkButton>
+            </span>
           )}
         </div>
       )}

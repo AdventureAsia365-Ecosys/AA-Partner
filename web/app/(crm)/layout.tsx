@@ -6,7 +6,7 @@
 // memberships (lib/studioAccess.ts; kept when CIS cannot answer).
 // AA-1036 (R3): the amber "AI paused" banner when Adventure Asia switched the CRM's AI off for the whole app (/me
 // ai_paused, from crm.llm_app_profile); the Trip planner entry opens the studio's Add-ons page (no more mailto:).
-import { ErrorState } from "@/app/_kit";
+import { ErrorState, PageFrame } from "@/app/_kit";
 import { MailboxBanner } from "@/components/mail/MailboxBanner";
 import { SupportBanner } from "@/components/support/SupportBanner";
 import { RecoveryBanner } from "@/components/team/RecoveryBanner";
@@ -30,9 +30,9 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
   if (ctx.apiDown) {
     const refused = ctx.reason === "refused";
     return (
-      <main
-        style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}
-        data-testid={refused ? "crm-session-refused" : "crm-api-down"}
+      <PageFrame
+        style={{ minHeight: "100vh", display: "grid", placeItems: "center", overflowY: "visible" }}
+        testId={refused ? "crm-session-refused" : "crm-api-down"}
       >
         <div style={{ display: "grid", justifyItems: "center", gap: 8 }}>
           <ErrorState message={t(ctx.lang, refused ? "error.session" : "error.api")} />
@@ -40,7 +40,7 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
             {t(ctx.lang, refused ? "auth.signIn" : "error.retry")}
           </a>
         </div>
-      </main>
+      </PageFrame>
     );
   }
   const active = ctx.memberships.filter((m) => m.tenant_status === "active").length;
