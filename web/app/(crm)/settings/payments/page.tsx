@@ -1,12 +1,14 @@
 // web/app/(crm)/settings/payments/page.tsx — Settings > Payments, the CRM-16 part (AA-944): base currency, booking
 // validation level, exchange rates automatic / manual and the owner's own rates; CRM-23 slice 2: the invoice settings
-// (prefix, tax, due days, service fees); slice 3: how clients pay the agency (its manual method). Owner only: other roles see why without calling the API.
+// (prefix, tax, due days, service fees); slice 3: how clients pay the agency (its manual method); AA-1030: the retail markup
+// on AA products the builder suggests a sell price from. Owner only: other roles see why without calling the API.
 import Link from "next/link";
 import { ErrorState, K } from "@/app/_kit";
 import { PageTitle } from "@/components/PageTitle";
 import { InvoiceSettingsForm } from "@/components/invoices/InvoiceSettingsForm";
 import { PaymentMethodsForm } from "@/components/invoices/PaymentMethodsForm";
 import { PaymentsView } from "@/components/ledger/PaymentsView";
+import { RetailMarkupForm, type RetailMarkupView } from "@/components/proposals/RetailMarkupForm";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { t } from "@/lib/i18n";
@@ -37,11 +39,12 @@ export default async function PaymentsSettingsPage() {
   }
   const { session } = await serverContext();
   if (!session) return null;
-  const [settings, overrides, invoiceSettings, methods] = await Promise.all([
+  const [settings, overrides, invoiceSettings, methods, markup] = await Promise.all([
     crmCall<PaymentSettings>(ctx.cfg, session, "GET", "settings/payments"),
     crmCall<{ overrides: FxOverride[] }>(ctx.cfg, session, "GET", "fx/overrides"),
     crmCall<InvoiceSettings>(ctx.cfg, session, "GET", "settings/invoices"),
     crmCall<PaymentMethodsView>(ctx.cfg, session, "GET", "settings/payment-methods"),
+    crmCall<RetailMarkupView>(ctx.cfg, session, "GET", "settings/retail-markup"),
   ]);
   return (
     <div data-testid="crm-payments-settings" style={{ display: "grid", gap: 14, maxWidth: 820 }}>
@@ -59,6 +62,7 @@ export default async function PaymentsSettingsPage() {
       )}
       {methods.ok && <PaymentMethodsForm view={methods.data} lang={ctx.lang} />}
       {invoiceSettings.ok && <InvoiceSettingsForm settings={invoiceSettings.data} lang={ctx.lang} />}
+      {markup.ok && <RetailMarkupForm view={markup.data} lang={ctx.lang} />}
     </div>
   );
 }

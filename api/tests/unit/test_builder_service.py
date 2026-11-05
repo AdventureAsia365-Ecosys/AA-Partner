@@ -140,8 +140,17 @@ async def test_the_view_builds_margin_for_owner_and_agent_only() -> None:
                            "deposit": "90.00", "balance": "210.00", "net_total": "150.00",
                            "margin_total": "150.00"}  # fmt: skip
     assert v["checks"] == {"publishable": True, "blocking": [], "warnings": []}
+    # AA-1030: the suggested sell, AA's RRP x party (200 x 2) with no agency markup.
+    assert (o[1]["aa"]["suggested_sell"], o[1]["aa"]["suggested_basis"]) == ("400.00", "aa_rrp")
     seen = await _run(builder.view, P, role="assistant")
     assert "net_total" not in seen["totals"] and "net_amount" not in seen["days"][1]["blocks"][0]["options"][0]
+    assert seen["days"][1]["blocks"][0]["options"][1]["aa"]["suggested_sell"] == "400.00"  # public AA data
+    marked = _conn().on("SELECT retail_markup_pct FROM crm.tenant_settings", {"trip_plan": 10})
+    agent = (await _run(builder.view, P, conn=marked))["days"][1]["blocks"][0]["options"][1]["aa"]
+    assert (agent["suggested_sell"], agent["suggested_basis"]) == ("165.00", "agency_markup")  # B2B 150 x 1.10
+    marked = _conn().on("SELECT retail_markup_pct FROM crm.tenant_settings", {"trip_plan": 10})
+    hidden = (await _run(builder.view, P, conn=marked, role="assistant"))["days"][1]["blocks"][0]["options"][1]["aa"]
+    assert hidden["suggested_sell"] is None  # derived from the B2B price: not for the assistant
     with pytest.raises(Conflict):
         await _run(builder.view, P, conn=ScriptedConn().on("FROM crm.proposal p", _proposal(kind="text")))
     with pytest.raises(NotFound):
@@ -425,11 +434,21 @@ async def test_aa_items() -> None:
     assert err.value.code == "invalid_nights"
     quote = AaQuote("q9", Decimal("120"), "on_request", NOW, Decimal("100"))
     conn = _conn()
-    await _run(builder.add_aa_option, plan, quote, {"sell_amount": None}, conn=conn)
+    await _run(builder.add_aa_option, plan, quote, {"sell_amount": None}, conn=conn, role="assistant")
     row = conn.sql("INSERT INTO crm.option (")[0]
-    # No sell given: the sell stays 0, never the b2b price (the assistant reads the sell, §4.6); no warning yet.
+    # An assistant gives no sell: the sell stays 0, never the b2b price (the assistant reads the sell, §4.6).
     assert row[9] == Decimal("0.00") and row[10] == Decimal("120.00") and row[13] == "on_request"
     assert row[22] is None and row[24] is None  # below_from_price, aa_nights
+    # AA-1030: an agent gives no sell: the suggested retail price, AA's RRP x party (100 x 2), not below "from".
+    conn = _conn()
+    await _run(builder.add_aa_option, plan, quote, {"sell_amount": None}, conn=conn)
+    row = conn.sql("INSERT INTO crm.option (")[0]
+    assert row[9] == Decimal("200.00") and row[22] is False
+    # ... or the agency's own markup on the B2B price when the owner set one (120 x 1.15 = 138, under "from": warned).
+    conn = _conn().on("SELECT retail_markup_pct FROM crm.tenant_settings", '{"trip_plan": 15}')
+    await _run(builder.add_aa_option, plan, quote, {"sell_amount": None}, conn=conn)
+    row = conn.sql("INSERT INTO crm.option (")[0]
+    assert row[9] == Decimal("138.00") and row[22] is True
     conn = _conn()
     await _run(builder.add_aa_option, plan, quote, {"sell_amount": Decimal("120")}, conn=conn)
     row = conn.sql("INSERT INTO crm.option (")[0]

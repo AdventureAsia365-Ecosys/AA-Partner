@@ -283,6 +283,21 @@ export function BuilderPage({
           </span>
         )}
         <span data-testid="builder-option-sell">{fmt(tr("builder.option.sell"), { amount: money(o.sell_amount) })}</span>
+        {o.aa?.suggested_sell && o.aa.suggested_basis && (
+          <span style={{ color: K.muted, display: "inline-flex", gap: 4, alignItems: "center" }} data-testid="builder-option-suggested" title={tr(`aa.suggested.${o.aa.suggested_basis}`)}>
+            {fmt(tr("aa.suggested"), { amount: money(o.aa.suggested_sell) })} · {tr(`aa.suggested.${o.aa.suggested_basis}`)}
+            {draft && canMoney && Number(o.aa.suggested_sell) !== Number(o.sell_amount) && (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={!hydrated || busy}
+                onClick={() => write("PATCH", `proposals/${view.proposal_id}/options/${o.option_id}`, { sell_amount: o.aa?.suggested_sell })}
+              >
+                {tr("aa.useSuggested")}
+              </Button>
+            )}
+          </span>
+        )}
         {!o.is_default && o.sell_delta && <span style={{ color: K.muted }}>({Number(o.sell_delta) >= 0 ? "+" : ""}{money(o.sell_delta)})</span>}
         {draft && (
           <span style={{ display: "flex", gap: 4 }}>

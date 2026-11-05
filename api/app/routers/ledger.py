@@ -46,6 +46,7 @@ from app.db import request_pool
 from app.ledger import fx, lines, suppliers
 from app.lifecycle import trash
 from app.permissions import Action, require
+from app.proposals import retail
 from app.routers.agency import tenant_header
 from app.tenancy import tenant_tx
 from app.vault import Vault
@@ -123,6 +124,17 @@ class PaymentSettings(_Body):
     base_currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
     booking_validation_level: Literal["off", "basic", "strict"] | None = None
     fx_mode: Literal["automatic", "manual"] | None = None
+
+
+MarkupPct = Annotated[Decimal, Field(ge=0, le=300, max_digits=5, decimal_places=2, allow_inf_nan=False)]
+
+
+class RetailMarkup(_Body):
+    """AA-1030: the agency's default retail markup per AA product type; null removes one (no markup)."""
+
+    retail_markup_pct: dict[
+        Literal["trip_plan", "hotel_room", "transfer", "guide", "activity", "entrance", "meal"], MarkupPct | None
+    ] = Field(max_length=7)
 
 
 class OverrideIn(_Body):
@@ -297,6 +309,24 @@ async def put_payment_settings(
     async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
         _payments_owner(ctx)
         return await fx.update_payment_settings(ctx, body.model_dump(exclude_unset=True))
+
+
+# AA-1030 (crm-046, root ADR 0019 b15): the default retail markup the builder suggests a new AA option's sell from.
+@router.get("/settings/retail-markup")
+async def get_retail_markup(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
+        return await retail.read(ctx)
+
+
+@router.put("/settings/retail-markup")
+async def put_retail_markup(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, body: RetailMarkup
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
+        _payments_owner(ctx)
+        return await retail.update(ctx, body.retail_markup_pct)
 
 
 @router.get("/fx/overrides")
