@@ -137,21 +137,42 @@ def test_who_is_a_desk_caller() -> None:
     assert exc.value.detail == "missing_group"
 
 
+ISS, SUB = "https://issuer.example.test/pool", "sub-desk"
+ME = {"iss": ISS, "sub": SUB}
+
+
+def _scope_body(**fields: Any) -> bytes:
+    body = {"identity": ME, "desk_role": "customer_success", "scope": "book", "tenant_ids": [], "as_of": "x"}
+    body.update(fields)
+    return json.dumps({k: v for k, v in body.items() if v is not ...}).encode()
+
+
+def test_an_answer_on_the_contract_is_the_scope() -> None:
+    scope = staff_scope.parse_scope(_scope_body(tenant_ids=[str(TENANT)]), "customer_success", ISS, SUB)
+    assert scope == staff_scope.StaffScope("book", "customer_success", frozenset({TENANT}))
+
+
 @pytest.mark.parametrize(
     "body",
     [
         b"[]",
-        b'{"desk_role": "support", "scope": "book", "tenant_ids": []}',  # another role than asked
-        b'{"desk_role": "customer_success", "scope": "all", "tenant_ids": []}',  # never "all" from CIS
-        b'{"desk_role": "customer_success", "scope": "book", "tenant_ids": "x"}',
-        b'{"desk_role": "customer_success", "scope": "book", "tenant_ids": ["not-a-uuid"]}',
-        b'{"desk_role": "customer_success", "scope": "none", "tenant_ids": ["00000000-0000-4000-8000-0000000000a1"]}',
+        _scope_body(desk_role="support"),  # another role than asked
+        _scope_body(scope="all"),  # never "all" from CIS
+        _scope_body(tenant_ids="x"),
+        _scope_body(tenant_ids=["not-a-uuid"]),
+        _scope_body(scope="none", tenant_ids=["00000000-0000-4000-8000-0000000000a1"]),
+        # AA-1035 review: the identity CIS echoes must be the caller's own
+        _scope_body(identity=...),  # no identity
+        _scope_body(identity="sub-desk"),
+        _scope_body(identity={"iss": ISS, "sub": "sub-other"}),  # another person's scope
+        _scope_body(identity={"iss": "https://issuer.example.test/other-pool", "sub": SUB}),  # another pool
+        _scope_body(identity={"sub": SUB}),
         b"not json",
     ],
 )
 def test_an_answer_off_the_contract_is_refused(body: bytes) -> None:
     with pytest.raises((ValueError, TypeError)):
-        staff_scope.parse_scope(body, "customer_success")
+        staff_scope.parse_scope(body, "customer_success", ISS, SUB)
 
 
 @pytest.mark.asyncio
@@ -166,7 +187,9 @@ async def test_fetch_asks_cis_with_the_identity_and_the_role() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("trouble", ["status_500", "status_401", "transport", "token", "body", "no_config"])
+@pytest.mark.parametrize(
+    "trouble", ["status_500", "status_401", "transport", "token", "body", "other_identity", "no_config"]
+)
 async def test_fetch_fails_closed(trouble: str) -> None:
     cis: Any = FakeCis()
     if trouble == "status_500":
@@ -179,6 +202,8 @@ async def test_fetch_fails_closed(trouble: str) -> None:
         cis.tokens = FakeTokens(fail="token_unavailable")
     elif trouble == "body":
         cis.body = b"{}"
+    elif trouble == "other_identity":
+        cis.body = _scope_body(identity={"iss": ISS, "sub": "sub-other"}, desk_role="support")
     else:
         cis = None
     with pytest.raises(HTTPException) as exc:
@@ -213,11 +238,15 @@ def desk_app(ops_app: Any) -> Any:  # noqa: F811
     return client, state, cis
 
 
-TENANT_READS = ["", "/usage", "/entitlements", "/data-requests", "/jobs", "/members"]
+TENANT_READS = ["", "/data-requests", "/jobs", "/members"]
+ACCOUNT_READS = ["/usage", "/entitlements"]  # plan, seats, usage: customer_success only (role matrix, CIS 1.12)
 
 
-@pytest.mark.parametrize("leaf", TENANT_READS)
-@pytest.mark.parametrize("group", ["cis-customer_success", "cis-support"])
+@pytest.mark.parametrize(
+    ("leaf", "group"),
+    [(leaf, group) for leaf in TENANT_READS for group in ("cis-customer_success", "cis-support")]
+    + [(leaf, "cis-customer_success") for leaf in ACCOUNT_READS],
+)
 def test_a_desk_caller_reads_its_scope_only(desk_app: Any, pools: LocalPools, leaf: str, group: str) -> None:
     client, state, cis = desk_app
     state["conn"] = base_conn()
@@ -227,6 +256,27 @@ def test_a_desk_caller_reads_its_scope_only(desk_app: Any, pools: LocalPools, le
     assert (r.status_code, r.json()["detail"]) == (403, staff_scope.OUTSIDE)
     assert conn.sql("INSERT INTO crm.audit_event") == []  # never opened, never on record
     assert len(cis.calls) == 1  # one CIS call per identity and role (cached)
+
+
+@pytest.mark.parametrize("leaf", ACCOUNT_READS)
+@pytest.mark.parametrize("tenant", [TENANT, OTHER])
+def test_support_never_reads_an_agency_account(desk_app: Any, pools: LocalPools, leaf: str, tenant: uuid.UUID) -> None:
+    """AA-1035 review: support sees no plan and no usage (role matrix; CIS: tenant.book.account.read), in its scope or
+    not; refused before CIS is asked and before the agency is opened."""
+    client, state, cis = desk_app
+    state["conn"] = conn = base_conn()
+    r = client.get(f"{PREFIX}/tenants/{tenant}{leaf}", headers=_desk(pools, "cis-support"))
+    assert (r.status_code, r.json()["detail"]) == (403, "missing_group")
+    assert conn.sql("INSERT INTO crm.audit_event") == []
+    assert cis.calls == []
+
+
+@pytest.mark.parametrize("leaf", ACCOUNT_READS)
+def test_customer_success_with_support_reads_the_account(desk_app: Any, pools: LocalPools, leaf: str) -> None:
+    client, state, _ = desk_app
+    state["conn"] = base_conn()
+    headers = {"Authorization": f"Bearer {pools.cis_admin(['cis-support', 'cis-customer_success'])}"}
+    assert client.get(f"{T}{leaf}", headers=headers).status_code == 200
 
 
 def test_the_list_holds_the_scope_only(desk_app: Any, pools: LocalPools, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -23,8 +23,10 @@ accounts (root ADR 0006b decision 5). The flow, end to end:
 AA-1035 R2 close-out (crm.ops.v1 1.12, crm-045): the address is ALSO kept sealed under a data key of the CRM
 (:func:`keep_address`: a fresh AES-256 key from the KMS data key, context ``{tenant_id: the CIS tenant, purpose:
 mail}``, stored wrapped next to the blob), so a send again with ``keep_address`` re-issues to the same address
-without anybody typing it (support may only do that). The claim clears it. A row issued before crm-045 or without a
-key provider keeps none: 409 ``address_not_kept``.
+without anybody typing it (support may only do that). The claim clears it; a revoke must too (the crm-045 guard
+refuses a revoke that keeps it; the CRM has no revoke path today); an expiry keeps it, because an expired invitation is
+re-issued (the usual send again). A row issued before crm-045 or without a key provider keeps none: 409
+``address_not_kept``.
 
 6. **Clean-up read** (:func:`account_links`, S263): the partner-account clean-up (:mod:`app.members.accounts`) reads
    every row bound to an identity, as ``job:crm_partner_accounts`` (crm-039, read only), so it never deletes an account

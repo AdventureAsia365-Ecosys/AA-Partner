@@ -12,11 +12,13 @@ admin relays it), so a scope sent with the request could be written by the staff
 scope: no new grant) for the caller's ``(iss, sub)`` and desk role, and serves that caller only those tenant ids.
 The answer is cached per ``(iss, sub, role)`` for :data:`CACHE_TTL_S` (an assignment removed in CIS stops working
 here within that time; a cache miss costs one CIS call). Fail closed: CIS unreachable, a token failure or an answer
-that is not the contract shape is 503 ``cis_unavailable`` for this caller only; an unknown identity is scope ``none``
+that is not the contract shape or is about another identity or role than asked is 503 ``cis_unavailable`` for this
+caller only; an unknown identity is scope ``none``
 (no agency).
 
 What a desk caller may do (``app.routers.ops``): the per-agency reads of its scope (403 ``tenant_outside_scope``
-otherwise, whether or not the agency exists), the agency list filtered to its scope, ``/console`` (``can_write``
+otherwise, whether or not the agency exists; the account reads ``/usage`` and ``/entitlements`` customer_success only,
+:func:`require_account_reader`), the agency list filtered to its scope, ``/console`` (``can_write``
 false, its ``scope``), and the studio invitation relay for a tenant of its scope (support: to the kept address only,
 :func:`may_readdress`). Never a platform-wide read (job summary, LLM usage / calls / app profile, data coverage,
 insights: 403 ``missing_group``) and never a ``crm-platform-admin`` write (unchanged). Nothing is logged but ids and
@@ -132,11 +134,15 @@ def _unavailable(code: str) -> HTTPException:
     return HTTPException(status_code=503, detail=UNAVAILABLE)
 
 
-def parse_scope(body: bytes, role: str) -> StaffScope:
-    """The contract body (StaffTenantScope), or ValueError for anything else."""
+def parse_scope(body: bytes, role: str, iss: str, sub: str) -> StaffScope:
+    """The contract body (StaffTenantScope) for exactly the identity and role asked, or ValueError for anything else
+    (an answer about another identity or role is never a scope for this caller: fail closed)."""
     data: Any = json.loads(body)
     if not isinstance(data, dict) or data.get("desk_role") != role or data.get("scope") not in SCOPE_KINDS:
         raise ValueError("not a StaffTenantScope")
+    identity = data.get("identity")
+    if not isinstance(identity, dict) or identity.get("iss") != iss or identity.get("sub") != sub:
+        raise ValueError("identity")
     ids = data.get("tenant_ids")
     if not isinstance(ids, list) or len(ids) > MAX_TENANT_IDS or not all(isinstance(i, str) for i in ids):
         raise ValueError("tenant_ids")
@@ -167,7 +173,7 @@ async def fetch_scope(config: Any, caller: Caller, role: str) -> StaffScope:
     if resp.status != 200:
         raise _unavailable(f"cis_status_{resp.status}")
     try:
-        return parse_scope(resp.body, role)
+        return parse_scope(resp.body, role, caller.iss, caller.sub)
     except (ValueError, TypeError) as exc:
         raise _unavailable("cis_bad_body") from exc
 
@@ -198,6 +204,15 @@ async def require_tenant(request: Request, caller: Caller, tenant_id: uuid.UUID)
         log.warning("ops_staff_scope_refused role=%s scope=%s", scope.desk_role, scope.kind)
         raise HTTPException(status_code=403, detail=OUTSIDE)
     return scope
+
+
+def require_account_reader(caller: Caller) -> None:
+    """The account of one agency (``/usage``, ``/entitlements``): never a support-only desk caller (403
+    ``missing_group``). The role matrix (root S265 clarifications section 3) gives support no plan and no usage; CIS
+    relays these reads only with ``tenant.book.account.read`` (admin, customer_success), and a desk caller can reach the
+    CRM without CIS, so the CRM refuses it too."""
+    if desk_role(caller) == "support":
+        raise HTTPException(status_code=403, detail="missing_group")
 
 
 def require_full(caller: Caller) -> None:

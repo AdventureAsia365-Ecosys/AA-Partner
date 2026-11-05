@@ -29,12 +29,13 @@ GET    ``/tenants?cursor=&limit=``                 agency list (TenantSummary pa
 POST   ``/tenants``                                create agency (201; an existing id is 409 tenant_exists, a trashed
                                                    one 409 tenant_deleted); no member
 GET    ``/tenants/{id}``                           one TenantSummary
-GET    ``/tenants/{id}/usage``                     usage meters
+GET    ``/tenants/{id}/usage``                     usage meters (1.12: never cis-support)
 POST   ``/tenants/{id}/lock`` / ``unlock``         lock / unlock (ticket, lock reason)
 POST   ``/tenants/{id}/owner-invite``              first-owner invitation (no owner, no travellers), 202
 POST   ``/tenants/{id}/owner-invite/withdraw``     S263: withdraw AA's live first-owner invitation (ticket)
 POST   ``/tenants/{id}/delete``                    S263: delete a synthetic agency (typed name, ticket; no member)
-GET    ``/tenants/{id}/entitlements``              plan, seats, features allowed, insights opt-out
+GET    ``/tenants/{id}/entitlements``              plan, seats, features allowed, insights opt-out (1.12: not
+                                                   cis-support)
 PUT    ``/tenants/{id}/entitlements-allowed``      allow features while managed_by ops; 409 once CIS projects (1.11)
 PUT    ``/tenants/{id}/insights-opt-out``          insights opt-out on the owner's written request (Q2 3.12)
 GET    ``/tenants/{id}/data-requests``             latest agency export / deletion requests
@@ -111,8 +112,20 @@ async def _tenant_reader(
     return caller
 
 
+async def _tenant_account_reader(
+    request: Request, tenant_id: uuid.UUID, caller: Annotated[Caller, Depends(current_caller)]
+) -> Caller:
+    """AA-1035: the account of one agency (plan, seats, allowed features, usage meters): as :func:`_tenant_reader`, but
+    never a support-only desk caller (403 ``missing_group``; the role matrix gives support no plan or usage, CIS
+    guards its relays of these reads with ``tenant.book.account.read``, which support does not hold)."""
+    staff_scope.require_account_reader(caller)
+    await staff_scope.require_tenant(request, caller, tenant_id)
+    return caller
+
+
 FullReader = Annotated[Caller, Depends(_full_reader)]
 TenantReader = Annotated[Caller, Depends(_tenant_reader)]
+TenantAccountReader = Annotated[Caller, Depends(_tenant_account_reader)]
 # A support ticket or Linear id ("AA-941", "SUP-1234"): it goes into the agency audit as the object id ticket:<REF>.
 TICKET_PATTERN = r"^[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,10}$"
 TicketRef = Annotated[str, Field(pattern=TICKET_PATTERN)]
@@ -653,7 +666,7 @@ async def get_tenant(request: Request, tenant_id: uuid.UUID, caller: TenantReade
 
 
 @router.get("/tenants/{tenant_id}/usage", response_model=UsageMeters)
-async def get_usage(request: Request, tenant_id: uuid.UUID, caller: TenantReader) -> dict:
+async def get_usage(request: Request, tenant_id: uuid.UUID, caller: TenantAccountReader) -> dict:
     pool = await request_pool(request)
     return await console.agency_usage(pool, tenant_id, staff_sub=caller.sub)
 
@@ -787,7 +800,7 @@ async def delete_test_agency(
 
 
 @router.get("/tenants/{tenant_id}/entitlements", response_model=Entitlements)
-async def get_entitlements(request: Request, tenant_id: uuid.UUID, caller: TenantReader) -> dict:
+async def get_entitlements(request: Request, tenant_id: uuid.UUID, caller: TenantAccountReader) -> dict:
     pool = await request_pool(request)
     return await console.agency_entitlements(pool, tenant_id, staff_sub=caller.sub)
 
