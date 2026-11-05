@@ -185,6 +185,39 @@ def test_documents_over_the_cap_or_not_matching_their_digest_are_listed_not_incl
     assert capped.documents_skipped == 1 and capped.documents_included == 0
 
 
+def test_a_value_that_does_not_open_fails_the_export_naming_its_table_and_column() -> None:
+    """S269: fail-closed (never a ZIP without what did not open), and the refusal says where: codes only."""
+    conn = _conn(b"x")
+    row = {"traveler_id": CLIENT, "tenant_id": TENANT, "display_name_enc": b"bad", "email_bidx": b"x",
+           "profile_token_enc": b"p", "notes": "Lumi Riverbend"}  # fmt: skip
+    conn.on("FROM crm.traveler", [row])
+    with pytest.raises(builder.ValueDenied) as caught:
+        run(builder.build(_lifecycle_ctx(conn), DocVault(), None, scope="tenant", subject_id=TENANT,  # type: ignore[arg-type]
+                          export_id=EXPORT))  # fmt: skip
+    denied = caught.value
+    assert denied.code == "decrypt_denied" and denied.status_code == 403 and denied.reason == "integrity_check_failed"
+    assert denied.failure_class == "decrypt_denied:traveler:display_name_enc"
+    assert denied.body()["table"] == "traveler" and denied.body()["column"] == "display_name_enc"
+    assert "Lumi" not in repr(denied.body()) and str(CLIENT) not in repr(denied.body())
+
+    class SealedDocVault(DocVault):
+        async def decrypt_bytes(self, *_: Any, **__: Any) -> bytes:
+            from app.vault import DecryptionDenied
+
+            raise DecryptionDenied("integrity_check_failed")
+
+    store = MemoryDocumentStore()
+    sealed = b"enc:document.content:hello"
+    run(store.put("documents/k", sealed))
+    with pytest.raises(builder.ValueDenied) as caught:
+        run(builder.build(_lifecycle_ctx(_conn(sealed)), SealedDocVault(), store, scope="tenant",  # type: ignore[arg-type]
+                          subject_id=TENANT, export_id=EXPORT))  # fmt: skip
+    assert caught.value.failure_class == "decrypt_denied:document:content"
+    # The failed row's column holds it (crm.export_job export_job_failure_chk: an identifier with colons, <= 64).
+    long = builder.ValueDenied("t" * 40, "c-" * 20, "x").failure_class
+    assert len(long) == 64 and re.fullmatch(r"[A-Za-z][A-Za-z0-9_:]{0,63}", long)
+
+
 def test_a_client_export_reads_only_the_rows_about_the_client() -> None:
     conn = _conn(b"x")
     run(builder.build(_lifecycle_ctx(conn), DocVault(), None, scope="traveler", subject_id=CLIENT,  # type: ignore[arg-type]
@@ -377,6 +410,64 @@ def test_the_job_builds_seals_stores_and_marks_ready(monkeypatch: pytest.MonkeyP
 
     with pytest.raises(PermanentError):
         run(handler(object(), Job("j", "crm_data_export", {}, 1, 3)))  # type: ignore[arg-type]
+
+
+def _failing_job(monkeypatch: pytest.MonkeyPatch, requested_by: str | None, error: Exception) -> ScriptedConn:
+    conn = ScriptedConn().on("FOR UPDATE", _row(status="queued", object_key=None))
+    conn.on("SET status = 'failed'", requested_by)
+    monkeypatch.setattr(exports, "lifecycle_tx", fake_tx(_lifecycle_ctx(conn)))
+    monkeypatch.setattr(exports, "Vault", lambda keys, ctx: DocVault())
+
+    async def built(*_: Any, **__: Any) -> builder.Built:
+        raise error
+
+    monkeypatch.setattr(exports.builder, "build", built)
+    return conn
+
+
+def test_a_failed_export_names_the_value_and_a_failed_pilot_backup_raises_the_ops_alert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S269 (AA-969): the live pilot backup failed ``decrypt_denied`` for days, seen only by hand. The row now names the
+    table and column; a failed nightly pilot backup raises ``pilot_backup_failed`` (once per export); an owner's own
+    export fails the same way without paging AA ops."""
+    from app.jobs.worker import PermanentError
+    from app.observability import ops_alerts
+
+    ops_alerts.PENDING.drain()
+    job = Job("j", "crm_data_export", {"tenant_id": str(TENANT), "export_id": str(EXPORT)}, 1, 3)
+    denied = builder.ValueDenied("message_delivery", "variables_enc", "integrity_check_failed")
+    for requested_by, paged in ((exports.PILOT_BACKUP_ACTOR, True), ("member:owner-1", False), (None, False)):
+        conn = _failing_job(monkeypatch, requested_by, denied)
+        handler = exports.build_handler(keys=object(), store=MemoryDocumentStore())  # type: ignore[arg-type]
+        with pytest.raises(PermanentError) as caught:
+            run(handler(object(), job))  # type: ignore[arg-type]
+        assert caught.value.code == "decrypt_denied"  # the crm.job row keeps the identifier code
+        [failed] = conn.sql("SET status = 'failed'")
+        assert failed == (EXPORT, "decrypt_denied:message_delivery:variables_enc")
+        assert "RETURNING requested_by" in exports.FAILED_SQL
+        findings = ops_alerts.PENDING.drain()
+        if paged:
+            [finding] = findings
+            assert finding.check == "pilot_backup_failed" and finding.scope == str(EXPORT)
+            assert finding.details == {"tenant_id": str(TENANT), "export_id": str(EXPORT),
+                                       "failure": "decrypt_denied:message_delivery:variables_enc"}  # fmt: skip
+        else:
+            assert findings == [], requested_by
+    # Any other refusal keeps its own code, and a pilot backup without a bucket pages too.
+    conn = ScriptedConn().on("FOR UPDATE", _row(status="queued", object_key=None))
+    conn.on("SET status = 'failed'", exports.PILOT_BACKUP_ACTOR)
+    monkeypatch.setattr(exports, "lifecycle_tx", fake_tx(_lifecycle_ctx(conn)))
+    assert run(exports.build_handler(keys=object(), store=None)(object(), job))["status"] == "export_not_configured"  # type: ignore[arg-type]
+    assert [f.details["failure"] for f in ops_alerts.PENDING.drain()] == ["export_not_configured"]
+    assert exports.failure_class(Unavailable("documents_not_configured")) == "documents_not_configured"
+    # The last attempt of an unexpected error fails the row export_error and pages for a pilot backup.
+    conn = _failing_job(monkeypatch, exports.PILOT_BACKUP_ACTOR, RuntimeError("boom"))
+    last = Job("j", "crm_data_export", {"tenant_id": str(TENANT), "export_id": str(EXPORT)}, 3, 3)
+    with pytest.raises(RuntimeError):
+        run(exports.build_handler(keys=object(), store=MemoryDocumentStore())(object(), last))  # type: ignore[arg-type]
+    assert conn.sql("SET status = 'failed'")[0][1] == "export_error"
+    assert [f.check for f in ops_alerts.PENDING.drain()] == ["pilot_backup_failed"]
 
 
 # ── The data-request log ──────────────────────────────────────────────────────────────────────────
@@ -837,14 +928,18 @@ def _seal_calls() -> list[tuple[str, str, Any, Any]]:
 
 def test_every_sealed_column_opens_under_the_purpose_its_writer_used() -> None:
     """S269 (live, AA-969 restore drill): ``message_delivery.variables_enc`` is sealed under the ``mail`` DEK
-    (app.messaging.compose, app.workflows.engine) but the export opened it under ``vault``, so every agency export with a
-    sent text template failed ``decrypt_denied`` for good (and with it the pilot's nightly backup);
+    (app.messaging.compose, app.workflows.engine) but the export opened it under ``vault``, so every agency export
+    with a sent text template failed ``decrypt_denied`` for good (and with it the pilot's nightly backup);
     ``ops_release.payload_enc`` (the ``ops_release`` DEK) had the same hole. Every writer in app/ must seal a column
     under the purpose :meth:`T.Table.purpose` opens it with (``T.MAIL_TABLES`` / ``T.COLUMN_PURPOSES``)."""
     by_aad = {(t, aad): column for (t, column), aad in T.COLUMN_AAD.items()}
     calls = _seal_calls()
     seen = {(t, c, p) for _, t, c, p in calls}
-    assert ("message_delivery", "variables_enc", "mail") in seen and ("ops_release", "payload_enc", "ops_release") in seen
+    assert ("message_delivery", "variables_enc", "mail") in seen and (
+        "ops_release",
+        "payload_enc",
+        "ops_release",
+    ) in seen
     assert ("traveler", "display_name_enc", "vault") in seen and ("signature_event", "envelope", "docs") in seen
     wrong: list[str] = []
     for where, table, column, purpose in calls:

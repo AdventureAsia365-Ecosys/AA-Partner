@@ -15,8 +15,9 @@ alarms used, so the recipients are the same):
   UTC day while it lasts.
 - **events** raised where the code already writes the alarm line, with :func:`emit` (sync, never raises): the
   break-glass opening and the owner not mailed (one e-mail per session), an ops release incomplete at T-21 or withdrawn
-  (per release), a refused CIS membership event (per event), the membership feed stuck (per UTC day) and a bulk reveal
-  (per member and hour). The log lines stay as they were.
+  (per release), a refused CIS membership event (per event), the membership feed stuck (per UTC day), a bulk reveal
+  (per member and hour) and a failed nightly export of the pilot agency (per export, S269). The log lines stay as they
+  were.
 
 The sampler drains the events and evaluates the state checks every tick (and the lifespan flushes the events once more
 on shutdown, :func:`flush_events`, so a deploy or a scale-in does not drop them; only a hard kill does), then
@@ -136,6 +137,13 @@ CHECKS: dict[str, Check] = {
         "One agency member revealed 60 or more traveller fields or documents within an hour (design v3 4.4). Confirm "
         "with the agency that it was expected; the reveal events are in its audit.",
     ),
+    "pilot_backup_failed": Check(
+        "Pilot agency nightly backup failed",
+        "The nightly export of the pilot agency (crm_pilot_backup, root ADR 0019 d16) failed, so tonight there is no "
+        "new restore copy of it. failure names the refusal (decrypt_denied:<table>:<column> = a stored value that "
+        "did not open under the key the export used). Fix the cause, then run the restore drill on the next "
+        "night's export (root runbook pilot-tenant-restore-drill).",
+    ),
 }
 
 
@@ -148,6 +156,7 @@ EVENT_CHECKS = frozenset(
         "membership_feed_stuck",
         "membership_apply_refused",
         "bulk_reveal",
+        "pilot_backup_failed",
     }
 )
 

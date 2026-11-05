@@ -415,7 +415,7 @@ diet.md`). The job sampler (`app/jobs/metrics.py`, every 5 minutes, API process)
 `app_profile.read_day_spend`, only when the app profile sets a daily budget), and drains the **events** the code raises with `ops_alerts.emit(check, scope, **ids)` next to the
 log lines it already wrote: `breakglass_opened`, `breakglass_owner_not_mailed` (per session), `ops_release_incomplete_t21`,
 `ops_release_withdrawn` (per release), `membership_apply_refused` (per event), `membership_feed_stuck` (per day),
-`bulk_reveal` (per member and hour). Each finding is e-mailed once on the platform alerts SNS topic (env
+`bulk_reveal` (per member and hour), `pilot_backup_failed` (per export: a failed nightly `crm_pilot_backup` export, S269). Each finding is e-mailed once on the platform alerts SNS topic (env
 `ALERTS_TOPIC_ARN`, task role `sns:Publish`, both AA-CIS-Infra), deduped by a ledger row in `crm.job` (kind
 `crm_ops_alert`, status `succeeded`, idempotency key `crm_ops_alert:<check>:<scope or UTC day>`, payload ids only;
 `queue.record_alert` / `queue.forget_alert`). The ledger rows are never claimed and are not busy work for the deploy
