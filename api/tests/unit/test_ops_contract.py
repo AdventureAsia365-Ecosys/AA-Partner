@@ -29,6 +29,7 @@ from app.main import create_app
 from app.ops import console
 from app.ops.serializer import OpsAllowListRoute, bad_keys, key_allowed
 from app.routers import ops as ops_router
+from app.vault.wrapping import LocalKeyWrapper
 from tests.tokens import LocalPools
 from tests.unit.fakes import ScriptedConn
 from tests.unit.slice_fakes import FakeVault
@@ -249,7 +250,15 @@ def pools() -> LocalPools:
 
 
 class _Keys:
-    """The key provider as the routes see it: only the S263 test-agency delete calls it (the crypto-shred)."""
+    """The key provider as the routes see it: the S263 test-agency delete calls it (the crypto-shred), and (AA-1035)
+    the studio invitation keeps its address under a local wrapper."""
+
+    active_provider = "local"
+    _local = LocalKeyWrapper.ephemeral()
+
+    def wrapper(self, provider: str) -> LocalKeyWrapper:
+        assert provider == "local"
+        return self._local
 
     async def destroy(self, ctx: Any) -> int:
         return 1
@@ -508,7 +517,7 @@ def test_console_tells_the_page_whether_it_may_write(ops_app: Any, pools: LocalP
         f"{PREFIX}/console",
         headers={"Authorization": f"Bearer {pools.cis_admin(['crm-platform-admin'])}"},
     )
-    assert reader.json() == {"can_write": False} and admin.json() == {"can_write": True}
+    assert reader.json() == {"can_write": False, "scope": "all"} and admin.json() == {"can_write": True, "scope": "all"}
 
 
 def test_every_ops_route_is_an_allow_list_route_with_a_closed_response_model(ops_app: Any) -> None:

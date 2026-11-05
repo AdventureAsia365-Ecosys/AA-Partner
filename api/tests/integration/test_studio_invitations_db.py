@@ -142,3 +142,73 @@ async def test_synthetic_agency_reads_the_crm_flag_under_row_security(app_pool: 
     assert await synthetic_agency(app_pool, synthetic_id) is True
     assert await synthetic_agency(app_pool, real_id) is False
     assert await synthetic_agency(app_pool, uuid.uuid4()) is False
+
+
+# ── AA-1035 R2 close-out (crm-045, crm.ops.v1 1.12): the kept address ───────────────────────────────────────────────
+
+
+class _Keys:
+    """The key provider as studio.issue sees it (a local wrapper; KMS on Dev)."""
+
+    active_provider = "local"
+
+    def __init__(self) -> None:
+        from app.vault.wrapping import LocalKeyWrapper
+
+        self.local = LocalKeyWrapper.ephemeral()
+
+    def wrapper(self, provider: str) -> Any:
+        assert provider == "local"
+        return self.local
+
+
+async def _send(pool: asyncpg.Pool, cis_id: uuid.UUID, mailer: MemoryMailer, keys: Any, email: str | None) -> str:
+    await studio.issue(
+        pool,
+        cis_tenant_id=TENANT,
+        cis_invitation_id=cis_id,
+        email=email,
+        locale="en",
+        staff_sub="staff-1035",
+        mailer=mailer,
+        web_origin="https://partner.example.test",
+        ttl_hours=72,
+        keys=keys,
+    )
+    return mailer.sent[-1].text.split("/join?t=")[1].split()[0]
+
+
+async def _kept(pool: asyncpg.Pool, cis_id: uuid.UUID) -> bool:
+    async with pool.acquire() as conn, conn.transaction():
+        await _as(conn, PLATFORM)
+        return await conn.fetchval(
+            "SELECT email_kept IS NOT NULL FROM crm.studio_invitation WHERE cis_invitation_id = $1", cis_id
+        )
+
+
+async def test_send_again_to_the_kept_address_then_the_claim_clears_it(app_pool: asyncpg.Pool) -> None:
+    mailer, keys, directory = MemoryMailer(), _Keys(), MemoryDirectory(issuer=ISS)
+    cis_id = uuid.uuid4()
+    first = await _send(app_pool, cis_id, mailer, keys, "Viewer@Agency.example")
+    assert await _kept(app_pool, cis_id)
+    token = await _send(app_pool, cis_id, mailer, keys, None)  # nobody types the address
+    assert first != token and [m.to for m in mailer.sent] == ["viewer@agency.example"] * 2
+    claimed = await studio.claim(app_pool, directory, token)
+    assert claimed.state == "created"
+    assert not await _kept(app_pool, cis_id)  # opened: never sent again, not kept any longer
+    with pytest.raises(Conflict):
+        await _send(app_pool, cis_id, mailer, keys, None)
+
+
+async def test_a_row_without_a_kept_address_needs_a_typed_one(app_pool: asyncpg.Pool) -> None:
+    mailer, keys = MemoryMailer(), _Keys()
+    cis_id = uuid.uuid4()
+    await _send(app_pool, cis_id, mailer, None, "editor@agency.example")  # no key provider: nothing kept
+    assert not await _kept(app_pool, cis_id)
+    with pytest.raises(Conflict) as exc:
+        await _send(app_pool, cis_id, mailer, keys, None)
+    assert exc.value.code == studio.NOT_KEPT
+    await _send(app_pool, cis_id, mailer, keys, "editor@agency.example")  # a typed address keeps it from now on
+    assert await _kept(app_pool, cis_id)
+    with pytest.raises(Conflict):  # a never-issued invitation has nothing to send again
+        await _send(app_pool, uuid.uuid4(), mailer, keys, None)
