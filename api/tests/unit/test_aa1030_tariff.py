@@ -385,12 +385,13 @@ def test_json_answer_no_store_and_one_audit_event_without_amounts(
     assert (data["currency"], data["tier_code"], len(data["items"])) == ("EUR", "gold", 2)
     assert data["items"][0]["b2b_price_per_person"] == {"amount": "388.00", "currency": "EUR"}
     [event] = ctx.audit_events
-    assert (event.action, event.outcome, event.object_kind, event.object_id, event.reason) == (
+    assert (event.action, event.outcome, event.object_kind, event.object_id, event.reason, event.object_ids) == (
         "aa_tariff_view",
         "allowed",
         "aa_tariff",
-        TARIFF_TOUR,
-        "json_eur",
+        "EUR",
+        "format_json",
+        (TARIFF_TOUR,),
     )
     assert event.fields == () and "388" not in repr(event)
     assert fake.tenants[-1] == str(TENANT)
@@ -404,7 +405,7 @@ def test_csv_answer_is_booking_s_file_with_its_name(pools: LocalPools, monkeypat
     assert r.headers["content-type"] == "text/csv; charset=utf-8"
     assert r.headers["content-disposition"] == 'attachment; filename="aa-tariff-invented-agency-sgd-2031-01-05.csv"'
     assert r.headers["cache-control"] == "no-store"
-    assert [(e.action, e.object_id, e.reason) for e in ctx.audit_events] == [("aa_tariff_view", None, "csv_sgd")]
+    assert [(e.action, e.object_id, e.reason) for e in ctx.audit_events] == [("aa_tariff_view", "SGD", "format_csv")]
 
 
 @pytest.mark.parametrize(
@@ -457,7 +458,7 @@ def test_a_source_id_that_is_not_an_audit_id_is_left_out_of_the_event(
     client, headers, ctx, _ = _route_client(pools, monkeypatch, "owner", booking=booking_client(FakeBooking()))
     r = client.get("/crm/v1/aa/tariff?source_id=a%20tour%2Fwith%20spaces", headers=headers)
     assert r.status_code == 200 and r.json()["items"] == []
-    assert [(e.object_id, e.reason) for e in ctx.audit_events] == [(None, "json_usd")]
+    assert [(e.object_id, e.reason, e.object_ids) for e in ctx.audit_events] == [("USD", "format_json", ())]
 
 
 def test_the_currencies_the_web_offers_are_booking_s_quote_currencies() -> None:

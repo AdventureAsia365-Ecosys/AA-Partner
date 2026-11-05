@@ -21,8 +21,8 @@ look-up calls Booking live after the membership check, outside the database tran
 
 AA-1030: ``GET /aa/tariff?currency=&format=json|csv&source_id=`` (booking.b2b.v1 1.4, :mod:`app.booking.tariff`) needs
 ``aa_tariff_view`` (owner, agent; the assistant 403 ``role_forbidden``), writes one ``aa_tariff_view`` audit event
-(format and currency, never an amount) and answers ``Cache-Control: no-store``; the CSV is Booking's file, with its
-file name.
+(the currency, the format and the tour asked for, never an amount) and answers ``Cache-Control: no-store``; the CSV
+is Booking's file, with its file name.
 """
 
 from __future__ import annotations
@@ -175,8 +175,11 @@ async def get_tariff(
     client = _booking_client(request)
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.AA_TARIFF_VIEW) as ctx:
-        object_id = source_id if source_id and _AUDIT_ID.match(source_id) else None
-        ctx.audit(Action.AA_TARIFF_VIEW.value, "allowed", "aa_tariff", object_id, reason=f"{fmt}_{currency.lower()}")
+        # The currency as the object, the tour (when asked for one) as its id, the format as the reason: no amount.
+        tours = (source_id,) if source_id and _AUDIT_ID.match(source_id) else ()
+        ctx.audit(
+            Action.AA_TARIFF_VIEW.value, "allowed", "aa_tariff", currency, reason=f"format_{fmt}", object_ids=tours
+        )
     # Booking is called after the membership check, outside the transaction (no connection held while it answers).
     if fmt == "csv":
         today = dt.datetime.now(dt.UTC).date()

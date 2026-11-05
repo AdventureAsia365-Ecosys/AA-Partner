@@ -84,10 +84,10 @@ async def test_the_aa_tariff_route_by_role_with_its_audit(app_pool: asyncpg.Pool
 
     events = await _events(app_pool, tenant)
     assert events == [
-        ("allowed", "json_eur", None),
-        ("allowed", "json_eur", None),
-        ("allowed", "csv_usd", None),
+        ("allowed", "format_json", "EUR"),
+        ("allowed", "format_json", "EUR"),
+        ("allowed", "format_csv", "USD"),
         ("denied", "role_forbidden", None),
         ("denied", "role_forbidden", None),
-        ("allowed", "json_usd", None),
+        ("allowed", "format_json", "USD"),
     ]
