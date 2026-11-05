@@ -18,7 +18,7 @@ import Link from "next/link";
 import { Download } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
-import { CtaLink } from "./ui";
+import { CtaLink } from "@/app/_kit/local/studio/StudioCard";
 import { parseContent } from "@/lib/studio/format";
 import { AiNotice, Button, type ColumnDef, DataTable, Drawer, ToastProvider, useToast, K, sans, useLang, useT } from "@/app/_kit";
 import { CATALOG_MESSAGES } from "./tours.messages";

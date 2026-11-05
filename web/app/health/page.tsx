@@ -4,7 +4,7 @@
 // they leave through the NAT, so every viewer shares the API's public per-viewer rate-limit bucket, and anonymous
 // traffic on this page must not be able to make the API look down.
 import { CenteredCard } from "@/components/CenteredCard";
-import { K } from "@/app/_kit";
+import { K, mono } from "@/app/_kit";
 import { config } from "@/lib/config";
 import { t, type MessageKey } from "@/lib/i18n";
 import { serverContext } from "@/lib/serverContext";
@@ -74,21 +74,20 @@ export default async function HealthPage() {
   return (
     <CenteredCard testId="crm-health" wide>
       <h1 style={{ margin: "0 0 14px", fontSize: 18, color: K.ink }}>{t(lang, "health.title")}</h1>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.label} data-testid={r.testId} data-ok={r.ok ? "true" : "false"}>
-              <th style={{ textAlign: "left", padding: "8px 0", color: K.muted, fontWeight: 500 }}>{t(lang, r.label)}</th>
-              <td style={{ padding: "8px 0", color: r.ok ? K.success : K.danger, fontWeight: 600 }}>
-                {r.ok ? t(lang, "health.ok") : t(lang, r.bad)}
-              </td>
-              <td style={{ padding: "8px 0", color: K.muted2, fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>
-                {r.detail}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {/* AA-1008 (S6f): three name / status / detail pairs, so a description list (one row a group), not a table. */}
+      <dl style={{ display: "grid", gridTemplateColumns: "max-content max-content minmax(0, 1fr)", gap: "0 16px", margin: 0, fontSize: 13.5 }}>
+        {rows.map((r) => (
+          <div key={r.label} data-testid={r.testId} data-ok={r.ok ? "true" : "false"} style={{ display: "contents" }}>
+            <dt style={{ padding: "8px 0", color: K.muted, fontWeight: 500 }}>{t(lang, r.label)}</dt>
+            <dd style={{ margin: 0, padding: "8px 0", color: r.ok ? K.success : K.danger, fontWeight: 600 }}>
+              {r.ok ? t(lang, "health.ok") : t(lang, r.bad)}
+            </dd>
+            <dd style={{ margin: 0, padding: "8px 0", color: K.muted2, fontFamily: mono, fontSize: 12, overflowWrap: "anywhere" }}>
+              {r.detail}
+            </dd>
+          </div>
+        ))}
+      </dl>
     </CenteredCard>
   );
 }

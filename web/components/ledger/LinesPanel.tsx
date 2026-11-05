@@ -13,7 +13,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fragment, useState } from "react";
-import { Badge, Button, K, useHydrated, useIsPhone } from "@/app/_kit";
+import type { ColumnDef } from "@tanstack/react-table";
+import { Badge, Button, DataTable, K, useHydrated, useIsPhone } from "@/app/_kit";
 import { DateInput } from "@/components/DateInput";
 import { AaItemForm } from "@/components/ledger/AaItemForm";
 import { useTripClosed, useTripUpdating } from "@/components/pipeline/TripClosed";
@@ -46,8 +47,6 @@ const field: React.CSSProperties = {
   boxSizing: "border-box",
   minWidth: 0,
 };
-const cell: React.CSSProperties = { padding: "7px 8px", borderTop: `1px solid ${K.line}`, verticalAlign: "top", fontSize: 13 };
-const head: React.CSSProperties = { ...cell, borderTop: "none", color: K.muted, fontSize: 11.5, fontWeight: 600, textAlign: "left" };
 const TONE = { planning: "neutral", confirmed: "success", cancelled: "danger" } as const;
 const AA_TONE: Record<string, "neutral" | "info" | "success" | "warning" | "danger"> = {
   pending: "warning",
@@ -331,6 +330,38 @@ export function LinesPanel({
     );
   }
 
+  /** The desktop columns (the phone shows a card per line instead, below). */
+  const desktopColumns: ColumnDef<Line, unknown>[] = [
+    { id: "day", header: tr("ledger.col.day"), accessorFn: (l) => l.service_from ?? "", cell: ({ row }) => (row.original.service_from ? formatDate(row.original.service_from, locale) : "—") },
+    {
+      id: "item",
+      header: tr("ledger.col.item"),
+      accessorFn: (l) => l.title,
+      cell: ({ row }) => (
+        <>
+          {row.original.title}
+          {aaDetails(row.original)}
+        </>
+      ),
+    },
+    { id: "supplier", header: tr("ledger.col.supplier"), accessorFn: (l) => l.supplier_name, cell: ({ row }) => supplierCell(row.original) },
+    { id: "conf", header: tr("ledger.col.conf"), accessorFn: (l) => l.confirmation_no ?? "—" },
+    { id: "status", header: tr("ledger.col.status"), accessorFn: (l) => l.status, cell: ({ row }) => statusCell(row.original) },
+    ...(margin
+      ? [{ id: "cost", header: tr("ledger.col.cost"), enableSorting: false, cell: ({ row }) => amount(row.original, "cost") } as ColumnDef<Line, unknown>]
+      : []),
+    { id: "sell", header: tr("ledger.col.sell"), enableSorting: false, cell: ({ row }) => sellCell(row.original) },
+    { id: "fx", header: tr("ledger.col.fx"), enableSorting: false, cell: ({ row }) => fxCell(row.original) },
+    { id: "collect", header: tr("ledger.col.collect"), accessorFn: (l) => tr(`ledger.collect.${l.collect}`) },
+    {
+      id: "actions",
+      header: "",
+      enableSorting: false,
+      meta: { hideLabelOnCard: true },
+      cell: ({ row }) => <span style={{ whiteSpace: "nowrap" }}>{actions(row.original)}</span>,
+    },
+  ];
+
   return (
     <Panel title={tr("ledger.tab")} testId="trip-bookings">
       <p style={{ margin: "0 0 10px", fontSize: 12.5, color: K.muted }}>
@@ -374,37 +405,20 @@ export function LinesPanel({
           ))}
         </ul>
       ) : (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 760 }} data-testid="ledger-lines">
-            <thead>
-              <tr>
-                {["day", "item", "supplier", "conf", "status", ...(margin ? ["cost"] : []), "sell", "fx", "collect", "actions"].map((c) => (
-                  <th key={c} style={head}>
-                    {c === "actions" ? "" : tr(`ledger.col.${c}`)}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {view.lines.map((line) => (
-                <tr key={line.booking_line_id} data-testid={`line-${line.booking_line_id}`}>
-                  <td style={cell}>{line.service_from ? formatDate(line.service_from, locale) : "—"}</td>
-                  <td style={cell}>
-                    {line.title}
-                    {aaDetails(line)}
-                  </td>
-                  <td style={cell}>{supplierCell(line)}</td>
-                  <td style={cell}>{line.confirmation_no ?? "—"}</td>
-                  <td style={cell}>{statusCell(line)}</td>
-                  {margin && <td style={cell}>{amount(line, "cost")}</td>}
-                  <td style={cell}>{sellCell(line)}</td>
-                  <td style={cell}>{fxCell(line)}</td>
-                  <td style={cell}>{tr(`ledger.collect.${line.collect}`)}</td>
-                  <td style={{ ...cell, whiteSpace: "nowrap" }}>{actions(line)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        // AA-1008 (S6f): the desktop list is the kit DataTable (no raw <table> in page code); each row keeps its
+        // `line-<id>` test id (rowTestId), which the unit tests and the E2E scenarios read.
+        <div data-testid="ledger-lines" style={{ minWidth: 0 }}>
+          <DataTable<Line>
+            data={view.lines}
+            columns={desktopColumns}
+            tableId="crm-trip-ledger"
+            getRowId={(line) => line.booking_line_id}
+            rowTestId={(line) => `line-${line.booking_line_id}`}
+            searchable={false}
+            compact
+            paginate={false}
+            tableMinWidth={760}
+          />
         </div>
       )}
       {closed ? (

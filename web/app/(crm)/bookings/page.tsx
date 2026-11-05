@@ -2,21 +2,18 @@
 // the agency's trips with a status filter. Only confirmed lines count in the totals (base currency, frozen amounts);
 // planning sell shows as pipeline value. Totals, cost and margin come only for owner and agent (the API decides).
 import Link from "next/link";
-import { Badge, ErrorState, K } from "@/app/_kit";
+import { ErrorState, K } from "@/app/_kit";
+import { BookingLinesTable } from "@/components/ledger/BookingLinesTable";
 import { Panel, PageTitle } from "@/components/PageTitle";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
-import { formatDate } from "@/lib/dates";
 import { fmt, t, type MessageKey } from "@/lib/i18n";
-import { formatMoney, fxReading, type LedgerView, type LineStatus } from "@/lib/ledger";
+import { formatMoney, type LedgerView, type LineStatus } from "@/lib/ledger";
 import { serverContext } from "@/lib/serverContext";
 
 export const dynamic = "force-dynamic";
 
 const STATUSES: readonly LineStatus[] = ["planning", "confirmed", "cancelled"];
-const TONE = { planning: "neutral", confirmed: "success", cancelled: "danger" } as const;
-const cell: React.CSSProperties = { padding: "7px 8px", borderTop: `1px solid ${K.line}`, verticalAlign: "top", fontSize: 13 };
-const head: React.CSSProperties = { ...cell, borderTop: "none", color: K.muted, fontSize: 11.5, fontWeight: 600, textAlign: "left" };
 
 export default async function BookingsPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
   const ctx = await crmContext();
@@ -89,40 +86,7 @@ export default async function BookingsPage({ searchParams }: { searchParams: Pro
       {lines.length === 0 ? (
         <p style={{ margin: 0, fontSize: 13 }}>{tr("ledger.empty")}</p>
       ) : (
-        <div style={{ overflowX: "auto", background: K.card, border: `1px solid ${K.line}`, borderRadius: 10 }}>
-          <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 820 }} data-testid="bookings-lines">
-            <thead>
-              <tr>
-                {["day", "trip", "item", "supplier", "conf", "status", "sell", "fx", "collect"].map((c) => (
-                  <th key={c} style={head}>
-                    {tr(`ledger.col.${c}`)}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((line) => (
-                <tr key={line.booking_line_id}>
-                  <td style={cell}>{line.service_from ? formatDate(line.service_from, ctx.locale) : "—"}</td>
-                  <td style={cell}>
-                    <a href={`/pipeline/${line.trip_id}`}>{line.trip_title}</a>
-                  </td>
-                  <td style={cell}>{line.title}</td>
-                  <td style={cell}>{line.supplier_name}</td>
-                  <td style={cell}>{line.confirmation_no ?? "—"}</td>
-                  <td style={cell}>
-                    <Badge tone={TONE[line.status]}>{tr(`ledger.status.${line.status}`)}</Badge>
-                  </td>
-                  <td style={cell}>
-                    {line.money?.sell ? formatMoney(line.money.sell.amount, line.money.sell.currency, ctx.locale) : "—"}
-                  </td>
-                  <td style={cell}>{fxReading(line.money?.sell) ?? "—"}</td>
-                  <td style={cell}>{tr(`ledger.collect.${line.collect}`)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <BookingLinesTable lines={lines} lang={ctx.lang} locale={ctx.locale} />
       )}
       {view.data.truncated && <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{tr("ledger.truncated")}</p>}
       <a href="https://www.exchangerate-api.com" target="_blank" rel="noreferrer" style={{ fontSize: 11.5 }}>

@@ -14,8 +14,8 @@
 //     then the run with the preview's hash (409 `preview_stale` asks to check again).
 //
 // No personal data here: ids, counts and codes only.
-import { useEffect, useRef, useState } from "react";
-import { Button, Checkbox, Field, Input, K } from "@/app/_kit";
+import { useEffect, useState } from "react";
+import { Button, Checkbox, Field, Input, K, Modal } from "@/app/_kit";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, plural, type Lang, type MessageKey, t } from "@/lib/i18n";
@@ -59,10 +59,12 @@ export function effectLabel(lang: Lang, kind: string, n: number): string {
   return fmt(text, { n, kind });
 }
 
-/** The dialog box of the stage engine. S262 (AA-957 live, 390 px and 1440 px): the title and the `footer` (the
- * confirm step and the buttons) stay in view; only the body between them scrolls, with a "more below" cue while it
- * overflows (one scroll area, never one nested in another). On a window under 480 px tall (a phone held sideways) the
- * whole box scrolls instead and the footer is compact, so the body is never squeezed to a sliver (app/globals.css). */
+/** The dialog box of the stage engine: the kit Modal's pinned-footer layout (AA-1008 moved the S262 frame into the kit,
+ * root ADR 0016). S262 (AA-957 live, 390 px and 1440 px): the title and the `footer` (the confirm step and the buttons)
+ * stay in view; only the body between them scrolls, with a "more below" cue while it overflows (one scroll area, never
+ * one nested in another). On a window under 480 px tall (a phone held sideways) the whole box scrolls instead and the
+ * footer is compact. The scrolling body is "<testId>-scroll" (S262 round 3: "-body" clashed with GateDialog's own
+ * "gate-dialog-body" paragraph, which the E2E and UAT scenarios read). The first control is focused on open. */
 export function Dialog({
   title,
   onClose,
@@ -80,92 +82,21 @@ export function Dialog({
   moreLabel?: string;
   testId: string;
 }) {
-  const box = useRef<HTMLDivElement>(null);
-  const body = useRef<HTMLDivElement>(null);
-  const content = useRef<HTMLDivElement>(null);
-  const [more, setMore] = useState(false);
-  useEffect(() => {
-    box.current?.querySelector<HTMLElement>("select, input, textarea, button")?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-    // Focus once on open (the Escape handler keeps the onClose of the first render: the parent's close is stable).
-  }, []);
-  useEffect(() => {
-    // The cue follows the body: measured when it scrolls or when it or its content changes size (the observer also
-    // reports once on observe, so nothing is set during the effect itself). On a short window the whole box scrolls
-    // instead (app/globals.css), so the box counts too: the cue says the confirm step is further down.
-    const el = body.current;
-    const frame = box.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const below = (node: HTMLElement | null) => !!node && node.scrollHeight - node.scrollTop - node.clientHeight > 4;
-    const measure = () => setMore(below(el) || below(frame));
-    const observer = new ResizeObserver(measure);
-    observer.observe(el);
-    if (frame) observer.observe(frame);
-    if (content.current) observer.observe(content.current);
-    el.addEventListener("scroll", measure, { passive: true });
-    frame?.addEventListener("scroll", measure, { passive: true });
-    return () => {
-      observer.disconnect();
-      el.removeEventListener("scroll", measure);
-      frame?.removeEventListener("scroll", measure);
-    };
-  }, []);
   return (
-    <div
-      role="presentation"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-      style={{ position: "fixed", inset: 0, background: "rgba(20, 16, 10, 0.45)", display: "grid", placeItems: "center", padding: 16, zIndex: 50 }}
+    <Modal
+      open
+      onClose={onClose}
+      title={title}
+      width={480}
+      testId={testId}
+      bodyTestId={`${testId}-scroll`}
+      footer={footer}
+      moreLabel={moreLabel}
+      pinFooter
+      initialFocus
     >
-      <div
-        ref={box}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        data-testid={testId}
-        // The frame's layout (max height with its 90vh fallback, the scrolling body, the short-window mode) is CSS in
-        // app/globals.css ("Stage-engine dialog frame"): an inline style cannot carry a fallback declaration or a
-        // media query.
-        data-crm-dialog="box"
-        style={{ background: K.card, color: K.ink, borderRadius: 12, border: `1px solid ${K.line}`, width: "min(480px, 100%)" }}
-      >
-        <h2 style={{ margin: 0, padding: "18px 18px 0", fontSize: 16, fontWeight: 600, flex: "none" }}>{title}</h2>
-        {/* The scrolling body is "<testId>-scroll" (S262 round 3): "-body" clashed with GateDialog's own
-            "gate-dialog-body" paragraph, which the E2E and UAT scenarios read. */}
-        <div ref={body} data-testid={`${testId}-scroll`} data-crm-dialog="body" style={{ padding: "12px 18px", position: "relative" }}>
-          <div ref={content} style={{ display: "grid", gap: 12 }}>
-            {children}
-          </div>
-          {more && moreLabel && (
-            <div
-              aria-hidden="true"
-              data-testid="dialog-more"
-              style={{
-                position: "sticky",
-                bottom: -12,
-                marginTop: 4,
-                padding: "18px 0 4px",
-                textAlign: "center",
-                fontSize: 12,
-                color: K.muted,
-                background: `linear-gradient(to bottom, transparent, ${K.card} 60%)`,
-                pointerEvents: "none",
-              }}
-            >
-              ↓ {moreLabel}
-            </div>
-          )}
-        </div>
-        {footer && (
-          <div data-crm-dialog="footer" style={{ borderTop: `1px solid ${K.line}` }}>{footer}</div>
-        )}
-      </div>
-    </div>
+      <div style={{ display: "grid", gap: 12 }}>{children}</div>
+    </Modal>
   );
 }
 
@@ -504,24 +435,25 @@ export function BulkDialog({
   const [lost, setLost] = useState("");
   const [override, setOverride] = useState(gate && OVERRIDE_REASONS[gate].length === 1 ? OVERRIDE_REASONS[gate][0] : "");
   const [preview, setPreview] = useState<BulkPreview | null>(null);
-  const [busy, setBusy] = useState(false);
+  /** Both reasons a move to this stage needs are given (or it needs none): only then is the preview asked. */
+  const reasonGiven = (l: string, o: string) => !needsReason || !!(target.to === "lost" ? l : o);
+  const [busy, setBusy] = useState(() => reasonGiven(lost, override));
   const [error, setError] = useState<string | null>(null);
 
-  function body(dryRun: boolean, hash?: string) {
+  function body(dryRun: boolean, hash?: string, l = lost, o = override) {
     return {
       ...target.scope,
       to: target.to,
-      lost_reason: target.to === "lost" ? lost || null : null,
-      override_reason: gate ? override || null : null,
+      lost_reason: target.to === "lost" ? l || null : null,
+      override_reason: gate ? o || null : null,
       dry_run: dryRun,
       ...(hash ? { preview_hash: hash } : {}),
     };
   }
 
-  async function check() {
-    setBusy(true);
-    setError(null);
-    const res = await bffSend<BulkPreview>("POST", "pipeline/bulk-stage", body(true));
+  const askPreview = (l: string, o: string) => bffSend<BulkPreview>("POST", "pipeline/bulk-stage", body(true, undefined, l, o));
+
+  function showPreview(res: Awaited<ReturnType<typeof askPreview>>) {
     setBusy(false);
     if (res.ok) setPreview(res.data);
     else {
@@ -530,12 +462,30 @@ export function BulkDialog({
     }
   }
 
-  // The preview follows the reasons: without one where it is needed, nothing is asked yet.
-  useEffect(() => {
+  async function check(l = lost, o = override) {
+    setBusy(true);
+    setError(null);
+    showPreview(await askPreview(l, o));
+  }
+
+  // The preview follows the reasons: without one where it is needed, nothing is asked yet. Run where a reason changes
+  // (its select), not in an effect after the render (react-hooks/set-state-in-effect).
+  function reasonsChanged(l: string, o: string) {
     setPreview(null);
-    if (needsReason && !(target.to === "lost" ? lost : override)) return;
-    void check();
-  }, [lost, override]);
+    if (reasonGiven(l, o)) void check(l, o);
+  }
+
+  // The first preview, when the dialog opens with every reason it needs (an answer after a close is dropped).
+  useEffect(() => {
+    if (!reasonGiven(lost, override)) return;
+    let live = true;
+    void askPreview(lost, override).then((res) => {
+      if (live) showPreview(res);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const stage = stageLabel(lang, target.to);
   const blockedCodes = preview ? Object.entries(preview.blocked.reduce<Record<string, number>>((m, b) => ({ ...m, [b.code]: (m[b.code] ?? 0) + 1 }), {})) : [];
@@ -580,7 +530,10 @@ export function BulkDialog({
       {target.to === "lost" && (
         <label style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted }}>
           {t(lang, "trip.lostReason")}
-          <select value={lost} onChange={(e) => setLost(e.target.value)} style={field} data-testid="bulk-lost-reason">
+          <select value={lost} onChange={(e) => {
+            setLost(e.target.value);
+            reasonsChanged(e.target.value, override);
+          }} style={field} data-testid="bulk-lost-reason">
             <option value="">{t(lang, "plan.choose")}</option>
             {LOST_REASONS.map((r) => (
               <option key={r} value={r}>
@@ -593,7 +546,10 @@ export function BulkDialog({
       {gate && (
         <label style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted }}>
           {t(lang, gate === "stage2" ? "pipeline.overrideOptional" : "pipeline.overrideRequired")}
-          <select value={override} onChange={(e) => setOverride(e.target.value)} style={field} data-testid="bulk-override">
+          <select value={override} onChange={(e) => {
+            setOverride(e.target.value);
+            reasonsChanged(lost, e.target.value);
+          }} style={field} data-testid="bulk-override">
             <option value="">{t(lang, gate === "stage2" ? "pipeline.noReason" : "plan.choose")}</option>
             {OVERRIDE_REASONS[gate].map((r) => (
               <option key={r} value={r}>

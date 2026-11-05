@@ -52,7 +52,13 @@ export function BoardView({ board, lang, locale }: { board: Board; lang: Lang; l
   const drag = useRef<{ tripId: string; from: BoardStage } | null>(null);
   const filtered = !!board.filter.waiting_on || board.filter.owner === "me";
 
-  useEffect(() => setStages(board.stages), [board]);
+  // A new board from the server (router.refresh) replaces the local columns: compared during render (React's "adjust
+  // state when a prop changes" pattern), not with an effect's setState after the render.
+  const [boardSeen, setBoardSeen] = useState(board);
+  if (board !== boardSeen) {
+    setBoardSeen(board);
+    setStages(board.stages);
+  }
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(id);
@@ -223,7 +229,7 @@ function ColumnMenu({ lang, stage, targets, onPick }: { lang: Lang; stage: Board
       <summary aria-label={t(lang, "pipeline.bulkMenu")} title={t(lang, "pipeline.bulkMenu")} style={{ listStyle: "none", cursor: "pointer", color: K.muted, fontSize: 14, padding: "0 4px", lineHeight: 1 }}>
         ⋯
       </summary>
-      <div role="menu" style={{ position: "absolute", right: 0, top: "100%", zIndex: 10, background: K.card, border: `1px solid ${K.line}`, borderRadius: 8, padding: 4, display: "grid", minWidth: 180, boxShadow: "0 8px 24px rgba(31,41,51,0.12)" }}>
+      <div role="menu" style={{ position: "absolute", right: 0, top: "100%", zIndex: 10, background: K.card, border: `1px solid ${K.line}`, borderRadius: 8, padding: 4, display: "grid", minWidth: 180, boxShadow: K.shadowMd }}>
         {targets.map((to) => (
           <ListButton
             key={to}

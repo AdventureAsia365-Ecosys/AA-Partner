@@ -72,7 +72,12 @@ export function MailImport({ lang, pollMs = IMPORT_POLL_MS }: { lang: Lang; poll
   const [guessed, setGuessed] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
-  const [entries, setEntries] = useState<Entry[]>([]);
+  // The imports remembered in this tab (sessionStorage), read once on the client. Shown only once hydrated
+  // (`shown` below): the server and the hydrating render have no storage, so they render the empty list.
+  const [entries, setEntries] = useState<Entry[]>(() =>
+    readRemembered(storage()).map((r) => ({ id: r.id, kind: r.kind, row: null, error: null, polling: true })),
+  );
+  const shown = hydrated ? entries : [];
   const pollers = useRef(new Map<string, ReturnType<typeof createImportPoller>>());
   const input = useRef<HTMLInputElement>(null);
 
@@ -102,10 +107,9 @@ export function MailImport({ lang, pollMs = IMPORT_POLL_MS }: { lang: Lang; poll
     poller.start();
   }
 
+  // Resume the progress checks of the remembered imports (the list itself is the state initialiser above).
   useEffect(() => {
-    const remembered = readRemembered(storage());
-    setEntries(remembered.map((r) => ({ id: r.id, kind: r.kind, row: null, error: null, polling: true })));
-    for (const r of remembered) watch(r.id);
+    for (const r of readRemembered(storage())) watch(r.id);
     const live = pollers.current;
     return () => {
       for (const p of live.values()) p.stop();
@@ -229,13 +233,13 @@ export function MailImport({ lang, pollMs = IMPORT_POLL_MS }: { lang: Lang; poll
           </p>
         )}
         <h3 style={{ margin: "6px 0 0", fontSize: 12.5, fontWeight: 600, color: K.ink }}>{tr("mail.import.recent")}</h3>
-        {entries.length === 0 ? (
+        {shown.length === 0 ? (
           <p style={{ margin: 0, color: K.muted }} data-testid="mail-import-empty">
             {tr("mail.import.none")}
           </p>
         ) : (
           <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 10 }}>
-            {entries.map((e) => (
+            {shown.map((e) => (
               <ImportItem key={e.id} entry={e} tr={tr} />
             ))}
           </ul>

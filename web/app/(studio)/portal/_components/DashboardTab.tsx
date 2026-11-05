@@ -8,7 +8,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, FileText, Code2, Globe2, BookOpen, Sparkles, Clock, AlertTriangle, Check, X, RefreshCw } from "lucide-react";
-import { T, Card, CardHead, CtaLink, ProgressBar, TextLink } from "./ui";
+import { Card, CardHead, CtaLink, ProgressBar, TextLink } from "@/app/_kit/local/studio/StudioCard";
 import { fmtDateTime, fmtBillingMonth } from "@/lib/studio/format";
 import { ActivityStateBadge } from "./workStatus";
 import { usePortalShell } from "./PortalShellContext";
@@ -126,11 +126,11 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
             </span>
           </div>
           <div style={{ marginTop: 16 }}>
-            <div style={{ fontFamily: serif, fontSize: 36, fontWeight: 500, letterSpacing: "-0.02em", color: T.onSolid, lineHeight: 1 }}>
+            <div style={{ fontFamily: serif, fontSize: 36, fontWeight: 500, letterSpacing: "-0.02em", color: K.onSolid, lineHeight: 1 }}>
               {planLabel}
             </div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginTop: 8, color: alpha(K.sideTitle, 65) }}>
-              <span style={{ fontSize: 22, fontWeight: 600, color: T.onSolid, letterSpacing: "-0.01em" }}>${n(price)}</span>
+              <span style={{ fontSize: 22, fontWeight: 600, color: K.onSolid, letterSpacing: "-0.01em" }}>${n(price)}</span>
               <span style={{ fontSize: 12 }}>{t("perMonth")}</span>
             </div>
           </div>
@@ -138,7 +138,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
             {[[t("rewritesMo"), fmtTotal(toursTotal)], [t("apiCalls"), fmtTotal(apiTotal)], [t("rateLimit"), rpm ? t("rpm", n(rpm)) : "—"]].map(([l, v]) => (
               <div key={l}>
                 <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.12em", color: alpha(K.sideTitle, 45), marginBottom: 4 }}>{l}</div>
-                <div style={{ fontSize: 12.5, fontWeight: 600, color: T.onSolid, fontVariantNumeric: "tabular-nums" }}>{v}</div>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: K.onSolid, fontVariantNumeric: "tabular-nums" }}>{v}</div>
               </div>
             ))}
           </div>
@@ -351,7 +351,7 @@ function ActionCard({ icon, title, sub, onClick }: {
         boxShadow: hov ? `0 4px 12px -6px ${alpha(K.accent, 35)}` : "none",
         transition: "all .15s",
       }}>
-      <div style={{ width: 40, height: 40, borderRadius: 9, background: T.darkPanel, color: K.accent, display: "grid", placeItems: "center", flexShrink: 0 }}>
+      <div style={{ width: 40, height: 40, borderRadius: 9, background: K.sideBg, color: K.accent, display: "grid", placeItems: "center", flexShrink: 0 }}>
         {icon}
       </div>
       <div style={{ flex: 1 }}>

@@ -6,7 +6,7 @@
    scans no file, so no utility class is generated (the studio uses none; kit inline styles do the rest). The kit
    tokens (`--aa-*`, light + dark) come from app/_kit/core/tokens.css, imported once by the root layout; never define an
    `--aa-*` variable here (Web Build runs `check-kit-copy.mjs --css`); studio-only variables use another prefix. The
-   kit token object `K` and the studio `T` object (portal/_components/ui.tsx) read these variables via `var()`, so one
+   kit token object `K` reads these variables via `var()`, so one
    <html data-theme> switch (the root layout's restore script + the shell toggle, localStorage key `cis_theme`)
    recolours every page. */
 @import "tailwindcss" source(none);

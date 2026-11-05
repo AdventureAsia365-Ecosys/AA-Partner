@@ -9,7 +9,7 @@
 // Two uses: the client's signed link (/c/s/<token>, mode "client") and the agent's "Fill in from call" on the trip
 // page (mode "agent": the consent is recorded as given on the call). Server-rendered on the client page: the buttons
 // stay disabled until hydration and the form says `data-hydrated="true"` once its handlers are attached (AA-936).
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Button, K, useHydrated, ChipButton } from "@/app/_kit";
 import type { MessageKey } from "@/lib/i18n";
 import { fmt } from "@/lib/i18n";
@@ -76,14 +76,13 @@ export function PlanningForm({
   const at = Math.min(index, Math.max(last, 0));
   const page = visible[at];
 
-  // A page can disappear (the consent unticked): keep the index on a page that exists.
-  useEffect(() => {
-    if (index > last && last >= 0) setIndex(last);
-  }, [index, last]);
-
   function set(name: string, value: unknown) {
     setAnswers((a) => ({ ...a, [name]: value }));
     setBad((b) => b.filter((n) => n !== name));
+    // A page can disappear (the consent unticked): keep the index on a page that exists. Done here, where the answer
+    // changes, not in an effect after the render (react-hooks/set-state-in-effect); `at` clamps the render meanwhile.
+    const nextLast = visiblePages(pages, tripStyle, { ...answers, [name]: value }).length - 1;
+    if (nextLast >= 0) setIndex((i) => Math.min(i, nextLast));
   }
 
   async function submit() {

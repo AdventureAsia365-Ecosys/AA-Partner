@@ -6,7 +6,8 @@
 // arrives only for owner and agent (the API's margin serializer strips it for the assistant).
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Badge, Button, Field, Input, K, useHydrated } from "@/app/_kit";
+import type { ColumnDef } from "@tanstack/react-table";
+import { Badge, Button, DataTable, Field, Input, K, useHydrated } from "@/app/_kit";
 import { bffSend } from "@/lib/bffClient";
 import { REVEAL_REASONS } from "@/lib/clients";
 import { t, type Lang, type MessageKey } from "@/lib/i18n";
@@ -23,7 +24,6 @@ const field: React.CSSProperties = {
   boxSizing: "border-box",
   minWidth: 0,
 };
-const cell: React.CSSProperties = { padding: "8px 10px", borderTop: `1px solid ${K.line}`, verticalAlign: "top", fontSize: 13 };
 
 function ContactReveal({ supplier, column, lang }: { supplier: Supplier; column: "contact_name" | "contact_email"; lang: Lang }) {
   const tr = (key: string) => t(lang, key as MessageKey);
@@ -179,6 +179,65 @@ export function SuppliersView({
     );
   }
 
+  const columns: ColumnDef<Supplier, unknown>[] = [
+    {
+      id: "name",
+      header: tr("suppliers.name"),
+      accessorFn: (s) => s.name,
+      cell: ({ row }) => {
+        const s = row.original;
+        return (
+          <div style={{ minWidth: 0 }}>
+            <strong>{s.name}</strong> {s.builtin && <Badge tone="accent">{tr("suppliers.builtin")}</Badge>}
+            <div style={{ color: K.muted, fontSize: 12 }}>{tr(`suppliers.category.${s.category}`)}</div>
+            {open === s.agency_supplier_id && !s.builtin && (
+              <div style={{ display: "grid", gap: 6, marginTop: 8, fontSize: 12.5 }}>
+                <div>
+                  {tr("suppliers.contactName")}: <ContactReveal supplier={s} column="contact_name" lang={lang} />
+                </div>
+                <div>
+                  {tr("suppliers.contactEmail")}: <ContactReveal supplier={s} column="contact_email" lang={lang} />
+                </div>
+                {form(s)}
+              </div>
+            )}
+          </div>
+        );
+      },
+    },
+    { id: "lines", header: tr("suppliers.col.lines"), accessorFn: (s) => s.line_count, cell: ({ row }) => `${row.original.line_count} ${tr("suppliers.lines")}` },
+    ...(margin
+      ? [{
+          id: "commission",
+          header: tr("suppliers.commission"),
+          enableSorting: false,
+          cell: ({ row }) => (row.original.default_commission_pct ? `${row.original.default_commission_pct} %` : "—"),
+        } as ColumnDef<Supplier, unknown>]
+      : []),
+    {
+      id: "actions",
+      header: "",
+      enableSorting: false,
+      meta: { hideLabelOnCard: true },
+      cell: ({ row }) => {
+        const s = row.original;
+        if (s.builtin) return null;
+        return (
+          <span style={{ whiteSpace: "nowrap" }}>
+            <Button size="sm" disabled={!hydrated} onClick={() => setOpen(open === s.agency_supplier_id ? null : s.agency_supplier_id)}>
+              {tr("suppliers.open")}
+            </Button>{" "}
+            {role !== "assistant" && (
+              <Button size="sm" variant="danger" disabled={!hydrated || busy || s.line_count > 0} onClick={() => send("DELETE", `suppliers/${s.agency_supplier_id}`)}>
+                {tr("ledger.delete")}
+              </Button>
+            )}
+          </span>
+        );
+      },
+    },
+  ];
+
   return (
     <div style={{ display: "grid", gap: 12 }} data-testid="suppliers-view">
       {error && (
@@ -186,47 +245,18 @@ export function SuppliersView({
           {error}
         </p>
       )}
-      <div style={{ overflowX: "auto", background: K.card, border: `1px solid ${K.line}`, borderRadius: 10 }}>
-        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 560 }}>
-          <tbody>
-            {suppliers.map((s) => (
-              <tr key={s.agency_supplier_id} data-testid={`supplier-${s.kind}`}>
-                <td style={cell}>
-                  <strong>{s.name}</strong> {s.builtin && <Badge tone="accent">{tr("suppliers.builtin")}</Badge>}
-                  <div style={{ color: K.muted, fontSize: 12 }}>{tr(`suppliers.category.${s.category}`)}</div>
-                  {open === s.agency_supplier_id && !s.builtin && (
-                    <div style={{ display: "grid", gap: 6, marginTop: 8, fontSize: 12.5 }}>
-                      <div>
-                        {tr("suppliers.contactName")}: <ContactReveal supplier={s} column="contact_name" lang={lang} />
-                      </div>
-                      <div>
-                        {tr("suppliers.contactEmail")}: <ContactReveal supplier={s} column="contact_email" lang={lang} />
-                      </div>
-                      {form(s)}
-                    </div>
-                  )}
-                </td>
-                <td style={cell}>{s.line_count} {tr("suppliers.lines")}</td>
-                {margin && <td style={cell}>{s.default_commission_pct ? `${s.default_commission_pct} %` : "—"}</td>}
-                <td style={{ ...cell, whiteSpace: "nowrap" }}>
-                  {!s.builtin && (
-                    <>
-                      <Button size="sm" disabled={!hydrated} onClick={() => setOpen(open === s.agency_supplier_id ? null : s.agency_supplier_id)}>
-                        {tr("suppliers.open")}
-                      </Button>{" "}
-                      {role !== "assistant" && (
-                        <Button size="sm" variant="danger" disabled={!hydrated || busy || s.line_count > 0} onClick={() => send("DELETE", `suppliers/${s.agency_supplier_id}`)}>
-                          {tr("ledger.delete")}
-                        </Button>
-                      )}
-                    </>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {/* AA-1008 (S6f): the kit DataTable (no raw <table>); a row keeps its `supplier-<kind>` test id (rowTestId). */}
+      <DataTable<Supplier>
+        data={suppliers}
+        columns={columns}
+        tableId="crm-suppliers"
+        getRowId={(s) => s.agency_supplier_id}
+        rowTestId={(s) => `supplier-${s.kind}`}
+        searchable={false}
+        paginate={false}
+        compact
+        tableMinWidth={560}
+      />
       {adding ? (
         form(null)
       ) : (

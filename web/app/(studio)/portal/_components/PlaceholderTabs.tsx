@@ -18,7 +18,7 @@ import {
   Button, EmptyState as KitEmptyState, Modal, PageHeader, SkeletonBar, SkeletonStyle, SITE_URL, SUPPORT_EMAIL, alpha, apiGet, K, sans,
   useLang, useT, type UiLang,
 } from "@/app/_kit";
-import { T, Card, ProgressBar } from "./ui";
+import { Card, ProgressBar } from "@/app/_kit/local/studio/StudioCard";
 import { SectionSkeleton } from "./SectionSkeleton";
 import { BILLING_MESSAGES, SETTINGS_MESSAGES } from "./account.messages";
 import { fmtBillingMonth } from "@/lib/studio/format";
@@ -146,7 +146,7 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
           <div>
             <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.14em", color: alpha(K.sideTitle, 50), marginBottom: 8 }}>{t("currentPlan")}</div>
-            <div style={{ fontSize: 32, fontWeight: 600, color: T.onSolid, letterSpacing: "-0.02em" }}>{noPlan ? t("noPlan") : titleCase(plan || "—")}</div>
+            <div style={{ fontSize: 32, fontWeight: 600, color: K.onSolid, letterSpacing: "-0.02em" }}>{noPlan ? t("noPlan") : titleCase(plan || "—")}</div>
             <div style={{ fontSize: 14, color: alpha(K.sideTitle, 65), marginTop: 4 }}>
               {noPlan ? t("setUpPlan") : price > 0 ? t("perMonth", num(price)) : t("customPricing")}
             </div>
@@ -159,7 +159,7 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
           {[[t("rewritesMonth"), q(toursTotal)], [t("apiCallsMonth"), q(apiTotal)], [t("rateLimit"), rpm ? t("rpm", num(rpm)) : "—"]].map(([l, v]) => (
             <div key={l}>
               <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.1em", color: alpha(K.sideTitle, 45), marginBottom: 4 }}>{l}</div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: T.onSolid, fontVariantNumeric: "tabular-nums" }}>{v}</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: K.onSolid, fontVariantNumeric: "tabular-nums" }}>{v}</div>
             </div>
           ))}
         </div>

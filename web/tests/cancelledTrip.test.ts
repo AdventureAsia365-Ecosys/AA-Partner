@@ -5,8 +5,6 @@
 // fee percentage, words a payment without an invoice, and keeps the confirm step out of the scrolling body; after the
 // run the trip shows "Cancellation pending" and offers no move at once (before the page reloads); a cancelled AA line
 // shows no "Confirmed by AA" and words every result code the Booking sync can write, in both languages.
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
@@ -17,6 +15,7 @@ import { invoiceErrorKey, type Invoice } from "@/lib/invoices";
 import type { Line, TripLines } from "@/lib/ledger";
 import { percentText, tripClosedForBilling, type CancelPreview, type Member, type TripView } from "@/lib/pipeline";
 import { proposalErrorKey, type LifecycleView } from "@/lib/proposals";
+import { MODAL_CSS } from "@/app/_kit/core/Modal";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const refresh = vi.fn();
@@ -318,8 +317,9 @@ describe("cancel dialog", () => {
     expect(typed).not.toBeNull();
     expect(body.contains(typed)).toBe(false);
     expect(body.contains(c.querySelector("[data-testid=cancel-confirm]"))).toBe(false);
-    expect(body.getAttribute("data-crm-dialog")).toBe("body");
-    expect(c.querySelector("[data-testid=cancel-dialog]")!.getAttribute("data-crm-dialog")).toBe("box");
+    expect(body.getAttribute("data-kit-modal")).toBe("body");
+    expect(c.querySelector("[data-testid=cancel-dialog]")!.getAttribute("data-kit-modal")).toBe("box");
+    expect(c.querySelector("[data-testid=cancel-dialog]")!.hasAttribute("data-pin-footer")).toBe(true);
     expect(c.querySelector("[data-testid=cancel-effects]")!.getAttribute("style") ?? "").not.toContain("overflow");
   });
   it("shows the more-below cue when only the whole box scrolls (a window under 480 px tall)", async () => {
@@ -332,30 +332,30 @@ describe("cancel dialog", () => {
     });
     const props: Parameters<typeof Dialog>[0] = { title: "Cancel", onClose: () => {}, footer: createElement("button", null, "Confirm"), moreLabel: "More below", testId: "short", children: null };
     const c = await mount(createElement(Dialog, props, createElement("p", null, "Body")));
-    const box = c.querySelector<HTMLElement>("[data-crm-dialog=box]")!;
-    const body = c.querySelector<HTMLElement>("[data-crm-dialog=body]")!;
+    const box = c.querySelector<HTMLElement>("[data-kit-modal=box]")!;
+    const body = c.querySelector<HTMLElement>("[data-kit-modal=body]")!;
     for (const [el, scroll, client] of [[box, 800, 350], [body, 600, 600]] as const) {
       Object.defineProperty(el, "scrollHeight", { configurable: true, value: scroll });
       Object.defineProperty(el, "clientHeight", { configurable: true, value: client });
     }
-    expect(c.querySelector("[data-testid=dialog-more]")).toBeNull();
+    expect(c.querySelector("[data-testid=kit-modal-more]")).toBeNull();
     await act(async () => callbacks[0]());
-    expect(c.querySelector("[data-testid=dialog-more]")!.textContent).toContain("More below");
+    expect(c.querySelector("[data-testid=kit-modal-more]")!.textContent).toContain("More below");
     // Scrolled to the end: the cue goes.
     Object.defineProperty(box, "scrollTop", { configurable: true, value: 450 });
     await act(async () => box.dispatchEvent(new Event("scroll")));
-    expect(c.querySelector("[data-testid=dialog-more]")).toBeNull();
+    expect(c.querySelector("[data-testid=kit-modal-more]")).toBeNull();
   });
-  it("frames the dialog in CSS: a 90vh fallback before dvh, the body scrolls, the whole box under 480 px of height", () => {
-    const css = readFileSync(path.resolve("app/globals.css"), "utf8").replace(/\s+/g, " ");
-    const box = css.match(/\[data-crm-dialog="box"\] \{([^}]*)\}/)![1];
+  it("frames the dialog in the kit CSS (pinned footer): a 90vh fallback before dvh, the body scrolls, the box under 480 px", () => {
+    const css = MODAL_CSS.replace(/\s+/g, " ");
+    const box = css.match(/\[data-kit-modal="box"\]\[data-pin-footer\] \{([^}]*)\}/)![1];
     // The fallback comes first, so a browser that drops the dvh declaration keeps 90vh.
     expect(box.indexOf("max-height: 90vh;")).toBeGreaterThan(-1);
     expect(box.indexOf("max-height: 90vh;")).toBeLessThan(box.indexOf("max-height: min(90vh, calc(100dvh - 32px))"));
-    expect(css).toContain('[data-crm-dialog="body"] { flex: 1 1 auto; min-height: 0; overflow-y: auto; }');
+    expect(css).toContain('> [data-kit-modal="body"] { flex: 1 1 auto; min-height: 0; overflow-y: auto; }');
     const short = css.slice(css.indexOf("@media (max-height: 479px)"));
-    expect(short).toMatch(/\[data-crm-dialog="box"\] \{ overflow-y: auto; \}/);
-    expect(short).toMatch(/\[data-crm-dialog="body"\] \{ flex: none; overflow-y: visible; \}/);
+    expect(short).toMatch(/\[data-kit-modal="box"\]\[data-pin-footer\] \{ overflow-y: auto; \}/);
+    expect(short).toMatch(/> \[data-kit-modal="body"\] \{ flex: none; overflow-y: visible; \}/);
   });
 });
 

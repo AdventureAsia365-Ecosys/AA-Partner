@@ -72,22 +72,8 @@ a { color: inherit; }
   [data-crm="hide-phone"] { display: none; }
 }
 
-/* ── Stage-engine dialog frame (components/pipeline/StageDialogs.tsx `Dialog`, S262) ─────────────
-   Title and footer (the confirm step, the buttons) stay in view; only the body between them scrolls. max-height 90vh
-   first: a browser without dvh keeps a max height. Under 480 px of height (a phone held sideways) the whole box
-   scrolls as one area and the footer is compact: a fixed footer would leave the body a sliver. */
-[data-crm-dialog="box"] {
-  display: flex; flex-direction: column; overflow: hidden;
-  max-height: 90vh;
-  max-height: min(90vh, calc(100dvh - 32px));
-}
-[data-crm-dialog="body"] { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
-[data-crm-dialog="footer"] { flex: none; display: grid; gap: 10px; padding: 12px 18px 16px; }
-@media (max-height: 479px) {
-  [data-crm-dialog="box"] { overflow-y: auto; }
-  [data-crm-dialog="body"] { flex: none; overflow-y: visible; }
-  [data-crm-dialog="footer"] { gap: 6px; padding: 8px 18px 10px; }
-}
+/* The stage-engine dialog frame (S262: title and footer in view, only the body scrolls, the whole box under 480 px of
+   height) moved into the kit Modal (`pinFooter`, MODAL_CSS in app/_kit/core/Modal.tsx) with AA-1008. */
 
 /* AA-957 S262 round 3: the kit toast is fixed at the bottom right (kit core, not edited here, ADR 0016) and on a phone
    it covered the list's pagination ("25 / page", the page buttons) after "Commission recorded". A list page with

@@ -55,7 +55,10 @@ export function MailboxSettings({
   const router = useRouter();
   const hydrated = useHydrated();
   const tr = (key: string) => t(lang, key as MessageKey);
-  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  // A provider error on the OAuth return is known at the first render: the initial message, not an effect's setState.
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(() =>
+    oauth && "error" in oauth ? { ok: false, text: tr(`mail.oauthError.${oauth.error}`) } : null,
+  );
   const [busy, setBusy] = useState(false);
   const [smtpFor, setSmtpFor] = useState<Scope | null>(null);
   const completed = useRef(false);
@@ -74,12 +77,8 @@ export function MailboxSettings({
   }
 
   useEffect(() => {
-    if (!oauth || completed.current) return;
+    if (!oauth || "error" in oauth || completed.current) return;
     completed.current = true;
-    if ("error" in oauth) {
-      setMessage({ ok: false, text: tr(`mail.oauthError.${oauth.error}`) });
-      return;
-    }
     void call("POST", "mailbox/oauth/complete", oauth, "mail.connected").then(() => {
       router.replace("/settings/mailbox");
       router.refresh();
@@ -262,17 +261,20 @@ export function MailboxSettings({
       <MailImport lang={lang} />
       <Panel title={tr("mail.senders.title")} testId="mailbox-senders">
         <p style={{ margin: "0 0 8px", fontSize: 12.5, color: K.muted }}>{tr("mail.senders.help")}</p>
-        <table style={{ borderCollapse: "collapse", fontSize: 13, width: "100%" }}>
-          <tbody>
-            {senders.map((s) => (
-              <tr key={s.path} data-testid={`sender-${s.path}`}>
-                <td style={{ padding: "4px 8px 4px 0" }}>{tr(`mail.senders.path.${s.path}`)}</td>
-                <td style={{ padding: "4px 8px", color: K.muted }}>{tr(`mail.senders.to.${s.recipient}`)}</td>
-                <td style={{ padding: "4px 0" }}>{tr(`mail.senders.via.${s.via}`)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        {/* AA-1008 (S6f): one line a sending path (what, to whom, through which mailbox): a list, not a table. */}
+        <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 2, fontSize: 13 }}>
+          {senders.map((s) => (
+            <li
+              key={s.path}
+              data-testid={`sender-${s.path}`}
+              style={{ display: "flex", flexWrap: "wrap", gap: "0 12px", padding: "4px 0", minWidth: 0 }}
+            >
+              <span>{tr(`mail.senders.path.${s.path}`)}</span>
+              <span style={{ color: K.muted }}>{tr(`mail.senders.to.${s.recipient}`)}</span>
+              <span>{tr(`mail.senders.via.${s.via}`)}</span>
+            </li>
+          ))}
+        </ul>
       </Panel>
     </div>
   );

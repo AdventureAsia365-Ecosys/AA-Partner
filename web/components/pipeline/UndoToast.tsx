@@ -29,11 +29,18 @@ export function UndoToast({ state, lang, onClose, testId = "undo-toast" }: { sta
   const [left, setLeft] = useState(UNDO_MS / 1000);
   const [busy, setBusy] = useState(false);
 
+  // A new toast (another id) starts its countdown afresh: reset during render when the id changes (React's "adjust
+  // state when a prop changes" pattern), not by an effect's setState after the render.
+  const [seenId, setSeenId] = useState(state?.id);
+  if (state && state.id !== seenId) {
+    setSeenId(state.id);
+    setLeft(UNDO_MS / 1000);
+    setBusy(false);
+  }
+
   useEffect(() => {
     if (!state) return;
     const started = Date.now();
-    setLeft(UNDO_MS / 1000);
-    setBusy(false);
     const tick = setInterval(() => setLeft(Math.max(0, Math.ceil((UNDO_MS - (Date.now() - started)) / 1000))), 1000);
     const close = setTimeout(onClose, UNDO_MS);
     return () => {
