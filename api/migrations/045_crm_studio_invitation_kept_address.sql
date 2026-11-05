@@ -20,9 +20,11 @@
 --      email_kept_kek_provider (kms | local) and email_kept_kek_id (the key ARN or local key id KMS / the keyring
 --      returned). All four or none (studio_invitation_kept_chk): a row issued before this file, or while the CRM had no
 --      key provider, keeps none and cannot be sent again without an address (409 address_not_kept).
---   2. crm.guard_studio_invitation_write() (crm-020 text plus one rule, CRM37): only a platform actor sets the kept
+--   2. crm.guard_studio_invitation_write() (crm-020 text plus two rules, CRM37): only a platform actor sets the kept
 --      address (issue, re-issue); the token holder may only clear it, which the claim does (the person opened the
---      invitation: it is never sent again, the address is not kept a minute longer); the job never touches it.
+--      invitation: it is never sent again, the address is not kept a minute longer); the job never touches it. A
+--      revoke clears it in the same UPDATE (a revoked invitation is never sent again either). An expired one keeps it:
+--      a pending or expired invitation is re-issued (crm-020), and a send again after the expiry is the usual one.
 --   3. Register crm-045.
 --
 -- Behaviour on apply: none. Existing rows keep NULL; nothing reads or writes the columns until the AA-Partner code PR
@@ -136,6 +138,10 @@ BEGIN
             RETURN NEW;
         END IF;
         IF NEW.status = 'revoked' AND OLD.status IN ('pending', 'claimed') THEN
+            IF NOT kept_cleared THEN
+                RAISE EXCEPTION 'crm: a revoke clears the kept address (a revoked invitation is never sent again)'
+                    USING ERRCODE = 'CRM37';
+            END IF;
             RETURN NEW;
         END IF;
         RAISE EXCEPTION 'crm: a platform actor re-issues or revokes a studio invitation, nothing else'
@@ -182,7 +188,7 @@ BEGIN
 END;
 $$;
 REVOKE ALL ON FUNCTION crm.guard_studio_invitation_write() FROM PUBLIC;
-COMMENT ON FUNCTION crm.guard_studio_invitation_write() IS 'AA-979 (crm-020), AA-1035 (crm-045): who may write crm.studio_invitation (CRM37): platform:* issues, re-issues (with the kept address) and revokes; invitation:* (the token holder) claims, accepts or expires, and may only clear the kept address; job:crm_studio_activation records attempts and activates; the tenant, the CIS invitation, the issuer and a bound identity never change.';
+COMMENT ON FUNCTION crm.guard_studio_invitation_write() IS 'AA-979 (crm-020), AA-1035 (crm-045): who may write crm.studio_invitation (CRM37): platform:* issues, re-issues (with the kept address) and revokes (clearing the kept address); invitation:* (the token holder) claims, accepts or expires, and may only clear the kept address; job:crm_studio_activation records attempts and activates; the tenant, the CIS invitation, the issuer and a bound identity never change.';
 
 -- ── Guard 1: the shape this file promises ─────────────────────────────────────────────────────────────────────────
 DO $$
@@ -203,8 +209,8 @@ BEGIN
                      AND conname = 'studio_invitation_kept_chk' AND contype = 'c' AND convalidated) THEN
         RAISE EXCEPTION 'crm-045: studio_invitation_kept_chk is missing or not validated';
     END IF;
-    IF position('kept_cleared' IN pg_catalog.pg_get_functiondef('crm.guard_studio_invitation_write()'::regprocedure))
-       = 0 THEN
+    IF position('a revoke clears the kept address' IN
+                pg_catalog.pg_get_functiondef('crm.guard_studio_invitation_write()'::regprocedure)) = 0 THEN
         RAISE EXCEPTION 'crm-045: crm.guard_studio_invitation_write() does not carry the kept address rule';
     END IF;
     IF pg_catalog.has_function_privilege('public', 'crm.guard_studio_invitation_write()', 'EXECUTE') THEN
@@ -216,7 +222,7 @@ BEGIN
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('crm-045', now(), 'AA-1035 R2 close-out: crm.studio_invitation keeps the invited address under the CRM data key (send again to the same address, crm.ops.v1 1.12 keep_address); the guard lets only a platform actor set it, the claim clears it')
+VALUES ('crm-045', now(), 'AA-1035 R2 close-out: crm.studio_invitation keeps the invited address under the CRM data key (send again to the same address, crm.ops.v1 1.12 keep_address); the guard lets only a platform actor set it, the claim and a revoke clear it')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
