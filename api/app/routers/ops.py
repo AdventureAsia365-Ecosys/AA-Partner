@@ -68,6 +68,7 @@ AA-979 / root ADR 0006a A10b-1 (S252 security review): the Dev-only E2E CIS admi
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -76,6 +77,7 @@ from typing import Annotated, Literal
 from fastapi import Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.auth import e2e_staff
 from app.auth.identity_config import GROUP_CRM_PLATFORM_ADMIN, OPS
 from app.auth.route_guard import Caller, class_router, current_caller, require_group
 from app.db import request_pool
@@ -88,6 +90,7 @@ from app.ops import console, staff_scope
 from app.reports import insights
 from app.vault.provider import require_keys
 
+log = logging.getLogger(__name__)
 router = class_router(OPS, tags=["ops"])
 
 # The ledger v2 statuses of a crm.llm_call row (app.aa_llm.ledger.STATUSES; crm-037, crm.ops.v1 1.7).
@@ -627,7 +630,10 @@ async def get_console(request: Request, caller: Reader) -> dict:
     admin, root ADR 0006a A10b), and (1.12) the caller's tenant scope. No database access (a desk caller's scope is
     one cached CIS call)."""
     scope = await staff_scope.scope_of(request, caller)
-    return {"can_write": caller.in_group(GROUP_CRM_PLATFORM_ADMIN) and not caller.e2e_read_only, "scope": scope.kind}
+    return {
+        "can_write": caller.in_group(GROUP_CRM_PLATFORM_ADMIN) and not (caller.e2e_read_only or caller.e2e_no_write),
+        "scope": scope.kind,
+    }
 
 
 @router.get("/tenants", response_model=TenantPage)
@@ -719,7 +725,13 @@ async def studio_invitation(request: Request, tenant_id: uuid.UUID, body: Studio
     an address (403 ``readdress_not_allowed``: it sends again to the kept address only); and only an invitation CIS
     reports as an invited viewer / editor membership of this tenant (:func:`studio.check_desk_invitation`: 403
     ``owner_invitation_not_allowed`` / ``invitation_not_invited``), since the desk caller can reach this route without
-    CIS's owner-tier check."""
+    CIS's owner-tier check.
+
+    AA-1035 (root ADR 0006a A10d): the Dev-only CIS customer_success E2E identity (``Caller.e2e_no_write``) writes
+    nothing: 403 ``e2e_read_only`` before any check, with or without an address."""
+    if caller.e2e_no_write:
+        log.warning("studio_invitation_e2e_no_write_refused")
+        raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
     await staff_scope.require_tenant(request, caller, tenant_id)
     if body.email is not None and not staff_scope.may_readdress(caller):
         raise HTTPException(status_code=403, detail=staff_scope.READDRESS)

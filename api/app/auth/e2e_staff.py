@@ -16,6 +16,15 @@ On ``/crm/staff/v1`` it is **synthetic-only**: :class:`app.auth.route_guard.Call
 the guard refuses its token outside ``dev`` / ``test`` / ``local`` (403 ``e2e_read_only``), and every staff context
 (``ops_tx``, ``staff_tx``, ``support_tx`` in :mod:`app.tenancy`) refuses an agency whose ``crm.tenant.is_synthetic``
 is not true (403 ``e2e_synthetic_only``); the board and the agency lists skip such agencies. Same removal as A10b.
+
+AA-1035 (root ADR 0006a A10d): a third Dev-only WORKFORCE E2E identity, the **CIS customer success** address
+:data:`E2E_CIS_CS_EMAIL`, issued with exactly ``cis-customer_success`` by the same trigger map and only on Dev. In the
+CRM it **writes nothing**: :class:`app.auth.route_guard.Caller` carries ``e2e_no_write`` (never ``e2e_read_only``,
+which would open the A10b-1 invitation path of :func:`app.members.studio.check_e2e_invitation`); the guard refuses its
+token outside ``dev`` / ``test`` / ``local``, :func:`app.auth.route_guard.require_group` refuses it, and the one
+``/crm/ops/v1`` write a ``cis-customer_success`` token reaches, the studio invitation relay, refuses it with 403
+``e2e_read_only`` before any check. Its desk reads stay scoped by CIS (``tenant.membership.v1`` staff-scope). Same
+removal as A10b.
 """
 
 from __future__ import annotations
@@ -29,6 +38,9 @@ E2E_MAIL_DOMAIN = E2E_CIS_ADMIN_EMAIL.split("@", 1)[1]
 E2E_INVITE_ROLES = frozenset({"viewer", "editor"})
 # AA-1019 (A10c): the Dev-only CRM staff E2E address (crm-ops + crm-support; synthetic agencies only).
 E2E_CRM_STAFF_EMAIL = "e2e-crm-staff@e2e-mail.lumiguides.it.com"
+# AA-1035 (A10d): the Dev-only CIS customer_success E2E address (cis-customer_success; no CRM write at all). Same
+# address as AA-CIS-App api/core/e2e_staff.E2E_CIS_CS_TEST_STAFF_EMAIL and AA-CIS-Infra workforce.py.
+E2E_CIS_CS_EMAIL = "e2e-cis-cs@e2e-mail.lumiguides.it.com"
 # The 403 detail when that identity reaches an agency that is not synthetic.
 E2E_SYNTHETIC_ONLY = "e2e_synthetic_only"
 # The 403 detail of every refusal (the same string CIS answers, so the BFF and the E2E helpers need no new one).
@@ -49,14 +61,20 @@ def is_e2e_crm_staff(email: Any) -> bool:
     return _normalise(email) == E2E_CRM_STAFF_EMAIL
 
 
+def is_e2e_cis_cs(email: Any) -> bool:
+    """True for the A10d address (after trimming and lower-casing; a missing claim is False)."""
+    return _normalise(email) == E2E_CIS_CS_EMAIL
+
+
 def is_e2e_mailbox_address(address: Any) -> bool:
     """True when ``address`` is ``<local>@`` exactly :data:`E2E_MAIL_DOMAIN` (ASCII only, one ``@``, non-empty local
-    part). The A10b address itself is not an invitee. ASCII is checked BEFORE lower-casing: U+212A KELVIN SIGN
+    part). The staff E2E addresses themselves (A10b, A10c, A10d) are not
+    invitees. ASCII is checked BEFORE lower-casing: U+212A KELVIN SIGN
     lower-cases to ASCII ``k`` and must not alias an E2E mailbox (the trigger's rule)."""
     if not isinstance(address, str) or not address.isascii():
         return False
     value = _normalise(address)
-    if value.count("@") != 1 or value in (E2E_CIS_ADMIN_EMAIL, E2E_CRM_STAFF_EMAIL):
+    if value.count("@") != 1 or value in (E2E_CIS_ADMIN_EMAIL, E2E_CRM_STAFF_EMAIL, E2E_CIS_CS_EMAIL):
         return False
     local, domain = value.split("@")
     return bool(local) and domain == E2E_MAIL_DOMAIN
