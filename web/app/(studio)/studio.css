@@ -289,15 +289,10 @@ textarea::placeholder,
 [data-pshell="spacer"],
 [data-pshell="bottom-nav"],
 [data-pshell-dot] { display: none; }
-[data-pshell="backdrop"] {
-  position: fixed;
-  inset: 0;
-  z-index: 999;
-  background: rgba(0, 0, 0, 0.45);
-}
-
+/* AA-1008 (S6e): the frame, the backdrop and the drawer below 900 px (fixed, off-canvas, out of the tab order while
+   closed) are the kit core ShellFrame's (its own style element, data-kit-shell hooks); the rules here size the
+   sidebar inside it. */
 @media (min-width: 900px) {
-  [data-pshell="backdrop"] { display: none; }
   html[data-sidebar="collapsed"] [data-pshell="sidebar"] { width: 68px; padding: 22px 10px 24px; }
   html[data-sidebar="collapsed"] [data-pshell="sidebar"] [data-pshell-label] { display: none; }
   html[data-sidebar="collapsed"] [data-pshell="sidebar"] [data-pshell-dot] { display: block; }
@@ -306,19 +301,9 @@ textarea::placeholder,
 
 @media (max-width: 899px) {
   [data-pshell="sidebar"] {
-    position: fixed;
-    top: 0;
-    left: 0;
-    bottom: 0;
     height: 100dvh;
     width: 264px;
-    z-index: 1000;
-    transform: translateX(-100%);
-    visibility: hidden; /* a closed drawer is not in the tab order */
-    transition: transform .22s ease, visibility .22s ease;
-    box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
   }
-  [data-pshell="sidebar"][data-open="true"] { transform: translateX(0); visibility: visible; }
   [data-pshell="collapse-btn"] { display: none !important; }
   [data-pshell="menu-btn"] { display: inline-flex; }
   [data-pshell="topbar"] { padding: 0 12px; gap: 8px; }

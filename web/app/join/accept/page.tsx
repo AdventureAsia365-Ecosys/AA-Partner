@@ -1,5 +1,6 @@
 // web/app/join/accept/page.tsx — after sign-in, accept the invitation (AA-939). Needs a session (the proxy sends a
 // visitor without one to sign-in). The form POSTs /join/confirm, which binds the membership to this account. EN/VI.
+import Link from "next/link";
 import { cookies } from "next/headers";
 import { CenteredCard, linkButton } from "@/components/CenteredCard";
 import { K } from "@/app/_kit";
@@ -46,9 +47,9 @@ export default async function JoinAcceptPage({
             <p role="alert" style={{ margin: 0, fontSize: 13.5, color: K.danger }} data-testid="join-error">
               {t(lang, `join.error.${problem}` as MessageKey)}
             </p>
-            <a href="/" style={{ fontSize: 13 }}>
+            <Link href="/" style={{ fontSize: 13 }}>
               {t(lang, "join.toApp")}
-            </a>
+            </Link>
           </>
         ) : (
           <form method="post" action="/join/confirm" style={{ display: "grid", gap: 10 }}>

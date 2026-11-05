@@ -1,6 +1,7 @@
 // web/app/(crm)/settings/mailbox/page.tsx — Settings > Mailbox (AA-945, card CRM-17): the member's own mailbox, the
 // agency's (owner), the forward-in address and the sender table. ?code&state (or ?oauth_error) arrive from
 // /connect/mail/callback after the provider's consent; the view completes the connection.
+import Link from "next/link";
 import { ErrorState } from "@/app/_kit";
 import { PageTitle } from "@/components/PageTitle";
 import { MailboxSettings } from "@/components/mail/MailboxSettings";
@@ -36,9 +37,9 @@ export default async function MailboxPage({
   ]);
   return (
     <div data-testid="crm-mailbox-settings" style={{ display: "grid", gap: 14, maxWidth: 820 }}>
-      <a href="/settings" style={{ fontSize: 13 }}>
+      <Link href="/settings" style={{ fontSize: 13 }}>
         ← {t(ctx.lang, "settings.title")}
-      </a>
+      </Link>
       <PageTitle title={t(ctx.lang, "mail.title")} subtitle={t(ctx.lang, "mail.subtitle")} />
       {!view.ok ? (
         <ErrorState message={t(ctx.lang, "error.api")} />

@@ -1,6 +1,6 @@
 // web/app/signed-out/page.tsx — public: after sign-out (Cognito logout_uri), or when sign-in failed / is not
 // configured (?reason=failed | unavailable). AA-935.
-import { CenteredCard, linkButton } from "@/components/CenteredCard";
+import { CenteredCard, SIGN_IN_PATH, linkButton } from "@/components/CenteredCard";
 import { LocaleSwitch } from "@/components/LocaleSwitch";
 import { K } from "@/app/_kit";
 import { t } from "@/lib/i18n";
@@ -25,7 +25,7 @@ export default async function SignedOutPage({ searchParams }: { searchParams: Pr
           {message}
         </p>
         {cfg.authConfigured && (
-          <a href="/auth/sign-in" style={linkButton} data-testid="sign-in-link">
+          <a href={SIGN_IN_PATH} style={linkButton} data-testid="sign-in-link">
             {t(lang, "auth.signIn")}
           </a>
         )}

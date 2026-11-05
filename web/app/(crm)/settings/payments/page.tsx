@@ -1,6 +1,7 @@
 // web/app/(crm)/settings/payments/page.tsx — Settings > Payments, the CRM-16 part (AA-944): base currency, booking
 // validation level, exchange rates automatic / manual and the owner's own rates; CRM-23 slice 2: the invoice settings
 // (prefix, tax, due days, service fees); slice 3: how clients pay the agency (its manual method). Owner only: other roles see why without calling the API.
+import Link from "next/link";
 import { ErrorState, K } from "@/app/_kit";
 import { PageTitle } from "@/components/PageTitle";
 import { InvoiceSettingsForm } from "@/components/invoices/InvoiceSettingsForm";
@@ -19,9 +20,9 @@ export default async function PaymentsSettingsPage() {
   const ctx = await crmContext();
   if (ctx.apiDown) return null;
   const back = (
-    <a href="/settings" style={{ fontSize: 13 }}>
+    <Link href="/settings" style={{ fontSize: 13 }}>
       ← {t(ctx.lang, "settings.title")}
-    </a>
+    </Link>
   );
   if (ctx.role !== "owner") {
     return (

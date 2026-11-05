@@ -16,7 +16,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { BookOpen, CornerDownLeft, FileText, Globe2, Search } from "lucide-react";
-import { K, Modal, RADIUS, alpha, apiGet, sans, useLang, useT } from "@/app/_kit";
+import { K, ListButton, Modal, RADIUS, alpha, apiGet, sans, useLang, useT } from "@/app/_kit";
 import { fetchMyVersions } from "@/app/(studio)/portal/_components/catalogApi";
 import { fetchReviews } from "@/app/(studio)/portal/_components/reviewListApi";
 import { channelName } from "@/app/(studio)/portal/_components/channelLabels";
@@ -177,16 +177,15 @@ function Palette({ onClose, onSearchTours }: { onClose: () => void; onSearchTour
                 const idx = runningIndex;
                 const isSel = idx === safeSelected;
                 return (
-                  <button
+                  <ListButton
                     key={row.key}
                     role="option"
-                    aria-selected={isSel}
+                    selected={isSel}
                     onClick={() => activate(row)}
                     onMouseEnter={() => setSelected(idx)}
                     style={{
-                      display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "9px 10px",
-                      borderRadius: RADIUS.md, border: "none", cursor: "pointer", textAlign: "left", fontFamily: sans,
-                      background: isSel ? alpha(K.accent, 12) : "transparent", color: K.ink,
+                      gap: 10, padding: "9px 10px", borderRadius: RADIUS.md, fontFamily: sans, fontWeight: 400,
+                      background: isSel ? alpha(K.accent, 12) : "transparent",
                     }}
                   >
                     <span aria-hidden style={{ color: isSel ? K.accentDeep : K.muted2, display: "flex", flexShrink: 0 }}>{row.icon}</span>
@@ -197,7 +196,7 @@ function Palette({ onClose, onSearchTours }: { onClose: () => void; onSearchTour
                       )}
                     </span>
                     {isSel && <CornerDownLeft size={14} aria-hidden style={{ color: K.muted2, flexShrink: 0 }} />}
-                  </button>
+                  </ListButton>
                 );
               })}
             </div>

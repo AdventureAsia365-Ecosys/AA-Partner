@@ -2,6 +2,7 @@
 // insurance declination and the merge fields): the agency's booking terms, traveller waiver and insurance declination
 // versions. Every member reads them (the trip's Proposal tab picks the terms); only the owner
 // drafts and publishes (the API checks TERMS_PUBLISH), other roles see the list and why they cannot change it.
+import Link from "next/link";
 import { ErrorState, K } from "@/app/_kit";
 import { PageTitle } from "@/components/PageTitle";
 import { AgreementsView } from "@/components/settings/AgreementsView";
@@ -21,9 +22,9 @@ export default async function AgreementsSettingsPage() {
   const docs = await crmCall<{ agreements: Agreement[]; merge_fields?: MergeField[] }>(ctx.cfg, session, "GET", "agreements");
   return (
     <div data-testid="crm-agreements-settings" style={{ display: "grid", gap: 14, maxWidth: 820 }}>
-      <a href="/settings" style={{ fontSize: 13 }}>
+      <Link href="/settings" style={{ fontSize: 13 }}>
         ← {t(ctx.lang, "settings.title")}
-      </a>
+      </Link>
       <PageTitle title={t(ctx.lang, "agreements.title")} subtitle={t(ctx.lang, "agreements.subtitle")} />
       {!docs.ok ? (
         <ErrorState message={t(ctx.lang, "error.api")} />

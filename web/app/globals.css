@@ -29,24 +29,23 @@ a { color: inherit; }
 }
 
 /* ── CRM shell (app/_kit/local/CrmShell.tsx) ─────────────────────────────────────────────
-   [sidebar | topbar over main]. Below 900 px the sidebar is an off-canvas drawer opened from the topbar menu
-   button (data-open on the frame); CSS only, so the server HTML is already right on a phone. */
-[data-crm="frame"] { display: flex; min-height: 100vh; background: var(--aa-bg); color: var(--aa-body); }
+   AA-1008 (S6e): the frame, the drawer below 900 px (off-canvas sidebar, backdrop, Esc), the sticky sidebar of the
+   scrolling document and the <main> are the kit core ShellFrame's (its own style element, data-kit-shell hooks).
+   The rules here are the CRM's look inside it, keyed on the data-crm hooks of its slots. */
+[data-crm="frame"] { color: var(--aa-body); }
 [data-crm="sidebar"] {
   width: 240px; flex: none; background: var(--aa-side-bg); color: var(--aa-side-text);
-  display: flex; flex-direction: column; height: 100vh; position: sticky; top: 0; overflow-y: auto;
+  display: flex; flex-direction: column; height: 100vh; overflow-y: auto;
 }
-[data-crm="main-col"] { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
 [data-crm="topbar"] {
   display: flex; align-items: center; gap: 10px; padding: 10px 20px; background: var(--aa-card);
   border-bottom: 1px solid var(--aa-line); position: sticky; top: 0; z-index: 5;
 }
-[data-crm="main"] { flex: 1; min-width: 0; padding: 22px 24px 40px; }
+[data-crm="main"] { padding: 22px 24px 40px; }
 /* AA-1033: one quiet line under every agency page (the terms of use). */
 [data-crm="footer"] { padding: 0 24px 18px; font-size: 12px; color: var(--aa-muted); }
 [data-crm="footer"] a { color: var(--aa-muted); }
 [data-crm="menu-button"] { display: none; }
-[data-crm="backdrop"] { display: none; }
 [data-crm="nav-item"] {
   position: relative; display: flex; align-items: center; gap: 10px; padding: 7px 12px; margin: 1px 8px;
   border-radius: 6px; color: var(--aa-side-text); text-decoration: none; font-size: 13px;
@@ -63,17 +62,6 @@ a { color: inherit; }
 [data-crm="search"] span { overflow: hidden; text-overflow: ellipsis; }
 
 @media (max-width: 899px) {
-  [data-crm="sidebar"] {
-    position: fixed; left: 0; top: 0; bottom: 0; z-index: 30; transform: translateX(-100%); visibility: hidden;
-    transition: transform 160ms ease, visibility 0s linear 160ms;
-  }
-  [data-crm="frame"][data-open="true"] [data-crm="sidebar"] {
-    transform: translateX(0); visibility: visible; box-shadow: 0 0 24px rgba(0, 0, 0, 0.25);
-    transition: transform 160ms ease;
-  }
-  [data-crm="frame"][data-open="true"] [data-crm="backdrop"] {
-    display: block; position: fixed; inset: 0; z-index: 20; background: rgba(15, 20, 27, 0.45);
-  }
   [data-crm="menu-button"] { display: inline-flex; }
   [data-crm="main"] { padding: 16px 16px 32px; }
   [data-crm="footer"] { padding: 0 16px 16px; }
@@ -82,9 +70,6 @@ a { color: inherit; }
 @media (max-width: 599px) {
   [data-crm="search"] { display: none; }
   [data-crm="hide-phone"] { display: none; }
-}
-@media (prefers-reduced-motion: reduce) {
-  [data-crm="sidebar"] { transition: none; }
 }
 
 /* ── Stage-engine dialog frame (components/pipeline/StageDialogs.tsx `Dialog`, S262) ─────────────

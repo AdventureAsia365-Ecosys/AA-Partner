@@ -1,6 +1,7 @@
 // web/app/(crm)/pipeline/page.tsx — A-02 Pipeline, the board (AA-936, card CRM-08; design v3 WF-1, ui-mockups
 // "Pipeline"). The API decrypts the lead's display name only and writes one list_view audit event per load; cards
 // never show margin, e-mail or phone. Filters are links (?waiting_on=…&owner=me), so the page stays a server render.
+import Link from "next/link";
 import { EmptyState, ErrorState } from "@/app/_kit";
 import { BoardView } from "@/components/pipeline/BoardView";
 import { PageTitle } from "@/components/PageTitle";
@@ -31,7 +32,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
         <EmptyState
           title={t(lang, "section.pipeline.title")}
           description={t(lang, "section.pipeline.body")}
-          action={<a href="/settings/forms">{t(lang, "pipeline.formLink")}</a>}
+          action={<Link href="/settings/forms">{t(lang, "pipeline.formLink")}</Link>}
         />
       ) : (
         <BoardView board={res.data} lang={lang} locale={ctx.locale} dict={dictionary(lang)} />

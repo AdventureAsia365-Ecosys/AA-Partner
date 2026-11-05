@@ -1,5 +1,6 @@
 // web/app/(crm)/settings/templates/page.tsx — Settings > Message templates (AA-951, card CRM-22, R9): the agency's
 // template library and the AA starter templates not added yet.
+import Link from "next/link";
 import { ErrorState } from "@/app/_kit";
 import { PageTitle } from "@/components/PageTitle";
 import { MessageTemplates } from "@/components/settings/MessageTemplates";
@@ -19,9 +20,9 @@ export default async function TemplatesPage() {
   const library = await crmCall<TemplateLibrary>(ctx.cfg, session, "GET", "message-templates");
   return (
     <div data-testid="crm-templates" style={{ display: "grid", gap: 14, maxWidth: 820 }}>
-      <a href="/settings" style={{ fontSize: 13 }}>
+      <Link href="/settings" style={{ fontSize: 13 }}>
         ← {t(ctx.lang, "settings.title")}
-      </a>
+      </Link>
       <PageTitle title={t(ctx.lang, "templates.title")} subtitle={t(ctx.lang, "templates.subtitle")} />
       {!library.ok ? <ErrorState message={t(ctx.lang, "error.api")} /> : <MessageTemplates library={library.data} role={ctx.role} lang={ctx.lang} />}
     </div>

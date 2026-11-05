@@ -6,6 +6,9 @@
 // the notifications bell, the account menu (tenant, plan, settings, language, legal links, sign out).
 // AA-1036 (R3): every label in the UI language (studio.messages.ts). The account menu carries the app's one language
 // switch (components/LocaleSwitch.tsx, the CRM's: cookie aa_crm_locale, the page reloads in the chosen language).
+// AA-1008 (S6f): every button is a kit button (IconButton for the icons, Pressable for the search pill and the account
+// trigger, ListButton for the menu row); the responsive show / hide hooks sit on a wrapper span where the kit button
+// sets its own display.
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -13,7 +16,8 @@ import { usePathname } from "next/navigation";
 import { ChevronDown, LogOut, Menu, Monitor, Moon, Search, Settings, Sun, CreditCard } from "lucide-react";
 import { signOutEverywhere } from "@/lib/studio/signOut";
 import {
-  Breadcrumb, K, SkeletonBar, SkeletonStyle, sans, serif, useT, useThemeChoice, type ThemeChoice, type Translator,
+  Breadcrumb, IconButton, K, ListButton, Pressable, SkeletonBar, SkeletonStyle, alpha, sans, serif, useT, useThemeChoice,
+  type ThemeChoice, type Translator,
 } from "@/app/_kit";
 import { LocaleSwitch } from "@/components/LocaleSwitch";
 import { PRIVACY_PATH, TERMS_PATH } from "@/lib/studio/legal";
@@ -25,12 +29,15 @@ import { useStudioLocale } from "./StudioLang";
 
 type T = Translator<typeof STUDIO_MESSAGES.en>;
 
-export function PortalTopbar({ tenantName, planTier, activity, onOpenSearch, onOpenMenu }: {
+export function PortalTopbar({ tenantName, planTier, activity, onOpenSearch, onOpenMenu, menuControls, menuExpanded }: {
   tenantName: string;
   planTier: string;
   activity: ShellActivityView[];
   onOpenSearch: () => void;
   onOpenMenu: () => void;
+  /** The drawer's id and state (the kit ShellFrame), for the menu button's aria-controls / aria-expanded. */
+  menuControls?: string;
+  menuExpanded?: boolean;
 }) {
   const t = useT(STUDIO_MESSAGES);
   const pathname = usePathname();
@@ -46,20 +53,24 @@ export function PortalTopbar({ tenantName, planTier, activity, onOpenSearch, onO
         fontFamily: sans, minWidth: 0,
       }}
     >
-      <button data-pshell="menu-btn" onClick={onOpenMenu} aria-label={t("openMenu")} style={iconBtn}>
-        <Menu size={18} />
-      </button>
+      <span data-pshell="menu-btn">
+        <IconButton variant="plain" size="lg" label={t("openMenu")} title="" onClick={onOpenMenu}
+          aria-controls={menuControls} aria-expanded={menuExpanded}>
+          <Menu size={18} />
+        </IconButton>
+      </span>
 
       <Breadcrumb root={t(pageGroup(pathname))} title={title ? t(title) : ""} fontSize={12.5} />
 
-      <button
+      {/* A trigger that looks like a search field: the kit Pressable (no look of its own) with the pill style. */}
+      <Pressable
         data-pshell="search-pill"
         onClick={onOpenSearch}
         aria-label={t("searchAria")}
         style={{
-          display: "flex", alignItems: "center", gap: 8, maxWidth: 380, flex: 1, minWidth: 0,
+          display: "flex", alignItems: "center", gap: 8, maxWidth: 380, flex: 1, minWidth: 0, width: "auto",
           margin: "0 auto", padding: "7px 12px", borderRadius: 999, border: `1px solid ${K.line}`,
-          background: K.bg, color: K.muted, cursor: "pointer", fontFamily: sans, fontSize: 13,
+          background: K.bg, color: K.muted, fontFamily: sans, fontSize: 13,
         }}
       >
         <Search size={15} style={{ flexShrink: 0 }} />
@@ -69,14 +80,16 @@ export function PortalTopbar({ tenantName, planTier, activity, onOpenSearch, onO
         <kbd style={{ fontSize: 11, color: K.muted, border: `1px solid ${K.line}`, borderRadius: 6, padding: "1px 6px", background: K.card, flexShrink: 0, fontFamily: sans }}>
           {isMac ? "⌘K" : "Ctrl K"}
         </kbd>
-      </button>
+      </Pressable>
 
       <span data-pshell="spacer" style={{ flex: 1 }} />
 
       <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-        <button data-pshell="search-icon" onClick={onOpenSearch} aria-label={t("search")} style={iconBtn}>
-          <Search size={18} />
-        </button>
+        <span data-pshell="search-icon">
+          <IconButton variant="plain" size="lg" label={t("search")} title="" onClick={onOpenSearch}>
+            <Search size={18} />
+          </IconButton>
+        </span>
         <ThemeToggle t={t} />
         <NotificationsBell activity={activity} />
         <AccountMenu t={t} tenantName={tenantName} planTier={planTier} />
@@ -84,11 +97,6 @@ export function PortalTopbar({ tenantName, planTier, activity, onOpenSearch, onO
     </header>
   );
 }
-
-const iconBtn: React.CSSProperties = {
-  alignItems: "center", justifyContent: "center", width: 36, height: 36, borderRadius: 8,
-  border: "none", background: "transparent", color: K.ink3, cursor: "pointer", flexShrink: 0,
-};
 
 // ── Theme switch (same cycle as the admin topbar: light → dark → system) ─────
 const THEME_OPTIONS: { key: ThemeChoice; label: StudioKey; icon: React.ReactNode }[] = [
@@ -103,15 +111,17 @@ function ThemeToggle({ t }: { t: T }) {
   const cur = THEME_OPTIONS[i];
   const next = THEME_OPTIONS[(i + 1) % THEME_OPTIONS.length];
   return (
-    <button
+    <IconButton
+      variant="plain"
+      size="lg"
       onClick={() => setChoice(next.key)}
-      data-testid="portal-theme-toggle"
+      testId="portal-theme-toggle"
       title={t("themeTitle", t(cur.label), t(next.label))}
-      aria-label={t("themeAria", t(cur.label), t(next.label))}
-      style={{ ...iconBtn, display: "flex", color: choice === "system" ? K.muted : K.accent }}
+      label={t("themeAria", t(cur.label), t(next.label))}
+      style={{ color: choice === "system" ? K.muted : K.accent }}
     >
       {cur.icon}
-    </button>
+    </IconButton>
   );
 }
 
@@ -143,14 +153,15 @@ function AccountMenu({ t, tenantName, planTier }: { t: T; tenantName: string; pl
 
   return (
     <div ref={ref} style={{ position: "relative" }}>
-      <button
+      <Pressable
+        display="inline"
         onClick={() => setOpen((v) => !v)}
         aria-label={t("accountMenu")}
         aria-expanded={open}
         aria-haspopup="menu"
         style={{
-          display: "flex", alignItems: "center", gap: 8, padding: "3px 8px 3px 3px", borderRadius: 999,
-          border: `1px solid ${K.line}`, background: K.card, cursor: "pointer", fontFamily: sans,
+          gap: 8, padding: "3px 8px 3px 3px", borderRadius: 999,
+          border: `1px solid ${K.line}`, background: K.card, fontFamily: sans,
         }}
       >
         {/* AA-760 — while /api/tenant/me loads (tenantName ""), a skeleton pill instead of the generic
@@ -159,7 +170,7 @@ function AccountMenu({ t, tenantName, planTier }: { t: T; tenantName: string; pl
           <>
             <span aria-hidden style={{
               width: 28, height: 28, borderRadius: "50%", background: K.accent, display: "grid", placeItems: "center",
-              color: "var(--aa-on-accent)", fontWeight: 700, fontSize: 11.5,
+              color: K.onAccent, fontWeight: 700, fontSize: 11.5,
             }}>{initials}</span>
             <span data-pshell="account-name" style={{ fontSize: 13, fontWeight: 500, color: K.ink, maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {tenantName}
@@ -173,12 +184,12 @@ function AccountMenu({ t, tenantName, planTier }: { t: T; tenantName: string; pl
           </>
         )}
         <ChevronDown size={14} style={{ color: K.muted2 }} />
-      </button>
+      </Pressable>
       {open && (
         <div role="menu" aria-label={t("account")} style={{
           position: "absolute", top: "100%", right: 0, marginTop: 6, width: 220, zIndex: 100,
           background: K.card, border: `1px solid ${K.line}`, borderRadius: 10,
-          boxShadow: "0 12px 32px rgba(0,0,0,0.18)", overflow: "hidden",
+          boxShadow: `0 12px 32px ${alpha(K.ink, 18)}`, overflow: "hidden",
         }}>
           <div style={{ padding: "10px 14px", borderBottom: `1px solid ${K.line}` }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: K.ink, fontFamily: serif, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tenantName}</div>
@@ -186,10 +197,10 @@ function AccountMenu({ t, tenantName, planTier }: { t: T; tenantName: string; pl
           </div>
           <MenuLink href={ROUTES.settings} icon={<Settings size={15} />} label={t("navSettings")} onClick={() => setOpen(false)} />
           <MenuLink href={ROUTES.billing} icon={<CreditCard size={15} />} label={t("navBilling")} onClick={() => setOpen(false)} />
-          <button role="menuitem" onClick={logout} style={menuRow}>
+          <ListButton role="menuitem" onClick={logout} style={{ gap: 10, padding: "9px 14px", color: K.ink3, fontSize: 13 }}>
             <span style={{ color: K.muted2, display: "flex" }}><LogOut size={15} /></span>
             {t("signOut")}
-          </button>
+          </ListButton>
           <div data-testid="portal-locale" style={{ padding: "8px 14px", borderTop: `1px solid ${K.line}` }}>
             <LocaleSwitch locale={locale} label={t("language")} next={pathname} compact example={t("dateExample")} />
           </div>

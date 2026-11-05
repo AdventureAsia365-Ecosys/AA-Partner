@@ -7,7 +7,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
-import { K, sans, useT } from "@/app/_kit";
+import { K, Pressable, sans, useT } from "@/app/_kit";
 import { BOTTOM_ITEMS, navActive } from "./portalNav";
 import { STUDIO_MESSAGES } from "./studio.messages";
 
@@ -25,10 +25,11 @@ export function PortalBottomNav({ onOpenMore }: { onOpenMore: () => void }) {
           </Link>
         );
       })}
-      <button onClick={onOpenMore} aria-label={t("navMoreAria")} style={btn(false)}>
+      {/* A bar cell like the links beside it: the kit Pressable (no look of its own) with the cell style. */}
+      <Pressable onClick={onOpenMore} aria-label={t("navMoreAria")} style={btn(false)}>
         <Menu size={18} aria-hidden />
         <span style={{ fontSize: 10.5, fontWeight: 500 }}>{t("navMore")}</span>
-      </button>
+      </Pressable>
     </nav>
   );
 }

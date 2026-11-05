@@ -10,6 +10,10 @@
 // AA-1036 (R3 slice 1, root ADR 0019 d7): the Content studio group is the app switcher ("Apps"): the Content studio
 // when the person may open it, and the add-ons the CRM cannot open yet with "Request add-on" (lib/apps.ts). Links
 // between apps stay plain <a> (a full page load).
+// AA-1008 (S6e, root ADR 0016 decision 1): the frame is the kit core ShellFrame (layout, the drawer below 900 px with
+// its backdrop and Esc, the <main>, the footer slot; scroll "document": the page scrolls and the sidebar stays in
+// view); this file is the CRM configuration of it: the sidebar, the topbar and the footer. Buttons are kit
+// IconButtons and colours are K tokens (aa-kit lint, no suppressions).
 
 import {
   BookOpen,
@@ -43,8 +47,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
-import { K, NavGroup, ToastProvider, useNavGroups, useThemeChoice, type ThemeChoice } from "@/app/_kit";
+import { IconButton, K, NavGroup, ShellFrame, ToastProvider, useNavGroups, useThemeChoice, type ThemeChoice } from "@/app/_kit";
 import type { DateLocale } from "@/lib/dates";
 import { CRM_TERMS_PATH } from "@/lib/legal";
 import type { MessageKey } from "@/lib/i18n";
@@ -120,24 +123,19 @@ function ThemeButton({ label }: { label: string }) {
   const [choice, setChoice] = useThemeChoice();
   const Icon = choice === "light" ? Sun : choice === "dark" ? Moon : SunMoon;
   return (
-    <button
-      type="button"
-      onClick={() => setChoice(THEME_NEXT[choice])}
-      title={`${label}: ${choice}`}
-      aria-label={`${label}: ${choice}`}
-      style={{ ...iconButton, display: "inline-flex" }}
-    >
+    <IconButton label={`${label}: ${choice}`} onClick={() => setChoice(THEME_NEXT[choice])}>
       <Icon size={16} />
-    </button>
+    </IconButton>
   );
 }
 
-// No `display` here: the menu buttons are shown / hidden by CSS (app/globals.css), and an inline display would win.
-const iconButton: React.CSSProperties = {
+// The bell's trigger keeps the look of the kit IconButton "outline" at its md size (the bell renders its own button:
+// it carries the unseen count badge).
+const bellButton: React.CSSProperties = {
   alignItems: "center",
   justifyContent: "center",
-  width: 34,
-  height: 34,
+  width: 32,
+  height: 32,
   borderRadius: 8,
   border: `1px solid ${K.line}`,
   background: K.card,
@@ -145,145 +143,139 @@ const iconButton: React.CSSProperties = {
   cursor: "pointer",
 };
 
-export function CrmShell({
+function CrmSidebar({
   dict,
   role,
   agencyName,
   agencyCount,
   contentStudioHref,
   plannerHref,
-  locale,
   syntheticBadge,
-  children,
-}: ShellProps) {
-  const pathname = usePathname() ?? "/";
-  const [open, setOpen] = useState(false);
+  pathname,
+  onClose,
+}: Omit<ShellProps, "children" | "locale"> & { pathname: string; onClose: () => void }) {
   const sections = visibleSections(role);
-  const close = () => setOpen(false);
   const activeGroup = sections.find((s) => isActive(s, pathname))?.group ?? null;
   const navGroups = useNavGroups("crm-web", activeGroup, pathname);
+  return (
+    <nav data-crm="sidebar" aria-label={dict["app.name"]}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 18px 6px" }}>
+        <span style={{ fontFamily: "var(--font-display, 'Fahkwang', serif)", fontSize: 18, color: K.accent }}>
+          {dict["app.short"]}
+        </span>
+        <span data-crm="menu-button">
+          <IconButton label={dict["shell.closeMenu"]} variant="plain" onClick={onClose} style={{ color: K.sideText }}>
+            <X size={18} />
+          </IconButton>
+        </span>
+      </div>
+      <div
+        data-testid="crm-agency"
+        style={{
+          margin: "8px 12px 6px",
+          padding: "9px 12px",
+          borderRadius: 8,
+          background: K.sidePanel,
+          color: K.sideTitle,
+          display: "grid",
+          gap: 2,
+        }}
+      >
+        <span style={{ fontWeight: 600, fontSize: 13, overflowWrap: "anywhere" }}>{agencyName}</span>
+        <span style={{ fontSize: 11, color: K.sideText2 }}>
+          {dict[`role.${role}` as MessageKey]}
+          {syntheticBadge ? ` · ${dict["shell.synthetic"]}` : ""}
+        </span>
+        {agencyCount > 1 && (
+          <Link href="/select-agency?manual=1" style={{ fontSize: 11, color: K.accent, textDecoration: "none" }}>
+            {dict["shell.switchAgency"]}
+          </Link>
+        )}
+      </div>
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+      {GROUP_ORDER.map((group) => {
+        if (group === "studio") {
+          if (!contentStudioHref) return null; // AA-1036 (R3): both entries need studio access
+          return (
+            <NavGroup
+              key={group}
+              id={group}
+              label={dict["nav.group.studio"]}
+              open={navGroups.isOpen(group)}
+              onToggle={() => navGroups.toggle(group)}
+              testId={`crm-nav-group-${group}`}
+              style={{ borderTop: `1px solid ${K.sidePanel}`, marginTop: 8 }}
+              headerStyle={groupHeaderStyle}
+              itemsStyle={{ gap: 0 }}
+            >
+              {contentStudioHref && (
+                <a href={contentStudioHref} data-crm="nav-item" data-testid="crm-studio-link">
+                  <Palette size={16} aria-hidden />
+                  <span>{dict["nav.studio"]}</span>
+                  <ExternalLink size={12} aria-hidden style={{ marginLeft: "auto", opacity: 0.7 }} />
+                </a>
+              )}
+              {plannerHref && (
+                <a href={plannerHref} data-crm="nav-item" data-testid="crm-app-planner" data-app-state="request">
+                  <MapIcon size={16} aria-hidden />
+                  <span>{dict["nav.planner.request"]}</span>
+                  <Plus size={12} aria-hidden style={{ marginLeft: "auto", opacity: 0.7 }} />
+                </a>
+              )}
+            </NavGroup>
+          );
+        }
+        const items = sections.filter((s) => s.group === group);
+        if (items.length === 0) return null;
+        const title = GROUP_LABEL[group];
+        return (
+          <NavGroup
+            key={group}
+            id={group}
+            label={title ? dict[title] : null}
+            open={navGroups.isOpen(group)}
+            onToggle={() => navGroups.toggle(group)}
+            active={group === activeGroup}
+            testId={`crm-nav-group-${group}`}
+            style={group === "settings" ? { marginTop: "auto", paddingBottom: 12 } : undefined}
+            headerStyle={groupHeaderStyle}
+            itemsStyle={{ gap: 0 }}
+          >
+            {items.map((s) => (
+              <NavLink key={s.key} section={s} dict={dict} pathname={pathname} onNavigate={onClose} />
+            ))}
+          </NavGroup>
+        );
+      })}
+    </nav>
+  );
+}
 
+export function CrmShell({ children, locale, ...props }: ShellProps) {
+  const pathname = usePathname() ?? "/";
+  const { dict } = props;
   return (
     <ToastProvider>
-      <div data-crm="frame" data-open={open ? "true" : "false"}>
-        <nav data-crm="sidebar" aria-label={dict["app.name"]} id="crm-sidebar">
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 18px 6px" }}>
-            <span style={{ fontFamily: "var(--font-display, 'Fahkwang', serif)", fontSize: 18, color: K.accent }}>
-              {dict["app.short"]}
-            </span>
-            <button
-              type="button"
-              data-crm="menu-button"
-              onClick={close}
-              aria-label={dict["shell.closeMenu"]}
-              style={{ ...iconButton, background: "transparent", border: "none", color: "var(--aa-side-text)" }}
-            >
-              <X size={18} />
-            </button>
-          </div>
-          <div
-            data-testid="crm-agency"
-            style={{
-              margin: "8px 12px 6px",
-              padding: "9px 12px",
-              borderRadius: 8,
-              background: "var(--aa-side-panel)",
-              color: "var(--aa-side-title)",
-              display: "grid",
-              gap: 2,
-            }}
-          >
-            <span style={{ fontWeight: 600, fontSize: 13, overflowWrap: "anywhere" }}>{agencyName}</span>
-            <span style={{ fontSize: 11, color: "var(--aa-side-text2)" }}>
-              {dict[`role.${role}` as MessageKey]}
-              {syntheticBadge ? ` · ${dict["shell.synthetic"]}` : ""}
-            </span>
-            {agencyCount > 1 && (
-              <Link href="/select-agency?manual=1" style={{ fontSize: 11, color: K.accent, textDecoration: "none" }}>
-                {dict["shell.switchAgency"]}
-              </Link>
-            )}
-          </div>
-
-          {GROUP_ORDER.map((group) => {
-            if (group === "studio") {
-              if (!contentStudioHref) return null; // AA-1036 (R3): both entries need studio access
-              return (
-                <NavGroup
-                  key={group}
-                  id={group}
-                  label={dict["nav.group.studio"]}
-                  open={navGroups.isOpen(group)}
-                  onToggle={() => navGroups.toggle(group)}
-                  testId={`crm-nav-group-${group}`}
-                  style={{ borderTop: "1px solid var(--aa-side-panel)", marginTop: 8 }}
-                  headerStyle={groupHeaderStyle}
-                  itemsStyle={{ gap: 0 }}
-                >
-                  {contentStudioHref && (
-                    <a href={contentStudioHref} data-crm="nav-item" data-testid="crm-studio-link">
-                      <Palette size={16} aria-hidden />
-                      <span>{dict["nav.studio"]}</span>
-                      <ExternalLink size={12} aria-hidden style={{ marginLeft: "auto", opacity: 0.7 }} />
-                    </a>
-                  )}
-                  {plannerHref && (
-                    <a href={plannerHref} data-crm="nav-item" data-testid="crm-app-planner" data-app-state="request">
-                      <MapIcon size={16} aria-hidden />
-                      <span>{dict["nav.planner.request"]}</span>
-                      <Plus size={12} aria-hidden style={{ marginLeft: "auto", opacity: 0.7 }} />
-                    </a>
-                  )}
-                </NavGroup>
-              );
-            }
-            const items = sections.filter((s) => s.group === group);
-            if (items.length === 0) return null;
-            const title = GROUP_LABEL[group];
-            return (
-              <NavGroup
-                key={group}
-                id={group}
-                label={title ? dict[title] : null}
-                open={navGroups.isOpen(group)}
-                onToggle={() => navGroups.toggle(group)}
-                active={group === activeGroup}
-                testId={`crm-nav-group-${group}`}
-                style={group === "settings" ? { marginTop: "auto", paddingBottom: 12 } : undefined}
-                headerStyle={groupHeaderStyle}
-                itemsStyle={{ gap: 0 }}
-              >
-                {items.map((s) => (
-                  <NavLink key={s.key} section={s} dict={dict} pathname={pathname} onNavigate={close} />
-                ))}
-              </NavGroup>
-            );
-          })}
-        </nav>
-        <div data-crm="backdrop" onClick={close} aria-hidden="true" />
-
-        <div data-crm="main-col">
+      <ShellFrame
+        drawerBelow={900}
+        scroll="document"
+        sidebarId="crm-sidebar"
+        mainId="main"
+        frameProps={{ "data-crm": "frame" }}
+        mainProps={{ "data-crm": "main" }}
+        sidebar={(c) => <CrmSidebar {...props} pathname={pathname} onClose={c.closeDrawer} />}
+        topbar={(c) => (
           <header data-crm="topbar">
-            <button
-              type="button"
-              data-crm="menu-button"
-              onClick={() => setOpen(true)}
-              aria-label={dict["shell.menu"]}
-              aria-controls="crm-sidebar"
-              aria-expanded={open}
-              style={iconButton}
-            >
-              <Menu size={18} />
-            </button>
+            <span data-crm="menu-button">
+              <IconButton
+                label={dict["shell.menu"]}
+                onClick={c.openDrawer}
+                aria-controls={c.sidebarId}
+                aria-expanded={c.drawerOpen}
+              >
+                <Menu size={18} />
+              </IconButton>
+            </span>
             <div
               data-crm="search"
               title={dict["shell.searchSoon"]}
@@ -305,30 +297,26 @@ export function CrmShell({
             <div data-crm="hide-phone">
               <LocaleSwitch locale={locale} label={dict["shell.language"]} next={pathname} compact />
             </div>
-            <BellMenu dict={dict} buttonStyle={iconButton} />
+            <BellMenu dict={dict} buttonStyle={bellButton} />
             <ThemeButton label={dict["shell.theme"]} />
             <form action="/auth/sign-out" method="post">
-              <button
-                type="submit"
-                title={dict["shell.signOut"]}
-                aria-label={dict["shell.signOut"]}
-                style={{ ...iconButton, display: "inline-flex" }}
-              >
+              <IconButton type="submit" label={dict["shell.signOut"]} title={dict["shell.signOut"]}>
                 <LogOut size={16} />
-              </button>
+              </IconButton>
             </form>
           </header>
-          <main data-crm="main" id="main">
-            {children}
-          </main>
-          {/* AA-1033: the terms of use (its AI section) from every agency page; /legal/terms, never /terms (lib/legal.ts). */}
+        )}
+        footer={
+          // AA-1033: the terms of use (its AI section) from every agency page; /legal/terms, never /terms (lib/legal.ts).
           <footer data-crm="footer">
             <Link href={CRM_TERMS_PATH} data-testid="crm-footer-terms">
               {dict["terms.link"]}
             </Link>
           </footer>
-        </div>
-      </div>
+        }
+      >
+        {children}
+      </ShellFrame>
     </ToastProvider>
   );
 }

@@ -1,6 +1,7 @@
 // web/app/(crm)/settings/team/page.tsx — A-18 Settings > Team & roles (AA-939, card CRM-11; design v3 §4.6). Owner
 // only (the permission matrix: team_view / team_manage / reassign are the owner's); an agent or assistant sees who
 // manages the team instead of the page. Members, invitations, the plan and the reassign queue come from /crm/v1.
+import Link from "next/link";
 import { ErrorState, K } from "@/app/_kit";
 import { PageTitle, Panel } from "@/components/PageTitle";
 import { TeamAdmin } from "@/components/team/TeamAdmin";
@@ -16,9 +17,9 @@ export default async function TeamSettingsPage() {
   const ctx = await crmContext();
   if (ctx.apiDown) return null;
   const back = (
-    <a href="/settings" style={{ fontSize: 13 }}>
+    <Link href="/settings" style={{ fontSize: 13 }}>
       ← {t(ctx.lang, "settings.title")}
-    </a>
+    </Link>
   );
   if (ctx.role !== "owner") {
     return (

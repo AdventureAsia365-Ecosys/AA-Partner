@@ -471,7 +471,7 @@ export function LinesPanel({
         )}
         {own.length === 0 && (
           <p style={{ margin: "8px 0 0", fontSize: 12.5, color: K.muted }}>
-            <a href="/suppliers">{tr("ledger.addSupplierFirst")}</a>
+            <Link href="/suppliers">{tr("ledger.addSupplierFirst")}</Link>
           </p>
         )}
       </div>

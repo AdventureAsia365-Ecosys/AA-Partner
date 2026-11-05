@@ -2,6 +2,7 @@
 // hosted link on the client host and the iframe embed code; the owner creates forms, turns them on or off and lists
 // the websites allowed to frame them (CSP frame-ancestors on the form page). AA-943 (CRM-15): the owner's pipeline
 // settings (timezone, Stage 2 auto-send, call windows; GET / PUT /settings/pipeline, owner only).
+import Link from "next/link";
 import { ErrorState } from "@/app/_kit";
 import { FormsAdmin, PipelineSettingsPanel, type FormRow } from "@/components/pipeline/FormsAdmin";
 import { PageTitle } from "@/components/PageTitle";
@@ -24,9 +25,9 @@ export default async function FormsPage() {
   ]);
   return (
     <div data-testid="crm-settings-forms" style={{ display: "grid", gap: 14, maxWidth: 900 }}>
-      <a href="/settings" style={{ fontSize: 13 }}>
+      <Link href="/settings" style={{ fontSize: 13 }}>
         ← {t(ctx.lang, "settings.title")}
-      </a>
+      </Link>
       <PageTitle title={t(ctx.lang, "forms.title")} subtitle={t(ctx.lang, "forms.subtitle")} />
       {!res || !res.ok ? (
         <ErrorState message={t(ctx.lang, "error.api")} />

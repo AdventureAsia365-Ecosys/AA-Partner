@@ -1,6 +1,7 @@
 // web/app/(crm)/bookings/page.tsx — A-11 Bookings (AA-944, card CRM-16; design v3 M6, R18): every booking line across
 // the agency's trips with a status filter. Only confirmed lines count in the totals (base currency, frozen amounts);
 // planning sell shows as pipeline value. Totals, cost and margin come only for owner and agent (the API decides).
+import Link from "next/link";
 import { Badge, ErrorState, K } from "@/app/_kit";
 import { Panel, PageTitle } from "@/components/PageTitle";
 import { crmCall } from "@/lib/crmApi";
@@ -76,9 +77,9 @@ export default async function BookingsPage({ searchParams }: { searchParams: Pro
         </Panel>
       )}
       <nav style={{ display: "flex", gap: 10, fontSize: 13 }} aria-label={tr("ledger.col.status")}>
-        <a href="/bookings" aria-current={status === null ? "page" : undefined}>
+        <Link href="/bookings" aria-current={status === null ? "page" : undefined}>
           {tr("ledger.filter.all")}
-        </a>
+        </Link>
         {STATUSES.map((s) => (
           <a key={s} href={`/bookings?status=${s}`} aria-current={status === s ? "page" : undefined}>
             {tr(`ledger.status.${s}`)}
