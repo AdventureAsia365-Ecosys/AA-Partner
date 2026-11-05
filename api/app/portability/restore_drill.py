@@ -24,8 +24,14 @@ Steps, in one transaction of the agency (:func:`app.tenancy.lifecycle_tx`, actor
 4. **compare row counts**: per table the manifest's count, the restored count, the live count now (``crm.<table>``
    under the agency's row security) and how many restored primary keys still exist live.
 
-Pass (exit 0): both digests and every checksum match, and for every table restored = manifest. The live counts are
-reported, not judged: the agency kept working after the export. Output: one JSON object of ids, table names and counts
+Pass (``ok``): both digests and every checksum match, and for every table restored = manifest. The live counts are
+reported, not judged: the agency kept working after the export. ``complete`` is stricter: ``ok`` and no document of the
+agency left out of the backup for a reason that loses it (``documents.skipped_by_reason``: past the export's size cap,
+its object missing or damaged, documents not configured; the documents of S3 are sealed under the agency keys, so a
+document the backup does not hold cannot be recovered from it). Exit 0 = complete, 3 = the rows restored but the
+backup is incomplete, 1 = failed. ``not_in_backup`` lists what the export never holds (vendor credentials, the agency
+keys, the audit log, blind indexes and token columns: :mod:`app.portability.tables`); the runbook says how a restore
+gets each back. Output: one JSON object of ids, table names and counts
 (never a value of a row, so the drill reads no personal data out of the container; root ``.claude/hooks`` and the Infra
 run-script guard keep agent reads to counts too). The drill writes one ``restore_drill`` audit event in the agency's
 log and nothing else.
@@ -35,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import csv
 import hashlib
 import io
 import json
@@ -88,6 +95,13 @@ KEPT_TYPES = frozenset(
         "json",
     }
 )
+
+
+# A document the backup should hold but does not: the backup cannot bring it back.
+INCOMPLETE_DOCUMENT_REASONS = frozenset(
+    {"skipped_size_cap", "object_missing", "skipped_integrity", "documents_not_configured"}
+)
+DOCUMENTS_MANIFEST = "documents/manifest.csv"
 
 
 @dataclass
@@ -145,6 +159,41 @@ def verify_zip(content: bytes) -> tuple[zipfile.ZipFile, dict[str, Any], int]:
     if not isinstance(manifest.get("tables"), list):
         raise DrillError("zip_shape")
     return zf, manifest, checked
+
+
+def document_skips(zf: zipfile.ZipFile, manifest: dict[str, Any]) -> dict[str, int]:
+    """How many documents the export left out, per ``skipped_reason`` of ``documents/manifest.csv`` (checksummed)."""
+    path = str((manifest.get("documents") or {}).get("manifest") or DOCUMENTS_MANIFEST)
+    try:
+        text = zf.read(path).decode("utf-8-sig")  # the export CSVs start with a BOM
+    except KeyError:
+        return {}
+    counts: dict[str, int] = {}
+    for line in csv.DictReader(io.StringIO(text)):
+        if str(line.get("included", "")).strip().lower() in ("true", "1"):
+            continue
+        reason = (line.get("skipped_reason") or "unknown").strip() or "unknown"
+        counts[reason] = counts.get(reason, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def lost_documents(skips: dict[str, int]) -> int:
+    return sum(n for reason, n in skips.items() if reason in INCOMPLETE_DOCUMENT_REASONS or reason == "unknown")
+
+
+def not_in_backup() -> dict[str, list[str]]:
+    """What a portability export never holds (so neither does the nightly backup)."""
+    return {
+        "tables": sorted(T.NEVER_EXPORT_TABLES),
+        "columns": sorted(T.NEVER_EXPORT_COLUMNS) + ["*_bidx"],
+    }
+
+
+def exit_code(report: dict[str, Any]) -> int:
+    """0 = complete, 3 = every table restored but documents are missing from the backup, 1 = failed."""
+    if not report.get("ok"):
+        return 1
+    return 0 if report.get("complete") else 3
 
 
 async def _export_row(ctx: LifecycleContext, export_id: uuid.UUID | None) -> Any:
@@ -226,22 +275,27 @@ async def drill(
             results.append(await restore_table(ctx, n, entry, rows, pks.get(str(entry["table"]), ())))
             del rows
         ok = all(r.ok for r in results)
-        ctx.audit(
-            "restore_drill", "allowed", "export_job", str(row["export_job_id"]), reason="ok" if ok else "mismatch"
-        )
+        skips = document_skips(zf, manifest)
+        lost = lost_documents(skips)
+        complete = ok and lost == 0
+        reason = "mismatch" if not ok else ("ok" if complete else "incomplete_documents")
+        ctx.audit("restore_drill", "allowed", "export_job", str(row["export_job_id"]), reason=reason)
     return {
         "tenant_id": str(tenant_id),
         "export_id": str(row["export_job_id"]),
         "export_completed_at": row["completed_at"].isoformat(),
         "schema_version": manifest.get("schema_version"),
         "checksums_verified": checked,
-        "documents": {k: manifest.get("documents", {}).get(k) for k in ("included", "skipped")},
+        "documents": {k: manifest.get("documents", {}).get(k) for k in ("included", "skipped", "max_bytes")}
+        | {"skipped_by_reason": skips, "lost": lost},
         "tables": [asdict(r) | {"ok": r.ok} for r in results],
         "table_count": len(results),
         "manifest_rows": sum(r.manifest_rows for r in results),
         "restored_rows": sum(r.restored_rows for r in results),
         "mismatched_tables": [r.table for r in results if not r.ok],
         "ok": ok,
+        "complete": complete,
+        "not_in_backup": not_in_backup(),
     }
 
 
@@ -294,7 +348,7 @@ async def _main(argv: list[str]) -> int:  # pragma: no cover — the container e
     finally:
         await pool.close()
     print(json.dumps(report, sort_keys=True))
-    return 0 if report["ok"] else 1
+    return exit_code(report)
 
 
 def cli(argv: list[str] | None = None) -> int:  # pragma: no cover

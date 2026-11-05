@@ -114,6 +114,8 @@ async def test_the_nightly_backup_restores_with_equal_counts(app_pool: asyncpg.P
 
         report = await rd.drill(app_pool, keys, store, a["tenant"])
         assert report["ok"] is True and report["export_id"] == str(export_id) and report["mismatched_tables"] == []
+        assert report["complete"] is True and report["documents"]["lost"] == 0 and rd.exit_code(report) == 0
+        assert "tenant_key" in report["not_in_backup"]["tables"]
         by_table = {t["table"]: t for t in report["tables"]}
         assert {"traveler", "trip", "member", "form_submission"} <= set(by_table)
         for t in report["tables"]:

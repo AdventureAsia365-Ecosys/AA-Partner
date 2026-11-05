@@ -181,6 +181,40 @@ def test_verify_zip_checks_every_listed_file() -> None:
         rd.verify_zip(broken.getvalue())
 
 
+def _docs_csv(*lines: tuple[str, str]) -> bytes:
+    body = "".join(f"d{n},invented-{n}.pdf,{inc},{why}\r\n" for n, (inc, why) in enumerate(lines))
+    return ("\ufeffdocument_id,file_name,included,skipped_reason\r\n" + body).encode("utf-8")
+
+
+def test_document_skips_count_by_reason_and_only_losses_make_a_backup_incomplete() -> None:
+    manifest = json.loads(MANIFEST) | {"documents": {"manifest": "documents/manifest.csv"}}
+    csv_bytes = _docs_csv(
+        ("true", ""),
+        ("false", "skipped_size_cap"),
+        ("false", "skipped_size_cap"),
+        ("false", "no_object"),
+        ("false", "object_missing"),
+        ("false", "skipped_integrity"),
+    )
+    zf, manifest, _ = rd.verify_zip(_zip({"manifest.json": json.dumps(manifest).encode(),
+                                          "documents/manifest.csv": csv_bytes}))  # fmt: skip
+    skips = rd.document_skips(zf, manifest)
+    assert skips == {"no_object": 1, "object_missing": 1, "skipped_integrity": 1, "skipped_size_cap": 2}
+    assert rd.lost_documents(skips) == 4  # a document row that never had an object is not a loss of the backup
+    assert rd.lost_documents({"no_object": 3}) == 0
+    assert rd.lost_documents({"unknown": 1}) == 1  # fail closed on a reason the drill does not know
+    assert rd.document_skips(zipfile.ZipFile(io.BytesIO(_zip({"manifest.json": MANIFEST.encode()}))), {}) == {}
+
+
+def test_exit_code_and_what_the_backup_never_holds() -> None:
+    assert rd.exit_code({"ok": True, "complete": True}) == 0
+    assert rd.exit_code({"ok": True, "complete": False}) == 3
+    assert rd.exit_code({"ok": False, "complete": False}) == 1
+    held_out = rd.not_in_backup()
+    assert {"tenant_key", "integration_credential", "audit_event"} <= set(held_out["tables"])
+    assert "*_bidx" in held_out["columns"] and "wrapped_dek" in held_out["columns"]
+
+
 def test_a_table_passes_when_restored_equals_the_manifest() -> None:
     assert rd.TableResult("note", 3, 3, 4, 3).ok
     assert not rd.TableResult("note", 3, 2, 3, 2).ok

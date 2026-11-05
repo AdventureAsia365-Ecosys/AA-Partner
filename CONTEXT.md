@@ -2412,7 +2412,10 @@ entitlements). `crm_entitlement_pull` (`app/cis/entitlement_feed.py`) makes `crm
   `crm_pilot_backup` exports it every night (above); `python -m app.portability.restore_drill` (inside the API
   container) opens the newest nightly export, checks both digests and every checksum, restores every table into
   temporary tables (`pg_temp`, dropped at commit) and prints per-table counts (manifest / restored / live / primary
-  keys still live), exit 0 when restored = manifest everywhere; runbook: root
+  keys still live) and the documents the export left out per reason; `ok` when restored = manifest everywhere,
+  `complete` when also no document was lost (past the size cap, missing, damaged): exit 0 complete, 3 restored but
+  incomplete, 1 failed; `not_in_backup` lists what an export never holds (vendor credentials, agency keys, audit log,
+  blind indexes); runbook: root
   `docs/ops/runbooks/pilot-tenant-restore-drill.md`. Kept as is (no pilot skip, reasons in
   `docs/implementation-notes/AA-969-l1-aa969-d16.md`): `crm_partner_accounts` (deletes only accounts no member or live
   invitation needs), `crm_job_retention` (job rows, not agency data), `crm_stage_date_rule`'s e-mail code expiry, the
