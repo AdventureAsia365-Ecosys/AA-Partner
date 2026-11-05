@@ -1,0 +1,52 @@
+{
+  "contract": "tenant.addons.v1",
+  "schema": "AddOnList",
+  "expect": "valid",
+  "why": "An agency with the CRM on and a pending Trip planner request (its last one was declined with a reason)",
+  "payload": {
+    "in_service": true,
+    "add_ons": [
+      {
+        "product": "crm",
+        "state": "active",
+        "subscription_status": "trialing",
+        "request": null,
+        "last_decision": {
+          "request_id": "4c1d2e3f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+          "product": "crm",
+          "status": "approved",
+          "note": null,
+          "requested_at": "2026-11-20T08:00:00.000000Z",
+          "decided_at": "2026-11-20T09:30:00.000000Z",
+          "decision_note": null,
+          "setup": "done"
+        }
+      },
+      {
+        "product": "tripplanner",
+        "state": "requested",
+        "subscription_status": null,
+        "request": {
+          "request_id": "5d2e3f4a-6b7c-4d8e-9fa0-1b2c3d4e5f60",
+          "product": "tripplanner",
+          "status": "pending",
+          "note": "We would like a planner for our walking tours.",
+          "requested_at": "2026-11-21T10:00:00.000000Z",
+          "decided_at": null,
+          "decision_note": null,
+          "setup": null
+        },
+        "last_decision": {
+          "request_id": "6e3f4a5b-7c8d-4e9f-a0b1-2c3d4e5f6071",
+          "product": "tripplanner",
+          "status": "declined",
+          "note": null,
+          "requested_at": "2026-11-10T10:00:00.000000Z",
+          "decided_at": "2026-11-11T10:00:00.000000Z",
+          "decision_note": "Please finish the content setup first.",
+          "setup": null
+        }
+      }
+    ]
+  }
+}

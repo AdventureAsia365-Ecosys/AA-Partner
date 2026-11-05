@@ -10,6 +10,7 @@ import { POST as logoutPost } from "@/app/api/auth/tenant-logout/route";
 import { POST as selectPost } from "@/app/api/auth/tenant-select/route";
 import { GET as tenantMeGet } from "@/app/api/tenant/me/route";
 import { GET as tenantProxyGet } from "@/app/api/tenant/[...path]/route";
+import { CRM_ADD_ONS_PATH } from "@/lib/addOns";
 import {
   ADD_ONS_PATH, addOnStatesFrom, cisAddOns, crmAccess, crmAccessFrom, crmApps, crmMember, plannerHref, studioApps,
   UNKNOWN_ADD_ONS,
@@ -351,20 +352,20 @@ describe("app switcher (root ADR 0019 d7)", () => {
     expect(await cisAddOns(CIS, "tok", boom as unknown as typeof fetch)).toEqual(UNKNOWN_ADD_ONS);
   });
 
-  it("the CRM side lists the studio when allowed, itself, and the planner through the studio", () => {
-    expect(crmApps("/portal/dashboard").map((a) => [a.key, a.state])).toEqual([["content", "open"], ["crm", "current"], ["planner", "request"]]);
+  it("the CRM side lists the studio when allowed, itself, and the planner through the CRM's Add-ons page (owner)", () => {
+    expect(crmApps("/portal/dashboard", "owner").map((a) => [a.key, a.state])).toEqual([["content", "open"], ["crm", "current"], ["planner", "request"]]);
+    expect(crmApps(null, "owner").map((a) => a.key)).toEqual(["crm", "planner"]); // S269: a CRM-only owner can ask
+    expect(crmApps("/portal/dashboard", "agent").map((a) => a.key)).toEqual(["content", "crm"]);
     expect(crmApps(null).map((a) => a.key)).toEqual(["crm"]);
-    expect(plannerHref("/portal/dashboard")).toBe(ADD_ONS_PATH);
+    expect(plannerHref("owner")).toBe(CRM_ADD_ONS_PATH);
+    expect(plannerHref("agent")).toBeNull();
     expect(plannerHref(null)).toBeNull();
   });
 
-  it("the planner link is absolute on the studio's host when the studio link is (review AA-1036)", () => {
-    const studio = "https://portal.example.test/portal/dashboard";
-    expect(plannerHref(studio)).toBe(`https://portal.example.test${ADD_ONS_PATH}`);
-    expect(plannerHref("http://localhost:3001/portal")).toBe(`http://localhost:3001${ADD_ONS_PATH}`);
-    const planner = crmApps(studio).find((a) => a.key === "planner");
-    expect(planner?.href).toBe(`https://portal.example.test${ADD_ONS_PATH}`);
-    expect(crmApps("/portal/dashboard").find((a) => a.key === "planner")?.href).toBe(ADD_ONS_PATH);
+  it("the CRM's planner entry never leads to the studio, whatever host the studio is on (S269)", () => {
+    const planner = crmApps("https://portal.example.test/portal/dashboard", "owner").find((a) => a.key === "planner");
+    expect(planner?.href).toBe(CRM_ADD_ONS_PATH);
+    expect(planner?.href).not.toBe(ADD_ONS_PATH);
   });
 
   it("a CRM member is a person /crm/v1/me answered 200 for, entitled or not", () => {

@@ -91,6 +91,9 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "GET", pattern: /^team\/reassign-queue$/, tenant: true, card: "AA-939" },
   { method: "POST", pattern: /^team\/reassign$/, tenant: true, card: "AA-939" },
   { method: "GET", pattern: /^plan$/, tenant: true, card: "AA-939" },
+  // AA-1036 (R3): Settings > Add-ons, the owner's add-on request relayed by the API to CIS tenant.addons.v1.
+  { method: "GET", pattern: /^add-ons$/, tenant: true, card: "AA-1036" },
+  { method: "POST", pattern: /^add-on-requests$/, tenant: true, card: "AA-1036" },
   { method: "GET", pattern: /^recovery$/, tenant: true, card: "AA-939" },
   { method: "POST", pattern: new RegExp(`^recovery/${UUID}/cancel$`), tenant: true, card: "AA-939" },
   { method: "POST", pattern: /^invitations\/accept$/, tenant: false, card: "AA-939" },
