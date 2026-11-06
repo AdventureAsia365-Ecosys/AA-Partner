@@ -326,9 +326,14 @@ def test_the_link_is_single_use_owner_only_and_checks_both_digests() -> None:
     vault = DocVault()
     sealed = run(vault.encrypt("export_job", "object", EXPORT, content))
     run(store.put(exports.object_key(TENANT, EXPORT), sealed))
+    # create_link/download check the row against the real clock, so the export here is built relative to now
+    # (a fixed NOW would turn the ready export into an expired one 7 days after it was written).
+    now = dt.datetime.now(dt.UTC)
     digests = {
         "object_sha256": hashlib.sha256(sealed).hexdigest(),
         "content_sha256": hashlib.sha256(content).hexdigest(),
+        "completed_at": now,
+        "expires_at": now + dt.timedelta(days=7),
     }
     conn = ScriptedConn().on("FROM crm.export_job WHERE export_job_id = $1 FOR UPDATE", _row(**digests))
     link = run(exports.create_link(tenant_ctx(conn), EXPORT, store))
@@ -343,7 +348,7 @@ def test_the_link_is_single_use_owner_only_and_checks_both_digests() -> None:
     assert conn.sql("download_count = download_count + 1")
     assert (ctx.audit_events[-1].action, ctx.audit_events[-1].outcome) == ("export_download", "allowed")
     # A wrong or late token: 403 link_invalid with a denied event.
-    for row in (_row(**digests, link_sha256=stored, link_expires_at=NOW - dt.timedelta(minutes=1)),
+    for row in (_row(**digests, link_sha256=stored, link_expires_at=now - dt.timedelta(minutes=1)),
                 _row(**digests, link_sha256=hashlib.sha256(b"other").digest(), link_expires_at=expires),
                 _row(**digests)):  # fmt: skip
         ctx = tenant_ctx(ScriptedConn().on("FOR UPDATE", row))
@@ -354,7 +359,8 @@ def test_the_link_is_single_use_owner_only_and_checks_both_digests() -> None:
     with codes(Forbidden, "owner_only"):
         run(exports.download(tenant_ctx(role="agent"), vault, store, EXPORT, link["token"]))  # type: ignore[arg-type]
     # Past its 7 days: 410, the object deleted.
-    late = ScriptedConn().on("FOR UPDATE", _row(expires_at=NOW - dt.timedelta(days=1)))
+    late_row = _row(completed_at=now - dt.timedelta(days=8), expires_at=now - dt.timedelta(days=1))
+    late = ScriptedConn().on("FOR UPDATE", late_row)
     with codes(Gone, "export_expired"):
         run(exports.create_link(tenant_ctx(late), EXPORT, store))
     assert late.sql("SET status = 'expired'") and store.objects == {}

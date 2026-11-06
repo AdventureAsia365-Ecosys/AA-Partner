@@ -21,15 +21,31 @@ name: CI
 # runner (ubuntu-24.04-arm, free for public repositories); the Python jobs run on x64 (pure-Python code, the pinned
 # wheels exist for both).
 
+#
+# S271 (CI minutes, AA-889 merge queue): what runs on which event. Main is protected by the merge queue: every commit
+# that lands on main is a queue group commit that passed the FULL run first, so the run on `push` to main (the same
+# tree tested again) is gone; Deploy Dev / Deploy Web Dev trigger on push themselves, never on this workflow.
+#   merge_group, workflow_dispatch: every job, no path filter, no skip. The merge queue's guarantee is unchanged.
+#   pull_request: the fast checks (Lint, Vendored CIS copies, Security Audit, Unit Tests, Migration preflight, and
+#     Web Build without `next build` and the standalone smoke, with the type check instead). The heavy jobs
+#     (Integration Tests, Docker Build Check, Web Docker Build Check, the web build; Visual in visual.yml) run on the
+#     queue, unless the PR touches their area (Lint step Scope, .github/scripts/ci_scope.py): migrations or
+#     integration tests -> Integration Tests, the API image inputs -> Docker Build Check, the web image inputs -> Web
+#     Docker Build Check. Web Build is skipped for a PR that does not touch web/; a docs-only PR (every path under docs/
+#     or *.md) skips the test jobs; a PR that changes .github/ runs everything.
+#   A skipped job reports "skipped", which counts as passed for a required check, so every required check still
+#   reports on a PR and it can enter the queue. Trade-off: a heavy failure is found in the queue (the group fails, the
+#   PR leaves the queue) instead of on the PR. To see the heavy jobs before queueing, dispatch this workflow on the PR
+#   branch (gh workflow run ci.yml --ref <branch>): its checks land on the PR head.
+
 on:
   pull_request:
-    branches: [main]
-  push:
     branches: [main]
   # AA-889 (merge queue): the queue tests each group on a temporary gh-readonly-queue/main/* commit and waits for
   # every required check there. All jobs run on it, with no path filter, so no required check is left unreported.
   merge_group:
     types: [checks_requested]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -43,11 +59,37 @@ defaults:
     working-directory: api
 
 jobs:
+  # S271: Lint also carries the CI scope of a pull request (its outputs gate the test and build jobs below; the step
+  # never fails the job, and a broken scope leaves the outputs empty, so every gated job runs: they test != 'false').
+  # "Vendored CIS copies" stays its own non-required job: it compares with CIS main, which a PR here does not
+  # control, so folding it into the required Lint would let a CIS change block every PR of this repo.
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    outputs:
+      tests: ${{ steps.scope.outputs.tests }}
+      integration: ${{ steps.scope.outputs.integration }}
+      docker: ${{ steps.scope.outputs.docker }}
+      web: ${{ steps.scope.outputs.web }}
+      webdocker: ${{ steps.scope.outputs.webdocker }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2    # the pull_request merge commit and its first parent (the base tip)
+
+      - name: Scope (what this pull request needs)
+        id: scope
+        continue-on-error: true
+        working-directory: .
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          python3 .github/scripts/ci_scope.py --event "$EVENT" \
+            --area integration=api/migrations/,api/tests/integration/ \
+            --area docker=api/Dockerfile,api/.dockerignore,api/requirements.txt,.trivyignore \
+            --area web=web/,api/scripts/check_kit_provenance.py \
+            --area webdocker=web/Dockerfile,web/.dockerignore,web/package.json,web/package-lock.json,.trivyignore \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v7.1.0
@@ -97,8 +139,11 @@ jobs:
         working-directory: web
         run: npm audit --audit-level=high
 
+  # S271: skipped only for a docs-only pull request (Lint's scope output tests=false); a failed scope runs it.
   test-unit:
     name: Unit Tests
+    needs: lint
+    if: ${{ !cancelled() && needs.lint.outputs.tests != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -135,8 +180,11 @@ jobs:
   # the path-ordered files (.github/scripts/ci_shards.py --contiguous, balanced on .github/test-durations/
   # integration.json), so a module keeps the predecessors it had in the single job. The required check keeps its name:
   # "Integration Tests" below passes only when every shard passed. Before (main, 01/11/2026): one job, 6-9 min.
+  # S271: merge_group and dispatch always; a pull request only when it touches migrations or the integration tests.
   test-integration-shard:
     name: Integration shard ${{ matrix.shard }}/3
+    needs: lint
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.lint.outputs.integration != 'false') }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -200,10 +248,10 @@ jobs:
 
   test-integration:
     name: Integration Tests
-    needs: test-integration-shard
+    needs: [lint, test-integration-shard]
     # Runs when a shard failed too, so the required check turns red instead of "skipped" (a skipped required check
-    # counts as passed).
-    if: ${{ !cancelled() }}
+    # counts as passed). Skipped (= passed) only with the shards, on a pull request outside their area (S271).
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.lint.outputs.integration != 'false') }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -240,8 +288,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # S271: merge_group and dispatch always; a pull request only when it changes the API image inputs.
   docker-build:
     name: Docker Build Check
+    needs: lint
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.lint.outputs.docker != 'false') }}
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7
@@ -327,7 +378,7 @@ jobs:
   # Same steps in AA-CIS-App, AA-Booking and AA-Partner; only the env block differs.
   migration-preflight:
     name: Migration preflight
-    if: github.event_name != 'push'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -474,8 +525,12 @@ jobs:
   # BFF allow-list, route handlers), then `next build` (it runs the TypeScript check), then the standalone server is
   # started with fake configuration and must answer /healthz, refuse an unknown Host and send a page without a
   # session to /auth/refresh. NODE_OPTIONS caps the build's heap like the Dockerfile does.
+  # S271: skipped for a pull request that does not touch web/ (Lint's scope output web); on a pull request `next build`
+  # and the standalone smoke wait for the queue and the type check (tsc --noEmit) runs instead.
   web-build:
     name: Web Build
+    needs: lint
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.lint.outputs.web != 'false') }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -513,13 +568,19 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      - name: Type check (pull request; the queue's build runs it)
+        if: github.event_name == 'pull_request'
+        run: npm run typecheck
+
       - name: Build (includes the type check)
+        if: github.event_name != 'pull_request'
         env:
           NODE_OPTIONS: --max-old-space-size=1536
           NEXT_TELEMETRY_DISABLED: "1"
         run: npm run build
 
       - name: Standalone server smoke
+        if: github.event_name != 'pull_request'
         env:
           ENVIRONMENT: test
           PORT: "3005"
@@ -631,8 +692,11 @@ jobs:
 
   # AA-935 — the CRM web image: native arm64 (Fargate ARM64, ADR 0010 decision 2), container answers /healthz with its
   # commit, Trivy fails on fixable CRITICAL/HIGH like the API image.
+  # S271: merge_group and dispatch always; a pull request only when it changes the web image inputs.
   web-docker-build:
     name: Web Docker Build Check
+    needs: lint
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.lint.outputs.webdocker != 'false') }}
     runs-on: ubuntu-24.04-arm
     defaults:
       run:
