@@ -356,7 +356,8 @@ runs it as `crm_owner`, then the `bot/db-schema-reference` PR is merged, then co
 `/crm/health/ready` stays 503 until every key in `app/db.py` `REQUIRED_SCHEMA_VERSIONS` is registered. Its body lists `registered_keys` (every registered `crm-NNN`, sorted) whenever the schema read succeeds (AA-993 M4a,
 root ADR 0017 d7: the Deploy Dev `schema-gate` job waits on it before the roll). CI job **Migration preflight**
 (`ci.yml`) checks a new file's number (`main` max + 1) and class (expand: `-- migrate: expand`, auto-applied on Dev;
-contract: manual DB Migrate apply), and `migration-sync-wake.yml` rings the AA-CIS-Infra Migration Sync doorbell after a
+contract: manual DB Migrate apply) and refuses an added line that names a migration by an old number after a renumber
+(`.github/scripts/migration_refs.py`, AA-1024 l22; mark a history note `old-mig-ok`), and `migration-sync-wake.yml` rings the AA-CIS-Infra Migration Sync doorbell after a
 push to `main` that touches `api/migrations/`, so the byte copy opens at once.
 
 ## Job runner (`crm.job`, ADR 0003a)
