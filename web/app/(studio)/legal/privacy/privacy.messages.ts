@@ -3,7 +3,9 @@
 // today (sources in docs/implementation-notes/AA-886-s245.md); open legal points are marked [to be confirmed]. S262
 // (v0.3): the AI provider list in §5 and §6 follows the AI Use Register (root docs/architecture/ai-use-register.md,
 // ADR 0009); AA-820. S264 (register v1.2, CIS migration 344): the writing fallback, Claude through the Anthropic API,
-// then an OpenAI model as a last resort.
+// then an OpenAI model as a last resort. S271 (register v1.11, route control version 6 "prefer_anthropic_api"): Claude
+// is called on the Anthropic API first and on Amazon Bedrock second, so §5 and §6 name the direct APIs as providers
+// that may process the content, not as a fallback; the order is AA's setting and may change (Draft v0.5).
 // AA-1036 (R3): moved out of page.tsx as a structured document (../../_legal/legalDoc.ts) in English and Vietnamese.
 // English applies; the Vietnamese text is a faithful translation for reading (the page says so).
 import { SUPPORT_EMAIL } from "@/app/_kit/core/brand";
@@ -46,14 +48,14 @@ const EN: LegalDoc = {
       { p: ["The legal basis for each use is [to be confirmed]."] },
     ] },
     { id: "ai", title: "5. AI processing", blocks: [{ p: [
-      "Content is generated and checked by AI models. Claude (Anthropic), through Amazon Bedrock, writes it; OpenAI models, also through Amazon Bedrock, review, score and check the drafts. When those models are unavailable, the review and check steps may fall back to other models on Amazon Bedrock (Amazon Nova, Meta Llama). If Amazon Bedrock is unavailable, the Anthropic API or the OpenAI API, used directly and with a spending cap, may be used as a fallback; those calls go from Amazon Web Services to Anthropic or OpenAI, on accounts Adventure Asia holds in its own company name. For writing, that means Claude through the Anthropic API first and, as a last resort, an OpenAI model through the OpenAI API. For some partners, a decision-checking service (Jev, by TypeSafe) also answers yes-or-no checks about the drafts. These providers receive tour content, your brand settings and the instructions for each piece. Our policy is not to send personal data to these models and not to store any in our AI call records, so please do not enter personal data about other people in brand settings or content.",
+      "Content is generated and checked by AI models of third-party providers, and may be processed by any of them. Claude (Anthropic) writes it: Adventure Asia calls Claude through the Anthropic API first and through Amazon Bedrock (Amazon Web Services) second. OpenAI models review, score and check the drafts, through Amazon Bedrock or the OpenAI API, and other models on Amazon Bedrock (Amazon Nova, Meta Llama) may also review and check them. If no Claude model is available, an OpenAI model through the OpenAI API may write the content as a last resort. The Anthropic API and the OpenAI API are used directly, each with a spending cap; those calls go from Amazon Web Services to Anthropic or OpenAI, on accounts Adventure Asia holds in its own company name. Adventure Asia sets the order in which these providers are used and may change it. For some partners, a decision-checking service (Jev, by TypeSafe) also answers yes-or-no checks about the drafts. These providers receive tour content, your brand settings and the instructions for each piece. Our policy is not to send personal data to these models and not to store any in our AI call records, so please do not enter personal data about other people in brand settings or content.",
     ] }] },
     { id: "share", title: "6. Who receives your data", blocks: [
       { ul: [
         [{ b: "Adventure Asia staff" }, ", for support and moderation (they can suspend an account or unpublish a post that Adventure Asia published for you)."],
         [{ b: "Amazon Web Services" }, " — hosting, database, Amazon Bedrock."],
         [{ b: "Vercel" }, " — hosts and delivers the portal pages."],
-        [{ b: "AI providers" }, " — Anthropic and OpenAI (through Amazon Bedrock, and directly only as a fallback), and Jev (TypeSafe) for some partners, as described above."],
+        [{ b: "AI providers" }, " — Anthropic and OpenAI (directly through the Anthropic API and the OpenAI API, and through Amazon Bedrock), and Jev (TypeSafe) for some partners, as described above."],
         [{ b: "Your channels" }, " (for example WordPress or Meta), when you publish to them."],
       ] },
       { p: ["We do not sell personal data."] },
@@ -113,14 +115,14 @@ const VI: LegalDoc = {
       { p: ["Cơ sở pháp lý cho từng mục đích sử dụng [cần xác nhận]."] },
     ] },
     { id: "ai", title: "5. Xử lý bằng AI", blocks: [{ p: [
-      "Nội dung được tạo và kiểm tra bởi các mô hình AI. Claude (Anthropic), thông qua Amazon Bedrock, viết nội dung; các mô hình OpenAI, cũng thông qua Amazon Bedrock, rà soát, chấm điểm và kiểm tra bản nháp. Khi các mô hình này không khả dụng, bước rà soát và kiểm tra có thể chuyển sang mô hình khác trên Amazon Bedrock (Amazon Nova, Meta Llama). Nếu Amazon Bedrock không khả dụng, Anthropic API hoặc OpenAI API, được gọi trực tiếp và có giới hạn chi tiêu, có thể được dùng làm phương án dự phòng; các lệnh gọi đó đi từ Amazon Web Services tới Anthropic hoặc OpenAI, trên tài khoản Adventure Asia đứng tên công ty. Với bước viết, điều đó có nghĩa là trước hết dùng Claude qua Anthropic API và, khi không còn lựa chọn nào khác, một mô hình OpenAI qua OpenAI API. Với một số đối tác, một dịch vụ kiểm tra quyết định (Jev, của TypeSafe) cũng trả lời các câu hỏi có-hoặc-không về bản nháp. Các nhà cung cấp này nhận nội dung tour, cài đặt thương hiệu của bạn và hướng dẫn cho từng bài. Chính sách của chúng tôi là không gửi dữ liệu cá nhân tới các mô hình này và không lưu dữ liệu cá nhân trong bản ghi lệnh gọi AI, vì vậy vui lòng không nhập dữ liệu cá nhân của người khác vào cài đặt thương hiệu hay nội dung.",
+      "Nội dung được tạo và kiểm tra bởi các mô hình AI của nhà cung cấp bên thứ ba, và có thể được xử lý bởi bất kỳ nhà cung cấp nào trong số đó. Claude (Anthropic) viết nội dung: Adventure Asia gọi Claude qua Anthropic API trước và qua Amazon Bedrock (Amazon Web Services) sau. Các mô hình OpenAI rà soát, chấm điểm và kiểm tra bản nháp, qua Amazon Bedrock hoặc OpenAI API, và các mô hình khác trên Amazon Bedrock (Amazon Nova, Meta Llama) cũng có thể rà soát và kiểm tra bản nháp. Nếu không có mô hình Claude nào khả dụng, một mô hình OpenAI qua OpenAI API có thể viết nội dung khi không còn lựa chọn nào khác. Anthropic API và OpenAI API được gọi trực tiếp, mỗi API có giới hạn chi tiêu; các lệnh gọi đó đi từ Amazon Web Services tới Anthropic hoặc OpenAI, trên tài khoản Adventure Asia đứng tên công ty. Adventure Asia quyết định thứ tự sử dụng các nhà cung cấp này và có thể thay đổi thứ tự đó. Với một số đối tác, một dịch vụ kiểm tra quyết định (Jev, của TypeSafe) cũng trả lời các câu hỏi có-hoặc-không về bản nháp. Các nhà cung cấp này nhận nội dung tour, cài đặt thương hiệu của bạn và hướng dẫn cho từng bài. Chính sách của chúng tôi là không gửi dữ liệu cá nhân tới các mô hình này và không lưu dữ liệu cá nhân trong bản ghi lệnh gọi AI, vì vậy vui lòng không nhập dữ liệu cá nhân của người khác vào cài đặt thương hiệu hay nội dung.",
     ] }] },
     { id: "share", title: "6. Ai nhận dữ liệu của bạn", blocks: [
       { ul: [
         [{ b: "Nhân viên Adventure Asia" }, ", để hỗ trợ và kiểm duyệt (họ có thể tạm khoá tài khoản hoặc gỡ một bài mà Adventure Asia đã đăng cho bạn)."],
         [{ b: "Amazon Web Services" }, " — lưu trữ, cơ sở dữ liệu, Amazon Bedrock."],
         [{ b: "Vercel" }, " — lưu trữ và phân phối các trang của cổng."],
-        [{ b: "Nhà cung cấp AI" }, " — Anthropic và OpenAI (thông qua Amazon Bedrock, và chỉ gọi trực tiếp khi dự phòng), cùng Jev (TypeSafe) với một số đối tác, như mô tả ở trên."],
+        [{ b: "Nhà cung cấp AI" }, " — Anthropic và OpenAI (gọi trực tiếp qua Anthropic API và OpenAI API, và thông qua Amazon Bedrock), cùng Jev (TypeSafe) với một số đối tác, như mô tả ở trên."],
         [{ b: "Các kênh của bạn" }, " (ví dụ WordPress hoặc Meta), khi bạn đăng bài lên đó."],
       ] },
       { p: ["Chúng tôi không bán dữ liệu cá nhân."] },
