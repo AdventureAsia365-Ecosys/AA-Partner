@@ -50,7 +50,12 @@ OLD_PORTAL_SLUGS = {
 }
 
 # AA-820 / S262 / S264: the AI section of the partner terms links the providers' policies and names the AI Use
-# Register's providers and the writing fallback.
+# Register's providers and the writing fallback. S271 (register v1.11, route control version 6): Claude goes to the
+# Anthropic API first, so the pages name the direct APIs as providers that may process the content, never "only as a
+# fallback", and say the order is AA's setting. S271 review: Claude models also check (FAQ checks, the Claude
+# fallbacks of audit and extraction), and AA may change the ORDER without notice while adding or replacing a provider
+# follows the DPA notice (root docs/legal/dpa.md 6.2), so the pages never say the providers change "by updating this
+# list".
 POLICY_HREFS = (
     "https://www.anthropic.com/legal/aup",
     "https://openai.com/policies/usage-policies/",
@@ -62,14 +67,30 @@ PROVIDER_PHRASES = (
     "OpenAI models",
     "Anthropic API",
     "OpenAI API",
-    "may be used as a fallback",
+    "may be processed by any of them",
+    "Claude through the Anthropic API first and through Amazon Bedrock (Amazon Web Services) second",
+    "through Amazon Bedrock or the OpenAI API",
+    "Claude models",
+    "write it and may also check it",
+    "may change the order in which the providers listed here are used without notice",
+    "Adding or replacing a provider follows the advance notice set out in the data processing agreement",
     "Amazon Nova",  # S263: the acc2 Bedrock fallback of the review / check steps (CIS migrations 331-333)
     "Meta Llama",
 )
 WRITING_FALLBACK_PHRASES = (
-    "Claude through the Anthropic API",
     "as a last resort",
     "an OpenAI model through the OpenAI API",
+)
+# S271: wording of the route before version 6 that must not come back (the direct APIs are not only a fallback).
+STALE_ROUTE_PHRASES = (
+    "may be used as a fallback",
+    "directly only as a fallback",
+    "If Amazon Bedrock is unavailable",
+    "When Claude is unavailable on Amazon Bedrock",
+    # S271 review: providers do not change by a page update (DPA 6.2 notice), and Claude does not only write.
+    "or the providers, by updating this list",
+    "Claude writes it",
+    "Claude (Anthropic) writes it",
 )
 
 # AA-911: write handlers and the work a handler must not do before the cross-site guard.
@@ -260,8 +281,25 @@ def test_partner_terms_ai_section_keeps_the_schedule_and_the_providers() -> None
     for phrase in (*PROVIDER_PHRASES, *WRITING_FALLBACK_PHRASES):
         assert phrase in ai, f"/legal/partner-terms §3 must name: {phrase}"
     privacy = _section(PRIVACY_TEXT)
-    for phrase in (*PROVIDER_PHRASES, "Jev"):
+    for phrase in (*PROVIDER_PHRASES, *WRITING_FALLBACK_PHRASES, "Jev"):
         assert phrase in privacy, f"/legal/privacy §5 must name: {phrase}"
+
+
+def test_studio_legal_pages_drop_the_pre_v6_fallback_wording() -> None:
+    """S271: since route control version 6 the direct APIs are providers, not a fallback (EN and VI, whole page)."""
+    for rel in (TERMS_TEXT, PRIVACY_TEXT):
+        text = re.sub(r"\s+", " ", _read(rel))
+        body = text[text.index("const EN: LegalDoc") :]
+        for phrase in STALE_ROUTE_PHRASES:
+            assert phrase not in body, f"{rel}: stale route wording: {phrase}"
+        assert "làm phương án dự phòng" not in body and "chỉ gọi trực tiếp khi dự phòng" not in body, rel
+        assert "bằng cách cập nhật danh sách này" not in body, rel
+        assert "cũng có thể kiểm tra nội dung" in body, rel
+        assert "phải được thông báo trước theo thoả thuận xử lý dữ liệu" in body, rel
+    privacy = re.sub(r"\s+", " ", _read(PRIVACY_TEXT))
+    assert "directly through the Anthropic API and the OpenAI API, and through Amazon Bedrock" in privacy
+    frame = _read("web/app/(studio)/_legal/legal.messages.ts")
+    assert 'version: "Draft v0.5"' in frame and 'version: "Bản nháp v0.5"' in frame
 
 
 def _write_routes() -> list[Path]:
