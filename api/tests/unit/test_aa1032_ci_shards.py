@@ -93,7 +93,13 @@ def test_committed_durations_name_the_files_discover_returns() -> None:
 def test_integration_tests_is_the_aggregate_of_its_shards() -> None:
     agg, shard = _job("test-integration"), _job("test-integration-shard")
     assert "name: Integration Tests\n" in agg
-    assert "needs: test-integration-shard\n" in agg and "if: ${{ !cancelled() }}\n" in agg
+    # S271: the aggregate also needs Lint (the CI scope) and is skipped exactly when its shards are; it runs when a
+    # shard failed (never "skipped" then: a required check counts that as passed).
+    cond = (
+        "if: ${{ !cancelled() && (github.event_name != 'pull_request' || "
+        "needs.lint.outputs.integration != 'false') }}\n"
+    )
+    assert "needs: [lint, test-integration-shard]\n" in agg and cond in agg and cond in shard
     assert "RESULT: ${{ needs.test-integration-shard.result }}" in agg
     assert '[ "$RESULT" != "success" ]' in agg and "exit 1" in agg
     count = int(re.search(r"INTEGRATION_SHARDS: (\d+)", shard).group(1))  # type: ignore[union-attr]
