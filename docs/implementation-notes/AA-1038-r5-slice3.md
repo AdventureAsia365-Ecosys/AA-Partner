@@ -72,3 +72,30 @@ Session S272 (lane l10). Root ADR 0019 d11 (+ the S272 amendment), contract `lea
   CRM has not listed the tenant within `TP_LEAD_CRM_PULL_FRESH_S` (10 minutes). Chosen over a CIS-side readiness flag
   because CIS does not hold the CRM's lock state and it needs no migration; the limit: a lead sent in the first minutes
   after a lock is still stored and waits for the hold (at most 7 days, then TripPlanner's expiry attention).
+
+## Review fix pass 3 (S272): the name rule is what the intake needs
+
+- **Finding.** The shared rule accepted any non-empty cleaned name, but `crm_intake_process` indexes the name
+  (`vault.name_index` -> `blind_index.name_tokens`), which needs at least one letter or digit token. A lead named `-`
+  (or `...`, an em dash, an emoji only) passed both pull checks, was stored and acknowledged `stored` (TripPlanner then
+  marked it delivered and redacted it), and the intake failed with `NormalisationError(invalid_name)`: no trip, no
+  alert, only an access-log line. The traveller's request was lost silently.
+- **Decision: one rule, the intake's own function.** The root rule now says a name must hold at least one token: after
+  NFKD, a character of Unicode category L or N (`name_token_pattern` `[\p{L}\p{N}]`, `name_token_normalisation`
+  `NFKD` in the rules file; Python's `\w` minus `_` is exactly that set, checked over every code point). The CRM does
+  not copy the rule: `stage1.has_name_token` calls `blind_index.name_tokens` itself, and both `traveller_errors` (the
+  pull) and Stage 1 `validate` (the hosted form and the pull's second check) use it. A planner lead with such a name
+  is now acknowledged `rejected` (reason `invalid_lead`), so the `tp_lead_rejected` alert fires here and TripPlanner
+  reports `lead_rejected_by_crm`; TripPlanner also refuses the name before storing (422 `invalid_lead`, fields
+  `[name]`), so this is a producer-bug path only.
+- **Changed beyond the finding.** The hosted Stage 1 form had the same gap since before this lane: a `-` name is now a
+  422 on `name` there too, and a companion name without a token is dropped like a blank one (companions are optional;
+  the intake indexes each companion's name too). No alert on `intake_failed` was added: with the gap closed at both
+  entry points it has no known trigger left, and an alert without a trigger is noise.
+- **Other Traveller fields.** E-mail and phone have no such gap: Stage 1 `validate` already normalises them with the
+  same `normalise_email` / `normalise_phone` the intake indexes with, and a phone that does not normalise is dropped to
+  the message. Test `test_no_other_traveller_field_passes_the_pull_and_fails_the_intake` pins it over the vectors.
+- **Tests.** `test_review_repro_a_pulled_lead_named_dash_acks_rejected_not_stored` (the real `ingest`, `-`, `...`, an
+  em dash, an emoji: ack `rejected`, alert, nothing stored; fails on the previous commit),
+  `test_the_name_rule_is_what_the_intake_job_needs` (every valid name vector indexes, every refused one that survives
+  cleaning cannot), the new vectors in the shared file, and Stage 1 cases in `test_intake_stage1.py`.

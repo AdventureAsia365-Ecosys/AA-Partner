@@ -18,7 +18,10 @@ Migrate exempt: a row exists only while due or running):
    - the traveller's name, e-mail and phone are checked first with the contract's ONE Traveller rule
      (:func:`traveller_errors`, the same rule and the same shared test vectors as TripPlanner's ``validate``: root
      ``docs/contracts/rules/lead.submitted.v1.traveller-rules.json``, byte copy in ``docs/contracts/rules/``), so a lead
-     TripPlanner accepted is never rejected here for its name or e-mail;
+     TripPlanner accepted is never rejected here for its name or e-mail; the rule includes what the intake job needs
+     (a name with at least one letter or digit token, :func:`app.intake.stage1.has_name_token`), so a lead stored and
+     acknowledged ``stored`` here never fails later at ``crm_intake_process`` for its traveller: a name like ``-`` is
+     acknowledged ``rejected`` (alert below) instead;
    - the answers are mapped onto the Stage 1 inquiry (:func:`stage1_raw`) and validated by the same validator as the
      hosted form (:func:`app.intake.stage1.validate`); an optional answer that does not validate (a past start date, a
      phone the CRM cannot normalise) is dropped, a required one rejects the lead; a dropped phone is kept as text on
@@ -101,8 +104,10 @@ COUNTRY_CODES = {
 OPTIONAL_FIELDS = ("phone", "start_date", "end_date", "nights", "message", "child_ages", "locale")
 
 # The contract's Traveller rule (lead.submitted.v1), the same on both sides: control characters removed, Unicode NFC,
-# trimmed, then the length in code points and the pattern. Shared test vectors: docs/contracts/rules/ (root copy is the
-# source); TripPlanner backend/assembly/leads.py applies the same constants.
+# trimmed, then the length in code points and the pattern; a name must also hold at least one name token (a letter or
+# a digit after NFKD), which is what crm_intake_process needs to file the traveller (vault.name_index ->
+# blind_index.name_tokens). Shared test vectors: docs/contracts/rules/ (root copy is the source); TripPlanner
+# backend/assembly/leads.py applies the same constants.
 TRAVELLER_CONTROL = re.compile(r"[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]")
 TRAVELLER_MAX = {"name": 120, "email": 254, "phone": 40}
 TRAVELLER_EMAIL = re.compile(r"^[^@\s]{1,64}@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,63}$")
@@ -156,7 +161,7 @@ def traveller_errors(traveller: Any) -> list[str]:
     t = traveller if isinstance(traveller, dict) else {}
     bad: list[str] = []
     checks = {
-        "name": lambda v: v is not None,
+        "name": lambda v: v is not None and stage1.has_name_token(v),
         "email": lambda v: v is not None and TRAVELLER_EMAIL.match(v) is not None,
         "phone": lambda v: v is None or TRAVELLER_PHONE.match(v) is not None,
     }

@@ -23,10 +23,12 @@ import pytest
 
 from app.cis.http import HttpResponse
 from app.errors import Forbidden, NotFound
+from app.intake import stage1
 from app.jobs.payload_guard import check_payload
 from app.jobs.queue import Job
 from app.observability import ops_alerts
 from app.tripplanner import leads
+from app.vault import blind_index
 
 TENANT_A = uuid.UUID("3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7")
 TENANT_B = uuid.UUID("9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d")
@@ -429,3 +431,76 @@ async def test_review_repro_a_locked_or_unknown_agency_is_never_listed(monkeypat
     cfg = leads.LeadPullConfig(base_url="https://tp.example.invalid", tokens=FakeTokens(), transport=recording)  # type: ignore[arg-type]
     result = await leads.LeadPull(cfg, object(), today=lambda: TODAY)(None, JOB)  # type: ignore[arg-type]
     assert listed == [TENANT_A] and result["skipped_agency_count"] == 2 and result["stored_count"] == 1
+
+
+# --- S272 review 2: a name the intake cannot index is rejected at the pull, never 'stored' then lost --------------
+
+NAME_CASES = [c for c in RULES["cases"] if c["field"] == "name"]
+
+
+@pytest.mark.parametrize("case", NAME_CASES, ids=lambda c: c["id"])
+def test_the_name_rule_is_what_the_intake_job_needs(case):
+    """Every name the rule accepts is one crm_intake_process can index (vault.name_index -> blind_index.name_tokens),
+    and every name it refuses that survives the cleaning is one the intake could not index."""
+    traveller = {**lead()["traveller"], "name": case["value"]}
+    if case["valid"]:
+        answers = leads.answers_of(lead(traveller=traveller), today=TODAY)
+        assert blind_index.normalise_name(answers.name)  # what process_submission indexes; raises when it cannot
+        assert blind_index.name_token_indexes(b"k" * 32, answers.name)
+        return
+    cleaned = None
+    try:
+        cleaned = stage1.clean_text(case["value"], stage1.MAX_NAME)
+    except ValueError:
+        pass
+    if cleaned:
+        with pytest.raises(blind_index.NormalisationError):
+            blind_index.name_tokens(cleaned)
+
+
+@pytest.mark.parametrize("field", ["email", "phone"])
+def test_no_other_traveller_field_passes_the_pull_and_fails_the_intake(field):
+    """The intake also indexes the e-mail and the phone (process_submission): every value the rule accepts reaches it
+    in a form its index functions take (a phone the CRM cannot normalise is dropped to the message, never indexed)."""
+    for case in [c for c in RULES["cases"] if c["field"] == field and c["valid"]]:
+        answers = leads.answers_of(lead(traveller={**lead()["traveller"], field: case["value"]}), today=TODAY)
+        assert blind_index.normalise_email(answers.email)
+        if answers.phone is not None:
+            assert blind_index.normalise_phone(answers.phone)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["-", "...", "—", "\U0001f334"])
+async def test_review_repro_a_pulled_lead_named_dash_acks_rejected_not_stored(monkeypatch, name):
+    """Review repro: a lead named '-' passed both pull checks, was stored and acknowledged 'stored', TripPlanner marked
+    it delivered and redacted it, then crm_intake_process failed on the name index (NormalisationError) with no alert.
+    Now the real ingest rejects it: ack 'rejected' (TripPlanner raises lead_rejected_by_crm), tp_lead_rejected alert,
+    nothing stored."""
+    bad = lead(traveller={**lead()["traveller"], "name": name})
+    tp = FakeTripPlanner({TENANT_A: [bad]})
+
+    async def fake_agencies(_pool):
+        return [Agency(TENANT_A)]
+
+    @asynccontextmanager
+    async def fake_system_tx(_pool, tenant_id, *, actor):
+        yield FakeCtx(tenant_id)
+
+    stored: list[Any] = []
+
+    async def never(*a: Any, **k: Any) -> Any:
+        stored.append(a)
+        raise AssertionError("nothing is stored for a lead the intake cannot process")
+
+    raised: list[tuple[str, Any, dict[str, Any]]] = []
+    monkeypatch.setattr(leads.registry, "agencies", fake_agencies)
+    monkeypatch.setattr(leads, "system_tx", fake_system_tx)
+    monkeypatch.setattr(leads, "Vault", lambda keys, ctx: None)
+    monkeypatch.setattr(leads, "planner_form", never)
+    monkeypatch.setattr(leads, "store_submission", never)
+    monkeypatch.setattr(ops_alerts, "emit", lambda check, scope=None, **d: raised.append((check, scope, d)))
+    cfg = leads.LeadPullConfig(base_url="https://tp.example.invalid", tokens=FakeTokens(), transport=tp)  # type: ignore[arg-type]
+    result = await leads.LeadPull(cfg, object(), today=lambda: TODAY)(None, JOB)  # type: ignore[arg-type]
+    assert tp.acks == [(TENANT_A, bad["lead_id"], {"outcome": "rejected", "reason": "invalid_lead"})]
+    assert result["rejected_count"] == 1 and "stored_count" not in result and stored == []
+    assert [r[0] for r in raised] == ["tp_lead_rejected"]
