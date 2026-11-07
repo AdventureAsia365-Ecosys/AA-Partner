@@ -99,8 +99,9 @@ export async function publishPiece(pieceId: string): Promise<PublishResult> {
 }
 
 /**
- * Fetch an export blob for a piece and trigger a browser download. Kept client-side (the proxy
- * forwards Content-Type but not Content-Disposition, so a plain <a href> would open inline).
+ * Fetch an export blob for a piece and trigger a browser download. Kept client-side: the file name
+ * and the HTML <title> are the piece title (below), which the CIS Content-Disposition does not carry
+ * (the tenant BFF passes a checked Content-Disposition and the X-AI-* headers, lib/studio/downloadHeaders.ts).
  * The backend audit-logs each export per tenant/channel (AA-613/AA-614).
  * S251 D5: the file name and, for an HTML page, its <title> are the piece title (lib/myContent.ts pieceTitle), the
  * same title the list and the drawer show; CIS writes a fixed "Blog post" <title>, replaced here.

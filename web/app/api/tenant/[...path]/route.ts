@@ -11,7 +11,8 @@
 //   - AA-577 follow-up: the backend path is built with lib/bffPath.ts proxyPath() (no dot, empty or
 //     slash-carrying segment can rewrite it after the checks);
 //   - AA-441: multipart/form-data bodies pass through as bytes (brand-guide upload), JSON as text;
-//   - S241: the upstream body is streamed through (lib/proxyResponse.ts, Content-Type only).
+//   - S241: the upstream body is streamed through (lib/proxyResponse.ts, Content-Type only); AA-1040: plus the AI mark
+//     headers (X-AI-*) and a download's file name, each checked (lib/studio/downloadHeaders.ts).
 //   - AA-979 P2b: the write guard compares with PORTAL_PUBLIC_ORIGIN (lib/writeGuard.ts, Fargate) and the tenant check
 //     renews an exchanged (partner) studio token that is about to expire (lib/studio/auth-server.ts requireStudio).
 //   - AA-1036 (R3 slice 1, root ADR 0019 d6): moved into the one agency app; CIS is the app's CIS_API_URL, the write
@@ -22,6 +23,7 @@ import { requireStudio, withRenewed } from "@/lib/studio/auth-server";
 import { refuseForeignWrite } from "@/lib/writeGuard";
 import { proxyPath } from "@/lib/bffPath";
 import { streamUpstream } from "@/lib/proxyResponse";
+import { studioDownloadHeaders } from "@/lib/studio/downloadHeaders";
 
 async function handler(
   req: NextRequest,
@@ -58,7 +60,10 @@ async function handler(
 
   try {
     const res = await fetch(url, { method: req.method, headers, body });
-    return withRenewed(streamUpstream(res), auth.renewed, auth.cfg);
+    const out = streamUpstream(res);
+    // AA-1040 — a download keeps its AI mark headers and file name (checked, lib/studio/downloadHeaders.ts).
+    for (const [name, value] of Object.entries(studioDownloadHeaders(res.headers))) out.headers.set(name, value);
+    return withRenewed(out, auth.renewed, auth.cfg);
   } catch {
     return NextResponse.json({ detail: "Upstream connection error" }, { status: 502 });
   }

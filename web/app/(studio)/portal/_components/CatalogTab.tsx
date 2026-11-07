@@ -20,6 +20,7 @@ import { useCallback, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { CtaLink } from "@/app/_kit/local/studio/StudioCard";
 import { parseContent } from "@/lib/studio/format";
+import { dispositionFileName } from "@/lib/studio/downloadHeaders";
 import { AiNotice, Button, type ColumnDef, DataTable, Drawer, ToastProvider, useToast, K, sans, useLang, useT } from "@/app/_kit";
 import { CATALOG_MESSAGES } from "./tours.messages";
 import { CatalogDrawer } from "./CatalogDrawer";
@@ -196,9 +197,8 @@ function CatalogInner() {
         return;
       }
       const blob = await r.blob();
-      const cd = r.headers.get("content-disposition") || "";
-      const match = /filename=([^;]+)/.exec(cd);
-      const filename = match ? match[1].trim() : "tour.docx";
+      // AA-1040 — the BFF passes CIS's file name on (quoted, checked: lib/studio/downloadHeaders.ts).
+      const filename = dispositionFileName(r.headers.get("content-disposition")) ?? "tour.docx";
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
