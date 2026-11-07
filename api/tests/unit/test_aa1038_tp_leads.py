@@ -148,6 +148,58 @@ def test_a_long_trip_message_is_cut():
     assert len(leads.message_text(lead(trip=trip))) <= 2000
 
 
+WHEELCHAIR = "One of us uses a wheelchair; please plan step-free hotels and call us on WhatsApp after 6 pm."
+
+
+@pytest.mark.parametrize("phone", [None, "+84 912 345 678"])
+def test_review_repro_a_long_catalog_never_cuts_the_travellers_message(phone):
+    """S272 review: the traveller's message came LAST, after the Tour/Day lines, and the cut to 2000 took it away for
+    good on a lead well inside the contract (4 tours, 14 days x 5 stops). The traveller's part now comes first."""
+    trip = {
+        **lead()["trip"],
+        "days": 14,
+        "message": WHEELCHAIR,
+        "tours": [
+            {"source_id": f"SYN-{i}", "title": "Northern Vietnam Highlights and Halong Bay Cruise i"} for i in range(4)
+        ],
+        "day_plan": [{"day": d, "stops": [f"Hanoi Old Quarter Stop {s:02d}" for s in range(5)]} for d in range(1, 15)],
+    }
+    answers = leads.answers_of(lead(trip=trip, traveller={**lead()["traveller"], "phone": phone}), today=TODAY)
+    message = answers.message or ""
+    assert f"Message from the traveller:\n{WHEELCHAIR}" in message
+    assert message.index("Message from the traveller:") < message.index("Tour: ")
+    assert len(message) <= stage1.MAX_MESSAGE and message.endswith("\u2026")
+
+
+def test_the_largest_catalog_the_contract_allows_keeps_the_whole_message_and_the_phone():
+    """Contract maxima: 12 countries x 80, 30 tours x 300-char titles, 90 days x 12 stops x 120 chars, a 1000-char
+    message, and a contract E.164 phone that phonenumbers rejects (kept as text). Only catalog lines are cut."""
+    own = ("Step-free rooms please. " * 50)[:999] + "!"
+    trip = {
+        **lead()["trip"],
+        "days": 90,
+        "countries": [f"Country {i:02d} " + "n" * 69 for i in range(12)],
+        "message": own,
+        "tours": [{"source_id": f"SYN-{i}", "title": f"T{i:02d}" + "t" * 297} for i in range(30)],
+        "day_plan": [{"day": d, "stops": [f"S{d}-{s}-" + "s" * 112 for s in range(12)]} for d in range(1, 91)],
+    }
+    assert len(own) == 1000 and all(len(c) == 80 for c in trip["countries"])
+    traveller = {**lead()["traveller"], "phone": "+999 1234 5678"}
+    answers = leads.answers_of(lead(trip=trip, traveller=traveller), today=TODAY)
+    message = answers.message or ""
+    assert answers.phone is None
+    assert "Phone as typed (not checked): +999 1234 5678" in message
+    assert f"Message from the traveller:\n{own}" in message
+    assert len(message) <= stage1.MAX_MESSAGE and stage1.clean_text(message, stage1.MAX_MESSAGE) == message
+
+
+def test_a_message_beyond_the_contract_is_cut_but_the_phone_and_header_stay():
+    trip = {**lead()["trip"], "message": "w" * 5000}
+    text = leads.message_text(lead(trip=trip), unchecked_phone="+999 1234 5678")
+    assert len(text) <= stage1.MAX_MESSAGE and text.startswith("Trip planner request: 6 day(s)")
+    assert "Phone as typed (not checked): +999 1234 5678" in text and text.endswith("w\u2026")
+
+
 # Code points whose NFC form is longer (composition exclusions that decompose): Devanagari U+0958..U+095F, Tibetan
 # U+0F73, Hebrew presentation forms U+FB1D..U+FB4E, combining U+0344.
 NFC_LENGTHENING = ["\u0958", "\u095f", "\u0f73", "\ufb2c", "\ufb4e", "\u0344"]
@@ -191,20 +243,42 @@ def test_a_short_message_is_cleaned_like_stage1_not_cut():
 
 
 def test_the_phone_retry_never_rebuilds_a_dropped_message(monkeypatch):
-    """A message Stage 1 refuses is dropped once and stays dropped: the phone retry does not write it back (which
-    made the next round refuse it again and reject the whole lead)."""
+    """A message Stage 1 refuses is dropped once and stays dropped: the phone retry does not write the built message
+    back (which made the next round refuse it again and reject the whole lead). The phone still survives: when the
+    message and the phone are refused in the same round, the message becomes the phone line alone (S272 review)."""
     real = stage1.validate
     seen: list[Any] = []
 
     def validate(raw: dict[str, Any], **kw: Any) -> Any:
-        seen.append(raw.get("message"))
-        if raw.get("message") is not None:
+        message = raw.get("message")
+        seen.append(message)
+        if message is not None and "Trip planner request" in message:
             raise stage1.Stage1Invalid(["message", "phone"] if raw.get("phone") else ["message"])
         return real(raw, **kw)
 
     monkeypatch.setattr(stage1, "validate", validate)
     answers = leads.answers_of(lead(traveller={**lead()["traveller"], "phone": "+999 1234 5678"}), today=TODAY)
-    assert answers.message is None and answers.phone is None and seen[-1] is None and len(seen) == 2
+    assert answers.phone is None and len(seen) == 2
+    assert answers.message == "Phone as typed (not checked): +999 1234 5678"
+    assert all("Trip planner request" not in (m or "") for m in seen[1:])  # the refused message is never rebuilt
+
+
+def test_a_phone_refused_after_the_message_was_dropped_still_survives(monkeypatch):
+    """The message is refused alone first (dropped), then the phone in a later round: the phone becomes the message."""
+    real = stage1.validate
+    rounds = iter([["message"], ["phone"]])
+
+    def validate(raw: dict[str, Any], **kw: Any) -> Any:
+        fields = next(rounds, None)
+        if fields is not None:
+            raise stage1.Stage1Invalid(fields)
+        return real(raw, **kw)
+
+    monkeypatch.setattr(stage1, "validate", validate)
+    monkeypatch.setattr(leads, "traveller_errors", lambda _t: [])
+    answers = leads.answers_of(lead(traveller={**lead()["traveller"], "phone": "+84 90 000 0000"}), today=TODAY)
+    assert answers.phone is None and answers.message is not None
+    assert answers.message.startswith("Phone as typed (not checked): ") and "Trip planner" not in answers.message
 
 
 def test_every_optional_field_failing_one_by_one_still_stores_the_lead(monkeypatch):

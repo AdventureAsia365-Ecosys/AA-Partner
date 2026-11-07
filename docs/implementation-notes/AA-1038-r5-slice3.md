@@ -132,3 +132,25 @@ Session S272 (lane l10). Root ADR 0019 d11 (+ the S272 amendment), contract `lea
   `message_text` is Stage 1 clean and within 2000; a dropped message is not rebuilt by the phone retry; every
   optional answer failing one per round still stores the lead. All fail on the previous commit.
 - Behaviour otherwise unchanged: a message within the limit is the same text (already NFC and trimmed in practice).
+
+## Follow-up review (S272, lane l14): the traveller's own words come first
+
+- **Finding.** `message_text` put the traveller's message LAST, after one `Tour:` line per tour and one `Day N:` line
+  per day, and the cut to 2000 ran from the end. A lead well inside the contract (14 days x 5 stops, 4 tours) lost the
+  traveller's message for good (a wheelchair request), with no sign; `ingest` stores only these answers.
+- **Decision.** The text is now: the header line, the optional "Phone as typed (not checked)" line, a blank line,
+  "Message from the traveller:" + `trip.message`, a blank line, then the Tour/Day lines. Each part is cleaned with
+  Stage 1's `clean_text` on its own and the parts are joined by newlines (a newline never composes under NFC, so the
+  joined text is still exactly what Stage 1 stores). Only the catalog part is cut, to what is left of the 2000.
+- **Beyond the contract.** If the message alone is longer than the room (only a message past the contract's 1000 can
+  be), the message is cut, keeping the phone line and at least 200 characters of the header line; the header line
+  is otherwise cut only when the phone + message leave it no room (12 countries x 80 + 1000 + phone = about 2100).
+- **The phone when the message is refused.** When Stage 1 refuses `message` and `phone` in the same round (or `phone`
+  after `message` was dropped), the message becomes `Phone as typed (not checked): <phone>` alone instead of None. It
+  cannot happen with the real `validate` today (the built message is always clean and within the limit); this keeps
+  a later change from losing the phone silently.
+- **Tests.** The reviewer's lead (with and without a phone), the largest lead the contract allows (12 countries x 80,
+  30 tours x 300, 90 days x 12 stops x 120, a 1000-char message, a phone `phonenumbers` rejects) keeps the whole
+  message and the phone line within 2000; the phone retry test now asserts the phone text survives; a phone refused
+  after the message was dropped also survives. Five fail on the previous commit. A 3000-case fuzz (NFC-lengthening,
+  combining marks, Hangul jamo, control characters) kept the limit, Stage 1 cleanliness and the whole message + phone.
