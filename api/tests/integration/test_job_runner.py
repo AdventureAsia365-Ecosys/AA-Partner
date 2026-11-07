@@ -36,6 +36,7 @@ from app.jobs.kinds import (
     PILOT_BACKUP,
     PLACEHOLDER_PURGE,
     STAGE_DATE_RULE,
+    TP_LEAD_PULL,
     WORKFLOW_TICK,
 )
 from app.jobs.payload_guard import PersonalDataInPayload
@@ -239,6 +240,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         (PILOT_BACKUP, True),  # AA-969 d16: the pilot agency's nightly export, due now
         (PLACEHOLDER_PURGE, True),  # AA-938: the hourly purge, queued due now like the daily retention
         (STAGE_DATE_RULE, True),  # AA-943: the hourly trip date rule, due now too
+        (TP_LEAD_PULL, True),  # AA-1038: the TripPlanner lead pull, one run per minute slot, due now
         (WORKFLOW_TICK, True),  # AA-959: the hourly workflow tick, due now
     ]
     # The due runs count while they wait (they would be interrupted by a deploy) ...
@@ -258,6 +260,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         PARTNER_ACCOUNTS: 1,
         ENTITLEMENT_PULL: 1,
         PILOT_BACKUP: 1,
+        TP_LEAD_PULL: 1,
     }
     while await worker.run_once():
         pass
