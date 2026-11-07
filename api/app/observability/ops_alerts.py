@@ -16,8 +16,8 @@ alarms used, so the recipients are the same):
 - **events** raised where the code already writes the alarm line, with :func:`emit` (sync, never raises): the
   break-glass opening and the owner not mailed (one e-mail per session), an ops release incomplete at T-21 or withdrawn
   (per release), a refused CIS membership event (per event), the membership feed stuck (per UTC day), a bulk reveal
-  (per member and hour) and a failed nightly export of the pilot agency (per export, S269). The log lines stay as they
-  were.
+  (per member and hour), a failed nightly export of the pilot agency (per export, S269) and a TripPlanner lead the
+  CRM rejected (per lead, AA-1038). The log lines stay as they were.
 
 The sampler drains the events and evaluates the state checks every tick (and the lifespan flushes the events once more
 on shutdown, :func:`flush_events`, so a deploy or a scale-in does not drop them; only a hard kill does), then
@@ -144,6 +144,14 @@ CHECKS: dict[str, Check] = {
         "did not open under the key the export used). Fix the cause, then run the restore drill on the next "
         "night's export (root runbook pilot-tenant-restore-drill).",
     ),
+    "tp_lead_rejected": Check(
+        "TripPlanner lead rejected by the CRM",
+        "The CRM could not store a traveller's request from an agency's TripPlanner site and acknowledged it rejected, "
+        "so TripPlanner redacted it and the agency never sees it. reason names the rule (invalid_lead, "
+        "consent_missing, unknown_contract). TripPlanner validates the same Traveller rule before storing (shared "
+        "vectors docs/contracts/rules/), so this is a producer / consumer drift: compare both sides, fix, and tell "
+        "the agency a request was lost (lead_id, no traveller data here).",
+    ),
 }
 
 
@@ -157,6 +165,7 @@ EVENT_CHECKS = frozenset(
         "membership_apply_refused",
         "bulk_reveal",
         "pilot_backup_failed",
+        "tp_lead_rejected",
     }
 )
 

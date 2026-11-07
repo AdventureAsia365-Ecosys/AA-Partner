@@ -99,6 +99,7 @@ from app.routers import (
     workflows,
 )
 from app.settings import INSECURE_ENVIRONMENTS, Settings, load_settings
+from app.tripplanner.leads import LeadPullConfig
 from app.vault import KeyProvider, build_key_provider
 from app.workflows import triggers as workflow_triggers
 
@@ -194,6 +195,7 @@ def create_app(
                     entitlement_feed=build_membership_feed(settings, tokens),  # AA-1028: same endpoint and token
                     studio_activation=app.state.studio_activation,
                     booking_client=app.state.booking_client,
+                    tp_leads=build_tp_leads(settings, tokens),
                     catalog=build_catalog(settings, tokens),
                     directory=app.state.directory,
                     mail_runtime=app.state.mail_runtime,
@@ -377,6 +379,13 @@ def build_catalog(settings: Settings, tokens: TokenProvider | None) -> CatalogCo
     if not settings.cis_api_url or tokens is None:
         return None
     return CatalogConfig(base_url=settings.cis_api_url, tokens=tokens)
+
+
+def build_tp_leads(settings: Settings, tokens: TokenProvider | None) -> LeadPullConfig | None:
+    """TripPlanner's lead.submitted.v1 pull (AA-1038); None when TRIPPLANNER_API_URL or M2M_CLIENT is empty."""
+    if not settings.tripplanner_api_url or tokens is None:
+        return None
+    return LeadPullConfig(base_url=settings.tripplanner_api_url, tokens=tokens)
 
 
 def build_booking_client(settings: Settings, tokens: TokenProvider | None) -> BookingClient | None:

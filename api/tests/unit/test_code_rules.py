@@ -117,6 +117,8 @@ SYSTEM_MODULES = frozenset(
         "app/workflows/runner.py",
         "app/workflows/tick.py",
         "app/workflows/digest.py",
+        # AA-1038: the TripPlanner lead pull (one lead per transaction, actor job:crm_tp_lead_pull).
+        "app/tripplanner/leads.py",
     }
 )
 INTAKE_MODULES = frozenset({"app/intake/public.py"})

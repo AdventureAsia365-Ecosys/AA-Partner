@@ -72,6 +72,7 @@ from app.jobs.kinds import (
     STAGE_DATE_RULE,
     STUDIO_ACTIVATION,
     TASK_DIGEST,
+    TP_LEAD_PULL,
     WORKFLOW_RUN,
     WORKFLOW_TICK,
 )
@@ -90,6 +91,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from app.mail.store import IngestStore
     from app.members.directory import PartnerDirectory
     from app.messaging.state import MessagingRuntime
+    from app.tripplanner.leads import LeadPullConfig
     from app.vault import KeyProvider
 
 log = logging.getLogger(__name__)
@@ -175,6 +177,7 @@ def build_handlers(
     messaging_runtime: MessagingRuntime | None = None,
     partner_account_cleanup_dry_run: bool = True,
     entitlement_feed: FeedConfig | None = None,
+    tp_leads: LeadPullConfig | None = None,
 ) -> dict[str, Handler]:
     """Every kind the worker runs. ``keys``: the field-encryption provider the intake kind needs (AA-936); without
     it ``crm_intake_process`` jobs are retried until the provider is configured. ``audit_archive``: the two audit
@@ -194,6 +197,7 @@ def build_handlers(
     S263 (AA-939 follow-up): ``partner_account_cleanup_dry_run`` (``PARTNER_ACCOUNT_CLEANUP_DRY_RUN``) for the
     partner-account clean-up, which uses ``directory``.
     AA-1028: ``entitlement_feed`` (CIS_API_URL + the M2M token, the same as the membership feed; None = the pull logs
+    not_configured). AA-1038: ``tp_leads`` (TRIPPLANNER_API_URL + the M2M token: the TripPlanner lead pull; None =
     not_configured)."""
     from app.audit_export import export as audit_export
     from app.audit_export import retention as audit_retention
@@ -220,6 +224,7 @@ def build_handlers(
     from app.portability import exports as portability_exports
     from app.privacy.purge import purge_expired_maps
     from app.stages_job import date_rule
+    from app.tripplanner.leads import LeadPull
     from app.workflows import digest as task_digest
     from app.workflows import runner as workflow_runner
     from app.workflows import tick as workflow_tick
@@ -257,6 +262,7 @@ def build_handlers(
         PARTNER_ACCOUNTS: partner_accounts.build_handler(directory, dry_run=partner_account_cleanup_dry_run),
         ENTITLEMENT_PULL: EntitlementFeed(entitlement_feed),
         PILOT_BACKUP: pilot_backup.build_handler(),
+        TP_LEAD_PULL: LeadPull(tp_leads, keys),
     }
 
 
@@ -316,6 +322,7 @@ def build_hooks(
     from app.ops_release.job import HourlyOpsReleaseSync
     from app.privacy.purge import HourlyPlaceholderPurge
     from app.stages_job import HourlyStageDateRule
+    from app.tripplanner.leads import LeadPullSchedule
     from app.workflows.tick import HourlyWorkflowTick
 
     clock = now or (lambda: datetime.now(UTC))
@@ -336,6 +343,7 @@ def build_hooks(
         DailyPartnerAccountSchedule(retention_utc_hour, clock),
         EntitlementPullSchedule(clock),  # AA-1028: the CIS account feed, every 2 minutes
         DailyPilotBackupSchedule(retention_utc_hour, clock),  # AA-969 d16: the pilot agency's nightly export
+        LeadPullSchedule(clock),  # AA-1038: TripPlanner leads, every minute
     )
 
 
@@ -366,6 +374,7 @@ SCHEDULED_KINDS: frozenset[str] = frozenset(
         PARTNER_ACCOUNTS,  # S263: daily; a test agency's delete also queues one run for its accounts
         ENTITLEMENT_PULL,  # AA-1028: every 2-minute slot, due now
         PILOT_BACKUP,  # AA-969 d16: daily, due now
+        TP_LEAD_PULL,  # AA-1038: every minute slot, due now
     }
 )
 # Kinds queued by request code, one row per event (AA-936: each stored inquiry), never scheduled.

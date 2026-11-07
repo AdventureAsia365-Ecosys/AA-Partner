@@ -90,6 +90,11 @@ def test_a_non_object_is_invalid() -> None:
         ({"name": "   "}, "name"),
         ({"name": "x" * 200}, "name"),
         ({"name": 5}, "name"),
+        # S272 review: a name the blind index cannot file (no letter or digit token) failed later in the intake job
+        ({"name": "-"}, "name"),
+        ({"name": "..."}, "name"),
+        ({"name": "\u2014"}, "name"),
+        ({"name": "\U0001f334"}, "name"),
         ({"email": "nope"}, "email"),
         ({"email": None}, "email"),
         ({"phone": "0912 345 678"}, "phone"),
@@ -111,6 +116,19 @@ def test_each_invalid_answer_names_its_field(over: dict[str, Any], field: str) -
     with pytest.raises(stage1.Stage1Invalid) as exc:
         stage1.validate(raw(**over), honeypot_field="website")
     assert field in exc.value.fields
+
+
+def test_review_repro_names_are_what_the_intake_can_index() -> None:
+    """S272 review: crm_intake_process indexes the traveller's and each companion's name (blind_index.name_tokens);
+    a name without a letter or digit token was accepted here and the intake then failed. A companion like that is
+    dropped (optional, like a blank one); a CJK or accented name is a name."""
+    a = stage1.validate(
+        raw(name="李小龙", companions=["-", "Zoë Núñez", "\U0001f334", "..."]), honeypot_field="website"
+    )
+    assert a.name == "李小龙" and a.companions == ("Zoë Núñez",)
+    for n in (a.name, *a.companions):
+        assert stage1.has_name_token(n)
+    assert not stage1.has_name_token("-") and stage1.has_name_token("\u2122")
 
 
 def test_optional_answers_may_be_empty() -> None:

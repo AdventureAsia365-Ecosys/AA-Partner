@@ -27,7 +27,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from app.vault.blind_index import NormalisationError, normalise_email, normalise_phone
+from app.vault.blind_index import NormalisationError, name_tokens, normalise_email, normalise_phone
 
 SCHEMA_KEY = "stage1.v1"
 VERSION = 1
@@ -190,6 +190,19 @@ class ConsentMissing(ValueError):
     """The contact consent box was not ticked: nothing may be stored (card R test)."""
 
 
+def has_name_token(text: str) -> bool:
+    """True when the blind index can file ``text`` as a name (:func:`app.vault.blind_index.name_tokens` finds a letter
+    or digit token after NFKD). ``crm_intake_process`` indexes every traveller's and companion's name, so a name of
+    punctuation, symbols or emoji only ("-", "...", an em dash) must be refused (or, for an optional companion, dropped)
+    here, before it is stored: else the intake fails with nobody told (S272 review, AA-1038). The blind index's own
+    function, not a copy, so the check cannot drift from what the intake needs."""
+    try:
+        name_tokens(text)
+    except NormalisationError:
+        return False
+    return True
+
+
 def clean_text(value: Any, max_length: int) -> str | None:
     if value is None:
         return None
@@ -271,11 +284,11 @@ def validate(raw: dict[str, Any], *, honeypot_field: str, today: date | None = N
         if not isinstance(v, list) or len(v) > MAX_COMPANIONS:
             raise ValueError
         names = [clean_text(x, MAX_NAME) for x in v]
-        return tuple(n for n in names if n)
+        return tuple(n for n in names if n and has_name_token(n))
 
     def required_name(v: Any) -> str:
         text = clean_text(v, MAX_NAME)
-        if not text:
+        if not text or not has_name_token(text):
             raise ValueError
         return text
 

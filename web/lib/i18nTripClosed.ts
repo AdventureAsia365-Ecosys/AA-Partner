@@ -25,6 +25,7 @@ export const tripClosedEn = {
   "source.companion": "Added as a companion",
   "source.import": "Imported",
   "source.synthetic_seed": "Sample data",
+  "source.tripplanner": "Trip planner",
   "source.website_form": "Website form",
 } as const;
 
@@ -48,5 +49,6 @@ export const tripClosedVi: Record<keyof typeof tripClosedEn, string> = {
   "source.companion": "Thêm làm bạn đồng hành",
   "source.import": "Nhập từ tệp",
   "source.synthetic_seed": "Dữ liệu mẫu",
+  "source.tripplanner": "Trình lập lịch trình",
   "source.website_form": "Biểu mẫu trên website",
 };
