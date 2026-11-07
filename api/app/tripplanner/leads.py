@@ -189,19 +189,73 @@ def message_text(lead: dict[str, Any], *, unchecked_phone: str | None = None) ->
     """What the agent reads first on the trip: the planned trip and the traveller's own words (at most 2000 chars).
 
     ``unchecked_phone``: the phone the traveller typed when the CRM could not normalise it (no region to read it with,
-    or a number ``phonenumbers`` does not know); it goes on the second line, so a long message never cuts it."""
+    or a number ``phonenumbers`` does not know); it goes on the second line.
+
+    The traveller's own part comes FIRST: the header line, the phone line, then "Message from the traveller:" and
+    ``trip.message``. The catalog lines (one ``Tour:`` per tour, one ``Day N:`` per day) come last and are the only
+    part cut to fit, so a long catalog never cuts the traveller's words or phone (S272 review: 4 tours x 14 days cut
+    a wheelchair request away for good). Every part is cleaned with Stage 1's own steps first; parts are joined by
+    newlines, which never compose under NFC, so the joined text is already what Stage 1 stores."""
     trip = lead.get("trip") or {}
-    lines = [f"Trip planner request: {trip.get('days', '?')} day(s) in {', '.join(trip.get('countries') or [])}."]
-    if unchecked_phone:
-        lines.append(f"Phone as typed (not checked): {unchecked_phone}")
-    for tour in trip.get("tours") or []:
-        lines.append(f"Tour: {tour.get('title')} ({tour.get('source_id')})")
-    for day in trip.get("day_plan") or []:
-        lines.append(f"Day {day.get('day')}: {', '.join(day.get('stops') or [])}")
-    if trip.get("message"):
-        lines += ["", "Message from the traveller:", str(trip["message"])]
-    text = "\n".join(lines)
-    return text if len(text) <= stage1.MAX_MESSAGE else text[: stage1.MAX_MESSAGE - 1] + "…"
+    limit = stage1.MAX_MESSAGE
+    header = _clean(
+        f"Trip planner request: {trip.get('days', '?')} day(s) in {', '.join(trip.get('countries') or [])}."
+    )
+    phone = _clean(f"Phone as typed (not checked): {unchecked_phone}") if unchecked_phone else ""
+    own = _clean(f"Message from the traveller:\n{trip['message']}") if trip.get("message") else ""
+    catalog_lines = [f"Tour: {tour.get('title')} ({tour.get('source_id')})" for tour in trip.get("tours") or []]
+    catalog_lines += [
+        f"Day {day.get('day')}: {', '.join(day.get('stops') or [])}" for day in trip.get("day_plan") or []
+    ]
+    catalog = _clean("\n".join(catalog_lines))
+
+    phone_cost = len(phone) + 1 if phone else 0
+    if own:
+        # Only a message beyond the contract (1000) can reach this: keep room for the phone and some of the header.
+        own = _fit_message(own, limit - phone_cost - min(len(header), _HEADER_FLOOR) - 2)
+    own_cost = len(own) + 2 if own else 0
+    # The header keeps at least min(len(header), _HEADER_FLOOR) by the cut above, so it is never empty.
+    text = "\n".join(p for p in (_fit_message(header, limit - phone_cost - own_cost), phone) if p)
+    if own:
+        text = f"{text}\n\n{own}"
+    room = limit - len(text) - 2
+    if catalog and room > 1:
+        text = f"{text}\n\n{_fit_message(catalog, room)}"
+    return text
+
+
+def _phone_only_message(phone: str) -> str:
+    """The message when Stage 1 refused the built one and now refuses the phone: only the phone, as typed."""
+    return _fit_message(f"Phone as typed (not checked): {phone}")
+
+
+# No bound: stage1.clean_text only cleans (control characters out, NFC, trimmed) when the limit cannot be reached.
+_UNBOUNDED = 2**62
+# The part of the header line kept when an over-long message must be cut (only beyond the contract's 1000).
+_HEADER_FLOOR = 200
+
+
+def _clean(text: str) -> str:
+    return stage1.clean_text(text, _UNBOUNDED) or ""
+
+
+def _fit_message(text: str, limit: int = stage1.MAX_MESSAGE) -> str:
+    """``text`` cleaned with Stage 1's own steps (:func:`app.intake.stage1.clean_text`) and THEN cut to ``limit``
+    code points (default ``stage1.MAX_MESSAGE``), so Stage 1 ``validate`` never finds it too long and drops it. NFC can
+    lengthen a catalog name (U+0958..U+095F, U+0F73, U+FB1D..U+FB4E, U+0344 decompose), so the cut must come after it;
+    the cut text is cleaned again (a cut inside a combining sequence may re-normalise) and shortened until it fits."""
+    clean = _clean(text)
+    if len(clean) <= limit:
+        return clean
+    if limit < 1:
+        return ""
+    cut = limit - 1
+    while cut > 0:
+        out = _clean(clean[:cut] + "…")
+        if len(out) <= limit:
+            return out
+        cut -= 1
+    return "…"
 
 
 def stage1_raw(lead: dict[str, Any], *, today: dt.date | None = None) -> dict[str, Any]:
@@ -248,20 +302,32 @@ def answers_of(lead: dict[str, Any], *, today: dt.date | None = None) -> stage1.
         raw["phone"] = None
         if isinstance(typed, str) and typed.strip():
             raw["message"] = message_text(lead, unchecked_phone=TRAVELLER_CONTROL.sub("", typed).strip()[:40])
-    for _ in range(2):
+    dropped: set[str] = set()
+    # Each failed round drops at least one more optional answer, so the loop ends within len(OPTIONAL_FIELDS) + 1.
+    for _ in range(len(OPTIONAL_FIELDS) + 1):
         try:
             return stage1.validate(raw, honeypot_field="website", today=today)
         except stage1.ConsentMissing:
             raise LeadRejected("consent_missing") from None
         except stage1.Stage1Invalid as exc:
             optional = [f for f in exc.fields if f in OPTIONAL_FIELDS]
-            if len(optional) != len(exc.fields):
+            if not optional or len(optional) != len(exc.fields):
                 raise LeadRejected("invalid_lead") from None
+            keep_phone_text: str | None = None
+            if "phone" in optional and raw.get("phone"):
+                # Never lose the traveller's phone: keep it as text where the agent reads first (AA-1038 review),
+                # written BEFORE the optional answers are dropped. A message Stage 1 refused (now or before) is never
+                # rebuilt (that made the next round refuse it again, S272); the phone alone takes its place.
+                phone_text = str(raw["phone"])[:40]
+                if "message" not in optional and "message" not in dropped:
+                    raw["message"] = message_text(lead, unchecked_phone=phone_text)
+                else:
+                    keep_phone_text = _phone_only_message(phone_text)
             for name in optional:
-                if name == "phone" and raw.get("phone"):
-                    # Never lose the traveller's phone: keep it as text where the agent reads first (AA-1038 review).
-                    raw["message"] = message_text(lead, unchecked_phone=str(raw["phone"])[:40])
                 raw[name] = [] if name == "child_ages" else None
+                dropped.add(name)
+            if keep_phone_text is not None:
+                raw["message"] = keep_phone_text
     raise LeadRejected("invalid_lead")
 
 
