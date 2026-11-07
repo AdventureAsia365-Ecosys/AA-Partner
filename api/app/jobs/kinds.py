@@ -103,6 +103,10 @@ ENTITLEMENT_PULL = "crm_entitlement_pull"
 # AA-969 part 2 (root ADR 0019 d16): the nightly export of the pilot agency alone (app.lifecycle.pilot), queued due-now
 # once per UTC day; it only queues one crm_data_export row (seconds). Not deploy-gate exempt.
 PILOT_BACKUP = "crm_pilot_backup"
+# AA-1038 R5 slice 3 (root ADR 0019 d11): pull each agency's TripPlanner leads (lead.submitted.v1) into its intake
+# (app.tripplanner.leads), queued due-now once per minute slot by a maintenance hook. Not deploy-gate or DB Migrate
+# exempt: a row exists only while due or running (seconds).
+TP_LEAD_PULL = "crm_tp_lead_pull"
 
 DEFAULT_EXPECTED_SECONDS = 300
 OVERDUE_FACTOR = 2
@@ -151,6 +155,7 @@ EXPECTED_SECONDS: dict[str, int] = {
     PARTNER_ACCOUNTS: 300,
     ENTITLEMENT_PULL: 60,
     PILOT_BACKUP: 60,
+    TP_LEAD_PULL: 120,
 }
 
 

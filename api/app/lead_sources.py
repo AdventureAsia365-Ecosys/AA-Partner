@@ -21,5 +21,6 @@ LEAD_SOURCES: tuple[str, ...] = (
     "companion",  # a companion added to a trip by name
     "import",  # the CSV import
     "synthetic_seed",  # the Dev / demo seed's inquiry form
+    "tripplanner",  # AA-1038: a trip request from the agency's TripPlanner site (its system form "Trip planner")
     "website_form",  # an inquiry form (the default code of a new form)
 )

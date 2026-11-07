@@ -147,6 +147,12 @@ CIS membership feed (AA-978, ``app.cis``):
   Either empty = the job logs ``not_configured`` and does nothing. A value that is not that JSON refuses to start
   (the value is never echoed).
 
+TripPlanner leads (AA-1038 R5 slice 3; ``app.tripplanner``):
+
+- ``TRIPPLANNER_API_URL``: the origin of TripPlanner's assembly API (API Gateway, no path; Terraform). The worker pulls
+  ``<TRIPPLANNER_API_URL>/trip/m2m/v1/tenants/{agency}/leads`` with the same ``M2M_CLIENT`` (scope
+  ``tripplanner.leads/deliver``). Empty = ``crm_tp_lead_pull`` logs ``not_configured``.
+
 AA supply (AA-947, card CRM-19; ``app.booking``, ``app.catalog``):
 
 - ``BOOKING_API_URL``: the origin of the Booking public API (``https://api-booking.…``, no path; Terraform
@@ -316,6 +322,7 @@ class Settings:
     fx_provider: str = "synthetic"
     cis_api_url: str = ""
     booking_api_url: str = ""
+    tripplanner_api_url: str = ""
     booking_admin_url: str = ""
     m2m_client: str = field(default="", repr=False)
     crm_ingest_bucket: str = ""
@@ -483,6 +490,12 @@ class Settings:
             _ORIGIN.match(self.booking_api_url) or (insecure and _HTTP_ORIGIN.match(self.booking_api_url))
         ):
             raise SettingsError(f"BOOKING_API_URL must be an https origin without a path, got {self.booking_api_url!r}")
+        if self.tripplanner_api_url and not (
+            _ORIGIN.match(self.tripplanner_api_url) or (insecure and _HTTP_ORIGIN.match(self.tripplanner_api_url))
+        ):
+            raise SettingsError(
+                f"TRIPPLANNER_API_URL must be an https origin without a path, got {self.tripplanner_api_url!r}"
+            )
         if self.booking_admin_url and not (
             _ORIGIN.match(self.booking_admin_url) or (insecure and _HTTP_ORIGIN.match(self.booking_admin_url))
         ):
@@ -708,6 +721,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         .lower(),
         cis_api_url=_text(env, "CIS_API_URL").lower().rstrip("/"),
         booking_api_url=_text(env, "BOOKING_API_URL").lower().rstrip("/"),
+        tripplanner_api_url=_text(env, "TRIPPLANNER_API_URL").lower().rstrip("/"),
         booking_admin_url=_text(env, "BOOKING_ADMIN_URL").lower().rstrip("/"),
         m2m_client=_text(env, "M2M_CLIENT"),
         crm_ingest_bucket=_text(env, "CRM_INGEST_BUCKET"),
