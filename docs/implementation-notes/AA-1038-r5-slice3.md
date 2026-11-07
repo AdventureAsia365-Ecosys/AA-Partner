@@ -41,3 +41,13 @@ Session S272 (lane l10). Root ADR 0019 d11 (+ the S272 amendment), contract `lea
 - Live only after AA-CIS-Infra: the aa-m2m resource server `tripplanner.leads` (scope `deliver`) granted to the CRM
   client, and `TRIPPLANNER_API_URL` on the CRM task (API + worker). Until then the job logs `not_configured` /
   `token_unauthorized` and leads wait at TripPlanner (7-day hold).
+
+## Review fix pass (S272)
+
+- **A phone is never lost.** TripPlanner now pins `Traveller.phone` to E.164 with its country code (contract pattern
+  `^\+[1-9][0-9 ()-]{5,39}$`), but `normalise_phone` (no region) still rejects numbers `phonenumbers` does not know.
+  When the phone does not normalise, `answers_of` drops it from the phone field as before AND writes it on the second
+  line of the inquiry message ("Phone as typed (not checked): ..."), above the trip summary, so a cut message keeps
+  it. Test `test_a_phone_tripplanner_accepts_is_never_lost` runs TripPlanner's pattern over sample phones.
+- **The pull starts only when TripPlanner offers it.** TripPlanner refuses crm-routed leads (503) until its
+  `TP_LEAD_CRM_PULL_ENABLED` is on; switch it on only with this CRM's M2M scope and `TRIPPLANNER_API_URL` (Infra).

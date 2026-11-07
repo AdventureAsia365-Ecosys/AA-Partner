@@ -17,7 +17,9 @@ Migrate exempt: a row exists only while due or running):
      lists one, this is the second check): not stored, not acknowledged, counted ``foreign``;
    - the answers are mapped onto the Stage 1 inquiry (:func:`stage1_raw`) and validated by the same validator as the
      hosted form (:func:`app.intake.stage1.validate`); an optional answer that does not validate (a past start date, a
-     phone the CRM does not accept) is dropped, a required one rejects the lead;
+     phone the CRM cannot normalise) is dropped, a required one rejects the lead; a dropped phone is kept as text on
+     the inquiry message (the contract pins E.164, but a number the CRM's phone library rejects is still the
+     traveller's);
    - stored through the inquiry form path (:func:`app.intake.public.store_submission`: vault-encrypted payload, the
      ``crm_intake_process`` job queued in the same transaction), idempotent on ``tp-lead:<lead_id>`` (a lead pulled
      twice stores once); the agency's system form "Trip planner" (lead source ``tripplanner``, disabled for the
@@ -119,10 +121,15 @@ def _today() -> dt.date:
     return dt.datetime.now(dt.UTC).date()
 
 
-def message_text(lead: dict[str, Any]) -> str:
-    """What the agent reads first on the trip: the planned trip and the traveller's own words (at most 2000 chars)."""
+def message_text(lead: dict[str, Any], *, unchecked_phone: str | None = None) -> str:
+    """What the agent reads first on the trip: the planned trip and the traveller's own words (at most 2000 chars).
+
+    ``unchecked_phone``: the phone the traveller typed when the CRM could not normalise it (no region to read it with,
+    or a number ``phonenumbers`` does not know); it goes on the second line, so a long message never cuts it."""
     trip = lead.get("trip") or {}
     lines = [f"Trip planner request: {trip.get('days', '?')} day(s) in {', '.join(trip.get('countries') or [])}."]
+    if unchecked_phone:
+        lines.append(f"Phone as typed (not checked): {unchecked_phone}")
     for tour in trip.get("tours") or []:
         lines.append(f"Tour: {tour.get('title')} ({tour.get('source_id')})")
     for day in trip.get("day_plan") or []:
@@ -175,6 +182,9 @@ def answers_of(lead: dict[str, Any], *, today: dt.date | None = None) -> stage1.
             if len(optional) != len(exc.fields):
                 raise LeadRejected("invalid_lead") from None
             for name in optional:
+                if name == "phone" and raw.get("phone"):
+                    # Never lose the traveller's phone: keep it as text where the agent reads first (AA-1038 review).
+                    raw["message"] = message_text(lead, unchecked_phone=str(raw["phone"])[:40])
                 raw[name] = [] if name == "child_ages" else None
     raise LeadRejected("invalid_lead")
 

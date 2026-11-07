@@ -80,6 +80,44 @@ def test_optional_answers_that_do_not_validate_are_dropped():
     past = {**lead()["trip"], "start_date": "2026-11-01"}  # already past on TODAY
     answers = leads.answers_of(lead(trip=past, traveller={**lead()["traveller"], "phone": "not a phone"}), today=TODAY)
     assert answers.start_date is None and answers.phone is None
+    assert "Phone as typed (not checked): not a phone" in (answers.message or "")
+
+
+# TripPlanner's Traveller.phone rule (AA-TripPlanner-Web backend/assembly/leads.py _PHONE_RE = the contract pattern).
+TP_PHONE_PATTERN = r"^\+[1-9][0-9 ()-]{5,39}$"
+
+
+@pytest.mark.parametrize(
+    "phone",
+    ["+84 90 000 0000", "+44 (20) 7946-0000", "+1-202-555-0100", "+8490000000", "+999 1234 5678", "+1 2345"],
+)
+def test_a_phone_tripplanner_accepts_is_never_lost(phone):
+    """Cross-repo rule: every phone the producer accepts reaches the agent, normalised or as typed."""
+    import re
+
+    assert re.match(TP_PHONE_PATTERN, phone)
+    answers = leads.answers_of(lead(traveller={**lead()["traveller"], "phone": phone}), today=TODAY)
+    if answers.phone is not None:
+        assert answers.phone.startswith("+") and answers.phone[1:].isdigit()
+        assert "Phone as typed" not in (answers.message or "")
+    else:
+        assert f"Phone as typed (not checked): {phone}" in (answers.message or "")
+    assert answers.name == "Ada Fernwick"
+
+
+def test_a_normalised_phone_is_e164():
+    answers = leads.answers_of(lead(traveller={**lead()["traveller"], "phone": "+84 90 000 0000"}), today=TODAY)
+    assert answers.phone == "+84900000000"
+
+
+def test_an_unchecked_phone_survives_a_long_message():
+    trip = {
+        **lead()["trip"],
+        "message": "x" * 1000,
+        "day_plan": [{"day": d, "stops": [f"Stop {d}" * 5]} for d in range(1, 60)],
+    }
+    text = leads.message_text(lead(trip=trip), unchecked_phone="+999 1234 5678")
+    assert len(text) <= 2000 and "Phone as typed (not checked): +999 1234 5678" in text
 
 
 @pytest.mark.parametrize(
