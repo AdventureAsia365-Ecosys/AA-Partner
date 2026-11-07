@@ -167,7 +167,14 @@ def traveller_errors(traveller: Any) -> list[str]:
     }
     for name, ok in checks.items():
         try:
-            if not ok(_rule_text(t.get(name), TRAVELLER_MAX[name])):
+            value = _rule_text(t.get(name), TRAVELLER_MAX[name])
+            if name == "email" and value is not None:
+                # Lower-case FIRST, then the length and the pattern (the producer's order; it sends that value):
+                # U+0130 lower-cases to two code points (S272 review 4, vectors dotted_capital_i_*).
+                value = value.lower()
+                if len(value) > TRAVELLER_MAX[name]:
+                    raise ValueError
+            if not ok(value):
                 bad.append(name)
         except ValueError:
             bad.append(name)

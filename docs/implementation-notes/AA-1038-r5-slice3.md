@@ -99,3 +99,17 @@ Session S272 (lane l10). Root ADR 0019 d11 (+ the S272 amendment), contract `lea
   em dash, an emoji: ack `rejected`, alert, nothing stored; fails on the previous commit),
   `test_the_name_rule_is_what_the_intake_job_needs` (every valid name vector indexes, every refused one that survives
   cleaning cannot), the new vectors in the shared file, and Stage 1 cases in `test_intake_stage1.py`.
+
+## Review fix pass 4 (S272): the e-mail is checked lower-case
+
+- **Finding (TripPlanner side).** TripPlanner checked the e-mail, then lower-cased it; U+0130 lower-cases to two code
+  points, so it sent addresses whose local part or total length broke the rule and this CRM rejected them at the pull
+  (ack `rejected`, alert `tp_lead_rejected`): loud, but the traveller's request never reached the agency.
+- **Decision.** The rule's order is now explicit in the root rules file: lower-case first, then the length and the
+  pattern. `traveller_errors` lower-cases the cleaned e-mail before its length and `TRAVELLER_EMAIL` check, so its
+  verdict is TripPlanner's on every vector, including the new `dotted_capital_i_*` ones (rules file byte copy).
+  Stage 1 `validate` is unchanged: `normalise_email` already lower-cases, and a planner lead that passes
+  `traveller_errors` is already lower-case and within 254.
+- **Tests.** `test_review_repro_an_email_lower_casing_lengthens_is_checked_lower_case` (the review's two addresses and
+  the total case, as typed and lower-cased: `['email']`; the as-typed `'İ' * 33` address passed before this change)
+  and `test_a_dotted_capital_i_email_within_the_limits_is_valid`.

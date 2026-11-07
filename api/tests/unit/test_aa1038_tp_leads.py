@@ -352,6 +352,26 @@ def test_traveller_rule_shared_vectors(case):
         assert leads.traveller_errors(traveller) == [case["field"]]
 
 
+@pytest.mark.parametrize(
+    "email",
+    [
+        "\u0130" * 33 + "@example.com",
+        "a" * 60 + "\u0130" * 4 + "@example.com",
+        "a" * 62 + "\u0130" * 2 + "@" + "b" * 181 + ".example",
+    ],
+)
+def test_review_repro_an_email_lower_casing_lengthens_is_checked_lower_case(email):
+    """S272 review 4: the verdict is the producer's (lower-case first, then length and pattern), so the address
+    TripPlanner now refuses is the one the CRM would reject, and its lower-case form is rejected too."""
+    traveller = {**lead()["traveller"], "email": email}
+    assert leads.traveller_errors(traveller) == ["email"]
+    assert leads.traveller_errors({**traveller, "email": email.lower()}) == ["email"]
+
+
+def test_a_dotted_capital_i_email_within_the_limits_is_valid():
+    assert leads.traveller_errors({**lead()["traveller"], "email": "\u0130\u0130@Example.Invalid"}) == []
+
+
 def test_the_rule_constants_are_the_shared_ones():
     assert leads.TRAVELLER_EMAIL.pattern == RULES["email_pattern"]
     assert leads.TRAVELLER_PHONE.pattern == RULES["phone_pattern"]
