@@ -33,14 +33,16 @@ Session S272 (lane l10). Root ADR 0019 d11 (+ the S272 amendment), contract `lea
 
 - A per-minute slot calls TripPlanner once per agency: fine at pilot scale; a "which tenants have leads" call is the
   next step if the agency count grows.
-- A rejected lead is lost to the agency (TripPlanner redacts it). It is counted and logged; TripPlanner validates the
-  same fields before storing, so it should not happen.
+- A rejected lead is lost to the agency (TripPlanner redacts it). Since the S272 second review pass it is never silent:
+  the ops alert `tp_lead_rejected` (ids and the reason code), an ERROR line, and TripPlanner's daily run asks for
+  attention (`lead_rejected_by_crm`). Both sides apply ONE Traveller rule with shared vectors, so it should not happen.
 
 ## Should know
 
 - Live only after AA-CIS-Infra: the aa-m2m resource server `tripplanner.leads` (scope `deliver`) granted to the CRM
   client, and `TRIPPLANNER_API_URL` on the CRM task (API + worker). Until then the job logs `not_configured` /
-  `token_unauthorized` and leads wait at TripPlanner (7-day hold).
+  `token_unauthorized`, never lists a tenant, and TripPlanner refuses crm leads (503 `lead_channel_unavailable`,
+  nothing stored): its switch `TP_LEAD_CRM_PULL_ENABLED` is off, and with it on, the per-tenant beacon is stale.
 
 ## Review fix pass (S272)
 
@@ -51,3 +53,22 @@ Session S272 (lane l10). Root ADR 0019 d11 (+ the S272 amendment), contract `lea
   it. Test `test_a_phone_tripplanner_accepts_is_never_lost` runs TripPlanner's pattern over sample phones.
 - **The pull starts only when TripPlanner offers it.** TripPlanner refuses crm-routed leads (503) until its
   `TP_LEAD_CRM_PULL_ENABLED` is on; switch it on only with this CRM's M2M scope and `TRIPPLANNER_API_URL` (Infra).
+
+## Review fix pass 2 (S272)
+
+- **One Traveller rule on both sides.** `traveller_errors` applies the contract's rule (control characters out, NFC,
+  trimmed, length in code points, the e-mail and E.164 phone patterns) with the constants of TripPlanner's `validate`.
+  Shared vectors: `docs/contracts/rules/lead.submitted.v1.traveller-rules.json` (a byte copy of the root file; the root
+  is the source, TripPlanner keeps another copy under `backend/tests/contracts/`). Tests: every vector gives the same
+  verdict here and at TripPlanner, a name / e-mail TripPlanner accepts is never rejected here (the review repro: a
+  name NFC lengthens past 120), one it refuses is rejected here too. A phone outside the rule is kept as text on the
+  message (never lost), not rejected: the consumer is the lenient side on an optional field.
+- **A rejected lead raises an alert.** `pull_agency` emits the ops alert `tp_lead_rejected` (scope = the lead id, one
+  e-mail per lead; details tenant id, lead id, reason code; no traveller data) and logs an ERROR line before it acks
+  `rejected`. The lead id is echoed only as a UUID (`_lead_ref`, anything else becomes `invalid`).
+- **A tenant this CRM cannot serve stops TripPlanner storing its leads.** The agency is entered (an empty `system_tx`)
+  BEFORE its leads are listed, so a locked / offboarding / unknown agency is never listed. TripPlanner treats each
+  list call as that tenant's beacon and refuses crm leads (503 `lead_channel_unavailable`, nothing stored) when the
+  CRM has not listed the tenant within `TP_LEAD_CRM_PULL_FRESH_S` (10 minutes). Chosen over a CIS-side readiness flag
+  because CIS does not hold the CRM's lock state and it needs no migration; the limit: a lead sent in the first minutes
+  after a lock is still stored and waits for the hold (at most 7 days, then TripPlanner's expiry attention).

@@ -16,14 +16,16 @@ import uuid
 from collections import Counter
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from app.cis.http import HttpResponse
-from app.errors import Forbidden
+from app.errors import Forbidden, NotFound
 from app.jobs.payload_guard import check_payload
 from app.jobs.queue import Job
+from app.observability import ops_alerts
 from app.tripplanner import leads
 
 TENANT_A = uuid.UUID("3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7")
@@ -203,6 +205,8 @@ def _patch(monkeypatch, agencies, outcomes):
         assert actor == "job:crm_tp_lead_pull"
         if tenant_id in outcomes.get("locked", set()):
             raise Forbidden("tenant_locked")
+        if tenant_id in outcomes.get("gone", set()):
+            raise NotFound("not_a_member")
         yield FakeCtx(tenant_id)
 
     async def fake_ingest(ctx, vault, item, *, today=None):
@@ -327,3 +331,101 @@ def test_tripplanner_api_url_is_an_origin_and_configures_the_pull() -> None:
     assert build_tp_leads(load_settings({"ENVIRONMENT": "test"}), FakeTokens()) is None  # type: ignore[arg-type]
     cfg = build_tp_leads(ok, FakeTokens())  # type: ignore[arg-type]
     assert cfg is not None and cfg.base_url == "https://tp-api.example.test"
+
+
+# --- S272 review fixes: one Traveller rule on both sides, a rejected lead alerts, a locked agency is never listed ----
+
+RULES_PATH = (
+    Path(__file__).resolve().parents[3] / "docs" / "contracts" / "rules" / "lead.submitted.v1.traveller-rules.json"
+)
+RULES = json.loads(RULES_PATH.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("case", RULES["cases"], ids=lambda c: f"{c['field']}-{c['id']}")
+def test_traveller_rule_shared_vectors(case):
+    """The same vectors TripPlanner's validate() runs (backend/tests/test_aa1038_lead_review.py)."""
+    traveller = {**lead()["traveller"], case["field"]: case["value"]}
+    assert (leads.traveller_errors(traveller) == []) is case["valid"]
+    if not case["valid"]:
+        assert leads.traveller_errors(traveller) == [case["field"]]
+
+
+def test_the_rule_constants_are_the_shared_ones():
+    assert leads.TRAVELLER_EMAIL.pattern == RULES["email_pattern"]
+    assert leads.TRAVELLER_PHONE.pattern == RULES["phone_pattern"]
+    assert leads.TRAVELLER_CONTROL.pattern == RULES["control_characters"]
+    assert leads.TRAVELLER_MAX == RULES["max_length"]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [c for c in RULES["cases"] if c["valid"] and c["field"] in ("name", "email")],
+    ids=lambda c: f"{c['field']}-{c['id']}",
+)
+def test_a_traveller_tripplanner_accepts_is_never_rejected(case):
+    """Review repro: a name NFC lengthens past 120 passed TripPlanner and was rejected here (the lead was lost)."""
+    traveller = {**lead()["traveller"], case["field"]: case["value"]}
+    answers = leads.answers_of(lead(traveller=traveller), today=TODAY)
+    assert answers.name and answers.email
+
+
+@pytest.mark.parametrize(
+    "case",
+    [c for c in RULES["cases"] if not c["valid"] and c["field"] in ("name", "email")],
+    ids=lambda c: f"{c['field']}-{c['id']}",
+)
+def test_a_traveller_tripplanner_refuses_is_rejected_here_too(case):
+    traveller = {**lead()["traveller"], case["field"]: case["value"]}
+    with pytest.raises(leads.LeadRejected) as e:
+        leads.answers_of(lead(traveller=traveller), today=TODAY)
+    assert e.value.reason == "invalid_lead"
+
+
+def test_a_phone_outside_the_rule_is_kept_as_text_not_rejected():
+    answers = leads.answers_of(lead(traveller={**lead()["traveller"], "phone": "0912 345 678"}), today=TODAY)
+    assert answers.phone is None and "Phone as typed (not checked): 0912 345 678" in (answers.message or "")
+
+
+@pytest.mark.asyncio
+async def test_review_repro_a_rejected_lead_raises_an_ops_alert_without_personal_data(monkeypatch):
+    bad = lead(version="bad")
+    tp = FakeTripPlanner({TENANT_A: [bad]})
+    _patch(monkeypatch, [TENANT_A], {})
+    raised: list[tuple[str, Any, dict[str, Any]]] = []
+    monkeypatch.setattr(ops_alerts, "emit", lambda check, scope=None, **d: raised.append((check, scope, d)))
+    cfg = leads.LeadPullConfig(base_url="https://tp.example.invalid", tokens=FakeTokens(), transport=tp)  # type: ignore[arg-type]
+    result = await leads.LeadPull(cfg, object(), today=lambda: TODAY)(None, JOB)  # type: ignore[arg-type]
+    assert result["rejected_count"] == 1
+    assert raised == [
+        (
+            "tp_lead_rejected",
+            bad["lead_id"],
+            {"tenant_id": TENANT_A, "lead_id": bad["lead_id"], "reason": "invalid_lead"},
+        )
+    ]
+    assert "Ada" not in repr(raised) and "example.invalid" not in repr(raised)
+    assert "tp_lead_rejected" in ops_alerts.EVENT_CHECKS
+
+
+def test_a_lead_ref_never_echoes_a_payload_value():
+    assert leads._lead_ref("Ada Fernwick <ada@example.invalid>") == "invalid"  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_review_repro_a_locked_or_unknown_agency_is_never_listed(monkeypatch):
+    """TripPlanner's per-tenant beacon is the list call: a locked agency must not refresh it."""
+    locked, gone = uuid.uuid4(), uuid.uuid4()
+    tp = FakeTripPlanner({TENANT_A: [lead()], locked: [lead(locked)], gone: [lead(gone)]})
+    listed: list[uuid.UUID] = []
+    inner = tp.__call__
+
+    async def recording(method, url, headers, body, timeout_s):
+        parts = url.split("/")
+        if method == "GET":
+            listed.append(uuid.UUID(parts[parts.index("tenants") + 1]))
+        return await inner(method, url, headers, body, timeout_s)
+
+    _patch(monkeypatch, [TENANT_A, locked, gone], {"locked": {locked}, "gone": {gone}})
+    cfg = leads.LeadPullConfig(base_url="https://tp.example.invalid", tokens=FakeTokens(), transport=recording)  # type: ignore[arg-type]
+    result = await leads.LeadPull(cfg, object(), today=lambda: TODAY)(None, JOB)  # type: ignore[arg-type]
+    assert listed == [TENANT_A] and result["skipped_agency_count"] == 2 and result["stored_count"] == 1

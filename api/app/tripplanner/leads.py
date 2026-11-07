@@ -15,6 +15,10 @@ Migrate exempt: a row exists only while due or running):
 3. Each lead, in one :func:`app.tenancy.system_tx` of that agency (actor ``job:crm_tp_lead_pull``):
    - **another tenant's lead is refused** (``lead.tenant.tenant_id`` must be the agency of the call; TripPlanner never
      lists one, this is the second check): not stored, not acknowledged, counted ``foreign``;
+   - the traveller's name, e-mail and phone are checked first with the contract's ONE Traveller rule
+     (:func:`traveller_errors`, the same rule and the same shared test vectors as TripPlanner's ``validate``: root
+     ``docs/contracts/rules/lead.submitted.v1.traveller-rules.json``, byte copy in ``docs/contracts/rules/``), so a lead
+     TripPlanner accepted is never rejected here for its name or e-mail;
    - the answers are mapped onto the Stage 1 inquiry (:func:`stage1_raw`) and validated by the same validator as the
      hosted form (:func:`app.intake.stage1.validate`); an optional answer that does not validate (a past start date, a
      phone the CRM cannot normalise) is dropped, a required one rejects the lead; a dropped phone is kept as text on
@@ -27,7 +31,14 @@ Migrate exempt: a row exists only while due or running):
      owner of planner leads in Settings > Forms;
    - then acknowledged (``POST .../leads/{lead_id}/ack``): ``stored`` (also for a duplicate) or ``rejected`` with the
      reason; TripPlanner then redacts its copy. An ack that fails is retried by the next run (the store is idempotent).
-   A locked or offboarding agency is skipped (its leads wait at TripPlanner, whose hold window ends them).
+     A rejected lead is a traveller's request the agency never sees: it raises the ops alert ``tp_lead_rejected``
+     (:mod:`app.observability.ops_alerts`: ids and the reason code only, one e-mail per lead) and an ERROR line, and
+     TripPlanner's daily run reports it too (``lead_rejected_by_crm``).
+   The agency is entered (an empty :func:`app.tenancy.system_tx`) BEFORE its leads are listed. A locked, offboarding or
+   unknown agency is skipped without a list call, and the list call is TripPlanner's per-tenant beacon: TripPlanner
+   takes crm leads for a tenant only while the CRM listed it within ``TP_LEAD_CRM_PULL_FRESH_S`` (10 minutes), so a
+   tenant this CRM cannot serve gets 503 ``lead_channel_unavailable`` at TripPlanner and nothing is stored there. Leads
+   stored before the agency was locked wait at TripPlanner, whose hold (at most 7 days) ends them.
 
 Payloads and results are counts and error classes only (DM-6.3); no name, e-mail or lead content is logged.
 """
@@ -37,7 +48,9 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import re
 import secrets
+import unicodedata
 import uuid
 from collections import Counter
 from collections.abc import Callable
@@ -55,6 +68,7 @@ from app.intake.public import store_submission
 from app.jobs import queue
 from app.jobs.kinds import TP_LEAD_PULL
 from app.jobs.queue import Job
+from app.observability import ops_alerts
 from app.tenancy import SystemContext, system_tx
 from app.vault import KeyProvider, Vault
 
@@ -86,6 +100,14 @@ COUNTRY_CODES = {
 }
 OPTIONAL_FIELDS = ("phone", "start_date", "end_date", "nights", "message", "child_ages", "locale")
 
+# The contract's Traveller rule (lead.submitted.v1), the same on both sides: control characters removed, Unicode NFC,
+# trimmed, then the length in code points and the pattern. Shared test vectors: docs/contracts/rules/ (root copy is the
+# source); TripPlanner backend/assembly/leads.py applies the same constants.
+TRAVELLER_CONTROL = re.compile(r"[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]")
+TRAVELLER_MAX = {"name": 120, "email": 254, "phone": 40}
+TRAVELLER_EMAIL = re.compile(r"^[^@\s]{1,64}@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,63}$")
+TRAVELLER_PHONE = re.compile(r"^\+[1-9][0-9 ()-]{5,39}$")
+
 FORM_SQL = (
     "SELECT intake_form_id FROM crm.intake_form WHERE lead_source = $1 AND created_by = $2 AND deleted_at IS NULL "
     "ORDER BY created_at LIMIT 1"
@@ -115,6 +137,36 @@ class LeadRejected(ValueError):
 
 class ForeignLead(ValueError):
     """The lead names another tenant than the agency it was pulled for."""
+
+
+def _rule_text(value: Any, max_len: int) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError
+    text = unicodedata.normalize("NFC", TRAVELLER_CONTROL.sub("", value)).strip()
+    if len(text) > max_len:
+        raise ValueError
+    return text or None
+
+
+def traveller_errors(traveller: Any) -> list[str]:
+    """The Traveller fields that break the contract's rule (``name`` and ``email`` required, ``phone`` optional E.164).
+    Pure; the same verdict as TripPlanner's ``validate`` on every shared test vector."""
+    t = traveller if isinstance(traveller, dict) else {}
+    bad: list[str] = []
+    checks = {
+        "name": lambda v: v is not None,
+        "email": lambda v: v is not None and TRAVELLER_EMAIL.match(v) is not None,
+        "phone": lambda v: v is None or TRAVELLER_PHONE.match(v) is not None,
+    }
+    for name, ok in checks.items():
+        try:
+            if not ok(_rule_text(t.get(name), TRAVELLER_MAX[name])):
+                bad.append(name)
+        except ValueError:
+            bad.append(name)
+    return bad
 
 
 def _today() -> dt.date:
@@ -170,8 +222,20 @@ def stage1_raw(lead: dict[str, Any], *, today: dt.date | None = None) -> dict[st
 
 
 def answers_of(lead: dict[str, Any], *, today: dt.date | None = None) -> stage1.Stage1Answers:
-    """Validated Stage 1 answers, dropping optional answers that do not validate; LeadRejected otherwise."""
+    """Validated Stage 1 answers, dropping optional answers that do not validate; LeadRejected otherwise.
+
+    The contract's Traveller rule runs first (:func:`traveller_errors`): a name or e-mail that breaks it rejects the
+    lead (TripPlanner refuses the same values before storing, so this is a producer bug, never a traveller's typo); a
+    phone that breaks it is kept as text on the message, like a phone the CRM cannot normalise."""
+    errors = traveller_errors(lead.get("traveller"))
+    if {"name", "email"} & set(errors):
+        raise LeadRejected("invalid_lead")
     raw = stage1_raw(lead, today=today)
+    if "phone" in errors:
+        typed = (lead.get("traveller") or {}).get("phone")
+        raw["phone"] = None
+        if isinstance(typed, str) and typed.strip():
+            raw["message"] = message_text(lead, unchecked_phone=TRAVELLER_CONTROL.sub("", typed).strip()[:40])
     for _ in range(2):
         try:
             return stage1.validate(raw, honeypot_field="website", today=today)
@@ -255,6 +319,14 @@ async def acknowledge(
     await _call(cfg, "POST", _url(cfg, tenant_id, lead_id, "ack"), {"outcome": outcome, "reason": reason})
 
 
+def _lead_ref(lead_id: str) -> str:
+    """The lead id as a UUID for logs and alerts (anything else becomes ``invalid``: never echo a payload value)."""
+    try:
+        return str(uuid.UUID(lead_id))
+    except ValueError:
+        return "invalid"
+
+
 async def pull_agency(
     pool: asyncpg.Pool,
     cfg: LeadPullConfig,
@@ -264,6 +336,10 @@ async def pull_agency(
     *,
     today: dt.date | None = None,
 ) -> None:
+    # Enter the agency first: a locked / offboarding / unknown agency raises Forbidden / NotFound here, BEFORE the list
+    # call, so TripPlanner's per-tenant beacon goes stale and it refuses that tenant's crm leads (nothing stored).
+    async with system_tx(pool, tenant_id, actor=ACTOR):
+        pass
     for lead in await fetch_leads(cfg, tenant_id):
         lead_id = str(lead.get("lead_id"))
         try:
@@ -275,6 +351,10 @@ async def pull_agency(
             continue
         except LeadRejected as exc:
             counts["rejected"] += 1
+            # A traveller's request the agency will never see: fail loudly (ids and the reason code only, DM-6.3).
+            ref = _lead_ref(lead_id)
+            log.error("tp_lead_rejected tenant_id=%s lead_id=%s reason=%s", tenant_id, ref, exc.reason)
+            ops_alerts.emit("tp_lead_rejected", ref, tenant_id=tenant_id, lead_id=ref, reason=exc.reason)
             await acknowledge(cfg, tenant_id, lead_id, "rejected", exc.reason)
             continue
         counts[outcome] += 1
@@ -304,7 +384,8 @@ class LeadPull:
             try:
                 await pull_agency(pool, self._config, self._keys, agency.tenant_id, counts, today=self._today())
             except (Forbidden, NotFound):
-                counts["skipped_agency"] += 1  # locked, offboarding or gone: its leads wait at TripPlanner
+                # Locked, offboarding or gone: not listed, so TripPlanner stops taking its crm leads (stale beacon).
+                counts["skipped_agency"] += 1
             except (HttpError, TokenError) as exc:
                 errors[getattr(exc, "error_class", type(exc).__name__)] += 1
             except Exception as exc:  # noqa: BLE001 — one agency's error must not hold every later agency
