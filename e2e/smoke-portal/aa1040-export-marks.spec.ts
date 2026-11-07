@@ -77,7 +77,9 @@ test.describe('AA-1040 — studio downloads keep the AI mark', () => {
       const ids = versions.map((v) => v.id ?? v.version_id).filter((id): id is string => !!id).slice(0, 3);
       for (const id of ids) {
         const res = await request.get(`/api/tenant/v1/tours/versions/${id}/export-docx`);
-        if (res.status() !== 200) continue; // a version still being written has nothing to export yet
+        // a version still being written has nothing to export yet (404/409); anything else is a real failure
+        expect([200, 404, 409], `DOCX export status of ${id}`).toContain(res.status());
+        if (res.status() !== 200) continue;
         expect(res.headers()['content-disposition'] ?? '', 'DOCX Content-Disposition')
           .toMatch(/^attachment; filename="[A-Za-z0-9][A-Za-z0-9._-]*\.docx"$/);
         expect((await res.body()).subarray(0, 2).toString('latin1'), 'DOCX is a zip').toBe('PK');
