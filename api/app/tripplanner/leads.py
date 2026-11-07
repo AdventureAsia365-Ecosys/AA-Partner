@@ -200,8 +200,28 @@ def message_text(lead: dict[str, Any], *, unchecked_phone: str | None = None) ->
         lines.append(f"Day {day.get('day')}: {', '.join(day.get('stops') or [])}")
     if trip.get("message"):
         lines += ["", "Message from the traveller:", str(trip["message"])]
-    text = "\n".join(lines)
-    return text if len(text) <= stage1.MAX_MESSAGE else text[: stage1.MAX_MESSAGE - 1] + "…"
+    return _fit_message("\n".join(lines))
+
+
+# No bound: stage1.clean_text only cleans (control characters out, NFC, trimmed) when the limit cannot be reached.
+_UNBOUNDED = 2**62
+
+
+def _fit_message(text: str) -> str:
+    """``text`` cleaned with Stage 1's own steps (:func:`app.intake.stage1.clean_text`) and THEN cut to
+    ``stage1.MAX_MESSAGE`` code points, so Stage 1 ``validate`` never finds it too long and drops it. NFC can lengthen
+    a catalog name (U+0958..U+095F, U+0F73, U+FB1D..U+FB4E, U+0344 decompose), so the cut must come after it; the cut
+    text is cleaned again (a cut inside a combining sequence may re-normalise) and shortened until it fits."""
+    clean = stage1.clean_text(text, _UNBOUNDED) or ""
+    if len(clean) <= stage1.MAX_MESSAGE:
+        return clean
+    cut = stage1.MAX_MESSAGE - 1
+    while cut > 0:
+        out = stage1.clean_text(clean[:cut] + "…", _UNBOUNDED) or ""
+        if len(out) <= stage1.MAX_MESSAGE:
+            return out
+        cut -= 1
+    return "…"
 
 
 def stage1_raw(lead: dict[str, Any], *, today: dt.date | None = None) -> dict[str, Any]:
@@ -248,20 +268,24 @@ def answers_of(lead: dict[str, Any], *, today: dt.date | None = None) -> stage1.
         raw["phone"] = None
         if isinstance(typed, str) and typed.strip():
             raw["message"] = message_text(lead, unchecked_phone=TRAVELLER_CONTROL.sub("", typed).strip()[:40])
-    for _ in range(2):
+    dropped: set[str] = set()
+    # Each failed round drops at least one more optional answer, so the loop ends within len(OPTIONAL_FIELDS) + 1.
+    for _ in range(len(OPTIONAL_FIELDS) + 1):
         try:
             return stage1.validate(raw, honeypot_field="website", today=today)
         except stage1.ConsentMissing:
             raise LeadRejected("consent_missing") from None
         except stage1.Stage1Invalid as exc:
             optional = [f for f in exc.fields if f in OPTIONAL_FIELDS]
-            if len(optional) != len(exc.fields):
+            if not optional or len(optional) != len(exc.fields):
                 raise LeadRejected("invalid_lead") from None
+            if "phone" in optional and raw.get("phone") and "message" not in optional and "message" not in dropped:
+                # Never lose the traveller's phone: keep it as text where the agent reads first (AA-1038 review),
+                # written BEFORE the optional answers are dropped, and never into a message already dropped (S272).
+                raw["message"] = message_text(lead, unchecked_phone=str(raw["phone"])[:40])
             for name in optional:
-                if name == "phone" and raw.get("phone"):
-                    # Never lose the traveller's phone: keep it as text where the agent reads first (AA-1038 review).
-                    raw["message"] = message_text(lead, unchecked_phone=str(raw["phone"])[:40])
                 raw[name] = [] if name == "child_ages" else None
+                dropped.add(name)
     raise LeadRejected("invalid_lead")
 
 

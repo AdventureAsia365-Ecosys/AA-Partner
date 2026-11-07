@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import unicodedata
 import uuid
 from collections import Counter
 from contextlib import asynccontextmanager
@@ -145,6 +146,82 @@ def test_a_long_trip_message_is_cut():
         "day_plan": [{"day": d, "stops": [f"Stop {d}" * 5]} for d in range(1, 60)],
     }
     assert len(leads.message_text(lead(trip=trip))) <= 2000
+
+
+# Code points whose NFC form is longer (composition exclusions that decompose): Devanagari U+0958..U+095F, Tibetan
+# U+0F73, Hebrew presentation forms U+FB1D..U+FB4E, combining U+0344.
+NFC_LENGTHENING = ["\u0958", "\u095f", "\u0f73", "\ufb2c", "\ufb4e", "\u0344"]
+
+
+@pytest.mark.parametrize("char", NFC_LENGTHENING)
+def test_review_repro_an_nfc_lengthening_stop_name_keeps_the_message_and_the_phone(char):
+    """S272 follow-up: message_text cut at 2000 code points BEFORE Stage 1's NFC, so a stop name whose NFC form is
+    longer pushed the message past 2000, validate dropped it, the phone retry rebuilt it, the second round dropped it
+    again and the lead was rejected (invalid_lead). Now the text is cleaned with Stage 1's own clean_text first and cut
+    after; the lead is stored with its message and the phone line."""
+    assert len(unicodedata.normalize("NFC", char)) > 1
+    trip = {**lead()["trip"], "day_plan": [{"day": d, "stops": [f"Ridge {char * 30}"]} for d in range(1, 60)]}
+    traveller = {**lead()["traveller"], "phone": "+999 1234 5678"}  # contract E.164, phonenumbers rejects it
+    answers = leads.answers_of(lead(trip=trip, traveller=traveller), today=TODAY)
+    message = answers.message or ""
+    assert answers.phone is None and answers.name == "Ada Fernwick"
+    assert "Phone as typed (not checked): +999 1234 5678" in message
+    assert "Lantern Coast Explorer (SYN-1)" in message and message.endswith("\u2026")
+    assert len(message) <= stage1.MAX_MESSAGE
+    assert stage1.clean_text(message, stage1.MAX_MESSAGE) == message  # what Stage 1 stores is what was built
+
+
+@pytest.mark.parametrize("char", NFC_LENGTHENING)
+def test_message_text_is_already_stage1_clean_and_within_the_limit(char):
+    trip = {
+        **lead()["trip"],
+        "message": f"{char}\x0b{char}" * 900,
+        "tours": [{"source_id": "SYN-2", "title": char * 50}],
+    }
+    text = leads.message_text(lead(trip=trip), unchecked_phone="+999 1234 5678")
+    assert len(text) <= stage1.MAX_MESSAGE and stage1.clean_text(text, stage1.MAX_MESSAGE) == text
+    assert "\x0b" not in text and unicodedata.is_normalized("NFC", text)
+    assert "Phone as typed (not checked): +999 1234 5678" in text
+
+
+def test_a_short_message_is_cleaned_like_stage1_not_cut():
+    trip = {**lead()["trip"], "message": "  Ka\u0958ri  ", "day_plan": [], "tours": []}
+    text = leads.message_text(lead(trip=trip))
+    assert text.endswith("Ka\u0915\u093cri") and not text.endswith("\u2026")
+
+
+def test_the_phone_retry_never_rebuilds_a_dropped_message(monkeypatch):
+    """A message Stage 1 refuses is dropped once and stays dropped: the phone retry does not write it back (which
+    made the next round refuse it again and reject the whole lead)."""
+    real = stage1.validate
+    seen: list[Any] = []
+
+    def validate(raw: dict[str, Any], **kw: Any) -> Any:
+        seen.append(raw.get("message"))
+        if raw.get("message") is not None:
+            raise stage1.Stage1Invalid(["message", "phone"] if raw.get("phone") else ["message"])
+        return real(raw, **kw)
+
+    monkeypatch.setattr(stage1, "validate", validate)
+    answers = leads.answers_of(lead(traveller={**lead()["traveller"], "phone": "+999 1234 5678"}), today=TODAY)
+    assert answers.message is None and answers.phone is None and seen[-1] is None and len(seen) == 2
+
+
+def test_every_optional_field_failing_one_by_one_still_stores_the_lead(monkeypatch):
+    """The retry loop runs until every optional answer could be dropped (one per round), not a fixed two rounds."""
+    real = stage1.validate
+    order = ["start_date", "nights", "child_ages", "locale", "message"]
+
+    def validate(raw: dict[str, Any], **kw: Any) -> Any:
+        for name in order:
+            if raw.get(name) not in (None, []):
+                raise stage1.Stage1Invalid([name])
+        return real(raw, **kw)
+
+    monkeypatch.setattr(stage1, "validate", validate)
+    answers = leads.answers_of(lead(), today=TODAY)
+    assert answers.name == "Ada Fernwick" and answers.start_date is None and answers.message is None
+    assert answers.nights is None and answers.child_ages == ()
 
 
 @dataclass

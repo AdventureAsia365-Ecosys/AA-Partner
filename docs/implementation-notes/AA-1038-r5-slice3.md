@@ -113,3 +113,22 @@ Session S272 (lane l10). Root ADR 0019 d11 (+ the S272 amendment), contract `lea
 - **Tests.** `test_review_repro_an_email_lower_casing_lengthens_is_checked_lower_case` (the review's two addresses and
   the total case, as typed and lower-cased: `['email']`; the as-typed `'İ' * 33` address passed before this change)
   and `test_a_dotted_capital_i_email_within_the_limits_is_valid`.
+
+## Follow-up (S272, lane l14): the inquiry message is cut after Stage 1's NFC
+
+- **Finding.** `message_text` cut the inquiry message at 2000 code points, then Stage 1 `validate` ran `clean_text`
+  (control characters out, NFC, trimmed) and measured again. A catalog name whose NFC form is longer (U+0958..U+095F,
+  U+0F73, U+FB1D..U+FB4E, U+0344 decompose under NFC) pushed it past 2000, so `validate` refused `message` and
+  `answers_of` dropped it. With a phone `phonenumbers` rejects in the same lead, the phone retry wrote the message back,
+  the second (last) round refused it again and the whole lead was acknowledged `rejected` (`invalid_lead`).
+- **Decision.** `_fit_message` cleans the whole text with Stage 1's own `clean_text` (no copy of its steps) and only
+  then cuts to `MAX_MESSAGE`; the cut text is cleaned again and shortened until it fits (a cut inside a combining
+  sequence may re-normalise). The message `answers_of` builds is exactly what Stage 1 stores.
+- **The retry loop.** `answers_of` now loops `len(OPTIONAL_FIELDS) + 1` rounds (each round drops at least one more
+  optional answer), writes the "Phone as typed" line BEFORE the optional answers are dropped, and never into a message
+  that is being or was dropped.
+- **Tests** (`tests/unit/test_aa1038_tp_leads.py`): an NFC-lengthening stop name (six code points) plus `+999 1234 5678`
+  (contract E.164, `phonenumbers` rejects it) -> stored with the message and the phone line (rejected before);
+  `message_text` is Stage 1 clean and within 2000; a dropped message is not rebuilt by the phone retry; every
+  optional answer failing one per round still stores the lead. All fail on the previous commit.
+- Behaviour otherwise unchanged: a message within the limit is the same text (already NFC and trimmed in practice).
