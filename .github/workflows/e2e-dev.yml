@@ -76,6 +76,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
+          package-manager-cache: false
       # Exact versions in e2e/package.json; no lockfile on purpose (this folder never ships in an image). No install
       # scripts run, and every step that runs third-party code before the tests does so WITHOUT AWS credentials: the
       # mailbox role (it reads every e2e inbound mail, sign-in codes included) is configured just before the tests.
