@@ -594,7 +594,7 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
   `data-ai-*` / `<meta name="ai-*">` in the WordPress post). The studio BFF (`/api/tenant/*`) passes the CIS
   `X-AI-Generated` / `X-AI-Generator` / `X-AI-Model` headers and a checked `Content-Disposition` on top of
   `Content-Type`, rebuilt from an allow-list (`web/lib/studio/downloadHeaders.ts`); every other upstream header is
-  dropped. The T2 DOCX carries its mark in the core properties only (CIS sends no `X-AI-*` on it). CRM AI drafts: `POST trips/{id}/ai/draft` answers
+  dropped. The T2 DOCX carries its mark in its core properties and, since AA-CIS-App #1366 (S272), the same `X-AI-*` headers. CRM AI drafts: `POST trips/{id}/ai/draft` answers
   `ai: {ai_generated, generator, generated_at}` (null without model text; the model is on the ledger row
   `llm_call_id`) and the draft text element carries `data-ai-generated` / `data-ai-generated-at`. A message a member
   writes from a draft is their own (crm.message carries no mark).

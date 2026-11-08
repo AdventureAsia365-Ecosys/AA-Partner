@@ -5,7 +5,8 @@
 //   - a ready blog piece exported as an HTML document and as a fragment: X-AI-Generated true + X-AI-Generator headers,
 //     `data-ai-generated="true"` on the <article> and `<meta name="ai-generated" content="true">` in the body;
 //   - a ready piece exported as text (no markup): the headers are its mark;
-//   - a T2 version's DOCX: a `.docx` Content-Disposition file name (its AI mark is in the file's core properties).
+//   - a T2 version's DOCX: a `.docx` Content-Disposition file name and the X-AI-* headers (AA-CIS-App #1366; the mark is
+//     also in the file's core properties).
 // Calls go through the page context's request (same cookies as the page, lesson S243/S251), as the studio's own
 // fetch does. Each export writes one CIS audit row, exactly like a person clicking Export; nothing is published and
 // no model is called. A tenant without a ready piece or version gets an annotation, not a failure.
@@ -66,7 +67,7 @@ test.describe('AA-1040 — studio downloads keep the AI mark', () => {
     }
   });
 
-  test('T2 DOCX export: the file name passes the studio BFF', async ({ browser }) => {
+  test('T2 DOCX export: the file name and the X-AI-* headers pass the studio BFF', async ({ browser }) => {
     const context = await browser.newContext({ baseURL: baseUrl(), storageState: TENANT_STATE });
     await installBypassRoute(context);
     try {
@@ -82,6 +83,7 @@ test.describe('AA-1040 — studio downloads keep the AI mark', () => {
         if (res.status() !== 200) continue;
         expect(res.headers()['content-disposition'] ?? '', 'DOCX Content-Disposition')
           .toMatch(/^attachment; filename="[A-Za-z0-9][A-Za-z0-9._-]*\.docx"$/);
+        expectAiHeaders(res, 'DOCX');
         expect((await res.body()).subarray(0, 2).toString('latin1'), 'DOCX is a zip').toBe('PK');
         return;
       }
