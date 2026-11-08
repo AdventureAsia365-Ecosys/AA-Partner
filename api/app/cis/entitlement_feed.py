@@ -32,6 +32,8 @@ The projection (:func:`projection`, one :func:`app.tenancy.entitlement_feed_tx` 
 - ``allowed_features``: the CRM codes whose ``crm.<code>`` key is entitled (a disabled or missing key is not allowed;
   the owner still switches an allowed feature on in Settings);
 - ``member_limit``: the ``crm.seats`` limit (1-500), kept as it is when CIS gives none;
+- ``tp_crm_leads`` (crm-047, AA-1038): both ``tp.hosted`` and ``crm.core`` are entitled, the two keys CIS 390 resolves
+  a TripPlanner tenant's ``lead_channel`` crm from; ``crm_tp_lead_pull`` calls TripPlanner only for these agencies;
 - ``projected_at`` = now; an unchanged projection writes nothing;
 - adoption guard: an agency never projected before (``projected_at`` NULL: what the L1 console wrote) whose CIS account
   has no ``crm`` subscription in any status keeps its plan, seats and features (outcome ``awaiting_cis``, logged): CIS
@@ -95,18 +97,22 @@ STUCK_FAILURES = 10
 LIVE = frozenset({"trialing", "active", "past_due"})
 PLANS = {"crm.core": "core", "crm.pro": "pro"}
 SEATS_KEY = "crm.seats"
+# AA-1038 (crm-047): TripPlanner sends a tenant's leads to its CRM when both keys are entitled (CIS 390
+# lead_channel crm).
+TP_CRM_LEAD_KEYS = ("tp.hosted", "crm.core")
 MEMBER_LIMIT_MAX = 500
 HELD = frozenset({"active", "locked"})
 
 ENTITLEMENT_SQL = (
-    "SELECT plan, member_limit, allowed_features, projected_at FROM crm.tenant_entitlement WHERE deleted_at IS NULL"
+    "SELECT plan, member_limit, allowed_features, projected_at, tp_crm_leads FROM crm.tenant_entitlement"
+    " WHERE deleted_at IS NULL"
 )
 UPSERT_SQL = """
-INSERT INTO crm.tenant_entitlement (plan, member_limit, allowed_features, projected_at)
-VALUES ($1, $2, $3::text[], now())
+INSERT INTO crm.tenant_entitlement (plan, member_limit, allowed_features, projected_at, tp_crm_leads)
+VALUES ($1, $2, $3::text[], now(), $4)
 ON CONFLICT (tenant_id) DO UPDATE
    SET plan = EXCLUDED.plan, member_limit = EXCLUDED.member_limit, allowed_features = EXCLUDED.allowed_features,
-       projected_at = EXCLUDED.projected_at
+       projected_at = EXCLUDED.projected_at, tp_crm_leads = EXCLUDED.tp_crm_leads
 """
 TENANT_LOCK_SQL = "SELECT status, lock_source, is_pilot FROM crm.tenant WHERE tenant_id = $1 FOR UPDATE"
 SET_PILOT_SQL = "UPDATE crm.tenant SET is_pilot = $2 WHERE tenant_id = $1"
@@ -127,6 +133,7 @@ class Projection:
     in_service: bool
     crm_subscribed: bool = True  # the CIS account has a crm subscription in any status (the adoption guard)
     is_pilot: bool | None = None  # AA-969 d16: the CIS pilot marker (crm-044); None = absent, keep the current one
+    tp_crm_leads: bool = False  # AA-1038 (crm-047): tp.hosted and crm.core entitled, TripPlanner leads come here
 
 
 @dataclass
@@ -235,7 +242,13 @@ def projection(account: dict[str, Any]) -> Projection:
     seats = ents.get(SEATS_KEY)
     member_limit = None if seats is None else max(1, min(int(seats), MEMBER_LIMIT_MAX))
     return Projection(
-        plan, member_limit, features, bool(account["in_service"]), crm is not None, account.get("is_pilot")
+        plan,
+        member_limit,
+        features,
+        bool(account["in_service"]),
+        crm is not None,
+        account.get("is_pilot"),
+        all(key in ents for key in TP_CRM_LEAD_KEYS),
     )
 
 
@@ -313,12 +326,13 @@ async def _apply_in(ctx: SystemContext, wanted: Projection, counts: RunCounts) -
         or row["plan"] != wanted.plan
         or int(row["member_limit"]) != member_limit
         or sorted(row["allowed_features"] or []) != features
+        or bool(row["tp_crm_leads"]) != wanted.tp_crm_leads
     )
     if changed:
-        await ctx.conn.execute(UPSERT_SQL, wanted.plan, member_limit, features)
+        await ctx.conn.execute(UPSERT_SQL, wanted.plan, member_limit, features, wanted.tp_crm_leads)
         ctx.audit(
             "entitlements_projected", "allowed", "tenant_entitlement", str(ctx.tenant_id),
-            fields=("plan", "member_limit", "allowed_features"), reason="cis_account",
+            fields=("plan", "member_limit", "allowed_features", "tp_crm_leads"), reason="cis_account",
         )  # fmt: skip
     tenant = await ctx.conn.fetchrow(TENANT_LOCK_SQL, ctx.tenant_id)
     change = status_change(wanted.in_service, tenant["status"], tenant["lock_source"])

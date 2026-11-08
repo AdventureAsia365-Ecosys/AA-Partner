@@ -12,6 +12,8 @@ tenant.entitlements.v1 feed and snapshots.
   fails (counted with its own failure count, retried sooner, reset by a clean pass).
 - Adoption guard: an agency the L1 console set up (projected_at NULL) keeps its features while CIS has no crm
   subscription for it (``awaiting_cis``); once CIS attaches one, the projection takes over.
+- AA-1038 (crm-047): tp.hosted + crm.core project ``tp_crm_leads``; the lead pull calls TripPlanner only for those
+  agencies.
 - AA-1036: ``crm_entitled`` (the app switcher's CRM entry, ``/crm/v1/me``) is true before any projection and on a live
   crm plan, false once CIS cancels the add-on (projected plan free).
 """
@@ -36,7 +38,7 @@ from app.errors import Forbidden
 from app.jobs.payload_guard import check_payload
 from app.jobs.queue import Job
 from app.ops import console
-from app.tenancy import tenant_tx
+from app.tenancy import system_tx, tenant_tx
 from tests.integration.test_crm005_intake import _agency
 from tests.integration.test_crm010_schema import _ctx
 
@@ -265,3 +267,52 @@ async def test_crm_entitled_follows_the_projected_add_on(app_pool: asyncpg.Pool,
     assert (await _entitlement(app_pool, tenant))["plan"] == "free"
     async with tenant_tx(app_pool, owner, tenant) as ctx:
         assert await entitlements.crm_entitled(ctx) is False
+
+
+async def test_the_tripplanner_lead_route_is_projected_and_filters_the_lead_pull(
+    app_pool: asyncpg.Pool, cis: Cis
+) -> None:
+    """AA-1038 (crm-047): tp.hosted + crm.core in CIS project tp_crm_leads; crm_tp_lead_pull lists TripPlanner only for
+    that agency (the other one is skipped with no HTTP call); removing tp.hosted in CIS turns it off again."""
+    from app.tripplanner import leads
+    from app.vault import KeyProvider
+    from app.vault.wrapping import LocalKeyWrapper
+
+    with_tp, _ = await _agency(app_pool)
+    without_tp, _ = await _agency(app_pool)
+    cis.account(with_tp, ents={"crm.core": None, "crm.seats": "3.00", "tp.hosted": None})
+    cis.account(without_tp)
+    assert (await _job(cis)(app_pool, JOB))["applied_count"] == 2
+
+    async def routed(tenant: uuid.UUID) -> bool:
+        async with system_tx(app_pool, tenant, actor=leads.ACTOR) as ctx:
+            return await leads.routed_here(ctx)
+
+    assert await routed(with_tp) is True and await routed(without_tp) is False
+
+    called: list[str] = []
+
+    async def tripplanner(method: str, url: str, headers: Mapping[str, str], body: bytes | None, timeout_s: float):
+        called.append(url)
+        return HttpResponse(200, b'{"leads": [], "more": false}')
+
+    class TpTokens(TokenProvider):
+        def __init__(self) -> None:
+            super().__init__(M2mCredentials("abc123", "x", "https://m2m-auth.example.invalid/oauth2/token"))
+
+        async def token(self, scope: str) -> str:
+            return "tok"
+
+    cfg = leads.LeadPullConfig(base_url="https://tp.example.invalid", tokens=TpTokens(), transport=tripplanner)
+    keys = KeyProvider({"local": LocalKeyWrapper({"k1": b"\x01" * 32}, "k1")}, "local")
+    result = await leads.LeadPull(cfg, keys)(app_pool, Job(id="j", kind="crm_tp_lead_pull", payload={}, attempt=1,
+                                                           max_attempts=1))  # fmt: skip
+    assert [u for u in called if str(without_tp) in u] == []
+    assert [u for u in called if str(with_tp) in u] == [
+        f"https://tp.example.invalid/trip/m2m/v1/tenants/{with_tp}/leads?limit={leads.PAGE}"
+    ]
+    assert result["skipped_not_routed_count"] >= 1 and result["error_count"] == 0
+
+    cis.account(with_tp)  # the TripPlanner add-on ends in CIS
+    assert (await _job(cis)(app_pool, JOB))["applied_count"] == 1
+    assert await routed(with_tp) is False

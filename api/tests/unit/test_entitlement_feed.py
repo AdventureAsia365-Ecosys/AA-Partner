@@ -171,6 +171,17 @@ def test_projection_rules() -> None:
     assert _proj(ents={"crm.seats": "0.00"}).member_limit == 1
 
 
+def test_projection_tp_crm_leads_needs_tp_hosted_and_crm_core() -> None:
+    """AA-1038 (crm-047): CIS 390 routes a TripPlanner tenant's leads to the CRM when tp.hosted and crm.core are both
+    live; only then does crm_tp_lead_pull call TripPlanner for the agency."""
+    base = {"crm.core": None, "crm.seats": "10.00"}
+    assert _proj().tp_crm_leads is False  # crm.core only (no TripPlanner add-on)
+    assert _proj(ents=base | {"tp.hosted": None}).tp_crm_leads is True
+    assert _proj(ents={"tp.hosted": None, "crm.seats": "10.00"}).tp_crm_leads is False  # TripPlanner without the CRM
+    assert _proj(crm=None, ents={"tp.hosted": None}).tp_crm_leads is False
+    assert _proj(ents={"tp.hosted_extra": None, "crm.core": None}).tp_crm_leads is False  # exact keys only
+
+
 def test_projection_reads_the_pilot_marker() -> None:
     assert _proj().is_pilot is False
     assert feed.projection(feed.parse_account(account() | {"is_pilot": True}, A)).is_pilot is True
@@ -211,7 +222,7 @@ async def test_apply_writes_a_new_projection_and_audits() -> None:
     conn = pool(statuses={A: "active"})
     counts = feed.RunCounts()
     assert await feed.apply(conn, A, feed.Projection("core", 5, ("campaigns", "ai_assist"), True), counts) == "applied"  # type: ignore[arg-type]
-    assert conn.sql("INSERT INTO crm.tenant_entitlement") == [("core", 5, ["ai_assist", "campaigns"])]
+    assert conn.sql("INSERT INTO crm.tenant_entitlement") == [("core", 5, ["ai_assist", "campaigns"], False)]
     audit = [a for a in conn.sql("INSERT INTO crm.audit_event")]
     assert audit and audit[0][2] == "entitlements_projected" and audit[0][7] == "cis_account"
     assert counts.applied == 1
@@ -219,7 +230,13 @@ async def test_apply_writes_a_new_projection_and_audits() -> None:
 
 @pytest.mark.asyncio
 async def test_apply_writes_the_pilot_marker_when_cis_changes_it() -> None:
-    row = {"plan": "core", "member_limit": 5, "allowed_features": ["ai_assist"], "projected_at": NOW}
+    row = {
+        "plan": "core",
+        "member_limit": 5,
+        "allowed_features": ["ai_assist"],
+        "projected_at": NOW,
+        "tp_crm_leads": False,
+    }
     wanted = feed.Projection("core", 5, ("ai_assist",), True, True, True)
     conn = pool(statuses={A: "active"}, entitlement=row)
     counts = feed.RunCounts()
@@ -253,7 +270,13 @@ async def test_apply_writes_the_pilot_marker_when_cis_changes_it() -> None:
 
 @pytest.mark.asyncio
 async def test_apply_keeps_member_limit_and_writes_nothing_when_unchanged() -> None:
-    row = {"plan": "core", "member_limit": 7, "allowed_features": ["ai_assist"], "projected_at": NOW}
+    row = {
+        "plan": "core",
+        "member_limit": 7,
+        "allowed_features": ["ai_assist"],
+        "projected_at": NOW,
+        "tp_crm_leads": False,
+    }
     conn = pool(statuses={A: "locked"}, entitlement=row, lock={"status": "locked", "lock_source": "aa_ops"})
     counts = feed.RunCounts()
     assert await feed.apply(conn, A, feed.Projection("core", None, ("ai_assist",), True), counts) == "unchanged"  # type: ignore[arg-type]
@@ -261,13 +284,42 @@ async def test_apply_keeps_member_limit_and_writes_nothing_when_unchanged() -> N
     # never projected before (projected_at NULL): written, with the agency's own member limit
     conn = pool(statuses={A: "active"}, entitlement=row | {"projected_at": None})
     await feed.apply(conn, A, feed.Projection("core", None, ("ai_assist",), True), counts)  # type: ignore[arg-type]
-    assert conn.sql("INSERT INTO crm.tenant_entitlement") == [("core", 7, ["ai_assist"])]
+    assert conn.sql("INSERT INTO crm.tenant_entitlement") == [("core", 7, ["ai_assist"], False)]
+
+
+@pytest.mark.asyncio
+async def test_apply_writes_tp_crm_leads_when_it_changes() -> None:
+    row = {"plan": "core", "member_limit": 7, "allowed_features": ["ai_assist"], "projected_at": NOW,
+           "tp_crm_leads": False}  # fmt: skip
+    on = feed.Projection("core", 7, ("ai_assist",), True, tp_crm_leads=True)
+    conn = pool(statuses={A: "active"}, entitlement=row)
+    counts = feed.RunCounts()
+    assert await feed.apply(conn, A, on, counts) == "applied"  # type: ignore[arg-type]
+    assert conn.sql("INSERT INTO crm.tenant_entitlement") == [("core", 7, ["ai_assist"], True)]
+    audit = conn.sql("INSERT INTO crm.audit_event")
+    assert audit and audit[0][2] == "entitlements_projected"
+    assert any(isinstance(v, (list, tuple)) and "tp_crm_leads" in v for v in audit[0])
+    # already on: nothing written
+    conn = pool(statuses={A: "active"}, entitlement=row | {"tp_crm_leads": True})
+    assert await feed.apply(conn, A, on, feed.RunCounts()) == "unchanged"  # type: ignore[arg-type]
+    assert conn.sql("INSERT INTO crm.tenant_entitlement") == []
+    # the add-on ends at CIS: switched off here
+    conn = pool(statuses={A: "active"}, entitlement=row | {"tp_crm_leads": True})
+    off = feed.Projection("core", 7, ("ai_assist",), True)
+    assert await feed.apply(conn, A, off, feed.RunCounts()) == "applied"  # type: ignore[arg-type]
+    assert conn.sql("INSERT INTO crm.tenant_entitlement") == [("core", 7, ["ai_assist"], False)]
 
 
 @pytest.mark.asyncio
 async def test_apply_waits_for_cis_before_the_first_projection(caplog: pytest.LogCaptureFixture) -> None:
     # never projected (the L1 console's row) and no crm subscription at CIS yet: nothing is wiped
-    row = {"plan": "core", "member_limit": 7, "allowed_features": ["ai_assist"], "projected_at": None}
+    row = {
+        "plan": "core",
+        "member_limit": 7,
+        "allowed_features": ["ai_assist"],
+        "projected_at": None,
+        "tp_crm_leads": False,
+    }
     no_crm = feed.Projection("free", None, (), True, False)
     conn = pool(statuses={A: "active"}, entitlement=row)
     counts = feed.RunCounts()
@@ -283,15 +335,15 @@ async def test_apply_waits_for_cis_before_the_first_projection(caplog: pytest.Lo
     # once CIS has a crm row (here canceled) the projection follows it
     conn = pool(statuses={A: "active"}, entitlement=row)
     assert await feed.apply(conn, A, feed.Projection("free", None, (), True, True), counts) == "applied"  # type: ignore[arg-type]
-    assert conn.sql("INSERT INTO crm.tenant_entitlement") == [("free", 7, [])]
+    assert conn.sql("INSERT INTO crm.tenant_entitlement") == [("free", 7, [], False)]
     # already projected from CIS: a later account without a crm row (an erased subscription) projects normally
     conn = pool(statuses={A: "active"}, entitlement=row | {"projected_at": NOW})
     assert await feed.apply(conn, A, no_crm, counts) == "applied"  # type: ignore[arg-type]
-    assert conn.sql("INSERT INTO crm.tenant_entitlement") == [("free", 7, [])]
+    assert conn.sql("INSERT INTO crm.tenant_entitlement") == [("free", 7, [], False)]
     # no row at all: nothing to keep, the free projection is written
     conn = pool(statuses={A: "active"})
     assert await feed.apply(conn, A, no_crm, counts) == "applied"  # type: ignore[arg-type]
-    assert conn.sql("INSERT INTO crm.tenant_entitlement") == [("free", 10, [])]
+    assert conn.sql("INSERT INTO crm.tenant_entitlement") == [("free", 10, [], False)]
 
 
 @pytest.mark.asyncio
@@ -365,7 +417,7 @@ async def test_a_page_projects_each_held_agency_once_and_moves_the_cursor() -> N
     assert result["tenant_count"] == 2 and result["page_count"] == 1 and result["reconciled_count"] == 0
     assert transport.urls == [feed.events_url(BASE, "c0"), feed.account_url(BASE, A)]  # no snapshot call for B
     assert conn.sql("SET feed_cursor") == [("c0", "c1")]
-    assert conn.sql("INSERT INTO crm.tenant_entitlement") == [("core", 10, ["ai_assist"])]
+    assert conn.sql("INSERT INTO crm.tenant_entitlement") == [("core", 10, ["ai_assist"], False)]
 
 
 @pytest.mark.asyncio
