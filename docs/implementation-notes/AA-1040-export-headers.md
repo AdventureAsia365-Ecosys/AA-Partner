@@ -62,7 +62,9 @@ the mark in its core properties).
   agencies read only its title, country, days and state (`app/catalog/store.py` `search` / `tour`): no AI body text
   reaches a CRM page, so no mark is needed there. The AA prep packs and starter templates (`crm.aa_content`) are
   written by AA staff in CIS, not by a model.
-- The T2 DOCX gets no `X-AI-*` headers from CIS (its mark is the file's core properties, which survive any proxy);
-  adding the headers is a CIS change, listed as a follow-up.
+- The T2 DOCX: its mark is the file's core properties (they survive any proxy). The follow-up is done: AA-CIS-App #1366
+  (S272) sends the same `X-AI-*` headers on the DOCX download (`export_version_docx`, `ai_marking.response_headers`),
+  and this BFF passes them with no change (the allow-list is per header, not per route). S273 l6: the e2e smoke
+  `aa1040-export-marks.spec.ts` now checks them on the DOCX too.
 - The CRM BFF (`/bff/*`) and the staff BFF are unchanged: no CRM download is AI output (CSV reports, portability ZIP,
   documents); the CRM AI draft is JSON with `ai` and a DOM mark.
