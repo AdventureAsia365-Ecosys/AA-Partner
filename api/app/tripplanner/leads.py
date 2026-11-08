@@ -49,7 +49,8 @@ Migrate exempt: a row exists only while due or running):
    at TripPlanner and nothing is stored there. Leads stored before the agency was locked wait at TripPlanner, whose
    hold (at most 7 days) ends them.
 
-Payloads and results are counts and error classes only (DM-6.3); no name, e-mail or lead content is logged.
+Payloads and results are counts and error classes only (DM-6.3); no name, e-mail or lead content is logged. A lead
+committed in the agency's intake logs ``tp_lead_stored`` with the tenant id, the lead id and the outcome only.
 """
 
 from __future__ import annotations
@@ -480,6 +481,8 @@ async def pull_agency(
             await acknowledge(cfg, tenant_id, lead_id, "rejected", exc.reason)
             continue
         counts[outcome] += 1
+        # Committed in the agency's intake: ids and the outcome only (the end-to-end check counts these per agency).
+        log.info("tp_lead_stored tenant_id=%s lead_id=%s outcome=%s", tenant_id, _lead_ref(lead_id), outcome)
         await acknowledge(cfg, tenant_id, lead_id, "stored")
         counts["acknowledged"] += 1
 

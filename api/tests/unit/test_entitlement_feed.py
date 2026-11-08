@@ -230,8 +230,13 @@ async def test_apply_writes_a_new_projection_and_audits() -> None:
 
 @pytest.mark.asyncio
 async def test_apply_writes_the_pilot_marker_when_cis_changes_it() -> None:
-    row = {"plan": "core", "member_limit": 5, "allowed_features": ["ai_assist"], "projected_at": NOW,
-           "tp_crm_leads": False}
+    row = {
+        "plan": "core",
+        "member_limit": 5,
+        "allowed_features": ["ai_assist"],
+        "projected_at": NOW,
+        "tp_crm_leads": False,
+    }
     wanted = feed.Projection("core", 5, ("ai_assist",), True, True, True)
     conn = pool(statuses={A: "active"}, entitlement=row)
     counts = feed.RunCounts()
@@ -265,8 +270,13 @@ async def test_apply_writes_the_pilot_marker_when_cis_changes_it() -> None:
 
 @pytest.mark.asyncio
 async def test_apply_keeps_member_limit_and_writes_nothing_when_unchanged() -> None:
-    row = {"plan": "core", "member_limit": 7, "allowed_features": ["ai_assist"], "projected_at": NOW,
-           "tp_crm_leads": False}
+    row = {
+        "plan": "core",
+        "member_limit": 7,
+        "allowed_features": ["ai_assist"],
+        "projected_at": NOW,
+        "tp_crm_leads": False,
+    }
     conn = pool(statuses={A: "locked"}, entitlement=row, lock={"status": "locked", "lock_source": "aa_ops"})
     counts = feed.RunCounts()
     assert await feed.apply(conn, A, feed.Projection("core", None, ("ai_assist",), True), counts) == "unchanged"  # type: ignore[arg-type]
@@ -303,8 +313,13 @@ async def test_apply_writes_tp_crm_leads_when_it_changes() -> None:
 @pytest.mark.asyncio
 async def test_apply_waits_for_cis_before_the_first_projection(caplog: pytest.LogCaptureFixture) -> None:
     # never projected (the L1 console's row) and no crm subscription at CIS yet: nothing is wiped
-    row = {"plan": "core", "member_limit": 7, "allowed_features": ["ai_assist"], "projected_at": None,
-           "tp_crm_leads": False}
+    row = {
+        "plan": "core",
+        "member_limit": 7,
+        "allowed_features": ["ai_assist"],
+        "projected_at": None,
+        "tp_crm_leads": False,
+    }
     no_crm = feed.Projection("free", None, (), True, False)
     conn = pool(statuses={A: "active"}, entitlement=row)
     counts = feed.RunCounts()

@@ -741,6 +741,10 @@ async def test_an_agency_not_routed_here_is_skipped_with_no_http_call(monkeypatc
         "tp_lead_pull_summary agencies=3 listed=1 pulled=1 skipped=2 skipped_not_routed=2 skipped_not_on_crm=0"
         " skipped_agency=0 acknowledged=1 stored=1 errors=0"
     ]
+    stored_lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("tp_lead_stored")]
+    only = tp.pages[TENANT_A][0]["lead_id"]
+    assert stored_lines == [f"tp_lead_stored tenant_id={TENANT_A} lead_id={only} outcome=stored"]
+    assert "Ada" not in caplog.text and "example.invalid" not in caplog.text  # ids and counts only
 
 
 def _tp_404(code_by_tenant: dict[uuid.UUID, bytes]):
