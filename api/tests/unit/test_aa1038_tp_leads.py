@@ -31,6 +31,7 @@ from app.observability import ops_alerts
 from app.tripplanner import leads
 from app.vault import blind_index
 
+REAL_ROUTED_HERE = leads.routed_here  # the autouse fixture below replaces it
 TENANT_A = uuid.UUID("3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7")
 TENANT_B = uuid.UUID("9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d")
 TODAY = dt.date(2026, 11, 7)
@@ -301,6 +302,18 @@ def test_every_optional_field_failing_one_by_one_still_stores_the_lead(monkeypat
 @dataclass
 class FakeCtx:
     tenant_id: uuid.UUID
+
+
+@pytest.fixture(autouse=True)
+def not_routed(monkeypatch) -> set[uuid.UUID]:
+    """Every agency's TripPlanner leads come to this CRM (crm-047) unless a test adds it to the returned set."""
+    out: set[uuid.UUID] = set()
+
+    async def fake_routed_here(ctx) -> bool:
+        return ctx.tenant_id not in out
+
+    monkeypatch.setattr(leads, "routed_here", fake_routed_here)
+    return out
 
 
 @pytest.mark.asyncio
@@ -675,3 +688,121 @@ async def test_review_repro_a_pulled_lead_named_dash_acks_rejected_not_stored(mo
     assert tp.acks == [(TENANT_A, bad["lead_id"], {"outcome": "rejected", "reason": "invalid_lead"})]
     assert result["rejected_count"] == 1 and "stored_count" not in result and stored == []
     assert [r[0] for r in raised] == ["tp_lead_rejected"]
+
+
+# --- S273 close-out: only agencies whose TripPlanner leads come here are called; TripPlanner's 404 is a skip ---------
+
+
+class RoutedConn:
+    def __init__(self, value: Any) -> None:
+        self.value, self.sql = value, []
+
+    async def fetchval(self, sql: str, *args: Any) -> Any:
+        self.sql.append(sql)
+        return self.value
+
+
+@dataclass
+class ConnCtx:
+    tenant_id: uuid.UUID
+    conn: RoutedConn
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("value", "routed"), [(True, True), (False, False), (None, False)])
+async def test_routed_here_reads_the_projected_flag(value, routed):
+    conn = RoutedConn(value)
+    assert await REAL_ROUTED_HERE(ConnCtx(TENANT_A, conn)) is routed  # type: ignore[arg-type]
+    assert conn.sql == [leads.ROUTED_SQL]
+    assert "tp_crm_leads" in leads.ROUTED_SQL and "crm.tenant_entitlement" in leads.ROUTED_SQL
+
+
+@pytest.mark.asyncio
+async def test_an_agency_not_routed_here_is_skipped_with_no_http_call(monkeypatch, not_routed, caplog):
+    other = uuid.uuid4()
+    calls: list[str] = []
+    tp = FakeTripPlanner({TENANT_A: [lead()]})
+
+    async def recording(method, url, headers, body, timeout_s):
+        calls.append(url)
+        return await tp(method, url, headers, body, timeout_s)
+
+    _patch(monkeypatch, [TENANT_A, TENANT_B, other], {})
+    not_routed.update({TENANT_B, other})
+    cfg = leads.LeadPullConfig(base_url="https://tp.example.invalid", tokens=FakeTokens(), transport=recording)  # type: ignore[arg-type]
+    with caplog.at_level("INFO", logger="app.tripplanner.leads"):
+        result = await leads.LeadPull(cfg, object(), today=lambda: TODAY)(None, JOB)  # type: ignore[arg-type]
+    check_payload(result, what="result")
+    assert all(f"/tenants/{TENANT_A}/" in url for url in calls) and calls  # never a call for B or the other agency
+    assert result["skipped_not_routed_count"] == 2 and result["listed_count"] == 1 and result["pulled_count"] == 1
+    assert result["stored_count"] == 1 and result["error_count"] == 0 and result["status"] == "ok"
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("tp_lead_pull_summary")]
+    assert lines == [
+        "tp_lead_pull_summary agencies=3 listed=1 pulled=1 skipped=2 skipped_not_routed=2 skipped_not_on_crm=0"
+        " skipped_agency=0 acknowledged=1 stored=1 errors=0"
+    ]
+
+
+def _tp_404(code_by_tenant: dict[uuid.UUID, bytes]):
+    async def transport(method, url, headers, body, timeout_s):
+        parts = url.split("/")
+        tenant = uuid.UUID(parts[parts.index("tenants") + 1])
+        if tenant in code_by_tenant:
+            return HttpResponse(404, code_by_tenant[tenant])
+        return HttpResponse(200, b'{"leads": [], "more": false}')
+
+    return transport
+
+
+@pytest.mark.asyncio
+async def test_tripplanners_404_not_on_crm_is_a_counted_skip_not_an_error(monkeypatch, caplog):
+    c, d, e = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    transport = _tp_404({
+        TENANT_A: b'{"error": "tenant_not_on_crm"}',
+        TENANT_B: b'{"error": "unknown_tenant"}',
+        c: b'{"error": "not_found"}',  # a wrong path is still an error
+        d: b"<html>404</html>",  # not TripPlanner's JSON: still an error
+    })  # fmt: skip
+    _patch(monkeypatch, [TENANT_A, TENANT_B, c, d, e], {})
+    cfg = leads.LeadPullConfig(base_url="https://tp.example.invalid", tokens=FakeTokens(), transport=transport)  # type: ignore[arg-type]
+    with caplog.at_level("INFO", logger="app.tripplanner.leads"):
+        result = await leads.LeadPull(cfg, object(), today=lambda: TODAY)(None, JOB)  # type: ignore[arg-type]
+    check_payload(result, what="result")
+    assert result["skipped_not_on_crm_count"] == 2 and result["listed_count"] == 1
+    assert result["error_count"] == 2 and result["reason_code"] == "tripplanner_http_404"
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("tp_lead_pull_summary")]
+    assert len(lines) == 1
+    assert "skipped=2 " in lines[0] and "skipped_not_on_crm=2" in lines[0]
+    assert lines[0].endswith("errors=2 error_classes=tripplanner_http_404:2")
+
+
+@pytest.mark.asyncio
+async def test_a_404_not_on_crm_raises_the_skip_from_fetch_leads():
+    transport = _tp_404({TENANT_A: b'{"error": "tenant_not_on_crm"}'})
+    cfg = leads.LeadPullConfig("https://tp.example.invalid", FakeTokens(), transport)  # type: ignore[arg-type]
+    with pytest.raises(leads.TenantNotOnCrm) as err:
+        await leads.fetch_leads(cfg, TENANT_A)
+    assert isinstance(err.value, leads.HttpError) and err.value.error_class == "tripplanner_tenant_not_on_crm"
+
+
+@pytest.mark.asyncio
+async def test_every_run_logs_one_summary_line_even_with_nothing_to_do(monkeypatch, caplog):
+    _patch(monkeypatch, [], {})
+    cfg = leads.LeadPullConfig("https://tp.example.invalid", FakeTokens(), FakeTripPlanner({}))  # type: ignore[arg-type]
+    with caplog.at_level("INFO", logger="app.tripplanner.leads"):
+        result = await leads.LeadPull(cfg, object())(None, JOB)  # type: ignore[arg-type]
+    assert result == {"status": "ok", "agency_count": 0, "error_count": 0, "reason_code": None}
+    assert [r.getMessage() for r in caplog.records] == [
+        "tp_lead_pull_summary agencies=0 listed=0 pulled=0 skipped=0 skipped_not_routed=0 skipped_not_on_crm=0"
+        " skipped_agency=0 errors=0"
+    ]
+
+
+def test_the_summary_line_holds_counts_and_error_classes_only():
+    counts = Counter({"listed": 2, "pulled": 3, "stored": 2, "rejected": 1, "acknowledged": 3, "skipped_agency": 1})
+    line = leads.summary_line(4, counts, Counter({"TokenError": 1}))
+    assert line == (
+        "tp_lead_pull_summary agencies=4 listed=2 pulled=3 skipped=1 skipped_not_routed=0 skipped_not_on_crm=0"
+        " skipped_agency=1 acknowledged=3 rejected=1 stored=2 errors=1 error_classes=TokenError:1"
+    )
+    assert "skipped_not_routed" not in counts  # reading a count for the line never adds a key

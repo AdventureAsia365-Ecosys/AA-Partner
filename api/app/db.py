@@ -80,6 +80,7 @@ REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = (
     # (crm-044 of another lane of the wave, when it is on main).
     "crm-045",
     "crm-046",  # AA-1030: crm.tenant_settings.retail_markup_pct (contract: MIG-4, applied before this code)
+    "crm-047",  # AA-1038: crm.tenant_entitlement.tp_crm_leads (contract: MIG-4, applied before this code)
 )
 REQUIRED_SCHEMA_VERSION = max(REQUIRED_SCHEMA_VERSIONS)
 

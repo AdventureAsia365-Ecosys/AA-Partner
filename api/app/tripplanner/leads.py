@@ -9,9 +9,14 @@ One run (a due-now maintenance hook every :data:`SLOT_SECONDS`, :class:`LeadPull
 Migrate exempt: a row exists only while due or running):
 
 1. Not configured (``TRIPPLANNER_API_URL`` or ``M2M_CLIENT`` empty) -> ``not_configured``, nothing else.
-2. For every agency the CRM holds (``registry.agencies``), at most :data:`PAGE` leads:
-   ``GET <TRIPPLANNER_API_URL>/trip/m2m/v1/tenants/{agency}/leads``. An HTTP / token failure is counted
-   (``error_class``) and the run goes on with the next agency, then ends **successfully** (the next slot retries).
+2. For every agency the CRM holds (``registry.agencies``) whose TripPlanner leads come to this CRM
+   (:func:`routed_here`: ``crm.tenant_entitlement.tp_crm_leads``, crm-047, the projection of the tenant's CIS
+   ``tp.hosted`` + ``crm.core`` keys by ``crm_entitlement_pull``; every other agency is counted ``skipped_not_routed``
+   with no HTTP call), at most :data:`PAGE` leads: ``GET <TRIPPLANNER_API_URL>/trip/m2m/v1/tenants/{agency}/leads``.
+   TripPlanner's 404 ``tenant_not_on_crm`` / ``unknown_tenant`` (its own route says no, e.g. between a CIS change and
+   the next projection) is a counted skip (``skipped_not_on_crm``), not an error. Any other HTTP / token failure is
+   counted (``error_class``) and the run goes on with the next agency, then ends **successfully** (the next slot
+   retries). Every run logs ONE summary line (``tp_lead_pull_summary``: agencies, pulled leads, skips, errors).
 3. Each lead, in one :func:`app.tenancy.system_tx` of that agency (actor ``job:crm_tp_lead_pull``):
    - **another tenant's lead is refused** (``lead.tenant.tenant_id`` must be the agency of the call; TripPlanner never
      lists one, this is the second check): not stored, not acknowledged, counted ``foreign``;
@@ -37,11 +42,12 @@ Migrate exempt: a row exists only while due or running):
      A rejected lead is a traveller's request the agency never sees: it raises the ops alert ``tp_lead_rejected``
      (:mod:`app.observability.ops_alerts`: ids and the reason code only, one e-mail per lead) and an ERROR line, and
      TripPlanner's daily run reports it too (``lead_rejected_by_crm``).
-   The agency is entered (an empty :func:`app.tenancy.system_tx`) BEFORE its leads are listed. A locked, offboarding or
-   unknown agency is skipped without a list call, and the list call is TripPlanner's per-tenant beacon: TripPlanner
-   takes crm leads for a tenant only while the CRM listed it within ``TP_LEAD_CRM_PULL_FRESH_S`` (10 minutes), so a
-   tenant this CRM cannot serve gets 503 ``lead_channel_unavailable`` at TripPlanner and nothing is stored there. Leads
-   stored before the agency was locked wait at TripPlanner, whose hold (at most 7 days) ends them.
+   The agency is entered (a :func:`app.tenancy.system_tx` that reads :func:`routed_here`) BEFORE its leads are
+   listed. A locked, offboarding or unknown agency is skipped without a list call, and the list call is TripPlanner's
+   per-tenant beacon: TripPlanner takes crm leads for a tenant only while the CRM listed it within
+   ``TP_LEAD_CRM_PULL_FRESH_S`` (10 minutes), so a tenant this CRM cannot serve gets 503 ``lead_channel_unavailable``
+   at TripPlanner and nothing is stored there. Leads stored before the agency was locked wait at TripPlanner, whose
+   hold (at most 7 days) ends them.
 
 Payloads and results are counts and error classes only (DM-6.3); no name, e-mail or lead content is logged.
 """
@@ -117,6 +123,11 @@ FORM_SQL = (
     "SELECT intake_form_id FROM crm.intake_form WHERE lead_source = $1 AND created_by = $2 AND deleted_at IS NULL "
     "ORDER BY created_at LIMIT 1"
 )
+# crm-047: the agency's TripPlanner leads come to this CRM (CIS tp.hosted + crm.core, projected by
+# crm_entitlement_pull). No row (never projected) = not routed here.
+ROUTED_SQL = "SELECT coalesce((SELECT tp_crm_leads FROM crm.tenant_entitlement WHERE deleted_at IS NULL), false)"
+# TripPlanner's 404 codes that mean "this tenant's leads do not go to a CRM" (serve_m2m / load_route), not a failure.
+NOT_ON_CRM_CODES = frozenset({"tenant_not_on_crm", "unknown_tenant"})
 INSERT_FORM_SQL = """
 INSERT INTO crm.intake_form (public_key, label, form_definition_id, honeypot_field, lead_source, status)
 VALUES ($1, $2, $3, $4, 'tripplanner', 'disabled')
@@ -142,6 +153,14 @@ class LeadRejected(ValueError):
 
 class ForeignLead(ValueError):
     """The lead names another tenant than the agency it was pulled for."""
+
+
+class TenantNotOnCrm(HttpError):
+    """TripPlanner answered 404 ``tenant_not_on_crm`` / ``unknown_tenant``: its route does not send this tenant's leads
+    to a CRM. A counted skip, not an error."""
+
+    def __init__(self) -> None:
+        super().__init__("tripplanner_tenant_not_on_crm")
 
 
 def _rule_text(value: Any, max_len: int) -> str | None:
@@ -375,12 +394,30 @@ async def _call(cfg: LeadPullConfig, method: str, url: str, body: dict[str, Any]
     resp = await cfg.transport(method, url, headers, data, cfg.timeout_s)
     if resp.status == 401:
         cfg.tokens.invalidate(SCOPE)
+    if resp.status == 404 and _error_code(resp.body) in NOT_ON_CRM_CODES:
+        raise TenantNotOnCrm
     if resp.status != 200:
         raise HttpError(f"tripplanner_http_{resp.status}")
     try:
         return json.loads(resp.body)
     except ValueError:
         raise HttpError("tripplanner_bad_json") from None
+
+
+def _error_code(body: bytes) -> str | None:
+    """The ``error`` code of a TripPlanner error body (``{"error": "<code>"}``), else None."""
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        return None
+    code = parsed.get("error") if isinstance(parsed, dict) else None
+    return code if isinstance(code, str) else None
+
+
+async def routed_here(ctx: SystemContext) -> bool:
+    """True when the agency's TripPlanner leads come to this CRM (``tp_crm_leads``, crm-047; RLS: the context's
+    agency)."""
+    return bool(await ctx.conn.fetchval(ROUTED_SQL))
 
 
 async def fetch_leads(cfg: LeadPullConfig, tenant_id: uuid.UUID) -> list[dict[str, Any]]:
@@ -415,10 +452,17 @@ async def pull_agency(
     today: dt.date | None = None,
 ) -> None:
     # Enter the agency first: a locked / offboarding / unknown agency raises Forbidden / NotFound here, BEFORE the list
-    # call, so TripPlanner's per-tenant beacon goes stale and it refuses that tenant's crm leads (nothing stored).
-    async with system_tx(pool, tenant_id, actor=ACTOR):
-        pass
-    for lead in await fetch_leads(cfg, tenant_id):
+    # call, so TripPlanner's per-tenant beacon goes stale and it refuses that tenant's crm leads (nothing stored). An
+    # agency whose TripPlanner leads do not come here (crm-047) is skipped with no HTTP call.
+    async with system_tx(pool, tenant_id, actor=ACTOR) as ctx:
+        routed = await routed_here(ctx)
+    if not routed:
+        counts["skipped_not_routed"] += 1
+        return
+    page = await fetch_leads(cfg, tenant_id)
+    counts["listed"] += 1
+    counts["pulled"] += len(page)
+    for lead in page:
         lead_id = str(lead.get("lead_id"))
         try:
             async with system_tx(pool, tenant_id, actor=ACTOR) as ctx:
@@ -464,18 +508,15 @@ class LeadPull:
             except (Forbidden, NotFound):
                 # Locked, offboarding or gone: not listed, so TripPlanner stops taking its crm leads (stale beacon).
                 counts["skipped_agency"] += 1
+            except TenantNotOnCrm:
+                # TripPlanner's route says this tenant's leads go elsewhere (or nowhere): a skip, not an error.
+                counts["skipped_not_on_crm"] += 1
             except (HttpError, TokenError) as exc:
                 errors[getattr(exc, "error_class", type(exc).__name__)] += 1
             except Exception as exc:  # noqa: BLE001 — one agency's error must not hold every later agency
                 errors[type(exc).__name__] += 1
                 log.error("tp_lead_pull_failed tenant_id=%s error_class=%s", agency.tenant_id, type(exc).__name__)
-        if sum(counts.values()) or errors:
-            log.info(
-                "tp_lead_pull agencies=%d %s errors=%s",
-                agencies,
-                " ".join(f"{k}={v}" for k, v in sorted(counts.items())),
-                dict(errors),
-            )
+        log.info(summary_line(agencies, counts, errors))
         # Ids and counts only (app.jobs.payload_guard): the error classes are in the log line; the result carries their
         # count and the most frequent one as a code.
         return {
@@ -485,6 +526,22 @@ class LeadPull:
             "error_count": sum(errors.values()),
             "reason_code": errors.most_common(1)[0][0][:64] if errors else None,
         }
+
+
+SKIPS = ("skipped_not_routed", "skipped_not_on_crm", "skipped_agency")
+
+
+def summary_line(agencies: int, counts: Counter[str], errors: Counter[str]) -> str:
+    """The one log line of a run: agencies, pulled leads, skips (total and per reason) and errors (total and per class).
+    Counts and error classes only (DM-6.3)."""
+    parts = [f"agencies={agencies}", f"listed={counts['listed']}", f"pulled={counts['pulled']}"]
+    parts.append(f"skipped={sum(counts[k] for k in SKIPS)}")
+    parts += [f"{k}={counts[k]}" for k in SKIPS]
+    parts += [f"{k}={v}" for k, v in sorted(counts.items()) if k not in (*SKIPS, "listed", "pulled")]
+    parts.append(f"errors={sum(errors.values())}")
+    if errors:
+        parts.append("error_classes=" + ",".join(f"{k}:{v}" for k, v in sorted(errors.items())))
+    return "tp_lead_pull_summary " + " ".join(parts)
 
 
 def schedule_key(now: dt.datetime) -> str:
