@@ -263,7 +263,7 @@ jobs:
 
       - name: Upload the shard's junit report
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: integration-shard-${{ matrix.shard }}
           path: api/junit-integration-${{ matrix.shard }}.xml
@@ -292,7 +292,7 @@ jobs:
 
       - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: integration-shard-*
           merge-multiple: true
@@ -305,7 +305,7 @@ jobs:
           python3 .github/scripts/ci_shards.py durations --out integration-durations.json \
             shards/junit-integration-*.xml | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: test-durations-integration
           path: integration-durations.json
@@ -406,7 +406,7 @@ jobs:
         run: syft scan "docker:${IMAGE}" --output "cyclonedx-json=${OUT}"
 
       - name: Upload SBOM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom-${{ github.sha }}.cdx.json
           path: sbom-${{ github.sha }}.cdx.json
