@@ -57,6 +57,7 @@ SENSITIVE_VAR = re.compile(
 PLAYWRIGHT = re.compile(r"playwright", re.I)
 NPM_CI = re.compile(r"(?:^|[;&|(]|\s)npm\s+ci\b", re.M)
 PINNED_RUNNER = "ubuntu-24.04"
+NESTED_EXPR = re.compile(r"\$\{\{(?:(?!\}\}).)*\$\{\{")
 DEFAULT_REF = re.compile(r"github\.ref\s*==\s*'refs/heads/(?:main|master)'")
 CACHE_INPUT_ACTIONS = ("actions/setup-python@", "actions/setup-node@")
 # Actions that download a binary themselves on every run (no cache keyed on a sha256 pin): what to use instead.
@@ -190,6 +191,10 @@ def _cache_findings(where: str, steps: list) -> list[str]:
         if uses.startswith("actions/cache/save@") and not DEFAULT_REF.search(str(step.get("if") or "")):
             findings.append(f"{where}:WL4 {label!r}: actions/cache/save needs if: github.ref == 'refs/heads/main' "
                             "(a pull request or merge-queue copy is readable only by that ref)")
+        if uses.startswith(("actions/cache", "actions/setup-")) and any(
+                NESTED_EXPR.search(str(v)) for v in with_.values()):
+            findings.append(f"{where}:WL4 {label!r}: a `${{{{` inside an expression is a literal string (the key never "
+                            "matches): use format('...{0}...', value)")
         if uses.startswith("aquasecurity/trivy-action@") and str(with_.get("cache")).lower() != "false":
             findings.append(f"{where}:WL4 {label!r}: trivy-action needs cache: \"false\" (its DB cache saves on every "
                             "ref): restore the DB with actions/cache/restore, save it on the default branch")
