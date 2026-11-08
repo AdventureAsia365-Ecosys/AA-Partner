@@ -429,7 +429,7 @@ WARNED=()
 # FAILED entries are "id SEP dir SEP command SEP ci"; the unit separator cannot appear in a command (docs-links has '|').
 SEP=$'\x1f'
 LYCHEE_VERSION="0.24.2"
-LYCHEE_HINT="install lychee v0.24.2 (the version lychee-action v2.9.0 runs in CI): a release binary from https://github.com/lycheeverse/lychee/releases, or cargo install lychee --version 0.24.2"
+LYCHEE_HINT="install lychee v0.24.2 (the version CI runs; the CI binary, sha256-checked: python3 .github/scripts/lychee_bin.py fetch --dest /tmp/lychee-cache --bin ~/.local/bin)"
 API_SETUP_HINT="python3.12 -m venv api/.venv && api/.venv/bin/pip install -r api/requirements-dev.txt (or set AA_PREPUSH_VENV)"
 
 # run_step <check id> <dir relative to repo root> <ci reference> <display command> -- <argv...>
