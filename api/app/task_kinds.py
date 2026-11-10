@@ -36,6 +36,7 @@ TASK_KINDS: frozenset[str] = frozenset(
         "confirm_arrival_flight",
         "confirm_supplier_bookings",
         "date_rule_gate_unmet",
+        "discount_approval",
         "follow_up_quiet_client",
         "get_planning_info",
         "invoice_overdue",

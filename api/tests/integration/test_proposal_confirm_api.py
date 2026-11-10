@@ -25,7 +25,7 @@ import pytest
 
 from app.booking.sync import BookingSync
 from app.ledger import lines
-from app.proposals import service
+from app.proposals import builder, client_page, service
 from app.stages import move
 from app.tenancy import tenant_tx
 from app.vault import Vault
@@ -36,9 +36,9 @@ from tests.integration.test_client_proposal_api import _accept, _hold, _raw, _se
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 
-async def _accepted(pool: asyncpg.Pool) -> dict[str, Any]:
+async def _accepted(pool: asyncpg.Pool, discount_pct: Decimal | None = None) -> dict[str, Any]:
     """A sent version with two AA blocks (the day tour 500 and rafting 200 by default), held and accepted."""
-    s = await _sent(pool, second_aa=True)
+    s = await _sent(pool, second_aa=True, discount_pct=discount_pct)
     status, out = await _hold(pool, s)
     assert status == 200 and out["outcome"] == "held"
     assert (await _accept(pool, s, out["page"]))["status"] == "accepted"
@@ -153,6 +153,34 @@ async def test_accept_writes_the_aa_lines_and_the_deposit_confirms_the_set_once(
     await _expire_leases(app_pool, s)
     await _sync(app_pool, s)
     assert len(fake.confirm_keys) == 1 and len(fake.bookings) == 1
+
+
+async def test_a_discounted_version_writes_lines_that_add_up_to_the_accepted_total(app_pool: asyncpg.Pool) -> None:
+    """AA-1066: the AA lines' sell carries their share of the discount (the ledger, its margin and the reports match
+    what the client accepted and pays), the agency's charged options take the rest, pay on arrival none."""
+    s = await _accepted(app_pool, Decimal("7"))
+    assert (await _sync(app_pool, s))["proposal_lines_held"] == 1
+    pid = _pid(s["v"])
+    async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:
+        struct = await builder._structure(ctx, pid)
+        picks = [dict(r) for r in await ctx.conn.fetch(builder.PICKS_SQL, pid)]
+        choice = client_page.effective(struct, picks)["choice"]
+        sells = builder.line_sells(struct, choice)
+        views = {str(m["booking_line_id"]): await lines.line(ctx, m["booking_line_id"])
+                 for m in await _aa_lines(app_pool, s)}  # fmt: skip
+    options = builder._option_map(struct)
+    paid = await _raw(app_pool, s, "SELECT sum(amount) AS total FROM crm.payment_schedule WHERE proposal_id = $1 "
+                      "AND status <> 'void'", pid)  # fmt: skip
+    charged = [o for o in sells if not options[o]["pay_on_arrival"]]
+    # The charged sells add up to exactly what the client pays (deposit + balance).
+    assert sum(sells[o] for o in charged) == paid[0]["total"]
+    assert len(views) == 2
+    for oid, view in views.items():
+        full = Decimal(options[oid]["sell_amount"])
+        assert Decimal(view["money"]["sell"]["amount"]) == sells[oid] < full
+        assert abs(sells[oid] - full * Decimal("0.93")) <= Decimal("0.05")
+    # Pay-on-arrival items are never discounted.
+    assert all(sells[o] == Decimal(options[o]["sell_amount"]) for o in sells if options[o]["pay_on_arrival"])
 
 
 async def test_a_confirm_booking_answers_on_request_is_finished_and_sent_once(app_pool: asyncpg.Pool) -> None:

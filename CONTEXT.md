@@ -349,6 +349,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-044` | `api/migrations/044_crm_tenant_pilot_marker.sql` | AA-969 part 2 (root ADR 0019 d16; **contract**: ALTER of `crm.tenant` + triggers, MIG-4): `crm.tenant.is_pilot` (boolean, default false), the CIS pilot marker projected by `crm_entitlement_pull`; `tenant_one_pilot_uq` (at most one pilot); `crm.guard_pilot_marker()` + triggers `tenant_pilot_marker_ins` / `_upd`: only the account feed actor `platform:feed-tenant-account` (or an unscoped owner session) sets or changes it, anyone else CRM04 `platform_only` |
 | `crm-045` | `api/migrations/045_crm_studio_invitation_kept_address.sql` | AA-1035 R2 close-out (**contract**, MIG-4; crm.ops.v1 1.12): `crm.studio_invitation` also keeps the invited address sealed under a one-off data key of the CRM KMS key (`email_kept`, `email_kept_dek`, `email_kept_kek_provider`, `email_kept_kek_id`, all or none), so a send again with `keep_address` goes to the same address; the guard (CRM37) lets only a platform actor set it, the token holder may only clear it (the claim does), a revoke clears it, the job never touches it; an expiry keeps it (an expired invitation is re-issued) |
 | `crm-046` | `api/migrations/046_crm_retail_markup.sql` | AA-1030 (**contract**: ALTER + CHECK on `crm.tenant_settings`, so MIG-4): `tenant_settings.retail_markup_pct` (JSONB, default `{}`: the owner's default retail markup in percent per AA product type, `trip_plan` / `hotel_room` / `transfer` / `guide` / `activity` / `entrance` / `meal`, 0..300 with 2 decimals), shape rule `crm.retail_markup_ok(jsonb)` (EXECUTE to crm_app, the writer) and `tenant_settings_retail_markup_chk`; no reader grant |
+| `crm-048` | `api/migrations/048_crm_retail_pricing.sql` | AA-1066 retail pricing (**contract**: ALTERs of `crm.tenant_settings`, `crm.proposal`, `crm.option`, `crm.status_transition` rows, so MIG-4): `tenant_settings.child_age_max` / `infant_age_max` (default 11 / 1) and `discount_owner_limit_pct` (default 10), `proposal.discount_pct` (builder only, 0 < pct <= 100; sealed after draft: `proposal_sealed` recreated with the crm-019 list plus `discount_pct`, CRM31), `option.price_rules` (the rules a sell was suggested with, a JSON array snapshot); `crm.option_price` (base template; one row per traveller type `adult` / `child` / `infant` / `single_supp`: unit sell, unit net, qty; draft-only through `crm.guard_proposal_draft`; cascades from its option), `crm.retail_price_rule` (base template; season / group_size / early_booking / last_minute with exactly its own condition, AA product scope, adjust_pct -90..300 not 0, priority, stacking `add` / `best_only`; cascades from the agency's `tenant_settings` row), `crm.discount_approval` (base template; pending -> approved / rejected / superseded, one pending per version, guard `crm.guard_discount_approval` CRM48: only an owner decides, as themselves; no crm_app DELETE; cascades from its proposal). `crm.erase_subject` unchanged (the three tables are cascade-erased, `test_crm010_schema.py`) |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -1539,6 +1540,34 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
   suggestion is derived from the B2B price, so only owner / agent see it. An owner or agent who adds an AA option
   without a sell gets the suggestion as the sell (an assistant's option still waits at 0); "Use" on the option sets
   it later. The below-"from" warning applies to it like any sell.
+- **Retail pricing** (AA-1066, crm-048; `app/proposals/pricing.py`, `app/proposals/discount.py`; decisions in
+  `docs/implementation-notes/AA-1066.md`):
+  - *Price per traveller type*: `PUT /crm/v1/proposals/{id}/options/{option}/prices` (`MONEY_FIELDS_EDIT`: owner /
+    agent) replaces an option's rows (`adult`, `child`, `infant`, `single_supp`), `[]` removes them, `use_suggested`
+    takes the grid the page shows; the option's sell becomes their sum (an agency item's net the sum of its unit nets
+    when every row has one; an AA item never takes a unit net: 403 `aa_net_from_quote`); a typed sell or net is 409
+    `amount_from_prices` while rows exist. The builder view carries `prices` (unit net for owner / agent only),
+    `suggested_prices` (the suggestion, else the current sell, shared per adult and child head; infants and the
+    supplement at 0) and `pricing.party` (the party by the agency's age bands, Settings > Pricing; AA's own quote keeps
+    infants under 2). The client page lists the types and counts (`price_lines`), never a unit price. The price hash
+    covers the rows (and the discount) only when a version has them, so older hashes are unchanged.
+  - *Retail price rules*: the owner's `crm.retail_price_rule` rows (Settings > Pricing, `GET` / `PUT /settings/pricing`,
+    `POST /settings/price-rules`, `PATCH` / `DELETE /settings/price-rules/{id}`, `PAYMENT_SETTINGS`, at most 50) change
+    the AA-1030 suggestion of an AA option: every matching `add` rule sums, of the matching `best_only` rules only the
+    first by priority applies, never below -90 %, rounded up to the cent; the service date is the option's day. The
+    rules used go to `option.price_rules` when the sell comes from the suggestion (an owner / agent adding an AA option
+    without a sell, `PATCH .../options/{id}` `use_suggested`, or the suggested grid); a typed sell clears them.
+    Agency items get no rule (they have no base price to adjust).
+  - *Discount*: `PATCH /proposals/{id}/builder` `discount_pct` (a money field) comes off the charged total (never the
+    pay-on-arrival items); every total, the deposit, the client page and the accept follow it (`builder._charged`).
+    Above `tenant_settings.discount_owner_limit_pct`, or with the discounted total below the net, a non-owner's
+    Publish is 409 `discount_needs_approval` (check `discount_needs_approval`) until an approved
+    `crm.discount_approval` of the trip covers that percent (and the loss): `POST /proposals/{id}/discount-approval`
+    (owner / agent) asks (an urgent `discount_approval` task for an active owner), `POST
+    /proposals/{id}/discount-approval/{approval}` (`DISCOUNT_APPROVE`, owner only; the DB guard CRM48 too) decides. A
+    raised discount is no longer covered (the approval re-opens); an owner's Publish records their own approval.
+    The AA ledger lines an accepted discounted version writes carry each option's share of the discount
+    (`builder.line_sells`), so the line sells add up to the accepted total.
 - **AA prices** (AA-1030, `booking.b2b.v1` 1.4 `GET /tariff`; `app/booking/tariff.py`, web `/aa-tariff`): the
   agency's own AA tariff, AA's B2B price per tour, season (departure window) and pax band with its tier or contract
   rate card discount and AA's RRP per person, read live from Booking. `GET /crm/v1/aa/tariff?currency=&format=json|csv
@@ -1939,7 +1968,8 @@ Design v3 §6.3 CRM-22 (M4, R38, R9; F4 / WF-5 A-05; Q1 2.3); migration crm-022;
   rules ALLOW, DENY, OWN, ASSIGNED, THRESHOLD (refund threshold from `tenant_settings`); one table, pinned cell by cell
   in `tests/unit/test_permissions.py`. Doors: `tenant_tx(action=)` (role level) and `permissions.require()` (object
   facts). Rows added after the design: `aa_confirm` (AA-947) and `aa_tariff_view` (AA-1030, the AA prices page and
-  CSV: owner, agent, like `view_margin`; owner only = one row change, never wider than `view_margin`, a unit test).
+  CSV: owner, agent, like `view_margin`; owner only = one row change, never wider than `view_margin`, a unit test)
+  and `discount_approve` (AA-1066, owner only: a proposal discount above the agency limit or a sale below cost).
   `/me` carries `permissions` (today `aa_tariff_view`) so the web hides what the API would refuse. Membership writes are also refused by the database for anyone but an owner (crm-008).
 - **Margin serializer** (`app/margin.py`): `class_router(AGENCY)` builds every agency router with
   `MarginFilteredRoute`; JSON responses lose every key named like net / b2b / cost / margin / commission unless the

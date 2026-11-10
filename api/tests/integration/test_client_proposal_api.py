@@ -56,11 +56,12 @@ async def _aa(pool: asyncpg.Pool, s: dict[str, Any], fake: FakeBooking, v: dict[
 
 
 async def _sent(pool: asyncpg.Pool, *, riverside_requires_upgrade: bool = False,
-                second_aa: bool = False) -> dict[str, Any]:  # fmt: skip
+                second_aa: bool = False, discount_pct: Decimal | None = None) -> dict[str, Any]:  # fmt: skip
     """A sent builder version: four lodging nights (day 1: Lodge 1 or Riverside +40), a fixed park fee paid on
     arrival, an AA day tour on day 2 (500, or the 650 upgrade) and an agency dinner on day 4 that may wait. Booking
     keeps its own rules for one version (``strict_version_set``). ``riverside_requires_upgrade``: the agency's rule
-    "Riverside 1 requires the 650 upgrade". ``second_aa``: a second AA block, "Rafting" on day 3 (200, or 230)."""
+    "Riverside 1 requires the 650 upgrade". ``second_aa``: a second AA block, "Rafting" on day 3 (200, or 230).
+    ``discount_pct``: the version's discount (AA-1066; stay at or below the agency limit, no approval asked)."""
     s = await _setup(pool)
     async with pool.acquire() as conn:
         await conn.execute(
@@ -91,6 +92,9 @@ async def _sent(pool: asyncpg.Pool, *, riverside_requires_upgrade: bool = False,
         v = await _as(pool, s, "agent", builder.add_rule, _pid(v), v["edit_seq"],
                       {"kind": "requires", "option_id": uuid.UUID(riverside["option_id"]),
                        "target_option_id": uuid.UUID(_block(v, 2, 1)["options"][1]["option_id"])})  # fmt: skip
+    if discount_pct is not None:
+        v = await _as(pool, s, "agent", builder.update_settings, _pid(v), v["edit_seq"],
+                      {"discount_pct": discount_pct})  # fmt: skip
     v = await _as(pool, s, "agent", builder.publish, _pid(v), v["edit_seq"], acknowledge_selection_seq=None)
     async with tenant_tx(pool, s["who"]["agent"], s["tenant"]) as ctx:
         sent = await service.send(ctx, Vault(s["keys"], ctx), _pid(v))

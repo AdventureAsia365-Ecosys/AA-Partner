@@ -7,7 +7,9 @@ the agency side reads the same choice diff (R19) through :mod:`app.proposals.ser
   "Choose later" (Fix B9) is a pick of the block's default marked ``choose_later``; only an agency item allows it.
 - **Prices (D1)**: the total, the deposit and the balance always; per option only the sell difference to the block's
   default (``total_with_deltas``), or nothing (``total_only``). Never a per-line price, a net, a margin, a traveller
-  name or a cancelled line (§2.9 rule 3).
+  name or a cancelled line (§2.9 rule 3). AA-1066: an option priced per traveller type lists the types and counts
+  (``price_lines``, no unit price); a discounted version adds the total before the discount, the percent and the
+  amount off.
 - **Groups (R26)**: the chosen items by confirmation class: confirmed when you pay (AA, instant), confirmed by our
   partner within 1 business day (AA, on request), your agent books (agency items), paid on arrival (listed, never
   charged).
@@ -92,7 +94,7 @@ def aa_hash(aa_ids: list[str]) -> bytes:
 
 def totals(s: dict[str, Any], row: Any, picks: dict[str, str]) -> dict[str, Any]:
     sums = builder._charged(s, picks, row["deposit_pct"])
-    return {
+    out = {
         "currency": row["currency"],
         "total": _money(sums["sell_total"]),
         "pay_on_arrival_total": _money(sums["pay_on_arrival_total"]),
@@ -102,6 +104,10 @@ def totals(s: dict[str, Any], row: Any, picks: dict[str, str]) -> dict[str, Any]
         "_sell": sums["sell_total"],
         "_deposit": sums["deposit"],
     }
+    if "discount" in sums:  # AA-1066: the total before the discount, the percent and the amount off
+        out.update(subtotal=_money(sums["subtotal"]), discount_pct=str(s["discount_pct"]),
+                   discount=_money(sums["discount"]))  # fmt: skip
+    return out
 
 
 def public_totals(t: dict[str, Any]) -> dict[str, Any]:
@@ -170,6 +176,12 @@ async def view(ctx: AnyContext, vault: Any, row: Any, s: dict[str, Any], pick_ro
             if deltas and default is not None
             else None,
             "blocked": {"reason": "sold_out"} if o["availability"] == "sold_out" else None,
+            # AA-1066: who the price is for ("Adult x 2, Child x 1, Single room x 1"): types and counts, no unit price.
+            "price_lines": [
+                {"pax_type": r["pax_type"], "qty": int(r["qty"])}
+                for r in s.get("prices", {}).get(oid, [])
+                if int(r["qty"]) > 0
+            ],
         }
         if item["blocked"] is None and not item["chosen"]:
             item["blocked"] = _blocked(oid, bid, choice, rule_objs, titles)

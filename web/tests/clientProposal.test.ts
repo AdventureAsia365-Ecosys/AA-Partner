@@ -202,6 +202,32 @@ describe("Before you go (AA-951)", () => {
     expect(none).not.toContain("client-before-you-go");
   });
 
+  it("AA-1066: who each price is for and the discount, in words in EN and VI (the keys ship to the page)", async () => {
+    const { ClientBuilderProposal } = await import("@/components/proposals/ClientBuilderProposal");
+    const base = page();
+    const lodging = base.days[0].blocks[0];
+    const priced = page({
+      days: [{ ...base.days[0], blocks: [{ ...lodging, options: [
+        { ...lodging.options[0], price_lines: [{ pax_type: "adult", qty: 2 }, { pax_type: "child", qty: 1 }, { pax_type: "infant", qty: 0 }, { pax_type: "single_supp", qty: 1 }] },
+        ...lodging.options.slice(1),
+      ] }] }],
+      totals: { ...base.totals, subtotal: "1835.29", discount_pct: "15.00", discount: "275.29" },
+    });
+    const en = renderToString(createElement(ClientBuilderProposal, { initial: priced, dict: clientMessages("en"), locale: "en-AU" }));
+    expect(en).toContain("Adult × 2 · Child × 1 · Single room × 1");
+    expect(en).toContain("Before discount");
+    expect(en).toContain("Discount (15%)");
+    expect(en).toContain('data-testid="client-discount"');
+    const vi = renderToString(createElement(ClientBuilderProposal, { initial: priced, dict: clientMessages("vi"), locale: "vi-VN" }));
+    expect(vi).toContain("Người lớn × 2 · Trẻ em × 1 · Phòng đơn × 1");
+    expect(vi).toContain("Trước giảm giá");
+    expect(vi).toContain("Giảm giá (15%)");
+    for (const html of [en, vi]) expect(html).not.toMatch(/pricing\.(line|client|subtotal|discount)/);
+    // No discount: no subtotal / discount rows.
+    const plain = renderToString(createElement(ClientBuilderProposal, { initial: page(), dict: clientMessages("en"), locale: "en-AU" }));
+    expect(plain).not.toContain('data-testid="client-discount"');
+  });
+
   it("its strings exist in EN and VI and ship to the client page", () => {
     const shipped = clientMessages("vi");
     for (const k of ["client.byg.visaLinks", "client.byg.visaNone", "client.byg.insurance", "client.byg.fitness"]) {

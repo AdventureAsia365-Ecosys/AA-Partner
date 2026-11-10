@@ -15,6 +15,8 @@ import { DateInput } from "@/components/DateInput";
 import { Panel } from "@/components/PageTitle";
 import { BeforeYouGoPanel } from "@/components/proposals/BeforeYouGoPanel";
 import { BuilderAaDrawer, type Supplier } from "@/components/proposals/BuilderAaDrawer";
+import { DiscountBox } from "@/components/proposals/DiscountBox";
+import { OptionPricesEditor } from "@/components/proposals/OptionPricesEditor";
 import { bffSend } from "@/lib/bffClient";
 import {
   allOptions,
@@ -42,6 +44,7 @@ import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import { formatMoney, seesMargin } from "@/lib/ledger";
 import { termsChoiceLabel, termsChoices, termsStaleNote, type Agreement } from "@/lib/proposals";
+import { priceLines } from "@/lib/retailPricing";
 
 const field: React.CSSProperties = {
   font: "inherit",
@@ -91,6 +94,8 @@ export function BuilderPage({
   const [conflict, setConflict] = useState<VersionConflict | null>(null);
   const [drawer, setDrawer] = useState<string | null>(null);
   const [advanced, setAdvanced] = useState(false);
+  // AA-1066: the option whose per-traveller prices are open.
+  const [pricesFor, setPricesFor] = useState<string | null>(null);
   const [rooms, setRooms] = useState<Room[]>(initial.room_config);
   const draft = view.status === "draft";
   const canMoney = seesMargin(role);
@@ -287,32 +292,61 @@ export function BuilderPage({
         )}
         <span data-testid="builder-option-sell">{fmt(tr("builder.option.sell"), { amount: money(o.sell_amount) })}</span>
         {o.aa?.suggested_sell && o.aa.suggested_basis && (
-          <span style={{ color: K.muted, display: "inline-flex", gap: 4, alignItems: "center" }} data-testid="builder-option-suggested" title={tr(`aa.suggested.${o.aa.suggested_basis}`)}>
+          <span style={{ color: K.muted, display: "inline-flex", gap: 4, alignItems: "center", flexWrap: "wrap" }} data-testid="builder-option-suggested" title={tr(`aa.suggested.${o.aa.suggested_basis}`)}>
             {fmt(tr("aa.suggested"), { amount: money(o.aa.suggested_sell) })} · {tr(`aa.suggested.${o.aa.suggested_basis}`)}
-            {draft && canMoney && Number(o.aa.suggested_sell) !== Number(o.sell_amount) && (
+            {/* AA-1066: the agency's price rules the suggestion applied. */}
+            {o.aa.suggested_rules && o.aa.suggested_rules.length > 0 && ` · ${fmt(tr("pricing.suggestedRules"), { names: o.aa.suggested_rules.map((r) => r.name).join(", ") })}`}
+            {draft && canMoney && !(o.prices && o.prices.length) && Number(o.aa.suggested_sell) !== Number(o.sell_amount) && (
               <Button
                 size="sm"
                 variant="ghost"
                 disabled={!hydrated || busy}
-                onClick={() => write("PATCH", `proposals/${view.proposal_id}/options/${o.option_id}`, { sell_amount: o.aa?.suggested_sell })}
+                onClick={() => write("PATCH", `proposals/${view.proposal_id}/options/${o.option_id}`, { use_suggested: true })}
               >
                 {tr("aa.useSuggested")}
               </Button>
             )}
           </span>
         )}
+        {o.prices && o.prices.length > 0 && (
+          <span style={{ color: K.muted }} data-testid="builder-option-price-lines">
+            {priceLines(o.prices, tr)}
+          </span>
+        )}
+        {o.price_rules && o.price_rules.length > 0 && (
+          <span style={{ color: K.muted }} data-testid="builder-option-price-rules">
+            {fmt(tr("pricing.rulesUsed"), { names: o.price_rules.map((r) => r.name).join(", ") })}
+          </span>
+        )}
         {!o.is_default && o.sell_delta && <span style={{ color: K.muted }}>({Number(o.sell_delta) >= 0 ? "+" : ""}{money(o.sell_delta)})</span>}
         {draft && (
           <span style={{ display: "flex", gap: 4 }}>
-            {canMoney && (
+            {canMoney && !(o.prices && o.prices.length) && (
               <Button size="sm" variant="ghost" disabled={!hydrated || busy} onClick={() => editSell(o)}>
                 {tr("builder.option.editSell")}
               </Button>
+            )}
+            {canMoney && (
+              <span data-testid="builder-option-prices-open">
+                <Button size="sm" variant="ghost" disabled={!hydrated || busy} onClick={() => setPricesFor(pricesFor === o.option_id ? null : o.option_id)}>
+                  {tr("pricing.perTraveller")}
+                </Button>
+              </span>
             )}
             <Button size="sm" variant="ghost" disabled={!hydrated || busy} onClick={() => write("DELETE", `proposals/${view.proposal_id}/options/${o.option_id}`)}>
               {tr("builder.delete")}
             </Button>
           </span>
+        )}
+        {draft && canMoney && pricesFor === o.option_id && (
+          <OptionPricesEditor
+            key={`${o.option_id}-${view.edit_seq}`}
+            option={o}
+            busy={busy}
+            tr={tr}
+            onSave={(body) => write("PUT", `proposals/${view.proposal_id}/options/${o.option_id}/prices`, body)}
+            onClose={() => setPricesFor(null)}
+          />
         )}
       </li>
     );
@@ -360,6 +394,13 @@ export function BuilderPage({
           )}
         </div>
         <p style={{ margin: "10px 0 0", fontSize: 13, color: K.ink, display: "flex", gap: 14, flexWrap: "wrap" }} data-testid="builder-totals">
+          {view.totals.discount && view.totals.subtotal && (
+            // AA-1066: the total before the discount and the amount off (the sell total below is after it).
+            <>
+              <span data-testid="builder-totals-subtotal">{fmt(tr("builder.totals.subtotal"), { amount: money(view.totals.subtotal) })}</span>
+              <span data-testid="builder-totals-discount">{fmt(tr("builder.totals.discount"), { pct: Number(view.totals.discount_pct), amount: money(view.totals.discount) })}</span>
+            </>
+          )}
           <span>{fmt(tr("builder.totals.sell"), { amount: money(view.totals.sell_total) })}</span>
           {canMoney && view.totals.net_total !== undefined && <span>{fmt(tr("builder.totals.net"), { amount: money(view.totals.net_total) })}</span>}
           {canMoney && view.totals.margin_total !== undefined && (
@@ -694,6 +735,22 @@ export function BuilderPage({
             </div>
           )}
         </div>
+        {view.pricing && (
+          // AA-1066: the discount, the agency limit and the owner's approval.
+          <DiscountBox
+            key={`discount-${view.edit_seq}`}
+            proposalId={view.proposal_id}
+            state={view.pricing.discount}
+            draft={draft}
+            canMoney={canMoney}
+            isOwner={role === "owner"}
+            busy={busy}
+            locale={locale}
+            tr={tr}
+            write={write}
+            onMessage={(tone, text) => setMessage({ tone, text })}
+          />
+        )}
       </Panel>
 
       <Panel testId="builder-advanced">

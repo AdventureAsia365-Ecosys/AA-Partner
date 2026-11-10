@@ -26,7 +26,14 @@ Route                                              What                         
 ``DELETE /proposals/{id}/rules/{rule}``            delete a rule                                  every role
 ``POST   /proposals/{id}/aa-refresh``              quote the AA items again (live, oldest first,  every role
                                                    40 a run; the rest reported ``refresh_limit``)
-``POST   /proposals/{id}/publish``                 publish vN                                     owner, agent
+``POST   /proposals/{id}/publish``                 publish vN (AA-1066: a discount above the      owner, agent
+                                                   limit needs the owner: 409
+                                                   ``discount_needs_approval``)
+``PUT    /proposals/{id}/options/{option}/prices``  AA-1066: the price per traveller type         owner, agent
+                                                   (rows, ``[]`` removes them, or the suggestion)
+``POST   /proposals/{id}/discount-approval``       AA-1066: ask the owner to approve the          owner, agent
+                                                   discount
+``POST   /proposals/{id}/discount-approval/{id}``  AA-1066: approve / reject a pending request    owner
 =================================================  =============================================  =====================
 
 Every write sends ``seq`` (the ``edit_seq`` the page read); another value is 409 ``version_conflict`` (§11.2). Writes
@@ -91,6 +98,8 @@ class SettingsIn(_Body):
     balance_due_on: dt.date | None = None
     terms_doc_id: uuid.UUID | None = None
     intro: str | None = Field(default=None, max_length=20_000)
+    # AA-1066: a discount in percent on the charged total (null or 0 = none; a money field).
+    discount_pct: Decimal | None = Field(default=None, ge=0, le=100, decimal_places=2)
 
 
 class DayIn(_Body):
@@ -162,6 +171,26 @@ class OptionChange(_Body):
     net_amount: Money | None = None
     pay_on_arrival: bool | None = None
     choose_later_allowed: bool | None = None
+    # AA-1066: take the suggested sell (AA-1030 markup or RRP, then the agency's price rules; a money field).
+    use_suggested: bool | None = None
+
+
+class PriceRowIn(_Body):
+    pax_type: Literal["adult", "child", "infant", "single_supp"]
+    unit_sell: Annotated[Decimal, Field(ge=0, le=Decimal("99999999.99"), decimal_places=2)]
+    unit_net: Annotated[Decimal, Field(ge=0, le=Decimal("99999999.99"), decimal_places=2)] | None = None
+    qty: int = Field(ge=0, le=99)
+
+
+class PricesIn(_Body):
+    seq: Seq
+    prices: list[PriceRowIn] | None = Field(default=None, max_length=4)
+    use_suggested: bool = False
+
+
+class DecisionIn(_Body):
+    seq: Seq | None = None  # the page sends the version it read; a decision does not change the version
+    decision: Literal["approved", "rejected"]
 
 
 class RuleIn(_Body):
@@ -229,7 +258,7 @@ async def patch_builder(
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     async with tenant_tx(pool, caller, tenant_id, action=Action.PROPOSAL_DRAFT) as ctx:
-        _money_check(ctx, body, ("deposit_pct",), proposal_id)
+        _money_check(ctx, body, ("deposit_pct", "discount_pct"), proposal_id)
         changes = _changes(body)
         if body.room_config is not None:
             changes["room_config"] = [r.model_dump() for r in body.room_config]
@@ -347,8 +376,48 @@ async def patch_option(
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     async with tenant_tx(pool, caller, tenant_id, action=Action.PROPOSAL_DRAFT) as ctx:
-        _money_check(ctx, body, ("sell_amount", "net_amount"), proposal_id)
+        _money_check(ctx, body, ("sell_amount", "net_amount", "use_suggested"), proposal_id)
         return await builder.update_option(ctx, Vault(keys, ctx), proposal_id, body.seq, option_id, _changes(body))
+
+
+@router.put("/proposals/{proposal_id}/options/{option_id}/prices")
+async def put_option_prices(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, proposal_id: uuid.UUID, option_id: uuid.UUID,
+    body: PricesIn,
+) -> dict[str, Any]:  # fmt: skip
+    """AA-1066: the price per traveller type of an option (money fields: owner / agent)."""
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.MONEY_FIELDS_EDIT) as ctx:
+        rows = [r.model_dump() for r in body.prices] if body.prices is not None else None
+        if rows is None and not body.use_suggested:
+            rows = []
+        return await builder.set_option_prices(
+            ctx, Vault(keys, ctx), proposal_id, body.seq, option_id, rows, use_suggested=body.use_suggested
+        )
+
+
+@router.post("/proposals/{proposal_id}/discount-approval", status_code=201)
+async def post_discount_approval(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, proposal_id: uuid.UUID, body: SeqIn
+) -> dict[str, Any]:
+    """AA-1066: ask the agency owner to approve the draft's discount (owner / agent: the discount is a money field)."""
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.MONEY_FIELDS_EDIT) as ctx:
+        return await builder.request_discount_approval(ctx, Vault(keys, ctx), proposal_id, body.seq)
+
+
+@router.post("/proposals/{proposal_id}/discount-approval/{approval_id}")
+async def post_discount_decision(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, proposal_id: uuid.UUID, approval_id: uuid.UUID,
+    body: DecisionIn,
+) -> dict[str, Any]:  # fmt: skip
+    """AA-1066: the owner approves or rejects a pending discount request."""
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.DISCOUNT_APPROVE) as ctx:
+        return await builder.decide_discount_approval(ctx, Vault(keys, ctx), proposal_id, approval_id, body.decision)
 
 
 @router.delete("/proposals/{proposal_id}/options/{option_id}")

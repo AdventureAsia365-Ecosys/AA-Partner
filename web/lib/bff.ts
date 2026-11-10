@@ -187,6 +187,9 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "DELETE", pattern: new RegExp(`^proposals/${UUID}/(days|blocks|options|rules)/${UUID}$`), tenant: true, card: "AA-949" },
   { method: "POST", pattern: new RegExp(`^proposals/${UUID}/days/${UUID}/blocks$`), tenant: true, card: "AA-949" },
   { method: "POST", pattern: new RegExp(`^proposals/${UUID}/blocks/${UUID}/(options|aa-options)$`), tenant: true, card: "AA-949" },
+  // AA-1066: the price per traveller type of an option, the discount request and the owner's decision.
+  { method: "PUT", pattern: new RegExp(`^proposals/${UUID}/options/${UUID}/prices$`), tenant: true, card: "AA-1066" },
+  { method: "POST", pattern: new RegExp(`^proposals/${UUID}/discount-approval(/${UUID})?$`), tenant: true, card: "AA-1066" },
   // AA-951 (CRM-22): the text proposal (A-05: e-mail / WhatsApp text, EN / VI, preview and send with the version's
   // price hash; a stale hash is the API's 409), the builder's Before you go day 0 (packs from CIS), and Settings >
   // Templates (the library, the AA starter import; owner writes, the API checks).
@@ -269,6 +272,12 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   // AA-1030: the agency default retail markup per AA product type (owner only, API Action.PAYMENT_SETTINGS).
   { method: "GET", pattern: /^settings\/retail-markup$/, tenant: true, card: "AA-1030" },
   { method: "PUT", pattern: /^settings\/retail-markup$/, tenant: true, card: "AA-1030" },
+  // AA-1066: Settings > Pricing (owner only, API Action.PAYMENT_SETTINGS): age bands, discount limit, price rules.
+  { method: "GET", pattern: /^settings\/pricing$/, tenant: true, card: "AA-1066" },
+  { method: "PUT", pattern: /^settings\/pricing$/, tenant: true, card: "AA-1066" },
+  { method: "POST", pattern: /^settings\/price-rules$/, tenant: true, card: "AA-1066" },
+  { method: "PATCH", pattern: new RegExp(`^settings/price-rules/${UUID}$`), tenant: true, card: "AA-1066" },
+  { method: "DELETE", pattern: new RegExp(`^settings/price-rules/${UUID}$`), tenant: true, card: "AA-1066" },
   // AA-1030: the agency's AA prices (owner / agent, API Action.AA_TARIFF_VIEW), JSON or AA's CSV with its file name.
   { method: "GET", pattern: /^aa\/tariff$/, tenant: true, card: "AA-1030", download: true, timeoutMs: 30_000 },
   { method: "POST", pattern: new RegExp(`^settings/payment-methods/${UUID}/disconnect$`), tenant: true, card: "AA-952" },

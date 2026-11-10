@@ -2,7 +2,7 @@
 // live date reading; the other sections (team, channels, payments, forms, AI, data and privacy) arrive with their
 // cards. AA-939: Team & roles (owner). AA-945: Mailbox and Saved replies. AA-964: AI assistant. AA-958: SMS and
 // WhatsApp. AA-1036 (R3): Add-ons (owner; the CRM owner's add-on request). AA-1030: AA prices (owner, agent: /me
-// permissions.aa_tariff_view; nothing shown to the assistant).
+// permissions.aa_tariff_view; nothing shown to the assistant). AA-1066: Pricing (owner) under Payments.
 import Link from "next/link";
 import { DateInput } from "@/components/DateInput";
 import { LocaleSwitch } from "@/components/LocaleSwitch";
@@ -90,6 +90,12 @@ export default async function SettingsPage() {
         <Link href="/settings/payments" style={{ fontSize: 13.5 }} data-testid="settings-payments-link">
           {t(lang, ctx.role === "owner" ? "payments.link" : "payments.ownerOnly")}
         </Link>
+        {/* AA-1066: age bands, the discount limit and the retail price rules (owner). */}
+        <p style={{ margin: "8px 0 0", fontSize: 13.5 }}>
+          <Link href="/settings/pricing" data-testid="settings-pricing-link">
+            {t(lang, ctx.role === "owner" ? "pricingSettings.link" : "pricingSettings.ownerOnly")}
+          </Link>
+        </p>
       </Panel>
       {seesAaTariff(ctx.me) && (
         <Panel title={t(lang, "tariff.title")} testId="settings-aa-tariff">

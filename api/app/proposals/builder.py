@@ -53,7 +53,7 @@ from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.esign import terms as esign_terms
 from app.intake import completeness, stage2
 from app.margin import sees_margin
-from app.proposals import prep_packs, retail, rules
+from app.proposals import discount, prep_packs, pricing, retail, rules
 from app.proposals.service import (
     ACCEPTED_EXISTS_SQL,
     DRAFTABLE_STAGES,
@@ -118,7 +118,7 @@ OPTIONS_SQL = """
 SELECT o.option_id, o.option_block_id, o.sort_order, o.source, o.title, o.tier, o.agency_supplier_id, o.sell_amount,
        o.net_amount, o.pay_on_arrival, o.choose_later_allowed, o.availability, o.availability_checked_at,
        o.aa_tour_source_id, o.aa_component_id, o.aa_component_kind, o.aa_departure_id, o.aa_nights, o.aa_quote_id,
-       o.aa_quote_valid_until, o.aa_from_price, o.below_from_price, o.source_option_id,
+       o.aa_quote_valid_until, o.aa_from_price, o.below_from_price, o.source_option_id, o.price_rules,
        c.served_state AS aa_served_state
   FROM crm.option o
   LEFT JOIN crm.aa_catalog_tour c ON c.source_system = 'cis' AND c.source_id = o.aa_tour_source_id
@@ -147,7 +147,7 @@ RETURNING edit_seq
 """
 SETTINGS_SQL = """
 UPDATE crm.proposal SET price_visibility = $2, room_config = $3::jsonb, deposit_pct = $4, starts_on = $5,
-       balance_due_on = $6, terms_doc_id = $7, body_enc = $8
+       balance_due_on = $6, terms_doc_id = $7, body_enc = $8, discount_pct = $9
  WHERE proposal_id = $1
 """
 TERMS_SQL = "SELECT doc_id, status, body_sha256 FROM crm.agreement_doc WHERE doc_id = $1 AND kind = 'booking_terms'"
@@ -185,15 +185,22 @@ INSERT INTO crm.option (option_id, proposal_id, trip_id, option_block_id, sort_o
                         agency_supplier_id, sell_amount, net_amount, pay_on_arrival, choose_later_allowed,
                         availability, availability_checked_at, aa_tour_source_id, aa_component_id, aa_component_kind,
                         aa_departure_id, aa_quote_id, aa_quote_valid_until, aa_from_price, below_from_price,
-                        source_option_id, aa_nights)
+                        source_option_id, aa_nights, price_rules)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24,
-        $25)
+        $25, $26::jsonb)
 """
 UPDATE_OPTION_SQL = """
 UPDATE crm.option SET title = $2, tier = $3, agency_supplier_id = $4, sell_amount = $5, net_amount = $6,
-       pay_on_arrival = $7, choose_later_allowed = $8, below_from_price = $9
+       pay_on_arrival = $7, choose_later_allowed = $8, below_from_price = $9, price_rules = $10::jsonb
  WHERE option_id = $1
 """
+# AA-1066: an option priced from its per-traveller rows (sell = their sum) or from the suggestion with the rules used.
+OPTION_PRICE_SQL = """
+UPDATE crm.option SET sell_amount = $2, net_amount = $3, below_from_price = $4, price_rules = $5::jsonb
+ WHERE option_id = $1
+"""
+# AA-1066: the version's discount (read with the structure, so every total, the client page included, follows it).
+DISCOUNT_SQL = "SELECT p.discount_pct FROM crm.proposal p WHERE p.proposal_id = $1 AND p.kind = 'builder'"
 QUOTE_UPDATE_SQL = """
 UPDATE crm.option SET net_amount = $2, availability = $3, availability_checked_at = now(), aa_quote_id = $4,
        aa_quote_valid_until = $5, aa_from_price = $6, below_from_price = $7
@@ -318,7 +325,17 @@ async def _structure(ctx: TenantContext, proposal_id: uuid.UUID) -> dict[str, An
     blocks = [dict(r) for r in await ctx.conn.fetch(BLOCKS_SQL, proposal_id)]
     options = [dict(r) for r in await ctx.conn.fetch(OPTIONS_SQL, proposal_id)]
     rule_rows = [dict(r) for r in await ctx.conn.fetch(RULES_SQL, proposal_id)]
-    return {"days": days, "blocks": blocks, "options": options, "rules": rule_rows}
+    # AA-1066: the per-traveller rows of every option and the version's discount.
+    prices = await pricing.prices_of(ctx, proposal_id)
+    return {"days": days, "blocks": blocks, "options": options, "rules": rule_rows, "prices": prices,
+            "discount_pct": await _discount_of(ctx, proposal_id)}  # fmt: skip
+
+
+async def _discount_of(ctx: AnyContext, proposal_id: uuid.UUID) -> Decimal | None:
+    raw = await ctx.conn.fetchval(DISCOUNT_SQL, proposal_id)
+    if isinstance(raw, bool) or not isinstance(raw, (Decimal, int, str)):
+        return None
+    return Decimal(raw) or None
 
 
 def _rule_objs(rule_rows: list[dict[str, Any]]) -> list[rules.Rule]:
@@ -341,8 +358,38 @@ def _option_map(s: dict[str, Any]) -> dict[str, dict[str, Any]]:
 def _charged(s: dict[str, Any], picks: dict[str, str] | None, deposit_pct: Any) -> dict[str, Any]:
     choice = rules.chosen(_defaults(s), picks)
     sums = rules.totals(choice, _option_map(s))
+    pct = s.get("discount_pct")
+    if pct:
+        # AA-1066: the discount comes off the charged total (pay-on-arrival items are never discounted); the margin
+        # is the discounted total less the net.
+        subtotal = sums["sell_total"]
+        off = rules.money(subtotal * Decimal(pct) / 100)
+        sums["subtotal"], sums["discount"], sums["sell_total"] = subtotal, off, subtotal - off
+        if sums["net_total"] is not None:
+            sums["margin_total"] = rules.money(sums["sell_total"] - sums["net_total"])
     sums["deposit"] = rules.deposit_of(sums["sell_total"], Decimal(deposit_pct or DEFAULT_DEPOSIT_PCT))
     return sums
+
+
+def line_sells(s: dict[str, Any], choice: dict[str, str]) -> dict[str, Decimal]:
+    """AA-1066: each chosen option's sell after the version's discount, what its ledger line records. The discount is
+    spread over the charged options (pay-on-arrival items keep their sell), each ``sell × (1 − pct/100)`` to the cent,
+    and the rounding remainder goes to the largest charged option, so the charged sells add up to exactly
+    :func:`_charged`'s ``sell_total`` (what the client accepted and pays)."""
+    options = _option_map(s)
+    out = {oid: rules.money(options[oid]["sell_amount"]) for oid in set(choice.values()) if oid in options}
+    pct = s.get("discount_pct")
+    charged = sorted((oid for oid in out if not options[oid].get("pay_on_arrival")), key=lambda o: (out[o], o))
+    if not pct or not charged:
+        return out
+    rate = Decimal(pct) / 100
+    left = rules.money(sum((out[o] for o in charged), Decimal("0")) * rate)
+    for oid in charged[:-1]:
+        off = rules.money(out[oid] * rate)
+        out[oid] -= off
+        left -= off
+    out[charged[-1]] -= left
+    return out
 
 
 async def _bump(ctx: TenantContext, row: Any) -> int:
@@ -388,9 +435,14 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
     defaults = _defaults(s)
     by_block: dict[str, list[dict[str, Any]]] = {}
     now = dt.datetime.now(dt.UTC)
-    # AA-1030: the suggested sell of each AA option (the agency markup, else AA's RRP for a tour).
-    markups = await retail.markups(ctx) if any(o["source"] == "aa" for o in s["options"]) else {}
+    # AA-1030: the suggested sell of each AA option (the agency markup, else AA's RRP for a tour); AA-1066: then the
+    # agency's price rules, and a per-traveller grid from the agency's age bands.
+    rctx = await _retail_ctx(ctx, s)
     party = _party(row)
+    bands = await pricing.settings(ctx)
+    counts = pricing.party_counts(_jsonb(row["room_config"]), int(row["party_adults"]), row["party_child_ages"] or [],
+                                  bands)  # fmt: skip
+    dates = _option_dates(row, s)
     for o in s["options"]:
         default_id = defaults.get(str(o["option_block_id"]))
         default = next((x for x in s["options"] if str(x["option_id"]) == default_id), None)
@@ -408,7 +460,14 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
             "availability_checked_at": _iso(o["availability_checked_at"]),
             "is_default": str(o["option_id"]) == default_id,
             "picked": picks.get(str(o["option_block_id"])) == str(o["option_id"]),
+            # AA-1066: the per-traveller rows (unit net for owner / agent only) and the rules the sell came from.
+            "prices": pricing.rows_out(s["prices"].get(str(o["option_id"]), []), sees_margin=margin),
+            "price_rules": pricing.parse_applied(o.get("price_rules")),
         }
+        suggestion = _suggestion(o, party=party, rctx=rctx, service_date=dates.get(str(o["option_id"])))
+        shown = suggestion is not None and (suggestion[1] != retail.BASIS_MARKUP or margin)
+        grid_total = suggestion[0] if shown and suggestion is not None else Decimal(o["sell_amount"])
+        item["suggested_prices"] = pricing.rows_out(pricing.grid(grid_total, counts), sees_margin=False)
         if o["source"] == "aa":
             item["aa"] = {
                 "tour_source_id": o["aa_tour_source_id"],
@@ -422,16 +481,8 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
                 "from_price": _amount(o["aa_from_price"]),
                 "below_from_price": o["below_from_price"],
                 "no_longer_offered": o["aa_served_state"] == "retired",
-                **retail.suggestion_out(
-                    retail.suggest(
-                        o["aa_component_kind"],
-                        b2b_price=Decimal(o["net_amount"]) if o["net_amount"] is not None else None,
-                        from_price=Decimal(o["aa_from_price"]) if o["aa_from_price"] is not None else None,
-                        party=party,
-                        agency_markups=markups,
-                    ),
-                    sees_margin=margin,
-                ),
+                **retail.suggestion_out(suggestion[:2] if suggestion else None, sees_margin=margin),
+                "suggested_rules": suggestion[2] if shown and suggestion else [],
             }
         if margin:
             item["net_amount"] = _amount(o["net_amount"])
@@ -478,6 +529,9 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
         "deposit": _amount(sums["deposit"]),
         "balance": _amount(sums["sell_total"] - sums["deposit"]),
     }
+    if "discount" in sums:  # AA-1066: only with a discount, so a version without one reads as before
+        totals.update(subtotal=_amount(sums["subtotal"]), discount_pct=str(s["discount_pct"]),
+                      discount=_amount(sums["discount"]))  # fmt: skip
     if margin:
         totals["net_total"] = _amount(sums["net_total"])
         totals["margin_total"] = _amount(sums["margin_total"])
@@ -544,6 +598,24 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
     }
     if row["status"] == "draft" and out["before_you_go"]["packs_not_chosen"]:
         out["checks"]["warnings"] = sorted({*out["checks"]["warnings"], "prep_packs_not_chosen"})
+    # AA-1066: the agency's bands, the party by retail type, the discount and its approval.
+    draft_sums = _charged(s, None, row["deposit_pct"])
+    state = await discount.state(ctx, trip_id=row["trip_id"], proposal_id=proposal_id, discount_pct=s["discount_pct"],
+                                 margin_total=draft_sums["margin_total"], bands=bands, sees_margin=margin)  # fmt: skip
+    out["pricing"] = {
+        "bands": {"child_age_max": bands.child_age_max, "infant_age_max": bands.infant_age_max},
+        "party": counts,
+        "discount": state,
+    }
+    if row["status"] == "draft":
+        extra_warnings = {"prices_party_changed"} if _prices_party_changed(s, counts) else set()
+        if state["needs_approval"]:
+            if ctx.member_role == "owner":
+                extra_warnings.add("discount_owner_approves")  # the owner's publish records their own approval
+            else:
+                out["checks"]["blocking"] = sorted({*out["checks"]["blocking"], "discount_needs_approval"})
+                out["checks"]["publishable"] = False
+        out["checks"]["warnings"] = sorted({*out["checks"]["warnings"], *extra_warnings})
     if audit:
         ctx.audit("view", "allowed", "proposal", str(proposal_id), fields=("builder",))
     return out
@@ -559,6 +631,58 @@ def _quote_expired(o: Any, now: dt.datetime) -> bool:
         and o["aa_quote_valid_until"] is not None
         and o["aa_quote_valid_until"] < now
     )
+
+
+async def _retail_ctx(ctx: AnyContext, s: dict[str, Any]) -> dict[str, Any]:
+    """What an AA option's suggestion needs (AA-1030 markups, AA-1066 rules and the agency's today); read only when
+    the version has an AA option."""
+    if not any(o["source"] == "aa" for o in s["options"]):
+        return {"markups": {}, "rules": [], "today": dt.datetime.now(dt.UTC).date()}
+    return {
+        "markups": await retail.markups(ctx),
+        "rules": await pricing.rules_of(ctx),
+        "today": pricing.today_in(await ctx.conn.fetchval(AGENCY_TZ_SQL)),
+    }
+
+
+def _suggestion(
+    o: Any, *, party: int, rctx: dict[str, Any], service_date: dt.date | None
+) -> tuple[Decimal, str, list[dict[str, str]]] | None:
+    """``(sell, basis, rules used)`` of an AA option: the AA-1030 suggestion (agency markup, else AA's RRP), then the
+    agency's price rules (AA-1066); None for an agency item or when AA-1030 has nothing to suggest."""
+    if o["source"] != "aa":
+        return None
+    base = retail.suggest(
+        o["aa_component_kind"],
+        b2b_price=Decimal(o["net_amount"]) if o["net_amount"] is not None else None,
+        from_price=Decimal(o["aa_from_price"]) if o["aa_from_price"] is not None else None,
+        party=party,
+        agency_markups=rctx["markups"],
+    )
+    if base is None:
+        return None
+    pct, used = pricing.adjustment(rctx["rules"], kind=o["aa_component_kind"], tour_source_id=o["aa_tour_source_id"],
+                                   service_date=service_date, pax=party, today=rctx["today"])  # fmt: skip
+    return pricing.adjusted(base[0], pct), base[1], used
+
+
+def _option_dates(row: Any, s: dict[str, Any]) -> dict[str, dt.date | None]:
+    """option id -> the date of its day (None without a day 1 date or on day 0)."""
+    day_no = {d["proposal_day_id"]: d["day_no"] for d in s["days"]}
+    block_day = {b["option_block_id"]: day_no.get(b["proposal_day_id"], 0) for b in s["blocks"]}
+    return {str(o["option_id"]): _day_date(row["starts_on"], block_day.get(o["option_block_id"], 0))
+            for o in s["options"]}  # fmt: skip
+
+
+def _prices_party_changed(s: dict[str, Any], counts: dict[str, int]) -> bool:
+    """An option's per-traveller rows count other travellers than the party now has (the rooms or the party changed
+    since): a warning, the agent decides."""
+    people = counts["adult"] + counts["child"] + counts["infant"]
+    for rows in s["prices"].values():
+        counted = sum(int(r["qty"]) for r in rows if r["pax_type"] != "single_supp")
+        if counted != people:
+            return True
+    return False
 
 
 def _checks(row: Any, s: dict[str, Any], now: dt.datetime) -> dict[str, Any]:
@@ -756,8 +880,13 @@ async def _copy(
             o["net_amount"], o["pay_on_arrival"], o["choose_later_allowed"], o["availability"],
             o["availability_checked_at"], o["aa_tour_source_id"], o["aa_component_id"], o["aa_component_kind"],
             o["aa_departure_id"], o["aa_quote_id"], o["aa_quote_valid_until"], o["aa_from_price"],
-            o["below_from_price"], o["option_id"], o["aa_nights"],
+            o["below_from_price"], o["option_id"], o["aa_nights"], _rules_json(o.get("price_rules")),
         )  # fmt: skip
+        # AA-1066: the per-traveller rows go with their option.
+        await pricing.replace(ctx, proposal_id, option_id, s["prices"].get(str(o["option_id"]), []))
+    if s["discount_pct"]:
+        await ctx.conn.execute("UPDATE crm.proposal SET discount_pct = $2 WHERE proposal_id = $1", proposal_id,
+                               s["discount_pct"])  # fmt: skip
     for b in s["blocks"]:
         if b["default_option_id"] is not None:
             await ctx.conn.execute(SET_DEFAULT_SQL, block_map[str(b["option_block_id"])],
@@ -800,6 +929,15 @@ async def update_settings(
             raise NotFound("terms_not_found")
         if doc["status"] != "published":
             raise Conflict("terms_not_published", "choose the published booking terms version")
+    # AA-1066: the discount (a money field: the route checks MONEY_FIELDS_EDIT); 0 or null = none.
+    disc = changes["discount_pct"] if "discount_pct" in changes else await _discount_of(ctx, proposal_id)
+    if disc is not None:
+        disc = Decimal(str(disc))
+        if not (Decimal("0") <= disc <= Decimal("100")) or disc != disc.quantize(rules.CENT):
+            raise Invalid("invalid_discount_pct", "0 to 100, two decimals at most")
+        disc = disc or None
+    if "discount_pct" in changes:
+        ctx.audit("proposal_discount", "allowed", "proposal", str(proposal_id), reason="set" if disc else "cleared")
     body = row["body_enc"]
     if "intro" in changes:
         text = (changes["intro"] or "").replace("\r\n", "\n").strip()
@@ -807,7 +945,7 @@ async def update_settings(
             raise Invalid("body_too_long", f"at most {MAX_BODY} characters")
         body = await vault.encrypt("proposal", "body_enc", proposal_id, text)
     await ctx.conn.execute(SETTINGS_SQL, proposal_id, visibility, json.dumps(rooms) if rooms else None, pct,
-                           starts_on, balance, terms, body)  # fmt: skip
+                           starts_on, balance, terms, body, disc)  # fmt: skip
     return await _done(ctx, vault, proposal_id, "settings")
 
 
@@ -1058,7 +1196,7 @@ async def add_agency_option(
         await _supplier(ctx, body.get("agency_supplier_id")), _money_in(body.get("sell_amount"), "sell_amount") or 0,
         _money_in(body.get("net_amount"), "net_amount"), bool(body.get("pay_on_arrival", False)),
         bool(body.get("choose_later_allowed", False)), "agency", None, None, None, None, None, None, None, None, None,
-        None, None,
+        None, None, None,
     )  # fmt: skip
     await _settle_default(ctx, proposal_id, block_id, await _tier(ctx, vault, row))
     _raise_conflicts(_conflicts(await _structure(ctx, proposal_id)), s)
@@ -1104,6 +1242,21 @@ async def update_option(
         raise Invalid("choose_later_agency_only", "choose later is for agency items only (AA: decided at accept)")
     if aa and changes.get("agency_supplier_id") is not None:
         raise Invalid("aa_items_from_the_drawer")
+    rows = s["prices"].get(str(option_id), [])
+    if rows and ("sell_amount" in changes or "net_amount" in changes or changes.get("use_suggested")):
+        # AA-1066: the per-traveller rows decide the amounts (edit them, or remove them first).
+        raise Conflict("amount_from_prices", "this item is priced per traveller; edit the traveller prices")
+    applied = o.get("price_rules")
+    if changes.get("use_suggested"):
+        # AA-1066: the suggestion (AA-1030 markup or RRP, then the agency's price rules), with the rules used kept.
+        suggested = _suggestion(o, party=_party(row), rctx=await _retail_ctx(ctx, s),
+                                service_date=_option_dates(row, s).get(str(option_id)))  # fmt: skip
+        if suggested is None:
+            raise Conflict("no_suggestion", "AA suggests no price for this item; type the sell")
+        changes = {**changes, "sell_amount": suggested[0]}
+        applied = suggested[2]
+    elif "sell_amount" in changes:
+        applied = None  # priced by hand
     sell = _money_in(changes["sell_amount"], "sell_amount") if "sell_amount" in changes else o["sell_amount"]
     if sell is None:
         raise Invalid("invalid_sell_amount")
@@ -1115,11 +1268,59 @@ async def update_option(
         _text(changes["title"], "title", 200, required=True) if "title" in changes else o["title"],
         _tier_in(changes["tier"]) if "tier" in changes else o["tier"], supplier, sell, net,
         _flag(changes, "pay_on_arrival", o), _flag(changes, "choose_later_allowed", o),
-        _below_from(o, Decimal(sell), _party(row)) if aa else None,
+        _below_from(o, Decimal(sell), _party(row)) if aa else None, _rules_json(applied),
     )  # fmt: skip
     if "tier" in changes:
         await _settle_default(ctx, proposal_id, o["option_block_id"], await _tier(ctx, vault, row))
     return await _done(ctx, vault, proposal_id, "option_edit")
+
+
+def _rules_json(value: Any) -> str | None:
+    """``option.price_rules`` for a write: the rules used (a list), as stored (JSON text), or None."""
+    if value is None:
+        return None
+    return value if isinstance(value, str) else json.dumps(value)
+
+
+async def set_option_prices(
+    ctx: TenantContext,
+    vault: Vault,
+    proposal_id: uuid.UUID,
+    seq: int,
+    option_id: uuid.UUID,
+    prices: list[dict[str, Any]] | None,
+    *,
+    use_suggested: bool = False,
+) -> dict[str, Any]:
+    """AA-1066 (item crm-05): the price per traveller type of an option (money fields: the route checks
+    ``MONEY_FIELDS_EDIT``). ``prices`` replaces the rows, ``[]`` removes them (the sell stays their last sum);
+    ``use_suggested`` takes the grid the page shows (the suggestion of an AA item after the agency's price rules, else
+    the current sell, shared per head), with the rules used kept on the option. The sell becomes the rows' sum; an
+    agency item's net the sum of its unit nets when the rows carry them."""
+    row = await _lock(ctx, proposal_id, seq)
+    s = await _structure(ctx, proposal_id)
+    o = _option(s, option_id)
+    aa = o["source"] == "aa"
+    if prices == [] and not use_suggested:
+        await pricing.replace(ctx, proposal_id, option_id, [])
+        return await _done(ctx, vault, proposal_id, "option_prices")
+    applied: list[dict[str, str]] | None = None
+    if use_suggested:
+        party = _party(row)
+        suggested = _suggestion(o, party=party, rctx=await _retail_ctx(ctx, s),
+                                service_date=_option_dates(row, s).get(str(option_id)))  # fmt: skip
+        total = suggested[0] if suggested is not None else Decimal(o["sell_amount"])
+        counts = pricing.party_counts(_jsonb(row["room_config"]), int(row["party_adults"]),
+                                      row["party_child_ages"] or [], await pricing.settings(ctx))  # fmt: skip
+        prices = pricing.grid(total, counts)
+        applied = suggested[2] if suggested is not None else None
+    clean = pricing.check_rows(prices, aa=aa)
+    sell, net_sum = pricing.sums(clean)
+    net = o["net_amount"] if aa or net_sum is None else net_sum
+    await pricing.replace(ctx, proposal_id, option_id, clean)
+    await ctx.conn.execute(OPTION_PRICE_SQL, option_id, sell, net, _below_from(o, sell, _party(row)) if aa else None,
+                           _rules_json(applied))  # fmt: skip
+    return await _done(ctx, vault, proposal_id, "option_prices")
 
 
 async def delete_option(
@@ -1206,16 +1407,20 @@ async def add_aa_option(
     s = await _structure(ctx, proposal_id)
     in_block = [o for o in s["options"] if o["option_block_id"] == _block(s, block_id)["option_block_id"]]
     sell = _money_in(body.get("sell_amount"), "sell_amount") or Decimal("0.00")
+    applied: list[dict[str, str]] | None = None
     if body.get("sell_amount") is None and sees_margin(ctx.member_role) and quote.b2b_price is not None:
-        suggested = retail.suggest(
-            plan["component_kind"],
-            b2b_price=rules.money(quote.b2b_price),
-            from_price=rules.money(quote.from_price) if quote.from_price is not None else None,
-            party=plan["party"],
-            agency_markups=await retail.markups(ctx),
-        )
+        # AA-1066: the agency's price rules on top of the AA-1030 suggestion, the rules used kept on the option.
+        new = {
+            "source": "aa", "aa_component_kind": plan["component_kind"], "aa_tour_source_id": plan["tour_source_id"],
+            "net_amount": rules.money(quote.b2b_price),
+            "aa_from_price": rules.money(quote.from_price) if quote.from_price is not None else None,
+        }  # fmt: skip
+        rctx = {"markups": await retail.markups(ctx), "rules": await pricing.rules_of(ctx),
+                "today": pricing.today_in(await ctx.conn.fetchval(AGENCY_TZ_SQL))}  # fmt: skip
+        date = dt.date.fromisoformat(plan["service_date"]) if plan.get("service_date") else None
+        suggested = _suggestion(new, party=plan["party"], rctx=rctx, service_date=date)
         if suggested is not None:
-            sell = suggested[0]
+            sell, applied = suggested[0], suggested[2]
     below = None
     if quote.from_price is not None and plan["component_kind"] == "trip_plan" and plan["party"] >= 1 and sell > 0:
         below = sell / plan["party"] < quote.from_price
@@ -1227,6 +1432,7 @@ async def add_aa_option(
         dt.datetime.now(dt.UTC), plan["tour_source_id"], plan["component_id"], plan["component_kind"],
         plan["departure_id"], quote.quote_id, quote.valid_until,
         rules.money(quote.from_price) if quote.from_price is not None else None, below, None, plan.get("nights"),
+        _rules_json(applied),
     )  # fmt: skip
     await _settle_default(ctx, proposal_id, block_id, await _tier(ctx, vault, row))
     _raise_conflicts(_conflicts(await _structure(ctx, proposal_id)), s)
@@ -1372,6 +1578,16 @@ def price_hash(row: Any, body: str, terms_sha256: bytes | None, s: dict[str, Any
         ],  # fmt: skip
         "rules": sorted([r["kind"], str(r["option_id"]), str(r["target_option_id"])] for r in s["rules"]),
     }
+    # AA-1066: the per-traveller rows and the discount, added only when the version has them (an older version's
+    # record, and so its hash, is unchanged).
+    prices = s.get("prices") or {}
+    if prices:
+        record["option_prices"] = sorted(
+            [oid, r["pax_type"], str(rules.money(r["unit_sell"])), int(r["qty"])]
+            for oid, rows in prices.items() for r in rows
+        )  # fmt: skip
+    if s.get("discount_pct"):
+        record["discount_pct"] = str(rules.money(s["discount_pct"]))
     return hashlib.sha256(json.dumps(record, sort_keys=True, separators=(",", ":")).encode()).digest()
 
 
@@ -1388,6 +1604,7 @@ async def publish(
         _raise_conflicts(_conflicts(s), s)
     if checks["blocking"]:
         raise Invalid("not_publishable", "fix the items listed first", blocking=checks["blocking"])
+    await _discount_gate(ctx, row, s)
     # A version without terms takes the agency's published booking terms (before the price hash, which covers them).
     row = await pin_current_terms(ctx, row)
     terms_sha = None
@@ -1427,6 +1644,52 @@ async def publish(
     out["publish"] = {"published_at": _iso(published_at), "price_hash": digest.hex(), "superseded": superseded,
                       "picks_carried": carried}  # fmt: skip
     return out
+
+
+async def _discount_gate(ctx: TenantContext, row: Any, s: dict[str, Any]) -> None:
+    """AA-1066 (item crm-07): a discount above the agency limit, or a discounted total below the net, needs an
+    owner's approval covering it. An owner's publish records their own; anyone else gets 409
+    ``discount_needs_approval``."""
+    sums = _charged(s, None, row["deposit_pct"])
+    bands = await pricing.settings(ctx)
+    above, below = discount.need(s["discount_pct"], sums["margin_total"], bands.discount_owner_limit_pct)
+    if not (above or below):
+        return
+    if discount.covered(await discount.approvals_of(ctx, row["trip_id"]), s["discount_pct"], below):
+        return
+    if ctx.member_role == "owner":
+        await discount.owner_record(ctx, trip_id=row["trip_id"], proposal_id=row["proposal_id"],
+                                    discount_pct=s["discount_pct"], below_cost=below, bands=bands)  # fmt: skip
+        return
+    raise Conflict(
+        "discount_needs_approval",
+        "the agency owner approves this discount first (ask for approval on the builder page)",
+        discount_pct=str(s["discount_pct"] or "0"),
+        limit_pct=str(bands.discount_owner_limit_pct),
+        reason="below_cost" if below and not above else "above_limit",
+    )
+
+
+async def request_discount_approval(
+    ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, seq: int
+) -> dict[str, Any]:
+    """AA-1066: an agent asks the owner to approve the draft's discount (the version counter is checked, not moved:
+    the content does not change)."""
+    row = await _lock(ctx, proposal_id, seq)
+    s = await _structure(ctx, proposal_id)
+    sums = _charged(s, None, row["deposit_pct"])
+    await discount.request(ctx, trip_id=row["trip_id"], proposal_id=proposal_id, discount_pct=s["discount_pct"],
+                           margin_total=sums["margin_total"], bands=await pricing.settings(ctx))  # fmt: skip
+    return await view(ctx, vault, proposal_id, audit=False)
+
+
+async def decide_discount_approval(
+    ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, approval_id: uuid.UUID, decision: str
+) -> dict[str, Any]:
+    """AA-1066: the owner approves or rejects a pending request of this draft (``DISCOUNT_APPROVE``)."""
+    await _lock(ctx, proposal_id, None)
+    await discount.decide(ctx, approval_id, decision, proposal_id=proposal_id)
+    return await view(ctx, vault, proposal_id, audit=False)
 
 
 async def _carry_picks(ctx: TenantContext, row: Any, s: dict[str, Any], base: Any) -> int:

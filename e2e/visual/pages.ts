@@ -75,6 +75,7 @@ export const PAGES: VisualPage[] = [
   crm("settings-import", "/settings/import"),
   crm("settings-mailbox", "/settings/mailbox"),
   crm("settings-payments", "/settings/payments"),
+  crm("settings-pricing", "/settings/pricing"), // AA-1066: age bands, discount limit, price rules (owner)
   crm("settings-saved-replies", "/settings/saved-replies"),
   crm("settings-team", "/settings/team"),
   crm("settings-templates", "/settings/templates"),
