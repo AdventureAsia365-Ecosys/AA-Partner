@@ -77,9 +77,10 @@ PROVIDER_PHRASES = (
     "Amazon Nova",  # S263: the acc2 Bedrock fallback of the review / check steps (CIS migrations 331-333)
     "Meta Llama",
 )
+# AA-1062 (Draft v0.6, register v1.13): since CIS 383 only Claude models write; a writer with no Claude model waits.
 WRITING_FALLBACK_PHRASES = (
-    "as a last resort",
-    "an OpenAI model through the OpenAI API",
+    "Only Claude models write",
+    "if no Claude model is available, the writing step waits and is tried again later",
 )
 # S271: wording of the route before version 6 that must not come back (the direct APIs are not only a fallback).
 STALE_ROUTE_PHRASES = (
@@ -91,6 +92,11 @@ STALE_ROUTE_PHRASES = (
     "or the providers, by updating this list",
     "Claude writes it",
     "Claude (Anthropic) writes it",
+    # AA-1062: no OpenAI model writes since CIS 383 (route control version 7);
+    # web/tests/studio/studioLegalProviders.test.ts checks every sentence about writing (EN and VI) against the
+    # register's writer providers.
+    "last resort",
+    "an OpenAI model through the OpenAI API may write",
 )
 
 # AA-911: write handlers and the work a handler must not do before the cross-site guard.
@@ -286,7 +292,10 @@ def test_partner_terms_ai_section_keeps_the_schedule_and_the_providers() -> None
 
 
 def test_studio_legal_pages_drop_the_pre_v6_fallback_wording() -> None:
-    """S271: since route control version 6 the direct APIs are providers, not a fallback (EN and VI, whole page)."""
+    """S271: since route control version 6 the direct APIs are providers, not a fallback (EN and VI, whole page).
+
+    AA-1062: since route control version 7 (CIS 383) no OpenAI model writes, so no "last resort" writer either.
+    """
     for rel in (TERMS_TEXT, PRIVACY_TEXT):
         text = re.sub(r"\s+", " ", _read(rel))
         body = text[text.index("const EN: LegalDoc") :]
@@ -294,12 +303,14 @@ def test_studio_legal_pages_drop_the_pre_v6_fallback_wording() -> None:
             assert phrase not in body, f"{rel}: stale route wording: {phrase}"
         assert "làm phương án dự phòng" not in body and "chỉ gọi trực tiếp khi dự phòng" not in body, rel
         assert "bằng cách cập nhật danh sách này" not in body, rel
+        assert "khi không còn lựa chọn nào khác" not in body, rel
+        assert "Chỉ các mô hình Claude viết nội dung" in body, rel
         assert "cũng có thể kiểm tra nội dung" in body, rel
         assert "phải được thông báo trước theo thoả thuận xử lý dữ liệu" in body, rel
     privacy = re.sub(r"\s+", " ", _read(PRIVACY_TEXT))
     assert "directly through the Anthropic API and the OpenAI API, and through Amazon Bedrock" in privacy
     frame = _read("web/app/(studio)/_legal/legal.messages.ts")
-    assert 'version: "Draft v0.5"' in frame and 'version: "Bản nháp v0.5"' in frame
+    assert 'version: "Draft v0.6"' in frame and 'version: "Bản nháp v0.6"' in frame
 
 
 def _write_routes() -> list[Path]:
