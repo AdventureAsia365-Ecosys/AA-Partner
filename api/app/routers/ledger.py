@@ -23,6 +23,12 @@ Route                                          What                             
 ``PUT    /settings/payments``                  change them                                    owner
 ``GET    /fx/overrides``                       the owner's rates                              owner
 ``POST   /fx/overrides``                       add a rate for a day                           owner
+``GET    /settings/pricing``                   AA-1066: age bands, discount limit, price      owner
+                                               rules
+``PUT    /settings/pricing``                   AA-1066: the bands and the discount limit      owner
+``POST   /settings/price-rules``               AA-1066: add a retail price rule               owner
+``PATCH  /settings/price-rules/{id}``          AA-1066: edit one                              owner
+``DELETE /settings/price-rules/{id}``          AA-1066: delete one                            owner
 =============================================  =============================================  ======================
 
 Money leaves only as keyed objects (``cost``, ``commission_expected``, ``margin_base``, ``default_commission_pct``):
@@ -46,7 +52,7 @@ from app.db import request_pool
 from app.ledger import fx, lines, suppliers
 from app.lifecycle import trash
 from app.permissions import Action, require
-from app.proposals import retail
+from app.proposals import pricing, retail
 from app.routers.agency import tenant_header
 from app.tenancy import tenant_tx
 from app.vault import Vault
@@ -135,6 +141,52 @@ class RetailMarkup(_Body):
     retail_markup_pct: dict[
         Literal["trip_plan", "hotel_room", "transfer", "guide", "activity", "entrance", "meal"], MarkupPct | None
     ] = Field(max_length=7)
+
+
+Pct = Annotated[Decimal, Field(ge=0, le=100, max_digits=5, decimal_places=2, allow_inf_nan=False)]
+AdjustPct = Annotated[Decimal, Field(ge=-90, le=300, max_digits=5, decimal_places=2, allow_inf_nan=False)]
+RuleKind = Literal["season", "group_size", "early_booking", "last_minute"]
+RuleScope = Literal["all", "trip_plan", "hotel_room", "transfer", "guide", "activity", "entrance", "meal"]
+
+
+class PricingSettingsIn(_Body):
+    """AA-1066: the agency's retail age bands and the discount limit above which the owner approves."""
+
+    child_age_max: int | None = Field(default=None, ge=1, le=17)
+    infant_age_max: int | None = Field(default=None, ge=0, le=5)
+    discount_owner_limit_pct: Pct | None = None
+
+
+class PriceRuleIn(_Body):
+    """AA-1066: one retail price rule (the kind's own condition only; the service checks the combination)."""
+
+    name: str = Field(min_length=1, max_length=80)
+    kind: RuleKind
+    product_scope: RuleScope = "all"
+    aa_tour_source_id: str | None = Field(default=None, min_length=1, max_length=128)
+    date_from: dt.date | None = None
+    date_to: dt.date | None = None
+    min_pax: int | None = Field(default=None, ge=2, le=99)
+    days_before: int | None = Field(default=None, ge=0, le=730)
+    adjust_pct: AdjustPct
+    priority: int = Field(default=100, ge=1, le=999)
+    stacking: Literal["add", "best_only"] = "add"
+    active: bool = True
+
+
+class PriceRuleChange(_Body):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    kind: RuleKind | None = None
+    product_scope: RuleScope | None = None
+    aa_tour_source_id: str | None = Field(default=None, min_length=1, max_length=128)
+    date_from: dt.date | None = None
+    date_to: dt.date | None = None
+    min_pax: int | None = Field(default=None, ge=2, le=99)
+    days_before: int | None = Field(default=None, ge=0, le=730)
+    adjust_pct: AdjustPct | None = None
+    priority: int | None = Field(default=None, ge=1, le=999)
+    stacking: Literal["add", "best_only"] | None = None
+    active: bool | None = None
 
 
 class OverrideIn(_Body):
@@ -327,6 +379,52 @@ async def put_retail_markup(
     async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
         _payments_owner(ctx)
         return await retail.update(ctx, body.retail_markup_pct)
+
+
+# AA-1066 (crm-048): Settings > Pricing, owner only like Settings > Payments.
+@router.get("/settings/pricing")
+async def get_pricing(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
+        return await pricing.read(ctx)
+
+
+@router.put("/settings/pricing")
+async def put_pricing(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, body: PricingSettingsIn
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
+        _payments_owner(ctx)
+        return await pricing.update_settings(ctx, body.model_dump(exclude_none=True))
+
+
+@router.post("/settings/price-rules", status_code=201)
+async def post_price_rule(request: Request, caller: CallerDep, tenant_id: TenantDep, body: PriceRuleIn) -> dict:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
+        _payments_owner(ctx)
+        return await pricing.create_rule(ctx, body.model_dump())
+
+
+@router.patch("/settings/price-rules/{rule_id}")
+async def patch_price_rule(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, rule_id: uuid.UUID, body: PriceRuleChange
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
+        _payments_owner(ctx)
+        return await pricing.update_rule(ctx, rule_id, body.model_dump(exclude_unset=True))
+
+
+@router.delete("/settings/price-rules/{rule_id}")
+async def delete_price_rule(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, rule_id: uuid.UUID
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
+        _payments_owner(ctx)
+        return await pricing.delete_rule(ctx, rule_id)
 
 
 @router.get("/fx/overrides")

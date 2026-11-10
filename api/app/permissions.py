@@ -134,6 +134,9 @@ class Action(StrEnum):
     # CIS tenant.addons.v1 (one store of requests in CIS). The owner, like the studio, where only the workspace owner
     # asks; reading the add-ons is PLAN_VIEW (owner).
     ADDON_REQUEST = "addon_request"
+    # AA-1066 (crm-048): approve or reject a proposal discount above the agency limit (or a sale below cost). The
+    # owner only: an agent asks (MONEY_FIELDS_EDIT), the database guard CRM48 lets only an owner decide too.
+    DISCOUNT_APPROVE = "discount_approve"
 
 
 A, D = Rule.ALLOW, Rule.DENY
@@ -199,6 +202,7 @@ _TABLE: dict[Action, tuple[Rule, Rule, Rule]] = {
     Action.ONBOARDING_MANAGE: (A, D, D),
     Action.AI_SETTINGS: (A, D, D),
     Action.ADDON_REQUEST: (A, D, D),
+    Action.DISCOUNT_APPROVE: (A, D, D),
 }
 
 MATRIX: dict[str, dict[Action, Rule]] = {
