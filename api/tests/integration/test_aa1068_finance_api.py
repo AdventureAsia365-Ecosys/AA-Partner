@@ -5,8 +5,10 @@
 - The assistant is refused every money read (``view_margin``) and sees no money anywhere.
 - "Bookings with AA": Booking's invoices (a fake booking.b2b.v1 1.5) are copied, linked to the AA line of the booking,
   flagged as a mismatch when billed in full at another amount, the past-due banner follows Booking's credit status;
-  Booking down -> the copy with ``source = cache``; the AA invoice is then the AA cost in the trip P&L.
-- Group departures: the group code, a per-departure cost split by pax over two trips, the departure P&L.
+  Booking down -> the copy with ``source = cache``; the AA invoice is then the AA cost in the trip P&L. Two lines on
+  one AA booking: compared and counted once per booking.
+- Group departures: the group code, a per-departure cost split by pax over two booked trips (a lead only quoted on
+  the departure takes no share), the departure P&L.
 - The profit cube by lead source and by product, its CSV, and the Home "today" tiles.
 - Tenant isolation: another agency sees none of it.
 """
@@ -57,7 +59,12 @@ async def _setup(pool: asyncpg.Pool) -> dict[str, Any]:
 
 
 async def _trip(
-    pool: asyncpg.Pool, s: dict[str, Any], adults: int = 2, source: str = "website_form", start_in: int = 10
+    pool: asyncpg.Pool,
+    s: dict[str, Any],
+    adults: int = 2,
+    source: str = "website_form",
+    start_in: int = 10,
+    stage: str = "booked",
 ) -> uuid.UUID:
     trip = uuid.uuid4()
     async with pool.acquire() as conn, conn.transaction():
@@ -65,11 +72,12 @@ async def _trip(
         await conn.execute("SELECT set_config('app.actor', 'seed:test', true)")
         await conn.execute(
             "INSERT INTO crm.trip (trip_id, title, stage, waiting_on, party_adults, start_date, lead_source) "
-            "VALUES ($1, 'Lakes 6 days', 'booked', 'none', $2, current_date + $4::int, $3)",
+            "VALUES ($1, 'Lakes 6 days', $5, 'none', $2, current_date + $4::int, $3)",
             trip,
             adults,
             source,
             start_in,
+            stage,
         )
     return trip
 
@@ -90,16 +98,23 @@ async def _confirmed_line(pool: asyncpg.Pool, s: dict[str, Any], trip: uuid.UUID
 
 async def _aa_line(admin: asyncpg.Connection, s: dict[str, Any], trip: uuid.UUID, booking: str, cost: str) -> uuid.UUID:
     """An AA line confirmed by the Booking feed with its quote-locked cost (as crm_owner, the feed's definer path)."""
+    return await _aa_line_as(admin, s, trip, booking, cost, "confirmed")
+
+
+async def _aa_line_as(
+    admin: asyncpg.Connection, s: dict[str, Any], trip: uuid.UUID, booking: str | None, cost: str, status: str
+) -> uuid.UUID:
     async with admin.transaction():
         await admin.execute("SET LOCAL ROLE crm_owner")
         await admin.execute("SELECT set_config('app.tenant_id', $1, true)", str(s["tenant"]))
         line = await admin.fetchval(
             "INSERT INTO crm.booking_line (trip_id, supplier_kind, agency_supplier_id, status, title, confirmed_at, "
-            "bk_booking_id, departure_id) VALUES ($1, 'aa', $2, 'confirmed', 'Lakes tour', now(), $3, 'DEP-77') "
-            "RETURNING booking_line_id",
+            "bk_booking_id, departure_id) VALUES ($1, 'aa', $2, $4, 'Lakes tour', "
+            "CASE WHEN $4 = 'confirmed' THEN now() END, $3, 'DEP-77') RETURNING booking_line_id",
             trip,
             s["aa"],
             booking,
+            status,
         )
         await admin.execute(
             "INSERT INTO crm.booking_line_money (booking_line_id, kind, amount, currency, base_currency, amount_base, "
@@ -239,11 +254,40 @@ async def test_bookings_with_aa_and_the_aa_cost(app_pool: asyncpg.Pool, admin: a
     assert empty["invoices"] == [] and empty["booking_error"] == "booking_not_configured"
 
 
+async def test_one_aa_booking_with_two_lines(app_pool: asyncpg.Pool, admin: asyncpg.Connection) -> None:
+    s = await _setup(app_pool)
+    trip = await _trip(app_pool, s)
+    first = await _aa_line(admin, s, trip, "BK-601", "400.00")  # one accepted proposal: two lines, one AA booking
+    second = await _aa_line(admin, s, trip, "BK-601", "500.00")
+    fake = FakeBooking()
+    fake.agency_invoices = [agency_invoice("AAT-2031-000011", total="900.00", balance="900.00")]
+    fake.invoice_details["AAT-2031-000011"] = agency_invoice_detail(
+        "AAT-2031-000011", [invoice_line(1, "full", "900.00", "BK-601")], total="900.00", balance="900.00"
+    )
+    owner = s["who"]["owner"]
+    page = await aa_invoices.page(_tx(app_pool, owner, s["tenant"]), booking_client(fake), s["tenant"],
+                                  dt.date(2031, 3, 1))  # fmt: skip
+    rows = {r["booking_line_id"]: r for r in page["bookings"]}
+    assert set(rows) == {str(first), str(second)}
+    for row in rows.values():  # 900 billed against 400 + 500 quoted: the booking matches
+        assert row["booking_quoted_b2b"] == {"amount": "900.00", "currency": "USD"} and row["booking_lines"] == 2
+        assert row["invoiced_b2b"]["amount"] == "900.00" and not row["mismatch"]
+    assert page["mismatches"] == 0
+    async with tenant_tx(app_pool, owner, s["tenant"]) as ctx:
+        p = await pnl.trip_pnl(ctx, trip)
+    # Counted once (900), not once per line (1800).
+    assert p["costs"]["aa_quoted_base"] == "900.00" and p["costs"]["aa_base"] == "900.00"
+    assert p["counts"]["aa_lines_mismatch"] == 0 and "aa_invoice_mismatch" not in p["notes"]
+
+
 async def test_group_departure_costs_profit_cube_and_agenda(app_pool: asyncpg.Pool, admin: asyncpg.Connection) -> None:
     s = await _setup(app_pool)
     first = await _trip(app_pool, s, adults=3, source="referral", start_in=-5)  # left 5 days ago
     second = await _trip(app_pool, s, adults=1)
     await _aa_line(admin, s, first, "BK-1", "600.00")  # first is on AA departure DEP-77
+    # A lead quoted on the same departure (a planning line, the trip at proposal): it shares none of its costs.
+    lead = await _trip(app_pool, s, adults=5, stage="proposal")
+    await _aa_line_as(admin, s, lead, None, "800.00", "planning")
     owner, agent = s["who"]["owner"], s["who"]["agent"]
     async with tenant_tx(app_pool, agent, s["tenant"]) as ctx:
         coded = await departures.set_group_code(ctx, second, "DEP-77")  # second joins it by its group code
@@ -259,6 +303,7 @@ async def test_group_departure_costs_profit_cube_and_agenda(app_pool: asyncpg.Po
         dep = await departures.departure_pnl(ctx, "DEP-77")
         p1, p2 = await pnl.trip_pnl(ctx, first), await pnl.trip_pnl(ctx, second)
     assert dep["totals"]["pax"] == 4 and dep["totals"]["departure_cost_base"] == "260.00"  # 200 + 15 x 4
+    assert str(lead) not in {t["trip_id"] for t in dep["trips"]}
     assert (p1["costs"]["departure_base"], p2["costs"]["departure_base"]) == ("195.00", "65.00")  # 150+45, 50+15
     with pytest.raises(Conflict):  # the supplier is named by a departure cost
         async with tenant_tx(app_pool, agent, s["tenant"]) as ctx:

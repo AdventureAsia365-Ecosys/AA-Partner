@@ -466,6 +466,45 @@ def test_booking_amounts_and_the_banner() -> None:
     assert aa_invoices.booking_error_code(contract.ContractError("x")) == "booking_contract"
 
 
+def _aa_row(line: uuid.UUID, booking: str, amount: str | None, currency: str | None, status: str = "confirmed") -> dict:
+    return {"booking_line_id": line, "trip_id": LINE, "trip_title": "Lakes", "start_date": None, "title": "Tour",
+            "status": status, "aa_sub_status": None, "bk_booking_id": booking, "bk_hold_id": "H-9",
+            "service_from": None, "quoted_amount": None if amount is None else D(amount),
+            "quoted_currency": currency}  # fmt: skip
+
+
+def test_the_mismatch_is_per_aa_booking() -> None:
+    """Several CRM lines share one AA booking: the invoiced sum compares with the sum of their quotes."""
+    lines = [_aa_row(uuid.uuid4(), "BK-7", "400.00", "USD"), _aa_row(uuid.uuid4(), "BK-7", "500.00", "USD"),
+             _aa_row(uuid.uuid4(), "BK-7", "70.00", "USD", status="planning"),
+             _aa_row(uuid.uuid4(), "BK-8", "100.00", "USD"), _aa_row(uuid.uuid4(), "BK-8", "50.00", "EUR"),
+             _aa_row(uuid.uuid4(), "BK-9", "100.00", "USD"), _aa_row(uuid.uuid4(), "BK-9", None, None)]  # fmt: skip
+    quotes = aa_invoices.booking_quotes(lines)
+    assert quotes["BK-7"] == {"quoted": {"amount": D("900.00"), "currency": "USD"}, "lines": 2}
+    assert quotes["BK-8"]["quoted"] is None and quotes["BK-9"]["quoted"] is None  # mixed currency / unquoted
+
+    def cache(amounts: str) -> list[dict]:
+        return [{"number": "AAT-2031-000001", "invoice_kind": "settlement", "aa_status": "issued", "currency": "USD",
+                 "total_amount": D(900), "balance_amount": D(900), "issued_on": TODAY, "due_on": TODAY,
+                 "overdue_days": 0, "booking_amounts": amounts, "detail_read": True,
+                 "refreshed_at": dt.datetime(2031, 3, 1, tzinfo=dt.UTC)}]  # fmt: skip
+
+    full = '{"BK-7": {"amount": "900.00", "complete": true}, "BK-8": {"amount": "150.00", "complete": true}}'
+    out = aa_invoices.build(cache(full), lines, aa_invoices.Fetched(), TODAY)
+    flags = [(r["booking_id"], r["status"], r["mismatch"]) for r in out["bookings"]]
+    assert flags[:3] == [("BK-7", "confirmed", False)] * 2 + [("BK-7", "planning", False)]
+    assert flags[3:5] == [("BK-8", "confirmed", True)] * 2  # two currencies quoted: cannot match
+    assert out["bookings"][0]["booking_quoted_b2b"] == {"amount": "900.00", "currency": "USD"}
+    assert out["bookings"][0]["booking_lines"] == 2 and out["bookings"][3]["booking_quoted_b2b"] is None
+    assert out["mismatches"] == 1  # BK-8 (BK-9 is not invoiced)
+    over = aa_invoices.build(cache('{"BK-7": {"amount": "950.00", "complete": true}}'), lines, aa_invoices.Fetched(),
+                             TODAY)  # fmt: skip
+    assert [r["mismatch"] for r in over["bookings"][:3]] == [True, True, False] and over["mismatches"] == 1
+    partial = aa_invoices.build(cache('{"BK-7": {"amount": "270.00", "complete": false}}'), lines,
+                                aa_invoices.Fetched(), TODAY)  # fmt: skip
+    assert partial["mismatches"] == 0  # a deposit only: never a mismatch
+
+
 def test_the_page_and_the_detail_with_a_fake_booking() -> None:
     fake = FakeBooking()
     fake.agency_invoices = [agency_invoice(f"AAT-2031-{n:06d}") for n in range(1, 4)]

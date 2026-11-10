@@ -1,6 +1,7 @@
 // web/app/(crm)/aa-bookings/page.tsx — AA-1068 (crm-26): "Bookings with AA". The agency's AA bookings (its AA lines with
 // a hold or booking: trip, status, the quoted B2B price and what AA invoiced, with a flag when AA billed a booking in full
-// at another amount), AA's invoices to the agency (software fee and tours: status, total, balance, due day, overdue) and
+// at another amount than the quotes of its lines; several lines of one proposal share one AA booking, so the invoiced
+// amount is the booking's and the row says what the whole booking was quoted), AA's invoices to the agency (software fee and tours: status, total, balance, due day, overdue) and
 // the billing status, with a banner while AA's credit status is warn / past due (new AA holds pause when past due).
 // Read live from AA on every open (GET /aa-bookings); when AA cannot answer, the CRM's last copy is shown and the page
 // says when it was read. Owner and agent only: the B2B price is the agency's AA cost (the API refuses the assistant).
@@ -41,6 +42,12 @@ export default async function AaBookingsPage() {
   const money = (amount: string | null | undefined, cur: string) => formatMoney(amount, cur, locale);
   const check = (b: AaBookingRow) =>
     !b.invoiced_b2b ? tr("aaBookings.notInvoiced") : b.mismatch ? tr("aaBookings.mismatch") : b.invoiced_b2b.complete ? tr("aaBookings.match") : tr("aaBookings.partial");
+  const invoiced = (b: AaBookingRow) => {
+    if (!b.invoiced_b2b) return "—";
+    const amount = money(b.invoiced_b2b.amount, b.invoiced_b2b.currency);
+    if (b.booking_lines < 2 || !b.booking_quoted_b2b) return amount;
+    return `${amount} (${fmt(tr("aaBookings.bookingQuoted"), { n: b.booking_lines, amount: money(b.booking_quoted_b2b.amount, b.booking_quoted_b2b.currency) })})`;
+  };
   const overdue = v.invoices.filter((i) => i.overdue);
   return (
     <div data-testid="crm-aa-bookings" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 14, maxWidth: 1200 }}>
@@ -103,7 +110,7 @@ export default async function AaBookingsPage() {
                 `${b.title} · ${tr(`ledger.status.${b.status}`)}`,
                 b.booking_id ?? b.hold_id ?? "—",
                 b.quoted_b2b ? money(b.quoted_b2b.amount, b.quoted_b2b.currency) : "—",
-                b.invoiced_b2b ? money(b.invoiced_b2b.amount, b.invoiced_b2b.currency) : "—",
+                invoiced(b),
                 check(b),
               ],
             }))}

@@ -99,6 +99,10 @@ export interface AaBookingRow {
   hold_id: string | null;
   service_from: string | null;
   quoted_b2b: { amount: string; currency: string } | null;
+  /** The sum of the quotes of the confirmed lines on the same AA booking (null: none, or quotes in two currencies). */
+  booking_quoted_b2b: { amount: string; currency: string } | null;
+  /** How many confirmed CRM lines share this AA booking; AA invoices (and the mismatch compares) per booking. */
+  booking_lines: number;
   invoiced_b2b: { amount: string; currency: string; complete: boolean; invoices: string[] } | null;
   mismatch: boolean;
 }

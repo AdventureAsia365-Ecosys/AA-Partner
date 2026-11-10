@@ -2,8 +2,9 @@
 ``crm.trip.group_code``, crm-051).
 
 - A **departure ref** is an AA departure id (the ``departure_id`` of a live AA line) or the agency's own group code
-  (``crm.trip.group_code``, set on the trip: :func:`set_group_code`). The live trips (not lost or cancelled) on a ref
-  share its costs.
+  (``crm.trip.group_code``, set on the trip: :func:`set_group_code`). The booked trips (booked, pre_departure,
+  travelling, completed) with a confirmed AA line on the departure or its group code share its costs; a lead that only
+  has a quote for it (a planning line), a lost or a cancelled trip takes no share.
 - A **departure cost** (:func:`create_cost`, :func:`update_cost`, :func:`delete_cost`) is something the agency pays
   for the whole group (its own tour leader, a group flight block, a welcome dinner) to one of its suppliers:
   ``per_departure`` (split by pax over the trips, the shares add up exactly) or ``per_pax`` (an amount per

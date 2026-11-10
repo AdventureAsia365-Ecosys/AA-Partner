@@ -4,8 +4,10 @@
 What the page shows: the agency's AA bookings (its AA lines with a Booking hold or booking, their trip and status, the
 quoted B2B price), the AA invoices (software fee and tour settlement) with their billing status, and per booking what
 AA invoiced: a **mismatch** flag when AA billed a booking in full (a ``balance`` or ``full`` line) at another amount or
-currency than the quote, and a **past-due banner** while AA's credit status is ``warn`` / ``past_due`` (holds are
-paused while ``past_due``: a new AA hold would be refused with ``credit_hold_overdue``).
+currency than the sum of the quotes of its confirmed lines (several CRM lines of one accepted proposal share one AA
+booking: Booking invoices per booking, so the comparison is per booking, as in ``crm.v_trip_pnl``), and a
+**past-due banner** while AA's credit status is ``warn`` / ``past_due`` (holds are paused while ``past_due``: a new
+AA hold would be refused with ``credit_hold_overdue``).
 
 How it reads:
 
@@ -204,12 +206,31 @@ def banner(billing: contract.BillingStatus | None, cache: list[Any]) -> dict[str
     }
 
 
+def booking_quotes(lines: list[Any]) -> dict[str, dict[str, Any]]:
+    """Per AA booking id: the quoted cost of its confirmed lines (``quoted``: {amount, currency} when every one has a
+    quote in one currency, else None) and how many there are (``lines``). Invoiced amounts compare with this sum."""
+    groups: dict[str, list[Any]] = {}
+    for line in lines:
+        if line["bk_booking_id"] and line["status"] == "confirmed":
+            groups.setdefault(line["bk_booking_id"], []).append(line)
+    out: dict[str, dict[str, Any]] = {}
+    for booking_id, group in groups.items():
+        currencies = {x["quoted_currency"] for x in group}
+        quoted = None
+        if len(currencies) == 1 and all(x["quoted_amount"] is not None for x in group):
+            total = sum((Decimal(x["quoted_amount"]) for x in group), Decimal(0))
+            quoted = {"amount": total.quantize(Decimal("0.01")), "currency": group[0]["quoted_currency"]}
+        out[booking_id] = {"quoted": quoted, "lines": len(group)}
+    return out
+
+
 def build(cache: list[Any], lines: list[Any], fetched: Fetched, today: dt.date) -> dict[str, Any]:
     """The page body from the copy and the agency's AA lines."""
     by_booking: dict[str, list[Any]] = {}
     for line in lines:
         if line["bk_booking_id"]:
             by_booking.setdefault(line["bk_booking_id"], []).append(line)
+    quotes = booking_quotes(lines)
     invoiced: dict[str, dict[str, Any]] = {}  # booking id -> {currency, amount, complete, numbers}
     invoices = []
     for r in cache:
@@ -254,8 +275,11 @@ def build(cache: list[Any], lines: list[Any], fetched: Fetched, today: dt.date) 
             }
         )
     rows = []
+    mismatched: set[str] = set()
     for line in lines:
         agg = invoiced.get(line["bk_booking_id"] or "")
+        group = quotes.get(line["bk_booking_id"] or "")
+        booking_quoted = group["quoted"] if group else None
         quoted = (
             {"amount": str(line["quoted_amount"]), "currency": line["quoted_currency"]}
             if line["quoted_amount"] is not None
@@ -266,11 +290,18 @@ def build(cache: list[Any], lines: list[Any], fetched: Fetched, today: dt.date) 
         if agg is not None:
             billed = {"amount": str(agg["amount"].quantize(Decimal("0.01"))), "currency": agg["currency"],
                       "complete": agg["complete"], "invoices": sorted(set(agg["numbers"]))}  # fmt: skip
+            # Per booking: the invoiced sum against the sum of the quotes of the booking's confirmed lines.
             mismatch = bool(
                 agg["complete"]
-                and quoted is not None
-                and (agg["currency"] != quoted["currency"] or agg["amount"] != Decimal(quoted["amount"]))
+                and line["status"] == "confirmed"
+                and (
+                    booking_quoted is None
+                    or agg["currency"] != booking_quoted["currency"]
+                    or agg["amount"] != booking_quoted["amount"]
+                )
             )
+            if mismatch:
+                mismatched.add(line["bk_booking_id"])
         rows.append(
             {
                 "booking_line_id": str(line["booking_line_id"]),
@@ -284,6 +315,10 @@ def build(cache: list[Any], lines: list[Any], fetched: Fetched, today: dt.date) 
                 "hold_id": line["bk_hold_id"],
                 "service_from": line["service_from"].isoformat() if line["service_from"] else None,
                 "quoted_b2b": quoted,
+                "booking_quoted_b2b": None
+                if booking_quoted is None
+                else {"amount": str(booking_quoted["amount"]), "currency": booking_quoted["currency"]},
+                "booking_lines": group["lines"] if group else 0,
                 "invoiced_b2b": billed,
                 "mismatch": mismatch,
             }
@@ -303,7 +338,7 @@ def build(cache: list[Any], lines: list[Any], fetched: Fetched, today: dt.date) 
         "banner": banner(fetched.billing, cache),
         "invoices": invoices,
         "bookings": rows,
-        "mismatches": sum(1 for r in rows if r["mismatch"]),
+        "mismatches": len(mismatched),  # AA bookings (not lines) billed in full at another amount
     }
 
 

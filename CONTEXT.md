@@ -1007,13 +1007,15 @@ invoice reads), `app/ledger/lines.py` (the line's actual cost); web `components/
   `/billing-status` and the detail of settlement invoices not read yet (at most 20 per open) are read live outside any
   transaction; `crm.aa_invoice_cache` keeps the summary and, per AA booking, the amount invoiced and whether billed in
   full (`booking_amounts`); lines, payments and the issuer text are never kept (`GET /aa-bookings/invoices/{number}`
-  reads them live). The page shows the AA lines with their quoted and invoiced B2B price (a **mismatch** once billed in
-  full at another amount), the invoices, and a **past-due banner** from Booking's credit status (holds paused while
+  reads them live). The page shows the AA lines with their quoted and invoiced B2B price (a **mismatch** once an AA
+  booking is billed in full at another amount than the sum of the quotes of its confirmed lines: several lines of one
+  proposal share one AA booking, so the comparison and the P&L's AA cost are per booking), the invoices, and a **past-due banner** from Booking's credit status (holds paused while
   past_due), or from the copy's overdue invoices when Booking is down (`source = cache`).
 - **Group departures** (`crm.departure_cost`, `crm.v_departure_trip`, `crm.trip.group_code`): a departure ref is an AA
-  `departure_id` of a live AA line or the agency's own group code (`PUT /trips/{id}/group-code`); a cost is
-  `per_departure` (split by pax over the live trips, cumulative rounding: the shares add up exactly) or `per_pax`, FX
-  of its day frozen. `GET /departures/{ref}/pnl`, `POST/PATCH/DELETE /departure-costs` (owner / agent); the simple page
+  `departure_id` of a confirmed AA line or the agency's own group code (`PUT /trips/{id}/group-code`); only booked
+  trips (booked, pre_departure, travelling, completed) are on a departure, so a lead with only a quote takes no share;
+  a cost is `per_departure` (split by pax over those trips, cumulative rounding: the shares add up exactly) or
+  `per_pax`, FX of its day frozen. `GET /departures/{ref}/pnl`, `POST/PATCH/DELETE /departure-costs` (owner / agent); the simple page
   `/departures/[ref]` until the departure roster card takes it over. A supplier named by a departure cost is not
   trashed (409 `supplier_in_use`).
 - **Profit cube** (`GET /reports/profit?period=&owner=&dimension=`, owner / agent; CSV: `GET /reports/export?section=
