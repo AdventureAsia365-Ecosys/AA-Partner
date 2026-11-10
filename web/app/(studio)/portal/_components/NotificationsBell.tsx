@@ -8,12 +8,18 @@
 // (tour.discontinued / tour.reinstated, written by the tour lifecycle service when AA stops or resumes serving a
 // tour the tenant uses). They come first, with a server-side unread count; opening the panel marks them read
 // (POST /v1/notifications/read-all). The badges on My Tours / Content / Publish stay the source of truth.
+// AA-1039 (option A): a `tour.pages_to_put_back` row (the tour is back on sale; WordPress pages moved to draft while it
+// was off sale stay in draft) lists each page with its own "Put back online" button (putBackApi.ts), one click each;
+// nothing is published until the tenant clicks. The same pages are on Publish (PutBackList, #put-back).
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Bell, Check, X, RefreshCw, RotateCcw } from "lucide-react";
-import { IconButton, apiGet, apiSend, K, sans, useLang, useT, type Translator } from "@/app/_kit";
+import { AlertTriangle, Bell, Check, X, RefreshCw, RotateCcw, UploadCloud } from "lucide-react";
+import { Button, IconButton, apiGet, apiSend, K, sans, useLang, useT, type Translator } from "@/app/_kit";
 import { BELL_MESSAGES } from "./account.messages";
+import { PUT_BACK_MESSAGES } from "./putBack.messages";
+import { PUT_BACK_ANCHOR, PUT_BACK_QUERY_KEY, isOnline, outcomeText, putBack, type PutBackResult } from "./putBackApi";
+import { plainError } from "./studioError";
 import { fmtDateTime } from "@/lib/studio/format";
 import type { ShellActivityView } from "./PortalShellContext";
 
@@ -27,6 +33,8 @@ export interface TenantNotification {
   tour_name: string | null;
   reason: string | null;
   live_posts: number;
+  /** AA-1039: the drafted pages of a `tour.pages_to_put_back` row; [] for any other row. */
+  pages?: { publish_id: string; url: string | null }[];
   is_read: boolean;
   created_at: string | null;
 }
@@ -56,6 +64,65 @@ const describe = (a: Activity, t: Translator<typeof BELL_MESSAGES.en>) => {
     default: return t("updated");
   }
 };
+
+const PAGES_TO_PUT_BACK = "tour.pages_to_put_back";
+
+/** One restore notice with drafted pages: the sentence, then each page with "Put back online" (one click, one call). */
+export function PutBackNote({ note, onNavigate }: { note: TenantNotification; onNavigate?: () => void }) {
+  const t = useT(PUT_BACK_MESSAGES);
+  const lang = useLang();
+  const qc = useQueryClient();
+  const [done, setDone] = useState<Record<string, { text: string; ok: boolean }>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+
+  async function click(publishId: string) {
+    if (busy) return;
+    setBusy(publishId);
+    try {
+      const r: PutBackResult = await putBack(publishId);
+      setDone(d => ({ ...d, [publishId]: { text: outcomeText(t, r), ok: isOnline(r) } }));
+      qc.invalidateQueries({ queryKey: PUT_BACK_QUERY_KEY });
+    } catch (e) {
+      setDone(d => ({ ...d, [publishId]: { text: plainError(e, t("failed"), lang), ok: false } }));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div data-testid={`bell-put-back-${note.id}`} style={{
+      display: "grid", gridTemplateColumns: "30px minmax(0,1fr)", gap: 10, padding: "11px 16px",
+      borderBottom: `1px solid ${K.line2}`, background: note.is_read ? "transparent" : K.accentTint,
+    }}>
+      <span style={{ width: 30, height: 30, borderRadius: 8, background: K.successSoft, color: K.success, display: "grid", placeItems: "center" }}>
+        <UploadCloud size={14} strokeWidth={2.2} />
+      </span>
+      <span style={{ minWidth: 0 }}>
+        <Link href={`/portal/content/publish#${PUT_BACK_ANCHOR}`} onClick={onNavigate}
+          style={{ display: "block", fontSize: 12.5, color: K.ink, lineHeight: 1.4, textDecoration: "none" }}>
+          <strong style={{ fontWeight: 600 }}>{note.title}</strong> · {note.message}
+        </Link>
+        {(note.pages ?? []).map(p => {
+          const result = done[p.publish_id];
+          return (
+            <span key={p.publish_id} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 11.5, color: K.muted, minWidth: 0, overflowWrap: "anywhere", flex: "1 1 140px" }}>{p.url}</span>
+              {result ? (
+                <span data-testid={`bell-put-back-result-${p.publish_id}`}
+                  style={{ fontSize: 11.5, color: result.ok ? K.success : K.muted, flex: "1 1 100%" }}>{result.text}</span>
+              ) : (
+                <Button size="sm" variant="primary" disabled={!!busy} onClick={() => click(p.publish_id)}
+                  testId={`bell-put-back-button-${p.publish_id}`} style={{ whiteSpace: "nowrap" }}>
+                  {busy === p.publish_id ? t("puttingBack") : t("putBack")}
+                </Button>
+              )}
+            </span>
+          );
+        })}
+      </span>
+    </div>
+  );
+}
 
 export default function NotificationsBell({ activity }: { activity: Activity[] }) {
   const t = useT(BELL_MESSAGES);
@@ -116,6 +183,9 @@ export default function NotificationsBell({ activity }: { activity: Activity[] }
             <Link href="/portal/account/activity" onClick={() => setOpen(false)} style={{ fontSize: 12, color: K.ink3, textDecoration: "none" }}>{t("viewAll")}</Link>
           </div>
           {tourNotes.slice(0, 5).map(n => {
+            if (n.event_type === PAGES_TO_PUT_BACK) {
+              return <PutBackNote key={`n-${n.id}`} note={n} onNavigate={() => setOpen(false)} />;
+            }
             const gone = n.event_type === "tour.discontinued";
             const Icon = gone ? AlertTriangle : RotateCcw;
             return (
