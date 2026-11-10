@@ -978,6 +978,55 @@ Design v3 M13, C12 (§2.7, §3.5 "Cancellation"), R17, R21, A-12; lane §2.7 `co
   `lib/i18nCommission.ts` (EN / VI), BFF lines card AA-957.
 - **Not built (paid vendor)**: Stripe Checkout session expiry and Stripe refunds wait for the BYO Stripe provider.
 
+## CRM finance: trip P&L, supplier bills, Bookings with AA, departure costs, profit cube (AA-1068)
+
+S275 study items crm-25, crm-26, crm-30, crm-31, crm-32 (root `docs/research/2026-11-10-odoo-tour-travel-plugin-
+comparison.md`, behaviour only, no plugin code); migration crm-051 (contract). Code: `app/finance/` (`pnl`, `bills`,
+`aa_invoices`, `departures`, `agenda`), `app/routers/finance.py`, `app/booking/client.py` + `contract.py` (Booking 1.5
+invoice reads), `app/ledger/lines.py` (the line's actual cost); web `components/finance/`, `app/(crm)/aa-bookings`,
+`app/(crm)/departures/[ref]`; decisions in `docs/implementation-notes/AA-1068.md`.
+
+- **Trip P&L** (`crm.v_trip_pnl`, security_invoker, one row per live trip, base currency now): revenue = issued
+  invoices (open, payment_claimed, paid, paid_unfulfillable) **net of tax** by kind (sales = every kind but
+  `service_fee` and `cancellation_fee`) minus refunds net of tax, at `crm.fx_resolve` of the issue / receipt day (no
+  rate: left out, `revenue_unconverted`); a trip cancelled with a charge (`crm.cancellation_charge`) counts the charge
+  net of tax at the cancel day's rate in place of its sales, their refunds and its fee invoices (`cancellation_charged`); costs = AA lines (the quote's
+  frozen cost, or the AA settlement invoice of the booking once a balance / full line billed it, at the quote rate) +
+  agency lines (`actual_cost` while a live supplier bill names the line, else planned) + AA `cancellation_cost` + the
+  group departure share + the sales partner commission (0, column `sales_partner_id` NULL: the seam of the partner
+  commission card); `commission_income_base` = the expected supplier commission of confirmed agency lines; margin,
+  margin %, per traveller. Confirmed lines count; planning lines and money frozen in an earlier base currency are
+  counted apart. The trip page's **Money** card (`GET /trips/{id}/pnl`) is owner / agent only.
+- **Supplier bills** (`crm.supplier_bill` recorded -> paid | void, paid -> void; `crm.supplier_bill_line`): a bill of an
+  own supplier pays confirmed agency lines of that supplier (CRM51 guard), FX of the bill date frozen on the bill; each
+  billed line gets the money kind **`actual_cost`** (`crm.booking_line_actual_cost`: the sum of its live bill lines in
+  one currency, at the latest bill's FX, `fx_basis bill_date`). Never edited: void and record again (voiding puts the
+  planned cost back). The line view shows `actual_cost`, `cost_variance_base`, `actual_margin_base` only while billed.
+  Routes `GET/POST /supplier-bills`, `GET/PATCH /supplier-bills/{id}` (owner / agent).
+- **Bookings with AA** (`GET /aa-bookings`, owner / agent): Booking contract 1.5 `GET /invoices` (up to 3 pages),
+  `/billing-status` and the detail of settlement invoices not read yet (at most 20 per open) are read live outside any
+  transaction; `crm.aa_invoice_cache` keeps the summary and, per AA booking, the amount invoiced and whether billed in
+  full (`booking_amounts`); lines, payments and the issuer text are never kept (`GET /aa-bookings/invoices/{number}`
+  reads them live). The page shows the AA lines with their quoted and invoiced B2B price (a **mismatch** once billed in
+  full at another amount), the invoices, and a **past-due banner** from Booking's credit status (holds paused while
+  past_due), or from the copy's overdue invoices when Booking is down (`source = cache`).
+- **Group departures** (`crm.departure_cost`, `crm.v_departure_trip`, `crm.trip.group_code`): a departure ref is an AA
+  `departure_id` of a live AA line or the agency's own group code (`PUT /trips/{id}/group-code`); a cost is
+  `per_departure` (split by pax over the live trips, cumulative rounding: the shares add up exactly) or `per_pax`, FX
+  of its day frozen. `GET /departures/{ref}/pnl`, `POST/PATCH/DELETE /departure-costs` (owner / agent); the simple page
+  `/departures/[ref]` until the departure roster card takes it over. A supplier named by a departure cost is not
+  trashed (409 `supplier_in_use`).
+- **Profit cube** (`GET /reports/profit?period=&owner=&dimension=`, owner / agent; CSV: `GET /reports/export?section=
+  profit&dimension=`): booked trips (and cancelled ones) travelling in the window (start date, else the month), by
+  `lead_source`, `sales_partner`, `product` (AA tour vs own services, from the confirmed lines' sell and cost),
+  `travel_month` or `owner_member`. **Home "today" tiles** (`GET /reports/agenda`, every role, counts only): open
+  proposals, deposits due this week, overdue schedule rows, trips leaving within 60 days with a traveller's passport
+  number or expiry missing (presence only, nothing decrypted), overdue AA invoices (owner / agent), next group
+  departures (AA's guaranteed status is null until the roster card stores the feed's `departure.guaranteed`).
+- **Margin policy**: the four new tables carry a RESTRICTIVE `*_margin_roles` policy FOR ALL (owner / agent, or a job /
+  seed actor), every money route asks `view_margin` / `money_fields_edit` first, and the money keys (`*_cost`, `*_b2b*`,
+  `margin*`) are stripped by the serializer for any other role.
+
 ## CRM-17 Module 5 e-mail (AA-945)
 
 Design v3 §6.3 CRM-17 (M5, R24, Q2 4.1), lane §2.8 / §6.5, **as changed by the BYO errata S247** (ADR 0010 decision 9):
