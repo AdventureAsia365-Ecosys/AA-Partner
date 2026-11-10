@@ -401,8 +401,17 @@ async def test_trip_overview() -> None:
     with _raises(NotFound, "trip_not_found"):
         await service.trip_overview(tenant_ctx(), FakeVault(), TRIP)
     sent = _proposal_row(status="sent", price_hash=b"\x01" * 32, sent_at=NOW, terms_doc_id=DOC)
-    schedule = {**_schedule_row(), "due_on": TODAY, "paid_at": None, "seq": 1, "percent": None,
-                "paid_amount": Decimal(0), "open_amount": Decimal(300), "live_status": "due", "days_overdue": 0}
+    schedule = {
+        **_schedule_row(),
+        "due_on": TODAY,
+        "paid_at": None,
+        "seq": 1,
+        "percent": None,
+        "paid_amount": Decimal(0),
+        "open_amount": Decimal(300),
+        "live_status": "due",
+        "days_overdue": 0,
+    }
     payment = {"payment_id": uuid.uuid4(), "schedule_id": SCHEDULE, "invoice_id": None, "amount": Decimal(1),
                "currency": "USD", "method": "cash", "received_on": TODAY}  # fmt: skip
     # AA-952 slice 3: a service-fee invoice's payment has no schedule row.
