@@ -295,7 +295,7 @@ def test_tiers_are_checked_and_sorted_most_days_first() -> None:
 
 @pytest.mark.parametrize(
     ("days", "pct", "amount"),
-    [(90, "10", "100.00"), (31, "10", "100.00"), (30, "25", "250.00"), (15, "25", "250.00"), (14, "50", "500.00"),
+    [(90, "0", "0.00"), (31, "0", "0.00"), (30, "25", "250.00"), (15, "25", "250.00"), (14, "50", "500.00"),
      (8, "50", "500.00"), (7, "100", "1000.00"), (0, "100", "1000.00"), (-3, "100", "1000.00"),
      (None, "100", "1000.00")],
 )  # fmt: skip
@@ -363,7 +363,7 @@ def test_policy_text_in_both_languages() -> None:
     text = rules.policy_text("Standard", 2, rules.default_tiers(), None, "en")
     assert text.splitlines() == [
         "Cancellation policy: Standard (version 2)",
-        "- 31 days or more before departure: 10 % of the trip price",
+        "- 31 days or more before departure: 0 % of the trip price",
         "- 15 to 30 days before departure: 25 % of the trip price",
         "- 8 to 14 days before departure: 50 % of the trip price",
         "- Fewer than 8 days before departure, or after the trip starts: 100 % of the trip price",
@@ -514,7 +514,7 @@ async def test_policy_settings_lifecycle_on_a_scripted_connection() -> None:
     conn.on(flat(policy.LOCK_SQL), draft)
     conn.on(flat(policy.ONE_SQL), draft)
     made = await policy.create(tenant_ctx(conn), {"aa_default": True})
-    assert made["status"] == "draft" and made["tiers"][0] == {"days_before_min": 31, "charge_pct": "10",
+    assert made["status"] == "draft" and made["tiers"][0] == {"days_before_min": 31, "charge_pct": "0",
                                                               "min_charge_amount": None}  # fmt: skip
     assert len(conn.sql("INSERT INTO crm.cancellation_policy_tier")) == 4
     assert made["text"]["en"].startswith("Cancellation policy: Standard (version 1)")
