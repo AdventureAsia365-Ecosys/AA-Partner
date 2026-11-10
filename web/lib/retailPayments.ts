@@ -95,8 +95,10 @@ export interface CancelCharge {
   aa_fee_amount?: string | null;
 }
 
-/** A row of the builder's line editor while the agent types (strings as typed). */
+/** A row of the builder's line editor while the agent types (strings as typed). ``id`` is the row's React key: it
+ *  stays with the row when an earlier one is removed, so each due-date field keeps its own date (never sent). */
 export interface DraftLine {
+  id: string;
   kind: ScheduleKind;
   percent: string;
   due_on: string;
@@ -112,20 +114,24 @@ export function lineLabel(line: Pick<ScheduleLine, "kind" | "seq">, tr: (key: st
   return line.kind === "instalment" ? fmt(tr("schedule.kind.instalment"), { n: line.seq }) : tr(`schedule.kind.${line.kind}`);
 }
 
+let draftSeq = 0;
+const draftId = () => `line-${++draftSeq}`;
+
 export function draftLines(lines: ScheduleLine[]): DraftLine[] {
-  return lines.map((l) => ({ kind: l.kind, percent: l.percent ?? "", due_on: l.due_on ?? "", days_before: l.days_before }));
+  return lines.map((l) => ({ id: draftId(), kind: l.kind, percent: l.percent ?? "", due_on: l.due_on ?? "", days_before: l.days_before }));
 }
 
 /** Add an instalment before the balance (or at the end), 10 % and no date yet. */
 export function addInstalment(rows: DraftLine[]): DraftLine[] {
   const at = rows.findIndex((r) => r.kind === "balance");
-  const line: DraftLine = { kind: "instalment", percent: "10", due_on: "", days_before: null };
+  const line: DraftLine = { id: draftId(), kind: "instalment", percent: "10", due_on: "", days_before: null };
   return at < 0 ? [...rows, line] : [...rows.slice(0, at), line, ...rows.slice(at)];
 }
 
-function pctOk(raw: string): string | null {
+/** A percent as typed: 0.01 to 100 (the deposit from 1: the proposal's deposit percent mirrors it, 1 to 100). */
+function pctOk(raw: string, min = 0.01): string | null {
   const v = raw.trim().replace(",", ".");
-  return PERCENT.test(v) && Number(v) > 0 && Number(v) <= 100 ? v : null;
+  return PERCENT.test(v) && Number(v) >= min && Number(v) <= 100 ? v : null;
 }
 
 /** The PATCH ``schedule`` body, or null when a line is not valid (the API checks the order and the sums again). A
@@ -136,7 +142,7 @@ export function scheduleBody(rows: DraftLine[]): Record<string, unknown>[] | nul
   for (const r of rows) {
     const line: Record<string, unknown> = { kind: r.kind };
     if (r.kind !== "balance") {
-      const pct = pctOk(r.percent);
+      const pct = pctOk(r.percent, r.kind === "deposit" ? 1 : 0.01);
       if (pct === null) return null;
       line.percent = pct;
     }
@@ -165,7 +171,7 @@ export function templateBody(rows: { kind: ScheduleKind; percent: string; days: 
   const out: TemplateLine[] = [];
   for (const r of rows) {
     if (r.kind === "deposit") {
-      const pct = pctOk(r.percent);
+      const pct = pctOk(r.percent, 1);
       if (pct === null) return null;
       out.push({ kind: "deposit", percent: pct, due: { anchor: "accept" } });
       continue;

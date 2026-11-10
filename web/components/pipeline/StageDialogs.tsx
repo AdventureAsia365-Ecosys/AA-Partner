@@ -210,6 +210,10 @@ export function CancelDialog({
   const [mode, setMode] = useState<ChargeMode>("policy");
   const [amount, setAmount] = useState("");
   const [why, setWhy] = useState("");
+  // The charge the figures on screen were worked out with (chargeKey of the last dry run). Changing the mode, the
+  // amount or the reason makes them stale: Confirm waits for "Update the figures", so the run never sends a charge
+  // with refunds prefilled for another one.
+  const [checked, setChecked] = useState<string | null>(null);
   const tr = (key: string) => t(lang, key as MessageKey);
   const pending = preview?.cancellation?.status === "pending";
 
@@ -218,10 +222,13 @@ export function CancelDialog({
     return chargeBody(mode, amount, why);
   }
 
+  const stale = Boolean(preview && !pending && preview.charge && chargeKey(chargePart()) !== checked);
+
   async function dryRun(code: string, charge: Record<string, string> | undefined = undefined) {
     setReason(code);
     setPreview(null);
     setError(null);
+    setChecked(null);
     if (!code) return;
     setBusy(true);
     const res = await bffSend<CancelPreview>("POST", `trips/${tripId}/cancel?dry_run=true`, { cancel_reason_code: code, ...(charge ? { charge } : {}) });
@@ -231,8 +238,14 @@ export function CancelDialog({
       return;
     }
     setPreview(res.data);
+    setChecked(chargeKey(charge));
     setRefunds(Object.fromEntries((res.data.payments ?? []).filter((p) => !p.needs_invoice).map((p) => [p.payment_id, p.refund_amount])));
     setKeep({});
+  }
+
+  /** Another reason: a new dry run with the charge as set now (the policy's when the typed one is not complete). */
+  async function chooseReason(code: string) {
+    await dryRun(code, chargePart() ?? undefined);
   }
 
   async function recheck() {
@@ -248,6 +261,10 @@ export function CancelDialog({
     const charge = chargePart();
     if (charge === null) {
       setError(tr("cancelCharge.invalid"));
+      return;
+    }
+    if (stale) {
+      setError(tr("cancelCharge.stale"));
       return;
     }
     setBusy(true);
@@ -294,7 +311,7 @@ export function CancelDialog({
               </span>
             ) : (
               <span data-testid="cancel-confirm" style={{ display: "contents" }}>
-                <Button size="sm" variant="danger" disabled={!preview || typed.trim() !== "CANCEL" || busy} onClick={() => void run()}>
+                <Button size="sm" variant="danger" disabled={!preview || stale || typed.trim() !== "CANCEL" || busy} onClick={() => void run()}>
                   {t(lang, "cancelTrip.confirm")}
                 </Button>
               </span>
@@ -305,7 +322,7 @@ export function CancelDialog({
     >
       <label style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted }}>
         {t(lang, "cancelTrip.reason")}
-        <select value={reason} onChange={(e) => void dryRun(e.target.value)} style={field} data-testid="cancel-reason">
+        <select value={reason} onChange={(e) => void chooseReason(e.target.value)} style={field} data-testid="cancel-reason">
           <option value="">{t(lang, "plan.choose")}</option>
           {CANCEL_REASONS.map((r) => (
             <option key={r} value={r}>
@@ -375,6 +392,7 @@ export function CancelDialog({
               amount={amount}
               why={why}
               busy={busy}
+              stale={stale}
               onMode={setMode}
               onAmount={setAmount}
               onWhy={setWhy}
@@ -450,6 +468,11 @@ export function CancelDialog({
   );
 }
 
+/** The charge a dry run was worked out with, as a comparable key ("policy" for the policy's own charge). */
+function chargeKey(charge: Record<string, string> | null | undefined): string {
+  return charge === undefined ? "policy" : charge === null ? "invalid" : JSON.stringify(charge);
+}
+
 /** AA-1067 (crm-11 / crm-12): the charge block of the cancel dialog: days before departure, the frozen policy and its
  *  tier, the charge, what was paid, kept and is refunded, the fee invoice; the member may charge another amount or
  *  waive it (a reason each; an agent lowering it past the refund threshold needs the owner). */
@@ -461,6 +484,7 @@ function CancelChargeBox({
   amount,
   why,
   busy,
+  stale,
   onMode,
   onAmount,
   onWhy,
@@ -473,6 +497,7 @@ function CancelChargeBox({
   amount: string;
   why: string;
   busy: boolean;
+  stale: boolean;
   onMode: (m: ChargeMode) => void;
   onAmount: (v: string) => void;
   onWhy: (v: string) => void;
@@ -522,11 +547,16 @@ function CancelChargeBox({
               <Input size="sm" value={why} maxLength={500} onChange={(e) => onWhy(e.target.value)} data-testid="cancel-charge-reason" />
             </Field>
           )}
-          <span>
-            <Button size="sm" variant="secondary" disabled={busy} onClick={onRecheck}>
+          <span data-testid="cancel-charge-update">
+            <Button size="sm" variant={stale ? "primary" : "secondary"} disabled={busy} onClick={onRecheck}>
               {tr("cancelCharge.update")}
             </Button>
           </span>
+          {stale && (
+            <span data-testid="cancel-charge-stale" style={{ color: K.amber }}>
+              {tr("cancelCharge.stale")}
+            </span>
+          )}
         </>
       )}
       {charge.needs_owner && (

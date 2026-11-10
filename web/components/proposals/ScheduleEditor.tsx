@@ -104,7 +104,7 @@ export function ScheduleEditor({
           style={{ display: "grid", gap: 8 }}
         >
           {rows.map((r, i) => (
-            <div key={`${r.kind}-${i}`} data-testid="builder-schedule-line" data-kind={r.kind} style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap" }}>
+            <div key={r.id} data-testid="builder-schedule-line" data-kind={r.kind} style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap" }}>
               <span style={{ fontSize: 13, minWidth: 110 }}>{lineLabel({ kind: r.kind, seq: rows.slice(0, i + 1).filter((x) => x.kind === "instalment").length }, tr)}</span>
               {r.kind === "balance" ? (
                 <span style={{ fontSize: 12.5, color: K.muted, minWidth: 100 }}>{fmt(tr("schedule.rest"), { pct: restPercent(rows) })}</span>
