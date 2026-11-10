@@ -28,7 +28,7 @@ LABELS = {
     "task": "Task due",
     "call": "Client call",
 }
-PAYMENT_LABELS = {"deposit": "Deposit due", "balance": "Balance due"}
+PAYMENT_LABELS = {"deposit": "Deposit due", "instalment": "Instalment due", "balance": "Balance due"}
 
 
 def escape(text: str) -> str:

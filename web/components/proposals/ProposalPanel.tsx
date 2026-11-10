@@ -39,6 +39,7 @@ import {
   type PayMethod,
   type Proposal,
 } from "@/lib/proposals";
+import { lineLabel, liveTone } from "@/lib/retailPayments";
 import { canRenderText } from "@/lib/textProposal";
 
 const field: React.CSSProperties = {
@@ -437,13 +438,26 @@ export function ProposalPanel({
             {view.schedule.map((row) => (
               <div key={row.schedule_id} data-testid="schedule-row" data-kind={row.kind} data-status={row.status} style={{ display: "grid", gap: 6, padding: "8px 0", borderTop: `1px solid ${K.line}` }}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 13 }}>
-                  <strong>{tr(`proposal.kind.${row.kind}`)}</strong>
+                  <strong>{lineLabel({ kind: row.kind, seq: row.seq ?? 1 }, tr)}</strong>
                   <span>{formatAmount(row.amount, row.currency, locale)}</span>
                   <span style={{ color: K.muted }}>{fmt(tr("proposal.dueOn"), { date: formatDate(row.due_on, locale) })}</span>
-                  {/* The cancel run voids an unpaid row: no "Due" until the server view says what it did. */}
-                  <Badge tone={updating && row.status === "due" ? "neutral" : ROW_TONE[row.status]}>
-                    {updating && row.status === "due" ? tr("trip.updating") : tr(`proposal.row.${row.status}`)}
-                  </Badge>
+                  {/* The cancel run voids an unpaid row: no "Due" until the server view says what it did. AA-1067: a
+                      due row shows its live status (part paid, overdue) from the payments on it. */}
+                  {updating && row.status === "due" ? (
+                    <Badge tone="neutral">{tr("trip.updating")}</Badge>
+                  ) : row.status === "due" && row.live_status && row.live_status !== "due" ? (
+                    <Badge tone={liveTone(row.live_status)}>
+                      {tr(`schedule.live.${row.live_status}`)}
+                    </Badge>
+                  ) : (
+                    <Badge tone={ROW_TONE[row.status]}>{tr(`proposal.row.${row.status}`)}</Badge>
+                  )}
+                  {row.status === "due" && row.live_status === "partial" && row.paid_amount && row.open_amount && (
+                    <span style={{ color: K.muted }}>{fmt(tr("schedule.paidOf"), { paid: formatAmount(row.paid_amount, row.currency, locale), open: formatAmount(row.open_amount, row.currency, locale) })}</span>
+                  )}
+                  {row.status === "due" && row.live_status === "overdue" && Boolean(row.days_overdue) && (
+                    <span style={{ color: K.danger }}>{fmt(tr("schedule.daysOverdue"), { n: row.days_overdue ?? 0 })}</span>
+                  )}
                   {row.status === "due" && canSend && paying !== row.schedule_id && (
                     <>
                       <Button size="sm" disabled={!hydrated || busy} onClick={() => setPaying(row.schedule_id)}>

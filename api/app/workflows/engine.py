@@ -133,6 +133,11 @@ SELECT archived_at IS NOT NULL AS archived, deleted_at IS NOT NULL AS deleted FR
 PHONE_SQL = "SELECT phone_enc FROM crm.traveler WHERE traveler_id = $1 AND deleted_at IS NULL"
 WAITING_ON_SQL = "UPDATE crm.trip SET waiting_on = $2 WHERE trip_id = $1 AND waiting_on IS DISTINCT FROM $2"
 OWNER_SQL = "UPDATE crm.trip SET owner_member_id = $2 WHERE trip_id = $1 AND owner_member_id IS DISTINCT FROM $2"
+# AA-1067 (crm-09): the schedule row a payment reminder run is about (its trigger key names it).
+SCHEDULE_ROW_SQL = """
+SELECT schedule_id, kind, seq, status, open_amount, currency, due_on FROM crm.v_schedule_status
+ WHERE schedule_id = $1 AND trip_id = $2
+"""
 
 
 @dataclass
@@ -189,9 +194,36 @@ async def _subject(ctx: AnyContext, run: Any) -> tuple[Subject, str | None]:
     return Subject(None, run["traveler_id"], client["owner_member_id"]), None
 
 
-async def merge_values(ctx: AnyContext, vault: Vault, subject: Subject, locale: str) -> dict[str, str | None]:
-    """The merge fields of a workflow message (text_render.MERGE_FIELDS; agent_name and proposal stay empty)."""
+async def schedule_row(ctx: AnyContext, run: Any) -> Any:
+    """AA-1067: the payment schedule row of a reminder run (``schedule:<row id>:...``), None for any other run or a
+    row gone."""
+    raw = model.schedule_id_of(run["trigger_key"])
+    if raw is None or run["trip_id"] is None:
+        return None
+    try:
+        schedule_id = uuid.UUID(raw)
+    except ValueError:
+        return None
+    return await ctx.conn.fetchrow(SCHEDULE_ROW_SQL, schedule_id, run["trip_id"])
+
+
+def _paid_meanwhile(run: Any, row: Any) -> bool:
+    """A reminder run whose row was paid in full (or voided) since it started sends nothing (``skipped_paid``)."""
+    if not str(run["trigger_key"] or "").startswith("schedule:"):
+        return False
+    return row is None or row["status"] != "due" or row["open_amount"] <= 0
+
+
+async def merge_values(
+    ctx: AnyContext, vault: Vault, subject: Subject, locale: str, schedule: Any = None
+) -> dict[str, str | None]:
+    """The merge fields of a workflow message (text_render.MERGE_FIELDS; agent_name and proposal stay empty;
+    AA-1067: ``payment_amount`` / ``payment_due_date`` of a reminder run's schedule row, the open amount)."""
     values: dict[str, str | None] = dict.fromkeys(text_render.MERGE_FIELDS)
+    if schedule is not None:
+        lang = locale if locale in text_render.LOCALES else "en"
+        values["payment_amount"] = text_render.money(schedule["open_amount"], schedule["currency"].strip(), lang)
+        values["payment_due_date"] = text_render.date(schedule["due_on"], lang, weekday=False)
     values["agency_name"] = await ctx.conn.fetchval(AGENCY_SQL, ctx.tenant_id)
     if subject.traveler_id is not None:
         row = await ctx.conn.fetchrow(NAME_SQL, subject.traveler_id)
@@ -264,13 +296,16 @@ async def _send_email(ctx: AnyContext, vault: Vault, run: Any, step: dict[str, A
     template = await ctx.conn.fetchrow(TEMPLATE_SQL, uuid.UUID(step["message_template_id"]))
     if template is None:
         return Step("skipped_template_missing")
+    schedule = await schedule_row(ctx, run)
+    if _paid_meanwhile(run, schedule):
+        return Step("skipped_paid")
     purpose = "marketing" if _greeting(run) else step.get("purpose", "transactional")
     if purpose == "marketing" and not await _marketing_ok(ctx, traveler_id):
         ctx.audit("workflow_send", "denied", "workflow_run", str(run["workflow_run_id"]), reason="no_consent")
         return Step("skipped_no_consent")
     body = await vault.decrypt("message_template", "body_enc", template["message_template_id"], template["body_enc"],
                                purpose=MAIL_PURPOSE)  # fmt: skip
-    values = await merge_values(ctx, vault, subject, template["locale"])
+    values = await merge_values(ctx, vault, subject, template["locale"], schedule)
     text, _ = text_render.merge(body, values)
     title, _ = text_render.merge(template["title"], values)
     message_id = uuid.uuid4()
@@ -325,7 +360,10 @@ async def _send_text(ctx: AnyContext, vault: Vault, run: Any, step: dict[str, An
     if purpose == "marketing" and not await _marketing_ok(ctx, traveler_id):
         ctx.audit("workflow_send", "denied", "workflow_run", str(run["workflow_run_id"]), reason="no_consent")
         return Step("skipped_no_consent")
-    merged = await merge_values(ctx, vault, subject, "en")
+    schedule = await schedule_row(ctx, run)
+    if _paid_meanwhile(run, schedule):
+        return Step("skipped_paid")
+    merged = await merge_values(ctx, vault, subject, "en", schedule)
     names = list(template["variables"] or []) or list(placeholders(template["body"]))
     mapping = step.get("variables") or {}
     values = {name: merged.get(mapping.get(name, "")) or "" for name in names}

@@ -12,9 +12,10 @@ M7 manual, F6; A-05 / A-10 thin). Routes in :mod:`app.routers.proposals`; the cl
 - **Mark paid** (``PAYMENT_MARK_RECEIVED``, owner / agent): one ``crm.payment`` row, the schedule row paid, a
   ``trip_commitment`` (kind ``payment``, succeeded: the delete block). A paid deposit of the accepted proposal moves a
   trip at Proposal to Booked (reason ``deposit_paid``) and invites every traveller to the portal (F6.6).
-- **Void** a due balance row (owner / agent). A deposit row is never void (409 ``deposit_not_voidable``; crm-016
-  ``payment_schedule_deposit_void_chk``): a deposit taken outside the CRM is marked paid with its method (cash /
-  other), so the accepted proposal always keeps its way to Booked and to the portal (review S251).
+- **Void** a due instalment or balance row (owner / agent; AA-1067: instalments as balances). A deposit row is never
+  void (409 ``deposit_not_voidable``; crm-016 ``payment_schedule_deposit_void_chk``): a deposit taken outside the CRM
+  is marked paid with its method (cash / other), so the accepted proposal always keeps its way to Booked and to the
+  portal (review S251).
 
 Every function takes the open context and never opens one. Amounts are the client's sell amounts only (no net, cost
 or margin key: nothing for the margin serializer to strip).
@@ -33,6 +34,7 @@ from typing import Any
 import asyncpg
 
 from app import cancellation, stages
+from app.cancel_policy import service as cancel_policy
 from app.dispatch import queue as dispatch
 from app.errors import Conflict, Invalid, NotFound
 from app.esign import terms as esign_terms
@@ -62,7 +64,7 @@ SELECT proposal_id, version, status, kind, body_enc, currency, total_amount, dep
 ONE_SQL = """
 SELECT p.proposal_id, p.trip_id, p.version, p.status, p.kind, p.body_enc, p.currency, p.total_amount,
        p.deposit_amount, p.balance_due_on, p.terms_doc_id, p.price_hash, p.link_id, p.published_at, t.stage,
-       t.owner_member_id
+       t.owner_member_id, p.cancellation_policy_id
   FROM crm.proposal p JOIN crm.trip t ON t.trip_id = p.trip_id AND t.deleted_at IS NULL
  WHERE p.proposal_id = $1 AND p.deleted_at IS NULL
    FOR UPDATE OF p
@@ -118,10 +120,13 @@ SELECT proposal_id, version, status, kind, currency, total_amount, deposit_pct, 
   FROM crm.proposal WHERE proposal_id = $1 AND deleted_at IS NULL
 """
 LEAD_SQL = "SELECT traveler_id FROM crm.trip_traveler WHERE trip_id = $1 AND role = 'lead' AND deleted_at IS NULL"
+# AA-1067 (crm-050): the rows with their live status (partial / overdue derived from the payments and the agency's day).
 SCHEDULE_SQL = """
-SELECT schedule_id, proposal_id, kind, amount, currency, due_on, status, paid_at FROM crm.payment_schedule
- WHERE trip_id = $1 AND deleted_at IS NULL
- ORDER BY due_on, kind
+SELECT schedule_id, proposal_id, kind, seq, percent, amount, currency, due_on, status, paid_at, paid_amount,
+       open_amount, live_status, days_overdue
+  FROM crm.v_schedule_status
+ WHERE trip_id = $1
+ ORDER BY due_on, array_position(ARRAY['deposit', 'instalment', 'balance'], kind), seq
 """
 # AA-952 slice 3: money in only (refund entries live on their invoice); an invoice payment may have no schedule row.
 PAYMENTS_SQL = """
@@ -192,8 +197,10 @@ def price_hash(
     body: str,
     terms_doc_id: uuid.UUID | None,
     terms_sha256: bytes | None,
+    cancellation_policy_id: uuid.UUID | None = None,
 ) -> bytes:
-    """SHA-256 of the canonical record the client sees (design M3 ``price_hash``; acceptance sends it back)."""
+    """SHA-256 of the canonical record the client sees (design M3 ``price_hash``; acceptance sends it back). AA-1067:
+    the cancellation policy version only when the version has one (an older version's hash is unchanged)."""
     record = {
         "proposal_id": str(proposal_id),
         "version": version,
@@ -205,6 +212,8 @@ def price_hash(
         "terms_doc_id": str(terms_doc_id) if terms_doc_id else None,
         "terms_sha256": terms_sha256.hex() if terms_sha256 else None,
     }
+    if cancellation_policy_id is not None:
+        record["cancellation_policy_id"] = str(cancellation_policy_id)
     return hashlib.sha256(json.dumps(record, sort_keys=True, separators=(",", ":")).encode()).digest()
 
 
@@ -280,11 +289,18 @@ def _schedule_view(r: Any) -> dict[str, Any]:
         "schedule_id": str(r["schedule_id"]),
         "proposal_id": str(r["proposal_id"]),
         "kind": r["kind"],
+        "seq": r["seq"],
+        "percent": None if r["percent"] is None else str(r["percent"]),
         "amount": _money(r["amount"]),
         "currency": r["currency"],
         "due_on": _iso(r["due_on"]),
         "status": r["status"],
         "paid_at": _iso(r["paid_at"]),
+        # AA-1067: the live status (paid | void | overdue | partial | due) and the money on the row.
+        "live_status": r["live_status"],
+        "paid_amount": _money(r["paid_amount"]),
+        "open_amount": _money(r["open_amount"]),
+        "days_overdue": r["days_overdue"],
     }
 
 
@@ -420,6 +436,7 @@ async def send(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID) -> dict
     if lead is None:
         raise Conflict("no_lead_traveller", "the trip has no lead traveller to send the proposal to")
     row = await pin_current_terms(ctx, row)
+    row = await cancel_policy.pin(ctx, row)  # AA-1067: the agency's cancellation policy goes out with the text
     terms = await _terms(ctx, row["terms_doc_id"], published=True)
     body = await vault.decrypt("proposal", "body_enc", proposal_id, row["body_enc"])
     digest = price_hash(
@@ -432,6 +449,7 @@ async def send(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID) -> dict
         body=body,
         terms_doc_id=row["terms_doc_id"],
         terms_sha256=bytes(terms["body_sha256"]) if terms is not None else None,
+        cancellation_policy_id=row.get("cancellation_policy_id"),
     )
     previous = await ctx.conn.fetchrow(OPEN_SENT_SQL, trip_id)
     if previous is not None:
@@ -734,9 +752,9 @@ async def settle_schedule(ctx: AnyContext, vault: Vault | None, row: Any) -> dic
 
 
 async def void(ctx: TenantContext, schedule_id: uuid.UUID) -> dict[str, Any]:
-    """Void a due balance row. One row is settled through one path (AA-952 slice 3): an issued invoice that bills it
-    refuses (409 ``invoice_issued_for_row``: void the invoice first, after refunding what it received); a draft one is
-    voided with the row."""
+    """Void a due instalment or balance row. One row is settled through one path (AA-952 slice 3): an issued invoice
+    that bills it refuses (409 ``invoice_issued_for_row``: void the invoice first, after refunding what it received); a
+    draft one is voided with the row."""
     await ctx.conn.fetch(LIVE_INVOICES_SQL, schedule_id)
     row = await ctx.conn.fetchrow(SCHEDULE_ONE_SQL, schedule_id)
     if row is None:

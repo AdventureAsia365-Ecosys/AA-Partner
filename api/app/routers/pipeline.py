@@ -101,12 +101,22 @@ class RefundChoice(_Body):
     amount: Annotated[Decimal, Field(ge=0, le=Decimal("999999999999.99"), decimal_places=2)]
 
 
+class CancelCharge(_Body):
+    """AA-1067 (crm-11): the cancellation charge to the client: the policy's, an override (amount + reason) or a
+    waiver (reason)."""
+
+    mode: Literal["policy", "override", "waive"] = "policy"
+    amount: Annotated[Decimal, Field(ge=0, le=Decimal("999999999999.99"), decimal_places=2)] | None = None
+    reason: str | None = Field(default=None, max_length=500)
+
+
 class CancelIn(_Body):
     cancel_reason_code: str | None = Field(default=None, max_length=40)
-    # AA-957 (C12): the amount asked back per payment (default all that is left; 0 = none) and the expected
-    # commissions the supplier still pays.
+    # AA-957 (C12): the amount asked back per payment (default what is left once the cancellation charge is kept;
+    # 0 = none) and the expected commissions the supplier still pays.
     refunds: list[RefundChoice] | None = Field(default=None, max_length=200)
     keep_commission: list[uuid.UUID] | None = Field(default=None, max_length=200)
+    charge: CancelCharge | None = None
 
 
 class BulkStage(_Body):
@@ -246,14 +256,17 @@ async def post_cancel(
     notices: ops_release.Notices = []
     refunds = None if body.refunds is None else [r.model_dump(mode="json") for r in body.refunds]
     keep = None if body.keep_commission is None else [str(x) for x in body.keep_commission]
+    charge = None if body.charge is None else body.charge.model_dump(mode="json", exclude_none=True)
     async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_CANCEL) as ctx:
         out = await stages.cancel(ctx, trip_id, reason=body.cancel_reason_code, dry_run=dry_run, notices=notices,
-                                  refunds=refunds, keep_commission=keep)  # fmt: skip
+                                  refunds=refunds, keep_commission=keep, charge=charge)  # fmt: skip
     ops_release.emit(notices)  # committed: AA ops are told the release was withdrawn (C12 step 6)
     if dry_run and out.get("aa_bookings"):
         # AA-957: Booking's fee per AA booking, read outside the transaction (Booking down: fee unknown, "pending").
         client = getattr(request.app.state, "booking_client", None)
         out = await cancellation.booking_fees(client, tenant_id, out, out["cancel_reason_code"])
+        # AA-1067: the client charged less than AA's own cancellation fees = the agency refunds below its AA cost.
+        cancellation.charge_vs_aa_fees(out)
     return out
 
 

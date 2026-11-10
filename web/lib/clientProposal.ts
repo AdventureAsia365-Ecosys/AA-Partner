@@ -110,6 +110,8 @@ export interface ClientBuilderPage extends PublicProposal {
     subtotal?: string;
     discount_pct?: string;
     discount?: string;
+    /** AA-1067: every payment line of the client's current total (only for a version with lines). */
+    schedule?: { kind: "deposit" | "instalment" | "balance"; seq: number; percent: string | null; due_on: string | null; amount: string }[];
   };
   selection_hash: string;
   hold: HoldBox;

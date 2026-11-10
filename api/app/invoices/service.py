@@ -45,7 +45,8 @@ from app.tenancy import AnyContext, TenantContext
 from app.vault import Vault
 
 CENT = Decimal("0.01")
-KINDS = ("deposit", "balance", "service_fee", "adjustment")
+KINDS = ("deposit", "instalment", "balance", "service_fee", "adjustment", "cancellation_fee")
+SCHEDULE_KINDS = ("deposit", "instalment", "balance")
 TYPED_KINDS = ("service_fee", "adjustment")
 STATUSES = ("draft", "open", "payment_claimed", "paid", "paid_unfulfillable", "void", "expired")
 RECEIVABLE = ("open", "payment_claimed", "expired")
@@ -67,7 +68,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "invoice_due_days": 7,
     "service_fee_enabled": False,
 }
-SCHEDULE_LABEL = {"deposit": "Deposit", "balance": "Balance"}
+SCHEDULE_LABEL = {"deposit": "Deposit", "instalment": "Instalment", "balance": "Balance"}
 
 SETTINGS_SQL = """
 SELECT invoice_prefix, invoice_tax_label, invoice_tax_rate, invoice_tax_inclusive, invoice_due_days,
@@ -88,7 +89,7 @@ TIMEZONE_SQL = "SELECT timezone FROM crm.tenant_settings LIMIT 1"
 # As app.calendar.events / app.duty.service: an agency without settings is a Dev seed in Viet Nam.
 DEFAULT_TZ = "Asia/Ho_Chi_Minh"
 SCHEDULE_SQL = """
-SELECT s.schedule_id, s.trip_id, s.proposal_id, s.kind, s.amount, s.currency, s.due_on, s.status,
+SELECT s.schedule_id, s.trip_id, s.proposal_id, s.kind, s.seq, s.amount, s.currency, s.due_on, s.status,
        p.status AS proposal_status, p.version
   FROM crm.payment_schedule s
   JOIN crm.proposal p ON p.proposal_id = s.proposal_id
@@ -675,8 +676,9 @@ async def create_from_schedule(ctx: TenantContext, trip_id: uuid.UUID, schedule_
     except asyncpg.PostgresError as exc:
         raise _translate(exc) from None
     amount = money(row["amount"])
+    label = SCHEDULE_LABEL[row["kind"]] + (f" {row['seq']}" if row["kind"] == "instalment" else "")
     charge = {
-        "description": f"{SCHEDULE_LABEL[row['kind']]} (proposal version {row['version']})",
+        "description": f"{label} (proposal version {row['version']})",
         "quantity": Decimal(1),
         "unit_amount": amount,
         "amount": amount,
@@ -726,13 +728,47 @@ async def create_typed(
     return await full(ctx, invoice_id)
 
 
+async def issue_cancellation_fee(
+    ctx: TenantContext,
+    trip_id: uuid.UUID,
+    *,
+    proposal_id: uuid.UUID | None,
+    currency: str,
+    amount: Decimal,
+    description: str,
+    memo: str | None,
+) -> uuid.UUID:
+    """AA-1067 (item crm-12): the trip cancel run bills the client the cancellation charge not covered by money the
+    agency keeps: one ``cancellation_fee`` invoice, one charge line (tax included, the agency's tax label and rate),
+    issued at once (the next number, due after the agency's ``invoice_due_days``). Called by
+    :func:`app.cancellation.run` before the trip is closed (so no ``trip_cancelled`` refusal applies)."""
+    conf = await settings(ctx)
+    invoice_id = uuid.uuid4()
+    rate = Decimal(conf["invoice_tax_rate"])
+    value = money(amount)
+    await ctx.conn.execute(INSERT_SQL, invoice_id, trip_id, "cancellation_fee", None, proposal_id, currency, rate,
+                           conf["invoice_tax_label"], True, memo, None)  # fmt: skip
+    line = {"description": CONTROL.sub(" ", description).strip()[:MAX_DESCRIPTION], "quantity": Decimal(1),
+            "unit_amount": value, "amount": value}  # fmt: skip
+    await _insert_lines(ctx, invoice_id, trip_id, [line], source="manual")
+    await _write_totals(ctx, invoice_id, rate, True)
+    today = await fx.agency_today(ctx)
+    seq = int(await ctx.conn.fetchval(NEXT_NUMBER_SQL))
+    due_on = today + dt.timedelta(days=int(conf["invoice_due_days"]))
+    await ctx.conn.fetchval(ISSUE_SQL, invoice_id, seq, number_text(conf["invoice_prefix"], seq), today, due_on,
+                            f"member:{ctx.member_id}")  # fmt: skip
+    await ctx.conn.execute(COMMITMENT_SQL, trip_id, "open", source_ref(invoice_id))
+    ctx.audit("invoice_issue", "allowed", "invoice", str(invoice_id), reason="cancellation_fee")
+    return invoice_id
+
+
 async def update_draft(ctx: TenantContext, invoice_id: uuid.UUID, changes: dict[str, Any]) -> dict[str, Any]:
     row = await _row(ctx, invoice_id, lock=True)
     if row["status"] != "draft":
         raise Conflict("invoice_not_draft", "an issued or void invoice never changes")
     typed = row["kind"] in TYPED_KINDS
     if not typed and ("lines" in changes or "tax_inclusive" in changes):
-        raise Conflict("schedule_invoice_fixed", "a deposit or balance invoice bills its schedule row, tax included")
+        raise Conflict("schedule_invoice_fixed", "a schedule invoice bills its row, tax included")
     memo = _text(changes["memo"], "memo", MAX_MEMO, required=False) if "memo" in changes else row["memo"]
     due_on = changes.get("due_on", row["due_on"])
     rate = _rate(changes["tax_rate"]) if changes.get("tax_rate") is not None else Decimal(row["tax_rate"])

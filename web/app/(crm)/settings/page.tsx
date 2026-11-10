@@ -96,6 +96,12 @@ export default async function SettingsPage() {
             {t(lang, ctx.role === "owner" ? "pricingSettings.link" : "pricingSettings.ownerOnly")}
           </Link>
         </p>
+        {/* AA-1067: the traveller cancellation policy (every role reads it; the owner changes it). */}
+        <p style={{ margin: "8px 0 0", fontSize: 13.5 }}>
+          <Link href="/settings/cancellation" data-testid="settings-cancellation-link">
+            {t(lang, "policy.title")}
+          </Link>
+        </p>
       </Panel>
       {seesAaTariff(ctx.me) && (
         <Panel title={t(lang, "tariff.title")} testId="settings-aa-tariff">

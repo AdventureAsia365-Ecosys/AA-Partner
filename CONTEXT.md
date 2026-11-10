@@ -350,6 +350,8 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-045` | `api/migrations/045_crm_studio_invitation_kept_address.sql` | AA-1035 R2 close-out (**contract**, MIG-4; crm.ops.v1 1.12): `crm.studio_invitation` also keeps the invited address sealed under a one-off data key of the CRM KMS key (`email_kept`, `email_kept_dek`, `email_kept_kek_provider`, `email_kept_kek_id`, all or none), so a send again with `keep_address` goes to the same address; the guard (CRM37) lets only a platform actor set it, the token holder may only clear it (the claim does), a revoke clears it, the job never touches it; an expiry keeps it (an expired invitation is re-issued) |
 | `crm-046` | `api/migrations/046_crm_retail_markup.sql` | AA-1030 (**contract**: ALTER + CHECK on `crm.tenant_settings`, so MIG-4): `tenant_settings.retail_markup_pct` (JSONB, default `{}`: the owner's default retail markup in percent per AA product type, `trip_plan` / `hotel_room` / `transfer` / `guide` / `activity` / `entrance` / `meal`, 0..300 with 2 decimals), shape rule `crm.retail_markup_ok(jsonb)` (EXECUTE to crm_app, the writer) and `tenant_settings_retail_markup_chk`; no reader grant |
 | `crm-048` | `api/migrations/048_crm_retail_pricing.sql` | AA-1066 retail pricing (**contract**: ALTERs of `crm.tenant_settings`, `crm.proposal`, `crm.option`, `crm.status_transition` rows, so MIG-4): `tenant_settings.child_age_max` / `infant_age_max` (default 11 / 1) and `discount_owner_limit_pct` (default 10), `proposal.discount_pct` (builder only, 0 < pct <= 100; sealed after draft: `proposal_sealed` recreated with the crm-019 list plus `discount_pct`, CRM31), `option.price_rules` (the rules a sell was suggested with, a JSON array snapshot); `crm.option_price` (base template; one row per traveller type `adult` / `child` / `infant` / `single_supp`: unit sell, unit net, qty; draft-only through `crm.guard_proposal_draft`; cascades from its option), `crm.retail_price_rule` (base template; season / group_size / early_booking / last_minute with exactly its own condition, AA product scope, adjust_pct -90..300 not 0, priority, stacking `add` / `best_only`; cascades from the agency's `tenant_settings` row), `crm.discount_approval` (base template; pending -> approved / rejected / superseded, one pending per version, guard `crm.guard_discount_approval` CRM48: only an owner decides, as themselves; no crm_app DELETE; cascades from its proposal). `crm.erase_subject` unchanged (the three tables are cascade-erased, `test_crm010_schema.py`) |
+| `crm-049` | `api/migrations/049_crm_cancellation_policy.sql` | AA-1067 (**expand**: three new tables + guard): `crm.cancellation_policy` (versions of the agency's traveller cancellation policy: name, version, `replaces_policy_id`, currency of minimum charges, `is_default` (one live default), `published_at` set once, `retired_at`), `crm.cancellation_policy_tier` (`days_before_min`, `charge_pct`, `min_charge_amount`; one per day count; only while its policy is a draft), `crm.cancellation_charge` (what one trip cancellation charged: policy, days, tier percent, policy charge, final charge with decision policy / override / waived / no_policy and reason, paid, kept, refund due, fee invoice; one per trip, insert-only); guard `crm.guard_cancellation_policy` (CRM49); cascades from `tenant_settings` / the policy / the trip, no `erase_subject` change |
+| `crm-050` | `api/migrations/050_crm_payment_schedule_instalments.sql` | AA-1067 (**contract**: ALTERs, seals recreated, an index replaced, so MIG-4): `payment_schedule.kind` + `instalment`, `seq` (1..10, 1 for deposit / balance), `percent`; live unique index on (tenant, proposal, kind, seq); the seal covers both; `proposal.schedule_plan` (builder only, 1..12 lines) and `proposal.cancellation_policy_id` (no key), both sealed after draft; `tenant_settings.schedule_template`; `invoice.kind` + `instalment` (with its row) and `cancellation_fee`; view `crm.v_schedule_status` (security_invoker: paid / partial / overdue derived, `crm_app` SELECT); index `payment (tenant_id, schedule_id)` |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -1619,6 +1621,41 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
     raised discount is no longer covered (the approval re-opens); an owner's Publish records their own approval.
     The AA ledger lines an accepted discounted version writes carry each option's share of the discount
     (`builder.line_sells`), so the line sells add up to the accepted total.
+- **Retail payments** (AA-1067, crm-049 / crm-050; `app/payments/schedule_plan.py`, `app/payments/schedule_settings.py`,
+  `app/cancel_policy/`; decisions in `docs/implementation-notes/AA-1067.md`):
+  - *Instalments*: a builder version carries `proposal.schedule_plan` (deposit first, at accept; 0..10 instalments,
+    each a share and a date; at most one balance, last, the rest); `deposit_pct` / `balance_due_on` mirror its deposit
+    and last line. A new version starts from `tenant_settings.schedule_template` (Settings > Payments, `GET` / `PUT
+    /settings/payment-schedule`, owner; NULL = the AA default 30 % now, 40 % at T-60, the rest at T-30), dated from day
+    1 (a line keeps `days_before` while it follows the template). `PATCH /proposals/{id}/builder` `schedule` (lines,
+    `null` = the deposit / balance pair), `schedule_reset` (a money field each). Publish blocks on
+    `schedule_dates_required` / `_order` / `schedule_after_start` / `schedule_amount_zero`; the price hash and the seal
+    (CRM31) cover the plan. Amounts round half up per currency (whole units for VND, JPY, ...), the deposit at least one
+    unit, the last line the rest: the accept writes one `crm.payment_schedule` row per line (`kind` deposit |
+    instalment | balance, `seq`, `percent`) adding up to the accepted total. Text proposals keep the pair. The stored
+    status stays due | paid | void; `crm.v_schedule_status` derives `live_status` (partial / overdue) and the money on
+    each row (trip overview, client page, portal). An instalment is invoiced, paid, voided and cancelled like a balance;
+    the stage gate keys on the deposit row only.
+  - *Reminders to travellers*: workflow `date_anchor` values `schedule_due_soon` (offset -60..0) and `schedule_overdue`
+    (1..60) start one run per open row of the accepted proposal (`schedule:<row>:<anchor>:<offset>:<due date>`), never
+    for a row paid in full, at most one per row every 3 days; the engine skips a row paid meanwhile (`skipped_paid`)
+    and fills `{{payment_amount}}` / `{{payment_due_date}}`. Library templates `payment_due_soon` (T-7) and
+    `payment_overdue` (+3) install **paused** (opt-in; `starter_mail: true` copies an EN / VI starter message into the
+    agency's templates); mail goes from the trip owner's mailbox, else the agency's.
+  - *Cancellation policy*: `crm.cancellation_policy` versions + `crm.cancellation_policy_tier` ("N days or more before
+    departure: X %, at least M"), owner-managed (`/cancellation-policies`, every role reads; CRM49: a published
+    version never changes, a new version retires the old one and takes its default flag). A version going out (builder
+    Publish, text Send) pins the agency default unless the agent chose one (`proposal.cancellation_policy_id`, sealed,
+    in the price hash); the client page shows it and booking terms merge it (`{{cancellation.policy}}`, also on the
+    portal signing pages).
+  - *Charge and refund*: the cancel dry run's `charge` block = days before departure, the frozen policy (else the
+    default, `policy_not_frozen`), tier, charge, paid, kept, refund due, fee invoice; `charge: {mode policy | override
+    | waive, amount, reason}` on `POST /trips/{id}/cancel`; an agent lowering the policy charge past
+    `refund_owner_threshold_base` is 403 `cancel_charge_owner_only`; `charge_below_aa_fee` warns when the charge is
+    below Booking's dry-run fees. The run prefills each refund request with what is left of the payment once the charge
+    is kept from the oldest payments, issues a `cancellation_fee` invoice for the charge not covered by money kept, and
+    records `crm.cancellation_charge` (`GET /trips/{id}/cancellation-charge`; the trip P&L seam of crm-30: fee =
+    `charge_amount`).
 - **AA prices** (AA-1030, `booking.b2b.v1` 1.4 `GET /tariff`; `app/booking/tariff.py`, web `/aa-tariff`): the
   agency's own AA tariff, AA's B2B price per tour, season (departure window) and pax band with its tier or contract
   rate card discount and AA's RRP per person, read live from Booking. `GET /crm/v1/aa/tariff?currency=&format=json|csv

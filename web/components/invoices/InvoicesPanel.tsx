@@ -35,7 +35,8 @@ import { formatAmount } from "@/lib/proposals";
 
 interface ScheduleRow {
   schedule_id: string;
-  kind: "deposit" | "balance";
+  kind: "deposit" | "instalment" | "balance";
+  seq?: number;
   amount: string;
   currency: string;
   due_on: string;
@@ -203,7 +204,7 @@ export function InvoicesPanel({
             <h3 style={{ margin: 0, fontSize: 13, color: K.ink }}>{tr("invoice.toInvoice")}</h3>
             {open.map((row) => (
               <div key={row.schedule_id} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 13 }}>
-                <span>{tr(`invoice.kind.${row.kind}`)}</span>
+                <span>{row.kind === "instalment" ? `${tr("invoice.kind.instalment")} ${row.seq ?? 1}` : tr(`invoice.kind.${row.kind}`)}</span>
                 <span>{formatAmount(row.amount, row.currency, locale)}</span>
                 <Button size="sm" disabled={!hydrated || busy} onClick={() => run("POST", `trips/${tripId}/invoices`, { schedule_id: row.schedule_id }, "invoice.created")}>
                   {tr("invoice.create")}

@@ -18,7 +18,7 @@ export interface CalendarEvent {
   trip_id: string | null;
   title: string | null;
   stage?: string;
-  payment_kind?: "deposit" | "balance";
+  payment_kind?: "deposit" | "instalment" | "balance";
   amount?: { amount: string; currency: string };
   invoice_number?: string | null;
   pending_signatures?: number;

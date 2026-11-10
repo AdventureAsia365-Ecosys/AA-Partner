@@ -16,6 +16,7 @@ import { Panel } from "@/components/PageTitle";
 import { BeforeYouGoPanel } from "@/components/proposals/BeforeYouGoPanel";
 import { BuilderAaDrawer, type Supplier } from "@/components/proposals/BuilderAaDrawer";
 import { DiscountBox } from "@/components/proposals/DiscountBox";
+import { ScheduleEditor } from "@/components/proposals/ScheduleEditor";
 import { OptionPricesEditor } from "@/components/proposals/OptionPricesEditor";
 import { bffSend } from "@/lib/bffClient";
 import {
@@ -191,10 +192,11 @@ export function BuilderPage({
       price_visibility: String(data.get("price_visibility")),
       intro: String(data.get("intro") ?? ""),
       starts_on: String(data.get("starts_on") ?? "") || null,
-      balance_due_on: String(data.get("balance_due_on") ?? "") || null,
       terms_doc_id: String(data.get("terms_doc_id") ?? "") || null,
     };
-    if (canMoney) body.deposit_pct = String(data.get("deposit_pct") ?? "");
+    // AA-1067: with payment lines the deposit and the balance date are edited in the schedule box.
+    if (!view.schedule) body.balance_due_on = String(data.get("balance_due_on") ?? "") || null;
+    if (canMoney && !view.schedule) body.deposit_pct = String(data.get("deposit_pct") ?? "");
     if (await write("PATCH", `proposals/${view.proposal_id}/builder`, body)) setMessage({ tone: "success", text: tr("builder.saved") });
   }
 
@@ -637,7 +639,7 @@ export function BuilderPage({
                   <option value="total_only">{tr("builder.visibility.total_only")}</option>
                 </select>
               </label>
-              {canMoney && (
+              {canMoney && !view.schedule && (
                 <label style={label}>
                   {tr("builder.depositPct")}
                   <input name="deposit_pct" style={field} inputMode="decimal" defaultValue={view.deposit_pct ?? "30"} />
@@ -680,7 +682,9 @@ export function BuilderPage({
             )}
             <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))" }}>
               <DateInput locale={locale} name="starts_on" label={tr("builder.startsOn")} readAs={tr("settings.readAs")} invalid={tr("settings.invalidDate")} defaultValue={view.starts_on ?? ""} />
-              <DateInput locale={locale} name="balance_due_on" label={tr("proposal.balanceDueLabel")} readAs={tr("settings.readAs")} invalid={tr("settings.invalidDate")} defaultValue={view.balance_due_on ?? ""} />
+              {!view.schedule && (
+                <DateInput locale={locale} name="balance_due_on" label={tr("proposal.balanceDueLabel")} readAs={tr("settings.readAs")} invalid={tr("settings.invalidDate")} defaultValue={view.balance_due_on ?? ""} />
+              )}
             </div>
             <label style={label}>
               {tr("builder.intro")}
@@ -751,6 +755,22 @@ export function BuilderPage({
             onMessage={(tone, text) => setMessage({ tone, text })}
           />
         )}
+        {/* AA-1067: the payment lines (instalments) and the cancellation policy that go out with the version. */}
+        <ScheduleEditor
+          key={`schedule-${view.edit_seq}`}
+          proposalId={view.proposal_id}
+          lines={view.schedule ?? null}
+          amounts={view.totals.schedule}
+          policy={view.cancellation_policy ?? null}
+          draft={draft}
+          canMoney={canMoney}
+          busy={busy}
+          locale={locale}
+          money={money}
+          tr={tr}
+          write={write}
+          onMessage={(tone, text) => setMessage({ tone, text })}
+        />
       </Panel>
 
       <Panel testId="builder-advanced">

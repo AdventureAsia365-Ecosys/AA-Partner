@@ -89,6 +89,14 @@ class RoomIn(_Body):
     children: int = Field(default=0, ge=0, le=6)
 
 
+class ScheduleLineIn(_Body):
+    kind: Literal["deposit", "instalment", "balance"]
+    percent: Decimal | None = Field(default=None, gt=0, le=100, decimal_places=2)
+    due_on: dt.date | None = None
+    days_before: int | None = Field(default=None, ge=0, le=730)
+    seq: int | None = Field(default=None, ge=1, le=10)
+
+
 class SettingsIn(_Body):
     seq: Seq
     price_visibility: Literal["total_with_deltas", "total_only"] | None = None
@@ -100,6 +108,11 @@ class SettingsIn(_Body):
     intro: str | None = Field(default=None, max_length=20_000)
     # AA-1066: a discount in percent on the charged total (null or 0 = none; a money field).
     discount_pct: Decimal | None = Field(default=None, ge=0, le=100, decimal_places=2)
+    # AA-1067: the payment lines ([{kind, percent, due_on, days_before}], null = the deposit / balance pair), or reset
+    # them from the agency template (money fields); the cancellation policy version (published, current).
+    schedule: list[ScheduleLineIn] | None = Field(default=None, min_length=1, max_length=12)
+    schedule_reset: bool | None = None
+    cancellation_policy_id: uuid.UUID | None = None
 
 
 class DayIn(_Body):
@@ -258,7 +271,7 @@ async def patch_builder(
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     async with tenant_tx(pool, caller, tenant_id, action=Action.PROPOSAL_DRAFT) as ctx:
-        _money_check(ctx, body, ("deposit_pct", "discount_pct"), proposal_id)
+        _money_check(ctx, body, ("deposit_pct", "discount_pct", "schedule", "schedule_reset"), proposal_id)
         changes = _changes(body)
         if body.room_config is not None:
             changes["room_config"] = [r.model_dump() for r in body.room_config]

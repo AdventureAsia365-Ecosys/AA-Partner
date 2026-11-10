@@ -10,6 +10,7 @@
 // terms shows TermsReaccept (re-accept before the deposit). AA-952 slice 4: an accepted page shows ClientPayBox (the
 // issued invoices, the agency's bank details while the window is open, "I have paid").
 import { useEffect, useState } from "react";
+import { ClientPolicy, ClientScheduleRows } from "@/components/proposals/ClientPaymentLines";
 import { K, Button } from "@/app/_kit";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, type MessageKey } from "@/lib/i18n";
@@ -118,18 +119,11 @@ export function ProposalPage({ dict, locale }: { dict: Partial<Record<MessageKey
           </>
         )}
       </dl>
+      <ClientPolicy policy={page.cancellation_policy} locale={locale} t={t} />
       {accepted ? (
         <div data-testid="client-accepted" style={{ display: "grid", gap: 8 }}>
           <p style={{ margin: 0, fontSize: 14, color: K.success }}>{fmt(t("client.acceptedThanks"), { agency: page.agency_name })}</p>
-          {page.schedule.map((s) => (
-            <p key={s.kind} style={{ margin: 0, fontSize: 13.5, color: K.body }}>
-              {fmt(t(`client.scheduleRow.${s.status}`), {
-                what: t(`client.kind.${s.kind}`),
-                amount: formatAmount(s.amount, s.currency, locale),
-                date: formatDate(s.due_on, locale),
-              })}
-            </p>
-          ))}
+          <ClientScheduleRows rows={page.schedule} locale={locale} t={t} />
           {page.terms_reaccept && <TermsReaccept terms={page.terms_reaccept} agency={page.agency_name} t={t} onDone={() => setRound((r) => r + 1)} />}
           <ClientPayBox invoices={page.payments ?? []} agency={page.agency_name} locale={locale} t={t} onDone={() => setRound((r) => r + 1)} />
         </div>
