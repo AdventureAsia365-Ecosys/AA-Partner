@@ -5,6 +5,7 @@
 // except the margin share shown next to the totals.
 
 import { fmt, type MessageKey } from "@/lib/i18n";
+import type { PolicySummary, ScheduleAmount, ScheduleLine } from "@/lib/retailPayments";
 import type { AppliedRule, PriceRow, PricingBlock } from "@/lib/retailPricing";
 import type { BeforeYouGo } from "@/lib/textProposal";
 
@@ -103,6 +104,9 @@ export interface BuilderView {
   deposit_pct: string | null;
   starts_on: string | null;
   balance_due_on: string | null;
+  /** AA-1067: the payment lines (null = the deposit / balance pair) and the cancellation policy of the version. */
+  schedule?: ScheduleLine[] | null;
+  cancellation_policy?: PolicySummary | null;
   terms_doc_id: string | null;
   /** S262 round 3: the named version's state (null without terms or once removed). */
   terms_status?: "published" | "retired" | "draft" | null;
@@ -125,6 +129,8 @@ export interface BuilderView {
     subtotal?: string;
     discount_pct?: string;
     discount?: string;
+    /** AA-1067: every payment line with its amount (only with lines). */
+    schedule?: ScheduleAmount[];
   };
   /** AA-1066: the agency's age bands, the party by traveller type, the discount and its approval. */
   pricing?: PricingBlock;
@@ -221,6 +227,9 @@ export function builderErrorKey(detail: string): MessageKey {
     discount_approval_not_needed: "pricing.err.discount_approval_not_needed",
     discount_approval_not_pending: "pricing.err.discount_approval_not_pending",
     invalid_discount_pct: "pricing.err.invalid_discount_pct",
+    // AA-1067: the payment lines and the cancellation policy.
+    invalid_schedule: "payments.err.invalid_schedule",
+    policy_not_live: "payments.err.policy_not_live",
   };
   return known[detail] ?? "builder.err.generic";
 }
@@ -259,6 +268,11 @@ export function checkKey(code: string): MessageKey {
     discount_needs_approval: "builder.check.discount_needs_approval",
     discount_owner_approves: "builder.check.discount_owner_approves",
     prices_party_changed: "builder.check.prices_party_changed",
+    // AA-1067: the payment lines.
+    schedule_dates_required: "builder.check.schedule_dates_required",
+    schedule_dates_order: "builder.check.schedule_dates_order",
+    schedule_after_start: "builder.check.schedule_after_start",
+    schedule_amount_zero: "builder.check.schedule_amount_zero",
   };
   return known[code] ?? "builder.err.generic";
 }

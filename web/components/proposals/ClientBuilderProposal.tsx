@@ -39,6 +39,7 @@ import {
 } from "@/lib/clientProposal";
 import { clientErrorKey, formatAmount } from "@/lib/proposals";
 import { ClientPayBox } from "./ClientPayBox";
+import { ClientPlanLines, ClientPolicy, ClientScheduleRows } from "./ClientPaymentLines";
 import { TermsReaccept } from "./TermsReaccept";
 
 const input: React.CSSProperties = {
@@ -314,17 +315,25 @@ export function ClientBuilderProposal({ initial, dict, locale }: { initial: Clie
             <dd style={{ margin: 0, color: K.body }}>{fmt(t("client.onArrivalNote"), { amount: formatAmount(page.totals.pay_on_arrival_total, cur, locale) })}</dd>
           </>
         )}
-        <dt style={{ color: K.muted }}>{t("client.deposit")}</dt>
-        <dd style={{ margin: 0, color: K.ink }}>{formatAmount(page.deposit_amount, cur, locale)}</dd>
-        {page.balance_due_on && Number(page.balance_amount) > 0 && (
+        {page.totals.schedule && page.totals.schedule.length > 0 && !accepted ? (
+          // AA-1067: every payment line of the client's current total.
+          <ClientPlanLines lines={page.totals.schedule} currency={cur} locale={locale} t={t} />
+        ) : (
           <>
-            <dt style={{ color: K.muted }}>{t("client.balance")}</dt>
-            <dd style={{ margin: 0, color: K.ink }}>
-              {fmt(t("client.balanceDue"), { amount: formatAmount(page.balance_amount, cur, locale), date: formatDate(page.balance_due_on, locale) })}
-            </dd>
+            <dt style={{ color: K.muted }}>{t("client.deposit")}</dt>
+            <dd style={{ margin: 0, color: K.ink }}>{formatAmount(page.deposit_amount, cur, locale)}</dd>
+            {page.balance_due_on && Number(page.balance_amount) > 0 && (
+              <>
+                <dt style={{ color: K.muted }}>{t("client.balance")}</dt>
+                <dd style={{ margin: 0, color: K.ink }}>
+                  {fmt(t("client.balanceDue"), { amount: formatAmount(page.balance_amount, cur, locale), date: formatDate(page.balance_due_on, locale) })}
+                </dd>
+              </>
+            )}
           </>
         )}
       </dl>
+      <ClientPolicy policy={page.cancellation_policy} locale={locale} t={t} />
 
       {error && (
         <p role="alert" data-testid="client-error" style={{ margin: 0, fontSize: 13.5, color: K.danger }}>
@@ -340,11 +349,7 @@ export function ClientBuilderProposal({ initial, dict, locale }: { initial: Clie
       {accepted ? (
         <div data-testid="client-accepted" style={{ display: "grid", gap: 8 }}>
           <p style={{ margin: 0, fontSize: 14, color: K.success }}>{fmt(t("client.acceptedThanks"), { agency: page.agency_name })}</p>
-          {page.schedule.map((s) => (
-            <p key={s.kind} style={{ margin: 0, fontSize: 13.5, color: K.body }}>
-              {fmt(t(`client.scheduleRow.${s.status}`), { what: t(`client.kind.${s.kind}`), amount: formatAmount(s.amount, s.currency, locale), date: formatDate(s.due_on, locale) })}
-            </p>
-          ))}
+          <ClientScheduleRows rows={page.schedule} locale={locale} t={t} />
           {page.terms_reaccept && <TermsReaccept terms={page.terms_reaccept} agency={page.agency_name} t={t} onDone={() => void refresh()} />}
           <ClientPayBox invoices={page.payments ?? []} agency={page.agency_name} locale={locale} t={t} onDone={() => void refresh()} />
         </div>

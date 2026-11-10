@@ -143,7 +143,13 @@ export function AutomationsBoard({
                   <Badge tone="success">{tr("wf.installed")}</Badge>
                 ) : (
                   owner && (
-                    <span data-testid="wf-install">
+                    <span data-testid="wf-install" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {(tpl.starter_mail ?? []).length > 0 && (
+                        // AA-1067: the payment reminders come with a starter message the owner can read and edit.
+                        <Button size="sm" variant="secondary" disabled={!hydrated || busy} onClick={() => void run("POST", "workflows/install", { template_key: tpl.key, starter_mail: true }, tr("wf.added"))}>
+                          {tr("wf.starterMail")}
+                        </Button>
+                      )}
                       <Button size="sm" variant="secondary" disabled={!hydrated || busy} onClick={() => void run("POST", "workflows/install", { template_key: tpl.key }, tr("wf.added"))}>
                         {tr("wf.install")}
                       </Button>
@@ -156,6 +162,7 @@ export function AutomationsBoard({
                 {triggerText(lang, tpl.trigger)}
                 {tpl.needs_templates ? ` · ${tr("wf.needsTemplate")}` : ""}
               </span>
+              {tpl.starts_paused && !tpl.installed && <span style={{ fontSize: 12, color: K.muted }}>{tr("wf.startsPaused")}</span>}
             </li>
           ))}
         </ul>

@@ -7,6 +7,7 @@
 // the quiet flag, Stage 2 completeness and the answers of the stage-engine routes (moves, Undo, bulk, cancel).
 
 import { formatDate, type DateLocale } from "./dates";
+import type { CancelCharge } from "@/lib/retailPayments";
 import { fmt, plural, type Lang, type MessageKey, t } from "./i18n";
 import type { PlanPage } from "./planningForm";
 
@@ -323,6 +324,9 @@ export interface CancelPreview {
   booking_unavailable?: boolean;
   cancellation?: Cancellation | null;
   requeued?: number;
+  /** AA-1067 (crm-11 / crm-12): the charge to the client by the frozen cancellation policy, the refund due, the fee
+   * invoice; warnings (below AA's fees, no frozen policy, ...). */
+  charge?: CancelCharge;
 }
 
 export interface CancelBooking {

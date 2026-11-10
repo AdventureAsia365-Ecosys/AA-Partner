@@ -278,6 +278,17 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "POST", pattern: /^settings\/price-rules$/, tenant: true, card: "AA-1066" },
   { method: "PATCH", pattern: new RegExp(`^settings/price-rules/${UUID}$`), tenant: true, card: "AA-1066" },
   { method: "DELETE", pattern: new RegExp(`^settings/price-rules/${UUID}$`), tenant: true, card: "AA-1066" },
+  // AA-1067: the payment schedule template (owner only, API Action.PAYMENT_SETTINGS), the traveller cancellation
+  // policy (every role reads; the owner writes) and a cancelled trip's recorded charge.
+  { method: "GET", pattern: /^settings\/payment-schedule$/, tenant: true, card: "AA-1067" },
+  { method: "PUT", pattern: /^settings\/payment-schedule$/, tenant: true, card: "AA-1067" },
+  { method: "GET", pattern: /^cancellation-policies$/, tenant: true, card: "AA-1067" },
+  { method: "POST", pattern: /^cancellation-policies$/, tenant: true, card: "AA-1067" },
+  { method: "GET", pattern: new RegExp(`^cancellation-policies/${UUID}$`), tenant: true, card: "AA-1067" },
+  { method: "PATCH", pattern: new RegExp(`^cancellation-policies/${UUID}$`), tenant: true, card: "AA-1067" },
+  { method: "DELETE", pattern: new RegExp(`^cancellation-policies/${UUID}$`), tenant: true, card: "AA-1067" },
+  { method: "POST", pattern: new RegExp(`^cancellation-policies/${UUID}/(publish|default|retire)$`), tenant: true, card: "AA-1067" },
+  { method: "GET", pattern: new RegExp(`^trips/${UUID}/cancellation-charge$`), tenant: true, card: "AA-1067" },
   // AA-1030: the agency's AA prices (owner / agent, API Action.AA_TARIFF_VIEW), JSON or AA's CSV with its file name.
   { method: "GET", pattern: /^aa\/tariff$/, tenant: true, card: "AA-1030", download: true, timeoutMs: 30_000 },
   { method: "POST", pattern: new RegExp(`^settings/payment-methods/${UUID}/disconnect$`), tenant: true, card: "AA-952" },

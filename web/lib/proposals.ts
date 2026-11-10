@@ -4,6 +4,7 @@
 // Amounts are the client's sell amounts (strings with two decimals from the API); no net, cost or margin here.
 
 import type { PortalPartyMember } from "./clientPortal";
+import type { LiveStatus, PolicySummary } from "@/lib/retailPayments";
 import { fmt, t, type Lang } from "./i18n";
 
 export type ProposalStatus = "draft" | "published" | "sent" | "accepted" | "superseded" | "withdrawn";
@@ -49,12 +50,20 @@ export interface Proposal {
 export interface ScheduleRow {
   schedule_id: string;
   proposal_id: string;
-  kind: "deposit" | "balance";
+  kind: "deposit" | "instalment" | "balance";
+  /** AA-1067: the instalment number (1 for the deposit and the balance) and the planned share. */
+  seq?: number;
+  percent?: string | null;
   amount: string;
   currency: string;
   due_on: string;
   status: ScheduleStatus;
   paid_at: string | null;
+  /** AA-1067 (crm.v_schedule_status): paid | void | overdue | partial | due, and the money on the row. */
+  live_status?: LiveStatus;
+  paid_amount?: string;
+  open_amount?: string;
+  days_overdue?: number;
 }
 
 export interface PaymentRow {
@@ -191,7 +200,9 @@ export interface PublicProposal {
   terms_reaccept?: { doc_id: string; version_label: string; body_text: string; body_sha256: string } | null;
   price_hash: string;
   accepted_at: string | null;
-  schedule: { kind: "deposit" | "balance"; amount: string; currency: string; due_on: string; status: ScheduleStatus }[];
+  schedule: { kind: "deposit" | "instalment" | "balance"; seq?: number; amount: string; currency: string; due_on: string; status: ScheduleStatus; live_status?: LiveStatus }[];
+  /** AA-1067: the cancellation policy that goes with the version (frozen when it went out). */
+  cancellation_policy?: PolicySummary | null;
   /** AA-952 slice 4 (C-04 deposit, C31): the issued invoices of an accepted version, with how and by when to pay. */
   payments?: ClientInvoice[];
 }
@@ -200,7 +211,7 @@ export interface PublicProposal {
 export interface ClientInvoice {
   invoice_id: string;
   number: string;
-  kind: "deposit" | "balance";
+  kind: "deposit" | "instalment" | "balance";
   currency: string;
   total_amount: string;
   balance_amount: string;
@@ -223,7 +234,7 @@ export interface PortalHome {
   waiver?: { doc_id: string; version_label: string; body_text: string; body_sha256: string; signed: boolean; signed_at: string | null } | null;
   /** AA-953 adds each member's id, name and way in (lib/clientPortal.ts PortalPartyMember). */
   party?: PortalPartyMember[];
-  payments?: { kind: "deposit" | "balance"; amount: string; currency: string; due_on: string; status: ScheduleStatus }[];
+  payments?: { kind: "deposit" | "instalment" | "balance"; seq?: number; amount: string; currency: string; due_on: string; status: ScheduleStatus; live_status?: LiveStatus }[];
   /** AA-955 (e-sign v1): the envelope documents and the envelopes this traveller signs (theirs, and a minor's as guardian). */
   agreements?: PortalAgreements | null;
 }
