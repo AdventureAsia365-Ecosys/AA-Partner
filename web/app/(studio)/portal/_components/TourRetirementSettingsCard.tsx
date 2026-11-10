@@ -11,7 +11,7 @@
 // others (useStudioRole). The card is not shown when the read fails (503 before the CIS migration, a refused read).
 // UI kit: Card + Checkbox + Field + Input + Button; react-query key ["account", "tour-retirement"].
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Checkbox, Field, Input, K, sans, useLang, useT } from "@/app/_kit";
 import { Card } from "@/app/_kit/local/studio/StudioCard";
@@ -31,8 +31,6 @@ export function TourRetirementSettingsForm({ settings, isOwner }: { settings: To
   const [days, setDays] = useState(String(settings.notice_days));
   const [note, setNote] = useState<{ text: string; ok: boolean } | null>(null);
 
-  useEffect(() => { setAuto(settings.auto_draft); setDays(String(settings.notice_days)); }, [settings]);
-
   const parsed = parseDays(days, settings.min_days, settings.max_days);
   const daysError = auto && parsed === null ? t("daysInvalid", settings.min_days, settings.max_days) : null;
   const changed = auto !== settings.auto_draft || (auto && parsed !== null && parsed !== settings.notice_days);
@@ -41,6 +39,9 @@ export function TourRetirementSettingsForm({ settings, isOwner }: { settings: To
     mutationFn: () => saveTourRetirementSettings(auto && parsed !== null
       ? { auto_draft: true, notice_days: parsed } : { auto_draft: auto }),
     onSuccess: (next) => {
+      // the form keeps what was typed (it is what was saved); the card's query gets the stored values
+      setAuto(next.auto_draft);
+      setDays(String(next.notice_days));
       qc.setQueryData(TOUR_RETIREMENT_SETTINGS_KEY, next);
       setNote({ text: t("saved"), ok: true });
     },
