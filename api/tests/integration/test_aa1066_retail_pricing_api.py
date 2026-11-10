@@ -22,12 +22,14 @@ from typing import Any
 
 import asyncpg
 import pytest
+import pytest_asyncio
 
 from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.permissions import Action
 from app.proposals import builder, pricing, retail
 from app.tenancy import tenant_tx
 from tests.aa_fakes import FakeBooking
+from tests.integration.conftest import OWNER
 from tests.integration.test_builder_api import (
     _aa,
     _as,
@@ -41,6 +43,18 @@ from tests.integration.test_builder_api import (
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _no_catalog_row_left(admin: asyncpg.Connection) -> Any:
+    """The AA tour row this file adds (``_catalog_tour``, a platform table) must not outlive it: the catalog cache test
+    of test_aa_lines_api.py counts every cached tour CIS no longer lists."""
+    yield
+    await admin.execute(f"SET ROLE {OWNER}")
+    try:
+        await admin.execute("DELETE FROM crm.aa_catalog_tour WHERE source_system = 'cis' AND source_id = 'T-949'")
+    finally:
+        await admin.execute("RESET ROLE")
 
 
 async def _plain(pool: asyncpg.Pool, s: dict[str, Any], role: str, fn: Any, *args: Any, **kw: Any) -> Any:
