@@ -10,8 +10,8 @@
 --
 -- What:
 --   1. crm.trip.group_code (NULL, else 1-80 characters [A-Za-z0-9:_.-]): the agency's own code for a group departure
---      that has no AA departure id (its tour leader, its group flight block). A trip is on a departure when one of its
---      live AA lines carries that departure_id, or when its group_code is that code (crm.v_departure_trip).
+--      that has no AA departure id (its tour leader, its group flight block). A booked trip is on a departure when one
+--      of its confirmed AA lines carries that departure_id, or when its group_code is that code (crm.v_departure_trip).
 --   2. crm.booking_line_money: kind + 'actual_cost' (what the supplier billed for an agency line, the sum of its bill
 --      lines, crm-25), fx_basis + 'bill_date' (frozen at the rate of the latest bill's date). Written only by
 --      crm.booking_line_actual_cost (SECURITY DEFINER), never by crm.booking_line_money_put (its kinds are unchanged).
@@ -27,11 +27,12 @@
 --   5. crm.departure_cost: a cost the agency carries for a whole group departure (an AA departure id or its own
 --      group_code): per_departure (split by pax over the departure's live trips) or per_pax (amount per traveller),
 --      FX frozen at the cost day. Owner / agent only.
---   6. crm.v_departure_trip: the live trips (not lost, not cancelled) on each departure ref with their pax.
+--   6. crm.v_departure_trip: the booked trips (booked, pre_departure, travelling, completed) on each departure ref with
+--      their pax. A lead that only has a quote for the departure (a planning line) takes no share of its costs.
 --   7. crm.v_trip_pnl: one row per live trip, in the agency's base currency: revenue (issued invoices net of tax, by
 --      kind, minus refunds net of tax; a trip cancelled with a charge, crm.cancellation_charge of crm-049 (applied
 --      before this key): the charge net of tax in place of its sales, their refunds and its fee invoices), costs (AA lines at the quote, or at the AA invoice once it bills the booking in
---      full; agency lines at the supplier bill once billed, else planned; AA cancellation fees; the departure share;
+--      full, spread over the booking's lines by their quoted cost; agency lines at the supplier bill once billed, else planned; AA cancellation fees; the departure share;
 --      the sales partner commission, 0 until that card), supplier commission income, margin, margin % and per pax.
 --      security_invoker: the money rows reach owner / agent only (crm-014 policy), so the view is read through the
 --      margin-gated API only.
@@ -438,14 +439,16 @@ SELECT t.tenant_id, r.departure_ref, t.trip_id, t.stage, t.start_date,
         SELECT l.departure_id AS departure_ref
           FROM crm.booking_line l
          WHERE l.tenant_id = t.tenant_id AND l.trip_id = t.trip_id AND l.departure_id IS NOT NULL
-           AND l.status <> 'cancelled' AND l.deleted_at IS NULL
+           AND l.supplier_kind = 'aa' AND l.status = 'confirmed' AND l.deleted_at IS NULL
         UNION
         SELECT t.group_code WHERE t.group_code IS NOT NULL
        ) r
- WHERE t.deleted_at IS NULL AND t.stage NOT IN ('lost', 'cancelled');
+ -- Booked trips only: a quote sets a line's departure_id (planning), so a lead in inquiry / qualifying / proposal would
+ -- otherwise take a share of the group's costs that the booked trips then miss. A cancelled trip takes no share.
+ WHERE t.deleted_at IS NULL AND t.stage IN ('booked', 'pre_departure', 'travelling', 'completed');
 REVOKE ALL ON crm.v_departure_trip FROM crm_app;
 GRANT SELECT ON crm.v_departure_trip TO crm_app;
-COMMENT ON VIEW crm.v_departure_trip IS 'AA-1068 (crm-051, item crm-32): the live trips (not lost or cancelled) on each departure ref (the departure_id of a live AA line, or the trip''s group_code) with their pax (adults + children). security_invoker.';
+COMMENT ON VIEW crm.v_departure_trip IS 'AA-1068 (crm-051, item crm-32): the booked trips (stage booked, pre_departure, travelling or completed) on each departure ref (the departure_id of a confirmed AA line, or the trip''s group_code) with their pax (adults + children): the trips that share the departure''s costs. A lead that only has a quote for the departure, a lost or a cancelled trip is not on it. security_invoker.';
 
 -- ── 7. crm.v_trip_pnl ────────────────────────────────────────────────────────────────────────────
 -- Read per trip (WHERE trip_id = $1) or for the agency (the profit cube). Every amount in the agency's base currency
@@ -579,13 +582,21 @@ SELECT x.*,
                     SELECT l.booking_line_id, l.supplier_kind, l.status, h.cost_base, h.sell_base, h.commission_base,
                            h.cancel_base, h.other_base,
                            (h.actual_base IS NOT NULL AND bill.live) AS billed, h.actual_base,
+                           -- An AA booking billed in full: its invoiced amount at the quote rate, spread over the
+                           -- booking's confirmed lines by their quoted cost (cumulative rounding in line id order, so
+                           -- the shares add up to round(invoiced x rate, 2) once per booking).
                            CASE WHEN l.supplier_kind = 'aa' AND ai.complete AND ai.currency = h.cost_currency
+                                     AND bk.currencies = 1 AND NOT bk.unquoted AND bk.tot_w > 0
                                      AND h.cost_rate IS NOT NULL
-                                THEN round(ai.invoiced * h.cost_rate, 2) ELSE h.cost_base END AS aa_cost,
+                                THEN round(ai.invoiced * h.cost_rate * bk.cum_w / bk.tot_w, 2)
+                                     - round(ai.invoiced * h.cost_rate * (bk.cum_w - bk.w) / bk.tot_w, 2)
+                                ELSE h.cost_base END AS aa_cost,
                            (l.supplier_kind = 'aa' AND COALESCE(ai.complete, false)) AS aa_invoiced,
+                           -- The booking's invoiced sum against the sum of its lines' quoted cost (one currency).
                            (l.supplier_kind = 'aa' AND COALESCE(ai.complete, false)
                             AND (ai.currency IS DISTINCT FROM h.cost_currency
-                                 OR ai.invoiced IS DISTINCT FROM h.cost_amount)) AS aa_mismatch
+                                 OR bk.currencies IS DISTINCT FROM 1::bigint OR COALESCE(bk.unquoted, true)
+                                 OR ai.invoiced IS DISTINCT FROM bk.quoted)) AS aa_mismatch
                       FROM crm.booking_line l
                      CROSS JOIN LATERAL (
                             SELECT max(m.amount_base) FILTER (WHERE m.kind = 'cost' AND m.base_currency = b.base_currency)
@@ -626,11 +637,36 @@ SELECT x.*,
                              ORDER BY c.currency
                              LIMIT 1
                            ) ai ON true
+                     -- The confirmed AA lines of the same AA booking (several lines of one accepted proposal share
+                     -- one Booking booking): their quoted cost and this line's weight for the invoiced amount.
+                      LEFT JOIN LATERAL (
+                            SELECT g.quoted, g.currencies, g.unquoted,
+                                   CASE WHEN g.quoted > 0 THEN h.cost_amount ELSE 1 END AS w,
+                                   CASE WHEN g.quoted > 0 THEN g.cum_quoted ELSE g.cum_n END AS cum_w,
+                                   CASE WHEN g.quoted > 0 THEN g.quoted ELSE g.n END AS tot_w
+                              FROM (
+                                    SELECT sum(oc.amount) AS quoted,
+                                           sum(oc.amount) FILTER (WHERE o.booking_line_id <= l.booking_line_id)
+                                               AS cum_quoted,
+                                           count(*) AS n,
+                                           count(*) FILTER (WHERE o.booking_line_id <= l.booking_line_id) AS cum_n,
+                                           count(DISTINCT oc.currency) AS currencies,
+                                           bool_or(oc.amount IS NULL) AS unquoted
+                                      FROM crm.booking_line o
+                                      LEFT JOIN crm.v_booking_line_money_current oc
+                                        ON oc.tenant_id = o.tenant_id AND oc.booking_line_id = o.booking_line_id
+                                       AND oc.kind = 'cost'
+                                     WHERE o.tenant_id = l.tenant_id AND o.bk_booking_id = l.bk_booking_id
+                                       AND o.supplier_kind = 'aa' AND o.status = 'confirmed' AND o.deleted_at IS NULL
+                                   ) g
+                             WHERE l.supplier_kind = 'aa' AND l.status = 'confirmed' AND l.bk_booking_id IS NOT NULL
+                           ) bk ON true
                      WHERE l.tenant_id = t.tenant_id AND l.trip_id = t.trip_id AND l.deleted_at IS NULL
                    ) q
            ) ln
      -- The trip's share of its departures' costs: per_pax = amount x the trip's pax; per_departure = split by pax over
-     -- the departure's live trips, by cumulative rounding in trip id order (the shares add up to the cost exactly).
+     -- the departure's booked trips (crm.v_departure_trip), by cumulative rounding in trip id order (the shares of the
+     -- booked trips add up to the cost exactly; a lead with only a quote takes none).
      CROSS JOIN LATERAL (
             SELECT COALESCE(sum(CASE WHEN d.basis = 'per_pax' THEN round(d.amount_base * s.pax, 2)
                                      ELSE round(d.amount_base * s.cum_pax / s.total_pax, 2)
@@ -654,7 +690,7 @@ SELECT x.*,
   ) x;
 REVOKE ALL ON crm.v_trip_pnl FROM crm_app;
 GRANT SELECT ON crm.v_trip_pnl TO crm_app;
-COMMENT ON VIEW crm.v_trip_pnl IS 'AA-1068 (crm-051, item crm-30): the profit of each live trip in the agency''s base currency: revenue_base = issued invoices (open, payment_claimed, paid, paid_unfulfillable) net of tax by kind (sales = every kind but service_fee and cancellation_fee) minus refunds net of tax, at crm.fx_resolve of the issue / receipt day; a trip cancelled with a charge (crm.cancellation_charge, crm-049) counts the charge net of tax at the cancel day''s rate in place of its sales, their refunds and its cancellation fee invoices (cancellation_charged); costs = AA lines (the quote''s frozen cost, or the AA settlement invoice of the booking once billed in full, crm.aa_invoice_cache, at the quote rate) + agency lines (actual_cost while a live supplier bill names the line, else the planned cost) + AA cancellation fees (cancellation_cost) + the departure share (crm.departure_cost by pax) + the sales partner commission (0 until crm-28); commission_income_base = the expected supplier commission of confirmed agency lines; margin_base = revenue + commission income - costs, margin_pct of revenue, margin_per_pax_base. Confirmed lines count, planning ones are counted apart. security_invoker: money rows reach owner / agent only (crm-014), so read it only through the margin-gated API.';
+COMMENT ON VIEW crm.v_trip_pnl IS 'AA-1068 (crm-051, item crm-30): the profit of each live trip in the agency''s base currency: revenue_base = issued invoices (open, payment_claimed, paid, paid_unfulfillable) net of tax by kind (sales = every kind but service_fee and cancellation_fee) minus refunds net of tax, at crm.fx_resolve of the issue / receipt day; a trip cancelled with a charge (crm.cancellation_charge, crm-049) counts the charge net of tax at the cancel day''s rate in place of its sales, their refunds and its cancellation fee invoices (cancellation_charged); costs = AA lines (the quote''s frozen cost, or the AA settlement invoice of the booking once billed in full, crm.aa_invoice_cache, at the quote rate, spread over the booking''s confirmed lines by their quoted cost; aa_lines_mismatch = the confirmed AA lines of a booking billed in full at another amount or currency than the sum of its lines'' quotes) + agency lines (actual_cost while a live supplier bill names the line, else the planned cost) + AA cancellation fees (cancellation_cost) + the departure share (crm.departure_cost by pax over the booked trips of crm.v_departure_trip) + the sales partner commission (0 until crm-28); commission_income_base = the expected supplier commission of confirmed agency lines; margin_base = revenue + commission income - costs, margin_pct of revenue, margin_per_pax_base. Confirmed lines count, planning ones are counted apart. security_invoker: money rows reach owner / agent only (crm-014), so read it only through the margin-gated API.';
 
 -- ── Post-checks ──────────────────────────────────────────────────────────────────────────────────
 DO $$

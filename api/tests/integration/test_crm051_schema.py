@@ -138,15 +138,24 @@ async def _line(
 
 
 async def _money(
-    admin: asyncpg.Connection, tenant: uuid.UUID, line: uuid.UUID, kind: str, amount: str, *, frozen: bool = True
+    admin: asyncpg.Connection,
+    tenant: uuid.UUID,
+    line: uuid.UUID,
+    kind: str,
+    amount: str,
+    *,
+    frozen: bool = True,
+    currency: str = "USD",
+    rate: str = "1",
 ) -> None:
     if frozen:
         await _as_owner(
             admin, tenant,
             "INSERT INTO crm.booking_line_money (booking_line_id, kind, amount, currency, base_currency, amount_base, "
             "fx_rate, fx_rate_date, fx_source, fx_basis, stale_days) "
-            "VALUES ($1, $2, $3::numeric, 'USD', 'USD', $3::numeric, 1, $4, 'platform_daily', 'booking_date', 0)",
-            line, kind, amount, DAY,
+            "VALUES ($1, $2, $3::numeric, $5, 'USD', round($3::numeric * $6::numeric, 2), $6::numeric, $4, "
+            "'platform_daily', 'booking_date', 0)",
+            line, kind, amount, DAY, currency, rate,
         )  # fmt: skip
     else:
         await _as_owner(
@@ -261,6 +270,8 @@ async def test_the_trip_profit_adds_up(admin: asyncpg.Connection, app_pool: asyn
     t = a["tenant"]
     trip = await _trip(admin, t, 2, [8])  # 3 travellers
     second = await _trip(admin, t, 1, [])  # 1 traveller on the same AA departure
+    lead = await _trip(admin, t, 4, [], stage="proposal")  # a lead quoted on the departure: no share
+    quoted = await _trip(admin, t, 2, [])  # booked, but its line on the departure is only quoted: no share
 
     # Revenue: an adjustment 1000 + 100 tax (USD), a service fee 50 EUR (x 1.1 = 55.00), a cancellation fee 20 USD;
     # a draft and a void invoice never count. A refund of 220 on the 1100 invoice is 200.00 net of tax.
@@ -296,7 +307,9 @@ async def test_the_trip_profit_adds_up(admin: asyncpg.Connection, app_pool: asyn
     await _money(admin, t, line_d, "sell", "320")
     line_e = await _line(admin, t, trip, a["aa"], "aa", "cancelled")
     await _money(admin, t, line_e, "cancellation_cost", "40")
-    await _line(admin, t, second, a["aa"], "aa", "planning", departure="DEP-1")
+    await _line(admin, t, second, a["aa"], "aa", "confirmed", departure="DEP-1")
+    await _line(admin, t, lead, a["aa"], "aa", "planning", departure="DEP-1")
+    await _line(admin, t, quoted, a["aa"], "aa", "planning", departure="DEP-1")
 
     before = await _pnl(app_pool, t, trip)
     assert before["agency_cost_base"] == D("400.00") and before["aa_cost_base"] == D("250.00")
@@ -345,6 +358,8 @@ async def test_the_trip_profit_adds_up(admin: asyncpg.Connection, app_pool: asyn
     assert (p["aa_sell_base"], p["agency_sell_base"]) == (D("320.00"), D("400.00"))
     other = await _pnl(app_pool, t, second)
     assert other["departure_cost_base"] == D("35.00")  # 25.00 + 10 x 1
+    for pipeline in (lead, quoted):  # only quoted for DEP-1: the booked trips carry the whole cost
+        assert (await _pnl(app_pool, t, pipeline))["departure_cost_base"] == D("0.00")
 
     # The supplier's actual cost row: kind actual_cost, at the bill FX, basis bill_date.
     async with app_pool.acquire() as conn, conn.transaction():
@@ -447,6 +462,43 @@ async def test_a_cancelled_trip_counts_its_charge_once(admin: asyncpg.Connection
     await _charge(admin, t, yen, "100", "0", "0", currency="JPY")
     j = await _pnl(app_pool, t, yen)
     assert (j["revenue_cancellation_fee_base"], j["revenue_unconverted"]) == (D("0.00"), 1)
+
+
+async def test_one_aa_booking_with_several_lines(admin: asyncpg.Connection, app_pool: asyncpg.Pool) -> None:
+    """Several CRM lines share one AA booking (the lines of one accepted proposal): the invoiced amount is compared
+    with the sum of their quotes and counted once, spread over the lines by their quoted cost."""
+    await _rates(admin)
+    a = await _agency(admin)
+    t = a["tenant"]
+
+    async def booking(trip: uuid.UUID, ref: str, quotes: tuple[str, ...], invoiced: str, currency: str, rate: str):
+        for amount in quotes:
+            line = await _line(admin, t, trip, a["aa"], "aa", "confirmed", booking=ref)
+            await _money(admin, t, line, "cost", amount, currency=currency, rate=rate)
+        await _as_app(
+            app_pool, t,
+            "INSERT INTO crm.aa_invoice_cache (number, agency_supplier_id, invoice_kind, aa_status, currency, "
+            "total_amount, balance_amount, issued_on, due_on, booking_amounts, detail_read) "
+            "VALUES ($1, $2, 'settlement', 'issued', $3, $4::numeric, $4::numeric, $5::date, $5::date + 7, "
+            "jsonb_build_object($6::text, jsonb_build_object('amount', $4::text, 'complete', true)), true)",
+            f"AAT-2026-{next(_SEQ):06d}", a["aa"], currency, invoiced, DAY, ref,
+        )  # fmt: skip
+
+    # Two lines of 100 + 200 USD on BK-20, billed 300 in full: no mismatch, the AA cost is 300 (not 2 x 300).
+    match = await _trip(admin, t, 2, [])
+    await booking(match, "BK-20", ("100", "200"), "300", "USD", "1")
+    m = await _pnl(app_pool, t, match)
+    assert (m["aa_cost_quoted_base"], m["aa_cost_base"]) == (D("300.00"), D("300.00"))
+    assert (m["aa_lines_invoiced"], m["aa_lines_mismatch"]) == (2, 0)
+
+    # Two lines of 100 + 50 EUR on BK-21 (rate 1.1: 165.00 quoted), billed 161 EUR in full: a mismatch on the booking
+    # (both its lines), the AA cost 161 x 1.1 = 177.10 once, split 118.07 + 59.03 by the quotes.
+    diff = await _trip(admin, t, 2, [])
+    await booking(diff, "BK-21", ("100", "50"), "161", "EUR", "1.1")
+    d = await _pnl(app_pool, t, diff)
+    assert (d["aa_cost_quoted_base"], d["aa_cost_base"]) == (D("165.00"), D("177.10"))
+    assert (d["aa_lines_invoiced"], d["aa_lines_mismatch"]) == (2, 2)
+    assert d["total_cost_base"] == D("177.10")
 
 
 async def test_a_per_departure_cost_splits_exactly(admin: asyncpg.Connection, app_pool: asyncpg.Pool) -> None:
