@@ -371,6 +371,27 @@ def _charged(s: dict[str, Any], picks: dict[str, str] | None, deposit_pct: Any) 
     return sums
 
 
+def line_sells(s: dict[str, Any], choice: dict[str, str]) -> dict[str, Decimal]:
+    """AA-1066: each chosen option's sell after the version's discount, what its ledger line records. The discount is
+    spread over the charged options (pay-on-arrival items keep their sell), each ``sell × (1 − pct/100)`` to the cent,
+    and the rounding remainder goes to the largest charged option, so the charged sells add up to exactly
+    :func:`_charged`'s ``sell_total`` (what the client accepted and pays)."""
+    options = _option_map(s)
+    out = {oid: rules.money(options[oid]["sell_amount"]) for oid in set(choice.values()) if oid in options}
+    pct = s.get("discount_pct")
+    charged = sorted((oid for oid in out if not options[oid].get("pay_on_arrival")), key=lambda o: (out[o], o))
+    if not pct or not charged:
+        return out
+    rate = Decimal(pct) / 100
+    left = rules.money(sum((out[o] for o in charged), Decimal("0")) * rate)
+    for oid in charged[:-1]:
+        off = rules.money(out[oid] * rate)
+        out[oid] -= off
+        left -= off
+    out[charged[-1]] -= left
+    return out
+
+
 async def _bump(ctx: TenantContext, row: Any) -> int:
     """After a write: the next edit_seq and the draft's amounts from its defaults."""
     s = await _structure(ctx, row["proposal_id"])

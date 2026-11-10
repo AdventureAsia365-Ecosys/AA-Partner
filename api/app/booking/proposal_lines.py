@@ -9,7 +9,8 @@ multi-line quote of every chosen AA option, ``line_ref`` = the option id). From 
    the held quote's ``price_hash``, FX lock and each line's ``b2b_price``) and writes one AA line per held option:
    **the line id is the option id**, so Booking's ``line_ref`` names the line in every later answer (confirm, feed
    events) without a mapping table. Money: cost = the line's ``b2b_price`` (net from Booking, the quote's FX lock,
-   ``crm.booking_line_aa_money``), sell = the option's sell (what the agency priced, the builder's margin rules). A
+   ``crm.booking_line_aa_money``), sell = the option's sell (what the agency priced, the builder's margin rules; a
+   discounted version: less the option's share of the discount, :func:`app.proposals.builder.line_sells`). A
    hold Booking already lets go (expired, released) gives lines ``expired`` and an urgent task for the trip owner
    (re-quote); a hold Booking does not know gives lines ``failed`` (``hold_not_found``) and the task. Once per
    proposal: a proposal with any line of its options is never written again.
@@ -151,7 +152,9 @@ async def write_lines(ctx: AnyContext, proposal_id: uuid.UUID, held: contract.He
     s = await builder._structure(ctx, proposal_id)  # type: ignore[arg-type]
     picks = [dict(r) for r in await ctx.conn.fetch(builder.PICKS_SQL, proposal_id)]
     options = builder._option_map(s)
-    aa_ids = client_page.aa_chosen(client_page.effective(s, picks)["choice"], options)
+    choice = client_page.effective(s, picks)["choice"]
+    aa_ids = client_page.aa_chosen(choice, options)
+    sells = builder.line_sells(s, choice)  # AA-1066: after the version's discount, as the client accepted it
     days = {d["proposal_day_id"]: d for d in s["days"]}
     blocks = {b["option_block_id"]: b for b in s["blocks"]}
     pax = rules.room_pax(builder._jsonb(row["room_config"]), int(row["party_adults"]), row["party_child_ages"] or [])
@@ -186,11 +189,12 @@ async def write_lines(ctx: AnyContext, proposal_id: uuid.UUID, held: contract.He
         states.append(sub)
         line = held.lines.get(oid) if held else None
         if held is not None and line is not None:
-            # Net from Booking (the held quote's line price, its FX lock); the sell is the agency's (the option).
+            # Net from Booking (the held quote's line price, its FX lock); the sell is the agency's (the option, less
+            # its share of the version's discount: the lines add up to what the client accepted).
             await ctx.conn.fetchval(MONEY_SQL, made, "cost", line.b2b_price, held.currency, held.rate_per_usd,
                                     held.rate_date)  # fmt: skip
-            await ctx.conn.fetchval(MONEY_SQL, made, "sell", rules.money(o["sell_amount"]), held.currency,
-                                    held.rate_per_usd, held.rate_date)  # fmt: skip
+            await ctx.conn.fetchval(MONEY_SQL, made, "sell", sells[oid], held.currency, held.rate_per_usd,
+                                    held.rate_date)  # fmt: skip
         ctx.audit("aa_sync", "allowed", "booking_line", str(made), reason=f"proposal_line_{sub}")
     if not states:
         return None

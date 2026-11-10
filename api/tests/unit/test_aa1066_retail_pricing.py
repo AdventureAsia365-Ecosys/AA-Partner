@@ -362,6 +362,49 @@ def test_totals_with_a_discount() -> None:
     assert "discount" not in client_page.totals({**s, "discount_pct": None}, row, {})
 
 
+def _line_struct(pct: Any, *sells: tuple[str, str, bool]) -> tuple[dict[str, Any], dict[str, str]]:
+    blocks = [{"option_block_id": f"b{oid}", "default_option_id": oid} for oid, _, _ in sells]
+    options = [{"option_id": oid, "option_block_id": f"b{oid}", "sell_amount": D(sell), "net_amount": None,
+                "pay_on_arrival": on_arrival} for oid, sell, on_arrival in sells]  # fmt: skip
+    return {"blocks": blocks, "options": options, "discount_pct": pct}, {f"b{oid}": oid for oid, _, _ in sells}
+
+
+@pytest.mark.parametrize(
+    ("pct", "sells", "want"),
+    [
+        # No discount: every option keeps its sell.
+        (None, [("a", "100", False), ("p", "40", True)], {"a": D("100.00"), "p": D("40.00")}),
+        # 15 % over 1000 + 500: 850 + 425; pay on arrival untouched.
+        (
+            "15",
+            [("a", "1000", False), ("b", "500", False), ("p", "40", True)],
+            {"a": D("850.00"), "b": D("425.00"), "p": D("40.00")},
+        ),
+        # Rounding: 3 x 33.33 at 10 % is 99.99 - 10.00 = 89.99; per line 30.00 each, the cent left on the largest.
+        (
+            "10",
+            [("x", "33.33", False), ("y", "33.33", False), ("z", "33.33", False)],
+            {"x": D("30.00"), "y": D("30.00"), "z": D("29.99")},
+        ),
+        # Everything off: every charged line at 0.
+        ("100", [("a", "10.01", False), ("b", "0.01", False)], {"a": D("0.00"), "b": D("0.00")}),
+        # Only pay on arrival chosen: nothing to discount.
+        ("20", [("p", "40", True)], {"p": D("40.00")}),
+    ],
+)
+def test_line_sells_spread_the_discount_and_add_up_to_the_charged_total(
+    pct: Any, sells: list[tuple[str, str, bool]], want: dict[str, D]
+) -> None:
+    s, choice = _line_struct(D(pct) if pct else None, *sells)
+    got = builder.line_sells(s, choice)
+    assert got == want
+    on_arrival = {oid for oid, _, a in sells if a}
+    assert (
+        sum((v for o, v in got.items() if o not in on_arrival), D("0"))
+        == builder._charged(s, None, D("30"))["sell_total"]
+    )
+
+
 def test_the_price_hash_covers_rows_and_discount_only_when_present() -> None:
     s = {"days": [], "blocks": [], "options": [], "rules": []}
     sums = {"sell_total": D("1"), "deposit": D("1"), "pay_on_arrival_total": D("0")}
