@@ -60,6 +60,7 @@ INSERT INTO crm.agency_supplier (agency_supplier_id, name, category, contact_nam
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 """
 LIVE_LINES_SQL = "SELECT count(*) FROM crm.booking_line WHERE agency_supplier_id = $1 AND deleted_at IS NULL"
+DEPARTURE_COSTS_SQL = "SELECT count(*) FROM crm.departure_cost WHERE agency_supplier_id = $1 AND deleted_at IS NULL"
 EDITABLE = (
     "name",
     "category",
@@ -252,3 +253,6 @@ async def trash_check(ctx: TenantContext, supplier_id: uuid.UUID) -> None:
         raise Conflict("aa_supplier_builtin", "Adventure Asia is built in and cannot be deleted")
     if await ctx.conn.fetchval(LIVE_LINES_SQL, supplier_id):
         raise Conflict("supplier_in_use", "booking lines name this supplier; move or delete them first")
+    # AA-1068: a group departure cost names it (the cost would leave with the supplier at the trash purge).
+    if await ctx.conn.fetchval(DEPARTURE_COSTS_SQL, supplier_id):
+        raise Conflict("supplier_in_use", "group departure costs name this supplier; delete them first")

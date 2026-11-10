@@ -6,7 +6,8 @@ Route                                           What                            
 ``GET  /reports/summary?period=&owner=``        the whole Reports page                           every role (money:
                                                                                                  owner / agent)
 ``GET  /reports/tiles``                         the Home tiles (last 12 months)                  every role
-``GET  /reports/export?section=&period=&owner=`` one section as CSV (audited ``report_export``)   every role; money
+``GET  /reports/export?section=&period=&owner=`` one section as CSV (audited ``report_export``;   every role; money
+                                                AA-1068: ``profit`` with ``dimension=``)
                                                                                                  sections owner /
                                                                                                  agent
 ==============================================  ===============================================  =====================
@@ -41,9 +42,11 @@ Owner = Annotated[
     str | None,
     Query(pattern=r"^(me|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"),
 ]
+# AA-1068: the profit cube's dimension (the ``profit`` section only).
+Dimension = Annotated[Literal["lead_source", "sales_partner", "product", "travel_month", "owner_member"], Query()]
 Section = Annotated[
     Literal["funnel", "lead_sources", "outcomes", "open_trips", "money_by_month", "top_products", "outstanding",
-            "team", "success"],
+            "team", "success", "profit"],
     Query(),
 ]  # fmt: skip
 
@@ -72,10 +75,11 @@ async def get_export(
     section: Section,
     period: Period = DEFAULT_PERIOD,
     owner: Owner = None,
+    dimension: Dimension = "lead_source",
 ) -> Response:
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.REPORTS_VIEW) as ctx:
-        body, count = await export.export(ctx, period, owner, section)
+        body, count = await export.export(ctx, period, owner, section, dimension=dimension)
     stamp = datetime.now(UTC).strftime("%Y%m%d")
     return Response(
         content=body,
