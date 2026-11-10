@@ -189,6 +189,7 @@ class PricesIn(_Body):
 
 
 class DecisionIn(_Body):
+    seq: Seq | None = None  # the page sends the version it read; a decision does not change the version
     decision: Literal["approved", "rejected"]
 
 

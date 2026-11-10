@@ -26,6 +26,7 @@ import { pluralsEn, pluralsVi } from "./i18nPlurals";
 import { tripClosedEn, tripClosedVi } from "./i18nTripClosed";
 import { tripCodesEn, tripCodesVi } from "./i18nTripCodes";
 import { workflowsEn, workflowsVi } from "./i18nWorkflows";
+import { retailPricingEn, retailPricingVi } from "./i18nRetailPricing";
 
 export type Lang = "en" | "vi";
 export const LOCALE_COOKIE = "aa_crm_locale";
@@ -65,6 +66,7 @@ const en = {
   ...staffEn, // AA-1019: the AA staff console, S-02 and S-04 (lib/i18nStaff.ts)
   ...messagingEn, // AA-958: SMS and WhatsApp, Settings > Channels and the trip panel (lib/i18nMessaging.ts)
   ...workflowsEn, // AA-959: Tasks, Automations, the trip's automations panel, workflow task kinds (lib/i18nWorkflows.ts)
+  ...retailPricingEn, // AA-1066: traveller prices, price rules, the discount and its approval (lib/i18nRetailPricing.ts)
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Home",
@@ -2773,6 +2775,7 @@ const vi: Record<MessageKey, string> = {
   ...staffVi,
   ...messagingVi,
   ...workflowsVi,
+  ...retailPricingVi,
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Trang chủ",

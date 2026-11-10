@@ -5,6 +5,7 @@
 // except the margin share shown next to the totals.
 
 import { fmt, type MessageKey } from "@/lib/i18n";
+import type { AppliedRule, PriceRow, PricingBlock } from "@/lib/retailPricing";
 import type { BeforeYouGo } from "@/lib/textProposal";
 
 export type BuilderStatus = "draft" | "published" | "sent" | "accepted" | "superseded" | "withdrawn";
@@ -32,6 +33,11 @@ export interface BuilderOption {
   availability_checked_at: string | null;
   is_default: boolean;
   picked: boolean;
+  /** AA-1066: the price per traveller type (the sell is their sum), the rules the sell was suggested with, and the
+   *  grid the editor starts from (the suggestion shared per head, or the current sell). */
+  prices?: PriceRow[];
+  price_rules?: AppliedRule[] | null;
+  suggested_prices?: PriceRow[];
   aa?: {
     tour_source_id: string;
     component_id: string;
@@ -47,6 +53,8 @@ export interface BuilderOption {
     /** AA-1030: the suggested sell (the agency markup on the B2B price, else AA's suggested retail price x party). */
     suggested_sell?: string | null;
     suggested_basis?: "agency_markup" | "aa_rrp" | null;
+    /** AA-1066: the agency's price rules the suggestion applied. */
+    suggested_rules?: AppliedRule[];
   };
 }
 
@@ -113,7 +121,13 @@ export interface BuilderView {
     balance: string;
     net_total?: string | null;
     margin_total?: string | null;
+    /** AA-1066: only with a discount. */
+    subtotal?: string;
+    discount_pct?: string;
+    discount?: string;
   };
+  /** AA-1066: the agency's age bands, the party by traveller type, the discount and its approval. */
+  pricing?: PricingBlock;
   checks: { publishable: boolean; blocking: string[]; warnings: string[] };
   stage2: { accommodation_tier: string | null; group_pref: string | null; pace: string | null; party_adults: number; party_children: number };
   publish?: { published_at: string; price_hash: string; superseded: string[]; picks_carried: number };
@@ -197,6 +211,16 @@ export function builderErrorKey(detail: string): MessageKey {
     option_sold_out: "builder.err.aa_sold_out",
     invalid_nights: "aa.error.nights",
     aa_net_from_quote: "builder.err.aa_net_from_quote",
+    // AA-1066: traveller prices and the discount.
+    amount_from_prices: "pricing.err.amount_from_prices",
+    no_suggestion: "pricing.err.no_suggestion",
+    unit_net_partial: "pricing.err.unit_net_partial",
+    prices_nothing_charged: "pricing.err.prices_nothing_charged",
+    invalid_prices: "pricing.err.invalid_prices",
+    discount_needs_approval: "pricing.err.discount_needs_approval",
+    discount_approval_not_needed: "pricing.err.discount_approval_not_needed",
+    discount_approval_not_pending: "pricing.err.discount_approval_not_pending",
+    invalid_discount_pct: "pricing.err.invalid_discount_pct",
   };
   return known[detail] ?? "builder.err.generic";
 }
@@ -232,6 +256,9 @@ export function checkKey(code: string): MessageKey {
     prep_packs_not_chosen: "builder.check.prep_packs_not_chosen",
     terms_retired: "builder.check.terms_retired",
     terms_not_published: "builder.check.terms_not_published",
+    discount_needs_approval: "builder.check.discount_needs_approval",
+    discount_owner_approves: "builder.check.discount_owner_approves",
+    prices_party_changed: "builder.check.prices_party_changed",
   };
   return known[code] ?? "builder.err.generic";
 }

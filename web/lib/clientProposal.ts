@@ -4,6 +4,7 @@
 // Swap, C-04 accept, C-12 hold expired) and the trip's Proposal tab share. Amounts are the client's sell amounts and
 // the per-option difference to the included one (Decision D1): never a net, a margin or a per-line price.
 
+import type { PaxType } from "@/lib/retailPricing";
 import type { PublicProposal } from "./proposals";
 
 /** Fix B11: the link's token goes into this host-only cookie (scoped to the API's proposal path) and leaves the URL. */
@@ -32,6 +33,8 @@ export interface ClientOption {
   /** The sell difference to the block's included option ("0.00" for it); null when the agency shows the total only. */
   delta: string | null;
   blocked: { reason: "sold_out" | "excludes" | "requires"; with?: string | null } | null;
+  /** AA-1066: who the price is for (traveller types and counts, never a unit price). */
+  price_lines?: { pax_type: PaxType; qty: number }[];
 }
 
 export interface ClientBlock {
@@ -96,7 +99,18 @@ export interface ClientBuilderPage extends PublicProposal {
   rooms: { type: string; adults: number; children: number }[];
   days: ClientDay[];
   groups: { confirm_class: ConfirmClass; items: { title: string; choose_later: boolean }[] }[];
-  totals: { currency: string; total: string; pay_on_arrival_total: string; deposit: string; balance: string; balance_due_on: string | null };
+  totals: {
+    currency: string;
+    total: string;
+    pay_on_arrival_total: string;
+    deposit: string;
+    balance: string;
+    balance_due_on: string | null;
+    /** AA-1066: only with a discount: the total before it, the percent and the amount off. */
+    subtotal?: string;
+    discount_pct?: string;
+    discount?: string;
+  };
   selection_hash: string;
   hold: HoldBox;
   notice: VersionNotice | null;

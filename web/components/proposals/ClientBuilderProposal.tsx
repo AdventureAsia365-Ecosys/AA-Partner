@@ -19,6 +19,7 @@ import { useState } from "react";
 import { K, Button } from "@/app/_kit";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, langOf, type MessageKey } from "@/lib/i18n";
+import { priceLines } from "@/lib/retailPricing";
 import {
   acceptOpen,
   CHANGE_REASONS,
@@ -270,6 +271,11 @@ export function ClientBuilderProposal({ initial, dict, locale }: { initial: Clie
                       {t(`client.confirm.${o.confirm_class}`)}
                       {o.availability === "on_request" ? ` · ${t("client.onRequest")}` : ""}
                     </span>
+                    {o.price_lines && o.price_lines.length > 0 && (
+                      <span data-testid="client-price-lines" style={{ fontSize: 12.5, color: K.body }}>
+                        {priceLines(o.price_lines, t)}
+                      </span>
+                    )}
                     {blockedText && !o.chosen && <span style={{ fontSize: 12.5, color: K.danger }}>{blockedText}</span>}
                     {!accepted && block.client_may_swap && !o.chosen && !o.blocked && (
                       <Button testId="client-swap" disabled={busy} onClick={() => void pick(block, o)} variant={o.is_default ? "secondary" : "primary"} style={big}>
@@ -291,6 +297,15 @@ export function ClientBuilderProposal({ initial, dict, locale }: { initial: Clie
       ))}
 
       <dl data-testid="client-amounts" style={{ margin: 0, display: "grid", gridTemplateColumns: "auto 1fr", gap: "6px 12px", fontSize: 14 }}>
+        {page.totals.discount && page.totals.subtotal && (
+          // AA-1066: the agency's discount: the total before it and the amount off.
+          <>
+            <dt style={{ color: K.muted }}>{t("pricing.client.subtotal")}</dt>
+            <dd data-testid="client-subtotal" style={{ margin: 0, color: K.body }}>{formatAmount(page.totals.subtotal, cur, locale)}</dd>
+            <dt style={{ color: K.muted }}>{fmt(t("pricing.client.discount"), { pct: Number(page.totals.discount_pct) })}</dt>
+            <dd data-testid="client-discount" style={{ margin: 0, color: K.body }}>−{formatAmount(page.totals.discount, cur, locale)}</dd>
+          </>
+        )}
         <dt style={{ color: K.muted }}>{t("client.total")}</dt>
         <dd data-testid="client-total" style={{ margin: 0, color: K.ink, fontWeight: 600 }}>{formatAmount(page.total_amount, cur, locale)}</dd>
         {Number(page.totals.pay_on_arrival_total) > 0 && (
