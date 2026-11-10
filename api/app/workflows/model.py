@@ -4,7 +4,8 @@ rules the engine and the API share (crm-038 ``crm.workflow_rule`` stores what :f
 A rule is ``trigger`` + ``conditions`` + ``steps``:
 
 - **Trigger** (:data:`TRIGGER_KINDS`): ``stage_enter`` (a stage of :data:`app.stages.STAGES`), ``event`` (a trip event:
-  :data:`EVENTS`), ``date_anchor`` (a date of the trip, :data:`DATE_ANCHORS`, plus ``offset_days``), ``special_date``
+  :data:`EVENTS`), ``date_anchor`` (a date of the trip, :data:`DATE_ANCHORS`, plus ``offset_days``; AA-1067: or the due
+  date of each open payment schedule row, :data:`SCHEDULE_ANCHORS`), ``special_date``
   (a date of a client, :data:`SPECIAL_DATES`, plus ``offset_days``), ``manual`` (a task list a member applies, R9).
 - **Conditions** (:data:`CONDITION_KEYS`, all optional, all must hold): ``stages``, ``trip_styles``, ``lead_sources``,
   ``destinations_any``, ``has_children``, ``has_aa_lines``, ``stage3_incomplete``. ``tags_any`` is CRM-29b's (AA-960):
@@ -53,7 +54,22 @@ EVENTS = (
     "message.sent",
 )
 MESSAGE_EVENTS = ("message.received", "message.sent")
-DATE_ANCHORS = ("departure", "return", "stage_entered", "last_activity", "created")
+DATE_ANCHORS = (
+    "departure",
+    "return",
+    "stage_entered",
+    "last_activity",
+    "created",
+    "schedule_due_soon",
+    "schedule_overdue",
+)
+# AA-1067 (crm-09): date triggers on each open payment schedule row of the trip (crm.v_schedule_status) instead of a
+# trip date: ``schedule_due_soon`` = N days before its due date (offset -60..0), ``schedule_overdue`` = N days after it
+# (offset 1..60), while the row is not paid in full. One run per row and due date; a row gets at most one reminder
+# run in :data:`SCHEDULE_COOLDOWN_DAYS` (whatever rule), so a due-soon and an overdue rule never mail twice in a row.
+SCHEDULE_ANCHORS = ("schedule_due_soon", "schedule_overdue")
+SCHEDULE_OFFSETS = {"schedule_due_soon": (-60, 0), "schedule_overdue": (1, 60)}
+SCHEDULE_COOLDOWN_DAYS = 3
 SPECIAL_DATES = ("birthday", "passport_expiry", "trip_anniversary")
 # Special dates whose message is a greeting, never a service message: every send of such a rule is marketing.
 GREETING_DATES = ("birthday", "trip_anniversary")
@@ -207,6 +223,12 @@ def _trigger(kind: Any, value: Any, offset: Any) -> tuple[str, str | None, int]:
         raise _err("invalid_trigger", "trigger.value", "a cancel stops workflows; it does not start one")
     if kind not in ("date_anchor", "special_date") and offset != 0:
         raise _err("invalid_trigger", "trigger.offset_days", "only date triggers have an offset")
+    if kind == "date_anchor" and value in SCHEDULE_OFFSETS:
+        low, high = SCHEDULE_OFFSETS[value]
+        if not low <= offset <= high:
+            raise _err("invalid_trigger", "trigger.offset_days",
+                       "days before the due date (-60 to 0)" if value == "schedule_due_soon"
+                       else "days after the due date (1 to 60)")  # fmt: skip
     return kind, value, offset
 
 
@@ -507,6 +529,14 @@ def step_kind(kind: str, rule_id: uuid.UUID, step_no: int) -> str:
 def manual_kind() -> str:
     """A member's own task: the custom family with a random suffix (never in conflict with another)."""
     return CUSTOM_PREFIX + uuid.uuid4().hex[:24]
+
+
+def schedule_id_of(trigger_key: str | None) -> str | None:
+    """AA-1067: the payment schedule row a reminder run's trigger key names (``schedule:<row id>:...``), else None."""
+    if not trigger_key or not trigger_key.startswith("schedule:"):
+        return None
+    parts = trigger_key.split(":")
+    return parts[1] if len(parts) > 1 and parts[1] else None
 
 
 def is_custom(kind: str) -> bool:

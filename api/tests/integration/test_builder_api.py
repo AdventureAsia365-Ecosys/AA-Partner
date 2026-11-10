@@ -432,6 +432,8 @@ async def test_a_sold_out_aa_alternative_with_an_expired_quote_never_blocks_publ
 async def test_a_full_deposit_with_a_balance_date_is_a_check_not_a_500(app_pool: asyncpg.Pool) -> None:
     s = await _setup(app_pool)
     v = await _publishable(app_pool, s)  # has a balance date
+    # AA-1067: the deposit / balance pair of a version without payment lines (a version with lines: test_aa1067_*).
+    v = await _as(app_pool, s, "agent", builder.update_settings, _pid(v), v["edit_seq"], {"schedule": None})
     v = await _as(app_pool, s, "agent", builder.update_settings, _pid(v), v["edit_seq"],
                   {"deposit_pct": Decimal("100")})  # fmt: skip
     assert v["checks"]["blocking"] == ["balance_due_on_not_needed"]

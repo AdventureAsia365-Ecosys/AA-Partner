@@ -50,11 +50,12 @@ import asyncpg
 from app import stages
 from app.booking import proposal_lines
 from app.booking.client import BookingClient
+from app.cancel_policy import service as cancel_policy
 from app.errors import Conflict, Invalid, NotFound
 from app.esign import merge, signing
 from app.esign import terms as esign_terms
 from app.intake import stage1
-from app.payments import claims
+from app.payments import claims, schedule_plan
 from app.portal.public import check_origin
 from app.proposals import builder, client_page, events, holds, prep_packs
 from app.settings import Settings
@@ -74,7 +75,7 @@ SELECT p.proposal_id, p.trip_id, p.version, p.status, p.kind, p.body_enc, p.curr
        p.hold_expires_at, p.hold_selection_sha256, p.hold_count, p.recheck_day, p.recheck_count_day,
        p.hold_attempt, p.hold_pending_key, p.hold_pending_at, p.hold_pending_quote_id, p.hold_pending_price_hash,
        p.hold_pending_selection_sha256, p.hold_release_id,
-       p.accepted_total_amount, p.accepted_deposit_amount, p.link_id,
+       p.accepted_total_amount, p.accepted_deposit_amount, p.link_id, p.cancellation_policy_id,
        t.title, t.start_date, t.end_date, t.owner_member_id, t.party_adults, t.party_child_ages
   FROM crm.proposal p JOIN crm.trip t ON t.trip_id = p.trip_id AND t.deleted_at IS NULL
  WHERE p.link_id = $1 AND p.status IN ('sent', 'accepted') AND p.deleted_at IS NULL
@@ -120,11 +121,14 @@ TODAY_SQL = """
 SELECT (now() AT TIME ZONE coalesce((SELECT timezone FROM crm.tenant_settings LIMIT 1), 'Asia/Ho_Chi_Minh'))::date
 """
 SCHEDULE_INSERT_SQL = """
-INSERT INTO crm.payment_schedule (trip_id, proposal_id, kind, amount, currency, due_on) VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO crm.payment_schedule (trip_id, proposal_id, kind, amount, currency, due_on, seq, percent)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 """
+# AA-1067: the live status of each row (partial / overdue derived in crm.v_schedule_status).
 SCHEDULE_SQL = """
-SELECT kind, amount, currency, due_on, status FROM crm.payment_schedule
- WHERE proposal_id = $1 AND status <> 'void' AND deleted_at IS NULL ORDER BY due_on, kind
+SELECT kind, seq, amount, currency, due_on, status, live_status, paid_amount FROM crm.v_schedule_status
+ WHERE proposal_id = $1 AND status <> 'void'
+ ORDER BY due_on, array_position(ARRAY['deposit', 'instalment', 'balance'], kind), seq
 """
 TASK_SQL = """
 INSERT INTO crm.task (trip_id, kind, priority, assignee_member_id, due_anchor, due_at)
@@ -193,7 +197,8 @@ async def _page(ctx: AnyContext, keys: KeyProvider, link: Any, row: Any) -> dict
     terms = await ctx.conn.fetchrow(TERMS_SQL, row["terms_doc_id"]) if row["terms_doc_id"] else None
     agency = await ctx.conn.fetchval(AGENCY_SQL, link.tenant_id)
     # AA-955: merge fields of the terms text filled in for the page (the signing facts as placeholders).
-    values = signing.preview_values(agency, row, "lead")
+    values = await signing.with_policy(ctx, signing.preview_values(agency, row, "lead"),
+                                      policy_id=row.get("cancellation_policy_id"))  # fmt: skip
     out: dict[str, Any] = {
         "agency_name": agency,
         "proposal_id": str(row["proposal_id"]),
@@ -215,13 +220,18 @@ async def _page(ctx: AnyContext, keys: KeyProvider, link: Any, row: Any) -> dict
         "schedule": [
             {
                 "kind": s["kind"],
+                "seq": s["seq"],
                 "amount": _money(s["amount"]),
                 "currency": s["currency"],
                 "due_on": s["due_on"].isoformat(),
                 "status": s["status"],
+                "live_status": s["live_status"],
+                "paid_amount": _money(s["paid_amount"]),
             }
             for s in await ctx.conn.fetch(SCHEDULE_SQL, row["proposal_id"])
         ],
+        # AA-1067: the cancellation policy that goes with this version (frozen when it went out).
+        "cancellation_policy": await cancel_policy.summary(ctx, row.get("cancellation_policy_id")),
     }
     reaccept = await esign_terms.reaccept_needed(ctx, row["trip_id"]) if row["status"] == "accepted" else None
     out["terms_reaccept"] = (
@@ -549,6 +559,7 @@ async def accept(
         now = _now()
         total, deposit = Decimal(row["total_amount"]), Decimal(row["deposit_amount"])
         builder_args: tuple[Any, ...] = ()
+        s: dict[str, Any] = {}
         due_anchor, due_at = "created", None
         if row["kind"] == "builder":
             if raw.get("rooms_confirmed") is not True:
@@ -616,19 +627,20 @@ async def accept(
                 user_agent=user_agent,
             )
         today = await ctx.conn.fetchval(TODAY_SQL)
-        await ctx.conn.execute(
-            SCHEDULE_INSERT_SQL, row["trip_id"], row["proposal_id"], "deposit", deposit, row["currency"], today
-        )
-        if deposit < total:
-            await ctx.conn.execute(
-                SCHEDULE_INSERT_SQL,
-                row["trip_id"],
-                row["proposal_id"],
-                "balance",
-                total - deposit,
-                row["currency"],
-                max(row["balance_due_on"], today),
-            )
+        plan = s.get("schedule_plan")
+        if plan:
+            # AA-1067: one row per payment line of the accepted total (rounded per currency, the last line the rest;
+            # a date already past is due today).
+            for r in schedule_plan.accept_rows(plan, total, row["currency"].strip(), today):
+                await ctx.conn.execute(SCHEDULE_INSERT_SQL, row["trip_id"], row["proposal_id"], r["kind"], r["amount"],
+                                       row["currency"], r["due_on"], r["seq"], r["percent"])  # fmt: skip
+        else:
+            await ctx.conn.execute(SCHEDULE_INSERT_SQL, row["trip_id"], row["proposal_id"], "deposit", deposit,
+                                   row["currency"], today, 1, None)  # fmt: skip
+            if deposit < total:
+                await ctx.conn.execute(SCHEDULE_INSERT_SQL, row["trip_id"], row["proposal_id"], "balance",
+                                       total - deposit, row["currency"], max(row["balance_due_on"], today), 1,
+                                       None)  # fmt: skip
         await ctx.conn.execute(TASK_SQL, row["trip_id"], row["owner_member_id"], due_anchor, due_at)
         await ctx.conn.execute(SUBMITTED_SQL, link.link_id)
         await stages.touch(ctx, row["trip_id"])

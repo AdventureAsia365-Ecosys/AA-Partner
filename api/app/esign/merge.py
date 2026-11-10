@@ -4,6 +4,8 @@ An agency writes ``{{field}}`` in a booking terms, waiver or insurance declinati
 outside :data:`MERGE_FIELDS` (422 ``unknown_merge_field``) and the signing page renders the version for the signer.
 Only trip and signing facts are offered: no traveller field (passport, birth date, address) is ever merged into a
 document, so rendering decrypts nothing. ``signer.name`` is the full name the signer types at signing.
+``cancellation.policy`` (AA-1067) is the agency's charge table of the proposal's frozen policy version (the accepted
+proposal's on the portal), in words; without a policy it renders ``—``.
 
 Before signing the portal shows :data:`PREVIEW` placeholders for the signing facts; the sealed envelope holds the
 final values.
@@ -24,6 +26,8 @@ MERGE_FIELDS: dict[str, str] = {
     "signer.name": "the full name the signer types",
     "signer.role": "traveller, or guardian of a minor",
     "signed.date": "the signing date (YYYY-MM-DD, UTC)",
+    # AA-1067 (crm-11): the agency's cancellation charge table frozen on the proposal (tiers in words).
+    "cancellation.policy": "the cancellation policy of the proposal (the charge table in words)",
 }
 PREVIEW: dict[str, str] = {
     "signer.name": "[your full name]",

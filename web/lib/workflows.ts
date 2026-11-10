@@ -92,6 +92,9 @@ export interface LibraryTemplate {
   steps: Step[];
   needs_templates: boolean;
   installed: boolean;
+  /** AA-1067: installed paused whatever its steps (opt-in), and the languages of its starter message. */
+  starts_paused?: boolean;
+  starter_mail?: string[];
 }
 
 export interface WorkflowOptions {

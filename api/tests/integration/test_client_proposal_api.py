@@ -274,9 +274,11 @@ async def test_card_r_accept_after_the_hold_expired_offers_a_requote(app_pool: a
     assert rows[0]["accepted_hold_id"] == rows[0]["hold_id"]
     sched = await _raw(app_pool, s, "SELECT kind, amount FROM crm.payment_schedule WHERE proposal_id = $1 "
                        "ORDER BY kind", _pid(s["v"]))  # fmt: skip
+    # AA-1067: a new version starts with the AA default schedule (30 % now, 40 % at T-60, the rest at T-30).
     assert [(r["kind"], r["amount"]) for r in sched] == [
-        ("balance", Decimal("1120.00")),
+        ("balance", Decimal("480.00")),
         ("deposit", Decimal("480.00")),
+        ("instalment", Decimal("640.00")),
     ]
     task = await _raw(app_pool, s, "SELECT due_anchor FROM crm.task WHERE trip_id = $1 AND kind = 'collect_deposit'",
                       s["trip"])  # fmt: skip

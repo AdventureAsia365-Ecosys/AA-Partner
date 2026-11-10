@@ -401,7 +401,17 @@ async def test_trip_overview() -> None:
     with _raises(NotFound, "trip_not_found"):
         await service.trip_overview(tenant_ctx(), FakeVault(), TRIP)
     sent = _proposal_row(status="sent", price_hash=b"\x01" * 32, sent_at=NOW, terms_doc_id=DOC)
-    schedule = {**_schedule_row(), "due_on": TODAY, "paid_at": None}
+    schedule = {
+        **_schedule_row(),
+        "due_on": TODAY,
+        "paid_at": None,
+        "seq": 1,
+        "percent": None,
+        "paid_amount": Decimal(0),
+        "open_amount": Decimal(300),
+        "live_status": "due",
+        "days_overdue": 0,
+    }
     payment = {"payment_id": uuid.uuid4(), "schedule_id": SCHEDULE, "invoice_id": None, "amount": Decimal(1),
                "currency": "USD", "method": "cash", "received_on": TODAY}  # fmt: skip
     # AA-952 slice 3: a service-fee invoice's payment has no schedule row.
@@ -410,7 +420,7 @@ async def test_trip_overview() -> None:
         ScriptedConn()
         .on("SELECT trip_id, stage FROM crm.trip", {"trip_id": TRIP, "stage": "proposal"})
         .on("FROM crm.proposal WHERE trip_id", [sent])
-        .on("FROM crm.payment_schedule WHERE trip_id", [schedule])
+        .on("FROM crm.v_schedule_status WHERE trip_id", [schedule])
         .on("FROM crm.payment WHERE trip_id", [payment, fee])
     )
     ctx = tenant_ctx(conn)
@@ -758,7 +768,8 @@ async def test_home_without_and_with_a_session(monkeypatch: pytest.MonkeyPatch) 
                                                            "body_sha256": b"\x01" * 32})  # fmt: skip
     signed.on("FROM crm.signature_request WHERE trip_id", {"request_id": uuid.uuid4(), "status": "signed",
                                                            "signed_at": NOW})  # fmt: skip
-    deposit = {"kind": "deposit", "amount": Decimal(300), "currency": "USD", "due_on": TODAY, "status": "paid"}
+    deposit = {"kind": "deposit", "seq": 1, "amount": Decimal(300), "currency": "USD", "due_on": TODAY,
+               "status": "paid", "live_status": "paid"}  # fmt: skip
     signed.on("JOIN crm.proposal p ON p.proposal_id = s.proposal_id AND p.status = 'accepted'", [deposit])
     _portal(monkeypatch, signed)
     home = await portal.home(object(), TOKEN, "session")  # type: ignore[arg-type]

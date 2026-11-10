@@ -15,7 +15,7 @@
 //
 // No personal data here: ids, counts and codes only.
 import { useEffect, useState } from "react";
-import { Button, Checkbox, Field, Input, K, Modal } from "@/app/_kit";
+import { Button, Checkbox, Field, Input, K, Modal, Select } from "@/app/_kit";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, plural, type Lang, type MessageKey, t } from "@/lib/i18n";
@@ -36,6 +36,7 @@ import {
   type Stage,
 } from "@/lib/pipeline";
 import { formatAmount } from "@/lib/proposals";
+import { chargeBody, paymentsErrorKey, type CancelCharge, type ChargeMode } from "@/lib/retailPayments";
 
 export const field: React.CSSProperties = {
   font: "inherit",
@@ -205,38 +206,79 @@ export function CancelDialog({
   // AA-957: the refund asked back per payment (default: all that is left) and the commissions the supplier still pays.
   const [refunds, setRefunds] = useState<Record<string, string>>({});
   const [keep, setKeep] = useState<Record<string, boolean>>({});
+  // AA-1067: the charge to the client (the policy's, another amount with a reason, or waived with a reason).
+  const [mode, setMode] = useState<ChargeMode>("policy");
+  const [amount, setAmount] = useState("");
+  const [why, setWhy] = useState("");
+  // The charge the figures on screen were worked out with (chargeKey of the last dry run). Changing the mode, the
+  // amount or the reason makes them stale: Confirm waits for "Update the figures", so the run never sends a charge
+  // with refunds prefilled for another one.
+  const [checked, setChecked] = useState<string | null>(null);
   const tr = (key: string) => t(lang, key as MessageKey);
   const pending = preview?.cancellation?.status === "pending";
 
-  async function dryRun(code: string) {
+  /** The charge part of a body: undefined = the policy's; null = the typed amount or reason is missing. */
+  function chargePart(): Record<string, string> | null | undefined {
+    return chargeBody(mode, amount, why);
+  }
+
+  const stale = Boolean(preview && !pending && preview.charge && chargeKey(chargePart()) !== checked);
+
+  async function dryRun(code: string, charge: Record<string, string> | undefined = undefined) {
     setReason(code);
     setPreview(null);
     setError(null);
+    setChecked(null);
     if (!code) return;
     setBusy(true);
-    const res = await bffSend<CancelPreview>("POST", `trips/${tripId}/cancel?dry_run=true`, { cancel_reason_code: code });
+    const res = await bffSend<CancelPreview>("POST", `trips/${tripId}/cancel?dry_run=true`, { cancel_reason_code: code, ...(charge ? { charge } : {}) });
     setBusy(false);
     if (!res.ok) {
       setError(t(lang, moveErrorKey(res.detail)));
       return;
     }
     setPreview(res.data);
+    setChecked(chargeKey(charge));
     setRefunds(Object.fromEntries((res.data.payments ?? []).filter((p) => !p.needs_invoice).map((p) => [p.payment_id, p.refund_amount])));
     setKeep({});
   }
 
+  /** Another reason: a new dry run with the charge as set now (the policy's when the typed one is not complete). */
+  async function chooseReason(code: string) {
+    await dryRun(code, chargePart() ?? undefined);
+  }
+
+  async function recheck() {
+    const charge = chargePart();
+    if (charge === null) {
+      setError(tr("cancelCharge.invalid"));
+      return;
+    }
+    await dryRun(reason, charge);
+  }
+
   async function run() {
+    const charge = chargePart();
+    if (charge === null) {
+      setError(tr("cancelCharge.invalid"));
+      return;
+    }
+    if (stale) {
+      setError(tr("cancelCharge.stale"));
+      return;
+    }
     setBusy(true);
     setError(null);
     const body = {
       cancel_reason_code: reason,
       refunds: Object.entries(refunds).map(([payment_id, amount]) => ({ payment_id, amount: amount.trim() || "0" })),
       keep_commission: Object.entries(keep).filter(([, v]) => v).map(([id]) => id),
+      ...(charge ? { charge } : {}),
     };
     const res = await bffSend<CancelPreview>("POST", `trips/${tripId}/cancel?dry_run=false`, body);
     setBusy(false);
     if (res.ok) onDone(res.data);
-    else setError(t(lang, moveErrorKey(res.detail)));
+    else setError(paymentsErrorKey(res.detail) ? tr(paymentsErrorKey(res.detail) as string) : t(lang, moveErrorKey(res.detail)));
   }
 
   const confirmStep = preview && !pending;
@@ -269,7 +311,7 @@ export function CancelDialog({
               </span>
             ) : (
               <span data-testid="cancel-confirm" style={{ display: "contents" }}>
-                <Button size="sm" variant="danger" disabled={!preview || typed.trim() !== "CANCEL" || busy} onClick={() => void run()}>
+                <Button size="sm" variant="danger" disabled={!preview || stale || typed.trim() !== "CANCEL" || busy} onClick={() => void run()}>
                   {t(lang, "cancelTrip.confirm")}
                 </Button>
               </span>
@@ -280,7 +322,7 @@ export function CancelDialog({
     >
       <label style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted }}>
         {t(lang, "cancelTrip.reason")}
-        <select value={reason} onChange={(e) => void dryRun(e.target.value)} style={field} data-testid="cancel-reason">
+        <select value={reason} onChange={(e) => void chooseReason(e.target.value)} style={field} data-testid="cancel-reason">
           <option value="">{t(lang, "plan.choose")}</option>
           {CANCEL_REASONS.map((r) => (
             <option key={r} value={r}>
@@ -340,6 +382,22 @@ export function CancelDialog({
                 </span>
               ))}
             </section>
+          )}
+          {!pending && preview.charge && (
+            <CancelChargeBox
+              charge={preview.charge}
+              locale={locale}
+              tr={tr}
+              mode={mode}
+              amount={amount}
+              why={why}
+              busy={busy}
+              stale={stale}
+              onMode={setMode}
+              onAmount={setAmount}
+              onWhy={setWhy}
+              onRecheck={() => void recheck()}
+            />
           )}
           {!pending && (preview.payments ?? []).length > 0 && (
             <section data-testid="cancel-refunds" style={{ display: "grid", gap: 6, fontSize: 13 }}>
@@ -407,6 +465,106 @@ export function CancelDialog({
         </div>
       )}
     </Dialog>
+  );
+}
+
+/** The charge a dry run was worked out with, as a comparable key ("policy" for the policy's own charge). */
+function chargeKey(charge: Record<string, string> | null | undefined): string {
+  return charge === undefined ? "policy" : charge === null ? "invalid" : JSON.stringify(charge);
+}
+
+/** AA-1067 (crm-11 / crm-12): the charge block of the cancel dialog: days before departure, the frozen policy and its
+ *  tier, the charge, what was paid, kept and is refunded, the fee invoice; the member may charge another amount or
+ *  waive it (a reason each; an agent lowering it past the refund threshold needs the owner). */
+function CancelChargeBox({
+  charge,
+  locale,
+  tr,
+  mode,
+  amount,
+  why,
+  busy,
+  stale,
+  onMode,
+  onAmount,
+  onWhy,
+  onRecheck,
+}: {
+  charge: CancelCharge;
+  locale: DateLocale;
+  tr: (key: string) => string;
+  mode: ChargeMode;
+  amount: string;
+  why: string;
+  busy: boolean;
+  stale: boolean;
+  onMode: (m: ChargeMode) => void;
+  onAmount: (v: string) => void;
+  onWhy: (v: string) => void;
+  onRecheck: () => void;
+}) {
+  const cur = charge.currency ?? "";
+  const money = (v: string | null | undefined) => formatAmount(v ?? "0", cur, locale);
+  return (
+    <section data-testid="cancel-charge" data-decision={charge.decision} style={{ display: "grid", gap: 6, fontSize: 13 }}>
+      <strong style={{ fontSize: 12.5 }}>{tr("cancelCharge.title")}</strong>
+      <span>{charge.days_before === null ? tr("cancelCharge.daysNone") : fmt(tr("cancelCharge.days"), { n: Math.max(charge.days_before, 0) })}</span>
+      {charge.policy && charge.tier ? (
+        <span>{fmt(tr("cancelCharge.policy"), { name: charge.policy.name, n: charge.policy.version, pct: Number(charge.tier.charge_pct) })}</span>
+      ) : (
+        <span style={{ color: K.muted }}>{tr("cancelCharge.noPolicy")}</span>
+      )}
+      {charge.policy_charge !== null && <span>{fmt(tr("cancelCharge.policyCharge"), { amount: money(charge.policy_charge) })}</span>}
+      <strong data-testid="cancel-charge-amount">{fmt(tr("cancelCharge.charge"), { amount: money(charge.charge_amount) })}</strong>
+      <span>{fmt(tr("cancelCharge.paid"), { amount: money(charge.paid_amount) })}</span>
+      <span>{fmt(tr("cancelCharge.kept"), { amount: money(charge.kept_amount) })}</span>
+      <span data-testid="cancel-refund-due">{fmt(tr("cancelCharge.refundDue"), { amount: money(charge.refund_due) })}</span>
+      {Number(charge.invoice_amount) > 0 && <span data-testid="cancel-fee-invoice">{fmt(tr("cancelCharge.invoice"), { amount: money(charge.invoice_amount) })}</span>}
+      {charge.aa_fee_amount && <span>{fmt(tr("cancelCharge.aaFee"), { amount: money(charge.aa_fee_amount) })}</span>}
+      {charge.warnings.map((w) => (
+        <span key={w} data-testid="cancel-charge-warning" data-code={w} style={{ color: w === "charge_below_aa_fee" ? K.danger : K.amber }}>
+          {tr(`cancelCharge.warn.${w}`)}
+        </span>
+      ))}
+      {charge.currency && (
+        <>
+          <Field label={tr("cancelCharge.mode")}>
+            <Select
+              size="sm"
+              value={mode}
+              data-testid="cancel-charge-mode"
+              onChange={(e) => onMode(e.target.value as ChargeMode)}
+              options={(["policy", "override", "waive"] as const).map((m) => ({ value: m, label: tr(`cancelCharge.mode.${m}`) }))}
+            />
+          </Field>
+          {mode === "override" && (
+            <Field label={fmt(tr("cancelCharge.amount"), { currency: cur })}>
+              <Input size="sm" inputMode="decimal" value={amount} onChange={(e) => onAmount(e.target.value)} data-testid="cancel-charge-input" />
+            </Field>
+          )}
+          {mode !== "policy" && (
+            <Field label={tr("cancelCharge.reason")}>
+              <Input size="sm" value={why} maxLength={500} onChange={(e) => onWhy(e.target.value)} data-testid="cancel-charge-reason" />
+            </Field>
+          )}
+          <span data-testid="cancel-charge-update">
+            <Button size="sm" variant={stale ? "primary" : "secondary"} disabled={busy} onClick={onRecheck}>
+              {tr("cancelCharge.update")}
+            </Button>
+          </span>
+          {stale && (
+            <span data-testid="cancel-charge-stale" style={{ color: K.amber }}>
+              {tr("cancelCharge.stale")}
+            </span>
+          )}
+        </>
+      )}
+      {charge.needs_owner && (
+        <span data-testid="cancel-charge-owner" style={{ color: K.danger }}>
+          {tr("cancelCharge.needsOwner")}
+        </span>
+      )}
+    </section>
   );
 }
 

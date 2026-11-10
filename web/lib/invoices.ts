@@ -9,7 +9,7 @@
 
 import { amountOf } from "./proposals";
 
-export type InvoiceKind = "deposit" | "balance" | "service_fee" | "adjustment";
+export type InvoiceKind = "deposit" | "instalment" | "balance" | "service_fee" | "adjustment" | "cancellation_fee";
 export type InvoiceStatus = "draft" | "open" | "payment_claimed" | "paid" | "paid_unfulfillable" | "void" | "expired";
 export type InvoiceAction = "edit" | "issue" | "void" | "record_payment" | "reject_claim";
 /** Slice 4: the pay window (derived from the AA hold a deposit pays for). */

@@ -15,6 +15,7 @@ import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt } from "@/lib/i18n";
 import { PROPOSAL_API } from "@/lib/clientProposal";
 import { clientErrorKey, formatAmount, type ClientInvoice } from "@/lib/proposals";
+import { clientLineLabel } from "./ClientPaymentLines";
 
 function when(value: string | null, locale: string): string {
   if (!value) return "";
@@ -77,7 +78,7 @@ export function ClientPayBox({
           <div key={inv.invoice_id} data-testid="client-pay-invoice" data-state={state} style={{ display: "grid", gap: 6, padding: 12, borderRadius: 10, border: `1px solid ${K.line}`, background: K.card }}>
             <strong style={{ fontSize: 14, color: K.ink, overflowWrap: "anywhere" }}>
               {fmt(t("client.pay.line"), {
-                what: t(`client.kind.${inv.kind}`),
+                what: clientLineLabel(inv.kind, inv.seq, t),
                 number: inv.number,
                 amount: formatAmount(inv.total_amount, inv.currency, locale),
               })}

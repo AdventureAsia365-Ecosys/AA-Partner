@@ -124,6 +124,29 @@ def preview_values(agency: str | None, trip: Any, role: str) -> dict[str, str | 
     }
 
 
+ACCEPTED_POLICY_SQL = """
+SELECT cancellation_policy_id FROM crm.proposal
+ WHERE trip_id = $1 AND status = 'accepted' AND deleted_at IS NULL
+ ORDER BY accepted_at DESC LIMIT 1
+"""
+
+
+async def with_policy(
+    ctx: AnyContext,
+    values: dict[str, str | None],
+    *,
+    trip_id: uuid.UUID | None = None,
+    policy_id: uuid.UUID | None = None,
+) -> dict[str, str | None]:
+    """AA-1067: ``values`` plus ``cancellation.policy``: the policy version named (a proposal page), else the trip's
+    accepted proposal's (the portal), in words; None (renders ``—``) without one."""
+    from app.cancel_policy import service as cancel_policy
+
+    if policy_id is None and trip_id is not None:
+        policy_id = await ctx.conn.fetchval(ACCEPTED_POLICY_SQL, trip_id)
+    return {**values, "cancellation.policy": await cancel_policy.merge_text(ctx, policy_id)}
+
+
 def document_view(doc: Document, values: dict[str, str | None]) -> dict[str, Any]:
     return {
         "kind": doc.kind,

@@ -200,6 +200,23 @@ describe("the portal page", () => {
     expect(el.querySelector<HTMLInputElement>('[data-testid="portal-field-passport_no"]')!.value).toBe("");
   });
 
+  it("AA-1067: the payments list names each instalment by its number, never a raw key", async () => {
+    const payments = [
+      { kind: "deposit", seq: 1, amount: "300.00", currency: "USD", due_on: "2026-10-01", status: "paid" },
+      { kind: "instalment", seq: 1, amount: "200.00", currency: "USD", due_on: "2026-10-20", status: "due" },
+      { kind: "instalment", seq: 2, amount: "200.00", currency: "USD", due_on: "2026-11-05", status: "due" },
+      { kind: "balance", seq: 1, amount: "300.00", currency: "USD", due_on: "2026-11-20", status: "due" },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async () => reply(200, { ...HOME, payments })));
+    const el = await mount();
+    const rows = [...el.querySelectorAll('[data-testid="portal-payment"]')].map((r) => r.textContent ?? "");
+    expect(rows).toHaveLength(4);
+    expect(rows[1]).toContain("Instalment 1");
+    expect(rows[2]).toContain("Instalment 2");
+    expect(rows[3]).toContain("Balance");
+    expect(rows.join(" ")).not.toContain("client.kind");
+  });
+
   it("a companion given their own address: the link goes to them, the lead sees no link", async () => {
     const posted: Record<string, unknown>[] = [];
     vi.stubGlobal(

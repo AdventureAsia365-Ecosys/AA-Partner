@@ -9,7 +9,9 @@ counts a queued row as busy; not deploy-gate exempt). Per agency, in one :func:`
    the rule's conditions, start one run each, keyed ``date:<trip id>:<anchor>:<offset>:<anchor date>``. A tick that
    runs twice starts nothing twice (the key is unique per rule, card E); two trips on one date each get their run (the
    key names the trip); a trip whose departure moves gets a run for the new date; a new rule never fires for dates
-   older than the catch-up window.
+   older than the catch-up window. AA-1067: a ``schedule_due_soon`` / ``schedule_overdue`` rule starts one run per
+   open payment schedule row instead (``schedule:<row id>:<anchor>:<offset>:<due date>``; a row paid in full starts
+   nothing; at most one reminder run per row every 3 days).
 2. **Special dates** (R2), at :data:`SPECIAL_HOURS` local only (the client data is opened once or twice a day): a
    client's birthday, passport expiry and the anniversary of a completed trip's end (its lead client), + the rule's
    offset, within the catch-up window: one run per client and date (``special:<code>:<client id>:<date>``; the
@@ -111,6 +113,24 @@ SELECT r.workflow_run_id, r.step_index, r.next_at
  LIMIT $1
 """
 DIGEST_SQL = "SELECT task_digest FROM crm.tenant_settings"
+# AA-1067 (crm-09): the open payment schedule rows (not paid in full, of the accepted proposal) of live trips whose due
+# date + the rule's offset falls in the catch-up window; due-soon only before the due date, overdue only after it.
+SCHEDULE_CANDIDATES_SQL = """
+SELECT s.schedule_id, s.trip_id, s.due_on FROM crm.v_schedule_status s
+  JOIN crm.trip t ON t.trip_id = s.trip_id AND t.deleted_at IS NULL AND t.stage NOT IN ('lost', 'cancelled')
+  JOIN crm.proposal p ON p.proposal_id = s.proposal_id AND p.status = 'accepted' AND p.deleted_at IS NULL
+ WHERE s.status = 'due' AND s.open_amount > 0
+   AND s.due_on + $1::int BETWEEN $2::date - $3::int AND $2::date
+   AND (($4::text = 'schedule_due_soon' AND s.due_on >= $2::date)
+        OR ($4::text = 'schedule_overdue' AND s.due_on < $2::date))
+ ORDER BY s.due_on, s.schedule_id
+ LIMIT $5
+"""
+# One reminder run per schedule row in the cool-down window, whatever rule started it (the key names the row).
+SCHEDULE_COOLDOWN_SQL = """
+SELECT EXISTS (SELECT 1 FROM crm.workflow_run
+                WHERE trip_id = $1 AND trigger_key LIKE $2 AND created_at > now() - make_interval(days => $3))
+"""
 
 
 def _conditions(raw: Any) -> dict[str, Any]:
@@ -154,6 +174,9 @@ async def _date_triggers(ctx: SystemContext, tz: ZoneInfo, today: dt.date) -> Co
     counts: Counter[str] = Counter()
     for rule in await ctx.conn.fetch(DATE_RULES_SQL, "date_anchor"):
         anchor, offset = rule["trigger_value"], int(rule["trigger_offset_days"])
+        if anchor in model.SCHEDULE_ANCHORS:
+            counts["schedule_runs_started"] += await _schedule_triggers(ctx, rule, today)
+            continue
         expr = DATE_EXPRESSIONS.get(anchor)
         if expr is None:
             continue
@@ -169,6 +192,33 @@ async def _date_triggers(ctx: SystemContext, tz: ZoneInfo, today: dt.date) -> Co
             if await triggers.start(ctx, rule, trip_id=r["trip_id"], traveler_id=None, key=key) is not None:
                 counts["date_runs_started"] += 1
     return counts
+
+
+def reminder_key(schedule_id: Any, anchor: str, offset: int, due_on: dt.date) -> str:
+    """``schedule:<row id>:<anchor>:<offset>:<due date>``: one run per rule, row and due date (a moved date runs
+    again); the row id prefix is what the cool-down and the engine's merge fields read."""
+    return f"schedule:{schedule_id}:{anchor}:{offset}:{due_on.isoformat()}"
+
+
+async def _schedule_triggers(ctx: SystemContext, rule: Any, today: dt.date) -> int:
+    """AA-1067 (crm-09): a ``schedule_due_soon`` / ``schedule_overdue`` rule starts one run per open schedule row
+    whose due date + offset is reached (catch-up window), unless the row had a reminder run in the cool-down."""
+    anchor, offset = rule["trigger_value"], int(rule["trigger_offset_days"])
+    rows = await ctx.conn.fetch(SCHEDULE_CANDIDATES_SQL, offset, today, CATCHUP_DAYS, anchor, MAX_TRIPS_PER_RULE)
+    all_facts = await wf_facts.trips(ctx, list({r["trip_id"] for r in rows}))
+    conditions = _conditions(rule["conditions"])
+    started = 0
+    for r in rows:
+        facts = all_facts.get(r["trip_id"])
+        if facts is None or model.stop_reason(facts) or model.matches(conditions, facts) is not None:
+            continue
+        if await ctx.conn.fetchval(SCHEDULE_COOLDOWN_SQL, r["trip_id"], f"schedule:{r['schedule_id']}:%",
+                                   model.SCHEDULE_COOLDOWN_DAYS):  # fmt: skip
+            continue
+        key = reminder_key(r["schedule_id"], anchor, offset, r["due_on"])
+        if await triggers.start(ctx, rule, trip_id=r["trip_id"], traveler_id=None, key=key) is not None:
+            started += 1
+    return started
 
 
 async def _open_date(vault: Vault, column: str, row: Any) -> dt.date | None:

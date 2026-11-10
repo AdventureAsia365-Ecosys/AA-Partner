@@ -88,6 +88,9 @@ UNSEEDED = {
     "/crm/v1/tasks/{task_id}": "a task: no money table behind it",
     "/crm/v1/workflows/{rule_id}": "an automation rule: no money table behind it",
     "/crm/v1/workflows/{rule_id}/preview": "trip ids and a count",
+    # AA-1067: one version of the agency's cancellation charge table (days, percents, minimum charges): no cost, net or
+    # margin behind it; the list (/cancellation-policies) is called below.
+    "/crm/v1/cancellation-policies/{policy_id}": "the agency's cancellation charge table: no money table behind it",
 }
 
 

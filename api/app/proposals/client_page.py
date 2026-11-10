@@ -26,6 +26,7 @@ import json
 from decimal import Decimal
 from typing import Any
 
+from app.payments import schedule_plan
 from app.proposals import builder, rules
 from app.tenancy import AnyContext
 
@@ -107,6 +108,12 @@ def totals(s: dict[str, Any], row: Any, picks: dict[str, str]) -> dict[str, Any]
     if "discount" in sums:  # AA-1066: the total before the discount, the percent and the amount off
         out.update(subtotal=_money(sums["subtotal"]), discount_pct=str(s["discount_pct"]),
                    discount=_money(sums["discount"]))  # fmt: skip
+    if s.get("schedule_plan") and s.get("currency"):
+        # AA-1067: every payment line of the client's current total (kind, number, share, date, amount).
+        out["schedule"] = [
+            {k: v for k, v in line.items() if k != "days_before"}
+            for line in schedule_plan.view(s["schedule_plan"], sums["sell_total"], s["currency"])
+        ]
     return out
 
 

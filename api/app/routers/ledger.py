@@ -29,6 +29,18 @@ Route                                          What                             
 ``POST   /settings/price-rules``               AA-1066: add a retail price rule               owner
 ``PATCH  /settings/price-rules/{id}``          AA-1066: edit one                              owner
 ``DELETE /settings/price-rules/{id}``          AA-1066: delete one                            owner
+``GET    /settings/payment-schedule``          AA-1067: the schedule template (or AA's)       owner
+``PUT    /settings/payment-schedule``          AA-1067: set it (null = the AA default)        owner
+``GET    /cancellation-policies``              AA-1067: every version + the AA table          every role
+``POST   /cancellation-policies``              AA-1067: a draft (AA table, blank, new         owner
+                                               version of a published one)
+``GET    /cancellation-policies/{id}``         AA-1067: one version                           every role
+``PATCH  /cancellation-policies/{id}``         AA-1067: edit a draft (name, currency, tiers)  owner
+``DELETE /cancellation-policies/{id}``         AA-1067: delete a draft                        owner
+``POST   /cancellation-policies/{id}/publish`` AA-1067: freeze it (optionally the default)    owner
+``POST   /cancellation-policies/{id}/default`` AA-1067: the default for new proposals         owner
+``POST   /cancellation-policies/{id}/retire``  AA-1067: no longer for new proposals           owner
+``GET    /trips/{id}/cancellation-charge``     AA-1067: what the trip's cancel charged        every role
 =============================================  =============================================  ======================
 
 Money leaves only as keyed objects (``cost``, ``commission_expected``, ``margin_base``, ``default_commission_pct``):
@@ -48,9 +60,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
+from app.cancel_policy import service as cancel_policy
 from app.db import request_pool
 from app.ledger import fx, lines, suppliers
 from app.lifecycle import trash
+from app.payments import schedule_settings
 from app.permissions import Action, require
 from app.proposals import pricing, retail
 from app.routers.agency import tenant_header
@@ -194,6 +208,49 @@ class OverrideIn(_Body):
     quote: str = Field(pattern=r"^[A-Z]{3}$")
     rate: Decimal = Field(gt=0)
     rate_date: dt.date | None = None
+
+
+class TemplateDueIn(_Body):
+    anchor: Literal["accept", "before_start"]
+    days: int | None = Field(default=None, ge=0, le=730)
+
+
+class TemplateLineIn(_Body):
+    """AA-1067: one line of the payment schedule template (the service checks the order and the percents)."""
+
+    kind: Literal["deposit", "instalment", "balance"]
+    percent: Decimal | None = Field(default=None, gt=0, le=100, decimal_places=2)
+    due: TemplateDueIn
+
+
+class ScheduleTemplateIn(_Body):
+    template: list[TemplateLineIn] | None = Field(default=None, min_length=1, max_length=12)
+
+
+class TierIn(_Body):
+    days_before_min: int = Field(ge=0, le=730)
+    charge_pct: Decimal = Field(ge=0, le=100, decimal_places=2)
+    min_charge_amount: Decimal | None = Field(default=None, gt=0, le=Decimal("99999999.99"), decimal_places=2)
+
+
+class PolicyIn(_Body):
+    """AA-1067: a new draft: a new version of a published policy, the AA starting table, or name + tiers."""
+
+    from_policy_id: uuid.UUID | None = None
+    aa_default: bool = False
+    name: str | None = Field(default=None, max_length=80)
+    currency: str | None = Field(default=None, max_length=3)
+    tiers: list[TierIn] | None = Field(default=None, min_length=1, max_length=12)
+
+
+class PolicyChange(_Body):
+    name: str | None = Field(default=None, max_length=80)
+    currency: str | None = Field(default=None, max_length=3)
+    tiers: list[TierIn] | None = Field(default=None, min_length=1, max_length=12)
+
+
+class PolicyPublishIn(_Body):
+    make_default: bool = False
 
 
 def _payments_owner(ctx: Any) -> None:
@@ -425,6 +482,101 @@ async def delete_price_rule(
     async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
         _payments_owner(ctx)
         return await pricing.delete_rule(ctx, rule_id)
+
+
+# AA-1067 (crm-050): the payment schedule template a new builder version starts with (owner only).
+@router.get("/settings/payment-schedule")
+async def get_payment_schedule(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
+        return await schedule_settings.read(ctx)
+
+
+@router.put("/settings/payment-schedule")
+async def put_payment_schedule(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, body: ScheduleTemplateIn
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
+        _payments_owner(ctx)
+        lines = None if body.template is None else [line.model_dump(mode="json", exclude_none=True)
+                                                    for line in body.template]  # fmt: skip
+        return await schedule_settings.update(ctx, lines)
+
+
+# AA-1067 (crm-049): the agency's traveller cancellation policy (every role reads; the owner writes).
+@router.get("/cancellation-policies")
+async def get_cancellation_policies(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PIPELINE_VIEW) as ctx:
+        return await cancel_policy.listing(ctx)
+
+
+@router.post("/cancellation-policies", status_code=201)
+async def post_cancellation_policy(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, body: PolicyIn
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
+        _payments_owner(ctx)
+        return await cancel_policy.create(ctx, body.model_dump(mode="json", exclude_none=True))
+
+
+@router.get("/cancellation-policies/{policy_id}")
+async def get_cancellation_policy(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, policy_id: uuid.UUID
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PIPELINE_VIEW) as ctx:
+        return await cancel_policy.get(ctx, policy_id)
+
+
+@router.patch("/cancellation-policies/{policy_id}")
+async def patch_cancellation_policy(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, policy_id: uuid.UUID, body: PolicyChange
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
+        _payments_owner(ctx)
+        return await cancel_policy.update_draft(ctx, policy_id, body.model_dump(mode="json", exclude_unset=True))
+
+
+@router.delete("/cancellation-policies/{policy_id}")
+async def delete_cancellation_policy(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, policy_id: uuid.UUID
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
+        _payments_owner(ctx)
+        return await cancel_policy.delete_draft(ctx, policy_id)
+
+
+@router.post("/cancellation-policies/{policy_id}/{action}")
+async def post_cancellation_policy_action(
+    request: Request,
+    caller: CallerDep,
+    tenant_id: TenantDep,
+    policy_id: uuid.UUID,
+    action: Literal["publish", "default", "retire"],
+    body: PolicyPublishIn | None = None,
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
+        _payments_owner(ctx)
+        if action == "publish":
+            return await cancel_policy.publish(ctx, policy_id, make_default=bool(body and body.make_default))
+        if action == "default":
+            return await cancel_policy.set_default(ctx, policy_id)
+        return await cancel_policy.retire(ctx, policy_id)
+
+
+@router.get("/trips/{trip_id}/cancellation-charge")
+async def get_cancellation_charge(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, trip_id: uuid.UUID
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_VIEW) as ctx:
+        return {"trip_id": str(trip_id), "charge": await cancel_policy.charge_of(ctx, trip_id)}
 
 
 @router.get("/fx/overrides")
