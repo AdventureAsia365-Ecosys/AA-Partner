@@ -108,6 +108,8 @@ class InstallIn(_Body):
     template_key: str = Field(pattern=r"^[a-z][a-z0-9_]{1,40}$")
     name: str | None = Field(default=None, max_length=200)
     steps: list[dict[str, Any]] | None = Field(default=None, max_length=20)
+    # AA-1067: copy the template's starter message into the agency's message templates and use it.
+    starter_mail: bool = False
 
 
 class StatusIn(_Body):
@@ -218,8 +220,11 @@ async def post_workflow(request: Request, caller: CallerDep, tenant_id: TenantDe
 @router.post("/workflows/install")
 async def post_install(request: Request, caller: CallerDep, tenant_id: TenantDep, body: InstallIn) -> dict[str, Any]:
     pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys) if body.starter_mail else None
     async with tenant_tx(pool, caller, tenant_id, action=Action.WORKFLOW_EDIT) as ctx:
-        return await service.install(ctx, body.template_key, name=body.name, steps=body.steps)
+        return await service.install(ctx, body.template_key, name=body.name, steps=body.steps,
+                                     vault=Vault(keys, ctx) if keys is not None else None,
+                                     starter_mail=body.starter_mail)  # fmt: skip
 
 
 @router.get("/workflows/runs")

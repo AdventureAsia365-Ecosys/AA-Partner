@@ -712,12 +712,14 @@ async def cancel(
     notices: list[Any] | None = None,
     refunds: Any = None,
     keep_commission: Any = None,
+    charge: Any = None,
 ) -> dict[str, Any]:
     """Cancel a booked, pre-departure or travelling trip (C12, :mod:`app.cancellation`). The dry run lists every effect
     and changes nothing; the run applies them in this transaction. A trip with AA bookings keeps its stage while
     Booking cancels them (``cancellation.status`` pending, card R); pressing it again asks Booking again. ``refunds``:
     ``[{payment_id, amount}]`` (the amount asked back per payment; default all that is left); ``keep_commission``: the
-    expected commissions the supplier still pays. ``notices``: the AA ops alarm lines
+    expected commissions the supplier still pays; ``charge``: the cancellation charge decision (AA-1067,
+    ``{mode: policy | override | waive, amount, reason}``). ``notices``: the AA ops alarm lines
     (:class:`app.ops_release.service.Notice`) the route writes after the commit."""
     from app import cancellation
 
@@ -731,6 +733,9 @@ async def cancel(
                        allowed=allowed_moves(trip["stage"]))  # fmt: skip
     choices = cancellation.refund_choices(refunds)
     keep = cancellation._uuid_list(keep_commission, "keep_commission")
+    from app.cancel_policy import rules as policy_rules
+
+    decision = policy_rules.check_decision(charge)
     out: dict[str, Any] = {
         "trip_id": str(trip_id),
         "from_stage": trip["stage"],
@@ -740,13 +745,21 @@ async def cancel(
     current = await cancellation.pending(ctx, trip_id)
     if current is not None and current["status"] == "pending":
         if dry_run:
-            return {**out, **await cancellation.plan(ctx, trip_id, refunds=choices), "cancellation": current}
+            return {**out, **_public(await cancellation.plan(ctx, trip_id, refunds=choices, charge=decision)),
+                    "cancellation": current}  # fmt: skip
         return {**out, **await cancellation.retry(ctx, trip_id), "stage": trip["stage"], "effects": []}
     if dry_run:
-        return {**out, **await cancellation.plan(ctx, trip_id, refunds=choices), "cancellation": None}
-    done = await cancellation.run(ctx, trip_id, trip, reason, refunds=choices, keep_commission=keep, notices=notices)
+        return {**out, **_public(await cancellation.plan(ctx, trip_id, refunds=choices, charge=decision)),
+                "cancellation": None}  # fmt: skip
+    done = await cancellation.run(ctx, trip_id, trip, reason, refunds=choices, keep_commission=keep, notices=notices,
+                                  charge=decision)  # fmt: skip
     status = done["cancellation"]["status"] if done["cancellation"] else "done"
     return {**out, **done, "stage": "cancelled" if status == "done" else trip["stage"]}
+
+
+def _public(plan: dict[str, Any]) -> dict[str, Any]:
+    """The cancel plan without its internal keys (``_charge``: the assessment the run reuses)."""
+    return {k: v for k, v in plan.items() if not k.startswith("_")}
 
 
 async def ensure_not_cancelling(ctx: AnyContext, trip_id: uuid.UUID) -> None:

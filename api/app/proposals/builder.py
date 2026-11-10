@@ -48,11 +48,13 @@ from decimal import Decimal
 from typing import Any
 
 from app import cancellation, stages
+from app.cancel_policy import service as cancel_policy
 from app.catalog import store as catalog
 from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.esign import terms as esign_terms
 from app.intake import completeness, stage2
 from app.margin import sees_margin
+from app.payments import schedule_plan
 from app.proposals import discount, prep_packs, pricing, retail, rules
 from app.proposals.service import (
     ACCEPTED_EXISTS_SQL,
@@ -92,7 +94,8 @@ PROPOSAL_SQL = """
 SELECT p.proposal_id, p.trip_id, p.version, p.status, p.kind, p.body_enc, p.currency, p.total_amount,
        p.deposit_amount, p.balance_due_on, p.terms_doc_id, p.price_hash, p.price_visibility, p.room_config,
        p.deposit_pct, p.starts_on, p.edit_seq, p.selection_seq, p.based_on_proposal_id, p.based_on_selection_seq,
-       p.published_at, p.sent_at, p.created_at, p.updated_at, t.stage AS trip_stage, t.party_adults,
+       p.published_at, p.sent_at, p.created_at, p.updated_at, p.cancellation_policy_id, t.stage AS trip_stage,
+       t.party_adults,
        t.party_child_ages, t.party_type, t.destinations, d.status AS terms_status
   FROM crm.proposal p JOIN crm.trip t ON t.trip_id = p.trip_id AND t.deleted_at IS NULL
   LEFT JOIN crm.agreement_doc d ON d.doc_id = p.terms_doc_id AND d.kind = 'booking_terms' AND d.deleted_at IS NULL
@@ -147,9 +150,17 @@ RETURNING edit_seq
 """
 SETTINGS_SQL = """
 UPDATE crm.proposal SET price_visibility = $2, room_config = $3::jsonb, deposit_pct = $4, starts_on = $5,
-       balance_due_on = $6, terms_doc_id = $7, body_enc = $8, discount_pct = $9
+       balance_due_on = $6, terms_doc_id = $7, body_enc = $8, discount_pct = $9, schedule_plan = $10::jsonb,
+       cancellation_policy_id = $11
  WHERE proposal_id = $1
 """
+# AA-1067: the version's payment lines (NULL = the deposit / balance pair) and currency, read with the structure.
+PLAN_SQL = "SELECT p.schedule_plan, p.currency FROM crm.proposal p WHERE p.proposal_id = $1 AND p.kind = 'builder'"
+SET_PLAN_SQL = """
+UPDATE crm.proposal SET schedule_plan = $2::jsonb, deposit_pct = $3, balance_due_on = $4 WHERE proposal_id = $1
+"""
+TEMPLATE_SQL = "SELECT schedule_template FROM crm.tenant_settings"
+COPY_POLICY_SQL = "UPDATE crm.proposal SET cancellation_policy_id = $2 WHERE proposal_id = $1"
 TERMS_SQL = "SELECT doc_id, status, body_sha256 FROM crm.agreement_doc WHERE doc_id = $1 AND kind = 'booking_terms'"
 SUPPLIER_SQL = """
 SELECT agency_supplier_id, kind FROM crm.agency_supplier WHERE agency_supplier_id = $1 AND deleted_at IS NULL
@@ -327,8 +338,18 @@ async def _structure(ctx: TenantContext, proposal_id: uuid.UUID) -> dict[str, An
     rule_rows = [dict(r) for r in await ctx.conn.fetch(RULES_SQL, proposal_id)]
     # AA-1066: the per-traveller rows of every option and the version's discount.
     prices = await pricing.prices_of(ctx, proposal_id)
-    return {"days": days, "blocks": blocks, "options": options, "rules": rule_rows, "prices": prices,
-            "discount_pct": await _discount_of(ctx, proposal_id)}  # fmt: skip
+    out = {"days": days, "blocks": blocks, "options": options, "rules": rule_rows, "prices": prices,
+           "discount_pct": await _discount_of(ctx, proposal_id)}  # fmt: skip
+    out.update(await _plan_of(ctx, proposal_id))
+    return out
+
+
+async def _plan_of(ctx: AnyContext, proposal_id: uuid.UUID) -> dict[str, Any]:
+    """AA-1067: ``schedule_plan`` (the parsed lines, None = the deposit / balance pair) and ``currency``."""
+    row = await ctx.conn.fetchrow(PLAN_SQL, proposal_id)
+    if row is None or not isinstance(row.get("currency"), str):
+        return {"schedule_plan": None, "currency": None}
+    return {"schedule_plan": schedule_plan.from_json(row.get("schedule_plan")), "currency": row["currency"].strip()}
 
 
 async def _discount_of(ctx: AnyContext, proposal_id: uuid.UUID) -> Decimal | None:
@@ -367,7 +388,14 @@ def _charged(s: dict[str, Any], picks: dict[str, str] | None, deposit_pct: Any) 
         sums["subtotal"], sums["discount"], sums["sell_total"] = subtotal, off, subtotal - off
         if sums["net_total"] is not None:
             sums["margin_total"] = rules.money(sums["sell_total"] - sums["net_total"])
-    sums["deposit"] = rules.deposit_of(sums["sell_total"], Decimal(deposit_pct or DEFAULT_DEPOSIT_PCT))
+    plan = s.get("schedule_plan")
+    if plan and s.get("currency"):
+        # AA-1067: the version's payment lines, each its share of the charged total, rounded per currency; the
+        # deposit is the first, the last takes the rest.
+        sums["schedule"] = schedule_plan.split(sums["sell_total"], plan, s["currency"])
+        sums["deposit"] = sums["schedule"][0]
+    else:
+        sums["deposit"] = rules.deposit_of(sums["sell_total"], Decimal(deposit_pct or DEFAULT_DEPOSIT_PCT))
     return sums
 
 
@@ -529,6 +557,8 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
         "deposit": _amount(sums["deposit"]),
         "balance": _amount(sums["sell_total"] - sums["deposit"]),
     }
+    if s.get("schedule_plan") and s.get("currency"):  # AA-1067: every payment line with its amount
+        totals["schedule"] = schedule_plan.view(s["schedule_plan"], sums["sell_total"], s["currency"])
     if "discount" in sums:  # AA-1066: only with a discount, so a version without one reads as before
         totals.update(subtotal=_amount(sums["subtotal"]), discount_pct=str(s["discount_pct"]),
                       discount=_amount(sums["discount"]))  # fmt: skip
@@ -563,6 +593,9 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
         "deposit_pct": str(row["deposit_pct"]) if row["deposit_pct"] is not None else None,
         "starts_on": _iso(row["starts_on"]),
         "balance_due_on": _iso(row["balance_due_on"]),
+        # AA-1067: the payment lines the agent set (None = the deposit / balance pair) and the cancellation policy.
+        "schedule": schedule_plan.to_json(s["schedule_plan"]) if s.get("schedule_plan") else None,
+        "cancellation_policy": await cancel_policy.summary(ctx, row.get("cancellation_policy_id")),
         "terms_doc_id": str(row["terms_doc_id"]) if row["terms_doc_id"] else None,
         # S262 round 3: the named version's state (published / retired / draft; None without terms or once removed).
         "terms_status": row["terms_status"],
@@ -719,6 +752,10 @@ def _checks(row: Any, s: dict[str, Any], now: dt.datetime) -> dict[str, Any]:
     sums = _charged(s, None, row["deposit_pct"])
     if sums["sell_total"] <= 0:
         blocking.append("nothing_to_charge")
+    elif s.get("schedule_plan") and s.get("currency"):
+        # AA-1067: every line after the deposit has a date, the dates go forward and stay before day 1, and the
+        # percents leave money for every line.
+        blocking += schedule_plan.problems(s["schedule_plan"], sums["sell_total"], s["currency"], row["starts_on"])
     elif sums["deposit"] < sums["sell_total"] and row["balance_due_on"] is None:
         blocking.append("balance_due_on_required")
     elif sums["deposit"] >= sums["sell_total"] and row["balance_due_on"] is not None:
@@ -811,6 +848,8 @@ async def _skeleton(
         None,
         None,
     )
+    # AA-1067: the agency's payment schedule template (else the AA default), dated from day 1.
+    await _write_plan(ctx, proposal_id, schedule_plan.from_template(await _template(ctx), trip["start_date"]))
     for day_no in range(0, count + 1):
         day_id = uuid.uuid4()
         await ctx.conn.execute(INSERT_DAY_SQL, day_id, proposal_id, trip["trip_id"], day_no, None, None, tz, None, None)
@@ -887,6 +926,13 @@ async def _copy(
     if s["discount_pct"]:
         await ctx.conn.execute("UPDATE crm.proposal SET discount_pct = $2 WHERE proposal_id = $1", proposal_id,
                                s["discount_pct"])  # fmt: skip
+    if s.get("schedule_plan"):  # AA-1067: the payment lines go with the copy
+        await _write_plan(ctx, proposal_id, s["schedule_plan"])
+    policy_id = src.get("cancellation_policy_id")
+    if policy_id is not None:
+        # The policy the source went out with, while it is still current (else Publish pins the agency default).
+        if await _policy_live(ctx, policy_id):
+            await ctx.conn.execute(COPY_POLICY_SQL, proposal_id, policy_id)
     for b in s["blocks"]:
         if b["default_option_id"] is not None:
             await ctx.conn.execute(SET_DEFAULT_SQL, block_map[str(b["option_block_id"])],
@@ -898,6 +944,53 @@ async def _copy(
 
 
 # ── Settings ─────────────────────────────────────────────────────────────────────────────────────
+
+
+async def _template(ctx: AnyContext) -> Any:
+    raw = await ctx.conn.fetchval(TEMPLATE_SQL)
+    return json.loads(raw) if isinstance(raw, str) else raw
+
+
+async def _write_plan(ctx: AnyContext, proposal_id: uuid.UUID, lines: list[schedule_plan.Line]) -> None:
+    await ctx.conn.execute(SET_PLAN_SQL, proposal_id, json.dumps(schedule_plan.to_json(lines)),
+                           schedule_plan.deposit_pct(lines), schedule_plan.balance_due_on(lines))  # fmt: skip
+
+
+async def _policy_live(ctx: AnyContext, policy_id: uuid.UUID) -> bool:
+    try:
+        await cancel_policy.check_choice(ctx, policy_id)
+    except (Conflict, NotFound):
+        return False
+    return True
+
+
+def _plan_changes(
+    changes: dict[str, Any], plan: list[schedule_plan.Line] | None, starts_on: dt.date | None, template: Any
+) -> list[schedule_plan.Line] | None:
+    """AA-1067: the version's payment lines after a settings write: ``schedule`` (the lines, ``null`` = back to the
+    deposit / balance pair), ``schedule_reset`` (from the agency template), or the old ``deposit_pct`` /
+    ``balance_due_on`` fields applied to the deposit and the last line; a new day 1 moves the lines that follow the
+    template."""
+    if changes.get("schedule_reset"):
+        return schedule_plan.from_template(template, starts_on)
+    if "schedule" in changes:
+        if changes["schedule"] is None:
+            return None
+        return schedule_plan.check_plan(changes["schedule"], starts_on)
+    if plan is None:
+        return None
+    lines = list(plan)
+    if "deposit_pct" in changes and changes["deposit_pct"] is not None:
+        lines[0] = schedule_plan.Line("deposit", 1, Decimal(str(changes["deposit_pct"])), None, None)
+    if "balance_due_on" in changes and len(lines) > 1:
+        last = lines[-1]
+        lines[-1] = schedule_plan.Line(last.kind, last.seq, last.percent, changes["balance_due_on"], None)
+    if "starts_on" in changes:
+        lines = schedule_plan.redate(lines, starts_on)
+    if lines != list(plan):
+        # Re-checked as a whole (a new deposit share may leave nothing for the balance).
+        return schedule_plan.check_plan(schedule_plan.to_json(lines), starts_on)
+    return lines
 
 
 async def update_settings(
@@ -929,6 +1022,15 @@ async def update_settings(
             raise NotFound("terms_not_found")
         if doc["status"] != "published":
             raise Conflict("terms_not_published", "choose the published booking terms version")
+    # AA-1067: the payment lines (money fields: the route checks MONEY_FIELDS_EDIT) and the cancellation policy.
+    s_plan = await _plan_of(ctx, proposal_id)
+    plan = _plan_changes(changes, s_plan["schedule_plan"], starts_on, await _template(ctx))
+    if plan is not None:
+        pct = schedule_plan.deposit_pct(plan) or pct
+        balance = schedule_plan.balance_due_on(plan)
+    policy_id = row.get("cancellation_policy_id")
+    if "cancellation_policy_id" in changes:
+        policy_id = await cancel_policy.check_choice(ctx, changes["cancellation_policy_id"])
     # AA-1066: the discount (a money field: the route checks MONEY_FIELDS_EDIT); 0 or null = none.
     disc = changes["discount_pct"] if "discount_pct" in changes else await _discount_of(ctx, proposal_id)
     if disc is not None:
@@ -944,8 +1046,9 @@ async def update_settings(
         if len(text) > MAX_BODY:
             raise Invalid("body_too_long", f"at most {MAX_BODY} characters")
         body = await vault.encrypt("proposal", "body_enc", proposal_id, text)
+    plan_json = json.dumps(schedule_plan.to_json(plan)) if plan is not None else None
     await ctx.conn.execute(SETTINGS_SQL, proposal_id, visibility, json.dumps(rooms) if rooms else None, pct,
-                           starts_on, balance, terms, body, disc)  # fmt: skip
+                           starts_on, balance, terms, body, disc, plan_json, policy_id)  # fmt: skip
     return await _done(ctx, vault, proposal_id, "settings")
 
 
@@ -1588,6 +1691,11 @@ def price_hash(row: Any, body: str, terms_sha256: bytes | None, s: dict[str, Any
         )  # fmt: skip
     if s.get("discount_pct"):
         record["discount_pct"] = str(rules.money(s["discount_pct"]))
+    # AA-1067: the payment lines and the cancellation policy, only when the version has them (older hashes unchanged).
+    if s.get("schedule_plan"):
+        record["schedule"] = schedule_plan.hash_record(s["schedule_plan"])
+    if row.get("cancellation_policy_id") is not None:
+        record["cancellation_policy_id"] = str(row["cancellation_policy_id"])
     return hashlib.sha256(json.dumps(record, sort_keys=True, separators=(",", ":")).encode()).digest()
 
 
@@ -1607,6 +1715,7 @@ async def publish(
     await _discount_gate(ctx, row, s)
     # A version without terms takes the agency's published booking terms (before the price hash, which covers them).
     row = await pin_current_terms(ctx, row)
+    row = await cancel_policy.pin(ctx, row)  # AA-1067: the agency's cancellation policy goes out with the version
     terms_sha = None
     if row["terms_doc_id"] is not None:
         terms = await ctx.conn.fetchrow(TERMS_SQL, row["terms_doc_id"])

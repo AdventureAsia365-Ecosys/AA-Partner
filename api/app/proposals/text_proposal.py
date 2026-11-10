@@ -34,9 +34,11 @@ from decimal import Decimal
 from typing import Any
 
 from app import cancellation
+from app.cancel_policy import service as cancel_policy
 from app.errors import Conflict, Invalid, NotFound
 from app.esign import terms as esign_terms
 from app.mail import conversations, templates
+from app.payments import schedule_plan
 from app.permissions import Action, require
 from app.proposals import builder, prep_packs, rules, service
 from app.proposals import text_render as tr
@@ -52,7 +54,8 @@ TO_SEND = {"builder": "published", "text": "draft"}
 ROW_SQL = """
 SELECT p.proposal_id, p.trip_id, p.version, p.status, p.kind, p.body_enc, p.currency, p.total_amount,
        p.deposit_amount, p.balance_due_on, p.terms_doc_id, p.price_hash, p.price_visibility, p.room_config,
-       p.deposit_pct, p.starts_on, p.link_id, t.title AS trip_title, t.stage, t.start_date, t.destinations
+       p.deposit_pct, p.starts_on, p.cancellation_policy_id, p.link_id, t.title AS trip_title, t.stage,
+       t.start_date, t.destinations
   FROM crm.proposal p JOIN crm.trip t ON t.trip_id = p.trip_id AND t.deleted_at IS NULL
  WHERE p.proposal_id = $1 AND p.deleted_at IS NULL
 """
@@ -90,10 +93,15 @@ async def current_hash(ctx: TenantContext, vault: Vault, row: Any) -> str:
         current = await esign_terms.current(ctx)
         if current is not None:
             terms_doc_id, terms = current["doc_id"], current["body_sha256"]
+    # AA-1067: Send pins the agency's default cancellation policy to a draft without one (cancel_policy.pin).
+    policy_id = row.get("cancellation_policy_id")
+    if policy_id is None:
+        default = await cancel_policy.current(ctx)
+        policy_id = default["policy_id"] if default is not None else None
     return service.price_hash(
         proposal_id=row["proposal_id"], version=row["version"], currency=row["currency"], total=row["total_amount"],
         deposit=row["deposit_amount"], balance_due_on=row["balance_due_on"], body=body,
-        terms_doc_id=terms_doc_id, terms_sha256=bytes(terms) if terms else None,
+        terms_doc_id=terms_doc_id, terms_sha256=bytes(terms) if terms else None, cancellation_policy_id=policy_id,
     ).hex()  # fmt: skip
 
 
@@ -154,9 +162,14 @@ async def snapshot(ctx: TenantContext, vault: Vault, row: Any, price_hash: str, 
             items,
         ))  # fmt: skip
     rooms = builder._jsonb(row["room_config"]) or []
+    plan = schedule_plan.from_json(s.get("schedule_plan"))
+    schedule: tuple[tuple[str, int, Decimal, Any], ...] = ()
+    if plan:  # AA-1067: every payment line of the version (its share of the published total, its date)
+        amounts = schedule_plan.split(Decimal(sums["sell_total"]), plan, row["currency"].strip())
+        schedule = tuple((line.kind, line.seq, amount, line.due_on) for line, amount in zip(plan, amounts, strict=True))
     return tr.Snapshot(kind="builder", pay_on_arrival_total=Decimal(sums["pay_on_arrival_total"]),
                        starts_on=row["starts_on"], rooms=tuple(rooms), days=tuple(days), before_you_go=before,
-                       **common)  # fmt: skip
+                       schedule=schedule, **common)  # fmt: skip
 
 
 async def _before_you_go(

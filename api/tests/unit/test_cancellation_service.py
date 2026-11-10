@@ -18,6 +18,7 @@ import pytest
 from app import cancellation, stages
 from app.booking import aa_lines
 from app.booking.client import BookingRefusal, BookingUnavailable
+from app.cancel_policy import service as cancel_policy
 from app.commissions import service as commissions
 from app.errors import Conflict, Invalid
 from app.invoices.service import VOID_BLOCK_SQL
@@ -113,6 +114,10 @@ def world(*, open_status: Any = '{"status": "done"}', stage: str = "booked") -> 
         "from_stage": stage, "aa_bookings": 1, "effects": {}, "created_at": ISSUED, "finished_at": None,
     })  # fmt: skip
     conn.on(flat(commissions.SYNC_SQL), '{"created": 0, "cancelled": 1}')
+    # AA-1067: a trip without an accepted proposal (an override into Booked): no policy, nothing charged.
+    conn.on(flat(cancel_policy.TRIP_FACTS_SQL), {"start_date": None, "proposal_id": None,
+                                                  "cancellation_policy_id": None, "currency": None, "kind": None,
+                                                  "total": None})  # fmt: skip
     return conn
 
 
@@ -179,7 +184,10 @@ async def test_the_dry_run_lists_every_effect_and_writes_nothing(seams: dict[str
         "commissions_cancelled": 1,
         "commissions_claimed_kept": 1,
         "ops_release_withdrawn": 1,
+        "cancellation_fee_invoiced": 0,  # AA-1067: no accepted proposal, no policy, nothing charged
     }
+    assert out["charge"]["decision"] == "no_policy" and out["charge"]["charge_amount"] == "0.00"
+    assert "no_accepted_proposal" in out["charge"]["warnings"]
     assert conn.sql(flat(cancellation.OPEN_TASKS_SQL)) == [(TRIP, ["verify_transfer"])]
     assert out["invoices_claimed"] == [str(INV_CLAIMED)]
     assert out["terms"] == {"version_label": "v3", "accepted_at": "2026-09-02T10:00:00"}

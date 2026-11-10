@@ -16,9 +16,17 @@ The dry run lists every effect and changes nothing; the run applies them in the 
    balance rows of the payment schedule are voided with them (S262 live finding), except a row a kept invoice bills
    (it settles through that invoice). From then on the trip takes no new invoice, "Mark paid" or client link
    (:func:`ensure_not_cancelled`, 409 ``trip_cancelled``).
-4. **Refunds**: one ``proposed`` request per payment with something left to ask back, for the amount the member set
-   (default everything left; lower keeps the non-refundable part; 0 none), the reason naming the booking terms the
-   client accepted (§4.6 approval as usual). A payment without an invoice gets the owner task ``cancel_refund_review``.
+4. **Charge and refunds** (AA-1067, :mod:`app.cancel_policy`): the dialog's ``charge`` block is the cancellation
+   policy frozen on the accepted proposal (days before departure, the tier percent, the charge), the money paid, the
+   refund due (paid - charge, never below 0) and the fee invoice; the member may override the charge (with a reason)
+   or waive it (with a reason; lowering it by more than the refund threshold is the owner's, 403
+   ``cancel_charge_owner_only``); a warning when the charge is below AA's own cancellation fees
+   (``charge_below_aa_fee``, added by the route after Booking's dry run). One ``proposed`` refund request per payment
+   with something left to ask back, for the amount the member set (default: what is left of it once the charge is
+   kept from the payments, the oldest first; 0 none), the reason naming the booking terms the client accepted (§4.6
+   approval as usual). A payment without an invoice gets the owner task ``cancel_refund_review``. The charge not
+   covered by money kept is billed on one issued ``cancellation_fee`` invoice; the run records the charge
+   (``crm.cancellation_charge``, the trip P&L seam of crm-30).
 5. **Commission**: expected commission is cancelled (``trip_cancelled``) unless the member keeps it (the supplier
    still pays); a claimed one stays.
 6. **Ops release** withdrawn (AA-956).
@@ -172,14 +180,14 @@ VOID_SQL = """
 UPDATE crm.invoice SET status = 'void', voided_at = now(), voided_by = $2, void_reason = 'Trip cancelled'
  WHERE invoice_id = $1
 """
-# S262 (C12 item 3): the due balance rows of the schedule, with the live (not void) invoices that bill each one. A
-# deposit row is never void (crm-016 CHECK); a booked trip has paid it anyway.
+# S262 (C12 item 3): the due balance rows of the schedule (AA-1067: and the due instalments), with the live (not void)
+# invoices that bill each one. A deposit row is never void (crm-016 CHECK); a booked trip has paid it anyway.
 SCHEDULE_DUE_SQL = """
 SELECT s.schedule_id,
        coalesce(array_agg(i.invoice_id) FILTER (WHERE i.invoice_id IS NOT NULL), '{}'::uuid[]) AS live_invoices
   FROM crm.payment_schedule s
   LEFT JOIN crm.invoice i ON i.schedule_id = s.schedule_id AND i.status <> 'void' AND i.deleted_at IS NULL
- WHERE s.trip_id = $1 AND s.status = 'due' AND s.kind = 'balance' AND s.deleted_at IS NULL
+ WHERE s.trip_id = $1 AND s.status = 'due' AND s.kind IN ('instalment', 'balance') AND s.deleted_at IS NULL
  GROUP BY s.schedule_id
  ORDER BY s.schedule_id
 """
@@ -195,7 +203,7 @@ SELECT s.schedule_id, s.trip_id,
   FROM crm.payment_schedule s
   JOIN crm.trip t ON t.trip_id = s.trip_id AND t.deleted_at IS NULL
   LEFT JOIN crm.invoice i ON i.schedule_id = s.schedule_id AND i.status = 'draft' AND i.deleted_at IS NULL
- WHERE s.status = 'due' AND s.kind = 'balance' AND s.deleted_at IS NULL
+ WHERE s.status = 'due' AND s.kind IN ('instalment', 'balance') AND s.deleted_at IS NULL
    AND (t.stage = 'cancelled' OR EXISTS (SELECT 1 FROM crm.trip_cancellation x WHERE x.trip_id = t.trip_id))
    AND NOT EXISTS (SELECT 1 FROM crm.invoice k
                     WHERE k.schedule_id = s.schedule_id AND k.deleted_at IS NULL AND k.status NOT IN ('draft', 'void'))
@@ -367,11 +375,19 @@ async def _aa_bookings(ctx: AnyContext, trip_id: uuid.UUID) -> list[dict[str, An
     ]
 
 
-async def _payments(ctx: AnyContext, trip_id: uuid.UUID, choices: dict[uuid.UUID, Decimal]) -> list[dict[str, Any]]:
+async def _payments(
+    ctx: AnyContext,
+    trip_id: uuid.UUID,
+    choices: dict[uuid.UUID, Decimal],
+    defaults: dict[str, Decimal] | None = None,
+) -> list[dict[str, Any]]:
+    """The client's payments (oldest first) with what can still be asked back and the refund asked: the member's
+    choice, else ``defaults`` (AA-1067: what is left once the cancellation charge is kept), else everything left."""
     out = []
     for r in await ctx.conn.fetch(PAYMENTS_SQL, trip_id):
         left = max(Decimal(r["refundable"]), Decimal(0))
-        asked = min(choices.get(r["payment_id"], left), left)
+        default = (defaults or {}).get(str(r["payment_id"]), left)
+        asked = min(choices.get(r["payment_id"], default), left)
         out.append(
             {
                 "payment_id": str(r["payment_id"]),
@@ -434,13 +450,23 @@ def refund_reason(reason: str, terms: dict[str, Any] | None) -> str:
 
 
 async def plan(
-    ctx: TenantContext, trip_id: uuid.UUID, *, refunds: dict[uuid.UUID, Decimal] | None = None
+    ctx: TenantContext,
+    trip_id: uuid.UUID,
+    *,
+    refunds: dict[uuid.UUID, Decimal] | None = None,
+    charge: Any = None,
 ) -> dict[str, Any]:
     """Everything the cancel would do (no write): the counts of :func:`app.stages.cancel`'s effect list and the detail
-    blocks the dialog shows (AA bookings, supplier lines, payments to refund, commissions, the accepted terms)."""
+    blocks the dialog shows (AA bookings, supplier lines, payments to refund, commissions, the accepted terms, the
+    cancellation charge). ``charge``: the dialog's decision (:func:`app.cancel_policy.rules.check_decision`). The
+    assessment rides along under ``_charge`` for :func:`run` (the route never returns it)."""
     from app.booking import aa_lines
+    from app.cancel_policy import rules as policy_rules
+    from app.cancel_policy import service as policy
     from app.ops_release import service as ops_release
     from app.stages import CANCEL_EFFECTS_SQL
+
+    decision = charge if isinstance(charge, policy_rules.Decision) else policy_rules.check_decision(charge)
 
     counts = await ctx.conn.fetchrow(CANCEL_EFFECTS_SQL, trip_id)
     aa = await aa_lines.close_effects(ctx, trip_id)
@@ -452,7 +478,12 @@ async def plan(
     ]  # fmt: skip
     invoices = await _invoices(ctx, trip_id)
     schedule = await _schedule_to_void(ctx, trip_id, {r["invoice_id"] for r in invoices["void"]})
-    payments = await _payments(ctx, trip_id, refunds or {})
+    base = await _payments(ctx, trip_id, {})
+    assessed = await policy.assess(ctx, trip_id, [p for p in base if Decimal(p["refundable"]) > 0], decision)
+    payments = await _payments(ctx, trip_id, refunds or {}, assessed.refunds)
+    # The money kept follows the refunds actually asked (a member may keep more, or less, than the charge).
+    assessed.refunds = {p["payment_id"]: Decimal(p["refund_amount"]) for p in payments
+                        if p["payment_id"] in assessed.refunds}  # fmt: skip
     commissions = await _commissions(ctx, trip_id)
     workflows = int(await ctx.conn.fetchval(WORKFLOW_DISPATCH_SQL, trip_id))
     for _name, hook in CANCEL_HOOKS:
@@ -476,6 +507,7 @@ async def plan(
         {"kind": "commissions_cancelled", "count": sum(1 for c in commissions if c["status"] == "expected")},
         {"kind": "commissions_claimed_kept", "count": sum(1 for c in commissions if c["status"] == "claimed")},
         {"kind": "ops_release_withdrawn", "count": await ops_release.live_count(ctx, trip_id)},
+        {"kind": "cancellation_fee_invoiced", "count": int(assessed.currency is not None and assessed.invoice_due > 0)},
     ]  # fmt: skip
     return {
         "effects": effects,
@@ -485,6 +517,8 @@ async def plan(
         "commissions": commissions,
         "terms": await _terms(ctx, trip_id),
         "invoices_claimed": [str(r["invoice_id"]) for r in invoices["claimed"]],
+        "charge": assessed.view(),
+        "_charge": assessed,
     }
 
 
@@ -516,16 +550,21 @@ async def run(
     refunds: dict[uuid.UUID, Decimal],
     keep_commission: list[uuid.UUID],
     notices: list[Any] | None,
+    charge: Any = None,
 ) -> dict[str, Any]:
     """The run (the caller locked the trip and checked the stage and the reason)."""
     from app import stages
     from app.booking import aa_lines
+    from app.cancel_policy import service as policy
     from app.commissions import service as commissions
+    from app.invoices import service as invoices_service
     from app.ops_release import service as ops_release
     from app.payments import reminders
 
     actor = f"member:{ctx.member_id}"
-    before = await plan(ctx, trip_id, refunds=refunds)
+    before = await plan(ctx, trip_id, refunds=refunds, charge=charge)
+    assessed: policy.Assessment = before.pop("_charge")
+    policy.require_allowed(ctx, assessed, trip_id)
     unknown_keep = set(keep_commission) - {uuid.UUID(c["commission_id"]) for c in before["commissions"]
                                            if c["status"] == "expected"}  # fmt: skip
     if unknown_keep:
@@ -562,6 +601,15 @@ async def run(
         requested += 1
     if any(p["needs_invoice"] for p in before["payments"]):
         await ctx.conn.execute(TASK_SQL, trip_id, REFUND_REVIEW_TASK, "urgent")
+    # AA-1067 (crm-12): the charge not covered by money kept is billed; the charge is recorded (the trip P&L seam).
+    if assessed.currency is not None:
+        invoice_id = None
+        if assessed.invoice_due > 0:
+            invoice_id = await invoices_service.issue_cancellation_fee(
+                ctx, trip_id, proposal_id=assessed.proposal_id, currency=assessed.currency,
+                amount=assessed.invoice_due, description=fee_description(assessed), memo=None,
+            )  # fmt: skip
+        await policy.record(ctx, trip_id, assessed, invoice_id)
     # 2. Agency suppliers.
     if before["supplier_lines"]:
         await ctx.conn.execute(TASK_SQL, trip_id, SUPPLIER_TASK, "urgent")
@@ -587,6 +635,20 @@ async def run(
     await nudge_requests(ctx, asked)
     ctx.audit("trip_cancel", "allowed", "trip", str(trip_id), reason=reason if status == "done" else "pending")
     return {**before, "cancellation": await pending(ctx, trip_id)}
+
+
+def fee_description(a: Any) -> str:
+    """The cancellation fee invoice's charge line (the client reads it): the policy, its percent and the days before
+    departure, or the override, and what was kept from the payments."""
+    if a.decision == "policy" and a.tier is not None and a.policy is not None:
+        days = "" if a.days_before is None else f", {max(a.days_before, 0)} days before departure"
+        pct = f"{a.tier.charge_pct.normalize():f}"
+        what = f"Cancellation charge ({pct} % under {a.policy['name']} v{a.policy['version']}{days})"
+    else:
+        what = "Cancellation charge"
+    what = f"{what}: {_money_text(a.charge)} {a.currency}"
+    kept = min(a.kept, a.charge)
+    return what if kept <= 0 else f"{what}, less {_money_text(kept)} {a.currency} already paid"
 
 
 async def retry(ctx: TenantContext, trip_id: uuid.UUID) -> dict[str, Any]:
@@ -693,6 +755,25 @@ async def booking_fees(client: Any, tenant_id: uuid.UUID, preview: dict[str, Any
     return preview
 
 
+def charge_vs_aa_fees(preview: dict[str, Any]) -> dict[str, Any]:
+    """AA-1067 (crm-11): after :func:`booking_fees`, the dry run's ``charge`` block warns when the charge to the
+    client is below the sum of AA's cancellation fees (``charge_below_aa_fee``), and the AA fee total in the trip
+    currency rides along (``aa_fee_amount``); a fee in another currency is not compared (``aa_fee_other_currency``)."""
+    from app.cancel_policy import rules as policy_rules
+
+    block = preview.get("charge")
+    if not isinstance(block, dict) or block.get("currency") is None:
+        return preview
+    fees = [b.get("fee") for b in preview.get("aa_bookings", [])]
+    amount = Decimal(block["charge_amount"])
+    extra = policy_rules.aa_fee_warnings(amount, block["currency"], fees)
+    same = [Decimal(str(f["amount"])) for f in fees if f and f.get("amount") is not None
+            and f.get("currency") == block["currency"]]  # fmt: skip
+    block["aa_fee_amount"] = _money_text(sum(same, Decimal(0))) if same else None
+    block["warnings"] = sorted({*block.get("warnings", []), *extra})
+    return preview
+
+
 def today_utc() -> dt.date:
     return dt.datetime.now(dt.UTC).date()
 
@@ -703,6 +784,7 @@ __all__ = [
     "CANCEL_DONE_CODES",
     "CANCEL_FAILED_TASK",
     "booking_fees",
+    "charge_vs_aa_fees",
     "ensure_not_cancelled",
     "finish_if_done",
     "is_closed",

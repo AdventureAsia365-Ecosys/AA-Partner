@@ -55,7 +55,7 @@ EXTENDED = "extended"
 NOT_NEEDED = "not_needed"
 UNAVAILABLE = "booking_unavailable"
 EXTEND_CODES = ("extend_limit", "hold_expired", "invalid", "not_found")
-CLIENT_KINDS = ("deposit", "balance")
+CLIENT_KINDS = ("deposit", "instalment", "balance")  # AA-1067: an instalment row is billed like the others
 
 # One invoice with what its pay window needs (the proposal's hold), for the client page and the agency views.
 INVOICE_SQL = """
@@ -244,8 +244,8 @@ def _client_invoice(row: Any, now: dt.datetime, pay_by: Any, *, terms_first: boo
 
 
 async def client_invoices(ctx: AnyContext, proposal_id: uuid.UUID, now: dt.datetime) -> list[dict[str, Any]]:
-    """The accepted page's pay box: the issued deposit / balance invoices of this version (never a service fee or an
-    adjustment of the trip, never another version's)."""
+    """The accepted page's pay box: the issued deposit / instalment / balance invoices of this version (never a service
+    fee or an adjustment of the trip, never another version's)."""
     rows = await ctx.conn.fetch(CLIENT_LIST_SQL, proposal_id, list(CLIENT_KINDS))
     if not rows:
         return []

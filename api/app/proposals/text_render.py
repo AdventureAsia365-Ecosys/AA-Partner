@@ -10,7 +10,9 @@ agent's template asks for, visa advice (only the official links, :func:`app.prop
 
 Merge fields of a template (R9; the names of the CIS starter templates, AA-977): ``{{traveller_first_name}}``,
 ``{{trip_name}}``, ``{{agency_name}}``, ``{{agent_name}}``, ``{{destination}}``, ``{{departure_date}}`` and
-``{{proposal}}`` (where the proposal goes; without it the proposal follows the template). A field without a value is
+``{{proposal}}`` (where the proposal goes; without it the proposal follows the template). AA-1067 adds
+``{{payment_amount}}`` and ``{{payment_due_date}}`` for the payment reminder workflows (the schedule row a run is
+about; a proposal text leaves them out). A field without a value is
 left out (a line that held only that field goes) and reported in ``unfilled``.
 """
 
@@ -22,11 +24,11 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
+from app.payments.schedule_plan import ZERO_DECIMAL
 from app.proposals.prep_packs import Section
 
 FORMATS = ("email", "whatsapp")
 LOCALES = ("en", "vi")
-ZERO_DECIMAL = frozenset({"VND", "JPY", "KRW", "CLP", "ISK", "UGX", "XAF", "XOF", "PYG", "RWF"})
 MERGE_FIELDS = (
     "traveller_first_name",
     "trip_name",
@@ -35,6 +37,8 @@ MERGE_FIELDS = (
     "destination",
     "departure_date",
     "proposal",
+    "payment_amount",
+    "payment_due_date",
 )
 _FIELD = re.compile(r"\{\{\s*([a-z_]{1,40})\s*\}\}")
 
@@ -63,6 +67,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "total": "Total",
         "deposit": "Deposit to confirm",
         "balance": "Balance",
+        "instalment": "Instalment {n}",
         "due": "due {date}",
         "on_arrival_total": "Paid on arrival (not included in the total)",
         "link": "See the details, choose your options and accept here: {link}",
@@ -93,6 +98,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "total": "Tổng cộng",
         "deposit": "Đặt cọc để xác nhận",
         "balance": "Số còn lại",
+        "instalment": "Đợt thanh toán {n}",
         "due": "hạn {date}",
         "on_arrival_total": "Trả khi đến nơi (không tính trong tổng)",
         "link": "Xem chi tiết, chọn dịch vụ và chấp nhận tại đây: {link}",
@@ -165,6 +171,9 @@ class Snapshot:
     rooms: tuple[dict[str, Any], ...] = ()
     days: tuple[Day, ...] = ()
     before_you_go: BeforeYouGo | None = None
+    # AA-1067: the payment lines of a builder version with a plan, (kind, seq, amount, due date or None = at accept);
+    # empty = the deposit / balance pair above.
+    schedule: tuple[tuple[str, int, Decimal, dt.date | None], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -311,6 +320,14 @@ def _before_you_go(b: BeforeYouGo, snap: Snapshot, fmt: str, locale: str, s: dic
 
 def _price(snap: Snapshot, fmt: str, locale: str, s: dict[str, Any]) -> list[str]:
     out = [_bold(s["price"], fmt), f"{s['total']}: {money(snap.total, snap.currency, locale)}"]
+    if snap.schedule:
+        for kind, seq, amount, due_on in snap.schedule:
+            label = s["instalment"].format(n=seq) if kind == "instalment" else s[kind]
+            due = f", {s['due'].format(date=date(due_on, locale, weekday=False))}" if due_on else ""
+            out.append(f"{label}: {money(amount, snap.currency, locale)}{due}")
+        if snap.pay_on_arrival_total > 0:
+            out.append(f"{s['on_arrival_total']}: {money(snap.pay_on_arrival_total, snap.currency, locale)}")
+        return out
     out.append(f"{s['deposit']}: {money(snap.deposit, snap.currency, locale)}")
     balance = snap.total - snap.deposit
     if balance > 0:

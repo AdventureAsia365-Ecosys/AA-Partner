@@ -25,8 +25,10 @@ import uuid
 from typing import Any
 
 from app.errors import Conflict, Invalid, NotFound
+from app.mail import templates as mail_templates
 from app.permissions import Action, require
 from app.tenancy import TenantContext
+from app.vault import Vault
 from app.workflows import facts as wf_facts
 from app.workflows import library, model, triggers
 
@@ -209,13 +211,24 @@ async def create(ctx: TenantContext, raw: dict[str, Any], *, status: str = "acti
     return await get(ctx, rule_id)
 
 
+LOCALE_SQL = "SELECT default_locale FROM crm.tenant LIMIT 1"
+
+
 async def install(
-    ctx: TenantContext, template_key: str, *, name: str | None = None, steps: list[dict[str, Any]] | None = None
+    ctx: TenantContext,
+    template_key: str,
+    *,
+    name: str | None = None,
+    steps: list[dict[str, Any]] | None = None,
+    vault: Vault | None = None,
+    starter_mail: bool = False,
 ) -> dict[str, Any]:
     """Install a library template as the agency's rule. ``steps`` may replace the template's (the same count and
     actions: the owner picked the message templates or edited the titles; a send step keeps the template's purpose, so
     a marketing greeting cannot be installed as transactional); without every message template the rule starts
-    paused."""
+    paused. AA-1067: ``starter_mail`` copies the template's starter message (the agency's default language) into the
+    agency's message templates and names it in the send steps left without one; a template marked ``starts_paused``
+    (the payment reminders to travellers) is installed paused whatever its steps: the owner switches it on (opt-in)."""
     require(ctx, Action.WORKFLOW_EDIT, object_kind="workflow_rule")
     template = library.get(template_key)
     if template is None:
@@ -232,14 +245,26 @@ async def install(
             {**s, "purpose": t["purpose"]} if "purpose" in t else dict(s)
             for s, t in zip(steps, raw["steps"], strict=True)
         ]
-    rule = model.validate(raw, draft=True)
-    await _check_references(ctx, rule)
-    status = _status_for(rule, "active")
     if await ctx.conn.fetchval(
         "SELECT 1 FROM crm.workflow_rule WHERE template_key = $1 AND status <> 'archived' AND deleted_at IS NULL",
         template.key,
     ):
         raise Conflict("template_installed", "this library automation is already installed")
+    if starter_mail:
+        if not template.starter_mail:
+            raise Invalid("no_starter_mail", "this automation has no starter message")
+        if vault is None:  # pragma: no cover — the route passes the vault with starter_mail
+            raise Invalid("no_starter_mail")
+        locale = await ctx.conn.fetchval(LOCALE_SQL)
+        locale = locale if locale in template.starter_mail else "en"
+        title, body = template.starter_mail[locale]
+        made = await mail_templates.create(ctx, vault, locale=locale, title=title, body=body)
+        for step in raw["steps"]:
+            if step["action"] == "send_email" and not step.get("message_template_id"):
+                step["message_template_id"] = made["message_template_id"]
+    rule = model.validate(raw, draft=True)
+    await _check_references(ctx, rule)
+    status = "paused" if template.starts_paused else _status_for(rule, "active")
     rule_id = await ctx.conn.fetchval(
         INSERT_SQL, rule.name, template.key, template.version, rule.trigger_kind, rule.trigger_value,
         rule.trigger_offset_days, json.dumps(rule.conditions), json.dumps(rule.steps), status,

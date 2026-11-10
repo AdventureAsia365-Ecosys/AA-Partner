@@ -27,6 +27,10 @@ class Template:
     trigger: dict[str, Any]
     steps: tuple[dict[str, Any], ...]
     conditions: dict[str, Any] = field(default_factory=dict)
+    # AA-1067: installed paused whatever its steps (the owner reads the message, then switches it on: opt-in).
+    starts_paused: bool = False
+    # AA-1067: a starter message (title, body) per locale the install may copy into the agency's templates.
+    starter_mail: dict[str, tuple[str, str]] = field(default_factory=dict)
 
     def rule(self) -> dict[str, Any]:
         return {
@@ -139,6 +143,60 @@ TEMPLATES: tuple[Template, ...] = (
         ),
     ),
 )
+# AA-1067 (crm-09): payment reminders to the traveller, sent from the agency mailbox (the trip owner's, else the
+# agency's). Opt-in: installed paused; the owner reads (or edits) the message and switches it on. The engine skips a
+# row paid in full meanwhile (``skipped_paid``); a row gets at most one reminder run every 3 days.
+DUE_SOON_MAIL = {
+    "en": (
+        "Payment reminder: {{trip_name}}",
+        "Hello {{traveller_first_name}},\n\nA friendly reminder that the next payment for {{trip_name}} "
+        "({{payment_amount}}) is due on {{payment_due_date}}.\n\nIf you have already paid, thank you and please "
+        "ignore this message.\n\n{{agency_name}}",
+    ),
+    "vi": (
+        "Nhắc thanh toán: {{trip_name}}",
+        "Chào {{traveller_first_name}},\n\nChúng tôi xin nhắc khoản thanh toán tiếp theo cho chuyến {{trip_name}} "
+        "({{payment_amount}}) đến hạn vào {{payment_due_date}}.\n\nNếu bạn đã thanh toán, xin cảm ơn và vui lòng "
+        "bỏ qua tin nhắn này.\n\n{{agency_name}}",
+    ),
+}
+OVERDUE_MAIL = {
+    "en": (
+        "Payment overdue: {{trip_name}}",
+        "Hello {{traveller_first_name}},\n\nOur records show that the payment for {{trip_name}} "
+        "({{payment_amount}}) was due on {{payment_due_date}} and is still open. Please let us know if you need the "
+        "payment details again.\n\nIf you have already paid, thank you and please ignore this message.\n\n"
+        "{{agency_name}}",
+    ),
+    "vi": (
+        "Thanh toán quá hạn: {{trip_name}}",
+        "Chào {{traveller_first_name}},\n\nTheo ghi nhận của chúng tôi, khoản thanh toán cho chuyến {{trip_name}} "
+        "({{payment_amount}}) đến hạn vào {{payment_due_date}} vẫn chưa hoàn tất. Hãy cho chúng tôi biết nếu bạn cần "
+        "lại thông tin thanh toán.\n\nNếu bạn đã thanh toán, xin cảm ơn và vui lòng bỏ qua tin nhắn này.\n\n"
+        "{{agency_name}}",
+    ),
+}
+TEMPLATES = (
+    *TEMPLATES,
+    Template(
+        key="payment_due_soon",
+        version=1,
+        name="Remind the traveller of a payment due (7 days before)",
+        trigger={"kind": "date_anchor", "value": "schedule_due_soon", "offset_days": -7},
+        steps=({"action": "send_email", "message_template_id": None, "purpose": "transactional"},),
+        starts_paused=True,
+        starter_mail=DUE_SOON_MAIL,
+    ),
+    Template(
+        key="payment_overdue",
+        version=1,
+        name="Remind the traveller of an overdue payment (3 days after)",
+        trigger={"kind": "date_anchor", "value": "schedule_overdue", "offset_days": 3},
+        steps=({"action": "send_email", "message_template_id": None, "purpose": "transactional"},),
+        starts_paused=True,
+        starter_mail=OVERDUE_MAIL,
+    ),
+)
 BY_KEY: dict[str, Template] = {t.key: t for t in TEMPLATES}
 
 
@@ -157,6 +215,8 @@ def listing() -> list[dict[str, Any]]:
             "conditions": dict(t.conditions),
             "steps": [dict(s) for s in t.steps],
             "needs_templates": bool(m.missing_templates([dict(s) for s in t.steps])),
+            "starts_paused": t.starts_paused,
+            "starter_mail": sorted(t.starter_mail),
         }
         for t in TEMPLATES
     ]

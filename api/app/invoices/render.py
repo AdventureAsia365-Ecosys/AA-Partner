@@ -19,9 +19,11 @@ from typing import Any
 CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; form-action 'none'; base-uri 'none'"
 KIND_TITLE = {
     "deposit": "Deposit invoice",
+    "instalment": "Instalment invoice",
     "balance": "Balance invoice",
     "service_fee": "Service fee invoice",
     "adjustment": "Invoice",
+    "cancellation_fee": "Cancellation charge invoice",
 }
 STYLE = """
 body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#1d232b;margin:0;padding:32px;

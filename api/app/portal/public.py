@@ -193,10 +193,10 @@ STAGE3_SQL = """
 UPDATE crm.traveler_access SET stage3_submitted_at = now() WHERE access_id = $1
 """
 SCHEDULE_SQL = """
-SELECT s.kind, s.amount, s.currency, s.due_on, s.status FROM crm.payment_schedule s
+SELECT s.kind, s.seq, s.amount, s.currency, s.due_on, s.status, s.live_status FROM crm.v_schedule_status s
   JOIN crm.proposal p ON p.proposal_id = s.proposal_id AND p.status = 'accepted' AND p.deleted_at IS NULL
- WHERE s.trip_id = $1 AND s.status <> 'void' AND s.deleted_at IS NULL
- ORDER BY s.due_on, s.kind
+ WHERE s.trip_id = $1 AND s.status <> 'void'
+ ORDER BY s.due_on, array_position(ARRAY['deposit', 'instalment', 'balance'], s.kind), s.seq
 """
 WAIVER_SQL = """
 SELECT doc_id, version_label, body_text, body_sha256 FROM crm.agreement_doc
@@ -585,7 +585,8 @@ async def _agreements_view(ctx: AnyContext, vault: Vault, access: Any, agency: s
     found = await signing.published(ctx)
     members = await signing.party(ctx, vault, access["trip_id"], access["start_date"])
     me = next((m for m in members if m.traveler_id == access["traveler_id"]), None)
-    values = signing.preview_values(agency, access, access["role"])
+    values = await signing.with_policy(ctx, signing.preview_values(agency, access, access["role"]),
+                                      trip_id=access["trip_id"])  # fmt: skip
     sigs = await signing.signatures(ctx, access["trip_id"], found.waiver.doc_id) if found.waiver else {}
     minor_no = 0
     rows = []
@@ -695,10 +696,12 @@ async def home(pool: asyncpg.Pool, token: str, session: str | None, keys: KeyPro
             out["payments"] = [
                 {
                     "kind": r["kind"],
+                    "seq": r["seq"],
                     "amount": str(r["amount"]),
                     "currency": r["currency"],
                     "due_on": r["due_on"].isoformat(),
                     "status": r["status"],
+                    "live_status": r["live_status"],  # AA-1067: partial / overdue derived
                 }
                 for r in await ctx.conn.fetch(SCHEDULE_SQL, access["trip_id"])
             ]
@@ -868,7 +871,10 @@ async def sign(
         docs = signing.documents(found, choice)
         shown = signing.shown_hashes(raw)
         if any(shown.get(d.doc_id) != d.body_sha256.hex() for d in docs):
-            values = signing.preview_values(await ctx.conn.fetchval(AGENCY_SQL, link.tenant_id), access, subject.role)
+            values = await signing.with_policy(
+                ctx, signing.preview_values(await ctx.conn.fetchval(AGENCY_SQL, link.tenant_id), access, subject.role),
+                trip_id=access["trip_id"],
+            )  # fmt: skip
             raise Conflict("document_changed", "the documents changed; read them again",
                            documents=[signing.document_view(d, values) for d in docs])  # fmt: skip
         waiver_id = uuid.UUID(found.waiver.doc_id)
@@ -894,7 +900,9 @@ async def sign(
         agency = await ctx.conn.fetchval(AGENCY_SQL, link.tenant_id)
         agent = esign_terms.clean_user_agent(user_agent)
         values = {
-            **signing.preview_values(agency, access, subject.role),
+            **await signing.with_policy(
+                ctx, signing.preview_values(agency, access, subject.role), trip_id=access["trip_id"]
+            ),  # fmt: skip
             "signer.name": name,
             "signer.role": "guardian of a minor" if guardian else "traveller",
             "signed.date": signed_at.date().isoformat(),
