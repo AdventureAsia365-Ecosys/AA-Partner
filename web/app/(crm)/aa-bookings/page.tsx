@@ -108,7 +108,8 @@ export default async function AaBookingsPage() {
               cells: [
                 b.trip_title,
                 `${b.title} · ${tr(`ledger.status.${b.status}`)}`,
-                b.booking_id ?? b.hold_id ?? "—",
+                // Short reference: the full id overflowed the 390 px card (S276 live check).
+                (b.booking_id ?? b.hold_id)?.slice(0, 8) ?? "—",
                 b.quoted_b2b ? money(b.quoted_b2b.amount, b.quoted_b2b.currency) : "—",
                 invoiced(b),
                 check(b),
