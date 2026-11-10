@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import uuid
 from decimal import Decimal
 from typing import Any
@@ -131,7 +132,8 @@ async def test_packs_from_the_aa_items_visa_link_only_and_one_hash_for_every_tex
     en = texts[("email", "en")]["body"]
     assert "Before you go: Nepal" in en and "Official information: https://www.immigration.gov.np" in en
     assert "Most travellers need a visa" not in en and "Nepalese rupee" in en and "Fitness:" in en
-    assert "900" not in en  # never the net
+    # never the net; a word-bounded match, because the body also carries random hex ids that may contain "900"
+    assert not re.search(r"\b900(?:\.00)?\b", en)
     vi = texts[("whatsapp", "vi")]["body"]
     assert "*Trước khi đi*" in vi and "Thông tin chính thức: https://www.immigration.gov.np" in vi
     assert texts[("email", "vi")]["subject"].startswith("Đề xuất chuyến đi")
