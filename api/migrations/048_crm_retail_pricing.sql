@@ -14,7 +14,9 @@
 --      discount_owner_limit_pct (default 10): a proposal discount above it needs the owner's approval.
 --   2. crm.proposal.discount_pct (NULL = no discount, else 0.01 to 100 with two decimals): a discount on the charged
 --      total of a builder version (pay-on-arrival items are never discounted); the amounts, the deposit and the price
---      hash follow it.
+--      hash follow it. Sealed with the other money columns once the version leaves draft: crm.proposal_sealed is
+--      recreated with the crm-019 column list plus discount_pct (CRM31), so no write path can change the discount of a
+--      published, sent or accepted version.
 --   3. crm.option.price_rules (NULL, else a JSON array of at most 20 {rule_id, name, adjust_pct} objects, at most
 --      4 KB): the agency price rules the option's sell was suggested with, copied when the agent used the suggestion
 --      (a snapshot: a later rename or delete of a rule does not change it).
@@ -42,7 +44,8 @@
 -- Behaviour on apply: none. Every agency reads the defaults (bands 11 / 1, limit 10 %), no proposal has a discount, no
 -- option has rows or rules, until the AA-Partner code PR deploys.
 --
--- Class: contract (ALTER of crm.tenant_settings, crm.proposal and crm.option, rows in crm.status_transition). MIG-4:
+-- Class: contract (ALTER of crm.tenant_settings, crm.proposal and crm.option, the crm.proposal seal trigger recreated, rows in
+-- crm.status_transition). MIG-4:
 -- this migration-only PR, then the code PR once it is applied on Dev. DM-7.1: crm.option_price and
 -- crm.discount_approval go with their trip, crm.retail_price_rule with the agency (root data standards Part B §7 rows
 -- added with this key).
@@ -50,8 +53,9 @@
 -- Rollback (a NEW forward migration, after the code is reverted): DROP TABLE crm.discount_approval,
 -- crm.retail_price_rule, crm.option_price; DROP FUNCTION crm.guard_discount_approval(); DELETE FROM
 -- crm.status_transition WHERE table_name = 'discount_approval'; ALTER TABLE crm.option DROP COLUMN price_rules;
--- ALTER TABLE crm.proposal DROP COLUMN discount_pct; ALTER TABLE crm.tenant_settings DROP COLUMN child_age_max,
--- DROP COLUMN infant_age_max, DROP COLUMN discount_owner_limit_pct.
+-- recreate crm.proposal_sealed with the crm-019 list (without discount_pct), then ALTER TABLE crm.proposal DROP COLUMN
+-- discount_pct; ALTER TABLE crm.tenant_settings DROP COLUMN child_age_max, DROP COLUMN infant_age_max, DROP COLUMN
+-- discount_owner_limit_pct.
 --
 -- Runs as crm_owner (DB Migrate switch), one BEGIN … COMMIT block, no role DDL. Re-runnable (IF NOT EXISTS, DROP …
 -- IF EXISTS before each ADD, CREATE OR REPLACE, ON CONFLICT DO NOTHING).
@@ -99,6 +103,12 @@ ALTER TABLE crm.proposal ADD CONSTRAINT proposal_discount_chk CHECK (
     discount_pct IS NULL OR (kind = 'builder' AND discount_pct > 0 AND discount_pct <= 100)
 );
 COMMENT ON COLUMN crm.proposal.discount_pct IS 'AA-1066 (crm-048): a discount in percent on the charged total of a builder version (pay-on-arrival items excluded); NULL = none. Covered by the price hash. Above crm.tenant_settings.discount_owner_limit_pct it needs an approved crm.discount_approval before a non-owner publishes.';
+-- The crm-019 seal (the content and the published amounts of a builder version never change after draft) plus the
+-- discount: the client total, deposit and balance are rebuilt from it, so it is a money column like total_amount.
+CREATE OR REPLACE TRIGGER proposal_sealed BEFORE UPDATE ON crm.proposal FOR EACH ROW
+    EXECUTE FUNCTION crm.guard_sealed_row('draft', 'trip_id', 'version', 'body_enc', 'currency', 'total_amount',
+        'deposit_amount', 'balance_due_on', 'terms_doc_id', 'price_hash', 'tenant_id', 'kind', 'price_visibility',
+        'room_config', 'deposit_pct', 'starts_on', 'published_at', 'discount_pct');
 
 -- ── 3. crm.option.price_rules ────────────────────────────────────────────────────────────────────
 ALTER TABLE crm.option ADD COLUMN IF NOT EXISTS price_rules JSONB;
@@ -342,6 +352,12 @@ BEGIN
        OR NOT has_column_privilege('crm_app', 'crm.proposal', 'discount_pct', 'UPDATE')
        OR NOT has_column_privilege('crm_app', 'crm.option', 'price_rules', 'INSERT') THEN
         RAISE EXCEPTION 'crm-048: crm_app cannot write the new columns';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgname = 'proposal_sealed'
+                   AND tgrelid = 'crm.proposal'::regclass
+                   AND position('discount_pct' IN pg_catalog.encode(tgargs, 'escape')) > 0
+                   AND position('published_at' IN pg_catalog.encode(tgargs, 'escape')) > 0) THEN
+        RAISE EXCEPTION 'crm-048: the proposal seal must cover discount_pct and keep the crm-019 columns';
     END IF;
     IF has_table_privilege('crm_support_reader', 'crm.option_price', 'SELECT')
        OR has_column_privilege('crm_support_reader', 'crm.tenant_settings', 'discount_owner_limit_pct', 'SELECT') THEN

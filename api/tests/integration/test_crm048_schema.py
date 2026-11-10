@@ -132,6 +132,26 @@ async def test_proposal_discount_and_option_rules_shapes(app_pool: asyncpg.Pool)
                    b["options"][0])  # fmt: skip
 
 
+async def test_the_discount_of_a_published_version_is_sealed(app_pool: asyncpg.Pool) -> None:
+    ids = await _agency(app_pool)
+    b = await _builder(app_pool, ids)
+    await _run(app_pool, ids["tenant"], "UPDATE crm.proposal SET discount_pct = 15 WHERE proposal_id = $1",
+               b["proposal"])  # fmt: skip
+    await _publish(app_pool, ids, b["proposal"])
+    for pct in (40, None):  # neither a new percent nor clearing it
+        with pytest.raises(asyncpg.PostgresError) as err:
+            await _run(app_pool, ids["tenant"], "UPDATE crm.proposal SET discount_pct = $2 WHERE proposal_id = $1",
+                       b["proposal"], pct)  # fmt: skip
+        assert err.value.sqlstate == "CRM31", pct
+    # The crm-019 columns stay sealed too (the trigger was recreated with the full list).
+    with pytest.raises(asyncpg.PostgresError) as err:
+        await _run(app_pool, ids["tenant"], "UPDATE crm.proposal SET deposit_pct = 50 WHERE proposal_id = $1",
+                   b["proposal"])  # fmt: skip
+    assert err.value.sqlstate == "CRM31"
+    assert await _run(app_pool, ids["tenant"], "SELECT discount_pct FROM crm.proposal WHERE proposal_id = $1",
+                      b["proposal"]) == 15  # fmt: skip
+
+
 async def test_option_prices_change_only_in_a_draft_and_cascade_with_the_option(app_pool: asyncpg.Pool) -> None:
     ids = await _agency(app_pool)
     b = await _builder(app_pool, ids)
