@@ -18,6 +18,7 @@ import io
 from decimal import Decimal
 from typing import Any
 
+from app.finance import pnl
 from app.permissions import Action, require
 from app.reports import service
 from app.tenancy import TenantContext
@@ -32,8 +33,9 @@ SECTIONS = (
     "outstanding",
     "team",
     "success",
+    "profit",  # AA-1068: the profit cube by one dimension (app.finance.pnl)
 )
-MONEY_SECTIONS = frozenset({"money_by_month"})
+MONEY_SECTIONS = frozenset({"money_by_month", "profit"})
 _DANGEROUS = ("=", "+", "-", "@", "\t", "\r")
 
 
@@ -145,10 +147,17 @@ async def section_rows(ctx: TenantContext, sc: service.Scope, section: str) -> t
     ]
 
 
-async def export(ctx: TenantContext, period: str, owner: str | None, section: str) -> tuple[bytes, int]:
-    """The section as CSV bytes and its row count; audited as ``report_export``."""
+async def export(
+    ctx: TenantContext, period: str, owner: str | None, section: str, *, dimension: str = "lead_source"
+) -> tuple[bytes, int]:
+    """The section as CSV bytes and its row count; audited as ``report_export``. ``dimension``: the ``profit``
+    section's grouping (AA-1068, :mod:`app.finance.pnl`)."""
     if section in MONEY_SECTIONS:
         require(ctx, Action.VIEW_MARGIN, object_kind="report", object_id=section)
+    if section == "profit":
+        header, rows = pnl.csv_rows(await pnl.profit_cube(ctx, period, owner, dimension, audit=False))
+        ctx.audit("report_export", "allowed", "report", section, reason=f"period_{period}")
+        return to_csv(header, rows), len(rows)
     sc = await service.scope(ctx, period, owner)
     header, rows = await section_rows(ctx, sc, section)
     ctx.audit("report_export", "allowed", "report", section, reason=f"period_{period}")

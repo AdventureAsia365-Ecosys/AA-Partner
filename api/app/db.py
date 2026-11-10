@@ -84,6 +84,7 @@ REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = (
     "crm-048",  # AA-1066: retail pricing (option_price, retail_price_rule, discount_approval; contract: MIG-4)
     "crm-049",  # AA-1067: cancellation policy + charge tables (expand, shipped with crm-050)
     "crm-050",  # AA-1067: payment schedule instalments, plan, policy pin, invoice kinds (contract: MIG-4)
+    "crm-051",  # AA-1068: CRM finance (v_trip_pnl, supplier bills, AA invoice copy, departure costs; contract: MIG-4)
 )
 REQUIRED_SCHEMA_VERSION = max(REQUIRED_SCHEMA_VERSIONS)
 

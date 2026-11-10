@@ -20,6 +20,7 @@
 // AA-959 (CRM-29a): the trip's automations under the workspace (its workflow runs, Apply a task list).
 // AA-1027 F3: the AI draft card under the trip panel (GET settings/ai: the plan's ai_assist and the AI switch decide
 // whether its Draft action works).
+// AA-1068: the Money card (owner / agent only: GET /trips/{id}/pnl and the trip's supplier bills) under the invoices.
 import { notFound } from "next/navigation";
 import { ErrorState } from "@/app/_kit";
 import { TripIncidentBanner } from "@/components/duty/IncidentPanel";
@@ -34,6 +35,8 @@ import { TripClosedProvider } from "@/components/pipeline/TripClosed";
 import { TripPanel } from "@/components/pipeline/TripPanel";
 import { AiDraftPanel } from "@/components/pipeline/AiDraftPanel";
 import { TripWorkflows } from "@/components/workflows/TripWorkflows";
+import { TripMoneyCard } from "@/components/finance/TripMoneyCard";
+import { canSeeMoney, type SupplierBill, type TripPnl } from "@/lib/finance";
 import type { AiSettings } from "@/lib/ai";
 import type { DocumentRow } from "@/lib/clients";
 import type { TripIncident } from "@/lib/duty";
@@ -78,6 +81,13 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
     crmCall<OpsReleaseView>(ctx.cfg, session, "GET", `trips/${tripId}/ops-release`),
     crmCall<AiSettings>(ctx.cfg, session, "GET", "settings/ai"),
   ]);
+  // AA-1068: the Money card's reads only for a role that sees money (the API refuses the assistant anyway).
+  const money = canSeeMoney(ctx.role)
+    ? await Promise.all([
+        crmCall<TripPnl>(ctx.cfg, session, "GET", `trips/${tripId}/pnl`),
+        crmCall<{ bills: SupplierBill[] }>(ctx.cfg, session, "GET", "supplier-bills", { query: tripQuery }),
+      ])
+    : null;
   const clientHost = ctx.cfg.clientHosts[0];
   // The agency's zone for times on the page (S262 AA-957: a time printed in the server's zone on the server and the
   // browser's in the browser failed hydration, and React's client re-render dropped the dark theme).
@@ -130,6 +140,17 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
         lang={ctx.lang}
         locale={ctx.locale}
         timeZone={invoices.data.timezone ?? "UTC"}
+        closed={closed}
+      />
+    )}
+    {money && money[0].ok && (
+      <TripMoneyCard
+        tripId={tripId}
+        pnl={money[0].data}
+        bills={money[1].ok ? money[1].data.bills : []}
+        lines={lines.ok ? lines.data.lines : []}
+        lang={ctx.lang}
+        locale={ctx.locale}
         closed={closed}
       />
     )}

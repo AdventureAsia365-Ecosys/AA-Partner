@@ -91,6 +91,11 @@ UNSEEDED = {
     # AA-1067: one version of the agency's cancellation charge table (days, percents, minimum charges): no cost, net or
     # margin behind it; the list (/cancellation-policies) is called below.
     "/crm/v1/cancellation-policies/{policy_id}": "the agency's cancellation charge table: no money table behind it",
+    # AA-1068: owner / agent only (view_margin, the assistant is 403 before any read); the lists and the trip P&L are
+    # called below (/supplier-bills, /aa-bookings, /trips/{trip_id}/pnl, /reports/profit).
+    "/crm/v1/supplier-bills/{bill_id}": "a supplier bill: view_margin, never the assistant",
+    "/crm/v1/aa-bookings/invoices/{number}": "an AA invoice read live from Booking: view_margin, never the assistant",
+    "/crm/v1/departures/{departure_ref}/pnl": "a group departure's P&L: view_margin, never the assistant",
 }
 
 

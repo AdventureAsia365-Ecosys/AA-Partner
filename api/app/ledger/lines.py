@@ -79,6 +79,12 @@ SELECT booking_line_id, kind, amount, currency, base_currency, amount_base, fx_r
   FROM crm.v_booking_line_money_current
  WHERE booking_line_id = ANY($1::uuid[])
 """
+# AA-1068 (crm-051): the lines a live (not void) supplier bill pays; only their actual_cost head counts.
+BILLED_SQL = """
+SELECT DISTINCT x.booking_line_id
+  FROM crm.supplier_bill_line x JOIN crm.supplier_bill b ON b.supplier_bill_id = x.supplier_bill_id
+ WHERE x.booking_line_id = ANY($1::uuid[]) AND b.status <> 'void'
+"""
 TRIP_SQL = "SELECT stage FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL"
 SUPPLIER_SQL = "SELECT kind, deleted_at FROM crm.agency_supplier WHERE agency_supplier_id = $1"
 INSERT_SQL = """
@@ -249,16 +255,27 @@ def _money_view(row: Any) -> dict[str, Any]:
     return out
 
 
-def _money(rows: list[Any]) -> dict[str, Any]:
+def _money(rows: list[Any], billed: bool = False) -> dict[str, Any]:
     """Keyed objects (never a list of rows with a kind): the margin serializer strips ``cost`` /
-    ``commission_expected`` / ``margin_base`` by key name for a role without ``view_margin``."""
+    ``commission_expected`` / ``margin_base`` by key name for a role without ``view_margin``.
+
+    AA-1068: ``actual_cost`` (what the supplier billed, crm-25) shows only while a live bill pays the line
+    (``billed``), with ``cost_variance_base`` (actual - planned) and ``actual_margin_base`` (sell - actual)."""
     out: dict[str, Any] = {kind: None for kind in KINDS}
     for r in rows:
+        if r["kind"] == "actual_cost" and not billed:
+            continue  # a voided bill's head stays in the append-only chain, ignored
         out[r["kind"]] = _money_view(r)
     sell, cost = out["sell"], out["cost"]
     frozen = sell and cost and "amount_base" in sell and "amount_base" in cost
     if frozen and sell["base_currency"] == cost["base_currency"]:
         out["margin_base"] = str(Decimal(sell["amount_base"]) - Decimal(cost["amount_base"]))
+    actual = out.get("actual_cost")
+    if actual and "amount_base" in actual:
+        if cost and "amount_base" in cost and cost["base_currency"] == actual["base_currency"]:
+            out["cost_variance_base"] = str(Decimal(actual["amount_base"]) - Decimal(cost["amount_base"]))
+        if sell and "amount_base" in sell and sell["base_currency"] == actual["base_currency"]:
+            out["actual_margin_base"] = str(Decimal(sell["amount_base"]) - Decimal(actual["amount_base"]))
     return out
 
 
@@ -297,7 +314,8 @@ async def _money_by_line(ctx: TenantContext, line_ids: list[uuid.UUID]) -> dict[
     grouped: dict[uuid.UUID, list[Any]] = {}
     for r in await ctx.conn.fetch(MONEY_SQL, line_ids):
         grouped.setdefault(r["booking_line_id"], []).append(r)
-    return {line: _money(grouped.get(line, [])) for line in line_ids}
+    billed = {r["booking_line_id"] for r in await ctx.conn.fetch(BILLED_SQL, line_ids)} if grouped else set()
+    return {line: _money(grouped.get(line, []), line in billed) for line in line_ids}
 
 
 # ── reads ────────────────────────────────────────────────────────────────────────────────────────

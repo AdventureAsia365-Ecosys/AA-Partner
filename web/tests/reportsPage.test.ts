@@ -15,6 +15,12 @@ vi.mock("@/lib/crmContext", () => ({
 vi.mock("@/lib/serverContext", () => ({ serverContext: async () => ({ session: { at: "x", tid: "t" } }) }));
 vi.mock("@/lib/crmApi", () => ({
   crmCall: async (_cfg: unknown, _s: unknown, _m: string, path: string) => {
+    if (path === "reports/profit") {
+      // AA-1068: the profit cube (owner / agent only; the page never asks for it as the assistant).
+      expect(state.role).not.toBe("assistant");
+      const row = { key: "referral", trips: 2, pax: 5, revenue_base: "2000.00", cost_base: "1500.00", commission_income_base: "50.00", margin_base: "550.00", margin_pct: "27.50" };
+      return { ok: true, status: 200, data: { dimension: "lead_source", period: "12m", window: { from: "2030-01-01", to: "2030-12-31" }, base_currency: "USD", rows: [row], totals: { ...row, key: "total" }, trips_unconverted: 0, trips_other_base: 0, truncated: false } };
+    }
     if (path === "members") {
       return {
         ok: true,
@@ -142,7 +148,7 @@ describe("Reports page", () => {
     const html = await render();
     for (const id of ["reports-tiles", "reports-funnel", "reports-open", "reports-outcomes", "reports-sources",
       "reports-picks", "reports-money", "reports-products", "reports-payments", "reports-team", "reports-success",
-      "reports-insights", "reports-export"]) {
+      "reports-insights", "reports-export", "reports-profit"]) {
       expect(html, id).toContain(`data-testid="${id}"`);
     }
     expect(html).toContain("61,000.00 AUD");
@@ -151,6 +157,7 @@ describe("Reports page", () => {
     expect(html).toContain("Revenue and margin by month"); // the money export is offered
     expect(html).toContain("Coming later");
     expect(html).toContain("800.00 AUD");
+    expect(html).toContain("550.00 USD"); // AA-1068: the profit cube's row
     expect(html).not.toContain("AA-9");
   });
 

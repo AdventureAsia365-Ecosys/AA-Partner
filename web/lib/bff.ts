@@ -321,6 +321,21 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "GET", pattern: new RegExp(`^commissions/${UUID}$`), tenant: true, card: "AA-957" },
   { method: "PATCH", pattern: new RegExp(`^commissions/${UUID}$`), tenant: true, card: "AA-957" },
   { method: "POST", pattern: new RegExp(`^commissions/${UUID}/(claim|unclaim|receive|write-off)$`), tenant: true, card: "AA-957" },
+  // AA-1068 (crm-051): CRM finance. Money reads and writes are owner / agent (the API's view_margin /
+  // money_fields_edit refuse the assistant); the group code is a trip edit; the agenda is counts only (every role).
+  { method: "GET", pattern: new RegExp(`^trips/${UUID}/pnl$`), tenant: true, card: "AA-1068" },
+  { method: "PUT", pattern: new RegExp(`^trips/${UUID}/group-code$`), tenant: true, card: "AA-1068" },
+  { method: "GET", pattern: /^supplier-bills$/, tenant: true, card: "AA-1068" },
+  { method: "POST", pattern: /^supplier-bills$/, tenant: true, card: "AA-1068" },
+  { method: "GET", pattern: new RegExp(`^supplier-bills/${UUID}$`), tenant: true, card: "AA-1068" },
+  { method: "PATCH", pattern: new RegExp(`^supplier-bills/${UUID}$`), tenant: true, card: "AA-1068" },
+  { method: "GET", pattern: /^aa-bookings$/, tenant: true, card: "AA-1068", timeoutMs: 30_000 },
+  { method: "GET", pattern: /^aa-bookings\/invoices\/AA[ST]-[0-9]{4}-[0-9]{6}$/, tenant: true, card: "AA-1068" },
+  { method: "GET", pattern: /^departures\/[A-Za-z0-9_.%-]{1,240}\/pnl$/, tenant: true, card: "AA-1068" },
+  { method: "POST", pattern: /^departure-costs$/, tenant: true, card: "AA-1068" },
+  { method: "PATCH", pattern: new RegExp(`^departure-costs/${UUID}$`), tenant: true, card: "AA-1068" },
+  { method: "DELETE", pattern: new RegExp(`^departure-costs/${UUID}$`), tenant: true, card: "AA-1068" },
+  { method: "GET", pattern: /^reports\/(profit|agenda)$/, tenant: true, card: "AA-1068" },
   // AA-956 (CRM-26): the trip's AA ground operations panel (counts and dates only) and the agency's withdrawal.
   { method: "GET", pattern: new RegExp(`^trips/${UUID}/ops-release$`), tenant: true, card: "AA-956" },
   { method: "POST", pattern: new RegExp(`^trips/${UUID}/ops-release/withdraw$`), tenant: true, card: "AA-956" },

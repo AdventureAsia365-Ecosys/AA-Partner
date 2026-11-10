@@ -4,8 +4,10 @@
 // reasons, lead sources, the client's option picks, revenue and margin by month (owner / agent only), top products,
 // outstanding payments, team activity and the spec's success metrics; every section downloads as CSV. Every number
 // comes from the API, computed from the agency's own rows only (RLS); the assistant never receives money.
+// AA-1068 (crm-31): the profit cube (components/finance/ProfitSection.tsx, ?dimension=) for owner / agent.
 import { Badge, EmptyState, ErrorState, K } from "@/app/_kit";
 import { Panel, PageTitle } from "@/components/PageTitle";
+import { ProfitSection } from "@/components/finance/ProfitSection";
 import { ExportMenu } from "@/components/reports/ExportMenu";
 import { BarList, TileRow } from "@/components/reports/ReportParts";
 import { ReportTable } from "@/components/reports/ReportTable";
@@ -13,6 +15,7 @@ import { leadSourceLabel } from "@/lib/clients";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { formatDate } from "@/lib/dates";
+import { canSeeMoney, isDimension, type ProfitView } from "@/lib/finance";
 import { fmt, plural, t, type MessageKey } from "@/lib/i18n";
 import { formatMoney } from "@/lib/ledger";
 import { memberLabel, type Member } from "@/lib/pipeline";
@@ -43,10 +46,16 @@ export default async function ReportsPage({
   if (ctx.apiDown) return null;
   const { session } = await serverContext();
   if (!session) return null;
-  const filters = parseFilters(await searchParams);
-  const [view, people] = await Promise.all([
+  const params = await searchParams;
+  const filters = parseFilters(params);
+  const dimension = isDimension(params.dimension) ? params.dimension : "lead_source";
+  const [view, people, profit] = await Promise.all([
     crmCall<ReportView>(ctx.cfg, session, "GET", "reports/summary", { query: reportQuery(filters) }),
     crmCall<{ members: Member[] }>(ctx.cfg, session, "GET", "members"),
+    // AA-1068: the profit cube, read only for a role that sees money (the API refuses the assistant).
+    canSeeMoney(ctx.role)
+      ? crmCall<ProfitView>(ctx.cfg, session, "GET", "reports/profit", { query: reportQuery(filters, { dimension }) })
+      : null,
   ]);
   const { lang, locale } = ctx;
   const tr = (key: string) => t(lang, key as MessageKey);
@@ -361,6 +370,18 @@ export default async function ReportsPage({
           </Panel>
         </div>
         </>
+      )}
+
+      {r.money_visible && profit?.ok && Array.isArray(profit.data.rows) && (
+        <ProfitSection
+          view={profit.data}
+          period={filters.period}
+          owner={filters.owner}
+          dimension={dimension}
+          members={members}
+          lang={lang}
+          locale={locale}
+        />
       )}
 
       <Panel title={tr("reports.success")} testId="reports-success">

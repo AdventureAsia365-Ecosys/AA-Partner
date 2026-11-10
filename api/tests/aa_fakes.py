@@ -108,6 +108,16 @@ class FakeBooking:
     tier_code: str = "silver"
     # S270: ``GET /fx-rates`` answers an approved rate for each of ``fx_currencies`` (no AUD, like Dev on 05/11/2026).
     fx_currencies: tuple[str, ...] = ("EUR", "GBP", "SGD", "VND", "THB")
+    # AA-1068 (contract 1.5): ``GET /invoices`` pages ``agency_invoices`` (summaries), ``GET /invoices/{number}``
+    # answers ``invoice_details[number]`` (404 ``invoice_not_found`` otherwise), ``GET /billing-status`` answers
+    # ``billing`` (an ``ok`` agency by default).
+    agency_invoices: list[dict[str, Any]] = field(default_factory=list)
+    invoice_details: dict[str, dict[str, Any]] = field(default_factory=dict)
+    billing: dict[str, Any] = field(
+        default_factory=lambda: {"status": "ok", "holds_paused": False, "overdue_invoices": 0,
+                                 "oldest_overdue_days": 0, "overdue_amount": [], "warn_after_days": 7,
+                                 "suspend_after_days": 30, "paid_through": None}
+    )  # fmt: skip
     calls: Counter[str] = field(default_factory=Counter)
     holds: dict[str, dict[str, Any]] = field(default_factory=dict)
     hold_keys: dict[str, str] = field(default_factory=dict)
@@ -215,6 +225,17 @@ class FakeBooking:
                                     {"content-type": "text/csv; charset=utf-8",
                                      "content-disposition": f'attachment; filename="{name}"'})  # fmt: skip
             return _resp(200, tariff_body(currency, tier=self.tier_code, source_id=query.get("source_id")))
+        if method == "GET" and path == "/invoices":
+            limit, offset = int(query.get("limit", "50")), int(query.get("offset", "0"))
+            items = self.agency_invoices[offset : offset + limit]
+            return _resp(200, {"items": items, "total": len(self.agency_invoices), "limit": limit, "offset": offset})
+        if method == "GET" and path.startswith("/invoices/"):
+            detail = self.invoice_details.get(urllib.parse.unquote(path.removeprefix("/invoices/")))
+            if detail is None:
+                return _resp(404, {"error": "invoice_not_found", "message": "booking-side detail"})
+            return _resp(200, detail)
+        if method == "GET" and path == "/billing-status":
+            return _resp(200, self.billing)
         if method == "GET" and path == "/fx-rates":
             rates = [{"currency": c, "rate_per_usd": "1.5", "as_of": "2031-01-01", "source": "invented"}
                      for c in self.fx_currencies]  # fmt: skip
@@ -541,3 +562,28 @@ def content_body(content_id: str, kind: str = "prep_pack", locale: str = "en", *
     }
     body.update(over)
     return body
+
+
+def agency_invoice(number: str, kind: str = "settlement", **over: Any) -> dict[str, Any]:
+    """AA-1068: one ``AgencyInvoiceSummary`` of contract 1.5 (synthetic)."""
+    body = {"number": number, "invoice_kind": kind, "status": "issued", "period_start": "2031-01-01",
+            "period_end": "2031-01-31", "currency": "USD", "subtotal": "1000.00", "tax_amount": "0.00",
+            "total": "1000.00", "paid": "0.00", "balance": "1000.00", "issued_on": "2031-02-01",
+            "due_date": "2031-02-15", "overdue_days": 0, "e_invoice_no": None}  # fmt: skip
+    body.update(over)
+    return body
+
+
+def agency_invoice_detail(number: str, lines: list[dict[str, Any]], **over: Any) -> dict[str, Any]:
+    """AA-1068: an ``AgencyInvoice`` of contract 1.5 with its lines (``invoice_line`` items) and no payment."""
+    return {**agency_invoice(number, **over), "tax_rate": "0.0000", "footer_wording": None,
+            "issuer": {"code": "AA", "legal_entity": "Invented Travel Co", "tax_code": None,
+                       "registered_office": None, "country_iso2": "VN", "invoice_inbox": "billing@invented.example",
+                       "payment_instructions": "Bank transfer to the invented account", "tax_line": None},
+            "lines": lines, "payments": []}  # fmt: skip
+
+
+def invoice_line(n: int, role: str, amount: str, booking_id: str | None, voided: bool = False) -> dict[str, Any]:
+    return {"line_no": n, "line_role": role, "description": f"{role} of {booking_id}", "quantity": "1.00",
+            "unit_price": amount, "amount": amount, "hold_id": None, "booking_id": booking_id,
+            "voided": voided}  # fmt: skip
