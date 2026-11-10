@@ -54,6 +54,7 @@ export const PAGES: VisualPage[] = [
   crm("clients-duplicates", "/clients/duplicates"),
   crm("bookings", "/bookings"),
   crm("aa-tariff", "/aa-tariff"),
+  crm("aa-bookings", "/aa-bookings"), // AA-1068: Bookings with AA (reads AA live; the copy when AA is down)
   crm("payments", "/payments"),
   crm("commissions", "/commissions"),
   crm("suppliers", "/suppliers"),
@@ -125,6 +126,7 @@ export const EXCLUDED: Record<string, string> = {
   "/join/invite": "an invitation landing: needs a real invitation token in the link",
   "/clients/[travelerId]": "one traveller of the agency: opened from the client list (agency data, no stable id)",
   "/pipeline/[tripId]": "one trip: opened from the board (agency data, no stable id)",
+  "/departures/[ref]": "one group departure (AA-1068): opened from a trip's Money card or Home (agency data, no stable ref)",
   "/pipeline/[tripId]/proposal/[proposalId]": "one proposal of a trip: opened from the trip (agency data, no stable id)",
   "/pipeline/[tripId]/proposal/[proposalId]/text": "the plain-text view of one proposal (agency data, no stable id)",
   "/c/[...slug]": "the client host (the traveller's links), not served on the agency host the run opens",
