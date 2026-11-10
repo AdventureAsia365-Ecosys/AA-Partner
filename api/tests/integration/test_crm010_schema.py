@@ -1204,6 +1204,11 @@ CASCADE_ERASED = {
     "message_delivery": {"message"},
     # AA-1027 F3 (crm-040, an expand file): an AI draft leaves with its trip.
     "ai_draft": {"trip"},
+    # AA-1066 (crm-048): a per-traveller price leaves with its option, a discount approval with its proposal, a retail
+    # price rule with the agency's settings row (the agency erase deletes it).
+    "option_price": {"option"},
+    "discount_approval": {"proposal"},
+    "retail_price_rule": {"tenant_settings"},
 }
 
 
