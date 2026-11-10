@@ -1209,6 +1209,11 @@ CASCADE_ERASED = {
     "option_price": {"option"},
     "discount_approval": {"proposal"},
     "retail_price_rule": {"tenant_settings"},
+    # AA-1067 (crm-049, an expand file): a cancellation policy leaves with the agency's settings row, its tiers with
+    # it, a cancellation charge with its trip.
+    "cancellation_policy": {"tenant_settings"},
+    "cancellation_policy_tier": {"cancellation_policy"},
+    "cancellation_charge": {"trip"},
 }
 
 
