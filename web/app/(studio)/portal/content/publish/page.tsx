@@ -10,6 +10,7 @@
 // AA-815: two channels — WordPress (blog) and a Facebook Page — each with its own connect form /
 // status card, the pending list gated per channel, and a "Published" list with Unpublish
 // (PublishedList). An Unpublish puts the piece back in Ready to Publish (reloadSignal).
+// AA-1039 (option A): "Pages to put back online" (PutBackList) above Ready to Publish after a tour is back on sale.
 // AA-761: a connected channel shows a one-line summary (health of the last test + "Manage"); the status card with
 // "Test connection", "Change credentials" and Disconnect lives on Account › Integrations.
 import Link from "next/link";
@@ -23,6 +24,7 @@ import { useFacebookStatus, FacebookConnectForm } from "../../_components/Facebo
 import { ConnectionSummary } from "../../_components/ConnectionSummary";
 import { PublishPendingList } from "../../_components/PublishPendingList";
 import { PublishedList } from "../../_components/PublishedList";
+import { PutBackList } from "../../_components/PutBackList";
 
 export default function T11PublishPage() {
   const t = useT(PAGES_MESSAGES);
@@ -69,6 +71,10 @@ export default function T11PublishPage() {
               ? <ConnectionSummary channel={t("facebookPage")} target={fb.status.page_id ? t("fbPage", fb.status.page_id) : null} status={fb.status} testId="publish-fb-summary" />
               : <FacebookConnectForm onConnected={fb.refresh} />}
         </div>
+
+        {/* AA-1039 (option A): pages moved to draft while their tour was off sale, one "Put back online" each;
+            the bell's restore notice links here (#put-back). Renders nothing when there is none. */}
+        <PutBackList onPutBack={() => setPendingReload(n => n + 1)} />
 
         <PublishPendingList
           connected={{ blog: wpConnected, facebook: fbConnected }}

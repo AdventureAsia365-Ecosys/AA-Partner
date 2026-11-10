@@ -740,6 +740,12 @@ original CIS commit). P2a moves the code only:
   DataTable with server paging over CIS `GET /v1/account/activity` (type and UTC-date filters) and a CSV export of the
   whole filtered set (`GET /v1/account/activity/export`); Integrations = each channel's health and test (Publish only
   shows a summary that links here; the API key card went with the tenant API keys, AA-1036). Pure helpers in `portal/lib/account.ts`, tested by `npm test` (node --test, in Portal Build).
+- **Put back online (AA-1039 option A, S275)**: when AA serves a retired tour again, a WordPress page the retirement
+  moved to draft stays in draft until the tenant clicks. Publish (`/portal/content/publish#put-back`) shows
+  "Pages to put back online" (`PutBackList`, CIS `GET /v1/publish-log/put-back`; hidden when empty or refused), and the
+  bell's `tour.pages_to_put_back` row lists the same pages (`PutBackNote`); each "Put back online" sends one CIS
+  `POST /v1/publish-log/{publish_id}/put-back` (`putBackApi.ts`) and shows the outcome: online again, already online,
+  or changed on WordPress and left as is. Nothing is published without that click.
 - **Marketplace (AA-671)**: one page at `/portal/tours` for the tours a tenant can pick and the tours it picked (was
   two pages, Browse Tours and Tour overview). View "All tours" (default): CIS `GET /v1/tours/pool` as a card grid with
   server paging and filters (name, country, length; newest first, "New" for the last 14 days), the kit Drawer for one
