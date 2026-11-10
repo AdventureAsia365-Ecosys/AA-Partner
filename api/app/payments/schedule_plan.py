@@ -10,8 +10,9 @@ Two shapes:
   lines with a date each, ``{kind, seq, percent, due_on, days_before}``. ``days_before`` is kept while the date still
   follows the template (a new day 1 moves it); a date the agent typed sets it to NULL.
 
-Rules (both shapes): one ``deposit``, first, due at accept, with a percent; 0..:data:`MAX_INSTALMENTS` ``instalment``
-lines with a percent; at most one ``balance``, last, without a percent (it takes the rest). The percents of the
+Rules (both shapes): one ``deposit``, first, due at accept, with a percent of at least 1 (:data:`MIN_DEPOSIT_PCT`);
+0..:data:`MAX_INSTALMENTS` ``instalment`` lines with a percent; at most one ``balance``, last, without a percent (it
+takes the rest). The percents of the
 deposit and the instalments add up to less than 100 with a balance, to exactly 100 without one. Due dates go forward
 line by line and never after the trip's start.
 
@@ -39,6 +40,7 @@ MAX_DAYS_BEFORE = 730
 ZERO_DECIMAL = frozenset({"VND", "JPY", "KRW", "CLP", "ISK", "UGX", "XAF", "XOF", "PYG", "RWF"})
 CENT = Decimal("0.01")
 HUNDRED = Decimal("100")
+MIN_DEPOSIT_PCT = Decimal("1")  # crm.proposal.deposit_pct mirrors the deposit line (proposal_kind_chk: 1 to 100)
 DEFAULT_TEMPLATE: tuple[dict[str, Any], ...] = (
     {"kind": "deposit", "percent": "30", "due": {"anchor": "accept"}},
     {"kind": "instalment", "percent": "40", "due": {"anchor": "before_start", "days": 60}},
@@ -104,13 +106,16 @@ def _err(message: str, field: str) -> Invalid:
     return Invalid("invalid_schedule", message, field=field)
 
 
-def _percent(value: Any, field: str) -> Decimal:
+def _percent(value: Any, field: str, *, deposit: bool = False) -> Decimal:
+    """A line's percent: 0.01 to 100, two decimals at most; the deposit at least :data:`MIN_DEPOSIT_PCT`, because
+    ``crm.proposal.deposit_pct`` mirrors it and ``proposal_kind_chk`` holds that column between 1 and 100."""
+    low = MIN_DEPOSIT_PCT if deposit else CENT
     try:
         pct = Decimal(str(value))
     except (InvalidOperation, ValueError):
-        raise _err("a percent from 0.01 to 100", field) from None
-    if not pct.is_finite() or pct <= 0 or pct > HUNDRED or pct != pct.quantize(CENT):
-        raise _err("a percent from 0.01 to 100, two decimals at most", field)
+        raise _err(f"a percent from {low} to 100", field) from None
+    if not pct.is_finite() or pct < low or pct > HUNDRED or pct != pct.quantize(CENT):
+        raise _err(f"a percent from {low} to 100, two decimals at most", field)
     return pct
 
 
@@ -169,7 +174,8 @@ def check_template(raw: Any) -> list[dict[str, Any]]:
         due = item.get("due") or {}
         if not isinstance(due, dict) or set(due) - {"anchor", "days"}:
             raise _err("{anchor, days}", f"{where}.due")
-        pct = None if kind == "balance" else _percent(item.get("percent"), f"{where}.percent")
+        is_deposit = kind == "deposit"
+        pct = None if kind == "balance" else _percent(item.get("percent"), f"{where}.percent", deposit=is_deposit)
         if kind == "balance" and item.get("percent") is not None:
             raise _err("the balance takes the rest: no percent", f"{where}.percent")
         if kind == "deposit":
@@ -235,7 +241,7 @@ def check_plan(raw: Any, starts_on: dt.date | None) -> list[Line]:
                 raise _err("the balance takes the rest: no percent", f"{where}.percent")
             pct = None
         else:
-            pct = _percent(item.get("percent"), f"{where}.percent")
+            pct = _percent(item.get("percent"), f"{where}.percent", deposit=kind == "deposit")
         if kind == "deposit":
             if item.get("due_on") is not None or item.get("days_before") is not None:
                 raise _err("the deposit is due at accept", f"{where}.due_on")

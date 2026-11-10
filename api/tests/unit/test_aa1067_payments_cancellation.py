@@ -143,6 +143,27 @@ def test_a_template_without_balance_adds_up_to_100_and_eleven_instalments_are_to
         sp.check_template(many)
 
 
+def test_a_deposit_under_one_percent_is_refused_in_the_template_and_the_plan() -> None:
+    # crm.proposal.deposit_pct mirrors the deposit line and proposal_kind_chk holds it between 1 and 100: a 0.5 %
+    # deposit would save, then break every later new builder version (a CheckViolation instead of a 422).
+    with pytest.raises(Invalid) as err:
+        sp.check_template([
+            {"kind": "deposit", "percent": "0.5", "due": {"anchor": "accept"}},
+            {"kind": "balance", "due": {"anchor": "before_start", "days": 30}},
+        ])  # fmt: skip
+    assert err.value.code == "invalid_schedule" and err.value.extra["field"] == "schedule.0.percent"
+    with pytest.raises(Invalid) as err:
+        sp.check_plan([{"kind": "deposit", "percent": "0.99"}, {"kind": "balance", "due_on": "2027-02-01"}], START)
+    assert err.value.code == "invalid_schedule" and err.value.extra["field"] == "schedule.0.percent"
+    # An instalment may still be a small share, and a 1 % deposit is fine.
+    lines = sp.check_plan([
+        {"kind": "deposit", "percent": "1"},
+        {"kind": "instalment", "percent": "0.5", "due_on": "2027-01-15"},
+        {"kind": "balance", "due_on": "2027-02-01"},
+    ], START)  # fmt: skip
+    assert sp.deposit_pct(lines) == D("1") and lines[1].percent == D("0.5")
+
+
 def test_the_agent_plan_takes_dates_or_days_and_problems_block_publish() -> None:
     lines = sp.check_plan([
         {"kind": "deposit", "percent": "25"},
