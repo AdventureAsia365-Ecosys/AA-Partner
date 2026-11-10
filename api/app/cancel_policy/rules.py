@@ -3,8 +3,8 @@ database: :mod:`app.cancel_policy.service` loads the rows and calls these.
 
 - **Tiers**: "cancelled N days or more before departure -> X % of the trip total, at least M". A policy has 1..12
   tiers, one per day count, and always a 0-day tier (so every cancellation finds one; a trip already started counts
-  as 0 days). :data:`DEFAULT_TIERS` is the AA starting table the owner edits (S275 proposal, pending the business
-  owner's answer): 31 days or more 10 %, 15-30 days 25 %, 8-14 days 50 %, 7 days or fewer 100 %.
+  as 0 days). :data:`DEFAULT_TIERS` is the AA starting table the owner edits (S275 proposal 3A to the business
+  owner): 31 days or more 0 %, 15-30 days 25 %, 8-14 days 50 %, 7 days or fewer 100 %. A 0 % tier is a valid line.
 - **Charge** (:func:`policy_charge`): the tier's percent of the total, rounded per currency
   (:func:`app.payments.schedule_plan.round_money`), raised to the tier's minimum when the trip is in the policy's
   currency, never above the total.
@@ -33,7 +33,7 @@ MAX_NAME = 80
 MAX_REASON = 500
 MODES = ("policy", "override", "waive")
 DEFAULT_NAME = "Standard cancellation policy"
-DEFAULT_TIERS: tuple[tuple[int, str], ...] = ((31, "10"), (15, "25"), (8, "50"), (0, "100"))
+DEFAULT_TIERS: tuple[tuple[int, str], ...] = ((31, "0"), (15, "25"), (8, "50"), (0, "100"))
 
 
 @dataclass(frozen=True)

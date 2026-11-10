@@ -279,7 +279,7 @@ async def test_the_policy_is_owner_set_pinned_shown_and_merged(app_pool: asyncpg
             pass
     live = await _policy(app_pool, s)
     assert live["status"] == "published" and live["is_default"] and live["version"] == 1
-    assert [t["charge_pct"] for t in live["tiers"]] == ["10", "25", "50", "100"]
+    assert [t["charge_pct"] for t in live["tiers"]] == ["0", "25", "50", "100"]
     with pytest.raises(Conflict):
         await _owner(app_pool, s, policy.update_draft, uuid.UUID(live["policy_id"]), {"name": "Changed"})
     async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:
@@ -289,7 +289,7 @@ async def test_the_policy_is_owner_set_pinned_shown_and_merged(app_pool: asyncpg
     sent = await _accepted_text(app_pool, s, terms=uuid.UUID(terms["doc_id"]))
     p = sent["page"]
     assert p["cancellation_policy"]["name"] == "Standard cancellation policy"
-    assert "- 31 days or more before departure: 10 % of the trip price" in p["terms"]["body_text"]
+    assert "- 31 days or more before departure: 0 % of the trip price" in p["terms"]["body_text"]
     pinned = await _rows(app_pool, s, "SELECT cancellation_policy_id FROM crm.proposal WHERE status = 'accepted'")
     assert str(pinned[0]["cancellation_policy_id"]) == live["policy_id"]
     # A new version: the old one retires, the accepted proposal keeps it.
@@ -312,18 +312,23 @@ async def test_the_policy_is_owner_set_pinned_shown_and_merged(app_pool: asyncpg
 
 
 async def test_cancel_charges_by_the_policy_prefills_refunds_and_records_the_charge(app_pool: asyncpg.Pool) -> None:
-    s = await _lc_setup(app_pool)  # the trip starts in 90 days: the 10 % tier
+    s = await _lc_setup(app_pool)  # the trip starts in 90 days: the 0 % tier
     await _policy(app_pool, s)
     await _accepted_text(app_pool, s)
     await _paid_deposit(app_pool, s)
+    early = (await _cancel(app_pool, s, "agent", dry_run=True))["charge"]
+    assert (early["days_before"], early["tier"]["charge_pct"], early["charge_amount"], early["refund_due"]) == (
+        90, "0", "0.00", "300.00")  # fmt: skip
+    # Twenty days before departure: the 25 % tier.
+    await _rows(app_pool, s, "UPDATE crm.trip SET start_date = current_date + 20")
     preview = await _cancel(app_pool, s, "agent", dry_run=True)
     c = preview["charge"]
     got = (c["days_before"], c["tier"]["charge_pct"], c["policy_charge"], c["charge_amount"])
-    assert got == (90, "10", "100.00", "100.00")
+    assert got == (20, "25", "250.00", "250.00")
     assert (c["paid_amount"], c["kept_amount"], c["refund_due"], c["invoice_amount"]) == (
-        "300.00", "100.00", "200.00", "0.00")  # fmt: skip
+        "300.00", "250.00", "50.00", "0.00")  # fmt: skip
     (pay,) = preview["payments"]
-    assert pay["refund_amount"] == "200.00" and pay["refundable"] == "300.00"  # prefilled with paid - charge
+    assert pay["refund_amount"] == "50.00" and pay["refundable"] == "300.00"  # prefilled with paid - charge
     # An agent waiving more than the refund threshold (lowered to 50 here) is refused; the owner may.
     await _rows(app_pool, s, "UPDATE crm.tenant_settings SET refund_owner_threshold_base = 50")
     waive = {"mode": "waive", "reason": "Family emergency"}
@@ -342,7 +347,7 @@ async def test_cancel_charges_by_the_policy_prefills_refunds_and_records_the_cha
     assert charge is not None and (charge["decision"], charge["charge_amount"], charge["kept_amount"],
                                    charge["refund_due"], charge["invoice_id"]) == ("override", "60.00", "60.00",
                                                                                    "240.00", None)  # fmt: skip
-    assert charge["reason"] == "Rebooked for spring" and charge["policy_charge"] == "100.00"
+    assert charge["reason"] == "Rebooked for spring" and charge["policy_charge"] == "250.00"
 
 
 async def test_a_charge_above_the_money_kept_is_billed_on_a_cancellation_fee_invoice(app_pool: asyncpg.Pool) -> None:
