@@ -99,7 +99,7 @@ const MONEY = /^\d{1,8}(\.\d{1,2})?$/;
 export function priceLines(rows: { pax_type: PaxType; qty: number }[], tr: (key: string) => string): string {
   return rows
     .filter((r) => r.qty > 0)
-    .map((r) => `${tr(`pricing.line.${r.pax_type}`)} × ${r.qty}`)
+    .map((r) => `${tr(`client.pricing.line.${r.pax_type}`)} × ${r.qty}`)
     .join(" · ");
 }
 

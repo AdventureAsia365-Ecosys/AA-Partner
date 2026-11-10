@@ -300,9 +300,9 @@ export function ClientBuilderProposal({ initial, dict, locale }: { initial: Clie
         {page.totals.discount && page.totals.subtotal && (
           // AA-1066: the agency's discount: the total before it and the amount off.
           <>
-            <dt style={{ color: K.muted }}>{t("pricing.client.subtotal")}</dt>
+            <dt style={{ color: K.muted }}>{t("client.pricing.subtotal")}</dt>
             <dd data-testid="client-subtotal" style={{ margin: 0, color: K.body }}>{formatAmount(page.totals.subtotal, cur, locale)}</dd>
-            <dt style={{ color: K.muted }}>{fmt(t("pricing.client.discount"), { pct: Number(page.totals.discount_pct) })}</dt>
+            <dt style={{ color: K.muted }}>{fmt(t("client.pricing.discount"), { pct: Number(page.totals.discount_pct) })}</dt>
             <dd data-testid="client-discount" style={{ margin: 0, color: K.body }}>−{formatAmount(page.totals.discount, cur, locale)}</dd>
           </>
         )}
