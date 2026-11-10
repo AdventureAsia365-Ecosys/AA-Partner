@@ -162,7 +162,7 @@ async def snapshot(ctx: TenantContext, vault: Vault, row: Any, price_hash: str, 
             items,
         ))  # fmt: skip
     rooms = builder._jsonb(row["room_config"]) or []
-    plan = schedule_plan.from_json(s.get("schedule_plan"))
+    plan = s.get("schedule_plan")
     schedule: tuple[tuple[str, int, Decimal, Any], ...] = ()
     if plan:  # AA-1067: every payment line of the version (its share of the published total, its date)
         amounts = schedule_plan.split(Decimal(sums["sell_total"]), plan, row["currency"].strip())

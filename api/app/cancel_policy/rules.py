@@ -220,7 +220,8 @@ _TEXT = {
 }
 
 
-def _pct(value: Decimal) -> str:
+def pct_text(value: Decimal) -> str:
+    """A percent without trailing zeros (10.00 -> "10", 12.50 -> "12.5")."""
     return f"{value.normalize():f}"
 
 
@@ -230,7 +231,7 @@ def policy_text(name: str, version: int, tiers: list[Tier], currency: str | None
     ordered = sorted(tiers, key=lambda t: -t.days_before_min)
     lines = [s["heading"].format(name=name, version=version)]
     for n, tier in enumerate(ordered):
-        pct = _pct(tier.charge_pct)
+        pct = pct_text(tier.charge_pct)
         if len(ordered) == 1:
             text = s["only"].format(pct=pct)
         elif n == 0:
@@ -249,7 +250,7 @@ def tiers_view(tiers: list[Tier]) -> list[dict[str, Any]]:
     return [
         {
             "days_before_min": t.days_before_min,
-            "charge_pct": str(t.charge_pct),
+            "charge_pct": pct_text(t.charge_pct),
             "min_charge_amount": None if t.min_charge_amount is None else str(t.min_charge_amount),
         }
         for t in sorted(tiers, key=lambda t: -t.days_before_min)

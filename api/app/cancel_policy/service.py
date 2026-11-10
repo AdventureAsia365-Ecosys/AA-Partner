@@ -414,7 +414,7 @@ class Assessment:
             },  # fmt: skip
             "tier": None
             if self.tier is None
-            else {"days_before_min": self.tier.days_before_min, "charge_pct": str(self.tier.charge_pct)},
+            else {"days_before_min": self.tier.days_before_min, "charge_pct": rules.pct_text(self.tier.charge_pct)},
             "policy_charge": _money(self.policy_charge),
             "decision": self.decision,
             "charge_amount": _money(self.charge),

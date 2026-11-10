@@ -602,6 +602,8 @@ def test_builder_plan_changes() -> None:
                                   None)  # fmt: skip
     assert moved is not None and moved[1].due_on == plan[1].due_on + dt.timedelta(days=7)
     assert builder._plan_changes({"intro": "x"}, plan, START, None) == plan
+    full = builder._plan_changes({"deposit_pct": D("100")}, plan, START, None)
+    assert full == [sp.Line("deposit", 1, D("100"), None, None)]  # paid in full at accept
     with pytest.raises(Invalid):  # 70 % deposit + 40 % instalment leaves nothing for the balance
         builder._plan_changes({"deposit_pct": D("70")}, plan, START, None)
     s = {"options": [], "blocks": [], "discount_pct": None, "schedule_plan": plan, "currency": "VND"}

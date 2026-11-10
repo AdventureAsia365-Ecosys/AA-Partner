@@ -981,7 +981,10 @@ def _plan_changes(
         return None
     lines = list(plan)
     if "deposit_pct" in changes and changes["deposit_pct"] is not None:
-        lines[0] = schedule_plan.Line("deposit", 1, Decimal(str(changes["deposit_pct"])), None, None)
+        pct = Decimal(str(changes["deposit_pct"]))
+        if pct == 100:
+            return [schedule_plan.Line("deposit", 1, pct, None, None)]  # paid in full at accept: one line
+        lines[0] = schedule_plan.Line("deposit", 1, pct, None, None)
     if "balance_due_on" in changes and len(lines) > 1:
         last = lines[-1]
         lines[-1] = schedule_plan.Line(last.kind, last.seq, last.percent, changes["balance_due_on"], None)
