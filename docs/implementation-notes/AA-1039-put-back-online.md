@@ -38,3 +38,7 @@ one click.
 - Kit components only (`Section`, `Button` with `testId`, `Badge`, `Toast`); no edit under `app/_kit/core`.
 - Needs the CIS routes deployed first (CIS PR of the same lane); before that the list read 404s and the section stays
   hidden, the bell has no such row.
+- CIS decides what is offered (S275 review): the list and the restore notice leave out a page the click would refuse
+  (a newer version of the content, or another live post of it), and Ready to publish leaves out a piece while its page
+  is listed here (tour served); a stale Publish tab gets CIS's 409 sentence in the error toast. After a click that
+  leaves the page as is, `onPutBack` reloads Ready to publish, where the piece shows again.
