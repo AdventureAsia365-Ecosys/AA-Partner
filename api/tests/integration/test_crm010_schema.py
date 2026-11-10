@@ -1214,6 +1214,12 @@ CASCADE_ERASED = {
     "cancellation_policy": {"tenant_settings"},
     "cancellation_policy_tier": {"cancellation_policy"},
     "cancellation_charge": {"trip"},
+    # AA-1068 (crm-051): a supplier bill, an AA invoice copy and a departure cost leave with their supplier (the agency
+    # erase deletes it; the AA row too), a bill line with its bill or its booking line.
+    "supplier_bill": {"agency_supplier"},
+    "supplier_bill_line": {"supplier_bill", "booking_line"},
+    "aa_invoice_cache": {"agency_supplier"},
+    "departure_cost": {"agency_supplier"},
 }
 
 

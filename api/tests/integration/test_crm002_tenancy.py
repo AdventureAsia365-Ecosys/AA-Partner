@@ -45,6 +45,11 @@ EXTRA_POLICIES = {
     ("calendar_feed", "calendar_feed_token_lookup"): ("r", {APP_ROLE}),
     #   crm-035: the RESTRICTIVE margin gate on commissions (design §4.6 commission.*; same rule as line money).
     ("commission", "commission_margin_roles"): ("r", {APP_ROLE}),
+    #   AA-1068 (crm-051): the finance tables, read AND written only as owner / agent (or a job / seed actor).
+    ("supplier_bill", "supplier_bill_margin_roles"): ("*", {APP_ROLE}),
+    ("supplier_bill_line", "supplier_bill_line_margin_roles"): ("*", {APP_ROLE}),
+    ("aa_invoice_cache", "aa_invoice_cache_margin_roles"): ("*", {APP_ROLE}),
+    ("departure_cost", "departure_cost_margin_roles"): ("*", {APP_ROLE}),
     #   crm-036: the Twilio webhook lookup of app.tenancy.messaging_hook_tx() (keyed on app.messaging_hook_id).
     ("messaging_connection", "messaging_connection_hook_lookup"): ("r", {APP_ROLE}),
 }
@@ -52,6 +57,10 @@ EXTRA_POLICIES = {
 RESTRICTIVE_POLICIES = {
     ("booking_line_money", "booking_line_money_margin_roles"),
     ("commission", "commission_margin_roles"),
+    ("supplier_bill", "supplier_bill_margin_roles"),
+    ("supplier_bill_line", "supplier_bill_line_margin_roles"),
+    ("aa_invoice_cache", "aa_invoice_cache_margin_roles"),
+    ("departure_cost", "departure_cost_margin_roles"),
 }
 
 ISS = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_TESTPARTN"
