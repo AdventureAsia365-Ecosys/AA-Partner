@@ -73,11 +73,13 @@ SELECT i.invoice_id, i.trip_id, i.kind, i.status, i.number, i.currency, i.total_
        i.schedule_id, i.claimed_at, i.hold_extended_at, i.hold_extend_code, i.rehold_requested_at, i.rehold_code,
        p.kind AS proposal_kind, p.accepted_hold_id, p.hold_id, p.hold_expires_at,
        (SELECT coalesce(sum(x.amount), 0) FROM crm.payment x
-         WHERE x.invoice_id = i.invoice_id AND x.entry_kind = 'payment') AS paid_amount
+         WHERE x.invoice_id = i.invoice_id AND x.entry_kind = 'payment') AS paid_amount,
+       coalesce(s.seq, 1) AS seq
   FROM crm.invoice i JOIN crm.proposal p ON p.proposal_id = i.proposal_id
+  LEFT JOIN crm.payment_schedule s ON s.tenant_id = i.tenant_id AND s.schedule_id = i.schedule_id
  WHERE i.proposal_id = $1 AND i.deleted_at IS NULL AND i.issued_at IS NOT NULL AND i.status <> 'void'
    AND i.kind = ANY($2::text[])
- ORDER BY i.due_on, i.kind
+ ORDER BY i.due_on, array_position(ARRAY['deposit', 'instalment', 'balance'], i.kind), coalesce(s.seq, 1)
 """
 PAY_BY_SQL = """
 SELECT display_name, instructions FROM crm.payment_provider_account
@@ -230,6 +232,8 @@ def _client_invoice(row: Any, now: dt.datetime, pay_by: Any, *, terms_first: boo
         "invoice_id": str(row["invoice_id"]),
         "number": row["number"],
         "kind": row["kind"],
+        # AA-1067: the instalment number ("Instalment 2"); 1 for the deposit and the balance.
+        "seq": row["seq"],
         "currency": row["currency"],
         "total_amount": _money(row["total_amount"]),
         "balance_amount": _money(balance),

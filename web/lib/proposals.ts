@@ -212,6 +212,8 @@ export interface ClientInvoice {
   invoice_id: string;
   number: string;
   kind: "deposit" | "instalment" | "balance";
+  /** AA-1067: the instalment number ("Instalment 2"); 1 for the deposit and the balance. */
+  seq?: number;
   currency: string;
   total_amount: string;
   balance_amount: string;

@@ -20,6 +20,7 @@ import { fmt, type MessageKey } from "@/lib/i18n";
 import { clientErrorKey, formatAmount, stage3Body, STAGE3_FIELDS, type PortalHome, type Stage3Field } from "@/lib/proposals";
 import { clearOffline, readOffline, syncOffline, usable, type OfflineItinerary, type OfflineSource } from "@/lib/offlineItinerary";
 import { clearWorkerCaches, precacheShell, registerPortalWorker } from "@/lib/portalPwa";
+import { clientLineLabel } from "@/components/proposals/ClientPaymentLines";
 import { InstallPrompt, OfflineView } from "./PortalOffline";
 import { DocumentsSection, FlightsSection, PartySection, PassportScanSection, TripSection } from "./PortalPerson";
 import { SignEnvelope } from "./SignEnvelope";
@@ -480,8 +481,8 @@ export function PortalPage({
         <section data-testid="portal-payments" style={section}>
           <h2 style={{ margin: 0, fontSize: 16, color: K.ink }}>{t("client.paymentsTitle")}</h2>
           {home.payments.map((p) => (
-            <p key={p.kind} style={{ margin: 0, fontSize: 13.5, color: K.body }}>
-              {fmt(t(`client.scheduleRow.${p.status}`), { what: t(`client.kind.${p.kind}`), amount: formatAmount(p.amount, p.currency, locale), date: formatDate(p.due_on, locale) })}
+            <p key={`${p.kind}-${p.seq ?? 1}`} data-testid="portal-payment" data-kind={p.kind} style={{ margin: 0, fontSize: 13.5, color: K.body }}>
+              {fmt(t(`client.scheduleRow.${p.status}`), { what: clientLineLabel(p.kind, p.seq, t), amount: formatAmount(p.amount, p.currency, locale), date: formatDate(p.due_on, locale) })}
             </p>
           ))}
         </section>

@@ -143,6 +143,10 @@ async def test_a_builder_version_with_instalments_from_draft_to_live_status(app_
         await ctx.conn.execute("UPDATE crm.payment_schedule SET due_on = current_date - 4 WHERE schedule_id = $1",
                                uuid.UUID(second["schedule_id"]))  # fmt: skip
         overview = await service.trip_overview(ctx, Vault(s["keys"], ctx), s["trip"])
+    # The client's pay box names the instalment invoice by its number (its schedule row's seq).
+    client = await page.read(app_pool, s["keys"], token)
+    billed = [(x["kind"], x["seq"]) for x in client["payments"] if x["kind"] == "instalment"]
+    assert billed == [("instalment", 1)]
     live = {(r["kind"], r["seq"]): r for r in overview["schedule"]}
     assert (live[("instalment", 1)]["live_status"], live[("instalment", 1)]["paid_amount"],
             live[("instalment", 1)]["open_amount"]) == ("partial", "100.00", "150.00")  # fmt: skip
@@ -157,10 +161,20 @@ async def test_the_schedule_template_and_a_full_payment_version(app_pool: asyncp
             pass
     template = [{"kind": "deposit", "percent": "50", "due": {"anchor": "accept"}},
                 {"kind": "balance", "due": {"anchor": "before_start", "days": 45}}]  # fmt: skip
+    # A deposit under 1 % is refused (422), never saved: crm.proposal.deposit_pct mirrors it (proposal_kind_chk 1-100).
+    tiny = [{**template[0], "percent": "0.5"}, template[1]]
+    with pytest.raises(Invalid) as err:
+        await _owner(app_pool, s, schedule_settings.update, tiny)
+    assert err.value.code == "invalid_schedule" and err.value.extra["field"] == "schedule.0.percent"
     saved = await _owner(app_pool, s, schedule_settings.update, template)
     assert saved["template"] == template and not saved["is_default"]
     v = await _publishable(app_pool, s)
     assert [(x["kind"], x["percent"]) for x in v["schedule"]] == [("deposit", "50"), ("balance", None)]
+    with pytest.raises(Invalid) as err:  # the same in the builder: a 422, not a CheckViolation
+        await _as(app_pool, s, "agent", builder.update_settings, _pid(v), v["edit_seq"],
+                  {"schedule": [{"kind": "deposit", "percent": D("0.5")},
+                                {"kind": "balance", "due_on": s["start"] - dt.timedelta(days=30)}]})  # fmt: skip
+    assert err.value.code == "invalid_schedule"
     v = await _as(app_pool, s, "agent", builder.update_settings, _pid(v), v["edit_seq"], {"deposit_pct": D("100")})
     assert [x["kind"] for x in v["schedule"]] == ["deposit"] and v["balance_due_on"] is None
     assert v["checks"]["publishable"] and v["totals"]["deposit"] == v["totals"]["sell_total"] == "1000.00"

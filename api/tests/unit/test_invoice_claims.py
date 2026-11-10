@@ -42,7 +42,7 @@ def _row(**over: Any) -> dict[str, Any]:
         "currency": "USD", "total_amount": Decimal("300"), "due_on": dt.date(2026, 11, 2), "proposal_id": PROPOSAL,
         "schedule_id": SCHEDULE, "claimed_at": None, "hold_extended_at": None, "hold_extend_code": None,
         "rehold_requested_at": None, "rehold_code": None, "proposal_kind": "builder", "accepted_hold_id": "h1",
-        "hold_id": "h1", "hold_expires_at": NOW + dt.timedelta(hours=10), "paid_amount": Decimal(0),
+        "hold_id": "h1", "hold_expires_at": NOW + dt.timedelta(hours=10), "paid_amount": Decimal(0), "seq": 1,
     }  # fmt: skip
     row.update(over)
     return row
@@ -273,6 +273,21 @@ async def test_client_invoices_hide_the_pay_details_until_the_terms_are_accepted
     conn = ScriptedConn().on("i.kind = ANY($2::text[])", rows[1:]).on("provider = 'manual'", pay_by)
     await claims.client_invoices(system_ctx(_terms_pending(conn)), PROPOSAL, NOW)
     assert not conn.sql(CURRENT_TERMS)
+
+
+@pytest.mark.asyncio
+async def test_client_invoices_carry_the_instalment_number_in_plan_order() -> None:
+    # AA-1067: an instalment invoice says which one it is ("Instalment 2"); the list reads its schedule row's seq and
+    # orders deposit, instalments by number, balance within a due date.
+    rows = [_row(), _row(invoice_id=uuid.uuid4(), kind="instalment", number="INV-000008", seq=2, accepted_hold_id=None)]
+    conn = ScriptedConn().on("i.kind = ANY($2::text[])", rows).on("provider = 'manual'", None)
+    deposit, instalment = await claims.client_invoices(system_ctx(_terms_pending(conn)), PROPOSAL, NOW)
+    assert (deposit["kind"], deposit["seq"]) == ("deposit", 1)
+    assert (instalment["kind"], instalment["seq"]) == ("instalment", 2)
+    listed = " ".join(claims.CLIENT_LIST_SQL.split())
+    assert "LEFT JOIN crm.payment_schedule s ON s.tenant_id = i.tenant_id AND s.schedule_id = i.schedule_id" in listed
+    assert "array_position(ARRAY['deposit', 'instalment', 'balance'], i.kind)" in listed
+    assert "instalment" in claims.CLIENT_KINDS
 
 
 @pytest.mark.asyncio
