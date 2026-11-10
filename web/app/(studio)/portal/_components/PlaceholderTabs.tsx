@@ -20,6 +20,7 @@ import {
 } from "@/app/_kit";
 import { Card, ProgressBar } from "@/app/_kit/local/studio/StudioCard";
 import { SectionSkeleton } from "./SectionSkeleton";
+import { TourRetirementSettingsCard } from "./TourRetirementSettingsCard";
 import { BILLING_MESSAGES, SETTINGS_MESSAGES } from "./account.messages";
 import { fmtBillingMonth } from "@/lib/studio/format";
 import { usePortalShell, type ShellBilling } from "./PortalShellContext";
@@ -341,6 +342,9 @@ export function SettingsTab() {
             <Button size="sm" onClick={() => setContact(true)} style={{ whiteSpace: "nowrap", flexShrink: 0 }}><Mail size={13} /> {t("contactUs")}</Button>
           </div>
         </Card>
+
+        {/* AA-1039 follow-up (S276): automatic drafts of posts about a discontinued tour, off by default. */}
+        <TourRetirementSettingsCard />
 
         <Card>
           <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: K.muted, marginBottom: 6 }}>{t("session")}</div>

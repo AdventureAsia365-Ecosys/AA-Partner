@@ -11,14 +11,20 @@
 // AA-1039 (option A): a `tour.pages_to_put_back` row (the tour is back on sale; WordPress pages moved to draft while it
 // was off sale stay in draft) lists each page with its own "Put back online" button (putBackApi.ts), one click each;
 // nothing is published until the tenant clicks. The same pages are on Publish (PutBackList, #put-back).
+// AA-1039 follow-up (tech lead decision S276): a `tour.pages_to_review` row (AA no longer offers the tour; the agency's
+// WordPress pages about it stay online) lists each page with its own "Move to draft" button (retiredPagesApi.ts), in the
+// UI language; nothing changes on the site until the agency clicks, unless it turned automatic drafts on (a page then
+// shows its draft date). The same pages are on Publish (RetiredPagesList, #retired-pages).
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Bell, Check, X, RefreshCw, RotateCcw, UploadCloud } from "lucide-react";
+import { AlertTriangle, Bell, Check, FileDown, X, RefreshCw, RotateCcw, UploadCloud } from "lucide-react";
 import { Button, IconButton, apiGet, apiSend, K, sans, useLang, useT, type Translator } from "@/app/_kit";
 import { BELL_MESSAGES } from "./account.messages";
 import { PUT_BACK_MESSAGES } from "./putBack.messages";
 import { PUT_BACK_ANCHOR, PUT_BACK_QUERY_KEY, isOnline, outcomeText, putBack, type PutBackResult } from "./putBackApi";
+import { RETIRED_PAGES_MESSAGES } from "./retiredPages.messages";
+import { RETIRED_PAGES_ANCHOR, RETIRED_PAGES_QUERY_KEY, moveOutcomeText, moveToDraft } from "./retiredPagesApi";
 import { plainError } from "./studioError";
 import { fmtDateTime } from "@/lib/studio/format";
 import type { ShellActivityView } from "./PortalShellContext";
@@ -33,8 +39,9 @@ export interface TenantNotification {
   tour_name: string | null;
   reason: string | null;
   live_posts: number;
-  /** AA-1039: the drafted pages of a `tour.pages_to_put_back` row; [] for any other row. */
-  pages?: { publish_id: string; url: string | null }[];
+  /** AA-1039: the drafted pages of a `tour.pages_to_put_back` row, or (S276) the live pages of a `tour.pages_to_review`
+   *  row with `draft_on` (the automatic draft day of an agency that turned it on, else null); [] for any other row. */
+  pages?: { publish_id: string; url: string | null; draft_on?: string | null }[];
   is_read: boolean;
   created_at: string | null;
 }
@@ -66,6 +73,7 @@ const describe = (a: Activity, t: Translator<typeof BELL_MESSAGES.en>) => {
 };
 
 const PAGES_TO_PUT_BACK = "tour.pages_to_put_back";
+const PAGES_TO_REVIEW = "tour.pages_to_review";
 
 /** One restore notice with drafted pages: the sentence, then each page with "Put back online" (one click, one call). */
 export function PutBackNote({ note, onNavigate }: { note: TenantNotification; onNavigate?: () => void }) {
@@ -114,6 +122,68 @@ export function PutBackNote({ note, onNavigate }: { note: TenantNotification; on
                 <Button size="sm" variant="primary" disabled={!!busy} onClick={() => click(p.publish_id)}
                   testId={`bell-put-back-button-${p.publish_id}`} style={{ whiteSpace: "nowrap" }}>
                   {busy === p.publish_id ? t("puttingBack") : t("putBack")}
+                </Button>
+              )}
+            </span>
+          );
+        })}
+      </span>
+    </div>
+  );
+}
+
+/** S276: a retirement notice with live WordPress pages: the sentence in the UI language, then each page with "Move to
+ *  draft" (one click, one call). Nothing changes on the site before the click. */
+export function ReviewPagesNote({ note, onNavigate }: { note: TenantNotification; onNavigate?: () => void }) {
+  const t = useT(RETIRED_PAGES_MESSAGES);
+  const lang = useLang();
+  const qc = useQueryClient();
+  const [done, setDone] = useState<Record<string, { text: string; ok: boolean }>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const pages = note.pages ?? [];
+
+  async function click(publishId: string) {
+    if (busy) return;
+    setBusy(publishId);
+    try {
+      const r = await moveToDraft(publishId);
+      setDone(d => ({ ...d, [publishId]: { text: moveOutcomeText(t, r), ok: true } }));
+      qc.invalidateQueries({ queryKey: RETIRED_PAGES_QUERY_KEY });
+    } catch (e) {
+      setDone(d => ({ ...d, [publishId]: { text: plainError(e, t("failed"), lang), ok: false } }));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div data-testid={`bell-review-${note.id}`} style={{
+      display: "grid", gridTemplateColumns: "30px minmax(0,1fr)", gap: 10, padding: "11px 16px",
+      borderBottom: `1px solid ${K.line2}`, background: note.is_read ? "transparent" : K.accentTint,
+    }}>
+      <span style={{ width: 30, height: 30, borderRadius: 8, background: K.dangerSoft, color: K.danger, display: "grid", placeItems: "center" }}>
+        <AlertTriangle size={14} strokeWidth={2.2} />
+      </span>
+      <span style={{ minWidth: 0 }}>
+        <Link href={`/portal/content/publish#${RETIRED_PAGES_ANCHOR}`} onClick={onNavigate}
+          style={{ display: "block", fontSize: 12.5, color: K.ink, lineHeight: 1.4, textDecoration: "none" }}>
+          <strong style={{ fontWeight: 600 }}>{t("bellTitle")}</strong> · {t("bellBody", note.tour_name || t("aTour"), pages.length)}
+          {pages.some(p => p.draft_on) ? ` ${t("bellDated")}` : ""}
+        </Link>
+        {pages.map(p => {
+          const result = done[p.publish_id];
+          return (
+            <span key={p.publish_id} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 11.5, color: K.muted, minWidth: 0, overflowWrap: "anywhere", flex: "1 1 140px" }}>
+                {p.url}{p.draft_on ? ` · ${p.draft_on}` : ""}
+              </span>
+              {result ? (
+                <span data-testid={`bell-review-result-${p.publish_id}`}
+                  style={{ fontSize: 11.5, color: result.ok ? K.success : K.muted, flex: "1 1 100%" }}>{result.text}</span>
+              ) : (
+                <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => click(p.publish_id)}
+                  testId={`bell-move-to-draft-button-${p.publish_id}`} style={{ whiteSpace: "nowrap" }}>
+                  <FileDown size={12} /> {busy === p.publish_id ? t("moving") : t("moveToDraft")}
                 </Button>
               )}
             </span>
@@ -185,6 +255,9 @@ export default function NotificationsBell({ activity }: { activity: Activity[] }
           {tourNotes.slice(0, 5).map(n => {
             if (n.event_type === PAGES_TO_PUT_BACK) {
               return <PutBackNote key={`n-${n.id}`} note={n} onNavigate={() => setOpen(false)} />;
+            }
+            if (n.event_type === PAGES_TO_REVIEW) {
+              return <ReviewPagesNote key={`n-${n.id}`} note={n} onNavigate={() => setOpen(false)} />;
             }
             const gone = n.event_type === "tour.discontinued";
             const Icon = gone ? AlertTriangle : RotateCcw;

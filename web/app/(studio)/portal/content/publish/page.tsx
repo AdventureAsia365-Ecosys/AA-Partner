@@ -11,6 +11,8 @@
 // status card, the pending list gated per channel, and a "Published" list with Unpublish
 // (PublishedList). An Unpublish puts the piece back in Ready to Publish (reloadSignal).
 // AA-1039 (option A): "Pages to put back online" (PutBackList) above Ready to Publish after a tour is back on sale.
+// AA-1039 follow-up (S276): "Posts about tours no longer offered" (RetiredPagesList) beside it: live posts about a
+// retired tour stay online by default; each WordPress page has a one-click "Move to draft".
 // AA-761: a connected channel shows a one-line summary (health of the last test + "Manage"); the status card with
 // "Test connection", "Change credentials" and Disconnect lives on Account › Integrations.
 import Link from "next/link";
@@ -25,6 +27,7 @@ import { ConnectionSummary } from "../../_components/ConnectionSummary";
 import { PublishPendingList } from "../../_components/PublishPendingList";
 import { PublishedList } from "../../_components/PublishedList";
 import { PutBackList } from "../../_components/PutBackList";
+import { RetiredPagesList } from "../../_components/RetiredPagesList";
 
 export default function T11PublishPage() {
   const t = useT(PAGES_MESSAGES);
@@ -75,6 +78,10 @@ export default function T11PublishPage() {
         {/* AA-1039 (option A): pages moved to draft while their tour was off sale, one "Put back online" each;
             the bell's restore notice links here (#put-back). Renders nothing when there is none. */}
         <PutBackList onPutBack={() => setPendingReload(n => n + 1)} />
+
+        {/* AA-1039 follow-up (S276): live posts about a tour AA no longer offers, one "Move to draft" per WordPress
+            page; the bell's notice links here (#retired-pages). Renders nothing when there is none. */}
+        <RetiredPagesList onMoved={() => setPendingReload(n => n + 1)} />
 
         <PublishPendingList
           connected={{ blog: wpConnected, facebook: fbConnected }}

@@ -749,6 +749,16 @@ original CIS commit). P2a moves the code only:
   bell's `tour.pages_to_put_back` row lists the same pages (`PutBackNote`); each "Put back online" sends one CIS
   `POST /v1/publish-log/{publish_id}/put-back` (`putBackApi.ts`) and shows the outcome: online again, already online,
   or changed on WordPress and left as is. Nothing is published without that click.
+- **Posts about tours no longer offered (AA-1039 follow-up, tech lead decision S276; root ADR 0019 d20 amended)**: when
+  AA retires a tour, nothing changes on the agency's site by default. Publish (`/portal/content/publish#retired-pages`)
+  shows "Posts about tours no longer offered" (`RetiredPagesList`, CIS `GET /v1/publish-log/retired-pages`; hidden when
+  empty or refused): each WordPress page has one "Move to draft" (CIS `POST /v1/publish-log/{publish_id}/move-to-draft`,
+  `retiredPagesApi.ts`; a repeat click answers "already a draft"), a Facebook post says to edit it on Facebook. The
+  bell's `tour.pages_to_review` row lists the same WordPress pages with the same button (`ReviewPagesNote`, its own EN /
+  VI sentence). Account › Settings has the owner-only opt-in "Automatically move posts about a discontinued tour to
+  draft" after N days (`TourRetirementSettingsCard`, CIS `GET` / `PATCH /v1/account/tour-retirement`, 1-30 days,
+  default 7, off by default; hidden when the read fails); a page of an opted-in agency shows its draft date. A page
+  drafted either way is put back with "Put back online" after a restore.
 - **Marketplace (AA-671)**: one page at `/portal/tours` for the tours a tenant can pick and the tours it picked (was
   two pages, Browse Tours and Tour overview). View "All tours" (default): CIS `GET /v1/tours/pool` as a card grid with
   server paging and filters (name, country, length; newest first, "New" for the last 14 days), the kit Drawer for one
