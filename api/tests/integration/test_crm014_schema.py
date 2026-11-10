@@ -46,6 +46,9 @@ TRASH_LINE_SQL = (
     "UPDATE crm.booking_line SET deleted_at = now(), deleted_by = 'm', purge_after = now() WHERE booking_line_id = $1"
 )
 NEW_TABLES = ("agency_supplier", "booking_line", "booking_line_money", "fx_rate_override", "fx_rate_platform")
+# Later files that restate an object of crm-014 (crm.booking_line_confirm, AA-1069 crm-053): re-applied after the
+# re-run, so the rest of the session sees the head version (lesson: a re-run of an old file).
+LATER = (MIGRATION.parent / "053_crm_supplier_requests.sql",)
 
 
 def _currency() -> str:
@@ -171,6 +174,8 @@ async def test_crm014_is_registered_and_runs_again_as_a_no_op(admin: asyncpg.Con
     await admin.execute(f"SET ROLE {OWNER}")
     try:
         await admin.execute(MIGRATION.read_text(encoding="utf-8"))
+        for later in LATER:
+            await admin.execute(later.read_text(encoding="utf-8"))
     finally:
         await admin.execute("RESET ROLE")
     source = await admin.fetchval(
