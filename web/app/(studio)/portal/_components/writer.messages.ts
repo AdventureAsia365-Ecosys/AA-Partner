@@ -210,6 +210,39 @@ export const SLATE_MESSAGES = defineMessages(
   },
 );
 
+// AA-1081 — the Articles page's note on the adopted tours that have no article topic, one line per reason code
+// (lib/studio/blogTopics.ts NO_TOPIC_REASONS). Agency words only: never "bar", score, Debate, gate or seed.
+export const BLOG_TOPICS_MESSAGES = defineMessages(
+  {
+    title: (n: number, total: number) => `${n} of your ${total} tours ${n === 1 ? "has" : "have"} no article topic yet`,
+    intro: "Every tour you add gets an article topic when there is enough to write a full article about. Here is why these don't yet.",
+    untitledTour: "Untitled tour",
+    reason_not_ready: "Topics for this tour are still being prepared. Check again after the next update.",
+    reason_low_search_interest: "Too few people search for this tour's places yet to carry an article. It still gets social post topics.",
+    reason_no_place_match: "The places people search for could not be matched to a stop on this tour yet.",
+    reason_seed_too_thin: "The tour's description is too short to carry a full article (about 900 words). Its stops are offered as shorter posts instead.",
+    reason_no_fitting_topic: "None of this tour's topics suits an article right now.",
+    reason_places_covered: "Its places already have an article topic, from this tour or another of your tours.",
+    reason_unknown: "No article topic yet.",
+    showAll: (n: number) => `Show all ${n}`,
+    showFewer: "Show fewer",
+  },
+  {
+    title: (n: number, total: number) => `${n} trong ${total} tour của bạn chưa có chủ đề bài viết`,
+    intro: "Mỗi tour bạn thêm sẽ có chủ đề bài viết khi có đủ nội dung cho một bài đầy đủ. Đây là lý do các tour dưới đây chưa có.",
+    untitledTour: "Tour chưa đặt tên",
+    reason_not_ready: "Chủ đề cho tour này đang được chuẩn bị. Hãy xem lại sau lần cập nhật tới.",
+    reason_low_search_interest: "Hiện còn quá ít người tìm kiếm các địa điểm của tour này để viết một bài. Tour vẫn có chủ đề cho bài mạng xã hội.",
+    reason_no_place_match: "Các địa điểm mọi người tìm kiếm chưa khớp được với điểm dừng nào của tour này.",
+    reason_seed_too_thin: "Mô tả tour quá ngắn cho một bài viết đầy đủ (khoảng 900 từ). Các điểm dừng của tour được gợi ý cho các bài ngắn hơn.",
+    reason_no_fitting_topic: "Hiện chưa có chủ đề nào của tour này phù hợp cho một bài viết.",
+    reason_places_covered: "Các địa điểm của tour đã có chủ đề bài viết, từ tour này hoặc một tour khác của bạn.",
+    reason_unknown: "Chưa có chủ đề bài viết.",
+    showAll: (n: number) => `Xem cả ${n}`,
+    showFewer: "Thu gọn",
+  },
+);
+
 export const ANGLE_MESSAGES = defineMessages(
   {
     tourUpdated: "This part of the tour was updated",

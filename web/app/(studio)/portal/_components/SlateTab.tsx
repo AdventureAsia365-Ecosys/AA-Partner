@@ -74,6 +74,8 @@ type SlateT = Translator<typeof SLATE_MESSAGES.en>;
 import type { ContentPiece } from "./AngleGateWizard";
 import { WriterPanel, useWriteWatcher, watchPiece, type WriterTarget } from "./WriterPanel";
 import { plainError } from "./studioError";
+import { BlogTopicsNote } from "./BlogTopicsNote";
+import type { BlogTopics } from "@/lib/studio/blogTopics";
 
 interface ClearedBarReason {
   channel: string;
@@ -113,6 +115,8 @@ interface SlateResponse {
   unmatched_markets?: string[];
   // AA-764 — the Slate is proposed by a background job; `refreshing` while it runs.
   refresh?: { status: string; refreshing: boolean; finished_at: string | null };
+  // AA-1081 — per adopted tour: its Blog topic count and, with none, a typed reason (null before the first update).
+  blog_topics?: BlogTopics | null;
 }
 
 const SLATE_REFRESH_POLL_MS = 15_000;
@@ -346,6 +350,8 @@ function SlateTabInner({ channels, title, intro }: { channels?: readonly string[
           channel={active} postsPerWeek={data!.posts_per_week} onPicked={load} writer={writer}
         />
       )}
+      {/* AA-1081 — Articles: the tours with no article topic yet, and why (tenant words, from the last update). */}
+      {!loading && !error && activeChannel === "blog" && <BlogTopicsNote blogTopics={data?.blog_topics} />}
       </div>
 
       <WriterPanel key={panel?.requestId ?? "closed"} target={panel} onClose={closeWriter} onBackgroundPiece={watchDetached} />
