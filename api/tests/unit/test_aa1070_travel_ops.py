@@ -950,3 +950,28 @@ def test_calendar_aa_departure_layer() -> None:
                                      member_id=None, tz=dt.UTC))  # fmt: skip
     assert [(e["kind"], e["departure_id"], e["trips"]) for e in out] == [("aa_departure", "DEP-1", 2)]
     assert ics.LABELS["aa_departure"] == "AA departure"
+
+
+def test_travelling_counts_passport_issues(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.duty import service as duty
+
+    trip = {"trip_id": TRIP, "title": "Bay days", "stage": "travelling", "start_date": dt.date(2031, 3, 1),
+            "end_date": END, "owner_member_id": None, "destinations": ["vietnam"]}  # fmt: skip
+
+    async def counts(*_: Any) -> dict[uuid.UUID, int]:
+        return {TRIP: 2}
+
+    async def today(_ctx: Any) -> tuple[dt.date, str]:
+        return dt.date(2031, 3, 2), "Asia/Ho_Chi_Minh"
+
+    async def flags(*_: Any) -> list[Any]:
+        return []
+
+    monkeypatch.setattr(duty.passport, "issue_counts", counts)
+    monkeypatch.setattr(duty, "today", today)
+    monkeypatch.setattr(duty, "_open_flags", flags)
+    monkeypatch.setattr(duty, "where_on", lambda *_: ("vietnam", None, 2, []))
+    conn = ScriptedConn().on("FROM crm.trip t", [trip])
+    out = run(duty.travelling(tenant_ctx(conn), vault=FakeVault()))
+    (row,) = [r for region in out["regions"] for r in region["trips"]]
+    assert row["passport_issues"] == 2

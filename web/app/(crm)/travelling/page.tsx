@@ -65,6 +65,7 @@ export default async function TravellingPage({ searchParams }: { searchParams: P
                       </a>
                       <Badge tone={trip.stage === "travelling" ? "success" : "info"}>{tr(`duty.stage.${trip.stage}`)}</Badge>
                       {trip.incident_flag_id && <Badge tone="danger">{tr("duty.trip.incident")}</Badge>}
+                      {!!trip.passport_issues && <Badge tone="danger">{fmt(tr("travel.pipeline.passportBadge"), { n: trip.passport_issues })}</Badge>}
                       {trip.is_mine && <Badge dot={false}>{tr("duty.trip.mine")}</Badge>}
                     </div>
                     <div style={{ fontSize: 12.5, color: K.muted }}>

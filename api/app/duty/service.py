@@ -34,6 +34,7 @@ from typing import Any
 from app.errors import Invalid, NotFound, RateLimited
 from app.observability import reveal_meter
 from app.tenancy import TenantContext
+from app.travel_ops import passport
 from app.vault import Vault
 
 DEFAULT_TZ = "Asia/Ho_Chi_Minh"
@@ -227,8 +228,11 @@ async def _open_flags(ctx: TenantContext, local_today: dt.date) -> list[dict[str
     return out
 
 
-async def travelling(ctx: TenantContext, *, start: dt.date | None = None, days: int = 7) -> dict[str, Any]:
-    """Travelling now / this week (A-02), grouped by region; travellers once each, without names."""
+async def travelling(
+    ctx: TenantContext, *, start: dt.date | None = None, days: int = 7, vault: Vault | None = None
+) -> dict[str, Any]:
+    """Travelling now / this week (A-02), grouped by region; travellers once each, without names. AA-1070: with the
+    ``vault``, each trip says how many travellers have a passport issue (:mod:`app.travel_ops.passport`)."""
     local_today, tz = await today(ctx)
     first, last = _window(start or local_today, days)
     trips = await ctx.conn.fetch(TRIPS_SQL, list(SHOWN_STAGES), first, last, MAX_TRIPS, local_today)
@@ -245,6 +249,7 @@ async def travelling(ctx: TenantContext, *, start: dt.date | None = None, days: 
             people[p["trip_id"]].append(p)
     flags = await _open_flags(ctx, local_today)
     flagged = {t["trip_id"]: f["incident_flag_id"] for f in flags for t in f["trips"]}
+    issues = await passport.issue_counts(ctx, vault, ids) if vault is not None and ids else {}
 
     regions: dict[str, list[dict[str, Any]]] = defaultdict(list)
     travellers: dict[uuid.UUID, dict[str, Any]] = {}
@@ -268,6 +273,7 @@ async def travelling(ctx: TenantContext, *, start: dt.date | None = None, days: 
                 "lines": [_line(ln) for ln in running],
                 "traveler_ids": [str(p["traveler_id"]) for p in party],
                 "incident_flag_id": flagged.get(str(t["trip_id"])),
+                "passport_issues": issues.get(t["trip_id"], 0),
             }
         )
         for p in party:

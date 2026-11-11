@@ -58,8 +58,9 @@ async def get_travelling(
     days: Annotated[int, Query(ge=1, le=service.MAX_DAYS)] = 7,
 ) -> dict[str, Any]:
     pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
     async with tenant_tx(pool, caller, tenant_id, action=Action.DUTY_OF_CARE_VIEW) as ctx:
-        return await service.travelling(ctx, start=start, days=days)
+        return await service.travelling(ctx, start=start, days=days, vault=Vault(keys, ctx))
 
 
 @router.get("/duty/reach")

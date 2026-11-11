@@ -390,7 +390,9 @@ def test_every_route_reaches_its_helper(pools: LocalPools, monkeypatch: pytest.M
         res = client.post("/crm/v1/duty/reveal", headers=h, json={"traveler_ids": [ID], "fields": ["passport_no"]})
         assert res.status_code == 422
     by_name = {n: (a, kw) for n, a, kw in calls}
-    assert by_name["travelling"][1] == {"start": dt.date(2026, 11, 10), "days": 7}
+    travelling = dict(by_name["travelling"][1])
+    assert travelling.pop("vault") is not None  # AA-1070: the passport check of each trip
+    assert travelling == {"start": dt.date(2026, 11, 10), "days": 7}
     assert by_name["bulk_reveal"][0][3] == ["display_name", "emergency_contact"]
     assert by_name["agency_calendar"][1]["mine"] is False
     assert by_name["feed_create"][1]["scope"] == "mine" and by_name["feed_create"][1]["origin"].startswith("https://")
