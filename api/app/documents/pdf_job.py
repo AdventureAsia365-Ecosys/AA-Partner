@@ -219,11 +219,11 @@ def build_handler(keys: KeyProvider | None, store: DocumentStore | None) -> Hand
                     content=content,
                     uploaded_by_kind="system",
                 )
+        except DecryptionDenied as exc:
+            raise PermanentError(type(exc).__name__) from None
         except (NotFound, Forbidden) as exc:
             # The trip, invoice, proposal or line is gone, or the agency is locked: nothing to make.
             return {"reason_code": exc.code if isinstance(exc.code, str) and len(exc.code) <= 64 else "not_found"}
-        except DecryptionDenied as exc:
-            raise PermanentError(type(exc).__name__) from None
         log.info("crm_pdf_rendered tenant_id=%s kind=%s size=%s", tenant_id, kind, len(content))
         return {"document_id": saved["document_id"], "kind": kind, "byte_count": len(content)}
 
