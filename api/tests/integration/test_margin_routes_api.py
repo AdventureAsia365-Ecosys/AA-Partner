@@ -102,6 +102,10 @@ UNSEEDED = {
     "/crm/v1/supplier-bills/{bill_id}": "a supplier bill: view_margin, never the assistant",
     "/crm/v1/aa-bookings/invoices/{number}": "an AA invoice read live from Booking: view_margin, never the assistant",
     "/crm/v1/departures/{departure_ref}/pnl": "a group departure's P&L: view_margin, never the assistant",
+    # AA-1070: the departure roster (names, codes, checks) and one visa application (status, dates, the granted visa):
+    # no money table behind either; the trip-level travel reads (passports, rooming, vouchers, visas) are called below.
+    "/crm/v1/departures/{ref}/roster": "the departure roster: names, codes and checks, no money table behind it",
+    "/crm/v1/visas/{app_id}": "a visa application: no money table behind it",
 }
 
 

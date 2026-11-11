@@ -17,10 +17,12 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from collections.abc import AsyncIterator
 from typing import Any
 
 import asyncpg
 import pytest
+import pytest_asyncio
 
 from app import pipeline
 from app.booking import contract
@@ -34,9 +36,19 @@ from app.ops_release import build
 from app.tenancy import system_tx, tenant_tx
 from app.travel_ops import departures, passport, rooming, visas, vouchers
 from app.vault import Vault
+from tests.integration.conftest import OWNER
+from tests.integration.test_crm054_schema import purge_system_documents, reapply_crm055
 from tests.integration.test_ops_release_api import DAY, DEP, FULL, _seed, _setup, _traveller
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _crm055_values(admin: asyncpg.Connection) -> AsyncIterator[None]:
+    # The PDF job writes crm-055 document values: the same guard as test_crm054_schema (see purge_system_documents).
+    await reapply_crm055(admin)
+    yield
+    await purge_system_documents(admin)
 
 
 async def _world(pool: asyncpg.Pool) -> dict[str, Any]:
@@ -204,7 +216,7 @@ async def test_visa_tracker(app_pool: asyncpg.Pool) -> None:
         assert len((await visas.trip_applications(ctx, Vault(s["keys"], ctx), s["trip"]))["applications"]) == 1
 
 
-async def test_departure_roster_from_the_feed(app_pool: asyncpg.Pool) -> None:
+async def test_departure_roster_from_the_feed(app_pool: asyncpg.Pool, admin: asyncpg.Connection) -> None:
     s = await _world(app_pool)
     await _seed(app_pool, s["tenant"], "INSERT INTO crm.booking_feed_state DEFAULT VALUES", actor="job:test")
     ev = contract.event({"event_id": f"ev_{uuid.uuid4().hex[:12]}", "type": "departure.guaranteed",
@@ -228,6 +240,11 @@ async def test_departure_roster_from_the_feed(app_pool: asyncpg.Pool) -> None:
         cal = await calendar_events.agency_calendar(ctx, start=s["start"] - DAY, end=s["start"] + DAY, mine=False)
     (aa,) = [e for e in cal["events"] if e["kind"] == "aa_departure"]
     assert aa["departure_id"] == DEP and aa["departure_status"] == "guaranteed" and aa["trips"] == 1
+    # The feed row makes crm_booking_sync read this agency's feed in later tests (they count the agencies called).
+    async with admin.transaction():
+        await admin.execute(f"SET LOCAL ROLE {OWNER}")
+        await admin.execute("SELECT set_config('app.tenant_id', $1, true)", str(s["tenant"]))
+        await admin.execute("DELETE FROM crm.booking_feed_state")
 
 
 async def test_pdf_job_stores_sealed_documents(app_pool: asyncpg.Pool) -> None:
