@@ -118,6 +118,9 @@ class FakeBooking:
                                  "oldest_overdue_days": 0, "overdue_amount": [], "warn_after_days": 7,
                                  "suspend_after_days": 30, "paid_through": None}
     )  # fmt: skip
+    # AA-1072: the one product ``GET /products`` lists and the start of the one departure ``GET /departures`` lists.
+    product_source_id: str = "T-100"
+    departure_start: str = "2026-12-01"
     calls: Counter[str] = field(default_factory=Counter)
     holds: dict[str, dict[str, Any]] = field(default_factory=dict)
     hold_keys: dict[str, str] = field(default_factory=dict)
@@ -352,7 +355,8 @@ class FakeBooking:
             return _resp(200, {"items": items, "next_cursor": items[-1]["cursor"] if items else str(after)})
         if method == "GET" and path == "/products":
             return _resp(200, {"items": [{
-                "tour": {"source_system": "cis", "source_id": "T-100"}, "trip_plan_id": "p1", "sellable": True,
+                "tour": {"source_system": "cis", "source_id": self.product_source_id}, "trip_plan_id": "p1",
+                "sellable": True,
                 "has_fixed_departures": True, "updated_at": "2026-10-20T00:00:00+00:00",
                 "components": [{"component_id": "tp:1", "kind": "trip_plan", "day_no": None},
                                {"component_id": "rt:2", "kind": "hotel_room", "day_no": 1}],
@@ -360,7 +364,7 @@ class FakeBooking:
         if method == "GET" and path == "/departures":
             return _resp(200, {"items": [{
                 "departure_id": "d1", "tour": {"source_system": "cis", "source_id": query["source_id"]},
-                "start_date": "2026-12-01", "capacity": 10, "held": 0, "sold": 0, "available": 10,
+                "start_date": self.departure_start, "capacity": 10, "held": 0, "sold": 0, "available": 10,
                 "status": "scheduled", "auto_confirm": True,
             }]})  # fmt: skip
         return _resp(404, {"error": "not_found", "message": "no route"})

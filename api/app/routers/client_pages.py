@@ -16,8 +16,9 @@ origin (no CORS) and the per-address limits key on the real visitor.
 - AA-952 slice 4 (C-04 deposit, C31, Fix A8), by cookie: ``POST /proposal/invoices/{id}/claim`` ("I have paid":
   the invoice reads ``payment_claimed``, Booking extends the AA hold once, the agent verifies; 410
   ``pay_link_expired`` once the hold ran out) and ``POST /proposal/invoices/{id}/card`` (the card pay button: 410
-  ``pay_link_expired`` past the hold, never a payment session; 409 ``card_not_offered`` / ``provider_not_available``
-  until the agency's own card provider has code). The accepted page lists the invoices under ``payments``.
+  ``pay_link_expired`` past the hold, never a payment session; 409 ``card_not_offered`` / ``provider_not_available`` /
+  ``currency_not_supported``; AA-1072: else ``{redirect_url}`` of a hosted payment on the agency's own gateway). The
+  accepted page lists the invoices under ``payments`` (``pay_online`` when the gateway takes that invoice).
 - ``GET  /crm/public/v1/portal/{token}``: the portal home (``signed_in: false`` without a session).
 - ``POST /crm/public/v1/portal/{token}/code``: e-mail a code (``{"purpose": "sign_in" | "sign"}``).
 - ``POST /crm/public/v1/portal/{token}/session``: check a sign-in code; 200 sets the session cookie
@@ -57,6 +58,7 @@ traveller's own application); both writes use the portal write limiter like the 
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 from collections.abc import AsyncIterator
@@ -308,12 +310,32 @@ async def post_invoice_claim(
 
 @router.post("/proposal/invoices/{invoice_id}/card")
 async def post_invoice_card(
-    request: Request, invoice_id: str, token: ProposalCookie = None, origin: Annotated[str | None, Header()] = None
-) -> None:
-    """Always refuses today (410 past the hold, else 409): the session is the BYO card provider's follow-up card."""
+    request: Request,
+    invoice_id: str,
+    token: ProposalCookie = None,
+    origin: Annotated[str | None, Header()] = None,
+    accept_language: Annotated[str | None, Header()] = None,
+) -> JSONResponse:
+    """AA-1072: one hosted payment through the agency's own gateway (410 past the hold, 409 without an online
+    account / for a provider without code / another currency): ``{redirect_url, expires_at}``."""
     _write_limit(request)
     pool = await request_pool(request)
-    await proposal_page.card_payment(pool, request.app.state.settings, _cookie_token(token), invoice_id, origin=origin)
+    keys = require_keys(request.app.state.keys)
+    settings = request.app.state.settings
+    address = client_address(request, settings.rate_limit_xff_hops)
+    locale = "vi" if (accept_language or "").lower().startswith("vi") else "en"
+    link = _cookie_token(token)
+    out = await proposal_page.card_payment(pool, keys, settings, link, invoice_id, origin=origin,
+                                           client_ip=_ip_only(address), locale=locale)  # fmt: skip
+    return _json(out)
+
+
+def _ip_only(address: str) -> str:
+    """The gateway wants an IP address for its fraud checks: the limiter key when it is one, else a placeholder."""
+    try:
+        return str(ipaddress.ip_address(address))
+    except ValueError:
+        return "127.0.0.1"
 
 
 # ── portal (C-05 .. C-08, C-10 view) ─────────────────────────────────────────────────────────────

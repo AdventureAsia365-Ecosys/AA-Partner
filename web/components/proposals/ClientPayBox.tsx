@@ -9,8 +9,11 @@
 // for the client's re-accept (the box above it), the deposit reads "accept the updated terms first" with no details and
 // no button (S261 F1; the claim answers 409 terms_reaccept_required). The agency is the merchant (BYO): the money goes
 // to its own account.
-import { useState } from "react";
-import { Button, K } from "@/app/_kit";
+// AA-1072: "Pay online" (POST .../invoices/<id>/card) when the agency connected its own gateway: the answer is the
+// gateway's hosted page (the card never reaches this site); the gateway sends the client back to /c/p?payment=returned,
+// where the box says the payment is being confirmed and reads the page again once.
+import { useEffect, useRef, useState } from "react";
+import { Button, K, useHydrated } from "@/app/_kit";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt } from "@/lib/i18n";
 import { PROPOSAL_API } from "@/lib/clientProposal";
@@ -49,7 +52,42 @@ export function ClientPayBox({
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const hydrated = useHydrated();
+  // Read after hydration only (the server has no address bar), so both renders agree.
+  const returned = hydrated && new URLSearchParams(window.location.search).get("payment") === "returned";
+  const reread = useRef(false);
+  useEffect(() => {
+    if (!returned || reread.current) return;
+    // The gateway's signed notice usually lands within seconds: read the page again, once.
+    const timer = window.setTimeout(() => {
+      reread.current = true;
+      onDone();
+    }, 4000);
+    return () => window.clearTimeout(timer);
+  }, [returned, onDone]);
   if (invoices.length === 0) return null;
+
+  async function payOnline(id: string) {
+    setBusy(id);
+    setError(null);
+    try {
+      const res = await fetch(`${PROPOSAL_API}/invoices/${encodeURIComponent(id)}/card`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+      });
+      const body = (await res.json().catch(() => ({}))) as { detail?: string; redirect_url?: string };
+      if (res.ok && typeof body.redirect_url === "string" && /^https:\/\//.test(body.redirect_url)) {
+        window.location.assign(body.redirect_url);
+        return;
+      }
+      setError(t(clientErrorKey(body.detail ?? (res.status === 429 ? "rate_limited" : "error"))));
+      onDone();
+    } catch {
+      setError(t("client.error.other"));
+    }
+    setBusy(null);
+  }
 
   async function claim(id: string) {
     setBusy(id);
@@ -72,6 +110,11 @@ export function ClientPayBox({
   return (
     <section data-testid="client-pay-box" style={{ display: "grid", gap: 10, paddingTop: 12, borderTop: `1px solid ${K.line}` }}>
       <h2 style={{ margin: 0, fontSize: 16, color: K.ink }}>{t("client.pay.title")}</h2>
+      {returned && (
+        <p role="status" data-testid="client-pay-returned" style={{ margin: 0, fontSize: 13.5, color: K.body }}>
+          {t("client.pay.returned")}
+        </p>
+      )}
       {invoices.map((inv) => {
         const state = inv.pay_window.state;
         return (
@@ -97,9 +140,19 @@ export function ClientPayBox({
                 <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{inv.pay_by.instructions}</span>
               </div>
             )}
+            {inv.pay_online && (
+              <div style={{ display: "grid", gap: 4 }}>
+                <span data-testid="client-pay-online">
+                  <Button variant="primary" size="lg" disabled={busy !== null} onClick={() => void payOnline(inv.invoice_id)}>
+                    {busy === inv.invoice_id ? t("client.pay.onlineBusy") : t("client.pay.online")}
+                  </Button>
+                </span>
+                <span style={{ fontSize: 12.5, color: K.muted }}>{fmt(t("client.pay.onlineHint"), { agency })}</span>
+              </div>
+            )}
             {inv.can_claim && (
               <div>
-                <Button variant="primary" size="lg" disabled={busy !== null} onClick={() => void claim(inv.invoice_id)} testId="client-pay-claim">
+                <Button variant={inv.pay_online ? "secondary" : "primary"} size="lg" disabled={busy !== null} onClick={() => void claim(inv.invoice_id)} testId="client-pay-claim">
                   {t("client.pay.claim")}
                 </Button>
               </div>

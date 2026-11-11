@@ -97,7 +97,7 @@ async def test_providers() -> None:
         providers.provider("paypal")
     assert providers.available() == [{"provider": "manual", "available": True},
                                      {"provider": "stripe", "available": False},
-                                     {"provider": "vn_gateway", "available": False}]  # fmt: skip
+                                     {"provider": "vn_gateway", "available": True}]  # fmt: skip
 
 
 # ── record a payment ──────────────────────────────────────────────────────────────────────────────
@@ -390,7 +390,7 @@ async def test_payment_methods() -> None:
     assert existing.sql("UPDATE crm.payment_provider_account SET display_name")[0] == (ACCOUNT, "Cash", "Office")
     with _raises(Conflict, "use_manual_settings"):
         await pay.connect(tenant_ctx(), "manual")
-    with _raises(Conflict, "provider_not_available"):
+    with _raises(Conflict, "use_gateway_settings"):  # AA-1072: the gateway connects with its code and secret
         await pay.connect(tenant_ctx(), "vn_gateway")
     with _raises(NotFound, "account_not_found"):
         await pay.disconnect(tenant_ctx(), ACCOUNT)

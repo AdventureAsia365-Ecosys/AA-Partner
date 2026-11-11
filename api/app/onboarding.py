@@ -118,7 +118,7 @@ def _best(statuses: list[str]) -> str:
 
 def connections(facts: Any) -> list[dict[str, Any]]:
     payments = [p.split(":", 1) for p in (facts["payment_methods"] or [])]
-    stripe = [status for provider, status in payments if provider == "stripe"]
+    stripe = [status for provider, status in payments if provider in ("stripe", "vn_gateway")]  # AA-1072
     card = "connected" if "active" in stripe else "disconnected" if stripe else "not_set_up"
     bank = any(provider == "manual" and status == "active" for provider, status in payments)
     creds = [c.split(":", 1) for c in (facts["credentials"] or [])]

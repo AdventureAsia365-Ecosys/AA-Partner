@@ -43,6 +43,7 @@ TASK_KINDS: frozenset[str] = frozenset(
         "ops_release_incomplete",
         "passport_expiring",
         "passport_invalid_for_trip",
+        "payment_review",
         "payment_unfulfillable",
         "proposal_change_request",
         "proposal_follow_up",
@@ -74,6 +75,7 @@ STAGE_REASONS: frozenset[str] = frozenset(
         "import",
         "intake",
         "undo",
+        "web_booking",
     }
 )
 

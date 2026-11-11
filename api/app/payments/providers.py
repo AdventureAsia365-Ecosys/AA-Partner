@@ -7,8 +7,11 @@ client money, so no provider here is ever configured with an AA account.
 - ``manual`` (today): the agency receives and returns money outside the CRM and a member records it. Its account row
   (``crm.payment_provider_account``) carries the pay-by instructions printed on the agency's invoices (its own bank
   details, its office for cash). A refund through it records what the member says was returned.
-- ``stripe`` (Connect Standard on the agency's own account) and ``vn_gateway`` are reserved names (the database knows
-  them). They have no implementation yet: asking for one is 409 ``provider_not_available``.
+- ``vn_gateway`` (AA-1072): the agency's own VNPay merchant account. The client pays on the gateway's hosted page
+  (:mod:`app.payments.gateway`); a refund is made by the agency in its merchant portal and recorded here like a manual
+  one (the gateway's refund API is a follow-up).
+- ``stripe`` (Connect Standard on the agency's own account) is a reserved name (the database knows it) and stays
+  paused (root ADR 0019 b14): asking for it is 409 ``provider_not_available``.
 """
 
 from __future__ import annotations
@@ -35,6 +38,8 @@ class PaymentProvider(Protocol):
     takes_cards: bool
     #: The account row names an account at the provider (``external_account_id``); manual has none.
     needs_external_account: bool
+    #: The one currency the provider charges in (None: any, the agency moves the money itself).
+    currency: str | None
 
     async def refund(self, *, amount: Decimal, currency: str, original_ref: str | None,
                      reference: str | None) -> RefundResult: ...  # fmt: skip
@@ -46,6 +51,7 @@ class ManualProvider:
     name = "manual"
     takes_cards = False
     needs_external_account = False
+    currency = None
 
     async def refund(
         self, *, amount: Decimal, currency: str, original_ref: str | None, reference: str | None
@@ -54,7 +60,22 @@ class ManualProvider:
         return RefundResult(provider_ref=reference)
 
 
-PROVIDERS: dict[str, PaymentProvider] = {"manual": ManualProvider()}
+class VnGatewayProvider:
+    """The agency's own VNPay merchant account (BYO). The client pays on VNPay's page; a refund is made by the agency
+    in its merchant portal and recorded with the gateway's refund reference (no refund API call yet)."""
+
+    name = "vn_gateway"
+    takes_cards = True
+    needs_external_account = True
+    currency = "VND"
+
+    async def refund(
+        self, *, amount: Decimal, currency: str, original_ref: str | None, reference: str | None
+    ) -> RefundResult:
+        return RefundResult(provider_ref=reference)
+
+
+PROVIDERS: dict[str, PaymentProvider] = {"manual": ManualProvider(), "vn_gateway": VnGatewayProvider()}
 
 
 def provider(name: str) -> PaymentProvider:

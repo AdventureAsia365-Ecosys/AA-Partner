@@ -25,6 +25,8 @@ the dispatcher, webhook and health-check modules (``tests/unit/test_vault_rules.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import uuid
 from typing import TYPE_CHECKING, NoReturn
 
@@ -99,6 +101,11 @@ class Vault:
     async def ref_index(self, table: str, column: str, value: str) -> bytes:
         """AA-962: an agency's own reference of an imported row (crm-030 ``import_ref_bidx``)."""
         return blind_index.ref_index(await self._index_key(table, column), value)
+
+    async def address_index(self, table: str, column: str, value: str) -> bytes:
+        """AA-1072: the full 32-byte HMAC of a client address under the agency's index key (a per-address ceiling of
+        a public route without storing the address, crm-057 ``public_booking_attempt.ip_hash``)."""
+        return hmac.new(await self._index_key(table, column), value.strip().lower().encode(), hashlib.sha256).digest()
 
     # ── Internals ──────────────────────────────────────────────────────────────────────────────────
     async def _seal(self, table: str, column: str, row_id: uuid.UUID | str, value: str | bytes, purpose: str) -> bytes:

@@ -23,5 +23,6 @@ LEAD_SOURCES: tuple[str, ...] = (
     "sales_partner",  # AA-1071: an inquiry sent through a sales partner's intake link
     "synthetic_seed",  # the Dev / demo seed's inquiry form
     "tripplanner",  # AA-1038: a trip request from the agency's TripPlanner site (its system form "Trip planner")
+    "web_booking",  # AA-1072: "Book now" on the public AA tour page
     "website_form",  # an inquiry form (the default code of a new form)
 )
