@@ -22,12 +22,14 @@ apply. The agency must have turned "Book now" on (``tenant_settings.public_booki
      ``ip_hash``: an HMAC under the agency's index key, never the address), and one ``crm.public_booking_attempt``
      (``received``; a repeated press of the same page is the same attempt: ``already_created`` / ``in_progress``);
   2. no transaction: the departure from Booking's product read and a live quote for the party;
-  3. ``intake_tx`` again: the traveller (deduped by e-mail, then phone, under the intake job's advisory locks), a trip
+  3. ``intake_tx`` again: always a **new** traveller (the visitor's e-mail and phone are not verified, so a client
+     with the same e-mail or phone is never reused: the trip gets an internal note and the agent merges the two on
+     Duplicates once the client confirms; :func:`_traveller`), a trip
      at **Proposal** (``lead_source`` ``web_booking``, stage history reason ``web_booking``), a builder version with
      day 0, day 1 and one block holding the AA option at the retail price (per-traveller rows), published and sent by
      the builder's own ``publish`` / ``send`` (price hash, terms, cancellation policy, the agency's schedule
-     template), then the attempt ``created``. The answer carries the client link path (``/c/p/<token>``, once);
-     the same link goes to the client by e-mail through the send's dispatch.
+     template), then the attempt ``created``. The answer carries the client link path (``/c/p/<token>``, once): it
+     opens a trip of the client this press made, never one of an existing client.
 
   A Booking refusal (sold out, not served, no price) marks the attempt ``refused`` with the code and answers 409 with
   it; any other failure of step 3 rolls it back and marks the attempt ``failed``.
@@ -135,6 +137,17 @@ RETURNING history_id
 INSERT_CONSENT_SQL = """
 INSERT INTO crm.consent (traveler_id, purpose, value, source, submission_id) VALUES ($1, $2, $3, 'form', NULL)
 """
+# A live client of the agency that already has the booking's e-mail or phone (the Duplicates page's own match).
+KNOWN_CONTACT_SQL = """
+SELECT EXISTS (
+  SELECT 1 FROM crm.traveler
+   WHERE deleted_at IS NULL AND (email_bidx = $1 OR ($2::bytea IS NOT NULL AND phone_bidx = $2))
+) AS known
+"""
+KNOWN_CONTACT_NOTE = (
+    "Booked online with an e-mail or phone that an existing client already has. The booking was made as a new "
+    "client because the details were not checked: confirm with the client, then merge the two on Clients > Duplicates."
+)
 INSERT_NOTE_SQL = "INSERT INTO crm.note (note_id, trip_id, traveler_id, kind, body_enc) VALUES ($1, $2, $3, $4, $5)"
 EDIT_SEQ_SQL = "SELECT edit_seq FROM crm.proposal WHERE proposal_id = $1"
 AGENCY_TZ_SQL = "SELECT timezone FROM crm.tenant_settings"
@@ -560,22 +573,20 @@ async def submit(
         raise Conflict("booking_failed", "this booking could not be made: send an inquiry instead") from None
 
 
-async def _traveller(ctx: SystemContext, vault: Vault, answers: Booking, owner: uuid.UUID | None) -> uuid.UUID:
-    """The lead: an existing client of the agency (e-mail, then phone; the intake job's advisory locks and order),
-    else a new one with its F2 profile."""
+async def _traveller(
+    ctx: SystemContext, vault: Vault, answers: Booking, owner: uuid.UUID | None
+) -> tuple[uuid.UUID, bool]:
+    """The lead: **always a new client** of the agency, with its own F2 profile. The name, e-mail and phone are typed by
+    an anonymous visitor and nobody checks them, while the answer hands that visitor a live client link: reusing a
+    client whose e-mail or phone matches would let anyone who knows a client's e-mail act on that client's record (the
+    terms acceptance, the hold and the deposit invoice pinned to their traveller id, their profile pre-filled). So a
+    match is never reused or unarchived; the new client gets an internal note on the trip instead, and the agent merges
+    the two on Duplicates once the client confirms (:mod:`app.travellers.merge`). The answer is the same either way, so
+    it never says whether the e-mail is known. Returns the new client and whether another live client already has the
+    e-mail or phone (blind indexes only)."""
     email_idx = await vault.email_index("traveler", "email", answers.email)
     phone_idx = await vault.phone_index("traveler", "phone", answers.phone) if answers.phone else None
-    await ctx.conn.execute(process.DEDUPE_LOCK_SQL, "crm_intake_email", str(ctx.tenant_id), email_idx)
-    if phone_idx is not None:
-        await ctx.conn.execute(process.DEDUPE_LOCK_SQL, "crm_intake_phone", str(ctx.tenant_id), phone_idx)
-    match = await ctx.conn.fetchrow(process.BY_EMAIL_SQL, email_idx)
-    if match is None and phone_idx is not None:
-        match = await ctx.conn.fetchrow(process.BY_PHONE_SQL, phone_idx)
-    if match is not None:
-        traveler_id = match["traveler_id"]
-        if await ctx.conn.fetchval(process.UNARCHIVE_SQL, traveler_id):
-            ctx.audit("unarchive", "allowed", "traveler", str(traveler_id), reason="web_booking")
-        return traveler_id
+    known = bool(await ctx.conn.fetchval(KNOWN_CONTACT_SQL, email_idx, phone_idx))
     traveler_id, token = uuid.uuid4(), uuid.uuid4()
     await ctx.conn.execute(process.INSERT_PROFILE_SQL, token, None, None, answers.consent_marketing)
     await ctx.conn.execute(
@@ -593,7 +604,7 @@ async def _traveller(ctx: SystemContext, vault: Vault, answers: Booking, owner: 
         owner,
         LEAD_SOURCE,
     )
-    return traveler_id
+    return traveler_id, known
 
 
 async def _profile_token(ctx: SystemContext, vault: Vault, traveler_id: uuid.UUID) -> uuid.UUID | None:
@@ -625,7 +636,7 @@ async def _create(
     sell = grid_total(rows)
     await ctx.conn.execute(QUOTED_SQL, started.attempt_id, quote.quote_id, sell)
 
-    traveler_id = await _traveller(ctx, vault, answers, owner)
+    traveler_id, known = await _traveller(ctx, vault, answers, owner)
     token = await _profile_token(ctx, vault, traveler_id)
     tour = started.tour
     days = int(tour["duration_days"] or 1)
@@ -648,6 +659,11 @@ async def _create(
         note_id = uuid.uuid4()
         await ctx.conn.execute(INSERT_NOTE_SQL, note_id, trip_id, traveler_id, "inquiry_message",
                                await vault.encrypt("note", "body_enc", note_id, answers.message))  # fmt: skip
+    if known:
+        note_id = uuid.uuid4()
+        await ctx.conn.execute(INSERT_NOTE_SQL, note_id, trip_id, traveler_id, "internal",
+                               await vault.encrypt("note", "body_enc", note_id, KNOWN_CONTACT_NOTE))  # fmt: skip
+        ctx.audit("public_booking_known_contact", "allowed", "trip", str(trip_id), reason=LEAD_SOURCE)
 
     proposal_id = uuid.UUID(plan["proposal_id"])
     await _proposal(ctx, vault, trip_id, proposal_id, plan=plan, quote=quote, sell=sell, rows=rows, start=start,

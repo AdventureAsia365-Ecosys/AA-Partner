@@ -1790,12 +1790,14 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
     **up** to the currency's unit (whole dong): the per-traveller grid; no suggestion = 409 `no_retail_price`. `POST
     .../bookings`: origin, honeypot (202, nothing written), consent, answers, at most 5 attempts an hour per address
     and agency (`ip_hash`), one `crm.public_booking_attempt` (a repeated press = `already_created` /
-    `booking_in_progress`); the departure and the quote with no transaction held; then one transaction: the client
-    (deduped by e-mail, then phone, under the intake job's advisory locks), a trip at **Proposal** (`lead_source` and
+    `booking_in_progress`); the departure and the quote with no transaction held; then one transaction: **always a new
+    client** (the typed e-mail is not verified and the answer is a live client link, so an existing client with the
+    same e-mail or phone is never reused or unarchived; the trip gets an `internal` note to confirm and merge them on
+    Clients > Duplicates, audit `public_booking_known_contact`), a trip at **Proposal** (`lead_source` and
     stage reason `web_booking`, the party, the departure's dates, the country's destination), a builder v1 (day 0, day
     1 with one "Tour" block holding the AA option at the retail sell, its traveller rows, the agency's schedule
-    template), published and sent by the builder's own `publish` / `send` (price hash, terms, cancellation policy, the
-    link e-mail), the attempt `created`; the answer is `/c/p/<token>` (201). A Booking refusal marks the attempt
+    template), published and sent by the builder's own `publish` / `send` (price hash, terms, cancellation policy),
+    the attempt `created`; the answer is `/c/p/<token>` (201). A Booking refusal marks the attempt
     `refused` with the code (409); another failure rolls back and marks it `failed`. The client holds, accepts and pays
     on the existing client page; **a web booking's deposit invoice is issued at the accept** (actor the client link).
   - *Online payment (BYO VNPay)*: Settings > Payments "Online payment (VNPay)" (`GET` / `PUT

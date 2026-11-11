@@ -5,7 +5,8 @@
   departures for the agency whose form key the page carries; the live price is the agency's retail on the Booking quote
   (owner markup), whole dong per head; a booking makes the traveller, a trip at Proposal (``web_booking``), a sent
   one-option day-by-day proposal and its client link; a repeated press is the same attempt; a honeypot hit stores
-  nothing; a second booking of the same e-mail reuses the client; a sold-out departure is refused and recorded.
+  nothing; a booking with an existing client's e-mail makes a new client (never binds the visitor to the existing
+  one) with an internal note to merge; a sold-out departure is refused and recorded.
 - The client holds and accepts on the existing page; the deposit invoice of a web booking is issued at the accept.
 - Online payment (item crm-03): without a gateway the pay box offers bank details only and the card button is 409
   ``card_not_offered``; with the agency's own VNPay account (stub mode) the button answers a signed gateway URL for the
@@ -280,8 +281,6 @@ async def test_a_booking_makes_the_trip_the_sent_proposal_and_the_link(app_pool:
     # A honeypot hit is answered as if stored and stores nothing.
     bot = await _submit(app_pool, s, _press(s, **{s["honeypot"]: "x"}))
     assert bot == {"status": "received"}
-    # The same e-mail again: the same client, a second trip.
-    await _submit(app_pool, s, _press(s, name="Mira Solenne", phone=None))
     counts = (
         await _raw(
             app_pool,
@@ -291,7 +290,64 @@ async def test_a_booking_makes_the_trip_the_sent_proposal_and_the_link(app_pool:
             "(SELECT count(*) FROM crm.public_booking_attempt) AS attempts",
         )
     )[0]
-    assert (counts["travellers"], counts["trips"], counts["attempts"]) == (1, 2, 2)
+    assert (counts["travellers"], counts["trips"], counts["attempts"]) == (1, 1, 1)
+
+
+async def test_an_existing_clients_email_never_binds_the_visitor_to_that_client(app_pool: asyncpg.Pool) -> None:
+    """Review finding: nobody checks the e-mail a visitor types, and the answer hands the visitor a live client link.
+    A booking with an existing client's e-mail (here an archived one) makes a new client: the link, the lead and the
+    terms the visitor could accept belong to the new client; the existing client stays as it was (still archived, no
+    trip, no link) and the agent gets an internal note to merge the two once the client confirms. The answer has the
+    same shape as for an unknown e-mail."""
+    s = await _setup(app_pool)
+    first = await _submit(app_pool, s, _press(s))
+    known = (await _raw(app_pool, s, "SELECT traveler_id FROM crm.traveler"))[0]["traveler_id"]
+    await _raw(
+        app_pool,
+        s,
+        "UPDATE crm.traveler SET archived_at = now(), archive_reason = 'agent', archived_by = 'seed:test' "
+        "WHERE traveler_id = $1 RETURNING traveler_id",
+        known,
+    )
+    out = await _submit(app_pool, s, _press(s, name="Dorin Vask", phone=None))
+    assert sorted(out) == sorted(first) and out["status"] == "created" and out["link_path"] != first["link_path"]
+    rows = await _raw(
+        app_pool,
+        s,
+        "SELECT t.traveler_id, t.archived_at IS NOT NULL AS archived, "
+        "(SELECT count(*) FROM crm.trip_traveler tt WHERE tt.traveler_id = t.traveler_id) AS trips, "
+        "(SELECT count(*) FROM crm.client_link l WHERE l.traveler_id = t.traveler_id) AS links "
+        "FROM crm.traveler t ORDER BY t.created_at, t.traveler_id",
+    )
+    assert len(rows) == 2
+    old = next(r for r in rows if r["traveler_id"] == known)
+    new = next(r for r in rows if r["traveler_id"] != known)
+    assert (old["archived"], old["trips"], old["links"]) == (True, 1, 1)  # only its own first booking
+    assert (new["archived"], new["trips"], new["links"]) == (False, 1, 1)
+    trip = (
+        await _raw(
+            app_pool,
+            s,
+            "SELECT tt.trip_id FROM crm.trip_traveler tt WHERE tt.traveler_id = $1 AND tt.role = 'lead'",
+            new["traveler_id"],
+        )
+    )[0]["trip_id"]
+    notes = await _raw(app_pool, s, "SELECT kind, traveler_id FROM crm.note WHERE trip_id = $1", trip)
+    assert sorted(n["kind"] for n in notes) == ["inquiry_message", "internal"]
+    assert {n["traveler_id"] for n in notes} == {new["traveler_id"]}
+    first_trip_notes = await _raw(
+        app_pool, s, "SELECT kind FROM crm.note WHERE kind = 'internal' AND trip_id <> $1", trip
+    )
+    assert first_trip_notes == []  # the first booking (an unknown e-mail then) has no duplicate note
+    # The visitor's link opens the new client's trip, not the existing client's.
+    held = await page.read(app_pool, s["keys"], _token(out["link_path"]))
+    lead = await _raw(
+        app_pool,
+        s,
+        "SELECT l.traveler_id FROM crm.client_link l JOIN crm.proposal p ON p.link_id = l.link_id WHERE p.trip_id = $1",
+        trip,
+    )
+    assert held and [r["traveler_id"] for r in lead] == [new["traveler_id"]]
 
 
 async def test_a_sold_out_departure_is_refused_and_recorded(app_pool: asyncpg.Pool) -> None:

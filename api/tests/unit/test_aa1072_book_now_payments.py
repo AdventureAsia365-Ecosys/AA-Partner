@@ -475,23 +475,32 @@ async def test_submit_creates_the_trip_and_sends_the_proposal(
     assert trip[2:5] == (dt.date(2031, 5, 1), dt.date(2031, 5, 2), 1) and trip[5] == ["vietnam"]
     assert trip[6:9] == (2, [7, 1], "family")
     assert agency.sql("INSERT INTO crm.traveler (")  # a new client (no e-mail or phone match)
-    assert agency.sql("INSERT INTO crm.note")
+    assert [n[3] for n in agency.sql("INSERT INTO crm.note")] == ["inquiry_message"]  # no duplicate note
     option = agency.sql("INSERT INTO crm.option (")[0]
     assert option[5] == "aa" and option[9] == Decimal("12000000.00") and option[16:19] == ("tp:1", "trip_plan", "d1")
     assert agency.sql("SET status = 'created'")
 
 
 @pytest.mark.asyncio
-async def test_submit_reuses_a_known_client_and_rolls_a_failure_back(
+async def test_submit_never_binds_the_visitor_to_a_known_client_and_rolls_a_failure_back(
     agency: ScriptedConn, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Review finding: the visitor's e-mail is not verified and the answer hands them a live client link, so an e-mail
+    (or phone) an existing client has makes a new client, never reuses or unarchives the existing one; the trip gets
+    an internal note for the agent to merge, and the answer is the same as for an unknown e-mail."""
     _creating(agency, monkeypatch)
-    agency.on("WHERE email_bidx = $1", None).on(
-        "WHERE phone_bidx = $1", {"traveler_id": uuid.uuid4(), "profile_token_enc": None}
-    )
+    known = {"traveler_id": uuid.uuid4(), "profile_token_enc": None}
+    agency.on("WHERE email_bidx = $1", known).on("WHERE phone_bidx = $1", known).on("AS known", True)
     agency.on("SET archived_at = NULL", uuid.uuid4())
-    await _submit(agency, _fake(), _press())
-    assert not agency.sql("INSERT INTO crm.traveler (")
+    out = await _submit(agency, _fake(), _press(message=None))
+    assert out == {"status": "created", "link_path": "/c/p/tok", "currency": "VND", "total": "12000000.00"}
+    created = agency.sql("INSERT INTO crm.traveler (")
+    assert len(created) == 1 and created[0][0] != known["traveler_id"]
+    lead = agency.sql("INSERT INTO crm.trip_traveler")[0]
+    assert known["traveler_id"] not in lead and created[0][0] in lead
+    assert not agency.sql("SET archived_at = NULL") and not agency.sql("WHERE email_bidx = $1 AND deleted_at")
+    assert [n[3] for n in agency.sql("INSERT INTO crm.note")] == ["internal"]
+    assert agency.sql("AS known")[0][1] is not None  # the phone is matched too
 
     async def broken(*_: Any, **__: Any) -> Any:
         raise RuntimeError("boom")
