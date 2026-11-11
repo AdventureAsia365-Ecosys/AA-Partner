@@ -144,7 +144,7 @@ export function OpsReleasePanel({
             )}
             {r.can_withdraw && (
               <div>
-                <Button size="sm" variant="secondary" disabled={!hydrated} onClick={() => setAsking(true)} data-testid="ops-release-withdraw">
+                <Button size="sm" variant="secondary" disabled={!hydrated} onClick={() => setAsking(true)} testId="ops-release-withdraw">
                   {tr("ops.withdraw")}
                 </Button>
               </div>
