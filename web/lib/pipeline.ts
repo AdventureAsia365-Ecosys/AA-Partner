@@ -149,6 +149,8 @@ export interface Trip {
   owner_member_id: string | null;
   is_mine: boolean;
   lead_source: string | null;
+  /** AA-1071 (crm-056): the sales partner that brought the trip. */
+  sales_partner_id?: string | null;
   lost_reason_code: LostReason | null;
   last_inquiry_at: string;
   created_at: string;
@@ -331,6 +333,8 @@ export interface CancelPreview {
   supplier_lines?: { booking_line_id: string; title: string; supplier_name: string; confirmation_no: string | null }[];
   payments?: CancelPayment[];
   commissions?: { commission_id: string; status: "expected" | "claimed"; title: string; supplier_name: string; expected: { amount: string; currency: string } | null }[];
+  /** AA-1071: the trip's open sales partner commissions (accrued / approved), cancelled with the trip unless kept. */
+  partner_commissions?: { partner_commission_id: string; status: "accrued" | "approved"; amount: string; currency: string }[];
   terms?: { version_label: string; accepted_at: string } | null;
   booking_unavailable?: boolean;
   cancellation?: Cancellation | null;

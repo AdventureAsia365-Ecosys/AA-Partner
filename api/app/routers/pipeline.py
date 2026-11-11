@@ -117,6 +117,8 @@ class CancelIn(_Body):
     refunds: list[RefundChoice] | None = Field(default=None, max_length=200)
     keep_commission: list[uuid.UUID] | None = Field(default=None, max_length=200)
     charge: CancelCharge | None = None
+    # AA-1071: keep the sales partner's commission (the partner is still paid for this trip).
+    keep_partner_commission: bool = False
 
 
 class BulkStage(_Body):
@@ -260,7 +262,8 @@ async def post_cancel(
     charge = None if body.charge is None else body.charge.model_dump(mode="json", exclude_none=True)
     async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_CANCEL) as ctx:
         out = await stages.cancel(ctx, trip_id, reason=body.cancel_reason_code, dry_run=dry_run, notices=notices,
-                                  refunds=refunds, keep_commission=keep, charge=charge)  # fmt: skip
+                                  refunds=refunds, keep_commission=keep, charge=charge,
+                                  keep_partner_commission=body.keep_partner_commission)  # fmt: skip
     ops_release.emit(notices)  # committed: AA ops are told the release was withdrawn (C12 step 6)
     if dry_run and out.get("aa_bookings"):
         # AA-957: Booking's fee per AA booking, read outside the transaction (Booking down: fee unknown, "pending").

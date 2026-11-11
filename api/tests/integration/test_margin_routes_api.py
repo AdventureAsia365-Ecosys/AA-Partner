@@ -106,6 +106,11 @@ UNSEEDED = {
     # no money table behind either; the trip-level travel reads (passports, rooming, vouchers, visas) are called below.
     "/crm/v1/departures/{ref}/roster": "the departure roster: names, codes and checks, no money table behind it",
     "/crm/v1/visas/{app_id}": "a visa application: no money table behind it",
+    # AA-1071: one partner with its contact is the owner's (sales_partner_manage) and the statement CSV needs
+    # view_margin: the assistant is 403 before any read; the list (/sales-partners, names only for the assistant) and
+    # /partner-commissions are called below.
+    "/crm/v1/sales-partners/{partner_id}": "one sales partner with its contact: owner only, never the assistant",
+    "/crm/v1/sales-partners/{partner_id}/statement": "a partner statement: view_margin, never the assistant",
 }
 
 

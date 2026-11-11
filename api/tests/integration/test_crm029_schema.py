@@ -4,7 +4,7 @@
   the readers; the CHECKs; one live flight per trip, traveller and direction; a flight names a traveller of the trip.
 - Erasure without a replaced ``crm.erase_subject``: every key cascades, so a trip erase, a traveller erase and an
   agency erase leave no flight; a held trip keeps its flights (``crm.guard_held_flight``), and another agency's hold
-  never stops this agency's erase (a cascade runs without the agency's RLS).
+  never stops this agency's erase (a cascade runs without the agency's RLS; crm-058 reads the flight's own agency).
 - ``crm.otp_challenge.sent_to_bidx``: a new nullable column (expand), tagged ``pii:contact``, no reader grant.
 """
 
@@ -140,8 +140,9 @@ async def test_the_flights_leave_with_their_trip_traveller_or_agency(app_pool: a
 
 
 async def test_another_agencys_hold_never_stops_this_agencys_erase(app_pool: asyncpg.Pool) -> None:
-    """The cascade runs without the agency's RLS (an RI action runs as the owner): crm.guard_held_flight lets a cascade
-    pass, so an agency-wide hold of another agency never refuses this agency's trip, client or agency erase."""
+    """The cascade runs without the agency's RLS (an RI action runs as the owner): since crm-058 (AA-1085)
+    crm.guard_held_flight reads the holds of the flight's own agency only, so an agency-wide hold of another agency
+    never refuses this agency's trip, client or agency erase."""
     held = await _agency(app_pool)
     await _hold(app_pool, held["tenant"], "tenant", None, "member:m")
     await _hold(app_pool, held["tenant"], "trip", held["trip"], "member:m")

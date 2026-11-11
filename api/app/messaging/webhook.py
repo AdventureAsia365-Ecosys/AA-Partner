@@ -93,6 +93,7 @@ SELECT t.trip_id FROM crm.trip_traveler tt JOIN crm.trip t ON t.trip_id = tt.tri
 UNMATCHED_SQL = """
 SELECT c.conversation_id FROM crm.conversation c
  WHERE c.trip_id IS NULL AND c.traveler_id IS NULL AND c.channel = $1 AND c.deleted_at IS NULL
+   AND c.sales_partner_id IS NULL
    AND EXISTS (SELECT 1 FROM crm.message m WHERE m.conversation_id = c.conversation_id AND m.from_bidx = $2)
  ORDER BY c.last_message_at DESC
  LIMIT 1

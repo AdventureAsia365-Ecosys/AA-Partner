@@ -47,7 +47,7 @@ SELECT t.trip_id FROM crm.trip_traveler tt JOIN crm.trip t ON t.trip_id = tt.tri
 """
 CONVERSATION_SQL = """
 SELECT conversation_id FROM crm.conversation
- WHERE channel = 'email' AND deleted_at IS NULL AND agency_supplier_id IS NULL
+ WHERE channel = 'email' AND deleted_at IS NULL AND agency_supplier_id IS NULL AND sales_partner_id IS NULL
    AND trip_id IS NOT DISTINCT FROM $1 AND traveler_id IS NOT DISTINCT FROM $2
  ORDER BY last_message_at DESC, conversation_id
  LIMIT 1
@@ -55,6 +55,7 @@ SELECT conversation_id FROM crm.conversation
 UNMATCHED_SQL = """
 SELECT c.conversation_id FROM crm.conversation c
  WHERE c.trip_id IS NULL AND c.traveler_id IS NULL AND c.channel = 'email' AND c.deleted_at IS NULL
+   AND c.sales_partner_id IS NULL
    AND EXISTS (SELECT 1 FROM crm.message m WHERE m.conversation_id = c.conversation_id AND m.from_bidx = $1)
  ORDER BY c.last_message_at DESC
  LIMIT 1

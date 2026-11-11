@@ -133,6 +133,8 @@ INVITATION_MODULES = frozenset({"app/members/invitations.py"})
 # AA-943: the signed client link context (token hash lookup, actor client_link:<id>): the public Stage 2 form only.
 # AA-946: the proposal accept page and the traveller portal (each opens only its own link purpose).
 CLIENT_LINK_MODULES = frozenset({"app/intake/stage2_public.py", "app/proposals/public.py", "app/portal/public.py"})
+# AA-1071: a sales partner's signed link (the token picks the agency and the partner): the partner pages module only.
+PARTNER_LINK_MODULES = frozenset({"app/partners/public.py"})
 # AA-945: the forward-in mail ingest context (the recipient's local part picks the agency): the ingest job only.
 INGEST_MODULES = frozenset({"app/mail/ingest.py"})
 # AA-961: a member's ICS calendar feed fetched by its token (the token picks the agency and the member): the feed only.
@@ -231,6 +233,7 @@ CONTEXT_FACTORIES = frozenset(
         "support_tx",
         "ops_tx",
         "partner_account_tx",
+        "partner_link_tx",
     }
 )
 
@@ -442,6 +445,10 @@ def test_invitation_tx_is_used_only_by_the_invitations_module() -> None:
 
 def test_client_link_tx_is_used_only_by_the_public_stage2_module() -> None:
     assert _users_of("client_link_tx", CLIENT_LINK_MODULES) == []
+
+
+def test_partner_link_tx_is_used_only_by_the_partner_pages_module() -> None:
+    assert _users_of("partner_link_tx", PARTNER_LINK_MODULES) == []
 
 
 def test_membership_feed_tx_is_used_only_by_the_feed_module() -> None:

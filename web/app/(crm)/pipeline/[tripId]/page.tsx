@@ -43,6 +43,7 @@ import type { AiSettings } from "@/lib/ai";
 import type { DocumentRow } from "@/lib/clients";
 import type { TripIncident } from "@/lib/duty";
 import { crmCall } from "@/lib/crmApi";
+import type { PartnerList } from "@/lib/partners";
 import { isTextChannel } from "@/lib/messaging";
 import { crmContext } from "@/lib/crmContext";
 import type { OpsReleaseView } from "@/lib/opsRelease";
@@ -66,7 +67,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
   const { session } = await serverContext();
   if (!session) return null;
   const tripQuery = new URLSearchParams({ trip_id: tripId });
-  const [trip, members, docs, stage2, lines, suppliers, convs, replies, lifecycle, agreements, invoices, signed, incidents, ops, ai] = await Promise.all([
+  const [trip, members, docs, stage2, lines, suppliers, convs, replies, lifecycle, agreements, invoices, signed, incidents, ops, ai, partners] = await Promise.all([
     crmCall<TripView>(ctx.cfg, session, "GET", `trips/${tripId}`),
     crmCall<{ members: Member[] }>(ctx.cfg, session, "GET", "members"),
     crmCall<{ documents: DocumentRow[] }>(ctx.cfg, session, "GET", `trips/${tripId}/documents`),
@@ -82,6 +83,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
     crmCall<{ incidents: TripIncident[] }>(ctx.cfg, session, "GET", `trips/${tripId}/incidents`),
     crmCall<OpsReleaseView>(ctx.cfg, session, "GET", `trips/${tripId}/ops-release`),
     crmCall<AiSettings>(ctx.cfg, session, "GET", "settings/ai"),
+    crmCall<PartnerList>(ctx.cfg, session, "GET", "sales-partners"), // AA-1071: the trip's partner picker
   ]);
   // AA-1068: the Money card's reads only for a role that sees money (the API refuses the assistant anyway).
   const money = canSeeMoney(ctx.role)
@@ -117,6 +119,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
       clientOrigin={clientHost ? `https://${clientHost}` : null}
       lostHint={lines.ok ? (lines.data.lost_reason_hint ?? null) : null}
       timeZone={agencyZone}
+      partners={partners.ok ? partners.data.items.map((p) => ({ id: p.sales_partner_id, name: p.name, active: p.status === "active" })) : null}
     />
     <AiDraftPanel tripId={tripId} settings={ai.ok ? ai.data : null} isOwner={ctx.role === "owner"} lang={ctx.lang} />
     <TripWorkflows tripId={tripId} role={ctx.role} lang={ctx.lang} locale={ctx.locale} timeZone={agencyZone} />

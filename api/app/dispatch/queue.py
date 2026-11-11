@@ -75,6 +75,30 @@ async def enqueue_message(
     return {"dispatch_id": str(queued["dispatch_id"]), "not_before": queued["not_before"].isoformat()}
 
 
+PARTNER_INSERT_SQL = """
+INSERT INTO crm.dispatch_queue (sales_partner_id, channel, purpose, origin, not_before, message_id)
+VALUES ($1, 'email', 'transactional', 'system', now(), $2)
+RETURNING dispatch_id, not_before
+"""
+
+
+async def enqueue_partner_message(
+    ctx: AnyContext, *, sales_partner_id: uuid.UUID, message_id: uuid.UUID
+) -> dict[str, Any]:
+    """AA-1071 (crm-056): one transactional e-mail to a sales partner (its view's sign-in code), sent at once: the
+    dispatch row names the partner instead of a client (the gate drops it once the partner is inactive or trashed)."""
+    queued = await ctx.conn.fetchrow(PARTNER_INSERT_SQL, sales_partner_id, message_id)
+    await jobs.enqueue(
+        ctx.conn,
+        DISPATCH,
+        {"tenant_id": str(ctx.tenant_id), "dispatch_id": str(queued["dispatch_id"])},
+        idempotency_key=f"{DISPATCH}:{queued['dispatch_id']}",
+        max_attempts=MAX_ATTEMPTS,
+        created_by="dispatch",
+    )
+    return {"dispatch_id": str(queued["dispatch_id"]), "not_before": queued["not_before"].isoformat()}
+
+
 async def undo(ctx: AnyContext, dispatch_id: uuid.UUID) -> dict[str, Any]:
     """Cancel a message that has not been sent yet ("Undo until sent")."""
     if await ctx.conn.fetchval(UNDO_SQL, dispatch_id) is None:

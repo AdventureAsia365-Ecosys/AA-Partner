@@ -713,12 +713,14 @@ async def cancel(
     refunds: Any = None,
     keep_commission: Any = None,
     charge: Any = None,
+    keep_partner_commission: bool = False,
 ) -> dict[str, Any]:
     """Cancel a booked, pre-departure or travelling trip (C12, :mod:`app.cancellation`). The dry run lists every effect
     and changes nothing; the run applies them in this transaction. A trip with AA bookings keeps its stage while
     Booking cancels them (``cancellation.status`` pending, card R); pressing it again asks Booking again. ``refunds``:
     ``[{payment_id, amount}]`` (the amount asked back per payment; default all that is left); ``keep_commission``: the
-    expected commissions the supplier still pays; ``charge``: the cancellation charge decision (AA-1067,
+    expected commissions the supplier still pays; ``keep_partner_commission`` (AA-1071): the sales partner is still
+    paid; ``charge``: the cancellation charge decision (AA-1067,
     ``{mode: policy | override | waive, amount, reason}``). ``notices``: the AA ops alarm lines
     (:class:`app.ops_release.service.Notice`) the route writes after the commit."""
     from app import cancellation
@@ -752,7 +754,7 @@ async def cancel(
         return {**out, **_public(await cancellation.plan(ctx, trip_id, refunds=choices, charge=decision)),
                 "cancellation": None}  # fmt: skip
     done = await cancellation.run(ctx, trip_id, trip, reason, refunds=choices, keep_commission=keep, notices=notices,
-                                  charge=decision)  # fmt: skip
+                                  charge=decision, keep_partner_commission=keep_partner_commission)  # fmt: skip
     status = done["cancellation"]["status"] if done["cancellation"] else "done"
     return {**out, **done, "stage": "cancelled" if status == "done" else trip["stage"]}
 

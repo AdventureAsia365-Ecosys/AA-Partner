@@ -80,6 +80,8 @@ DESIGN: dict[str, tuple[str, str, str]] = {
     "ai_settings": (Y, N, N),  # AA-964 (A-18 AI): AI on / off and the monthly AI budget — owner
     "addon_request": (Y, N, N),  # AA-1036 (R3): ask Adventure Asia for an add-on (relayed to CIS) — owner
     "discount_approve": (Y, N, N),  # AA-1066: approve a proposal discount above the agency limit — owner
+    "sales_partner_manage": (Y, N, N),  # AA-1071: sales partners, their commission terms and links — owner
+    "partner_commission_approve": (Y, N, N),  # AA-1071: approve, pay or cancel a partner commission — owner
 }
 WORD = {Rule.ALLOW: Y, Rule.DENY: N, Rule.OWN: OWN, Rule.ASSIGNED: ASG, Rule.THRESHOLD: THR}
 
