@@ -52,6 +52,10 @@ EXTRA_POLICIES = {
     ("departure_cost", "departure_cost_margin_roles"): ("*", {APP_ROLE}),
     #   crm-036: the Twilio webhook lookup of app.tenancy.messaging_hook_tx() (keyed on app.messaging_hook_id).
     ("messaging_connection", "messaging_connection_hook_lookup"): ("r", {APP_ROLE}),
+    #   AA-1071 (crm-056): the RESTRICTIVE margin gate on partner commissions, and the partner link lookup of
+    #   app.tenancy.partner_link_tx() (keyed on app.partner_link_hash).
+    ("partner_commission", "partner_commission_margin_roles"): ("r", {APP_ROLE}),
+    ("sales_partner_link", "sales_partner_link_token_lookup"): ("r", {APP_ROLE}),
 }
 # Extra policies that must be RESTRICTIVE (ANDed with tenant_isolation); every other extra policy is permissive.
 RESTRICTIVE_POLICIES = {
@@ -61,6 +65,7 @@ RESTRICTIVE_POLICIES = {
     ("supplier_bill_line", "supplier_bill_line_margin_roles"),
     ("aa_invoice_cache", "aa_invoice_cache_margin_roles"),
     ("departure_cost", "departure_cost_margin_roles"),
+    ("partner_commission", "partner_commission_margin_roles"),
 }
 
 ISS = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_TESTPARTN"
