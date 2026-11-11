@@ -40,6 +40,8 @@ import {
 const h3 = { margin: "4px 0 6px", fontSize: 13, fontWeight: 600 } as const;
 const muted = { margin: 0, fontSize: 12.5, color: K.muted } as const;
 const row = { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" } as const;
+// A proposal version the text renderer prints (app.proposals.text_proposal RENDERABLE: a builder draft is not one).
+const PDF_PROPOSAL_STATUSES = ["sent", "published", "accepted"];
 
 interface Props {
   tripId: string;
@@ -59,19 +61,28 @@ export function TripTravelPanel({ tripId, lang, locale, closed = false }: Props)
   const [rooming, setRooming] = useState<RoomingView | null>(null);
   const [vouchers, setVouchers] = useState<VouchersView | null>(null);
   const [visas, setVisas] = useState<VisasView | null>(null);
+  const [pdfSubjects, setPdfSubjects] = useState<{ invoices: { id: string; label: string }[]; proposals: { id: string; label: string }[] }>({ invoices: [], proposals: [] });
   const [notice, setNotice] = useState<Notice>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let stopped = false;
     void (async () => {
-      const [p, r, v, s] = await Promise.all([
+      const [p, r, v, s, inv, life] = await Promise.all([
         bffSend<PassportCheck>("GET", `trips/${tripId}/passports`),
         bffSend<RoomingView>("GET", `trips/${tripId}/rooming`),
         bffSend<VouchersView>("GET", `trips/${tripId}/vouchers`),
         bffSend<VisasView>("GET", `trips/${tripId}/visas`),
+        bffSend<{ invoices: { invoice_id: string; number: string | null; status: string; kind: string }[] }>("GET", `trips/${tripId}/invoices`),
+        bffSend<{ proposals: { proposal_id: string; version: number; status: string }[] }>("GET", `trips/${tripId}/lifecycle`),
       ]);
       if (stopped) return;
+      setPdfSubjects({
+        invoices: inv.ok ? inv.data.invoices.filter((i) => i.status !== "void").map((i) => ({ id: i.invoice_id, label: i.number ?? tr("travel.pdf.draftInvoice") })) : [],
+        proposals: life.ok
+          ? life.data.proposals.filter((x) => PDF_PROPOSAL_STATUSES.includes(x.status)).map((x) => ({ id: x.proposal_id, label: fmt(tr("travel.pdf.version"), { n: String(x.version) }) }))
+          : [],
+      });
       if (p.ok) setPassports(p.data);
       if (r.ok) setRooming(r.data);
       if (v.ok) setVouchers(v.data);
@@ -80,6 +91,7 @@ export function TripTravelPanel({ tripId, lang, locale, closed = false }: Props)
     return () => {
       stopped = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the labels follow the language only
   }, [tripId, tick]);
 
   const names = useMemo(() => {
@@ -156,6 +168,16 @@ export function TripTravelPanel({ tripId, lang, locale, closed = false }: Props)
                 {tr("travel.pdf.confirmation")}
               </Button>
             </span>
+            {pdfSubjects.invoices.map((i) => (
+              <Button key={i.id} size="sm" variant="ghost" disabled={disabled} onClick={() => void call("POST", `trips/${tripId}/pdfs`, { kind: "invoice", invoice_id: i.id }, "travel.pdf.queued")}>
+                {fmt(tr("travel.pdf.invoice"), { ref: i.label })}
+              </Button>
+            ))}
+            {pdfSubjects.proposals.map((x) => (
+              <Button key={x.id} size="sm" variant="ghost" disabled={disabled} onClick={() => void call("POST", `trips/${tripId}/pdfs`, { kind: "proposal", proposal_id: x.id }, "travel.pdf.queued")}>
+                {fmt(tr("travel.pdf.proposal"), { ref: x.label })}
+              </Button>
+            ))}
           </div>
         </div>
       </div>
