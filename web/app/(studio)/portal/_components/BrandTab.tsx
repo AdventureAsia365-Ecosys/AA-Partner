@@ -36,6 +36,7 @@ import {
 import { BRAND_MESSAGES } from "./brand.messages";
 import { fmtDate } from "@/lib/studio/format";
 import { CtaReviewNotice, ctaWarningFrom, useCtaReviewCheck, type CtaWarning } from "./CtaReviewNotice";
+import { draftedFields, marketNoteLines, wordList, type MarketSummary } from "@/lib/studio/brandMarkets";
 
 interface BrandData {
   configured: boolean; system_prompt: string; style_guide: string;
@@ -48,6 +49,9 @@ interface BrandData {
   customer_segment: string; customer_mindset: string;
   tone_of_voice: string[]; good_examples: string; target_markets: string[];
   default_cta?: string;
+  // AA-1080 — the brand's own words (AA-800) and the market note (unsupported markets with the reason).
+  signature_words?: string[];
+  markets?: MarketSummary | null;
 }
 
 // AA-1008 (S6f): the brand form's fields are the kit Field + Input / Textarea (the studio's own textarea Field of the
@@ -103,6 +107,26 @@ function TagListField({ label, value, onChange, placeholder, hint }: {
   );
 }
 
+// AA-1080 — the saved markets: which market the tour-page keywords use, and each declared market without search
+// data with the reason and the market used instead (was dropped without a word).
+function MarketNoteBox({ summary }: { summary: MarketSummary | null }) {
+  const t = useT(BRAND_MESSAGES);
+  const lines = marketNoteLines(summary);
+  if (!lines) return null;
+  return (
+    <div role="note" aria-label={t("marketNoteTitle")} style={{ marginTop: -6, marginBottom: 16, padding: "10px 12px",
+      background: lines.unsupported.length ? K.amberSoft : K.bg, border: `1px solid ${lines.unsupported.length ? K.accentSoft : K.line}`,
+      borderRadius: 8 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: K.ink, marginBottom: 4 }}>{t("marketNoteTitle")}</div>
+      <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: K.body, lineHeight: 1.6 }}>
+        <li>{lines.defaulted ? t("marketNoteDefault") : t("marketNoteSeo", lines.seoMarket)}</li>
+        {lines.unsupported.map(u => <li key={u.country}>{t("marketNoteReason", u.country, u.uses)}</li>)}
+        {lines.unknown.length > 0 && <li>{t("notMarket", lines.unknown.join(", "))}</li>}
+      </ul>
+    </div>
+  );
+}
+
 function toBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -114,7 +138,7 @@ function toBase64(file: File): Promise<string> {
 
 const BRAND_KEY = ["tenant-brand-identity"] as const;
 
-type MarketNote = { countries: string[]; unsupported: string[]; unknown: string[] };
+type MarketNote = MarketSummary;
 /** What the last save returned (kept by BrandTab: the form remounts after a save). */
 interface SaveResult { marketNote: MarketNote | null; ctaWarning: CtaWarning }
 
@@ -191,6 +215,7 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
   const [toneOfVoice, setToneOfVoice] = useState((data.tone_of_voice ?? []).join(", "));
   const [goodExamples, setGoodExamples] = useState(data.good_examples ?? "");
   const [defaultCta, setDefaultCta] = useState(data.default_cta ?? "");
+  const [sigWords, setSigWords] = useState((data.signature_words ?? []).join(", "));
   // AA-819 follow-up — a CTA that mentions reviews or ratings is saved as typed, with a warning:
   // live while typing, and from the save response.
   const liveCtaWarning = useCtaReviewCheck(defaultCta);
@@ -217,6 +242,7 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
           tone_of_voice: toneOfVoice.split(",").map(w => w.trim()).filter(Boolean),
           good_examples: goodExamples,
           default_cta: defaultCta,
+          signature_words: wordList(sigWords),
         }),
       });
       const body = await r.json().catch(() => ({}));
@@ -285,11 +311,18 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
       if (f.style_guide) setSg(f.style_guide);
       if (f.good_examples) setGoodExamples(f.good_examples);
       if (f.forbidden_words?.length) setFw(f.forbidden_words.join(", "));
+      // AA-1080: the brief now fills Brand context, the default CTA and the signature words too.
+      if (f.system_prompt) setSp(f.system_prompt);
+      if (f.default_cta) setDefaultCta(f.default_cta);
+      if (f.signature_words?.length) setSigWords(f.signature_words.join(", "));
       const notes: string[] = [...(body.warnings ?? [])];
-      const m = body.markets;
-      if (m?.unsupported?.length) {
-        notes.push(t("marketsUnsupported", m.unsupported.join(", "), m.supported?.length ? m.supported.join(", ") : t("theUs")));
+      const drafted = draftedFields(body.drafted);
+      if (drafted.length) {
+        const label = { default_cta: t("cta"), system_prompt: t("context"), signature_words: t("signature") };
+        notes.push(t("drafted", drafted.map(d => label[d]).join(", ")));
       }
+      const m = marketNoteLines(body.markets);
+      for (const u of m?.unsupported ?? []) notes.push(t("marketNoteReason", u.country, u.uses));
       if (m?.unknown?.length) notes.push(t("notMarket", m.unknown.join(", ")));
       setBriefNotes(notes);
       setUploadStatus("done");
@@ -351,6 +384,7 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
           />
           <TagListField label={t("targetMarkets")} value={targetMarkets} onChange={v => { setTargetMarkets(v); markDirty(); }}
             placeholder={t("targetMarketsPh")} hint={t("targetMarketsHint")} />
+          <MarketNoteBox summary={marketNote ?? data.markets ?? null} />
           <AreaField
             label={t("segment")} rows={2}
             placeholder={t("segmentPh")}
@@ -377,6 +411,8 @@ function BrandForm({ data, result, clearResult, onSaved, onReset }: {
             onChange={v => { setDefaultCta(v); markDirty(); }}
             placeholder={t("ctaPh")} />
           <CtaReviewNotice warning={liveCtaWarning ?? savedCtaWarning} style={{ marginTop: -6, marginBottom: 16 }} />
+          <TagListField label={t("signature")} value={sigWords} onChange={v => { setSigWords(v); markDirty(); }}
+            placeholder={t("signaturePh")} hint={t("signatureHint")} />
           <AreaField
             label={t("context")} rows={5}
             placeholder={t("contextPh")}
