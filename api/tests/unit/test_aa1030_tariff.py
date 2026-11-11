@@ -5,6 +5,7 @@ mapping and the route (owner / agent 200, assistant 403, no-store, Booking's CSV
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import io
 import json
@@ -452,7 +453,8 @@ def test_json_answer_no_store_and_one_audit_event_without_amounts(
         "format_json",
         (TARIFF_TOUR,),
     )
-    assert event.fields == () and "388" not in repr(event)
+    # the random request_id is left out: it is hex and can contain "388" by chance (S277 merge-queue flake)
+    assert event.fields == () and "388" not in repr(dataclasses.replace(event, request_id=""))
     assert fake.tenants[-1] == str(TENANT)
 
 
