@@ -206,6 +206,8 @@ export function CancelDialog({
   // AA-957: the refund asked back per payment (default: all that is left) and the commissions the supplier still pays.
   const [refunds, setRefunds] = useState<Record<string, string>>({});
   const [keep, setKeep] = useState<Record<string, boolean>>({});
+  // AA-1071: keep the sales partner's commission (the partner is still paid).
+  const [keepPartner, setKeepPartner] = useState(false);
   // AA-1067: the charge to the client (the policy's, another amount with a reason, or waived with a reason).
   const [mode, setMode] = useState<ChargeMode>("policy");
   const [amount, setAmount] = useState("");
@@ -241,6 +243,7 @@ export function CancelDialog({
     setChecked(chargeKey(charge));
     setRefunds(Object.fromEntries((res.data.payments ?? []).filter((p) => !p.needs_invoice).map((p) => [p.payment_id, p.refund_amount])));
     setKeep({});
+    setKeepPartner(false);
   }
 
   /** Another reason: a new dry run with the charge as set now (the policy's when the typed one is not complete). */
@@ -273,6 +276,7 @@ export function CancelDialog({
       cancel_reason_code: reason,
       refunds: Object.entries(refunds).map(([payment_id, amount]) => ({ payment_id, amount: amount.trim() || "0" })),
       keep_commission: Object.entries(keep).filter(([, v]) => v).map(([id]) => id),
+      keep_partner_commission: keepPartner,
       ...(charge ? { charge } : {}),
     };
     const res = await bffSend<CancelPreview>("POST", `trips/${tripId}/cancel?dry_run=false`, body);
@@ -454,6 +458,14 @@ export function CancelDialog({
                     />
                   </div>
                 ))}
+            </section>
+          )}
+          {!pending && (preview.partner_commissions ?? []).length > 0 && (
+            <section data-testid="cancel-partner-commissions" style={{ display: "grid", gap: 4, fontSize: 13 }}>
+              <span style={{ overflowWrap: "anywhere" }}>
+                {(preview.partner_commissions ?? []).map((c) => formatAmount(c.amount, c.currency, locale)).join(" · ")}
+              </span>
+              <Checkbox label={tr("cancelTrip.keepPartnerCommission")} checked={keepPartner} onChange={(e) => setKeepPartner(e.target.checked)} />
             </section>
           )}
           {!pending && (preview.aa_bookings ?? []).length > 0 && (

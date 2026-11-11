@@ -87,6 +87,8 @@ from app.routers import (
     onboarding,
     ops,
     ops_release,
+    partner_pages,
+    partners,
     payments,
     pipeline,
     proposal_text,
@@ -311,6 +313,7 @@ def create_app(
     app.include_router(ci.router)
     app.include_router(public.router)
     app.include_router(client_pages.router)
+    app.include_router(partner_pages.router)  # AA-1071: a sales partner's intake link and its view
     app.include_router(agency.router)
     app.include_router(addons.router)  # AA-1036 (R3): the agency's add-ons, owner's request relayed to CIS
     app.include_router(pipeline.router)
@@ -343,6 +346,7 @@ def create_app(
     app.include_router(ops_release.router)
     app.include_router(travel_ops.router)  # AA-1070: departure roster, vouchers, PDFs, rooming, passports, visas
     app.include_router(commissions.router)
+    app.include_router(partners.router)  # AA-1071: sales partners and their commission
     app.include_router(finance.router)  # AA-1068: trip P&L, supplier bills, Bookings with AA, departure costs
     app.include_router(catalogue.router)  # AA-1069: the agency service catalogue
     app.include_router(workflows.router)

@@ -233,6 +233,17 @@ UPDATE crm.commission SET status = 'cancelled', close_reason = 'trip_cancelled',
  WHERE trip_id = $1 AND status = 'expected' AND NOT (commission_id = ANY($3::uuid[]))
 """
 KEEP_COMMISSION_SQL = "UPDATE crm.commission SET keep_on_cancel = true WHERE commission_id = ANY($1::uuid[])"
+# AA-1071 (crm-056): the sales partner commission of the trip (accrued or approved) is cancelled with the trip unless
+# the member keeps it (the partner is still paid); a paid one stays.
+PARTNER_COMMISSIONS_SQL = """
+SELECT partner_commission_id, status, amount, currency FROM crm.partner_commission
+ WHERE trip_id = $1 AND status IN ('accrued', 'approved') AND deleted_at IS NULL
+ ORDER BY created_at, partner_commission_id
+"""
+CANCEL_PARTNER_COMMISSION_SQL = """
+UPDATE crm.partner_commission SET status = 'cancelled', cancel_reason = 'trip_cancelled'
+ WHERE trip_id = $1 AND status IN ('accrued', 'approved') AND deleted_at IS NULL
+"""
 # A7 (review): an invoice the cancel kept because it held money is voided once its refunds left nothing on it.
 REFUNDED_VOID_SQL = """
 SELECT i.issued_at FROM crm.invoice i
@@ -485,6 +496,11 @@ async def plan(
     assessed.refunds = {p["payment_id"]: Decimal(p["refund_amount"]) for p in payments
                         if p["payment_id"] in assessed.refunds}  # fmt: skip
     commissions = await _commissions(ctx, trip_id)
+    partner_commissions = [
+        {"partner_commission_id": str(r["partner_commission_id"]), "status": r["status"],
+         "amount": f"{r['amount']:.2f}", "currency": r["currency"]}
+        for r in await ctx.conn.fetch(PARTNER_COMMISSIONS_SQL, trip_id)
+    ]  # fmt: skip
     workflows = int(await ctx.conn.fetchval(WORKFLOW_DISPATCH_SQL, trip_id))
     for _name, hook in CANCEL_HOOKS:
         workflows += await hook(ctx, trip_id, True)
@@ -506,6 +522,7 @@ async def plan(
         {"kind": "payments_without_invoice", "count": sum(1 for p in payments if p["needs_invoice"])},
         {"kind": "commissions_cancelled", "count": sum(1 for c in commissions if c["status"] == "expected")},
         {"kind": "commissions_claimed_kept", "count": sum(1 for c in commissions if c["status"] == "claimed")},
+        {"kind": "partner_commissions_open", "count": len(partner_commissions)},
         {"kind": "ops_release_withdrawn", "count": await ops_release.live_count(ctx, trip_id)},
         {"kind": "cancellation_fee_invoiced", "count": int(assessed.currency is not None and assessed.invoice_due > 0)},
     ]  # fmt: skip
@@ -515,6 +532,7 @@ async def plan(
         "supplier_lines": supplier_lines,
         "payments": payments,
         "commissions": commissions,
+        "partner_commissions": partner_commissions,
         "terms": await _terms(ctx, trip_id),
         "invoices_claimed": [str(r["invoice_id"]) for r in invoices["claimed"]],
         "charge": assessed.view(),
@@ -551,8 +569,10 @@ async def run(
     keep_commission: list[uuid.UUID],
     notices: list[Any] | None,
     charge: Any = None,
+    keep_partner_commission: bool = False,
 ) -> dict[str, Any]:
-    """The run (the caller locked the trip and checked the stage and the reason)."""
+    """The run (the caller locked the trip and checked the stage and the reason). ``keep_partner_commission``
+    (AA-1071): the sales partner is still paid for this trip (its accrued / approved commission stays)."""
     from app import stages
     from app.booking import aa_lines
     from app.cancel_policy import service as policy
@@ -617,6 +637,8 @@ async def run(
     if keep_commission:
         await ctx.conn.execute(KEEP_COMMISSION_SQL, keep_commission)
     await ctx.conn.execute(CANCEL_COMMISSION_SQL, trip_id, actor, keep_commission)
+    if not keep_partner_commission and before["partner_commissions"]:
+        await ctx.conn.execute(CANCEL_PARTNER_COMMISSION_SQL, trip_id)
     # 1. AA: holds released (after the Undo window, as a Lost move), bookings cancelled through Booking.
     await aa_lines.close_trip(ctx, trip_id)
     asked = await ask_booking(ctx, trip_id, before["aa_bookings"])

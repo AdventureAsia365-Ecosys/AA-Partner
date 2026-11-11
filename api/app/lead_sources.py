@@ -20,6 +20,7 @@ LEAD_SOURCES: tuple[str, ...] = (
     "agent_created",  # a client added by a member (POST /travelers without a code)
     "companion",  # a companion added to a trip by name
     "import",  # the CSV import
+    "sales_partner",  # AA-1071: an inquiry sent through a sales partner's intake link
     "synthetic_seed",  # the Dev / demo seed's inquiry form
     "tripplanner",  # AA-1038: a trip request from the agency's TripPlanner site (its system form "Trip planner")
     "website_form",  # an inquiry form (the default code of a new form)

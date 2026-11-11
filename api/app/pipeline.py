@@ -110,7 +110,8 @@ TRIP_SQL = """
 SELECT trip_id, title, stage, stage_entered_at, waiting_on, start_date, end_date, month, date_flex_days, nights,
        destinations, party_adults, party_child_ages, party_type, budget_band, trip_style, owner_member_id,
        intake_form_id, lead_source, lost_reason_code, last_inquiry_at, created_at, updated_at, intake_completeness,
-       cancel_reason_code, last_activity_at, greatest(0, extract(day FROM now() - last_activity_at))::int AS quiet_days,
+       sales_partner_id, cancel_reason_code, last_activity_at,
+       greatest(0, extract(day FROM now() - last_activity_at))::int AS quiet_days,
        EXISTS (SELECT 1 FROM crm.trip_cancellation x WHERE x.trip_id = trip.trip_id AND x.status = 'pending')
            AS cancellation_pending
   FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL
@@ -420,6 +421,7 @@ def _trip(r: Any, ctx: TenantContext) -> dict[str, Any]:
         "owner_member_id": _id(r["owner_member_id"]),
         "is_mine": r["owner_member_id"] == ctx.member_id,
         "lead_source": r["lead_source"],
+        "sales_partner_id": _id(r.get("sales_partner_id")),  # AA-1071 (crm-056)
         "lost_reason_code": r["lost_reason_code"],
         "last_inquiry_at": _iso(r["last_inquiry_at"]),
         "created_at": _iso(r["created_at"]),

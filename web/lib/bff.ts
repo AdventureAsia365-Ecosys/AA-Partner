@@ -386,7 +386,20 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "POST", pattern: new RegExp(`^workflows/runs/${UUID}/stop$`), tenant: true, card: "AA-959" },
   { method: "GET", pattern: new RegExp(`^workflows/${UUID}(/preview)?$`), tenant: true, card: "AA-959" },
   { method: "PATCH", pattern: new RegExp(`^workflows/${UUID}$`), tenant: true, card: "AA-959" },
-  { method: "POST", pattern: new RegExp(`^workflows/${UUID}/(status|apply)$`), tenant: true, card: "AA-959" },
+  { method: "POST", pattern: new RegExp(`^workflows/${UUID}/(status|apply)$`), tenant: true, card: "AA-959" },  // AA-1071 (crm-056): sales partners (every member lists them for the trip's picker; the owner manages them, their
+  // links and their commissions; owner / agent read the commissions and the statement CSV), the trip's partner.
+  { method: "GET", pattern: /^sales-partners$/, tenant: true, card: "AA-1071" },
+  { method: "POST", pattern: /^sales-partners$/, tenant: true, card: "AA-1071" },
+  { method: "GET", pattern: new RegExp(`^sales-partners/${UUID}$`), tenant: true, card: "AA-1071" },
+  { method: "PATCH", pattern: new RegExp(`^sales-partners/${UUID}$`), tenant: true, card: "AA-1071" },
+  { method: "DELETE", pattern: new RegExp(`^sales-partners/${UUID}$`), tenant: true, card: "AA-1071" },
+  { method: "POST", pattern: new RegExp(`^sales-partners/${UUID}/links$`), tenant: true, card: "AA-1071" },
+  { method: "POST", pattern: new RegExp(`^sales-partners/${UUID}/links/${UUID}/revoke$`), tenant: true, card: "AA-1071" },
+  { method: "GET", pattern: new RegExp(`^sales-partners/${UUID}/statement$`), tenant: true, card: "AA-1071", download: true },
+  { method: "PUT", pattern: new RegExp(`^trips/${UUID}/sales-partner$`), tenant: true, card: "AA-1071" },
+  { method: "POST", pattern: new RegExp(`^trips/${UUID}/partner-commission/sync$`), tenant: true, card: "AA-1071" },
+  { method: "GET", pattern: /^partner-commissions$/, tenant: true, card: "AA-1071" },
+  { method: "POST", pattern: new RegExp(`^partner-commissions/${UUID}/(approve|unapprove|pay|cancel)$`), tenant: true, card: "AA-1071" },
 ];
 
 /** Calls only the web server makes (lib/crmApi.ts crmCall), never reachable through /bff from the browser. */
