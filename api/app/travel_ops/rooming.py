@@ -2,7 +2,8 @@
 sleeps in.
 
 A list is ``[{room_no, room_type, travellers: [{traveler_id, bed_pref}]}]`` and is replaced whole
-(:func:`replace`). It must hold:
+(:func:`replace`); a traveller entry without the ``bed_pref`` key keeps the bed preference already on file (the
+portal's lead never sees or sets it, so their save must not wipe what the agent set), ``null`` clears it. It must hold:
 
 - every traveller is on the trip and in at most one room; room numbers 1..50, one type per room number;
 - a room's travellers fit its type (:data:`CAPACITY`: single 1, double 2, twin 2, triple 3, quad 4, family 6);
@@ -126,6 +127,31 @@ def check(
     return out
 
 
+def keep_beds(rooms: Any, beds: dict[uuid.UUID, str | None]) -> Any:
+    """``rooms`` with each traveller entry that has no ``bed_pref`` key given the bed preference on file (``beds``,
+    None when they have none). Anything malformed is left as it is for :func:`check` to refuse."""
+    if not isinstance(rooms, list):
+        return rooms
+    out: list[Any] = []
+    for room in rooms:
+        people = room.get("travellers") if isinstance(room, dict) else None
+        if not isinstance(people, list):
+            out.append(room)
+            continue
+        kept = []
+        for person in people:
+            if isinstance(person, dict) and "bed_pref" not in person:
+                try:
+                    traveler_id = uuid.UUID(str(person.get("traveler_id")))
+                except ValueError:
+                    kept.append(person)
+                    continue
+                person = {**person, "bed_pref": beds.get(traveler_id)}
+            kept.append(person)
+        out.append({**room, "travellers": kept})
+    return out
+
+
 async def _party(ctx: AnyContext, trip_id: uuid.UUID) -> list[Any]:
     if await ctx.conn.fetchval(TRIP_SQL, trip_id) is None:
         raise NotFound("trip_not_found")
@@ -175,8 +201,9 @@ async def replace(ctx: AnyContext, vault: Vault, trip_id: uuid.UUID, rooms: Any)
     """Make the trip's rooming list ``rooms`` (a traveller left out has no room)."""
     party = await _party(ctx, trip_id)
     config = config_counts(await ctx.conn.fetchval(CONFIG_SQL, trip_id))
-    wanted = {t: (n, k, b) for t, n, k, b in check(rooms, {r["traveler_id"] for r in party}, config)}
     current = {r["traveler_id"]: r for r in await ctx.conn.fetch(ROWS_SQL, trip_id)}
+    rooms = keep_beds(rooms, {t: r["bed_pref"] for t, r in current.items()})
+    wanted = {t: (n, k, b) for t, n, k, b in check(rooms, {r["traveler_id"] for r in party}, config)}
     try:
         async with ctx.conn.transaction():
             for traveler_id, row in current.items():

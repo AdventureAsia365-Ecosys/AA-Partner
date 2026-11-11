@@ -7,7 +7,7 @@ Route                                       What                                
 ==========================================  ===============================================  ===========================
 ``GET    /departures?scope=``               AA departures with the agency's travellers       every role
 ``GET    /departures/{ref}/roster``         one departure: trips, travellers, checks         every role
-``POST   /departures/{ref}/manifest``       the merged manifest CSV (fields picked, logged)  every role (logged reveal)
+``POST   /departures/{ref}/manifest``       the merged manifest CSV (fields, reason, limit)  every role (logged reveal)
 ``GET    /trips/{id}/passports``            each traveller's passport check                  every role
 ``GET    /trips/{id}/rooming``              the rooming list                                 every role
 ``PUT    /trips/{id}/rooming``              replace it                                       every role (trip edit)
@@ -75,6 +75,8 @@ class _Body(BaseModel):
 
 class ManifestIn(_Body):
     fields: list[str] | None = Field(default=None, max_length=12)
+    # A bulk reveal reason (app.duty.service.BULK_REASONS), needed above 5 travellers or with a health field.
+    reason: str | None = Field(default=None, max_length=40)
 
 
 class RoomTravellerIn(_Body):
@@ -194,7 +196,7 @@ async def post_manifest(
     pool = await request_pool(request)
     keys = _keys(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.REVEAL_SENSITIVE) as ctx:
-        return await departures.manifest(ctx, Vault(keys, ctx), ref, body.fields)
+        return await departures.manifest(ctx, Vault(keys, ctx), ref, body.fields, body.reason)
 
 
 # ── passport check, rooming list ─────────────────────────────────────────────────────────────────────────────────
@@ -226,7 +228,7 @@ async def put_rooming(
     pool = await request_pool(request)
     keys = _keys(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_EDIT) as ctx:
-        rooms = body.model_dump(mode="json")["rooms"]
+        rooms = body.model_dump(mode="json", exclude_unset=True)["rooms"]  # no bed_pref key: keep the one on file
         return await rooming.replace(ctx, Vault(keys, ctx), trip_id, rooms)
 
 

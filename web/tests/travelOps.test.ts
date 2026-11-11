@@ -21,6 +21,7 @@ import {
   paxTotal,
   roomingBody,
   travelErrorKey,
+  manifestNeedsReason,
   visaOverdue,
   visaTone,
 } from "@/lib/travelOps";
@@ -58,6 +59,12 @@ describe("helpers", () => {
     expect(departurePath("DEP 1/2")).toBe("/departures/DEP%201%2F2");
     expect(travelErrorKey("legal_hold")).toBe("travel.err.legal_hold");
     expect(travelErrorKey("whatever")).toBe("travel.err.generic");
+    expect(travelErrorKey("reason_required")).toBe("travel.err.reason_required");
+    expect(travelErrorKey("reveal_rate_limited")).toBe("travel.err.reveal_rate_limited");
+    expect(manifestNeedsReason(5, ["name", "room"])).toBe(false);
+    expect(manifestNeedsReason(6, ["name"])).toBe(true);
+    expect(manifestNeedsReason(2, ["name", "dietary"])).toBe(true);
+    expect(manifestNeedsReason(2, ["mobility"])).toBe(true);
     expect(travelErrorKey(undefined)).toBe("travel.err.generic");
   });
   it("an open visa past its deadline is overdue", () => {
@@ -108,6 +115,12 @@ describe("every travel code has a label in both languages", () => {
     "wf.tpl.passport_invalid_for_trip",
     "wf.event.passport.invalid_for_trip",
     "nav.departures",
+    "travel.err.reason_required",
+    "travel.err.reveal_rate_limited",
+    "travel.manifest.reasonNote",
+    "client.travel.trip",
+    "client.travel.leadTraveller",
+    "client.travel.party",
   ];
   it.each(LANGS)("%s", (lang) => {
     const missing = keys.filter((k) => !MESSAGES[lang][k as MessageKey]?.trim());

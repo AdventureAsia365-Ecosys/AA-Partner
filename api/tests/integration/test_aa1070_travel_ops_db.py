@@ -130,12 +130,24 @@ async def test_rooming_list_into_the_ops_release_and_the_manifest(app_pool: asyn
         built = await build.document(ctx, vault, trip, [])
     assert '"v":2' in built.text and '"room":{"bed_pref":"extra_bed","room_no":1,"room_type":"twin"}' in built.text
     assert "room" in built.fields
+    # The lead's portal save names the travellers only (no bed_pref key): the agent's extra bed stays.
+    named_only = [{**r, "travellers": [{"traveler_id": p["traveler_id"]} for p in r["travellers"]]} for r in rooms]
+    async with tenant_tx(app_pool, _agent(s), s["tenant"]) as ctx:
+        view = await rooming.replace(ctx, Vault(s["keys"], ctx), s["trip"], named_only)
+    beds = {p["traveler_id"]: p["bed_pref"] for r in view["rooms"] for p in r["travellers"]}
+    assert beds[str(s["child"])] == "extra_bed" and beds[str(s["lead"])] is None
     async with tenant_tx(app_pool, _agent(s), s["tenant"]) as ctx:
         out = await departures.manifest(ctx, Vault(s["keys"], ctx), DEP, ["name", "room", "passport_check"])
         events = list(ctx.audit_events)
     assert out["row_count"] == 3 and "1 twin, extra_bed" in out["csv"] and "expires_too_soon" in out["csv"]
     assert out["csv"].splitlines()[0] == "watermark,no,name,room,passport_check"
     assert [(e.action, e.reason) for e in events][-1] == ("report_export", "departure_manifest")
+    reveals = [e for e in events if e.action == "reveal"]
+    assert len(reveals) == 3 and {e.reason for e in reveals} == {"duty_of_care"}
+    async with tenant_tx(app_pool, _agent(s), s["tenant"]) as ctx:
+        with pytest.raises(Invalid) as err:
+            await departures.manifest(ctx, Vault(s["keys"], ctx), DEP, ["name", "dietary"])
+    assert err.value.code == "reason_required"
 
 
 async def test_vouchers_sealed_and_released(app_pool: asyncpg.Pool) -> None:

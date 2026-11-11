@@ -13,10 +13,12 @@ import {
   CAPACITY,
   ROOM_TYPES,
   roomingBody,
+  type BedPref,
   type RoomType,
   type RoomingView,
   type VisaApplication,
   type Voucher,
+  type VouchersView,
 } from "@/lib/travelOps";
 
 type T = (key: string) => string;
@@ -30,8 +32,12 @@ const PRINT_CSS =
   "@media print{body *{visibility:hidden}[data-print-voucher=on],[data-print-voucher=on] *{visibility:visible}" +
   "[data-print-voucher=on]{position:absolute;left:0;top:0;width:100%}}";
 
+/** What every printed voucher carries besides the service: the agency, the trip, the lead traveller, the party size. */
+export type VoucherHeader = Pick<VouchersView, "agency_name" | "trip_title" | "start_date" | "end_date" | "lead_traveller" | "pax">;
+
 interface TravelView {
   vouchers: Voucher[];
+  voucher_header?: VoucherHeader | null;
   rooming: RoomingView;
   visas: VisaApplication[];
 }
@@ -64,14 +70,14 @@ export function PortalTravel({ base, t, locale, busy, step, round }: { base: str
   return (
     <>
       <style>{PRINT_CSS}</style>
-      <VouchersSection vouchers={view.vouchers} t={t} locale={locale} />
+      <VouchersSection vouchers={view.vouchers} header={view.voucher_header ?? null} t={t} locale={locale} />
       <RoomingSection rooming={view.rooming} t={t} busy={busy} step={step} onSaved={() => setTick((n) => n + 1)} />
       {view.visas.length > 0 && <VisasSection visas={view.visas} t={t} locale={locale} busy={busy} step={step} onSaved={() => setTick((n) => n + 1)} />}
     </>
   );
 }
 
-function VouchersSection({ vouchers, t, locale }: { vouchers: Voucher[]; t: T; locale: DateLocale }) {
+function VouchersSection({ vouchers, header, t, locale }: { vouchers: Voucher[]; header: VoucherHeader | null; t: T; locale: DateLocale }) {
   const [printing, setPrinting] = useState<string | null>(null);
   function print(id: string) {
     flushSync(() => setPrinting(id)); // the voucher is marked before the browser lays out the print
@@ -91,6 +97,7 @@ function VouchersSection({ vouchers, t, locale }: { vouchers: Voucher[]; t: T; l
             data-print-voucher={printing === v.booking_line_id ? "on" : "off"}
             style={{ display: "grid", gap: 4, border: `1px solid ${K.line}`, borderRadius: 8, padding: "10px 12px" }}
           >
+            {header && <VoucherHead header={header} t={t} locale={locale} />}
             <strong style={{ fontSize: 14, color: K.ink, overflowWrap: "anywhere" }}>{v.title}</strong>
             <p style={line}>
               {[v.service_from && formatDate(v.service_from, locale, { year: true }), v.service_time].filter(Boolean).join(" · ")}
@@ -125,6 +132,34 @@ function VouchersSection({ vouchers, t, locale }: { vouchers: Voucher[]; t: T; l
   );
 }
 
+/** A traveller's bed preference on file (an unplaced traveller has none). */
+export function bedOf(p: { traveler_id: string; bed_pref?: BedPref | null }): BedPref | null {
+  return "bed_pref" in p ? (p.bed_pref ?? null) : null;
+}
+
+/** The voucher's header: the agency's name, then the trip (title, dates), the lead traveller and the party size. */
+function VoucherHead({ header, t, locale }: { header: VoucherHeader; t: T; locale: DateLocale }) {
+  const dates = [header.start_date, header.end_date].filter((d): d is string => !!d).map((d) => formatDate(d, locale, { year: true }));
+  const rows: [string, string | null][] = [
+    ["client.travel.trip", [header.trip_title, [...new Set(dates)].join(" – ")].filter(Boolean).join(" · ") || null],
+    ["client.travel.leadTraveller", header.lead_traveller],
+    ["client.travel.party", header.pax ? String(header.pax) : null],
+  ];
+  return (
+    <div data-testid="portal-voucher-head" style={{ display: "grid", gap: 2, paddingBottom: 6, borderBottom: `1px solid ${K.line}` }}>
+      {header.agency_name && <strong style={{ fontSize: 15, color: K.ink, overflowWrap: "anywhere" }}>{header.agency_name}</strong>}
+      {rows
+        .filter(([, value]) => value)
+        .map(([key, value]) => (
+          <p key={key} style={line}>
+            <span style={{ color: K.muted }}>{t(key)}: </span>
+            {value}
+          </p>
+        ))}
+    </div>
+  );
+}
+
 function RoomingSection({ rooming, t, busy, step, onSaved }: { rooming: RoomingView; t: T; busy: boolean; step: Step; onSaved: () => void }) {
   const people = [...rooming.rooms.flatMap((r) => r.travellers), ...rooming.unassigned];
   const [rooms, setRooms] = useState(() => rooming.rooms.map((r) => ({ room_no: r.room_no, room_type: r.room_type })));
@@ -152,7 +187,9 @@ function RoomingSection({ rooming, t, busy, step, onSaved }: { rooming: RoomingV
   }
 
   function save() {
-    const body = roomingBody(rooms.map((r) => ({ ...r, travellers: people.filter((p) => placed[p.traveler_id] === r.room_no).map((p) => ({ traveler_id: p.traveler_id })) })));
+    // The lead never sets a bed preference here: each traveller keeps the one the agency set (the PUT replaces the list).
+    const travellersOf = (roomNo: number) => people.filter((p) => placed[p.traveler_id] === roomNo).map((p) => ({ traveler_id: p.traveler_id, bed_pref: bedOf(p) }));
+    const body = roomingBody(rooms.map((r) => ({ ...r, travellers: travellersOf(r.room_no) })));
     if (!body.ok) return setError(t(`client.travel.err.${body.error}`));
     setError(null);
     void step("PUT", "/rooming", body.body, () => onSaved());

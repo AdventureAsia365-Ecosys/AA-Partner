@@ -3,17 +3,20 @@
 // the Booking feed sent (scheduled / guaranteed / cancelled), the pax, every trip on it (stage, Stage 3, rooms placed,
 // passport issues) and every traveller (Stage 3 details, passport check, room), and the merged manifest for the
 // agency's own tour leader (pick the columns, download a watermarked CSV; the API logs it). Every role. A group code
-// of the agency's own (not an AA departure) has no roster: nothing shows.
+// of the agency's own (not an AA departure) has no roster: nothing shows. The manifest is a bulk reveal: a reason is
+// needed above 5 travellers or with a health column (dietary, mobility), and it counts in the member's hourly limit.
 import { useEffect, useState } from "react";
-import { Badge, Button, Checkbox, K, KpiTile, useHydrated } from "@/app/_kit";
+import { Badge, Button, Checkbox, Field, K, KpiTile, Select, useHydrated } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
 import { ReportTable } from "@/components/reports/ReportTable";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
+import { BULK_REASONS } from "@/lib/duty";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import {
   MANIFEST_FIELDS,
   departureTone,
+  manifestNeedsReason,
   passportTone,
   paxTotal,
   travelErrorKey,
@@ -26,6 +29,7 @@ export function DepartureRoster({ departureRef, lang, locale }: { departureRef: 
   const hydrated = useHydrated();
   const [view, setView] = useState<RosterView | null>(null);
   const [fields, setFields] = useState<ManifestField[]>([]);
+  const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -46,7 +50,7 @@ export function DepartureRoster({ departureRef, lang, locale }: { departureRef: 
 
   async function download() {
     setBusy(true);
-    const res = await bffSend<{ filename: string; csv: string }>("POST", `departures/${encodeURIComponent(departureRef)}/manifest`, { fields });
+    const res = await bffSend<{ filename: string; csv: string }>("POST", `departures/${encodeURIComponent(departureRef)}/manifest`, { fields, ...(reason ? { reason } : {}) });
     setBusy(false);
     if (!res.ok) {
       if (!res.redirecting) setError(tr(travelErrorKey(res.detail)));
@@ -62,6 +66,7 @@ export function DepartureRoster({ departureRef, lang, locale }: { departureRef: 
   }
 
   const name = new Map(view.trips.map((x) => [x.trip_id, x.title]));
+  const reasonMissing = manifestNeedsReason(view.travellers.length, fields) && !reason;
   return (
     <div style={{ display: "grid", gap: 14 }} data-testid="departure-roster">
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -116,9 +121,20 @@ export function DepartureRoster({ departureRef, lang, locale }: { departureRef: 
             />
           ))}
         </div>
+        <div style={{ maxWidth: 320, marginTop: 10 }}>
+          <Field label={tr("duty.reveal.reason")} hint={tr("travel.manifest.reasonNote")}>
+            <Select
+              size="sm"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder={tr("duty.reveal.reason.pick")}
+              options={BULK_REASONS.map((r) => ({ value: r, label: tr(`duty.reveal.reason.${r}`) }))}
+            />
+          </Field>
+        </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10 }}>
           <span data-testid="roster-manifest-download">
-            <Button size="sm" variant="primary" disabled={busy || !hydrated || fields.length === 0} onClick={() => void download()}>
+            <Button size="sm" variant="primary" disabled={busy || !hydrated || fields.length === 0 || reasonMissing} onClick={() => void download()}>
               {tr("travel.manifest.download")}
             </Button>
           </span>

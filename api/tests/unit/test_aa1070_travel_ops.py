@@ -19,10 +19,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.documents import pdf, pdf_job, renders
-from app.errors import Conflict, Forbidden, Invalid, NotFound
+from app.errors import Conflict, Forbidden, Invalid, NotFound, RateLimited
 from app.jobs.queue import Job
 from app.jobs.worker import PermanentError
 from app.main import create_app
+from app.observability import reveal_meter
 from app.portal import public as portal
 from app.routers import travel_ops as router
 from app.travel_ops import departures, passport, rooming, visas, vouchers
@@ -287,6 +288,28 @@ def test_rooming_view_replace_and_hold() -> None:
     with pytest.raises(NotFound):
         run(rooming.view(tenant_ctx(ScriptedConn()), FakeVault(), TRIP))
     assert run(rooming.by_traveller(tenant_ctx(conn), TRIP))[LEAD]["room_no"] == 1
+
+
+def test_rooming_save_without_a_bed_pref_keeps_the_one_on_file() -> None:
+    beds = {LEAD: "extra_bed", MATE: None}
+    rooms = [{"room_no": 1, "room_type": "twin", "travellers": [{"traveler_id": str(LEAD)}, {"traveler_id": "x"}]},
+             {"room_no": 2, "room_type": "single", "travellers": [{"traveler_id": str(MATE), "bed_pref": "cot"}]},
+             "odd", {"room_no": 3, "travellers": None}]  # fmt: skip
+    kept = rooming.keep_beds(rooms, beds)
+    assert kept[0]["travellers"] == [{"traveler_id": str(LEAD), "bed_pref": "extra_bed"}, {"traveler_id": "x"}]
+    assert kept[1] == rooms[1] and kept[2:] == rooms[2:] and rooming.keep_beds("x", beds) == "x"
+    party = [{"traveler_id": LEAD, "role": "lead", "display_name_enc": enc("traveler", "display_name_enc", "Ilse")}]
+    rows = [{"room_assignment_id": uuid.uuid4(), "traveler_id": LEAD, "room_no": 1, "room_type": "twin",
+             "bed_pref": "extra_bed"}]  # fmt: skip
+    conn = ScriptedConn().on("SELECT stage FROM crm.trip", "booked").on("FROM crm.trip_traveler tt", party)
+    conn.on("FROM crm.room_assignment", rows)
+    # The lead's portal save names the traveller only: the agent's extra bed stays, nothing is written.
+    named_only = [{"room_no": 1, "room_type": "twin", "travellers": [{"traveler_id": str(LEAD)}]}]
+    run(rooming.replace(tenant_ctx(conn), FakeVault(), TRIP, named_only))
+    assert conn.sql("UPDATE crm.room_assignment") == []
+    # A null clears it.
+    run(rooming.replace(tenant_ctx(conn), FakeVault(), TRIP, [_room(1, "twin", LEAD)]))
+    assert conn.sql("UPDATE crm.room_assignment")[0][1:] == (1, "twin", None)
 
 
 # ── vouchers ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -802,7 +825,22 @@ def portal_world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(portal.stages, "touch", nothing)
     monkeypatch.setattr(portal.rooming, "view", stub("view", room))
     monkeypatch.setattr(portal.rooming, "replace", stub("replace", room))
-    monkeypatch.setattr(portal.vouchers, "trip_vouchers", stub("vouchers", {"vouchers": [{"title": "Bay cruise"}]}))
+    monkeypatch.setattr(
+        portal.vouchers,
+        "trip_vouchers",
+        stub(
+            "vouchers",
+            {
+                "vouchers": [{"title": "Bay cruise"}],
+                "agency_name": "Lotus Trails",
+                "trip_title": "Bay days",
+                "start_date": None,
+                "end_date": None,
+                "lead_traveller": "Ilse Varo",
+                "pax": 2,
+            },
+        ),
+    )
     monkeypatch.setattr(portal.visas, "trip_applications", stub("visas", {"applications": []}))
     monkeypatch.setattr(portal.visas, "set_item", stub("set_item", {"done": True}))
     return world
@@ -820,6 +858,8 @@ def test_portal_travel_rooming_and_checklist(portal_world: dict[str, Any]) -> No
     assert lead["rooming"]["can_edit"] and len(lead["rooming"]["rooms"]) == 2
     assert not companion["rooming"]["can_edit"] and companion["rooming"]["rooms"][0]["room_no"] == 1
     assert companion["rooming"]["unassigned"] == [] and lead["vouchers"] == [{"title": "Bay cruise"}]
+    assert lead["voucher_header"] == {"agency_name": "Lotus Trails", "trip_title": "Bay days", "start_date": None,
+                                      "end_date": None, "lead_traveller": "Ilse Varo", "pax": 2}  # fmt: skip
     assert ("vouchers", {"travellers_only": True}) in portal_world["calls"]
     with pytest.raises(Forbidden):
         run(portal.save_rooming(object(), object(), object(), "t", "s", {"rooms": []}, origin=None))  # type: ignore[arg-type]
@@ -878,7 +918,43 @@ def test_roster_and_merged_manifest(monkeypatch: pytest.MonkeyPatch) -> None:
     assert (
         made["row_count"] == 1 and ",Ilse,1 twin,ok" in made["csv"] and made["filename"].startswith("departure-DEP-1")
     )
-    assert ctx.audit_events[-1].action == "report_export"
+    assert made["reason"] == "duty_of_care"
+    assert [(e.action, e.object_id, e.reason) for e in ctx.audit_events[-2:]] == [
+        ("reveal", str(LEAD), "duty_of_care"),
+        ("report_export", "DEP-1", "departure_manifest"),
+    ]
+
+
+def test_merged_manifest_is_a_bulk_reveal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A reason above five travellers or with a health column; the hourly reveal limit before anything opens."""
+    assert departures.manifest_reason(None, ("name",), 5) == "duty_of_care"
+    assert departures.manifest_reason("ops_handoff", ("name", "dietary"), 1) == "ops_handoff"
+    for reason, picked, count in ((None, ("name",), 6), (None, ("mobility",), 1), ("because", ("name",), 1)):
+        with pytest.raises(Invalid) as err:
+            departures.manifest_reason(reason, picked, count)
+        assert err.value.code == "reason_required"
+    row = {"departure_id": "DEP-1", "trip_ids": [TRIP]}
+    trip = {"trip_id": TRIP}
+    conn = ScriptedConn().on("WHERE l.supplier_kind = 'aa' AND l.departure_id = $1", row)
+    conn.on("FROM crm.trip WHERE trip_id = ANY", [trip]).on("SELECT count(*) FROM crm.trip_traveler", 12)
+
+    async def document(*_: Any) -> Any:
+        raise AssertionError("nothing is opened before the checks")
+
+    monkeypatch.setattr(departures.build, "document", document)
+    ctx = tenant_ctx(conn)
+    with pytest.raises(Invalid) as err:
+        run(departures.manifest(ctx, FakeVault(), "DEP-1", ["name"]))
+    assert err.value.code == "reason_required"
+    meter = reveal_meter.RevealMeter()
+    monkeypatch.setattr(reveal_meter, "METER", meter)
+    meter.record(TENANT, ctx.member_id, departures.duty.HOURLY_LIMIT - 11)
+    with pytest.raises(RateLimited) as limited:
+        run(departures.manifest(ctx, FakeVault(), "DEP-1", ["name"], "ops_handoff"))
+    assert limited.value.code == "reveal_rate_limited"
+    denied = ctx.audit_events[-1]
+    assert (denied.action, denied.outcome, denied.reason, denied.object_ids) == ("reveal", "denied", "rate_limited",
+                                                                                 (str(TRIP),))  # fmt: skip
 
 
 def test_visa_create_suggest_and_list() -> None:

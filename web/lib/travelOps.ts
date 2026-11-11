@@ -229,6 +229,16 @@ export function visaOverdue(app: Pick<VisaApplication, "status" | "deadline">, t
   return (app.status === "to_do" || app.status === "collecting") && !!app.deadline && app.deadline < today;
 }
 
+/** Manifest columns with health codes: picking one always needs a reason (the API checks again). */
+export const MANIFEST_HEALTH_FIELDS: readonly ManifestField[] = ["dietary", "mobility"];
+/** Bulk reveals of more travellers than this need a reason (the duty reveal's threshold, card R). */
+export const MANIFEST_REASON_THRESHOLD = 5;
+
+/** Whether a manifest of ``travellers`` with ``fields`` needs the member to pick a reason. */
+export function manifestNeedsReason(travellers: number, fields: readonly ManifestField[]): boolean {
+  return travellers > MANIFEST_REASON_THRESHOLD || fields.some((f) => MANIFEST_HEALTH_FIELDS.includes(f));
+}
+
 /** A draft room list -> the PUT body, or the first problem (the API checks again). */
 export function roomingBody(
   rooms: { room_no: number; room_type: RoomType; travellers: { traveler_id: string; bed_pref?: BedPref | null }[] }[],
@@ -271,6 +281,8 @@ export function travelErrorKey(detail: string | undefined): string {
     "trip_cancelled",
     "role_forbidden",
     "owner_only",
+    "reason_required",
+    "reveal_rate_limited",
   ]);
   return detail && known.has(detail) ? `travel.err.${detail}` : "travel.err.generic";
 }

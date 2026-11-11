@@ -11,7 +11,12 @@ one Adventure Asia departure, across its trips.
 - **The merged manifest** (:func:`manifest`) for the agency's own tour leader: the fields the member picks
   (:data:`MANIFEST_FIELDS`) of every traveller on the departure, from the same build as the AA ops release
   (:func:`app.ops_release.build.document`: dietary and mobility codes only with the traveller's health consent), plus
-  the room and the passport check; watermarked, never stored; one ``report_export`` audit event naming the trips.
+  the room and the passport check; watermarked, never stored. It is a bulk reveal (card R, like
+  :func:`app.duty.service.bulk_reveal`): a reason from :data:`app.duty.service.BULK_REASONS` is required above
+  :data:`app.duty.service.REASON_THRESHOLD` travellers or when a health field (dietary, mobility) is picked; the
+  member's hourly reveal limit (:data:`app.duty.service.HOURLY_LIMIT`, the reveal meter) is checked before anything is
+  opened (429 ``reveal_rate_limited`` with a denied ``reveal`` audit event); one ``reveal`` audit event per traveller
+  released (the reveal meter counts them) and one ``report_export`` audit event naming the trips.
 - **The feed** (:func:`apply_event`, called by :mod:`app.booking.sync`): ``departure.guaranteed`` /
   ``departure.cancelled`` upsert the agency's ``crm.aa_departure_state`` row (written by the job only, CRM53); an
   event older than the stored one changes nothing.
@@ -30,9 +35,11 @@ import secrets
 import uuid
 from typing import Any
 
-from app.errors import Invalid, NotFound
+from app.duty import service as duty
+from app.errors import Invalid, NotFound, RateLimited
+from app.observability import reveal_meter
 from app.ops_release import build
-from app.tenancy import AnyContext
+from app.tenancy import AnyContext, TenantContext
 from app.travel_ops import passport, rooming
 from app.vault import Vault
 
@@ -93,6 +100,13 @@ SELECT tt.trip_id, tt.traveler_id, tt.role, t.display_name_enc,
  WHERE tt.trip_id = ANY($1::uuid[]) AND tt.deleted_at IS NULL
  ORDER BY tt.trip_id, tt.role = 'lead' DESC, tt.created_at, tt.traveler_id
 """
+COUNT_SQL = """
+SELECT count(*) FROM crm.trip_traveler tt
+  JOIN crm.traveler t ON t.traveler_id = tt.traveler_id AND t.deleted_at IS NULL
+ WHERE tt.trip_id = ANY($1::uuid[]) AND tt.deleted_at IS NULL
+"""
+# Manifest columns that carry health codes: picking one always needs a reason.
+HEALTH_FIELDS = frozenset({"dietary", "mobility"})
 STATE_SQL = """
 SELECT departure_status, last_event_at FROM crm.aa_departure_state WHERE departure_id = $1 AND deleted_at IS NULL
 """
@@ -288,11 +302,38 @@ def manifest_csv(people: list[tuple[str, dict[str, Any], str]], fields: tuple[st
     return out.getvalue(), len(people)
 
 
-async def manifest(ctx: AnyContext, vault: Vault, departure_id: str, fields: list[str] | None) -> dict[str, Any]:
+def manifest_reason(reason: str | None, picked: tuple[str, ...], count: int) -> str:
+    """The reason of a manifest export: given, or :data:`app.duty.service.DEFAULT_REASON` for a small export without a
+    health field; else 422 ``reason_required``."""
+    if reason is None and count <= duty.REASON_THRESHOLD and not HEALTH_FIELDS & set(picked):
+        reason = duty.DEFAULT_REASON
+    if reason not in duty.BULK_REASONS:
+        raise Invalid(
+            "reason_required",
+            f"a manifest of more than {duty.REASON_THRESHOLD} travellers or with health codes needs a reason",
+            reasons=list(duty.BULK_REASONS),
+            threshold=duty.REASON_THRESHOLD,
+        )
+    return reason
+
+
+async def manifest(ctx: TenantContext, vault: Vault, departure_id: str, fields: list[str] | None,
+                   reason: str | None = None) -> dict[str, Any]:  # fmt: skip
     picked = pick_fields(fields)
     row = await _one(ctx, departure_id)
     trips = list(await ctx.conn.fetch(TRIPS_SQL, list(row["trip_ids"]), MAX_TRIPS))
     ids = [t["trip_id"] for t in trips]
+    count = int(await ctx.conn.fetchval(COUNT_SQL, ids) or 0)
+    reason = manifest_reason(reason, picked, count)
+    used = reveal_meter.METER.count(ctx.tenant_id, ctx.member_id)
+    if used + count > duty.HOURLY_LIMIT:
+        ctx.audit("reveal", "denied", "departure", _audit_id(row["departure_id"]), fields=picked,
+                  reason="rate_limited", object_ids=tuple(str(t) for t in ids)[:200])  # fmt: skip
+        raise RateLimited(
+            "reveal_rate_limited",
+            int(reveal_meter.WINDOW_S),
+            f"{duty.HOURLY_LIMIT} travellers an hour; {max(duty.HOURLY_LIMIT - used, 0)} left",
+        )
     checks = await passport.checks(ctx, vault, ids) if "passport_check" in picked else {}
     status_of = {(t, p["traveler_id"]): p["status"] for t, people in checks.items() for p in people}
     people: list[tuple[str, dict[str, Any], str]] = []
@@ -303,6 +344,8 @@ async def manifest(ctx: AnyContext, vault: Vault, departure_id: str, fields: lis
             people.append((str(t["trip_id"])[:8], person, status_of.get((t["trip_id"], person["traveler_id"]), "")))
     mark = watermark()
     text, count = manifest_csv(people, picked, mark)
+    for _trip_ref, person, _status in people:  # one reveal per traveller released: the reveal meter counts them
+        ctx.audit("reveal", "allowed", "traveler", str(person["traveler_id"]), fields=picked, reason=reason)
     ctx.audit("report_export", "allowed", "departure", _audit_id(row["departure_id"]), fields=picked,
               reason="departure_manifest", object_ids=tuple(str(t) for t in ids)[:200])  # fmt: skip
     safe = re.sub(r"[^A-Za-z0-9_-]", "-", row["departure_id"])[:40]
@@ -311,6 +354,7 @@ async def manifest(ctx: AnyContext, vault: Vault, departure_id: str, fields: lis
         "watermark": mark,
         "row_count": count,
         "fields": list(picked),
+        "reason": reason,
         "csv": text,
     }
 

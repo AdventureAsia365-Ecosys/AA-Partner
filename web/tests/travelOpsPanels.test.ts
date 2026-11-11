@@ -86,7 +86,7 @@ vi.mock("@/lib/bffClient", () => ({
 
 const { TripTravelPanel } = await import("@/components/travelOps/TripTravelPanel");
 const { DepartureRoster } = await import("@/components/travelOps/DepartureRoster");
-const { PortalTravel, travelView } = await import("@/components/portal/PortalTravel");
+const { PortalTravel, bedOf, travelView } = await import("@/components/portal/PortalTravel");
 
 const roots: Root[] = [];
 afterEach(() => {
@@ -127,6 +127,16 @@ describe("the travel panels", () => {
     expect(el.textContent).not.toMatch(/travel\.[a-z]/);
   });
 
+  it("the merged manifest asks for a reason once a health column is picked", async () => {
+    const el = await mount(createElement(DepartureRoster, { departureRef: "DEP-1", lang: "en", locale: "en-GB" }));
+    const download = () => el.querySelector('[data-testid="roster-manifest-download"] button') as HTMLButtonElement;
+    expect(download().disabled).toBe(false);
+    const dietary = [...el.querySelectorAll("label")].find((l) => l.textContent === "Dietary")?.querySelector("input") as HTMLInputElement;
+    await act(async () => dietary.click());
+    expect(download().disabled).toBe(true);
+    expect(el.textContent).toContain("Needed for more than 5 travellers");
+  });
+
   it("the portal shows the released vouchers, the room and the checklist", async () => {
     const t = (k: string) => k;
     vi.stubGlobal(
@@ -140,5 +150,38 @@ describe("the travel panels", () => {
     expect(el.querySelector('[data-testid="portal-rooming"]')?.textContent).toContain("Ilse Varo");
     expect(el.querySelector('[data-testid="portal-visas"]')?.textContent).toContain("Photo page");
     expect(travelView({ vouchers: [] })).toBeNull();
+  });
+
+  it("every printed portal voucher carries the agency, the trip, the lead traveller and the party size", async () => {
+    const t = (k: string) => k;
+    const header = { agency_name: "Lotus Trails", trip_title: "Bay days", start_date: "2031-03-01", end_date: "2031-03-31", lead_traveller: "Ilse Varo", pax: 2 };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ vouchers: [VOUCHER], voucher_header: header, rooming: { ...ROOMING, can_edit: false }, visas: [] }), { status: 200 })),
+    );
+    const el = await mount(createElement(PortalTravel, { base: "/crm/public/v1/traveller", t, locale: "en-GB", busy: false, step: vi.fn(async () => {}), round: 0 }));
+    const printed = el.querySelector('[data-testid="portal-voucher"]');
+    const head = printed?.querySelector('[data-testid="portal-voucher-head"]');
+    expect(head?.textContent).toContain("Lotus Trails");
+    expect(head?.textContent).toContain("client.travel.leadTraveller: Ilse Varo");
+    expect(head?.textContent).toContain("client.travel.party: 2");
+    expect(head?.textContent).toContain("Bay days");
+  });
+
+  it("the lead's rooming save keeps the bed preference the agency set", async () => {
+    const t = (k: string) => k;
+    const rooming = {
+      ...ROOMING,
+      can_edit: true,
+      rooms: [{ room_no: 1, room_type: "twin", travellers: [{ traveler_id: LEAD, name: "Ilse Varo", role: "lead", bed_pref: "extra_bed" }] }],
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ vouchers: [], rooming, visas: [] }), { status: 200 })));
+    const step = vi.fn(async (...args: unknown[]) => void args);
+    const el = await mount(createElement(PortalTravel, { base: "/crm/public/v1/traveller", t, locale: "en-GB", busy: false, step, round: 0 }));
+    const save = [...el.querySelectorAll("button")].find((b) => b.textContent === "client.travel.saveRooms");
+    await act(async () => save?.click());
+    expect(step).toHaveBeenCalledTimes(1);
+    expect(step.mock.calls[0][2]).toEqual({ rooms: [{ room_no: 1, room_type: "twin", travellers: [{ traveler_id: LEAD, bed_pref: "extra_bed" }] }] });
+    expect(bedOf({ traveler_id: MATE })).toBeNull();
   });
 });

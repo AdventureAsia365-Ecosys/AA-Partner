@@ -1164,11 +1164,15 @@ async def invite_companion(
 
 
 # ── AA-1070: vouchers, rooming list and visa checklist on the traveller portal ────────────────────────────────────────
+# What every printed voucher carries besides the service (``app.travel_ops.vouchers.trip_vouchers``).
+VOUCHER_HEADER = ("agency_name", "trip_title", "start_date", "end_date", "lead_traveller", "pax")
 
 
 async def travel(pool: asyncpg.Pool, keys: KeyProvider, token: str, session: str | None) -> dict[str, Any]:
-    """The acting traveller's travel documents: the released vouchers of the trip, the rooming list (the lead: every
-    room, editable after the deposit; a companion: their own room) and their own visa applications with checklists."""
+    """The acting traveller's travel documents: the released vouchers of the trip with the voucher header (the agency's
+    name, the trip, its dates, the lead traveller's name opened server-side and the party size, printed on every
+    voucher), the rooming list (the lead: every room, editable after the deposit; a companion: their own room) and
+    their own visa applications with checklists."""
     async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
         access = await _signed_in(ctx, await _access(ctx, link), session)
         vault = Vault(keys, ctx)
@@ -1178,8 +1182,10 @@ async def travel(pool: asyncpg.Pool, keys: KeyProvider, token: str, session: str
         if not lead:
             mine = [r for r in rooms["rooms"] if any(p["traveler_id"] == str(me) for p in r["travellers"])]
             rooms = {**rooms, "rooms": mine, "unassigned": []}
+        released = await vouchers.trip_vouchers(ctx, vault, trip_id, travellers_only=True)
         return {
-            "vouchers": (await vouchers.trip_vouchers(ctx, vault, trip_id, travellers_only=True))["vouchers"],
+            "vouchers": released["vouchers"],
+            "voucher_header": {k: released.get(k) for k in VOUCHER_HEADER},
             "rooming": {**rooms, "can_edit": lead and await _unlocked(ctx, trip_id)},
             "visas": (await visas.trip_applications(ctx, vault, trip_id, traveler_id=me))["applications"],
         }
