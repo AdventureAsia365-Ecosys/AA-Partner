@@ -26,6 +26,7 @@ import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import { formatMoney } from "@/lib/ledger";
 import { memberLabel, type Member } from "@/lib/pipeline";
 import { serverContext } from "@/lib/serverContext";
+import { departurePath } from "@/lib/travelOps";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +47,7 @@ function detail(e: CalendarEvent, lang: Lang, locale: DateLocale, timeZone: stri
   if (e.task_kind) parts.push(e.task_kind.replace(/_/g, " "));
   if (e.priority === "urgent") parts.push(tr("calendar.task.urgent"));
   if (e.call_status) parts.push(tr(`calendar.call.${e.call_status}`));
+  if (e.kind === "aa_departure" && e.trips) parts.push(fmt(tr("calendar.aaDeparture.trips"), { n: e.trips }));
   return parts.join(" · ");
 }
 
@@ -142,7 +144,11 @@ export default async function CalendarPage({
                       style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", fontSize: 13, minWidth: 0 }}
                     >
                       <Badge tone={KIND_TONE[e.kind]}>{tr(kindKey(e.kind))}</Badge>
-                      {e.trip_id ? (
+                      {e.departure_id ? (
+                        <a href={departurePath(e.departure_id)} style={{ overflowWrap: "anywhere" }}>
+                          {`${e.title ?? e.departure_id} · ${tr(`travel.departure.state.${e.departure_status ?? "scheduled"}`)}`}
+                        </a>
+                      ) : e.trip_id ? (
                         <a href={`/pipeline/${e.trip_id}`} style={{ overflowWrap: "anywhere" }}>
                           {e.title ?? e.trip_id.slice(0, 8)}
                         </a>

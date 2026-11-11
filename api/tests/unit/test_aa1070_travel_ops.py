@@ -937,3 +937,16 @@ def test_pdf_build_confirmation_and_voucher(monkeypatch: pytest.MonkeyPatch) -> 
     assert data.startswith(b"%PDF") and name == f"confirmation-{str(TRIP)[:8]}.pdf"
     data, name = run(pdf_job.build(tenant_ctx(conn), FakeVault(), TRIP, "voucher", LINE))
     assert name == f"voucher-{str(LINE)[:8].upper()}.pdf"
+
+
+def test_calendar_aa_departure_layer() -> None:
+    from app.calendar import events as calendar_events
+    from app.calendar import ics
+
+    row = {"departure_id": "DEP-1", "title": "Bay loop", "day": dt.date(2031, 3, 1), "trips": 2,
+           "departure_status": "guaranteed"}  # fmt: skip
+    conn = ScriptedConn().on("GROUP BY l.departure_id, s.departure_status", [row])
+    out = run(calendar_events.events(tenant_ctx(conn), start=dt.date(2031, 3, 1), end=dt.date(2031, 3, 31),
+                                     member_id=None, tz=dt.UTC))  # fmt: skip
+    assert [(e["kind"], e["departure_id"], e["trips"]) for e in out] == [("aa_departure", "DEP-1", 2)]
+    assert ics.LABELS["aa_departure"] == "AA departure"

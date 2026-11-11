@@ -27,6 +27,7 @@ LABELS = {
     "signing_deadline": "Signatures due",
     "task": "Task due",
     "call": "Client call",
+    "aa_departure": "AA departure",  # AA-1070
 }
 PAYMENT_LABELS = {"deposit": "Deposit due", "instalment": "Instalment due", "balance": "Balance due"}
 

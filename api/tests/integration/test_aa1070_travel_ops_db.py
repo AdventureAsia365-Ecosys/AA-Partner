@@ -25,6 +25,7 @@ import pytest
 from app import pipeline
 from app.booking import contract
 from app.booking.sync import apply_event
+from app.calendar import events as calendar_events
 from app.documents import pdf_job
 from app.documents.store import MemoryDocumentStore
 from app.errors import Conflict, Invalid
@@ -223,6 +224,10 @@ async def test_departure_roster_from_the_feed(app_pool: asyncpg.Pool) -> None:
         with pytest.raises(asyncpg.PostgresError):
             async with ctx.conn.transaction():
                 await ctx.conn.execute("DELETE FROM crm.aa_departure_state")  # a member never writes it (CRM53)
+    async with tenant_tx(app_pool, _agent(s), s["tenant"]) as ctx:
+        cal = await calendar_events.agency_calendar(ctx, start=s["start"] - DAY, end=s["start"] + DAY, mine=False)
+    (aa,) = [e for e in cal["events"] if e["kind"] == "aa_departure"]
+    assert aa["departure_id"] == DEP and aa["departure_status"] == "guaranteed" and aa["trips"] == 1
 
 
 async def test_pdf_job_stores_sealed_documents(app_pool: asyncpg.Pool) -> None:

@@ -5,7 +5,7 @@
 
 import type { MessageKey } from "./i18n";
 
-export type EventKind = "departure" | "return" | "payment_due" | "invoice_due" | "signing_deadline" | "task" | "call";
+export type EventKind = "departure" | "return" | "payment_due" | "invoice_due" | "signing_deadline" | "task" | "call" | "aa_departure";
 export type Scope = "mine" | "agency";
 
 export interface CalendarEvent {
@@ -26,6 +26,10 @@ export interface CalendarEvent {
   task_kind?: string;
   priority?: "normal" | "urgent";
   call_status?: "requested" | "confirmed";
+  /** AA-1070: an AA departure (its first service day): the departure id, the feed state, the trips on it. */
+  departure_id?: string;
+  departure_status?: "scheduled" | "guaranteed" | "cancelled";
+  trips?: number;
 }
 
 export interface CalendarView {
@@ -51,7 +55,7 @@ export interface Feed {
   fetch_count: number;
 }
 
-export const KINDS: readonly EventKind[] = ["departure", "return", "payment_due", "invoice_due", "signing_deadline", "task", "call"];
+export const KINDS: readonly EventKind[] = ["departure", "return", "payment_due", "invoice_due", "signing_deadline", "task", "call", "aa_departure"];
 
 export function kindKey(kind: EventKind): MessageKey {
   return `calendar.kind.${kind}` as MessageKey;
@@ -65,6 +69,7 @@ export const KIND_TONE: Record<EventKind, "info" | "success" | "warning" | "dang
   signing_deadline: "danger",
   task: "neutral",
   call: "success",
+  aa_departure: "info",
 };
 
 /** Events grouped by their day, days in order (the API sorts; this keeps the order and groups). */

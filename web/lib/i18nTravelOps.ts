@@ -18,6 +18,8 @@ function prefixed<T extends Record<string, string>, P extends string>(prefix: P,
 
 export const travelOpsEn = {
   "nav.departures": "Departures",
+  "calendar.kind.aa_departure": "AA departure",
+  "calendar.aaDeparture.trips": "{n} trips",
   "travel.title": "Travel",
   "travel.lead": "lead",
   "travel.err.generic": "That did not work. Try again.",
@@ -233,6 +235,8 @@ export const travelOpsEn = {
 
 export const travelOpsVi: Record<keyof typeof travelOpsEn, string> = {
   "nav.departures": "Đoàn khởi hành",
+  "calendar.kind.aa_departure": "Đoàn AA",
+  "calendar.aaDeparture.trips": "{n} chuyến đi",
   "travel.title": "Chuyến đi",
   "travel.lead": "đại diện",
   "travel.err.generic": "Chưa thực hiện được. Hãy thử lại.",
