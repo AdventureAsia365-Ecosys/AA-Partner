@@ -5,9 +5,11 @@
 // The sell is a money field (owner / agent); the assistant adds items without one. When AA cannot be reached the
 // drawer says so and AA adds stay disabled (WF-4). Sold-out items cannot be added (the API answers 409).
 // AA-1030: owner and agent get a link to the agency's AA prices (opens in a new tab, the draft stays as it is).
+// AA-1069: a third source, "From catalogue": a service of the agency's own catalogue, priced for the party (a copy).
 import Link from "next/link";
 import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
+import { BuilderCatalogueTab } from "@/components/catalogue/BuilderCatalogueTab";
 import { type AaProduct, type CatalogTour } from "@/lib/aa";
 import { AA_TARIFF_PATH } from "@/lib/aaTariff";
 import { bffSend } from "@/lib/bffClient";
@@ -60,7 +62,8 @@ export function BuilderAaDrawer({
 }) {
   const hydrated = useHydrated();
   const tr = (key: string) => t(lang, key as MessageKey);
-  const [tab, setTab] = useState<"aa" | "agency">("aa");
+  const [tab, setTab] = useState<"aa" | "agency" | "catalogue">("aa");
+  const dayDate = view.days.find((d) => d.blocks.some((b) => b.option_block_id === blockId))?.date ?? null;
   const [query, setQuery] = useState("");
   const [tours, setTours] = useState<CatalogTour[] | null>(null);
   const [tour, setTour] = useState<CatalogTour | null>(null);
@@ -173,7 +176,7 @@ export function BuilderAaDrawer({
     // not a dialog (aa-kit/no-raw-dialog); the two sources are toggle buttons (aria-pressed), not a half-built tab list.
     <div role="group" aria-label={tr("builder.add")} data-testid="builder-drawer" style={{ display: "grid", gap: 8, padding: 12, borderRadius: 8, border: `1px solid ${K.line2}`, background: K.bg }}>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {(["aa", "agency"] as const).map((x) => (
+        {(["aa", "agency", "catalogue"] as const).map((x) => (
           <Button key={x} size="sm" variant={tab === x ? "primary" : "ghost"} aria-pressed={tab === x} onClick={() => setTab(x)}>
             {tr(`builder.drawer.${x}`)}
           </Button>
@@ -281,6 +284,9 @@ export function BuilderAaDrawer({
             </Button>
           </div>
         </div>
+      )}
+      {tab === "catalogue" && (
+        <BuilderCatalogueTab view={view} blockId={blockId} dayDate={dayDate} canMargin={canMoney} lang={lang} locale={locale} write={write} onClose={onClose} />
       )}
       {tab === "agency" && (
         <div style={{ display: "grid", gap: 8 }} data-testid="builder-agency">

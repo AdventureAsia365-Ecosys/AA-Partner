@@ -10,12 +10,16 @@
 // S262 round 3: on a phone (< 768 px, the kit's cut) each line is a card with labelled rows, so Status (with a
 // cancelled line's badge and fee note), Cost, Sell and Collect are never cut off to the right; the desktop table is
 // unchanged. Between the cancel run's answer and the server refresh, a line's commission reads "Updating".
+// AA-1069 (crm-053): "Request from suppliers" prepares one e-mail per supplier (SupplierRequestsPanel); a requested line
+// shows when it was asked and whether the supplier replied, takes the supplier's confirmation number ("Record
+// confirmation": saved and confirmed in one call) or goes back to planning.
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fragment, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Badge, Button, DataTable, K, useHydrated, useIsPhone } from "@/app/_kit";
 import { DateInput } from "@/components/DateInput";
+import { SupplierRequestsPanel } from "@/components/catalogue/SupplierRequestsPanel";
 import { AaItemForm } from "@/components/ledger/AaItemForm";
 import { useTripClosed, useTripUpdating } from "@/components/pipeline/TripClosed";
 import { aaBadgeKey, aaErrorKey, aaResultKey, allowedAaActions, isRetrying, type AaAction } from "@/lib/aa";
@@ -47,7 +51,7 @@ const field: React.CSSProperties = {
   boxSizing: "border-box",
   minWidth: 0,
 };
-const TONE = { planning: "neutral", confirmed: "success", cancelled: "danger" } as const;
+const TONE = { planning: "neutral", requested: "info", confirmed: "success", cancelled: "danger" } as const;
 const AA_TONE: Record<string, "neutral" | "info" | "success" | "warning" | "danger"> = {
   pending: "warning",
   quoted: "info",
@@ -96,6 +100,9 @@ export function LinesPanel({
   const [editing, setEditing] = useState<string | null>(null);
   const [money, setMoney] = useState<Partial<Record<MoneyKind, string>>>({});
   const [currency, setCurrency] = useState(view.base_currency);
+  const [requesting, setRequesting] = useState(false);
+  const [confNo, setConfNo] = useState<Record<string, string>>({});
+  const requestable = view.lines.some((l) => l.supplier_kind === "agency" && (l.status === "planning" || l.status === "requested"));
 
   function refusal(detail: string, body: unknown): string {
     if (detail === "trip_cancelled") return tr("ledger.closed"); // S262 round 3: the page was out of date
@@ -226,6 +233,16 @@ export function LinesPanel({
       <>
         <Badge tone={TONE[line.status]}>{tr(`ledger.status.${line.status}`)}</Badge>
         {aaStatus(line)}
+        {line.status === "requested" && line.requested_at && (
+          <div style={{ marginTop: 4, fontSize: 11.5, color: K.muted }} data-testid="line-requested">
+            {fmt(tr("requests.requestedOn"), { date: formatDate(line.requested_at.slice(0, 10), locale) })}
+          </div>
+        )}
+        {line.supplier_thread?.replied && line.status !== "cancelled" && (
+          <div style={{ marginTop: 4 }} data-testid="line-supplier-replied">
+            <Badge tone="info">{tr("requests.replied")}</Badge>
+          </div>
+        )}
         {line.commission && (
           // AA-957: the commission follow-up of an agency line (owner / agent; A-12 acts on it). S262 round 3: while the
           // cancel run's answer waits for the server view, no stale "Expected" (the run may cancel the commission).
@@ -288,6 +305,29 @@ export function LinesPanel({
           <Button size="sm" variant="primary" disabled={!hydrated || busy} onClick={() => run("POST", `lines/${line.booking_line_id}/confirm`, undefined, confirmNote)}>
             {tr("ledger.confirm")}
           </Button>
+        )}{" "}
+        {!line.read_only && line.status === "requested" && !closed && (
+          <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", alignItems: "center" }} data-testid="line-record-confirmation">
+            <input
+              style={{ ...field, width: 140 }}
+              aria-label={tr("requests.confirmNo")}
+              placeholder={tr("requests.confirmNo")}
+              maxLength={80}
+              value={confNo[line.booking_line_id] ?? ""}
+              onChange={(e) => setConfNo({ ...confNo, [line.booking_line_id]: e.target.value })}
+            />
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={!hydrated || busy || !(confNo[line.booking_line_id] ?? "").trim()}
+              onClick={() => run("POST", `lines/${line.booking_line_id}/confirm`, { confirmation_no: (confNo[line.booking_line_id] ?? "").trim() }, confirmNote)}
+            >
+              {tr("requests.record")}
+            </Button>
+            <Button size="sm" variant="ghost" disabled={!hydrated || busy} onClick={() => run("POST", `lines/${line.booking_line_id}/back-to-planning`)}>
+              {tr("requests.back")}
+            </Button>
+          </span>
         )}{" "}
         {!line.read_only && margin && line.status !== "cancelled" && (
           <Button size="sm" disabled={!hydrated || busy} onClick={() => setEditing(editing === line.booking_line_id ? null : line.booking_line_id)}>
@@ -434,6 +474,17 @@ export function LinesPanel({
             <div>
               <Button size="sm" disabled={!hydrated} onClick={() => setAddingAa(true)}>
                 {tr("aa.add.open")}
+              </Button>
+            </div>
+          )
+        )}
+        {!addingAa && !adding && requestable && (
+          requesting ? (
+            <SupplierRequestsPanel tripId={tripId} lang={lang} onClose={() => setRequesting(false)} />
+          ) : (
+            <div>
+              <Button size="sm" disabled={!hydrated} onClick={() => setRequesting(true)}>
+                {tr("requests.open")}
               </Button>
             </div>
           )

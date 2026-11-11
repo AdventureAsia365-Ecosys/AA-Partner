@@ -13,7 +13,7 @@ import { serverContext } from "@/lib/serverContext";
 
 export const dynamic = "force-dynamic";
 
-const STATUSES: readonly LineStatus[] = ["planning", "confirmed", "cancelled"];
+const STATUSES: readonly LineStatus[] = ["planning", "requested", "confirmed", "cancelled"];
 
 export default async function BookingsPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
   const ctx = await crmContext();

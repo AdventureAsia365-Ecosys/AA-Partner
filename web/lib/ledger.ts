@@ -5,9 +5,11 @@
 // and lines carry no `money` block at all for her, so a missing key always means "not shown", never "zero".
 
 import type { AaBlock } from "@/lib/aa";
+import type { SupplierThread } from "@/lib/catalogue";
 import type { LineCommission } from "@/lib/commissions";
 
-export type LineStatus = "planning" | "confirmed" | "cancelled";
+/** AA-1069 (crm-053): "requested" = asked from its supplier, waiting for the confirmation number. */
+export type LineStatus = "planning" | "requested" | "confirmed" | "cancelled";
 export type Level = "off" | "basic" | "strict";
 
 export interface Fx {
@@ -51,6 +53,10 @@ export interface Line {
   confirm_class: string | null;
   visible_to_travelers: boolean;
   confirmed_at: string | null;
+  /** AA-1069: when the line was asked from its supplier and the request e-mail; the supplier's thread on the trip. */
+  requested_at?: string | null;
+  request_ref?: string | null;
+  supplier_thread?: SupplierThread | null;
   read_only: boolean;
   /** AA-947: Adventure Asia lines only (status, "AA pending", the "from"-price warning, the asks allowed now). */
   aa?: AaBlock;
