@@ -473,7 +473,7 @@ export function BuilderPage({
                 {/* A day row of the list (bordered like its neighbours): the kit Pressable with the row style. */}
                 <Pressable
                   onClick={() => setDayId(d.proposal_day_id)}
-                  data-testid="builder-day"
+                  testId="builder-day"
                   data-day-no={d.day_no}
                   aria-current={d.proposal_day_id === day?.proposal_day_id ? "true" : undefined}
                   style={{ flex: 1, textAlign: "left", fontSize: 13, padding: "6px 8px", borderRadius: 8, border: `1px solid ${d.proposal_day_id === day?.proposal_day_id ? K.accent : K.line}`, background: K.card, color: K.ink, minWidth: 0, width: "auto" }}

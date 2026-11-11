@@ -25,7 +25,7 @@ export function ProfitExport({ lang, period, owner, dimension }: { lang: Lang; p
 
   return (
     <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
-      <Button size="sm" variant="ghost" disabled={busy} onClick={download} data-testid="profit-export">
+      <Button size="sm" variant="ghost" disabled={busy} onClick={download} testId="profit-export">
         {t(lang, "profit.export")}
       </Button>
       {error && (
