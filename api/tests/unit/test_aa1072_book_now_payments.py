@@ -23,7 +23,7 @@ from app.errors import Conflict, Forbidden, Gone, Invalid, NotFound, RateLimited
 from app.intake import booking, booking_settings
 from app.payments import claims, gateway, providers, vnpay
 from app.payments import service as payments
-from app.proposals import aa_options, pricing
+from app.proposals import aa_options, client_page, pricing
 from app.settings import Settings
 from app.tenancy import PaymentSessionRef
 from tests.aa_fakes import FakeBooking, booking_client
@@ -1085,3 +1085,49 @@ async def test_unsettled_money_is_recorded_with_a_review_task() -> None:
         )
     assert payments.ctx_actor(system_ctx()) == "job:crm_intake_process"
     assert payments.ctx_actor(tenant_ctx()).startswith("member:")
+
+
+# ── the client page's payment dates (S277 live check) ────────────────────────────────────────────
+
+
+def test_the_summary_dates_follow_the_schedule() -> None:
+    today = dt.date(2031, 3, 1)
+    assert client_page.due_from("2031-02-10", today) == "2031-03-01"  # past: due now (the accept dates it today)
+    assert client_page.due_from("2031-04-01", today) == "2031-04-01"
+    assert client_page.due_from(None, today) is None and client_page.due_from("2031-02-10", None) == "2031-02-10"
+    # Accepted, a departure 9 days out on the default template: the rows the accept wrote are all due today, so the
+    # summary's balance date is today too (it used to read the version's plan date, 30 days before the start).
+    accepted = {
+        "status": "accepted",
+        "balance_due_on": "2031-02-08",
+        "schedule": [
+            {"kind": "deposit", "seq": 1, "due_on": "2031-03-01"},
+            {"kind": "instalment", "seq": 1, "due_on": "2031-03-01"},
+            {"kind": "balance", "seq": 1, "due_on": "2031-03-01"},
+        ],
+    }
+    client_page.client_dates(accepted, today)
+    assert accepted["balance_due_on"] == "2031-03-01"
+    whole = {"status": "accepted", "balance_due_on": None, "schedule": [{"kind": "deposit", "due_on": "2031-03-01"}]}
+    client_page.client_dates(whole, today)
+    assert whole["balance_due_on"] is None
+    # Not accepted yet: every past date of the plan reads as today; future dates and the deposit stay.
+    sent = {
+        "status": "sent",
+        "schedule": [],
+        "balance_due_on": "2031-02-08",
+        "totals": {
+            "balance_due_on": "2031-02-08",
+            "schedule": [
+                {"kind": "deposit", "seq": 1, "due_on": None, "amount": "300.00"},
+                {"kind": "instalment", "seq": 1, "due_on": "2031-01-09", "amount": "400.00"},
+                {"kind": "balance", "seq": 1, "due_on": "2031-04-08", "amount": "300.00"},
+            ],
+        },
+    }
+    client_page.client_dates(sent, today)
+    assert sent["balance_due_on"] == "2031-03-01" and sent["totals"]["balance_due_on"] == "2031-03-01"
+    assert [line["due_on"] for line in sent["totals"]["schedule"]] == [None, "2031-03-01", "2031-04-08"]
+    text = {"status": "sent", "schedule": [], "balance_due_on": "2031-02-08"}  # a text proposal has no totals
+    client_page.client_dates(text, today)
+    assert text["balance_due_on"] == "2031-03-01"
