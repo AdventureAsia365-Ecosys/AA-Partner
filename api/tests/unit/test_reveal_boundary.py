@@ -134,7 +134,8 @@ def boundary_offenders(sources: dict[str, str]) -> list[str]:
 def test_the_public_router_is_found() -> None:
     # AA-939: the invitation claim route is public too (no token: the person has no account yet).
     # AA-946: the proposal page and the traveller portal (app.routers.client_pages).
-    found = ["app.routers.client_pages", "app.routers.invitations", "app.routers.public"]
+    # AA-1071: a sales partner's intake link and its view (app.routers.partner_pages).
+    found = ["app.routers.client_pages", "app.routers.invitations", "app.routers.partner_pages", "app.routers.public"]
     assert public_router_modules(_sources()) == found
     assert live_public_router_modules() == set(found)
 
@@ -162,10 +163,13 @@ def test_r_a_public_route_importing_reveal_fails() -> None:
     sources = _sources()
     sources["app.routers.public"] += "\nfrom app.travellers.reveal import reveal  # a reviewer must never see this\n"
     line = "app.routers.public:" + str(sources["app.routers.public"].count("\n")) + " imports reveal"
-    # AA-946: app.routers.client_pages imports helpers of app.routers.public, so it is reached the same way.
+    # AA-946: app.routers.client_pages imports helpers of app.routers.public, so it is reached the same way (and
+    # AA-1071's app.routers.partner_pages).
     assert boundary_offenders(sources) == [
         f"app.routers.client_pages: {line}",
         "app.routers.client_pages: reaches app.travellers.reveal",
+        f"app.routers.partner_pages: {line}",
+        "app.routers.partner_pages: reaches app.travellers.reveal",
         f"app.routers.public: {line}",
         "app.routers.public: reaches app.travellers.reveal",
     ]
@@ -176,6 +180,7 @@ def test_r_reaching_reveal_through_a_helper_fails_too() -> None:
     sources["app.intake.public"] += "\nimport app.travellers.reveal\n"
     assert boundary_offenders(sources) == [
         "app.routers.client_pages: reaches app.travellers.reveal",
+        "app.routers.partner_pages: reaches app.travellers.reveal",
         "app.routers.public: reaches app.travellers.reveal",
     ]
     sources = _sources()

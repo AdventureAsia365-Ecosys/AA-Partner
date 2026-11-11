@@ -676,7 +676,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
               return (
                 // A choice card of the goal radio group: the kit Pressable (no look of its own) with the card style.
                 <Pressable key={g.key} role="radio" aria-checked={on} disabled={generating || replaced}
-                  data-testid={`goal-${g.key}`}
+                  testId={`goal-${g.key}`}
                   onClick={() => setSelectedGoal(g.key)} style={{
                     textAlign: "left", padding: "10px 14px", borderRadius: 8,
                     cursor: generating ? "default" : "pointer", minWidth: 0,

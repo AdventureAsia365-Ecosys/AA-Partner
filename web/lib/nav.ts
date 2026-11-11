@@ -56,6 +56,7 @@ export const SECTIONS: readonly Section[] = [
   { key: "bookings", path: "/bookings", group: "money", label: "nav.bookings", icon: "ticket", roles: ALL, empty: { title: "section.bookings.title", body: "section.bookings.body" } }, // AA-944
   { key: "aa-bookings", path: "/aa-bookings", group: "money", label: "nav.aaBookings", icon: "ticket", roles: NO_ASSISTANT }, // AA-1068
   { key: "commissions", path: "/commissions", group: "money", label: "nav.commissions", icon: "percent", roles: NO_ASSISTANT, empty: { title: "section.commissions.title", body: "section.commissions.body" } }, // AA-957
+  { key: "partners", path: "/partners", group: "money", label: "nav.partners", icon: "users", roles: ALL }, // AA-1071
   { key: "reports", path: "/reports", group: "grow", label: "nav.reports", icon: "chart", roles: ALL }, // AA-966
   { key: "marketing", path: "/marketing", group: "grow", label: "nav.marketing", icon: "megaphone", roles: NO_ASSISTANT, empty: { title: "section.marketing.title", body: "section.marketing.body" } }, // AA-968
   { key: "suppliers", path: "/suppliers", group: "grow", label: "nav.suppliers", icon: "truck", roles: ALL, empty: { title: "section.suppliers.title", body: "section.suppliers.body" } }, // AA-944

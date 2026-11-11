@@ -2,6 +2,8 @@
 
 The gate, in order (first match wins; the row ends ``dropped`` with the code as ``gate_result``):
 
+0. AA-1071: a row to a sales partner (``sales_partner_id``, no client) -> ``partner_inactive`` once the partner is
+   inactive or trashed; the client rules below do not apply to it;
 1. the traveller is in the trash -> ``traveler_trashed``; the trip of the message is in the trash -> ``trip_trashed``;
 2. the traveller is **archived** -> ``archived`` (R23, card R "an archived contact's queued message is dropped");
 3. a marketing message without a current marketing consent (latest ``crm.consent`` row of purpose ``marketing``) ->
@@ -55,6 +57,7 @@ ACTOR = "job:crm_dispatch"
 
 ROW_SQL = """
 SELECT d.dispatch_id, d.status, d.channel, d.purpose, d.message_ref, d.message_id, d.traveler_id, d.trip_id,
+       d.sales_partner_id, (sp.status = 'active' AND sp.deleted_at IS NULL) AS partner_active,
        t.archived_at, t.deleted_at AS traveler_deleted_at, tr.deleted_at AS trip_deleted_at,
        (SELECT c.value FROM crm.consent c WHERE c.traveler_id = d.traveler_id AND c.purpose = 'marketing'
          ORDER BY c.at DESC, c.created_at DESC, c.consent_id DESC LIMIT 1) AS marketing_ok,
@@ -63,7 +66,8 @@ SELECT d.dispatch_id, d.status, d.channel, d.purpose, d.message_ref, d.message_i
              WHERE cv.traveler_id = d.traveler_id AND cv.channel = d.channel AND cv.opted_out_at IS NOT NULL
                AND cv.deleted_at IS NULL)) AS text_opted_out
   FROM crm.dispatch_queue d
-  JOIN crm.traveler t ON t.traveler_id = d.traveler_id
+  LEFT JOIN crm.traveler t ON t.traveler_id = d.traveler_id
+  LEFT JOIN crm.sales_partner sp ON sp.sales_partner_id = d.sales_partner_id
   LEFT JOIN crm.trip tr ON tr.trip_id = d.trip_id
  WHERE d.dispatch_id = $1
    FOR UPDATE OF d
@@ -102,6 +106,8 @@ class Sender(Protocol):
 
 def gate(row: Any) -> str | None:
     """The drop code for a queued row, or None when it may be sent."""
+    if row.get("sales_partner_id") is not None:  # AA-1071: a sales partner's sign-in code mail
+        return None if row.get("partner_active") else "partner_inactive"
     if row["traveler_deleted_at"] is not None:
         return "traveler_trashed"
     if row["trip_deleted_at"] is not None:

@@ -61,6 +61,9 @@ const nextConfig: NextConfig = {
       // AA-946: the proposal page and the traveller portal carry their signed link's token in the path too.
       { source: "/c/p/:token*", headers: [{ key: "Referrer-Policy", value: "no-referrer" }] },
       { source: "/c/t/:token*", headers: [{ key: "Referrer-Policy", value: "no-referrer" }] },
+      // AA-1071: a sales partner's inquiry link and its page link carry their token in the path too.
+      { source: "/c/r/:token*", headers: [{ key: "Referrer-Policy", value: "no-referrer" }] },
+      { source: "/c/a/:token*", headers: [{ key: "Referrer-Policy", value: "no-referrer" }] },
     ];
   },
 };

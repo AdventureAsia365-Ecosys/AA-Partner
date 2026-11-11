@@ -89,6 +89,8 @@ REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = (
     "crm-053",  # AA-1069: supplier booking requests (line status requested, supplier threads; contract: MIG-4)
     "crm-054",  # AA-1070: travel ops tables (departure state, vouchers, rooming, visas; expand, shipped with crm-055)
     "crm-055",  # AA-1070: passport months, PDF document kinds, visa status moves (contract: MIG-4)
+    "crm-056",  # AA-1071: sales partners, partner commission, partner links and codes (contract: MIG-4)
+    "crm-057",  # AA-1072: Book now attempts, gateway payment sessions, vn_gateway, online payments (contract: MIG-4)
     "crm-058",  # AA-1085: legal-hold guards read the holds of the row's own agency (contract: MIG-4)
 )
 REQUIRED_SCHEMA_VERSION = max(REQUIRED_SCHEMA_VERSIONS)

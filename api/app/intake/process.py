@@ -53,12 +53,15 @@ log = logging.getLogger(__name__)
 
 ACTOR = "job:crm_intake_process"
 OPEN_STAGES = ("inquiry", "qualifying")
+# AA-1071: the lead source of a new client and trip from a sales partner's intake link (app.lead_sources; a dict so
+# tests/unit/test_lead_sources.py finds the code).
+PARTNER_LEAD = {"lead_source": "sales_partner"}
 REPLY_TASK = "reply_inquiry"
 REPLY_WITHIN = timedelta(hours=2)
 
 SUBMISSION_SQL = """
 SELECT s.submission_id, s.intake_form_id, s.payload_enc, s.status, f.default_owner_member_id, f.lead_source,
-       t.default_locale
+       t.default_locale, s.sales_partner_id
   FROM crm.form_submission s
   JOIN crm.intake_form f ON f.intake_form_id = s.intake_form_id
   JOIN crm.tenant t ON t.tenant_id = s.tenant_id
@@ -112,10 +115,21 @@ SET_MARKETING_SQL = "UPDATE crm.traveler_profile SET marketing_ok = $2 WHERE tra
 INSERT_TRIP_SQL = """
 INSERT INTO crm.trip (trip_id, title, start_date, end_date, month, date_flex_days, nights, destinations, party_adults,
                       party_child_ages, party_type, budget_band, trip_style, owner_member_id, intake_form_id,
-                      lead_source)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                      lead_source, sales_partner_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 """
 ATTACH_TRIP_SQL = "UPDATE crm.trip SET last_inquiry_at = now(), waiting_on = 'agency' WHERE trip_id = $1"
+# AA-1071: an inquiry from a sales partner's intake link names the partner on an open trip that has none (an active
+# partner of the agency only); a trip that already names a partner keeps it.
+ATTACH_PARTNER_SQL = """
+UPDATE crm.trip SET sales_partner_id = $2
+ WHERE trip_id = $1 AND sales_partner_id IS NULL
+   AND EXISTS (SELECT 1 FROM crm.sales_partner p WHERE p.sales_partner_id = $2 AND p.status = 'active'
+                 AND p.deleted_at IS NULL)
+"""
+ACTIVE_PARTNER_SQL = """
+SELECT sales_partner_id FROM crm.sales_partner WHERE sales_partner_id = $1 AND status = 'active' AND deleted_at IS NULL
+"""
 INSERT_PARTY_SQL = "INSERT INTO crm.trip_traveler (trip_id, traveler_id, role) VALUES ($1, $2, $3)"
 INSERT_PARTY_F2_SQL = "INSERT INTO crm.trip_party (trip_id, traveler_token, role) VALUES ($1, $2, $3)"
 INSERT_HISTORY_SQL = """
@@ -196,6 +210,10 @@ async def process_submission(ctx: AnyContext, vault: Vault, submission_id: uuid.
     answers = stage1.Stage1Answers.from_json(raw)
     owner = row["default_owner_member_id"]
     lead_source = row["lead_source"]
+    partner = row.get("sales_partner_id")
+    if partner is not None:  # AA-1071: a partner deactivated since the inquiry was sent stamps nothing
+        partner = await ctx.conn.fetchval(ACTIVE_PARTNER_SQL, partner)
+        lead_source = PARTNER_LEAD["lead_source"] if partner is not None else lead_source
 
     email_idx = await vault.email_index("traveler", "email", answers.email)
     phone_idx = await vault.phone_index("traveler", "phone", answers.phone) if answers.phone else None
@@ -216,6 +234,8 @@ async def process_submission(ctx: AnyContext, vault: Vault, submission_id: uuid.
         if open_trip is not None:
             trip_id = open_trip["trip_id"]
             await ctx.conn.execute(ATTACH_TRIP_SQL, trip_id)
+            if partner is not None:
+                await ctx.conn.execute(ATTACH_PARTNER_SQL, trip_id, partner)
             await _reply_task(ctx, trip_id, open_trip["owner_member_id"])
             await _message_note(ctx, vault, trip_id, traveler_id, answers)
             await _consent(ctx, traveler_id, answers, submission_id)
@@ -272,6 +292,7 @@ async def process_submission(ctx: AnyContext, vault: Vault, submission_id: uuid.
         owner,
         row["intake_form_id"],
         lead_source,
+        partner,
     )
     history_id = await ctx.conn.fetchval(INSERT_HISTORY_SQL, trip_id)
     await ctx.conn.execute(INSERT_PARTY_SQL, trip_id, traveler_id, "lead")

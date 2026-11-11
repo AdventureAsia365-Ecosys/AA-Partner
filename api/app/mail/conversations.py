@@ -53,7 +53,7 @@ SELECT c.conversation_id, c.trip_id, c.traveler_id, c.channel, c.last_message_at
        (SELECT m.direction FROM crm.message m WHERE m.conversation_id = c.conversation_id
            AND m.status <> 'draft_autosaved' ORDER BY m.occurred_at DESC LIMIT 1) AS last_direction
   FROM crm.conversation c
- WHERE c.deleted_at IS NULL
+ WHERE c.deleted_at IS NULL AND c.sales_partner_id IS NULL
    AND ($1::uuid IS NULL OR c.trip_id = $1)
    AND ($2::uuid IS NULL OR c.traveler_id = $2)
    AND (NOT $3 OR (c.trip_id IS NULL AND c.traveler_id IS NULL AND c.agency_supplier_id IS NULL))

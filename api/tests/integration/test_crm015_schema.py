@@ -33,6 +33,8 @@ from tests.integration.test_crm010_schema import ISS, _agency, _count, _ctx, _er
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 MIGRATION = Path(__file__).resolve().parents[2] / "migrations" / "015_crm_mail.sql"
+# Later files that replace an object crm-015 creates again when it re-runs: crm-058 (AA-1085) crm.guard_message.
+LATER = (MIGRATION.parent / "058_crm_hold_guard_tenant.sql",)
 MAIL_TABLES = ("message", "conversation", "saved_reply", "mail_import", "ingest_address", "channel_account")
 
 
@@ -133,6 +135,8 @@ async def test_crm015_is_registered_and_runs_again_as_a_no_op(admin: asyncpg.Con
     await admin.execute(f"SET ROLE {OWNER}")
     try:
         await admin.execute(MIGRATION.read_text(encoding="utf-8"))
+        for later in LATER:
+            await admin.execute(later.read_text(encoding="utf-8"))
     finally:
         await admin.execute("RESET ROLE")
     source = await admin.fetchval(

@@ -136,6 +136,7 @@ describe("cancel dialog (C12)", () => {
       cancel_reason_code: "client_request",
       refunds: [{ payment_id: PAY, amount: "200" }],
       keep_commission: [KEEP],
+      keep_partner_commission: false,
     });
     expect(done).toHaveBeenCalledWith(expect.objectContaining({ cancellation: { status: "pending" } }));
   });

@@ -24,6 +24,7 @@ import { useMarkTripClosed, useTripClosed } from "@/components/pipeline/TripClos
 import { TravellerInfoPanel } from "@/components/pipeline/TravellerInfoPanel";
 import { toast, UndoToast, type ToastState } from "@/components/pipeline/UndoToast";
 import { RevealField } from "@/components/clients/RevealField";
+import { TripPartnerPicker } from "@/components/partners/TripPartnerPicker";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
 import { passportTone } from "@/lib/travelOps";
@@ -77,6 +78,7 @@ export function TripPanel({
   clientOrigin = null,
   lostHint = null,
   timeZone = "UTC",
+  partners = null,
 }: {
   view: TripView;
   members: Member[];
@@ -91,6 +93,8 @@ export function TripPanel({
   lostHint?: string | null;
   /** The agency's IANA zone (task due times): the server and the browser print the same time (S262, AA-957). */
   timeZone?: string;
+  /** AA-1071: the agency's sales partners for the picker (read by the page on the server; null = not read). */
+  partners?: { id: string; name: string; active: boolean }[] | null;
 }) {
   const router = useRouter();
   const { trip } = view;
@@ -377,6 +381,7 @@ export function TripPanel({
             <dt style={{ color: K.muted }}>{t(lang, "trip.source")}</dt>
             <dd style={{ margin: 0 }} data-testid="trip-source">{leadSourceLabel(lang, trip.lead_source)}</dd>
           </dl>
+          {partners && <TripPartnerPicker tripId={trip.trip_id} partnerId={trip.sales_partner_id ?? null} partners={partners} closed={closed} lang={lang} />}
           {closed ? (
             <p data-testid="trip-dates-closed" style={{ margin: "12px 0 0", fontSize: 12.5, color: K.muted }}>
               {t(lang, "trip.closedPlanning")}
