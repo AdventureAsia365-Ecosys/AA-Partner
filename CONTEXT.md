@@ -356,6 +356,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-053` | `api/migrations/053_crm_supplier_requests.sql` | AA-1069 (**contract**, MIG-4): `crm.booking_line` status + `requested` (planning -> requested -> confirmed / planning / cancelled), `requested_at`, `request_ref` (the request e-mail's message id; agency lines only, `booking_line_request_chk`); `crm.booking_line_confirm` also confirms a requested line; `crm.conversation.agency_supplier_id` (the trip's supplier request thread: a trip, no client, e-mail; one live per trip and supplier) |
 | `crm-054` | `api/migrations/054_crm_travel_ops.sql` | AA-1070 (**expand**: six new tables + two guards): `crm.aa_departure_state` (the Booking feed's state of one AA departure: scheduled / guaranteed / cancelled, times, min to operate, last event; job writes only, CRM53; cascades from `booking_feed_state`), `crm.booking_line_voucher` (sealed pick-up, drop-off, PNR, note + start time of a line), `crm.room_assignment` (the rooming list), `crm.visa_template` (the agency's visa guidance), `crm.visa_application` (sealed visa number and validity), `crm.visa_checklist_item`; every key cascades; hold guard `crm.guard_held_travel_doc` (CRM10) on the trip-scoped tables |
 | `crm-055` | `api/migrations/055_crm_travel_ops_settings.sql` | AA-1070 (**contract**, MIG-4): `tenant_settings.passport_valid_months` (default 6, 0..24), `crm.document` kinds `confirmation_pdf` / `proposal_pdf` and uploader `system`, the `crm.visa_application` status moves in `crm.status_transition` |
+| `crm-058` | `api/migrations/058_crm_hold_guard_tenant.sql` | AA-1085 (**contract**, MIG-4: replaces six trigger functions, adds a trigger): `crm.hold_trip_of` / `hold_traveler_of` / `hold_row_of` (the crm-010 hold rule 4a-4d with an explicit `tenant_id = p_tenant` on every read); the hold guards `guard_held_change`, `guard_message`, `guard_held_flight`, `guard_ops_release`, `guard_supplier_manifest_export`, `guard_held_travel_doc` read the holds of `OLD.tenant_id` only, so a foreign-key cascade (owner, no row security) never sees another agency's hold; the flight and travel document guards check cascades too; `crm.partner_commission` gets `guard_held_change('trip_id')`. Lint: `tests/unit/test_aa1085_hold_guard_tenant.py` |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -2298,6 +2299,11 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   trip_traveler, trip_party, note, document, traveler_relation, form_submission, task, dispatch_queue,
   traveler_health): delete, trash or unlink / content change -> CRM10, which `tenant_tx` maps to 409 `legal_hold`
   for any route (remove from a party, delete a document, remove a relation).
+  Every hold guard trigger reads the holds of the row's own agency through `crm.hold_row_of(OLD.tenant_id, ...)` /
+  `hold_trip_of` / `hold_traveler_of` (crm-058, AA-1085), never through RLS alone: a foreign-key cascade runs as the
+  owner without row security, so an RLS-only guard would see every agency's holds there. The guards therefore also
+  check cascades (a partner delete onto a held trip's commission, a party row onto a held trip's flight / room /
+  visa). Lint: `api/tests/unit/test_aa1085_hold_guard_tenant.py`.
   A hold placed by `platform:*` is released only by `platform:*`; a hold is never deleted nor trashed (its trash
   columns stay NULL), it only moves to released.
 - **Erasure** (`POST /travelers/{id}/erasure`, owner): dry run by default; a real run bypasses the trash and leaves an
