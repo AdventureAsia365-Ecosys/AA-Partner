@@ -95,7 +95,7 @@ export function AccessLogView({
     <div style={{ display: "grid", gap: 14 }}>
       <Panel testId="access-log-filters">
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }} role="group" aria-label={t(lang, "log.who")}>
-          <ChipButton selected={!filter.actor} onClick={() => go({ ...filter, actor: undefined })} data-testid="log-actor-all">
+          <ChipButton selected={!filter.actor} onClick={() => go({ ...filter, actor: undefined })} testId="log-actor-all">
             {t(lang, "log.allActors")}
           </ChipButton>
           {ACTOR_GROUPS.map((g) => (
@@ -103,7 +103,7 @@ export function AccessLogView({
               key={g}
               selected={filter.actor === g}
               onClick={() => go({ ...filter, actor: g })}
-              data-testid={`log-actor-${g}`}
+              testId={`log-actor-${g}`}
             >
               {codeLabel(lang, "log.actor", g)}
             </ChipButton>

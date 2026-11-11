@@ -1240,6 +1240,10 @@ CASCADE_ERASED = {
     "sales_partner_link": {"sales_partner", "intake_form"},
     "sales_partner_otp": {"sales_partner", "sales_partner_link"},
     "partner_commission": {"trip", "sales_partner"},
+    # AA-1072 (crm-057): a "Book now" attempt leaves with the agency's settings row, a gateway payment session with its
+    # invoice.
+    "public_booking_attempt": {"tenant_settings"},
+    "payment_session": {"invoice"},
 }
 
 

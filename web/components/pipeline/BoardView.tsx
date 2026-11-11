@@ -240,7 +240,7 @@ function ColumnMenu({ lang, stage, targets, onPick }: { lang: Lang; stage: Board
             key={to}
             role="menuitem"
             density="compact"
-            data-testid={`bulk-to-${to}`}
+            testId={`bulk-to-${to}`}
             onClick={() => {
               if (ref.current) ref.current.open = false;
               onPick(to);
