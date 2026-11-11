@@ -156,6 +156,8 @@ async def test_create_update_and_delete() -> None:
     conn.on("EXISTS (SELECT 1 FROM crm.trip", True)
     with pytest.raises(Conflict):
         await service.delete_partner(ctx, PARTNER)
+    # A commission row keeps the partner too (a paid row stays after the trip moved to another partner).
+    assert "FROM crm.partner_commission WHERE sales_partner_id = $1" in service.IN_USE_SQL
     conn.on("EXISTS (SELECT 1 FROM crm.trip", False)
     assert (await service.delete_partner(ctx, PARTNER))["deleted"]
     conn.on("FROM crm.sales_partner WHERE sales_partner_id", None)

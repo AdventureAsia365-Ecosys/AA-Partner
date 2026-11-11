@@ -131,6 +131,20 @@ async def test_a_booked_trip_accrues_then_the_owner_approves_and_pays(
     rows = list(csv.DictReader(io.StringIO(body)))
     assert name.startswith("partner-statement-") and rows[0]["trip_ref"] == "T-" + trip.hex[:8].upper()
     assert rows[0]["payout_ref"] == "'=BANK 88" and "Kim Lien" not in body  # formula guard; never the trip title
+    # The trip moves to another partner: the paid row stays, and the first partner is still not deleted (409).
+    async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"], action=Action.SALES_PARTNER_MANAGE) as ctx:
+        other = await service.create_partner(
+            ctx, Vault(s["keys"], ctx),
+            {"kind": "referrer", "name": "Pine Ridge Desk", "commission_type": "percent", "rate": "5"},
+        )  # fmt: skip
+        await service.set_trip_partner(ctx, trip, uuid.UUID(other["sales_partner_id"]))
+    async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"], action=Action.SALES_PARTNER_MANAGE) as ctx:
+        with pytest.raises(Exception) as err:
+            await service.delete_partner(ctx, s["partner"])
+    assert getattr(err.value, "code", None) == "partner_in_use"
+    async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"], action=Action.VIEW_MARGIN) as ctx:
+        listed = await service.list_commissions(ctx, status="all", partner_id=s["partner"], trip_id=trip)
+    assert [r["status"] for r in listed["items"]] == ["paid"]
 
 
 async def test_the_intake_link_stamps_the_partner_on_the_new_trip(app_pool: asyncpg.Pool) -> None:

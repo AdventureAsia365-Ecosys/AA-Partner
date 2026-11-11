@@ -17,8 +17,10 @@
 - **Commissions** (``crm.partner_commission``): owner / agent read them (``view_margin``) with totals in the base
   currency; "Recalculate" refreshes an accrued row (the margin moves as bills arrive); an owner approves (as
   themselves, after a fresh recalculation), un-approves, marks paid (date + own reference) or cancels one
-  (``partner_commission_approve``). A per-partner statement is a CSV of its commissions (trip reference, travel date,
-  pax, basis, amount, status, due and paid dates, payout reference), never a traveller's name.
+  (``partner_commission_approve``). An owner's cancel (like a trip cancel's) is a waiver: the sync accrues nothing new
+  for that trip and partner until the trip leaves the booked stages, so a later stage move never brings it back. A
+  per-partner statement is a CSV of its commissions (trip reference, travel date, pax, basis, amount, status, due and
+  paid dates, payout reference), never a traveller's name.
 """
 
 from __future__ import annotations
@@ -88,8 +90,12 @@ INSERT INTO crm.sales_partner (sales_partner_id, kind, name_enc, contact_email_e
                                rate, currency, basis, payout_due_days)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 """
+# A commission row of any status counts (the partner's payout history: a paid row stays after the trip moves to
+# another partner); the owner reads every row (partner_commission_margin_roles). crm-056 also refuses the cascade of an
+# approved or paid row while its trip remains (partner_commission_kept).
 IN_USE_SQL = """
 SELECT EXISTS (SELECT 1 FROM crm.trip WHERE sales_partner_id = $1)
+    OR EXISTS (SELECT 1 FROM crm.partner_commission WHERE sales_partner_id = $1)
     OR EXISTS (SELECT 1 FROM crm.conversation WHERE sales_partner_id = $1)
     OR EXISTS (SELECT 1 FROM crm.dispatch_queue WHERE sales_partner_id = $1)
 """
@@ -377,7 +383,7 @@ async def update_partner(
 async def delete_partner(ctx: TenantContext, partner_id: uuid.UUID) -> dict[str, Any]:
     await _partner(ctx, partner_id)
     if await ctx.conn.fetchval(IN_USE_SQL, partner_id):
-        raise Conflict("partner_in_use", "a trip or a mail names this partner: deactivate it instead")
+        raise Conflict("partner_in_use", "a trip, a commission or a mail names this partner: deactivate it instead")
     await ctx.conn.execute(DELETE_SQL, partner_id)
     ctx.audit("sales_partner_delete", "allowed", "sales_partner", str(partner_id))
     return {"sales_partner_id": str(partner_id), "deleted": True}
