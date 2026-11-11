@@ -97,6 +97,7 @@ from app.routers import (
     staff_ops,
     support_access,
     team,
+    travel_ops,
     travellers,
     workflows,
 )
@@ -340,6 +341,7 @@ def create_app(
     app.include_router(staff.router)
     app.include_router(staff_ops.router)
     app.include_router(ops_release.router)
+    app.include_router(travel_ops.router)  # AA-1070: departure roster, vouchers, PDFs, rooming, passports, visas
     app.include_router(commissions.router)
     app.include_router(finance.router)  # AA-1068: trip P&L, supplier bills, Bookings with AA, departure costs
     app.include_router(catalogue.router)  # AA-1069: the agency service catalogue

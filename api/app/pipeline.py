@@ -40,6 +40,7 @@ from app.intake import stage1
 from app.permissions import Action, require
 from app.stages import CANCELLABLE, QUIET_DAYS, allowed_moves, touch
 from app.tenancy import TenantContext
+from app.travel_ops import passport
 from app.travellers import age_bands
 from app.vault import Vault
 
@@ -205,6 +206,7 @@ def _id(value: Any) -> str | None:
 class BoardFilter:
     waiting_on: str | None = None
     owner: str = "anyone"  # anyone | me
+    issue: str | None = None  # AA-1070: "passport" = only the cards with a passport issue
 
     def owner_id(self, ctx: TenantContext) -> uuid.UUID | None:
         return ctx.member_id if self.owner == "me" else None
@@ -253,6 +255,16 @@ async def board(ctx: TenantContext, vault: Vault, flt: BoardFilter) -> dict[str,
                 "stage2_percent": r["s2"] if r["stage"] in ("inquiry", "qualifying") else None,
             }
         )
+    # AA-1070 (crm-15): the passport check of the booked, pre-departure and travelling cards (computed, never stored).
+    issues = await passport.issue_counts(
+        ctx, vault, [uuid.UUID(c["trip_id"]) for s in passport.CHECK_STAGES for c in cards.get(s, [])]
+    )
+    for s in passport.CHECK_STAGES:
+        for c in cards.get(s, []):
+            c["passport_issues"] = issues.get(uuid.UUID(c["trip_id"]), 0)
+    if flt.issue == "passport":
+        cards = {s: [c for c in cs if c.get("passport_issues")] for s, cs in cards.items()}
+        stage_counts = {s: len(cs) for s, cs in cards.items()}
     if rows:
         # AA-937 (crm-006): the event names the travellers whose names the page showed (design §4.4).
         shown = tuple(dict.fromkeys(str(r["lead_traveler_id"]) for r in rows if r["lead_name_enc"] is not None))
@@ -277,7 +289,7 @@ async def board(ctx: TenantContext, vault: Vault, flt: BoardFilter) -> dict[str,
         },
         "waiting_on_counts": {w: waiting.get(w, 0) for w in WAITING_ON},
         "total": sum(waiting.values()),
-        "filter": {"waiting_on": flt.waiting_on, "owner": flt.owner},
+        "filter": {"waiting_on": flt.waiting_on, "owner": flt.owner, "issue": flt.issue},
     }
 
 
@@ -299,6 +311,11 @@ async def trip_detail(ctx: TenantContext, vault: Vault, trip_id: uuid.UUID) -> d
                 "has_phone": r["has_phone"],
             }
         )
+    # AA-1070 (crm-15): each traveller's passport check against the trip (the status only, never the expiry).
+    check = await passport.trip_view(ctx, vault, trip_id, trip["end_date"])
+    statuses = {p["traveler_id"]: p["status"] for p in check["travellers"]}
+    for p in party:
+        p["passport"] = statuses.get(p["traveler_id"])
     notes = []
     for r in await ctx.conn.fetch(NOTES_SQL, trip_id):
         notes.append(
@@ -361,6 +378,7 @@ async def trip_detail(ctx: TenantContext, vault: Vault, trip_id: uuid.UUID) -> d
     return {
         "trip": _trip(trip, ctx),
         "party": party,
+        "passport_check": {k: check[k] for k in ("valid_months", "valid_until_needed", "issues")},
         "tasks": tasks,
         "notes": notes,
         "history": history,

@@ -22,7 +22,11 @@ counts a queued row as busy; not deploy-gate exempt). Per agency, in one :func:`
 4. **Task dates** (R20): every open task anchored on the departure or the return, not edited by hand
    (``due_overridden``), gets its due time from the trip's dates (date + offset at 09:00 local); a trip without the
    date leaves it NULL ("Waiting for dates"), a trip that gets one dates it.
-5. **Digest**: an agency with ``task_digest`` on gets one ``crm_task_digest`` job per local day at
+5. **Travel ops** (AA-1070): the ``passport.invalid_for_trip`` event of a trip that entered Booked in the last 3 days
+   with a passport issue (one per entry into Booked, :func:`app.travel_ops.passport.booked_events`), and one
+   ``visa_deadline_overdue`` task per trip with an open visa application past its deadline
+   (:func:`app.travel_ops.visas.overdue_tasks`).
+6. **Digest**: an agency with ``task_digest`` on gets one ``crm_task_digest`` job per local day at
    :data:`DIGEST_HOUR` (idempotency key per agency and date).
 
 Payload and result are ids and counts only. A locked or offboarding agency is skipped.
@@ -47,6 +51,7 @@ from app.jobs import queue
 from app.jobs.kinds import TASK_DIGEST, WORKFLOW_RUN, WORKFLOW_TICK
 from app.jobs.queue import Job
 from app.tenancy import SystemContext, system_tx
+from app.travel_ops import passport, visas
 from app.vault import KeyProvider, Vault
 from app.vault.errors import DecryptionDenied
 from app.workflows import facts as wf_facts
@@ -287,6 +292,10 @@ async def run_agency(ctx: SystemContext, vault: Vault, now: datetime) -> Counter
     counts = await _date_triggers(ctx, tz, today)
     if local.hour in SPECIAL_HOURS:
         counts.update(await _special_dates(ctx, vault, today))
+    # AA-1070: a trip that entered Booked with a passport issue fires its event (before the due runs, so a run it
+    # starts is picked at once); open visa applications past their deadline get one task per trip.
+    counts.update(await passport.booked_events(ctx, vault, triggers.on_trip_event))
+    counts.update(await visas.overdue_tasks(ctx, today))
     counts["runs_queued"] += await _due_runs(ctx)
     counts["tasks_redated"] += await tasks.redate(ctx, tz)
     if local.hour == DIGEST_HOUR and await ctx.conn.fetchval(DIGEST_SQL):

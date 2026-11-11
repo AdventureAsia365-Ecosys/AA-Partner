@@ -42,6 +42,7 @@ TASK_KINDS: frozenset[str] = frozenset(
         "invoice_overdue",
         "ops_release_incomplete",
         "passport_expiring",
+        "passport_invalid_for_trip",
         "payment_unfulfillable",
         "proposal_change_request",
         "proposal_follow_up",
@@ -54,6 +55,7 @@ TASK_KINDS: frozenset[str] = frozenset(
         "stage3_due_t21",
         "trip_anniversary",
         "verify_transfer",
+        "visa_deadline_overdue",
     }
 )
 

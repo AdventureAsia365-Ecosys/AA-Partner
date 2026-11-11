@@ -83,6 +83,7 @@ from app.portal import person, progress
 from app.portal.codes import CODE_MASK
 from app.settings import Settings
 from app.tenancy import AnyContext, ClientLink, client_link_tx
+from app.travel_ops import rooming, visas, vouchers
 from app.travellers import age_bands
 from app.travellers.fields import clean_f1
 from app.vault import KeyProvider, Vault
@@ -1160,3 +1161,72 @@ async def invite_companion(
             "link_path": None if own else invited["link_path"],
             "expires_at": invited["expires_at"],
         }
+
+
+# ── AA-1070: vouchers, rooming list and visa checklist on the traveller portal ────────────────────────────────────────
+
+
+async def travel(pool: asyncpg.Pool, keys: KeyProvider, token: str, session: str | None) -> dict[str, Any]:
+    """The acting traveller's travel documents: the released vouchers of the trip, the rooming list (the lead: every
+    room, editable after the deposit; a companion: their own room) and their own visa applications with checklists."""
+    async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
+        access = await _signed_in(ctx, await _access(ctx, link), session)
+        vault = Vault(keys, ctx)
+        trip_id, me = access["trip_id"], access["traveler_id"]
+        lead = access["role"] == "lead"
+        rooms = await rooming.view(ctx, vault, trip_id)
+        if not lead:
+            mine = [r for r in rooms["rooms"] if any(p["traveler_id"] == str(me) for p in r["travellers"])]
+            rooms = {**rooms, "rooms": mine, "unassigned": []}
+        return {
+            "vouchers": (await vouchers.trip_vouchers(ctx, vault, trip_id, travellers_only=True))["vouchers"],
+            "rooming": {**rooms, "can_edit": lead and await _unlocked(ctx, trip_id)},
+            "visas": (await visas.trip_applications(ctx, vault, trip_id, traveler_id=me))["applications"],
+        }
+
+
+async def save_rooming(
+    pool: asyncpg.Pool,
+    keys: KeyProvider,
+    settings: Settings,
+    token: str,
+    session: str | None,
+    raw: Any,
+    *,
+    origin: str | None,
+) -> dict[str, Any]:
+    """The lead traveller's rooming list (after the deposit, like the rest of Stage 3)."""
+    check_origin(settings, origin)
+    async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
+        access = await _signed_in(ctx, await _access(ctx, link), session)
+        if access["role"] != "lead":
+            raise Forbidden("lead_only", "the lead traveller sets the rooms")
+        await _require_unlocked(ctx, access, "portal_rooming")
+        rooms = raw.get("rooms") if isinstance(raw, dict) else None
+        saved = await rooming.replace(ctx, Vault(keys, ctx), access["trip_id"], rooms)
+        await stages.touch(ctx, access["trip_id"])
+        return {**saved, "can_edit": True}
+
+
+async def tick_visa_item(
+    pool: asyncpg.Pool,
+    settings: Settings,
+    token: str,
+    session: str | None,
+    item_id: Any,
+    raw: Any,
+    *,
+    origin: str | None,
+) -> dict[str, Any]:
+    """The acting traveller ticks (or unticks) one document of their own visa checklist."""
+    check_origin(settings, origin)
+    try:
+        wanted = uuid.UUID(str(item_id))
+    except ValueError:
+        raise NotFound("visa_checklist_item_not_found") from None
+    done = raw.get("done") if isinstance(raw, dict) else None
+    if not isinstance(done, bool):
+        raise Invalid("invalid_done", "true or false")
+    async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
+        access = await _signed_in(ctx, await _access(ctx, link), session)
+        return await visas.set_item(ctx, wanted, done, by="traveler", traveler_id=access["traveler_id"])

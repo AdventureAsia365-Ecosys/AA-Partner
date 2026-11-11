@@ -122,6 +122,13 @@ TEMPLATES: tuple[Template, ...] = (
         steps=(_task(m.PASSPORT_TASK),),
     ),
     Template(
+        key="passport_invalid_for_trip",
+        version=1,
+        name="Passport not valid long enough for the trip",
+        trigger={"kind": "event", "value": "passport.invalid_for_trip"},
+        steps=(_task(m.PASSPORT_TRIP_TASK, urgent=True),),
+    ),
+    Template(
         key="trip_anniversary",
         version=1,
         name="A year since the trip (marketing consent only)",

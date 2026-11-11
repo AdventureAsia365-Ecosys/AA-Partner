@@ -49,6 +49,9 @@ SESSION_WRITES: list[tuple[str, str, dict[str, Any]]] = [
     ("PUT", "/traveller/flights", {"flights": []}),
     ("POST", "/traveller/passport-scan", {"content_b64": ""}),
     ("POST", "/traveller/companions", {"traveler_id": TRAVELLER}),
+    # AA-1070: the lead's rooming list and a tick of the traveller's own visa checklist.
+    ("PUT", "/traveller/rooming", {"rooms": []}),
+    ("PUT", f"/traveller/visa-checklist/{TRAVELLER}", {"done": True}),
 ]
 
 # Writes a link holder makes without a session: the proposal pages, the sign-in code and the code check.
@@ -99,7 +102,7 @@ def _client(
     monkeypatch.setattr(client_pages, "require_store", lambda store: store)
     calls: list[tuple[str, Any]] = []
     for name in ("submit_stage3", "sign_out", "request_code", "switch", "save_flights", "upload_passport_scan",
-                 "invite_companion"):  # fmt: skip
+                 "invite_companion", "save_rooming", "tick_visa_item"):  # fmt: skip
         monkeypatch.setattr(portal, name, _session_stub(calls, name, valid))
     for name in ("accept", "reaccept_terms", "pick", "change_request", "claim_payment", "card_payment"):
         monkeypatch.setattr(proposal_page, name, _stub(calls, name))

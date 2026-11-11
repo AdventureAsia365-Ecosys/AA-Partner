@@ -287,7 +287,9 @@ async def test_events_the_feed_cannot_place_are_ignored(seams: dict[str, list[An
     assert await apply_event(ctx, contract.Event(event_id="e", type="x.new", known=False)) == (
         "ignored", "unknown_type",
     )  # fmt: skip
-    assert await apply_event(ctx, event("departure.guaranteed")) == ("ignored", "informational")
+    assert await apply_event(ctx, event("departure.time_change")) == ("ignored", "informational")
+    # AA-1070: a guaranteed / cancelled departure without its id changes nothing (the roster needs the id).
+    assert await apply_event(ctx, event("departure.guaranteed")) == ("ignored", "departure_incomplete")
     assert await apply_event(ctx, event("booking.cancelled", line_ref="not-a-uuid")) == ("ignored", "unknown_line")
     assert ctx.conn.sql(flat(sync.EVENT_LINES_SQL)) == [(None, None, None)]  # a bad line_ref reads as none
     assert seams["finish"] == []

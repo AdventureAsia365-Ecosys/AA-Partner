@@ -107,6 +107,9 @@ PILOT_BACKUP = "crm_pilot_backup"
 # (app.tripplanner.leads), queued due-now once per minute slot by a maintenance hook. Not deploy-gate or DB Migrate
 # exempt: a row exists only while due or running (seconds).
 TP_LEAD_PULL = "crm_tp_lead_pull"
+# AA-1070: one server-side PDF of a trip (confirmation, invoice, proposal, voucher; app.documents.pdf_job), queued by
+# a member's request. Not deploy-gate exempt (exists only while queued / running, seconds).
+PDF_RENDER = "crm_pdf_render"
 
 DEFAULT_EXPECTED_SECONDS = 300
 OVERDUE_FACTOR = 2
@@ -156,6 +159,7 @@ EXPECTED_SECONDS: dict[str, int] = {
     ENTITLEMENT_PULL: 60,
     PILOT_BACKUP: 60,
     TP_LEAD_PULL: 120,
+    PDF_RENDER: 60,
 }
 
 

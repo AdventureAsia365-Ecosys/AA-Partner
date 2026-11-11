@@ -38,6 +38,7 @@ from app.auth.route_guard import Caller
 from app.errors import Forbidden, Invalid, NotFound
 from app.ops_release import service
 from app.tenancy import OpsContext, ops_tx
+from app.travel_ops import rooming
 from app.vault import KeyProvider, Vault
 
 log = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ BOARD_PAST_DAYS = 14
 BOARD_HORIZON_DAYS = 120
 BOARD_MAX_PER_AGENCY = 200
 # The manifest columns a supplier may receive (Q1 3.10 minimal set; never insurance, which is the agency's matter).
-MANIFEST_FIELDS = ("name", "age_band", "dietary", "mobility", "arrival_flight", "departure_flight")
+MANIFEST_FIELDS = ("name", "age_band", "dietary", "mobility", "arrival_flight", "departure_flight", "room")
 MANIFEST_DEFAULT = ("name", "age_band", "dietary", "mobility")
 WATERMARK_PREFIX = "AAOPS"
 INCIDENT_ADMIN_PATH = "/b2b-desk"
@@ -254,6 +255,7 @@ def manifest_csv(doc: dict[str, Any], fields: tuple[str, ...], mark: str) -> tup
             "mobility": " ".join(person.get("mobility") or []),
             "arrival_flight": _flight(person.get("arrival")),
             "departure_flight": _flight(person.get("departure")),
+            "room": rooming.room_text(person.get("room")),  # AA-1070: a v1 document has none
         }
         w.writerow([mark, str(i), *(_cell(values[f]) for f in fields)])
         rows += 1
