@@ -163,7 +163,7 @@ export function InquiryForm({ publicKey, form, lang, dict, submitPath }: { publi
                   key={d}
                   type="button"
                   selected={on}
-                  data-testid={`intake-dest-${d}`}
+                  testId={`intake-dest-${d}`}
                   onClick={() => setDestinations(on ? destinations.filter((x) => x !== d) : [...destinations, d])}
                 >
                   {code("dest", d)}

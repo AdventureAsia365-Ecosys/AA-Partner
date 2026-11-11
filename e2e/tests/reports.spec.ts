@@ -1,7 +1,7 @@
 // e2e/tests/reports.spec.ts — AA-966, card CRM-34 on Dev (the web half of the live verify):
 //   1. Reports (A-14): the page renders for the owner with the tiles, the funnel, money and success metrics; the
 //      period links switch the window; the CSV export downloads a file whose first line is a header row.
-//   2. Home (A-01): the KPI tiles show and link to Reports.
+//   2. Home (A-01, /home): the KPI tiles show and link to Reports.
 //   3. Screenshots at 1440 and 390 wide, light and dark (lessons: evidence per viewport and theme).
 // The reconcile checks (numbers = direct counts, RLS, assistant without money, formula guard) run against the API in
 // api/tests/integration/test_reports_api.py and in the orchestrator's live verify.
@@ -62,7 +62,8 @@ test.describe("CRM-34 reports on Dev", () => {
     await page.goto(`${PARTNER}/reports?period=30d`);
     await expect(page.getByTestId("crm-reports")).toBeVisible({ timeout: 20_000 });
 
-    await page.goto(`${PARTNER}/`);
+    // The CRM home is /home: with WEB_CONTENT_HOME on (root ADR 0019 d7) the bare "/" lands on the Content studio.
+    await page.goto(`${PARTNER}/home`);
     await expect(page.getByTestId("crm-home-tiles")).toBeVisible({ timeout: 20_000 });
     await shot(page, "home-tiles");
   });
