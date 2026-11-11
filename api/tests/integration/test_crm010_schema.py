@@ -1224,6 +1224,15 @@ CASCADE_ERASED = {
     # supplier (a supplier purge); a tier with its service.
     "agency_service": {"tenant_settings", "agency_supplier"},
     "agency_service_tier": {"agency_service"},
+    # AA-1070 (crm-054, an expand file): the departure state leaves with the agency's feed row (the agency erase), a
+    # voucher with its line or trip, a room assignment and a visa application with their trip, traveller or party row,
+    # a checklist item with its application, a visa template with the agency's settings row.
+    "aa_departure_state": {"booking_feed_state"},
+    "booking_line_voucher": {"booking_line", "trip"},
+    "room_assignment": {"trip", "traveler", "trip_traveler"},
+    "visa_template": {"tenant_settings"},
+    "visa_application": {"trip", "traveler", "trip_traveler"},
+    "visa_checklist_item": {"visa_application"},
 }
 
 
