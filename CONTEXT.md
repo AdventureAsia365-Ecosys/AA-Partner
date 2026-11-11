@@ -352,6 +352,8 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-048` | `api/migrations/048_crm_retail_pricing.sql` | AA-1066 retail pricing (**contract**: ALTERs of `crm.tenant_settings`, `crm.proposal`, `crm.option`, `crm.status_transition` rows, so MIG-4): `tenant_settings.child_age_max` / `infant_age_max` (default 11 / 1) and `discount_owner_limit_pct` (default 10), `proposal.discount_pct` (builder only, 0 < pct <= 100; sealed after draft: `proposal_sealed` recreated with the crm-019 list plus `discount_pct`, CRM31), `option.price_rules` (the rules a sell was suggested with, a JSON array snapshot); `crm.option_price` (base template; one row per traveller type `adult` / `child` / `infant` / `single_supp`: unit sell, unit net, qty; draft-only through `crm.guard_proposal_draft`; cascades from its option), `crm.retail_price_rule` (base template; season / group_size / early_booking / last_minute with exactly its own condition, AA product scope, adjust_pct -90..300 not 0, priority, stacking `add` / `best_only`; cascades from the agency's `tenant_settings` row), `crm.discount_approval` (base template; pending -> approved / rejected / superseded, one pending per version, guard `crm.guard_discount_approval` CRM48: only an owner decides, as themselves; no crm_app DELETE; cascades from its proposal). `crm.erase_subject` unchanged (the three tables are cascade-erased, `test_crm010_schema.py`) |
 | `crm-049` | `api/migrations/049_crm_cancellation_policy.sql` | AA-1067 (**expand**: three new tables + guard): `crm.cancellation_policy` (versions of the agency's traveller cancellation policy: name, version, `replaces_policy_id`, currency of minimum charges, `is_default` (one live default), `published_at` set once, `retired_at`), `crm.cancellation_policy_tier` (`days_before_min`, `charge_pct`, `min_charge_amount`; one per day count; only while its policy is a draft), `crm.cancellation_charge` (what one trip cancellation charged: policy, days, tier percent, policy charge, final charge with decision policy / override / waived / no_policy and reason, paid, kept, refund due, fee invoice; one per trip, insert-only); guard `crm.guard_cancellation_policy` (CRM49); cascades from `tenant_settings` / the policy / the trip, no `erase_subject` change |
 | `crm-050` | `api/migrations/050_crm_payment_schedule_instalments.sql` | AA-1067 (**contract**: ALTERs, seals recreated, an index replaced, so MIG-4): `payment_schedule.kind` + `instalment`, `seq` (1..10, 1 for deposit / balance), `percent`; live unique index on (tenant, proposal, kind, seq); the seal covers both; `proposal.schedule_plan` (builder only, 1..12 lines) and `proposal.cancellation_policy_id` (no key), both sealed after draft; `tenant_settings.schedule_template`; `invoice.kind` + `instalment` (with its row) and `cancellation_fee`; view `crm.v_schedule_status` (security_invoker: paid / partial / overdue derived, `crm_app` SELECT); index `payment (tenant_id, schedule_id)` |
+| `crm-052` | `api/migrations/052_crm_agency_service_catalogue.sql` | AA-1069 (**expand**: two new tables + guard): `crm.agency_service` (the agency's own catalogue of root ADR 0019 b6 ancillaries: own supplier or none, category flight / insurance / visa / transfer / fee, name, `unit_net` (owner / agent), `unit_sell`, currency, `qty_basis` per_person / per_adult / per_booking / per_room / per_night / per_person_night, validity window, `active`; cascades from `tenant_settings` and its supplier) and `crm.agency_service_tier` (group-size `unit_net`, ranges never overlap); guard `crm.guard_agency_service` (CRM52: owner / agent or a job / seed actor writes; a live own supplier or none) |
+| `crm-053` | `api/migrations/053_crm_supplier_requests.sql` | AA-1069 (**contract**, MIG-4): `crm.booking_line` status + `requested` (planning -> requested -> confirmed / planning / cancelled), `requested_at`, `request_ref` (the request e-mail's message id; agency lines only, `booking_line_request_chk`); `crm.booking_line_confirm` also confirms a requested line; `crm.conversation.agency_supplier_id` (the trip's supplier request thread: a trip, no client, e-mail; one live per trip and supplier) |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -897,7 +899,7 @@ Design v3 §6.3 CRM-16 (M6 non-AA, M15, R17, R18), lane §2.7 / §3.1 / §3.2; m
   event); one `list_view` event per list. `default_commission_pct` is a margin key (stripped for the assistant) and
   needs `money_fields_edit` to set. A supplier that live lines name is not trashed (409 `supplier_in_use`).
 - **Lines** (`/crm/v1/trips/{id}/lines`, `/crm/v1/lines/{id}`, the trip's Bookings tab): status planning -> confirmed
-  -> cancelled. Confirm (`POST .../confirm`) runs `crm.booking_line_confirm` (SECURITY DEFINER): the agency's level
+  -> cancelled (AA-1069: planning -> requested -> confirmed, see the supplier requests section). Confirm (`POST .../confirm`) runs `crm.booking_line_confirm` (SECURITY DEFINER): the agency's level
   (Settings > Payments: off / basic default / strict) decides the required fields (409 `line_incomplete` + `missing`),
   the money is frozen at the rate of the confirmation day in the agency timezone (R17), strict refuses a second
   confirmed line of one supplier with one number (409 `duplicate_confirmation_no`, card R), and the assistant is never
@@ -1040,6 +1042,48 @@ invoice reads), `app/ledger/lines.py` (the line's actual cost); web `components/
 - **Margin policy**: the four new tables carry a RESTRICTIVE `*_margin_roles` policy FOR ALL (owner / agent, or a job /
   seed actor), every money route asks `view_margin` / `money_fields_edit` first, and the money keys (`*_cost`, `*_b2b*`,
   `margin*`) are stripped by the serializer for any other role.
+
+## Agency service catalogue and supplier booking requests (AA-1069)
+
+S275 study items crm-23 and crm-24 (root `docs/research/2026-11-10-odoo-tour-travel-plugin-comparison.md`, behaviour
+only, no plugin code); migrations crm-052 (expand) and crm-053 (contract). Code: `app/catalogue/service.py`,
+`app/routers/catalogue.py`, `app/proposals/builder.py` (`add_catalogue_option`), `app/ledger/requests.py`,
+`app/routers/ledger.py`, `app/mail/conversations.py` + `sender.py` (the supplier thread); web `/services`,
+`components/catalogue/`, the builder drawer's "From catalogue" tab, the Bookings tab; decisions in
+`docs/implementation-notes/AA-1069.md`. Defaults are the proposed ones (the business owner may adjust them).
+
+- **Catalogue** (`GET/POST /services`, `GET/PATCH/DELETE /services/{id}`): every role reads it; `unit_net` and the
+  tiers only for owner / agent (built only for `view_margin`, stripped by the serializer as a backstop); writes are
+  `MONEY_FIELDS_EDIT` (owner / agent) and CRM52 in the database. Categories are the b6 ancillaries only (flight,
+  insurance, visa, transfer, fee); a service names a live own supplier (never the AA row) or none (the agency's own
+  fee). Delete is a hard delete: options added from a service are copies.
+- **Add from catalogue** (`POST /proposals/{id}/blocks/{block}/catalogue-options`, `PROPOSAL_DRAFT`, every role: the
+  prices are the owner's): the quantity follows the basis against the proposal's party (its room list, else the trip
+  party: travellers, adults, rooms) and nights (typed, else the trip's `nights`, else the builder's days - 1), unless
+  the member types one; the unit net is the tier of the party size. The option is an ordinary agency option (title
+  "<name> x <qty>", supplier, sell, net), a **snapshot** with no key to the service; a service in another currency is
+  converted at today's rate (409 `fx_rate_missing` without one); a switched-off service is 409 `service_inactive`, one
+  not offered on the block's day 409 `service_not_valid`.
+- **Supplier requests** (`POST /trips/{id}/supplier-requests`, `TRIP_EDIT`): the trip's planning (or requested) agency
+  lines grouped per supplier; each supplier with an e-mail gets one draft (the member's earlier request draft for that
+  supplier is replaced) in the trip's **supplier request thread** (`crm.conversation.agency_supplier_id`: no client,
+  never the thread `app.mail.threads.conversation_for` picks for the client): travel dates, travellers by type, rooms
+  (the latest builder version's room list), each service with its dates, and traveller display names when asked (by
+  default for flight, insurance and visa suppliers). EN, or VI for an agency whose default locale is Vietnamese. A
+  supplier without an e-mail gets no draft (`supplier_no_email`).
+- **Send** (`POST /trips/{id}/supplier-requests/send`, `MESSAGE_SEND`): the normal send path (`conversations.send`: the
+  member's mailbox else the agency's, 10 s Undo, held while disconnected); the dispatch row names the trip's lead (the
+  gate drops it once that client is trashed or archived); the sender writes to the supplier's
+  `contact_email_enc`, decrypted at send time (none -> `failed` / `no_supplier_address`); sender table row
+  `supplier_request`. The lines it names become `requested` (`requested_at`, `request_ref` = the message id).
+- **The answer**: the supplier's reply threads on the supplier thread by its headers (the normal forward-in); the trip's
+  lines show `supplier_thread` (`replied` once the supplier wrote after the request). "Record confirmation"
+  (`POST /lines/{id}/confirm` with `confirmation_no`) saves the number and runs `crm.booking_line_confirm` in one call
+  (a requested line is confirmed like a planning one); "Back to planning" (`POST /lines/{id}/back-to-planning`) clears
+  the request. No automatic number parsing.
+- **Where `requested` counts**: pipeline value in the ledger totals (with planning), `waiting_on = supplier`, the
+  cancel run's supplier checklist and its task closing (with confirmed), the trip P&L's "not counted yet" note. Only a
+  planning line goes to the trash; a requested one is cancelled.
 
 ## CRM-17 Module 5 e-mail (AA-945)
 

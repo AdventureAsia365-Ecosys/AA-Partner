@@ -14,6 +14,10 @@ drafts"; Fix B8 Undo; R24 held_reconnect).
   ``message_id``. Needs a client on the conversation (409 ``conversation_unmatched``) and a sending mailbox (the
   member's own, else the agency's; none -> 409 ``mailbox_not_connected``). A disconnected mailbox is accepted: the
   message is held at send time (R24). The assistant sends only on a trip assigned to them (``MESSAGE_SEND`` ASSIGNED).
+- **Supplier request threads** (AA-1069, crm-053): a conversation of a trip with one own supplier
+  (``agency_supplier_id``, no client). Send needs the supplier's e-mail (409 ``supplier_no_email``) and the trip's
+  lead (the dispatch row's subject: the gate drops the mail once that client is trashed or archived); the sender
+  writes to the supplier's address. The ledger's "Request from suppliers" (:mod:`app.ledger.requests`) creates them.
 - **Undo** within the delay: the dispatch row is cancelled and the message goes back to a draft.
 - **Saved replies**: agency-wide ones (owner: ``WORKFLOW_EDIT``, the agency's templates) and each member's own.
 """
@@ -40,7 +44,8 @@ MAX_BODY = 100_000
 MAX_LIST = 100
 
 LIST_SQL = """
-SELECT c.conversation_id, c.trip_id, c.traveler_id, c.channel, c.last_message_at,
+SELECT c.conversation_id, c.trip_id, c.traveler_id, c.channel, c.last_message_at, c.agency_supplier_id,
+       (SELECT s.name FROM crm.agency_supplier s WHERE s.agency_supplier_id = c.agency_supplier_id) AS supplier_name,
        (SELECT count(*) FROM crm.message m WHERE m.conversation_id = c.conversation_id
            AND m.status <> 'draft_autosaved' AND m.deleted_at IS NULL)::int AS message_count,
        (SELECT count(*) FROM crm.message m WHERE m.conversation_id = c.conversation_id
@@ -51,13 +56,14 @@ SELECT c.conversation_id, c.trip_id, c.traveler_id, c.channel, c.last_message_at
  WHERE c.deleted_at IS NULL
    AND ($1::uuid IS NULL OR c.trip_id = $1)
    AND ($2::uuid IS NULL OR c.traveler_id = $2)
-   AND (NOT $3 OR (c.trip_id IS NULL AND c.traveler_id IS NULL))
+   AND (NOT $3 OR (c.trip_id IS NULL AND c.traveler_id IS NULL AND c.agency_supplier_id IS NULL))
    AND (NOT $5 OR (c.trip_id IS NULL AND c.traveler_id IS NOT NULL AND c.channel IN ('sms', 'whatsapp')))
  ORDER BY c.last_message_at DESC, c.conversation_id
  LIMIT $4
 """
 CONVERSATION_SQL = """
-SELECT conversation_id, trip_id, traveler_id, channel, last_message_at, wa_window_expires_at, opted_out_at
+SELECT conversation_id, trip_id, traveler_id, channel, last_message_at, wa_window_expires_at, opted_out_at,
+       agency_supplier_id
   FROM crm.conversation
  WHERE conversation_id = $1 AND deleted_at IS NULL
 """
@@ -82,6 +88,10 @@ UPDATE crm.conversation SET traveler_id = coalesce(traveler_id, $2), trip_id = c
 TRAVELER_SQL = "SELECT 1 FROM crm.traveler WHERE traveler_id = $1 AND deleted_at IS NULL"
 TRIP_SQL = "SELECT owner_member_id FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL"
 LEAD_SQL = "SELECT traveler_id FROM crm.trip_traveler WHERE trip_id = $1 AND role = 'lead' LIMIT 1"
+SUPPLIER_EMAIL_SQL = """
+SELECT contact_email_enc IS NOT NULL FROM crm.agency_supplier
+ WHERE agency_supplier_id = $1 AND kind = 'own' AND deleted_at IS NULL
+"""
 DRAFT_SQL = """
 SELECT message_id, conversation_id, status, author_member_id, channel_account_id FROM crm.message
  WHERE message_id = $1 FOR UPDATE
@@ -164,6 +174,9 @@ async def list_conversations(
             "held_count": r["held_count"],
             "last_direction": r["last_direction"],
             "unmatched": r["trip_id"] is None and r["traveler_id"] is None,
+            # AA-1069: a supplier request thread of the trip (no client): the supplier it is with.
+            "agency_supplier_id": str(r["agency_supplier_id"]) if r.get("agency_supplier_id") else None,
+            "supplier_name": r.get("supplier_name"),
         }
         for r in rows
     ]
@@ -225,6 +238,7 @@ async def conversation_messages(ctx: TenantContext, vault: Vault, conversation_i
         "trip_id": str(conv["trip_id"]) if conv["trip_id"] else None,
         "traveler_id": str(conv["traveler_id"]) if conv["traveler_id"] else None,
         "channel": conv["channel"],
+        "agency_supplier_id": str(conv["agency_supplier_id"]) if conv.get("agency_supplier_id") else None,
         "messages": out,
     }
     if conv["channel"] in ("sms", "whatsapp"):
@@ -359,7 +373,16 @@ async def send(
         ctx, vault, message_id, conversation_id=conversation_id, trip_id=trip_id, subject=subject, body=body
     )
     conv = await _conversation(ctx, uuid.UUID(draft["conversation_id"]))
-    if conv["traveler_id"] is None:
+    subject_traveler = conv["traveler_id"]
+    if conv.get("agency_supplier_id") is not None:
+        # AA-1069: a supplier request thread: the mail goes to the supplier's own address (read at send time); the
+        # dispatch row names the trip's lead, so the gate drops it once the trip's client is trashed or archived.
+        if not await ctx.conn.fetchval(SUPPLIER_EMAIL_SQL, conv["agency_supplier_id"]):
+            raise Conflict("supplier_no_email", "add the supplier's e-mail in Suppliers first")
+        subject_traveler = await ctx.conn.fetchval(LEAD_SQL, conv["trip_id"])
+        if subject_traveler is None:
+            raise Conflict("no_lead_traveller", "the trip has no lead traveller yet")
+    elif subject_traveler is None:
         raise Conflict("conversation_unmatched", "link the conversation to a client first")
     owner = (await ctx.conn.fetchrow(TRIP_SQL, conv["trip_id"]))["owner_member_id"] if conv["trip_id"] else None
     require(
@@ -375,7 +398,7 @@ async def send(
     await ctx.conn.execute(QUEUE_SQL, message_id)
     queued = await dispatch.enqueue_message(
         ctx,
-        traveler_id=conv["traveler_id"],
+        traveler_id=subject_traveler,
         channel="email",
         purpose="transactional",
         origin="user_action",

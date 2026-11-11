@@ -10,7 +10,7 @@ import { useTripClosed } from "@/components/pipeline/TripClosed";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
-import { plural, t, type Lang, type MessageKey } from "@/lib/i18n";
+import { fmt, plural, t, type Lang, type MessageKey } from "@/lib/i18n";
 import {
   createAutosave,
   htmlFrame,
@@ -271,6 +271,7 @@ export function MessagesPanel({
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {conversations.map((c) => (
               <Button key={c.conversation_id} size="sm" variant={c.conversation_id === selected ? "primary" : "secondary"} onClick={() => setSelected(c.conversation_id)}>
+                {c.supplier_name ? `${fmt(tr("mail.thread.supplier"), { supplier: c.supplier_name })} · ` : ""}
                 {formatDate(c.last_message_at.slice(0, 10), locale)} · {c.message_count}
               </Button>
             ))}

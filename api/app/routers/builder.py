@@ -19,6 +19,9 @@ Route                                              What                         
                                                                                                   net: owner, agent)
 ``POST   /proposals/{id}/blocks/{block}/aa-options`` add an AA item (live Booking quote)          every role (sell:
                                                                                                   owner, agent)
+``POST   /proposals/{id}/blocks/{block}/catalogue-options``  AA-1069: add a service of the agency's       every role
+                                                   catalogue (a snapshot; quantity from the party,
+                                                   rooms and nights unless typed)
 ``PATCH  /proposals/{id}/options/{option}``        edit an item                                   every role (sell /
                                                                                                   net: owner, agent)
 ``DELETE /proposals/{id}/options/{option}``        delete an item (its rules go too)              every role
@@ -162,6 +165,15 @@ class OptionIn(_Body):
     net_amount: Money | None = None
     pay_on_arrival: bool = False
     choose_later_allowed: bool = False
+
+
+class CatalogueOptionIn(_Body):
+    """AA-1069: the prices are the catalogue's (owner / agent set them), so no money field is typed here."""
+
+    seq: Seq
+    service_id: uuid.UUID
+    quantity: int | None = Field(default=None, ge=1, le=9999)
+    nights: int | None = Field(default=None, ge=1, le=90)
 
 
 class AaOptionIn(_Body):
@@ -363,6 +375,20 @@ async def post_option(
     async with tenant_tx(pool, caller, tenant_id, action=Action.PROPOSAL_DRAFT) as ctx:
         _money_check(ctx, body, ("sell_amount", "net_amount"), proposal_id)
         return await builder.add_agency_option(ctx, Vault(keys, ctx), proposal_id, body.seq, block_id, _changes(body))
+
+
+@router.post("/proposals/{proposal_id}/blocks/{block_id}/catalogue-options", status_code=201)
+async def post_catalogue_option(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, proposal_id: uuid.UUID, block_id: uuid.UUID,
+    body: CatalogueOptionIn,
+) -> dict[str, Any]:  # fmt: skip
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PROPOSAL_DRAFT) as ctx:
+        return await builder.add_catalogue_option(
+            ctx, Vault(keys, ctx), proposal_id, body.seq, block_id, body.service_id,
+            quantity=body.quantity, nights=body.nights,
+        )  # fmt: skip
 
 
 @router.post("/proposals/{proposal_id}/blocks/{block_id}/aa-options", status_code=201)

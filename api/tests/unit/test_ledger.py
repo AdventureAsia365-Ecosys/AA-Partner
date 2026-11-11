@@ -391,9 +391,17 @@ async def test_the_waiting_on_hook_answers_supplier_for_open_agency_lines() -> N
     assert any(name == "supplier_lines" and prio == 50 for prio, name, _ in stages.WAITING_ON_HOOKS)
     facts = stages.TripFacts(trip_id=TRIP, stage="booked", stage2_link_open=False)
     assert (
-        await lines.supplier_lines_hook(tenant_ctx(ScriptedConn().on("status = 'planning'", True)), facts) == "supplier"
+        await lines.supplier_lines_hook(
+            tenant_ctx(ScriptedConn().on("status IN ('planning', 'requested')", True)), facts
+        )
+        == "supplier"
     )
-    assert await lines.supplier_lines_hook(tenant_ctx(ScriptedConn().on("status = 'planning'", False)), facts) is None
+    assert (
+        await lines.supplier_lines_hook(
+            tenant_ctx(ScriptedConn().on("status IN ('planning', 'requested')", False)), facts
+        )
+        is None
+    )
 
 
 # ── suppliers ────────────────────────────────────────────────────────────────────────────────────

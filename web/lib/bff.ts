@@ -150,6 +150,18 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "PATCH", pattern: new RegExp(`^lines/${UUID}$`), tenant: true, card: "AA-944" },
   { method: "DELETE", pattern: new RegExp(`^lines/${UUID}$`), tenant: true, card: "AA-944" },
   { method: "POST", pattern: new RegExp(`^lines/${UUID}/(confirm|cancel)$`), tenant: true, card: "AA-944" },
+  // AA-1069 (crm-053): a requested line back to planning; the supplier requests of a trip (one draft per supplier,
+  // then each one sent from the agency mailbox, marking its lines requested). The confirm route above takes the
+  // supplier's confirmation number.
+  { method: "POST", pattern: new RegExp(`^lines/${UUID}/back-to-planning$`), tenant: true, card: "AA-1069" },
+  { method: "POST", pattern: new RegExp(`^trips/${UUID}/supplier-requests$`), tenant: true, card: "AA-1069" },
+  { method: "POST", pattern: new RegExp(`^trips/${UUID}/supplier-requests/send$`), tenant: true, card: "AA-1069" },
+  // AA-1069 (crm-052): the agency service catalogue (writes: owner / agent, the API's money_fields_edit).
+  { method: "GET", pattern: /^services$/, tenant: true, card: "AA-1069" },
+  { method: "POST", pattern: /^services$/, tenant: true, card: "AA-1069" },
+  { method: "GET", pattern: new RegExp(`^services/${UUID}$`), tenant: true, card: "AA-1069" },
+  { method: "PATCH", pattern: new RegExp(`^services/${UUID}$`), tenant: true, card: "AA-1069" },
+  { method: "DELETE", pattern: new RegExp(`^services/${UUID}$`), tenant: true, card: "AA-1069" },
   { method: "PUT", pattern: new RegExp(`^lines/${UUID}/money$`), tenant: true, card: "AA-944" },
   { method: "GET", pattern: /^bookings$/, tenant: true, card: "AA-944" },
   // AA-964 (CRM-33a): Settings > AI (every role reads, the owner changes) and one AI draft for a trip (a suggestion,
@@ -187,6 +199,7 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "DELETE", pattern: new RegExp(`^proposals/${UUID}/(days|blocks|options|rules)/${UUID}$`), tenant: true, card: "AA-949" },
   { method: "POST", pattern: new RegExp(`^proposals/${UUID}/days/${UUID}/blocks$`), tenant: true, card: "AA-949" },
   { method: "POST", pattern: new RegExp(`^proposals/${UUID}/blocks/${UUID}/(options|aa-options)$`), tenant: true, card: "AA-949" },
+  { method: "POST", pattern: new RegExp(`^proposals/${UUID}/blocks/${UUID}/catalogue-options$`), tenant: true, card: "AA-1069" },
   // AA-1066: the price per traveller type of an option, the discount request and the owner's decision.
   { method: "PUT", pattern: new RegExp(`^proposals/${UUID}/options/${UUID}/prices$`), tenant: true, card: "AA-1066" },
   { method: "POST", pattern: new RegExp(`^proposals/${UUID}/discount-approval(/${UUID})?$`), tenant: true, card: "AA-1066" },

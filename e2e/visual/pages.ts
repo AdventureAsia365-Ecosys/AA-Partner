@@ -58,6 +58,7 @@ export const PAGES: VisualPage[] = [
   crm("payments", "/payments"),
   crm("commissions", "/commissions"),
   crm("suppliers", "/suppliers"),
+  crm("services", "/services"), // AA-1069: the agency service catalogue
   crm("travelling", "/travelling"),
   crm("reports", "/reports"),
   crm("automations", "/automations"),

@@ -426,3 +426,26 @@ async def test_in_reply_to_alone_threads_when_the_provider_kept_our_message_id(k
     raw, stored_hash = await _sent(kind)
     reply = parse(_client_reply(_delivered(raw, rewrites=False), keep_references=False), ingest_domain=INGEST_DOMAIN)
     assert reply.in_reply_to_hash == stored_hash
+
+
+@pytest.mark.asyncio
+async def test_a_supplier_request_goes_to_the_suppliers_address() -> None:
+    """AA-1069: a supplier request thread (no client, a supplier) is sent to the supplier's contact e-mail."""
+    supplier = uuid.uuid4()
+    provider = FakeProvider()
+    runtime, _, _ = _runtime(provider)
+    conn = _conn(message=_message(traveler_id=None, agency_supplier_id=supplier))
+    conn.on("SELECT contact_email_enc FROM crm.agency_supplier",
+            enc("agency_supplier", "contact_email_enc", "desk@lantern-air.example.test"))  # fmt: skip
+    assert await MailSender(runtime).send(system_ctx(conn), DISPATCH, "email", MESSAGE) == "sent"
+    assert provider.sent[0][2] == ["desk@lantern-air.example.test"]
+    assert not conn.sql("SELECT email_enc FROM crm.traveler")
+
+
+@pytest.mark.asyncio
+async def test_a_supplier_without_an_address_fails_the_message() -> None:
+    provider = FakeProvider()
+    runtime, _, _ = _runtime(provider)
+    conn = _conn(message=_message(traveler_id=None, agency_supplier_id=uuid.uuid4()))
+    assert await MailSender(runtime).send(system_ctx(conn), DISPATCH, "email", MESSAGE) == "send_failed"
+    assert conn.sql("SET status = 'failed'")[0][1] == "no_supplier_address" and provider.sent == []

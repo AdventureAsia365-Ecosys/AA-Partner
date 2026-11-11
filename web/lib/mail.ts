@@ -57,6 +57,9 @@ export interface Conversation {
   held_count: number;
   last_direction: "in" | "out" | null;
   unmatched: boolean;
+  /** AA-1069: a supplier request thread of the trip (no client): the supplier it is with. */
+  agency_supplier_id?: string | null;
+  supplier_name?: string | null;
 }
 
 export interface MailMessage {

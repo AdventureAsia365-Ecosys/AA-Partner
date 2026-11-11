@@ -10,7 +10,7 @@ import { formatDate, type DateLocale } from "@/lib/dates";
 import { t, type Lang, type MessageKey } from "@/lib/i18n";
 import { formatMoney, fxReading, type Line } from "@/lib/ledger";
 
-const TONE = { planning: "neutral", confirmed: "success", cancelled: "danger" } as const;
+const TONE = { planning: "neutral", requested: "info", confirmed: "success", cancelled: "danger" } as const;
 
 /** The width the nine columns need before the wrapper scrolls (the 820 px the raw table had). */
 export const BOOKING_LINES_MIN_WIDTH = 820;

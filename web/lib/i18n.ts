@@ -29,6 +29,7 @@ import { workflowsEn, workflowsVi } from "./i18nWorkflows";
 import { retailPricingEn, retailPricingVi } from "./i18nRetailPricing";
 import { retailPaymentsEn, retailPaymentsVi } from "./i18nRetailPayments";
 import { financeEn, financeVi } from "./i18nFinance";
+import { catalogueEn, catalogueVi } from "./i18nCatalogue";
 
 export type Lang = "en" | "vi";
 export const LOCALE_COOKIE = "aa_crm_locale";
@@ -71,6 +72,7 @@ const en = {
   ...retailPricingEn, // AA-1066: traveller prices, price rules, the discount and its approval (lib/i18nRetailPricing.ts)
   ...retailPaymentsEn, // AA-1067: instalments, reminders, the cancellation policy and charge (lib/i18nRetailPayments.ts)
   ...financeEn, // AA-1068: trip Money card, supplier bills, Bookings with AA, departures, profit, Home today (lib/i18nFinance.ts)
+  ...catalogueEn, // AA-1069: the Services catalogue, From catalogue in the builder, supplier requests (lib/i18nCatalogue.ts)
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Home",
@@ -2782,6 +2784,7 @@ const vi: Record<MessageKey, string> = {
   ...retailPricingVi,
   ...retailPaymentsVi,
   ...financeVi,
+  ...catalogueVi,
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Trang chủ",

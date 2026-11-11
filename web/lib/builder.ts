@@ -217,6 +217,11 @@ export function builderErrorKey(detail: string): MessageKey {
     option_sold_out: "builder.err.aa_sold_out",
     invalid_nights: "aa.error.nights",
     aa_net_from_quote: "builder.err.aa_net_from_quote",
+    // AA-1069: "From catalogue" (the service is switched off, not offered on the day, gone, or needs a rate).
+    service_inactive: "catalogue.error.service_inactive",
+    service_not_valid: "catalogue.error.service_not_valid",
+    service_not_found: "catalogue.error.service_not_found",
+    fx_rate_missing: "catalogue.error.fx_rate_missing",
     // AA-1066: traveller prices and the discount.
     amount_from_prices: "pricing.err.amount_from_prices",
     no_suggestion: "pricing.err.no_suggestion",
