@@ -147,13 +147,14 @@ INSERT INTO crm.task (trip_id, kind, priority, assignee_member_id, due_anchor, d
 VALUES ($1, $2, 'normal', $3, 'created', now() + interval '1 day')
 ON CONFLICT (trip_id, kind) WHERE status = 'open' AND deleted_at IS NULL AND trip_id IS NOT NULL DO NOTHING
 """
-# The supplier task of a cancel (app.cancellation): done once no confirmed agency line is left on the trip.
+# The supplier task of a cancel (app.cancellation): done once no confirmed agency line is left on the trip (nor one
+# requested from its supplier, AA-1069: the supplier was asked and must be told too).
 CLOSE_SUPPLIER_TASKS_SQL = """
 UPDATE crm.task k SET status = 'done', done_at = now(), done_by = $2
  WHERE k.kind = $1 AND k.status = 'open' AND k.deleted_at IS NULL AND k.trip_id IS NOT NULL
    AND NOT EXISTS (SELECT 1 FROM crm.booking_line l
-                    WHERE l.trip_id = k.trip_id AND l.supplier_kind = 'agency' AND l.status = 'confirmed'
-                      AND l.deleted_at IS NULL)
+                    WHERE l.trip_id = k.trip_id AND l.supplier_kind = 'agency'
+                      AND l.status IN ('requested', 'confirmed') AND l.deleted_at IS NULL)
 RETURNING k.task_id
 """
 

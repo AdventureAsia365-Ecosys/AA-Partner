@@ -69,6 +69,7 @@ from app.routers import (
     audit,
     builder,
     calendar,
+    catalogue,
     ci,
     client_pages,
     commissions,
@@ -341,6 +342,7 @@ def create_app(
     app.include_router(ops_release.router)
     app.include_router(commissions.router)
     app.include_router(finance.router)  # AA-1068: trip P&L, supplier bills, Bookings with AA, departure costs
+    app.include_router(catalogue.router)  # AA-1069: the agency service catalogue
     app.include_router(workflows.router)
     return app
 

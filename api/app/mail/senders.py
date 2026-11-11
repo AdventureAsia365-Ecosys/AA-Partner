@@ -19,13 +19,16 @@ from typing import Any
 class SenderRow:
     path: str  # the code of the send path (a Message kind of app.members.mail, or a mail send path)
     sender_kind: str  # agency_mailbox | system
-    recipient: str  # client | agency_member
+    recipient: str  # client | agency_member | supplier (AA-1069)
     via: str  # agency_mailbox | aa_ses | agency_twilio (AA-958)
     module: str
 
 
 SENDERS: tuple[SenderRow, ...] = (
     SenderRow("client_message", "agency_mailbox", "client", "agency_mailbox", "app.mail.sender"),
+    # AA-1069: a booking request to one of the agency's own suppliers (the trip's supplier request thread), sent from
+    # the agency's own mailbox like a client message; never through AA's SES.
+    SenderRow("supplier_request", "agency_mailbox", "supplier", "agency_mailbox", "app.mail.sender"),
     SenderRow("mailbox_test", "agency_mailbox", "agency_member", "agency_mailbox", "app.mail.health"),
     SenderRow("invitation", "system", "agency_member", "aa_ses", "app.members.mail"),
     SenderRow("recovery_notice", "system", "agency_member", "aa_ses", "app.members.mail"),

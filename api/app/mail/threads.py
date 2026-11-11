@@ -47,7 +47,7 @@ SELECT t.trip_id FROM crm.trip_traveler tt JOIN crm.trip t ON t.trip_id = tt.tri
 """
 CONVERSATION_SQL = """
 SELECT conversation_id FROM crm.conversation
- WHERE channel = 'email' AND deleted_at IS NULL
+ WHERE channel = 'email' AND deleted_at IS NULL AND agency_supplier_id IS NULL
    AND trip_id IS NOT DISTINCT FROM $1 AND traveler_id IS NOT DISTINCT FROM $2
  ORDER BY last_message_at DESC, conversation_id
  LIMIT 1
@@ -80,7 +80,8 @@ async def _traveler(ctx: AnyContext, bidx: bytes | None) -> uuid.UUID | None:
 
 
 async def conversation_for(ctx: AnyContext, trip_id: uuid.UUID | None, traveler_id: uuid.UUID | None) -> uuid.UUID:
-    """The latest e-mail conversation of exactly this (trip, client) pair, created when there is none."""
+    """The latest e-mail conversation of exactly this (trip, client) pair, created when there is none. A supplier
+    request thread of the trip (AA-1069, ``agency_supplier_id`` set) is never this pair's conversation."""
     found = await ctx.conn.fetchval(CONVERSATION_SQL, trip_id, traveler_id)
     if found is not None:
         return found

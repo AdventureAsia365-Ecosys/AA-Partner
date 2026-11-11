@@ -2,8 +2,10 @@
 
 Rules the database holds (crm-014) and this module words:
 
-- **Status** planning -> confirmed -> cancelled (planning -> cancelled too). Only confirmed lines count in margins
-  and totals; planning is pipeline value; a cancelled line is hidden from travellers (R22).
+- **Status** planning -> confirmed -> cancelled (planning -> cancelled too); AA-1069 (crm-053): planning ->
+  requested (asked from the supplier, :mod:`app.ledger.requests`) -> confirmed | planning | cancelled. Only confirmed
+  lines count in margins and totals; planning and requested are pipeline value; a cancelled line is hidden from
+  travellers (R22).
 - **Confirm** goes through ``crm.booking_line_confirm`` (SECURITY DEFINER): the agency's level (off / basic /
   strict) decides what must be filled in (409 ``line_incomplete`` with the missing codes), the money is frozen at the
   rate of the confirmation day (R17), and under strict a second confirmed line of one supplier with one number is 409
@@ -43,7 +45,7 @@ from app.tenancy import AnyContext, TenantContext
 KINDS = ("cost", "sell", "commission_expected")
 COLLECT = ("agency", "on_arrival")
 CONFIRM_CLASSES = ("confirmed", "aa_on_request", "agency_booking")
-STATUSES = ("planning", "confirmed", "cancelled")
+STATUSES = ("planning", "requested", "confirmed", "cancelled")
 MAX_AMOUNT = Decimal("999999999999.99")
 MAX_LEDGER = 500
 ADD_COMMISSION_TASK = "add_commission"
@@ -51,7 +53,7 @@ ADD_COMMISSION_TASK = "add_commission"
 _LINE_COLUMNS = """
 l.booking_line_id, l.trip_id, l.supplier_kind, l.agency_supplier_id, s.name AS supplier_name, l.status,
 l.aa_sub_status, l.title, l.confirmation_no, l.service_from, l.service_to, l.collect, l.confirm_class,
-l.visible_to_travelers, l.confirmed_at, l.departure_id, l.created_at, l.updated_at,
+l.visible_to_travelers, l.confirmed_at, l.departure_id, l.created_at, l.updated_at, l.requested_at, l.request_ref,
 l.aa_tour_source_id, l.aa_component_kind, l.aa_currency, l.aa_pax, l.quote_valid_until, l.hold_expires_at,
 l.from_price, l.below_from_price, l.aa_decline_code, l.aa_result_code, l.bk_hold_id, l.bk_booking_id,
 (SELECT c.served_state FROM crm.aa_catalog_tour c
@@ -86,6 +88,14 @@ SELECT DISTINCT x.booking_line_id
  WHERE x.booking_line_id = ANY($1::uuid[]) AND b.status <> 'void'
 """
 TRIP_SQL = "SELECT stage FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL"
+# AA-1069: the trip's supplier request threads (one per own supplier) and when each supplier last wrote back.
+THREADS_SQL = """
+SELECT c.agency_supplier_id, c.conversation_id,
+       (SELECT max(m.occurred_at) FROM crm.message m
+         WHERE m.conversation_id = c.conversation_id AND m.direction = 'in' AND m.deleted_at IS NULL) AS last_reply_at
+  FROM crm.conversation c
+ WHERE c.trip_id = $1 AND c.agency_supplier_id IS NOT NULL AND c.deleted_at IS NULL
+"""
 SUPPLIER_SQL = "SELECT kind, deleted_at FROM crm.agency_supplier WHERE agency_supplier_id = $1"
 INSERT_SQL = """
 INSERT INTO crm.booking_line (trip_id, agency_supplier_id, title, confirmation_no, service_from, service_to, collect,
@@ -99,7 +109,8 @@ SELECT trip_id, status, supplier_kind FROM crm.booking_line WHERE booking_line_i
 CONFIRM_SQL = "SELECT crm.booking_line_confirm($1)"
 CHECK_SQL = "SELECT crm.booking_line_confirm_check($1)"
 CANCEL_SQL = """
-UPDATE crm.booking_line SET status = 'cancelled' WHERE booking_line_id = $1 AND status IN ('planning', 'confirmed')
+UPDATE crm.booking_line SET status = 'cancelled' WHERE booking_line_id = $1
+   AND status IN ('planning', 'requested', 'confirmed')
 RETURNING booking_line_id
 """
 MONEY_PUT_SQL = "SELECT crm.booking_line_money_put($1, $2, $3, $4)"
@@ -114,7 +125,8 @@ RETURNING task_id
 """
 OPEN_SUPPLIER_LINE_SQL = """
 SELECT EXISTS (SELECT 1 FROM crm.booking_line
-                WHERE trip_id = $1 AND supplier_kind = 'agency' AND status = 'planning' AND deleted_at IS NULL)
+                WHERE trip_id = $1 AND supplier_kind = 'agency' AND status IN ('planning', 'requested')
+                  AND deleted_at IS NULL)
 """
 LEDGER_SQL = f"""
 SELECT {_LINE_COLUMNS}, t.title AS trip_title, t.stage AS trip_stage
@@ -127,16 +139,18 @@ SELECT {_LINE_COLUMNS}, t.title AS trip_title, t.stage AS trip_stage
  LIMIT $4
 """  # noqa: S608 — fixed text
 # Totals in the base currency: confirmed lines from their frozen base amounts; planning sell as pipeline value at
-# today's rate (an estimate; a line whose currency has no rate is counted apart). A confirmed amount frozen in an
+# today's rate (an estimate; a line whose currency has no rate is counted apart; AA-1069: a line requested from its
+# supplier is pipeline value too, so the CTE reads it as planning). A confirmed amount frozen in an
 # earlier base currency (the owner changed it in Settings > Payments; stored rows are never re-converted) is left out
 # of the sums and its lines counted apart (confirmed_other_base), so the totals never add two currencies.
 TOTALS_SQL = """
 WITH heads AS (
-    SELECT m.booking_line_id, m.kind, m.amount, m.currency, m.amount_base, m.base_currency, l.status
+    SELECT m.booking_line_id, m.kind, m.amount, m.currency, m.amount_base, m.base_currency,
+           CASE WHEN l.status = 'requested' THEN 'planning' ELSE l.status END AS status
       FROM crm.v_booking_line_money_current m
       JOIN crm.booking_line l ON l.booking_line_id = m.booking_line_id AND l.deleted_at IS NULL
       JOIN crm.trip t ON t.trip_id = l.trip_id AND t.deleted_at IS NULL
-     WHERE l.status IN ('confirmed', 'planning')
+     WHERE l.status IN ('confirmed', 'planning', 'requested')
        AND ($1::date IS NULL OR l.service_from >= $1) AND ($2::date IS NULL OR l.service_from <= $2)
 )
 SELECT
@@ -296,6 +310,9 @@ def _line_view(row: Any, money: dict[str, Any] | None, trip_stage: str | None = 
         "confirm_class": row["confirm_class"],
         "visible_to_travelers": row["visible_to_travelers"],
         "confirmed_at": row["confirmed_at"].isoformat() if row["confirmed_at"] else None,
+        # AA-1069 (crm-053): when the line was asked from its supplier and the request e-mail (message id).
+        "requested_at": row["requested_at"].isoformat() if row.get("requested_at") else None,
+        "request_ref": row.get("request_ref"),
         "read_only": row["supplier_kind"] == "aa",
     }
     aa = aa_views.aa_block(row, trip_stage)
@@ -329,6 +346,7 @@ async def trip_lines(ctx: TenantContext, trip_id: uuid.UUID) -> dict[str, Any]:
     money = await _money_by_line(ctx, [r["booking_line_id"] for r in rows])
     settings = await fx.settings(ctx)
     views = [_line_view(r, money.get(r["booking_line_id"]) if money is not None else None, stage) for r in rows]
+    await _attach_threads(ctx, trip_id, views)
     if money is not None and any(r["supplier_kind"] == "agency" for r in rows):
         # AA-957: each line's commission follow-up (owner / agent; a margin key for anyone else)
         follow = await commissions.for_lines(ctx, trip_id)
@@ -342,6 +360,26 @@ async def trip_lines(ctx: TenantContext, trip_id: uuid.UUID) -> dict[str, Any]:
         # AA-947: the Lost dialog pre-selects this reason (a declined or sold-out AA line); null = no AA signal.
         "lost_reason_hint": aa_views.lost_reason_hint(rows),
     }
+
+
+async def _attach_threads(ctx: TenantContext, trip_id: uuid.UUID, views: list[dict[str, Any]]) -> None:
+    """AA-1069: each agency line's ``supplier_thread`` (the trip's request conversation with its supplier, when there
+    is one): ``conversation_id``, ``last_reply_at`` and ``replied`` (the supplier wrote after the request)."""
+    if not any(v["supplier_kind"] == "agency" for v in views):
+        return
+    threads = {r["agency_supplier_id"]: r for r in await ctx.conn.fetch(THREADS_SQL, trip_id)}
+    for v in views:
+        t = threads.get(uuid.UUID(v["agency_supplier_id"])) if v["supplier_kind"] == "agency" else None
+        if t is None:
+            v["supplier_thread"] = None
+            continue
+        reply = t["last_reply_at"]
+        asked = dt.datetime.fromisoformat(v["requested_at"]) if v["requested_at"] else None
+        v["supplier_thread"] = {
+            "conversation_id": str(t["conversation_id"]),
+            "last_reply_at": reply.isoformat() if reply else None,
+            "replied": bool(reply and (asked is None or reply > asked)),
+        }
 
 
 async def line(ctx: TenantContext, line_id: uuid.UUID, *, extra: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -502,12 +540,20 @@ async def _add_commission_task(ctx: TenantContext, trip_id: uuid.UUID) -> uuid.U
     return await ctx.conn.fetchval(TASK_SQL, trip_id, ADD_COMMISSION_TASK, owner)
 
 
-async def confirm(ctx: TenantContext, line_id: uuid.UUID) -> dict[str, Any]:
+async def confirm(ctx: TenantContext, line_id: uuid.UUID, *, confirmation_no: Any = None) -> dict[str, Any]:
+    """Confirm a planning or requested agency line (AA-1069: ``confirmation_no`` = the number the supplier answered,
+    saved first, so "Record confirmation" is one call)."""
     current = await ctx.conn.fetchrow(TRIP_OF_LINE_SQL, line_id)
     if current is None:
         raise NotFound("line_not_found")
     # S262 round 3 (C12 §2.7): a cancelled trip confirms nothing more (its supplier lines are being cancelled).
     await cancellation.ensure_not_cancelled(ctx, current["trip_id"], "no booking line is confirmed")
+    if confirmation_no is not None:
+        if current["supplier_kind"] == "aa":
+            raise Forbidden("aa_line_read_only", "Adventure Asia lines come from your AA bookings")
+        if current["status"] not in ("planning", "requested"):
+            raise Conflict("line_not_editable", "only a planning or requested line is confirmed")
+        await update_line(ctx, line_id, {"confirmation_no": confirmation_no})
     try:
         async with ctx.conn.transaction():
             raw = await ctx.conn.fetchval(CONFIRM_SQL, line_id)

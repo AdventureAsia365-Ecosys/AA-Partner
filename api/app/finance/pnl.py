@@ -120,12 +120,21 @@ def view(row: Any) -> dict[str, Any]:
     }
 
 
+# AA-1069 (crm-053): lines asked from their supplier are not confirmed yet either; the crm-051 view counts only the
+# planning ones, so the card adds these to its "not counted yet" count.
+REQUESTED_SQL = """
+SELECT count(*)::int FROM crm.booking_line
+ WHERE trip_id = $1 AND supplier_kind = 'agency' AND status = 'requested' AND deleted_at IS NULL
+"""
+
+
 async def trip_pnl(ctx: TenantContext, trip_id: uuid.UUID) -> dict[str, Any]:
     row = await ctx.conn.fetchrow(TRIP_SQL, trip_id)
     if row is None:
         raise NotFound("trip_not_found")
     ctx.audit("view", "allowed", "trip_pnl", str(trip_id))
-    return view(row)
+    requested = int(await ctx.conn.fetchval(REQUESTED_SQL, trip_id) or 0)
+    return view({**dict(row), "lines_planning": row["lines_planning"] + requested} if requested else row)
 
 
 # ── the cube ─────────────────────────────────────────────────────────────────────────────────────────────────────

@@ -400,3 +400,25 @@ async def test_oauth_state_is_sealed_bound_and_expires() -> None:
     with pytest.raises(Conflict):
         await oauth.complete(ctx, vault, _oauth_settings(), {"gmail": Refusing()}, "c", state)
     assert isinstance(OAuthMailProvider(GOOGLE, None, None), OAuthMailProvider)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_a_supplier_thread_is_sent_with_the_trip_lead_as_the_dispatch_subject() -> None:
+    """AA-1069: a supplier request thread has no client; the dispatch row names the trip's lead (the gate's subject),
+    and a supplier without an e-mail is refused before anything is queued."""
+    supplier = uuid.uuid4()
+    conn = _draft_conn(_draft_row()).on("FROM crm.conversation WHERE conversation_id",
+                                       _conv(traveler_id=None, agency_supplier_id=supplier))  # fmt: skip
+    conn.on("SELECT contact_email_enc IS NOT NULL FROM crm.agency_supplier", True)
+    out = await conversations.send(tenant_ctx(conn), MailVault(), DRAFT, conversation_id=CONV, trip_id=None,
+                                   subject="s", body="b")  # fmt: skip
+    assert out["status"] == "queued"
+    (row,) = conn.sql("INSERT INTO crm.dispatch_queue")
+    assert row[0] == CLIENT  # the trip's lead
+    no_email = _draft_conn(_draft_row()).on("FROM crm.conversation WHERE conversation_id",
+                                           _conv(traveler_id=None, agency_supplier_id=supplier))  # fmt: skip
+    no_email.on("SELECT contact_email_enc IS NOT NULL FROM crm.agency_supplier", False)
+    with pytest.raises(Conflict) as err:
+        await conversations.send(tenant_ctx(no_email), MailVault(), DRAFT, conversation_id=CONV, trip_id=None,
+                                 subject="s", body="b")  # fmt: skip
+    assert err.value.code == "supplier_no_email" and not no_email.sql("INSERT INTO crm.dispatch_queue")

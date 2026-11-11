@@ -50,6 +50,7 @@ from typing import Any
 from app import cancellation, stages
 from app.cancel_policy import service as cancel_policy
 from app.catalog import store as catalog
+from app.catalogue import service as catalogue
 from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.esign import terms as esign_terms
 from app.intake import completeness, stage2
@@ -1307,6 +1308,43 @@ async def add_agency_option(
     await _settle_default(ctx, proposal_id, block_id, await _tier(ctx, vault, row))
     _raise_conflicts(_conflicts(await _structure(ctx, proposal_id)), s)
     return await _done(ctx, vault, proposal_id, "option_add")
+
+
+TRIP_NIGHTS_SQL = "SELECT nights FROM crm.trip WHERE trip_id = $1"
+
+
+async def add_catalogue_option(
+    ctx: TenantContext,
+    vault: Vault,
+    proposal_id: uuid.UUID,
+    seq: int,
+    block_id: uuid.UUID,
+    service_id: uuid.UUID,
+    *,
+    quantity: int | None = None,
+    nights: int | None = None,
+) -> dict[str, Any]:
+    """AA-1069 "Add from catalogue": one agency option priced from a catalogue service (a snapshot: title, supplier,
+    sell and net copied now; no key back to the service). The quantity comes from the party, the rooms and the nights
+    (:func:`app.catalogue.service.quantity`) unless the member typed one. The view carries ``catalogue`` (how it was
+    priced; the net parts for owner / agent only)."""
+    row = await _lock(ctx, proposal_id, seq)
+    s = await _structure(ctx, proposal_id)
+    day = await _day(s, _block(s, block_id)["proposal_day_id"])
+    proposal = {
+        "currency": row["currency"],
+        "room_config": _jsonb(row["room_config"]),
+        "party_adults": row["party_adults"],
+        "party_child_ages": row["party_child_ages"],
+        "trip_nights": await ctx.conn.fetchval(TRIP_NIGHTS_SQL, row["trip_id"]),
+    }
+    body, summary = await catalogue.plan_option(
+        ctx, service_id, proposal=proposal, service_date=_day_date(row["starts_on"], day["day_no"]),
+        days=len(s["days"]), quantity_override=quantity, nights_override=nights,
+    )  # fmt: skip
+    out = await add_agency_option(ctx, vault, proposal_id, seq, block_id, body)
+    out["catalogue"] = summary
+    return out
 
 
 def _option(s: dict[str, Any], option_id: uuid.UUID) -> dict[str, Any]:

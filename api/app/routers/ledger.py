@@ -14,7 +14,14 @@ Route                                          What                             
 ``POST   /trips/{id}/lines``                   add a planning agency line                     every role
 ``PATCH  /lines/{id}``                         edit (not an AA line)                          every role
 ``GET    /lines/{id}/confirm-check``           what a confirm still misses (codes)            every role
-``POST   /lines/{id}/confirm``                 confirm (R18 level; money frozen, R17)         every role
+``POST   /lines/{id}/confirm``                 confirm (R18 level; money frozen, R17);        every role
+                                               AA-1069: a requested line too, with the
+                                               supplier's ``confirmation_no`` in one call
+``POST   /lines/{id}/back-to-planning``        AA-1069: a requested line back to planning     every role
+``POST   /trips/{id}/supplier-requests``       AA-1069: one e-mail draft per supplier of the  every role
+                                               trip's planning agency lines
+``POST   /trips/{id}/supplier-requests/send``  AA-1069: send one supplier's draft (agency     MESSAGE_SEND
+                                               mailbox) and mark its lines requested
 ``POST   /lines/{id}/cancel``                  cancel                                         every role
 ``DELETE /lines/{id}``                         a planning line to the trash                   owner, agent
 ``PUT    /lines/{id}/money``                   cost / sell / commission (new row)             owner, agent
@@ -62,7 +69,7 @@ from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
 from app.cancel_policy import service as cancel_policy
 from app.db import request_pool
-from app.ledger import fx, lines, suppliers
+from app.ledger import fx, lines, requests, suppliers
 from app.lifecycle import trash
 from app.payments import schedule_settings
 from app.permissions import Action, require
@@ -355,11 +362,64 @@ async def get_confirm_check(request: Request, caller: CallerDep, tenant_id: Tena
         return await lines.confirm_check(ctx, line_id)
 
 
+class ConfirmIn(_Body):
+    """AA-1069: the number the supplier answered (saved, then the line is confirmed in the same call)."""
+
+    confirmation_no: str | None = Field(default=None, min_length=1, max_length=80)
+
+
+class SupplierRequestsIn(_Body):
+    line_ids: list[uuid.UUID] | None = Field(default=None, min_length=1, max_length=requests.MAX_LINES)
+    include_names: bool | None = None  # null = by supplier category (flight, insurance, visa: yes)
+
+
+class SupplierRequestSendIn(_Body):
+    message_id: uuid.UUID
+    subject: str | None = Field(default=None, max_length=300)
+    body: str = Field(min_length=1, max_length=100_000)
+    line_ids: list[uuid.UUID] = Field(min_length=1, max_length=requests.MAX_LINES)
+
+
 @router.post("/lines/{line_id}/confirm")
-async def post_confirm(request: Request, caller: CallerDep, tenant_id: TenantDep, line_id: uuid.UUID) -> dict:
+async def post_confirm(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, line_id: uuid.UUID, body: ConfirmIn | None = None
+) -> dict:
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_EDIT) as ctx:
-        return await lines.confirm(ctx, line_id)
+        return await lines.confirm(ctx, line_id, confirmation_no=body.confirmation_no if body else None)
+
+
+@router.post("/lines/{line_id}/back-to-planning")
+async def post_back_to_planning(request: Request, caller: CallerDep, tenant_id: TenantDep, line_id: uuid.UUID) -> dict:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_EDIT) as ctx:
+        await requests.back_to_planning(ctx, line_id)
+        return await lines.line(ctx, line_id)
+
+
+@router.post("/trips/{trip_id}/supplier-requests")
+async def post_supplier_requests(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, trip_id: uuid.UUID, body: SupplierRequestsIn
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_EDIT) as ctx:
+        return await requests.build(
+            ctx, Vault(keys, ctx), trip_id, line_ids=body.line_ids, include_names=body.include_names
+        )
+
+
+@router.post("/trips/{trip_id}/supplier-requests/send", status_code=202)
+async def post_supplier_request_send(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, trip_id: uuid.UUID, body: SupplierRequestSendIn
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.MESSAGE_SEND) as ctx:
+        return await requests.send(
+            ctx, Vault(keys, ctx), trip_id, message_id=body.message_id, subject=body.subject, body=body.body,
+            line_ids=body.line_ids,
+        )  # fmt: skip
 
 
 @router.post("/lines/{line_id}/cancel")

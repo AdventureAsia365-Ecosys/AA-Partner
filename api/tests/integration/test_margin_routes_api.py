@@ -41,6 +41,7 @@ from fastapi import FastAPI
 from fastapi.routing import APIRoute
 
 from app.booking import aa_lines
+from app.catalogue import service as catalogue
 from app.invoices import service as invoices
 from app.ledger import lines, suppliers
 from app.main import create_app
@@ -64,7 +65,10 @@ LINE_COMMISSION = "135.79"  # agency line: commission_expected
 LINE_MARGIN = "1111.11"  # agency line: sell 3579.24 - cost 2468.13 (derived by the ledger)
 AA_LINE_COST = "876.43"  # AA line: cost from Booking's quote
 SUPPLIER_COMMISSION_PCT = "73.25"  # agency supplier: default_commission_pct (60-99: no seconds field reads "73.")
-COST_SIDE = (AGENCY_NET, AA_OPTION_NET, LINE_COST, LINE_COMMISSION, LINE_MARGIN, AA_LINE_COST, SUPPLIER_COMMISSION_PCT)
+SERVICE_NET = "2864.37"  # AA-1069: a catalogue service's unit_net
+SERVICE_TIER_NET = "1357.91"  # AA-1069: its group-size tier's unit_net
+COST_SIDE = (AGENCY_NET, AA_OPTION_NET, LINE_COST, LINE_COMMISSION, LINE_MARGIN, AA_LINE_COST, SUPPLIER_COMMISSION_PCT,
+             SERVICE_NET, SERVICE_TIER_NET)  # fmt: skip
 
 # Money routes the owner's positive control relies on: the assistant must read them (200), or its check is empty.
 ASSISTANT_READS = (
@@ -73,6 +77,8 @@ ASSISTANT_READS = (
     "/crm/v1/trips/{trip_id}/lines",
     "/crm/v1/suppliers",
     "/crm/v1/suppliers/{supplier_id}",
+    "/crm/v1/services",  # AA-1069: the catalogue (unit_net and tiers: owner / agent only)
+    "/crm/v1/services/{service_id}",
 )
 
 # GET /crm/v1 routes whose path parameter names an object this seed does not create, with why none of them can carry
@@ -168,6 +174,12 @@ async def _seed(pool: asyncpg.Pool) -> dict[str, Any]:
         commission_id = await ctx.conn.fetchval(
             "SELECT commission_id FROM crm.commission WHERE booking_line_id = $1", line_id
         )
+        # AA-1069: a catalogue service with a unit net and a group-size tier net (owner / agent only).
+        service = await catalogue.create_service(ctx, {
+            "agency_supplier_id": uuid.UUID(own["agency_supplier_id"]), "category": "transfer",
+            "name": "Airport transfer", "unit_net": SERVICE_NET, "unit_sell": "4012.35", "currency": "USD",
+            "qty_basis": "per_booking", "tiers": [{"min_pax": 4, "max_pax": None, "unit_net": SERVICE_TIER_NET}],
+        })  # fmt: skip
     assert confirmed["status"] == "confirmed" and confirmed["money"]["margin_base"] == LINE_MARGIN
     assert commission_id is not None
 
@@ -197,6 +209,7 @@ async def _seed(pool: asyncpg.Pool) -> dict[str, Any]:
         aa_line=uuid.UUID(aa_line["booking_line_id"]),
         invoice=uuid.UUID(invoice["invoice_id"]),
         commission=commission_id,
+        service=uuid.UUID(service["service_id"]),
         fake=fake,
     )
     return s
@@ -212,6 +225,7 @@ def _params(s: dict[str, Any], lead: str) -> dict[str, str]:
         "source_id": "T-949",
         "invoice_id": str(s["invoice"]),
         "commission_id": str(s["commission"]),
+        "service_id": str(s["service"]),
     }
 
 

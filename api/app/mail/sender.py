@@ -21,6 +21,10 @@ A portal code mail (AA-946 review S251: an ``otp_challenge`` row names the messa
 (:data:`app.portal.codes.CODE_MASK`); the code is opened from ``otp_challenge.code_enc`` here, put into the mail and
 cleared once sent. A code that is no longer pending or has expired -> the message ``failed`` (``code_expired``).
 
+AA-1069: a supplier request thread (``crm.conversation.agency_supplier_id``) is sent to the supplier's contact e-mail
+(``crm.agency_supplier.contact_email_enc``, decrypted here at send time, never copied); none -> ``failed``
+(``no_supplier_address``).
+
 AA-1014: a client address in the reserved ``.invalid`` top-level domain (:mod:`app.mail.recipients`; synthetic
 agencies, every environment) is never handed to the provider: the message ends ``failed`` (``invalid_tld``) and the
 dispatch row ``dropped`` / ``send_failed``. The action that queued the mail (proposal sent, portal code issued) is
@@ -49,7 +53,7 @@ log = logging.getLogger(__name__)
 
 MESSAGE_SQL = """
 SELECT m.message_id, m.status, m.direction, m.channel_account_id, m.subject_enc, m.body_enc, m.conversation_id,
-       c.traveler_id, c.trip_id, t.mail_token
+       c.traveler_id, c.trip_id, c.agency_supplier_id, t.mail_token
   FROM crm.message m
   JOIN crm.conversation c ON c.conversation_id = m.conversation_id
   LEFT JOIN crm.trip t ON t.trip_id = c.trip_id
@@ -63,6 +67,10 @@ SELECT a.channel_account_id, a.kind, a.status, a.address_enc, a.credential_id, i
  WHERE a.channel_account_id = $1 AND a.deleted_at IS NULL
 """
 TRAVELER_SQL = "SELECT email_enc FROM crm.traveler WHERE traveler_id = $1"
+# AA-1069: a supplier request thread goes to the supplier's own contact e-mail (an own, live supplier only).
+SUPPLIER_SQL = """
+SELECT contact_email_enc FROM crm.agency_supplier WHERE agency_supplier_id = $1 AND kind = 'own' AND deleted_at IS NULL
+"""
 REPLY_TO_SQL = """
 SELECT message_id, rfc_message_id_enc FROM crm.message
  WHERE conversation_id = $1 AND direction = 'in' AND rfc_message_id_enc IS NOT NULL AND deleted_at IS NULL
@@ -119,7 +127,12 @@ class MailSender:
         if channel != "email" or message_id is None or self.runtime.keys is None:
             return "no_message"
         row = await ctx.conn.fetchrow(MESSAGE_SQL, message_id)
-        if row is None or row["direction"] != "out" or row["status"] != "queued" or row["traveler_id"] is None:
+        if (
+            row is None
+            or row["direction"] != "out"
+            or row["status"] != "queued"
+            or (row["traveler_id"] is None and row.get("agency_supplier_id") is None)
+        ):
             return "no_message"
         mailbox = await ctx.conn.fetchrow(MAILBOX_SQL, row["channel_account_id"]) if row["channel_account_id"] else None
         provider = self.runtime.providers.get(mailbox["kind"]) if mailbox else None
@@ -133,11 +146,18 @@ class MailSender:
             await ctx.conn.execute(HOLD_SQL, message_id, "mailbox_disconnected")
             return "held_reconnect"
         vault = Vault(self.runtime.keys, ctx)
-        to_enc = await ctx.conn.fetchval(TRAVELER_SQL, row["traveler_id"])
-        if to_enc is None:
-            await ctx.conn.execute(FAIL_SQL, message_id, "no_client_address")
-            return "send_failed"
-        to_address = await vault.decrypt("traveler", "email_enc", row["traveler_id"], to_enc)
+        if row.get("agency_supplier_id") is not None:  # AA-1069: a supplier request thread
+            to_enc = await ctx.conn.fetchval(SUPPLIER_SQL, row["agency_supplier_id"])
+            if to_enc is None:
+                await ctx.conn.execute(FAIL_SQL, message_id, "no_supplier_address")
+                return "send_failed"
+            to_address = await vault.decrypt("agency_supplier", "contact_email_enc", row["agency_supplier_id"], to_enc)
+        else:
+            to_enc = await ctx.conn.fetchval(TRAVELER_SQL, row["traveler_id"])
+            if to_enc is None:
+                await ctx.conn.execute(FAIL_SQL, message_id, "no_client_address")
+                return "send_failed"
+            to_address = await vault.decrypt("traveler", "email_enc", row["traveler_id"], to_enc)
         recipients = deliverable([to_address])
         if not recipients:
             # AA-1014: a .invalid address never resolves (RFC 6761); the provider is never called, nothing bounces.
