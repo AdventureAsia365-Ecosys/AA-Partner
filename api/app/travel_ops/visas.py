@@ -482,9 +482,10 @@ async def create(ctx: AnyContext, vault: Vault, trip_id: uuid.UUID, body: dict[s
             raise NotFound("visa_template_not_found")
         if template["country"] != country:
             raise Invalid("template_other_country", "the template is for another country")
-    visa_type = _visa_type(body.get("visa_type") or (template["visa_type"] if template else None))
     if template is None:
-        template = await ctx.conn.fetchrow(TEMPLATE_FOR_SQL, country, visa_type)
+        # The agency's active template for the country (and the type, when one is given).
+        template = await ctx.conn.fetchrow(TEMPLATE_FOR_SQL, country, body.get("visa_type") or None)
+    visa_type = _visa_type(body.get("visa_type") or (template["visa_type"] if template else None))
     deadline = body.get("deadline")
     if deadline is None:
         deadline = default_deadline(trip["start_date"], template["processing_days"] if template else None)
