@@ -64,6 +64,8 @@ export interface ReleaseTraveller {
   arrival: Flight | null;
   departure: Flight | null;
   insurance: string | null;
+  /** AA-1070 (document v2): the rooming list's room (number and codes); absent on a v1 document. */
+  room?: { room_no: number; room_type: string; bed_pref: string | null } | null;
 }
 
 export interface ReleaseDocument {
@@ -117,7 +119,7 @@ export interface Manifest {
 }
 
 /** The manifest columns a supplier may receive (API MANIFEST_FIELDS, same order) and the API's default pick. */
-export const MANIFEST_FIELDS = ["name", "age_band", "dietary", "mobility", "arrival_flight", "departure_flight"] as const;
+export const MANIFEST_FIELDS = ["name", "age_band", "dietary", "mobility", "arrival_flight", "departure_flight", "room"] as const;
 export type ManifestField = (typeof MANIFEST_FIELDS)[number];
 export const MANIFEST_DEFAULT: readonly ManifestField[] = ["name", "age_band", "dietary", "mobility"];
 

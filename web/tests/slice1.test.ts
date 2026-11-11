@@ -94,8 +94,8 @@ describe("board helpers", () => {
   it("filters are links and are parsed strictly", () => {
     expect(boardHref({})).toBe("/pipeline");
     expect(boardHref({ waiting_on: "client", owner: "me" })).toBe("/pipeline?waiting_on=client&owner=me");
-    expect(parseFilter({ waiting_on: "client", owner: "me" })).toEqual({ waiting_on: "client", owner: "me" });
-    expect(parseFilter({ waiting_on: "nobody", owner: ["me"] })).toEqual({ waiting_on: null, owner: "anyone" });
+    expect(parseFilter({ waiting_on: "client", owner: "me" })).toEqual({ waiting_on: "client", owner: "me", issue: null });
+    expect(parseFilter({ waiting_on: "nobody", owner: ["me"] })).toEqual({ waiting_on: null, owner: "anyone", issue: null });
   });
 });
 

@@ -21,6 +21,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
   const query = new URLSearchParams();
   if (filter.waiting_on) query.set("waiting_on", filter.waiting_on);
   if (filter.owner === "me") query.set("owner", "me");
+  if (filter.issue) query.set("issue", filter.issue);
   const res = session ? await crmCall<Board>(ctx.cfg, session, "GET", "pipeline", { query }) : null;
   const { lang } = ctx;
   return (
@@ -28,7 +29,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
       <PageTitle title={t(lang, "pipeline.title")} subtitle={t(lang, "pipeline.subtitle")} />
       {!res || !res.ok ? (
         <ErrorState message={t(lang, "pipeline.error")} />
-      ) : res.data.total === 0 && !filter.waiting_on && filter.owner === "anyone" ? (
+      ) : res.data.total === 0 && !filter.waiting_on && filter.owner === "anyone" && !filter.issue ? (
         <EmptyState
           title={t(lang, "section.pipeline.title")}
           description={t(lang, "section.pipeline.body")}

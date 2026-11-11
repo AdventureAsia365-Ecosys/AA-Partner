@@ -1,7 +1,8 @@
 "use client";
 // web/components/staff/ReleaseTravellers.tsx — S-02, the travellers of one release (AA-1019): the minimal fields the
 // agency shares with AA ground operations (name, age band on the departure date, dietary / mobility codes, flights with
-// their IANA zone, the insurance choice). Never contact data, passport, birth date or notes: the API never sends them.
+// their IANA zone, the insurance choice; AA-1070: the room). Never contact data, passport, birth date or notes: the API
+// never sends them.
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo } from "react";
 import { DataTable } from "@/app/_kit";
@@ -22,6 +23,8 @@ export function ReleaseTravellers({ travellers, lang }: { travellers: ReleaseTra
       { id: "arrival", header: tr("staff.release.col.arrival"), enableSorting: false, accessorFn: (p) => flightText(p.arrival) || "—" },
       { id: "departure", header: tr("staff.release.col.departure"), enableSorting: false, accessorFn: (p) => flightText(p.departure) || "—" },
       { id: "insurance", header: tr("staff.release.col.insurance"), enableSorting: false, accessorFn: (p) => (p.insurance ?? "—").replace(/_/g, " ") },
+      // AA-1070: the room of the rooming list (number, type, bed preference codes).
+      { id: "room", header: tr("staff.release.col.room"), enableSorting: false, accessorFn: (p) => (p.room ? [p.room.room_no, p.room.room_type, p.room.bed_pref].filter(Boolean).join(" ").replace(/_/g, " ") : "—") },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps -- labels follow lang only
     [lang],
