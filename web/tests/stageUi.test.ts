@@ -194,6 +194,15 @@ describe("planning form (C-02) branches", () => {
     expect(root.getAttribute("data-pages")).toBe("travel_style interests planning health_consent health");
   });
 
+  it("the interest chips carry their test ids (E2E clicks them; a kit chip takes testId, not data-testid)", async () => {
+    const c = await mount(form("relaxed"));
+    await click(c.querySelector("[data-testid=plan-next] button"));
+    const chip = c.querySelector<HTMLButtonElement>("[data-testid=plan-interests-culture]");
+    expect(chip).not.toBeNull();
+    await click(chip);
+    expect(c.querySelector("[data-testid=plan-interests-culture]")!.getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("shows the adventure questions for an adventure trip", async () => {
     const c = await mount(form("adventure"));
     expect(c.querySelector("[data-testid=plan-trek_experience]")).not.toBeNull();
@@ -251,6 +260,13 @@ describe("inquiry form (C-01)", () => {
     expect(body.call_slot).toBe("2026-11-02T02:00:00Z");
     expect(document.activeElement?.getAttribute("name")).toBe("nights");
     expect(c.querySelector("[data-testid=intake-error]")!.textContent).toBe("Please check this answer.");
+  });
+
+  it("the destination chips carry their test ids (E2E clicks them; a kit chip takes testId, not data-testid)", async () => {
+    const c = await mount(createElement(InquiryForm, { publicKey: "AbCdEfGhIjKlMnOpQrStUv", form: FORM, lang: "en", dict: DICT }));
+    const chip = c.querySelector<HTMLButtonElement>("[data-testid=intake-dest-vietnam]");
+    expect(chip).not.toBeNull();
+    expect(chip!.getAttribute("aria-pressed")).toBe("false");
   });
 
   it("uses the default consent wording and shows no data-request line when the agency set none", async () => {

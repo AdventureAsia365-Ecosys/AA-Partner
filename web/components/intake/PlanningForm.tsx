@@ -245,7 +245,7 @@ function FieldInput({
                 key={o}
                 type="button"
                 selected={on}
-                data-testid={`${id}-${o}`}
+                testId={`${id}-${o}`}
                 onClick={() => set(field.name, toggleCode(chosen, o, field.max_items))}
               >
                 {code(prefix, o)}
