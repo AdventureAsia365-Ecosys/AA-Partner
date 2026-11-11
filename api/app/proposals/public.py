@@ -43,7 +43,7 @@ import datetime as dt
 import hashlib
 import uuid
 from decimal import Decimal
-from typing import Any, NoReturn
+from typing import Any
 
 import asyncpg
 
@@ -55,7 +55,7 @@ from app.errors import Conflict, Invalid, NotFound
 from app.esign import merge, signing
 from app.esign import terms as esign_terms
 from app.intake import stage1
-from app.payments import claims, schedule_plan
+from app.payments import claims, gateway, schedule_plan
 from app.portal.public import check_origin
 from app.proposals import builder, client_page, events, holds, prep_packs
 from app.settings import Settings
@@ -68,6 +68,11 @@ VIEW_EVENT_EVERY_S = 3600
 OUTAGE_EVENT_EVERY_S = 3600
 CHANGE_REASONS = ("rooms", "dates", "activities", "lodging", "budget", "other")
 
+WEB_BOOKING_SQL = "SELECT lead_source = 'web_booking' FROM crm.trip WHERE trip_id = $1"
+DEPOSIT_ROW_SQL = """
+SELECT schedule_id FROM crm.payment_schedule
+ WHERE proposal_id = $1 AND kind = 'deposit' AND status = 'due' AND deleted_at IS NULL
+"""
 PROPOSAL_SQL = """
 SELECT p.proposal_id, p.trip_id, p.version, p.status, p.kind, p.body_enc, p.currency, p.total_amount,
        p.deposit_amount, p.balance_due_on, p.terms_doc_id, p.price_hash, p.accepted_at, p.price_visibility,
@@ -642,6 +647,8 @@ async def accept(
                                        total - deposit, row["currency"], max(row["balance_due_on"], today), 1,
                                        None)  # fmt: skip
         await ctx.conn.execute(TASK_SQL, row["trip_id"], row["owner_member_id"], due_anchor, due_at)
+        if await ctx.conn.fetchval(WEB_BOOKING_SQL, row["trip_id"]):
+            await _deposit_invoice(ctx, row)  # AA-1072: a client who booked online pays the deposit right away
         await ctx.conn.execute(SUBMITTED_SQL, link.link_id)
         await stages.touch(ctx, row["trip_id"])
         if row["kind"] == "builder":
@@ -654,6 +661,18 @@ async def accept(
         ctx.audit("proposal_accept", "allowed", "proposal", str(row["proposal_id"]))
         reaccept = await esign_terms.reaccept_needed(ctx, row["trip_id"])
         return {"status": "accepted", "accepted_at": _iso(accepted_at), "terms_reaccept_required": reaccept is not None}
+
+
+async def _deposit_invoice(ctx: AnyContext, row: Any) -> None:
+    """AA-1072: the deposit invoice of a "Book now" trip is issued at the accept (actor the client link), so the pay
+    box offers the bank details or "Pay online" at once; other trips keep the agent-issued invoice."""
+    from app.invoices import service as invoices  # local: the invoices module imports the proposals service
+
+    schedule_id = await ctx.conn.fetchval(DEPOSIT_ROW_SQL, row["proposal_id"])
+    if schedule_id is None:
+        return
+    draft = await invoices.create_from_schedule(ctx, row["trip_id"], schedule_id)  # type: ignore[arg-type]
+    await invoices.issue(ctx, uuid.UUID(draft["invoice_id"]))  # type: ignore[arg-type]
 
 
 async def reaccept_terms(
@@ -779,13 +798,26 @@ async def claim_payment(
 
 
 async def card_payment(
-    pool: asyncpg.Pool, settings: Settings, token: str, invoice_raw: Any, *, origin: str | None
-) -> NoReturn:
-    """The card pay button (C31): never a payment session past the AA hold's expiry (410 ``pay_link_expired``);
-    409 ``card_not_offered`` / ``provider_not_available`` until the agency's own card provider has code."""
+    pool: asyncpg.Pool,
+    keys: KeyProvider,
+    settings: Settings,
+    token: str,
+    invoice_raw: Any,
+    *,
+    origin: str | None,
+    client_ip: str = "",
+    locale: str = "en",
+) -> dict[str, Any]:
+    """The pay-online button (C31, AA-1072): never a payment session past the AA hold's expiry (410
+    ``pay_link_expired``); 409 ``card_not_offered`` without an online account of the agency's own,
+    ``provider_not_available`` for a provider without code (Stripe, paused), ``currency_not_supported`` for an invoice
+    the gateway cannot charge. Otherwise one hosted payment of the invoice's open amount: ``{redirect_url,
+    expires_at}`` (the gateway's own page takes the card)."""
     check_origin(settings, origin)
     invoice_id = _invoice_id(invoice_raw)
     async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
         row = await _row(ctx, link)
         _require_accepted(row)
-        await claims.card_payment(ctx, row["proposal_id"], invoice_id, _now())
+        invoice, account = await claims.card_window(ctx, row["proposal_id"], invoice_id, _now())
+        return await gateway.start_session(ctx, Vault(keys, ctx), settings, invoice, account,  # type: ignore[arg-type]
+                                           client_ip=client_ip, locale=locale, now=_now())  # fmt: skip

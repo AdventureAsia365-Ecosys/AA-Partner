@@ -14,6 +14,10 @@ Route                                           What                            
 ``PUT  /settings/payment-methods/manual``       the manual method's name and pay-by instructions owner
 ``POST /settings/payment-methods``              connect a provider account (none has code yet)   owner
 ``POST /settings/payment-methods/{id}/disconnect``  stop using a method                          owner
+``GET  /settings/payment-methods/vn-gateway``   AA-1072: the gateway's mode and IPN URL          owner
+``PUT  /settings/payment-methods/vn-gateway``   AA-1072: connect the agency's own VNPay account  owner
+``GET  /settings/online-booking``               AA-1072: "Book now" switch + the form keys       owner
+``PUT  /settings/online-booking``               AA-1072: turn "Book now" on or off               owner
 ==============================================  ===============================================  =====================
 
 Amounts are the client's sell amounts; nothing here is margin-bearing. No route moves money: the agency's own account
@@ -33,7 +37,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
 from app.db import request_pool
-from app.payments import service
+from app.intake import booking_settings
+from app.payments import gateway, service
 from app.permissions import Action, require
 from app.routers.agency import tenant_header
 from app.tenancy import tenant_tx
@@ -178,3 +183,52 @@ async def post_payment_method_disconnect(
     async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
         require(ctx, Action.PAYMENT_SETTINGS, object_kind="payment_provider_account")
         return await service.disconnect(ctx, account_id)
+
+
+# ── AA-1072: the agency's own VN gateway and "Book now" ─────────────────────────────────────────
+
+
+class VnGatewayIn(_Body):
+    tmn_code: str = Field(min_length=3, max_length=32)
+    hash_secret: str = Field(min_length=16, max_length=128)
+    mode: Literal["sandbox", "live", "stub"]
+    display_name: str | None = Field(default=None, max_length=80)
+
+
+class OnlineBookingIn(_Body):
+    enabled: bool
+
+
+@router.get("/settings/payment-methods/vn-gateway")
+async def get_vn_gateway(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
+        return await gateway.status(ctx, Vault(require_keys(request.app.state.keys), ctx), request.app.state.settings)
+
+
+@router.put("/settings/payment-methods/vn-gateway")
+async def put_vn_gateway(
+    request: Request, body: VnGatewayIn, caller: CallerDep, tenant_id: TenantDep
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
+        require(ctx, Action.PAYMENT_SETTINGS, object_kind="payment_provider_account")
+        vault = Vault(require_keys(request.app.state.keys), ctx)
+        return await gateway.connect(ctx, vault, request.app.state.settings, body.model_dump())
+
+
+@router.get("/settings/online-booking")
+async def get_online_booking(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
+        return await booking_settings.read(ctx, request.app.state.settings)
+
+
+@router.put("/settings/online-booking")
+async def put_online_booking(
+    request: Request, body: OnlineBookingIn, caller: CallerDep, tenant_id: TenantDep
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
+        require(ctx, Action.PAYMENT_SETTINGS, object_kind="tenant_settings")
+        return await booking_settings.update(ctx, request.app.state.settings, body.enabled)

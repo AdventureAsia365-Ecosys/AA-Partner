@@ -8,7 +8,7 @@ the agency's own payment methods, as crm_app through ``tenant_tx()``.
   invoice's approved refunds plus the one asked (above it: 403, the owner approves), never a request of their own;
   executed once approved; the refund entry joins crm.payment; a fully refunded payment's commitment
   reads refunded and the trip still cannot be deleted (has_money).
-- Payment methods: the manual instructions print on the invoice; another provider is 409 provider_not_available.
+- Payment methods: the manual instructions print on the invoice; Stripe is 409 provider_not_available.
 - Review S260: a partly paid invoice refunded in full can be voided and its row invoiced again; the balance row is not
   voided under an issued invoice (a draft one is voided with it); a split refund still reaches the owner.
 """
@@ -139,8 +139,9 @@ async def test_payment_methods_and_the_printed_instructions(app_pool: asyncpg.Po
     out = await _as(app_pool, s, "owner", lambda ctx: payments.save_manual(
         ctx, display_name="Bank transfer", instructions="Account 0000 2222"))  # fmt: skip
     assert [a["provider"] for a in out["accounts"]] == ["manual"]
+    # AA-1072: the agency's own VN gateway has code; Stripe stays paused (root ADR 0019 b14).
     assert {p["provider"]: p["available"] for p in out["providers"]} == {"manual": True, "stripe": False,
-                                                                         "vn_gateway": False}  # fmt: skip
+                                                                         "vn_gateway": True}  # fmt: skip
     again = await _as(app_pool, s, "owner", lambda ctx: payments.save_manual(
         ctx, display_name="Bank transfer (VCB)", instructions="Account 0000 3333"))  # fmt: skip
     assert len(again["accounts"]) == 1 and again["accounts"][0]["instructions"] == "Account 0000 3333"

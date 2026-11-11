@@ -41,6 +41,27 @@ is decided by the form key inside :func:`app.tenancy.intake_tx`.
   misses check and takes its own slot key of the pool (:data:`app.tenant_gate.HOOK_KEY`), so neither a random-id
   flood (:data:`app.tenant_gate.HOOK_UNKNOWN_KEY`) nor anonymous browsing queues ahead of it.
 
+- ``GET  /crm/public/v1/book/{public_key}?tour=&page=`` (AA-1072): the "Book now" widget of the public tour page for
+  the agency whose intake form key the page link carries (:func:`app.intake.booking.widget`): the tour, its open
+  fixed departures, the agency's name, currency and age bands. 404 ``form_not_found`` / ``booking_not_offered`` /
+  ``tour_not_bookable``; 503 ``booking_unavailable``. Public rate limit.
+- ``POST /crm/public/v1/book/{public_key}/price``: the live retail price of a departure for a party (a quote, no hold,
+  nothing stored); the per-address intake limit (each call asks Booking).
+- ``POST /crm/public/v1/book/{public_key}/bookings``: one booking (:func:`app.intake.booking.submit`): 201
+  ``{status: created, link_path}`` (the client page to hold, accept and pay; the link also goes by e-mail), 200
+  ``{status: already_created}`` for a repeated press, 202 ``{status: received}`` for a honeypot hit; 409 with the
+  refusal code (``aa_sold_out``, ``no_retail_price``, ``departure_not_available``, ...), 429 per address (the intake
+  limit, then 5 attempts an hour per agency on the attempt rows), 403 ``origin_not_allowed``, 32 KiB cap.
+
+- ``GET  /crm/public/v1/hooks/vnpay/ipn`` (AA-1072): the IPN of an agency's own VNPay account
+  (:func:`app.payments.gateway.handle_ipn`): always 200 with VNPay's ``{RspCode, Message}`` (``00`` confirmed,
+  ``01`` unknown order, ``02`` already confirmed, ``04`` wrong amount, ``97`` bad signature, ``99`` malformed). The
+  signature is checked with the agency's own secret before anything is written. An address whose unknown references pass
+  ``HOOK_MISSES_PER_MINUTE`` is answered 429 before any work (a known gateway retries).
+- ``GET  /crm/public/v1/pay/stub`` and ``POST /crm/public/v1/pay/stub/{ref}`` (dev / test / local, accounts in mode
+  ``stub`` only): the simulated gateway page and its Pay / Cancel buttons (a signed IPN through the same handler,
+  then 303 to the client's return page). 404 everywhere else.
+
 Responses never carry an id, a name, or whether an e-mail is already known.
 """
 
@@ -50,15 +71,17 @@ import json
 import urllib.parse
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Header, HTTPException, Path, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi import APIRouter, Header, HTTPException, Path, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from app.calendar import public as calendar_public
 from app.db import request_pool
 from app.errors import NotFound
+from app.intake import booking as public_booking
 from app.intake import public as intake
 from app.intake import stage2_public
 from app.messaging import webhook as messaging_hooks
+from app.payments import gateway
 from app.ratelimit import PublicRateLimit, client_address
 from app.vault.provider import require_keys
 
@@ -239,3 +262,103 @@ async def post_twilio_status(
     x_twilio_signature: Annotated[str | None, Header()] = None,
 ) -> Response:
     return await _hook(request, hook_id, "status", x_twilio_signature)
+
+
+# ── AA-1072: "Book now" and the agency's own payment gateway ─────────────────────────────────────
+
+
+def _booking_deps(request: Request) -> tuple[Any, Any]:
+    return getattr(request.app.state, "aa_products", None), getattr(request.app.state, "booking_client", None)
+
+
+TourKey = Annotated[str | None, Query(min_length=1, max_length=128)]
+
+
+@router.get("/book/{public_key}")
+async def get_booking_widget(
+    request: Request, public_key: PublicKey, _: PublicRateLimit, tour: TourKey = None, page: TourKey = None
+) -> JSONResponse:
+    pool = await request_pool(request)
+    cache, client = _booking_deps(request)
+    out = await public_booking.widget(pool, cache, client, public_key, tour=tour, page_id=page)
+    return JSONResponse(out, headers=NO_STORE)
+
+
+@router.post("/book/{public_key}/price")
+async def post_booking_price(
+    request: Request, public_key: PublicKey, content_length: Annotated[int | None, Header()] = None
+) -> JSONResponse:
+    settings = request.app.state.settings
+    _limit(request, "intake_limiter", client_address(request, settings.rate_limit_xff_hops))
+    raw = await _json_body(request, content_length)
+    pool = await request_pool(request)
+    cache, client = _booking_deps(request)
+    return JSONResponse(await public_booking.price(pool, cache, client, public_key, raw), headers=NO_STORE)
+
+
+@router.post("/book/{public_key}/bookings")
+async def post_booking(
+    request: Request,
+    public_key: PublicKey,
+    origin: Annotated[str | None, Header()] = None,
+    content_length: Annotated[int | None, Header()] = None,
+) -> JSONResponse:
+    settings = request.app.state.settings
+    address = client_address(request, settings.rate_limit_xff_hops)
+    _limit(request, "intake_limiter", address)
+    raw = await _json_body(request, content_length)
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    cache, client = _booking_deps(request)
+    out = await public_booking.submit(pool, keys, settings, cache, client, public_key, raw, origin=origin,
+                                      client_ip=address)  # fmt: skip
+    code = {"created": 201, "received": 202}.get(out["status"], 200)
+    return JSONResponse(out, status_code=code, headers={**NO_STORE, "Referrer-Policy": "no-referrer"})
+
+
+def _vnp_fields(request: Request) -> dict[str, str]:
+    """The ``vnp_*`` query fields (at most 40, each value at most 512 characters; others ignored)."""
+    out: dict[str, str] = {}
+    for key, value in request.query_params.multi_items()[:40]:
+        if key.startswith("vnp_") and len(key) <= 40 and len(value) <= 512:
+            out[key] = value
+    return out
+
+
+@router.get("/hooks/vnpay/ipn")
+async def get_vnpay_ipn(request: Request) -> JSONResponse:
+    misses = request.app.state.hook_miss_limiter
+    address = client_address(request, request.app.state.settings.rate_limit_xff_hops)
+    if misses.exhausted(address):
+        raise HTTPException(status_code=429, detail="rate_limited", headers={"Retry-After": str(int(misses.window_s))})
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    answer = await gateway.handle_ipn(pool, keys, _vnp_fields(request))
+    if answer["RspCode"] == "01":
+        misses.allow(address)  # only unknown references count against the address
+    return JSONResponse(answer, headers=NO_STORE)
+
+
+@router.get("/pay/stub")
+async def get_pay_stub(request: Request, _: PublicRateLimit) -> HTMLResponse:
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    page = await gateway.stub_page(pool, keys, request.app.state.settings, _vnp_fields(request))
+    return HTMLResponse(page, headers={**NO_STORE, "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer"})
+
+
+StubRef = Annotated[str, Path(min_length=16, max_length=40, pattern=r"^[A-Za-z0-9]+$")]
+
+
+@router.post("/pay/stub/{ref}")
+async def post_pay_stub(request: Request, ref: StubRef, _: PublicRateLimit) -> RedirectResponse:
+    try:
+        body = await read_capped(request, 1024)
+    except BodyTooLarge:
+        raise HTTPException(status_code=413, detail="body_too_large") from None
+    fields = dict(urllib.parse.parse_qsl(body.decode("utf-8", "replace"), max_num_fields=4))
+    outcome = "paid" if fields.get("outcome") == "paid" else "cancel"
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    target = await gateway.stub_pay(pool, keys, request.app.state.settings, ref, outcome)
+    return RedirectResponse(target, status_code=303, headers=NO_STORE)

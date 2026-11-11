@@ -7,6 +7,12 @@
 // did), a retired or unknown tour the not-found page, a CIS fault a 500 (never a false "gone").
 //
 // Indexable (the CIS page was): the root layout's noindex is overridden here, and public/robots.txt allows /trip/.
+//
+// AA-1072 (item crm-02): a link that carries an agency's inquiry form key (`?f=<key>`, optionally `&p=<AA tour key>`)
+// shows that agency's "Book now" widget (components/booking/BookNowWidget.tsx) instead of the AA contact button: the
+// departures, the agency's live price, and a booking that opens the client's proposal page to accept and pay. An
+// agency without Book now (its owner's switch, off by default) or a tour it cannot sell online shows "Ask <agency>"
+// (its inquiry form). Words in English unless the visitor chose Vietnamese (cookie).
 import type { Metadata } from "next";
 import { notFound, permanentRedirect } from "next/navigation";
 import { cache } from "react";
@@ -15,6 +21,17 @@ import { SUPPORT_EMAIL } from "@/app/_kit/core/brand";
 import { config } from "@/lib/config";
 import { itineraryParagraphs, loadTrip, TOUR_ID, type TripLookup } from "@/lib/tripPage";
 import { TripHeader, tripLabel as label } from "./TripHeader";
+import { BookNowWidget } from "@/components/booking/BookNowWidget";
+import { bookingLink } from "@/lib/bookNow";
+import { dictionary } from "@/lib/i18n";
+import { serverContext } from "@/lib/serverContext";
+
+type Search = Promise<{ f?: string | string[]; p?: string | string[] }>;
+
+/** Only the widget's strings go to the browser (not the agency app's dictionary). */
+function bookMessages(lang: "en" | "vi"): Record<string, string> {
+  return Object.fromEntries(Object.entries(dictionary(lang)).filter(([k]) => k.startsWith("book.")));
+}
 
 // One CIS read per request for the metadata and the page.
 const lookup = cache((tourId: string): Promise<TripLookup> => loadTrip(config().cisApiUrl, tourId));
@@ -38,14 +55,16 @@ export async function generateMetadata({ params }: { params: Promise<{ tourId: s
   };
 }
 
-export default async function TripPage({ params }: { params: Promise<{ tourId: string }> }) {
+export default async function TripPage({ params, searchParams }: { params: Promise<{ tourId: string }>; searchParams?: Search }) {
   const { tourId } = await params;
+  const booking = bookingLink((await searchParams) ?? {});
   redirectToLowerCase(tourId);
   const found = await lookup(tourId);
   if (found.kind === "moved") permanentRedirect(`/trip/${found.tourId}`);
   if (found.kind === "not_found") notFound();
   if (found.kind === "error") throw new Error("trip_page_unavailable");
   const { trip } = found;
+  const ctx = booking ? await serverContext() : null;
 
   return (
     <PageFrame testId="trip-page" style={{ background: K.bg, minHeight: "100vh", color: K.ink, padding: 0, overflowY: "visible" }}>
@@ -119,28 +138,41 @@ export default async function TripPage({ params }: { params: Promise<{ tourId: s
         {/* AA-1033: the summary, highlights and itinerary above are written with the help of AI (CIS pipeline). */}
         <AiNotice variant="traveller" lang="en" testId="trip-ai-notice" style={{ margin: "0 0 28px", fontSize: 13 }} />
 
-        {/* No price shown — ADR-2026-030 §8.4: never display a price without a real source. */}
-        <div style={{ textAlign: "center", padding: "36px 0 0", borderTop: `1px solid ${K.line}` }}>
-          <a
-            href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(
-              `Design This Journey — ${trip.name ?? trip.tour_id}`,
-            )}`}
-            style={{
-              display: "inline-block",
-              background: K.accent,
-              color: K.onAccent,
-              fontFamily: sans,
-              fontWeight: 700,
-              fontSize: 14,
-              letterSpacing: "0.02em",
-              padding: "14px 32px",
-              borderRadius: 999,
-              textDecoration: "none",
-            }}
-          >
-            Design This Journey
-          </a>
-        </div>
+        {booking && ctx ? (
+          <div style={{ padding: "28px 0 0", borderTop: `1px solid ${K.line}` }} lang={ctx.lang}>
+            {/* AA-1072: the agency's live price comes from AA's quote with the agency's own retail (a real source). */}
+            <BookNowWidget
+              formKey={booking.formKey}
+              tour={booking.tour ?? trip.source_id}
+              pageId={trip.tour_id}
+              locale={ctx.locale}
+              dict={bookMessages(ctx.lang)}
+            />
+          </div>
+        ) : (
+          // No price shown — ADR-2026-030 §8.4: never display a price without a real source.
+          <div style={{ textAlign: "center", padding: "36px 0 0", borderTop: `1px solid ${K.line}` }}>
+            <a
+              href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(
+                `Design This Journey — ${trip.name ?? trip.tour_id}`,
+              )}`}
+              style={{
+                display: "inline-block",
+                background: K.accent,
+                color: K.onAccent,
+                fontFamily: sans,
+                fontWeight: 700,
+                fontSize: 14,
+                letterSpacing: "0.02em",
+                padding: "14px 32px",
+                borderRadius: 999,
+                textDecoration: "none",
+              }}
+            >
+              Design This Journey
+            </a>
+          </div>
+        )}
       </section>
       </div>
     </PageFrame>

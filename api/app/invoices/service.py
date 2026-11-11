@@ -796,6 +796,12 @@ async def update_draft(ctx: TenantContext, invoice_id: uuid.UUID, changes: dict[
 # ── issue and void ────────────────────────────────────────────────────────────────────────────────
 
 
+def _actor(ctx: AnyContext) -> str:
+    """The issuer: the member, or (AA-1072) the context's own actor (the client link that accepted a web booking)."""
+    actor = getattr(ctx, "actor", None)
+    return actor if isinstance(actor, str) else f"member:{ctx.member_id}"
+
+
 async def issue(ctx: TenantContext, invoice_id: uuid.UUID) -> dict[str, Any]:
     row = await _row(ctx, invoice_id, lock=True)
     if row["status"] != "draft":
@@ -814,7 +820,7 @@ async def issue(ctx: TenantContext, invoice_id: uuid.UUID) -> dict[str, Any]:
     seq = int(await ctx.conn.fetchval(NEXT_NUMBER_SQL))
     number = number_text(conf["invoice_prefix"], seq)
     try:
-        await ctx.conn.fetchval(ISSUE_SQL, invoice_id, seq, number, today, due_on, f"member:{ctx.member_id}")
+        await ctx.conn.fetchval(ISSUE_SQL, invoice_id, seq, number, today, due_on, _actor(ctx))
     except asyncpg.PostgresError as exc:
         raise _translate(exc) from None
     await ctx.conn.execute(COMMITMENT_SQL, row["trip_id"], "open", source_ref(invoice_id))

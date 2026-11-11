@@ -8,7 +8,7 @@ instructions: the agency is the merchant, errata S247 BYO).
 - **Pay window** (:func:`pay_window`, derived, never stored): a deposit invoice of an accepted day-by-day version that
   holds AA items can be paid while that hold lives (``crm.proposal.hold_expires_at``, moved by the extension below and
   by the re-hold). Past it the window is ``expired``: the page shows no bank details and no "I have paid", and a card
-  payment never starts (:func:`card_payment`: 410 ``pay_link_expired`` before any provider is asked). Other invoices
+  payment never starts (:func:`card_window`: 410 ``pay_link_expired`` before any provider is asked). Other invoices
   have no window (``open`` until paid or void). The invoice status ``expired`` is not written: the money that still
   arrives after the window must reach ``paid`` / ``paid_unfulfillable``, which crm-024 allows from ``open`` /
   ``payment_claimed`` only.
@@ -37,7 +37,7 @@ import datetime as dt
 import uuid
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, NoReturn
+from typing import Any
 
 from app.booking import contract
 from app.booking.client import BookingClient, BookingRefusal, BookingUnavailable
@@ -224,7 +224,9 @@ async def window_facts(ctx: AnyContext, invoice_id: uuid.UUID) -> Any:
     return await ctx.conn.fetchrow(FACTS_SQL, invoice_id)
 
 
-def _client_invoice(row: Any, now: dt.datetime, pay_by: Any, *, terms_first: bool = False) -> dict[str, Any]:
+def _client_invoice(
+    row: Any, now: dt.datetime, pay_by: Any, *, terms_first: bool = False, online: str | None = None
+) -> dict[str, Any]:
     window = pay_window(row, now, terms_first=terms_first)
     balance = max(Decimal(row["total_amount"]) - Decimal(row["paid_amount"]), Decimal(0))
     payable = window["state"] == "open"
@@ -244,6 +246,8 @@ def _client_invoice(row: Any, now: dt.datetime, pay_by: Any, *, terms_first: boo
         if not payable or pay_by is None
         else {"name": pay_by["display_name"], "instructions": pay_by["instructions"]},
         "can_claim": payable,
+        # AA-1072: "Pay online" through the agency's own gateway (its currency only), while the window is open.
+        "pay_online": payable and online is not None and str(row["currency"]).strip() == online and balance > 0,
     }
 
 
@@ -257,7 +261,18 @@ async def client_invoices(ctx: AnyContext, proposal_id: uuid.UUID, now: dt.datet
     # One version, one trip: the terms rule is read once (deposit invoices only).
     deposit = next((r for r in rows if r["kind"] == "deposit"), None)
     pending = deposit is not None and await terms_pending(ctx, deposit) is not None
-    return [_client_invoice(r, now, pay_by, terms_first=pending and r["kind"] == "deposit") for r in rows]
+    online = await online_currency(ctx)
+    return [
+        _client_invoice(r, now, pay_by, terms_first=pending and r["kind"] == "deposit", online=online) for r in rows
+    ]
+
+
+async def online_currency(ctx: AnyContext) -> str | None:
+    """The currency the agency's own online gateway takes, or None (no active account, or a provider without code)."""
+    account = await ctx.conn.fetchrow(CARD_ACCOUNT_SQL)
+    if account is None or account["provider"] not in providers.PROVIDERS:
+        return None
+    return providers.PROVIDERS[account["provider"]].currency
 
 
 async def _client_row(ctx: AnyContext, proposal_id: uuid.UUID, invoice_id: uuid.UUID) -> Any:
@@ -383,11 +398,13 @@ async def close_verify(ctx: AnyContext, trip_id: uuid.UUID, invoice_id: uuid.UUI
         await ctx.conn.execute(CLOSE_TASK_SQL, trip_id, VERIFY_TASK, "done", actor)
 
 
-async def card_payment(ctx: AnyContext, proposal_id: uuid.UUID, invoice_id: uuid.UUID, now: dt.datetime) -> NoReturn:
+async def card_window(
+    ctx: AnyContext, proposal_id: uuid.UUID, invoice_id: uuid.UUID, now: dt.datetime
+) -> tuple[Any, Any]:
     """The card pay button (C31): the window is checked **before** any provider is asked, so a link past the hold's
-    expiry never creates a payment session (410 ``pay_link_expired``). With a live window, the agency's own card
-    account would start the session; no card provider has code yet (BYO Stripe is the follow-up card), so 409
-    ``provider_not_available``."""
+    expiry never creates a payment session (410 ``pay_link_expired``). With a live window: the locked invoice row and
+    the agency's own active online account (409 ``card_not_offered`` without one). AA-1072: the caller starts the
+    session with that account (:func:`app.payments.gateway.start_session`)."""
     row = await _client_row(ctx, proposal_id, invoice_id)
     window = pay_window(row, now)
     if window["state"] == "expired":
@@ -399,6 +416,5 @@ async def card_payment(ctx: AnyContext, proposal_id: uuid.UUID, invoice_id: uuid
     account = await ctx.conn.fetchrow(CARD_ACCOUNT_SQL)
     if account is None:
         raise Conflict("card_not_offered", "this agency takes payment by transfer: use the details shown")
-    # 409 provider_not_available while no card provider has code; the session itself is the BYO Stripe card's.
-    providers.provider(account["provider"])
-    raise Conflict("provider_not_available", "card payments are not available yet")
+    providers.provider(account["provider"])  # 409 provider_not_available for a provider without code (Stripe)
+    return row, account

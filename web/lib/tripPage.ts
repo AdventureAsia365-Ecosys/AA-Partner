@@ -30,6 +30,8 @@ export interface TripPageData {
   highlights: string[];
   seo_title: string | null;
   seo_meta: string | null;
+  /** AA-1072: the AA catalogue key of the tour, when CIS sends it (the "Book now" widget's tour); null otherwise. */
+  source_id: string | null;
 }
 
 export type TripLookup =
@@ -60,6 +62,7 @@ export function parseTrip(body: unknown, tourId: string): TripPageData | null {
     highlights: Array.isArray(b.highlights) ? b.highlights.filter((h): h is string => typeof h === "string") : [],
     seo_title: text(b.seo_title),
     seo_meta: text(b.seo_meta),
+    source_id: text(b.source_id),
   };
 }
 
