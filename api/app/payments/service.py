@@ -41,7 +41,7 @@ from app.proposals import service as proposals
 from app.tenancy import AnyContext, TenantContext
 from app.vault import Vault
 
-METHODS = ("bank_transfer", "cash", "card_offline", "other")
+METHODS = ("bank_transfer", "cash", "card_offline", "other")  # a member records these; "online" = a gateway webhook
 PAYABLE = ("open", "payment_claimed")
 REFUND_STATUSES = ("proposed", "approved", "rejected", "executed")
 MAX_REFERENCE = 120
@@ -214,6 +214,14 @@ async def record_payment(
     ref = _note(reference, "reference", MAX_REFERENCE, required=False)
     if ref is not None and "\n" in ref:
         raise Invalid("invalid_reference", "one line")
+    row, schedule = await _payable(ctx, invoice_id, value)
+    day = await _day(ctx, received_on)
+    return await _book(ctx, vault, row, schedule, value=value, method=method, day=day, provider_name="manual",
+                       reference=ref, actor=f"member:{ctx.member_id}")  # fmt: skip
+
+
+async def _payable(ctx: AnyContext, invoice_id: uuid.UUID, value: Decimal) -> tuple[Any, Any]:
+    """The invoice under its row lock and its schedule row, once every rule for taking ``value`` on it holds."""
     row = await ctx.conn.fetchrow(INVOICE_LOCK_SQL, invoice_id)
     if row is None:
         raise NotFound("invoice_not_found")
@@ -227,22 +235,41 @@ async def record_payment(
         if schedule is None or schedule["status"] != "due":
             raise Conflict("schedule_not_due", "the schedule row this invoice bills is paid or void: void the invoice")
         await proposals.require_terms_current(ctx, schedule)  # AA-955: newer terms are accepted before the deposit
-    paid = Decimal(await ctx.conn.fetchval(PAID_SUM_SQL, invoice_id))
-    balance = _money(row["total_amount"]) - paid
+    balance = _money(row["total_amount"]) - Decimal(await ctx.conn.fetchval(PAID_SUM_SQL, invoice_id))
     if value > balance:
         raise Invalid("amount_above_balance", f"at most {balance} {row['currency']}", balance=str(balance))
-    day = await _day(ctx, received_on)
-    manual = providers.provider("manual")
+    return row, schedule
+
+
+async def _book(
+    ctx: AnyContext,
+    vault: Vault | None,
+    row: Any,
+    schedule: Any,
+    *,
+    value: Decimal,
+    method: str,
+    day: dt.date,
+    provider_name: str,
+    reference: str | None,
+    actor: str,
+) -> dict[str, Any]:
+    """One payment on a payable invoice (checked by :func:`_payable`) and what follows when it pays the invoice in full:
+    the invoice paid and its schedule row settled (Proposal -> Booked, portal, Booking confirm), or the re-hold of a
+    deposit whose AA hold ran out."""
+    invoice_id = row["invoice_id"]
+    balance = _money(row["total_amount"]) - Decimal(await ctx.conn.fetchval(PAID_SUM_SQL, invoice_id))
+    impl = providers.provider(provider_name)
     payment_id = uuid.uuid4()
     await ctx.conn.execute(INSERT_PAYMENT_SQL, payment_id, row["trip_id"], row["schedule_id"], invoice_id, value,
-                           row["currency"], method, day, manual.name, ref, "payment", None)  # fmt: skip
+                           row["currency"], method, day, impl.name, reference, "payment", None)  # fmt: skip
     await ctx.conn.execute(COMMITMENT_SQL, row["trip_id"], "payment", "succeeded", f"payment:{payment_id}")
     ctx.audit("payment_record", "allowed", "invoice", str(invoice_id), reason=method)
     out: dict[str, Any] = {"payment_id": str(payment_id), "trip_moved": None, "portal": None, "rehold_pending": False}
     if value == balance:
-        await claims.close_verify(ctx, row["trip_id"], invoice_id, f"member:{ctx.member_id}")
+        await claims.close_verify(ctx, row["trip_id"], invoice_id, actor)
         # Paid in full, or sent to the re-hold below: either way nothing is left to chase on this invoice.
-        await reminders.settled(ctx, row["trip_id"], invoice_id, f"member:{ctx.member_id}")
+        await reminders.settled(ctx, row["trip_id"], invoice_id, actor)
         facts = await claims.window_facts(ctx, invoice_id)
         if facts is not None and claims.holds_aa(facts) and not _hold_live(facts):
             # AA-952 slice 4 (card E): the money settles a deposit whose AA hold ran out (also after the one
@@ -261,6 +288,52 @@ async def record_payment(
                 out.update(await proposals.settle_schedule(ctx, vault, schedule))
     out["invoice"] = await invoices.full(ctx, invoice_id)
     return out
+
+
+async def record_gateway_payment(
+    ctx: AnyContext, vault: Vault, invoice_id: uuid.UUID, *, amount: Decimal, provider_name: str, reference: str
+) -> dict[str, Any]:
+    """AA-1072: money the client paid through the agency's own gateway (a verified webhook), recorded exactly like
+    "Record payment" (method ``online``, the gateway's transaction number as the reference). Raises the same business
+    refusals; the caller (:mod:`app.payments.gateway`) never loses the money on one: see
+    :func:`record_unsettled_payment`."""
+    row, schedule = await _payable(ctx, invoice_id, amount)
+    day = await _day(ctx, None)
+    return await _book(ctx, vault, row, schedule, value=amount, method="online", day=day, provider_name=provider_name,
+                       reference=reference, actor=ctx_actor(ctx))  # fmt: skip
+
+
+def ctx_actor(ctx: AnyContext) -> str:
+    actor = getattr(ctx, "actor", None)
+    return actor if isinstance(actor, str) else f"member:{ctx.member_id}"
+
+
+REVIEW_TASK = "payment_review"
+REVIEW_TASK_SQL = """
+INSERT INTO crm.task (trip_id, kind, priority, assignee_member_id, due_anchor, due_at)
+SELECT $1, $2, 'urgent', t.owner_member_id, 'created', now() FROM crm.trip t WHERE t.trip_id = $1
+ON CONFLICT (trip_id, kind) WHERE status = 'open' AND deleted_at IS NULL AND trip_id IS NOT NULL DO NOTHING
+"""
+
+
+async def record_unsettled_payment(
+    ctx: AnyContext, invoice_id: uuid.UUID, *, amount: Decimal, provider_name: str, reference: str, reason: str
+) -> uuid.UUID:
+    """AA-1072, "never block on a business error": the gateway took the client's money but the invoice could not take
+    it (paid or void meanwhile, an amount above what is left, newer terms waiting). The money is still recorded on the
+    invoice (no schedule row: it settles nothing) and the trip owner gets an urgent ``payment_review`` task to refund
+    it or apply it by hand."""
+    row = await ctx.conn.fetchrow(INVOICE_LOCK_SQL, invoice_id)
+    if row is None:
+        raise NotFound("invoice_not_found")
+    payment_id = uuid.uuid4()
+    await ctx.conn.execute(INSERT_PAYMENT_SQL, payment_id, row["trip_id"], None, invoice_id, amount, row["currency"],
+                           "online", await _day(ctx, None), providers.provider(provider_name).name, reference,
+                           "payment", None)  # fmt: skip
+    await ctx.conn.execute(COMMITMENT_SQL, row["trip_id"], "payment", "succeeded", f"payment:{payment_id}")
+    await ctx.conn.execute(REVIEW_TASK_SQL, row["trip_id"], REVIEW_TASK)
+    ctx.audit("payment_record", "allowed", "invoice", str(invoice_id), reason=f"review_{reason}"[:64])
+    return payment_id
 
 
 def _hold_live(facts: Any) -> bool:
@@ -452,11 +525,13 @@ async def save_manual(ctx: TenantContext, *, display_name: Any, instructions: An
 
 
 async def connect(ctx: TenantContext, provider_name: str) -> dict[str, Any]:
-    """A provider account of the agency's own (BYO). Only ``manual`` exists today (:func:`save_manual`)."""
+    """A provider account of the agency's own (BYO): ``manual`` is saved with its instructions (:func:`save_manual`),
+    ``vn_gateway`` with its merchant code and secret (``PUT /settings/payment-methods/vn-gateway``,
+    :func:`app.payments.gateway.connect`); a provider without code is 409 ``provider_not_available``."""
     impl = providers.provider(provider_name)
     if not impl.needs_external_account:
         raise Conflict("use_manual_settings", "the manual method is saved with its instructions")
-    raise Conflict("provider_not_available")  # pragma: no cover — no provider with an external account has code yet
+    raise Conflict("use_gateway_settings", "connect the gateway with its merchant code and secret")
 
 
 async def disconnect(ctx: TenantContext, account_id: uuid.UUID) -> dict[str, Any]:

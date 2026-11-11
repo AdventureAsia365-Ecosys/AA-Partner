@@ -30,6 +30,8 @@ Migrate idle check count a queued row as busy; not deploy-gate exempt). For ever
 10. S262 (C12 item 3): the due balance rows of cancelled (or cancelling) trips that no kept invoice bills are voided
     with their draft invoices (:func:`app.cancellation.void_cancelled_schedule`; the cancel run does it at once since
     S262, this catches the trips cancelled before), audit ``payment_schedule_void`` reason ``trip_cancelled``.
+11. AA-1072 (DM-7.1): the agency's "Book now" attempts (``crm.public_booking_attempt``) older than 90 days are deleted
+    (counts only).
 
 Payload and result are ids and counts only. An agency that is locked or offboarding is skipped.
 """
@@ -48,6 +50,7 @@ from app import cancellation, stages
 from app.audit_export import registry
 from app.commissions import service as commissions
 from app.errors import Forbidden, NotFound, ServiceError
+from app.intake import booking
 from app.jobs import queue
 from app.jobs.kinds import STAGE_DATE_RULE
 from app.jobs.queue import Job
@@ -170,6 +173,9 @@ async def run_agency(ctx: SystemContext) -> Counter[str]:
     schedule_voided = await cancellation.void_cancelled_schedule(ctx, ACTOR)
     if schedule_voided:
         counts["cancelled_schedule_rows_voided"] += schedule_voided
+    attempts = stages._rows(await ctx.conn.execute(booking.PURGE_SQL, booking.RETENTION_DAYS))
+    if attempts:
+        counts["booking_attempts_purged"] += attempts
     return counts
 
 

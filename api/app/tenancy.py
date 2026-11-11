@@ -1105,6 +1105,62 @@ async def messaging_hook_tx(
         raise pending
 
 
+PAYMENT_SESSION_SQL = """
+SELECT session_id, tenant_id FROM crm.payment_session WHERE txn_ref = $1 AND deleted_at IS NULL
+"""
+PAYMENT_HOOK_ACTOR = "job:crm_payment_hook"
+_TXN_REF = re.compile(r"^[A-Za-z0-9]{16,40}$")
+
+
+@dataclass(frozen=True)
+class PaymentSessionRef:
+    """The gateway payment session :func:`payment_session_tx` found by its merchant reference (ids only)."""
+
+    session_id: uuid.UUID
+    tenant_id: uuid.UUID
+
+
+@asynccontextmanager
+async def payment_session_tx(
+    pool: asyncpg.Pool, txn_ref: str
+) -> AsyncIterator[tuple[SystemContext, PaymentSessionRef]]:
+    """A payment gateway's webhook (AA-1072, crm-057): the merchant transaction reference the gateway names finds the
+    ``crm.payment_session`` through the SELECT-only policy ``payment_session_ref_lookup`` (``app.payment_txn_ref``)
+    before any agency is known; then ``app.tenant_id`` = its agency (which must be active) and ``app.actor`` =
+    ``job:crm_payment_hook``. An unknown or malformed reference, or an agency that is not active: 404
+    ``session_not_found``. The caller checks the gateway's signature with the agency's own secret before it writes
+    anything. Audit semantics as :func:`system_tx`. Only ``app/payments/gateway.py`` may open it."""
+    if not isinstance(txn_ref, str) or not _TXN_REF.match(txn_ref):
+        raise NotFound("session_not_found")
+    pending: Exception | None = None
+    async with _gated(pool, tenant_gate.HOOK_KEY, busy=tenant_gate.public_busy) as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.payment_txn_ref', $1, true)", txn_ref)
+        row = await conn.fetchrow(PAYMENT_SESSION_SQL, txn_ref)
+        await conn.execute("SELECT set_config('app.payment_txn_ref', '', true)")
+        if row is None:
+            raise NotFound("session_not_found")
+        tenant_id = row["tenant_id"]
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        if await conn.fetchval(TENANT_SQL, tenant_id) != "active":
+            raise NotFound("session_not_found")
+        await conn.execute("SELECT set_config('app.actor', $1, true)", PAYMENT_HOOK_ACTOR)
+        ref = PaymentSessionRef(session_id=row["session_id"], tenant_id=tenant_id)
+        ctx = SystemContext(conn=conn, tenant_id=tenant_id, actor=PAYMENT_HOOK_ACTOR, status="active")
+        try:
+            async with conn.transaction():  # savepoint: the webhook's work
+                yield ctx, ref
+        except Exception as exc:
+            denied = [e for e in ctx.audit_events if e.outcome == "denied"]
+            if not denied:
+                raise
+            await _write_audit(ctx, denied)
+            pending = exc
+        else:
+            await _write_audit(ctx, ctx.audit_events)
+    if pending is not None:
+        raise pending
+
+
 CALENDAR_FEED_SQL = """
 SELECT calendar_feed_id, tenant_id FROM crm.calendar_feed
  WHERE token_hash = decode($1, 'hex') AND status = 'active' AND expires_at > now() AND deleted_at IS NULL

@@ -211,6 +211,12 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
   `crm_app`, active and unexpired feeds only); the feed decides the agency (must be active) and the member (must be
   active), `app.actor` = `calendar_feed:<id>` (audit actor kind `user`; the crm-027 guard lets it touch only that
   feed's fetch counters). Any unusable token is 404 `feed_not_found`. Only `app/calendar/public.py` may open it.
+- **`payment_session_tx(pool, txn_ref)`** (AA-1072) is a payment gateway's webhook (the VNPay IPN, the Dev stub
+  gateway): the merchant transaction reference the gateway names sets `app.payment_txn_ref`, read by the crm-057
+  SELECT-only policy `payment_session_ref_lookup` (TO `crm_app`, live sessions only); the session decides the agency
+  (must be active), `app.actor` = `job:crm_payment_hook`. Any unusable reference is 404 `session_not_found` (the route
+  answers VNPay's `01`). The gateway signature is checked with the agency's own secret before anything is written.
+  Only `app/payments/gateway.py` may open it (`test_code_rules.py`).
 - **`ingest_tx(pool, local_part)`** (AA-945) is the forward-in mail's context: the recipient's local part (an
   unauthenticated sender chose it) sets `app.ingest_local_part`, read by the crm-015 SELECT-only policy
   `ingest_address_lookup` (TO `crm_app`, active and live addresses only); the address decides the agency (must be
@@ -285,7 +291,9 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
   `KeyProvider.rotate` adds a DEK version, `rewrap` moves every DEK to another KEK without touching ciphertext (BYOK
   path), `destroy` crypto-shreds an agency. Integration secrets (`crm.integration_credential.secret_enc`) open only
   through `Vault.decrypt_secret`, allowed by lint in the dispatcher, webhook and health-check modules and the mail
-  sender `app/mail/sender.py` (AA-945; the mailbox health check opens credentials through it); no route
+  sender `app/mail/sender.py` (AA-945; the mailbox health check opens credentials through it), the text-message sender
+  `app/messaging/sender.py` (AA-958) and the agency's own payment gateway `app/payments/gateway.py` (AA-1072: the pay
+  URL signer, the IPN check and the Dev stub); no route
   response model may carry a `*_enc`, `*_bidx`, `secret*` or `wrapped_dek` field (`tests/unit/test_vault_rules.py`).
 - **Audit** (`crm.audit_event`, append-only, codes and random ids only): `ctx.audit(...)` queues an event; `tenant_tx()`
   writes all of them on success and only the `denied` ones (committed) when the block raises. Partitions, export,
@@ -356,6 +364,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-053` | `api/migrations/053_crm_supplier_requests.sql` | AA-1069 (**contract**, MIG-4): `crm.booking_line` status + `requested` (planning -> requested -> confirmed / planning / cancelled), `requested_at`, `request_ref` (the request e-mail's message id; agency lines only, `booking_line_request_chk`); `crm.booking_line_confirm` also confirms a requested line; `crm.conversation.agency_supplier_id` (the trip's supplier request thread: a trip, no client, e-mail; one live per trip and supplier) |
 | `crm-054` | `api/migrations/054_crm_travel_ops.sql` | AA-1070 (**expand**: six new tables + two guards): `crm.aa_departure_state` (the Booking feed's state of one AA departure: scheduled / guaranteed / cancelled, times, min to operate, last event; job writes only, CRM53; cascades from `booking_feed_state`), `crm.booking_line_voucher` (sealed pick-up, drop-off, PNR, note + start time of a line), `crm.room_assignment` (the rooming list), `crm.visa_template` (the agency's visa guidance), `crm.visa_application` (sealed visa number and validity), `crm.visa_checklist_item`; every key cascades; hold guard `crm.guard_held_travel_doc` (CRM10) on the trip-scoped tables |
 | `crm-055` | `api/migrations/055_crm_travel_ops_settings.sql` | AA-1070 (**contract**, MIG-4): `tenant_settings.passport_valid_months` (default 6, 0..24), `crm.document` kinds `confirmation_pdf` / `proposal_pdf` and uploader `system`, the `crm.visa_application` status moves in `crm.status_transition` |
+| `crm-057` | `api/migrations/057_crm_public_booking_online_payment.sql` | AA-1072 (**contract**, MIG-4; crm-056 is another card's, independent): `tenant_settings.public_booking_enabled` (default false: "Book now" off until the owner turns it on); `crm.public_booking_attempt` (base template; one "Book now" press of the public tour page: intake form, AA tour and departure, party counts and ages, quote and total, received -> created / refused / failed with a code, the trip and proposal ids, one per client submission id, `ip_hash` = HMAC of the address under the agency's index key; cascades from `tenant_settings`; deleted after 90 days by the date rule); `crm.payment_session` (base template; one hosted payment of an invoice on the agency's own gateway: account, `txn_ref` unique across agencies, amount, currency, expiry, open -> paid / failed / review, the gateway's transaction number and response code, the payment it wrote; SELECT-only `payment_session_ref_lookup` on `app.payment_txn_ref`; cascades from its invoice); `integration_credential.provider` + `vn_gateway`; `payment.method` + `online`, `payment_provider_ref_uq` (one payment per gateway reference and agency) |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -513,6 +522,10 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
   (`WEB_CLIENT_HOSTS`, later `go-dev.`) serves `/c/*` and `/trip/*` only (both 404 on the partner host); any other
   Host is 404; `/healthz` answers any Host (the ALB health check sends the task IP). Cookies are host-only, so the two
   hosts never share a session.
+- **Book now on the trip page** (AA-1072): a link with an agency's inquiry form key (`/trip/<tourId>?f=<key>[&p=<AA tour
+  key>]`) shows that agency's booking widget (`web/components/booking/BookNowWidget.tsx`, `web/lib/bookNow.ts`; words
+  EN by default, VI by the visitor's cookie, `web/lib/i18nBookNow.ts`) instead of the AA contact button; section "Book
+  now and online payment".
 - **Trip page** (AA-979 P2b §4.3, `web/app/trip/[tourId]`, `web/lib/tripPage.ts`): the public AA tour page moved from
   the CIS admin host (which answers 307 to it). Server side it reads CIS's public `GET <CIS_API_URL>/v1/trip/{id}`
   (no token; CIS stamps `url_alive` for its T10 gate): CIS 301 (superseded version) -> 308 to `/trip/<current id>`,
@@ -1761,6 +1774,49 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
     is kept from the oldest payments, issues a `cancellation_fee` invoice for the charge not covered by money kept, and
     records `crm.cancellation_charge` (`GET /trips/{id}/cancellation-charge`; the trip P&L seam of crm-30: fee =
     `charge_amount`).
+- **Book now and online payment** (AA-1072, crm-057, items crm-02 / crm-03 of the S275 study; `app/intake/booking.py`,
+  `app/intake/booking_settings.py`, `app/payments/gateway.py`, `app/payments/vnpay.py`; decisions in
+  `docs/implementation-notes/AA-1072.md`):
+  - *Book now*: the public AA tour page books for the agency whose **inquiry form key** its link carries
+    (`/trip/<tourId>?f=<key>`), so `/crm/public/v1/book/{key}` opens `intake_tx` like the inquiry form (unknown,
+    disabled, locked = 404 `form_not_found`; the form's honeypot, page origins and default owner apply). The owner's
+    switch `tenant_settings.public_booking_enabled` (Settings > Payments "Online booking", `GET` / `PUT
+    /settings/online-booking`, `PAYMENT_SETTINGS`) is **off by default** (404 `booking_not_offered`). The AA tour is
+    the link's `p` catalogue key, else the page id when it is a catalogue key (a tour without versions); CIS adding
+    `source_id` to `GET /v1/trip/{id}` is a follow-up the web already reads. Only fixed departures from today + 1,
+    with seats, of a product Booking sells the agency (404 `tour_not_bookable` otherwise: the page shows "Ask the
+    agency"). `POST .../price`: a Booking quote (no hold, nothing stored) and the agency's retail on it, the builder's
+    own suggestion (owner markup on the B2B price, else AA's RRP, then the price rules), shared per head and rounded
+    **up** to the currency's unit (whole dong): the per-traveller grid; no suggestion = 409 `no_retail_price`. `POST
+    .../bookings`: origin, honeypot (202, nothing written), consent, answers, at most 5 attempts an hour per address
+    and agency (`ip_hash`), one `crm.public_booking_attempt` (a repeated press = `already_created` /
+    `booking_in_progress`); the departure and the quote with no transaction held; then one transaction: the client
+    (deduped by e-mail, then phone, under the intake job's advisory locks), a trip at **Proposal** (`lead_source` and
+    stage reason `web_booking`, the party, the departure's dates, the country's destination), a builder v1 (day 0, day
+    1 with one "Tour" block holding the AA option at the retail sell, its traveller rows, the agency's schedule
+    template), published and sent by the builder's own `publish` / `send` (price hash, terms, cancellation policy, the
+    link e-mail), the attempt `created`; the answer is `/c/p/<token>` (201). A Booking refusal marks the attempt
+    `refused` with the code (409); another failure rolls back and marks it `failed`. The client holds, accepts and pays
+    on the existing client page; **a web booking's deposit invoice is issued at the accept** (actor the client link).
+  - *Online payment (BYO VNPay)*: Settings > Payments "Online payment (VNPay)" (`GET` / `PUT
+    /settings/payment-methods/vn-gateway`, owner): the merchant code on the agency's `payment_provider_account`
+    (`external_account_id`, `charges_enabled`, VND) and the hash secret + mode in its `vn_gateway`
+    `integration_credential` (sealed; never answered back); modes `sandbox`, `live`, `stub` (dev / test / local only, 422
+    `mode_not_allowed` elsewhere). The client page offers "Pay online" (`pay_online`) on a payable invoice in the
+    gateway's currency; the card button creates a `crm.payment_session` for the invoice's **open amount computed on the
+    server** (15 minutes) and answers the signed gateway URL; the return page `/c/p/paid` drops the gateway's query and
+    opens `/c/p?payment=returned` (the box reads itself again once). The IPN (`GET /crm/public/v1/hooks/vnpay/ipn`,
+    `payment_session_tx`) checks the HMAC-SHA512 signature with the agency's own secret first (`97`), then the merchant
+    code, the amount (`04`), the session state (`02`); a failure closes the session `failed`; a success goes through
+    the same code as "Record payment" (method `online`, provider `vn_gateway`, the gateway's number as reference,
+    once per reference: `payment_provider_ref_uq`): the invoice paid, the row settled (Booked, portal, Booking confirm)
+    or the re-hold of a late deposit. **Never blocked by a business error**: money the invoice cannot take (paid or
+    void meanwhile, above what is left, newer terms, late money of a failed session) is still recorded on the invoice
+    without a schedule row, the session goes to `review` and the trip owner gets an urgent `payment_review` task; the
+    gateway is answered `00`. The stub (`/crm/public/v1/pay/stub`) checks the signed URL like VNPay, shows Pay /
+    Cancel, and sends a VNPay-shaped IPN signed with the agency's own secret through the same handler; it never
+    simulates a sandbox or live account. Refunds of an online payment are made in the agency's VNPay portal and recorded
+    as today (the gateway's refund API is a follow-up).
 - **AA prices** (AA-1030, `booking.b2b.v1` 1.4 `GET /tariff`; `app/booking/tariff.py`, web `/aa-tariff`): the
   agency's own AA tariff, AA's B2B price per tour, season (departure window) and pax band with its tier or contract
   rate card discount and AA's RRP per person, read live from Booking. `GET /crm/v1/aa/tariff?currency=&format=json|csv
@@ -1973,8 +2029,9 @@ Design v3 group F (M7), §4.6 (refund approval), §6.3 (BYO providers), A-10; mi
   `has_money`). Every money step of an invoice runs under its row lock.
 - **Payment methods** (`/settings/payment-methods`, owner `PAYMENT_SETTINGS`): the manual method's name and pay-by
   instructions (printed on the agency's unpaid invoices), disconnect. `app/payments/providers.py` is the BYO
-  abstraction (`PaymentProvider`: `refund`, `takes_cards`, `needs_external_account`); only `manual` has code, `stripe`
-  (Connect Standard on the agency's own account) and `vn_gateway` answer 409 `provider_not_available`.
+  abstraction (`PaymentProvider`: `refund`, `takes_cards`, `needs_external_account`, `currency`); `manual` and (AA-1072)
+  `vn_gateway` have code, `stripe` (Connect Standard on the agency's own account, paused: root ADR 0019 b14) answers
+  409 `provider_not_available`.
 - **Web**: `components/invoices/InvoiceMoney.tsx` (record payment, payments, request refund) and `RefundActions.tsx`
   (approve / reject / mark refunded) on the trip's Invoices card; `RefundsPanel.tsx` on A-10 `/payments`;
   `PaymentMethodsForm.tsx` on Settings > Payments; BFF lines card AA-952 in `lib/bff.ts`.
@@ -2004,8 +2061,9 @@ Design v3 §3.5 "Deposit link (C31, Fix A3, Fix A8)", F6 step 5, WF-9, U8; card 
   second press answers the same. The agent: record the payment, or "Not received" (`POST /invoices/{id}/reject-claim`:
   back to open, task skipped; a claimed invoice is not voided: 409 `invoice_claimed`).
 - **Card button** (`POST /crm/public/v1/proposal/invoices/{id}/card`): the window is checked before any provider: 410
-  `pay_link_expired` past it (never a payment session), else 409 `card_not_offered` / `provider_not_available` until
-  the BYO card provider (Stripe Connect Standard) has code.
+  `pay_link_expired` past it (never a payment session), else 409 `card_not_offered` without an online account of the
+  agency's own / `provider_not_available` (Stripe, paused); AA-1072: with the agency's VNPay account, a hosted payment
+  (section "Book now and online payment" below).
 - **Money after the hold ran out** (also after the extension): `record_payment` that completes such a deposit sets
   `rehold_requested_at` and settles nothing (`rehold_pending: true`). The Booking sync (`invoice_holds`, after the
   accepted sets) reads Booking's hold (still active: `hold_live`), else quotes the same AA lines and holds them again

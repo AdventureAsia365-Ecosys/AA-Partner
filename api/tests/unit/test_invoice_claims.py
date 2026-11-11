@@ -202,17 +202,16 @@ async def test_card_payment_never_starts_a_session_past_the_window(monkeypatch: 
     asked: list[str] = []
     monkeypatch.setattr(claims.providers, "provider", lambda name: asked.append(name))
     with _raises(Gone, "pay_link_expired"):
-        await claims.card_payment(system_ctx(_claim_conn(_row(hold_expires_at=NOW - dt.timedelta(minutes=1)))),
+        await claims.card_window(system_ctx(_claim_conn(_row(hold_expires_at=NOW - dt.timedelta(minutes=1)))),
                                   PROPOSAL, INVOICE, NOW)  # fmt: skip
     assert asked == []
     with _raises(Conflict, "invoice_not_payable"):
-        await claims.card_payment(system_ctx(_claim_conn(_row(status="payment_claimed"))), PROPOSAL, INVOICE, NOW)
+        await claims.card_window(system_ctx(_claim_conn(_row(status="payment_claimed"))), PROPOSAL, INVOICE, NOW)
     with _raises(Conflict, "card_not_offered"):
-        await claims.card_payment(system_ctx(_claim_conn(_row())), PROPOSAL, INVOICE, NOW)
+        await claims.card_window(system_ctx(_claim_conn(_row())), PROPOSAL, INVOICE, NOW)
     conn = _claim_conn(_row()).on("charges_enabled", {"account_id": uuid.uuid4(), "provider": "stripe"})
-    with _raises(Conflict, "provider_not_available"):
-        await claims.card_payment(system_ctx(conn), PROPOSAL, INVOICE, NOW)
-    assert asked == ["stripe"]
+    await claims.card_window(system_ctx(conn), PROPOSAL, INVOICE, NOW)  # the stubbed provider lookup lets it through
+    assert asked == ["stripe"]  # (the real one refuses Stripe: 409 provider_not_available, AA-1072 unit tests)
 
 
 @pytest.mark.asyncio
@@ -322,7 +321,7 @@ async def test_card_payment_waits_for_the_terms(monkeypatch: pytest.MonkeyPatch)
     conn = _terms_pending(_claim_conn(_row())).on("charges_enabled", {"account_id": uuid.uuid4(), "provider": "stripe"})
     ctx = system_ctx(conn)
     with _raises(Conflict, "terms_reaccept_required"):
-        await claims.card_payment(ctx, PROPOSAL, INVOICE, NOW)
+        await claims.card_window(ctx, PROPOSAL, INVOICE, NOW)
     assert asked == [] and [e.reason for e in ctx.audit_events if e.outcome == "denied"] == ["terms_reaccept_required"]
 
 

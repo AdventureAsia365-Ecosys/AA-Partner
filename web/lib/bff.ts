@@ -302,6 +302,11 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "DELETE", pattern: new RegExp(`^cancellation-policies/${UUID}$`), tenant: true, card: "AA-1067" },
   { method: "POST", pattern: new RegExp(`^cancellation-policies/${UUID}/(publish|default|retire)$`), tenant: true, card: "AA-1067" },
   { method: "GET", pattern: new RegExp(`^trips/${UUID}/cancellation-charge$`), tenant: true, card: "AA-1067" },
+  // AA-1072: the agency's own VNPay account and the "Book now" switch (owner only, API Action.PAYMENT_SETTINGS).
+  { method: "GET", pattern: /^settings\/payment-methods\/vn-gateway$/, tenant: true, card: "AA-1072" },
+  { method: "PUT", pattern: /^settings\/payment-methods\/vn-gateway$/, tenant: true, card: "AA-1072" },
+  { method: "GET", pattern: /^settings\/online-booking$/, tenant: true, card: "AA-1072" },
+  { method: "PUT", pattern: /^settings\/online-booking$/, tenant: true, card: "AA-1072" },
   // AA-1030: the agency's AA prices (owner / agent, API Action.AA_TARIFF_VIEW), JSON or AA's CSV with its file name.
   { method: "GET", pattern: /^aa\/tariff$/, tenant: true, card: "AA-1030", download: true, timeoutMs: 30_000 },
   { method: "POST", pattern: new RegExp(`^settings/payment-methods/${UUID}/disconnect$`), tenant: true, card: "AA-952" },

@@ -224,6 +224,8 @@ export interface ClientInvoice {
   /** The agency's own pay-by details, only while the window is open. */
   pay_by: { name: string; instructions: string } | null;
   can_claim: boolean;
+  /** AA-1072: "Pay online" through the agency's own gateway (its currency, while the window is open). */
+  pay_online?: boolean;
 }
 
 /** The traveller portal home (GET /crm/public/v1/portal/<token>). */
@@ -370,6 +372,9 @@ export function proposalErrorKey(code: string): string {
 }
 
 const PUBLIC_CODES = new Set([
+  "card_not_offered",
+  "currency_not_supported",
+  "provider_not_available",
   "price_changed",
   "terms_changed",
   "link_not_found",

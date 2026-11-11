@@ -258,7 +258,7 @@ async def test_terms_first_the_pay_box_and_the_claim_wait_for_the_reaccept(app_p
         await _claim(app_pool, s, invoice_id, fake)
     assert err.value.code == "terms_reaccept_required" and err.value.extra["version_label"] == "v2026-12"
     with pytest.raises(Conflict) as err:
-        await page.card_payment(app_pool, PLAIN, s["token"], str(invoice_id), origin=None)
+        await page.card_payment(app_pool, s["keys"], PLAIN, s["token"], str(invoice_id), origin=None)
     assert err.value.code == "terms_reaccept_required"
     # Nothing written: no claim, no extension asked, the hold where it was, no verify task, no bell.
     assert fake.extend_keys == []
@@ -445,7 +445,7 @@ async def test_the_expired_link_shows_no_details_takes_no_claim_and_starts_no_se
     await _sync(app_pool, s)
     invoice_id = await _deposit_invoice(app_pool, s)
     with pytest.raises(Conflict) as err:  # a live window: no card account of the agency's own
-        await page.card_payment(app_pool, PLAIN, s["token"], str(invoice_id), origin=None)
+        await page.card_payment(app_pool, s["keys"], PLAIN, s["token"], str(invoice_id), origin=None)
     assert err.value.code == "card_not_offered"
     await _expire_hold(app_pool, s)
     box = _box(await page.read(app_pool, s["keys"], s["token"]), invoice_id)
@@ -454,7 +454,7 @@ async def test_the_expired_link_shows_no_details_takes_no_claim_and_starts_no_se
         await _claim(app_pool, s, invoice_id, s["fake"])
     assert gone.value.code == "pay_link_expired" and s["fake"].extend_keys == []
     with pytest.raises(Gone) as gone:
-        await page.card_payment(app_pool, PLAIN, s["token"], str(invoice_id), origin=None)
+        await page.card_payment(app_pool, s["keys"], PLAIN, s["token"], str(invoice_id), origin=None)
     assert gone.value.code == "pay_link_expired"
     assert (await _invoice(app_pool, s, invoice_id))["status"] == "open"
     denied = await _raw(app_pool, s, "SELECT action, reason FROM crm.audit_event WHERE outcome = 'denied' "

@@ -122,7 +122,8 @@ SYSTEM_MODULES = frozenset(
         "app/tripplanner/leads.py",
     }
 )
-INTAKE_MODULES = frozenset({"app/intake/public.py"})
+# AA-1072: the "Book now" routes of the public tour page decide the agency by the same form key.
+INTAKE_MODULES = frozenset({"app/intake/public.py", "app/intake/booking.py"})
 # AA-940: the audit export's read context (a locked or trashed agency too): the export, verify and retention jobs only.
 AUDIT_EXPORT_MODULES = frozenset(
     {"app/audit_export/export.py", "app/audit_export/verify.py", "app/audit_export/retention.py"}
@@ -138,6 +139,8 @@ INGEST_MODULES = frozenset({"app/mail/ingest.py"})
 CALENDAR_FEED_MODULES = frozenset({"app/calendar/public.py"})
 # AA-958: a Twilio webhook (the hook id picks the agency; the signature is checked inside): the webhook module only.
 MESSAGING_HOOK_MODULES = frozenset({"app/messaging/webhook.py"})
+# AA-1072: a payment gateway's webhook (the merchant reference picks the agency; the signature is checked inside).
+PAYMENT_HOOK_MODULES = frozenset({"app/payments/gateway.py"})
 # AA-942: the lifecycle jobs' context (the daily run, the offboarding steps).
 LIFECYCLE_MODULES = frozenset(
     {
@@ -221,6 +224,7 @@ CONTEXT_FACTORIES = frozenset(
         "ingest_tx",
         "calendar_feed_tx",
         "messaging_hook_tx",
+        "payment_session_tx",
         "studio_platform_tx",
         "studio_invitation_tx",
         "staff_tx",
@@ -485,6 +489,10 @@ def test_calendar_feed_tx_is_used_only_by_the_public_feed_module() -> None:
 
 def test_messaging_hook_tx_is_used_only_by_the_webhook_module() -> None:
     assert _users_of("messaging_hook_tx", MESSAGING_HOOK_MODULES) == []
+
+
+def test_payment_session_tx_is_used_only_by_the_gateway_module() -> None:
+    assert _users_of("payment_session_tx", PAYMENT_HOOK_MODULES) == []
 
 
 def test_every_router_tenant_tx_names_its_permission_action() -> None:
