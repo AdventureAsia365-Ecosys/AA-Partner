@@ -67,6 +67,7 @@ from app.jobs.kinds import (
     OFFBOARD,
     OPS_RELEASE_SYNC,
     PARTNER_ACCOUNTS,
+    PDF_RENDER,
     PILOT_BACKUP,
     PLACEHOLDER_PURGE,
     STAGE_DATE_RULE,
@@ -206,6 +207,7 @@ def build_handlers(
     from app.cis.entitlement_feed import EntitlementFeed
     from app.cis.membership_feed import MembershipFeed
     from app.dispatch import worker as dispatch_worker
+    from app.documents import pdf_job
     from app.fx import fetch as fx_fetch
     from app.imports import service as client_imports
     from app.intake.process import build_handler as build_intake_handler
@@ -263,6 +265,7 @@ def build_handlers(
         ENTITLEMENT_PULL: EntitlementFeed(entitlement_feed),
         PILOT_BACKUP: pilot_backup.build_handler(),
         TP_LEAD_PULL: LeadPull(tp_leads, keys),
+        PDF_RENDER: pdf_job.build_handler(keys, documents),
     }
 
 
@@ -394,5 +397,6 @@ EVENT_KINDS: frozenset[str] = frozenset(
         MESSAGING_TEMPLATES,
         WORKFLOW_RUN,
         TASK_DIGEST,
+        PDF_RENDER,  # AA-1070: one per member's PDF request
     }
 )

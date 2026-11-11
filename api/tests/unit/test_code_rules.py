@@ -111,6 +111,7 @@ SYSTEM_MODULES = frozenset(
         "app/booking/sync.py",
         # AA-956: the ops release job (one agency per transaction, actor job:crm_ops_release_sync).
         "app/ops_release/job.py",
+        "app/documents/pdf_job.py",  # AA-1070: the server-side PDF job
         # AA-958: the SMS / WhatsApp template sync and daily check (one agency per transaction, actor job:<kind>).
         "app/messaging/health.py",
         # AA-959: one workflow run, the hourly workflow tick and the morning digest (one agency per transaction).

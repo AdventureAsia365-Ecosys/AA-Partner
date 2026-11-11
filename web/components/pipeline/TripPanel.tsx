@@ -26,6 +26,7 @@ import { toast, UndoToast, type ToastState } from "@/components/pipeline/UndoToa
 import { RevealField } from "@/components/clients/RevealField";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
+import { passportTone } from "@/lib/travelOps";
 import { deleteRefusal } from "@/lib/lifecycle";
 import { formatDate, formatInstant, type DateLocale } from "@/lib/dates";
 import { leadSourceLabel, type DocumentRow } from "@/lib/clients";
@@ -413,6 +414,11 @@ export function TripPanel({
                     {p.display_name}
                   </a>{" "}
                   <span style={{ color: K.muted, fontSize: 12 }}>· {t(lang, p.role === "lead" ? "trip.lead" : "trip.companion")}</span>
+                  {p.passport && p.passport !== "no_trip_end" && (
+                    <span data-testid="trip-party-passport" data-status={p.passport} style={{ marginLeft: 6 }}>
+                      <Badge tone={passportTone(p.passport)}>{t(lang, `travel.passport.status.${p.passport}` as MessageKey)}</Badge>
+                    </span>
+                  )}
                 </span>
                 {p.preferred_channel && <span style={{ fontSize: 12, color: K.muted }}>{fmt(t(lang, "trip.prefers"), { channel: codeLabel(lang, "channel", p.preferred_channel) })}</span>}
                 <span style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>

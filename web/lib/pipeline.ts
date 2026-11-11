@@ -112,6 +112,8 @@ export interface Card {
   stage2_percent?: number | null;
   /** AA-957 (C12): cancelled in the CRM, AA has not confirmed the cancellation of its bookings yet. */
   cancellation_pending?: boolean;
+  /** AA-1070: travellers whose passport ends too soon for the trip (booked, pre-departure, travelling cards). */
+  passport_issues?: number;
 }
 
 export interface ClosedCard extends Omit<Card, "stage"> {
@@ -124,7 +126,7 @@ export interface Board {
   closed?: { count: number; counts: Record<ClosedStage, number>; cards: ClosedCard[] };
   waiting_on_counts: Record<WaitingOn, number>;
   total: number;
-  filter: { waiting_on: WaitingOn | null; owner: "anyone" | "me" };
+  filter: { waiting_on: WaitingOn | null; owner: "anyone" | "me"; issue?: "passport" | null };
 }
 
 export interface Trip {
@@ -194,7 +196,16 @@ export function supplierChecklistLine(item: SupplierChecklistItem): string {
 
 export interface TripView {
   trip: Trip;
-  party: { traveler_id: string; role: "lead" | "companion"; display_name: string; preferred_channel: string | null; has_email: boolean; has_phone: boolean }[];
+  party: {
+    traveler_id: string;
+    role: "lead" | "companion";
+    display_name: string;
+    preferred_channel: string | null;
+    has_email: boolean;
+    has_phone: boolean;
+    /** AA-1070: the passport check against the trip (status only). */
+    passport?: "ok" | "expires_too_soon" | "missing" | "no_trip_end" | null;
+  }[];
   tasks: {
     task_id: string;
     kind: string;
@@ -464,10 +475,11 @@ export function partySummary(lang: Lang, adults: number, childAges: number[]): s
 }
 
 /** The board URL for a filter (chips and owner toggle are links: no client state needed). */
-export function boardHref(filter: { waiting_on?: WaitingOn | null; owner?: "anyone" | "me" }): string {
+export function boardHref(filter: { waiting_on?: WaitingOn | null; owner?: "anyone" | "me"; issue?: "passport" | null }): string {
   const q = new URLSearchParams();
   if (filter.waiting_on) q.set("waiting_on", filter.waiting_on);
   if (filter.owner === "me") q.set("owner", "me");
+  if (filter.issue === "passport") q.set("issue", "passport");
   const s = q.toString();
   return s ? `/pipeline?${s}` : "/pipeline";
 }
@@ -475,11 +487,14 @@ export function boardHref(filter: { waiting_on?: WaitingOn | null; owner?: "anyo
 export function parseFilter(params: Record<string, string | string[] | undefined>): {
   waiting_on: WaitingOn | null;
   owner: "anyone" | "me";
+  issue: "passport" | null;
 } {
   const w = typeof params.waiting_on === "string" ? params.waiting_on : "";
   return {
     waiting_on: (WAITING_ON as readonly string[]).includes(w) ? (w as WaitingOn) : null,
     owner: params.owner === "me" ? "me" : "anyone",
+    // AA-1070: only the booked / pre-departure / travelling trips with a passport issue.
+    issue: params.issue === "passport" ? "passport" : null,
   };
 }
 

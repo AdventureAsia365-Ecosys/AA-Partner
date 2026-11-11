@@ -95,7 +95,7 @@ async def test_board_groups_cards_decrypts_names_and_audits_once() -> None:
     assert stages["inquiry"]["cards"][0]["is_mine"] and not stages["qualifying"]["cards"][0]["is_mine"]
     assert stages["qualifying"]["cards"][0]["lead_name"] is None
     assert view["waiting_on_counts"] == {"agency": 4, "client": 0, "aa": 0, "supplier": 0, "none": 0}
-    assert view["total"] == 4 and view["filter"] == {"waiting_on": "agency", "owner": "me"}
+    assert view["total"] == 4 and view["filter"] == {"waiting_on": "agency", "owner": "me", "issue": None}
     assert conn.sql("WITH visible AS")[0][2] == MEMBER  # owner=me filters by the caller
     assert [(e.action, e.fields) for e in ctx.audit_events] == [("list_view", ("display_name",))]
     # AA-943: the quiet flag, the Stage 2 percentage on early cards, and the Closed group.

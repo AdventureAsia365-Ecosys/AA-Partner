@@ -190,11 +190,12 @@ async def get_pipeline(
     tenant_id: TenantDep,
     waiting_on: Annotated[Literal["agency", "client", "aa", "supplier", "none"] | None, Query()] = None,
     owner: Annotated[Literal["anyone", "me"], Query()] = "anyone",
+    issue: Annotated[Literal["passport"] | None, Query()] = None,
 ) -> dict[str, Any]:
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     async with tenant_tx(pool, caller, tenant_id, action=Action.PIPELINE_VIEW) as ctx:
-        return await board(ctx, Vault(keys, ctx), BoardFilter(waiting_on=waiting_on, owner=owner))
+        return await board(ctx, Vault(keys, ctx), BoardFilter(waiting_on=waiting_on, owner=owner, issue=issue))
 
 
 @router.get("/trips/{trip_id}")

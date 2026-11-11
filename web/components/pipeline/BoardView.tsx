@@ -50,7 +50,7 @@ export function BoardView({ board, lang, locale }: { board: Board; lang: Lang; l
   const [bulk, setBulk] = useState<BulkTarget | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const drag = useRef<{ tripId: string; from: BoardStage } | null>(null);
-  const filtered = !!board.filter.waiting_on || board.filter.owner === "me";
+  const filtered = !!board.filter.waiting_on || board.filter.owner === "me" || !!board.filter.issue;
 
   // A new board from the server (router.refresh) replaces the local columns: compared during render (React's "adjust
   // state when a prop changes" pattern), not with an effect's setState after the render.
@@ -133,25 +133,30 @@ export function BoardView({ board, lang, locale }: { board: Board; lang: Lang; l
   }
 
   const active = board.filter.waiting_on;
+  const issue = board.filter.issue ?? null;
   return (
     <div style={{ display: "grid", gap: 12, minWidth: 0 }}>
       <nav aria-label={t(lang, "pipeline.waitingOn")} style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", fontSize: 13 }}>
         <span style={{ color: K.muted, marginRight: 4 }}>{t(lang, "pipeline.waitingOn")}:</span>
-        <Chip href={boardHref({ owner: board.filter.owner })} on={!active} testId="chip-all">
+        <Chip href={boardHref({ owner: board.filter.owner, issue })} on={!active} testId="chip-all">
           {t(lang, "pipeline.all")} {board.total}
         </Chip>
         {WAITING_ON.filter((w) => w !== "none").map((w: WaitingOn) => (
-          <Chip key={w} href={boardHref({ waiting_on: w, owner: board.filter.owner })} on={active === w} testId={`chip-${w}`}>
+          <Chip key={w} href={boardHref({ waiting_on: w, owner: board.filter.owner, issue })} on={active === w} testId={`chip-${w}`}>
             {waitingLabel(lang, w)} {board.waiting_on_counts[w] ?? 0}
           </Chip>
         ))}
         <span style={{ color: K.line2, margin: "0 6px" }}>|</span>
         <span style={{ color: K.muted }}>{t(lang, "pipeline.owner")}:</span>
-        <Chip href={boardHref({ waiting_on: active, owner: "anyone" })} on={board.filter.owner === "anyone"} testId="owner-anyone">
+        <Chip href={boardHref({ waiting_on: active, owner: "anyone", issue })} on={board.filter.owner === "anyone"} testId="owner-anyone">
           {t(lang, "pipeline.owner.anyone")}
         </Chip>
-        <Chip href={boardHref({ waiting_on: active, owner: "me" })} on={board.filter.owner === "me"} testId="owner-me">
+        <Chip href={boardHref({ waiting_on: active, owner: "me", issue })} on={board.filter.owner === "me"} testId="owner-me">
           {t(lang, "pipeline.owner.me")}
+        </Chip>
+        <span style={{ color: K.line2, margin: "0 6px" }}>|</span>
+        <Chip href={boardHref({ waiting_on: active, owner: board.filter.owner, issue: issue ? null : "passport" })} on={issue === "passport"} testId="chip-passport-issue">
+          {t(lang, "travel.pipeline.passportIssue")}
         </Chip>
       </nav>
       <p style={{ margin: 0, fontSize: 12, color: K.muted }}>{t(lang, "pipeline.dragHint")}</p>
@@ -332,6 +337,11 @@ function TripCard({ card, lang, locale, now, onDrag }: { card: Card; lang: Lang;
         {card.cancellation_pending && (
           <span data-testid="trip-card-cancellation-pending" style={{ display: "contents" }}>
             <Badge tone="danger">{t(lang, "trip.cancellationPending")}</Badge>
+          </span>
+        )}
+        {!!card.passport_issues && (
+          <span data-testid="trip-card-passport" style={{ display: "contents" }}>
+            <Badge tone="danger">{fmt(t(lang, "travel.pipeline.passportBadge"), { n: card.passport_issues })}</Badge>
           </span>
         )}
         {quiet !== null && (

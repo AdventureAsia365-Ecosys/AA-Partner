@@ -33,6 +33,8 @@ export interface DutyTrip {
   lines: DutyLine[];
   traveler_ids: string[];
   incident_flag_id: string | null;
+  /** AA-1070: travellers whose passport ends too soon for the trip (0 when none). */
+  passport_issues?: number;
 }
 
 export interface DutyTraveller {

@@ -103,6 +103,13 @@ export default async function SettingsPage() {
           </Link>
         </p>
       </Panel>
+      {/* AA-1070: the passport rule and the agency's visa guidance (every role reads; the owner changes them). */}
+      <Panel title={t(lang, "travel.settings.title")} testId="settings-travel">
+        <p style={{ margin: "0 0 8px", fontSize: 13, color: K.muted }}>{t(lang, "travel.settings.help")}</p>
+        <Link href="/settings/travel" style={{ fontSize: 13.5 }} data-testid="settings-travel-link">
+          {t(lang, "travel.settings.link")}
+        </Link>
+      </Panel>
       {seesAaTariff(ctx.me) && (
         <Panel title={t(lang, "tariff.title")} testId="settings-aa-tariff">
           <p style={{ margin: "0 0 8px", fontSize: 13, color: K.muted }}>{t(lang, "tariff.settings.help")}</p>

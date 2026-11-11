@@ -12,6 +12,8 @@ kind                   source
                        at T-21")
 ``task``               ``crm.task.due_at`` of an open task
 ``call``               ``crm.meeting_slot.starts_at`` of a requested / confirmed call (crm-012, R15)
+``aa_departure``       AA-1070: the first service day of each AA departure the agency has live lines on
+                       (``crm.booking_line.departure_id``), with its feed state (``crm.aa_departure_state``)
 =====================  ==================================================================================
 
 Scope ``mine``: the member's own trips (``owner_member_id``), tasks assigned to them (or unassigned on their trips) and
@@ -31,7 +33,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from app.errors import Invalid
 from app.tenancy import SystemContext, TenantContext
 
-KINDS = ("departure", "return", "payment_due", "invoice_due", "signing_deadline", "task", "call")
+KINDS = ("departure", "return", "payment_due", "invoice_due", "signing_deadline", "task", "call", "aa_departure")
 SIGNING_LEAD_DAYS = 21
 MAX_SPAN_DAYS = 400
 MAX_EVENTS = 2000
@@ -43,6 +45,21 @@ TRIP_STAGES = (*LIVE_STAGES, "completed")
 DEFAULT_TZ = "Asia/Ho_Chi_Minh"
 TZ_SQL = "SELECT coalesce((SELECT timezone FROM crm.tenant_settings LIMIT 1), $1)"
 
+# AA-1070: one event per AA departure (its first service day) with the agency's live lines; ``mine`` = a departure with
+# one of the member's trips on it.
+AA_DEPARTURES_SQL = """
+SELECT l.departure_id, min(l.title) AS title, min(l.service_from) AS day, count(DISTINCT l.trip_id)::int AS trips,
+       coalesce(s.departure_status, 'scheduled') AS departure_status
+  FROM crm.booking_line l
+  JOIN crm.trip t ON t.trip_id = l.trip_id AND t.deleted_at IS NULL AND t.stage NOT IN ('lost', 'cancelled')
+  LEFT JOIN crm.aa_departure_state s ON s.departure_id = l.departure_id AND s.deleted_at IS NULL
+ WHERE l.supplier_kind = 'aa' AND l.departure_id IS NOT NULL AND l.status <> 'cancelled' AND l.deleted_at IS NULL
+   AND ($3::uuid IS NULL OR t.owner_member_id = $3)
+ GROUP BY l.departure_id, s.departure_status
+HAVING min(l.service_from) BETWEEN $1 AND $2
+ ORDER BY 3, 1
+ LIMIT $4
+"""
 TRIP_DATES_SQL = """
 SELECT t.trip_id, t.title, t.stage, t.start_date, t.end_date, t.owner_member_id
   FROM crm.trip t
@@ -202,6 +219,20 @@ async def events(
                 "trip_id": _id(c["trip_id"]),
                 "title": c["title"],
                 "call_status": c["status"],
+            }
+        )
+    for d in await ctx.conn.fetch(AA_DEPARTURES_SQL, first, last, member_id, MAX_EVENTS):
+        out.append(
+            {
+                "kind": "aa_departure",
+                "id": f"aa-departure-{d['departure_id']}",
+                "date": d["day"],
+                "all_day": True,
+                "trip_id": None,
+                "title": d["title"],
+                "departure_id": d["departure_id"],
+                "departure_status": d["departure_status"],
+                "trips": d["trips"],
             }
         )
     out.sort(key=lambda e: (e["date"], e.get("starts_at") or dt.datetime.min.replace(tzinfo=tz), e["id"]))

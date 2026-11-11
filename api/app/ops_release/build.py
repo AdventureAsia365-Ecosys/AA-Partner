@@ -5,9 +5,10 @@ data-privacy-integrations §2.10 / §5.6 / §6.8, R33, R44 data).
 display name), the age band on the departure date (from the date of birth; the date itself is never released),
 dietary and mobility **codes** (only while the traveller's latest ``health_data`` consent is yes), the arrival and
 departure flights (flight number, airport, local time and its IANA zone: an overnight flight lands on its own local
-date, R33), and the insurance choice of the signed waiver (``insured`` / ``declined``, R13). Per trip: a short trip
-reference, the dates, the party size, the agency's name and time zone (the agency is the emergency channel, R37) and
-the confirmed AA lines (title, tour, Booking departure and booking ids, service dates).
+date, R33), the insurance choice of the signed waiver (``insured`` / ``declined``, R13) and (AA-1070, v2) the room
+of the rooming list (room number, room type and bed preference codes; who shares follows from the number). Per trip:
+a short trip reference, the dates, the party size, the agency's name and time zone (the agency is the emergency
+channel, R37) and the confirmed AA lines (title, tour, Booking departure and booking ids, service dates).
 
 **Never released**: phone, e-mail, the emergency contact (X6: excluded by default, a Ms. Thư question), passport and
 nationality data, the date of birth, notes, messages, documents, money, the trip title (agencies write client names
@@ -32,13 +33,15 @@ from typing import Any
 
 from app.portal import progress
 from app.tenancy import AnyContext
+from app.travel_ops import rooming
 from app.travellers.age_bands import age_band
 from app.vault import Vault
 
-DOCUMENT_VERSION = 1
+# AA-1070: v2 adds each traveller's room (crm.room_assignment: the number and the codes only).
+DOCUMENT_VERSION = 2
 MISSING_ITEMS = ("stage3", "waiver", "arrival_flight", "departure_flight")
 # The field codes a document can carry (crm.ops_release.fields_released) and a manifest can print.
-FIELD_CODES = ("name", "age_band", "dietary", "mobility", "arrival_flight", "departure_flight", "insurance")
+FIELD_CODES = ("name", "age_band", "dietary", "mobility", "arrival_flight", "departure_flight", "insurance", "room")
 # The F1 fields a build opens (one audit event per run names them, design §5.7 "volume control").
 OPENED_FIELDS = ("display_name", "given_name", "family_name", "dob", "health", "flight_no")
 
@@ -111,6 +114,7 @@ async def document(ctx: AnyContext, vault: Vault, trip: Any, lines: list[Any]) -
         (r["traveler_id"], r["direction"]): r for r in await ctx.conn.fetch(FLIGHTS_SQL, trip_id)
     }
     done = {p.traveler_id: p for p in (await progress.compute(ctx, trip_id)).travellers}
+    rooms = await rooming.by_traveller(ctx, trip_id)
     waiver_required = any(p.waiver_signed is not None for p in done.values())
     start: dt.date | None = trip["start_date"]
     travellers: list[dict[str, Any]] = []
@@ -153,6 +157,9 @@ async def document(ctx: AnyContext, vault: Vault, trip: Any, lines: list[Any]) -
         person["insurance"] = r["insurance_choice"]
         if person["insurance"]:
             fields.add("insurance")
+        person["room"] = rooms.get(tid)
+        if person["room"]:
+            fields.add("room")
         travellers.append(person)
         # Completeness of this traveller.
         p = done.get(tid)

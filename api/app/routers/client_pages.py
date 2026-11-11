@@ -48,6 +48,11 @@ cap. 404 ``link_not_found`` for any unusable link. Answers carry ``no-store`` an
   write also holds a slot of the unproven-session limiter (``RATE_LIMIT_INTAKE_PER_MINUTE``) until the session check
   passes (:func:`_session_write`), so a forged or stale cookie gets the anonymous ceiling of refused writes. See
   ``docs/implementation-notes/AA-953-write-limit.md`` for the per-route list.
+
+AA-1070: ``GET /crm/public/v1/traveller/travel`` (the released vouchers, the rooming list, the traveller's own visa
+checklists), ``PUT /crm/public/v1/traveller/rooming`` (the lead, after the deposit: 403 ``lead_only`` /
+``stage3_locked``) and ``PUT /crm/public/v1/traveller/visa-checklist/{item_id}`` (tick one document of the
+traveller's own application); both writes use the portal write limiter like the other signed-in writes.
 """
 
 from __future__ import annotations
@@ -659,5 +664,53 @@ async def post_traveller_companion(
         return _json(
             await portal.invite_companion(
                 pool, keys, request.app.state.settings, _cookie_token(token), session, raw, origin=origin
+            )
+        )
+
+
+# ── AA-1070: vouchers, rooming list and visa checklist ────────────────────────────────────────────────────────────────
+@router.get("/traveller/travel")
+async def get_traveller_travel(
+    request: Request, _: PublicRateLimit, token: PortalLinkCookie = None, session: SessionCookie = None
+) -> JSONResponse:
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    return _json(await portal.travel(pool, keys, _cookie_token(token), session))
+
+
+@router.put("/traveller/rooming")
+async def put_traveller_rooming(
+    request: Request,
+    token: PortalLinkCookie = None,
+    session: SessionCookie = None,
+    origin: Annotated[str | None, Header()] = None,
+    content_length: Annotated[int | None, Header()] = None,
+) -> JSONResponse:
+    async with _session_write(request, session):
+        raw = await _json_body(request, content_length)
+        pool = await request_pool(request)
+        keys = require_keys(request.app.state.keys)
+        return _json(
+            await portal.save_rooming(
+                pool, keys, request.app.state.settings, _cookie_token(token), session, raw, origin=origin
+            )
+        )
+
+
+@router.put("/traveller/visa-checklist/{item_id}")
+async def put_traveller_visa_item(
+    request: Request,
+    item_id: str,
+    token: PortalLinkCookie = None,
+    session: SessionCookie = None,
+    origin: Annotated[str | None, Header()] = None,
+    content_length: Annotated[int | None, Header()] = None,
+) -> JSONResponse:
+    async with _session_write(request, session):
+        raw = await _json_body(request, content_length)
+        pool = await request_pool(request)
+        return _json(
+            await portal.tick_visa_item(
+                pool, request.app.state.settings, _cookie_token(token), session, item_id, raw, origin=origin
             )
         )

@@ -1,12 +1,13 @@
 // web/app/(crm)/departures/[ref]/page.tsx — AA-1068 (crm-32): one group departure (an AA departure id or the agency's
 // own group code): the costs the agency carries for the whole group (its tour leader, a group flight block, a welcome
 // dinner: per departure, split by travellers, or per traveller), the trips on it with their pax, their share and their
-// own profit, and the totals (GET /departures/{ref}/pnl). Reached from a trip's Money card and the Home "today" tiles;
-// the departure roster page of a later card takes this section over. Owner and agent only (the API refuses the
-// assistant).
+// own profit, and the totals (GET /departures/{ref}/pnl). Reached from a trip's Money card and the Home "today" tiles.
+// AA-1070: an AA departure's roster (trips, travellers, checks, the merged manifest) heads the page for every role;
+// the costs and P&L stay owner and agent only (the API refuses the assistant).
 import { notFound } from "next/navigation";
-import { EmptyState, ErrorState, K, KpiTile } from "@/app/_kit";
+import { ErrorState, K, KpiTile } from "@/app/_kit";
 import { DepartureCosts } from "@/components/finance/DepartureCosts";
+import { DepartureRoster } from "@/components/travelOps/DepartureRoster";
 import { Panel, PageTitle } from "@/components/PageTitle";
 import { ReportTable } from "@/components/reports/ReportTable";
 import { crmCall } from "@/lib/crmApi";
@@ -28,10 +29,11 @@ export default async function DeparturePage({ params }: { params: Promise<{ ref:
   if (ctx.apiDown) return null;
   const tr = (key: string) => t(ctx.lang, key as MessageKey);
   if (!canSeeMoney(ctx.role)) {
+    // AA-1070: the roster is every role's; the group costs and P&L are the owner's and the agents'.
     return (
-      <div data-testid="crm-section-forbidden">
-        <PageTitle title={fmt(tr("departure.title"), { ref })} />
-        <EmptyState title={tr("section.forbidden.title")} description={tr("section.forbidden.body")} />
+      <div data-testid="crm-departure" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 14, maxWidth: 1200 }}>
+        <PageTitle title={fmt(tr("departure.title"), { ref })} subtitle={tr("travel.departure.subtitle")} />
+        <DepartureRoster departureRef={ref} lang={ctx.lang} locale={ctx.locale} />
       </div>
     );
   }
@@ -49,6 +51,7 @@ export default async function DeparturePage({ params }: { params: Promise<{ ref:
   return (
     <div data-testid="crm-departure" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 14, maxWidth: 1200 }}>
       <PageTitle title={fmt(tr("departure.title"), { ref })} subtitle={tr("departure.subtitle")} />
+      <DepartureRoster departureRef={ref} lang={ctx.lang} locale={locale} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
         <KpiTile size="sm" testId="departure-pax" label={tr("departure.total.pax")} value={String(d.totals.pax)} />
         <KpiTile size="sm" testId="departure-cost" label={tr("departure.total.cost")} value={money(d.totals.departure_cost_base)} />

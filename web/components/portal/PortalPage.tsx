@@ -12,6 +12,7 @@
 // with "last updated" when the network cannot be reached; it replaces the copy on every signed-in answer and on
 // reconnect (server wins), and drops it at sign-out, for a gone link and for another link's answer. Sign-out clears
 // the device first, whatever the server then answers, and a load still in flight at that moment never writes back.
+// AA-1070: the travel section (components/portal/PortalTravel.tsx: vouchers, rooming list, visa checklists).
 import { useEffect, useRef, useState } from "react";
 import { Button, K, LinkButton } from "@/app/_kit";
 import type { PortalPersonHome, PortalPick } from "@/lib/clientPortal";
@@ -23,6 +24,7 @@ import { clearWorkerCaches, precacheShell, registerPortalWorker } from "@/lib/po
 import { clientLineLabel } from "@/components/proposals/ClientPaymentLines";
 import { InstallPrompt, OfflineView } from "./PortalOffline";
 import { DocumentsSection, FlightsSection, PartySection, PassportScanSection, TripSection } from "./PortalPerson";
+import { PortalTravel } from "./PortalTravel";
 import { SignEnvelope } from "./SignEnvelope";
 
 type Home = PortalHome & PortalPersonHome;
@@ -472,6 +474,9 @@ export function PortalPage({
       {home.documents !== undefined && (
         <DocumentsSection base={base} documents={home.documents} t={t} locale={locale} onError={(status) => setNote({ tone: "danger", text: refused({}, status) })} />
       )}
+
+      {/* AA-1070: released vouchers, the rooming list and the traveller's own visa checklists. */}
+      {home.documents !== undefined && <PortalTravel base={base} t={t} locale={locale} busy={busy} step={step} round={round} />}
 
       {home.party && (
         <PartySection party={home.party} busy={busy} step={step} t={t} onInvited={(text) => saved(text)} />

@@ -40,8 +40,11 @@ KINDS = (
     "invoice_pdf",
     "supplier_confirmation",
     "other",
+    "confirmation_pdf",  # AA-1070 (crm-055): the server-side PDFs of app.documents.pdf_job
+    "proposal_pdf",
 )
-UPLOADERS = ("member", "traveler")
+# AA-1070 (crm-055): ``system`` = a PDF the crm_pdf_render job wrote on a member's request.
+UPLOADERS = ("member", "traveler", "system")
 CONTENT_TYPES = ("application/pdf", "image/jpeg", "image/png", "image/webp", "image/heic")
 MAX_FILENAME = 200
 

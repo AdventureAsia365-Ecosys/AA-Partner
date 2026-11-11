@@ -52,6 +52,9 @@ EVENTS = (
     "invoice.unfulfillable",
     "message.received",
     "message.sent",
+    # AA-1070 (crm-15): a trip entered Booked while a traveller's passport ends too soon for it
+    # (app.travel_ops.passport, fired by the hourly tick once per entry into Booked).
+    "passport.invalid_for_trip",
 )
 MESSAGE_EVENTS = ("message.received", "message.sent")
 DATE_ANCHORS = (
@@ -109,6 +112,7 @@ _MEMBER = re.compile(r"^member:([0-9a-f-]{36})$")
 # AA-957 kind scan (tests/unit/test_task_kinds.py) sees them written.
 ARRIVAL_FLIGHT_TASK = "confirm_arrival_flight"  # R44 step 1: T-48 h, with the flight status link
 PASSPORT_TASK = "passport_expiring"  # R2: the passport expires within 200 days of today
+PASSPORT_TRIP_TASK = "passport_invalid_for_trip"  # AA-1070: a passport ends before the trip's end + N months
 BIRTHDAY_TASK = "client_birthday"  # R2
 ANNIVERSARY_TASK = "trip_anniversary"  # R2: a year since a completed trip ended
 PRE_TRAVEL_PACK_TASK = "send_pre_travel_pack"
@@ -119,6 +123,7 @@ QUIET_CLIENT_TASK = "follow_up_quiet_client"
 WORKFLOW_TASK_KINDS = (
     ARRIVAL_FLIGHT_TASK,
     PASSPORT_TASK,
+    PASSPORT_TRIP_TASK,
     BIRTHDAY_TASK,
     ANNIVERSARY_TASK,
     PRE_TRAVEL_PACK_TASK,

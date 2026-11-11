@@ -38,8 +38,10 @@ event in its own transaction, recorded once in ``crm.inbox_events`` (a replayed 
 cursor moves only from the value this run read (compare and set). ``hold.expired`` -> expired; ``hold.extended`` -> a
 refresh request; ``line.confirmed`` -> confirmed; ``line.declined`` -> cancelled / declined (the Lost hint) and an
 urgent task for the trip owner; ``booking.cancelled`` -> cancelled; ``departure.incident`` /
-``departure.incident_cleared`` -> ``crm.incident_flag`` (AA-961, :func:`apply_incident`); the other ``departure.*`` ->
-recorded ``informational``; an unknown type -> ``unknown_type``. A feed failure backs off like a request.
+``departure.incident_cleared`` -> ``crm.incident_flag`` (AA-961, :func:`apply_incident`); ``departure.guaranteed`` /
+``departure.cancelled`` -> ``crm.aa_departure_state`` (AA-1070, :func:`app.travel_ops.departures.apply_event`); the
+other ``departure.*`` -> recorded ``informational``; an unknown type -> ``unknown_type``. A feed failure backs off like
+a request.
 
 AA-956: a confirm / release answer and the line events ``line.confirmed`` / ``line.declined`` / ``booking.cancelled``
 queue one ``crm_ops_release_sync`` nudge for the trip (:func:`app.ops_release.service.nudge`, ids only), so the
@@ -71,6 +73,7 @@ from app.ledger import fx
 from app.ops_release import service as ops_release
 from app.payments import claims
 from app.tenancy import SystemContext, system_tx
+from app.travel_ops import departures
 
 log = logging.getLogger(__name__)
 
@@ -674,6 +677,11 @@ async def apply_event(ctx: SystemContext, ev: contract.Event) -> tuple[str, str]
         return "ignored", "unknown_type"
     if ev.type in ("departure.incident", "departure.incident_cleared"):
         return await apply_incident(ctx, ev)
+    if ev.type in departures.EVENT_STATES:
+        # AA-1070 (crm-054): the departure roster's guaranteed / cancelled state.
+        return await departures.apply_event(
+            ctx, ev.type, ev.departure_id, ev.event_id, ev.occurred_at or dt.datetime.now(dt.UTC)
+        )
     if ev.type.startswith("departure."):
         return "ignored", "informational"
     try:

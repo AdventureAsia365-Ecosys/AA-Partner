@@ -21,6 +21,7 @@
 // AA-1027 F3: the AI draft card under the trip panel (GET settings/ai: the plan's ai_assist and the AI switch decide
 // whether its Draft action works).
 // AA-1068: the Money card (owner / agent only: GET /trips/{id}/pnl and the trip's supplier bills) under the invoices.
+// AA-1070: the Travel panel (passport check, rooming list, vouchers, visas, server PDFs) under AA ground operations.
 import { notFound } from "next/navigation";
 import { ErrorState } from "@/app/_kit";
 import { TripIncidentBanner } from "@/components/duty/IncidentPanel";
@@ -36,6 +37,7 @@ import { TripPanel } from "@/components/pipeline/TripPanel";
 import { AiDraftPanel } from "@/components/pipeline/AiDraftPanel";
 import { TripWorkflows } from "@/components/workflows/TripWorkflows";
 import { TripMoneyCard } from "@/components/finance/TripMoneyCard";
+import { TripTravelPanel } from "@/components/travelOps/TripTravelPanel";
 import { canSeeMoney, type SupplierBill, type TripPnl } from "@/lib/finance";
 import type { AiSettings } from "@/lib/ai";
 import type { DocumentRow } from "@/lib/clients";
@@ -155,6 +157,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
       />
     )}
     {ops.ok && <OpsReleasePanel tripId={tripId} view={ops.data} lang={ctx.lang} locale={ctx.locale} canOpenAccessLog={ctx.role === "owner"} />}
+    <TripTravelPanel tripId={tripId} lang={ctx.lang} locale={ctx.locale} closed={closed} />
     {signed.ok && <TripAgreementsPanel view={signed.data} party={trip.data.party} lang={ctx.lang} locale={ctx.locale} closed={closed} />}
     {lines.ok && (
       <LinesPanel
