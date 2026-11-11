@@ -23,7 +23,7 @@ from app.errors import Conflict, Forbidden, Gone, Invalid, NotFound, RateLimited
 from app.intake import booking, booking_settings
 from app.payments import claims, gateway, providers, vnpay
 from app.payments import service as payments
-from app.proposals import aa_options, pricing
+from app.proposals import aa_options, client_page, pricing
 from app.settings import Settings
 from app.tenancy import PaymentSessionRef
 from tests.aa_fakes import FakeBooking, booking_client
@@ -428,6 +428,58 @@ async def test_submit_records_a_refusal_or_a_failure(agency: ScriptedConn) -> No
         await _submit(agency, _fake(), _press(departure_id="d9"))
 
 
+def _rrp_only(monkeypatch: pytest.MonkeyPatch) -> FakeBooking:
+    """An agency without a markup (the retail is AA's RRP of 4,000,000 a head) on a tour whose B2B price is
+    10,000,000 whatever the party: one adult would be sold below cost, three adults are not."""
+
+    async def rctx(ctx: Any) -> dict[str, Any]:
+        return {"markups": {}, "rules": [], "today": dt.date(2031, 3, 1)}
+
+    monkeypatch.setattr(booking, "_rctx", rctx)
+    return FakeBooking(b2b_price="10000000.00", from_price="4000000.00", departure_start="2031-05-01")
+
+
+def test_a_retail_below_the_b2b_price_is_on_request() -> None:
+    quote = aa_options.AaQuote("q1", Decimal("10000000"), "available", NOW, Decimal("4000000"))
+    with _raises(Conflict, booking.PRICE_ON_REQUEST):
+        booking.check_not_below_cost(Decimal("9999999.99"), quote)
+    booking.check_not_below_cost(Decimal("10000000.00"), quote)  # at cost: the gate's margin is not negative
+    booking.check_not_below_cost(Decimal("1.00"), aa_options.AaQuote("q2", None, "available", NOW, None))
+
+
+@pytest.mark.asyncio
+async def test_one_adult_below_cost_is_priced_on_request_not_an_error(
+    agency: ScriptedConn, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S277 live check: a 1-adult price check stopped at the owner's discount gate (409 discount_needs_approval,
+    below_cost, "Something went wrong" on the page). The public path refuses with its own code instead."""
+    fake = _rrp_only(monkeypatch)
+    client = booking_client(fake)
+    one = {"tour": "T-100", "departure_id": "d1", "adults": 1, "child_ages": []}
+    with _raises(Conflict, booking.PRICE_ON_REQUEST):
+        await booking.price(None, ProductCache(client), client, "k" * 22, one)  # type: ignore[arg-type]
+    three = await booking.price(None, ProductCache(client), client, "k" * 22, {**one, "adults": 3})  # type: ignore[arg-type]
+    assert three["total"] == "12000000.00" and three["lines"] == [{"pax_type": "adult", "qty": 3, "unit": "4000000.00"}]
+
+
+@pytest.mark.asyncio
+async def test_a_one_adult_booking_below_cost_is_refused_without_using_an_attempt(
+    agency: ScriptedConn, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = _creating(agency, monkeypatch)
+    fake = _rrp_only(monkeypatch)
+    with _raises(Conflict, booking.PRICE_ON_REQUEST):
+        await _submit(agency, fake, _press(tour="T-100", adults=1, child_ages=[]))
+    assert seen == ["start"]  # never published (the owner gate is never reached), nothing sent
+    assert not agency.sql("INSERT INTO crm.trip (") and not agency.sql("INSERT INTO crm.traveler (")
+    assert agency.sql("UPDATE crm.public_booking_attempt SET status = $2")[-1][1:] == ("refused", "price_on_request")
+    # ... and such a refusal is not one of the address's attempts an hour.
+    assert booking.PRICE_ON_REQUEST in booking.UNCOUNTED_REFUSALS
+    assert "refusal_code = ANY($2::text[])" in " ".join(booking.ADDRESS_COUNT_SQL.split())
+    out = await _submit(agency, fake, _press(tour="T-100", adults=3, child_ages=[]))
+    assert out["status"] == "created" and out["total"] == "12000000.00"
+
+
 def _creating(agency: ScriptedConn, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     seen: list[str] = []
     agency.on("SELECT count(*) FROM crm.public_booking_attempt", 0)
@@ -609,6 +661,9 @@ def test_connect_values_are_checked() -> None:
     assert gateway.ipn_url(SimpleNamespace(messaging_hooks_origin=lambda: "")) is None  # type: ignore[arg-type]
 
 
+LAST_ACCOUNT = "WHERE provider = 'vn_gateway' AND deleted_at IS NULL ORDER BY"
+
+
 @pytest.mark.asyncio
 async def test_connect_seals_the_secret_and_answers_without_it() -> None:
     conn = ScriptedConn().on("FROM crm.payment_provider_account WHERE deleted_at IS NULL", [])
@@ -623,6 +678,7 @@ async def test_connect_seals_the_secret_and_answers_without_it() -> None:
         "WHERE provider = 'vn_gateway' AND member_id IS NULL",
         {"integration_credential_id": CREDENTIAL, "secret_enc": b"x", "account_ref": "TESTSTUB1"},
     )
+    conn.on(LAST_ACCOUNT, {"account_id": ACCOUNT, "status": "active"})
     conn.on("WHERE provider = 'vn_gateway' AND status = 'active'", ACCOUNT)
     await gateway.connect(
         tenant_ctx(conn), vault, TEST, {"tmn_code": "TESTSTUB2", "hash_secret": SECRET, "mode": "live"}
@@ -633,9 +689,30 @@ async def test_connect_seals_the_secret_and_answers_without_it() -> None:
         "Online payment",
         "TESTSTUB2",
     )
+    assert len(conn.sql("INSERT INTO crm.payment_provider_account")) == 1  # the active account is updated in place
     status = await gateway.status(tenant_ctx(conn), vault, TEST)
     assert status == {"connected": True, "mode": "stub", "ipn_url": gateway.ipn_url(TEST)}
     assert (await gateway.status(tenant_ctx(ScriptedConn()), vault, TEST))["connected"] is False
+
+
+@pytest.mark.asyncio
+async def test_after_a_disconnect_the_gateway_reads_not_connected_and_a_reconnect_reuses_the_account() -> None:
+    """S277 live check: the disconnect left the credential (webhooks of started sessions still verify), so the status
+    still said "Connected", and every new connect added another account row."""
+    vault = SecretVault()
+    conn = ScriptedConn().on(
+        "WHERE provider = 'vn_gateway' AND member_id IS NULL",
+        {"integration_credential_id": CREDENTIAL, "secret_enc": b"x", "account_ref": "TESTSTUB1"},
+    )
+    # The credential is there, no account is active: not connected, no mode (and the secret is never opened).
+    status = await gateway.status(tenant_ctx(conn), vault, TEST)
+    assert status == {"connected": False, "mode": None, "ipn_url": gateway.ipn_url(TEST)}
+    conn.on(LAST_ACCOUNT, {"account_id": ACCOUNT, "status": "disconnected"})
+    ctx = tenant_ctx(conn)
+    await gateway.connect(ctx, vault, TEST, {"tmn_code": "TESTSTUB3", "hash_secret": SECRET, "mode": "stub"})
+    assert not conn.sql("INSERT INTO crm.payment_provider_account")
+    assert conn.sql("SET status = 'active', disconnected_at = NULL") == [(ACCOUNT, "Online payment", "TESTSTUB3")]
+    assert ctx.audit_events[-1].fields == ("status", "external_account_id", "charges_enabled")
 
 
 def _invoice_row(**over: Any) -> dict[str, Any]:
@@ -1008,3 +1085,49 @@ async def test_unsettled_money_is_recorded_with_a_review_task() -> None:
         )
     assert payments.ctx_actor(system_ctx()) == "job:crm_intake_process"
     assert payments.ctx_actor(tenant_ctx()).startswith("member:")
+
+
+# ── the client page's payment dates (S277 live check) ────────────────────────────────────────────
+
+
+def test_the_summary_dates_follow_the_schedule() -> None:
+    today = dt.date(2031, 3, 1)
+    assert client_page.due_from("2031-02-10", today) == "2031-03-01"  # past: due now (the accept dates it today)
+    assert client_page.due_from("2031-04-01", today) == "2031-04-01"
+    assert client_page.due_from(None, today) is None and client_page.due_from("2031-02-10", None) == "2031-02-10"
+    # Accepted, a departure 9 days out on the default template: the rows the accept wrote are all due today, so the
+    # summary's balance date is today too (it used to read the version's plan date, 30 days before the start).
+    accepted = {
+        "status": "accepted",
+        "balance_due_on": "2031-02-08",
+        "schedule": [
+            {"kind": "deposit", "seq": 1, "due_on": "2031-03-01"},
+            {"kind": "instalment", "seq": 1, "due_on": "2031-03-01"},
+            {"kind": "balance", "seq": 1, "due_on": "2031-03-01"},
+        ],
+    }
+    client_page.client_dates(accepted, today)
+    assert accepted["balance_due_on"] == "2031-03-01"
+    whole = {"status": "accepted", "balance_due_on": None, "schedule": [{"kind": "deposit", "due_on": "2031-03-01"}]}
+    client_page.client_dates(whole, today)
+    assert whole["balance_due_on"] is None
+    # Not accepted yet: every past date of the plan reads as today; future dates and the deposit stay.
+    sent = {
+        "status": "sent",
+        "schedule": [],
+        "balance_due_on": "2031-02-08",
+        "totals": {
+            "balance_due_on": "2031-02-08",
+            "schedule": [
+                {"kind": "deposit", "seq": 1, "due_on": None, "amount": "300.00"},
+                {"kind": "instalment", "seq": 1, "due_on": "2031-01-09", "amount": "400.00"},
+                {"kind": "balance", "seq": 1, "due_on": "2031-04-08", "amount": "300.00"},
+            ],
+        },
+    }
+    client_page.client_dates(sent, today)
+    assert sent["balance_due_on"] == "2031-03-01" and sent["totals"]["balance_due_on"] == "2031-03-01"
+    assert [line["due_on"] for line in sent["totals"]["schedule"]] == [None, "2031-03-01", "2031-04-08"]
+    text = {"status": "sent", "schedule": [], "balance_due_on": "2031-02-08"}  # a text proposal has no totals
+    client_page.client_dates(text, today)
+    assert text["balance_due_on"] == "2031-03-01"

@@ -121,6 +121,43 @@ def public_totals(t: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in t.items() if not k.startswith("_")}
 
 
+# ── Payment dates the client reads (S277 live check, AA-1072) ────────────────────────────────────
+
+
+def due_from(day: str | None, today: dt.date | None) -> str | None:
+    """A payment date of a version not accepted yet, as the client page shows it: a date already past reads as today,
+    because the accept dates such a line on its own day (:func:`app.payments.schedule_plan.accept_rows`, the text
+    proposal's balance row likewise). Without a known ``today`` the date is left as it is."""
+    if day is None or today is None:
+        return day
+    return max(dt.date.fromisoformat(day), today).isoformat()
+
+
+def schedule_balance_due(rows: list[dict[str, Any]]) -> str | None:
+    """The balance date of an accepted version as its schedule rows say it (the last row after the deposit; None when
+    the deposit is the whole amount), so the page's summary and its schedule list never disagree."""
+    later = [str(r["due_on"]) for r in rows if r["kind"] != "deposit"]
+    return max(later) if later else None
+
+
+def client_dates(out: dict[str, Any], today: dt.date | None) -> None:
+    """Make the page's summary dates follow its payment schedule (in place): accepted, the balance date comes from
+    the schedule rows written at the accept; not accepted yet, every date already past reads as today (also each line
+    of a builder plan). Example: a departure 9 days out on the AA default template had "Balance ... due" 30 days
+    before the start (a date in the past) while the rows said every payment is due today."""
+    if out.get("status") == "accepted" and out.get("schedule"):
+        out["balance_due_on"] = schedule_balance_due(out["schedule"])
+        return
+    out["balance_due_on"] = due_from(out.get("balance_due_on"), today)
+    t = out.get("totals")
+    if not isinstance(t, dict):
+        return
+    if "balance_due_on" in t:
+        t["balance_due_on"] = due_from(t["balance_due_on"], today)
+    if t.get("schedule"):
+        t["schedule"] = [{**line, "due_on": due_from(line["due_on"], today)} for line in t["schedule"]]
+
+
 def _blocked(
     option_id: str, block_id: str, choice: dict[str, str], rule_objs: list[rules.Rule], titles: dict[str, str]
 ) -> dict[str, Any] | None:

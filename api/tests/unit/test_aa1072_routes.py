@@ -73,6 +73,30 @@ def test_the_widget_and_the_price_routes(public: tuple[TestClient, list]) -> Non
     assert client.get("/crm/public/v1/book/short").status_code == 422
 
 
+def test_price_checks_have_their_own_limit_and_leave_the_writes_theirs(
+    public: tuple[TestClient, list], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S277 live check: a visitor who checks the price a few times and then books, holds, accepts and pays within a
+    minute is not stopped on "Pay online" (the price check has its own bucket), and price checks still stop."""
+    client, calls = public
+    monkeypatch.setattr(booking, "submit", _record(calls, "submit", {"status": "created"}))
+    intake = client.app.state.intake_limiter  # type: ignore[attr-defined]
+    price_limit = client.app.state.booking_price_limiter  # type: ignore[attr-defined]
+    limit = price_limit._limit
+    assert limit == client.app.state.settings.rate_limit_booking_price_per_minute > intake._limit  # type: ignore[attr-defined]
+    for _ in range(3):
+        assert client.post(f"/crm/public/v1/book/{KEY}/price", json={"tour": "T-1"}).status_code == 200
+    assert client.post(f"/crm/public/v1/book/{KEY}/bookings", json={"tour": "T-1"}).status_code == 201
+    client.cookies.set(client_pages.PROPOSAL_COOKIE, "t" * 43, domain="go.test", path="/")
+    card = "/crm/public/v1/proposal/invoices/00000000-0000-4000-8000-0000000000d1/card"
+    assert client.post(card).status_code == 200  # 3 price checks + 1 booking + this: under the 5 writes a minute
+    for _ in range(limit - 3):
+        assert client.post(f"/crm/public/v1/book/{KEY}/price", json={"tour": "T-1"}).status_code == 200
+    res = client.post(f"/crm/public/v1/book/{KEY}/price", json={"tour": "T-1"})
+    assert res.status_code == 429 and res.json()["detail"] == "rate_limited"
+    assert client.post(card).status_code == 200  # the price bucket being full leaves the writes alone
+
+
 @pytest.mark.parametrize(("status", "code"), [("created", 201), ("received", 202), ("already_created", 200)])
 def test_a_booking_answers_by_its_status(
     public: tuple[TestClient, list], monkeypatch: pytest.MonkeyPatch, status: str, code: int

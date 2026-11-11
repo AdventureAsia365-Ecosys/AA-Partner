@@ -77,6 +77,7 @@ const CODES = new Set([
   "aa_sold_out",
   "departure_not_available",
   "no_retail_price",
+  "price_on_request",
   "aa_tour_not_served",
   "aa_quote_refused",
   "booking_rate_limited",

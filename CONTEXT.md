@@ -1815,9 +1815,14 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
     with seats, of a product Booking sells the agency (404 `tour_not_bookable` otherwise: the page shows "Ask the
     agency"). `POST .../price`: a Booking quote (no hold, nothing stored) and the agency's retail on it, the builder's
     own suggestion (owner markup on the B2B price, else AA's RRP, then the price rules), shared per head and rounded
-    **up** to the currency's unit (whole dong): the per-traveller grid; no suggestion = 409 `no_retail_price`. `POST
+    **up** to the currency's unit (whole dong): the per-traveller grid; no suggestion = 409 `no_retail_price`; a
+    retail under the quote's B2B price (no markup, AA's RRP per head under the B2B price of the party, e.g. one
+    traveller's single supplement) = 409 `price_on_request` at the price check and at the booking (never sold below
+    cost: the public path has no owner to pass the builder's discount gate). The price check has its own per-address
+    bucket (`RATE_LIMIT_BOOKING_PRICE_PER_MINUTE`, 20), not the intake one the booking, hold, accept and "Pay online"
+    share (S277 live check). `POST
     .../bookings`: origin, honeypot (202, nothing written), consent, answers, at most 5 attempts an hour per address
-    and agency (`ip_hash`), one `crm.public_booking_attempt` (a repeated press = `already_created` /
+    and agency (`ip_hash`; a `price_on_request` refusal does not count), one `crm.public_booking_attempt` (a repeated press = `already_created` /
     `booking_in_progress`); the departure and the quote with no transaction held; then one transaction: **always a new
     client** (the typed e-mail is not verified and the answer is a live client link, so an existing client with the
     same e-mail or phone is never reused or unarchived; the trip gets an `internal` note to confirm and merge them on
@@ -1825,15 +1830,20 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
     stage reason `web_booking`, the party, the departure's dates, the country's destination), a builder v1 (day 0, day
     1 with one "Tour" block holding the AA option at the retail sell, its traveller rows, the agency's schedule
     template), published and sent by the builder's own `publish` / `send` (price hash, terms, cancellation policy),
-    the attempt `created`; the answer is `/c/p/<token>` (201). A Booking refusal marks the attempt
+    the attempt `created`; the answer is `/c/p/<token>` (201). The client page's payment dates follow its schedule:
+    before the accept a plan date already past reads as today, after it the summary's balance date is the schedule
+    rows' (the accept dates a past line on its own day). A Booking refusal marks the attempt
     `refused` with the code (409); another failure rolls back and marks it `failed`. The client holds, accepts and pays
     on the existing client page; **a web booking's deposit invoice is issued at the accept** (actor the client link).
   - *Online payment (BYO VNPay)*: Settings > Payments "Online payment (VNPay)" (`GET` / `PUT
     /settings/payment-methods/vn-gateway`, owner): the merchant code on the agency's `payment_provider_account`
     (`external_account_id`, `charges_enabled`, VND) and the hash secret + mode in its `vn_gateway`
     `integration_credential` (sealed; never answered back); modes `sandbox`, `live`, `stub` (dev / test / local only, 422
-    `mode_not_allowed` elsewhere). The client page offers "Pay online" (`pay_online`) on a payable invoice in the
-    gateway's currency; the card button creates a `crm.payment_session` for the invoice's **open amount computed on the
+    `mode_not_allowed` elsewhere). Connected = an **active** `vn_gateway` account with its credential: a disconnect
+    (Settings > Payments) keeps the credential for the webhooks of sessions already started, but the status reads
+    "Not connected" and the client page offers no "Pay online"; a reconnect reactivates the agency's last
+    `vn_gateway` account row (never a second row). The client page offers "Pay online" (`pay_online`) on a payable
+    invoice in the gateway's currency; the card button creates a `crm.payment_session` for the invoice's **open amount computed on the
     server** (15 minutes) and answers the signed gateway URL; the return page `/c/p/paid` drops the gateway's query and
     opens `/c/p?payment=returned` (the box reads itself again once). The IPN (`GET /crm/public/v1/hooks/vnpay/ipn`,
     `payment_session_tx`) checks the HMAC-SHA512 signature with the agency's own secret first (`97`), then the merchant
@@ -2713,7 +2723,8 @@ local and signing answers 503 `esign_not_configured` on stg / prod),
 `DEK_CACHE_TTL_SECONDS`, and the public intake (AA-936) `INTAKE_PAGE_ORIGINS` (the client host origin; empty on Dev =
 every submission 503 `intake_not_configured`), `RATE_LIMIT_INTAKE_PER_MINUTE` (default 5 per address; also every anonymous client-page write),
 `RATE_LIMIT_PORTAL_WRITE_PER_MINUTE` (default 30 per address: traveller portal writes with a session that proved valid;
-not set on Dev, the code default applies),
+not set on Dev, the code default applies), `RATE_LIMIT_BOOKING_PRICE_PER_MINUTE` (default 20 per address: "Book now"
+price checks; not set on Dev, the code default applies),
 `RATE_LIMIT_INTAKE_FORM_PER_HOUR` (default 200 per form), and the documents bucket (AA-937) `DOCUMENTS_BUCKET`, the
 audit export (AA-940) `AUDIT_BUCKET_COMPLIANCE` / `AUDIT_BUCKET_GOVERNANCE` (both or neither) and
 `AUDIT_RETENTION_DRY_RUN` (default true), and (AA-939) `COGNITO_PARTNER_POOL_ID`, `PARTNER_WEB_ORIGIN`,

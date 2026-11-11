@@ -274,6 +274,9 @@ async def _page(ctx: AnyContext, keys: KeyProvider, link: Any, row: Any) -> dict
             balance_amount=_money(total - deposit),
             balance_due_on=_iso(row["balance_due_on"]),
         )
+    # S277 live check: the summary's dates follow the schedule (never a date already past).
+    today = await ctx.conn.fetchval(TODAY_SQL)
+    client_page.client_dates(out, today if isinstance(today, dt.date) else None)
     return out
 
 

@@ -46,12 +46,16 @@ is decided by the form key inside :func:`app.tenancy.intake_tx`.
   fixed departures, the agency's name, currency and age bands. 404 ``form_not_found`` / ``booking_not_offered`` /
   ``tour_not_bookable``; 503 ``booking_unavailable``. Public rate limit.
 - ``POST /crm/public/v1/book/{public_key}/price``: the live retail price of a departure for a party (a quote, no hold,
-  nothing stored); the per-address intake limit (each call asks Booking).
+  nothing stored); its own per-address limit (``RATE_LIMIT_BOOKING_PRICE_PER_MINUTE``, default 20: each call asks
+  Booking), not the intake limit the booking, the hold, the accept and "Pay online" share (S277 live check). 409
+  ``price_on_request`` when the agency's retail for that party is below what AA charges it (no owner to approve a
+  sale below cost on the public path).
 - ``POST /crm/public/v1/book/{public_key}/bookings``: one booking (:func:`app.intake.booking.submit`): 201
   ``{status: created, link_path}`` (the client page to hold, accept and pay; the link also goes by e-mail), 200
   ``{status: already_created}`` for a repeated press, 202 ``{status: received}`` for a honeypot hit; 409 with the
-  refusal code (``aa_sold_out``, ``no_retail_price``, ``departure_not_available``, ...), 429 per address (the intake
-  limit, then 5 attempts an hour per agency on the attempt rows), 403 ``origin_not_allowed``, 32 KiB cap.
+  refusal code (``aa_sold_out``, ``no_retail_price``, ``price_on_request``, ``departure_not_available``, ...), 429 per
+  address (the intake limit, then 5 attempts an hour per agency on the attempt rows; a ``price_on_request`` refusal
+  does not count), 403 ``origin_not_allowed``, 32 KiB cap.
 
 - ``GET  /crm/public/v1/hooks/vnpay/ipn`` (AA-1072): the IPN of an agency's own VNPay account
   (:func:`app.payments.gateway.handle_ipn`): always 200 with VNPay's ``{RspCode, Message}`` (``00`` confirmed,
@@ -289,7 +293,7 @@ async def post_booking_price(
     request: Request, public_key: PublicKey, content_length: Annotated[int | None, Header()] = None
 ) -> JSONResponse:
     settings = request.app.state.settings
-    _limit(request, "intake_limiter", client_address(request, settings.rate_limit_xff_hops))
+    _limit(request, "booking_price_limiter", client_address(request, settings.rate_limit_xff_hops))
     raw = await _json_body(request, content_length)
     pool = await request_pool(request)
     cache, client = _booking_deps(request)

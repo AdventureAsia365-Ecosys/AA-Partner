@@ -72,7 +72,9 @@ async def _leave_no_trace(admin: asyncpg.Connection, app_pool: asyncpg.Pool) -> 
 BANK = "Account 0000 7777 at the agency's bank"
 
 
-async def _setup(pool: asyncpg.Pool, *, enabled: bool = True) -> dict[str, Any]:
+async def _setup(
+    pool: asyncpg.Pool, *, enabled: bool = True, markup: bool = True, days_out: int = 60, from_price: str | None = None
+) -> dict[str, Any]:
     tenant_id, people = await _agency(pool, "owner", "agent")
     AGENCIES.append(tenant_id)
     who = {"owner": people[0][0], "agent": people[1][0]}
@@ -87,9 +89,10 @@ async def _setup(pool: asyncpg.Pool, *, enabled: bool = True) -> dict[str, Any]:
     async with tenant_tx(pool, who["owner"], tenant_id) as ctx:
         await ctx.conn.execute(
             "INSERT INTO crm.tenant_settings (tenant_id, base_currency, retail_markup_pct) "
-            "VALUES ($1, 'VND', '{\"trip_plan\": 20}'::jsonb) ON CONFLICT (tenant_id) DO UPDATE "
-            "SET base_currency = 'VND', retail_markup_pct = '{\"trip_plan\": 20}'::jsonb",
+            "VALUES ($1, 'VND', $2::jsonb) ON CONFLICT (tenant_id) DO UPDATE "
+            "SET base_currency = 'VND', retail_markup_pct = $2::jsonb",
             tenant_id,
+            '{"trip_plan": 20}' if markup else "{}",
         )
         await booking_settings.update(ctx, PLAIN, enabled)
         await payments.save_manual(ctx, display_name="Bank transfer", instructions=BANK)
@@ -99,9 +102,9 @@ async def _setup(pool: asyncpg.Pool, *, enabled: bool = True) -> dict[str, Any]:
         )
     fake = FakeBooking(
         b2b_price="10000000.00",
-        from_price=None,
+        from_price=from_price,
         product_source_id=TOUR,
-        departure_start=(dt.date.today() + dt.timedelta(days=60)).isoformat(),
+        departure_start=(dt.date.today() + dt.timedelta(days=days_out)).isoformat(),
     )
     return {
         "tenant": tenant_id,
@@ -524,3 +527,81 @@ async def test_the_purge_keeps_held_attempts(app_pool: asyncpg.Pool) -> None:
     assert rows == []
     left = await _raw(app_pool, s, "SELECT status FROM crm.public_booking_attempt")
     assert [r["status"] for r in left] == ["created"]  # the refused one left; the held trip's stays
+
+
+# ── S277 live check fixes ─────────────────────────────────────────────────────────────────────────
+
+
+async def test_one_adult_below_cost_is_priced_on_request_and_never_uses_an_attempt(app_pool: asyncpg.Pool) -> None:
+    """No agency markup: the retail is AA's RRP (4,000,000 a head) while the B2B price is 10,000,000 for any party.
+    One adult would be sold below cost (the builder's owner gate stopped it with discount_needs_approval / below_cost);
+    the public path answers price_on_request at the price check and at the booking, and such refusals are not counted
+    in the address's attempts. Three adults (12,000,000) book as before."""
+    s = await _setup(app_pool, markup=False, from_price="4000000.00")
+    one = {"tour": TOUR, "departure_id": "d1", "adults": 1, "child_ages": []}
+    with pytest.raises(Conflict) as err:
+        await booking.price(app_pool, s["cache"], booking_client(s["fake"]), s["key"], one)
+    assert err.value.code == booking.PRICE_ON_REQUEST
+    for _ in range(booking.MAX_PER_ADDRESS_HOUR + 1):
+        with pytest.raises(Conflict) as err:
+            await _submit(app_pool, s, _press(s, adults=1, child_ages=[]), ip="203.0.113.21")
+        assert err.value.code == booking.PRICE_ON_REQUEST
+    rows = await _raw(app_pool, s, "SELECT status, refusal_code, trip_id FROM crm.public_booking_attempt")
+    assert {(r["status"], r["refusal_code"], r["trip_id"]) for r in rows} == {("refused", "price_on_request", None)}
+    assert (await _raw(app_pool, s, "SELECT count(*) AS n FROM crm.trip"))[0]["n"] == 0
+    assert (await _raw(app_pool, s, "SELECT count(*) AS n FROM crm.discount_approval"))[0]["n"] == 0
+    out = await _submit(app_pool, s, _press(s, adults=3, child_ages=[]), ip="203.0.113.21")
+    assert out["status"] == "created" and out["total"] == "12000000.00"
+
+
+async def test_a_disconnected_gateway_reads_not_connected_and_a_reconnect_reuses_its_account(
+    app_pool: asyncpg.Pool,
+) -> None:
+    s = await _setup(app_pool)
+    p = await _book_and_accept(app_pool, s)
+    deposit = next(i for i in p["payments"] if i["kind"] == "deposit")
+    await _connect_stub(app_pool, s)
+
+    async def status() -> dict[str, Any]:
+        async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:
+            return await gateway.status(ctx, Vault(s["keys"], ctx), PLAIN)
+
+    async def accounts() -> list[Any]:
+        return await _raw(
+            app_pool, s, "SELECT account_id, status FROM crm.payment_provider_account WHERE provider = 'vn_gateway'"
+        )
+
+    assert (await status())["connected"] is True and (await status())["mode"] == "stub"
+    [account] = await accounts()
+    async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:
+        await payments.disconnect(ctx, account["account_id"])
+    assert await status() == {"connected": False, "mode": None, "ipn_url": gateway.ipn_url(PLAIN)}
+    p = await page.read(app_pool, s["keys"], s["token"])
+    deposit = next(i for i in p["payments"] if i["kind"] == "deposit")
+    assert deposit["pay_online"] is False and deposit["pay_by"]["instructions"] == BANK  # bank details only
+    with pytest.raises(Conflict) as err:
+        await _card(app_pool, s, deposit["invoice_id"])
+    assert err.value.code == "card_not_offered"
+    # Connect, disconnect, connect again: still one account row, active again.
+    await _connect_stub(app_pool, s)
+    assert [(r["account_id"], r["status"]) for r in await accounts()] == [(account["account_id"], "active")]
+    assert (await status())["connected"] is True
+    p = await page.read(app_pool, s["keys"], s["token"])
+    assert next(i for i in p["payments"] if i["kind"] == "deposit")["pay_online"] is True
+
+
+async def test_a_departure_nine_days_out_shows_one_schedule(app_pool: asyncpg.Pool) -> None:
+    """The AA default template dates the instalment 60 and the balance 30 days before the start: both already past.
+    Before the accept every past date reads as today; after it the summary's balance date is the schedule rows' date
+    (the accept dated them today), never the plan's past date."""
+    s = await _setup(app_pool, days_out=9)
+    out = await _submit(app_pool, s, _press(s))
+    s["token"] = _token(out["link_path"])
+    sent = await page.read(app_pool, s["keys"], s["token"])
+    today = dt.date.fromisoformat(sent["totals"]["schedule"][1]["due_on"])
+    assert abs((today - dt.date.today()).days) <= 1  # the agency's today (its time zone)
+    assert [line["due_on"] for line in sent["totals"]["schedule"]] == [None, today.isoformat(), today.isoformat()]
+    assert sent["balance_due_on"] == today.isoformat()
+    p = await _book_and_accept(app_pool, s)
+    assert {r["due_on"] for r in p["schedule"]} == {today.isoformat()}
+    assert p["balance_due_on"] == today.isoformat()

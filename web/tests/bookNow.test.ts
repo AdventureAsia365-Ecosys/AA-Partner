@@ -15,6 +15,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => {}, push:
 const { BookNowWidget } = await import("@/components/booking/BookNowWidget");
 const { ClientPayBox } = await import("@/components/proposals/ClientPayBox");
 const { GET: paidReturn } = await import("@/app/c/p/paid/route");
+const { OnlinePaymentForm } = await import("@/components/settings/OnlinePaymentForm");
 
 const KEY = "k".repeat(22);
 const PAGE = "11111111-1111-4111-8111-111111111111";
@@ -77,6 +78,8 @@ describe("the link and the helpers", () => {
     expect(childAges(["seven"])).toBeNull();
     expect(childAges(Array(11).fill("5"))).toBeNull();
     expect(bookErrorKey("aa_sold_out", 409)).toBe("book.error.aa_sold_out");
+    // S277 live check: a party priced below cost reads as "on request", never as the generic error.
+    expect(bookErrorKey("price_on_request", 409)).toBe("book.error.price_on_request");
     expect(bookErrorKey(undefined, 429)).toBe("book.error.rate_limited");
     expect(bookErrorKey("something_else", 500)).toBe("book.error.other");
     expect(safeLinkPath(`/c/p/${"a".repeat(43)}`)).toBe(`/c/p/${"a".repeat(43)}`);
@@ -86,7 +89,7 @@ describe("the link and the helpers", () => {
 
   it("has every word in both languages and every refusal it can show", () => {
     expect(Object.keys(bookNowVi).sort()).toEqual(Object.keys(bookNowEn).sort());
-    for (const code of ["aa_sold_out", "no_retail_price", "booking_rate_limited", "consent_required"]) {
+    for (const code of ["aa_sold_out", "no_retail_price", "price_on_request", "booking_rate_limited", "consent_required"]) {
       expect(MESSAGES.en[`book.error.${code}` as keyof typeof MESSAGES.en]).toBeTruthy();
       expect(MESSAGES.vi[`book.error.${code}` as keyof typeof MESSAGES.vi]).toBeTruthy();
     }
@@ -206,6 +209,33 @@ describe("pay online", () => {
     const again = await mount(createElement(ClientPayBox, { invoices: [inv], agency: "Lotus Lane Travel", locale: "en-AU", t: tr, onDone: () => {} }));
     await act(async () => (again.querySelector('[data-testid="client-pay-online"] button') as HTMLButtonElement).click());
     expect(again.querySelector('[data-testid="client-pay-error"]')?.textContent).toBe(tr("client.error.currency_not_supported"));
+  });
+
+  it("the settings panel says Not connected once the gateway is disconnected", () => {
+    // S277 live check: after a disconnect the API answers connected: false (the status follows the active account).
+    const panel = (status: { connected: boolean; mode: "stub" | null }) =>
+      renderToStaticMarkup(
+        createElement(OnlinePaymentForm, {
+          status: { ...status, ipn_url: "https://client.example.test/crm/public/v1/hooks/vnpay/ipn" },
+          lang: "en",
+          stubAllowed: true,
+        }),
+      );
+    const on = panel({ connected: true, mode: "stub" });
+    expect(on).toContain("Connected (");
+    expect(on).not.toContain(tr("gateway.notConnected"));
+    const off = panel({ connected: false, mode: null });
+    expect(off).toContain(tr("gateway.notConnected"));
+    expect(off).not.toContain("Connected (");
+  });
+
+  it("offers no Pay online when the API says the invoice cannot be paid online", () => {
+    // A disconnected gateway: the API's pay_online is false (no active account), the bank details stay.
+    const html = renderToStaticMarkup(
+      createElement(ClientPayBox, { invoices: [{ ...inv, pay_online: false }], agency: "Lotus Lane Travel", locale: "en-AU", t: tr, onDone: () => {} }),
+    );
+    expect(html).not.toContain('data-testid="client-pay-online"');
+    expect(html).toContain("Account 0000 7777");
   });
 
   it("the return route drops the gateway's fields and opens the proposal page", async () => {
