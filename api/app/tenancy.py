@@ -286,6 +286,8 @@ def _system_actor_kind(actor: str) -> str:
         return "user"  # the invited person accepting (AA-939)
     if actor.startswith("client_link:"):
         return "traveler"  # a client filling a form from a signed link (AA-943)
+    if actor.startswith("sales_partner_link:"):
+        return "traveler"  # AA-1071: a sales partner (an outside party) on its own signed link
     if actor.startswith("calendar_feed:"):
         return "user"  # a member's own calendar subscription (AA-961)
     if actor.startswith("support:"):
@@ -971,6 +973,85 @@ async def client_link_tx(
             traveler_id=row["traveler_id"],
             purpose=row["purpose"],
             status=row["status"],
+            expires_at=row["expires_at"],
+        )
+        ctx = SystemContext(conn=conn, tenant_id=tenant_id, actor=actor)
+        try:
+            async with conn.transaction():  # savepoint: the page's work
+                yield ctx, link
+        except Exception as exc:
+            denied = [e for e in ctx.audit_events if e.outcome == "denied"]
+            if not denied:
+                raise
+            await _write_audit(ctx, denied)
+            pending = exc
+        else:
+            await _write_audit(ctx, ctx.audit_events)
+    if pending is not None:
+        raise pending
+
+
+PARTNER_LINK_SQL = """
+SELECT link_id, tenant_id FROM crm.sales_partner_link
+ WHERE token_hash = decode($1, 'hex') AND status = 'active' AND expires_at > now() AND deleted_at IS NULL
+"""
+# The same row again inside the agency, locked, with its partner (an inactive or trashed partner has no page).
+PARTNER_LINK_LOCK_SQL = """
+SELECT l.link_id, l.sales_partner_id, l.purpose, l.intake_form_id, l.expires_at
+  FROM crm.sales_partner_link l
+  JOIN crm.sales_partner p ON p.sales_partner_id = l.sales_partner_id AND p.status = 'active' AND p.deleted_at IS NULL
+ WHERE l.link_id = $1 AND l.status = 'active' AND l.expires_at > now() AND l.deleted_at IS NULL
+   FOR UPDATE OF l
+"""
+
+
+@dataclass(frozen=True)
+class PartnerLink:
+    """The live sales partner link :func:`partner_link_tx` found by its token (ids and codes only)."""
+
+    link_id: uuid.UUID
+    tenant_id: uuid.UUID
+    sales_partner_id: uuid.UUID
+    purpose: str
+    intake_form_id: uuid.UUID | None
+    expires_at: dt.datetime
+
+
+@asynccontextmanager
+async def partner_link_tx(
+    pool: asyncpg.Pool, token_hash_hex: str, *, purpose: str
+) -> AsyncIterator[tuple[SystemContext, PartnerLink]]:
+    """A sales partner's page opened from its signed link (AA-1071, crm-056): the token's SHA-256 (hex) finds one live
+    ``crm.sales_partner_link`` through the SELECT-only policy ``sales_partner_link_token_lookup`` before any agency
+    is known; then ``app.tenant_id`` = its agency (which must be active) and ``app.actor`` =
+    ``sales_partner_link:<id>`` (audit actor kind ``traveler``: an outside party on a signed link), and the row is
+    re-read locked with its partner. Unknown, expired, revoked or trashed token, a link of another ``purpose``, an
+    inactive or trashed partner, or a locked agency: 404 ``link_not_found`` (one answer, so tokens cannot be
+    probed). Audit semantics as :func:`system_tx`. Only ``app/partners/public.py`` may open it."""
+    if not isinstance(token_hash_hex, str) or len(token_hash_hex) != 64:
+        raise NotFound("link_not_found")
+    pending: Exception | None = None
+    async with _gated(pool, tenant_gate.PUBLIC_KEY, busy=tenant_gate.public_busy) as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.partner_link_hash', $1, true)", token_hash_hex)
+        row = await conn.fetchrow(PARTNER_LINK_SQL, token_hash_hex)
+        await conn.execute("SELECT set_config('app.partner_link_hash', '', true)")
+        if row is None:
+            raise NotFound("link_not_found")
+        tenant_id = row["tenant_id"]
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+        if await conn.fetchval(TENANT_SQL, tenant_id) != "active":
+            raise NotFound("link_not_found")
+        row = await conn.fetchrow(PARTNER_LINK_LOCK_SQL, row["link_id"])
+        if row is None or row["purpose"] != purpose:
+            raise NotFound("link_not_found")
+        actor = f"sales_partner_link:{row['link_id']}"
+        await conn.execute("SELECT set_config('app.actor', $1, true)", actor)
+        link = PartnerLink(
+            link_id=row["link_id"],
+            tenant_id=tenant_id,
+            sales_partner_id=row["sales_partner_id"],
+            purpose=row["purpose"],
+            intake_form_id=row["intake_form_id"],
             expires_at=row["expires_at"],
         )
         ctx = SystemContext(conn=conn, tenant_id=tenant_id, actor=actor)

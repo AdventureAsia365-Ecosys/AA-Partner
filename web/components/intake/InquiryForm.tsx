@@ -42,7 +42,8 @@ function options(form: PublicForm, name: string): string[] {
   return form.fields.find((f) => f.name === name)?.options ?? [];
 }
 
-export function InquiryForm({ publicKey, form, lang, dict }: { publicKey: string; form: PublicForm; lang: Lang; dict: Dict }) {
+// AA-1071: a sales partner's intake link (/c/r/<token>) posts the same form to its own path (submitPath).
+export function InquiryForm({ publicKey, form, lang, dict, submitPath }: { publicKey: string; form: PublicForm; lang: Lang; dict: Dict; submitPath?: string }) {
   const t = (k: MessageKey) => dict[k] ?? k;
   const code = (prefix: string, c: string) => dict[`${prefix}.${c}` as MessageKey] ?? c;
   const submissionId = useMemo(() => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : ""), []);
@@ -118,7 +119,7 @@ export function InquiryForm({ publicKey, form, lang, dict }: { publicKey: string
     setError(null);
     setBad([]);
     try {
-      const res = await fetch(`/crm/public/v1/forms/${encodeURIComponent(publicKey)}/submissions`, {
+      const res = await fetch(submitPath ?? `/crm/public/v1/forms/${encodeURIComponent(publicKey)}/submissions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

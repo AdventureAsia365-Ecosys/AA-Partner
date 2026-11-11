@@ -137,6 +137,8 @@ class Action(StrEnum):
     # AA-1066 (crm-048): approve or reject a proposal discount above the agency limit (or a sale below cost). The
     # owner only: an agent asks (MONEY_FIELDS_EDIT), the database guard CRM48 lets only an owner decide too.
     DISCOUNT_APPROVE = "discount_approve"
+    SALES_PARTNER_MANAGE = "sales_partner_manage"  # AA-1071: partners, their terms and their links (crm-056 CRM54)
+    PARTNER_COMMISSION_APPROVE = "partner_commission_approve"  # AA-1071: approve / pay / cancel a partner commission
 
 
 A, D = Rule.ALLOW, Rule.DENY
@@ -203,6 +205,8 @@ _TABLE: dict[Action, tuple[Rule, Rule, Rule]] = {
     Action.AI_SETTINGS: (A, D, D),
     Action.ADDON_REQUEST: (A, D, D),
     Action.DISCOUNT_APPROVE: (A, D, D),
+    Action.SALES_PARTNER_MANAGE: (A, D, D),
+    Action.PARTNER_COMMISSION_APPROVE: (A, D, D),
 }
 
 MATRIX: dict[str, dict[Action, Rule]] = {

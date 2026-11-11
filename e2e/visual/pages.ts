@@ -57,6 +57,7 @@ export const PAGES: VisualPage[] = [
   crm("aa-bookings", "/aa-bookings"), // AA-1068: Bookings with AA (reads AA live; the copy when AA is down)
   crm("payments", "/payments"),
   crm("commissions", "/commissions"),
+  crm("partners", "/partners"), // AA-1071
   crm("suppliers", "/suppliers"),
   crm("services", "/services"), // AA-1069: the agency service catalogue
   crm("travelling", "/travelling"),
@@ -138,6 +139,8 @@ export const EXCLUDED: Record<string, string> = {
   "/c/p": "the client host's proposal view (needs a signed client link), not served on the agency host",
   "/c/s/[token]": "the client host's signing page (needs a live signing token), not served on the agency host",
   "/c/t": "the client host's trip view (needs a signed client link), not served on the agency host",
+  "/c/a": "AA-1071: a sales partner's own page on the client host (needs a signed partner link and an e-mail code)",
+  "/c/r/[token]": "AA-1071: a sales partner's inquiry link on the client host (needs a signed partner link)",
   "/trip/[tourId]": "the client host's public tour page (redirects to the tour of a published catalog)",
   "/staff": "the AA staff console: a staff Cognito sign-in, no staff E2E user in CI (redirects to /staff/ops)",
   "/staff/ops": "the AA staff console: a staff Cognito sign-in, no staff E2E user in CI",

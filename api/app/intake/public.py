@@ -59,8 +59,8 @@ SELECT d.schema, t.display_name, t.default_locale, s.privacy_notice_url AS agenc
 """
 INSERT_SQL = """
 INSERT INTO crm.form_submission (submission_id, intake_form_id, stage, schema_key, payload_enc, idempotency_key,
-                                 hidden_answers_dropped)
-VALUES ($1, $2, 's1', $3, $4, $5, $6)
+                                 hidden_answers_dropped, sales_partner_id)
+VALUES ($1, $2, 's1', $3, $4, $5, $6, $7)
 ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
 RETURNING submission_id
 """
@@ -161,9 +161,11 @@ async def store_submission(
     *,
     idempotency_key: str,
     created_by: str,
+    sales_partner_id: uuid.UUID | None = None,
 ) -> uuid.UUID | None:
     """Encrypt and store validated answers and queue their ``crm_intake_process`` job in the same transaction.
-    None when the idempotency key already holds a submission (nothing new is queued). Also used by the Dev seeder."""
+    None when the idempotency key already holds a submission (nothing new is queued). Also used by the Dev seeder and
+    by a sales partner's intake link (AA-1071: ``sales_partner_id`` stamps the inquiry, then the trip)."""
     submission_id = uuid.uuid4()
     blob = await vault.encrypt(
         "form_submission", "payload_enc", submission_id, json.dumps(answers.as_json(), ensure_ascii=False)
@@ -176,6 +178,7 @@ async def store_submission(
         blob,
         idempotency_key,
         answers.hidden_answers_dropped,
+        sales_partner_id,
     )
     if stored is None:
         return None

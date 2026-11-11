@@ -183,6 +183,7 @@ async def test_the_dry_run_lists_every_effect_and_writes_nothing(seams: dict[str
         "payments_without_invoice": 1,
         "commissions_cancelled": 1,
         "commissions_claimed_kept": 1,
+        "partner_commissions_open": 0,  # AA-1071: no sales partner commission on this trip
         "ops_release_withdrawn": 1,
         "cancellation_fee_invoiced": 0,  # AA-1067: no accepted proposal, no policy, nothing charged
     }

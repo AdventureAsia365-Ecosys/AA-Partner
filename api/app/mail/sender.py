@@ -25,6 +25,11 @@ AA-1069: a supplier request thread (``crm.conversation.agency_supplier_id``) is 
 (``crm.agency_supplier.contact_email_enc``, decrypted here at send time, never copied); none -> ``failed``
 (``no_supplier_address``).
 
+AA-1071: a sales partner's thread (``crm.conversation.sales_partner_id``: its view's sign-in codes) is sent to the
+partner's contact e-mail (``crm.sales_partner.contact_email_enc``, decrypted here at send time); none, or the partner is
+inactive or trashed -> ``failed`` (``no_partner_address``). Its code waits on ``crm.sales_partner_otp.code_enc`` like
+a traveller's on ``otp_challenge`` and is cleared once sent.
+
 AA-1014: a client address in the reserved ``.invalid`` top-level domain (:mod:`app.mail.recipients`; synthetic
 agencies, every environment) is never handed to the provider: the message ends ``failed`` (``invalid_tld``) and the
 dispatch row ``dropped`` / ``send_failed``. The action that queued the mail (proposal sent, portal code issued) is
@@ -53,7 +58,7 @@ log = logging.getLogger(__name__)
 
 MESSAGE_SQL = """
 SELECT m.message_id, m.status, m.direction, m.channel_account_id, m.subject_enc, m.body_enc, m.conversation_id,
-       c.traveler_id, c.trip_id, c.agency_supplier_id, t.mail_token
+       c.traveler_id, c.trip_id, c.agency_supplier_id, c.sales_partner_id, t.mail_token
   FROM crm.message m
   JOIN crm.conversation c ON c.conversation_id = m.conversation_id
   LEFT JOIN crm.trip t ON t.trip_id = c.trip_id
@@ -70,6 +75,10 @@ TRAVELER_SQL = "SELECT email_enc FROM crm.traveler WHERE traveler_id = $1"
 # AA-1069: a supplier request thread goes to the supplier's own contact e-mail (an own, live supplier only).
 SUPPLIER_SQL = """
 SELECT contact_email_enc FROM crm.agency_supplier WHERE agency_supplier_id = $1 AND kind = 'own' AND deleted_at IS NULL
+"""
+# AA-1071: a sales partner's thread goes to the partner's contact e-mail (an active, live partner only).
+PARTNER_SQL = """
+SELECT contact_email_enc FROM crm.sales_partner WHERE sales_partner_id = $1 AND status = 'active' AND deleted_at IS NULL
 """
 REPLY_TO_SQL = """
 SELECT message_id, rfc_message_id_enc FROM crm.message
@@ -98,6 +107,12 @@ SELECT otp_id, code_enc, status <> 'pending' OR expires_at <= now() AS expired F
    FOR UPDATE
 """
 CODE_SENT_SQL = "UPDATE crm.otp_challenge SET code_enc = NULL WHERE otp_id = $1"
+PARTNER_CODE_SQL = """
+SELECT otp_id, code_enc, status <> 'pending' OR expires_at <= now() AS expired FROM crm.sales_partner_otp
+ WHERE message_id = $1
+   FOR UPDATE
+"""
+PARTNER_CODE_SENT_SQL = "UPDATE crm.sales_partner_otp SET code_enc = NULL WHERE otp_id = $1"
 PURPOSE = "mail"
 
 
@@ -131,7 +146,11 @@ class MailSender:
             row is None
             or row["direction"] != "out"
             or row["status"] != "queued"
-            or (row["traveler_id"] is None and row.get("agency_supplier_id") is None)
+            or (
+                row["traveler_id"] is None
+                and row.get("agency_supplier_id") is None
+                and row.get("sales_partner_id") is None
+            )
         ):
             return "no_message"
         mailbox = await ctx.conn.fetchrow(MAILBOX_SQL, row["channel_account_id"]) if row["channel_account_id"] else None
@@ -152,6 +171,12 @@ class MailSender:
                 await ctx.conn.execute(FAIL_SQL, message_id, "no_supplier_address")
                 return "send_failed"
             to_address = await vault.decrypt("agency_supplier", "contact_email_enc", row["agency_supplier_id"], to_enc)
+        elif row.get("sales_partner_id") is not None:  # AA-1071: a sales partner's sign-in code
+            to_enc = await ctx.conn.fetchval(PARTNER_SQL, row["sales_partner_id"])
+            if to_enc is None:
+                await ctx.conn.execute(FAIL_SQL, message_id, "no_partner_address")
+                return "send_failed"
+            to_address = await vault.decrypt("sales_partner", "contact_email_enc", row["sales_partner_id"], to_enc)
         else:
             to_enc = await ctx.conn.fetchval(TRAVELER_SQL, row["traveler_id"])
             if to_enc is None:
@@ -177,13 +202,15 @@ class MailSender:
             if row["body_enc"]
             else ""
         )
-        code = await ctx.conn.fetchrow(CODE_SQL, message_id)
+        partner = row.get("sales_partner_id") is not None
+        code_table = "sales_partner_otp" if partner else "otp_challenge"
+        code = await ctx.conn.fetchrow(PARTNER_CODE_SQL if partner else CODE_SQL, message_id)
         if code is not None:
             if code["expired"] or code["code_enc"] is None:
                 await ctx.conn.execute(FAIL_SQL, message_id, "code_expired")
                 return "send_failed"
             text = text.replace(
-                CODE_MASK, await vault.decrypt("otp_challenge", "code_enc", code["otp_id"], code["code_enc"])
+                CODE_MASK, await vault.decrypt(code_table, "code_enc", code["otp_id"], code["code_enc"])
             )
         reply = await ctx.conn.fetchrow(REPLY_TO_SQL, row["conversation_id"])
         in_reply_to = (
@@ -220,6 +247,6 @@ class MailSender:
         await ctx.conn.execute(TOUCH_SQL, row["conversation_id"])
         await ctx.conn.execute(CREDENTIAL_OK_SQL, mailbox["credential_id"])
         if code is not None:
-            await ctx.conn.execute(CODE_SENT_SQL, code["otp_id"])
+            await ctx.conn.execute(PARTNER_CODE_SENT_SQL if partner else CODE_SENT_SQL, code["otp_id"])
         await store_rotated(ctx, vault, mailbox["credential_id"], result.rotated_secret)
         return "sent"

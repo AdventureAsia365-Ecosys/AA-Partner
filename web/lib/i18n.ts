@@ -31,6 +31,7 @@ import { retailPaymentsEn, retailPaymentsVi } from "./i18nRetailPayments";
 import { financeEn, financeVi } from "./i18nFinance";
 import { catalogueEn, catalogueVi } from "./i18nCatalogue";
 import { travelOpsEn, travelOpsVi } from "./i18nTravelOps";
+import { partnersEn, partnersVi } from "./i18nPartners";
 
 export type Lang = "en" | "vi";
 export const LOCALE_COOKIE = "aa_crm_locale";
@@ -75,6 +76,7 @@ const en = {
   ...financeEn, // AA-1068: trip Money card, supplier bills, Bookings with AA, departures, profit, Home today (lib/i18nFinance.ts)
   ...catalogueEn, // AA-1069: the Services catalogue, From catalogue in the builder, supplier requests (lib/i18nCatalogue.ts)
   ...travelOpsEn, // AA-1070: departures, the trip's Travel panel, Settings > Travel, the portal's travel section
+  ...partnersEn, // AA-1071: Partners, partner commissions, the trip's partner, the partner's own pages (lib/i18nPartners.ts)
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Home",
@@ -2788,6 +2790,7 @@ const vi: Record<MessageKey, string> = {
   ...financeVi,
   ...catalogueVi,
   ...travelOpsVi,
+  ...partnersVi,
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Trang chủ",
