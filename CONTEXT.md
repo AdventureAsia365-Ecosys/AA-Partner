@@ -354,6 +354,8 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-050` | `api/migrations/050_crm_payment_schedule_instalments.sql` | AA-1067 (**contract**: ALTERs, seals recreated, an index replaced, so MIG-4): `payment_schedule.kind` + `instalment`, `seq` (1..10, 1 for deposit / balance), `percent`; live unique index on (tenant, proposal, kind, seq); the seal covers both; `proposal.schedule_plan` (builder only, 1..12 lines) and `proposal.cancellation_policy_id` (no key), both sealed after draft; `tenant_settings.schedule_template`; `invoice.kind` + `instalment` (with its row) and `cancellation_fee`; view `crm.v_schedule_status` (security_invoker: paid / partial / overdue derived, `crm_app` SELECT); index `payment (tenant_id, schedule_id)` |
 | `crm-052` | `api/migrations/052_crm_agency_service_catalogue.sql` | AA-1069 (**expand**: two new tables + guard): `crm.agency_service` (the agency's own catalogue of root ADR 0019 b6 ancillaries: own supplier or none, category flight / insurance / visa / transfer / fee, name, `unit_net` (owner / agent), `unit_sell`, currency, `qty_basis` per_person / per_adult / per_booking / per_room / per_night / per_person_night, validity window, `active`; cascades from `tenant_settings` and its supplier) and `crm.agency_service_tier` (group-size `unit_net`, ranges never overlap); guard `crm.guard_agency_service` (CRM52: owner / agent or a job / seed actor writes; a live own supplier or none) |
 | `crm-053` | `api/migrations/053_crm_supplier_requests.sql` | AA-1069 (**contract**, MIG-4): `crm.booking_line` status + `requested` (planning -> requested -> confirmed / planning / cancelled), `requested_at`, `request_ref` (the request e-mail's message id; agency lines only, `booking_line_request_chk`); `crm.booking_line_confirm` also confirms a requested line; `crm.conversation.agency_supplier_id` (the trip's supplier request thread: a trip, no client, e-mail; one live per trip and supplier) |
+| `crm-054` | `api/migrations/054_crm_travel_ops.sql` | AA-1070 (**expand**: six new tables + two guards): `crm.aa_departure_state` (the Booking feed's state of one AA departure: scheduled / guaranteed / cancelled, times, min to operate, last event; job writes only, CRM53; cascades from `booking_feed_state`), `crm.booking_line_voucher` (sealed pick-up, drop-off, PNR, note + start time of a line), `crm.room_assignment` (the rooming list), `crm.visa_template` (the agency's visa guidance), `crm.visa_application` (sealed visa number and validity), `crm.visa_checklist_item`; every key cascades; hold guard `crm.guard_held_travel_doc` (CRM10) on the trip-scoped tables |
+| `crm-055` | `api/migrations/055_crm_travel_ops_settings.sql` | AA-1070 (**contract**, MIG-4): `tenant_settings.passport_valid_months` (default 6, 0..24), `crm.document` kinds `confirmation_pdf` / `proposal_pdf` and uploader `system`, the `crm.visa_application` status moves in `crm.status_transition` |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -413,6 +415,7 @@ queued / running rows as information, exempt kinds left out). Daily or slower ki
 | `crm_task_digest` | per agency and local day, queued by the tick (idempotency key per agency and date) | AA-959: the morning digest (counts only, AA SES) when `task_digest` is on. Not deploy-gate exempt |
 | `crm_partner_accounts` | daily, from `JOB_RETENTION_UTC_HOUR`, due-now hook (`app.members.accounts.DailyPartnerAccountSchedule`), plus one run per deleted test agency (queued in the delete's transaction, payload `tenant_id`) | S263 (AA-939 follow-up): deletes never-signed-in partner-pool accounts that no member, live invitation or studio invitation needs (section "Partner-account clean-up"); counts only while `PARTNER_ACCOUNT_CLEANUP_DRY_RUN` is on; at most 50 deletes per run. Not deploy-gate exempt |
 | `crm_tp_lead_pull` | every minute slot, due-now hook (`app.tripplanner.leads.LeadPullSchedule`, key `crm_tp_lead_pull:slot:<n>`) | AA-1038 R5 slice 3 (root ADR 0019 d11, contract `lead.submitted.v1`): per agency (`registry.agencies`), entered first (a `system_tx` that reads `crm.tenant_entitlement.tp_crm_leads`, crm-047: a locked / offboarding agency is skipped BEFORE the list call, so TripPlanner's per-tenant beacon goes stale and it refuses that tenant's crm leads; an agency whose CIS account does not entitle both `tp.hosted` and `crm.core`, projected by `crm_entitlement_pull`, is skipped with no HTTP call, `skipped_not_routed`), then `GET <TRIPPLANNER_API_URL>/trip/m2m/v1/tenants/{agency}/leads` with the M2M client (scope `tripplanner.leads/deliver`); each lead in one `system_tx` of that agency: another tenant's lead is refused (never stored, never acknowledged), the traveller's name / e-mail / phone are checked with the contract's one Traveller rule (`traveller_errors`, shared vectors `docs/contracts/rules/`), the answers are mapped onto the Stage 1 inquiry and validated like the hosted form (an optional answer that does not validate is dropped), stored through `store_submission` (idempotent on `tp-lead:<lead_id>`, the `crm_intake_process` job in the same transaction) under the agency's system form "Trip planner" (lead source `tripplanner`, disabled for the public, created on the first lead), then acknowledged (`stored` / `rejected` + reason) so TripPlanner redacts its copy; a rejected lead raises the ops alert `tp_lead_rejected`. TripPlanner's 404 `tenant_not_on_crm` / `unknown_tenant` is a counted skip (`skipped_not_on_crm`), not an error; any other TripPlanner or token failure is counted and the run ends successfully (next slot). One summary log line per run (`tp_lead_pull_summary`: agencies, pulled, skips, errors). `not_configured` without `TRIPPLANNER_API_URL` / `M2M_CLIENT`. Counts only. Not deploy-gate or DB Migrate exempt |
+| `crm_pdf_render` | event: one per member's PDF request (`POST /trips/{id}/pdfs`, key per trip, kind, subject and minute) | AA-1070: builds the booking confirmation / invoice / proposal / voucher PDF of a trip (`app.documents.pdf_job`, our own PDF writer) in one `system_tx` (actor `job:crm_pdf_render`) and stores it as a sealed `crm.document` (uploader `system`); the subject gone or the agency locked = finished with a `reason_code`; without the key provider or the documents bucket `not_configured` (never a queued-ahead retry). Ids only. Not deploy-gate exempt |
 | `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
 
 
@@ -1084,6 +1087,48 @@ only, no plugin code); migrations crm-052 (expand) and crm-053 (contract). Code:
 - **Where `requested` counts**: pipeline value in the ledger totals (with planning), `waiting_on = supplier`, the
   cancel run's supplier checklist and its task closing (with confirmed), the trip P&L's "not counted yet" note. Only a
   planning line goes to the trash; a requested one is cancelled.
+
+## Travel ops: departure roster, vouchers, server PDFs, rooming list, passport check, visa tracker (AA-1070)
+
+S275 study items crm-22, crm-20, crm-21, crm-17, crm-15, crm-16 (root `docs/research/2026-11-10-odoo-tour-travel-plugin-
+comparison.md`, behaviour only, no plugin code); migrations crm-054 (expand) and crm-055 (contract). Code:
+`app/travel_ops/` (`passport`, `rooming`, `vouchers`, `visas`, `departures`), `app/routers/travel_ops.py`, the portal
+wrappers in `app/portal/public.py` (routes in `app/routers/client_pages.py`), `app/documents/pdf.py` (the PDF writer),
+`renders.py`, `pdf_job.py`; web `components/travelOps/`, `components/portal/PortalTravel.tsx`, `app/(crm)/departures`,
+`app/(crm)/settings/travel`; decisions in `docs/implementation-notes/AA-1070.md`. The inclusion library (crm-35) and
+the guided "AA cancelled the departure" flow (crm-13) of the same issue are not built here.
+
+- **Passport check** (computed, never stored): `expiry >= trip end + tenant_settings.passport_valid_months` (calendar
+  months). Statuses `ok`, `expires_too_soon` (the "passport issue"), `missing`, `no_trip_end`; the API answers the
+  status only, never the expiry. Shown on the trip party (`GET /trips/{id}` party `passport`, `GET /trips/{id}/
+  passports`), the pipeline (`passport_issues` on booked / pre-departure / travelling cards, filter `?issue=passport`),
+  Travelling now and the departure roster. The hourly workflow tick fires the trip event `passport.invalid_for_trip`
+  once per entry into Booked (last 3 days); the AA library template `passport_invalid_for_trip` turns it into an urgent
+  task. Settings > Travel (`GET/PUT /settings/travel`, owner changes).
+- **Rooming list** (`crm.room_assignment`, `GET/PUT /trips/{id}/rooming`, the lead on the portal after the deposit:
+  `PUT /crm/public/v1/traveller/rooming`): replaced whole; capacities single 1, double 2, twin 2, triple 3, quad 4,
+  family 6; with an accepted proposal's `room_config`, no more rooms of a type than it has. The **ops release document
+  is v2**: each traveller's `room` (number and codes only); the AA staff manifest can print a `room` column.
+- **Vouchers** (`crm.booking_line_voucher`, `GET/PUT /lines/{id}/voucher`, `GET /trips/{id}/vouchers`): one per
+  confirmed line; released to travellers (portal `GET /crm/public/v1/traveller/travel`, printable on its own) when the
+  trip is booked or later and the line is shown to travellers. An own supplier's contact name is opened for the voucher
+  only; an AA line shows its short AA booking reference and departure (Booking's pick-up points are a Booking card).
+- **Server PDFs** (`POST /trips/{id}/pdfs` 202 -> job `crm_pdf_render`, event kind, ids only): booking confirmation
+  (booked trips), invoice, proposal (the e-mail text of the version), voucher; written by our own PDF writer (A4,
+  Unicode via the embedded Liberation Sans, SIL OFL, `app/documents/fonts/`), stored as a sealed `crm.document`
+  (uploader `system`, not shown to travellers until the agent shares it). No headless browser in the image.
+- **Visa tracker** (`crm.visa_template` owner-kept guidance, `crm.visa_application` + `crm.visa_checklist_item`):
+  suggestions from the trip's destination countries vs each traveller's nationality (opened server-side), one
+  application per traveller, country and booked trip, status moves `to_do -> collecting -> submitted -> approved |
+  refused`, `not_needed`, `cancelled`; the granted number and validity sealed (`pii:government_id`), masked in lists;
+  the traveller ticks their own checklist on the portal; one `visa_deadline_overdue` task per trip from the hourly tick.
+  AA gives no visa advice (BYO).
+- **Departure roster** (`GET /departures?scope=`, `GET /departures/{ref}/roster`, `POST /departures/{ref}/manifest`):
+  one row per AA departure id of the agency's live AA lines, with the feed state (`departure.guaranteed` /
+  `departure.cancelled` upsert `crm.aa_departure_state`; an older event changes nothing), trips, pax by type, Stage 3;
+  the merged manifest for the agency's tour leader (picked fields from the ops release build + room + passport check,
+  watermarked, never stored, one `report_export` audit event). Every role; the `/departures/[ref]` page keeps the
+  owner / agent group costs below the roster. AA departures are also a calendar layer (`aa_departure`).
 
 ## CRM-17 Module 5 e-mail (AA-945)
 
