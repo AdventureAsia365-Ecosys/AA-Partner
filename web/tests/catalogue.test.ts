@@ -101,7 +101,7 @@ describe("words and navigation", () => {
     expect(t("en", "ledger.status.requested" as MessageKey)).toBe("Requested");
   });
   it("lists Services for every role", () => {
-    for (const role of ["owner", "agent", "assistant"]) expect(visibleSections(role).map((s) => s.key)).toContain("services");
+    for (const role of ["owner", "agent", "assistant"] as const) expect(visibleSections(role).map((s) => s.key)).toContain("services");
   });
 });
 
