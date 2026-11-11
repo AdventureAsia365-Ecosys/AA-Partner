@@ -230,10 +230,11 @@ async def test_the_flight_and_travel_doc_guards_check_cascades_too(
     for table in ("trip_traveler", "traveler_flight", "room_assignment", "visa_application", "booking_line_voucher"):
         assert await _count(app_pool, t, table) >= 1, table
     # The guards are back on (the ALTER rolled back with the refusal).
-    assert await admin.fetchval(
+    enabled = await admin.fetchval(
         "SELECT count(*) FROM pg_trigger WHERE tgname IN ('trip_traveler_hold_guard', 'booking_line_hold_guard') "
         "AND tgenabled = 'O'"
-    ) == 2
+    )
+    assert enabled == 2
 
 
 async def test_the_explicit_tenant_is_no_oracle_under_rls(app_pool: asyncpg.Pool) -> None:
