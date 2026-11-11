@@ -303,6 +303,81 @@ async def test_a_trip_cancel_is_an_owner_or_agent_cancel(
     )
 
 
+async def test_a_waived_commission_is_not_brought_back(
+    admin: asyncpg.Connection, app_pool: asyncpg.Pool, tenant: uuid.UUID
+) -> None:
+    """An owner's cancel (by_owner) and a pending trip cancel (trip_cancelled) are waivers: a later stage move, the
+    trash and restore or a direct sync never accrue that partner's commission again on the trip, until the trip has
+    left the booked stages since."""
+    cancel = (
+        "UPDATE crm.partner_commission SET status = 'cancelled', cancel_reason = $2 "
+        "WHERE partner_commission_id = $1 RETURNING status"
+    )
+    stage = "UPDATE crm.trip SET stage = $2 WHERE trip_id = $1"
+    for reason, role in (("by_owner", "owner"), ("trip_cancelled", "agent")):
+        partner = await _partner(admin, tenant, rate="10")
+        trip = await _trip(admin, tenant)
+        await _accepted_proposal(admin, tenant, trip, "600")
+        await _set_partner(admin, tenant, trip, partner)
+        [row] = await _rows(admin, tenant, trip)
+        assert await _as_app(app_pool, tenant, cancel, row["partner_commission_id"], reason, role=role) == "cancelled"
+        await _as_owner(admin, tenant, stage, trip, "travelling")  # the stage-rules job's date moves
+        await _as_owner(admin, tenant, stage, trip, "completed")
+        await _as_owner(
+            admin, tenant,
+            "UPDATE crm.trip SET deleted_at = now(), deleted_by = 'member:test', "
+            "purge_after = now() + interval '7 days' WHERE trip_id = $1",
+            trip,
+        )  # fmt: skip
+        await _as_owner(
+            admin, tenant,
+            "UPDATE crm.trip SET deleted_at = NULL, deleted_by = NULL, purge_after = NULL WHERE trip_id = $1",
+            trip,
+        )  # fmt: skip
+        await _as_owner(admin, tenant, "SELECT crm.partner_commission_sync($1)", trip)
+        assert [(r["status"], r["cancel_reason"]) for r in await _rows(admin, tenant, trip)] == [
+            ("cancelled", reason)
+        ], reason
+    # A move out of the booked stages after the waiver (a new booking) lets the next sync accrue again.
+    await _as_owner(
+        admin, tenant,
+        "INSERT INTO crm.trip_stage_history (trip_id, from_stage, to_stage, reason_code) "
+        "VALUES ($1, 'completed', 'proposal', 'undo_test')",
+        trip,
+    )  # fmt: skip
+    await _as_owner(admin, tenant, "SELECT crm.partner_commission_sync($1)", trip)
+    rows = await _rows(admin, tenant, trip)
+    assert [(r["status"], r["cancel_reason"]) for r in rows] == [("cancelled", "trip_cancelled"), ("accrued", None)]
+
+
+async def test_a_partner_delete_never_takes_an_approved_or_paid_commission(
+    admin: asyncpg.Connection, app_pool: asyncpg.Pool, tenant: uuid.UUID
+) -> None:
+    first = await _partner(admin, tenant, rate="10")
+    second = await _partner(admin, tenant, rate="5")
+    trip = await _trip(admin, tenant)
+    await _set_partner(admin, tenant, trip, first)
+    [row] = await _rows(admin, tenant, trip)
+    approve = (
+        "UPDATE crm.partner_commission SET status = 'approved', approved_at = now(), approved_by = 'member:test' "
+        "WHERE partner_commission_id = $1 RETURNING status"
+    )
+    assert await _as_app(app_pool, tenant, approve, row["partner_commission_id"]) == "approved"
+    # The trip moves to the second partner; the first partner's approved row stays (the sync never touches it).
+    await _set_partner(admin, tenant, trip, second)
+    delete = "DELETE FROM crm.sales_partner WHERE sales_partner_id = $1 RETURNING sales_partner_id"
+    with pytest.raises(asyncpg.PostgresError) as err:
+        await _as_app(app_pool, tenant, delete, first)
+    assert err.value.sqlstate == "CRM54" and "partner_commission_kept" in str(err.value)
+    with pytest.raises(asyncpg.PostgresError) as err:  # the owner role (a migration, a script) is refused too
+        await _as_owner(admin, tenant, delete, first)
+    assert err.value.sqlstate == "CRM54"
+    assert [r["status"] for r in await _rows(admin, tenant, trip)] == ["approved", "accrued"]
+    # The trip's own erase takes it (the trip goes first; no proposal here to erase), then the partner leaves.
+    await _as_owner(admin, tenant, "DELETE FROM crm.trip WHERE trip_id = $1", trip)
+    assert await _as_app(app_pool, tenant, delete, first) == first
+
+
 async def test_partner_links_and_codes(admin: asyncpg.Connection, app_pool: asyncpg.Pool, tenant: uuid.UUID) -> None:
     partner = await _partner(admin, tenant)
     token_hash = hashlib.sha256(os.urandom(16)).digest()
@@ -388,6 +463,12 @@ async def test_the_agency_erase_takes_every_partner_row(admin: asyncpg.Connectio
     partner = await _partner(admin, tenant)
     trip = await _trip(admin, tenant)
     await _set_partner(admin, tenant, trip, partner)
+    # A paid payout record leaves with its trip (crm.erase_subject deletes the trips before the settings row).
+    await _as_owner(
+        admin, tenant,
+        "UPDATE crm.partner_commission SET status = 'approved', approved_at = now(), approved_by = 'member:test'",
+    )  # fmt: skip
+    await _as_owner(admin, tenant, "UPDATE crm.partner_commission SET status = 'paid', paid_on = current_date")
     await _as_owner(admin, tenant, "DELETE FROM crm.trip WHERE trip_id = $1", trip)
     assert await _as_owner(admin, tenant, "SELECT count(*) FROM crm.partner_commission") == 0
     await _as_owner(admin, tenant, "DELETE FROM crm.tenant_settings WHERE tenant_id = $1", tenant)

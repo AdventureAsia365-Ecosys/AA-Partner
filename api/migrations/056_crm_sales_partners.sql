@@ -28,11 +28,16 @@
 --      follow-up columns. Guard CRM54: the identity and the amounts never change outside the sync; approve,
 --      un-approve, pay and an owner's cancel are the owner's; the cancel of a trip cancel (reason trip_cancelled) is
 --      the owner's or an agent's; a paid or cancelled row is sealed. Cascades from its trip and its partner (no hold
---      guard: crm.erase_subject refuses a held trip first).
+--      guard: crm.erase_subject refuses a held trip first); an approved or paid row whose trip remains is never
+--      deleted by its partner's delete (partner_commission_kept: the payout record stays; the API refuses the delete
+--      first, partner_in_use).
 --   4. crm.partner_commission_sync(trip): accrued rows that no longer apply are cancelled (the trip left the booked
 --      stages: unbooked; its partner was removed / changed); a booked trip (booked, pre_departure, travelling,
 --      completed) with a partner gets one accrued row for that partner, refreshed while it is accrued; an approved or
---      paid row is never touched; a cancelled trip is left to the cancel run (it keeps or cancels the rows).
+--      paid row is never touched; a cancelled trip is left to the cancel run (it keeps or cancels the rows). A row the
+--      owner cancelled (by_owner) or a trip cancel cancelled (trip_cancelled) is a waiver: no new row for that trip and
+--      partner until the trip leaves the booked stages (a crm.trip_stage_history move out of them after the waiver),
+--      so a later stage move, a trash / restore or a Recalculate never brings the commission back.
 --      Trigger trip_partner_commission_sync (AFTER UPDATE OF stage, sales_partner_id ON crm.trip) runs it on every
 --      move and every partner change, whatever path made it (stage moves, the deposit, Undo, the bulk move).
 --   5. crm.sales_partner_link (base template): one signed link per partner and purpose (intake: the agency's inquiry
@@ -420,6 +425,17 @@ DECLARE
     v_actor text := COALESCE(NULLIF(current_setting('app.actor', true), ''), '');
     v_role text := COALESCE(NULLIF(current_setting('app.member_role', true), ''), '');
 BEGIN
+    -- An approved or paid partner commission is a payout record: deleting its partner never takes it while its trip
+    -- remains (the API refuses the delete first, partner_in_use). Its trip's erase and the agency erase delete the
+    -- trip first, so they pass. Checked before the cascade / owner pass below (a partner delete is a cascade here).
+    -- (Nested: a PL/pgSQL condition is not short-circuited, OLD of another table has no trip_id.)
+    IF TG_TABLE_NAME = 'partner_commission' AND TG_OP = 'DELETE' THEN
+        IF OLD.status IN ('approved', 'paid')
+           AND EXISTS (SELECT 1 FROM crm.trip t WHERE t.tenant_id = OLD.tenant_id AND t.trip_id = OLD.trip_id) THEN
+            RAISE EXCEPTION 'crm: partner_commission_kept (an approved or paid partner commission stays while its trip does)'
+                USING ERRCODE = 'CRM54';
+        END IF;
+    END IF;
     -- A cascade (the agency erase, a partner deleted: trigger depth > 1) and the owner role (migrations, tests, the
     -- SECURITY DEFINER sync) pass.
     IF pg_catalog.pg_trigger_depth() > 1 OR current_user = 'crm_owner' THEN
@@ -500,7 +516,7 @@ BEGIN
     RETURN NEW;
 END;
 $$;
-COMMENT ON FUNCTION crm.guard_sales_partner() IS 'AA-1071 (crm-056, SQLSTATE CRM54): crm.sales_partner and its links are written by an owner (sales_partner_owner) or a job / seed actor; a link''s token, partner, purpose, form and expiry are fixed and its own page touches only its counters (sales_partner_link_counters / _fixed); partner codes only by the partner page and jobs (sales_partner_otp_actor); crm.partner_commission rows only from crm.partner_commission_sync (partner_commission_sync_only), identity and amounts fixed (partner_commission_fixed), paid / cancelled sealed (partner_commission_sealed), approve / un-approve / pay / an owner''s cancel by an owner, as themselves, a trip cancel by an owner or an agent (partner_commission_owner). A cascade (depth > 1) and crm_owner pass. Invoker rights.';
+COMMENT ON FUNCTION crm.guard_sales_partner() IS 'AA-1071 (crm-056, SQLSTATE CRM54): crm.sales_partner and its links are written by an owner (sales_partner_owner) or a job / seed actor; a link''s token, partner, purpose, form and expiry are fixed and its own page touches only its counters (sales_partner_link_counters / _fixed); partner codes only by the partner page and jobs (sales_partner_otp_actor); crm.partner_commission rows only from crm.partner_commission_sync (partner_commission_sync_only), identity and amounts fixed (partner_commission_fixed), paid / cancelled sealed (partner_commission_sealed), an approved or paid row never deleted while its trip remains, even by its partner''s cascade (partner_commission_kept), approve / un-approve / pay / an owner''s cancel by an owner, as themselves, a trip cancel by an owner or an agent (partner_commission_owner). A cascade (depth > 1) and crm_owner pass. Invoker rights.';
 DROP TRIGGER IF EXISTS sales_partner_guard ON crm.sales_partner;
 CREATE TRIGGER sales_partner_guard
     BEFORE INSERT OR UPDATE OR DELETE ON crm.sales_partner
@@ -611,6 +627,20 @@ BEGIN
     IF FOUND AND v_live.status <> 'accrued' THEN
         RETURN jsonb_build_object('created', 0, 'refreshed', 0, 'cancelled', v_cancelled);
     END IF;
+    -- A waiver: the owner cancelled this partner's commission on this trip (by_owner), or a trip cancel did
+    -- (trip_cancelled, the stage still booked while Booking cancels the AA bookings). No new row until the trip has
+    -- left the booked stages since (a new booking): a later stage move, the stage-rules job, a trash / restore or a
+    -- Recalculate never brings it back.
+    IF NOT FOUND AND EXISTS (
+        SELECT 1 FROM crm.partner_commission w
+         WHERE w.tenant_id = v_tenant AND w.trip_id = p_trip AND w.sales_partner_id = v_partner.sales_partner_id
+           AND w.status = 'cancelled' AND w.cancel_reason IN ('by_owner', 'trip_cancelled') AND w.deleted_at IS NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM crm.trip_stage_history h
+                WHERE h.tenant_id = v_tenant AND h.trip_id = p_trip AND h.created_at > w.updated_at
+                  AND h.to_stage NOT IN ('booked', 'pre_departure', 'travelling', 'completed'))) THEN
+        RETURN jsonb_build_object('created', 0, 'refreshed', 0, 'cancelled', v_cancelled);
+    END IF;
     v_base := COALESCE((SELECT ts.base_currency::text FROM crm.tenant_settings ts WHERE ts.tenant_id = v_tenant), 'USD');
     v_pax := v_trip.pax;
     IF v_partner.commission_type = 'fixed_per_pax' THEN
@@ -672,7 +702,7 @@ END;
 $$;
 REVOKE ALL ON FUNCTION crm.partner_commission_sync(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION crm.partner_commission_sync(uuid) TO crm_app;
-COMMENT ON FUNCTION crm.partner_commission_sync(uuid) IS 'AA-1071 (crm-056, item crm-28): the partner commission rows of one trip of the agency of app.tenant_id. A cancelled trip is left to the cancel run. Accrued rows of a trip that left the booked stages (unbooked) or whose partner was removed / changed are cancelled; a booked trip (booked, pre_departure, travelling, completed, not trashed) with a partner gets one accrued row for that partner, refreshed while accrued: fixed_per_pax = rate x pax in the partner''s currency; percent / net_rate = rate % of the basis: revenue = the accepted proposal''s total (accepted_total_amount, else total_amount) in its currency, else the issued revenue of crm.v_trip_pnl in the base currency; margin = v_trip_pnl margin_base + partner_commission_base (the margin before partner commissions, never below 0) in the base currency. amount_base at crm.fx_resolve of today (NULL without a rate); due_on = trip end, else start, else today, + payout_due_days. Approved and paid rows are never touched. SECURITY DEFINER (the assistant may book a trip but reads no money); returns counts only. Unknown trip CRM13. EXECUTE crm_app.';
+COMMENT ON FUNCTION crm.partner_commission_sync(uuid) IS 'AA-1071 (crm-056, item crm-28): the partner commission rows of one trip of the agency of app.tenant_id. A cancelled trip is left to the cancel run. Accrued rows of a trip that left the booked stages (unbooked) or whose partner was removed / changed are cancelled; a booked trip (booked, pre_departure, travelling, completed, not trashed) with a partner gets one accrued row for that partner, refreshed while accrued: fixed_per_pax = rate x pax in the partner''s currency; percent / net_rate = rate % of the basis: revenue = the accepted proposal''s total (accepted_total_amount, else total_amount) in its currency, else the issued revenue of crm.v_trip_pnl in the base currency; margin = v_trip_pnl margin_base + partner_commission_base (the margin before partner commissions, never below 0) in the base currency. amount_base at crm.fx_resolve of today (NULL without a rate); due_on = trip end, else start, else today, + payout_due_days. Approved and paid rows are never touched. A by_owner or trip_cancelled row is a waiver: no new row for that trip and partner until a crm.trip_stage_history move out of the booked stages after it. SECURITY DEFINER (the assistant may book a trip but reads no money); returns counts only. Unknown trip CRM13. EXECUTE crm_app.';
 
 CREATE OR REPLACE FUNCTION crm.trip_partner_commission() RETURNS trigger
     LANGUAGE plpgsql
