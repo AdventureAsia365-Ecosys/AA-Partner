@@ -1107,16 +1107,19 @@ the guided "AA cancelled the departure" flow (crm-13) of the same issue are not 
   task. Settings > Travel (`GET/PUT /settings/travel`, owner changes).
 - **Rooming list** (`crm.room_assignment`, `GET/PUT /trips/{id}/rooming`, the lead on the portal after the deposit:
   `PUT /crm/public/v1/traveller/rooming`): replaced whole; capacities single 1, double 2, twin 2, triple 3, quad 4,
-  family 6; with an accepted proposal's `room_config`, no more rooms of a type than it has. The **ops release document
+  family 6; with an accepted proposal's `room_config`, no more rooms of a type than it has; a traveller entry without a
+  `bed_pref` key keeps the one on file (the lead's portal save never wipes the agent's). The **ops release document
   is v2**: each traveller's `room` (number and codes only); the AA staff manifest can print a `room` column.
 - **Vouchers** (`crm.booking_line_voucher`, `GET/PUT /lines/{id}/voucher`, `GET /trips/{id}/vouchers`): one per
-  confirmed line; released to travellers (portal `GET /crm/public/v1/traveller/travel`, printable on its own) when the
+  confirmed line; released to travellers (portal `GET /crm/public/v1/traveller/travel`, printable on its own with the
+  `voucher_header`: agency, trip and dates, lead traveller, party size) when the
   trip is booked or later and the line is shown to travellers. An own supplier's contact name is opened for the voucher
   only; an AA line shows its short AA booking reference and departure (Booking's pick-up points are a Booking card).
 - **Server PDFs** (`POST /trips/{id}/pdfs` 202 -> job `crm_pdf_render`, event kind, ids only): booking confirmation
   (booked trips), invoice, proposal (the e-mail text of the version), voucher; written by our own PDF writer (A4,
   Unicode via the embedded Liberation Sans, SIL OFL, `app/documents/fonts/`), stored as a sealed `crm.document`
-  (uploader `system`, not shown to travellers until the agent shares it). No headless browser in the image.
+  (uploader `system`, not shown to travellers until the agent shares it). No headless browser in the image. The
+  header is the agency's display name only: the Content studio brand profile (CIS) has no CRM read yet (follow-up).
 - **Visa tracker** (`crm.visa_template` owner-kept guidance, `crm.visa_application` + `crm.visa_checklist_item`):
   suggestions from the trip's destination countries vs each traveller's nationality (opened server-side), one
   application per traveller, country and booked trip, status moves `to_do -> collecting -> submitted -> approved |
@@ -1127,7 +1130,10 @@ the guided "AA cancelled the departure" flow (crm-13) of the same issue are not 
   one row per AA departure id of the agency's live AA lines, with the feed state (`departure.guaranteed` /
   `departure.cancelled` upsert `crm.aa_departure_state`; an older event changes nothing), trips, pax by type, Stage 3;
   the merged manifest for the agency's tour leader (picked fields from the ops release build + room + passport check,
-  watermarked, never stored, one `report_export` audit event). Every role; the `/departures/[ref]` page keeps the
+  watermarked, never stored, one `report_export` audit event). It is a bulk reveal (card R, as the duty reveal): a
+  reason from `BULK_REASONS` above 5 travellers or with a dietary / mobility column, the member's hourly reveal limit
+  checked first (429 `reveal_rate_limited`), one `reveal` audit event per traveller (the reveal meter counts them).
+  Every role; the `/departures/[ref]` page keeps the
   owner / agent group costs below the roster. AA departures are also a calendar layer (`aa_departure`).
 
 ## CRM-17 Module 5 e-mail (AA-945)
