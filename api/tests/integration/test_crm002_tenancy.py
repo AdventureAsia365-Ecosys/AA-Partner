@@ -52,6 +52,8 @@ EXTRA_POLICIES = {
     ("departure_cost", "departure_cost_margin_roles"): ("*", {APP_ROLE}),
     #   crm-036: the Twilio webhook lookup of app.tenancy.messaging_hook_tx() (keyed on app.messaging_hook_id).
     ("messaging_connection", "messaging_connection_hook_lookup"): ("r", {APP_ROLE}),
+    #   AA-1072 (crm-057): the gateway webhook lookup of app.tenancy.payment_session_tx() (app.payment_txn_ref).
+    ("payment_session", "payment_session_ref_lookup"): ("r", {APP_ROLE}),
 }
 # Extra policies that must be RESTRICTIVE (ANDed with tenant_isolation); every other extra policy is permissive.
 RESTRICTIVE_POLICIES = {

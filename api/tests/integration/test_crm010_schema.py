@@ -1233,6 +1233,10 @@ CASCADE_ERASED = {
     "visa_template": {"tenant_settings"},
     "visa_application": {"trip", "traveler", "trip_traveler"},
     "visa_checklist_item": {"visa_application"},
+    # AA-1072 (crm-057): a "Book now" attempt leaves with the agency's settings row, a gateway payment session with its
+    # invoice.
+    "public_booking_attempt": {"tenant_settings"},
+    "payment_session": {"invoice"},
 }
 
 
