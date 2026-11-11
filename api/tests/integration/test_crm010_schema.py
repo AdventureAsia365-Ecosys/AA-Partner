@@ -1220,6 +1220,10 @@ CASCADE_ERASED = {
     "supplier_bill_line": {"supplier_bill", "booking_line"},
     "aa_invoice_cache": {"agency_supplier"},
     "departure_cost": {"agency_supplier"},
+    # AA-1069 (crm-052): a catalogue service leaves with the agency's settings row (the agency erase) and with its
+    # supplier (a supplier purge); a tier with its service.
+    "agency_service": {"tenant_settings", "agency_supplier"},
+    "agency_service_tier": {"agency_service"},
 }
 
 
