@@ -303,6 +303,9 @@ def create_app(
     # ... and a session cookie only lifts a write to that bucket once it proves valid: each such write holds a slot of
     # this one (the anonymous ceiling) until the session check passes, so forged or stale cookies stay at 5 a minute.
     app.state.portal_unproven_limiter = FixedWindowLimiter(settings.rate_limit_intake_per_minute)
+    # AA-1072 (S277 live check): "Book now" price checks get their own per-address bucket (they store nothing), so a
+    # visitor who compares dates does not use up the intake limit the booking, the hold, the accept and the pay share.
+    app.state.booking_price_limiter = FixedWindowLimiter(settings.rate_limit_booking_price_per_minute)
     app.add_exception_handler(ServiceError, service_error_handler)
     app.add_exception_handler(Exception, unhandled_error_handler)
     # AA-969 (F1): the body ceiling runs before any route reads a body (FastAPI parses JSON before the class guard).

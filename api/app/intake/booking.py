@@ -15,6 +15,11 @@ apply. The agency must have turned "Book now" on (``tenant_settings.public_booki
 - :func:`price`: the live retail price of a departure for a party: a Booking quote (no hold), then the agency's
   retail on it (:func:`retail_total`, the builder's own suggestion: owner markup on the B2B price, else AA's RRP, with
   the agency's price rules), shared per head as the per-traveller grid. The B2B price never leaves the server.
+  **Never below cost** (S277 live check): when that retail is under what AA charges the agency for the party (AA's
+  RRP per person x 1 under the B2B price of a single traveller, who pays a supplement), the builder's owner discount
+  gate would stop the version at publish (``below_cost``), and nobody approves on the public path. So the price check
+  and the booking answer 409 ``price_on_request`` (the page says to ask the agency for a price) before anything is
+  sold, and such a refused booking does not count towards the visitor's attempts (:data:`UNCOUNTED_REFUSALS`).
 - :func:`submit`, in three steps so no connection is held while Booking answers (the AA-947 rule):
 
   1. ``intake_tx``: the page origin, the honeypot (202 as if stored, nothing written), consent, the answers, the
@@ -70,6 +75,9 @@ log = logging.getLogger(__name__)
 
 LEAD_SOURCE = "web_booking"
 MAX_PER_ADDRESS_HOUR = 5
+PRICE_ON_REQUEST = "price_on_request"
+# Refusals that are the offer's doing, not the visitor's: they never use one of the address's attempts an hour.
+UNCOUNTED_REFUSALS = (PRICE_ON_REQUEST,)
 CENT = Decimal("0.01")
 RETENTION_DAYS = 90
 MAX_ADULTS = 20
@@ -110,7 +118,9 @@ INSERT INTO crm.public_booking_attempt (attempt_id, intake_form_id, tour_source_
 VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, NULL)
 """
 ADDRESS_COUNT_SQL = """
-SELECT count(*) FROM crm.public_booking_attempt WHERE ip_hash = $1 AND created_at > now() - interval '1 hour'
+SELECT count(*) FROM crm.public_booking_attempt
+ WHERE ip_hash = $1 AND created_at > now() - interval '1 hour'
+   AND NOT (status = 'refused' AND refusal_code = ANY($2::text[]))
 """
 REFUSE_SQL = """
 UPDATE crm.public_booking_attempt SET status = $2, refusal_code = $3 WHERE attempt_id = $1 AND status = 'received'
@@ -326,6 +336,15 @@ def retail_total(quote: aa_options.AaQuote, *, kind: str, source_id: str, party:
     return suggested[0] if suggested is not None and suggested[0] > 0 else None
 
 
+def check_not_below_cost(sell: Decimal, quote: aa_options.AaQuote) -> None:
+    """409 ``price_on_request`` when the party's retail ``sell`` (the grid total) is under the B2B price of the quote:
+    the margin the builder's discount gate checks at publish (``builder._discount_gate``, ``below_cost``) would be
+    negative, and on the public path there is no owner to approve a sale below cost. Typical case: no agency markup,
+    so the retail is AA's RRP per person x 1, while the B2B price of one traveller carries a single supplement."""
+    if quote.b2b_price is not None and sell < rules.money(quote.b2b_price):
+        raise Conflict(PRICE_ON_REQUEST, "the agency prices this party on request: send them a question")
+
+
 def price_grid(total: Decimal, party: Party, bands: pricing.Settings, currency: str) -> list[dict[str, Any]]:
     """The per-traveller rows of the option: adults and children share the total per head, rounded **up** to the
     currency's unit (whole dong for VND, so a gateway can charge the amounts exactly), infants at 0. The option's sell
@@ -456,6 +475,7 @@ async def price(
     if total is None:
         raise Conflict("no_retail_price", "the agency prices this tour on request: send an inquiry")
     rows = price_grid(total, party, bands, currency)
+    check_not_below_cost(grid_total(rows), quote)
     return {
         "currency": currency,
         "total": str(grid_total(rows)),
@@ -491,7 +511,7 @@ async def _start(
             raise Conflict("booking_in_progress", "your booking is being made: wait a moment")
         raise Conflict(existing["refusal_code"] or "booking_failed", "this booking could not be made")
     ip_hash = await vault.address_index("public_booking_attempt", "ip_hash", client_ip or "unknown")
-    if int(await ctx.conn.fetchval(ADDRESS_COUNT_SQL, ip_hash)) >= MAX_PER_ADDRESS_HOUR:
+    if int(await ctx.conn.fetchval(ADDRESS_COUNT_SQL, ip_hash, list(UNCOUNTED_REFUSALS))) >= MAX_PER_ADDRESS_HOUR:
         record_drop("booking_address", form.intake_form_id)
         raise RateLimited("booking_rate_limited", 3600)
     attempt_id = uuid.uuid4()
@@ -634,6 +654,7 @@ async def _create(
         raise Conflict("no_retail_price", "the agency prices this tour on request: send an inquiry")
     rows = price_grid(total, answers.party, bands, plan["currency"])
     sell = grid_total(rows)
+    check_not_below_cost(sell, quote)  # before anything is written; the refusal does not use an attempt
     await ctx.conn.execute(QUOTED_SQL, started.attempt_id, quote.quote_id, sell)
 
     traveler_id, known = await _traveller(ctx, vault, answers, owner)

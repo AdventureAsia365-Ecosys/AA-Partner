@@ -68,6 +68,9 @@ Rate limits (ADR 0010 decision 2: CloudFront → VPC origin bypasses API Gateway
   (AA-953 follow-up). Until the session check passes, each such write also holds a slot of a bucket sized by
   ``RATE_LIMIT_INTAKE_PER_MINUTE``, so a forged cookie is held to the anonymous ceiling; see
   ``app.routers.client_pages``.
+- ``RATE_LIMIT_BOOKING_PRICE_PER_MINUTE``: "Book now" price checks per client address per minute (default 20; 0 =
+  off). Their own bucket (S277 live check, AA-1072): a price check stores nothing, so a visitor who tries a few dates
+  or party sizes does not use up the intake limit the booking, the hold, the accept and "Pay online" share.
 
 Public intake (AA-936, card CRM-08; ``app.intake.public``):
 
@@ -228,6 +231,7 @@ DEFAULT_INVITATION_TTL_HOURS = 168
 MAX_INVITATION_TTL_HOURS = 720
 DEFAULT_CLAIM_PER_MINUTE = 10
 DEFAULT_PORTAL_WRITE_PER_MINUTE = 30
+DEFAULT_BOOKING_PRICE_PER_MINUTE = 20
 DEFAULT_MEMBER_PER_MINUTE = 600
 DEFAULT_TENANT_MAX_CONCURRENCY = 2
 MAX_TENANT_CONCURRENCY = 2  # app.tenant_gate.REQUEST_SLOTS: the pool's max_size (app.db) minus the worker's one
@@ -288,6 +292,7 @@ class Settings:
     rate_limit_intake_per_minute: int = DEFAULT_INTAKE_PER_MINUTE
     rate_limit_intake_form_per_hour: int = DEFAULT_INTAKE_FORM_PER_HOUR
     rate_limit_portal_write_per_minute: int = DEFAULT_PORTAL_WRITE_PER_MINUTE
+    rate_limit_booking_price_per_minute: int = DEFAULT_BOOKING_PRICE_PER_MINUTE
     intake_page_origins: tuple[str, ...] = ()
     documents_bucket: str = ""
     audit_bucket_compliance: str = ""
@@ -457,6 +462,8 @@ class Settings:
             raise SettingsError("RATE_LIMIT_INTAKE_PER_MINUTE / RATE_LIMIT_INTAKE_FORM_PER_HOUR must be >= 0")
         if self.rate_limit_portal_write_per_minute < 0:
             raise SettingsError("RATE_LIMIT_PORTAL_WRITE_PER_MINUTE must be >= 0")
+        if self.rate_limit_booking_price_per_minute < 0:
+            raise SettingsError("RATE_LIMIT_BOOKING_PRICE_PER_MINUTE must be >= 0")
         if self.cognito_partner_pool_id:
             if not _POOL_ID.match(self.cognito_partner_pool_id):
                 raise SettingsError("COGNITO_PARTNER_POOL_ID must be a Cognito user pool id (<region>_<id>)")
@@ -667,6 +674,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             env.get("RATE_LIMIT_PORTAL_WRITE_PER_MINUTE"),
             DEFAULT_PORTAL_WRITE_PER_MINUTE,
             "RATE_LIMIT_PORTAL_WRITE_PER_MINUTE",
+        ),
+        rate_limit_booking_price_per_minute=_int(
+            env.get("RATE_LIMIT_BOOKING_PRICE_PER_MINUTE"),
+            DEFAULT_BOOKING_PRICE_PER_MINUTE,
+            "RATE_LIMIT_BOOKING_PRICE_PER_MINUTE",
         ),
         intake_page_origins=_origins(env.get("INTAKE_PAGE_ORIGINS")),
         documents_bucket=_text(env, "DOCUMENTS_BUCKET"),

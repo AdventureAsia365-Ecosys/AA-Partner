@@ -7,8 +7,10 @@ signed webhook. One gateway today, VNPay (provider ``vn_gateway``, pure protocol
   and the mode go into the agency-level ``vn_gateway`` ``crm.integration_credential``, sealed under the agency's
   integration DEK (only this module opens it: ``Vault.decrypt_secret`` is lint-allowed here). Mode ``sandbox``
   (VNPay's test host), ``live``, or ``stub`` (the simulator below; dev / test / local only, 422 ``mode_not_allowed``
-  elsewhere). A disconnect stops new sessions; the credential stays, so a webhook of a session already started still
-  verifies.
+  elsewhere). A disconnect (Settings > Payments, :func:`app.payments.service.disconnect`) stops new sessions and the
+  gateway reads "not connected" (:func:`status` follows the active account); the credential stays, so a webhook of a
+  session already started still verifies. A reconnect reuses the agency's last ``vn_gateway`` account row (reactivated
+  with the new merchant code) instead of adding another one.
 - **Start** (:func:`start_session`, the client link, after :func:`app.payments.claims.card_window`): the invoice's open
   amount, computed here from the invoice and its payments (never from the browser), in VND only (409
   ``currency_not_supported`` otherwise); one ``crm.payment_session`` (random merchant reference, 15 minutes); the
@@ -73,10 +75,19 @@ UPDATE crm.integration_credential
        last_ok_at = now()
  WHERE integration_credential_id = $1
 """
+# The agency's gateway account to (re)use: the active one, else the most recently connected one (a reconnect
+# reactivates it, so connect / disconnect / connect never piles up account rows).
+ACCOUNT_SQL = """
+SELECT account_id, status FROM crm.payment_provider_account
+ WHERE provider = 'vn_gateway' AND deleted_at IS NULL
+ ORDER BY (status = 'active') DESC, connected_at DESC, account_id
+ LIMIT 1
+   FOR UPDATE
+"""
 ACTIVE_ACCOUNT_SQL = """
 SELECT account_id FROM crm.payment_provider_account
  WHERE provider = 'vn_gateway' AND status = 'active' AND deleted_at IS NULL
-   FOR UPDATE
+ LIMIT 1
 """
 INSERT_ACCOUNT_SQL = """
 INSERT INTO crm.payment_provider_account (account_id, provider, display_name, external_account_id, default_currency,
@@ -86,6 +97,12 @@ VALUES ($1, 'vn_gateway', $2, $3, 'VND', true)
 UPDATE_ACCOUNT_SQL = """
 UPDATE crm.payment_provider_account SET display_name = $2, external_account_id = $3, charges_enabled = true
  WHERE account_id = $1
+"""
+REACTIVATE_ACCOUNT_SQL = """
+UPDATE crm.payment_provider_account
+   SET status = 'active', disconnected_at = NULL, connected_at = now(), display_name = $2, external_account_id = $3,
+       charges_enabled = true
+ WHERE account_id = $1 AND status = 'disconnected'
 """
 OPEN_AMOUNT_SQL = """
 SELECT i.total_amount - coalesce((SELECT sum(p.amount) FROM crm.payment p
@@ -149,23 +166,36 @@ async def connect(ctx: TenantContext, vault: Vault, settings: Settings, body: di
         await ctx.conn.execute(INSERT_CREDENTIAL_SQL, credential_id, values["tmn_code"], sealed)
     else:
         await ctx.conn.execute(UPDATE_CREDENTIAL_SQL, credential_id, values["tmn_code"], sealed)
-    account = await ctx.conn.fetchval(ACTIVE_ACCOUNT_SQL)
-    if account is None:
+    found = await ctx.conn.fetchrow(ACCOUNT_SQL)
+    fields: tuple[str, ...] = ("external_account_id", "charges_enabled")
+    if found is None:
         account = uuid.uuid4()
         await ctx.conn.execute(INSERT_ACCOUNT_SQL, account, values["display_name"], values["tmn_code"])
-    else:
+    elif found["status"] == "active":
+        account = found["account_id"]
         await ctx.conn.execute(UPDATE_ACCOUNT_SQL, account, values["display_name"], values["tmn_code"])
+    else:  # S277 live check: a reconnect reuses the disconnected row instead of adding another one
+        account = found["account_id"]
+        await ctx.conn.execute(REACTIVATE_ACCOUNT_SQL, account, values["display_name"], values["tmn_code"])
+        fields = ("status", *fields)
     ctx.audit("update", "allowed", "payment_provider_account", str(account), reason=f"vn_gateway_{values['mode']}",
-              fields=("external_account_id", "charges_enabled"))  # fmt: skip
+              fields=fields)  # fmt: skip
     out = await payments.payment_methods(ctx)
     out["vn_gateway"] = {"mode": values["mode"], "ipn_url": ipn_url(settings)}
     return out
 
 
 async def status(ctx: TenantContext, vault: Vault, settings: Settings) -> dict[str, Any]:
-    """Settings > Payments: whether the gateway is set up, its mode and the IPN URL (never the secret)."""
+    """Settings > Payments: whether the gateway is connected, its mode and the IPN URL (never the secret). Connected =
+    an **active** ``vn_gateway`` account (what the client's "Pay online" needs) with its credential: after a
+    disconnect the credential stays for the webhooks of sessions already started, but the gateway is not connected."""
+    out: dict[str, Any] = {"connected": False, "mode": None, "ipn_url": ipn_url(settings)}
+    if await ctx.conn.fetchval(ACTIVE_ACCOUNT_SQL) is None:
+        return out
     loaded = await load(ctx, vault)
-    return {"connected": loaded is not None, "mode": loaded[2] if loaded else None, "ipn_url": ipn_url(settings)}
+    if loaded is not None:
+        out.update(connected=True, mode=loaded[2])
+    return out
 
 
 async def load(ctx: AnyContext, vault: Vault) -> tuple[str, str, str] | None:
