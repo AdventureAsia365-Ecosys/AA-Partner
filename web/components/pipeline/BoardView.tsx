@@ -155,8 +155,12 @@ export function BoardView({ board, lang, locale }: { board: Board; lang: Lang; l
           {t(lang, "pipeline.owner.me")}
         </Chip>
         <span style={{ color: K.line2, margin: "0 6px" }}>|</span>
-        <Chip href={boardHref({ waiting_on: active, owner: board.filter.owner, issue: issue ? null : "passport" })} on={issue === "passport"} testId="chip-passport-issue">
+        <Chip href={boardHref({ waiting_on: active, owner: board.filter.owner, issue: issue === "passport" ? null : "passport" })} on={issue === "passport"} testId="chip-passport-issue">
           {t(lang, "travel.pipeline.passportIssue")}
+        </Chip>
+        {/* AA-1070 (crm-13): the trips on a departure AA cancelled that the agent has not settled yet. */}
+        <Chip href={boardHref({ waiting_on: active, owner: board.filter.owner, issue: issue === "aa_cancelled" ? null : "aa_cancelled" })} on={issue === "aa_cancelled"} testId="chip-aa-cancelled">
+          {t(lang, "aaCancel.filter")}
         </Chip>
       </nav>
       <p style={{ margin: 0, fontSize: 12, color: K.muted }}>{t(lang, "pipeline.dragHint")}</p>
@@ -337,6 +341,11 @@ function TripCard({ card, lang, locale, now, onDrag }: { card: Card; lang: Lang;
         {card.cancellation_pending && (
           <span data-testid="trip-card-cancellation-pending" style={{ display: "contents" }}>
             <Badge tone="danger">{t(lang, "trip.cancellationPending")}</Badge>
+          </span>
+        )}
+        {card.aa_cancelled && (
+          <span data-testid="trip-card-aa-cancelled" style={{ display: "contents" }}>
+            <Badge tone="danger">{t(lang, "aaCancel.badge")}</Badge>
           </span>
         )}
         {!!card.passport_issues && (

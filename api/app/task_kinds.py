@@ -21,6 +21,7 @@ TASK_KINDS: frozenset[str] = frozenset(
     {
         "aa_cancel_failed",
         "aa_confirm_failed",
+        "aa_departure_cancelled",
         "aa_hold_expired",
         "aa_incident",
         "aa_line_declined",
@@ -67,6 +68,7 @@ TASK_KIND_PREFIXES: tuple[str, ...] = ("custom_",)
 # Every whole reason code a stage move writes into crm.trip_stage_history.
 STAGE_REASONS: frozenset[str] = frozenset(
     {
+        "aa_rebook",
         "agent_move",
         "bulk_move",
         "date_rule",

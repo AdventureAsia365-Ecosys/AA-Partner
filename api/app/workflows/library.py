@@ -204,6 +204,35 @@ TEMPLATES = (
         starter_mail=OVERDUE_MAIL,
     ),
 )
+# AA-1070 (crm-13): Adventure Asia cancelled the departure: tell the lead traveller from the agency mailbox (AA never
+# messages travellers). Opt-in: installed paused with a starter message the owner reads (or edits) first. The message
+# names no supplier and no money: the agent follows up with another date or the refund.
+AA_CANCELLED_MAIL = {
+    "en": (
+        "Change to your trip: {{trip_name}}",
+        "Hello {{traveller_first_name}},\n\nWe are sorry to tell you that the tour departure booked for {{trip_name}} "
+        "has been cancelled by the operator. You will not be charged for this.\n\nWe will contact you shortly with "
+        "another date or a full refund, as you prefer.\n\n{{agency_name}}",
+    ),
+    "vi": (
+        "Thay đổi chuyến đi: {{trip_name}}",
+        "Chào {{traveller_first_name}},\n\nChúng tôi rất tiếc phải báo rằng lịch khởi hành đã đặt cho chuyến "
+        "{{trip_name}} đã bị nhà điều hành huỷ. Bạn sẽ không bị tính phí cho việc này.\n\nChúng tôi sẽ sớm liên hệ để "
+        "đề xuất ngày khác hoặc hoàn tiền đầy đủ, tuỳ bạn chọn.\n\n{{agency_name}}",
+    ),
+}
+TEMPLATES = (
+    *TEMPLATES,
+    Template(
+        key="aa_departure_cancelled_notice",
+        version=1,
+        name="Tell the traveller the tour departure was cancelled",
+        trigger={"kind": "event", "value": "departure.aa_cancelled"},
+        steps=({"action": "send_email", "message_template_id": None, "purpose": "transactional"},),
+        starts_paused=True,
+        starter_mail=AA_CANCELLED_MAIL,
+    ),
+)
 BY_KEY: dict[str, Template] = {t.key: t for t in TEMPLATES}
 
 

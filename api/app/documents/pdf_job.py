@@ -15,6 +15,14 @@ Kind (request)            ``crm.document``    Needs
 ``voucher``               ``voucher``         ``booking_line_id``: a confirmed line of the trip
 ========================  ==================  =========================================================================
 
+**Branding** (:func:`agency_brand`, the one place every render reads it): the agency is the brand (design §2.9). Today
+that is the agency's name (``crm.tenant.display_name``) heading every document, in its footer and as the PDF author.
+The Content studio tenant profile the issue names has no colour or logo (CIS ``shared.tenant_brand_rules`` holds the
+brand voice and ``brand_name``; a colour exists only in the TripPlanner site theme, served to TripPlanner by a database
+view) and the CRM has no read of either (no M2M contract call, ``tenant.entitlements.v1`` carries none): adding one is
+a cross-repo contract change, recorded in ``docs/implementation-notes/AA-1070.md``. When CIS serves it, only
+:func:`agency_brand` changes.
+
 A request for the same document in the same minute queues once (idempotency key). Without the key provider or the
 documents bucket the job finishes ``not_configured`` (never a queued-ahead retry that would keep DB Migrate busy).
 """
@@ -117,6 +125,11 @@ def _iso(value: Any) -> str | None:
     return value.isoformat() if value is not None else None
 
 
+async def agency_brand(ctx: AnyContext) -> str | None:
+    """The brand every PDF of the agency carries (see the module docstring): the agency's display name."""
+    return await ctx.conn.fetchval(AGENCY_SQL, ctx.tenant_id)
+
+
 async def build(ctx: AnyContext, vault: Vault, trip_id: uuid.UUID, kind: str,
                 subject_id: uuid.UUID | None) -> tuple[bytes, str]:  # fmt: skip
     """The PDF bytes and the file name of one document."""
@@ -124,7 +137,7 @@ async def build(ctx: AnyContext, vault: Vault, trip_id: uuid.UUID, kind: str,
     if trip is None:
         raise NotFound("trip_not_found")
     locale = await prep_packs.agency_locale(ctx)  # type: ignore[arg-type]
-    agency = await ctx.conn.fetchval(AGENCY_SQL, ctx.tenant_id)
+    agency = await agency_brand(ctx)
     ref = str(trip_id)[:8]
     if kind == "confirmation":
         party = [
@@ -182,7 +195,7 @@ async def build(ctx: AnyContext, vault: Vault, trip_id: uuid.UUID, kind: str,
     one = next((v for v in found["vouchers"] if v["booking_line_id"] == str(subject_id)), None)
     if one is None:
         raise NotFound("voucher_not_found")
-    return renders.voucher(found, one, locale), f"voucher-{one['voucher_no']}.pdf"
+    return renders.voucher({**found, "agency_name": agency}, one, locale), f"voucher-{one['voucher_no']}.pdf"
 
 
 def _payload(payload: dict[str, Any]) -> tuple[uuid.UUID, uuid.UUID, str, uuid.UUID | None]:
