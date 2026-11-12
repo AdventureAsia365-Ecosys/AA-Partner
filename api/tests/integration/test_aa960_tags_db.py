@@ -18,10 +18,12 @@ from __future__ import annotations
 import datetime as dt
 import json
 import uuid
+from collections.abc import AsyncIterator
 from typing import Any
 
 import asyncpg
 import pytest
+import pytest_asyncio
 
 from app import pipeline
 from app.errors import Conflict, Forbidden, NotFound
@@ -31,11 +33,31 @@ from app.travellers import service as travellers
 from app.vault import Vault
 from app.workflows import coverage
 from app.workflows import service as workflows
+from tests.integration.conftest import OWNER
 from tests.integration.test_ops_release_api import DAY, _seed, _setup, _traveller
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 TICK = "job:crm_workflow_tick"
+
+
+TOURS: list[str] = []  # the rows of the shared catalog cache (a platform table) this file makes
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _leave_no_trace(admin: asyncpg.Connection) -> AsyncIterator[None]:
+    """After each test the catalog rows made here leave: the catalog sync tests of other files count every cached
+    tour (they ran red after this file left three served tours behind)."""
+    yield
+    if not TOURS:
+        return
+    await admin.execute(f"SET ROLE {OWNER}")
+    try:
+        sql = "DELETE FROM crm.aa_catalog_tour WHERE source_system = 'cis' AND source_id = ANY($1::text[])"
+        await admin.execute(sql, TOURS)
+    finally:
+        await admin.execute("RESET ROLE")
+        TOURS.clear()
 
 
 def _task_rule(name: str, trigger: dict[str, Any], conditions: dict[str, Any]) -> dict[str, Any]:
@@ -157,6 +179,7 @@ async def test_coverage_lists_a_trip_without_its_stage_rule_and_apply_closes_it(
 
 
 async def _tour(pool: asyncpg.Pool, source_id: str, country: str, days: int, facets: dict[str, Any]) -> None:
+    TOURS.append(source_id)
     async with pool.acquire() as conn:
         await conn.execute(
             "INSERT INTO crm.aa_catalog_tour (source_system, source_id, title, country_code, duration_days, "
