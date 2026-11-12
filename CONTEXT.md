@@ -1202,6 +1202,11 @@ below; the guided "AA cancelled the departure" flow (crm-13) of the same issue i
   to 0 (decision `waived`, reason `aa_departure_cancelled`, never the owner's call, the dialog's charge ignored), so
   each payment is prefilled for a full refund (`proposed` refund requests, §4.6 approval as usual); Booking's reason
   `departure_cancelled` costs the agency no fee. The run closes the case. Audit reasons are codes, never amounts.
+  Dev E2E (agent-only, AA-1087 S278): `e2e/tests/aa-cancel.spec.ts` around the AA-Booking E2E write run, driven by
+  the AA-Booking fixture seeder's output (`E2ECRMAACANCELFIXTURES`): `E2ECRMAACANCEL=prepare` puts the seeded tour as an
+  AA item on the seeded departure in a draft builder version of a new trip; after Booking's E2E staff address cancels
+  that departure, `verify` waits for the one active case and the `issue=aa_cancelled` board filter. Skipped in
+  `e2e-dev.yml` (no phase set).
 
 ## Sales partners and their commission (AA-1071)
 
