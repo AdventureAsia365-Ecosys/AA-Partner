@@ -40,7 +40,7 @@ from app.esign import terms as esign_terms
 from app.mail import conversations, templates
 from app.payments import schedule_plan
 from app.permissions import Action, require
-from app.proposals import builder, prep_packs, rules, service
+from app.proposals import builder, inclusions, prep_packs, rules, service
 from app.proposals import text_render as tr
 from app.tenancy import TenantContext
 from app.vault import Vault
@@ -167,9 +167,18 @@ async def snapshot(ctx: TenantContext, vault: Vault, row: Any, price_hash: str, 
     if plan:  # AA-1067: every payment line of the version (its share of the published total, its date)
         amounts = schedule_plan.split(Decimal(sums["sell_total"]), plan, row["currency"].strip())
         schedule = tuple((line.kind, line.seq, amount, line.due_on) for line, amount in zip(plan, amounts, strict=True))
+    # AA-1070 crm-35: the "Included" / "Not included" lines; the AA tours of the default options (the version as sent).
+    lines = await inclusions.lines(ctx, row["proposal_id"])
+    own = inclusions.agency_lists(lines)
+    tours = await inclusions.aa_block(ctx, row["status"], lines, inclusions.tours_in(s, builder._defaults(s)))
     return tr.Snapshot(kind="builder", pay_on_arrival_total=Decimal(sums["pay_on_arrival_total"]),
                        starts_on=row["starts_on"], rooms=tuple(rooms), days=tuple(days), before_you_go=before,
-                       schedule=schedule, **common)  # fmt: skip
+                       schedule=schedule,
+                       included=tuple(inclusions.text_of(x, locale) for x in own["included"]),
+                       not_included=tuple(inclusions.text_of(x, locale) for x in own["not_included"]),
+                       aa_tours=tuple(tr.TourLists(t["title"], tuple(t["included"]), tuple(t["not_included"]))
+                                      for t in tours),
+                       **common)  # fmt: skip
 
 
 async def _before_you_go(

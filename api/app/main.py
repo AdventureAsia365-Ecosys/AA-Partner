@@ -78,6 +78,7 @@ from app.routers import (
     esign,
     finance,
     health,
+    inclusions,
     invitations,
     invoices,
     ledger,
@@ -339,6 +340,7 @@ def create_app(
     app.include_router(reports.router)
     app.include_router(builder.router)
     app.include_router(proposal_text.router)
+    app.include_router(inclusions.router)  # AA-1070 crm-35: the inclusion lists of a proposal
     app.include_router(mail.router)
     app.include_router(messaging.router)
     app.include_router(ai.router)

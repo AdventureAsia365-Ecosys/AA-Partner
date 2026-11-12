@@ -14,6 +14,7 @@ import { Badge, Button, K, useHydrated, LinkButton, Pressable } from "@/app/_kit
 import { DateInput } from "@/components/DateInput";
 import { Panel } from "@/components/PageTitle";
 import { BeforeYouGoPanel } from "@/components/proposals/BeforeYouGoPanel";
+import { InclusionsPanel } from "@/components/proposals/InclusionsPanel";
 import { BuilderAaDrawer, type Supplier } from "@/components/proposals/BuilderAaDrawer";
 import { DiscountBox } from "@/components/proposals/DiscountBox";
 import { ScheduleEditor } from "@/components/proposals/ScheduleEditor";
@@ -772,6 +773,20 @@ export function BuilderPage({
           onMessage={(tone, text) => setMessage({ tone, text })}
         />
       </Panel>
+
+      {view.inclusions && (
+        // AA-1070 crm-35: the version's "Included" / "Not included" lists; an AA tour's lines are fixed.
+        <Panel title={tr("incl.panel")} testId="builder-inclusions">
+          <InclusionsPanel
+            key={`inclusions-${view.edit_seq}`}
+            data={view.inclusions}
+            draft={draft}
+            busy={busy}
+            lang={lang}
+            onSave={(lines) => write("PUT", `proposals/${view.proposal_id}/inclusions`, { lines })}
+          />
+        </Panel>
+      )}
 
       <Panel testId="builder-advanced">
         <LinkButton tone="inherit" onClick={() => setAdvanced(!advanced)} aria-expanded={advanced} style={{ color: K.ink, justifySelf: "start" }}>
