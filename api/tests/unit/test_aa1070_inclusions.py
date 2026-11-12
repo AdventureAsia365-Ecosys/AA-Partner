@@ -359,3 +359,27 @@ def test_bodies_are_checked_first(pools: LocalPools, monkeypatch: pytest.MonkeyP
     assert client.put(put, headers=h, json={"seq": 1, "lines": many}).status_code == 422
     assert client.put(put, headers=h, json={"seq": 1, "lines": [{"kind": "other", "text_en": "x"}]}).status_code == 422
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_set_inclusions_locks_the_draft_then_answers_the_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[Any] = []
+
+    async def lock(ctx: Any, proposal_id: Any, seq: Any) -> dict[str, Any]:
+        seen.append(("lock", proposal_id, seq))
+        return {"trip_id": TRIP}
+
+    async def replace(ctx: Any, proposal_id: Any, trip_id: Any, entries: Any) -> int:
+        seen.append(("replace", trip_id, entries))
+        return len(entries)
+
+    async def done(ctx: Any, vault: Any, proposal_id: Any, reason: str) -> dict[str, Any]:
+        seen.append(("done", reason))
+        return {"proposal_id": str(proposal_id)}
+
+    monkeypatch.setattr(builder, "_lock", lock)
+    monkeypatch.setattr(inclusions, "replace", replace)
+    monkeypatch.setattr(builder, "_done", done)
+    out = await builder.set_inclusions(tenant_ctx(ScriptedConn()), FakeVault(), PID, 7, [{"inclusion_item_id": I1}])
+    assert out == {"proposal_id": P}
+    assert seen == [("lock", PID, 7), ("replace", TRIP, [{"inclusion_item_id": I1}]), ("done", "inclusions")]
