@@ -7,6 +7,9 @@
 - Settings > Online booking reads and changes the ceiling (bounds, audit, owner only through the route class).
 - The public inquiry form and its sales partner links charge one bucket per form (the form's id): together they get
   the form's hourly quota once, not twice.
+- The Book now widget (the GET, review round 1): its departures come from a short cache, and a read that reaches
+  Booking takes one of the agency's reads a minute (its own ``widget:`` bucket, the same ceiling): a burst of page
+  views from many addresses never asks Booking more than the ceiling.
 All names are invented.
 """
 
@@ -20,6 +23,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from app.booking import products as aa_products
+from app.booking.client import BookingUnavailable
 from app.booking.products import ProductCache
 from app.errors import Invalid, RateLimited
 from app.intake import booking, booking_settings
@@ -158,6 +163,115 @@ def test_the_route_answers_429_agency_rate_limited_per_agency(
     assert (first.status_code, second.status_code) == (200, 200)
     assert third.status_code == 429 and third.headers["retry-after"] == "60"
     assert third.json()["detail"] == "agency_rate_limited"
+
+
+# ── the widget (GET /book/{key}) ─────────────────────────────────────────────────────────────────
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+@pytest.mark.asyncio
+async def test_the_departures_cache_asks_booking_once_per_window() -> None:
+    fake, clock = _fake(), Clock()
+    cache = ProductCache(booking_client(fake), clock=clock)
+    charged: list[str] = []
+    window = {"date_from": "2031-03-02", "date_to": "2032-03-01"}
+
+    async def read(source_id: str = "T-100") -> dict[str, Any]:
+        return await cache.departures(TENANT, source_id, before_fetch=lambda: charged.append(source_id), **window)
+
+    first = await read()
+    assert await read() is first and fake.calls["GET departures"] == 1 and charged == ["T-100"]
+    clock.now = aa_products.DEPARTURES_TTL_S + 1  # the answer has expired: Booking is asked (and charged) again
+    await read()
+    assert fake.calls["GET departures"] == 2 and charged == ["T-100", "T-100"]
+    fake.down = True  # an error is never kept: the next read asks again
+    clock.now += aa_products.DEPARTURES_TTL_S + 1
+    with pytest.raises(BookingUnavailable):
+        await read()
+    fake.down = False
+    await read()
+    assert fake.calls["GET departures"] == 3
+
+    def refuse() -> None:
+        raise RateLimited("agency_rate_limited", 60)
+
+    clock.now += aa_products.DEPARTURES_TTL_S + 1
+    with pytest.raises(RateLimited):  # a refused charge never reaches Booking
+        await cache.departures(TENANT, "T-100", before_fetch=refuse, **window)
+    assert fake.calls["GET departures"] == 3
+
+
+@pytest.mark.asyncio
+async def test_the_departures_cache_keeps_a_bounded_number_of_answers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(aa_products, "MAX_DEPARTURE_KEYS", 2)
+    fake = _fake()
+    cache = ProductCache(booking_client(fake), clock=Clock())
+    window = {"date_from": "2031-03-02", "date_to": "2032-03-01"}
+    for source_id in ("T-100", "T-200", "T-100", "T-300"):  # T-200 is the least recently used when T-300 comes
+        await cache.departures(TENANT, source_id, **window)
+    assert fake.calls["GET departures"] == 3
+    await cache.departures(TENANT, "T-100", **window)
+    assert fake.calls["GET departures"] == 3  # still kept
+    await cache.departures(TENANT, "T-200", **window)
+    assert fake.calls["GET departures"] == 4  # evicted, so asked again
+
+
+@pytest.mark.asyncio
+async def test_the_widget_takes_the_agency_ceiling_only_when_booking_is_asked(agency: ScriptedConn) -> None:
+    fake, clock = _fake(), Clock()
+    client = booking_client(fake)
+    cache = ProductCache(client, clock=clock)
+    limiter = FixedWindowLimiter(0, clock=lambda: 0.0)
+    asked: list[int] = []
+
+    def quota(tenant_id: uuid.UUID, ceiling: int) -> bool:
+        asked.append(ceiling)
+        return limiter.allow(f"widget:{tenant_id}", ceiling)
+
+    for _ in range(5):  # page views inside the cache window: one Booking read, one charge
+        out = await booking.widget(None, cache, client, KEY, tour="T-100", page_id=None, agency_quota=quota)  # type: ignore[arg-type]
+        assert [d["departure_id"] for d in out["departures"]] == ["d1"]
+    assert fake.calls["GET departures"] == 1 and asked == [2]
+    clock.now = aa_products.DEPARTURES_TTL_S + 1
+    await booking.widget(None, cache, client, KEY, tour="T-100", page_id=None, agency_quota=quota)  # type: ignore[arg-type]
+    clock.now += aa_products.DEPARTURES_TTL_S + 1  # the third Booking read of the minute is past the ceiling (2)
+    with pytest.raises(RateLimited) as err:
+        await booking.widget(
+            None, cache, client, KEY, tour="T-100", page_id=None, agency_quota=quota, quota_window_s=60
+        )  # type: ignore[arg-type]
+    assert (err.value.code, err.value.retry_after_s) == ("agency_rate_limited", 60)
+    assert fake.calls["GET departures"] == 2
+
+
+def test_a_widget_burst_from_many_addresses_stays_under_the_agency_ceiling(
+    pools: LocalPools, agency: ScriptedConn, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = pools.settings()
+    app = create_app(settings, verifier=pools.verifier(settings), keys=object())
+    monkeypatch.setattr(public_router, "request_pool", _pool)
+    fake, clock = _fake(), Clock()
+    client = booking_client(fake)
+    url = f"/crm/public/v1/book/{KEY}"
+    statuses: list[int] = []
+    with TestClient(app) as c:
+        app.state.aa_products, app.state.booking_client = ProductCache(client, clock=clock), client
+        for n in range(6):  # every view from another address, each after the cache expired: the worst case
+            clock.now += aa_products.DEPARTURES_TTL_S + 1
+            res = c.get(url, params={"tour": "T-100"}, headers={"X-Forwarded-For": f"203.0.113.{n + 10}"})
+            statuses.append(res.status_code)
+            if res.status_code == 429:
+                assert res.json()["detail"] == "agency_rate_limited" and res.headers["retry-after"] == "60"
+    assert statuses == [200, 200, 429, 429, 429, 429]  # the agency's value is 2
+    assert fake.calls["GET departures"] == 2
+    # the widget has its own bucket: the price checks of the minute are untouched
+    assert app.state.booking_agency_price_limiter.allow(f"price:{TENANT}", 2) is True
 
 
 # ── Settings > Online booking ────────────────────────────────────────────────────────────────────

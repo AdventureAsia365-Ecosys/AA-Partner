@@ -305,7 +305,11 @@ def _booking_error(exc: Exception) -> ServiceError:
 
 
 async def offer(cache: ProductCache, client: BookingClient, tenant_id: uuid.UUID, source_id: str,
-                today: dt.date) -> Offer:  # fmt: skip
+                today: dt.date, *, before_fetch: Callable[[], None] | None = None,
+                cached: bool = False) -> Offer:  # fmt: skip
+    """The tour's whole-tour component and its open departures. ``cached`` (the widget only, AA-1092): the departures
+    answer may be up to ``DEPARTURES_TTL_S`` old and ``before_fetch`` (the agency's ceiling) runs only when Booking is
+    asked; the price check and the booking read live."""
     try:
         product = (await cache.products(tenant_id)).get(source_id)
         if product is None or not product.has_fixed_departures:
@@ -313,8 +317,13 @@ async def offer(cache: ProductCache, client: BookingClient, tenant_id: uuid.UUID
         component = next((c for c in product.components if c.kind == "trip_plan"), None)
         if component is None:
             raise NotFound("tour_not_bookable", "this tour cannot be booked online: ask the agency")
-        data = await client.departures(tenant_id, source_id, date_from=(today + dt.timedelta(days=1)).isoformat(),
-                                       date_to=(today + dt.timedelta(days=DEPARTURE_DAYS)).isoformat())  # fmt: skip
+        date_from = (today + dt.timedelta(days=1)).isoformat()
+        date_to = (today + dt.timedelta(days=DEPARTURE_DAYS)).isoformat()
+        if cached:
+            data = await cache.departures(tenant_id, source_id, date_from=date_from, date_to=date_to,
+                                          before_fetch=before_fetch)  # fmt: skip
+        else:
+            data = await client.departures(tenant_id, source_id, date_from=date_from, date_to=date_to)
         found = {
             d.departure_id: d
             for d in contract.departures(data)
@@ -410,7 +419,13 @@ async def widget(
     *,
     tour: str | None,
     page_id: str | None,
+    agency_quota: Callable[[uuid.UUID, int], bool] | None = None,
+    quota_window_s: int = 60,
 ) -> dict[str, Any]:
+    """The Book now panel of a tour page. AA-1092: the departures come from a short cache (``ProductCache.departures``)
+    and a read that does reach Booking takes one of the agency's reads a minute (``agency_quota(tenant_id, ceiling)``,
+    the same ``public_price_per_minute`` value as the price check, its own bucket): page views from any number of
+    addresses never ask Booking more than that; past it 429 ``agency_rate_limited``."""
     keys = [k for k in (tour, page_id) if isinstance(k, str) and 1 <= len(k) <= 128]
     async with intake_tx(pool, public_key) as (ctx, form):
         agency = await _agency(ctx)
@@ -420,7 +435,13 @@ async def widget(
         tenant_id = ctx.tenant_id
     if cache is None or client is None:
         raise Unavailable("booking_unavailable", "bookings cannot be checked right now; try again in a minute")
-    found = await offer(cache, client, tenant_id, row["source_id"], today)
+    ceiling = int(agency.get("public_price_per_minute") or DEFAULT_PRICE_PER_AGENCY_MINUTE)
+
+    def charge() -> None:
+        if agency_quota is not None and not agency_quota(tenant_id, ceiling):
+            raise RateLimited("agency_rate_limited", quota_window_s)
+
+    found = await offer(cache, client, tenant_id, row["source_id"], today, before_fetch=charge, cached=True)
     return {
         "agency_name": agency["display_name"],
         "tour": row["source_id"],

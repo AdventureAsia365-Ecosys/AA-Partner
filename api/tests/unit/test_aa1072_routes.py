@@ -5,6 +5,7 @@ arguments, status codes and headers (the services run on PostgreSQL in tests/int
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterator
 from typing import Any
 
@@ -66,7 +67,10 @@ def test_the_widget_and_the_price_routes(public: tuple[TestClient, list]) -> Non
     client, calls = public
     res = client.get(f"/crm/public/v1/book/{KEY}", params={"tour": "T-1", "page": "P-1"})
     assert res.status_code == 200 and res.json() == {"tour": "T-1"} and res.headers["cache-control"] == "no-store"
-    assert calls[-1][2] == {"tour": "T-1", "page_id": "P-1"}
+    kw = calls[-1][2]
+    assert (kw["tour"], kw["page_id"], kw["quota_window_s"]) == ("T-1", "P-1", 60)
+    assert kw["agency_quota"](uuid.UUID(int=1), 1) is True  # AA-1092: the widget's per-agency reads (own bucket)
+    assert kw["agency_quota"](uuid.UUID(int=1), 1) is False
     res = client.post(f"/crm/public/v1/book/{KEY}/price", json={"tour": "T-1"})
     assert res.status_code == 200 and calls[-1][0] == "price" and calls[-1][1][-1] == {"tour": "T-1"}
     assert client.post(f"/crm/public/v1/book/{KEY}/price", content=b"{bad").status_code == 400

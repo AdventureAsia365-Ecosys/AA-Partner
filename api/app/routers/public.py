@@ -293,7 +293,17 @@ async def get_booking_widget(
 ) -> JSONResponse:
     pool = await request_pool(request)
     cache, client = _booking_deps(request)
-    out = await public_booking.widget(pool, cache, client, public_key, tour=tour, page_id=page)
+    agency_limiter = request.app.state.booking_agency_price_limiter
+    out = await public_booking.widget(
+        pool,
+        cache,
+        client,
+        public_key,
+        tour=tour,
+        page_id=page,
+        agency_quota=lambda tenant_id, ceiling: agency_limiter.allow(f"widget:{tenant_id}", ceiling),
+        quota_window_s=int(agency_limiter.window_s),
+    )
     return JSONResponse(out, headers=NO_STORE)
 
 
