@@ -2,6 +2,8 @@
 // web/components/reports/ReportTable.tsx — a small read-only report table on the kit DataTable (AA-966). The server page
 // formats every cell to text first (numbers in the person's locale, money with its currency), so this component gets
 // plain strings: the first column is a label, the others are numbers aligned right. Sorting is the DataTable's own.
+// AA-1070: `textColumns` names the other columns that hold words (a trip title, a status): they sit left and wrap, so a
+// long title does not widen a phone card past the screen (a number cell never wraps).
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo } from "react";
 import { DataTable } from "@/app/_kit";
@@ -17,11 +19,14 @@ export function ReportTable({
   head,
   rows,
   empty,
+  textColumns = [],
 }: {
   tableId: string;
   head: string[];
   rows: ReportRow[];
   empty: string;
+  /** Indexes of the columns after the first that hold text, not numbers. */
+  textColumns?: readonly number[];
 }) {
   const columns = useMemo<ColumnDef<ReportRow, unknown>[]>(
     () =>
@@ -30,18 +35,18 @@ export function ReportTable({
         header: h,
         accessorFn: (r: ReportRow) => r.cells[i],
         enableSorting: false,
-        meta: i === 0 ? undefined : { align: "right" },
+        meta: i === 0 || textColumns.includes(i) ? undefined : { align: "right" },
         cell: ({ row }) => {
           const text = row.original.cells[i] ?? "";
           if (i === 0 && row.original.href) return <a href={row.original.href}>{text}</a>;
-          return i === 0 ? (
+          return i === 0 || textColumns.includes(i) ? (
             <span style={{ overflowWrap: "anywhere" }}>{text}</span>
           ) : (
             <span style={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{text}</span>
           );
         },
       })),
-    [head],
+    [head, textColumns],
   );
   return (
     <div data-testid={`report-table-${tableId}`} style={{ minWidth: 0 }}>
