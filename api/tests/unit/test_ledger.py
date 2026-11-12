@@ -191,6 +191,8 @@ async def test_the_ledger_has_totals_for_owner_and_agent_only() -> None:
     assert "totals" not in assistant and "money" not in assistant["lines"][0]
     with pytest.raises(Invalid):
         await lines.ledger(ctx, status="booked", date_from=None, date_to=None)
+    await lines.ledger(ctx, status="requested", date_from=None, date_to=None)  # AA-1069: a line status since crm-053
+    assert conn.sql("t.title AS trip_title")[-1][0] == "requested"
 
 
 # ── writes ───────────────────────────────────────────────────────────────────────────────────────
@@ -560,3 +562,33 @@ async def test_resolve_wraps_the_database_answer() -> None:
     rate = await fx.resolve(tenant_ctx(conn), "VND", "USD", dt.date(2026, 10, 24))
     assert rate is not None and rate.view()["stale_days"] == 1 and "attribution" in rate.view()
     assert await fx.resolve(tenant_ctx(ScriptedConn()), "VND", "USD", dt.date(2026, 10, 24)) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "said", "unsaid"),
+    [
+        ("cancelled", "this line is cancelled", "confirmed"),
+        ("requested", "this line is requested from its supplier", "confirmed"),
+        ("confirmed", "this line is confirmed", "cancelled"),
+    ],
+)
+async def test_a_line_that_is_not_planning_is_refused_in_the_words_of_its_status(
+    status: str, said: str, unsaid: str
+) -> None:
+    """AA-1069 (S278 live check): moving a cancelled line to another supplier said "the supplier of a confirmed line";
+    the supplier move and the trash word the refusal from the line's actual status."""
+    row = {"trip_id": TRIP, "status": status, "supplier_kind": "agency"}
+    move = _conn(
+        **{
+            "SELECT trip_id, status, supplier_kind FROM crm.booking_line": row,
+            "SELECT kind, deleted_at FROM crm.agency_supplier": {"kind": "own", "deleted_at": None},
+        }
+    )
+    with pytest.raises(Invalid) as moved:
+        await lines.update_line(tenant_ctx(move), LINE, {"agency_supplier_id": str(SUPPLIER)})
+    with pytest.raises(Conflict) as trashed:
+        await lines.trash_check(tenant_ctx(_conn(**{"SELECT trip_id, status, supplier_kind": row})), LINE)
+    for err in (moved.value, trashed.value):
+        assert err.code == "line_not_editable"
+        assert err.message.startswith(said) and unsaid not in err.message
