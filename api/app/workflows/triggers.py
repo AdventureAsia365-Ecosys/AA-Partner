@@ -11,8 +11,9 @@ Called inside the transaction of the change that triggers them, so a rolled-back
   (its dispatch row has ``origin workflow``) starts nothing, and a message rule starts at most one run per trip every
   :data:`MESSAGE_COOLDOWN_HOURS` (a client's auto-reply cannot ping-pong with a rule that answers it; a rule started
   by ``message.sent`` may not send a text at all, :func:`app.workflows.model.validate`).
-- :func:`on_tag_added` (AA-960): a tag was put on a trip or a client. Keyed ``tag:<tag link id>``; on an archived
-  client nothing starts (audited denied ``client_archived``, card R of CRM-29b).
+- :func:`on_tag_added` (AA-960): a tag was put on a trip or a client. Keyed ``tag:<tag link id>`` (a system tag:
+  ``tag:sys:...``, per subject and code); on an archived client nothing starts (audited denied ``client_archived``,
+  card R of CRM-29b).
 - :func:`apply_manual`: a member applies a manual rule (a task list, R9) to trips. Keyed ``manual:<request id>:<trip>``.
 - Date and special-date triggers start in the hourly tick (:mod:`app.workflows.tick`).
 
@@ -201,15 +202,18 @@ async def on_tag_added(
     link_id: uuid.UUID,
     *,
     client_archived: bool = False,
+    key: str | None = None,
 ) -> int:
     """AA-960 (R3 / R29): a tag was put on a trip or a client (a member, a bulk apply or the system-tag refresh).
     Every active ``trip_tag.added`` / ``client_tag.added`` rule whose ``tags_any`` names the tag starts one run, keyed
-    ``tag:<link id>`` (a tag removed and put back is a new link: the rule runs again; the same link never twice). A
-    trip rule checks its other conditions on the trip as it is now. On an archived client nothing starts: the start is
+    ``tag:<link id>`` (a member's tag removed and put back is a new link: the rule runs again; the same link never
+    twice). The system-tag refresh passes its own ``key`` instead (:func:`app.tags.system.start_key`: per trip and
+    code, so a system tag that comes and goes with a tour's state never starts the rule twice). A trip rule checks its
+    other conditions on the trip as it is now. On an archived client nothing starts: the start is
     audited ``workflow_start`` denied ``client_archived`` (card R, "a workflow on an archived contact is
     suppressed"). Returns how many runs started; a failure never fails the tagging (savepoint, logged)."""
     event = "trip_tag.added" if applies_to == "trip" else "client_tag.added"
-    key = f"tag:{link_id}"
+    key = key or f"tag:{link_id}"
     try:
         async with ctx.conn.transaction():
             rules = [r for r in await ctx.conn.fetch(RULES_SQL, "event", event)

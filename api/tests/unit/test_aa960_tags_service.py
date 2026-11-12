@@ -53,6 +53,9 @@ async def test_vocabulary_and_create() -> None:
     ctx = tenant_ctx(conn, role="assistant")
     created = await service.create(ctx, "trip", " VIP  2 ", "info")
     assert created["code"] == "vip_2"
+    # crm.tag hangs on the settings row (crm-061 FK) that provisioning does not make: made first, never a 500.
+    inserts = [flat for flat, _args in conn.calls if flat.startswith("INSERT INTO")]
+    assert inserts[0] == service.ENSURE_SETTINGS_SQL and inserts[1].startswith("INSERT INTO crm.tag (")
     assert conn.sql("INSERT INTO crm.tag")[0] == ("trip", "vip_2", "VIP 2", "info")
     assert ctx.audit_events[-1].action == "tag_create"
     with pytest.raises(Conflict) as err:
@@ -273,8 +276,8 @@ async def test_ready_to_travel_list_explains_itself() -> None:
 async def test_system_refresh_adds_updates_and_drops(monkeypatch: pytest.MonkeyPatch) -> None:
     fired: list[tuple[Any, ...]] = []
 
-    async def on_tag_added(ctx: Any, applies_to: str, code: str, subject: Any, link: Any, **_: Any) -> int:
-        fired.append((applies_to, code, subject))
+    async def on_tag_added(ctx: Any, applies_to: str, code: str, subject: Any, link: Any, **kw: Any) -> int:
+        fired.append((applies_to, code, subject, kw["key"]))
         return 1
 
     monkeypatch.setattr(triggers, "on_tag_added", on_tag_added)
@@ -302,15 +305,20 @@ async def test_system_refresh_adds_updates_and_drops(monkeypatch: pytest.MonkeyP
     conn.on("INSERT INTO crm.tag_link (tag_id, trip_id, source", LINK)
     counts = await system.refresh(system_ctx(conn), dt.date(2026, 11, 12), clients=False)
     assert counts["system_tags_added"] == 1 and counts["system_tags_updated"] == 1 and counts["tag_runs_started"] == 1
-    assert fired == [("trip", "sys_aa_trekking", TRIP)]
+    # Keyed per trip and code, not per link: a tag that comes and goes with the tour's state never starts it twice.
+    assert fired == [("trip", "sys_aa_trekking", TRIP, f"tag:sys:trip:{TRIP}:sys_aa_trekking")]
     assert conn.sql("DELETE FROM crm.tag_link WHERE tag_link_id = ANY")[0][0] == [links["trip"][1]["tag_link_id"]]
     assert counts["system_tags_held"] == 1  # the fake reports no deleted row: counted as held
+    assert conn.sql(system.ENSURE_SETTINGS_SQL) == [()]  # the settings row first (crm-061 FK)
     ensure = conn.sql("INSERT INTO crm.tag (kind, applies_to, code, name, tone)")[0]
     assert set(ensure[1]) == set(model.SYSTEM_TAGS) and ensure[3] == model.SYSTEM_TONE
 
 
 async def test_system_refresh_marks_ready_clients(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def on_tag_added(*_a: Any, **_k: Any) -> int:
+    keys: list[str] = []
+
+    async def on_tag_added(*_a: Any, **kw: Any) -> int:
+        keys.append(kw["key"])
         return 0
 
     monkeypatch.setattr(triggers, "on_tag_added", on_tag_added)
@@ -332,6 +340,8 @@ async def test_system_refresh_marks_ready_clients(monkeypatch: pytest.MonkeyPatc
     assert counts["system_tags_added"] == 1
     args = conn.sql("INSERT INTO crm.tag_link (tag_id, traveler_id, source")[0]
     assert args[1] == CLIENT
+    # Once per client and return home: another completed trip later is a new episode.
+    assert keys == [f"tag:sys:client:{CLIENT}:{model.READY_TAG}:2025-01-15"]
     assert json.loads(args[2]) == [{"code": "returned_months_ago", "months": 21},
                                    {"code": "anniversary_soon", "days": 54},
                                    {"code": "new_aa_tours", "country": "VN", "count": 1}]  # fmt: skip

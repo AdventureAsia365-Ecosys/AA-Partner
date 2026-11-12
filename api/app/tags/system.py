@@ -1,7 +1,8 @@
 """The system-tag refresh (AA-960, card CRM-29b; R29, R36): run by the hourly workflow tick of each agency
 (:func:`app.workflows.tick.run_agency`, actor ``job:crm_workflow_tick``: crm-061 lets only a job write system tags).
 
-1. The agency's system tag rows exist (:data:`app.tags.model.SYSTEM_TAGS`, one INSERT ... ON CONFLICT DO NOTHING).
+1. The agency's settings row (crm.tag hangs on it) and system tag rows exist (:data:`app.tags.model.SYSTEM_TAGS`, one
+   INSERT ... ON CONFLICT DO NOTHING each).
 2. **Trip tags** (R29), every run: the live AA tours of every live trip (its AA booking lines that are not cancelled,
    and the AA options of its live proposals) joined with the AA catalogue cache (``crm.aa_catalog_tour``, served
    tours only: root ADR 0015) give the codes of :func:`app.tags.model.trip_system_tags` with their reasons.
@@ -11,6 +12,11 @@
 The links are made to match: a new link (source ``system``, its reasons) starts the tag workflows
 (:func:`app.workflows.triggers.on_tag_added`); a link whose reasons changed is updated; a link no longer true is
 deleted, except on a held trip or client (hold rule 4h: it stays until the hold ends). Ids, codes and counts only.
+
+A system link comes and goes with facts the agency does not control (a CIS tour paused then served again, a trip
+trashed and restored, an AA line cancelled and re-added), so its runs are not keyed by the link (a new link each time)
+but by :func:`start_key`: a trip tag starts a rule once per trip and code, ever; "ready to travel again" once per
+client and return home (the end date of their last completed trip): after another trip it may start the rule again.
 """
 
 from __future__ import annotations
@@ -33,6 +39,8 @@ SELECT 'system', s.applies_to, s.code, s.name, $4
   FROM unnest($1::text[], $2::text[], $3::text[]) AS s(applies_to, code, name)
 ON CONFLICT (tenant_id, applies_to, code) DO NOTHING
 """
+# crm.tag hangs on the agency's settings row (crm-061 tag_settings_fk); provisioning does not make that row.
+ENSURE_SETTINGS_SQL = "INSERT INTO crm.tenant_settings DEFAULT VALUES ON CONFLICT (tenant_id) DO NOTHING"
 SYSTEM_IDS_SQL = "SELECT tag_id, applies_to, code FROM crm.tag WHERE kind = 'system'"
 TRIP_TOURS_SQL = """
 SELECT x.trip_id, c.source_id, c.duration_days, c.body -> 'facets' AS facets
@@ -99,6 +107,13 @@ SELECT country_code, array_agg(source_id ORDER BY source_id) AS tours
 """
 
 
+def start_key(applies_to: str, subject: uuid.UUID, code: str, episode: dt.date | None = None) -> str:
+    """The workflow trigger key of a system tag on a subject (crm.workflow_run ``trigger_key``): the same tag on the
+    same trip (or the same return home of a client) never starts a rule twice, however often the link is remade."""
+    key = f"tag:sys:{applies_to}:{subject}:{code}"
+    return f"{key}:{episode.isoformat()}" if episode is not None else key
+
+
 def _json(raw: Any) -> Any:
     return json.loads(raw) if isinstance(raw, str) else raw
 
@@ -110,6 +125,7 @@ def _dump(reasons: list[dict[str, Any]]) -> str:
 async def ensure_tags(ctx: AnyContext) -> dict[tuple[str, str], uuid.UUID]:
     """The agency's system tag rows, made when missing: (applies_to, code) -> tag id."""
     items = list(model.SYSTEM_TAGS.items())
+    await ctx.conn.execute(ENSURE_SETTINGS_SQL)
     await ctx.conn.execute(
         ENSURE_SQL,
         [applies for _code, (applies, _name) in items],
@@ -127,9 +143,10 @@ async def _sync(
     wanted: dict[tuple[uuid.UUID, str], list[dict[str, Any]]],
     *,
     scope: set[str],
+    episodes: dict[uuid.UUID, dt.date] | None = None,
 ) -> Counter[str]:
     """Make the system links of ``applies_to`` whose code is in ``scope`` match ``wanted`` ((subject, code) ->
-    reasons)."""
+    reasons). ``episodes``: the subject's episode in :func:`start_key` (a client's last return home)."""
     from app.workflows import triggers  # app.workflows imports app.tags: import late
 
     counts: Counter[str] = Counter()
@@ -159,7 +176,8 @@ async def _sync(
             continue
         counts["system_tags_added"] += 1
         # An archived client never gets a system tag (ready_to_travel), so no start here is suppressed.
-        counts["tag_runs_started"] += await triggers.on_tag_added(ctx, applies_to, code, subject, link_id)
+        key = start_key(applies_to, subject, code, (episodes or {}).get(subject))
+        counts["tag_runs_started"] += await triggers.on_tag_added(ctx, applies_to, code, subject, link_id, key=key)
     return counts
 
 
@@ -208,11 +226,15 @@ async def histories(ctx: AnyContext) -> dict[uuid.UUID, model.ClientHistory]:
 
 async def refresh_clients(ctx: AnyContext, tag_ids: dict[tuple[str, str], uuid.UUID], today: dt.date) -> Counter[str]:
     wanted: dict[tuple[uuid.UUID, str], list[dict[str, Any]]] = {}
+    episodes: dict[uuid.UUID, dt.date] = {}
     for client, history in (await histories(ctx)).items():
         reasons = model.ready_to_travel(history, today)
         if reasons is not None:
             wanted[(client, model.READY_TAG)] = reasons
-    return await _sync(ctx, "client", tag_ids, wanted, scope=set(model.CLIENT_SYSTEM_TAGS))
+            back = model.last_return(history, today)
+            if back is not None:
+                episodes[client] = back
+    return await _sync(ctx, "client", tag_ids, wanted, scope=set(model.CLIENT_SYSTEM_TAGS), episodes=episodes)
 
 
 async def refresh(ctx: AnyContext, today: dt.date, *, clients: bool) -> Counter[str]:

@@ -12,7 +12,7 @@ import { memberLabel, type Member } from "@/lib/pipeline";
 import type { ChannelTemplate } from "@/lib/messaging";
 import { tagLabel, type Tag, type TagVocabulary } from "@/lib/tags";
 import type { MessageTemplate } from "@/lib/textProposal";
-import { STAGES, actionsFor, isClientRule, isGreeting, isTagRule, workflowErrorKey, type Rule, type Step, type Trigger, type WorkflowOptions } from "@/lib/workflows";
+import { STAGES, actionsFor, isClientRule, isMarketingOnly, isTagRule, workflowErrorKey, type Rule, type Step, type Trigger, type WorkflowOptions } from "@/lib/workflows";
 
 export interface EditorDraft {
   name: string;
@@ -55,14 +55,14 @@ function num(value: string, fallback = 0): number {
 }
 
 /** The body the API takes (POST /workflows, PATCH /workflows/{id}): the draft as it is, empty titles trimmed; a
- * birthday or anniversary rule's messages are marketing (the API refuses transactional there). */
+ * birthday, anniversary or client tag rule's messages are marketing (the API refuses transactional there). */
 export function payloadOf(draft: EditorDraft): Record<string, unknown> {
   const trigger: Record<string, unknown> = { kind: draft.trigger.kind, value: draft.trigger.kind === "manual" ? null : draft.trigger.value };
   if (draft.trigger.kind === "date_anchor" || draft.trigger.kind === "special_date") trigger.offset_days = draft.trigger.offset_days;
   const kept = Object.fromEntries(Object.entries(draft.conditions).filter(([, v]) => v !== undefined && !(Array.isArray(v) && v.length === 0)));
   // A special date has no condition; a client tag rule only its tags (AA-960).
   const conditions = draft.trigger.kind === "special_date" ? {} : isClientRule(draft.trigger) ? ("tags_any" in kept ? { tags_any: kept.tags_any } : {}) : kept;
-  const greeting = isGreeting(draft.trigger);
+  const greeting = isMarketingOnly(draft.trigger);
   const steps = greeting ? draft.steps.map((s) => (s.action === "send_email" || s.action === "send_text" ? { ...s, purpose: "marketing" } : s)) : draft.steps;
   return { name: draft.name.trim(), trigger, conditions, steps };
 }
@@ -225,7 +225,7 @@ export function RuleEditor({
   }, []);
   const subjectTags = allTags.filter((x) => x.applies_to === (client ? "client" : "trip"));
   const tagsAny = (draft.conditions.tags_any as string[] | undefined) ?? [];
-  const greeting = isGreeting(draft.trigger);
+  const greeting = isMarketingOnly(draft.trigger);
   const actions = actionsFor(draft.trigger);
   const values = TRIGGER_VALUES(options, kind);
   const stages = (draft.conditions.stages as string[] | undefined) ?? [];

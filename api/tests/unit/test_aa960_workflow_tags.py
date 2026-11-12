@@ -14,7 +14,7 @@ import asyncpg
 import pytest
 
 from app.errors import Invalid
-from app.workflows import service, tick
+from app.workflows import model, service, tick
 from tests.unit.fakes import ScriptedConn
 from tests.unit.slice_fakes import system_ctx, tenant_ctx
 from tests.unit.test_workflows_service import NOW, RULE, TRIP, rule_row, trip_row
@@ -49,6 +49,27 @@ async def test_a_rule_names_tags_of_the_agency() -> None:
                  "conditions": {"tags_any": ["vip"], "stages": ["booked"]}}  # fmt: skip
     await service.create(tenant_ctx(conn.on("FROM crm.tag WHERE applies_to = $1", [{"code": "vip"}])), trip_rule)
     assert conn.sql("FROM crm.tag WHERE applies_to = $1")[-1] == ("trip", ["vip"])
+
+
+async def test_a_client_tag_rule_sends_marketing_only() -> None:
+    """R36 "Ready to travel again feeds Marketing; sending needs consent": every message of a ``client_tag.added``
+    rule is marketing (it has no trip to serve); an explicit transactional is 422 ``marketing_only``. A trip tag rule
+    keeps the owner's choice."""
+    template, sid = str(uuid.uuid4()), "HX" + "c" * 32
+    mail = {"action": "send_email", "message_template_id": template}
+    text = {"action": "send_text", "channel": "sms", "content_sid": sid}
+    rule = model.validate({**CLIENT_RULE, "steps": [mail, text]})
+    assert [s["purpose"] for s in rule.steps] == ["marketing", "marketing"]
+    assert model.marketing_only("event", "client_tag.added")
+    assert not model.marketing_only("event", "trip_tag.added")
+    for n, step in enumerate(({**mail, "purpose": "transactional"}, {**text, "purpose": "transactional"})):
+        with pytest.raises(Invalid) as err:
+            model.validate({**CLIENT_RULE, "steps": [CLIENT_RULE["steps"][0]] * n + [step]})
+        assert err.value.code == "marketing_only" and err.value.extra["field"] == f"steps.{n}.purpose"
+    trip_rule = {**CLIENT_RULE, "trigger": {"kind": "event", "value": "trip_tag.added"},
+                 "conditions": {"tags_any": ["sys_aa_trekking"]},
+                 "steps": [{**mail, "purpose": "transactional"}]}  # fmt: skip
+    assert model.validate(trip_rule).steps[0]["purpose"] == "transactional"
 
 
 async def test_the_overview_offers_tag_events_and_tags_any() -> None:

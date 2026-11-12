@@ -59,6 +59,13 @@ export function isGreeting(trigger: Pick<Trigger, "kind" | "value">): boolean {
   return trigger.kind === "special_date" && (GREETING_DATES as readonly string[]).includes(String(trigger.value));
 }
 
+/** Every message of the rule is marketing (sent only with consent; the API refuses "transactional", 422
+ * marketing_only): a birthday or anniversary greeting, and a tag put on a client (AA-960: no trip to serve; "ready to
+ * travel again" feeds Marketing). */
+export function isMarketingOnly(trigger: Pick<Trigger, "kind" | "value">): boolean {
+  return isGreeting(trigger) || (trigger.kind === "event" && trigger.value === "client_tag.added");
+}
+
 /** AA-960: a rule about a client, not a trip: a client's special date, or a tag put on a client (the API's
  * model.subject_of). It has no trip conditions, no trip field and no trip date. */
 export function isClientRule(trigger: Pick<Trigger, "kind" | "value">): boolean {

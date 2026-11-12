@@ -8,6 +8,10 @@ and the tick's ``system_tx()``:
   off when the tour is no longer served; members can neither add nor remove a system tag (CRM55 / 409);
 - R36: a client home for more than 9 months is "ready to travel again" with its reasons; the list explains them;
 - R30: the coverage lists a trip in a rule's stage without a run, and the apply closes the gap;
+- R36 feeds Marketing: a client tag rule's message to a client without marketing consent is skipped
+  (``skipped_no_consent``), whatever its step says;
+- a system tag that comes and goes with its tour's state starts a trip tag rule once per trip, not once per link;
+- an agency without its settings row (provisioning does not make it) can make a tag and get its system tags;
 - RLS: another agency sees none of it.
 
 Invented names, tours and places only.
@@ -26,12 +30,13 @@ import pytest
 import pytest_asyncio
 
 from app import pipeline
-from app.errors import Conflict, Forbidden, NotFound
+from app.errors import Conflict, Forbidden, Invalid, NotFound
+from app.mail import templates
 from app.tags import model, ready, service, system
 from app.tenancy import system_tx, tenant_tx
 from app.travellers import service as travellers
 from app.vault import Vault
-from app.workflows import coverage
+from app.workflows import coverage, engine
 from app.workflows import service as workflows
 from tests.integration.conftest import OWNER
 from tests.integration.test_ops_release_api import DAY, _seed, _setup, _traveller
@@ -221,6 +226,8 @@ async def test_system_tags_and_ready_to_travel(app_pool: asyncpg.Pool) -> None:
     async with tenant_tx(app_pool, owner, t) as ctx:
         rule = await workflows.create(ctx, _task_rule("Welcome back", {"kind": "event", "value": "client_tag.added"},
                                                       {"tags_any": [model.READY_TAG]}))  # fmt: skip
+        trek_rule = await workflows.create(ctx, _task_rule("Trek kit", {"kind": "event", "value": "trip_tag.added"},
+                                                           {"tags_any": ["sys_aa_trekking"]}))  # fmt: skip
     counts = await _refresh(app_pool, t, today)
     assert counts["system_tags_added"] >= 4
     async with tenant_tx(app_pool, agent, t) as ctx:
@@ -260,3 +267,65 @@ async def test_system_tags_and_ready_to_travel(app_pool: asyncpg.Pool) -> None:
     async with tenant_tx(app_pool, agent, t) as ctx:
         assert (await service.of_subject(ctx, trip_id=s["trip"]))["tags"] == []
         assert (await ready.listing(ctx, Vault(s["keys"], ctx)))["total"] == 0
+    # The tour is served again: its tags come back on a new link, but the trip's rule does not start a second time.
+    async with app_pool.acquire() as conn:
+        await conn.execute("UPDATE crm.aa_catalog_tour SET served_state = 'served' WHERE source_id = $1", trek)
+    back_again = await _refresh(app_pool, t, today, clients=False)
+    assert back_again["system_tags_added"] >= 4 and back_again.get("tag_runs_started", 0) == 0
+    [trek_run] = await _runs(app_pool, t, trek_rule["workflow_rule_id"])
+    assert trek_run["trip_id"] == s["trip"] and trek_run["trigger_key"] == f"tag:sys:trip:{s['trip']}:sys_aa_trekking"
+
+
+async def test_a_client_tag_message_is_marketing_and_waits_for_consent(app_pool: asyncpg.Pool) -> None:
+    """R36 "Ready to travel again feeds Marketing; sending needs consent": a client tag rule's message is marketing,
+    so a client whose consent is unknown gets nothing (logged ``skipped_no_consent``, audited denied)."""
+    s = await _world(app_pool)
+    t = s["tenant"]
+    owner = s["who"]["owner"][0]
+    async with tenant_tx(app_pool, owner, t) as ctx:
+        made = await templates.create(ctx, Vault(s["keys"], ctx), locale="en", title="We miss you",
+                                      body="Hi {{traveller_first_name}}, ready for the next trip?")  # fmt: skip
+        tag = await service.create(ctx, "client", "Win back")
+        mail = {"action": "send_email", "message_template_id": made["message_template_id"]}
+        raw = {"name": "Win back", "trigger": {"kind": "event", "value": "client_tag.added"},
+               "conditions": {"tags_any": ["win_back"]}}  # fmt: skip
+        with pytest.raises(Invalid) as err:
+            await workflows.create(ctx, {**raw, "steps": [{**mail, "purpose": "transactional"}]})
+        assert err.value.code == "marketing_only"
+        rule = await workflows.create(ctx, {**raw, "steps": [mail]})
+        assert rule["steps"][0]["purpose"] == "marketing"
+        assert (await service.put(ctx, uuid.UUID(tag["tag_id"]), traveler_id=s["lead"]))["workflows_started"] == 1
+    [run] = await _runs(app_pool, t, rule["workflow_rule_id"])
+    async with system_tx(app_pool, t, actor=engine.ACTOR) as ctx:
+        run_id = await ctx.conn.fetchval("SELECT workflow_run_id FROM crm.workflow_run WHERE trigger_key = $1",
+                                         run["trigger_key"])  # fmt: skip
+        out = await engine.advance(ctx, Vault(s["keys"], ctx), run_id,
+                                   now=dt.datetime.now(dt.UTC) + dt.timedelta(seconds=1))  # fmt: skip
+    assert out["status"] == "completed"
+    async with app_pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(t))
+        log = await conn.fetchval("SELECT log FROM crm.workflow_run WHERE workflow_run_id = $1", run_id)
+        queued = await conn.fetchval("SELECT count(*) FROM crm.dispatch_queue WHERE origin = 'workflow'")
+        denied = await conn.fetchval("SELECT count(*) FROM crm.audit_event WHERE action = 'workflow_send' "
+                                     "AND outcome = 'denied' AND reason = 'no_consent'")  # fmt: skip
+    assert [e["outcome"] for e in (json.loads(log) if isinstance(log, str) else log)] == ["skipped_no_consent"]
+    assert (queued, denied) == (0, 1)
+
+
+async def test_an_agency_without_its_settings_row_gets_tags(app_pool: asyncpg.Pool) -> None:
+    """crm.tag hangs on crm.tenant_settings (crm-061 FK) and provisioning does not make that row: making a tag and the
+    tick's system-tag refresh make it first (no 500, no refresh failing every hour)."""
+    s = await _setup(app_pool)  # no settings row: _world adds it, this does not
+    t = s["tenant"]
+    has_settings = "SELECT count(*) AS n FROM crm.tenant_settings"
+    async with app_pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(t))
+        assert (await conn.fetchrow(has_settings))["n"] == 0
+    counts = await _refresh(app_pool, t, s["today"])
+    assert "system_tags_failed" not in counts
+    async with tenant_tx(app_pool, s["who"]["owner"][0], t) as ctx:
+        made = await service.create(ctx, "trip", "Honeymoon")
+        assert made["code"] == "honeymoon"
+        vocab = await service.vocabulary(ctx, applies_to="client")
+        assert [x["code"] for x in vocab["tags"]] == [model.READY_TAG]
+        assert (await ctx.conn.fetchrow(has_settings))["n"] == 1

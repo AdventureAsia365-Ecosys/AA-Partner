@@ -21,7 +21,8 @@ A rule is ``trigger`` + ``conditions`` + ``steps``:
   or ``owner`` = one member), ``wait`` (days / hours, or until a date of the trip).
 
 Two guards (S263 review): a birthday or trip-anniversary greeting is always marketing (:func:`marketing_only`: the
-consent is checked before it is sent, card R; an explicit ``transactional`` is refused, 422 ``marketing_only``), and a
+consent is checked before it is sent, card R; an explicit ``transactional`` is refused, 422 ``marketing_only``; AA-960:
+so is every message of a ``client_tag.added`` rule, which has no trip to serve), and a
 rule started by ``message.sent`` sends no text (``send_text`` would start the rule again with its own message, 422
 ``message_loop``; ``message.received`` rules are rate-capped in :mod:`app.workflows.triggers` instead).
 
@@ -427,7 +428,8 @@ def validate(raw: dict[str, Any], *, draft: bool = False) -> Rule:
                 raise _err(
                     "marketing_only",
                     f"steps.{n}.purpose",
-                    "a birthday or anniversary message is marketing: it is sent only with the client's consent",
+                    "a birthday, anniversary or client tag message is marketing: it is sent only with the client's "
+                    "consent",
                 )
             s["purpose"] = "marketing"
     return Rule(name, kind, value, offset, conditions, steps)
@@ -435,7 +437,11 @@ def validate(raw: dict[str, Any], *, draft: bool = False) -> Rule:
 
 def marketing_only(trigger_kind: str | None, trigger_value: str | None) -> bool:
     """A rule whose every message is marketing whatever its steps say: a client's birthday or trip anniversary (a
-    greeting is never a service message; the consent is checked before it is sent, card R)."""
+    greeting is never a service message; the consent is checked before it is sent, card R), and a tag put on a client
+    (AA-960: such a rule has no trip to serve; "ready to travel again" feeds Marketing, R36, and its win-back message
+    goes only to a client who agreed)."""
+    if trigger_kind == "event" and trigger_value == "client_tag.added":
+        return True
     return trigger_kind == "special_date" and trigger_value in GREETING_DATES
 
 

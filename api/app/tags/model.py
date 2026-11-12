@@ -200,6 +200,19 @@ def _anniversary_in(start: dt.date, today: dt.date) -> int | None:
     return None
 
 
+def _completed(history: ClientHistory, today: dt.date) -> list[PastTrip]:
+    return sorted(
+        (t for t in history.trips if t.stage == "completed" and t.end_date is not None and t.end_date <= today),
+        key=lambda t: t.end_date or dt.date.min,
+    )
+
+
+def last_return(history: ClientHistory, today: dt.date) -> dt.date | None:
+    """The end date of the client's last completed trip (the "home since" of R36), or None."""
+    done = _completed(history, today)
+    return done[-1].end_date if done else None
+
+
 def ready_to_travel(history: ClientHistory, today: dt.date) -> list[dict[str, Any]] | None:
     """The reasons a client is ready to travel again (R36), most telling first, or None when they are not: archived,
     no completed trip with an end date, an open trip, or home for less than :data:`READY_AFTER_MONTHS` months."""
@@ -207,10 +220,7 @@ def ready_to_travel(history: ClientHistory, today: dt.date) -> list[dict[str, An
         return None
     if any(t.stage in OPEN_STAGES for t in history.trips):
         return None
-    done = sorted(
-        (t for t in history.trips if t.stage == "completed" and t.end_date is not None and t.end_date <= today),
-        key=lambda t: t.end_date or dt.date.min,
-    )
+    done = _completed(history, today)
     if not done:
         return None
     last = done[-1]

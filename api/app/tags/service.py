@@ -58,6 +58,8 @@ UPDATE crm.tag SET name = $2, tone = $3, archived_at = CASE WHEN $4 THEN coalesc
 RETURNING tag_id, kind, applies_to, code, name, tone, archived_at
 """
 USES_SQL = "SELECT count(*)::int FROM crm.tag_link WHERE tag_id = $1"
+# crm.tag hangs on the agency's settings row (crm-061 tag_settings_fk); provisioning does not make that row.
+ENSURE_SETTINGS_SQL = "INSERT INTO crm.tenant_settings DEFAULT VALUES ON CONFLICT (tenant_id) DO NOTHING"
 DELETE_SQL = "DELETE FROM crm.tag WHERE tag_id = $1"
 SUBJECT_TAGS_SQL = """
 SELECT l.tag_link_id, l.source, l.reasons, l.created_at, g.tag_id, g.kind, g.code, g.name, g.tone, g.archived_at
@@ -189,6 +191,7 @@ async def create(ctx: TenantContext, applies_to: str, name: Any, tone: Any = "ne
     if int(await ctx.conn.fetchval(COUNT_SQL, applies_to) or 0) >= model.MAX_TAGS:
         raise Conflict("too_many_tags", f"at most {model.MAX_TAGS} tags per kind of record")
     code = model.code_for(clean, (r["code"] for r in existing))
+    await ctx.conn.execute(ENSURE_SETTINGS_SQL)
     row = await ctx.conn.fetchrow(INSERT_SQL, applies_to, code, clean, tone)
     ctx.audit("tag_create", "allowed", "tag", str(row["tag_id"]))
     return tag_view(row)
