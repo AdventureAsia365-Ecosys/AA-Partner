@@ -60,7 +60,7 @@ from app.messaging.state import MessagingRuntime
 from app.messaging.webhook import HookCache
 from app.observability import setup as setup_observability
 from app.observability.request_id import RequestIdMiddleware, unhandled_error_handler
-from app.ratelimit import HOOK_MISSES_PER_MINUTE, FixedWindowLimiter
+from app.ratelimit import HOOK_MISSES_PER_MINUTE, IPN_REF_REFUSALS_PER_MINUTE, FixedWindowLimiter
 from app.routers import (
     aa,
     addons,
@@ -291,6 +291,8 @@ def create_app(
     app.state.public_limiter = FixedWindowLimiter(settings.rate_limit_public_per_minute)
     # AA-958: the Twilio webhooks count only unknown hook ids per address (app.routers.public), never genuine callbacks.
     app.state.hook_miss_limiter = FixedWindowLimiter(HOOK_MISSES_PER_MINUTE)
+    # AA-1092: forged VNPay notices per (address, merchant reference) (app.routers.public get_vnpay_ipn).
+    app.state.ipn_ref_refusal_limiter = FixedWindowLimiter(IPN_REF_REFUSALS_PER_MINUTE)
     # AA-969 round 3: hook id -> its connection's Twilio token, so a refused signature costs no database work and no
     # lockout, and known hooks get their own gate key (app.messaging.webhook.HookCache).
     app.state.hook_cache = HookCache()

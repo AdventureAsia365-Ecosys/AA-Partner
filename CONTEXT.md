@@ -1930,6 +1930,8 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
     rows' (the accept dates a past line on its own day). A Booking refusal marks the attempt
     `refused` with the code (409); another failure rolls back and marks it `failed`. The client holds, accepts and pays
     on the existing client page; **a web booking's deposit invoice is issued at the accept** (actor the client link).
+    A booking also takes one of the agency's hourly ceiling (AA-1092: `RATE_LIMIT_INTAKE_FORM_PER_HOUR` per form key,
+    its own bucket `book:<key>`, charged after the origin, honeypot and answers): 429 `form_rate_limited`.
   - *Online payment (BYO VNPay)*: Settings > Payments "Online payment (VNPay)" (`GET` / `PUT
     /settings/payment-methods/vn-gateway`, owner): the merchant code on the agency's `payment_provider_account`
     (`external_account_id`, `charges_enabled`, VND) and the hash secret + mode in its `vn_gateway`
@@ -1941,7 +1943,12 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
     invoice in the gateway's currency; the card button creates a `crm.payment_session` for the invoice's **open amount computed on the
     server** (15 minutes) and answers the signed gateway URL; the return page `/c/p/paid` drops the gateway's query and
     opens `/c/p?payment=returned` (the box reads itself again once). The IPN (`GET /crm/public/v1/hooks/vnpay/ipn`,
-    `payment_session_tx`) checks the HMAC-SHA512 signature with the agency's own secret first (`97`), then the merchant
+    `payment_session_tx`; AA-1092: a notice without a `vnp_SecureHash` of the SHA-512 hex shape is `97` before any
+    lookup and spends its address's misses, as `01` / `99` do; a well-formed but wrong signature spends
+    `IPN_REF_REFUSALS_PER_MINUTE` of the pair (client address, merchant reference), then 429 for that address on that
+    reference only: never the address alone, which VNPay shares, and never the reference alone, so a forger cannot keep
+    VNPay's genuine notice out)
+    checks the HMAC-SHA512 signature with the agency's own secret first (`97`), then the merchant
     code, the amount (`04`), the session state (`02`); a failure closes the session `failed`; a success goes through
     the same code as "Record payment" (method `online`, provider `vn_gateway`, the gateway's number as reference,
     once per reference: `payment_provider_ref_uq`): the invoice paid, the row settled (Booked, portal, Booking confirm)

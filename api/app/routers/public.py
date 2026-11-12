@@ -55,13 +55,19 @@ is decided by the form key inside :func:`app.tenancy.intake_tx`.
   ``{status: already_created}`` for a repeated press, 202 ``{status: received}`` for a honeypot hit; 409 with the
   refusal code (``aa_sold_out``, ``no_retail_price``, ``price_on_request``, ``departure_not_available``, ...), 429 per
   address (the intake limit, then 5 attempts an hour per agency on the attempt rows; a ``price_on_request`` refusal
-  does not count), 403 ``origin_not_allowed``, 32 KiB cap.
+  does not count), 429 ``form_rate_limited`` per agency (AA-1092: ``RATE_LIMIT_INTAKE_FORM_PER_HOUR`` per form key, its
+  own bucket ``book:<key>``, charged once the origin, honeypot and answers passed: many addresses together cannot make
+  an agency mail an unbounded number of client links), 403 ``origin_not_allowed``, 32 KiB cap.
 
 - ``GET  /crm/public/v1/hooks/vnpay/ipn`` (AA-1072): the IPN of an agency's own VNPay account
   (:func:`app.payments.gateway.handle_ipn`): always 200 with VNPay's ``{RspCode, Message}`` (``00`` confirmed,
   ``01`` unknown order, ``02`` already confirmed, ``04`` wrong amount, ``97`` bad signature, ``99`` malformed). The
   signature is checked with the agency's own secret before anything is written. An address whose unknown references pass
-  ``HOOK_MISSES_PER_MINUTE`` is answered 429 before any work (a known gateway retries).
+  ``HOOK_MISSES_PER_MINUTE`` is answered 429 before any work (a known gateway retries). AA-1092: a notice without
+  a ``vnp_SecureHash`` of the SHA-512 hex shape is ``97`` before any lookup and counts as a miss of its address (VNPay
+  signs every notice); a malformed one (``99``) counts too; a well-formed but wrong signature counts against the
+  merchant reference it names (``IPN_REF_REFUSALS_PER_MINUTE``, then 429 for that reference only, before the
+  database), never against the address, which VNPay shares between agencies.
 - ``GET  /crm/public/v1/pay/stub`` and ``POST /crm/public/v1/pay/stub/{ref}`` (dev / test / local, accounts in mode
   ``stub`` only): the simulated gateway page and its Pay / Cancel buttons (a signed IPN through the same handler,
   then 303 to the client's return page). 404 everywhere else.
@@ -85,7 +91,7 @@ from app.intake import booking as public_booking
 from app.intake import public as intake
 from app.intake import stage2_public
 from app.messaging import webhook as messaging_hooks
-from app.payments import gateway
+from app.payments import gateway, vnpay
 from app.ratelimit import PublicRateLimit, client_address
 from app.vault.provider import require_keys
 
@@ -314,8 +320,11 @@ async def post_booking(
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     cache, client = _booking_deps(request)
+    form_limiter = request.app.state.intake_form_limiter
     out = await public_booking.submit(pool, keys, settings, cache, client, public_key, raw, origin=origin,
-                                      client_ip=address)  # fmt: skip
+                                      client_ip=address,
+                                      form_quota=lambda: form_limiter.allow(f"book:{public_key}"),
+                                      quota_window_s=int(form_limiter.window_s))  # fmt: skip
     code = {"created": 201, "received": 202}.get(out["status"], 200)
     return JSONResponse(out, status_code=code, headers={**NO_STORE, "Referrer-Policy": "no-referrer"})
 
@@ -335,11 +344,27 @@ async def get_vnpay_ipn(request: Request) -> JSONResponse:
     address = client_address(request, request.app.state.settings.rate_limit_xff_hops)
     if misses.exhausted(address):
         raise HTTPException(status_code=429, detail="rate_limited", headers={"Retry-After": str(int(misses.window_s))})
+    fields = _vnp_fields(request)
+    # AA-1092 (pre-PII review): VNPay signs every notice, so an unsigned or garbled one is refused before any lookup
+    # and counted against its address like an unknown reference (it can never be one of VNPay's shared addresses).
+    if not vnpay.signature_shaped(fields):
+        misses.allow(address)
+        return JSONResponse(vnpay.ipn_answer(vnpay.BAD_SIGNATURE), headers=NO_STORE)
+    refusals = request.app.state.ipn_ref_refusal_limiter
+    # Per (address, reference): a forger who knows a live reference locks only their own address for it, so VNPay's
+    # genuine notice for that reference (from VNPay's own addresses) always reaches the handler.
+    ref_key = f"ref:{address}:{fields.get('vnp_TxnRef') or ''}"
+    if refusals.exhausted(ref_key):
+        raise HTTPException(
+            status_code=429, detail="rate_limited", headers={"Retry-After": str(int(refusals.window_s))}
+        )
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
-    answer = await gateway.handle_ipn(pool, keys, _vnp_fields(request))
-    if answer["RspCode"] == "01":
-        misses.allow(address)  # only unknown references count against the address
+    answer = await gateway.handle_ipn(pool, keys, fields)
+    if answer["RspCode"] in (vnpay.NOT_FOUND, vnpay.OTHER):
+        misses.allow(address)  # unknown or malformed notices count against the address
+    elif answer["RspCode"] == vnpay.BAD_SIGNATURE:
+        refusals.allow(ref_key)  # forged notices count against (address, reference), never the address alone
     return JSONResponse(answer, headers=NO_STORE)
 
 

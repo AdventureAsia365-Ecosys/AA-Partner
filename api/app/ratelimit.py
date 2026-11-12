@@ -48,6 +48,12 @@ MAX_TRACKED_KEYS = 10_000
 # 600 -> 120, now that a hook id this task knows skips this check (app.routers.public), so a Twilio address that also
 # carries misses (a deleted connection Twilio still calls) never stops known hooks' callbacks.
 HOOK_MISSES_PER_MINUTE = 120
+# AA-1092: VNPay IPNs with a well-formed but wrong signature, per (client address, merchant reference) per minute.
+# Past it that address is answered 429 for that reference before the database for the rest of the minute, so a flood
+# of forged notices for one known reference cannot keep the webhook slot busy. Never per reference alone (anyone who
+# knows a live reference could then keep VNPay's genuine notice out with a sustained flood) and never per address alone
+# (VNPay posts every agency's notices from shared addresses).
+IPN_REF_REFUSALS_PER_MINUTE = 10
 IPV6_PREFIX = 64
 VIEWER_ADDRESS_HEADER = "cloudfront-viewer-address"
 

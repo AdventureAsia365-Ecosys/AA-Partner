@@ -37,6 +37,8 @@ CURRENCY = "VND"
 VN_TZ = dt.timezone(dt.timedelta(hours=7))  # VNPay reads its dates in GMT+7
 TMN_CODE = re.compile(r"^[A-Za-z0-9]{3,32}$")
 TXN_REF = re.compile(r"^[A-Za-z0-9]{16,40}$")
+# AA-1092: an HMAC-SHA512 hex digest. VNPay signs every IPN; a request without one of this shape is never VNPay's.
+SECURE_HASH = re.compile(r"[0-9A-Fa-f]{128}")
 MAX_SECRET = 128
 SKIP = ("vnp_SecureHash", "vnp_SecureHashType")
 
@@ -68,6 +70,12 @@ def _canonical(fields: Mapping[str, str]) -> str:
 
 def sign(fields: Mapping[str, str], secret: str) -> str:
     return hmac.new(secret.encode(), _canonical(fields).encode(), hashlib.sha512).hexdigest()
+
+
+def signature_shaped(fields: Mapping[str, str]) -> bool:
+    """AA-1092: the notice carries a ``vnp_SecureHash`` of the HMAC-SHA512 hex shape (checked before any database work:
+    an unsigned or garbled request is refused without a lookup and counted against its address)."""
+    return bool(SECURE_HASH.fullmatch(fields.get("vnp_SecureHash") or ""))  # fullmatch: no trailing newline
 
 
 def verify(fields: Mapping[str, str], secret: str) -> bool:
