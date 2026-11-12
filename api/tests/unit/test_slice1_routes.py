@@ -24,6 +24,7 @@ from tests.unit.fakes import ScriptedConn
 from tests.unit.slice_fakes import MEMBER, TENANT, FakeVault, fake_tx, tenant_ctx
 
 KEY = "k" * 22
+FORM_ID = uuid.UUID("5f0c0000-0000-4000-8000-000000001092")
 TRIP = "00000000-0000-4000-8000-0000000000e1"
 
 
@@ -129,7 +130,7 @@ def test_form_quota_answers_429_with_retry_after(pools: LocalPools, monkeypatch:
     monkeypatch.setattr(public_router, "request_pool", _pool)
 
     async def submit(pool: Any, keys: Any, settings: Any, key: str, raw: Any, **kw: Any) -> Any:
-        if not kw["form_quota"]():
+        if not kw["form_quota"](FORM_ID):
             raise RateLimited("form_rate_limited", kw["quota_window_s"])
         return intake_public.Submitted(stored=True)
 

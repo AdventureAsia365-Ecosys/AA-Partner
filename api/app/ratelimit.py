@@ -26,6 +26,9 @@ A caller can take a slot and give it back (:meth:`FixedWindowLimiter.release`): 
 (``app.routers.client_pages``), so only refused sessions use it up, and a burst of parallel requests cannot pass
 before the first refusal is counted.
 
+A caller can pass its own ``limit`` per key (:meth:`FixedWindowLimiter.allow`): the "Book now" price checks per
+agency (AA-1092) read the agency's own ceiling (``tenant_settings.public_price_per_minute``) on each call.
+
 A caller can also look before it charges (:meth:`FixedWindowLimiter.exhausted`): the Twilio webhooks (AA-958,
 ``app.routers.public``) of a hook id the task does not know are refused only once an address has run out of *misses*
 (unknown hook ids), so the shared Twilio egress addresses that carry every agency's genuine callbacks are never
@@ -80,15 +83,17 @@ class FixedWindowLimiter:
         """The current window's number (read it right after :meth:`allow` to :meth:`release` that slot later)."""
         return self._window
 
-    def allow(self, key: str) -> bool:
-        if self._limit <= 0:
+    def allow(self, key: str, limit: int | None = None) -> bool:
+        """Take a slot of ``key``; ``limit`` (when given) replaces the limiter's own for this key (0 = no limit)."""
+        ceiling = self._limit if limit is None else limit
+        if ceiling <= 0:
             return True
         self._roll()
         count = self._counts.pop(key, 0) + 1
         self._counts[key] = count  # re-inserted last: the most recently seen key
         while len(self._counts) > self._max_keys:
             self._counts.popitem(last=False)  # evict the least recently seen key only
-        return count <= self._limit
+        return count <= ceiling
 
     def _roll(self) -> None:
         now = self._clock()

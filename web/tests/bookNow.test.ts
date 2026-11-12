@@ -90,6 +90,8 @@ describe("the link and the helpers", () => {
     // S277 live check: a party priced below cost reads as "on request", never as the generic error.
     expect(bookErrorKey("price_on_request", 409)).toBe("book.error.price_on_request");
     expect(bookErrorKey(undefined, 429)).toBe("book.error.rate_limited");
+    // AA-1092: the agency's price checks a minute are used up (every visitor together).
+    expect(bookErrorKey("agency_rate_limited", 429)).toBe("book.error.agency_rate_limited");
     expect(bookErrorKey("something_else", 500)).toBe("book.error.other");
     expect(safeLinkPath(`/c/p/${"a".repeat(43)}`)).toBe(`/c/p/${"a".repeat(43)}`);
     expect(safeLinkPath("https://evil.example.test/c/p/x")).toBeNull();

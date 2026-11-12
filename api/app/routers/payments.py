@@ -196,7 +196,13 @@ class VnGatewayIn(_Body):
 
 
 class OnlineBookingIn(_Body):
-    enabled: bool
+    enabled: bool | None = None
+    # AA-1092 (crm-062): the agency's Book now price checks a minute (booking_settings bounds, the column CHECK).
+    price_checks_per_minute: int | None = Field(
+        default=None,
+        ge=booking_settings.MIN_PRICE_PER_AGENCY_MINUTE,
+        le=booking_settings.MAX_PRICE_PER_AGENCY_MINUTE,
+    )
 
 
 @router.get("/settings/payment-methods/vn-gateway")
@@ -231,4 +237,6 @@ async def put_online_booking(
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
         require(ctx, Action.PAYMENT_SETTINGS, object_kind="tenant_settings")
-        return await booking_settings.update(ctx, request.app.state.settings, body.enabled)
+        return await booking_settings.update(
+            ctx, request.app.state.settings, body.enabled, body.price_checks_per_minute
+        )

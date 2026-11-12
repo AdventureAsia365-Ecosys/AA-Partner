@@ -13,7 +13,9 @@ read an agency's form by its URL key (crm-005 policy ``intake_form_public_lookup
 4. any other invalid answer -> 422 ``invalid_submission`` with the field codes (never the values);
 5. the form's hourly quota (``form_quota``, ``RATE_LIMIT_INTAKE_FORM_PER_HOUR``) is charged only now, by a submission
    that passed every check above, so forged-origin, honeypot or invalid requests cannot use up a form's allowance
-   (429 ``form_rate_limited``, nothing written);
+   (429 ``form_rate_limited``, nothing written). The bucket is the form's id (:func:`form_bucket`, AA-1092), the same
+   one its sales partner links charge (``app.partners.public``), so a form that also has partner links keeps one
+   hourly quota for both paths;
 6. otherwise the normalised answers are encrypted (vault DEK, AAD = the submission id) into ``crm.form_submission``
    and a ``crm_intake_process`` job (ids only) is queued **in the same transaction**; a repeated
    ``client_submission_id`` stores nothing new (idempotent) and answers the same 202.
@@ -42,6 +44,12 @@ from app.tenancy import AnyContext, intake_tx
 from app.vault import KeyProvider, Vault
 
 log = logging.getLogger(__name__)
+
+
+def form_bucket(form_id: uuid.UUID) -> str:
+    """The per-form hourly quota key (AA-1092): one bucket per form for the public form and its partner links."""
+    return f"form:{form_id}"
+
 
 # Drops since the process started, by reason (count-only: no payload, no address, no e-mail is ever logged).
 DROPS: Counter[str] = Counter()
@@ -116,7 +124,7 @@ async def submit(
     raw: Any,
     *,
     origin: str | None,
-    form_quota: Callable[[], bool] | None = None,
+    form_quota: Callable[[uuid.UUID], bool] | None = None,
     quota_window_s: int = 3600,
 ) -> Submitted:
     if settings.intake_origin_check and not settings.intake_page_origins:
@@ -139,7 +147,7 @@ async def submit(
         if answers.call_slot is not None and not await slots.is_offered(ctx, answers.call_slot):
             record_drop("invalid", form.intake_form_id)
             raise Invalid("invalid_submission", "the call slot is no longer free", fields=["call_slot"])
-        if form_quota is not None and not form_quota():
+        if form_quota is not None and not form_quota(form.intake_form_id):
             record_drop("form_quota", form.intake_form_id)
             raise RateLimited("form_rate_limited", quota_window_s)
         stored = await store_submission(

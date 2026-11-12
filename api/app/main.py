@@ -44,6 +44,7 @@ from app.db import Database
 from app.documents.store import DocumentStore, MemoryDocumentStore, S3DocumentStore
 from app.errors import ServiceError, service_error_handler
 from app.esign.seal import build_sealer
+from app.intake.booking_settings import DEFAULT_PRICE_PER_AGENCY_MINUTE
 from app.jobs import handlers as job_handlers
 from app.jobs.metrics import JobMetricsSampler
 from app.jobs.worker import Worker
@@ -310,6 +311,9 @@ def create_app(
     # AA-1072 (S277 live check): "Book now" price checks get their own per-address bucket (they store nothing), so a
     # visitor who compares dates does not use up the intake limit the booking, the hold, the accept and the pay share.
     app.state.booking_price_limiter = FixedWindowLimiter(settings.rate_limit_booking_price_per_minute)
+    # AA-1092: and a ceiling per agency for every address together; the limit of each call is the agency's own
+    # setting (tenant_settings.public_price_per_minute, crm-062), so the limiter's own value is only the default.
+    app.state.booking_agency_price_limiter = FixedWindowLimiter(DEFAULT_PRICE_PER_AGENCY_MINUTE)
     app.add_exception_handler(ServiceError, service_error_handler)
     app.add_exception_handler(Exception, unhandled_error_handler)
     # AA-969 (F1): the body ceiling runs before any route reads a body (FastAPI parses JSON before the class guard).

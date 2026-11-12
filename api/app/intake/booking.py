@@ -20,6 +20,10 @@ apply. The agency must have turned "Book now" on (``tenant_settings.public_booki
   gate would stop the version at publish (``below_cost``), and nobody approves on the public path. So the price check
   and the booking answer 409 ``price_on_request`` (the page says to ask the agency for a price) before anything is
   sold, and such a refused booking does not count towards the visitor's attempts (:data:`UNCOUNTED_REFUSALS`).
+  **Per agency** (AA-1092): before anything goes to Booking a check takes one of the agency's price checks a minute
+  (``tenant_settings.public_price_per_minute``, crm-062, the owner's setting on Settings > Payments; every address
+  together, per API task): past it 429 ``agency_rate_limited`` with ``Retry-After`` (the per-address bucket of the
+  router still applies first).
 - :func:`submit`, in three steps so no connection is held while Booking answers (the AA-947 rule):
 
   1. ``intake_tx``: the page origin, the honeypot (202 as if stored, nothing written), consent, the answers, the
@@ -61,6 +65,7 @@ from app.booking.products import ProductCache
 from app.errors import Conflict, Forbidden, Invalid, NotFound, RateLimited, ServiceError, Unavailable
 from app.esign import terms as esign_terms
 from app.intake import process, stage1
+from app.intake.booking_settings import DEFAULT_PRICE_PER_AGENCY_MINUTE
 from app.intake.public import origin_allowed, record_drop
 from app.payments import schedule_plan
 from app.proposals import aa_options, builder, pricing, retail, rules
@@ -98,7 +103,7 @@ COUNTRY_DESTINATION = {
 
 SETTINGS_SQL = """
 SELECT s.public_booking_enabled, s.base_currency, s.timezone, t.display_name, s.consent_text,
-       s.privacy_notice_url AS agency_privacy_notice_url
+       s.privacy_notice_url AS agency_privacy_notice_url, s.public_price_per_minute
   FROM crm.tenant t LEFT JOIN crm.tenant_settings s ON s.tenant_id = t.tenant_id
  WHERE t.tenant_id = $1
 """
@@ -300,7 +305,11 @@ def _booking_error(exc: Exception) -> ServiceError:
 
 
 async def offer(cache: ProductCache, client: BookingClient, tenant_id: uuid.UUID, source_id: str,
-                today: dt.date) -> Offer:  # fmt: skip
+                today: dt.date, *, before_fetch: Callable[[], None] | None = None,
+                cached: bool = False) -> Offer:  # fmt: skip
+    """The tour's whole-tour component and its open departures. ``cached`` (the widget only, AA-1092): the departures
+    answer may be up to ``DEPARTURES_TTL_S`` old and ``before_fetch`` (the agency's ceiling) runs only when Booking is
+    asked; the price check and the booking read live."""
     try:
         product = (await cache.products(tenant_id)).get(source_id)
         if product is None or not product.has_fixed_departures:
@@ -308,8 +317,13 @@ async def offer(cache: ProductCache, client: BookingClient, tenant_id: uuid.UUID
         component = next((c for c in product.components if c.kind == "trip_plan"), None)
         if component is None:
             raise NotFound("tour_not_bookable", "this tour cannot be booked online: ask the agency")
-        data = await client.departures(tenant_id, source_id, date_from=(today + dt.timedelta(days=1)).isoformat(),
-                                       date_to=(today + dt.timedelta(days=DEPARTURE_DAYS)).isoformat())  # fmt: skip
+        date_from = (today + dt.timedelta(days=1)).isoformat()
+        date_to = (today + dt.timedelta(days=DEPARTURE_DAYS)).isoformat()
+        if cached:
+            data = await cache.departures(tenant_id, source_id, date_from=date_from, date_to=date_to,
+                                          before_fetch=before_fetch)  # fmt: skip
+        else:
+            data = await client.departures(tenant_id, source_id, date_from=date_from, date_to=date_to)
         found = {
             d.departure_id: d
             for d in contract.departures(data)
@@ -405,7 +419,13 @@ async def widget(
     *,
     tour: str | None,
     page_id: str | None,
+    agency_quota: Callable[[uuid.UUID, int], bool] | None = None,
+    quota_window_s: int = 60,
 ) -> dict[str, Any]:
+    """The Book now panel of a tour page. AA-1092: the departures come from a short cache (``ProductCache.departures``)
+    and a read that does reach Booking takes one of the agency's reads a minute (``agency_quota(tenant_id, ceiling)``,
+    the same ``public_price_per_minute`` value as the price check, its own bucket): page views from any number of
+    addresses never ask Booking more than that; past it 429 ``agency_rate_limited``."""
     keys = [k for k in (tour, page_id) if isinstance(k, str) and 1 <= len(k) <= 128]
     async with intake_tx(pool, public_key) as (ctx, form):
         agency = await _agency(ctx)
@@ -415,7 +435,13 @@ async def widget(
         tenant_id = ctx.tenant_id
     if cache is None or client is None:
         raise Unavailable("booking_unavailable", "bookings cannot be checked right now; try again in a minute")
-    found = await offer(cache, client, tenant_id, row["source_id"], today)
+    ceiling = int(agency.get("public_price_per_minute") or DEFAULT_PRICE_PER_AGENCY_MINUTE)
+
+    def charge() -> None:
+        if agency_quota is not None and not agency_quota(tenant_id, ceiling):
+            raise RateLimited("agency_rate_limited", quota_window_s)
+
+    found = await offer(cache, client, tenant_id, row["source_id"], today, before_fetch=charge, cached=True)
     return {
         "agency_name": agency["display_name"],
         "tour": row["source_id"],
@@ -445,9 +471,18 @@ async def _quote(client: BookingClient, tenant_id: uuid.UUID, plan: dict[str, An
 
 
 async def price(
-    pool: asyncpg.Pool, cache: ProductCache | None, client: BookingClient | None, public_key: str, raw: Any
+    pool: asyncpg.Pool,
+    cache: ProductCache | None,
+    client: BookingClient | None,
+    public_key: str,
+    raw: Any,
+    *,
+    agency_quota: Callable[[uuid.UUID, int], bool] | None = None,
+    quota_window_s: int = 60,
 ) -> dict[str, Any]:
-    """The live retail price of a departure for a party (a quote, no hold; nothing stored)."""
+    """The live retail price of a departure for a party (a quote, no hold; nothing stored).
+
+    ``agency_quota(tenant_id, ceiling)`` takes one of the agency's price checks a minute (False = none left)."""
     if not isinstance(raw, dict):
         raise Invalid("invalid_submission", "a JSON object", fields=["body"])
     party = read_party(raw)
@@ -458,6 +493,9 @@ async def price(
         bands = await pricing.settings(ctx)
         rctx = await _rctx(ctx)
         tenant_id = ctx.tenant_id
+    ceiling = agency.get("public_price_per_minute") or DEFAULT_PRICE_PER_AGENCY_MINUTE
+    if agency_quota is not None and not agency_quota(tenant_id, int(ceiling)):
+        raise RateLimited("agency_rate_limited", quota_window_s)
     if cache is None or client is None:
         raise Unavailable("booking_unavailable", "bookings cannot be checked right now; try again in a minute")
     found = await offer(cache, client, tenant_id, row["source_id"], rctx["today"])
