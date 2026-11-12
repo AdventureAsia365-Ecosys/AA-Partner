@@ -334,6 +334,14 @@ async def test_supplier_requests_from_draft_to_confirmation(app_pool: asyncpg.Po
 
         listed = {r["booking_line_id"] for r in await ctx.conn.fetch(SUPPLIER_LINES_SQL, d["trip"], 50)}
         assert {first, second} <= listed and boat not in listed
+        # S278 live check: the Bookings filter takes the requested status (it answered 422), and a requested line
+        # keeps its supplier with a refusal in the words of its own status.
+        ledger = await lines.ledger(ctx, status="requested", date_from=None, date_to=None)
+        assert {x["booking_line_id"] for x in ledger["lines"]} == {str(first), str(second)}
+        with pytest.raises(Invalid) as moved:
+            await lines.update_line(ctx, second, {"agency_supplier_id": str(boats)})
+        assert moved.value.code == "line_not_editable" and "requested" in moved.value.message
+        assert "confirmed" not in moved.value.message
         # The number the supplier answered confirms the line in one call (level off: no money needed).
         await ctx.conn.execute(
             "INSERT INTO crm.tenant_settings (booking_validation_level) VALUES ('off') "

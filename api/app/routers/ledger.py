@@ -451,7 +451,8 @@ async def get_bookings(
     request: Request,
     caller: CallerDep,
     tenant_id: TenantDep,
-    status: Annotated[Literal["planning", "confirmed", "cancelled"] | None, Query()] = None,
+    # AA-1069 (crm-053): a line asked from its supplier is "requested" until its confirmation number comes.
+    status: Annotated[Literal["planning", "requested", "confirmed", "cancelled"] | None, Query()] = None,
     date_from: Annotated[dt.date | None, Query(alias="from")] = None,
     date_to: Annotated[dt.date | None, Query(alias="to")] = None,
 ) -> dict[str, Any]:

@@ -160,3 +160,18 @@ def test_money_bodies_are_validated(pools: LocalPools, monkeypatch: pytest.Monke
     client, h = _client(pools, monkeypatch, "owner")
     with client:
         assert client.put(f"/crm/v1/lines/{ID}/money", headers=h, json=body).status_code == 422
+
+
+@pytest.mark.parametrize("status", ["planning", "requested", "confirmed", "cancelled"])
+def test_the_bookings_filter_takes_every_line_status(
+    pools: LocalPools, monkeypatch: pytest.MonkeyPatch, calls: list, status: str
+) -> None:
+    """AA-1069 (S278 live check): ``?status=requested`` answered 422 while lines carry that status since crm-053 and the
+    Bookings page offers it as a filter; every line status reaches the ledger, anything else is 422."""
+    client, h = _client(pools, monkeypatch, "owner")
+    with client:
+        res = client.get(f"/crm/v1/bookings?status={status}", headers=h)
+        assert res.status_code == 200, res.text
+        assert client.get("/crm/v1/bookings?status=booked", headers=h).status_code == 422
+    assert ("lines.ledger", {"status": status, "date_from": None, "date_to": None}) in calls
+    assert set(lines.STATUSES) == {"planning", "requested", "confirmed", "cancelled"}
