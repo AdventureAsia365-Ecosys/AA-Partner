@@ -193,6 +193,16 @@ EDITABLE = (
 # ── validation ───────────────────────────────────────────────────────────────────────────────────
 
 
+def _not_planning(status: str, rule: str) -> str:
+    """The message of a change only a planning line takes, worded from the line's actual status (AA-1069: a cancelled
+    or requested line was told it was confirmed)."""
+    if status == "cancelled":
+        return f"this line is cancelled; {rule}"
+    if status == "requested":
+        return f"this line is requested from its supplier; {rule}; move it back to planning first"
+    return f"this line is {status}; {rule}; cancel it instead"
+
+
 def _title(value: Any) -> str:
     if not isinstance(value, str) or not 1 <= len(value.strip()) <= 200 or any(ord(c) < 32 for c in value):
         raise Invalid("invalid_title", "1 to 200 characters")
@@ -515,7 +525,7 @@ async def update_line(ctx: TenantContext, line_id: uuid.UUID, changes: dict[str,
             value = _uuid(value, field)
             await _own_supplier(ctx, value)
             if current["status"] != "planning":
-                raise Invalid("line_not_editable", "the supplier of a confirmed line does not change; cancel it")
+                raise Invalid("line_not_editable", _not_planning(current["status"], "its supplier does not change"))
         args.append(value)
         sets.append(f"{field} = ${len(args)}")
     if sets:
@@ -646,4 +656,4 @@ async def trash_check(ctx: TenantContext, line_id: uuid.UUID) -> None:
     if current["supplier_kind"] == "aa":
         raise Forbidden("aa_line_read_only", "Adventure Asia lines come from your AA bookings")
     if current["status"] != "planning":
-        raise Conflict("line_not_editable", "only a planning line is deleted; cancel a confirmed one")
+        raise Conflict("line_not_editable", _not_planning(current["status"], "only a planning line is deleted"))
