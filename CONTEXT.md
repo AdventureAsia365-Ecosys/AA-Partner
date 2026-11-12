@@ -371,6 +371,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-059` | `api/migrations/059_crm_proposal_inclusions.sql` | AA-1070 item crm-35 (**expand**: two new tables): `crm.inclusion_item` (the agency library of standard proposal lines: kind `included` / `not_included`, `text_en` (default) + optional `text_vi`, 1..500 characters, `sort_order` 0..999, `archived`; one live line per kind and English text, case-insensitive; cascades from `tenant_settings`), `crm.proposal_inclusion` (the lines of one builder version: source `library` (text copied, `inclusion_item_id` a snapshot reference without a key) / `custom` / `aa_tour` (an AA tour's inclusion or exclusion copied at Publish: `aa_tour_source_id`, `aa_tour_title`), `sort_order` 0..199, `source_inclusion_id` of a working copy; draft-only through `crm.guard_proposal_draft` (CRM35), trip hold guard; cascades from its proposal); no `erase_subject` change |
 | `crm-060` | `api/migrations/060_crm_aa_cancel_case.sql` | AA-1070 item crm-13 (**expand**: one new table): `crm.aa_cancel_case` (one agency trip with a live AA line or proposal option on a departure AA cancelled: opened once per trip and departure by the Booking feed job; `resolution` NULL (open) -> `requoted` (`proposal_id`, `rebook_trip_id`) / `cancelled`; no status column, the API only moves it forward); unique per (trip, departure); cascades from the trip; hold guard `crm.guard_held_travel_doc` (CRM10). (crm-059 is AA-1070 item crm-35, another lane.) |
 | `crm-061` | `api/migrations/061_crm_tags.sql` | CRM-29b tags (AA-960; **expand**: two new tables + two guards): `crm.tag` (agency / system, trip / client, fixed code, name, tone, archived; one per agency, subject and code; never trashed; cascades from `tenant_settings`), `crm.tag_link` (one tag on one trip or client, source member / system + reasons; one per tag and subject; cascades from tag, trip, traveller; hold rule 4h), `crm.guard_tag()` / `crm.guard_tag_link()` (CRM55: system tags by job / platform / seed actors only, kind / subject / code fixed, a link of the tag's subject and source) |
+| `crm-062` | `api/migrations/062_crm_book_now_price_ceiling.sql` | AA-1092 residual (**contract**, MIG-4; crm-062..065 are other cards' of the same wave, independent): `tenant_settings.public_price_per_minute` (SMALLINT, default 60, CHECK 10..600): the "Book now" price checks a minute the agency's public page takes from every address together (per API task), the owner's setting on Settings > Payments "Online booking"; past it the price check answers 429 `agency_rate_limited`. |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -1201,6 +1202,11 @@ below; the guided "AA cancelled the departure" flow (crm-13) of the same issue i
   to 0 (decision `waived`, reason `aa_departure_cancelled`, never the owner's call, the dialog's charge ignored), so
   each payment is prefilled for a full refund (`proposed` refund requests, §4.6 approval as usual); Booking's reason
   `departure_cancelled` costs the agency no fee. The run closes the case. Audit reasons are codes, never amounts.
+  Dev E2E (agent-only, AA-1087 S278): `e2e/tests/aa-cancel.spec.ts` around the AA-Booking E2E write run, driven by
+  the AA-Booking fixture seeder's output (`E2ECRMAACANCELFIXTURES`): `E2ECRMAACANCEL=prepare` puts the seeded tour as an
+  AA item on the seeded departure in a draft builder version of a new trip; after Booking's E2E staff address cancels
+  that departure, `verify` waits for the one active case and the `issue=aa_cancelled` board filter. Skipped in
+  `e2e-dev.yml` (no phase set).
 
 ## Sales partners and their commission (AA-1071)
 
@@ -1915,7 +1921,15 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
     traveller's single supplement) = 409 `price_on_request` at the price check and at the booking (never sold below
     cost: the public path has no owner to pass the builder's discount gate). The price check has its own per-address
     bucket (`RATE_LIMIT_BOOKING_PRICE_PER_MINUTE`, 20), not the intake one the booking, hold, accept and "Pay online"
-    share (S277 live check). `POST
+    share (S277 live check). AA-1092 (crm-062): and a ceiling per agency for every address together, before Booking is
+    asked: the agency's `tenant_settings.public_price_per_minute` (default 60, 10..600, the owner sets it in "Online
+    booking", `PUT /settings/online-booking` `{price_checks_per_minute}`; audited by field), 429 `agency_rate_limited`
+    with `Retry-After` (the page says it is busy). Counted in each API task's memory (no shared limiter store), so N
+    tasks give an agency up to N times its value. The widget (`GET /book/{key}`) is bounded the same way: its
+    departures come from a 30 s cache per (agency, tour, date window) (`ProductCache.departures`, at most 2048 answers,
+    errors never kept), and a read that does reach Booking takes one of the agency's reads a minute (the same value,
+    its own `widget:<tenant id>` bucket), else 429 `agency_rate_limited`; the price check and the booking still read
+    departures live. `POST
     .../bookings`: origin, honeypot (202, nothing written), consent, answers, at most 5 attempts an hour per address
     and agency (`ip_hash`; a `price_on_request` refusal does not count), one `crm.public_booking_attempt` (a repeated press = `already_created` /
     `booking_in_progress`); the departure and the quote with no transaction held; then one transaction: **always a new
@@ -2827,7 +2841,8 @@ every submission 503 `intake_not_configured`), `RATE_LIMIT_INTAKE_PER_MINUTE` (d
 `RATE_LIMIT_PORTAL_WRITE_PER_MINUTE` (default 30 per address: traveller portal writes with a session that proved valid;
 not set on Dev, the code default applies), `RATE_LIMIT_BOOKING_PRICE_PER_MINUTE` (default 20 per address: "Book now"
 price checks; not set on Dev, the code default applies),
-`RATE_LIMIT_INTAKE_FORM_PER_HOUR` (default 200 per form), and the documents bucket (AA-937) `DOCUMENTS_BUCKET`, the
+`RATE_LIMIT_INTAKE_FORM_PER_HOUR` (default 200 per form; AA-1092: one bucket per form id, shared by the public form and
+its sales partner links), and the documents bucket (AA-937) `DOCUMENTS_BUCKET`, the
 audit export (AA-940) `AUDIT_BUCKET_COMPLIANCE` / `AUDIT_BUCKET_GOVERNANCE` (both or neither) and
 `AUDIT_RETENTION_DRY_RUN` (default true), and (AA-939) `COGNITO_PARTNER_POOL_ID`, `PARTNER_WEB_ORIGIN`,
 `SES_FROM_ADDRESS`, `SES_CONFIGURATION_SET`, `INVITATION_TTL_HOURS` (default 168), `RATE_LIMIT_CLAIM_PER_MINUTE`
