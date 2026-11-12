@@ -7,6 +7,7 @@ import { apiGet } from "@/app/_kit";
 import type { ServedFields } from "./ServedBadge";
 import { exportFileStem, withDocumentTitle, type AtomReplacement } from "@/lib/studio/myContent";
 import { StudioError, detailOf } from "./studioError";
+import { finalCheckRefusal, publishRequestInit } from "@/lib/studio/publishCheck";
 
 export interface ReviewGoal { key: string; label: string }
 export interface ReviewAngle {
@@ -87,11 +88,16 @@ export const PUBLISHABLE_CHANNELS: ReadonlySet<string> = new Set(["blog", "faceb
  * Publish one piece (blog/facebook + connected channel). Backend validates eligibility.
  * AA-668 — the endpoint answers 200 with `success: false` when the remote post failed (the row is
  * kept as 'failed' for a retry); that is a failure too, not a publish.
+ * AA-1088 — `publishAnyway` sends the account owner's choice for a piece that needs a final read (CIS audits it).
  */
-export async function publishPiece(pieceId: string): Promise<PublishResult> {
-  const r = await fetch(`/api/tenant/v1/publish-log/${pieceId}/publish`, { method: "POST" });
+export async function publishPiece(pieceId: string, opts: { publishAnyway?: boolean } = {}): Promise<PublishResult> {
+  const r = await fetch(`/api/tenant/v1/publish-log/${pieceId}/publish`, publishRequestInit(!!opts.publishAnyway));
   if (!r.ok) {
-    throw new StudioError("publishFailed", r.status, detailOf(await r.json().catch(() => null)));
+    const body = await r.json().catch(() => null);
+    // AA-1088 (M3): the final-read refusal reads in the UI language (errors.messages.ts), not CIS's English sentence
+    const check = finalCheckRefusal(r.status, body);
+    if (check) throw new StudioError(check.canPublishAnyway ? "needsFinalCheckOwner" : "needsFinalCheckEditor", r.status);
+    throw new StudioError("publishFailed", r.status, detailOf(body));
   }
   const d: PublishResult = await r.json();
   if (d.success === false) throw new StudioError("postNotThrough", r.status);
