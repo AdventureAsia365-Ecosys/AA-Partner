@@ -1233,6 +1233,10 @@ CASCADE_ERASED = {
     "visa_template": {"tenant_settings"},
     "visa_application": {"trip", "traveler", "trip_traveler"},
     "visa_checklist_item": {"visa_application"},
+    # AA-960 (crm-061, an expand file): a tag leaves with the agency's settings row (the agency erase), a tag link with
+    # its tag, its trip or its client.
+    "tag": {"tenant_settings"},
+    "tag_link": {"tag", "trip", "traveler"},
     # AA-1071 (crm-056): a sales partner leaves with the agency's settings row (the agency erase deletes it); its
     # links with it or with their intake form, its sign-in codes with it or their link, a partner commission with its
     # trip or its partner. The partner's conversation and dispatch rows (no trip, no client) leave with the agency.
