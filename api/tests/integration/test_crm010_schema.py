@@ -1248,6 +1248,8 @@ CASCADE_ERASED = {
     # inclusion line with its proposal (the trip and agency erase, the trash purge).
     "inclusion_item": {"tenant_settings"},
     "proposal_inclusion": {"proposal"},
+    # AA-1070 item crm-13 (crm-060): an "AA cancelled" case leaves with its trip.
+    "aa_cancel_case": {"trip"},
 }
 
 
