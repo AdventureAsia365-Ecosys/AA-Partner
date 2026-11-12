@@ -1244,6 +1244,8 @@ CASCADE_ERASED = {
     # invoice.
     "public_booking_attempt": {"tenant_settings"},
     "payment_session": {"invoice"},
+    # AA-1070 item crm-13 (crm-060): an "AA cancelled" case leaves with its trip.
+    "aa_cancel_case": {"trip"},
 }
 
 
