@@ -78,6 +78,24 @@ def test_the_feed_opens_one_case_per_trip_and_a_replay_opens_nothing(fired: list
     assert aa_cancel.event_id(TRIP, DEP) == aa_cancel.event_id(TRIP, DEP) != aa_cancel.event_id(OTHER, DEP)
 
 
+def test_the_feed_names_a_dotted_departure_only_through_its_trips(fired: list) -> None:
+    # The Booking contract allows a dot in a departure id; the audit object id does not (a raise there would roll the
+    # feed page back and stall the agency's feed): the event keeps the trips, without the departure id.
+    dotted = "dep.2031.lotus-a"
+    conn = ScriptedConn().on("t.stage <> ALL", [{"trip_id": TRIP}]).on("INSERT INTO crm.aa_cancel_case", CASE)
+    ctx = system_ctx(conn)
+    assert run(aa_cancel.open_cases(ctx, dotted, "ev-1", WHEN)) == [TRIP]
+    (event,) = ctx.audit_events
+    assert event.object_id is None and event.object_ids == (str(TRIP),)
+    assert fired == [(TRIP, "departure.aa_cancelled", aa_cancel.event_id(TRIP, dotted))]
+    # An id without a dot stays the object id.
+    plain = system_ctx(
+        ScriptedConn().on("t.stage <> ALL", [{"trip_id": TRIP}]).on("INSERT INTO crm.aa_cancel_case", CASE)
+    )
+    run(aa_cancel.open_cases(plain, DEP, "ev-1", WHEN))
+    assert plain.audit_events[0].object_id == DEP
+
+
 def test_the_feed_caps_the_trips_of_one_departure(fired: list, caplog: pytest.LogCaptureFixture) -> None:
     rows = [{"trip_id": uuid.uuid4()} for _ in range(3)]
     conn = ScriptedConn().on("t.stage <> ALL", rows)
@@ -223,7 +241,12 @@ def test_requote_after_acceptance_opens_a_new_trip(made: list) -> None:
     out, ctx = _requote(conn)
     assert out["mode"] == "new_trip" and out["proposal_id"] == str(NEW_PROP) and out["trip_id"] != str(TRIP)
     new_trip = uuid.UUID(out["trip_id"])
-    assert conn.sql("INSERT INTO crm.trip (")[0] == (TRIP, new_trip, START, START + dt.timedelta(days=3))
+    # The tour is on day 2 of the copied version: the new trip starts on its day 1 (the day before the picked
+    # departure), as long as the old trip, and the version's starts_on says the same day.
+    day1 = START - dt.timedelta(days=1)
+    assert conn.sql("INSERT INTO crm.trip (")[0] == (TRIP, new_trip, day1, day1 + dt.timedelta(days=3))
+    assert conn.sql("UPDATE crm.proposal SET starts_on")[0] == (NEW_PROP, day1)
+    assert conn.sql("SELECT min(d.day_no)")[0] == (PROP, DEP)  # read on the source before the trip is made
     assert conn.sql("INSERT INTO crm.trip_stage_history")[0] == (new_trip,)
     assert conn.sql("INSERT INTO crm.trip_traveler")[0] == (TRIP, new_trip)
     assert conn.sql("INSERT INTO crm.trip_party")[0] == (TRIP, new_trip)

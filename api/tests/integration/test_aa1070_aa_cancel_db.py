@@ -273,15 +273,19 @@ async def test_requote_after_acceptance_opens_a_new_trip(app_pool: asyncpg.Pool)
     new_trip = uuid.UUID(out["trip_id"])
     trips = await _rows(app_pool, s, "SELECT stage, start_date, end_date, title FROM crm.trip WHERE trip_id = $1",
                         new_trip)  # fmt: skip
+    # The tour is on day 2: the new trip starts on day 1 of its version (the day before the picked departure), as
+    # long as the old trip, and agrees with the version's starts_on.
+    day1 = new_start - dt.timedelta(days=1)
     assert (trips[0]["stage"], trips[0]["start_date"], trips[0]["end_date"]) == (
-        "proposal", new_start, new_start + dt.timedelta(days=4))  # fmt: skip
+        "proposal", day1, day1 + dt.timedelta(days=4))  # fmt: skip
     party = await _rows(app_pool, s, "SELECT role FROM crm.trip_traveler WHERE trip_id = $1", new_trip)
     assert [p["role"] for p in party] == ["lead"]
     history = await _rows(app_pool, s, "SELECT reason_code FROM crm.trip_stage_history WHERE trip_id = $1", new_trip)
     assert [h["reason_code"] for h in history] == ["aa_rebook"]
-    props = await _rows(app_pool, s, "SELECT version, status, based_on_proposal_id FROM crm.proposal "
+    props = await _rows(app_pool, s, "SELECT version, status, based_on_proposal_id, starts_on FROM crm.proposal "
                         "WHERE trip_id = $1", new_trip)  # fmt: skip
     assert [(p["version"], p["status"], p["based_on_proposal_id"]) for p in props] == [(1, "draft", None)]
+    assert props[0]["starts_on"] == trips[0]["start_date"]
     async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
         # The old trip stays flagged until it is cancelled (step b); the new one names where it came from.
         assert await aa_cancel.flagged(ctx, [s["trip"]]) == {s["trip"]}

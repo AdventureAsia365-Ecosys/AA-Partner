@@ -217,6 +217,7 @@ def _iso(value: Any) -> str | None:
 async def open_cases(ctx: AnyContext, departure_id: str, event: str, occurred_at: dt.datetime) -> list[uuid.UUID]:
     """``departure.cancelled``: one case, one owner task and one workflow event per affected trip (new cases only).
     Returns the trips that got a new case."""
+    from app.travel_ops import departures
     from app.workflows import triggers
 
     rows = await ctx.conn.fetch(AFFECTED_SQL, departure_id, list(CLOSED_STAGES), MAX_TRIPS)
@@ -231,8 +232,10 @@ async def open_cases(ctx: AnyContext, departure_id: str, event: str, occurred_at
         await triggers.on_trip_event(ctx, r["trip_id"], EVENT_NAME, event_id(r["trip_id"], departure_id))
         opened.append(r["trip_id"])
     if opened:
-        ctx.audit("aa_sync", "allowed", "departure", departure_id, reason="departure_cancelled_cases",
-                  object_ids=tuple(str(t) for t in opened[:200]))  # fmt: skip
+        # A Booking id may carry a dot (the contract allows it), the audit object id may not: None then, the trips
+        # still named (as departures.apply_event does).
+        ctx.audit("aa_sync", "allowed", "departure", departures._audit_id(departure_id),
+                  reason="departure_cancelled_cases", object_ids=tuple(str(t) for t in opened[:200]))  # fmt: skip
     return opened
 
 
@@ -300,8 +303,14 @@ async def trip_view(ctx: AnyContext, trip_id: uuid.UUID, stage: str) -> dict[str
 # ── (a) re-quote ─────────────────────────────────────────────────────────────────────────────────
 
 
+def _starts_on(start_date: dt.date, first_day: Any) -> dt.date:
+    """Day 1 of a version whose AA tour (first on day ``first_day``) starts on ``start_date``."""
+    return start_date - dt.timedelta(days=max(int(first_day or 1), 1) - 1)
+
+
 async def _new_trip(ctx: TenantContext, trip: Any, start: dt.date) -> uuid.UUID:
-    """A trip in Proposal for the same client and party, the dates moved to ``start`` (same length)."""
+    """A trip in Proposal for the same client and party, the dates moved to ``start`` (day 1 of its version, same
+    length as the old trip)."""
     new_id = uuid.uuid4()
     end = None
     if trip["start_date"] is not None and trip["end_date"] is not None:
@@ -359,7 +368,10 @@ async def requote(
             made = await builder.create(ctx, vault, trip_id, currency=None, from_proposal_id=source["proposal_id"])
             target = uuid.UUID(made["proposal_id"])
     else:
-        rebook_trip = await _new_trip(ctx, trip, start_date)
+        # The trip starts on day 1 of its version, not on the tour's day: the copy keeps the source's days, so its
+        # first AA day is the source's (the dates rules, passport check and calendar read the trip's dates).
+        source_first = await ctx.conn.fetchval(FIRST_DAY_SQL, source["proposal_id"], case["departure_id"])
+        rebook_trip = await _new_trip(ctx, trip, _starts_on(start_date, source_first))
         target = await builder.rebook_copy(ctx, vault, rebook_trip, source["proposal_id"], trip_id)
     first_day = await ctx.conn.fetchval(FIRST_DAY_SQL, target, case["departure_id"])
     moved = await ctx.conn.fetch(SWAP_SQL, target, case["departure_id"], new_dep)
@@ -367,7 +379,7 @@ async def requote(
         # The working copy has no option on the departure (the agent removed it): it is theirs, never overwritten.
         raise Conflict("builder_draft_exists", "this trip has a working copy without that AA tour; finish it first",
                        proposal_id=str(target))  # fmt: skip
-    starts_on = start_date - dt.timedelta(days=max(int(first_day or 1), 1) - 1)
+    starts_on = _starts_on(start_date, first_day)
     await ctx.conn.execute(STARTS_ON_SQL, target, starts_on)
     await builder.touch_draft(ctx, target)
     await ctx.conn.execute(RESOLVE_SQL, case_id, f"member:{ctx.member_id}", target, rebook_trip)
