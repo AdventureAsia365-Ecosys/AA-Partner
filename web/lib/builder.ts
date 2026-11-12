@@ -7,6 +7,7 @@
 import { fmt, type MessageKey } from "@/lib/i18n";
 import type { PolicySummary, ScheduleAmount, ScheduleLine } from "@/lib/retailPayments";
 import type { AppliedRule, PriceRow, PricingBlock } from "@/lib/retailPricing";
+import type { InclusionsPanelData } from "@/lib/inclusions";
 import type { BeforeYouGo } from "@/lib/textProposal";
 
 export type BuilderStatus = "draft" | "published" | "sent" | "accepted" | "superseded" | "withdrawn";
@@ -140,6 +141,8 @@ export interface BuilderView {
   refresh?: { quoted: number; failed: { option_id: string; code: string }[]; skipped: number };
   /** AA-951 (CRM-22, R38): the day 0 packs, the suggestions from the AA items and the reminders. */
   before_you_go?: BeforeYouGo;
+  /** AA-1070 crm-35: the version's "Included" / "Not included" lines, the AA tours' fixed lists, the library. */
+  inclusions?: InclusionsPanelData;
 }
 
 /** The 409 the API answers when the page is stale (another editor) or the client picked on the base version. */

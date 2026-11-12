@@ -4,6 +4,7 @@
 // Swap, C-04 accept, C-12 hold expired) and the trip's Proposal tab share. Amounts are the client's sell amounts and
 // the per-option difference to the included one (Decision D1): never a net, a margin or a per-line price.
 
+import type { ClientInclusions } from "@/lib/inclusions";
 import type { PaxType } from "@/lib/retailPricing";
 import type { PublicProposal } from "./proposals";
 
@@ -117,6 +118,8 @@ export interface ClientBuilderPage extends PublicProposal {
   hold: HoldBox;
   notice: VersionNotice | null;
   before_you_go?: ClientBeforeYouGo | null;
+  /** AA-1070 crm-35: the "Included" / "Not included" lists (the AA tours of the client's current choice). */
+  inclusions?: ClientInclusions | null;
 }
 
 export type AnyClientPage = (PublicProposal & { kind?: "text" }) | ClientBuilderPage;

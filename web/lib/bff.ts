@@ -374,6 +374,14 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "POST", pattern: /^visa-templates$/, tenant: true, card: "AA-1070" },
   { method: "PATCH", pattern: new RegExp(`^visa-templates/${UUID}$`), tenant: true, card: "AA-1070" },
   { method: "DELETE", pattern: new RegExp(`^visa-templates/${UUID}$`), tenant: true, card: "AA-1070" },
+  // AA-1070 crm-35 (crm-059): the inclusion library (writes: owner / agent, the API's money_fields_edit) and a builder
+  // version's "Included" / "Not included" lines (every role, drafts only).
+  { method: "GET", pattern: /^inclusion-items$/, tenant: true, card: "AA-1070" },
+  { method: "POST", pattern: /^inclusion-items$/, tenant: true, card: "AA-1070" },
+  { method: "PATCH", pattern: new RegExp(`^inclusion-items/${UUID}$`), tenant: true, card: "AA-1070" },
+  { method: "DELETE", pattern: new RegExp(`^inclusion-items/${UUID}$`), tenant: true, card: "AA-1070" },
+  { method: "GET", pattern: new RegExp(`^proposals/${UUID}/inclusions$`), tenant: true, card: "AA-1070" },
+  { method: "PUT", pattern: new RegExp(`^proposals/${UUID}/inclusions$`), tenant: true, card: "AA-1070" },
   { method: "GET", pattern: /^settings\/travel$/, tenant: true, card: "AA-1070" },
   { method: "PUT", pattern: /^settings\/travel$/, tenant: true, card: "AA-1070" },
   // AA-956 (CRM-26): the trip's AA ground operations panel (counts and dates only) and the agency's withdrawal.
