@@ -351,7 +351,9 @@ async def get_vnpay_ipn(request: Request) -> JSONResponse:
         misses.allow(address)
         return JSONResponse(vnpay.ipn_answer(vnpay.BAD_SIGNATURE), headers=NO_STORE)
     refusals = request.app.state.ipn_ref_refusal_limiter
-    ref_key = f"ref:{fields.get('vnp_TxnRef') or ''}"
+    # Per (address, reference): a forger who knows a live reference locks only their own address for it, so VNPay's
+    # genuine notice for that reference (from VNPay's own addresses) always reaches the handler.
+    ref_key = f"ref:{address}:{fields.get('vnp_TxnRef') or ''}"
     if refusals.exhausted(ref_key):
         raise HTTPException(
             status_code=429, detail="rate_limited", headers={"Retry-After": str(int(refusals.window_s))}
@@ -362,7 +364,7 @@ async def get_vnpay_ipn(request: Request) -> JSONResponse:
     if answer["RspCode"] in (vnpay.NOT_FOUND, vnpay.OTHER):
         misses.allow(address)  # unknown or malformed notices count against the address
     elif answer["RspCode"] == vnpay.BAD_SIGNATURE:
-        refusals.allow(ref_key)  # forged notices count against the reference they name, never the address
+        refusals.allow(ref_key)  # forged notices count against (address, reference), never the address alone
     return JSONResponse(answer, headers=NO_STORE)
 
 

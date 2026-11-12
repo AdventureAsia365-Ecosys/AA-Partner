@@ -1944,8 +1944,10 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
     server** (15 minutes) and answers the signed gateway URL; the return page `/c/p/paid` drops the gateway's query and
     opens `/c/p?payment=returned` (the box reads itself again once). The IPN (`GET /crm/public/v1/hooks/vnpay/ipn`,
     `payment_session_tx`; AA-1092: a notice without a `vnp_SecureHash` of the SHA-512 hex shape is `97` before any
-    lookup and spends its address's misses, as `01` / `99` do; a well-formed but wrong signature spends the merchant
-    reference's `IPN_REF_REFUSALS_PER_MINUTE` (then 429 for that reference only), never the address VNPay shares)
+    lookup and spends its address's misses, as `01` / `99` do; a well-formed but wrong signature spends
+    `IPN_REF_REFUSALS_PER_MINUTE` of the pair (client address, merchant reference), then 429 for that address on that
+    reference only: never the address alone, which VNPay shares, and never the reference alone, so a forger cannot keep
+    VNPay's genuine notice out)
     checks the HMAC-SHA512 signature with the agency's own secret first (`97`), then the merchant
     code, the amount (`04`), the session state (`02`); a failure closes the session `failed`; a success goes through
     the same code as "Record payment" (method `online`, provider `vn_gateway`, the gateway's number as reference,

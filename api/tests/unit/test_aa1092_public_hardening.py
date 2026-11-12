@@ -2,9 +2,10 @@
 
 1. VNPay IPN: a notice without a ``vnp_SecureHash`` of the SHA-512 hex shape is answered ``97`` before any lookup
    (the session is never looked up, no secret is opened) and counts as a miss of its address; malformed notices
-   (``99``) count too; a well-formed but wrong signature counts against the merchant reference it names, and past
-   :data:`app.ratelimit.IPN_REF_REFUSALS_PER_MINUTE` that reference alone is 429 before the database, while another
-   reference from the same address still goes through.
+   (``99``) count too; a well-formed but wrong signature counts against (its address, the merchant reference it
+   names), and past :data:`app.ratelimit.IPN_REF_REFUSALS_PER_MINUTE` that address is 429 for that reference before
+   the database, while another reference from the same address, and the same reference from another address (VNPay's
+   genuine notice), still go through.
 2. "Book now": the agency's hourly ceiling (``RATE_LIMIT_INTAKE_FORM_PER_HOUR``, bucket ``book:<form key>``) is charged
    only once the origin, honeypot and answers passed, and a booking over it is 429 ``form_rate_limited`` before any
    attempt row, Booking call or e-mail.
@@ -124,6 +125,50 @@ def test_forged_notices_lock_their_reference_only(client: tuple[TestClient, list
     # Same address, another reference: not affected (VNPay's addresses carry every agency's notices).
     other = c.get(IPN, params=_notice(REF_B))
     assert other.status_code == 200 and other.json()["RspCode"] == vnpay.CONFIRMED
+
+
+def _from(address: str) -> dict[str, str]:
+    return {"cloudfront-viewer-address": f"{address}:443"}
+
+
+def test_a_forger_cannot_lock_a_reference_for_another_address(client: tuple[TestClient, list]) -> None:
+    c, seen = client
+    forger, gateway_address = "198.51.100.7", "203.0.113.20"
+
+    # Every minute the forger spends the (address, reference) budget again; here it runs over by several notices.
+    for _ in range(IPN_REF_REFUSALS_PER_MINUTE + 5):
+        c.get(IPN, params=_notice(REF_A), headers=_from(forger))
+    assert c.get(IPN, params=_notice(REF_A), headers=_from(forger)).status_code == 429
+    calls = len(seen)
+    # The gateway's notice for the same reference, from its own address, still reaches the handler.
+    genuine = c.get(IPN, params=_notice(REF_A), headers=_from(gateway_address))
+    assert genuine.status_code == 200
+    assert len(seen) == calls + 1 and seen[-1]["vnp_TxnRef"] == REF_A
+
+
+def test_the_genuine_notice_is_confirmed_after_a_forged_flood(
+    pools: LocalPools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = pools.settings()
+    app = create_app(settings, verifier=pools.verifier(settings), keys=object())
+
+    async def pool(_request: Any) -> object:
+        return object()
+
+    monkeypatch.setattr(public_router, "request_pool", pool)
+    monkeypatch.setattr(public_router, "require_keys", lambda keys: keys)
+
+    async def handle(_pool: Any, _keys: Any, fields: dict[str, str]) -> dict[str, str]:
+        # Only the gateway's own secret signs a notice that verifies (stand-in for the HMAC check).
+        good = fields.get("vnp_SecureHash") == "cd" * 64
+        return vnpay.ipn_answer(vnpay.CONFIRMED if good else vnpay.BAD_SIGNATURE)
+
+    monkeypatch.setattr(gateway, "handle_ipn", handle)
+    with TestClient(app, base_url="https://go.test") as c:
+        for _ in range(IPN_REF_REFUSALS_PER_MINUTE * 3):
+            c.get(IPN, params=_notice(REF_A), headers=_from("198.51.100.7"))
+        res = c.get(IPN, params=_notice(REF_A, "cd" * 64), headers=_from("203.0.113.20"))
+    assert res.status_code == 200 and res.json()["RspCode"] == vnpay.CONFIRMED
 
 
 def test_the_answers_carry_no_detail(client: tuple[TestClient, list]) -> None:
