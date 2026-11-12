@@ -370,6 +370,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-058` | `api/migrations/058_crm_hold_guard_tenant.sql` | AA-1085 (**contract**, MIG-4: replaces six trigger functions, adds a trigger): `crm.hold_trip_of` / `hold_traveler_of` / `hold_row_of` (the crm-010 hold rule 4a-4d with an explicit `tenant_id = p_tenant` on every read); the hold guards `guard_held_change`, `guard_message`, `guard_held_flight`, `guard_ops_release`, `guard_supplier_manifest_export`, `guard_held_travel_doc` read the holds of `OLD.tenant_id` only, so a foreign-key cascade (owner, no row security) never sees another agency's hold; the flight and travel document guards check cascades too; `crm.partner_commission` gets `guard_held_change('trip_id')`. Lint: `tests/unit/test_aa1085_hold_guard_tenant.py` |
 | `crm-059` | `api/migrations/059_crm_proposal_inclusions.sql` | AA-1070 item crm-35 (**expand**: two new tables): `crm.inclusion_item` (the agency library of standard proposal lines: kind `included` / `not_included`, `text_en` (default) + optional `text_vi`, 1..500 characters, `sort_order` 0..999, `archived`; one live line per kind and English text, case-insensitive; cascades from `tenant_settings`), `crm.proposal_inclusion` (the lines of one builder version: source `library` (text copied, `inclusion_item_id` a snapshot reference without a key) / `custom` / `aa_tour` (an AA tour's inclusion or exclusion copied at Publish: `aa_tour_source_id`, `aa_tour_title`), `sort_order` 0..199, `source_inclusion_id` of a working copy; draft-only through `crm.guard_proposal_draft` (CRM35), trip hold guard; cascades from its proposal); no `erase_subject` change |
 | `crm-060` | `api/migrations/060_crm_aa_cancel_case.sql` | AA-1070 item crm-13 (**expand**: one new table): `crm.aa_cancel_case` (one agency trip with a live AA line or proposal option on a departure AA cancelled: opened once per trip and departure by the Booking feed job; `resolution` NULL (open) -> `requoted` (`proposal_id`, `rebook_trip_id`) / `cancelled`; no status column, the API only moves it forward); unique per (trip, departure); cascades from the trip; hold guard `crm.guard_held_travel_doc` (CRM10). (crm-059 is AA-1070 item crm-35, another lane.) |
+| `crm-061` | `api/migrations/061_crm_tags.sql` | CRM-29b tags (AA-960; **expand**: two new tables + two guards): `crm.tag` (agency / system, trip / client, fixed code, name, tone, archived; one per agency, subject and code; never trashed; cascades from `tenant_settings`), `crm.tag_link` (one tag on one trip or client, source member / system + reasons; one per tag and subject; cascades from tag, trip, traveller; hold rule 4h), `crm.guard_tag()` / `crm.guard_tag_link()` (CRM55: system tags by job / platform / seed actors only, kind / subject / code fixed, a link of the tag's subject and source) |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -1356,8 +1357,8 @@ in `docs/implementation-notes/AA-959.md`. CRM-29b (AA-960: tags, system tags, co
   `invoice.payment_claimed` / `overdue` / `unfulfillable`, `message.received` / `message.sent`), `date_anchor`
   (departure, return, stage entered, last activity, created + offset days), `special_date` (a client's birthday,
   passport expiry, trip anniversary + offset; the run is about the client) and `manual` (a task list a member applies,
-  R9). Conditions: stages, trip styles, lead sources, destinations, children, AA services, Stage 3 incomplete
-  (`tags_any` is refused with 422 `condition_not_available` until CRM-29b). Steps: `create_task` (a library kind or a
+  R9). Conditions: stages, trip styles, lead sources, destinations, children, AA services, Stage 3 incomplete,
+  `tags_any` (CRM-29b, below). Steps: `create_task` (a library kind or a
   custom title; due = anchor + offset, 09:00 local for a date; assignee = the owner of the trip / client or a member),
   `send_email` (an agency message template merged with `{{traveller_first_name}}` ...; transactional or marketing; a
   birthday or trip-anniversary rule's messages are always marketing, 422 `marketing_only` on transactional),
@@ -1404,6 +1405,51 @@ in `docs/implementation-notes/AA-959.md`. CRM-29b (AA-960: tags, system tags, co
   (`components/workflows/AutomationsBoard.tsx` + `RuleEditor.tsx`: rules with trigger and steps in words, preview count,
   switch on / pause / archive, the editor, the library), the trip page's Automations panel
   (`components/workflows/TripWorkflows.tsx`: runs with each step's outcome, stop, Check then Apply a task list).
+
+## CRM-29b tags, system tags, coverage, ready to travel again (AA-960)
+
+Design v3 §6.3 CRM-29b (R3 tags + tag workflows, R29 system-tag workflows, R30 missing-workflow badge, R36 ready to
+travel again; card R "a workflow on an archived contact is suppressed", card E "bulk apply previews the count; the R36
+list explains its reasons"). Migration crm-061 (expand); code in `app/tags/` and `app/workflows/coverage.py`, routes in
+`app/routers/tags.py` and `GET /workflows/coverage`; decisions in `docs/implementation-notes/AA-960.md`.
+
+- **Tags** (`crm.tag`, `crm.tag_link`): kind `agency` (the agency's words) | `system` (computed, codes `sys_*`, guard
+  CRM55: only a `job:` / `platform:` / `seed:` actor writes them); `applies_to` trip | client; a fixed `code` made once
+  from the first name (`app.tags.model.code_for`: ASCII `a-z0-9_`, never `sys_`), so renaming keeps rules working; tone
+  = a kit badge tone; an archived agency tag keeps its links and is not offered. A link names exactly one trip or
+  client (its tag's subject), source member | system (+ `reasons`). Never trashed: removing deletes; every key
+  cascades (tag, trip, traveller); hold rule 4h on links (CRM10 -> 409 `legal_hold`).
+- **Who** (`app/permissions.py`): `tag_apply` every role (tag one record, a new tag from the picker), `tag_bulk_apply`
+  owner + agent, `tag_manage` owner (rename, recolour, archive, delete), `marketing_view` owner + agent.
+- **Bulk** (`POST /tags/{id}/bulk`): add / remove on explicit ids or a filter (trips: stage / owner / tag; clients:
+  archived / owner / tag), at most 500. The dry run is the preview: `count`, `already`, `held` (remove skips held
+  records), `archived_suppressed` (archived clients tagged without automations), a sample; the apply sends the
+  previewed `expected` count back, another count is 409 `count_changed`.
+- **Tag workflows**: trigger `event` + `trip_tag.added` (about the trip; other trip conditions apply) or
+  `client_tag.added` (about the client, like a special date), always with `conditions.tags_any` (422 `tags_required`;
+  codes must be the agency's tags of that subject or a known system code, 422 `tag_not_found`). A new link starts
+  each matching active rule once (`app.workflows.triggers.on_tag_added`, key `tag:<link id>`); on an archived client
+  nothing starts and each rule's start is audited `workflow_start` denied `client_archived` (card R); the engine also
+  stops a client run once the client is archived (CRM-29a). `tags_any` is also a plain trip condition of any rule.
+- **System tags** (`app/tags/system.py`, step 6 of the hourly `crm_workflow_tick`, in a savepoint): R29 trip tags from
+  the AA catalogue cache (`crm.aa_catalog_tour`, served tours only) of the trip's live AA lines and AA options: day /
+  multi-day, the CIS activity vocabulary (8 codes), easy / challenging; reasons = the tours. R36 `sys_ready_to_travel`
+  on a client at the special-date hours: a completed trip with an end date, no open trip, home >= 9 months; reasons =
+  months home, repeat traveller, anniversary within 60 days, new live AA tours in a country they travelled to. New
+  links start the tag workflows; stale links are deleted unless held.
+- **Coverage** (R30, `GET /workflows/coverage`, computed on read): per active `stage_enter` / `trip_tag.added` rule, the
+  live trips in that state that match its conditions and never had a run of it, plus `by_trip`. [Run] = the existing
+  apply (dry run first).
+- **R36 list** (`GET /marketing/ready-to-travel`, owner / agent): live, not archived clients with the system tag, the
+  reasons, the last completed trip, the marketing consent state (`yes` / `no` / `unknown`); names opened and the view
+  audited (`list_view`, `ready_to_travel`). The agency's own marketing; AA never reads it.
+- **Lists**: the client directory filters by a client tag (`?tag=<code>`) and returns each client's tags; the pipeline
+  board cards carry their trip's tags.
+- **Web**: `components/tags/TagBar.tsx` (trip page and client page: agency tags, system tags with reasons, add / new
+  tag), `BulkTagButton.tsx` (pipeline column header, clients directory: Preview then Apply), `TagsSettings.tsx`
+  (`/settings/tags`), `CoveragePanel.tsx` (`/automations`, under the pipeline board; cards get a "Missing automation"
+  badge), `/marketing` (Ready to travel again; campaigns arrive with CRM-36), the automation editor's tag trigger and
+  tags condition. Words in `lib/i18nTags.ts` (system tags by code `tag.sys.<code>`, reasons `tag.reason.<code>`).
 
 ## CRM-18 thin full lifecycle (AA-946)
 

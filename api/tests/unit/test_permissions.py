@@ -82,6 +82,10 @@ DESIGN: dict[str, tuple[str, str, str]] = {
     "discount_approve": (Y, N, N),  # AA-1066: approve a proposal discount above the agency limit — owner
     "sales_partner_manage": (Y, N, N),  # AA-1071: sales partners, their commission terms and links — owner
     "partner_commission_approve": (Y, N, N),  # AA-1071: approve, pay or cancel a partner commission — owner
+    "tag_apply": (Y, Y, Y),  # AA-960 (R3): tag one trip / client, a new tag from the picker — every role
+    "tag_bulk_apply": (Y, Y, N),  # AA-960 (R3, card E): bulk add / remove with a preview — like workflow_apply
+    "tag_manage": (Y, N, N),  # AA-960: rename, recolour, archive, delete a tag of the vocabulary — owner
+    "marketing_view": (Y, Y, N),  # AA-960 (R36, A-15): the Marketing lists — owner, agent
 }
 WORD = {Rule.ALLOW: Y, Rule.DENY: N, Rule.OWN: OWN, Rule.ASSIGNED: ASG, Rule.THRESHOLD: THR}
 

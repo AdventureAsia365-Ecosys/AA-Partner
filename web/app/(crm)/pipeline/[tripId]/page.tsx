@@ -35,6 +35,7 @@ import { OpsReleasePanel } from "@/components/pipeline/OpsReleasePanel";
 import { TripClosedProvider } from "@/components/pipeline/TripClosed";
 import { TripPanel } from "@/components/pipeline/TripPanel";
 import { AiDraftPanel } from "@/components/pipeline/AiDraftPanel";
+import { TagBar } from "@/components/tags/TagBar";
 import { TripWorkflows } from "@/components/workflows/TripWorkflows";
 import { TripMoneyCard } from "@/components/finance/TripMoneyCard";
 import { TripTravelPanel } from "@/components/travelOps/TripTravelPanel";
@@ -122,6 +123,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
       partners={partners.ok ? partners.data.items.map((p) => ({ id: p.sales_partner_id, name: p.name, active: p.status === "active" })) : null}
     />
     <AiDraftPanel tripId={tripId} settings={ai.ok ? ai.data : null} isOwner={ctx.role === "owner"} lang={ctx.lang} />
+    <TagBar subject="trip" id={tripId} lang={ctx.lang} />
     <TripWorkflows tripId={tripId} role={ctx.role} lang={ctx.lang} locale={ctx.locale} timeZone={agencyZone} />
     {lifecycle.ok && (
       <ProposalPanel

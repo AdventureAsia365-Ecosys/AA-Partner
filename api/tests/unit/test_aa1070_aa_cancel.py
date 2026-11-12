@@ -324,8 +324,12 @@ def test_the_pipeline_filter_keeps_the_aa_cancelled_cards(monkeypatch: pytest.Mo
     async def no_issues(*_: Any) -> dict[uuid.UUID, int]:
         return {}
 
+    async def no_tags(*_: Any) -> dict[uuid.UUID, list[dict[str, Any]]]:
+        return {}
+
     monkeypatch.setattr(aa_cancel, "flagged", flagged)
     monkeypatch.setattr(pipeline.passport, "issue_counts", no_issues)
+    monkeypatch.setattr(pipeline.tag_service, "of_many", no_tags)  # AA-960: the cards' tags
 
     def card(trip_id: uuid.UUID, stage: str) -> dict[str, Any]:
         return {"trip_id": trip_id, "title": "Lotus", "stage": stage, "waiting_on": "agency", "owner_member_id": None,

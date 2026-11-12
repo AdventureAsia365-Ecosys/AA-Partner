@@ -284,7 +284,8 @@ async def _create_task(
 
 
 def _greeting(run: Any) -> bool:
-    """A birthday or anniversary run: its messages are marketing whatever the step says (card R, S263 review)."""
+    """A birthday, anniversary or client-tag run: its messages are marketing whatever the step says (card R, S263
+    review; AA-960 R36)."""
     return model.marketing_only(run["trigger_kind"], run["trigger_value"])
 
 

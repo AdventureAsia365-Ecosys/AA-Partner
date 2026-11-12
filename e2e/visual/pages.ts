@@ -62,6 +62,7 @@ export const PAGES: VisualPage[] = [
   crm("services", "/services"), // AA-1069: the agency service catalogue
   crm("travelling", "/travelling"),
   crm("departures", "/departures"), // AA-1070: the departure roster
+  crm("marketing", "/marketing"), // AA-960: Ready to travel again
   crm("reports", "/reports"),
   crm("automations", "/automations"),
   crm("onboarding", "/onboarding"),
@@ -74,6 +75,7 @@ export const PAGES: VisualPage[] = [
   crm("settings-ai", "/settings/ai"),
   crm("settings-travel", "/settings/travel"), // AA-1070
   crm("settings-inclusions", "/settings/inclusions"), // AA-1070 crm-35
+  crm("settings-tags", "/settings/tags"), // AA-960: the agency's tags
   crm("settings-channels", "/settings/channels"),
   crm("settings-connections", "/settings/connections"),
   crm("settings-data", "/settings/data"),

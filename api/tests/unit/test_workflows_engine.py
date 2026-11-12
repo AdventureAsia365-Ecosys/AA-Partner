@@ -287,6 +287,11 @@ async def test_r_a_greeting_run_sends_marketing_whatever_its_step_says() -> None
     conn = text_conn().on("FROM crm.workflow_run r JOIN crm.workflow_rule w", anniversary)
     await advance(conn)
     assert logged(finished(conn)) == ["skipped_no_consent"]  # a UTILITY template, but a greeting
+    # AA-960 (R36): a client tag run (a "welcome back" on Ready to travel again) is marketing the same way.
+    tagged = run_row(steps, trigger_kind="event", trigger_value="client_tag.added")
+    conn = mail_conn("transactional", consent=False).on("FROM crm.workflow_run r JOIN crm.workflow_rule w", tagged)
+    await advance(conn)
+    assert logged(finished(conn)) == ["skipped_no_consent"] and not conn.sql("INSERT INTO crm.dispatch_queue")
     marked = run_row([text_steps[0] | {"purpose": "marketing"}])
     conn = text_conn(consent=True).on("FROM crm.workflow_run r JOIN crm.workflow_rule w", marked)
     await advance(conn)

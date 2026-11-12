@@ -35,6 +35,7 @@ import { aaCancelEn, aaCancelVi } from "./i18nAaCancel";
 import { partnersEn, partnersVi } from "./i18nPartners";
 import { bookNowEn, bookNowVi } from "./i18nBookNow";
 import { inclusionsEn, inclusionsVi } from "./i18nInclusions";
+import { tagsEn, tagsVi } from "./i18nTags";
 
 export type Lang = "en" | "vi";
 export const LOCALE_COOKIE = "aa_crm_locale";
@@ -83,6 +84,7 @@ const en = {
   ...partnersEn, // AA-1071: Partners, partner commissions, the trip's partner, the partner's own pages (lib/i18nPartners.ts)
   ...bookNowEn, // AA-1072: Book now on the tour page, Pay online, Settings > online payment and booking
   ...inclusionsEn, // AA-1070 crm-35: Settings > Proposal lines, the builder picker, the client lists (lib/i18nInclusions.ts)
+  ...tagsEn, // AA-960: tags, system tags, bulk tagging, Settings > Tags, coverage, ready to travel again (lib/i18nTags.ts)
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Home",
@@ -2800,6 +2802,7 @@ const vi: Record<MessageKey, string> = {
   ...partnersVi,
   ...bookNowVi,
   ...inclusionsVi,
+  ...tagsVi,
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Trang chủ",

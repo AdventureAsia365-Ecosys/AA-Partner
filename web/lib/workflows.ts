@@ -59,11 +59,29 @@ export function isGreeting(trigger: Pick<Trigger, "kind" | "value">): boolean {
   return trigger.kind === "special_date" && (GREETING_DATES as readonly string[]).includes(String(trigger.value));
 }
 
+/** Every message of the rule is marketing (sent only with consent; the API refuses "transactional", 422
+ * marketing_only): a birthday or anniversary greeting, and a tag put on a client (AA-960: no trip to serve; "ready to
+ * travel again" feeds Marketing). */
+export function isMarketingOnly(trigger: Pick<Trigger, "kind" | "value">): boolean {
+  return isGreeting(trigger) || (trigger.kind === "event" && trigger.value === "client_tag.added");
+}
+
+/** AA-960: a rule about a client, not a trip: a client's special date, or a tag put on a client (the API's
+ * model.subject_of). It has no trip conditions, no trip field and no trip date. */
+export function isClientRule(trigger: Pick<Trigger, "kind" | "value">): boolean {
+  return trigger.kind === "special_date" || (trigger.kind === "event" && trigger.value === "client_tag.added");
+}
+
+/** A rule started by a tag (AA-960): it names the tags that start it (conditions.tags_any, required). */
+export function isTagRule(trigger: Pick<Trigger, "kind" | "value">): boolean {
+  return trigger.kind === "event" && (trigger.value === "trip_tag.added" || trigger.value === "client_tag.added");
+}
+
 /** The actions a rule's step may take for its trigger: a task list never sends, a client's date sets no trip field,
  * and a rule started by a sent text sends no text (its own text would start it again: 422 message_loop). */
 export function actionsFor(trigger: Pick<Trigger, "kind" | "value">): Step["action"][] {
   if (trigger.kind === "manual") return ["create_task", "set_field", "wait"];
-  if (trigger.kind === "special_date") return ["create_task", "send_email", "send_text", "wait"];
+  if (isClientRule(trigger)) return ["create_task", "send_email", "send_text", "wait"];
   if (trigger.kind === "event" && trigger.value === "message.sent") return ["create_task", "send_email", "set_field", "wait"];
   return ["create_task", "send_email", "send_text", "set_field", "wait"];
 }
@@ -107,6 +125,8 @@ export interface WorkflowOptions {
   merge_fields: string[];
   waiting_on: string[];
   condition_keys: string[];
+  /** AA-960: the tag events (trip_tag.added, client_tag.added). */
+  tag_events?: string[];
 }
 
 export interface WorkflowOverview {
@@ -236,7 +256,8 @@ const ERRORS = new Set([
   "task_closed",
   "title_fixed",
   "role_forbidden",
-  "condition_not_available",
+  "tags_required",
+  "tag_not_found",
   "marketing_only",
   "message_loop",
 ]);

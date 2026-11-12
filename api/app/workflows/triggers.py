@@ -11,6 +11,9 @@ Called inside the transaction of the change that triggers them, so a rolled-back
   (its dispatch row has ``origin workflow``) starts nothing, and a message rule starts at most one run per trip every
   :data:`MESSAGE_COOLDOWN_HOURS` (a client's auto-reply cannot ping-pong with a rule that answers it; a rule started
   by ``message.sent`` may not send a text at all, :func:`app.workflows.model.validate`).
+- :func:`on_tag_added` (AA-960): a tag was put on a trip or a client. Keyed ``tag:<tag link id>`` (a system tag:
+  ``tag:sys:...``, per subject and code); on an archived client nothing starts (audited denied ``client_archived``,
+  card R of CRM-29b).
 - :func:`apply_manual`: a member applies a manual rule (a task list, R9) to trips. Keyed ``manual:<request id>:<trip>``.
 - Date and special-date triggers start in the hourly tick (:mod:`app.workflows.tick`).
 
@@ -121,9 +124,18 @@ async def start(
 
 
 async def _start_matching(
-    ctx: AnyContext, kind: str, value: str, trip_id: uuid.UUID, key: str, delay_s: float = 0, cooldown_h: int = 0
+    ctx: AnyContext,
+    kind: str,
+    value: str,
+    trip_id: uuid.UUID,
+    key: str,
+    delay_s: float = 0,
+    cooldown_h: int = 0,
+    *,
+    rules: list[Any] | None = None,
 ) -> list[uuid.UUID]:
-    rules = await ctx.conn.fetch(RULES_SQL, kind, value)
+    if rules is None:
+        rules = await ctx.conn.fetch(RULES_SQL, kind, value)
     if not rules:
         return []
     facts = await wf_facts.trip(ctx, trip_id)
@@ -164,8 +176,9 @@ async def on_stage_enter(
 
 
 async def on_trip_event(ctx: AnyContext, trip_id: uuid.UUID, name: str, event_id: uuid.UUID) -> int:
-    """A trip event was recorded. Message events come through :func:`on_message` (the AA-958 seam) instead."""
-    if name not in model.EVENTS or name.startswith("message."):
+    """A trip event was recorded. Message events come through :func:`on_message` (the AA-958 seam) and tag events
+    through :func:`on_tag_added` instead."""
+    if name not in model.EVENTS or name.startswith("message.") or name in model.TAG_EVENTS:
         return 0
     return await _safely(ctx, "event", "event", name, trip_id, f"event:{event_id}", 0)
 
@@ -179,6 +192,51 @@ async def on_message(ctx: AnyContext, event: Any) -> None:
         return  # a workflow's own text: never a trigger (no rule answers itself)
     key = f"event:{event.message_id}"
     await _safely(ctx, "message", "event", name, event.trip_id, key, 0, MESSAGE_COOLDOWN_HOURS)
+
+
+async def on_tag_added(
+    ctx: AnyContext,
+    applies_to: str,
+    code: str,
+    subject_id: uuid.UUID,
+    link_id: uuid.UUID,
+    *,
+    client_archived: bool = False,
+    key: str | None = None,
+) -> int:
+    """AA-960 (R3 / R29): a tag was put on a trip or a client (a member, a bulk apply or the system-tag refresh).
+    Every active ``trip_tag.added`` / ``client_tag.added`` rule whose ``tags_any`` names the tag starts one run, keyed
+    ``tag:<link id>`` (a member's tag removed and put back is a new link: the rule runs again; the same link never
+    twice). The system-tag refresh passes its own ``key`` instead (:func:`app.tags.system.start_key`: per trip and
+    code, so a system tag that comes and goes with a tour's state never starts the rule twice). A trip rule checks its
+    other conditions on the trip as it is now. On an archived client nothing starts: the start is
+    audited ``workflow_start`` denied ``client_archived`` (card R, "a workflow on an archived contact is
+    suppressed"). Returns how many runs started; a failure never fails the tagging (savepoint, logged)."""
+    event = "trip_tag.added" if applies_to == "trip" else "client_tag.added"
+    key = key or f"tag:{link_id}"
+    try:
+        async with ctx.conn.transaction():
+            rules = [r for r in await ctx.conn.fetch(RULES_SQL, "event", event)
+                     if code in (_conditions(r["conditions"]).get("tags_any") or ())]  # fmt: skip
+            if not rules:
+                return 0
+            if applies_to == "trip":
+                return len(await _start_matching(ctx, "event", event, subject_id, key, 0, rules=rules))
+            client = await wf_facts.client(ctx, subject_id)
+            if client is None or client["deleted"]:
+                return 0
+            if client_archived or client["archived"]:
+                for rule in rules:
+                    ctx.audit("workflow_start", "denied", "workflow_rule", str(rule["workflow_rule_id"]),
+                              reason="client_archived", object_ids=(str(subject_id),))  # fmt: skip
+                return 0
+            started = 0
+            for rule in rules:
+                started += await start(ctx, rule, trip_id=None, traveler_id=subject_id, key=key) is not None
+            return started
+    except (asyncpg.PostgresError, ValueError) as exc:
+        log.error("workflow_start_failed trigger=tag error_class=%s", type(exc).__name__)
+        return 0
 
 
 async def stop_trip_runs(ctx: AnyContext, trip_id: uuid.UUID, dry_run: bool, *, reason: str = "trip_cancelled") -> int:

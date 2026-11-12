@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import { Badge, K, ListButton } from "@/app/_kit";
 import { BulkDialog, GateDialog, type BulkTarget } from "@/components/pipeline/StageDialogs";
 import { toast, UndoToast, type ToastState } from "@/components/pipeline/UndoToast";
+import { BulkTagButton } from "@/components/tags/BulkTagButton";
 import { bffSend } from "@/lib/bffClient";
 import type { DateLocale } from "@/lib/dates";
 import { fmt, type Lang, type MessageKey, t } from "@/lib/i18n";
@@ -41,8 +42,20 @@ import {
   type Stage,
   type WaitingOn,
 } from "@/lib/pipeline";
+import { tagLabel, type Coverage } from "@/lib/tags";
 
-export function BoardView({ board, lang, locale }: { board: Board; lang: Lang; locale: DateLocale; dict: Record<MessageKey, string> }) {
+export function BoardView({ board, lang, locale, coverage = null, canTag = false }: {
+  board: Board;
+  lang: Lang;
+  locale: DateLocale;
+  dict: Record<MessageKey, string>;
+  /** AA-960 (R30): the automations each trip is missing (GET /workflows/coverage), for the card badge. */
+  coverage?: Coverage | null;
+  /** AA-960 (R3): owner / agent may tag a whole column (bulk, with a preview). */
+  canTag?: boolean;
+}) {
+  const ruleNames = new Map((coverage?.rules ?? []).map((r) => [r.workflow_rule_id, r.name]));
+  const missingOf = (tripId: string) => (coverage?.by_trip[tripId] ?? []).map((id) => ruleNames.get(id) ?? "").filter(Boolean);
   const router = useRouter();
   const [stages, setStages] = useState(board.stages);
   const [toastState, setToast] = useState<ToastState | null>(null);
@@ -191,6 +204,16 @@ export function BoardView({ board, lang, locale }: { board: Board; lang: Lang; l
                 <h2 style={{ margin: 0, fontSize: 13, fontWeight: 600, color: K.ink }}>{stageLabel(lang, column.stage)}</h2>
                 <span style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
                   <span style={{ fontSize: 12, color: K.muted }}>{column.count}</span>
+                  {canTag && column.cards.length > 0 && (
+                    <BulkTagButton
+                      subject="trip"
+                      lang={lang}
+                      label={t(lang, "tag.title")}
+                      testId={`bulk-tag-${column.stage}`}
+                      selection={{ filter: { stage: column.stage, ...(board.filter.owner === "me" ? { owner: "me" } : {}) } }}
+                      scope={stageLabel(lang, column.stage)}
+                    />
+                  )}
                   {column.cards.length > 0 && targets.length > 0 && (
                     <ColumnMenu
                       lang={lang}
@@ -202,7 +225,7 @@ export function BoardView({ board, lang, locale }: { board: Board; lang: Lang; l
                 </span>
               </header>
               {column.cards.map((card) => (
-                <TripCard key={card.trip_id} card={card} lang={lang} locale={locale} now={now} onDrag={() => (drag.current = { tripId: card.trip_id, from: column.stage })} />
+                <TripCard key={card.trip_id} card={card} lang={lang} locale={locale} now={now} missing={missingOf(card.trip_id)} onDrag={() => (drag.current = { tripId: card.trip_id, from: column.stage })} />
               ))}
               {column.truncated && (
                 <span style={{ fontSize: 12, color: K.muted }}>{fmt(t(lang, "pipeline.more"), { n: column.count - column.cards.length })}</span>
@@ -305,7 +328,7 @@ function Chip({ href, on, children, testId }: { href: string; on: boolean; child
   );
 }
 
-function TripCard({ card, lang, locale, now, onDrag }: { card: Card; lang: Lang; locale: DateLocale; now: number; onDrag: () => void }) {
+function TripCard({ card, lang, locale, now, missing = [], onDrag }: { card: Card; lang: Lang; locale: DateLocale; now: number; missing?: string[]; onDrag: () => void }) {
   const due = dueIn(card.next_due_at, now);
   const when = whenLabel(card, locale);
   const quiet = quietDays(card);
@@ -367,7 +390,22 @@ function TripCard({ card, lang, locale, now, onDrag }: { card: Card; lang: Lang;
         )}
         {card.submissions > 1 && <Badge tone="info" dot={false}>{fmt(t(lang, "pipeline.inquiries"), { n: card.submissions })}</Badge>}
         {!card.owner_member_id && <span style={{ color: K.muted }}>{t(lang, "pipeline.unassigned")}</span>}
+        {missing.length > 0 && (
+          <span data-testid="trip-card-missing-workflow" title={fmt(t(lang, "tag.coverage.badgeTitle"), { rules: missing.join(", ") })} style={{ display: "contents" }}>
+            <Badge tone="warning">{t(lang, "tag.coverage.badge")}</Badge>
+          </span>
+        )}
       </span>
+      {card.tags && card.tags.length > 0 && (
+        <span data-testid="trip-card-tags" style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+          {card.tags.slice(0, 4).map((x) => (
+            <Badge key={x.code} tone={x.tone} dot={false}>
+              {tagLabel(lang, x)}
+            </Badge>
+          ))}
+          {card.tags.length > 4 && <span style={{ fontSize: 11.5, color: K.muted }}>+{card.tags.length - 4}</span>}
+        </span>
+      )}
     </a>
   );
 }

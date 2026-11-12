@@ -30,6 +30,8 @@ import asyncpg
 from app.audit import MAX_OBJECT_IDS
 from app.errors import Conflict, Invalid, NotFound
 from app.lifecycle.window import trash_days
+from app.tags import model as tag_model
+from app.tags import service as tag_service
 from app.tenancy import TenantContext
 from app.travellers import age_bands
 from app.travellers.fields import (
@@ -61,6 +63,9 @@ SELECT tr.traveler_id, tr.display_name_enc, tr.owner_member_id, tr.lead_source, 
    AND ($3::bytea IS NULL OR tr.email_bidx = $3)
    AND ($4::bytea IS NULL OR tr.phone_bidx = $4)
    AND ($5::bytea[] IS NULL OR tr.name_token_bidx @> $5)
+   AND ($8::text IS NULL OR EXISTS (SELECT 1 FROM crm.tag_link tl JOIN crm.tag tg ON tg.tag_id = tl.tag_id
+                                     WHERE tl.traveler_id = tr.traveler_id AND tg.applies_to = 'client'
+                                       AND tg.code = $8))
  ORDER BY tr.created_at DESC, tr.traveler_id
  LIMIT $6 OFFSET $7
 """
@@ -177,9 +182,12 @@ async def directory(
     archived: bool = False,
     owner: str = "anyone",
     page: int = 1,
+    tag: str | None = None,
 ) -> dict[str, Any]:
     if not 1 <= page <= MAX_PAGE:
         raise Invalid("invalid_page", f"1 to {MAX_PAGE}")
+    if tag is not None and not tag_model.is_code(tag):
+        raise Invalid("invalid_tag", "a tag code", field="tag")
     email_idx = phone_idx = None
     tokens_idx: list[bytes] | None = None
     wanted: list[str] = []
@@ -199,7 +207,7 @@ async def directory(
         raise Invalid("invalid_query", "an exact e-mail, an international phone (+…) or a name") from None
     owner_id = ctx.member_id if owner == "me" else None
     rows = await ctx.conn.fetch(
-        LIST_SQL, archived, owner_id, email_idx, phone_idx, tokens_idx, PAGE_SIZE + 1, (page - 1) * PAGE_SIZE
+        LIST_SQL, archived, owner_id, email_idx, phone_idx, tokens_idx, PAGE_SIZE + 1, (page - 1) * PAGE_SIZE, tag
     )
     more = len(rows) > PAGE_SIZE
     items = []
@@ -223,6 +231,10 @@ async def directory(
                 "created_at": _iso(r["created_at"]),
             }
         )
+    # AA-960 (R3): each client's tags (codes, names, tones; system tags too).
+    tagged = await tag_service.of_many(ctx, "client", [uuid.UUID(i["traveler_id"]) for i in items])
+    for i in items:
+        i["tags"] = tagged.get(uuid.UUID(i["traveler_id"]), [])
     if items:
         ctx.audit(
             "list_view",
@@ -237,7 +249,7 @@ async def directory(
         "items": items,
         "page": page,
         "has_more": more,
-        "filter": {"q": query or None, "search": search, "archived": archived, "owner": owner},
+        "filter": {"q": query or None, "search": search, "archived": archived, "owner": owner, "tag": tag},
     }
 
 

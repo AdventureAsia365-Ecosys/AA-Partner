@@ -16,6 +16,7 @@ import {
   canApply,
   canEdit,
   isGreeting,
+  isMarketingOnly,
   outcomeText,
   stepText,
   stopText,
@@ -217,6 +218,12 @@ describe("wording", () => {
     const passport = payloadOf({ name: "Passport", trigger: { kind: "special_date", value: "passport_expiry", offset_days: -200 }, conditions: {}, steps: [mail] });
     expect((passport.steps as Record<string, unknown>[])[0].purpose).toBe("transactional");
     expect(isGreeting({ kind: "event", value: "birthday" })).toBe(false);
+    // AA-960 (R36): a client tag rule has no trip to serve, so its messages are marketing; a trip tag rule is not.
+    const winBack = payloadOf({ name: "Win back", trigger: { kind: "event", value: "client_tag.added", offset_days: 0 }, conditions: { tags_any: ["sys_ready_to_travel"] }, steps: [mail, text] });
+    expect((winBack.steps as Record<string, unknown>[]).map((s) => s.purpose)).toEqual(["marketing", "marketing"]);
+    expect(isMarketingOnly({ kind: "event", value: "client_tag.added" })).toBe(true);
+    expect(isMarketingOnly({ kind: "event", value: "trip_tag.added" })).toBe(false);
+    expect(isMarketingOnly({ kind: "special_date", value: "birthday" })).toBe(true);
     expect(actionsFor({ kind: "event", value: "message.sent" })).not.toContain("send_text");
     expect(actionsFor({ kind: "event", value: "message.received" })).toContain("send_text");
     expect(actionsFor({ kind: "manual", value: null })).toEqual(["create_task", "set_field", "wait"]);

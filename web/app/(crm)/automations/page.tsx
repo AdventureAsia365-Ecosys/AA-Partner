@@ -3,6 +3,7 @@
 // SMS / WhatsApp templates and the members the editor offers. Every role reads; the API refuses edits by others.
 import { ErrorState } from "@/app/_kit";
 import { PageTitle } from "@/components/PageTitle";
+import { CoveragePanel } from "@/components/tags/CoveragePanel";
 import { AutomationsBoard } from "@/components/workflows/AutomationsBoard";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
@@ -39,6 +40,8 @@ export default async function AutomationsPage() {
         members={members?.ok ? members.data.members.filter((m) => m.status === "active") : []}
         lang={ctx.lang}
       />
+      {/* AA-960 (R30): the trips an active stage / tag automation should cover but never ran on. */}
+      <CoveragePanel role={ctx.role} lang={ctx.lang} />
     </div>
   );
 }

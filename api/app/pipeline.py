@@ -39,6 +39,7 @@ from app.errors import Conflict, Invalid, NotFound
 from app.intake import stage1
 from app.permissions import Action, require
 from app.stages import CANCELLABLE, QUIET_DAYS, allowed_moves, touch
+from app.tags import service as tag_service
 from app.tenancy import TenantContext
 from app.travel_ops import aa_cancel, passport
 from app.travellers import age_bands
@@ -270,6 +271,11 @@ async def board(ctx: TenantContext, vault: Vault, flt: BoardFilter) -> dict[str,
     for s in BOARD_STAGES:
         for c in cards.get(s, []):
             c["aa_cancelled"] = uuid.UUID(c["trip_id"]) in hit
+    # AA-960 (R3 / R29): each card's tags (agency and system).
+    tagged = await tag_service.of_many(ctx, "trip", [uuid.UUID(c["trip_id"]) for cs in cards.values() for c in cs])
+    for cs in cards.values():
+        for c in cs:
+            c["tags"] = tagged.get(uuid.UUID(c["trip_id"]), [])
     if flt.issue == "passport":
         cards = {s: [c for c in cs if c.get("passport_issues")] for s, cs in cards.items()}
         stage_counts = {s: len(cs) for s, cs in cards.items()}

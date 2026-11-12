@@ -152,8 +152,8 @@ def test_routes_reach_their_helpers(client: TestClient, pools: LocalPools, monke
         "trash",
         "update_trip",
     ]
-    assert calls[0][1] == {"archived": False, "owner": "me", "page": 2}
-    assert calls[1][1] == {"q": "anna", "archived": False, "owner": "me", "page": 2}
+    assert calls[0][1] == {"archived": False, "owner": "me", "page": 2, "tag": None}
+    assert calls[1][1] == {"q": "anna", "archived": False, "owner": "me", "page": 2, "tag": None}
     assert calls[4][1] == {"dob": "1990-04-03"}  # only the fields sent (exclude_unset)
     assert calls[13][1]["content"] == b"%PDF-1.7 synthetic"
 
