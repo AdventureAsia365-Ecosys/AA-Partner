@@ -24,6 +24,9 @@ import {
   type RosterView,
 } from "@/lib/travelOps";
 
+/** AA-1070: every roster column after the traveller is text (the trip title was a no-wrap number cell: 458 px at 390). */
+const ROSTER_TEXT_COLUMNS = [1, 2, 3, 4] as const;
+
 export function DepartureRoster({ departureRef, lang, locale }: { departureRef: string; lang: Lang; locale: DateLocale }) {
   const tr = (key: string) => t(lang, key as MessageKey);
   const hydrated = useHydrated();
@@ -88,6 +91,7 @@ export function DepartureRoster({ departureRef, lang, locale }: { departureRef: 
         <ReportTable
           tableId="roster-travellers"
           head={[tr("travel.col.traveller"), tr("travel.col.trip"), tr("travel.col.details"), tr("travel.col.passport"), tr("travel.col.room")]}
+          textColumns={ROSTER_TEXT_COLUMNS}
           rows={view.travellers.map((p) => ({
             key: `${p.trip_id}-${p.traveler_id}`,
             href: `/pipeline/${p.trip_id}`,
