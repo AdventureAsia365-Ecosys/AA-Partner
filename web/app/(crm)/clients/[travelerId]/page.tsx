@@ -5,6 +5,7 @@
 import { notFound } from "next/navigation";
 import { ErrorState } from "@/app/_kit";
 import { ClientProfileView } from "@/components/clients/ClientProfileView";
+import { TagBar } from "@/components/tags/TagBar";
 import type { ClientProfile } from "@/lib/clients";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
@@ -31,12 +32,16 @@ export default async function ClientPage({ params }: { params: Promise<{ travele
     return <ErrorState message={t(ctx.lang, client.status === 404 ? "clients.notFound" : "clients.error")} />;
   }
   return (
-    <ClientProfileView
-      view={client.data}
-      members={members.ok ? members.data.members : []}
-      role={ctx.role}
-      lang={ctx.lang}
-      locale={ctx.locale}
-    />
+    <div style={{ display: "grid", gap: 16 }}>
+      <ClientProfileView
+        view={client.data}
+        members={members.ok ? members.data.members : []}
+        role={ctx.role}
+        lang={ctx.lang}
+        locale={ctx.locale}
+      />
+      {/* AA-960: the client's tags (agency tags, and the app's "ready to travel again" with its reasons). */}
+      <TagBar subject="client" id={travelerId} lang={ctx.lang} />
+    </div>
   );
 }

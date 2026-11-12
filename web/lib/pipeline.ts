@@ -6,6 +6,7 @@
 // AA-943 (CRM-15): every crm-012 edge, the gates and their override reasons, the cancel reasons, the Closed group,
 // the quiet flag, Stage 2 completeness and the answers of the stage-engine routes (moves, Undo, bulk, cancel).
 
+import type { TagChip } from "./tags";
 import { formatDate, type DateLocale } from "./dates";
 import type { CancelCharge } from "@/lib/retailPayments";
 import { fmt, plural, type Lang, type MessageKey, t } from "./i18n";
@@ -114,6 +115,8 @@ export interface Card {
   cancellation_pending?: boolean;
   /** AA-1070: travellers whose passport ends too soon for the trip (booked, pre-departure, travelling cards). */
   passport_issues?: number;
+  /** AA-960: the trip's tags (agency and system). */
+  tags?: TagChip[];
 }
 
 export interface ClosedCard extends Omit<Card, "stage"> {

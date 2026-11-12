@@ -6,7 +6,8 @@
 // client-side form.
 import { cookies } from "next/headers";
 import Link from "next/link";
-import { EmptyState, ErrorState, K, Button } from "@/app/_kit";
+import { Badge, EmptyState, ErrorState, K, Button } from "@/app/_kit";
+import { BulkTagButton } from "@/components/tags/BulkTagButton";
 import { NewClientForm } from "@/components/clients/NewClientForm";
 import { PageTitle } from "@/components/PageTitle";
 import { directoryHref, leadSourceLabel, parseDirectory, SEARCH_MAX, tripsCount, type Directory } from "@/lib/clients";
@@ -16,6 +17,7 @@ import { crmContext } from "@/lib/crmContext";
 import { formatDate } from "@/lib/dates";
 import { fmt, t } from "@/lib/i18n";
 import { serverContext } from "@/lib/serverContext";
+import { canBulkTag, tagLabel, type TagVocabulary } from "@/lib/tags";
 
 export const dynamic = "force-dynamic";
 
@@ -40,11 +42,17 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
   if (f.archived) query.set("archived", "true");
   if (f.owner === "me") query.set("owner", "me");
   if (f.page > 1) query.set("page", String(f.page));
-  const res = !session
-    ? null
-    : search
-      ? await crmCall<Directory>(ctx.cfg, session, "POST", "travelers/search", { body: { q, archived: f.archived, owner: f.owner, page: f.page } })
-      : await crmCall<Directory>(ctx.cfg, session, "GET", "travelers", { query });
+  if (f.tag) query.set("tag", f.tag);
+  const [res, vocab] = !session
+    ? [null, null]
+    : await Promise.all([
+        search
+          ? crmCall<Directory>(ctx.cfg, session, "POST", "travelers/search", { body: { q, archived: f.archived, owner: f.owner, page: f.page, tag: f.tag } })
+          : crmCall<Directory>(ctx.cfg, session, "GET", "travelers", { query }),
+        // AA-960: the client tags for the filter and bulk tagging.
+        crmCall<TagVocabulary>(ctx.cfg, session, "GET", "tags", { query: new URLSearchParams({ applies_to: "client" }) }),
+      ]);
+  const clientTags = vocab?.ok ? vocab.data.tags.filter((x) => !x.archived) : [];
   const { lang, locale } = ctx;
   const KIND = { email: "clients.byEmail", phone: "clients.byPhone", name: "clients.byName" } as const;
   const matched = res?.ok ? res.data.filter.search : "none";
@@ -73,22 +81,43 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
         )}
       </form>
       <nav style={{ display: "flex", flexWrap: "wrap", gap: 8 }} aria-label={t(lang, "clients.title")}>
-        <a href={directoryHref({ search, owner: f.owner })} style={chip(!f.archived)}>
+        <a href={directoryHref({ search, owner: f.owner, tag: f.tag })} style={chip(!f.archived)}>
           {t(lang, "clients.active")}
         </a>
-        <a href={directoryHref({ search, owner: f.owner, archived: true })} style={chip(f.archived)}>
+        <a href={directoryHref({ search, owner: f.owner, archived: true, tag: f.tag })} style={chip(f.archived)}>
           {t(lang, "clients.archived")}
         </a>
-        <a href={directoryHref({ search, archived: f.archived })} style={chip(f.owner === "anyone")}>
+        <a href={directoryHref({ search, archived: f.archived, tag: f.tag })} style={chip(f.owner === "anyone")}>
           {t(lang, "clients.everyone")}
         </a>
-        <a href={directoryHref({ search, archived: f.archived, owner: "me" })} style={chip(f.owner === "me")}>
+        <a href={directoryHref({ search, archived: f.archived, owner: "me", tag: f.tag })} style={chip(f.owner === "me")}>
           {t(lang, "clients.mine")}
         </a>
         <Link href="/clients/duplicates" style={chip(false)} data-testid="clients-duplicates-link">
           {t(lang, "onb.dup.title")}
         </Link>
       </nav>
+      {clientTags.length > 0 && (
+        <nav data-testid="clients-tag-filter" style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }} aria-label={t(lang, "tag.filter")}>
+          <span style={{ fontSize: 12.5, color: K.muted }}>{t(lang, "tag.filter")}:</span>
+          <a href={directoryHref({ search, archived: f.archived, owner: f.owner })} style={chip(!f.tag)}>
+            {t(lang, "tag.filterAll")}
+          </a>
+          {clientTags.map((x) => (
+            <a key={x.tag_id} href={directoryHref({ search, archived: f.archived, owner: f.owner, tag: x.code })} style={chip(f.tag === x.code)} data-code={x.code}>
+              {tagLabel(lang, x)}
+            </a>
+          ))}
+          {canBulkTag(ctx.role) && (
+            <BulkTagButton
+              subject="client"
+              lang={lang}
+              selection={{ filter: { archived: f.archived, ...(f.owner === "me" ? { owner: "me" } : {}), ...(f.tag ? { tag: f.tag } : {}) } }}
+              scope={[t(lang, f.archived ? "clients.archived" : "clients.active"), f.owner === "me" ? t(lang, "clients.mine") : null, f.tag ? tagLabel(lang, clientTags.find((x) => x.code === f.tag) ?? { code: f.tag, name: f.tag, kind: "agency" }) : null].filter(Boolean).join(" · ")}
+            />
+          )}
+        </nav>
+      )}
       <NewClientForm lang={lang} />
       {!res || !res.ok ? (
         <ErrorState message={t(lang, res?.status === 422 ? "clients.noResults" : "clients.error")} />
@@ -116,6 +145,15 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
                   {c.lead_source && <span>{leadSourceLabel(lang, c.lead_source)}</span>}
                   <span>{formatDate(c.created_at, locale, { year: true })}</span>
                 </span>
+                {c.tags && c.tags.length > 0 && (
+                  <span data-testid="client-row-tags" style={{ display: "flex", flexWrap: "wrap", gap: 4, flexBasis: "100%" }}>
+                    {c.tags.map((x) => (
+                      <Badge key={x.code} tone={x.tone} dot={false}>
+                        {tagLabel(lang, x)}
+                      </Badge>
+                    ))}
+                  </span>
+                )}
               </li>
             ))}
           </ul>

@@ -103,6 +103,13 @@ export default async function SettingsPage() {
           </Link>
         </p>
       </Panel>
+      {/* AA-960: the agency's trip and client tags (every role reads; the owner renames, archives, deletes). */}
+      <Panel title={t(lang, "tag.settings.title")} testId="settings-tags">
+        <p style={{ margin: "0 0 8px", fontSize: 13, color: K.muted }}>{t(lang, "tag.settings.help")}</p>
+        <Link href="/settings/tags" style={{ fontSize: 13.5 }} data-testid="settings-tags-link">
+          {t(lang, "tag.settings.link")}
+        </Link>
+      </Panel>
       {/* AA-1070: the passport rule and the agency's visa guidance (every role reads; the owner changes them). */}
       <Panel title={t(lang, "travel.settings.title")} testId="settings-travel">
         <p style={{ margin: "0 0 8px", fontSize: 13, color: K.muted }}>{t(lang, "travel.settings.help")}</p>

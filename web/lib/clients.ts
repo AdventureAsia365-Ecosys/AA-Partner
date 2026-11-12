@@ -5,6 +5,7 @@
 // field is masked ("••••") until a member presses Reveal and picks a reason (one reveal event per field). No partial
 // digits are ever formatted here. Edge-safe, unit-tested.
 
+import type { TagChip } from "./tags";
 import { type Lang, type MessageKey, plural, t } from "./i18n";
 import type { Stage, WaitingOn } from "./pipeline";
 
@@ -71,13 +72,15 @@ export interface ClientRow {
   has_phone: boolean;
   trips: number;
   created_at: string;
+  /** AA-960: the client's tags (agency and system). */
+  tags?: TagChip[];
 }
 
 export interface Directory {
   items: ClientRow[];
   page: number;
   has_more: boolean;
-  filter: { q: string | null; search: "none" | "email" | "phone" | "name"; archived: boolean; owner: "anyone" | "me" };
+  filter: { q: string | null; search: "none" | "email" | "phone" | "name"; archived: boolean; owner: "anyone" | "me"; tag?: string | null };
 }
 
 export interface ClientProfile {
@@ -166,23 +169,26 @@ export function leadSourceLabel(lang: Lang, code: string | null | undefined): st
 /** Directory URL for a filter (archived, mine, page) and whether the saved search applies: links, so the list stays a
  * server render. The search term itself never goes into a URL (Vercel / CDN request logs, browser history): the form
  * POSTs it to /clients/search, which keeps it in a short-lived sealed cookie and links here with `s=1`. */
-export function directoryHref(f: { search?: boolean; archived?: boolean; owner?: "anyone" | "me"; page?: number }): string {
+export function directoryHref(f: { search?: boolean; archived?: boolean; owner?: "anyone" | "me"; page?: number; tag?: string | null }): string {
   const q = new URLSearchParams();
   if (f.search) q.set("s", "1");
   if (f.archived) q.set("archived", "true");
   if (f.owner === "me") q.set("owner", "me");
+  if (f.tag) q.set("tag", f.tag); // AA-960: a client tag code
   if (f.page && f.page > 1) q.set("page", String(f.page));
   const s = q.toString();
   return s ? `/clients?${s}` : "/clients";
 }
 
-export function parseDirectory(params: Record<string, string | string[] | undefined>): { search: boolean; archived: boolean; owner: "anyone" | "me"; page: number } {
+export function parseDirectory(params: Record<string, string | string[] | undefined>): { search: boolean; archived: boolean; owner: "anyone" | "me"; page: number; tag: string | null } {
   const page = Number(typeof params.page === "string" ? params.page : "1");
   return {
     search: params.s === "1",
     archived: params.archived === "true",
     owner: params.owner === "me" ? "me" : "anyone",
     page: Number.isInteger(page) && page >= 1 && page <= 200 ? page : 1,
+    // AA-960: a tag code (the API's pattern), anything else is dropped.
+    tag: typeof params.tag === "string" && /^[a-z][a-z0-9_]{0,39}$/.test(params.tag) ? params.tag : null,
   };
 }
 

@@ -65,8 +65,12 @@ describe("directory helpers", () => {
     expect(directoryHref({})).toBe("/clients");
     // The search term is never in a link: only the "search applies" flag.
     expect(directoryHref({ search: true, archived: true, owner: "me", page: 3 })).toBe("/clients?s=1&archived=true&owner=me&page=3");
-    expect(parseDirectory({ s: "1", q: "anna@example.test", archived: "true", owner: "me", page: "2" })).toEqual({ search: true, archived: true, owner: "me", page: 2 });
-    expect(parseDirectory({ page: "0", owner: "x" })).toEqual({ search: false, archived: false, owner: "anyone", page: 1 });
+    expect(parseDirectory({ s: "1", q: "anna@example.test", archived: "true", owner: "me", page: "2" })).toEqual({ search: true, archived: true, owner: "me", page: 2, tag: null });
+    expect(parseDirectory({ page: "0", owner: "x" })).toEqual({ search: false, archived: false, owner: "anyone", page: 1, tag: null });
+    // AA-960: a client tag code is kept, anything else dropped.
+    expect(parseDirectory({ tag: "repeat_client" }).tag).toBe("repeat_client");
+    expect(parseDirectory({ tag: "Not a code" }).tag).toBeNull();
+    expect(directoryHref({ owner: "me", tag: "vip" })).toBe("/clients?owner=me&tag=vip");
     expect(parseDirectory({ page: "abc" }).page).toBe(1);
   });
 

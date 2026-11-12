@@ -391,7 +391,21 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "POST", pattern: new RegExp(`^workflows/runs/${UUID}/stop$`), tenant: true, card: "AA-959" },
   { method: "GET", pattern: new RegExp(`^workflows/${UUID}(/preview)?$`), tenant: true, card: "AA-959" },
   { method: "PATCH", pattern: new RegExp(`^workflows/${UUID}$`), tenant: true, card: "AA-959" },
-  { method: "POST", pattern: new RegExp(`^workflows/${UUID}/(status|apply)$`), tenant: true, card: "AA-959" },  // AA-1071 (crm-056): sales partners (every member lists them for the trip's picker; the owner manages them, their
+  { method: "POST", pattern: new RegExp(`^workflows/${UUID}/(status|apply)$`), tenant: true, card: "AA-959" },
+  // AA-960 (CRM-29b): tags (vocabulary: every role reads, any member adds a tag from the picker, the owner renames /
+  // archives / deletes), the tags of a trip or a client, bulk add / remove with a preview (owner / agent), the
+  // automations' coverage (R30) and Marketing > Ready to travel again (owner / agent). The API checks each role.
+  { method: "GET", pattern: /^tags$/, tenant: true, card: "AA-960" },
+  { method: "POST", pattern: /^tags$/, tenant: true, card: "AA-960" },
+  { method: "PATCH", pattern: new RegExp(`^tags/${UUID}$`), tenant: true, card: "AA-960" },
+  { method: "DELETE", pattern: new RegExp(`^tags/${UUID}$`), tenant: true, card: "AA-960" },
+  { method: "POST", pattern: new RegExp(`^tags/${UUID}/bulk$`), tenant: true, card: "AA-960" },
+  { method: "GET", pattern: new RegExp(`^(trips|travelers)/${UUID}/tags$`), tenant: true, card: "AA-960" },
+  { method: "PUT", pattern: new RegExp(`^(trips|travelers)/${UUID}/tags/${UUID}$`), tenant: true, card: "AA-960" },
+  { method: "DELETE", pattern: new RegExp(`^(trips|travelers)/${UUID}/tags/${UUID}$`), tenant: true, card: "AA-960" },
+  { method: "GET", pattern: /^workflows\/coverage$/, tenant: true, card: "AA-960" },
+  { method: "GET", pattern: /^marketing\/ready-to-travel$/, tenant: true, card: "AA-960" },
+  // AA-1071 (crm-056): sales partners (every member lists them for the trip's picker; the owner manages them, their
   // links and their commissions; owner / agent read the commissions and the statement CSV), the trip's partner.
   { method: "GET", pattern: /^sales-partners$/, tenant: true, card: "AA-1071" },
   { method: "POST", pattern: /^sales-partners$/, tenant: true, card: "AA-1071" },

@@ -4,14 +4,15 @@
 // conditions (stages, booking details missing, children, AA services) and the steps in order (create a task, send an
 // e-mail from the agency's mailbox, send an approved SMS / WhatsApp template, set a field, wait). Owner only (the API
 // checks it too). The API validates everything again and answers with the field that is wrong (422).
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Checkbox, Field, Input, K, Modal, Select, useHydrated } from "@/app/_kit";
 import { bffSend } from "@/lib/bffClient";
 import { t, type Lang, type MessageKey } from "@/lib/i18n";
 import { memberLabel, type Member } from "@/lib/pipeline";
 import type { ChannelTemplate } from "@/lib/messaging";
+import { tagLabel, type Tag, type TagVocabulary } from "@/lib/tags";
 import type { MessageTemplate } from "@/lib/textProposal";
-import { STAGES, actionsFor, isGreeting, workflowErrorKey, type Rule, type Step, type Trigger, type WorkflowOptions } from "@/lib/workflows";
+import { STAGES, actionsFor, isClientRule, isGreeting, isTagRule, workflowErrorKey, type Rule, type Step, type Trigger, type WorkflowOptions } from "@/lib/workflows";
 
 export interface EditorDraft {
   name: string;
@@ -58,7 +59,9 @@ function num(value: string, fallback = 0): number {
 export function payloadOf(draft: EditorDraft): Record<string, unknown> {
   const trigger: Record<string, unknown> = { kind: draft.trigger.kind, value: draft.trigger.kind === "manual" ? null : draft.trigger.value };
   if (draft.trigger.kind === "date_anchor" || draft.trigger.kind === "special_date") trigger.offset_days = draft.trigger.offset_days;
-  const conditions = draft.trigger.kind === "special_date" ? {} : Object.fromEntries(Object.entries(draft.conditions).filter(([, v]) => v !== undefined && !(Array.isArray(v) && v.length === 0)));
+  const kept = Object.fromEntries(Object.entries(draft.conditions).filter(([, v]) => v !== undefined && !(Array.isArray(v) && v.length === 0)));
+  // A special date has no condition; a client tag rule only its tags (AA-960).
+  const conditions = draft.trigger.kind === "special_date" ? {} : isClientRule(draft.trigger) ? ("tags_any" in kept ? { tags_any: kept.tags_any } : {}) : kept;
   const greeting = isGreeting(draft.trigger);
   const steps = greeting ? draft.steps.map((s) => (s.action === "send_email" || s.action === "send_text" ? { ...s, purpose: "marketing" } : s)) : draft.steps;
   return { name: draft.name.trim(), trigger, conditions, steps };
@@ -206,7 +209,22 @@ export function RuleEditor({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const kind = draft.trigger.kind;
-  const client = kind === "special_date";
+  const client = isClientRule(draft.trigger);
+  const tagRule = isTagRule(draft.trigger);
+  // AA-960: the agency's tags of the rule's subject (trip or client), for the tag trigger and the tags condition.
+  const [allTags, setAllTags] = useState<Tag[]>([]);
+  useEffect(() => {
+    let stopped = false;
+    void (async () => {
+      const res = await bffSend<TagVocabulary>("GET", "tags");
+      if (!stopped && res.ok) setAllTags(res.data.tags.filter((x) => !x.archived));
+    })();
+    return () => {
+      stopped = true;
+    };
+  }, []);
+  const subjectTags = allTags.filter((x) => x.applies_to === (client ? "client" : "trip"));
+  const tagsAny = (draft.conditions.tags_any as string[] | undefined) ?? [];
   const greeting = isGreeting(draft.trigger);
   const actions = actionsFor(draft.trigger);
   const values = TRIGGER_VALUES(options, kind);
@@ -242,7 +260,7 @@ export function RuleEditor({
               onChange={(e) => {
                 const next = e.target.value as Trigger["kind"];
                 const first = TRIGGER_VALUES(options, next)[0] ?? null;
-                setDraft({ ...draft, trigger: { kind: next, value: next === "manual" ? null : first, offset_days: 0 }, conditions: next === "special_date" ? {} : draft.conditions });
+                setDraft({ ...draft, trigger: { kind: next, value: next === "manual" ? null : first, offset_days: 0 }, conditions: next === "special_date" || next === "event" ? {} : draft.conditions });
               }}
               options={options.trigger_kinds.map((k) => ({ value: k, label: tr(`wf.trigger.kind.${k}`) }))}
             />
@@ -251,7 +269,11 @@ export function RuleEditor({
             <Field label={tr("wf.trigger.value")}>
               <Select
                 value={String(draft.trigger.value ?? "")}
-                onChange={(e) => setDraft({ ...draft, trigger: { ...draft.trigger, value: e.target.value } })}
+                onChange={(e) => {
+                  const trigger = { ...draft.trigger, value: e.target.value };
+                  // A change of subject (trip <-> client tag) drops the conditions of the other subject.
+                  setDraft({ ...draft, trigger, conditions: isClientRule(trigger) !== isClientRule(draft.trigger) ? {} : draft.conditions });
+                }}
                 options={values.map((v) => ({ value: v, label: kind === "stage_enter" ? tr(`stage.${v}`) : kind === "event" ? tr(`wf.event.${v}`) : tr(`wf.anchor.${v}`) }))}
               />
             </Field>
@@ -262,6 +284,21 @@ export function RuleEditor({
             </Field>
           )}
         </div>
+        {(tagRule || (!client && subjectTags.length > 0)) && (
+          <Field label={tr("wf.cond.tags_any")} as="div" required={tagRule}>
+            <div data-testid="wf-tags" style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+              {subjectTags.length === 0 && <span style={{ fontSize: 12.5, color: K.muted }}>{tr("tag.settings.empty")}</span>}
+              {subjectTags.map((x) => (
+                <Checkbox
+                  key={x.tag_id}
+                  label={tagLabel(lang, x)}
+                  checked={tagsAny.includes(x.code)}
+                  onChange={(e) => setCond("tags_any", e.target.checked ? [...tagsAny, x.code] : tagsAny.filter((c) => c !== x.code))}
+                />
+              ))}
+            </div>
+          </Field>
+        )}
         {!client && (
           <Field label={tr("wf.conditions")} as="div">
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
