@@ -22,6 +22,7 @@ from typing import Any
 
 import asyncpg
 import pytest
+import pytest_asyncio
 
 from app.errors import Conflict, Invalid, NotFound
 from app.proposals import builder, inclusions, text_proposal
@@ -50,7 +51,7 @@ async def _tour(pool: asyncpg.Pool, body: dict[str, Any] = BODY) -> None:
         )
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _drop_tour(app_pool: asyncpg.Pool) -> Any:
     # crm.aa_catalog_tour is shared by every test of the run: a served row left behind is one more tour the catalog
     # sync re-checks in a later test (test_aa_lines_api counts the CIS fetches; S278 shard 1 red, 5 == 2 + 2).
