@@ -56,7 +56,7 @@ from app.esign import terms as esign_terms
 from app.intake import completeness, stage2
 from app.margin import sees_margin
 from app.payments import schedule_plan
-from app.proposals import discount, prep_packs, pricing, retail, rules
+from app.proposals import discount, inclusions, prep_packs, pricing, retail, rules
 from app.proposals.service import (
     ACCEPTED_EXISTS_SQL,
     DRAFTABLE_STAGES,
@@ -629,6 +629,8 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
         "stage2": await _stage2_basis(ctx, vault, row),
         # AA-951 (CRM-22, R38): the day 0 packs, the suggestions from the AA items, the reminders.
         "before_you_go": await prep_packs.view(ctx, proposal_id, row["trip_id"]),
+        # AA-1070 crm-35: the version's "Included" / "Not included" lines, the AA tours' fixed lists, the library.
+        "inclusions": await inclusions.builder_view(ctx, proposal_id, row["status"], s, defaults),
     }
     if row["status"] == "draft" and out["before_you_go"]["packs_not_chosen"]:
         out["checks"]["warnings"] = sorted({*out["checks"]["warnings"], "prep_packs_not_chosen"})
@@ -862,12 +864,22 @@ async def _skeleton(
 
 
 async def _copy(
-    ctx: TenantContext, vault: Vault, trip: Any, proposal_id: uuid.UUID, version: int, source_id: uuid.UUID
+    ctx: TenantContext,
+    vault: Vault,
+    trip: Any,
+    proposal_id: uuid.UUID,
+    version: int,
+    source_id: uuid.UUID,
+    *,
+    source_trip_id: uuid.UUID | None = None,
 ) -> None:
-    """A working copy of an earlier version of the same trip, with its lineage and the pick counter it saw."""
+    """A working copy of an earlier version of the same trip, with its lineage and the pick counter it saw.
+    ``source_trip_id`` (AA-1070 crm-13, :func:`rebook_copy`): the source is a version of that other trip; the copy
+    has no lineage (the client's picks on the old trip are not carried)."""
     src = await ctx.conn.fetchrow(PROPOSAL_SQL, source_id)
-    if src is None or src["trip_id"] != trip["trip_id"]:
+    if src is None or src["trip_id"] != (source_trip_id or trip["trip_id"]):
         raise NotFound("proposal_not_found")
+    lineage = source_trip_id is None
     if src["kind"] != KIND:
         raise Conflict("proposal_not_builder", "only a builder version is copied")
     body = await vault.decrypt("proposal", "body_enc", source_id, src["body_enc"])
@@ -889,8 +901,8 @@ async def _copy(
         json.dumps(_jsonb(src["room_config"])) if src["room_config"] is not None else None,
         src["deposit_pct"],
         src["starts_on"],
-        source_id,
-        src["selection_seq"],
+        source_id if lineage else None,
+        src["selection_seq"] if lineage else None,
     )
     s = await _structure(ctx, source_id)
     day_map: dict[str, uuid.UUID] = {}
@@ -942,6 +954,29 @@ async def _copy(
         await ctx.conn.execute(INSERT_RULE_SQL, uuid.uuid4(), proposal_id, trip["trip_id"], r["kind"],
                                option_map[str(r["option_id"])], option_map[str(r["target_option_id"])])  # fmt: skip
     await prep_packs.copy(ctx, source_id, proposal_id, trip["trip_id"])  # AA-951: the day 0 packs it was sent with
+    await inclusions.copy(ctx, source_id, proposal_id, trip["trip_id"])  # AA-1070 crm-35: its own included lines
+
+
+async def rebook_copy(
+    ctx: TenantContext, vault: Vault, trip_id: uuid.UUID, source_id: uuid.UUID, source_trip_id: uuid.UUID
+) -> uuid.UUID:
+    """AA-1070 (crm-13, :func:`app.travel_ops.aa_cancel.requote`): version 1 of the new trip a re-quote of a booked
+    trip opens, copied from ``source_id`` (a builder version of ``source_trip_id``). Returns the new draft's id."""
+    trip = await ctx.conn.fetchrow(TRIP_SQL, trip_id)
+    if trip is None:
+        raise NotFound("trip_not_found")
+    proposal_id = uuid.uuid4()
+    await _copy(ctx, vault, trip, proposal_id, 1, source_id, source_trip_id=source_trip_id)
+    await _bump(ctx, await ctx.conn.fetchrow(LOCK_SQL, proposal_id))
+    await stages.touch(ctx, trip_id)
+    ctx.audit("proposal_draft", "allowed", "proposal", str(proposal_id), reason="builder_rebook")
+    return proposal_id
+
+
+async def touch_draft(ctx: TenantContext, proposal_id: uuid.UUID) -> int:
+    """After a write made outside the builder's own actions (AA-1070 crm-13 re-quote): the next edit_seq and the
+    draft's amounts (an open editor reloads instead of saving over it)."""
+    return await _bump(ctx, await _lock(ctx, proposal_id, None))
 
 
 # ── Settings ─────────────────────────────────────────────────────────────────────────────────────
@@ -1063,6 +1098,30 @@ async def set_before_you_go(
     row = await _lock(ctx, proposal_id, seq)
     await prep_packs.replace(ctx, proposal_id, row["trip_id"], group_keys)
     return await _done(ctx, vault, proposal_id, "prep_packs")
+
+
+async def inclusions_view(ctx: TenantContext, proposal_id: uuid.UUID) -> dict[str, Any]:
+    """AA-1070 crm-35: ``GET /proposals/{id}/inclusions``: the builder panel of any status (the AA tours of the
+    default options)."""
+    row = await ctx.conn.fetchrow(PROPOSAL_SQL, proposal_id)
+    if row is None:
+        raise NotFound("proposal_not_found")
+    if row["kind"] != KIND:
+        raise Conflict("proposal_not_builder", "a text version has no inclusion lists")
+    s = await _structure(ctx, proposal_id)
+    out = await inclusions.builder_view(ctx, proposal_id, row["status"], s, _defaults(s))
+    ctx.audit("view", "allowed", "proposal", str(proposal_id), fields=("inclusions",))
+    return {"proposal_id": str(proposal_id), "status": row["status"], **out}
+
+
+async def set_inclusions(
+    ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, seq: int, entries: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """AA-1070 crm-35: the draft's "Included" / "Not included" lines (every role; the version counter like every
+    builder write)."""
+    row = await _lock(ctx, proposal_id, seq)
+    await inclusions.replace(ctx, proposal_id, row["trip_id"], entries)
+    return await _done(ctx, vault, proposal_id, "inclusions")
 
 
 async def _done(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, reason: str) -> dict[str, Any]:
@@ -1672,9 +1731,17 @@ async def delete_rule(
 # ── Publish vN ───────────────────────────────────────────────────────────────────────────────────
 
 
-def price_hash(row: Any, body: str, terms_sha256: bytes | None, s: dict[str, Any], sums: dict[str, Any]) -> bytes:
+def price_hash(
+    row: Any,
+    body: str,
+    terms_sha256: bytes | None,
+    s: dict[str, Any],
+    sums: dict[str, Any],
+    inclusion_rows: list[dict[str, Any]] | None = None,
+) -> bytes:
     """SHA-256 of the canonical record the client will see (no net, no margin): the version, its settings, every day,
-    block and option with its sell amount, the rules, the computed amounts and the terms."""
+    block and option with its sell amount, the rules, the computed amounts, the terms and (AA-1070 crm-35) the
+    "Included" / "Not included" lines."""
     days = {d["proposal_day_id"]: d for d in s["days"]}
     record = {
         "proposal_id": str(row["proposal_id"]),
@@ -1737,6 +1804,9 @@ def price_hash(row: Any, body: str, terms_sha256: bytes | None, s: dict[str, Any
         record["schedule"] = schedule_plan.hash_record(s["schedule_plan"])
     if row.get("cancellation_policy_id") is not None:
         record["cancellation_policy_id"] = str(row["cancellation_policy_id"])
+    # AA-1070 crm-35: the included / not included lines, only when the version has them (older hashes unchanged).
+    if inclusion_rows:
+        record["inclusions"] = inclusions.hash_record(inclusion_rows)
     return hashlib.sha256(json.dumps(record, sort_keys=True, separators=(",", ":")).encode()).digest()
 
 
@@ -1783,7 +1853,9 @@ async def publish(
             )
     sums = _charged(s, None, row["deposit_pct"])
     body = await vault.decrypt("proposal", "body_enc", proposal_id, row["body_enc"])
-    digest = price_hash(row, body, terms_sha, s, sums)
+    # AA-1070 crm-35: the AA tours' lists are copied into the version while it is still a draft (then frozen, CRM35).
+    await inclusions.snapshot_aa(ctx, proposal_id, row["trip_id"], s)
+    digest = price_hash(row, body, terms_sha, s, sums, await inclusions.lines(ctx, proposal_id))
     superseded = [str(r["proposal_id"]) for r in await ctx.conn.fetch(SUPERSEDE_PUBLISHED_SQL, row["trip_id"],
                                                                       proposal_id)]  # fmt: skip
     published_at = await ctx.conn.fetchval(PUBLISH_SQL, proposal_id, digest, sums["sell_total"], sums["deposit"])

@@ -3,6 +3,7 @@
 // cards. AA-939: Team & roles (owner). AA-945: Mailbox and Saved replies. AA-964: AI assistant. AA-958: SMS and
 // WhatsApp. AA-1036 (R3): Add-ons (owner; the CRM owner's add-on request). AA-1030: AA prices (owner, agent: /me
 // permissions.aa_tariff_view; nothing shown to the assistant). AA-1066: Pricing (owner) under Payments.
+// AA-1070 crm-35: Proposal lines (the inclusion library) under Payments.
 import Link from "next/link";
 import { DateInput } from "@/components/DateInput";
 import { LocaleSwitch } from "@/components/LocaleSwitch";
@@ -10,6 +11,7 @@ import { Panel, PageTitle } from "@/components/PageTitle";
 import { K } from "@/app/_kit";
 import { AA_TARIFF_PATH, seesAaTariff } from "@/lib/aaTariff";
 import { CRM_ADD_ONS_PATH } from "@/lib/addOns";
+import { INCLUSIONS_SETTINGS_PATH } from "@/lib/inclusions";
 import { crmContext } from "@/lib/crmContext";
 import { t, type MessageKey } from "@/lib/i18n";
 
@@ -100,6 +102,12 @@ export default async function SettingsPage() {
         <p style={{ margin: "8px 0 0", fontSize: 13.5 }}>
           <Link href="/settings/cancellation" data-testid="settings-cancellation-link">
             {t(lang, "policy.title")}
+          </Link>
+        </p>
+        {/* AA-1070 crm-35: the standard "Included" / "Not included" lines of proposals (owner and agents change them). */}
+        <p style={{ margin: "8px 0 0", fontSize: 13.5 }}>
+          <Link href={INCLUSIONS_SETTINGS_PATH} data-testid="settings-inclusions-link">
+            {t(lang, "settings.inclusions")}
           </Link>
         </p>
       </Panel>

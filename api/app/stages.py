@@ -738,6 +738,10 @@ async def cancel(
     from app.cancel_policy import rules as policy_rules
 
     decision = policy_rules.check_decision(charge)
+    from app.travel_ops import aa_cancel
+
+    # AA-1070 (crm-13): AA cancelled the trip's departure: the traveller charge is 0 whatever the dialog sent.
+    decision = await aa_cancel.forced_decision(ctx, trip_id, reason) or decision
     out: dict[str, Any] = {
         "trip_id": str(trip_id),
         "from_stage": trip["stage"],

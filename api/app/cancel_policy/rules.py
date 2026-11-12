@@ -48,6 +48,9 @@ class Decision:
     mode: str  # policy | override | waive
     amount: Decimal | None = None
     reason: str | None = None
+    # AA-1070 (crm-13): the server forced it (AA cancelled the departure: waived, never the owner's call, the dialog's
+    # own choice ignored); only app.travel_ops.aa_cancel.forced_decision sets it.
+    forced: bool = False
 
 
 def _err(code: str, message: str, field: str) -> Invalid:

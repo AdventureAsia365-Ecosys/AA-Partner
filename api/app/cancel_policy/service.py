@@ -386,6 +386,7 @@ class Assessment:
     frozen: bool
     warnings: list[str] = field(default_factory=list)
     needs_owner: bool = False
+    forced: bool = False  # AA-1070 (crm-13): waived because AA cancelled the departure
 
     @property
     def kept(self) -> Decimal:
@@ -425,6 +426,7 @@ class Assessment:
             "invoice_amount": _money(self.invoice_due),
             "warnings": sorted(set(self.warnings)),
             "needs_owner": self.needs_owner,
+            "forced": self.forced,
         }
 
 
@@ -470,7 +472,9 @@ async def assess(
     refunds = rules.allocate([(p["payment_id"], Decimal(p["refundable"])) for p in same], charge)
     out = Assessment(currency, total, days, policy, tier, amount, code, charge, decision.reason, paid, refunds,
                      facts["proposal_id"], frozen, warnings)  # fmt: skip
-    out.needs_owner = await _needs_owner(ctx, out)
+    # AA-1070 (crm-13): AA cancelled the departure: the waiver is the rule, not a member lowering the charge.
+    out.forced = decision.forced
+    out.needs_owner = False if decision.forced else await _needs_owner(ctx, out)
     return out
 
 

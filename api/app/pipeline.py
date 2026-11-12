@@ -41,7 +41,7 @@ from app.permissions import Action, require
 from app.stages import CANCELLABLE, QUIET_DAYS, allowed_moves, touch
 from app.tags import service as tag_service
 from app.tenancy import TenantContext
-from app.travel_ops import passport
+from app.travel_ops import aa_cancel, passport
 from app.travellers import age_bands
 from app.vault import Vault
 
@@ -208,7 +208,9 @@ def _id(value: Any) -> str | None:
 class BoardFilter:
     waiting_on: str | None = None
     owner: str = "anyone"  # anyone | me
-    issue: str | None = None  # AA-1070: "passport" = only the cards with a passport issue
+    # AA-1070: "passport" = only the cards with a passport issue; "aa_cancelled" = only the trips on a departure AA
+    # cancelled that the agent has not settled yet (crm-13, crm.aa_cancel_case).
+    issue: str | None = None
 
     def owner_id(self, ctx: TenantContext) -> uuid.UUID | None:
         return ctx.member_id if self.owner == "me" else None
@@ -264,6 +266,11 @@ async def board(ctx: TenantContext, vault: Vault, flt: BoardFilter) -> dict[str,
     for s in passport.CHECK_STAGES:
         for c in cards.get(s, []):
             c["passport_issues"] = issues.get(uuid.UUID(c["trip_id"]), 0)
+    # AA-1070 (crm-13): the trips Adventure Asia's departure cancel left for the agent to settle.
+    hit = await aa_cancel.flagged(ctx, [uuid.UUID(c["trip_id"]) for s in BOARD_STAGES for c in cards.get(s, [])])
+    for s in BOARD_STAGES:
+        for c in cards.get(s, []):
+            c["aa_cancelled"] = uuid.UUID(c["trip_id"]) in hit
     # AA-960 (R3 / R29): each card's tags (agency and system).
     tagged = await tag_service.of_many(ctx, "trip", [uuid.UUID(c["trip_id"]) for cs in cards.values() for c in cs])
     for cs in cards.values():
@@ -271,6 +278,9 @@ async def board(ctx: TenantContext, vault: Vault, flt: BoardFilter) -> dict[str,
             c["tags"] = tagged.get(uuid.UUID(c["trip_id"]), [])
     if flt.issue == "passport":
         cards = {s: [c for c in cs if c.get("passport_issues")] for s, cs in cards.items()}
+        stage_counts = {s: len(cs) for s, cs in cards.items()}
+    elif flt.issue == "aa_cancelled":
+        cards = {s: [c for c in cs if c.get("aa_cancelled")] for s, cs in cards.items()}
         stage_counts = {s: len(cs) for s, cs in cards.items()}
     if rows:
         # AA-937 (crm-006): the event names the travellers whose names the page showed (design §4.4).
@@ -393,6 +403,7 @@ async def trip_detail(ctx: TenantContext, vault: Vault, trip_id: uuid.UUID) -> d
         "allowed_moves": allowed_moves(trip["stage"]),
         "can_cancel": trip["stage"] in CANCELLABLE,
         "cancellation": await cancellation.pending(ctx, trip_id),  # AA-957 (C12): pending until AA confirms
+        "aa_cancel": await aa_cancel.trip_view(ctx, trip_id, trip["stage"]),  # AA-1070 (crm-13): the guided card
         "stage2_link": None
         if link is None
         else {

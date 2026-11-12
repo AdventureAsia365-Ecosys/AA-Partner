@@ -9,6 +9,7 @@
 import type { TagChip } from "./tags";
 import { formatDate, type DateLocale } from "./dates";
 import type { CancelCharge } from "@/lib/retailPayments";
+import type { AaCancelView } from "@/lib/aaCancel";
 import { fmt, plural, type Lang, type MessageKey, t } from "./i18n";
 import type { PlanPage } from "./planningForm";
 
@@ -115,9 +116,14 @@ export interface Card {
   cancellation_pending?: boolean;
   /** AA-1070: travellers whose passport ends too soon for the trip (booked, pre-departure, travelling cards). */
   passport_issues?: number;
+  /** AA-1070 (crm-13): AA cancelled a departure the trip is on and the agent has not settled it yet. */
+  aa_cancelled?: boolean;
   /** AA-960: the trip's tags (agency and system). */
   tags?: TagChip[];
 }
+
+/** AA-1070 (crm-13): the pipeline's issue filters. */
+export type BoardIssue = "passport" | "aa_cancelled";
 
 export interface ClosedCard extends Omit<Card, "stage"> {
   stage: ClosedStage;
@@ -129,7 +135,7 @@ export interface Board {
   closed?: { count: number; counts: Record<ClosedStage, number>; cards: ClosedCard[] };
   waiting_on_counts: Record<WaitingOn, number>;
   total: number;
-  filter: { waiting_on: WaitingOn | null; owner: "anyone" | "me"; issue?: "passport" | null };
+  filter: { waiting_on: WaitingOn | null; owner: "anyone" | "me"; issue?: BoardIssue | null };
 }
 
 export interface Trip {
@@ -233,6 +239,8 @@ export interface TripView {
   stage2_link?: Stage2Link | null;
   /** AA-957 (C12): the trip's cancellation, pending while AA cancels its bookings. */
   cancellation?: Cancellation | null;
+  /** AA-1070 (crm-13): AA cancelled a departure the trip is on (absent on an older API). */
+  aa_cancel?: AaCancelView;
 }
 
 /** S262 (C12 §2.7): a trip that is cancelled, or whose cancellation waits for AA, bills the client no more: its
@@ -482,11 +490,11 @@ export function partySummary(lang: Lang, adults: number, childAges: number[]): s
 }
 
 /** The board URL for a filter (chips and owner toggle are links: no client state needed). */
-export function boardHref(filter: { waiting_on?: WaitingOn | null; owner?: "anyone" | "me"; issue?: "passport" | null }): string {
+export function boardHref(filter: { waiting_on?: WaitingOn | null; owner?: "anyone" | "me"; issue?: BoardIssue | null }): string {
   const q = new URLSearchParams();
   if (filter.waiting_on) q.set("waiting_on", filter.waiting_on);
   if (filter.owner === "me") q.set("owner", "me");
-  if (filter.issue === "passport") q.set("issue", "passport");
+  if (filter.issue === "passport" || filter.issue === "aa_cancelled") q.set("issue", filter.issue);
   const s = q.toString();
   return s ? `/pipeline?${s}` : "/pipeline";
 }
@@ -494,14 +502,15 @@ export function boardHref(filter: { waiting_on?: WaitingOn | null; owner?: "anyo
 export function parseFilter(params: Record<string, string | string[] | undefined>): {
   waiting_on: WaitingOn | null;
   owner: "anyone" | "me";
-  issue: "passport" | null;
+  issue: BoardIssue | null;
 } {
   const w = typeof params.waiting_on === "string" ? params.waiting_on : "";
   return {
     waiting_on: (WAITING_ON as readonly string[]).includes(w) ? (w as WaitingOn) : null,
     owner: params.owner === "me" ? "me" : "anyone",
-    // AA-1070: only the booked / pre-departure / travelling trips with a passport issue.
-    issue: params.issue === "passport" ? "passport" : null,
+    // AA-1070: only the booked / pre-departure / travelling trips with a passport issue, or (crm-13) only the trips on
+    // a departure AA cancelled.
+    issue: params.issue === "passport" || params.issue === "aa_cancelled" ? params.issue : null,
   };
 }
 

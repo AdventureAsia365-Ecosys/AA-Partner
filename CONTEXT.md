@@ -368,6 +368,8 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-056` | `api/migrations/056_crm_sales_partners.sql` | AA-1071 (**contract**: ALTERs of `crm.trip`, `crm.form_submission`, `crm.conversation`, `crm.dispatch_queue`, a trigger on `crm.trip`, `crm.status_transition` rows, a replaced view, so MIG-4): `crm.sales_partner` (kind, sealed name and contact, commission terms percent / fixed_per_pax / net_rate, basis revenue / margin, payout days, active <-> inactive; cascades from `tenant_settings`), `crm.trip.sales_partner_id` (key on (tenant, partner)), `crm.form_submission.sales_partner_id`, `crm.partner_commission` (one live per trip and partner: accrued -> approved -> paid, approved -> accrued, accrued / approved -> cancelled; amount + currency, base amount frozen at the computing day; RESTRICTIVE margin policy; cascades from trip and partner), `crm.partner_commission_sync(trip)` (SECURITY DEFINER) + trigger `trip_partner_commission_sync`, `crm.sales_partner_link` (intake / view, token SHA-256, <= 400 days, lookup policy on `app.partner_link_hash`), `crm.sales_partner_otp` (view codes and sessions, 24 h), `conversation.sales_partner_id` + `dispatch_queue.sales_partner_id` (traveler_id nullable, exactly one subject; gate code `partner_inactive`), `crm.v_trip_pnl` partner commission; guard `crm.guard_sales_partner` (CRM54); no `erase_subject` change |
 | `crm-057` | `api/migrations/057_crm_public_booking_online_payment.sql` | AA-1072 (**contract**, MIG-4; crm-056 is another card's, independent): `tenant_settings.public_booking_enabled` (default false: "Book now" off until the owner turns it on); `crm.public_booking_attempt` (base template; one "Book now" press of the public tour page: intake form, AA tour and departure, party counts and ages, quote and total, received -> created / refused / failed with a code, the trip and proposal ids, one per client submission id, `ip_hash` = HMAC of the address under the agency's index key; cascades from `tenant_settings`; deleted after 90 days by the date rule); `crm.payment_session` (base template; one hosted payment of an invoice on the agency's own gateway: account, `txn_ref` unique across agencies, amount, currency, expiry, open -> paid / failed / review, the gateway's transaction number and response code, the payment it wrote; SELECT-only `payment_session_ref_lookup` on `app.payment_txn_ref`; cascades from its invoice); `integration_credential.provider` + `vn_gateway`; `payment.method` + `online`, `payment_provider_ref_uq` (one payment per gateway reference and agency) |
 | `crm-058` | `api/migrations/058_crm_hold_guard_tenant.sql` | AA-1085 (**contract**, MIG-4: replaces six trigger functions, adds a trigger): `crm.hold_trip_of` / `hold_traveler_of` / `hold_row_of` (the crm-010 hold rule 4a-4d with an explicit `tenant_id = p_tenant` on every read); the hold guards `guard_held_change`, `guard_message`, `guard_held_flight`, `guard_ops_release`, `guard_supplier_manifest_export`, `guard_held_travel_doc` read the holds of `OLD.tenant_id` only, so a foreign-key cascade (owner, no row security) never sees another agency's hold; the flight and travel document guards check cascades too; `crm.partner_commission` gets `guard_held_change('trip_id')`. Lint: `tests/unit/test_aa1085_hold_guard_tenant.py` |
+| `crm-059` | `api/migrations/059_crm_proposal_inclusions.sql` | AA-1070 item crm-35 (**expand**: two new tables): `crm.inclusion_item` (the agency library of standard proposal lines: kind `included` / `not_included`, `text_en` (default) + optional `text_vi`, 1..500 characters, `sort_order` 0..999, `archived`; one live line per kind and English text, case-insensitive; cascades from `tenant_settings`), `crm.proposal_inclusion` (the lines of one builder version: source `library` (text copied, `inclusion_item_id` a snapshot reference without a key) / `custom` / `aa_tour` (an AA tour's inclusion or exclusion copied at Publish: `aa_tour_source_id`, `aa_tour_title`), `sort_order` 0..199, `source_inclusion_id` of a working copy; draft-only through `crm.guard_proposal_draft` (CRM35), trip hold guard; cascades from its proposal); no `erase_subject` change |
+| `crm-060` | `api/migrations/060_crm_aa_cancel_case.sql` | AA-1070 item crm-13 (**expand**: one new table): `crm.aa_cancel_case` (one agency trip with a live AA line or proposal option on a departure AA cancelled: opened once per trip and departure by the Booking feed job; `resolution` NULL (open) -> `requoted` (`proposal_id`, `rebook_trip_id`) / `cancelled`; no status column, the API only moves it forward); unique per (trip, departure); cascades from the trip; hold guard `crm.guard_held_travel_doc` (CRM10). (crm-059 is AA-1070 item crm-35, another lane.) |
 | `crm-061` | `api/migrations/061_crm_tags.sql` | CRM-29b tags (AA-960; **expand**: two new tables + two guards): `crm.tag` (agency / system, trip / client, fixed code, name, tone, archived; one per agency, subject and code; never trashed; cascades from `tenant_settings`), `crm.tag_link` (one tag on one trip or client, source member / system + reasons; one per tag and subject; cascades from tag, trip, traveller; hold rule 4h), `crm.guard_tag()` / `crm.guard_tag_link()` (CRM55: system tags by job / platform / seed actors only, kind / subject / code fixed, a link of the tag's subject and source) |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
@@ -1112,8 +1114,8 @@ comparison.md`, behaviour only, no plugin code); migrations crm-054 (expand) and
 `app/travel_ops/` (`passport`, `rooming`, `vouchers`, `visas`, `departures`), `app/routers/travel_ops.py`, the portal
 wrappers in `app/portal/public.py` (routes in `app/routers/client_pages.py`), `app/documents/pdf.py` (the PDF writer),
 `renders.py`, `pdf_job.py`; web `components/travelOps/`, `components/portal/PortalTravel.tsx`, `app/(crm)/departures`,
-`app/(crm)/settings/travel`; decisions in `docs/implementation-notes/AA-1070.md`. The inclusion library (crm-35) and
-the guided "AA cancelled the departure" flow (crm-13) of the same issue are not built here.
+`app/(crm)/settings/travel`; decisions in `docs/implementation-notes/AA-1070.md`. The inclusion lists (crm-35) are
+below; the guided "AA cancelled the departure" flow (crm-13) of the same issue is not built here.
 
 - **Passport check** (computed, never stored): `expiry >= trip end + tenant_settings.passport_valid_months` (calendar
   months). Statuses `ok`, `expires_too_soon` (the "passport issue"), `missing`, `no_trip_end`; the API answers the
@@ -1136,7 +1138,10 @@ the guided "AA cancelled the departure" flow (crm-13) of the same issue are not 
   (booked trips), invoice, proposal (the e-mail text of the version), voucher; written by our own PDF writer (A4,
   Unicode via the embedded Liberation Sans, SIL OFL, `app/documents/fonts/`), stored as a sealed `crm.document`
   (uploader `system`, not shown to travellers until the agent shares it). No headless browser in the image. The
-  header is the agency's display name only: the Content studio brand profile (CIS) has no CRM read yet (follow-up).
+  header, footer and PDF author are the agency's display name (`app.documents.pdf_job.agency_brand`, the one place every
+  render reads it): the CIS tenant profile has no colour or logo (CIS keeps the brand voice and `brand_name`; a colour
+  exists only in the TripPlanner site theme, served to TripPlanner by a database view) and the CRM has no read of it,
+  so branding beyond the name is a CIS contract change first (follow-up in `docs/implementation-notes/AA-1070.md`).
 - **Visa tracker** (`crm.visa_template` owner-kept guidance, `crm.visa_application` + `crm.visa_checklist_item`):
   suggestions from the trip's destination countries vs each traveller's nationality (opened server-side), one
   application per traveller, country and booked trip, status moves `to_do -> collecting -> submitted -> approved |
@@ -1152,6 +1157,40 @@ the guided "AA cancelled the departure" flow (crm-13) of the same issue are not 
   checked first (429 `reveal_rate_limited`), one `reveal` audit event per traveller (the reveal meter counts them).
   Every role; the `/departures/[ref]` page keeps the
   owner / agent group costs below the roster. AA departures are also a calendar layer (`aa_departure`).
+- **Included / not included lists** (item crm-35, crm-059; `app/proposals/inclusions.py`, `app/routers/inclusions.py`,
+  web `components/proposals/InclusionsPanel.tsx`, `components/settings/InclusionLibraryView.tsx`,
+  `app/(crm)/settings/inclusions`): the agency library `crm.inclusion_item` (`GET/POST /inclusion-items`,
+  `PATCH/DELETE /inclusion-items/{id}`; every role reads, owner / agent write: `money_fields_edit`; English text, optional
+  Vietnamese, order, archive) and a builder version's lines `crm.proposal_inclusion` (`GET /proposals/{id}/inclusions`,
+  `PUT /proposals/{id}/inclusions` with `seq`: the new list, whole; every role, drafts only). A pick copies the library
+  text; a line already on the draft keeps its copy when the library line is archived or edited; a new pick of an
+  archived line is 409 `inclusion_item_archived`. The AA tours' lists come from the CIS tour content in
+  `crm.aa_catalog_tour.body` (`inclusions`, `exclusions[].text`), read-only: live on a draft, copied into the version at
+  Publish (source `aa_tour`, every AA tour among its options) so the published version is frozen (CRM35); each page
+  shows the tours of the chosen options (defaults in the builder and the texts, the client's picks on the client page).
+  The lines are covered by the price hash (only when a version has some). One section, three forms: the client page
+  (`inclusions`), the e-mail / WhatsApp text and so the proposal PDF ("Included" / "Not included" after the days). A
+  working copy copies the agency lines (not the AA copy). Text proposals have no lists.
+- **AA cancelled a departure** (item crm-13, crm-060 `crm.aa_cancel_case`, `app/travel_ops/aa_cancel.py`): a
+  `departure.cancelled` the feed applies opens one case per live trip of the agency (not lost, cancelled, completed or
+  being cancelled) with a live AA line or an AA option of a live builder version on the departure, plus one urgent
+  owner task `aa_departure_cancelled` and the workflow trip event `departure.aa_cancelled` (library template
+  `aa_departure_cancelled_notice`: an e-mail to the lead traveller from the agency mailbox, installed paused = opt-in;
+  AA never messages travellers). Once per trip and departure: a replayed or repeated event opens nothing. The trip is
+  flagged "AA cancelled" (pipeline filter `issue=aa_cancelled`, card badge, the trip page's guided card) while the
+  case is open, or re-quoted onto a new trip and this trip not cancelled yet. The card offers:
+  (a) **re-quote** (`POST /trips/{id}/aa-cancel/{case}/requote` {departure_id, start_date}, every role,
+  `proposal_draft`): the same AA tour on another open departure the agent picks (`GET /aa/products/{source_id}`), as a
+  NEW builder version prefilled from the trip's latest version with the tour (the accepted one first): the AA options
+  move to the new departure, their quote is cleared (Refresh AA prices quotes again), day 1 moves so the tour's day
+  falls on the new date; before booking the version is on the same trip (or its working copy); a trip with an accepted
+  version cannot take a second one, so the re-quote opens a **new trip** in Proposal (same client, party, owner, the
+  dates moved; stage reason `aa_rebook`) with version 1. Nothing goes to the client until the agent sends it.
+  Idempotent: a re-quoted case answers what it made.
+  (b) **cancel at no charge**: the trip cancel with reason `aa_cancelled` on a flagged trip forces the traveller charge
+  to 0 (decision `waived`, reason `aa_departure_cancelled`, never the owner's call, the dialog's charge ignored), so
+  each payment is prefilled for a full refund (`proposed` refund requests, §4.6 approval as usual); Booking's reason
+  `departure_cancelled` costs the agency no fee. The run closes the case. Audit reasons are codes, never amounts.
 
 ## Sales partners and their commission (AA-1071)
 

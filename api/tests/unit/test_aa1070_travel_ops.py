@@ -26,7 +26,7 @@ from app.main import create_app
 from app.observability import reveal_meter
 from app.portal import public as portal
 from app.routers import travel_ops as router
-from app.travel_ops import departures, passport, rooming, visas, vouchers
+from app.travel_ops import aa_cancel, departures, passport, rooming, visas, vouchers
 from app.vault import DecryptionDenied
 from tests.tokens import LocalPools
 from tests.unit.fakes import ScriptedConn
@@ -80,6 +80,7 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         (rooming, ("view", "replace")),
         (vouchers, ("trip_vouchers", "get_details", "save_details")),
         (pdf_job, ("request",)),
+        (aa_cancel, ("requote",)),
         (visas, ("trip_applications", "suggest", "create", "get", "update", "delete", "add_item", "set_item",
                  "delete_item", "list_templates", "create_template", "update_template", "delete_template")),
     ):  # fmt: skip
@@ -117,6 +118,12 @@ REQUESTS = [
     ("GET", f"/crm/v1/lines/{ID}/voucher", None, "get_details"),
     ("PUT", f"/crm/v1/lines/{ID}/voucher", {"pickup": "Pier 4", "service_time": "07:30"}, "save_details"),
     ("POST", f"/crm/v1/trips/{ID}/pdfs", {"kind": "voucher", "booking_line_id": ID}, "request"),
+    (
+        "POST",
+        f"/crm/v1/trips/{ID}/aa-cancel/{ID}/requote",
+        {"departure_id": "DEP-2", "start_date": "2031-02-01"},
+        "requote",
+    ),
     ("GET", f"/crm/v1/trips/{ID}/visas", None, "trip_applications"),
     ("GET", f"/crm/v1/trips/{ID}/visas/suggestions", None, "suggest"),
     ("POST", f"/crm/v1/trips/{ID}/visas", {"traveler_id": ID, "country": "VN"}, "create"),
@@ -146,6 +153,7 @@ def test_every_travel_ops_route_reaches_its_helper(pools: LocalPools, monkeypatc
     for method, path, body in (
         ("PUT", f"/crm/v1/trips/{ID}/rooming", {"rooms": [{"room_no": 51, "room_type": "twin", "travellers": []}]}),
         ("POST", f"/crm/v1/trips/{ID}/pdfs", {"kind": "brochure"}),
+        ("POST", f"/crm/v1/trips/{ID}/aa-cancel/{ID}/requote", {"departure_id": "a b", "start_date": "2031-02-01"}),
         ("PUT", f"/crm/v1/lines/{ID}/voucher", {"service_time": "25:00"}),
         ("GET", "/crm/v1/departures/a%20b/roster", None),
         ("PUT", "/crm/v1/settings/travel", {"passport_valid_months": 30}),

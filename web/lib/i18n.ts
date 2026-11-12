@@ -31,8 +31,10 @@ import { retailPaymentsEn, retailPaymentsVi } from "./i18nRetailPayments";
 import { financeEn, financeVi } from "./i18nFinance";
 import { catalogueEn, catalogueVi } from "./i18nCatalogue";
 import { travelOpsEn, travelOpsVi } from "./i18nTravelOps";
+import { aaCancelEn, aaCancelVi } from "./i18nAaCancel";
 import { partnersEn, partnersVi } from "./i18nPartners";
 import { bookNowEn, bookNowVi } from "./i18nBookNow";
+import { inclusionsEn, inclusionsVi } from "./i18nInclusions";
 import { tagsEn, tagsVi } from "./i18nTags";
 
 export type Lang = "en" | "vi";
@@ -78,8 +80,10 @@ const en = {
   ...financeEn, // AA-1068: trip Money card, supplier bills, Bookings with AA, departures, profit, Home today (lib/i18nFinance.ts)
   ...catalogueEn, // AA-1069: the Services catalogue, From catalogue in the builder, supplier requests (lib/i18nCatalogue.ts)
   ...travelOpsEn, // AA-1070: departures, the trip's Travel panel, Settings > Travel, the portal's travel section
+  ...aaCancelEn, // AA-1070 (crm-13): AA cancelled a departure
   ...partnersEn, // AA-1071: Partners, partner commissions, the trip's partner, the partner's own pages (lib/i18nPartners.ts)
   ...bookNowEn, // AA-1072: Book now on the tour page, Pay online, Settings > online payment and booking
+  ...inclusionsEn, // AA-1070 crm-35: Settings > Proposal lines, the builder picker, the client lists (lib/i18nInclusions.ts)
   ...tagsEn, // AA-960: tags, system tags, bulk tagging, Settings > Tags, coverage, ready to travel again (lib/i18nTags.ts)
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
@@ -2794,8 +2798,10 @@ const vi: Record<MessageKey, string> = {
   ...financeVi,
   ...catalogueVi,
   ...travelOpsVi,
+  ...aaCancelVi,
   ...partnersVi,
   ...bookNowVi,
+  ...inclusionsVi,
   ...tagsVi,
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",

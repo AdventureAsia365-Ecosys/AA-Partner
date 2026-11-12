@@ -15,6 +15,7 @@ Route                                       What                                
 ``GET    /lines/{id}/voucher``              one line's voucher details                       every role
 ``PUT    /lines/{id}/voucher``              write them (sealed)                              every role (trip edit)
 ``POST   /trips/{id}/pdfs``                 queue a server-side PDF (202)                    every role (upload)
+``POST   /trips/{id}/aa-cancel/{case}/requote``  AA cancelled: re-quote on another departure  every role (draft)
 ``GET    /trips/{id}/visas``                the trip's visa applications                     every role
 ``GET    /trips/{id}/visas/suggestions``    destination countries per traveller              every role
 ``POST   /trips/{id}/visas``                a new application (booked trips)                 every role (trip edit)
@@ -54,7 +55,7 @@ from app.ledger import fx
 from app.permissions import Action
 from app.routers.agency import tenant_header
 from app.tenancy import TenantContext, tenant_tx
-from app.travel_ops import departures, passport, rooming, visas, vouchers
+from app.travel_ops import aa_cancel, departures, passport, rooming, visas, vouchers
 from app.vault import Vault
 from app.vault.provider import require_keys
 
@@ -156,6 +157,12 @@ class VisaTemplateChange(_Body):
     documents: list[str] | None = Field(default=None, max_length=30)
     official_url: str | None = Field(default=None, max_length=500)
     active: bool | None = None
+
+
+class RequoteIn(_Body):
+    # AA-1070 (crm-13): the AA departure the agent picked (GET /aa/products/{source_id}) and its start date.
+    departure_id: str = Field(pattern=r"^[A-Za-z0-9:_.-]{1,64}$")
+    start_date: dt.date
 
 
 class TravelSettings(_Body):
@@ -267,6 +274,18 @@ async def post_pdf(
     subject = {"invoice": body.invoice_id, "proposal": body.proposal_id, "voucher": body.booking_line_id}.get(body.kind)
     async with tenant_tx(pool, caller, tenant_id, action=Action.DOCUMENT_UPLOAD) as ctx:
         return await pdf_job.request(ctx, trip_id, body.kind, subject)
+
+
+# ── AA cancelled a departure (crm-13) ───────────────────────────────────────────────────────────────────────────
+@router.post("/trips/{trip_id}/aa-cancel/{case_id}/requote", status_code=201)
+async def post_aa_cancel_requote(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, trip_id: uuid.UUID, case_id: uuid.UUID, body: RequoteIn
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    keys = _keys(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PROPOSAL_DRAFT) as ctx:
+        return await aa_cancel.requote(ctx, Vault(keys, ctx), trip_id, case_id, departure_id=body.departure_id,
+                                       start_date=body.start_date)  # fmt: skip
 
 
 # ── visas ────────────────────────────────────────────────────────────────────────────────────────────────────────

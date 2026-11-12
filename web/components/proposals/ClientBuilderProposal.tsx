@@ -37,6 +37,7 @@ import {
   type ClientBuilderPage,
   type ClientOption,
 } from "@/lib/clientProposal";
+import { hasInclusions, lineText, type ClientInclusions } from "@/lib/inclusions";
 import { clientErrorKey, formatAmount } from "@/lib/proposals";
 import { ClientPayBox } from "./ClientPayBox";
 import { ClientPlanLines, ClientPolicy, ClientScheduleRows } from "./ClientPaymentLines";
@@ -125,6 +126,51 @@ function BeforeYouGoContent({ byg, lang, t }: { byg: ClientBeforeYouGo; lang: st
         </p>
       )}
     </div>
+  );
+}
+
+/** AA-1070 crm-35: "What's included" / "Not included": the agency's lines in the page's language, then each AA tour's
+ * fixed lines under its title. */
+export function ClientInclusionsContent({ data, lang, t }: { data: ClientInclusions; lang: string; t: (k: string) => string }) {
+  const lists = [
+    { kind: "included" as const, title: t("client.incl.included") },
+    { kind: "not_included" as const, title: t("client.incl.notIncluded") },
+  ];
+  const item: React.CSSProperties = { fontSize: 13.5, color: K.body, overflowWrap: "anywhere" };
+  return (
+    <section data-testid="client-inclusions" style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", minWidth: 0 }}>
+      {lists.map(({ kind, title }) => {
+        const own = data[kind];
+        const tours = data.aa_tours.filter((tour) => tour[kind].length > 0);
+        if (own.length === 0 && tours.length === 0) return null;
+        return (
+          <div key={kind} data-testid={`client-incl-${kind}`} style={{ ...card, gap: 6 }}>
+            <h2 style={{ margin: 0, fontSize: 16, color: K.ink }}>{title}</h2>
+            {own.length > 0 && (
+              <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 2 }}>
+                {own.map((line, i) => (
+                  <li key={i} style={item}>
+                    {lineText(line, lang)}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {tours.map((tour) => (
+              <div key={tour.source_id} style={{ display: "grid", gap: 2, minWidth: 0 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: K.ink, overflowWrap: "anywhere" }}>{tour.title}</span>
+                <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 2 }}>
+                  {tour[kind].map((line, i) => (
+                    <li key={i} style={item}>
+                      {line}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </section>
   );
 }
 
@@ -296,6 +342,8 @@ export function ClientBuilderProposal({ initial, dict, locale }: { initial: Clie
           ))}
         </section>
       ))}
+
+      {hasInclusions(page.inclusions) && <ClientInclusionsContent data={page.inclusions} lang={lang} t={t} />}
 
       <dl data-testid="client-amounts" style={{ margin: 0, display: "grid", gridTemplateColumns: "auto 1fr", gap: "6px 12px", fontSize: 14 }}>
         {page.totals.discount && page.totals.subtotal && (

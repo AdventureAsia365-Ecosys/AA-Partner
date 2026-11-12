@@ -93,6 +93,8 @@ export interface CancelCharge {
   warnings: string[];
   needs_owner: boolean;
   aa_fee_amount?: string | null;
+  /** AA-1070 (crm-13): AA cancelled the departure: the charge is 0 by rule (waived), the dialog cannot change it. */
+  forced?: boolean;
 }
 
 /** A row of the builder's line editor while the agent types (strings as typed). ``id`` is the row's React key: it

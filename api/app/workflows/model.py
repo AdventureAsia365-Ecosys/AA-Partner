@@ -60,6 +60,9 @@ EVENTS = (
     # AA-1070 (crm-15): a trip entered Booked while a traveller's passport ends too soon for it
     # (app.travel_ops.passport, fired by the hourly tick once per entry into Booked).
     "passport.invalid_for_trip",
+    # AA-1070 (crm-13): Adventure Asia cancelled a departure the trip is on (app.travel_ops.aa_cancel, fired once per
+    # trip and departure by the Booking feed).
+    "departure.aa_cancelled",
     # AA-960 (R3 / R29): a tag was put on a trip / a client (app.workflows.triggers.on_tag_added).
     "trip_tag.added",
     "client_tag.added",

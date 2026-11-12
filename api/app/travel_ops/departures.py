@@ -19,7 +19,8 @@ one Adventure Asia departure, across its trips.
   released (the reveal meter counts them) and one ``report_export`` audit event naming the trips.
 - **The feed** (:func:`apply_event`, called by :mod:`app.booking.sync`): ``departure.guaranteed`` /
   ``departure.cancelled`` upsert the agency's ``crm.aa_departure_state`` row (written by the job only, CRM53); an
-  event older than the stored one changes nothing.
+  event older than the stored one changes nothing. A departure that reads cancelled opens the "AA cancelled" cases of
+  its trips (:func:`app.travel_ops.aa_cancel.open_cases`, crm-13).
 
 Every function takes the open context and never opens one.
 """
@@ -369,4 +370,11 @@ async def apply_event(ctx: AnyContext, event_type: str, departure_id: str | None
         return "ignored", "no_feed_state"
     await ctx.conn.execute(UPSERT_SQL, departure_id, status, event_id, occurred_at)
     ctx.audit("aa_sync", "allowed", "departure", _audit_id(departure_id), reason=f"departure_{status}")
+    if status == "cancelled":
+        # AA-1070 (crm-13): every live trip on it gets its "AA cancelled" case, task and workflow event (once).
+        state = await ctx.conn.fetchrow(STATE_SQL, departure_id)
+        if state is not None and state["departure_status"] == "cancelled":
+            from app.travel_ops import aa_cancel
+
+            await aa_cancel.open_cases(ctx, departure_id, event_id, occurred_at)
     return "applied", f"departure_{status}"

@@ -191,17 +191,20 @@ export function CancelDialog({
   locale,
   onDone,
   onClose,
+  presetReason,
 }: {
   tripId: string;
   lang: Lang;
   locale: DateLocale;
   onDone: (result: CancelPreview) => void;
   onClose: () => void;
+  /** AA-1070 (crm-13): the "AA cancelled" card opens the dialog on its reason, the dry run asked at once. */
+  presetReason?: string;
 }) {
-  const [reason, setReason] = useState("");
+  const [reason, setReason] = useState(presetReason ?? "");
   const [preview, setPreview] = useState<CancelPreview | null>(null);
   const [typed, setTyped] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(Boolean(presetReason));
   const [error, setError] = useState<string | null>(null);
   // AA-957: the refund asked back per payment (default: all that is left) and the commissions the supplier still pays.
   const [refunds, setRefunds] = useState<Record<string, string>>({});
@@ -224,7 +227,9 @@ export function CancelDialog({
     return chargeBody(mode, amount, why);
   }
 
-  const stale = Boolean(preview && !pending && preview.charge && chargeKey(chargePart()) !== checked);
+  // AA-1070 (crm-13): a forced waiver (AA cancelled the departure) has nothing to choose, so nothing goes stale.
+  const forced = Boolean(preview?.charge?.forced);
+  const stale = Boolean(preview && !pending && preview.charge && !forced && chargeKey(chargePart()) !== checked);
 
   async function dryRun(code: string, charge: Record<string, string> | undefined = undefined) {
     setReason(code);
@@ -233,7 +238,14 @@ export function CancelDialog({
     setChecked(null);
     if (!code) return;
     setBusy(true);
-    const res = await bffSend<CancelPreview>("POST", `trips/${tripId}/cancel?dry_run=true`, { cancel_reason_code: code, ...(charge ? { charge } : {}) });
+    showPreview(await askPreview(code, charge), charge);
+  }
+
+  function askPreview(code: string, charge: Record<string, string> | undefined) {
+    return bffSend<CancelPreview>("POST", `trips/${tripId}/cancel?dry_run=true`, { cancel_reason_code: code, ...(charge ? { charge } : {}) });
+  }
+
+  function showPreview(res: Awaited<ReturnType<typeof askPreview>>, charge: Record<string, string> | undefined) {
     setBusy(false);
     if (!res.ok) {
       setError(t(lang, moveErrorKey(res.detail)));
@@ -250,6 +262,19 @@ export function CancelDialog({
   async function chooseReason(code: string) {
     await dryRun(code, chargePart() ?? undefined);
   }
+
+  // AA-1070 (crm-13): opened on a preset reason, the dry run is asked once (later reasons come from the select).
+  useEffect(() => {
+    if (!presetReason) return;
+    let live = true;
+    void askPreview(presetReason, undefined).then((res) => {
+      if (live) showPreview(res, undefined);
+    });
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presetReason]);
 
   async function recheck() {
     const charge = chargePart();
@@ -277,7 +302,7 @@ export function CancelDialog({
       refunds: Object.entries(refunds).map(([payment_id, amount]) => ({ payment_id, amount: amount.trim() || "0" })),
       keep_commission: Object.entries(keep).filter(([, v]) => v).map(([id]) => id),
       keep_partner_commission: keepPartner,
-      ...(charge ? { charge } : {}),
+      ...(charge && !forced ? { charge } : {}),
     };
     const res = await bffSend<CancelPreview>("POST", `trips/${tripId}/cancel?dry_run=false`, body);
     setBusy(false);
@@ -538,7 +563,12 @@ function CancelChargeBox({
           {tr(`cancelCharge.warn.${w}`)}
         </span>
       ))}
-      {charge.currency && (
+      {charge.forced && (
+        <span data-testid="cancel-charge-forced" style={{ color: K.body }}>
+          {tr("aaCancel.chargeForced")}
+        </span>
+      )}
+      {charge.currency && !charge.forced && (
         <>
           <Field label={tr("cancelCharge.mode")}>
             <Select

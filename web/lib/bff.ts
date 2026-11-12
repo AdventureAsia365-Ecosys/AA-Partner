@@ -362,6 +362,8 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "GET", pattern: new RegExp(`^trips/${UUID}/(passports|rooming|vouchers|visas|visas/suggestions)$`), tenant: true, card: "AA-1070" },
   { method: "PUT", pattern: new RegExp(`^trips/${UUID}/rooming$`), tenant: true, card: "AA-1070" },
   { method: "POST", pattern: new RegExp(`^trips/${UUID}/(pdfs|visas)$`), tenant: true, card: "AA-1070" },
+  // AA-1070 (crm-13): AA cancelled a departure: re-quote the same tour on another departure (a new version or trip).
+  { method: "POST", pattern: new RegExp(`^trips/${UUID}/aa-cancel/${UUID}/requote$`), tenant: true, card: "AA-1070" },
   { method: "GET", pattern: new RegExp(`^lines/${UUID}/voucher$`), tenant: true, card: "AA-1070" },
   { method: "PUT", pattern: new RegExp(`^lines/${UUID}/voucher$`), tenant: true, card: "AA-1070" },
   { method: "GET", pattern: new RegExp(`^visas/${UUID}$`), tenant: true, card: "AA-1070" },
@@ -374,6 +376,14 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "POST", pattern: /^visa-templates$/, tenant: true, card: "AA-1070" },
   { method: "PATCH", pattern: new RegExp(`^visa-templates/${UUID}$`), tenant: true, card: "AA-1070" },
   { method: "DELETE", pattern: new RegExp(`^visa-templates/${UUID}$`), tenant: true, card: "AA-1070" },
+  // AA-1070 crm-35 (crm-059): the inclusion library (writes: owner / agent, the API's money_fields_edit) and a builder
+  // version's "Included" / "Not included" lines (every role, drafts only).
+  { method: "GET", pattern: /^inclusion-items$/, tenant: true, card: "AA-1070" },
+  { method: "POST", pattern: /^inclusion-items$/, tenant: true, card: "AA-1070" },
+  { method: "PATCH", pattern: new RegExp(`^inclusion-items/${UUID}$`), tenant: true, card: "AA-1070" },
+  { method: "DELETE", pattern: new RegExp(`^inclusion-items/${UUID}$`), tenant: true, card: "AA-1070" },
+  { method: "GET", pattern: new RegExp(`^proposals/${UUID}/inclusions$`), tenant: true, card: "AA-1070" },
+  { method: "PUT", pattern: new RegExp(`^proposals/${UUID}/inclusions$`), tenant: true, card: "AA-1070" },
   { method: "GET", pattern: /^settings\/travel$/, tenant: true, card: "AA-1070" },
   { method: "PUT", pattern: /^settings\/travel$/, tenant: true, card: "AA-1070" },
   // AA-956 (CRM-26): the trip's AA ground operations panel (counts and dates only) and the agency's withdrawal.
