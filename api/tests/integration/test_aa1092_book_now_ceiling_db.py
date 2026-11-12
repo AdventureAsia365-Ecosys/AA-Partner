@@ -1,4 +1,4 @@
-"""AA-1092 residual (needs crm-066) on PostgreSQL: the agency's Book now price checks a minute.
+"""AA-1092 residual (needs crm-062) on PostgreSQL: the agency's Book now price checks a minute.
 
 - Settings > Online booking reads the column default (60) and the owner's new value; the value is audited by field.
 - ``booking.price`` reads the agency's own value from ``tenant_settings`` and hands it to the per-agency quota; a

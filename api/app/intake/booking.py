@@ -21,7 +21,7 @@ apply. The agency must have turned "Book now" on (``tenant_settings.public_booki
   and the booking answer 409 ``price_on_request`` (the page says to ask the agency for a price) before anything is
   sold, and such a refused booking does not count towards the visitor's attempts (:data:`UNCOUNTED_REFUSALS`).
   **Per agency** (AA-1092): before anything goes to Booking a check takes one of the agency's price checks a minute
-  (``tenant_settings.public_price_per_minute``, crm-066, the owner's setting on Settings > Payments; every address
+  (``tenant_settings.public_price_per_minute``, crm-062, the owner's setting on Settings > Payments; every address
   together, per API task): past it 429 ``agency_rate_limited`` with ``Retry-After`` (the per-address bucket of the
   router still applies first).
 - :func:`submit`, in three steps so no connection is held while Booking answers (the AA-947 rule):

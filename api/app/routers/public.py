@@ -51,7 +51,7 @@ is decided by the form key inside :func:`app.tenancy.intake_tx`.
   Booking), not the intake limit the booking, the hold, the accept and "Pay online" share (S277 live check). 409
   ``price_on_request`` when the agency's retail for that party is below what AA charges it (no owner to approve a
   sale below cost on the public path). AA-1092: and a ceiling per agency for every address together, the agency's own
-  ``tenant_settings.public_price_per_minute`` (crm-066, default 60, the owner's Settings > Payments "Online booking";
+  ``tenant_settings.public_price_per_minute`` (crm-062, default 60, the owner's Settings > Payments "Online booking";
   per API task): 429 ``agency_rate_limited`` with ``Retry-After`` before Booking is asked.
 - ``POST /crm/public/v1/book/{public_key}/bookings``: one booking (:func:`app.intake.booking.submit`): 201
   ``{status: created, link_path}`` (the client page to hold, accept and pay; the link also goes by e-mail), 200

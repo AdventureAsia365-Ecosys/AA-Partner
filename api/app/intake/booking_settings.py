@@ -5,7 +5,7 @@ an agent until the owner turns it on). The answer lists the agency's active inta
 for the agency whose form key its link carries (``<client host>/trip/<tour id>?f=<form key>``), so the owner copies
 a key from here. Owner only (``PAYMENT_SETTINGS``); the page shows no client data.
 
-AA-1092 (crm-066): ``tenant_settings.public_price_per_minute``, the price checks a minute the agency's Book now takes
+AA-1092 (crm-062): ``tenant_settings.public_price_per_minute``, the price checks a minute the agency's Book now takes
 from every address together (the policy value of the per-agency ceiling, ``app.routers.public`` ``post_booking_price``):
 default :data:`DEFAULT_PRICE_PER_AGENCY_MINUTE`, the owner sets :data:`MIN_PRICE_PER_AGENCY_MINUTE` to
 :data:`MAX_PRICE_PER_AGENCY_MINUTE` here (the same bounds as the column CHECK). Each API task counts on its own (the CRM
@@ -20,7 +20,7 @@ from app.errors import Invalid
 from app.settings import Settings
 from app.tenancy import TenantContext
 
-# The crm-066 column default and CHECK bounds. The default applies only where no settings row exists yet (the column
+# The crm-062 column default and CHECK bounds. The default applies only where no settings row exists yet (the column
 # default fills every row); the bounds answer a 422 before the database's CHECK would.
 DEFAULT_PRICE_PER_AGENCY_MINUTE = 60
 MIN_PRICE_PER_AGENCY_MINUTE = 10

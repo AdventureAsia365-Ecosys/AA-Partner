@@ -95,7 +95,7 @@ REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = (
     "crm-059",  # AA-1070 crm-35: proposal inclusion lists (library + per-version lines; expand)
     "crm-060",  # AA-1070 crm-13: crm.aa_cancel_case (AA cancelled a departure: the guided card; expand)
     "crm-061",  # AA-960: agency and system tags on trips and clients (expand, migration-only PR first)
-    "crm-066",  # AA-1092: tenant_settings.public_price_per_minute, the Book now price checks a minute (contract, MIG-4)
+    "crm-062",  # AA-1092: tenant_settings.public_price_per_minute, the Book now price checks a minute (contract, MIG-4)
 )
 REQUIRED_SCHEMA_VERSION = max(REQUIRED_SCHEMA_VERSIONS)
 
