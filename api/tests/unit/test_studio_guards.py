@@ -310,7 +310,7 @@ def test_studio_legal_pages_drop_the_pre_v6_fallback_wording() -> None:
     privacy = re.sub(r"\s+", " ", _read(PRIVACY_TEXT))
     assert "directly through the Anthropic API and the OpenAI API, and through Amazon Bedrock" in privacy
     frame = _read("web/app/(studio)/_legal/legal.messages.ts")
-    assert 'version: "Draft v0.6"' in frame and 'version: "Bản nháp v0.6"' in frame
+    assert 'version: "Draft v0.7"' in frame and 'version: "Bản nháp v0.7"' in frame  # AA-1088 (M9) sign-in wording
 
 
 def _write_routes() -> list[Path]:

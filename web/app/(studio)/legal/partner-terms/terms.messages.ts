@@ -11,6 +11,9 @@
 // "last resort" writer sentence is gone; tests/studio/studioLegalProviders.test.ts keeps it out.
 // AA-1036 (R3): moved out of page.tsx as a structured document (../../_legal/legalDoc.ts) in English and Vietnamese.
 // English applies; the Vietnamese text is a faithful translation for reading (the page says so).
+// AA-1088 (M9, Draft v0.7): §2 describes today's sign-in (each person's own partner sign-in with a second step, roles set
+// by the account owner) instead of the tenant API key AA-1036 removed; the other API-key mentions (intro, §3, §5) go
+// with it. tests/studio/studioLegalProviders.test.ts keeps "API key" / "khoá API" out of both legal pages.
 import { SUPPORT_EMAIL } from "@/app/_kit/core/brand";
 import type { Lang } from "@/app/_kit/core/i18n";
 import { AI_PROVIDER_POLICIES, AI_SCHEDULE_VERSION } from "@/lib/aiTerms";
@@ -33,15 +36,16 @@ const EN: LegalDoc = {
   metaTitle: "Partner terms (draft) — Adventure Asia Partner Portal",
   title: "Partner terms",
   intro: [
-    "These terms apply to partner businesses that use the Adventure Asia Partner Portal and its API. They will form part of, or sit next to, the partner agreement you sign with Adventure Asia [relationship to be confirmed].",
+    "These terms apply to partner businesses that use the Adventure Asia Partner Portal. They will form part of, or sit next to, the partner agreement you sign with Adventure Asia [relationship to be confirmed].",
   ],
   sections: [
     { id: "service", title: "1. The service", blocks: [{ p: [
       "The portal gives you Adventure Asia catalog tours rewritten in your brand voice, social and blog pieces about those tours, and tools to export them or publish them to your own channels. The operating legal entity is [to be confirmed].",
     ] }] },
-    { id: "account", title: "2. Your account and API key", blocks: [{ ul: [
-      ["Keep your API key secret. Activity under your key is treated as yours."],
-      ["Tell us at once at ", MAIL, " if you think the key is known to someone else, so we can revoke it."],
+    { id: "account", title: "2. Your account and sign-in", blocks: [{ ul: [
+      ["Each person on your team signs in with their own partner sign-in: an e-mail address, a password and a second step (a code from an authenticator app). Do not share a sign-in. Activity under your team's sign-ins is treated as yours."],
+      ["Your account owner invites team members, sets their role and removes their access. Remove a person's access when they leave."],
+      ["Tell us at once at ", MAIL, " if you think a sign-in is known to someone else, so we can block it."],
     ] }] },
     { id: "ai", title: "3. AI-generated content and acceptable use", blocks: [{ ul: [
       ["Content is generated with AI and can contain mistakes. The portal shows this at review, publish and export: “This content was generated with AI. Review it before publishing; you are responsible for what you publish.”"],
@@ -62,11 +66,11 @@ const EN: LegalDoc = {
         ["false or misleading information, in particular about visas and entry rules, health, safety, prices or availability;"],
         ["advice to a specific person on insurance, finance, visas or other high-risk matters, unless a qualified person reviews it before it is delivered and the person receiving it is told that AI was used (general travel information, such as which visa rules exist, is not advice);"],
         ["getting around Adventure Asia's content checks, limits or other safeguards;"],
-        ["any automation or AI agent you run through the API that does one of the above: you are responsible for it."],
+        ["any automation or AI agent you run with the portal that does one of the above: you are responsible for it."],
       ] },
       ["If the law or a channel's rules require content to be labelled as AI-generated, you add that label."],
       ["If you use AI content to talk directly with your customers, for example in a chat or in automated replies, tell them they are talking to AI, at least at the start of each conversation."],
-      ["You review each piece before it is published, and you are its publisher. Telling Adventure Asia to publish a piece, in the portal or through the API, confirms that you have reviewed it."],
+      ["You review each piece before it is published, and you are its publisher. Telling Adventure Asia to publish a piece in the portal confirms that you have reviewed it."],
       ["Adventure Asia may hold, rewrite or decline to generate or publish content that breaks these rules. Unpublishing and suspension are covered in sections 4 and 5."],
       ["Your plan may include a monthly AI allowance. When it is used up, AI features may pause until the next month or until Adventure Asia raises it; nothing extra is charged for AI use."],
       ["Adventure Asia keeps records of AI use (model, provider, step, time and cost, not the text itself) and of publishing, to run and secure the service and to show that these rules are followed."],
@@ -78,7 +82,7 @@ const EN: LegalDoc = {
       ["You can unpublish your posts. Adventure Asia can also unpublish a post it published for you, for example when it breaks these terms."],
     ] }] },
     { id: "suspension", title: "5. Suspension and ending the service", blocks: [{ p: [
-      "Adventure Asia may suspend an account, which stops its API access and publishing at once, for example to protect the service or when these terms are broken. Notice periods, termination and what happens to your content afterwards are [to be confirmed].",
+      "Adventure Asia may suspend an account, which stops its sign-in and publishing at once, for example to protect the service or when these terms are broken. Notice periods, termination and what happens to your content afterwards are [to be confirmed].",
     ] }] },
     { id: "ownership", title: "6. Content rights", blocks: [{ p: [
       "Who owns the generated content and the licence to the catalog tours are [to be confirmed].",
@@ -100,15 +104,16 @@ const VI: LegalDoc = {
   metaTitle: "Điều khoản đối tác (bản nháp) — Cổng đối tác Adventure Asia",
   title: "Điều khoản đối tác",
   intro: [
-    "Các điều khoản này áp dụng cho doanh nghiệp đối tác sử dụng Cổng đối tác Adventure Asia và API của cổng. Điều khoản sẽ là một phần của, hoặc đi kèm, hợp đồng đối tác bạn ký với Adventure Asia [quan hệ giữa hai văn bản cần xác nhận].",
+    "Các điều khoản này áp dụng cho doanh nghiệp đối tác sử dụng Cổng đối tác Adventure Asia. Điều khoản sẽ là một phần của, hoặc đi kèm, hợp đồng đối tác bạn ký với Adventure Asia [quan hệ giữa hai văn bản cần xác nhận].",
   ],
   sections: [
     { id: "service", title: "1. Dịch vụ", blocks: [{ p: [
       "Cổng cung cấp cho bạn các tour trong danh mục của Adventure Asia được viết lại theo giọng văn thương hiệu của bạn, các bài mạng xã hội và bài blog về những tour đó, cùng công cụ để xuất nội dung hoặc đăng lên các kênh của bạn. Pháp nhân vận hành [cần xác nhận].",
     ] }] },
-    { id: "account", title: "2. Tài khoản và khoá API của bạn", blocks: [{ ul: [
-      ["Giữ bí mật khoá API của bạn. Mọi hoạt động dưới khoá của bạn được coi là của bạn."],
-      ["Báo ngay cho chúng tôi qua ", MAIL, " nếu bạn nghĩ người khác đã biết khoá, để chúng tôi thu hồi khoá."],
+    { id: "account", title: "2. Tài khoản và đăng nhập", blocks: [{ ul: [
+      ["Mỗi người trong nhóm của bạn đăng nhập bằng tài khoản đăng nhập đối tác của riêng mình: một địa chỉ e-mail, một mật khẩu và một bước thứ hai (mã từ ứng dụng xác thực). Không dùng chung tài khoản đăng nhập. Mọi hoạt động dưới các tài khoản đăng nhập của nhóm bạn được coi là của bạn."],
+      ["Chủ tài khoản của bạn mời thành viên, đặt vai trò và gỡ quyền truy cập của họ. Hãy gỡ quyền truy cập của một người khi người đó rời đi."],
+      ["Báo ngay cho chúng tôi qua ", MAIL, " nếu bạn nghĩ người khác đã biết một tài khoản đăng nhập, để chúng tôi khoá tài khoản đó."],
     ] }] },
     { id: "ai", title: "3. Nội dung do AI tạo và quy định sử dụng", blocks: [{ ul: [
       ["Nội dung được tạo bằng AI và có thể có sai sót. Cổng hiển thị điều này khi duyệt, đăng và xuất: “Nội dung này được tạo bằng AI. Hãy kiểm tra trước khi đăng; bạn chịu trách nhiệm về những gì mình đăng.”"],
@@ -129,11 +134,11 @@ const VI: LegalDoc = {
         ["thông tin sai hoặc gây hiểu nhầm, đặc biệt về visa và quy định nhập cảnh, sức khoẻ, an toàn, giá hoặc tình trạng còn chỗ;"],
         ["tư vấn cho một người cụ thể về bảo hiểm, tài chính, visa hoặc các vấn đề rủi ro cao khác, trừ khi người có chuyên môn kiểm tra trước khi gửi và người nhận được thông báo rằng có sử dụng AI (thông tin du lịch chung, ví dụ có những quy định visa nào, không phải là tư vấn);"],
         ["lách các bước kiểm tra nội dung, giới hạn hay biện pháp bảo vệ khác của Adventure Asia;"],
-        ["bất kỳ quy trình tự động hay tác tử AI nào bạn chạy qua API làm một trong các việc trên: bạn chịu trách nhiệm về nó."],
+        ["bất kỳ quy trình tự động hay tác tử AI nào bạn chạy cùng cổng làm một trong các việc trên: bạn chịu trách nhiệm về nó."],
       ] },
       ["Nếu luật hoặc quy định của một kênh yêu cầu ghi nhãn nội dung do AI tạo, bạn có trách nhiệm thêm nhãn đó."],
       ["Nếu bạn dùng nội dung AI để trò chuyện trực tiếp với khách hàng, ví dụ trong khung chat hoặc tin nhắn trả lời tự động, hãy cho họ biết họ đang trò chuyện với AI, ít nhất ở đầu mỗi cuộc trò chuyện."],
-      ["Bạn kiểm tra từng bài trước khi đăng, và bạn là bên đăng bài. Việc yêu cầu Adventure Asia đăng một bài, trên cổng hoặc qua API, xác nhận rằng bạn đã kiểm tra bài đó."],
+      ["Bạn kiểm tra từng bài trước khi đăng, và bạn là bên đăng bài. Việc yêu cầu Adventure Asia đăng một bài trên cổng xác nhận rằng bạn đã kiểm tra bài đó."],
       ["Adventure Asia có thể giữ lại, viết lại hoặc từ chối tạo hay đăng nội dung vi phạm các quy định này. Việc gỡ bài và tạm khoá được nêu ở mục 4 và 5."],
       ["Gói của bạn có thể bao gồm hạn mức AI hằng tháng. Khi dùng hết, các tính năng AI có thể tạm dừng tới tháng sau hoặc tới khi Adventure Asia nâng hạn mức; việc dùng AI không phát sinh thêm phí."],
       ["Adventure Asia lưu bản ghi về việc sử dụng AI (mô hình, nhà cung cấp, bước, thời gian và chi phí, không lưu chính văn bản) và về việc đăng bài, để vận hành, bảo vệ dịch vụ và chứng minh các quy định này được tuân thủ."],
@@ -145,7 +150,7 @@ const VI: LegalDoc = {
       ["Bạn có thể gỡ bài của mình. Adventure Asia cũng có thể gỡ một bài đã đăng cho bạn, ví dụ khi bài vi phạm các điều khoản này."],
     ] }] },
     { id: "suspension", title: "5. Tạm khoá và chấm dứt dịch vụ", blocks: [{ p: [
-      "Adventure Asia có thể tạm khoá một tài khoản, việc này dừng ngay quyền truy cập API và việc đăng bài của tài khoản, ví dụ để bảo vệ dịch vụ hoặc khi các điều khoản này bị vi phạm. Thời hạn thông báo, việc chấm dứt và những gì xảy ra với nội dung của bạn sau đó [cần xác nhận].",
+      "Adventure Asia có thể tạm khoá một tài khoản, việc này dừng ngay việc đăng nhập và việc đăng bài của tài khoản, ví dụ để bảo vệ dịch vụ hoặc khi các điều khoản này bị vi phạm. Thời hạn thông báo, việc chấm dứt và những gì xảy ra với nội dung của bạn sau đó [cần xác nhận].",
     ] }] },
     { id: "ownership", title: "6. Quyền đối với nội dung", blocks: [{ p: [
       "Ai sở hữu nội dung được tạo và giấy phép sử dụng các tour trong danh mục [cần xác nhận].",

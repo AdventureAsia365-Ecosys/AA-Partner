@@ -12,6 +12,10 @@
 //
 // AA-815: the Publish button is gated per channel (blog needs WordPress, facebook needs the
 // Facebook Page) instead of WordPress for every piece, and a publish refreshes the Published list.
+//
+// AA-1088 (M3): a piece CIS could not fully confirm against the trip is refused with a 409
+// (content_needs_final_check). The card shows the reason in the UI language and, for the account
+// owner (can_publish_anyway), a "Publish anyway" button that sends the owner's choice (CIS audits it).
 
 import { useState, useEffect, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -22,6 +26,8 @@ import { PUBLISH_LOG_QUERY_KEY, channelName } from "./PublishedList";
 import { channelName as channelLabel } from "./channelLabels";
 import { AiNotice, Button, EmptyState, K, sans, useFormat, useLang, useT, type Translator } from "@/app/_kit";
 import { PUBLISH_MESSAGES } from "./publish.messages";
+import { StudioError } from "./studioError";
+import { finalCheckRefusal, publishRequestInit } from "@/lib/studio/publishCheck";
 import {
   ServedBadge, plainError, publishClosedLabel, servedTitle, workClosed, type ServedFields,
 } from "./ServedBadge";
@@ -41,6 +47,8 @@ interface PublishResult {
   success: boolean;
   external_url: string | null;
   last_error: string | null;
+  /** AA-1088: the account owner may publish this piece anyway (CIS 409 content_needs_final_check). */
+  can_publish_anyway?: boolean;
 }
 
 // AA-760 — the shared date format ("9 Oct 2026"), was the browser locale ("10/20/2026").
@@ -75,13 +83,22 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
 
   useEffect(() => { load(); }, [load, reloadSignal]);
 
-  async function handlePublish(pieceId: string) {
+  async function handlePublish(pieceId: string, publishAnyway = false) {
     setPublishingId(pieceId);
     setResults(prev => { const next = { ...prev }; delete next[pieceId]; return next; });
     try {
-      const res = await fetch(`/api/tenant/v1/publish-log/${pieceId}/publish`, { method: "POST" });
+      const res = await fetch(`/api/tenant/v1/publish-log/${pieceId}/publish`, publishRequestInit(publishAnyway));
       const body = await res.json().catch(() => ({}));
-      if (res.ok && body.success) {
+      const check = finalCheckRefusal(res.status, body);
+      if (check) {
+        // AA-1088: the reason in the UI language; the owner gets "Publish anyway" on the card
+        const reason = new StudioError(check.canPublishAnyway ? "needsFinalCheckOwner" : "needsFinalCheckEditor", res.status);
+        setResults(prev => ({
+          ...prev,
+          [pieceId]: { success: false, external_url: null, last_error: plainError(reason, t("publishFailed"), lang),
+                       can_publish_anyway: check.canPublishAnyway },
+        }));
+      } else if (res.ok && body.success) {
         setResults(prev => ({ ...prev, [pieceId]: { success: true, external_url: body.external_url, last_error: null } }));
         // Published pieces drop out of the pending list entirely — refresh from the server
         // rather than guessing the new shape client-side.
@@ -202,9 +219,17 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
                   </div>
                 )}
                 {result && !result.success && (
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 12px", borderRadius: 8, background: K.dangerSoft, color: K.danger, fontSize: 12.5, lineHeight: 1.5 }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 12px", borderRadius: 8, background: K.dangerSoft, color: K.danger, fontSize: 12.5, lineHeight: 1.5, flexWrap: "wrap" }}>
                     <XCircle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
-                    <span>{result.last_error}</span>
+                    <span style={{ flex: "1 1 240px", minWidth: 0 }}>{result.last_error}</span>
+                    {/* AA-1088: only the account owner, only after the final-read refusal */}
+                    {result.can_publish_anyway && channelConnected && !workClosed(p) && (
+                      <span data-testid="publish-anyway" style={{ flexShrink: 0 }}>
+                        <Button size="sm" variant="secondary" disabled={busy} onClick={() => handlePublish(p.piece_id, true)}>
+                          {t("publishAnyway")}
+                        </Button>
+                      </span>
+                    )}
                   </div>
                 )}
               </div>

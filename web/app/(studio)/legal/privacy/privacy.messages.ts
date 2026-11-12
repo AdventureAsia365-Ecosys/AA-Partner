@@ -8,6 +8,7 @@
 // that may process the content, not as a fallback; the order is AA's setting and may change (Draft v0.5). S271 review:
 // Claude models also check content, and AA may change the ORDER without notice while adding or replacing a provider
 // follows the DPA notice (root docs/legal/dpa.md 6.2; the DPA itself is §10, still [to be confirmed]).
+// AA-1088 (M9, Draft v0.7): §2 "Partner account" describes today's partner sign-in, not the removed API key.
 // AA-1062 (Draft v0.6, register v1.13): since CIS migration 383 (route control version 7) no OpenAI model writes; only
 // Claude models write, and a writing step with no Claude model available waits and is retried (queue_retry). The
 // "last resort" writer sentence is gone; tests/studio/studioLegalProviders.test.ts keeps it out.
@@ -34,7 +35,7 @@ const EN: LegalDoc = {
       MAIL, ".",
     ] }] },
     { id: "collect", title: "2. What we collect", blocks: [{ ul: [
-      [{ b: "Partner account." }, " Your business name, plan and account status, and the API key you sign in with. We check the key on our server; the browser then holds a sign-in session."],
+      [{ b: "Partner account." }, " Your business name, plan and account status, and for each person on your team: their e-mail address, their role and their sign-in (a password and a second step, held by our sign-in service on Amazon Web Services; we never see the password). We check each sign-in on our server; the browser then holds a sign-in session."],
       [{ b: "Brand settings and content." }, " The brand voice and settings you enter, the tour rewrites and social or blog pieces generated for you, and your edits."],
       [{ b: "Channel connections." }, " The details you give us to publish to your own channels (for example a WordPress site or a Facebook Page)."],
       [{ b: "Activity records." }, " Each AI model call (provider, model, cost, time, partner and job), each publish and unpublish (piece, channel, post id, status, time, and whether your account or an Adventure Asia admin acted), and an admin log of changes to partner accounts."],
@@ -101,7 +102,7 @@ const VI: LegalDoc = {
       MAIL, ".",
     ] }] },
     { id: "collect", title: "2. Chúng tôi thu thập gì", blocks: [{ ul: [
-      [{ b: "Tài khoản đối tác." }, " Tên doanh nghiệp, gói dịch vụ và trạng thái tài khoản, cùng khoá API bạn dùng để đăng nhập. Chúng tôi kiểm tra khoá trên máy chủ; sau đó trình duyệt giữ một phiên đăng nhập."],
+      [{ b: "Tài khoản đối tác." }, " Tên doanh nghiệp, gói dịch vụ và trạng thái tài khoản, và với mỗi người trong nhóm của bạn: địa chỉ e-mail, vai trò và tài khoản đăng nhập (mật khẩu và một bước thứ hai, do dịch vụ đăng nhập của chúng tôi trên Amazon Web Services lưu giữ; chúng tôi không bao giờ thấy mật khẩu). Chúng tôi kiểm tra mỗi lần đăng nhập trên máy chủ; sau đó trình duyệt giữ một phiên đăng nhập."],
       [{ b: "Cài đặt thương hiệu và nội dung." }, " Giọng văn và các cài đặt thương hiệu bạn nhập, các bản viết lại tour và bài mạng xã hội hoặc bài blog được tạo cho bạn, cùng những chỉnh sửa của bạn."],
       [{ b: "Kết nối kênh." }, " Thông tin bạn cung cấp để chúng tôi đăng bài lên các kênh của bạn (ví dụ một website WordPress hoặc một Trang Facebook)."],
       [{ b: "Bản ghi hoạt động." }, " Mỗi lần gọi mô hình AI (nhà cung cấp, mô hình, chi phí, thời gian, đối tác và tác vụ), mỗi lần đăng và gỡ bài (bài viết, kênh, mã bài đăng, trạng thái, thời gian, và người thực hiện là tài khoản của bạn hay quản trị viên Adventure Asia), cùng nhật ký quản trị về các thay đổi trên tài khoản đối tác."],
