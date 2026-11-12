@@ -26,7 +26,10 @@ counts a queued row as busy; not deploy-gate exempt). Per agency, in one :func:`
    with a passport issue (one per entry into Booked, :func:`app.travel_ops.passport.booked_events`), and one
    ``visa_deadline_overdue`` task per trip with an open visa application past its deadline
    (:func:`app.travel_ops.visas.overdue_tasks`).
-6. **Digest**: an agency with ``task_digest`` on gets one ``crm_task_digest`` job per local day at
+6. **System tags** (AA-960, :mod:`app.tags.system`): the trip system tags from the AA catalogue (R29) every hour, and
+   "ready to travel again" (R36) at :data:`SPECIAL_HOURS`; a new system tag starts the tag workflows (in a savepoint:
+   a failure is counted ``system_tags_failed``, the tick goes on).
+7. **Digest**: an agency with ``task_digest`` on gets one ``crm_task_digest`` job per local day at
    :data:`DIGEST_HOUR` (idempotency key per agency and date).
 
 Payload and result are ids and counts only. A locked or offboarding agency is skipped.
@@ -50,6 +53,7 @@ from app.errors import Forbidden, NotFound, ServiceError
 from app.jobs import queue
 from app.jobs.kinds import TASK_DIGEST, WORKFLOW_RUN, WORKFLOW_TICK
 from app.jobs.queue import Job
+from app.tags import system as system_tags
 from app.tenancy import SystemContext, system_tx
 from app.travel_ops import passport, visas
 from app.vault import KeyProvider, Vault
@@ -285,6 +289,17 @@ async def _due_runs(ctx: SystemContext) -> int:
     return queued
 
 
+async def _system_tags(ctx: SystemContext, today: dt.date, *, clients: bool) -> Counter[str]:
+    """AA-960 (R29 / R36): the agency's system tags, in a savepoint: a failure is logged and counted, the rest of the
+    tick goes on."""
+    try:
+        async with ctx.conn.transaction():
+            return await system_tags.refresh(ctx, today, clients=clients)
+    except asyncpg.PostgresError as exc:
+        log.error("system_tags_failed tenant_id=%s error_class=%s", ctx.tenant_id, type(exc).__name__)
+        return Counter({"system_tags_failed": 1})
+
+
 async def run_agency(ctx: SystemContext, vault: Vault, now: datetime) -> Counter[str]:
     tz = await wf_facts.timezone(ctx)
     local = now.astimezone(tz)
@@ -296,6 +311,7 @@ async def run_agency(ctx: SystemContext, vault: Vault, now: datetime) -> Counter
     # starts is picked at once); open visa applications past their deadline get one task per trip.
     counts.update(await passport.booked_events(ctx, vault, triggers.on_trip_event))
     counts.update(await visas.overdue_tasks(ctx, today))
+    counts.update(await _system_tags(ctx, today, clients=local.hour in SPECIAL_HOURS))
     counts["runs_queued"] += await _due_runs(ctx)
     counts["tasks_redated"] += await tasks.redate(ctx, tz)
     if local.hour == DIGEST_HOUR and await ctx.conn.fetchval(DIGEST_SQL):

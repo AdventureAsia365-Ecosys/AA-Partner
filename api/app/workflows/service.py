@@ -27,6 +27,7 @@ from typing import Any
 from app.errors import Conflict, Invalid, NotFound
 from app.mail import templates as mail_templates
 from app.permissions import Action, require
+from app.tags import model as tag_model
 from app.tenancy import TenantContext
 from app.vault import Vault
 from app.workflows import facts as wf_facts
@@ -78,6 +79,14 @@ SELECT message_template_id FROM crm.message_template WHERE message_template_id =
 """
 TEXT_TEMPLATE_SQL = """
 SELECT content_sid FROM crm.channel_template WHERE content_sid = ANY($1::text[]) AND deleted_at IS NULL
+"""
+TAG_CODES_SQL = "SELECT code FROM crm.tag WHERE applies_to = $1 AND code = ANY($2::text[])"
+TAGGED_CLIENTS_SQL = """
+SELECT DISTINCT l.traveler_id FROM crm.tag_link l
+  JOIN crm.tag g ON g.tag_id = l.tag_id AND g.applies_to = 'client' AND g.code = ANY($1::text[])
+  JOIN crm.traveler tr ON tr.traveler_id = l.traveler_id AND tr.deleted_at IS NULL AND tr.archived_at IS NULL
+ ORDER BY l.traveler_id
+ LIMIT 2000
 """
 MEMBERS_SQL = """
 SELECT member_id FROM crm.member WHERE member_id = ANY($1::uuid[]) AND status = 'active' AND deleted_at IS NULL
@@ -155,12 +164,21 @@ async def overview(ctx: TenantContext, *, include_archived: bool = False) -> dic
             "merge_fields": list(model.MERGE_FIELDS),
             "waiting_on": list(model.WAITING_ON),
             "condition_keys": list(model.CONDITION_KEYS),
+            "tag_events": list(model.TAG_EVENTS),
         },
     }
 
 
 async def _check_references(ctx: TenantContext, rule: model.Rule) -> None:
-    """Message templates, text templates and members a rule names belong to this agency (RLS) and exist."""
+    """Message templates, text templates, members and tags a rule names belong to this agency (RLS) and exist."""
+    codes = rule.conditions.get("tags_any") or []
+    if codes:
+        applies_to = "client" if rule.subject == "traveler" else "trip"
+        # A system tag of the right subject is always known (the tick makes its row on its first run).
+        found = {code for code in codes if tag_model.SYSTEM_TAGS.get(code, ("",))[0] == applies_to}
+        found |= {r["code"] for r in await ctx.conn.fetch(TAG_CODES_SQL, applies_to, list(codes))}
+        if set(codes) - found:
+            raise Invalid("tag_not_found", f"a {applies_to} tag of this agency", field="conditions.tags_any")
     mail = {
         s["message_template_id"] for s in rule.steps if s["action"] == "send_email" and s.get("message_template_id")
     }
@@ -333,6 +351,11 @@ async def preview(ctx: TenantContext, rule_id: uuid.UUID) -> dict[str, Any]:
         raise NotFound("workflow_not_found")
     rule = _rule_of(row)
     if rule.subject != "trip":
+        if rule.trigger_kind == "event" and rule.conditions.get("tags_any"):
+            # AA-960: the live, not archived clients that carry one of its tags now.
+            ids = [str(r["traveler_id"])
+                   for r in await ctx.conn.fetch(TAGGED_CLIENTS_SQL, list(rule.conditions["tags_any"]))]  # fmt: skip
+            return {"workflow_rule_id": str(rule_id), "subject": "client", "count": len(ids), "sample": ids[:SAMPLE]}
         return {"workflow_rule_id": str(rule_id), "subject": "client", "count": None, "sample": []}
     ids = [r["trip_id"] for r in await ctx.conn.fetch(LIVE_TRIPS_SQL)]
     all_facts = await wf_facts.trips(ctx, ids)
@@ -349,6 +372,9 @@ async def preview(ctx: TenantContext, rule_id: uuid.UUID) -> dict[str, Any]:
                 continue
         if rule.trigger_kind == "stage_enter" and facts.stage != rule.trigger_value:
             continue
+        if rule.trigger_kind == "event" and rule.trigger_value in model.TAG_EVENTS:
+            if not set(rule.conditions.get("tags_any") or ()) & set(facts.tags):
+                continue
         eligible.append(str(trip_id))
     return {"workflow_rule_id": str(rule_id), "subject": "trip", "count": len(eligible), "sample": eligible[:SAMPLE]}
 

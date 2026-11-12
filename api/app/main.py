@@ -98,6 +98,7 @@ from app.routers import (
     staff,
     staff_ops,
     support_access,
+    tags,
     team,
     travel_ops,
     travellers,
@@ -353,6 +354,7 @@ def create_app(
     app.include_router(finance.router)  # AA-1068: trip P&L, supplier bills, Bookings with AA, departure costs
     app.include_router(catalogue.router)  # AA-1069: the agency service catalogue
     app.include_router(workflows.router)
+    app.include_router(tags.router)  # AA-960: tags, system tags, ready to travel again
     return app
 
 

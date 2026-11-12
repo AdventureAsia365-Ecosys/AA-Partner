@@ -139,6 +139,14 @@ class Action(StrEnum):
     DISCOUNT_APPROVE = "discount_approve"
     SALES_PARTNER_MANAGE = "sales_partner_manage"  # AA-1071: partners, their terms and their links (crm-056 CRM54)
     PARTNER_COMMISSION_APPROVE = "partner_commission_approve"  # AA-1071: approve / pay / cancel a partner commission
+    # AA-960 (CRM-29b, R3 / R36; no tag row in design §4.6): tag one trip / client and make a tag from the picker
+    # (every role, like editing a client); bulk add / remove with a preview (owner, agent, like workflow_apply); rename,
+    # recolour, archive or delete a tag of the agency's vocabulary (owner: it changes every record); the A-15 Marketing
+    # lists, "Ready to travel again" (owner, agent: the Marketing nav is not the assistant's).
+    TAG_APPLY = "tag_apply"
+    TAG_BULK_APPLY = "tag_bulk_apply"
+    TAG_MANAGE = "tag_manage"
+    MARKETING_VIEW = "marketing_view"
 
 
 A, D = Rule.ALLOW, Rule.DENY
@@ -207,6 +215,10 @@ _TABLE: dict[Action, tuple[Rule, Rule, Rule]] = {
     Action.DISCOUNT_APPROVE: (A, D, D),
     Action.SALES_PARTNER_MANAGE: (A, D, D),
     Action.PARTNER_COMMISSION_APPROVE: (A, D, D),
+    Action.TAG_APPLY: (A, A, A),
+    Action.TAG_BULK_APPLY: (A, A, D),
+    Action.TAG_MANAGE: (A, D, D),
+    Action.MARKETING_VIEW: (A, A, D),
 }
 
 MATRIX: dict[str, dict[Action, Rule]] = {

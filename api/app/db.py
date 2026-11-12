@@ -92,6 +92,7 @@ REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = (
     "crm-056",  # AA-1071: sales partners, partner commission, partner links and codes (contract: MIG-4)
     "crm-057",  # AA-1072: Book now attempts, gateway payment sessions, vn_gateway, online payments (contract: MIG-4)
     "crm-058",  # AA-1085: legal-hold guards read the holds of the row's own agency (contract: MIG-4)
+    "crm-061",  # AA-960: agency and system tags on trips and clients (expand, migration-only PR first)
 )
 REQUIRED_SCHEMA_VERSION = max(REQUIRED_SCHEMA_VERSIONS)
 

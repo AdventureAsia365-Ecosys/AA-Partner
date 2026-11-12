@@ -23,7 +23,9 @@ SELECT t.trip_id, t.stage, t.trip_style, t.lead_source, t.destinations,
        EXISTS (SELECT 1 FROM crm.trip_cancellation x
                 WHERE x.trip_id = t.trip_id AND x.status = 'pending') AS cancelling,
        (SELECT tt.traveler_id FROM crm.trip_traveler tt
-         WHERE tt.trip_id = t.trip_id AND tt.role = 'lead' ORDER BY tt.created_at LIMIT 1) AS lead_id
+         WHERE tt.trip_id = t.trip_id AND tt.role = 'lead' ORDER BY tt.created_at LIMIT 1) AS lead_id,
+       ARRAY(SELECT g.code FROM crm.tag_link l JOIN crm.tag g ON g.tag_id = l.tag_id
+              WHERE l.trip_id = t.trip_id ORDER BY g.code) AS tags
   FROM crm.trip t
  WHERE t.trip_id = ANY($1::uuid[])
 """
@@ -65,6 +67,7 @@ def _facts(r: Any) -> TripFacts:
         created_at=r["created_at"],
         deleted=bool(r["deleted"]),
         cancelling=bool(r["cancelling"]),
+        tags=tuple(r["tags"] or ()) if "tags" in r.keys() else (),
     )
 
 

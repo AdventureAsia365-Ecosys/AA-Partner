@@ -80,6 +80,7 @@ class SearchIn(_Body):
     archived: bool = False
     owner: Literal["anyone", "me"] = "anyone"
     page: int = Field(default=1, ge=1, le=service.MAX_PAGE)
+    tag: str | None = Field(default=None, max_length=40)  # AA-960: a client tag code
 
 
 class TravelerIn(_Body):
@@ -183,13 +184,14 @@ async def get_travelers(
     archived: bool = False,
     owner: Annotated[Literal["anyone", "me"], Query()] = "anyone",
     page: Annotated[int, Query(ge=1, le=service.MAX_PAGE)] = 1,
+    tag: Annotated[str | None, Query(max_length=40)] = None,
 ) -> dict[str, Any]:
     if q is not None:
         raise Invalid("search_by_post", "search with POST /crm/v1/travelers/search (the term stays out of URLs)")
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     async with tenant_tx(pool, caller, tenant_id, action=Action.CLIENT_VIEW) as ctx:
-        return await service.directory(ctx, Vault(keys, ctx), archived=archived, owner=owner, page=page)
+        return await service.directory(ctx, Vault(keys, ctx), archived=archived, owner=owner, page=page, tag=tag)
 
 
 @router.post("/travelers/search")
@@ -200,7 +202,7 @@ async def post_travelers_search(
     keys = require_keys(request.app.state.keys)
     async with tenant_tx(pool, caller, tenant_id, action=Action.CLIENT_VIEW) as ctx:
         return await service.directory(
-            ctx, Vault(keys, ctx), q=body.q, archived=body.archived, owner=body.owner, page=body.page
+            ctx, Vault(keys, ctx), q=body.q, archived=body.archived, owner=body.owner, page=body.page, tag=body.tag
         )
 
 

@@ -348,7 +348,9 @@ async def test_directory_lists_names_only_and_writes_one_list_view() -> None:
         "has_phone",
         "trips",
         "created_at",
+        "tags",  # AA-960
     }
+    assert got["items"][0]["tags"] == []
     [event] = ctx.audit_events
     assert (event.action, event.fields, event.reason, event.object_ids) == (
         "list_view",
@@ -367,13 +369,21 @@ async def test_directory_exact_search_by_email_phone_and_name() -> None:
     got = await service.directory(ctx, FakeVault(), q="anna", owner="me")
     # The 4-byte token index matched both; only the confirmed name is shown.
     assert [i["display_name"] for i in got["items"]] == ["Anna Martin"]
-    args = conn.calls[-1][1]
-    assert args[1] == MEMBER and args[4] == [b"tok1"] and args[2] is None
+
+    def listed() -> tuple[Any, ...]:
+        return [c for c in conn.calls if "tr.name_token_bidx @>" in c[0]][-1][1]
+
+    args = listed()
+    assert args[1] == MEMBER and args[4] == [b"tok1"] and args[2] is None and args[7] is None
     assert ctx.audit_events[-1].reason == "client_search" and ctx.audit_events[-1].object_ids == (str(T1),)
     await service.directory(ctx, FakeVault(), q="Anna@Example.test")
-    assert conn.calls[-1][1][2] == b"e:anna@example.test"
+    assert listed()[2] == b"e:anna@example.test"
     await service.directory(ctx, FakeVault(), q="+84 912 345 678")
-    assert conn.calls[-1][1][3] == b"p:+84 912 345 678"
+    assert listed()[3] == b"p:+84 912 345 678"
+    await service.directory(ctx, FakeVault(), tag="repeat_client")  # AA-960: the client tag filter
+    assert listed()[7] == "repeat_client"
+    with pytest.raises(Invalid):
+        await service.directory(ctx, FakeVault(), tag="Not A Code")
     for bad_q, bad_page in (("!!!", 1), (None, 0), (None, 999)):
         with pytest.raises(Invalid):
             await service.directory(ctx, FakeVault(), q=bad_q, page=bad_page)

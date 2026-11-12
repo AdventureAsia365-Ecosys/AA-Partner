@@ -138,7 +138,9 @@ def test_every_action_and_trigger_kind_is_accepted() -> None:
             "invalid_number",
             "trigger.offset_days",
         ),
-        ({"conditions": {"tags_any": ["vip"]}}, "condition_not_available", "conditions.tags_any"),
+        ({"conditions": {"tags_any": ["VIP"]}}, "invalid_code", "conditions.tags_any"),
+        ({"conditions": {"tags_any": []}}, "invalid_list", "conditions.tags_any"),
+        ({"trigger": {"kind": "event", "value": "trip_tag.added"}}, "tags_required", "conditions.tags_any"),
         ({"conditions": {"colour": "blue"}}, "unknown_field", "conditions.colour"),
         ({"conditions": []}, "invalid_conditions", "conditions"),
         ({"conditions": {"stages": []}}, "invalid_list", "conditions.stages"),
@@ -308,6 +310,32 @@ def test_client_rules_and_task_lists_have_their_own_limits() -> None:
         model.validate("rule")  # type: ignore[arg-type]
 
 
+def test_tag_rules_name_their_tags_and_a_client_tag_rule_is_about_the_client() -> None:
+    """AA-960: a tag trigger needs tags_any; a trip tag rule keeps the trip conditions; a client tag rule is about the
+    client (no trip condition, no trip field, no trip date)."""
+    trip_rule = model.validate(raw(trigger={"kind": "event", "value": "trip_tag.added"},
+                                   conditions={"tags_any": ["vip"], "stages": ["booked"]}))  # fmt: skip
+    assert trip_rule.subject == "trip"
+    assert trip_rule.conditions == {"tags_any": ["vip"], "stages": ["booked"]}
+    client = {"kind": "event", "value": "client_tag.added"}
+    rule = model.validate(raw(trigger=client, conditions={"tags_any": ["sys_ready_to_travel", "repeat"]}))
+    assert rule.subject == "traveler"
+    assert model.subject_of("event", "client_tag.added") == "traveler"
+    assert model.subject_of("event", "trip_tag.added") == "trip"
+    with pytest.raises(Invalid) as err:
+        model.validate(raw(trigger=client, conditions={"tags_any": ["vip"], "stages": ["booked"]}))
+    assert err.value.code == "invalid_conditions"
+    with pytest.raises(Invalid) as err:
+        model.validate(raw(trigger=client, conditions={"tags_any": ["vip"]},
+                           steps=[{"action": "set_field", "field": "waiting_on", "value": "client"}]))  # fmt: skip
+    assert err.value.code == "invalid_action"
+    with pytest.raises(Invalid) as err:
+        model.validate(raw(trigger=client, conditions={}))
+    assert err.value.code == "tags_required"
+    # tags_any is also a plain condition of any trip rule.
+    assert model.validate(raw(conditions={"tags_any": ["vip"]})).conditions == {"tags_any": ["vip"]}
+
+
 def test_a_greeting_is_always_marketing() -> None:
     """S263 review: a birthday or anniversary send is marketing (consent checked, card R); transactional is refused."""
     template, sid = str(uuid.uuid4()), "HX" + "a" * 32
@@ -389,6 +417,8 @@ def test_the_library_validates_and_needs_templates_where_it_sends() -> None:
         ({"has_aa_lines": True}, {}, "aa_lines"),
         ({"stage3_incomplete": True}, {}, None),
         ({"stage3_incomplete": True}, {"s3": 100}, "stage3"),
+        ({"tags_any": ["vip"]}, {}, "tags"),
+        ({"tags_any": ["vip", "sys_aa_trekking"]}, {"tags": ("sys_aa_trekking",)}, None),
     ],
 )
 def test_conditions(conditions: dict[str, Any], over: dict[str, Any], result: str | None) -> None:

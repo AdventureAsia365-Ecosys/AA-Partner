@@ -8,8 +8,12 @@ A rule is ``trigger`` + ``conditions`` + ``steps``:
   date of each open payment schedule row, :data:`SCHEDULE_ANCHORS`), ``special_date``
   (a date of a client, :data:`SPECIAL_DATES`, plus ``offset_days``), ``manual`` (a task list a member applies, R9).
 - **Conditions** (:data:`CONDITION_KEYS`, all optional, all must hold): ``stages``, ``trip_styles``, ``lead_sources``,
-  ``destinations_any``, ``has_children``, ``has_aa_lines``, ``stage3_incomplete``. ``tags_any`` is CRM-29b's (AA-960):
-  refused until tags exist (422 ``condition_not_available``) rather than accepted and silently ignored.
+  ``destinations_any``, ``has_children``, ``has_aa_lines``, ``stage3_incomplete``, ``tags_any`` (AA-960, CRM-29b: the
+  trip carries one of these tag codes, agency or system).
+- **Tag workflows** (AA-960, R3 / R29): trigger ``event`` with value ``trip_tag.added`` (a tag put on a trip; the run
+  is about the trip) or ``client_tag.added`` (a tag put on a client; the run is about the client, like a special
+  date), always with ``conditions.tags_any`` (422 ``tags_required``): which tags start it. A client tag rule has no
+  other condition.
 - **Steps** (1..:data:`MAX_STEPS`, :data:`ACTIONS`): ``create_task`` (a coded kind of :data:`WORKFLOW_TASK_KINDS` or a
   ``custom`` task with the agency's own title; due = anchor + offset; priority; assignee = the trip / client owner or
   one member), ``send_email`` (an agency message template, transactional or marketing), ``send_text`` (an approved
@@ -55,7 +59,12 @@ EVENTS = (
     # AA-1070 (crm-15): a trip entered Booked while a traveller's passport ends too soon for it
     # (app.travel_ops.passport, fired by the hourly tick once per entry into Booked).
     "passport.invalid_for_trip",
+    # AA-960 (R3 / R29): a tag was put on a trip / a client (app.workflows.triggers.on_tag_added).
+    "trip_tag.added",
+    "client_tag.added",
 )
+TAG_EVENTS = {"trip_tag.added": "trip", "client_tag.added": "client"}
+CLIENT_EVENTS = ("client_tag.added",)  # events whose run is about a client, not a trip
 MESSAGE_EVENTS = ("message.received", "message.sent")
 DATE_ANCHORS = (
     "departure",
@@ -93,8 +102,8 @@ CONDITION_KEYS = (
     "has_children",
     "has_aa_lines",
     "stage3_incomplete",
+    "tags_any",  # AA-960 (CRM-29b)
 )
-LATER_CONDITION_KEYS = ("tags_any",)  # CRM-29b (AA-960)
 MAX_STEPS = 20
 MAX_NAME = 120
 MAX_TITLE = 120
@@ -147,8 +156,15 @@ class Rule:
 
     @property
     def subject(self) -> str:
-        """Whom a run of the rule is about: a client (special dates) or a trip (everything else)."""
-        return "traveler" if self.trigger_kind == "special_date" else "trip"
+        """Whom a run of the rule is about: a client (special dates, a client tag) or a trip (everything else)."""
+        return subject_of(self.trigger_kind, self.trigger_value)
+
+
+def subject_of(trigger_kind: str | None, trigger_value: str | None) -> str:
+    """``traveler`` for a client's special date or a client tag, else ``trip``."""
+    if trigger_kind == "special_date" or (trigger_kind == "event" and trigger_value in CLIENT_EVENTS):
+        return "traveler"
+    return "trip"
 
 
 def _err(code: str, where: str, message: str = "") -> Invalid:
@@ -237,19 +253,21 @@ def _trigger(kind: Any, value: Any, offset: Any) -> tuple[str, str | None, int]:
     return kind, value, offset
 
 
-def _conditions(raw: Any, subject: str) -> dict[str, Any]:
+def _conditions(raw: Any, subject: str, *, tag_event: bool = False) -> dict[str, Any]:
     if raw is None:
-        return {}
+        raw = {}
     if not isinstance(raw, dict):
         raise _err("invalid_conditions", "conditions")
     for key in raw:
-        if key in LATER_CONDITION_KEYS:
-            raise _err("condition_not_available", f"conditions.{key}", "tags arrive with a later release")
         if key not in CONDITION_KEYS:
             raise _err("unknown_field", f"conditions.{key}")
-    if subject == "traveler" and raw:
-        raise _err("invalid_conditions", "conditions", "a client's special date has no trip conditions")
+    if tag_event and "tags_any" not in raw:
+        raise _err("tags_required", "conditions.tags_any", "pick the tags that start this automation")
+    if subject == "traveler" and set(raw) - ({"tags_any"} if tag_event else set()):
+        raise _err("invalid_conditions", "conditions", "a client's special date or client tag has no trip conditions")
     out: dict[str, Any] = {}
+    if "tags_any" in raw:
+        out["tags_any"] = _codes(raw["tags_any"], "conditions.tags_any")
     if "stages" in raw:
         out["stages"] = _codes(raw["stages"], "conditions.stages", STAGES)
     if "trip_styles" in raw:
@@ -385,8 +403,8 @@ def validate(raw: dict[str, Any], *, draft: bool = False) -> Rule:
     if not isinstance(trigger, dict):
         raise _err("invalid_trigger", "trigger")
     kind, value, offset = _trigger(trigger.get("kind"), trigger.get("value"), trigger.get("offset_days"))
-    subject = "traveler" if kind == "special_date" else "trip"
-    conditions = _conditions(raw.get("conditions"), subject)
+    subject = subject_of(kind, value)
+    conditions = _conditions(raw.get("conditions"), subject, tag_event=kind == "event" and value in TAG_EVENTS)
     steps_raw = raw.get("steps")
     if not isinstance(steps_raw, list) or not 1 <= len(steps_raw) <= MAX_STEPS:
         raise _err("invalid_steps", "steps", f"1 to {MAX_STEPS} steps")
@@ -456,6 +474,7 @@ class TripFacts:
     created_at: dt.datetime
     deleted: bool
     cancelling: bool
+    tags: tuple[str, ...] = ()  # AA-960: the codes of the trip's tags (agency and system)
 
 
 def matches(conditions: dict[str, Any], facts: TripFacts) -> str | None:
@@ -474,6 +493,8 @@ def matches(conditions: dict[str, Any], facts: TripFacts) -> str | None:
         return "aa_lines"
     if "stage3_incomplete" in conditions and (facts.s3 < 100) != conditions["stage3_incomplete"]:
         return "stage3"
+    if "tags_any" in conditions and not set(conditions["tags_any"]) & set(facts.tags):
+        return "tags"
     return None
 
 

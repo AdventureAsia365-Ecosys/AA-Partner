@@ -15,6 +15,8 @@ Route                                           What                            
 ``POST /workflows``                             a new rule                                       owner
 ``POST /workflows/install``                     install a library template                       owner
 ``GET  /workflows/runs``                        runs of a trip / client / rule (step log)        every role
+``GET  /workflows/coverage``                    R30: per stage / trip-tag rule, the live trips   every role
+                                                in its state that never had a run (AA-960)
 ``POST /workflows/runs/{id}/stop``              stop one active run                              owner, agent
 ``GET  /workflows/{id}``                        one rule                                         every role
 ``PATCH /workflows/{id}``                       edit (``version`` must match)                    owner
@@ -43,7 +45,7 @@ from app.routers.agency import tenant_header
 from app.tenancy import tenant_tx
 from app.vault import Vault
 from app.vault.provider import require_keys
-from app.workflows import service, tasks
+from app.workflows import coverage, service, tasks
 
 router = class_router(AGENCY, tags=["workflows"])
 
@@ -239,6 +241,13 @@ async def get_runs(
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_VIEW) as ctx:
         return await service.runs(ctx, trip_id=trip_id, traveler_id=traveler_id, rule_id=workflow_rule_id)
+
+
+@router.get("/workflows/coverage")
+async def get_coverage(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PIPELINE_VIEW) as ctx:
+        return await coverage.coverage(ctx)
 
 
 @router.post("/workflows/runs/{run_id}/stop")
