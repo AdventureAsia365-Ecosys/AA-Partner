@@ -19,6 +19,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
 import { DocumentsPanel } from "@/components/clients/DocumentsPanel";
+import { AaCancelCard } from "@/components/pipeline/AaCancelCard";
 import { CancelDialog, GateDialog } from "@/components/pipeline/StageDialogs";
 import { useMarkTripClosed, useTripClosed } from "@/components/pipeline/TripClosed";
 import { TravellerInfoPanel } from "@/components/pipeline/TravellerInfoPanel";
@@ -108,6 +109,8 @@ export function TripPanel({
   const [dates, setDates] = useState({ start: trip.start_date ?? "", end: trip.end_date ?? "" });
   const [gate, setGate] = useState<{ to: Stage; refusal: GateRefusal } | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
+  // AA-1070 (crm-13): the "AA cancelled" card opens the cancel dialog on its reason.
+  const [cancelReason, setCancelReason] = useState<string | undefined>(undefined);
   const [fillOpen, setFillOpen] = useState(false);
   const [toastState, setToast] = useState<ToastState | null>(null);
   // S262 (AA-957 live): the cancel's answer is shown at once (stage, "Cancellation pending", moves frozen) while the
@@ -345,6 +348,21 @@ export function TripPanel({
         )}
       </header>
 
+      {view.aa_cancel && !frozen && (
+        <AaCancelCard
+          tripId={trip.trip_id}
+          view={view.aa_cancel}
+          lang={lang}
+          locale={locale}
+          timeZone={timeZone}
+          canCancel={Boolean(view.can_cancel) && role !== "assistant" && stageShown !== "cancelled" && hydrated}
+          onCancel={() => {
+            setCancelReason("aa_cancelled");
+            setCancelOpen(true);
+          }}
+        />
+      )}
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(300px, 100%), 1fr))", gap: 14, alignItems: "start" }}>
         {stage2 !== undefined && (
           <TravellerInfoPanel
@@ -579,9 +597,14 @@ export function TripPanel({
           tripId={trip.trip_id}
           lang={lang}
           locale={locale}
-          onClose={() => setCancelOpen(false)}
+          presetReason={cancelReason}
+          onClose={() => {
+            setCancelOpen(false);
+            setCancelReason(undefined);
+          }}
           onDone={(result) => {
             setCancelOpen(false);
+            setCancelReason(undefined);
             // AA-957: with AA bookings the trip waits for AA ("Cancellation pending", never cancelled early).
             const pending = result.cancellation?.status === "pending";
             const key = pending ? (result.requeued !== undefined ? "cancelTrip.retried" : "cancelTrip.pendingDone") : "cancelTrip.done";

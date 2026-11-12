@@ -362,6 +362,8 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "GET", pattern: new RegExp(`^trips/${UUID}/(passports|rooming|vouchers|visas|visas/suggestions)$`), tenant: true, card: "AA-1070" },
   { method: "PUT", pattern: new RegExp(`^trips/${UUID}/rooming$`), tenant: true, card: "AA-1070" },
   { method: "POST", pattern: new RegExp(`^trips/${UUID}/(pdfs|visas)$`), tenant: true, card: "AA-1070" },
+  // AA-1070 (crm-13): AA cancelled a departure: re-quote the same tour on another departure (a new version or trip).
+  { method: "POST", pattern: new RegExp(`^trips/${UUID}/aa-cancel/${UUID}/requote$`), tenant: true, card: "AA-1070" },
   { method: "GET", pattern: new RegExp(`^lines/${UUID}/voucher$`), tenant: true, card: "AA-1070" },
   { method: "PUT", pattern: new RegExp(`^lines/${UUID}/voucher$`), tenant: true, card: "AA-1070" },
   { method: "GET", pattern: new RegExp(`^visas/${UUID}$`), tenant: true, card: "AA-1070" },

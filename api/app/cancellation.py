@@ -453,7 +453,10 @@ async def _terms(ctx: AnyContext, trip_id: uuid.UUID) -> dict[str, Any] | None:
     return {"version_label": row["version_label"], "accepted_at": row["accepted_at"].isoformat()}
 
 
-def refund_reason(reason: str, terms: dict[str, Any] | None) -> str:
+def refund_reason(reason: str, terms: dict[str, Any] | None, *, aa_departure_cancelled: bool = False) -> str:
+    if aa_departure_cancelled:  # AA-1070 (crm-13): the charge was forced to 0, the refund is in full
+        base = "Trip cancelled: AA cancelled the departure (aa_departure_cancelled). No cancellation charge."
+        return base if terms is None else f"{base} Booking terms {terms['version_label']}."
     base = f"Trip cancelled ({reason.replace('_', ' ')})."
     if terms is None:
         return base + " No booking terms were accepted in the CRM."
@@ -608,7 +611,7 @@ async def run(
         await ctx.conn.execute(SCHEDULE_VOID_SQL, schedule_id)
         ctx.audit("payment_schedule_void", "allowed", "payment_schedule", str(schedule_id), reason="trip_cancelled")
     # 4. Refund requests (proposed; approved under §4.6 as usual).
-    text = refund_reason(reason, before["terms"])
+    text = refund_reason(reason, before["terms"], aa_departure_cancelled=assessed.forced)
     requested = 0
     for p in before["payments"]:
         amount = Decimal(p["refund_amount"])
@@ -655,6 +658,9 @@ async def run(
                                trip_id)  # fmt: skip
     await commissions.sync(ctx, trip_id)
     await nudge_requests(ctx, asked)
+    from app.travel_ops import aa_cancel
+
+    await aa_cancel.close_on_cancel(ctx, trip_id, actor)  # AA-1070 (crm-13): the "AA cancelled" card is done
     ctx.audit("trip_cancel", "allowed", "trip", str(trip_id), reason=reason if status == "done" else "pending")
     return {**before, "cancellation": await pending(ctx, trip_id)}
 
