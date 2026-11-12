@@ -7,7 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { bookNowEn, bookNowVi } from "@/lib/i18nBookNow";
 import { MESSAGES } from "@/lib/i18n";
-import { bookErrorKey, bookingLink, childAges, safeLinkPath, widgetUrl, type BookingWidget } from "@/lib/bookNow";
+import { bookErrorKey, bookingLink, childAges, safeLinkPath, widgetTour, widgetUrl, type BookingWidget } from "@/lib/bookNow";
 import type { ClientInvoice } from "@/lib/proposals";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -70,6 +70,15 @@ describe("the link and the helpers", () => {
     expect(bookingLink({ f: KEY, p: "bad\u0001" })).toEqual({ formKey: KEY, tour: null });
     expect(widgetUrl(KEY, "T 1", PAGE)).toBe(`/crm/public/v1/book/${KEY}?tour=T+1&page=${PAGE}`);
     expect(widgetUrl(KEY, null, PAGE)).toBe(`/crm/public/v1/book/${KEY}?page=${PAGE}`);
+  });
+
+  it("books the page's own catalogue key, a link key only when the page names none (AA-1094)", () => {
+    expect(widgetTour("T-PAGE", "T-LINK")).toBe("T-PAGE");
+    expect(widgetTour("T-PAGE", null)).toBe("T-PAGE");
+    expect(widgetTour(null, "T-LINK")).toBe("T-LINK");
+    expect(widgetTour("", "T-LINK")).toBe("T-LINK");
+    expect(widgetTour("bad\u0001", "T-LINK")).toBe("T-LINK");
+    expect(widgetTour(null, null)).toBeNull();
   });
 
   it("reads child ages and refusal codes", () => {
