@@ -52,8 +52,9 @@ async def _world(pool: asyncpg.Pool) -> dict[str, Any]:
 async def _runs(pool: asyncpg.Pool, tenant: uuid.UUID, rule: str) -> list[Any]:
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant))
-        return list(await conn.fetch("SELECT trip_id, traveler_id, trigger_key FROM crm.workflow_run "
-                                     "WHERE workflow_rule_id = $1 ORDER BY created_at", uuid.UUID(rule)))  # fmt: skip
+        sql = ("SELECT trip_id, traveler_id, trigger_key FROM crm.workflow_run "
+               "WHERE workflow_rule_id = $1 ORDER BY created_at, workflow_run_id")  # fmt: skip
+        return list(await conn.fetch(sql, uuid.UUID(rule)))
 
 
 async def _denied(pool: asyncpg.Pool, tenant: uuid.UUID) -> int:
