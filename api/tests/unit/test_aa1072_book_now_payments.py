@@ -616,11 +616,12 @@ async def test_start_writes_one_attempt(agency: ScriptedConn) -> None:
 async def test_the_online_booking_setting(monkeypatch: pytest.MonkeyPatch) -> None:
     conn = (
         ScriptedConn()
-        .on("SELECT public_booking_enabled", True)
+        .on("SELECT public_booking_enabled", {"public_booking_enabled": True, "public_price_per_minute": 60})
         .on("FROM crm.intake_form", [{"label": "Website", "public_key": "k" * 22}])
     )
     out = await booking_settings.read(tenant_ctx(conn), TEST)
     assert out["enabled"] and out["forms"] == [{"label": "Website", "public_key": "k" * 22}]
+    assert out["price_checks_per_minute"] == 60
     assert out["page_base"].endswith("/trip/")
     await booking_settings.update(tenant_ctx(conn), TEST, False)
     assert conn.sql("INSERT INTO crm.tenant_settings") == [(False,)]

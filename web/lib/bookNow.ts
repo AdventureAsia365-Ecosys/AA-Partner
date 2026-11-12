@@ -90,6 +90,7 @@ const CODES = new Set([
   "aa_quote_refused",
   "booking_rate_limited",
   "rate_limited",
+  "agency_rate_limited",
   "booking_in_progress",
   "booking_unavailable",
   "booking_failed",

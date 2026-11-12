@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse
 
 from app.db import request_pool
 from app.errors import NotFound
+from app.intake import public as intake_public
 from app.partners import public as partner
 from app.ratelimit import PublicRateLimit, client_address
 from app.routers.public import MAX_BODY_BYTES, LinkToken, _json_body, _limit
@@ -79,7 +80,7 @@ async def post_intake(
         token,
         raw,
         origin=origin,
-        form_quota=lambda form_id: form_limiter.allow(f"form:{form_id}"),
+        form_quota=lambda form_id: form_limiter.allow(intake_public.form_bucket(form_id)),
         quota_window_s=int(form_limiter.window_s),
     )
     return _json({"status": "received"}, 202)

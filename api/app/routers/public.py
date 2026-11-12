@@ -10,7 +10,8 @@ is decided by the form key inside :func:`app.tenancy.intake_tx`.
   ``{"status": "received"}`` when stored, a repeat or a honeypot hit alike; 422 ``consent_required`` /
   ``invalid_submission`` (field codes only); 403 ``origin_not_allowed``; 429 per address
   (``RATE_LIMIT_INTAKE_PER_MINUTE``, before anything is read) and per form (``RATE_LIMIT_INTAKE_FORM_PER_HOUR``,
-  charged only by a submission that passed the origin, honeypot, consent and answer checks); 413 over 32 KiB, also
+  charged only by a submission that passed the origin, honeypot, consent and answer checks; AA-1092: the bucket is the
+  form's id, the same one its sales partner links charge, so both paths share one hourly quota); 413 over 32 KiB, also
   for a chunked body or one whose Content-Length lies: the body is streamed and the read stops at the cap, so no more
   than 32 KiB (plus one chunk) is ever held in memory.
 
@@ -49,7 +50,9 @@ is decided by the form key inside :func:`app.tenancy.intake_tx`.
   nothing stored); its own per-address limit (``RATE_LIMIT_BOOKING_PRICE_PER_MINUTE``, default 20: each call asks
   Booking), not the intake limit the booking, the hold, the accept and "Pay online" share (S277 live check). 409
   ``price_on_request`` when the agency's retail for that party is below what AA charges it (no owner to approve a
-  sale below cost on the public path).
+  sale below cost on the public path). AA-1092: and a ceiling per agency for every address together, the agency's own
+  ``tenant_settings.public_price_per_minute`` (crm-066, default 60, the owner's Settings > Payments "Online booking";
+  per API task): 429 ``agency_rate_limited`` with ``Retry-After`` before Booking is asked.
 - ``POST /crm/public/v1/book/{public_key}/bookings``: one booking (:func:`app.intake.booking.submit`): 201
   ``{status: created, link_path}`` (the client page to hold, accept and pay; the link also goes by e-mail), 200
   ``{status: already_created}`` for a repeated press, 202 ``{status: received}`` for a honeypot hit; 409 with the
@@ -164,7 +167,7 @@ async def post_submission(
         public_key,
         raw,
         origin=origin,
-        form_quota=lambda: form_limiter.allow(public_key),
+        form_quota=lambda form_id: form_limiter.allow(intake.form_bucket(form_id)),
         quota_window_s=int(form_limiter.window_s),
     )
     return JSONResponse({"status": "received"}, status_code=202, headers=NO_STORE)
@@ -303,7 +306,17 @@ async def post_booking_price(
     raw = await _json_body(request, content_length)
     pool = await request_pool(request)
     cache, client = _booking_deps(request)
-    return JSONResponse(await public_booking.price(pool, cache, client, public_key, raw), headers=NO_STORE)
+    agency_limiter = request.app.state.booking_agency_price_limiter
+    out = await public_booking.price(
+        pool,
+        cache,
+        client,
+        public_key,
+        raw,
+        agency_quota=lambda tenant_id, ceiling: agency_limiter.allow(f"price:{tenant_id}", ceiling),
+        quota_window_s=int(agency_limiter.window_s),
+    )
+    return JSONResponse(out, headers=NO_STORE)
 
 
 @router.post("/book/{public_key}/bookings")

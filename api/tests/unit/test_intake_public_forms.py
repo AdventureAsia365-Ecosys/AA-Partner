@@ -81,10 +81,10 @@ async def test_stored_submission_queues_one_job_in_the_same_transaction(intake: 
 
 
 async def test_form_quota_is_charged_only_by_a_submission_that_passed_every_check(intake: ScriptedConn) -> None:
-    charged: list[int] = []
+    charged: list[uuid.UUID] = []
 
-    def quota() -> bool:
-        charged.append(1)
+    def quota(form_id: uuid.UUID) -> bool:
+        charged.append(form_id)  # AA-1092: charged on the form's id (one bucket for the form and its partner links)
         return len(charged) <= 1
 
     key = "k" * 22
@@ -97,6 +97,7 @@ async def test_form_quota_is_charged_only_by_a_submission_that_passed_every_chec
         await public.submit(None, None, DEV, key, body(email="x"), origin=PAGE, form_quota=quota)  # type: ignore[arg-type]
     assert charged == []  # forged origin, honeypot, no consent, invalid: none of them used the form's allowance
     assert (await public.submit(None, None, DEV, key, body(), origin=PAGE, form_quota=quota)).stored  # type: ignore[arg-type]
+    assert charged == [FORM_ID]
     before = len(intake.sql("INSERT INTO crm.form_submission"))
     with pytest.raises(RateLimited) as exc:
         await public.submit(None, None, DEV, key, body(), origin=PAGE, form_quota=quota, quota_window_s=3600)  # type: ignore[arg-type]
