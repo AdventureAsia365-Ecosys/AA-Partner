@@ -1,4 +1,4 @@
-"""crm-066 (AA-1092, a contract file) on PostgreSQL with the RDS role shape: the Book now price ceiling per agency.
+"""crm-062 (AA-1092, a contract file) on PostgreSQL with the RDS role shape: the Book now price ceiling per agency.
 
 - ``crm.tenant_settings.public_price_per_minute``: registered, default 60, the owner's value 10..600 (CHECK), the app
   role reads and writes it for its own agency; another agency sees nothing of it.
@@ -19,12 +19,12 @@ from tests.integration.test_crm010_schema import _agency, _ctx
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
-CRM066 = Path(__file__).resolve().parents[2] / "migrations" / "066_crm_book_now_price_ceiling.sql"
+CRM066 = Path(__file__).resolve().parents[2] / "migrations" / "062_crm_book_now_price_ceiling.sql"
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def _crm066(admin: asyncpg.Connection) -> AsyncIterator[None]:
-    """crm-066 again (re-runnable) before each test: an earlier test of the session may have re-run an older file."""
+async def _crm062(admin: asyncpg.Connection) -> AsyncIterator[None]:
+    """crm-062 again (re-runnable) before each test: an earlier test of the session may have re-run an older file."""
     await admin.execute(f"SET ROLE {OWNER}")
     try:
         await admin.execute(CRM066.read_text(encoding="utf-8"))
@@ -38,8 +38,8 @@ async def _settings(conn: asyncpg.Connection) -> None:
                        " ON CONFLICT DO NOTHING")  # fmt: skip
 
 
-async def test_crm066_is_registered_and_the_default_is_60(app_pool: asyncpg.Pool, admin: asyncpg.Connection) -> None:
-    assert await admin.fetchval("SELECT 1 FROM shared.schema_versions WHERE version = 'crm-066'") == 1
+async def test_crm062_is_registered_and_the_default_is_60(app_pool: asyncpg.Pool, admin: asyncpg.Connection) -> None:
+    assert await admin.fetchval("SELECT 1 FROM shared.schema_versions WHERE version = 'crm-062'") == 1
     ids = await _agency(app_pool)
     async with app_pool.acquire() as conn, conn.transaction():
         await _ctx(conn, ids["tenant"], "seed:test")

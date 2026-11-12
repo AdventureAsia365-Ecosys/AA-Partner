@@ -1,10 +1,10 @@
--- Migration crm-066: AA-1092 (S278 pre-PII review, residual item: Book now price checks per agency) — the agency's
+-- Migration crm-062: AA-1092 (S278 pre-PII review, residual item: Book now price checks per agency) — the agency's
 -- ceiling of "Book now" price checks a minute, an editable setting.
 --
--- Owner: AA-Partner (api/migrations/066_crm_book_now_price_ceiling.sql). AA-CIS-Infra db/migrations/crm/ holds the byte
--- copy Migration Apply runs (Migration Copy Guard). Key crm-066 (crm-062..065 belong to other cards of the same wave and
+-- Owner: AA-Partner (api/migrations/062_crm_book_now_price_ceiling.sql). AA-CIS-Infra db/migrations/crm/ holds the byte
+-- copy Migration Apply runs (Migration Copy Guard). Key crm-062 (crm-062..065 belong to other cards of the same wave and
 -- are independent: no object of theirs is used here); if main moves, renumber: file name, this header, Guard 0 and the
--- registration below, app/db.py REQUIRED_SCHEMA_VERSIONS and the tests that name it (git grep '066_' and 'crm-066').
+-- registration below, app/db.py REQUIRED_SCHEMA_VERSIONS and the tests that name it (git grep '066_' and 'crm-062').
 --
 -- Why: POST /crm/public/v1/book/{key}/price asks AA-Booking for a live quote on every call. It is bounded per client
 -- address (RATE_LIMIT_BOOKING_PRICE_PER_MINUTE, 20) but not per agency, so many addresses together could make one
@@ -19,7 +19,7 @@
 -- for one or two tasks. Not personal data.
 --
 -- Behaviour on apply: none. Every existing settings row gets 60; no code reads the column until the AA-Partner code PR
--- (readiness crm-066) deploys.
+-- (readiness crm-062) deploys.
 --
 -- Class: contract (ALTER of crm.tenant_settings, a new CHECK on it). MIG-4: this migration-only PR, then the code PR
 -- once it is applied on Dev. No new table (no DM-7.1 row), no crm.erase_subject change (a setting, not personal data).
@@ -39,14 +39,14 @@ SET LOCAL statement_timeout = '5min';
 DO $$
 BEGIN
     IF current_user <> 'crm_owner' THEN
-        RAISE EXCEPTION 'crm-066: must run as crm_owner (DB Migrate live-owner switch), runs as %', current_user;
+        RAISE EXCEPTION 'crm-062: must run as crm_owner (DB Migrate live-owner switch), runs as %', current_user;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM shared.schema_versions WHERE version = 'crm-057') THEN
-        RAISE EXCEPTION 'crm-066: crm-057 (AA-1072 Book now, tenant_settings.public_booking_enabled) lands first';
+        RAISE EXCEPTION 'crm-062: crm-057 (AA-1072 Book now, tenant_settings.public_booking_enabled) lands first';
     END IF;
     IF EXISTS (SELECT 1 FROM shared.schema_versions
-                WHERE version = 'crm-066' AND description NOT LIKE 'AA-1092: Book now price ceiling%') THEN
-        RAISE EXCEPTION 'crm-066: the key crm-066 is already held by another migration (not AA-1092): renumber one';
+                WHERE version = 'crm-062' AND description NOT LIKE 'AA-1092: Book now price ceiling%') THEN
+        RAISE EXCEPTION 'crm-062: the key crm-062 is already held by another migration (not AA-1092): renumber one';
     END IF;
 END $$;
 
@@ -54,18 +54,18 @@ ALTER TABLE crm.tenant_settings ADD COLUMN IF NOT EXISTS public_price_per_minute
 ALTER TABLE crm.tenant_settings DROP CONSTRAINT IF EXISTS tenant_settings_public_price_chk;
 ALTER TABLE crm.tenant_settings ADD CONSTRAINT tenant_settings_public_price_chk
     CHECK (public_price_per_minute BETWEEN 10 AND 600);
-COMMENT ON COLUMN crm.tenant_settings.public_price_per_minute IS 'AA-1092 (crm-066): the "Book now" price checks a minute the agency''s public tour page takes from every address together (10..600, default 60, per API task: each task counts on its own); past it the price check answers 429 agency_rate_limited. The owner sets it on Settings > Payments "Online booking"';
+COMMENT ON COLUMN crm.tenant_settings.public_price_per_minute IS 'AA-1092 (crm-062): the "Book now" price checks a minute the agency''s public tour page takes from every address together (10..600, default 60, per API task: each task counts on its own); past it the price check answers 429 agency_rate_limited. The owner sets it on Settings > Payments "Online booking"';
 
 DO $$
 BEGIN
     IF NOT has_column_privilege('crm_app', 'crm.tenant_settings', 'public_price_per_minute', 'UPDATE')
        OR NOT has_column_privilege('crm_app', 'crm.tenant_settings', 'public_price_per_minute', 'SELECT') THEN
-        RAISE EXCEPTION 'crm-066: crm_app is missing a privilege on crm.tenant_settings.public_price_per_minute';
+        RAISE EXCEPTION 'crm-062: crm_app is missing a privilege on crm.tenant_settings.public_price_per_minute';
     END IF;
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('crm-066', now(), 'AA-1092: Book now price ceiling: crm.tenant_settings.public_price_per_minute (default 60, 10..600), the agency''s price checks a minute')
+VALUES ('crm-062', now(), 'AA-1092: Book now price ceiling: crm.tenant_settings.public_price_per_minute (default 60, 10..600), the agency''s price checks a minute')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
