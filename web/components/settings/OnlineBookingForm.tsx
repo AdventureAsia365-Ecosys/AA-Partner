@@ -86,7 +86,7 @@ export function OnlineBookingForm({ view, lang }: { view: OnlineBookingView; lan
               data-testid="online-booking-ceiling"
             />
           </Field>
-          <Button size="sm" variant="primary" disabled={!hydrated || busy} onClick={() => void saveCeiling()} data-testid="online-booking-ceiling-save">
+          <Button size="sm" variant="primary" disabled={!hydrated || busy} onClick={() => void saveCeiling()} testId="online-booking-ceiling-save">
             {tr("onlineBooking.ceilingSave")}
           </Button>
         </div>
