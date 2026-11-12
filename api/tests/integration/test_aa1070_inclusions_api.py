@@ -52,12 +52,12 @@ async def _tour(pool: asyncpg.Pool, body: dict[str, Any] = BODY) -> None:
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def _drop_tour(app_pool: asyncpg.Pool) -> Any:
+async def _drop_tour(admin: asyncpg.Connection) -> Any:
     # crm.aa_catalog_tour is shared by every test of the run: a served row left behind is one more tour the catalog
     # sync re-checks in a later test (test_aa_lines_api counts the CIS fetches; S278 shard 1 red, 5 == 2 + 2).
     yield
-    async with app_pool.acquire() as conn:
-        await conn.execute("DELETE FROM crm.aa_catalog_tour WHERE source_system = 'cis' AND source_id = $1", TOUR)
+    # crm_app has no DELETE on the catalogue cache (only the sync writes it): the owner connection removes the row.
+    await admin.execute("DELETE FROM crm.aa_catalog_tour WHERE source_system = 'cis' AND source_id = $1", TOUR)
 
 
 async def _lib(pool: asyncpg.Pool, s: dict[str, Any], fn: Any, *args: Any, role: str = "agent", **kw: Any) -> Any:
