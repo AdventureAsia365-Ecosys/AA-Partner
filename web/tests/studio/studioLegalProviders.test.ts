@@ -74,9 +74,23 @@ describe("studio legal pages: writer providers follow the AI Use Register", () =
     });
   }
 
-  it("the page frame shows Draft v0.6 in English and Vietnamese", () => {
-    expect(LEGAL_MESSAGES.en.version).toBe("Draft v0.6");
-    expect(LEGAL_MESSAGES.vi.version).toBe("Bản nháp v0.6");
+  it("the page frame shows Draft v0.7 in English and Vietnamese", () => {
+    expect(LEGAL_MESSAGES.en.version).toBe("Draft v0.7");
+    expect(LEGAL_MESSAGES.vi.version).toBe("Bản nháp v0.7");
+  });
+
+  // AA-1088 (M9): agencies sign in with their own partner sign-in (second step required); tenant API keys are gone
+  // (AA-1036), so neither page may tell them to keep or sign in with an API key.
+  for (const [name, doc] of DOCS) {
+    it(`${name}: no API-key sign-in, in English and Vietnamese`, () => {
+      expect(docText(doc.en)).not.toMatch(/API key|its API|through the API|API access/i);
+      expect(docText(doc.vi)).not.toMatch(/khoá API|khóa API|API của cổng|qua API|truy cập API/i);
+    });
+  }
+
+  it("partner terms §2 describes the partner sign-in with a second step", () => {
+    expect(docText(TERMS_DOC.en, "account")).toMatch(/own partner sign-in.*second step/);
+    expect(docText(TERMS_DOC.vi, "account")).toContain("bước thứ hai");
   });
 
   it("the guard itself catches the Draft v0.5 sentence", () => {

@@ -614,6 +614,16 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
   wording there and in Settings > AI describes the F3 scrubber as it works (the trip's known details plus what it can
   detect, may not catch every detail), never an absolute promise.
   Portal: the `publisher` variant replaces the local `AiContentNotice` at review, publish and export, same sentence.
+- **Content only, final read before publish (AA-1088, S278 audit M3 / M6 / M9)**: the My Content piece drawer
+  (`ReviewDrawer.tsx`) shows only the agency's own text and the AI notice; the writer's brief (angle formula / style,
+  source fact) and the search context (people-also-ask, related terms) are not shown there (the Create wizard still
+  shows the angle cards the agency picks from). CIS refuses the first publish of a piece it could not fully confirm
+  against the trip (409, body `code` `content_needs_final_check`, `can_publish_anyway`; the BFF drops headers, so the
+  code is read from the body: `web/lib/studio/publishCheck.ts`). The studio shows its own EN / VI sentence
+  (`errors.messages.ts` `needsFinalCheckOwner` / `needsFinalCheckEditor`); on Publish the account owner gets
+  **Publish anyway**, which sends `{"publish_anyway": true}` (CIS audits it). The draft legal pages (Draft v0.7)
+  describe the partner sign-in (each person's own sign-in with a second step, roles set by the owner), never an API key;
+  `tests/studio/studioLegalProviders.test.ts` keeps "API key" out. Tests: `tests/studio/prepilotFixes.test.ts`.
 - **AI-content mark (AA-1040, EU AI Act Art. 50)**: Content studio shows the kit badge form
   (`<AiNotice variant="publisher" form="badge" />`, "AI-assisted", the publisher sentence as its accessible name) under
   the channel of each My Content and Published row, in the piece drawer title and on each publish card. The

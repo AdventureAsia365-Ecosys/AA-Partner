@@ -11,6 +11,11 @@ export const ERROR_MESSAGES = defineMessages(
     saveFailed: (status: number) => `Save failed (${status})`,
     publishFailed: (status: number) => `Publish failed (${status})`,
     postNotThrough: "The post didn't go through — try again in a moment.",
+    // AA-1088 (M3): the piece needs a final read before it goes live (CIS 409 content_needs_final_check)
+    needsFinalCheckOwner:
+      "Read this piece through once more before it goes live: we could not confirm every detail in it against the trip (dates, places, what is included). If it reads right, choose Publish anyway on the Publish page.",
+    needsFinalCheckEditor:
+      "Read this piece through once more before it goes live: we could not confirm every detail in it against the trip (dates, places, what is included). An account owner can then publish it.",
     exportFailed: (status: number) => `Export failed (${status})`,
     ctaMissing: "Add a call to action first: open it from Create and write it there.",
     rewriteStartFailed: (status: number) => `Could not start the rewrite (${status})`,
@@ -24,6 +29,10 @@ export const ERROR_MESSAGES = defineMessages(
     saveFailed: (status: number) => `Không lưu được (${status})`,
     publishFailed: (status: number) => `Đăng bài không thành công (${status})`,
     postNotThrough: "Bài chưa đăng được — vui lòng thử lại sau giây lát.",
+    needsFinalCheckOwner:
+      "Hãy đọc lại bài này một lần trước khi đăng: chúng tôi chưa xác nhận được mọi chi tiết trong bài so với tour (ngày, địa điểm, dịch vụ bao gồm). Nếu bài đã đúng, chọn Vẫn đăng ở trang Đăng bài.",
+    needsFinalCheckEditor:
+      "Hãy đọc lại bài này một lần trước khi đăng: chúng tôi chưa xác nhận được mọi chi tiết trong bài so với tour (ngày, địa điểm, dịch vụ bao gồm). Sau đó chủ tài khoản có thể đăng bài.",
     exportFailed: (status: number) => `Xuất không thành công (${status})`,
     ctaMissing: "Hãy thêm lời kêu gọi hành động trước: mở bài từ mục Sáng tạo và viết ở đó.",
     rewriteStartFailed: (status: number) => `Không bắt đầu viết lại được (${status})`,
