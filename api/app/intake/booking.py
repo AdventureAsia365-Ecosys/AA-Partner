@@ -48,7 +48,7 @@ import datetime as dt
 import json
 import logging
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from decimal import ROUND_CEILING, Decimal
 from typing import Any
@@ -540,6 +540,8 @@ async def submit(
     *,
     origin: str | None,
     client_ip: str,
+    form_quota: Callable[[], bool] | None = None,
+    quota_window_s: int = 3600,
 ) -> dict[str, Any]:
     if settings.intake_origin_check and not settings.intake_page_origins:
         raise Unavailable("intake_not_configured")
@@ -551,6 +553,11 @@ async def submit(
             record_drop("honeypot", form.intake_form_id)
             return {"status": "received"}  # the bot learns nothing
         answers = read_booking(raw)
+        # AA-1092: the agency's hourly ceiling (the inquiry form's per-form quota, its own bucket), after the checks a
+        # bot fails: each booking makes a client, a trip and a mailed client link from the agency's mailbox.
+        if form_quota is not None and not form_quota():
+            record_drop("form_quota", form.intake_form_id)
+            raise RateLimited("form_rate_limited", quota_window_s)
         started = await _start(ctx, form, Vault(keys, ctx), answers, client_ip=client_ip)
         owner = form.default_owner_member_id
         form_id = form.intake_form_id

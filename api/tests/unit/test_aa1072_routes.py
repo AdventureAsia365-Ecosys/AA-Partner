@@ -114,14 +114,16 @@ def test_the_ipn_answers_vnpay_and_counts_unknown_references(
     public: tuple[TestClient, list], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client, calls = public
-    res = client.get("/crm/public/v1/hooks/vnpay/ipn", params={"vnp_TxnRef": REF, "vnp_Amount": "100", "other": "x"})
+    signed = {"vnp_TxnRef": REF, "vnp_Amount": "100", "vnp_SecureHash": "0f" * 64}  # AA-1092: the hash shape only
+    res = client.get("/crm/public/v1/hooks/vnpay/ipn", params={**signed, "other": "x"})
     assert res.status_code == 200 and res.json()["RspCode"] == "00"
-    assert calls[-1][1][2] == {"vnp_TxnRef": REF, "vnp_Amount": "100"}
+    assert calls[-1][1][2] == signed
     monkeypatch.setattr(gateway, "handle_ipn", _record(calls, "ipn", {"RspCode": "01", "Message": "Order not found"}))
     from app.ratelimit import HOOK_MISSES_PER_MINUTE
 
+    unknown = {"vnp_TxnRef": "x", "vnp_SecureHash": "0f" * 64}
     answers = [
-        client.get("/crm/public/v1/hooks/vnpay/ipn", params={"vnp_TxnRef": "x"}).status_code
+        client.get("/crm/public/v1/hooks/vnpay/ipn", params=unknown).status_code
         for _ in range(HOOK_MISSES_PER_MINUTE + 1)
     ]
     assert answers[0] == 200 and answers[-1] == 429  # an address of unknown references is cut off

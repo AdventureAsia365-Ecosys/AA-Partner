@@ -270,6 +270,8 @@ async def handle_ipn(pool: asyncpg.Pool, keys: KeyProvider, fields: dict[str, st
         notice = vnpay.read_notice(fields)
     except vnpay.NoticeInvalid:
         return vnpay.ipn_answer(vnpay.NOT_FOUND if not fields.get("vnp_TxnRef") else vnpay.OTHER)
+    if not vnpay.signature_shaped(fields):
+        return vnpay.ipn_answer(vnpay.BAD_SIGNATURE)  # AA-1092: unsigned, so no lookup and no secret is opened
     try:
         async with payment_session_tx(pool, notice.txn_ref) as (ctx, ref):
             return await _apply(ctx, Vault(keys, ctx), ref.session_id, notice, fields)
