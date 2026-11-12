@@ -1244,6 +1244,10 @@ CASCADE_ERASED = {
     # invoice.
     "public_booking_attempt": {"tenant_settings"},
     "payment_session": {"invoice"},
+    # AA-1070 crm-35 (crm-059, an expand file): a library line leaves with the agency's settings row, a proposal's
+    # inclusion line with its proposal (the trip and agency erase, the trash purge).
+    "inclusion_item": {"tenant_settings"},
+    "proposal_inclusion": {"proposal"},
     # AA-1070 item crm-13 (crm-060): an "AA cancelled" case leaves with its trip.
     "aa_cancel_case": {"trip"},
 }
