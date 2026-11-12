@@ -18,7 +18,9 @@ export default async function InclusionSettingsPage() {
   if (ctx.apiDown) return null;
   const { session } = await serverContext();
   if (!session) return null;
-  const library = await crmCall<{ items: InclusionItem[] }>(ctx.cfg, session, "GET", "inclusion-items?archived=true");
+  const library = await crmCall<{ items: InclusionItem[] }>(ctx.cfg, session, "GET", "inclusion-items", {
+    query: new URLSearchParams({ archived: "true" }),
+  });
   const canEdit = ctx.role === "owner" || ctx.role === "agent";
   return (
     <div data-testid="crm-inclusion-settings" style={{ display: "grid", gap: 14, maxWidth: 820 }}>
