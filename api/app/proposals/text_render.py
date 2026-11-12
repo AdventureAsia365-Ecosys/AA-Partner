@@ -49,6 +49,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "version": "Version {version}, prepared by {agency}",
         "day": "Day {n}",
         "included": "Included",
+        "not_included": "Not included",
         "alternatives": "Other choices",
         "on_request": "on request",
         "pay_on_arrival": "paid on arrival",
@@ -80,6 +81,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "version": "Phiên bản {version}, do {agency} chuẩn bị",
         "day": "Ngày {n}",
         "included": "Đã bao gồm",
+        "not_included": "Chưa bao gồm",
         "alternatives": "Lựa chọn khác",
         "on_request": "theo yêu cầu",
         "pay_on_arrival": "trả khi đến nơi",
@@ -153,6 +155,15 @@ class BeforeYouGo:
 
 
 @dataclass(frozen=True)
+class TourLists:
+    """AA-1070 crm-35: one AA tour's fixed "Included" / "Not included" lines (the CIS tour content)."""
+
+    title: str
+    included: tuple[str, ...] = ()
+    not_included: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class Snapshot:
     """One proposal version as the client sees it (no net, no margin)."""
 
@@ -174,6 +185,10 @@ class Snapshot:
     # AA-1067: the payment lines of a builder version with a plan, (kind, seq, amount, due date or None = at accept);
     # empty = the deposit / balance pair above.
     schedule: tuple[tuple[str, int, Decimal, dt.date | None], ...] = ()
+    # AA-1070 crm-35: the agency's lines (in the text's locale) and the AA tours' fixed lists.
+    included: tuple[str, ...] = ()
+    not_included: tuple[str, ...] = ()
+    aa_tours: tuple[TourLists, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -318,6 +333,22 @@ def _before_you_go(b: BeforeYouGo, snap: Snapshot, fmt: str, locale: str, s: dic
     return out
 
 
+def _inclusions(snap: Snapshot, fmt: str, s: dict[str, Any]) -> list[str]:
+    """AA-1070 crm-35: "Included" then "Not included": the agency's lines, then each AA tour's under its title."""
+    out: list[str] = []
+    for kind in ("included", "not_included"):
+        own: tuple[str, ...] = getattr(snap, kind)
+        tours = [(t.title, getattr(t, kind)) for t in snap.aa_tours if getattr(t, kind)]
+        if not own and not tours:
+            continue
+        out += ["", _bold(s[kind], fmt)]
+        out += [f"- {line}" for line in own]
+        for title, lines in tours:
+            out.append(f"{title}:")
+            out += [f"- {line}" for line in lines]
+    return out
+
+
 def _price(snap: Snapshot, fmt: str, locale: str, s: dict[str, Any]) -> list[str]:
     out = [_bold(s["price"], fmt), f"{s['total']}: {money(snap.total, snap.currency, locale)}"]
     if snap.schedule:
@@ -359,6 +390,7 @@ def proposal_block(snap: Snapshot, fmt: str, locale: str, link_url: str | None =
             out += _items(d.items, snap, locale, s)
             if d.notes:
                 out.append(d.notes.strip())
+        out += _inclusions(snap, fmt, s)
     elif snap.body.strip():
         out += ["", snap.body.strip()]
     out += ["", *_price(snap, fmt, locale, s)]
