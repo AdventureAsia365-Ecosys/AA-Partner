@@ -55,6 +55,9 @@ EVENTS = (
     # AA-1070 (crm-15): a trip entered Booked while a traveller's passport ends too soon for it
     # (app.travel_ops.passport, fired by the hourly tick once per entry into Booked).
     "passport.invalid_for_trip",
+    # AA-1070 (crm-13): Adventure Asia cancelled a departure the trip is on (app.travel_ops.aa_cancel, fired once per
+    # trip and departure by the Booking feed).
+    "departure.aa_cancelled",
 )
 MESSAGE_EVENTS = ("message.received", "message.sent")
 DATE_ANCHORS = (

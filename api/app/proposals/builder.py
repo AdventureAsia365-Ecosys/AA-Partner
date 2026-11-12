@@ -862,12 +862,22 @@ async def _skeleton(
 
 
 async def _copy(
-    ctx: TenantContext, vault: Vault, trip: Any, proposal_id: uuid.UUID, version: int, source_id: uuid.UUID
+    ctx: TenantContext,
+    vault: Vault,
+    trip: Any,
+    proposal_id: uuid.UUID,
+    version: int,
+    source_id: uuid.UUID,
+    *,
+    source_trip_id: uuid.UUID | None = None,
 ) -> None:
-    """A working copy of an earlier version of the same trip, with its lineage and the pick counter it saw."""
+    """A working copy of an earlier version of the same trip, with its lineage and the pick counter it saw.
+    ``source_trip_id`` (AA-1070 crm-13, :func:`rebook_copy`): the source is a version of that other trip; the copy
+    has no lineage (the client's picks on the old trip are not carried)."""
     src = await ctx.conn.fetchrow(PROPOSAL_SQL, source_id)
-    if src is None or src["trip_id"] != trip["trip_id"]:
+    if src is None or src["trip_id"] != (source_trip_id or trip["trip_id"]):
         raise NotFound("proposal_not_found")
+    lineage = source_trip_id is None
     if src["kind"] != KIND:
         raise Conflict("proposal_not_builder", "only a builder version is copied")
     body = await vault.decrypt("proposal", "body_enc", source_id, src["body_enc"])
@@ -889,8 +899,8 @@ async def _copy(
         json.dumps(_jsonb(src["room_config"])) if src["room_config"] is not None else None,
         src["deposit_pct"],
         src["starts_on"],
-        source_id,
-        src["selection_seq"],
+        source_id if lineage else None,
+        src["selection_seq"] if lineage else None,
     )
     s = await _structure(ctx, source_id)
     day_map: dict[str, uuid.UUID] = {}
@@ -942,6 +952,28 @@ async def _copy(
         await ctx.conn.execute(INSERT_RULE_SQL, uuid.uuid4(), proposal_id, trip["trip_id"], r["kind"],
                                option_map[str(r["option_id"])], option_map[str(r["target_option_id"])])  # fmt: skip
     await prep_packs.copy(ctx, source_id, proposal_id, trip["trip_id"])  # AA-951: the day 0 packs it was sent with
+
+
+async def rebook_copy(
+    ctx: TenantContext, vault: Vault, trip_id: uuid.UUID, source_id: uuid.UUID, source_trip_id: uuid.UUID
+) -> uuid.UUID:
+    """AA-1070 (crm-13, :func:`app.travel_ops.aa_cancel.requote`): version 1 of the new trip a re-quote of a booked
+    trip opens, copied from ``source_id`` (a builder version of ``source_trip_id``). Returns the new draft's id."""
+    trip = await ctx.conn.fetchrow(TRIP_SQL, trip_id)
+    if trip is None:
+        raise NotFound("trip_not_found")
+    proposal_id = uuid.uuid4()
+    await _copy(ctx, vault, trip, proposal_id, 1, source_id, source_trip_id=source_trip_id)
+    await _bump(ctx, await ctx.conn.fetchrow(LOCK_SQL, proposal_id))
+    await stages.touch(ctx, trip_id)
+    ctx.audit("proposal_draft", "allowed", "proposal", str(proposal_id), reason="builder_rebook")
+    return proposal_id
+
+
+async def touch_draft(ctx: TenantContext, proposal_id: uuid.UUID) -> int:
+    """After a write made outside the builder's own actions (AA-1070 crm-13 re-quote): the next edit_seq and the
+    draft's amounts (an open editor reloads instead of saving over it)."""
+    return await _bump(ctx, await _lock(ctx, proposal_id, None))
 
 
 # ── Settings ─────────────────────────────────────────────────────────────────────────────────────
