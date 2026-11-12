@@ -1920,7 +1920,11 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
     asked: the agency's `tenant_settings.public_price_per_minute` (default 60, 10..600, the owner sets it in "Online
     booking", `PUT /settings/online-booking` `{price_checks_per_minute}`; audited by field), 429 `agency_rate_limited`
     with `Retry-After` (the page says it is busy). Counted in each API task's memory (no shared limiter store), so N
-    tasks give an agency up to N times its value. `POST
+    tasks give an agency up to N times its value. The widget (`GET /book/{key}`) is bounded the same way: its
+    departures come from a 30 s cache per (agency, tour, date window) (`ProductCache.departures`, at most 2048 answers,
+    errors never kept), and a read that does reach Booking takes one of the agency's reads a minute (the same value,
+    its own `widget:<tenant id>` bucket), else 429 `agency_rate_limited`; the price check and the booking still read
+    departures live. `POST
     .../bookings`: origin, honeypot (202, nothing written), consent, answers, at most 5 attempts an hour per address
     and agency (`ip_hash`; a `price_on_request` refusal does not count), one `crm.public_booking_attempt` (a repeated press = `already_created` /
     `booking_in_progress`); the departure and the quote with no transaction held; then one transaction: **always a new
