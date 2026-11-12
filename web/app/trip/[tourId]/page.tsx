@@ -13,6 +13,8 @@
 // departures, the agency's live price, and a booking that opens the client's proposal page to accept and pay. An
 // agency without Book now (its owner's switch, off by default) or a tour it cannot sell online shows "Ask <agency>"
 // (its inquiry form). Words in English unless the visitor chose Vietnamese (cookie).
+// AA-1094: the widget books the page's own AA catalogue key (CIS `source_id`); a `p=` key in the link only counts
+// while CIS sends none, so a link can no longer put another tour's booking under this page's text.
 import type { Metadata } from "next";
 import { notFound, permanentRedirect } from "next/navigation";
 import { cache } from "react";
@@ -22,7 +24,7 @@ import { config } from "@/lib/config";
 import { itineraryParagraphs, loadTrip, TOUR_ID, type TripLookup } from "@/lib/tripPage";
 import { TripHeader, tripLabel as label } from "./TripHeader";
 import { BookNowWidget } from "@/components/booking/BookNowWidget";
-import { bookingLink } from "@/lib/bookNow";
+import { bookingLink, widgetTour } from "@/lib/bookNow";
 import { dictionary } from "@/lib/i18n";
 import { serverContext } from "@/lib/serverContext";
 
@@ -143,7 +145,7 @@ export default async function TripPage({ params, searchParams }: { params: Promi
             {/* AA-1072: the agency's live price comes from AA's quote with the agency's own retail (a real source). */}
             <BookNowWidget
               formKey={booking.formKey}
-              tour={booking.tour ?? trip.source_id}
+              tour={widgetTour(trip.source_id, booking.tour)}
               pageId={trip.tour_id}
               locale={ctx.locale}
               dict={bookMessages(ctx.lang)}

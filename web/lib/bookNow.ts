@@ -48,6 +48,14 @@ export function bookingLink(search: { f?: string | string[]; p?: string | string
   return { formKey: f, tour: p && TOUR_KEY.test(p) ? p : null };
 }
 
+/** AA-1094 (S278 audit M12): the AA tour key the widget books. The page's own catalogue key (CIS `GET /v1/trip/{id}`
+ * `source_id`) wins, so the widget always offers the tour the page text describes; a `p=` key in the link is used only
+ * while CIS sends no key (an older CIS answer). Null = neither (the API then tries the page id). */
+export function widgetTour(pageSourceId: string | null, linkTour: string | null): string | null {
+  if (pageSourceId && TOUR_KEY.test(pageSourceId)) return pageSourceId;
+  return linkTour;
+}
+
 /** The widget's address: the AA tour key of the link (else the page's tour id, which is a catalogue key for a tour
  * without versions). */
 export function widgetUrl(formKey: string, tour: string | null, pageId: string): string {
