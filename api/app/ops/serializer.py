@@ -226,6 +226,15 @@ OPS_ALLOWED_KEYS: frozenset[str] = frozenset(
         "decided_at",
         "decision_note",
         "previous_value",
+        # the operator's guide of a CRM setting (the CIS 416 shape the Settings page reads): plain text per language
+        "guide",
+        "en",
+        "vi",
+        "what",
+        "raise",
+        "lower",
+        "when",
+        "example",
     }
 )
 

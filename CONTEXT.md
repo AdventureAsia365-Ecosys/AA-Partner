@@ -2939,6 +2939,12 @@ or an env var alone. The CRM keeps its own registry in `crm` (root ADR 0008a: no
   audit). Routes `app/routers/ops_settings.py`, service `app/platform_settings/service.py`.
 - **Guard**: `tests/unit/test_aa1096_settings_lint.py` (no new policy-looking constant in the governed modules, a
   baseline that only shrinks, every enforced key read by code).
+- **Every key ships its guide** (the CIS 416 rule): `app/platform_settings/guides.json` holds the operator's guide of
+  each key, `{en|vi: {what, raise, lower, when, example}}` (hand-edited; `crm.setting_definition` has no guide column
+  and the reader never needs it). `/settings` and `/settings/{key}/history` serve it as `guide` in each definition; the
+  CIS page shows it in the "what it controls" line and the Explain panel. A new key adds its guide in the same PR:
+  `tests/unit/test_aa1096_settings_guides.py` fails on a key without a complete EN + VI guide, an orphan guide, an
+  issue id or stage code in operator text, or an English example that does not name the default.
 
 ## CIS membership feed (AA-978, CRM-P1)
 

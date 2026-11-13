@@ -104,6 +104,18 @@ def load_definitions(path: Path = COMPILED_DEFAULTS) -> list[dict[str, Any]]:
     return list(json.loads(path.read_text(encoding="utf-8"))["definitions"])
 
 
+# The operator's guide of each key ({"en": {what, raise, lower, when, example}, "vi": ...}), shown by CIS Platform >
+# Settings (CRM tab) in the CIS 416 shape. A hand-edited file beside the compiled defaults (crm.setting_definition has
+# no guide column; the reader never needs it); tests/unit/test_aa1096_settings_guides.py keeps it complete.
+GUIDES_FILE = Path(__file__).with_name("guides.json")
+GUIDES: dict[str, dict[str, Any]] = dict(json.loads(GUIDES_FILE.read_text(encoding="utf-8"))["guides"])
+
+
+def guide(key: str) -> dict[str, Any] | None:
+    """The guide of ``key`` (None when it has none yet: the guide lint fails on it)."""
+    return GUIDES.get(key)
+
+
 async def _alert(key: str, problem: str, raw: Any, version: int | None) -> None:
     """A stored value broke its definition: one AA ops e-mail per key and version (the reader logged it already)."""
     from app.observability import ops_alerts
@@ -321,6 +333,7 @@ async def stop_refresher(task: asyncio.Task[None] | None) -> None:
 __all__ = [
     "COMPILED_DEFAULTS",
     "Definition",
+    "GUIDES",
     "KEY_PREFIX",
     "READER",
     "RANGE_GROUPS",
@@ -336,6 +349,7 @@ __all__ = [
     "flag",
     "forget_tenant",
     "get",
+    "guide",
     "install",
     "int_range",
     "invalidate",

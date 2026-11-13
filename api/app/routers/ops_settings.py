@@ -52,6 +52,21 @@ class SettingRowOut(_Out):
     previous_value: SettingValue | None = None
 
 
+class SettingGuideTextOut(_Out):
+    """One language of a setting's operator guide (the CIS 416 shape the Platform > Settings page reads)."""
+
+    what: str
+    raise_: str = Field(alias="raise")
+    lower: str
+    when: str
+    example: str
+
+
+class SettingGuideOut(_Out):
+    en: SettingGuideTextOut
+    vi: SettingGuideTextOut
+
+
 class SettingDefinitionOut(_Out):
     key: str
     app: Literal["crm"]
@@ -71,6 +86,7 @@ class SettingDefinitionOut(_Out):
     env_override: str | None
     cache_s: int
     enforced: bool
+    guide: SettingGuideOut | None = None  # None = no guide yet (tests/unit/test_aa1096_settings_guides.py fails on it)
 
 
 class SettingOut(SettingDefinitionOut):

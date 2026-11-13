@@ -1,0 +1,437 @@
+{
+ "about": "AA-1096 L4 follow-up (the CIS 416 shape): the operator's guide of every CRM setting, shown by CIS Platform > Settings (CRM tab) through crm.ops.v1 /settings. One entry per key of compiled_defaults.json: {en|vi: {what, raise, lower, when, example}}. Hand-edited source (crm.setting_definition has no guide column); tests/unit/test_aa1096_settings_guides.py keeps it complete. The example names the default, never the value in force.",
+ "guides": {
+  "crm.agency_defaults.auto_archive_months": {
+   "en": {
+    "what": "How many months a client can go without any activity before the daily lifecycle run archives it. This is the window a new agency starts with, and the window of any agency that has not saved its own on Settings > Data and privacy.",
+    "raise": "Inactive clients stay in the active lists longer. Fewer clients are archived by surprise, but the lists get longer and old personal data stays in active view for more time.",
+    "lower": "Inactive clients are archived sooner, which keeps lists short and limits how long old data stays in view. Too low and agents find clients archived while a slow sale is still alive.",
+    "when": "Raise it when agencies often restore clients the run archived; lower it when a privacy review asks for a shorter active window. It must stay between the shortest and the longest window an owner may set.",
+    "example": "With the default of 36 months, a client with no activity for three years is archived by the daily run; an agency that saved its own window uses that instead."
+   },
+   "vi": {
+    "what": "Số tháng một khách hàng không có hoạt động nào trước khi lượt chạy vòng đời hằng ngày lưu trữ (archive) khách đó. Đây là giá trị một đại lý mới nhận lúc tạo, và là giá trị của mọi đại lý chưa tự lưu giá trị riêng ở Settings > Data and privacy.",
+    "raise": "Khách không hoạt động ở lại danh sách đang dùng lâu hơn. Ít khách bị lưu trữ bất ngờ hơn, nhưng danh sách dài ra và dữ liệu cá nhân cũ hiện lâu hơn.",
+    "lower": "Khách không hoạt động được lưu trữ sớm hơn, danh sách gọn và dữ liệu cũ ít hiện hơn. Quá thấp thì nhân viên thấy khách bị lưu trữ khi một thương vụ chậm vẫn còn đang theo.",
+    "when": "Tăng khi các đại lý hay phải khôi phục khách bị lưu trữ; giảm khi rà soát quyền riêng tư yêu cầu thời gian hiển thị ngắn hơn. Giá trị phải nằm giữa mức ngắn nhất và dài nhất chủ đại lý được chọn.",
+    "example": "Với mặc định 36 tháng, khách không có hoạt động nào trong ba năm sẽ bị lượt chạy hằng ngày lưu trữ; đại lý đã lưu giá trị riêng thì dùng giá trị của mình."
+   }
+  },
+  "crm.agency_defaults.auto_archive_months_max": {
+   "en": {
+    "what": "The longest auto-archive window an agency owner may choose on Settings > Data and privacy. The database allows 12 to 120 months; this setting narrows what the owner's form accepts.",
+    "raise": "Owners may keep inactive clients in the active lists for longer. More room for agencies with long sales cycles, but personal data of inactive clients can stay in active view for years.",
+    "lower": "Caps how long any agency can keep inactive clients active. A window an agency already saved is not rewritten; the narrower range applies when an owner picks a new value.",
+    "when": "Lower it when the data policy sets a firm maximum for keeping inactive client records active. It is checked together with the shortest window and the new-agency default.",
+    "example": "With the default of 120 months, an owner may pick any auto-archive window up to ten years."
+   },
+   "vi": {
+    "what": "Thời gian tự lưu trữ dài nhất mà chủ đại lý được chọn ở Settings > Data and privacy. Cơ sở dữ liệu cho phép 12 đến 120 tháng; thiết lập này thu hẹp khoảng mà biểu mẫu của chủ đại lý chấp nhận.",
+    "raise": "Chủ đại lý được giữ khách không hoạt động trong danh sách lâu hơn. Thoải mái hơn cho đại lý có chu kỳ bán dài, nhưng dữ liệu cá nhân của khách không hoạt động có thể hiện nhiều năm.",
+    "lower": "Giới hạn thời gian tối đa mọi đại lý giữ khách không hoạt động. Giá trị đại lý đã lưu không bị ghi đè; khoảng hẹp hơn áp dụng khi chủ đại lý chọn giá trị mới.",
+    "when": "Giảm khi chính sách dữ liệu đặt mức tối đa cố định cho việc giữ hồ sơ khách không hoạt động. Giá trị được kiểm cùng mức ngắn nhất và mặc định của đại lý mới.",
+    "example": "Với mặc định 120 tháng, chủ đại lý được chọn thời gian tự lưu trữ bất kỳ, tối đa mười năm."
+   }
+  },
+  "crm.agency_defaults.auto_archive_months_min": {
+   "en": {
+    "what": "The shortest auto-archive window an agency owner may choose on Settings > Data and privacy. The database floor is 12 months.",
+    "raise": "Owners can no longer pick short windows, so clients are not archived after only a few months of silence. Agencies that want a tight privacy window lose that choice.",
+    "lower": "The database floor is 12 months, so it cannot go lower; a lower floor needs a reviewed database change.",
+    "when": "Raise it if agencies archive clients too early and lose sales they were still working on. It is checked together with the longest window and the new-agency default.",
+    "example": "With the default of 12 months, an owner may set any auto-archive window from one year upward."
+   },
+   "vi": {
+    "what": "Thời gian tự lưu trữ ngắn nhất mà chủ đại lý được chọn ở Settings > Data and privacy. Mức sàn của cơ sở dữ liệu là 12 tháng.",
+    "raise": "Chủ đại lý không còn chọn được thời gian ngắn, nên khách không bị lưu trữ chỉ sau vài tháng im lặng. Đại lý muốn thời gian riêng tư chặt sẽ mất lựa chọn đó.",
+    "lower": "Mức sàn của cơ sở dữ liệu là 12 tháng nên không giảm thêm được; muốn sàn thấp hơn cần một thay đổi cơ sở dữ liệu có review.",
+    "when": "Tăng nếu các đại lý lưu trữ khách quá sớm và mất thương vụ còn đang theo. Giá trị được kiểm cùng mức dài nhất và mặc định của đại lý mới.",
+    "example": "Với mặc định 12 tháng, chủ đại lý được đặt thời gian tự lưu trữ bất kỳ từ một năm trở lên."
+   }
+  },
+  "crm.agency_defaults.discount_owner_limit_pct": {
+   "en": {
+    "what": "A discount on a proposal above this percent needs the agency owner's approval before it goes out. This is the limit a new agency starts with; each owner may change their own on Settings > Pricing (0 to 100 %).",
+    "raise": "Agents can give bigger discounts without waiting for the owner. Quotes go out faster, but larger discounts leave without a second look.",
+    "lower": "More discounts wait for the owner. Tighter control of the agency's margin, but quotes slow down when the owner is busy; 0 sends every discount to the owner.",
+    "when": "Change it when new agencies report owner approvals piling up (raise) or agents giving away too much (lower). Agencies that already saved their own limit keep it.",
+    "example": "With the default of 10 %, an agent may publish a 10 % discount alone; an 11 % discount waits for the owner."
+   },
+   "vi": {
+    "what": "Mức giảm giá trên một báo giá vượt phần trăm này cần chủ đại lý duyệt trước khi gửi. Đây là giới hạn một đại lý mới nhận lúc tạo; mỗi chủ đại lý tự đổi giới hạn của mình ở Settings > Pricing (0 đến 100 %).",
+    "raise": "Nhân viên được giảm giá nhiều hơn mà không phải chờ chủ đại lý. Báo giá đi nhanh hơn, nhưng mức giảm lớn không có người xem lại.",
+    "lower": "Nhiều mức giảm phải chờ chủ đại lý hơn. Kiểm soát biên lợi nhuận chặt hơn, nhưng báo giá chậm khi chủ đại lý bận; 0 thì mọi mức giảm đều chờ chủ đại lý.",
+    "when": "Đổi khi các đại lý mới báo việc duyệt dồn ứ (tăng) hoặc nhân viên giảm giá quá tay (giảm). Đại lý đã lưu giới hạn riêng vẫn giữ giới hạn đó.",
+    "example": "Với mặc định 10 %, nhân viên tự gửi được báo giá giảm 10 %; mức giảm 11 % phải chờ chủ đại lý."
+   }
+  },
+  "crm.agency_defaults.markup_max_pct": {
+   "en": {
+    "what": "The highest default retail markup an agency owner may set per AA product type on Settings > Retail markup. The markup is the percent the agency adds to AA products to set its client price.",
+    "raise": "Owners may set higher markups. More freedom on pricing, but a typing mistake (3000 instead of 30) is caught less often.",
+    "lower": "Owners cannot save markups above the new ceiling; markups already saved stay until the owner changes them. Too low blocks agencies that sell their own service on top of AA products.",
+    "when": "Lower it if owners save absurd markups by mistake; raise it only when an agency shows a real need above the current ceiling.",
+    "example": "With the default of 300 %, an owner may set any markup from 0 % to 300 % for each product type."
+   },
+   "vi": {
+    "what": "Mức cộng giá bán lẻ mặc định cao nhất mà chủ đại lý được đặt cho mỗi loại sản phẩm AA ở Settings > Retail markup. Mức cộng là phần trăm đại lý cộng thêm vào sản phẩm AA để ra giá bán cho khách.",
+    "raise": "Chủ đại lý được đặt mức cộng cao hơn. Tự do định giá hơn, nhưng lỗi gõ nhầm (3000 thay vì 30) khó bị chặn hơn.",
+    "lower": "Chủ đại lý không lưu được mức cộng vượt trần mới; mức đã lưu giữ nguyên tới khi chủ đại lý đổi. Quá thấp sẽ cản đại lý bán thêm dịch vụ riêng kèm sản phẩm AA.",
+    "when": "Giảm nếu chủ đại lý hay lưu nhầm mức cộng vô lý; chỉ tăng khi một đại lý chứng minh nhu cầu thật vượt trần hiện tại.",
+    "example": "Với mặc định 300 %, chủ đại lý được đặt mức cộng bất kỳ từ 0 % đến 300 % cho từng loại sản phẩm."
+   }
+  },
+  "crm.agency_defaults.price_checks_per_minute": {
+   "en": {
+    "what": "How many Book now price checks a minute an agency's public page accepts from all visitors together. This is the limit a new agency starts with, and the limit of any agency that has not saved its own on Settings > Online booking.",
+    "raise": "Busy agency pages answer more price checks before visitors are asked to try again. A bot can also ask for more prices a minute, which puts more load on AA pricing.",
+    "lower": "Limits how fast a bot can scrape prices from an agency page. Too low and real visitors at a busy moment see their price check refused.",
+    "when": "Raise it when agencies report visitors refused during campaigns; lower it when the logs show price scraping. It is checked together with the lowest and highest limit an owner may set.",
+    "example": "With the default of 60 checks a minute, the 61st price check within one minute on one agency page is refused until the next minute."
+   },
+   "vi": {
+    "what": "Số lượt kiểm giá Book now mỗi phút mà trang công khai của một đại lý nhận từ tất cả khách truy cập cộng lại. Đây là giới hạn đại lý mới nhận lúc tạo, và là giới hạn của mọi đại lý chưa tự lưu ở Settings > Online booking.",
+    "raise": "Trang đại lý đông khách trả lời được nhiều lượt kiểm giá hơn trước khi khách bị báo thử lại. Bot cũng hỏi được nhiều giá hơn mỗi phút, làm tăng tải lên hệ thống giá của AA.",
+    "lower": "Giới hạn tốc độ bot dò giá từ trang đại lý. Quá thấp thì khách thật vào lúc đông sẽ bị từ chối kiểm giá.",
+    "when": "Tăng khi đại lý báo khách bị từ chối trong đợt khuyến mãi; giảm khi log cho thấy có dò giá. Giá trị được kiểm cùng mức thấp nhất và cao nhất chủ đại lý được chọn.",
+    "example": "Với mặc định 60 lượt mỗi phút, lượt kiểm giá thứ 61 trong cùng một phút trên một trang đại lý bị từ chối tới phút sau."
+   }
+  },
+  "crm.agency_defaults.price_checks_per_minute_max": {
+   "en": {
+    "what": "The highest Book now price-check limit an agency owner may choose on Settings > Online booking. The database allows 10 to 600 a minute.",
+    "raise": "The database ceiling is 600 a minute, so it cannot go higher; a higher ceiling needs a reviewed database change.",
+    "lower": "Owners can no longer open their page to very high price-check rates, which bounds the pricing load any one agency can cause. A limit an agency already saved is not rewritten.",
+    "when": "Lower it if one agency's page drives too much pricing load; leave it at the ceiling while the load is fine.",
+    "example": "With the default of 600 checks a minute, an owner may pick any price-check limit up to 600."
+   },
+   "vi": {
+    "what": "Giới hạn kiểm giá Book now cao nhất mà chủ đại lý được chọn ở Settings > Online booking. Cơ sở dữ liệu cho phép 10 đến 600 lượt mỗi phút.",
+    "raise": "Trần của cơ sở dữ liệu là 600 lượt mỗi phút nên không tăng thêm được; muốn trần cao hơn cần một thay đổi cơ sở dữ liệu có review.",
+    "lower": "Chủ đại lý không còn mở trang cho tốc độ kiểm giá rất cao, nên tải lên hệ thống giá từ một đại lý có giới hạn. Giới hạn đại lý đã lưu không bị ghi đè.",
+    "when": "Giảm nếu trang của một đại lý gây quá nhiều tải lên hệ thống giá; giữ ở mức trần khi tải vẫn ổn.",
+    "example": "Với mặc định 600 lượt mỗi phút, chủ đại lý được chọn giới hạn kiểm giá bất kỳ, tối đa 600."
+   }
+  },
+  "crm.agency_defaults.price_checks_per_minute_min": {
+   "en": {
+    "what": "The lowest Book now price-check limit an agency owner may choose on Settings > Online booking. The database floor is 10 a minute.",
+    "raise": "Owners can no longer set a very low limit, so their own page cannot refuse most of its real visitors by mistake.",
+    "lower": "The database floor is 10 a minute, so it cannot go lower; a lower floor needs a reviewed database change.",
+    "when": "Raise it when agencies set limits so low that their own visitors are refused and support has to step in.",
+    "example": "With the default of 10 checks a minute, an owner may pick any price-check limit from 10 upward."
+   },
+   "vi": {
+    "what": "Giới hạn kiểm giá Book now thấp nhất mà chủ đại lý được chọn ở Settings > Online booking. Mức sàn của cơ sở dữ liệu là 10 lượt mỗi phút.",
+    "raise": "Chủ đại lý không còn đặt được giới hạn quá thấp, nên trang của họ không vô tình từ chối phần lớn khách thật.",
+    "lower": "Mức sàn của cơ sở dữ liệu là 10 lượt mỗi phút nên không giảm thêm được; muốn sàn thấp hơn cần một thay đổi cơ sở dữ liệu có review.",
+    "when": "Tăng khi các đại lý đặt giới hạn thấp tới mức khách của chính họ bị từ chối và bộ phận hỗ trợ phải can thiệp.",
+    "example": "Với mặc định 10 lượt mỗi phút, chủ đại lý được chọn giới hạn kiểm giá bất kỳ từ 10 trở lên."
+   }
+  },
+  "crm.agency_defaults.trash_days": {
+   "en": {
+    "what": "How many days a deleted record stays in the trash and can be restored before the daily lifecycle run purges it for good. This is the window a new agency starts with, and the window of any agency that has not saved its own on Settings > Data and privacy.",
+    "raise": "Agents have longer to undo a mistaken delete. Deleted personal data stays in the database longer before it is gone.",
+    "lower": "Deleted data leaves sooner, which helps privacy, but a mistaken delete noticed late can no longer be restored.",
+    "when": "Raise it when agencies often ask to restore records after the window closed; lower it when a privacy review asks deleted data to go faster. It must stay between the shortest and the longest window an owner may set.",
+    "example": "With the default of 7 days, a client deleted on a Monday can be restored until the next Monday; then the daily run purges it (unless lifecycle deletes are in dry run)."
+   },
+   "vi": {
+    "what": "Số ngày một bản ghi đã xoá nằm trong thùng rác và còn khôi phục được trước khi lượt chạy vòng đời hằng ngày xoá hẳn. Đây là giá trị đại lý mới nhận lúc tạo, và là giá trị của mọi đại lý chưa tự lưu ở Settings > Data and privacy.",
+    "raise": "Nhân viên có nhiều thời gian hơn để hoàn tác một lần xoá nhầm. Dữ liệu cá nhân đã xoá nằm lâu hơn trong cơ sở dữ liệu.",
+    "lower": "Dữ liệu đã xoá biến mất sớm hơn, tốt cho quyền riêng tư, nhưng xoá nhầm mà phát hiện muộn thì không khôi phục được nữa.",
+    "when": "Tăng khi các đại lý hay xin khôi phục bản ghi sau khi đã hết hạn; giảm khi rà soát quyền riêng tư yêu cầu dữ liệu đã xoá đi nhanh hơn. Giá trị phải nằm giữa mức ngắn nhất và dài nhất chủ đại lý được chọn.",
+    "example": "Với mặc định 7 ngày, khách bị xoá vào thứ Hai còn khôi phục được tới thứ Hai tuần sau; sau đó lượt chạy hằng ngày xoá hẳn (trừ khi việc xoá vòng đời đang ở chế độ chạy thử)."
+   }
+  },
+  "crm.agency_defaults.trash_days_max": {
+   "en": {
+    "what": "The longest trash window an agency owner may choose on Settings > Data and privacy. The database allows 1 to 30 days.",
+    "raise": "The database ceiling is 30 days, so it cannot go higher; a longer ceiling needs a reviewed database change.",
+    "lower": "Owners cannot keep deleted records restorable for as long. A window an agency already saved is not rewritten.",
+    "when": "Lower it if the data policy sets a shorter maximum for keeping deleted data. It is checked together with the shortest window and the new-agency default.",
+    "example": "With the default of 30 days, an owner may keep deleted records restorable for up to a month."
+   },
+   "vi": {
+    "what": "Thời gian giữ trong thùng rác dài nhất mà chủ đại lý được chọn ở Settings > Data and privacy. Cơ sở dữ liệu cho phép 1 đến 30 ngày.",
+    "raise": "Trần của cơ sở dữ liệu là 30 ngày nên không tăng thêm được; muốn trần dài hơn cần một thay đổi cơ sở dữ liệu có review.",
+    "lower": "Chủ đại lý không giữ được bản ghi đã xoá lâu như trước. Giá trị đại lý đã lưu không bị ghi đè.",
+    "when": "Giảm nếu chính sách dữ liệu đặt mức tối đa ngắn hơn cho việc giữ dữ liệu đã xoá. Giá trị được kiểm cùng mức ngắn nhất và mặc định của đại lý mới.",
+    "example": "Với mặc định 30 ngày, chủ đại lý được giữ bản ghi đã xoá ở trạng thái còn khôi phục được tối đa một tháng."
+   }
+  },
+  "crm.agency_defaults.trash_days_min": {
+   "en": {
+    "what": "The shortest trash window an agency owner may choose on Settings > Data and privacy. The database floor is 1 day.",
+    "raise": "Owners can no longer purge deleted records within a day, which protects agencies from losing data to a quick mistake.",
+    "lower": "The database floor is 1 day, so it cannot go lower.",
+    "when": "Raise it if agencies lose records because they set a very short window and noticed a mistake too late.",
+    "example": "With the default of 1 day, an owner may set any trash window from one day upward."
+   },
+   "vi": {
+    "what": "Thời gian giữ trong thùng rác ngắn nhất mà chủ đại lý được chọn ở Settings > Data and privacy. Mức sàn của cơ sở dữ liệu là 1 ngày.",
+    "raise": "Chủ đại lý không còn xoá hẳn bản ghi trong vòng một ngày, giúp đại lý không mất dữ liệu vì một thao tác vội.",
+    "lower": "Mức sàn của cơ sở dữ liệu là 1 ngày nên không giảm thêm được.",
+    "when": "Tăng nếu các đại lý mất bản ghi vì đặt thời gian quá ngắn và phát hiện nhầm lẫn quá muộn.",
+    "example": "Với mặc định 1 ngày, chủ đại lý được đặt thời gian thùng rác bất kỳ từ một ngày trở lên."
+   }
+  },
+  "crm.ai.budget_default_usd": {
+   "en": {
+    "what": "The monthly AI budget, in US dollars, a new agency starts with, and the budget of any agency that has not saved its own on Settings > AI. It never goes above the agency's ceiling: the lower of the two applies.",
+    "raise": "New agencies can use AI draft replies more each month before the calls stop. AA pays for the calls, so AA's monthly AI cost can grow.",
+    "lower": "Caps AA's AI cost per new agency. Too low and agents see AI drafts stop early in the month and reply by hand.",
+    "when": "Raise it when most agencies use up their budget early and the AI cost report allows it; lower it when AI spend grows faster than its value.",
+    "example": "With the default of 2 USD a month, a new agency's AI calls are refused once it has used 2 USD in that month."
+   },
+   "vi": {
+    "what": "Ngân sách AI hằng tháng, tính bằng đô la Mỹ, mà một đại lý mới nhận lúc tạo, và là ngân sách của mọi đại lý chưa tự lưu ở Settings > AI. Không bao giờ vượt trần của đại lý: áp dụng giá trị thấp hơn trong hai giá trị.",
+    "raise": "Đại lý mới dùng được bản nháp trả lời bằng AI nhiều hơn mỗi tháng trước khi bị dừng. AA trả tiền các lượt gọi, nên chi phí AI hằng tháng của AA có thể tăng.",
+    "lower": "Giới hạn chi phí AI của AA cho mỗi đại lý mới. Quá thấp thì nhân viên thấy bản nháp AI dừng sớm trong tháng và phải tự trả lời.",
+    "when": "Tăng khi phần lớn đại lý dùng hết ngân sách sớm và báo cáo chi phí AI cho phép; giảm khi chi phí AI tăng nhanh hơn giá trị mang lại.",
+    "example": "Với mặc định 2 USD mỗi tháng, các lượt gọi AI của một đại lý mới bị từ chối khi đại lý đã dùng hết 2 USD trong tháng đó."
+   }
+  },
+  "crm.ai.budget_max_usd": {
+   "en": {
+    "what": "The highest monthly AI budget, in US dollars, an agency owner may set on Settings > AI. AA pays for the calls. An administrator may give one agency its own ceiling.",
+    "raise": "Owners may allow more AI use a month. Good for agencies that rely on AI drafts, but AA's AI bill per agency can grow up to the new ceiling.",
+    "lower": "Caps the most any agency can spend on AI a month. An agency whose own budget is above the new ceiling is held to the ceiling (the lower of the two applies).",
+    "when": "Raise it, for one agency or for all, when an agency shows steady useful AI use and asks for more; lower it if AI cost needs a hard stop.",
+    "example": "With the default of 2 USD a month, no owner can set an AI budget above 2 USD unless an administrator gives that agency its own ceiling."
+   },
+   "vi": {
+    "what": "Ngân sách AI hằng tháng cao nhất, tính bằng đô la Mỹ, mà chủ đại lý được đặt ở Settings > AI. AA trả tiền các lượt gọi. Quản trị viên có thể cho riêng một đại lý một mức trần khác.",
+    "raise": "Chủ đại lý được cho phép dùng AI nhiều hơn mỗi tháng. Tốt cho đại lý dựa nhiều vào bản nháp AI, nhưng hoá đơn AI của AA cho mỗi đại lý có thể tăng tới mức trần mới.",
+    "lower": "Giới hạn số tiền AI tối đa mỗi đại lý dùng trong tháng. Đại lý có ngân sách riêng cao hơn trần mới sẽ bị giữ ở mức trần (áp dụng giá trị thấp hơn).",
+    "when": "Tăng, cho một đại lý hoặc tất cả, khi đại lý dùng AI đều đặn, có ích và xin thêm; giảm nếu chi phí AI cần một điểm dừng cứng.",
+    "example": "Với mặc định 2 USD mỗi tháng, không chủ đại lý nào đặt được ngân sách AI trên 2 USD, trừ khi quản trị viên cho đại lý đó mức trần riêng."
+   }
+  },
+  "crm.ai.draft_reply_max_tokens": {
+   "en": {
+    "what": "The longest AI draft reply the CRM asks the model for, in tokens (a token is roughly three quarters of an English word). A reply cut at this length is marked as cut, and the agent replies by hand.",
+    "raise": "Long replies are cut less often. Each call can cost more, and drafts may get wordy.",
+    "lower": "Calls cost less and drafts stay short, but more replies are cut off and the agent has to write them.",
+    "when": "Raise it when agents often see cut-off drafts on normal client messages; lower it if drafts are long and the AI cost per call is high.",
+    "example": "With the default of 800 tokens, a draft reply can run to roughly 600 words before it is cut."
+   },
+   "vi": {
+    "what": "Độ dài tối đa của bản nháp trả lời bằng AI mà CRM yêu cầu mô hình, tính bằng token (một token xấp xỉ ba phần tư một từ tiếng Anh). Bản trả lời bị cắt ở độ dài này được đánh dấu là bị cắt và nhân viên tự trả lời.",
+    "raise": "Bản trả lời dài ít bị cắt hơn. Mỗi lượt gọi có thể tốn hơn và bản nháp có thể dài dòng.",
+    "lower": "Lượt gọi rẻ hơn và bản nháp ngắn gọn, nhưng nhiều bản trả lời bị cắt hơn và nhân viên phải tự viết.",
+    "when": "Tăng khi nhân viên hay thấy bản nháp bị cắt với tin nhắn khách bình thường; giảm nếu bản nháp dài và chi phí AI mỗi lượt gọi cao.",
+    "example": "Với mặc định 800 token, bản nháp trả lời dài được khoảng 600 từ trước khi bị cắt."
+   }
+  },
+  "crm.payments.invoice_reminder_every_days": {
+   "en": {
+    "what": "Days between two reminders of the same overdue invoice. A reminder is a bell item and a task for the trip owner (the agent); the CRM never writes to the client by itself. The first reminder comes the day after the due date.",
+    "raise": "Agents are nudged less often about the same invoice. Less noise, but a late payment can sit longer before anyone chases it.",
+    "lower": "Agents are nudged more often, so late payments get chased sooner; too often and the reminders become noise agents ignore.",
+    "when": "Change it when agents say the reminders come too often or too rarely, or when overdue invoices stay unpaid too long.",
+    "example": "With the default of 3 days, an invoice due on the 1st reminds the agent on the 2nd, the 5th, the 8th and so on, until the most reminders an invoice gives."
+   },
+   "vi": {
+    "what": "Số ngày giữa hai lần nhắc của cùng một hoá đơn quá hạn. Một lần nhắc là một mục chuông và một việc cần làm cho người phụ trách chuyến (nhân viên); CRM không bao giờ tự viết cho khách. Lần nhắc đầu tiên vào ngày sau hạn thanh toán.",
+    "raise": "Nhân viên ít bị nhắc về cùng một hoá đơn hơn. Bớt ồn, nhưng khoản trả chậm có thể nằm lâu hơn trước khi có người đòi.",
+    "lower": "Nhân viên được nhắc thường hơn nên khoản trả chậm được đòi sớm hơn; nhắc quá dày thì thành tiếng ồn bị bỏ qua.",
+    "when": "Đổi khi nhân viên phản ánh lời nhắc quá dày hoặc quá thưa, hoặc khi hoá đơn quá hạn chưa được trả quá lâu.",
+    "example": "Với mặc định 3 ngày, hoá đơn đến hạn ngày 1 sẽ nhắc nhân viên vào ngày 2, ngày 5, ngày 8 và cứ thế, tới số lần nhắc tối đa của một hoá đơn."
+   }
+  },
+  "crm.payments.invoice_reminder_max": {
+   "en": {
+    "what": "The most reminders one overdue invoice gives the trip owner. 0 turns the reminders off.",
+    "raise": "Agents keep being nudged about a long-overdue invoice for longer.",
+    "lower": "Reminders stop sooner on an invoice the agent is already handling; 0 stops them completely, so overdue invoices show only in the invoice lists.",
+    "when": "Raise it if overdue invoices are forgotten after the reminders stop; lower it if agents follow invoices another way and the reminders are noise.",
+    "example": "With the default of 5, an overdue invoice reminds the agent five times, then the reminders stop while the invoice stays overdue in the lists."
+   },
+   "vi": {
+    "what": "Số lần nhắc tối đa mà một hoá đơn quá hạn gửi cho người phụ trách chuyến. 0 là tắt nhắc.",
+    "raise": "Nhân viên tiếp tục được nhắc về một hoá đơn quá hạn lâu hơn.",
+    "lower": "Lời nhắc dừng sớm hơn với hoá đơn nhân viên đã đang xử lý; 0 là dừng hẳn, hoá đơn quá hạn chỉ còn hiện trong danh sách hoá đơn.",
+    "when": "Tăng nếu hoá đơn quá hạn bị quên sau khi hết lời nhắc; giảm nếu nhân viên theo dõi hoá đơn cách khác và lời nhắc chỉ gây ồn.",
+    "example": "Với mặc định 5, một hoá đơn quá hạn nhắc nhân viên năm lần rồi dừng, hoá đơn vẫn hiện là quá hạn trong danh sách."
+   }
+  },
+  "crm.payments.refund_owner_threshold_default": {
+   "en": {
+    "what": "A refund or a cancellation-fee change above this amount, in the agency's own base currency, needs the owner's approval; an agent may approve up to it. This is the threshold a new agency starts with, and the threshold of any agency that has not saved its own.",
+    "raise": "Agents can approve larger refunds alone. Faster for clients, but bigger sums leave without the owner's eye.",
+    "lower": "More refunds wait for the owner. Tighter control of money going out, but refunds slow down when the owner is away.",
+    "when": "Change it when new agencies report owner approvals piling up (raise) or refunds approved too freely (lower). The number is in each agency's currency, so the same figure means different sums.",
+    "example": "With the default of 1,000, an agent may approve a refund of 1,000 in the agency's currency alone; 1,001 waits for the owner."
+   },
+   "vi": {
+    "what": "Khoản hoàn tiền hoặc thay đổi phí huỷ vượt số tiền này, tính bằng tiền tệ gốc của đại lý, cần chủ đại lý duyệt; nhân viên được duyệt tới mức này. Đây là ngưỡng đại lý mới nhận lúc tạo, và là ngưỡng của mọi đại lý chưa tự lưu ngưỡng riêng.",
+    "raise": "Nhân viên tự duyệt được khoản hoàn lớn hơn. Nhanh hơn cho khách, nhưng số tiền lớn đi ra mà chủ đại lý không xem.",
+    "lower": "Nhiều khoản hoàn phải chờ chủ đại lý hơn. Kiểm soát tiền chi ra chặt hơn, nhưng hoàn tiền chậm khi chủ đại lý vắng.",
+    "when": "Đổi khi các đại lý mới báo việc duyệt dồn ứ (tăng) hoặc hoàn tiền bị duyệt quá dễ (giảm). Con số tính theo tiền tệ của từng đại lý, nên cùng một con số là các khoản khác nhau.",
+    "example": "Với mặc định 1.000, nhân viên tự duyệt được khoản hoàn 1.000 theo tiền tệ của đại lý; 1.001 phải chờ chủ đại lý."
+   }
+  },
+  "crm.rate.ai_per_minute": {
+   "en": {
+    "what": "How many AI calls one agency may make a minute. Above it a call is refused at once, before anything is sent to the model or paid. 0 turns the limit off.",
+    "raise": "Busy agencies hit the limit less often. A runaway script or misuse can spend the AI budget faster.",
+    "lower": "Slows down bursts and protects the budget, but agents drafting many replies at once are asked to try again in a moment.",
+    "when": "Raise it when agents report AI drafts refused during normal busy hours; lower it if one agency shows bursts that look like misuse.",
+    "example": "With the default of 6 calls a minute, an agency's 7th AI call within one minute is refused and works again the next minute."
+   },
+   "vi": {
+    "what": "Số lượt gọi AI một đại lý được thực hiện mỗi phút. Vượt mức này lượt gọi bị từ chối ngay, trước khi gửi gì cho mô hình hay tốn tiền. 0 là tắt giới hạn.",
+    "raise": "Đại lý đông việc ít chạm giới hạn hơn. Một script chạy sai hoặc bị lạm dụng có thể tiêu ngân sách AI nhanh hơn.",
+    "lower": "Hãm các đợt gọi dồn dập và bảo vệ ngân sách, nhưng nhân viên soạn nhiều bản nháp cùng lúc sẽ được báo thử lại sau giây lát.",
+    "when": "Tăng khi nhân viên báo bản nháp AI bị từ chối trong giờ cao điểm bình thường; giảm nếu một đại lý có các đợt gọi trông như lạm dụng.",
+    "example": "Với mặc định 6 lượt mỗi phút, lượt gọi AI thứ 7 của một đại lý trong cùng một phút bị từ chối và gọi lại được ở phút sau."
+   }
+  },
+  "crm.rate.intake_form_per_hour": {
+   "en": {
+    "what": "How many submissions one inquiry form (and the Book now bookings that use its key) takes an hour, from all addresses together. It is counted only after every other check. 0 turns the quota off. An administrator may give a busy agency its own quota.",
+    "raise": "A popular form takes more inquiries in an hour before refusing. A spam wave can also push more fake inquiries into the agency's inbox.",
+    "lower": "Caps how many fake inquiries a spam wave can create, but a real campaign may see genuine inquiries refused.",
+    "when": "Raise it, for one agency, when it runs a campaign and real inquiries are refused; lower it when spam floods agency inboxes.",
+    "example": "With the default of 200 an hour, the 201st submission to one form within the hour is refused."
+   },
+   "vi": {
+    "what": "Số lượt gửi một biểu mẫu yêu cầu (và các đặt chỗ Book now dùng khoá của biểu mẫu đó) nhận mỗi giờ, từ mọi địa chỉ cộng lại. Chỉ được tính sau tất cả các bước kiểm khác. 0 là tắt hạn mức. Quản trị viên có thể cho một đại lý đông khách hạn mức riêng.",
+    "raise": "Biểu mẫu được quan tâm nhận nhiều yêu cầu hơn mỗi giờ trước khi từ chối. Một đợt spam cũng đẩy được nhiều yêu cầu giả hơn vào hộp thư đại lý.",
+    "lower": "Giới hạn số yêu cầu giả một đợt spam tạo ra được, nhưng một chiến dịch thật có thể bị từ chối yêu cầu thật.",
+    "when": "Tăng, cho riêng một đại lý, khi đại lý chạy chiến dịch và yêu cầu thật bị từ chối; giảm khi spam tràn hộp thư đại lý.",
+    "example": "Với mặc định 200 mỗi giờ, lượt gửi thứ 201 vào một biểu mẫu trong cùng một giờ bị từ chối."
+   }
+  },
+  "crm.rate.intake_per_minute": {
+   "en": {
+    "what": "How many inquiry-form submissions and other anonymous client-page writes (on the proposal page: sign-in codes, Book now bookings, holds, accepting, paying) one visitor address may make a minute. 0 turns the limit off.",
+    "raise": "Clients who click fast or share one office address are refused less often. Bots can try more sign-in codes or submissions a minute.",
+    "lower": "Slows down bots guessing sign-in codes or spamming forms, but several real clients behind one shared address may be refused.",
+    "when": "Raise it when real clients report being refused (often a shared office or hotel network); lower it when the logs show bursts from single addresses.",
+    "example": "With the default of 5 a minute, a sixth write from the same address within one minute is refused until the next minute."
+   },
+   "vi": {
+    "what": "Số lượt gửi biểu mẫu yêu cầu và các thao tác ghi ẩn danh khác trên trang khách (trên trang báo giá: mã đăng nhập, đặt chỗ Book now, giữ chỗ, chấp nhận, thanh toán) mà một địa chỉ truy cập được làm mỗi phút. 0 là tắt giới hạn.",
+    "raise": "Khách bấm nhanh hoặc dùng chung một địa chỉ văn phòng ít bị từ chối hơn. Bot thử được nhiều mã đăng nhập hoặc lượt gửi hơn mỗi phút.",
+    "lower": "Hãm bot dò mã đăng nhập hoặc spam biểu mẫu, nhưng nhiều khách thật dùng chung một địa chỉ có thể bị từ chối.",
+    "when": "Tăng khi khách thật báo bị từ chối (thường do mạng văn phòng hay khách sạn dùng chung); giảm khi log cho thấy các đợt dồn dập từ một địa chỉ.",
+    "example": "Với mặc định 5 lượt mỗi phút, lượt ghi thứ sáu từ cùng một địa chỉ trong một phút bị từ chối tới phút sau."
+   }
+  },
+  "crm.rate.member_per_minute": {
+   "en": {
+    "what": "How many requests one signed-in agency member may make to the CRM for one agency a minute, the same for every plan. Above it the request is refused as rate limited. 0 turns the limit off.",
+    "raise": "Heavy users are refused less often, but a stuck browser tab or a script can put more load on the CRM.",
+    "lower": "Protects the CRM from a runaway client, but a busy agent with many tabs open may see pages fail to load.",
+    "when": "Raise it when real members hit the limit in normal work; lower it if one member's traffic slows the CRM for others.",
+    "example": "With the default of 600 a minute (10 a second), a member's 601st request within one minute is refused."
+   },
+   "vi": {
+    "what": "Số yêu cầu một thành viên đại lý đã đăng nhập được gửi tới CRM cho một đại lý mỗi phút, như nhau với mọi gói. Vượt mức này yêu cầu bị từ chối vì vượt giới hạn tốc độ. 0 là tắt giới hạn.",
+    "raise": "Người dùng nhiều ít bị từ chối hơn, nhưng một tab trình duyệt bị treo hay một script có thể tạo thêm tải lên CRM.",
+    "lower": "Bảo vệ CRM khỏi một máy khách chạy mất kiểm soát, nhưng nhân viên bận mở nhiều tab có thể thấy trang không tải được.",
+    "when": "Tăng khi thành viên thật chạm giới hạn trong công việc bình thường; giảm nếu lưu lượng của một thành viên làm CRM chậm cho người khác.",
+    "example": "Với mặc định 600 mỗi phút (10 mỗi giây), yêu cầu thứ 601 của một thành viên trong cùng một phút bị từ chối."
+   }
+  },
+  "crm.rate.public_per_minute": {
+   "en": {
+    "what": "How many requests one visitor address may make a minute to the public CRM pages that need no sign-in, and to the health checks. 0 turns the limit off.",
+    "raise": "Visitors behind a shared address (an office, a hotel) are refused less often; scrapers and bots get more requests through.",
+    "lower": "Slows scrapers and bots, but busy shared networks may see public pages refused.",
+    "when": "Raise it when real visitors report refused public pages; lower it when the logs show one address hammering the public routes.",
+    "example": "With the default of 60 a minute, the 61st public request from one address within a minute is refused."
+   },
+   "vi": {
+    "what": "Số yêu cầu một địa chỉ truy cập được gửi mỗi phút tới các trang CRM công khai không cần đăng nhập, và tới các lượt kiểm tra sức khoẻ hệ thống. 0 là tắt giới hạn.",
+    "raise": "Khách dùng chung một địa chỉ (văn phòng, khách sạn) ít bị từ chối hơn; công cụ dò dữ liệu và bot cũng gửi được nhiều hơn.",
+    "lower": "Hãm công cụ dò dữ liệu và bot, nhưng mạng dùng chung đông người có thể bị từ chối trang công khai.",
+    "when": "Tăng khi khách thật báo trang công khai bị từ chối; giảm khi log cho thấy một địa chỉ gửi dồn dập vào các trang công khai.",
+    "example": "Với mặc định 60 mỗi phút, yêu cầu công khai thứ 61 từ một địa chỉ trong cùng một phút bị từ chối."
+   }
+  },
+  "crm.retention.audit_dry_run": {
+   "en": {
+    "what": "On: the daily audit retention only reports which monthly audit partitions older than 12 months it would drop, and both locked copies stay. Off: it drops them, but only while the Terraform floor AUDIT_RETENTION_DRY_RUN is off too.",
+    "raise": "Turning it on stops every audit partition drop at once; the audit log keeps growing, and its storage cost with it.",
+    "lower": "Turning it off lets the run drop audit partitions older than 12 months, which cannot be undone; nothing is dropped until the Terraform floor is off too.",
+    "when": "Turn it off only after the dry-run reports were checked and the retention period is confirmed; turn it back on at once if a drop looks wrong.",
+    "example": "With the default of on, the daily run only reports what it would drop and deletes nothing."
+   },
+   "vi": {
+    "what": "Bật: lượt lưu giữ nhật ký kiểm toán hằng ngày chỉ báo những phân vùng nhật ký theo tháng cũ hơn 12 tháng mà nó sẽ xoá, cả hai bản sao bị khoá vẫn giữ nguyên. Tắt: nó xoá các phân vùng đó, nhưng chỉ khi mức sàn AUDIT_RETENTION_DRY_RUN của Terraform cũng tắt.",
+    "raise": "Bật lên là dừng ngay mọi việc xoá phân vùng nhật ký; nhật ký tiếp tục lớn dần và chi phí lưu trữ tăng theo.",
+    "lower": "Tắt đi là cho phép xoá phân vùng nhật ký cũ hơn 12 tháng, không hoàn tác được; chưa có gì bị xoá tới khi mức sàn Terraform cũng tắt.",
+    "when": "Chỉ tắt sau khi đã kiểm báo cáo chạy thử và đã chốt thời hạn lưu giữ; bật lại ngay nếu một lần xoá trông không đúng.",
+    "example": "Với mặc định là bật, lượt chạy hằng ngày chỉ báo những gì nó sẽ xoá và không xoá gì."
+   }
+  },
+  "crm.retention.job_dry_run": {
+   "en": {
+    "what": "On: the daily job retention run only counts the finished CRM job rows it would delete. Off: it deletes them, but only while the Terraform floor JOB_RETENTION_DRY_RUN is off too.",
+    "raise": "Turning it on stops the clean-up; the job table keeps growing, which slows job queries over time.",
+    "lower": "Turning it off deletes old finished job rows for good, which keeps the table small; their history is gone.",
+    "when": "Turn it off once the counted rows look right; turn it on while an investigation needs the old job rows kept.",
+    "example": "With the default of on, the run deletes nothing and only reports a count."
+   },
+   "vi": {
+    "what": "Bật: lượt dọn bảng việc nền hằng ngày chỉ đếm các dòng việc CRM đã xong mà nó sẽ xoá. Tắt: nó xoá các dòng đó, nhưng chỉ khi mức sàn JOB_RETENTION_DRY_RUN của Terraform cũng tắt.",
+    "raise": "Bật lên là dừng việc dọn; bảng việc nền lớn dần, lâu dần làm truy vấn việc nền chậm đi.",
+    "lower": "Tắt đi là xoá hẳn các dòng việc đã xong từ lâu, giữ bảng gọn; lịch sử của chúng mất luôn.",
+    "when": "Tắt khi số dòng được đếm trông hợp lý; bật lại trong lúc một cuộc điều tra cần giữ các dòng cũ.",
+    "example": "Với mặc định là bật, lượt chạy không xoá gì và chỉ báo một con số đếm."
+   }
+  },
+  "crm.retention.lifecycle_dry_run": {
+   "en": {
+    "what": "On: every hard delete of agency data (submission redaction, AI call log purge, trash purge, auto-archive, an owner's erasure or an offboarding erase) only counts what it would do. Off lets them run, but only while the Terraform floor LIFECYCLE_DRY_RUN is off too.",
+    "raise": "Turning it on stops every lifecycle delete at once: nothing is lost, but data the agencies or the law say must go stays in the database.",
+    "lower": "Turning it off makes those deletes real and final; the agencies' retention choices and erasure requests then take effect.",
+    "when": "Turn it off when the dry-run counts were checked and the platform is ready to delete for real; turn it back on at once if a delete looks wrong.",
+    "example": "With the default of on, the lifecycle runs only count; no agency data is deleted while it stays on."
+   },
+   "vi": {
+    "what": "Bật: mọi thao tác xoá hẳn dữ liệu đại lý (che dữ liệu biểu mẫu đã gửi, dọn nhật ký gọi AI, dọn thùng rác, tự lưu trữ, yêu cầu xoá của chủ đại lý hay xoá khi ngừng dịch vụ) chỉ đếm những gì sẽ làm. Tắt: cho chạy thật, nhưng chỉ khi mức sàn LIFECYCLE_DRY_RUN của Terraform cũng tắt.",
+    "raise": "Bật lên là dừng ngay mọi thao tác xoá vòng đời: không mất gì, nhưng dữ liệu mà đại lý hoặc luật yêu cầu xoá vẫn nằm trong cơ sở dữ liệu.",
+    "lower": "Tắt đi là các thao tác xoá chạy thật và không hoàn tác được; lựa chọn lưu giữ và yêu cầu xoá của đại lý khi đó mới có hiệu lực.",
+    "when": "Tắt khi đã kiểm số đếm chạy thử và nền tảng sẵn sàng xoá thật; bật lại ngay nếu một lần xoá trông không đúng.",
+    "example": "Với mặc định là bật, các lượt chạy vòng đời chỉ đếm; không dữ liệu đại lý nào bị xoá khi còn bật."
+   }
+  },
+  "crm.retention.partner_account_cleanup_dry_run": {
+   "en": {
+    "what": "On: the partner account clean-up only counts the never-used partner pool accounts it would delete. Off: it deletes them, while the Terraform floor PARTNER_ACCOUNT_CLEANUP_DRY_RUN is off too.",
+    "raise": "Turning it on keeps every unused partner account; the pool slowly fills with accounts no one uses.",
+    "lower": "Turning it off removes partner accounts that were never used, which keeps the pool clean.",
+    "when": "Turn it on if the clean-up removes accounts that were about to be used, while the cause is checked.",
+    "example": "With the default of off, never-used partner accounts are deleted by the clean-up when the Terraform floor is off too."
+   },
+   "vi": {
+    "what": "Bật: lượt dọn tài khoản đối tác chỉ đếm các tài khoản trong nhóm tài khoản đối tác chưa từng dùng mà nó sẽ xoá. Tắt: nó xoá các tài khoản đó, khi mức sàn PARTNER_ACCOUNT_CLEANUP_DRY_RUN của Terraform cũng tắt.",
+    "raise": "Bật lên là giữ lại mọi tài khoản đối tác chưa dùng; nhóm tài khoản dần đầy những tài khoản không ai dùng.",
+    "lower": "Tắt đi là xoá các tài khoản đối tác chưa từng được dùng, giữ nhóm tài khoản gọn gàng.",
+    "when": "Bật nếu lượt dọn xoá mất tài khoản sắp được dùng, trong lúc tìm nguyên nhân.",
+    "example": "Với mặc định là tắt, tài khoản đối tác chưa từng dùng bị lượt dọn xoá khi mức sàn Terraform cũng tắt."
+   }
+  },
+  "crm.settings.two_person_approval": {
+   "en": {
+    "what": "On: a CRM setting marked for two-person approval needs a second AA staff member to approve each change. Off: the administrator may approve their own change with a written reason, and a high-impact change e-mails AA ops.",
+    "raise": "Turning it on means no single person can change a sensitive CRM setting; changes wait for a second staff member. Turning it off again then needs a second person too.",
+    "lower": "Turning it off lets one administrator change and approve alone: faster, but without a second check.",
+    "when": "Turn it on at the first production launch or the first paying agency, once enough staff can act as the second approver.",
+    "example": "With the default of off, the administrator may approve their own CRM setting changes with a reason."
+   },
+   "vi": {
+    "what": "Bật: một thiết lập CRM thuộc loại duyệt hai người cần một nhân viên AA thứ hai duyệt mỗi thay đổi. Tắt: quản trị viên được tự duyệt thay đổi của mình kèm lý do, và thay đổi có tác động cao sẽ gửi e-mail cho AA ops.",
+    "raise": "Bật lên thì không ai một mình đổi được thiết lập CRM nhạy cảm; thay đổi phải chờ người thứ hai. Muốn tắt lại khi đó cũng cần người thứ hai.",
+    "lower": "Tắt đi thì một quản trị viên tự đổi và tự duyệt: nhanh hơn, nhưng không có người kiểm thứ hai.",
+    "when": "Bật khi ra mắt môi trường production đầu tiên hoặc có đại lý trả tiền đầu tiên, khi đã đủ nhân sự làm người duyệt thứ hai.",
+    "example": "Với mặc định là tắt, quản trị viên được tự duyệt các thay đổi thiết lập CRM của mình kèm lý do."
+   }
+  }
+ }
+}

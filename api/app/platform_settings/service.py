@@ -184,6 +184,7 @@ def definition_out(d: Definition) -> dict[str, Any]:
         "env_override": d.env_override,
         "cache_s": d.cache_s,
         "enforced": d.enforced,
+        "guide": ps.guide(d.key),  # the operator's guide, EN + VI (CIS 416 shape; None = none yet)
     }
 
 
