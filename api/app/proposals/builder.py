@@ -1298,6 +1298,7 @@ async def delete_block(
 ) -> dict[str, Any]:
     await _lock(ctx, proposal_id, seq)
     _block(await _structure(ctx, proposal_id), block_id)
+    await aa_days.before_block_delete(ctx, block_id)  # AA-1086: its AA tours' copied days go with it
     await _delete_blocks(ctx, [block_id])
     return await _done(ctx, vault, proposal_id, "block_delete")
 
@@ -1534,17 +1535,16 @@ async def delete_option(
     o = _option(s, option_id)
     await ctx.conn.execute(
         "DELETE FROM crm.option_rule WHERE proposal_id = $1 AND (option_id = $2 OR target_option_id = $2)",
-        proposal_id,
-        option_id,
-    )
+        proposal_id, option_id,
+    )  # fmt: skip
     await ctx.conn.execute(
         "UPDATE crm.option_block SET default_option_id = NULL, default_pinned = false"
         " WHERE option_block_id = $1 AND default_option_id = $2",
-        o["option_block_id"],
-        option_id,
-    )
+        o["option_block_id"], option_id,
+    )  # fmt: skip
     await ctx.conn.execute("DELETE FROM crm.option WHERE option_id = $1", option_id)
     await _settle_default(ctx, proposal_id, o["option_block_id"], await _tier(ctx, vault, row))
+    await aa_days.after_delete(ctx, o["option_block_id"], o)  # AA-1086: a removed AA tour's copied days
     return await _done(ctx, vault, proposal_id, "option_delete")
 
 
@@ -1638,7 +1638,7 @@ async def add_aa_option(
     )  # fmt: skip
     await _settle_default(ctx, proposal_id, block_id, await _tier(ctx, vault, row))
     _raise_conflicts(_conflicts(await _structure(ctx, proposal_id)), s)
-    await aa_days.fill_days(ctx, block_id, plan["tour_source_id"], plan["component_kind"])  # AA-1086
+    await aa_days.after_add(ctx, block_id, plan["tour_source_id"], plan["component_kind"])  # AA-1086
     return await _done(ctx, vault, proposal_id, "aa_option_add")
 
 

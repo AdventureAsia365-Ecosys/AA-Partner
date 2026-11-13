@@ -4,14 +4,21 @@ REH-10-portal; tech lead decision 13/11/2026).
 The AA tour's days come from the catalog cache (``crm.aa_catalog_tour.body``, CIS ``catalog.http.v1`` ``Tour.days``:
 ``day_no``, ``title``, ``places[].name``, ``time_zone``); nothing here asks CIS or Booking.
 
-- :func:`fill_days`: when the agency adds a whole AA tour (component ``trip_plan``) to a block of a builder draft,
-  tour day *k* goes into the version's day *d + k - 1* (*d* = the block's day): its title where that day has none,
-  its places (names joined, at most :data:`MAX_TEXT` characters, the column's own limit) where the day has no place,
-  and with the place the tour day's IANA zone. Text the agency wrote is never replaced and no day is added (a tour
-  that runs past the version's last day fills the days there are); the agency edits the copied text like its own.
-- :func:`portal_days`: the traveller portal's fallback for a day of the accepted version that has no title or place
-  (a version accepted before :func:`fill_days`, or a day the agency left empty): the day of a live AA tour line of the
-  trip shown to travellers that falls on that date.
+- :func:`after_add` / :func:`after_delete`: a block of a builder draft whose only AA option of a whole tour (component
+  ``trip_plan``) is tour T gets T's days: tour day *k* goes into the version's day *d + k - 1* (*d* = the block's
+  day), its title where that day has none, its places (names joined, at most :data:`MAX_TEXT` characters, the
+  column's own limit) where the day has no place, and with the place the tour day's IANA zone. Text the agency wrote
+  is never replaced and no day is added (a tour that runs past the version's last day fills the days there are); the
+  agency edits the copied text like its own. A block that offers two or more different whole tours as alternatives
+  (the client may pick any) copies none: adding the second clears the text the first copied (a title or place still
+  equal to its tour day's; the zone stays), so the proposal never shows a tour the client may not take; once the
+  client's pick is confirmed, the portal shows that tour's days (:func:`portal_days`). The same tour twice (two
+  prices) counts once. Removing a tour (or its block) clears its copied text; when one whole tour is left, its days
+  are copied.
+- :func:`portal_days`: the traveller portal's days for a day of the accepted version that has neither a title nor a
+  place (a version accepted before the copy existed, a block of alternative tours, or a day the agency left empty):
+  the day of a live AA tour line of the trip shown to travellers that falls on that date. A day with a title or a
+  place is the agency's and is shown as it is (a field the agency cleared stays empty).
 """
 
 from __future__ import annotations
@@ -45,6 +52,12 @@ SELECT d.proposal_day_id, d.day_no - s.day_no + 1 AS tour_day_no, d.title, d.pla
  ORDER BY d.day_no
 """
 FILL_SQL = "UPDATE crm.proposal_day SET title = $2, place = $3, tz = $4 WHERE proposal_day_id = $1"
+# The block's live AA options of a whole tour, in the block's order.
+TOURS_SQL = """
+SELECT aa_tour_source_id FROM crm.option
+ WHERE option_block_id = $1 AND source = 'aa' AND aa_component_kind = 'trip_plan' AND deleted_at IS NULL
+ ORDER BY sort_order, option_id
+"""
 # The trip's live AA tour lines shown to travellers, with their tour's days (portal fallback).
 LINES_SQL = """
 SELECT l.service_from, c.body -> 'days' AS days
@@ -127,22 +140,77 @@ def filled(day: dict[str, Any], tour_day: TourDay | None) -> tuple[str | None, s
     return title, place, tz
 
 
-async def fill_days(ctx: AnyContext, block_id: uuid.UUID, source_id: str, component_kind: str) -> int:
-    """Copy the AA tour's days into the days of the block's version from the block's day on (see the module text);
-    returns how many days changed. Only a whole tour (``trip_plan``): a part of a tour (a room, a transfer) leaves the
-    days as they are. Runs in the caller's transaction (the builder's, the draft locked)."""
-    if component_kind != "trip_plan":
-        return 0
+def cleared(day: dict[str, Any], tour_day: TourDay | None) -> tuple[str | None, str | None, str] | None:
+    """``(title, place, tz)`` of a proposal day once the text this tour day copied is taken out again (a title or place
+    still equal to the tour day's; the zone stays: the column is required), or None when nothing changes."""
+    if tour_day is None:
+        return None
+    title = None if day["title"] is not None and day["title"] == tour_day.title else day["title"]
+    place = None if day["place"] is not None and day["place"] == tour_day.place else day["place"]
+    if (title, place) == (day["title"], day["place"]):
+        return None
+    return title, place, day["tz"]
+
+
+async def _apply(ctx: AnyContext, block_id: uuid.UUID, source_id: str, change: Any) -> int:
     days = tour_days(await ctx.conn.fetchval(TOUR_DAYS_SQL, source_id))
     if not days:
         return 0
     changed = 0
     for row in await ctx.conn.fetch(DAYS_SQL, block_id):
-        values = filled(dict(row), days.get(row["tour_day_no"]))
+        values = change(dict(row), days.get(row["tour_day_no"]))
         if values is not None:
             await ctx.conn.execute(FILL_SQL, row["proposal_day_id"], *values)
             changed += 1
     return changed
+
+
+async def fill_days(ctx: AnyContext, block_id: uuid.UUID, source_id: str) -> int:
+    """Copy the AA tour's days into the empty fields of the block's days (see the module text); how many days
+    changed."""
+    return await _apply(ctx, block_id, source_id, filled)
+
+
+async def clear_days(ctx: AnyContext, block_id: uuid.UUID, source_id: str) -> int:
+    """Take the text this AA tour copied out of the block's days again (see :func:`cleared`); how many days changed."""
+    return await _apply(ctx, block_id, source_id, cleared)
+
+
+async def _tours(ctx: AnyContext, block_id: uuid.UUID) -> list[str]:
+    return [r["aa_tour_source_id"] for r in await ctx.conn.fetch(TOURS_SQL, block_id)]
+
+
+async def after_add(ctx: AnyContext, block_id: uuid.UUID, source_id: str, component_kind: str) -> int:
+    """After AA option ``source_id`` was added to the block: a whole tour that is the block's only one fills the days;
+    a second, different whole tour clears what every whole tour of the block copied; the same tour again (another
+    price) and a part of a tour (a room, a transfer) leave the days as they are. Runs in the builder's transaction
+    (the draft locked)."""
+    if component_kind != "trip_plan":
+        return 0
+    tours = await _tours(ctx, block_id)
+    if tours.count(source_id) > 1:
+        return 0
+    distinct = list(dict.fromkeys(tours))
+    if len(distinct) == 1:
+        return await fill_days(ctx, block_id, distinct[0])
+    return sum([await clear_days(ctx, block_id, tour) for tour in distinct])
+
+
+async def after_delete(ctx: AnyContext, block_id: uuid.UUID, option: dict[str, Any]) -> int:
+    """After an option was removed from the block: a removed whole tour that the block no longer offers takes its
+    copied text with it; when one whole tour is left, its days are copied."""
+    if option.get("source") != "aa" or option.get("aa_component_kind") != "trip_plan":
+        return 0
+    removed, tours = option["aa_tour_source_id"], list(dict.fromkeys(await _tours(ctx, block_id)))
+    if removed in tours:
+        return 0
+    changed = await clear_days(ctx, block_id, removed)
+    return changed + (await fill_days(ctx, block_id, tours[0]) if len(tours) == 1 else 0)
+
+
+async def before_block_delete(ctx: AnyContext, block_id: uuid.UUID) -> int:
+    """A block about to be deleted takes the text its whole tours copied with it."""
+    return sum([await clear_days(ctx, block_id, tour) for tour in dict.fromkeys(await _tours(ctx, block_id))])
 
 
 async def portal_days(ctx: AnyContext, trip_id: uuid.UUID) -> dict[dt.date, TourDay]:

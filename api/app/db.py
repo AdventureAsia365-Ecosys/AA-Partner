@@ -98,7 +98,7 @@ REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = (
     "crm-062",  # AA-1092: tenant_settings.public_price_per_minute, the Book now price checks a minute (contract, MIG-4)
     "crm-063",  # AA-1093 part 1: crm.tour_retired_flag, the fan-out of a retired AA tour (expand, MIG-4 chain)
     "crm-064",  # AA-1096 L4: crm.setting_definition / setting_value, the admin-editable settings (contract, MIG-4)
-    "crm-065",  # AA-1086: confirmed AA lines shown to travellers by default (backfill; contract, MIG-4)
+    "crm-065",  # AA-1086: a member shows or hides a confirmed AA line (guard_booking_line; contract, MIG-4)
 )
 REQUIRED_SCHEMA_VERSION = max(REQUIRED_SCHEMA_VERSIONS)
 

@@ -362,6 +362,10 @@ def test_voucher_views_and_release() -> None:
     aa = run(vouchers.trip_vouchers(tenant_ctx(_voucher_conn(kind="aa")), FakeVault(), TRIP))["vouchers"][0]
     assert aa["supplier"] == {"name": "Adventure Asia", "category": "activity", "contact_name": None,
                               "aa_booking_ref": "BKG-AAAA", "aa_departure_id": "DEP-1"}  # fmt: skip
+    # AA-1086: the travellers' copy names the agency and carries no AA reference (the agent's copy above does).
+    mine = run(vouchers.trip_vouchers(tenant_ctx(_voucher_conn(kind="aa")), FakeVault(), TRIP, travellers_only=True))
+    assert mine["vouchers"][0]["supplier"] == {"name": "Lotus Trails", "category": "activity", "contact_name": None,
+                                               "aa_booking_ref": None, "aa_departure_id": None}  # fmt: skip
     assert vouchers.release_reason("booked", False) == "line_hidden"
     with pytest.raises(NotFound):
         run(vouchers.trip_vouchers(tenant_ctx(ScriptedConn()), FakeVault(), TRIP))

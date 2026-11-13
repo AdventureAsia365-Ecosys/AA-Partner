@@ -17,8 +17,10 @@ Rules the database holds (crm-014) and this module words:
   it as keyed objects (``cost``, ``commission_expected``, ``margin_base``) that the margin serializer
   (:mod:`app.margin`) strips for any other role: a list of ``{"kind": "cost"}`` rows would not be caught.
 - **AA lines** come from a Booking quote, hold or feed event (CRM-19, :mod:`app.booking`); members cannot write them
-  (403 ``aa_line_read_only``). Their view carries an ``aa`` block (:func:`app.booking.views.aa_block`: sub-status,
-  "AA pending", the "from"-price warning, what the agent may ask for) and the trip's lines a ``lost_reason_hint``.
+  (403 ``aa_line_read_only``), except whether a confirmed one is shown to the travellers (AA-1086, crm-065: shown by
+  default once AA confirms it; ``visible_to_travelers`` alone, else 403). Their view carries an ``aa`` block
+  (:func:`app.booking.views.aa_block`: sub-status, "AA pending", the "from"-price warning, what the agent may ask for)
+  and the trip's lines a ``lost_reason_hint``.
 - **waiting_on** (AA-943 contract, ``app.stages``): hook ``supplier_lines`` (priority 50) answers ``supplier`` while a
   booked / pre-departure trip has a live agency line still planning. Registered when this module is imported (the
   ledger router imports it, so the API and the in-process worker both have it).
@@ -489,13 +491,21 @@ async def create_line(ctx: TenantContext, trip_id: uuid.UUID, body: dict[str, An
     return await line(ctx, line_id)
 
 
+def _aa_visibility_only(status: str, changes: dict[str, Any]) -> None:
+    """Card R (CRM-19): an AA line follows Booking; the database refuses a member write too (crm-014 CRM24). AA-1086
+    (crm-065): the one member choice is whether a confirmed AA line is shown to the travellers (shown by default)."""
+    if set(changes) != {"visible_to_travelers"}:
+        raise Forbidden("aa_line_read_only", "Adventure Asia lines come from your AA bookings")
+    if status != "confirmed":
+        raise Invalid("line_not_editable", "an Adventure Asia line is shown to travellers once AA confirms it")
+
+
 async def update_line(ctx: TenantContext, line_id: uuid.UUID, changes: dict[str, Any]) -> dict[str, Any]:
     current = await ctx.conn.fetchrow(TRIP_OF_LINE_SQL, line_id)
     if current is None:
         raise NotFound("line_not_found")
     if current["supplier_kind"] == "aa":
-        # Card R (CRM-19): an AA line follows Booking; the database refuses it too (crm-014 CRM24).
-        raise Forbidden("aa_line_read_only", "Adventure Asia lines come from your AA bookings")
+        _aa_visibility_only(current["status"], changes)
     sets: list[str] = []
     args: list[Any] = [line_id]
     for field in EDITABLE:
